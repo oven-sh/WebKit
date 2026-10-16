@@ -36,7 +36,10 @@
 #include <wayland-client-protocol.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
+#include <wtf/text/StringCommon.h>
 #include <xkbcommon/xkbcommon.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 typedef struct _TextInputV3Global TextInputV3Global;
 typedef struct _Preedit Preedit;
@@ -506,24 +509,41 @@ static void wpeIMContextWaylandV3Dispose(GObject* object)
     G_OBJECT_CLASS(wpe_im_context_wayland_v3_parent_class)->dispose(object);
 }
 
+// text-input-v3 counts the pre-edit cursor in bytes, but WPEInputMethodContext counts it in characters.
+// Offsets out of range are clamped, and an offset inside a character counts as after it.
+static unsigned preeditCharacterOffset(std::span<const char> text, int32_t byteOffset)
+{
+    auto clampedByteOffset = std::clamp<size_t>(std::max(byteOffset, 0), 0, text.size());
+    return g_utf8_pointer_to_offset(text.data(), text.subspan(clampedByteOffset).data());
+}
+
 static void wpeIMContextWaylandV3GetPreeditString(WPEInputMethodContext* context, char** text, GList** underlines, guint* cursorOffset)
 {
     auto* self = WPE_IM_CONTEXT_WAYLAND_V3(context);
+    const auto& preedit = self->priv->currentPreedit;
+    auto preeditText = unsafeSpan(preedit.text ? preedit.text.get() : "");
 
     if (text != nullptr)
-        *text = self->priv->currentPreedit.text ? g_strdup(self->priv->currentPreedit.text.get()) : g_strdup("");
+        *text = g_strndup(preeditText.data(), preeditText.size());
+
+    // Both offsets are -1 when the cursor is hidden. Put it at the end of the pre-edit then.
+    unsigned cursorBegin, cursorEnd;
+    if (preedit.cursorBegin == -1 && preedit.cursorEnd == -1)
+        cursorBegin = cursorEnd = g_utf8_strlen(preeditText.data(), preeditText.size());
+    else {
+        cursorBegin = preeditCharacterOffset(preeditText, preedit.cursorBegin);
+        cursorEnd = preeditCharacterOffset(preeditText, preedit.cursorEnd);
+    }
 
     if (underlines != nullptr) {
         *underlines = nullptr;
-        if (self->priv->currentPreedit.cursorBegin != self->priv->currentPreedit.cursorEnd) {
-            *underlines =
-                g_list_prepend(*underlines, wpe_input_method_underline_new(self->priv->currentPreedit.cursorBegin,
-                    self->priv->currentPreedit.cursorEnd));
-        }
-    };
+        // The cursor end can be before the cursor begin, for example for a selection made backwards.
+        if (cursorBegin != cursorEnd)
+            *underlines = g_list_prepend(*underlines, wpe_input_method_underline_new(std::min(cursorBegin, cursorEnd), std::max(cursorBegin, cursorEnd)));
+    }
 
     if (cursorOffset)
-        *cursorOffset = self->priv->currentPreedit.cursorBegin;
+        *cursorOffset = cursorBegin;
 }
 
 static void wpeIMContextWaylandV3FocusIn(WPEInputMethodContext* context)
@@ -623,3 +643,5 @@ WPEInputMethodContext* wpe_im_context_wayland_v3_new(WPEDisplayWayland* display,
     textInputV3GetGlobalByDisplay(display); // ensure creation of listener
     return WPE_INPUT_METHOD_CONTEXT(g_object_new(WPE_TYPE_IM_CONTEXT_WAYLAND_V3, "view", view, nullptr));
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

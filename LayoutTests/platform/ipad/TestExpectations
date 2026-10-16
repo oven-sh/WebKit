@@ -5,6 +5,12 @@ css-dark-mode/older-systems [ Skip ]
 fast/events/ios/ipad [ Pass ]
 fast/forms/ios/ipad [ Pass ]
 
+# The element fullscreen safe area quirk does not apply to iPad, which is not a small-screen device.
+fast/quirks/ios/element-fullscreen-safe-area-opt-in.html [ Skip ]
+fast/quirks/ios/element-fullscreen-safe-area-opt-in-cover.html [ Skip ]
+fast/quirks/ios/element-fullscreen-safe-area-opt-in-iframe.html [ Skip ]
+fast/quirks/ios/element-fullscreen-safe-area-opt-in-late-meta.html [ Skip ]
+
 # iPads don't zoom when form elements are focused
 fast/forms/ios/accessory-bar-navigation.html [ Skip ]
 fast/forms/ios/focus-input-in-fixed.html [ Skip ]

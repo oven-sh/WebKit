@@ -55,7 +55,7 @@ namespace WebCore {
 namespace Style {
 
 PaintImage::PaintImage(CustomIdent&& name, Ref<CSSVariableData>&& arguments)
-    : GeneratedImage { Type::PaintImage, PaintImage::isFixedSize }
+    : GeneratedImage { Type::PaintImage }
     , m_name { WTF::move(name) }
     , m_arguments { WTF::move(arguments) }
 {
@@ -162,7 +162,7 @@ static RefPtr<CSSValue> extractComputedProperty(const AtomString& name, Element&
         return extractor.customPropertyValue(name);
 
     CSSPropertyID propertyID = cssPropertyID(name);
-    if (!propertyID)
+    if (propertyID == CSSPropertyID::Invalid)
         return nullptr;
 
     return extractor.propertyValue(propertyID, Extractor::UpdateLayout::No);
@@ -258,11 +258,6 @@ bool PaintImage::canDraw(const RenderElement& renderer) const
 bool PaintImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& size) const
 {
     return !size.isEmpty() && canDraw(renderer);
-}
-
-FloatSize PaintImage::fixedSize(const RenderElement&) const
-{
-    return { };
 }
 
 } // namespace Style

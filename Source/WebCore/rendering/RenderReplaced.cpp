@@ -48,6 +48,7 @@
 #include "RenderBlock.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderFragmentedFlow.h"
@@ -62,6 +63,7 @@
 #include "RenderVideo.h"
 #include "RenderView.h"
 #include "RenderedDocumentMarker.h"
+#include "ReplacedElementSizing.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "Settings.h"
@@ -122,14 +124,6 @@ bool RenderReplaced::shouldRespectZeroIntrinsicWidth() const
 bool RenderReplaced::shouldRespectZeroIntrinsicHeight() const
 {
     return false;
-}
-
-void RenderReplaced::willBeDestroyed()
-{
-    if (!renderTreeBeingDestroyed() && parent())
-        parent()->dirtyLineFromChangedChild();
-
-    RenderBox::willBeDestroyed();
 }
 
 void RenderReplaced::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
@@ -249,7 +243,7 @@ Color RenderReplaced::calculateHighlightColor() const
                     continue;
 
                 if (auto highlightStyle = lazyPseudoElementStyle({ PseudoElementType::Highlight, highlight.key }, &style()))
-                    return highlightStyle->backgroundColorResolvingCurrentColor();
+                    return highlightStyle->usedBackgroundColorResolvingCurrentColor();
             }
         }
     }
@@ -292,7 +286,7 @@ void RenderReplaced::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
         // shape. The children still register their precise bounds via paintReplaced.
         if (visibleToHitTesting()) {
             auto borderRect = LayoutRect(adjustedPaintOffset, borderBoxSize());
-            auto borderShape = BorderShape::shapeForBorderRect(style(), borderRect);
+            auto borderShape = BorderShape::shapeForBorderRect(usedStyle(), borderRect);
             auto contributeToInteractionRegions = (svgRootHasChildrenOrFilters && !isSkippedContentRoot(*this))
                 ? EventRegionContext::ContributeToInteractionRegions::No
                 : EventRegionContext::ContributeToInteractionRegions::Yes;
@@ -314,6 +308,9 @@ void RenderReplaced::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
         paintInfo.axCustomColorBackdropContext()->recordBackdrop(*this, FloatRect { LayoutRect(adjustedPaintOffset, borderBoxSize()) }, paintInfo.paintBehavior);
         return;
     }
+
+    if (paintInfo.phase == PaintPhase::AXCustomColorComputeBackdrops)
+        paintInfo.axCustomColorBackdropContext()->updateImageBackdrop(*this, FloatRect { LayoutRect(adjustedPaintOffset, borderBoxSize()) });
 #endif
 
     SetLayoutNeededForbiddenScope scope(*this);
@@ -343,7 +340,7 @@ void RenderReplaced::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
         return;
     }
 
-    if (paintInfo.phase == PaintPhase::ClippingMask && style().usedVisibility() == Visibility::Visible) {
+    if (paintInfo.phase == PaintPhase::ClippingMask && usedStyle().visibility() == UsedVisibility::Visible) {
         paintClippingMask(paintInfo, adjustedPaintOffset);
         return;
     }
@@ -413,7 +410,7 @@ bool RenderReplaced::shouldPaint(PaintInfo& paintInfo, const LayoutPoint& paintO
     if (paintInfo.paintBehavior.contains(PaintBehavior::ExcludeReplacedContentExceptForIFrames) && !isRenderIFrame())
         return false;
 
-    if (!canHaveChildren()
+    if ((!canHaveChildren() || hasDrawableContent())
         && paintInfo.phase != PaintPhase::Foreground
         && paintInfo.phase != PaintPhase::Outline
         && paintInfo.phase != PaintPhase::SelfOutline
@@ -432,7 +429,7 @@ bool RenderReplaced::shouldPaint(PaintInfo& paintInfo, const LayoutPoint& paintO
         return false;
 
     // if we're invisible or haven't received a layout yet, then just bail.
-    if (style().usedVisibility() != Visibility::Visible)
+    if (usedStyle().visibility() != UsedVisibility::Visible)
         return false;
 
     LayoutRect paintRect(visualOverflowRect());
@@ -520,7 +517,7 @@ static FloatSize computeIntrinsicSizeForRenderer(const RenderReplaced& replacedR
 
         intrinsicSize.scale(replacedRenderer.style().usedZoom());
         if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(replacedRenderer))
-            intrinsicSize.scale(renderImage->imageDevicePixelRatio());
+            intrinsicSize = intrinsicSize / renderImage->currentPixelDensity();
         if (!replacedRenderer.isHorizontalWritingMode())
             intrinsicSize = intrinsicSize.transposedSize();
         return intrinsicSize;
@@ -664,64 +661,75 @@ std::optional<FloatRect> RenderReplaced::resolvedObjectViewBox(const FloatSize& 
 
 bool RenderReplaced::objectViewBoxIsContainedWithinNaturalSize() const
 {
-    if (style().objectViewBox().isNone())
-        return true;
-
-    auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
     if (!viewBox)
         return true;
 
-    return FloatRect({ }, FloatSize(intrinsicSize())).contains(*viewBox);
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return FloatRect({ }, FloatSize(intrinsicSize())).contains(*viewBox);
+}
+
+LayoutRect RenderReplaced::computePaintRectForObjectViewBox(const LayoutRect& destRect) const
+{
+    if (auto naturalSize = zoomedNaturalSize())
+        return computePaintRectForObjectViewBox(destRect, *naturalSize);
+    return destRect;
 }
 
 LayoutRect RenderReplaced::computePaintRectForObjectViewBox(const LayoutRect& destRect, const LayoutSize& intrinsicSize) const
 {
-    if (!style().objectViewBox().isNone()) {
-        if (auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize)))
-            return LayoutRect(fullRectFromSubrectAndSize(FloatSize(intrinsicSize), *viewBox, FloatRect(destRect)));
-    }
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST if (auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize)))
+        return LayoutRect(fullRectFromSubrectAndSize(FloatSize(intrinsicSize), *viewBox, FloatRect(destRect)));
     return destRect;
 }
 
-LayoutRect RenderReplaced::replacedContentRect(const LayoutSize& intrinsicSize) const
+// https://drafts.csswg.org/css-images-3/#the-object-position
+static LayoutRect placeConcreteObject(const Style::ComputedStyle& style, const LayoutRect& contentRect, LayoutSize concreteObjectSize)
+{
+    auto& objectPosition = style.objectPosition();
+    auto zoom = style.usedZoomForLength();
+
+    auto xOffset = Style::evaluate<LayoutUnit>(objectPosition.x, contentRect.width() - concreteObjectSize.width(), zoom);
+    auto yOffset = Style::evaluate<LayoutUnit>(objectPosition.y, contentRect.height() - concreteObjectSize.height(), zoom);
+
+    return { contentRect.location() + LayoutSize { xOffset, yOffset }, concreteObjectSize };
+}
+
+NaturalDimensions RenderReplaced::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
+}
+
+std::optional<LayoutSize> RenderReplaced::zoomedNaturalSize() const
+{
+    auto naturalDimensions = zoomedNaturalDimensions();
+    if (!naturalDimensions.width || !naturalDimensions.height)
+        return std::nullopt;
+    return LayoutSize { FloatSize { *naturalDimensions.width, *naturalDimensions.height } };
+}
+
+LayoutRect RenderReplaced::replacedContentRect() const
+{
+    return replacedContentRect(zoomedNaturalDimensions());
+}
+
+LayoutRect RenderReplaced::replacedContentRect(NaturalDimensions zoomedNaturalDimensions) const
 {
     LayoutRect contentRect = contentBoxRect();
-    if (intrinsicSize.isEmpty())
-        return contentRect;
+    if (zoomedNaturalDimensions.width && zoomedNaturalDimensions.height) {
+        FloatSize naturalSize { *zoomedNaturalDimensions.width, *zoomedNaturalDimensions.height };
+        if (naturalSize.isEmpty())
+            return contentRect;
 
-    LayoutSize effectiveIntrinsicSize = intrinsicSize;
-    if (!style().objectViewBox().isNone()) {
-        if (auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize)))
-            effectiveIntrinsicSize = LayoutSize(viewBox->size());
+        if (auto viewBox = resolvedObjectViewBox(naturalSize))
+            zoomedNaturalDimensions = NaturalDimensions::fixed(FloatSize { LayoutSize(viewBox->size()) });
     }
 
-    auto objectFit = style().objectFit();
+    auto concreteObjectSize = ReplacedElementSizing { contentRect.size(), style().objectFit() }.resolve(zoomedNaturalDimensions);
 
-    LayoutRect finalRect = contentRect;
-    switch (objectFit) {
-    case ObjectFit::Contain:
-    case ObjectFit::ScaleDown:
-    case ObjectFit::Cover:
-        finalRect.setSize(finalRect.size().fitToAspectRatio(effectiveIntrinsicSize, objectFit == ObjectFit::Cover ? AspectRatioFit::Grow : AspectRatioFit::Shrink));
-        if (objectFit != ObjectFit::ScaleDown || finalRect.width() <= effectiveIntrinsicSize.width())
-            break;
-        [[fallthrough]];
-    case ObjectFit::None:
-        finalRect.setSize(effectiveIntrinsicSize);
-        break;
-    case ObjectFit::Fill:
-        break;
-    }
-
-    auto& objectPosition = style().objectPosition();
-    auto zoom = style().usedZoomForLength();
-
-    auto xOffset = Style::evaluate<LayoutUnit>(objectPosition.x, contentRect.width() - finalRect.width(), zoom);
-    auto yOffset = Style::evaluate<LayoutUnit>(objectPosition.y, contentRect.height() - finalRect.height(), zoom);
-
-    finalRect.move(xOffset, yOffset);
-
-    return finalRect;
+    return placeConcreteObject(style(), contentRect, LayoutSize { concreteObjectSize.size() });
 }
 
 std::optional<double> RenderReplaced::preferredAspectRatio() const
@@ -780,20 +788,20 @@ LayoutUnit RenderReplaced::computeConstrainedLogicalWidth() const
         logicalWidth = containingBlock()->contentBoxLogicalWidth();
 
     // This solves above equation for 'width' (== logicalWidth).
-    auto marginStart = Style::evaluateMinimum<LayoutUnit>(style().marginStart(), logicalWidth, style().usedZoomForLength());
-    auto marginEnd = Style::evaluateMinimum<LayoutUnit>(style().marginEnd(), logicalWidth, style().usedZoomForLength());
+    auto marginStart = usedStyle().marginStart(logicalWidth).value_or(0_lu);
+    auto marginEnd = usedStyle().marginEnd(logicalWidth).value_or(0_lu);
 
     return std::max(0_lu, (logicalWidth - (marginStart + marginEnd + borderLeft() + borderRight() + paddingLeft() + paddingRight())));
 }
 
-static inline LayoutUnit NODELETE resolveWidthForRatio(LayoutUnit borderAndPaddingLogicalHeight, LayoutUnit borderAndPaddingLogicalWidth, LayoutUnit logicalHeight, double aspectRatio, BoxSizing boxSizing)
+static inline LayoutUnit LEGACY_NODELETE resolveWidthForRatio(LayoutUnit borderAndPaddingLogicalHeight, LayoutUnit borderAndPaddingLogicalWidth, LayoutUnit logicalHeight, double aspectRatio, BoxSizing boxSizing)
 {
     if (boxSizing == BoxSizing::BorderBox)
         return LayoutUnit((logicalHeight + borderAndPaddingLogicalHeight) * aspectRatio) - borderAndPaddingLogicalWidth;
     return LayoutUnit(logicalHeight * aspectRatio);
 }
 
-static inline bool NODELETE hasIntrinsicSize(const RenderReplaced* svgRoot, bool hasIntrinsicWidth, bool hasIntrinsicHeight)
+static inline bool LEGACY_NODELETE hasIntrinsicSize(const RenderReplaced* svgRoot, bool hasIntrinsicWidth, bool hasIntrinsicHeight)
 {
     return (hasIntrinsicWidth && hasIntrinsicHeight) || ((hasIntrinsicWidth || hasIntrinsicHeight) && svgRoot);
 }
@@ -1026,19 +1034,35 @@ void RenderReplaced::computeIntrinsicLogicalWidthContributions()
         if (shouldIgnoreLogicalMinMaxWidthSizes())
             return;
 
-        // Apply max-width before min-width so that min-width wins when min > max, matching
-        // CSS 2.1 §10.4 and RenderBox::constrainIntrinsicLogicalWidthsByMinMax().
-        if (auto fixedLogicalMaxWidth = styleToUse.logicalMaxWidth().tryFixed()) {
-            auto maxWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMaxWidth);
-            m_maxContentLogicalWidthContribution = std::min(m_maxContentLogicalWidthContribution, maxWidth);
-            m_minContentLogicalWidthContribution = std::min(m_minContentLogicalWidthContribution, maxWidth);
-        }
+        // Resolve the used min/max width, then clamp by max-width before min-width so that min-width
+        // wins when min > max (CSS 2.1 section 10.4). A min-content/max-content keyword min-width floors
+        // the contribution by the box's own min-content/max-content size; this matters for a
+        // percentage-width replaced element, whose min-content contribution is resolved against zero
+        // (CSS Sizing 3 section 5.2.1) and is then floored by the minimum size in its own axis.
+        // Mirrors RenderBox::constrainIntrinsicLogicalWidthsByMinMax().
+        auto& logicalMinWidth = styleToUse.logicalMinWidth();
 
-        if (auto fixedLogicalMinWidth = styleToUse.logicalMinWidth().tryFixed()) {
-            auto minWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMinWidth);
-            m_maxContentLogicalWidthContribution = std::max(m_maxContentLogicalWidthContribution, minWidth);
-            m_minContentLogicalWidthContribution = std::max(m_minContentLogicalWidthContribution, minWidth);
-        }
+        auto usedMaxLogicalWidth = [&] -> LayoutUnit {
+            if (auto fixedLogicalMaxWidth = styleToUse.logicalMaxWidth().tryFixed())
+                return adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMaxWidth);
+            return LayoutUnit::max();
+        }();
+
+        auto usedMinLogicalWidth = [&] -> LayoutUnit {
+            if (auto fixedLogicalMinWidth = logicalMinWidth.tryFixed())
+                return adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMinWidth);
+            if (logicalMinWidth.isMaxContent())
+                return m_maxContentLogicalWidthContribution;
+            if (logicalMinWidth.isMinContent())
+                return m_minContentLogicalWidthContribution;
+            return { };
+        }();
+
+        m_maxContentLogicalWidthContribution = std::min(m_maxContentLogicalWidthContribution, usedMaxLogicalWidth);
+        m_minContentLogicalWidthContribution = std::min(m_minContentLogicalWidthContribution, usedMaxLogicalWidth);
+
+        m_maxContentLogicalWidthContribution = std::max(m_maxContentLogicalWidthContribution, usedMinLogicalWidth);
+        m_minContentLogicalWidthContribution = std::max(m_minContentLogicalWidthContribution, usedMinLogicalWidth);
     };
 
     applyExplicitMinMaxWidthConstraints();
@@ -1088,7 +1112,8 @@ LayoutRect RenderReplaced::selectionRectForRepaint(const RenderLayerModelObject*
     LayoutRect rect = localSelectionRect();
     if (clipToVisibleContent)
         return computeRectForRepaint(rect, repaintContainer);
-    return localToContainerQuad(FloatRect(rect), repaintContainer).enclosingBoundingBox();
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return localToContainerQuad(FloatRect(rect), repaintContainer).enclosingBoundingBox();
 }
 
 LayoutRect RenderReplaced::localSelectionRect(bool checkWhetherSelected) const

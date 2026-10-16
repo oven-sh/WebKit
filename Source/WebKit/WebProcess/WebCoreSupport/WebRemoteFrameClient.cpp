@@ -48,6 +48,7 @@
 #include <WebCore/RemoteFrame.h>
 #include <WebCore/Settings.h>
 #include <WebCore/UserGestureIndicator.h>
+#include <wtf/Borrow.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -79,6 +80,11 @@ void WebRemoteFrameClient::frameDetached()
         protect(ownerElement->document())->checkCompleted();
 }
 
+void WebRemoteFrameClient::destroyProvisionalFrame()
+{
+    m_frame->destroyProvisionalFrame();
+}
+
 void WebRemoteFrameClient::frameRectDidChange(IntRect rect)
 {
     broadcastFrameRectToOtherProcesses(rect);
@@ -94,7 +100,7 @@ void WebRemoteFrameClient::paintContents(GraphicsContext& context, const IntRect
 
 void WebRemoteFrameClient::postMessageToRemote(FrameIdentifier source, const SecurityOriginData& sourceOrigin, FrameIdentifier target, std::optional<SecurityOriginData> targetOrigin, const MessageWithMessagePorts& message, const std::optional<WebCore::UserGestureTokenData>& userGestureToken)
 {
-    for (auto& port : message.transferredPorts)
+    for (auto& port : borrow(message.transferredPorts))
         WebMessagePortChannelProvider::singleton().messagePortSentToRemote(port.first);
 
     if (RefPtr serializedValue = message.message)
@@ -119,7 +125,7 @@ void WebRemoteFrameClient::postMessageToRemote(FrameIdentifier source, const Sec
         return;
 
     WebMessagePortChannelProvider::singleton().ensureMessagePortCreatedWithRoundtrip([pendingPostMessages, page] {
-        auto messagesToSend = pendingPostMessages->takeMessagesThroughNextPortTransfer();
+        const Vector messagesToSend = pendingPostMessages->takeMessagesThroughNextPortTransfer();
         for (auto& pendingPostMessage : messagesToSend)
             page->send(Messages::WebPageProxy::PostMessageToRemote(pendingPostMessage.source, pendingPostMessage.sourceOrigin, pendingPostMessage.target, pendingPostMessage.targetOrigin, pendingPostMessage.message, pendingPostMessage.userGestureToken));
     });
@@ -145,10 +151,10 @@ String WebRemoteFrameClient::renderTreeAsText(size_t baseIndent, OptionSet<Rende
 {
     RefPtr page = m_frame->page();
     if (!page)
-        return "Test Error - Missing page"_s;
+        return "Test Error - Missing page\n"_s;
     auto sendResult = page->sendSync(Messages::WebPageProxy::RenderTreeAsTextForTesting(m_frame->frameID(), baseIndent, behavior), IPC::Timeout::infinity(), IPC::SendSyncOption::MaintainOrderingWithAsyncMessages);
     if (!sendResult.succeeded())
-        return "Test Error - sending WebPageProxy::RenderTreeAsTextForTesting failed"_s;
+        return "Test Error - sending WebPageProxy::RenderTreeAsTextForTesting failed\n"_s;
     auto [result] = sendResult.takeReply();
     return result;
 }
@@ -157,11 +163,11 @@ String WebRemoteFrameClient::layerTreeAsText(size_t baseIndent, OptionSet<LayerT
 {
     RefPtr page = m_frame->page();
     if (!page)
-        return "Test Error - Missing page"_s;
+        return "Test Error - Missing page\n"_s;
     options.add(LayerTreeAsTextOptions::IncludeRootLayers);
     auto sendResult = page->sendSync(Messages::WebPageProxy::LayerTreeAsTextForTesting(m_frame->frameID(), baseIndent, options));
     if (!sendResult.succeeded())
-        return "Test Error - sending WebPageProxy::LayerTreeAsTextForTesting failed"_s;
+        return "Test Error - sending WebPageProxy::LayerTreeAsTextForTesting failed\n"_s;
     auto [result] = sendResult.takeReply();
     return result;
 }
@@ -265,9 +271,9 @@ void WebRemoteFrameClient::broadcastFrameTreeSyncDataToOtherProcesses(FrameTreeS
     WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(WTF::move(data));
 }
 
-void WebRemoteFrameClient::didNotifyUserActivation(MonotonicTime activationTime)
+void WebRemoteFrameClient::didNotifyUserActivation(MonotonicTime activationTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken)
 {
-    WebFrameLoaderClient::didNotifyUserActivation(activationTime);
+    WebFrameLoaderClient::didNotifyUserActivation(activationTime, forcedActivationToken);
 }
 
 void WebRemoteFrameClient::didConsumeUserActivation()

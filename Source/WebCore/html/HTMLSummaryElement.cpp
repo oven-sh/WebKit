@@ -73,7 +73,7 @@ bool HTMLSummaryElement::isActiveSummary() const
 static bool isInSummaryInteractiveContent(EventTarget* target)
 {
     for (RefPtr element = dynamicDowncast<Element>(target); element && !is<HTMLSummaryElement>(element); element = element->parentOrShadowHostElement()) {
-        auto* htmlElement = dynamicDowncast<HTMLElement>(*element);
+        RefPtr htmlElement = dynamicDowncast<HTMLElement>(*element);
         if ((htmlElement && htmlElement->isInteractiveContent()) || is<SVGAElement>(element))
             return true;
     }

@@ -47,15 +47,15 @@ struct PositionAreaValue {
     constexpr PositionAreaSpan blockOrXAxis() const { return m_blockOrXAxis; }
     constexpr PositionAreaSpan inlineOrYAxis() const { return m_inlineOrYAxis; }
 
-    PositionAreaSpan NODELETE spanForAxis(BoxAxis physicalAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
-    PositionAreaSpan NODELETE spanForAxis(LogicalBoxAxis logicalAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
+    PositionAreaSpan LEGACY_NODELETE spanForAxis(BoxAxis physicalAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
+    PositionAreaSpan LEGACY_NODELETE spanForAxis(LogicalBoxAxis logicalAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
 
     // Start/end based on container's coordinate-increasing direction (RenderBox coordinates)
-    PositionAreaTrack NODELETE coordMatchedTrackForAxis(BoxAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
+    PositionAreaTrack LEGACY_NODELETE coordMatchedTrackForAxis(BoxAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
 
-    ItemPosition NODELETE defaultAlignmentForAxis(BoxAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
+    ItemPosition LEGACY_NODELETE defaultAlignmentForAxis(BoxAxis, WritingMode containerWritingMode, WritingMode selfWritingMode) const;
 
-    constexpr bool NODELETE operator==(const PositionAreaValue&) const = default;
+    constexpr bool LEGACY_NODELETE operator==(const PositionAreaValue&) const = default;
 
 private:
     PositionAreaSpan m_blockOrXAxis;
@@ -86,7 +86,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<PositionArea> { PositionArea NODELETE operator()(BuilderState&, const CSSValue&); };
+template<> struct CSSValueConversion<PositionArea> { PositionArea operator()(BuilderState&, const CSSValue&); };
 template<> struct CSSValueCreation<PositionAreaValue> { Ref<CSSValue> operator()(CSSValuePool&, const Style::ComputedStyle&, const PositionAreaValue&); };
 
 // MARK: - Serialization

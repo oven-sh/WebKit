@@ -544,6 +544,89 @@ TEST(ObscuredContentInsets, TopOverhangColorExtensionLayerRemovedQuicklyAfterNav
     EXPECT_NULL([webView firstLayerWithNameContaining:@"top overhang"]);
 }
 
+TEST(ObscuredContentInsets, TopOverhangColorExtensionLayerAppliesColorFilter)
+{
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    [configuration _setColorFilterEnabled:YES];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 600, 400) configuration:configuration]);
+
+    [webView setObscuredContentInsets:NSEdgeInsetsMake(100, 0, 0, 0)];
+    [webView waitForNextPresentationUpdate];
+
+    static constexpr NSString *html = @(R"(
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                html, body { margin: 0; width: 100%; height: 100%; }
+                header { position: fixed; top: 0; left: 0; width: 100%; height: 100px; background-color: rgb(255, 0, 0); -apple-color-filter: invert(1); }
+                .tall { height: 4000px; }
+            </style>
+        </head>
+        <body>
+            <header><div class='tall'></header>
+        </body>
+        </html>
+        )");
+
+    [webView synchronouslyLoadHTMLString:html];
+    [webView waitForNextPresentationUpdate];
+
+    RetainPtr<CALayer> colorExtensionLayer;
+    Util::waitForConditionWithLogging([&] {
+        colorExtensionLayer = [webView firstLayerWithNameContaining:@"top overhang"];
+        return !!colorExtensionLayer;
+    }, 3, @"Timed out waiting for top overhang color extension layer to appear");
+
+    auto layerColor = WebCore::colorFromCocoaColor([NSColor colorWithCGColor:[colorExtensionLayer backgroundColor]]);
+    auto sampledColor = WebCore::colorFromCocoaColor([webView _sampledTopFixedPositionContentColor]);
+
+    EXPECT_EQ(WebCore::serializationForCSS(layerColor), "rgb(0, 255, 255)"_s);
+    EXPECT_EQ(WebCore::serializationForCSS(sampledColor), "rgb(0, 255, 255)"_s);
+}
+
+TEST(ObscuredContentInsets, TopOverhangColorExtensionLayerResolvesRelativeColor)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 600, 400)]);
+
+    [webView setObscuredContentInsets:NSEdgeInsetsMake(100, 0, 0, 0)];
+    [webView waitForNextPresentationUpdate];
+
+    static constexpr NSString *html = @(R"(
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                html, body { margin: 0; width: 100%; height: 100%; }
+                header { position: fixed; top: 0; left: 0; width: 100%; height: 100px; background-color: rgb(255, 255, 255); }
+                .bar { height: 100%; color: rgb(0, 0, 255); background-color: rgb(from currentcolor r g b); }
+                .tall { height: 4000px; }
+            </style>
+        </head>
+        <body>
+            <header><div class='bar'></div></header>
+            <div class='tall'></div>
+        </body>
+        </html>
+        )");
+
+    [webView synchronouslyLoadHTMLString:html];
+    [webView waitForNextPresentationUpdate];
+
+    RetainPtr<CALayer> colorExtensionLayer;
+    Util::waitForConditionWithLogging([&] {
+        colorExtensionLayer = [webView firstLayerWithNameContaining:@"top overhang"];
+        return !!colorExtensionLayer;
+    }, 3, @"Timed out waiting for top overhang color extension layer to appear");
+
+    auto layerColor = WebCore::colorFromCocoaColor([NSColor colorWithCGColor:[colorExtensionLayer backgroundColor]]);
+    auto sampledColor = WebCore::colorFromCocoaColor([webView _sampledTopFixedPositionContentColor]);
+
+    EXPECT_EQ(WebCore::serializationForCSS(layerColor), "rgb(0, 0, 255)"_s);
+    EXPECT_EQ(WebCore::serializationForCSS(sampledColor), "rgb(0, 0, 255)"_s);
+}
+
 TEST(ObscuredContentInsets, ScrollPocketRemainsWhenScrolledToTopInEditableWebView)
 {
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 600, 400)]);
@@ -777,14 +860,18 @@ static void assertTopPocket(TestWKWebView *webView, const PageState& state, CGFl
 
 static void assertTopColorExtension(TestWKWebView *webView, const PageState& state, bool hasFixedHeader, CGFloat tolerance)
 {
+    RetainPtr topFill = [webView firstLayerWithNameContaining:@"Fixed color extension fill (Top)"];
+    if (!hasFixedHeader) {
+        EXPECT_NULL(topFill.get());
+        return;
+    }
+
     auto geometry = computeGeometry(state);
     auto expected = CGRectMake(0, -topInset, geometry.contentsWidthView, topInset);
 
-    RetainPtr name = hasFixedHeader ? @"Fixed color extension fill (Top)" : @"Top system background color extension";
-    RetainPtr topFill = [webView firstLayerWithNameContaining:name];
     EXPECT_NOT_NULL(topFill.get());
     if (topFill)
-        expectFrameEqualWithTolerance([topFill frame], expected, tolerance, name);
+        expectFrameEqualWithTolerance([topFill frame], expected, tolerance, @"top fixed");
 }
 
 #endif

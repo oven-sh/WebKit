@@ -292,6 +292,7 @@
     "visibilitychange": { },
     "voiceschanged": { },
     "volumechange": { },
+    "volumetricchange": { "conditional": "ENABLE(CONNECTED_VOLUMETRIC_SCENE)" },
     "waiting": { },
     "waitingforkey": { },
     "webglcontextcreationerror": { },

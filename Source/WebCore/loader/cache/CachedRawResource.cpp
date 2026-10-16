@@ -153,9 +153,10 @@ static void iterateRedirects(CachedRawResource& handle, CachedRawResourceClient&
     client.redirectReceived(handle, WTF::move(redirectPair.first), WTF::move(redirectPair.second), [handle = Ref { handle }, client = WeakPtr { client }, redirectsInReverseOrder = WTF::move(redirectsInReverseOrder), completionHandler = WTF::move(completionHandler)] (ResourceRequest&&) mutable {
         // Ignore the new request because we can't do anything with it.
         // We're just replying a redirect chain that has already happened.
-        if (!client)
+        RefPtr protectedClient = client;
+        if (!protectedClient)
             return completionHandler({ });
-        iterateRedirects(handle, *client, WTF::move(redirectsInReverseOrder), WTF::move(completionHandler));
+        iterateRedirects(handle, *protectedClient, WTF::move(redirectsInReverseOrder), WTF::move(completionHandler));
     });
 }
 
@@ -176,13 +177,15 @@ void CachedRawResource::didAddClient(CachedResourceClient& c)
                 return;
             if (RefPtr data = m_data) {
                 data->forEachSegmentAsSharedBuffer([&](auto&& buffer) {
-                    if (client && hasClient(*client))
-                        client->dataReceived(*this, buffer);
+                    RefPtr protectedClient = client;
+                    if (protectedClient && hasClient(*protectedClient))
+                        protectedClient->dataReceived(*this, buffer);
                 });
             }
-            if (!client || !hasClient(*client))
+            RefPtr protectedClient = client;
+            if (!protectedClient || !hasClient(*protectedClient))
                 return;
-            CachedResource::didAddClient(*client);
+            CachedResource::didAddClient(*protectedClient);
         };
 
         if (!response().isNull()) {
@@ -193,7 +196,7 @@ void CachedRawResource::didAddClient(CachedResourceClient& c)
                 ASSERT(!validationInProgress());
                 response.setSource(ResourceResponse::Source::MemoryCache);
             }
-            client->responseReceived(*this, WTF::move(response), WTF::move(responseProcessedHandler));
+            protect(*client)->responseReceived(*this, WTF::move(response), WTF::move(responseProcessedHandler));
         } else
             responseProcessedHandler();
     });
@@ -284,7 +287,7 @@ void CachedRawResource::setDataBufferingPolicy(DataBufferingPolicy dataBuffering
     m_options.dataBufferingPolicy = dataBufferingPolicy;
 }
 
-static bool NODELETE shouldIgnoreHeaderForCacheReuse(HTTPHeaderName name)
+static bool LEGACY_NODELETE shouldIgnoreHeaderForCacheReuse(HTTPHeaderName name)
 {
     switch (name) {
     // FIXME: This list of headers that don't affect cache policy almost certainly isn't complete.

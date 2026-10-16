@@ -38,6 +38,7 @@
 #include <WebCore/DiagnosticLoggingKeys.h>
 #include <WebCore/HTTPStatusCodes.h>
 #include <pal/HysteresisActivity.h>
+#include <wtf/Borrow.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -159,8 +160,8 @@ public:
         return WTF::move(m_entry);
     }
 
-    const std::optional<ResourceRequest>& NODELETE revalidationRequest() const { return m_speculativeValidationRequest; }
-    bool NODELETE wasRevalidated() const { return !!m_speculativeValidationRequest; }
+    const std::optional<ResourceRequest>& LEGACY_NODELETE revalidationRequest() const { return m_speculativeValidationRequest; }
+    bool LEGACY_NODELETE wasRevalidated() const { return !!m_speculativeValidationRequest; }
 
 private:
     std::unique_ptr<Entry> m_entry;
@@ -212,11 +213,11 @@ public:
         saveToDiskIfReady();
     }
 
-    bool NODELETE didReceiveMainResourceResponse() const { return m_didReceiveMainResourceResponse; }
+    bool LEGACY_NODELETE didReceiveMainResourceResponse() const { return m_didReceiveMainResourceResponse; }
     void markMainResourceResponseAsReceived()
     {
         m_didReceiveMainResourceResponse = true;
-        for (auto& task : m_postMainResourceResponseTasks)
+        for (auto& task : borrow(m_postMainResourceResponseTasks))
             task();
     }
 

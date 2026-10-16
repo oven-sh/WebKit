@@ -367,7 +367,7 @@ static inline JSC::EncodedJSValue jsTestCallTracerPrototypeFunction_testOperatio
     decltype(auto) nativeResult = impl.testOperationInterface();
     if (impl.hasActiveTestInterfaceCallTracer()) [[unlikely]]
         TestInterfaceCallTracer::recordActionResult<IDLInterface<TestCallTracer>>(impl, nativeResult);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<TestCallTracer>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, std::forward<decltype(nativeResult)>(nativeResult))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<TestCallTracer>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return std::forward<decltype(nativeResult)>(nativeResult); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTestCallTracerPrototypeFunction_testOperationInterface, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
@@ -438,7 +438,7 @@ static inline JSC::EncodedJSValue jsTestCallTracerPrototypeFunction_testOperatio
        return encodedJSValue();
     if (impl.hasActiveTestInterfaceCallTracer()) [[unlikely]]
         TestInterfaceCallTracer::recordAction(impl, "testOperationWithNullableArgument"_s, { TestInterfaceCallTracer::processArgument<IDLNullable<IDLInterface<Node>>>(impl, nodeNullableArgConversionResult.returnValue()) });
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.testOperationWithNullableArgument(nodeNullableArgConversionResult.releaseReturnValue()); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.testOperationWithNullableArgument(nodeNullableArgConversionResult.releaseReturnValue().get()); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTestCallTracerPrototypeFunction_testOperationWithNullableArgument, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))

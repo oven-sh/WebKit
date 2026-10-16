@@ -636,12 +636,12 @@ struct AbstractModuleRecord::ResolveQuery {
     {
     }
 
-    bool NODELETE isEmptyValue() const
+    bool LEGACY_NODELETE isEmptyValue() const
     {
         return !exportName;
     }
 
-    bool NODELETE isDeletedValue() const
+    bool LEGACY_NODELETE isDeletedValue() const
     {
         return exportName.isHashTableDeletedValue();
     }
@@ -661,12 +661,12 @@ struct AbstractModuleRecord::ResolveQuery {
     RefPtr<UniquedStringImpl> exportName;
 };
 
-inline unsigned NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
+inline unsigned LEGACY_NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
 {
     return WTF::PtrHash<AbstractModuleRecord*>::hash(query.moduleRecord) + IdentifierRepHash::hash(query.exportName);
 }
 
-inline bool NODELETE AbstractModuleRecord::ResolveQuery::Hash::equal(const ResolveQuery& lhs, const ResolveQuery& rhs)
+inline bool LEGACY_NODELETE AbstractModuleRecord::ResolveQuery::Hash::equal(const ResolveQuery& lhs, const ResolveQuery& rhs)
 {
     return lhs.moduleRecord == rhs.moduleRecord && lhs.exportName == rhs.exportName;
 }
@@ -2078,6 +2078,8 @@ ScriptFetchParameters::Type AbstractModuleRecord::moduleType() const
         return ScriptFetchParameters::Type::JavaScript;
     case SourceProviderSourceType::WebAssembly:
         return ScriptFetchParameters::Type::WebAssembly;
+    case SourceProviderSourceType::CSS:
+        return ScriptFetchParameters::Type::CSS;
     case SourceProviderSourceType::ImportMap:
         RELEASE_ASSERT_NOT_REACHED();
         return ScriptFetchParameters::Type::None;

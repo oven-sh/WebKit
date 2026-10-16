@@ -89,7 +89,7 @@
             return;
         }
 
-        NSError *readError;
+        NSError *readError = nil;
         NSData *fileData = [NSData dataWithContentsOfURL:fileURLForRequest.get() options:0 error:&readError];
         if (!fileData) {
             LOG_ERROR("Unable to read data for Web Inspector resource: %@", requestURL.get().absoluteString);

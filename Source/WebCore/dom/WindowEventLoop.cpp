@@ -49,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WindowEventLoop);
 
-static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& NODELETE windowEventLoopMap()
+static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& LEGACY_NODELETE windowEventLoopMap()
 {
     RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>> map;
@@ -214,7 +214,8 @@ std::optional<MonotonicTime> WindowEventLoop::nextScheduledWorkTime() const
 std::optional<MonotonicTime> WindowEventLoop::nextRenderingTime() const
 {
     std::optional<MonotonicTime> nextRenderingTime;
-    const_cast<WindowEventLoop*>(this)->forEachAssociatedContext([&](ScriptExecutionContext& context) {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<WindowEventLoop*>(this)->forEachAssociatedContext([&](ScriptExecutionContext& context) {
         RefPtr document = dynamicDowncast<Document>(context);
         if (!document)
             return;
@@ -273,7 +274,7 @@ void WindowEventLoop::removeMutationObserversForContext(ScriptExecutionContext& 
 
     auto disconnectMatching = [&](HashSet<Ref<MutationObserver>>& observers) {
         observers.removeIf([&](auto& observer) {
-            auto* observerContext = observer->callback().scriptExecutionContext();
+            RefPtr observerContext = observer->callback().scriptExecutionContext();
             if (observerContext && observerContext != &context)
                 return false;
             observer->disconnect();

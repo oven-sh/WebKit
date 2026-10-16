@@ -33,7 +33,6 @@
 #import <AppKit/AppKit.h>
 #endif
 
-@class WebHistoryItemPrivate;
 @class NSURL;
 
 /*
@@ -53,10 +52,6 @@ extern NSString * const WebHistoryItemChangedNotification WEBKIT_DEPRECATED_MAC(
 */
 WEBKIT_CLASS_DEPRECATED_MAC(10_3, 10_14)
 @interface WebHistoryItem : NSObject <NSCopying>
-{
-@package
-    WebHistoryItemPrivate *_private;
-}
 
 /*!
     @method initWithURLString:title:lastVisitedTimeInterval:

@@ -809,16 +809,16 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
 
         "--ro-bind-try"_s, "/usr/share"_s, "/usr/share"_s,
         "--ro-bind-try"_s, "/usr/local/share"_s, "/usr/local/share"_s,
-        "--ro-bind-try"_s, ASCIILiteral::fromLiteralUnsafe(DATADIR), ASCIILiteral::fromLiteralUnsafe(DATADIR),
+        "--ro-bind-try"_s, ASCIILiteral { DATADIR }, ASCIILiteral { DATADIR },
 
         // We only grant access to the libdirs webkit is built with and
         // guess system libdirs. This will always have some edge cases.
         "--ro-bind-try"_s, "/lib"_s, "/lib"_s,
         "--ro-bind-try"_s, "/usr/lib"_s, "/usr/lib"_s,
         "--ro-bind-try"_s, "/usr/local/lib"_s, "/usr/local/lib"_s,
-        "--ro-bind-try"_s, ASCIILiteral::fromLiteralUnsafe(LIBDIR), ASCIILiteral::fromLiteralUnsafe(LIBDIR),
+        "--ro-bind-try"_s, ASCIILiteral { LIBDIR }, ASCIILiteral { LIBDIR },
 #if defined(WEBKIT_SWIFT_STDLIB_LIBRARY_PATH)
-        "--ro-bind-try"_s, ASCIILiteral::fromLiteralUnsafe(WEBKIT_SWIFT_STDLIB_LIBRARY_PATH), ASCIILiteral::fromLiteralUnsafe(WEBKIT_SWIFT_STDLIB_LIBRARY_PATH),
+        "--ro-bind-try"_s, ASCIILiteral { WEBKIT_SWIFT_STDLIB_LIBRARY_PATH }, ASCIILiteral { WEBKIT_SWIFT_STDLIB_LIBRARY_PATH },
 #endif
 #if CPU(ADDRESS64)
         "--ro-bind-try"_s, "/lib64"_s, "/lib64"_s,
@@ -830,7 +830,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         "--ro-bind-try"_s, "/usr/local/lib32"_s, "/usr/local/lib32"_s,
 #endif
 
-        "--ro-bind-try"_s, ASCIILiteral::fromLiteralUnsafe(PKGLIBEXECDIR), ASCIILiteral::fromLiteralUnsafe(PKGLIBEXECDIR),
+        "--ro-bind-try"_s, ASCIILiteral { PKGLIBEXECDIR }, ASCIILiteral { PKGLIBEXECDIR },
     };
 
     if (enableDebugPermissions()) {
@@ -852,7 +852,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
 
     if (launchOptions.processType == ProcessLauncher::ProcessType::DBusProxy) {
         sandboxArgs.appendList<UTF8CString>({
-            "--ro-bind"_s, ASCIILiteral::fromLiteralUnsafe(DBUS_PROXY_EXECUTABLE), ASCIILiteral::fromLiteralUnsafe(DBUS_PROXY_EXECUTABLE),
+            "--ro-bind"_s, ASCIILiteral { DBUS_PROXY_EXECUTABLE }, ASCIILiteral { DBUS_PROXY_EXECUTABLE },
             "--bind"_s, sandboxedUserRuntimeDirectory(), sandboxedUserRuntimeDirectory(),
         });
 
@@ -983,7 +983,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
     g_subprocess_launcher_take_fd(launcher, bwrapFd, bwrapFd);
 
     Vector<UTF8CString> bwrapArgs = {
-        ASCIILiteral::fromLiteralUnsafe(BWRAP_EXECUTABLE),
+        ASCIILiteral { BWRAP_EXECUTABLE },
         "--args"_s,
         String::number(bwrapFd).utf8(),
         "--"_s,

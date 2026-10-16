@@ -23,7 +23,7 @@ layer at (0,0) size 450x500
       RenderSVGText {text} at (10,130) size 98x25 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 98x25
           chunk 1 text run 1 at (10.00,150.00) startOffset 0 endOffset 8 width 98.00: "  X  X  "
-        RenderSVGTSpan {tspan} at (-10,-130) size 0x0
+        RenderSVGTSpan {tspan} at (0,0) size 0x0
       RenderSVGText {text} at (120,133) size 95x19 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 95x9
           chunk 1 text run 1 at (120.00,140.00) startOffset 0 endOffset 19 width 95.00: "Empty tspan at end "
@@ -33,7 +33,7 @@ layer at (0,0) size 450x500
       RenderSVGText {text} at (10,155) size 74x25 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 74x25
           chunk 1 text run 1 at (10.00,175.00) startOffset 0 endOffset 6 width 74.00: "  X  X"
-        RenderSVGTSpan {tspan} at (-10,-155) size 0x0
+        RenderSVGTSpan {tspan} at (0,0) size 0x0
           RenderSVGInlineText {#text} at (0,0) size 0x0
       RenderSVGText {text} at (120,158) size 95x19 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 75x9
@@ -44,7 +44,7 @@ layer at (0,0) size 450x500
       RenderSVGText {text} at (10,180) size 86x25 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 86x25
           chunk 1 text run 1 at (10.00,200.00) startOffset 0 endOffset 7 width 86.00: "  X  X "
-        RenderSVGTSpan {tspan} at (-10,-180) size 0x0
+        RenderSVGTSpan {tspan} at (0,0) size 0x0
           RenderSVGInlineText {#text} at (0,0) size 0x0
       RenderSVGText {text} at (120,183) size 95x19 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 50x9
@@ -66,7 +66,7 @@ layer at (0,0) size 450x500
       RenderSVGText {text} at (10,230) size 86x25 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 12x25
           chunk 1 text run 1 at (10.00,250.00) startOffset 0 endOffset 1 width 12.00: " "
-        RenderSVGTSpan {tspan} at (-10,-230) size 0x0
+        RenderSVGTSpan {tspan} at (0,0) size 0x0
           RenderSVGInlineText {#text} at (-10,-230) size 0x0
         RenderSVGInlineText {#text} at (12,0) size 74x25
           chunk 1 text run 1 at (22.00,250.00) startOffset 0 endOffset 6 width 74.00: "X  X  "
@@ -93,7 +93,7 @@ layer at (0,0) size 450x500
       RenderSVGText {text} at (10,280) size 86x25 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 49x25
           chunk 1 text run 1 at (10.00,300.00) startOffset 0 endOffset 4 width 49.00: "  X "
-        RenderSVGTSpan {tspan} at (-10,-280) size 0x0
+        RenderSVGTSpan {tspan} at (0,0) size 0x0
           RenderSVGInlineText {#text} at (-10,-280) size 0x0
         RenderSVGInlineText {#text} at (49,0) size 37x25
           chunk 1 text run 1 at (59.00,300.00) startOffset 0 endOffset 3 width 37.00: "X  "

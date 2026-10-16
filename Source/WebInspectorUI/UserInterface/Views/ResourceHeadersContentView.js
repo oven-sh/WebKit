@@ -470,9 +470,9 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         for (let element of elements) {
             let matchRanges = [];
             let text = element.textContent;
-            let match;
-            while ((match = searchRegex.exec(text)))
+            WI.SearchUtilities.forEachMatch(searchRegex, text, (match) => {
                 matchRanges.push({offset: match.index, length: match[0].length});
+            });
 
             if (matchRanges.length) {
                 let highlightedNodes = WI.highlightRangesWithStyleClass(element, matchRanges, "search-highlight", this._searchDOMChanges);

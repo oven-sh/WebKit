@@ -1673,6 +1673,8 @@ void UIScriptControllerIOS::setHardwareKeyboardAttached(bool attached)
 {
     GSEventSetHardwareKeyboardAttached(attached, 0);
     TestController::singleton().setIsInHardwareKeyboardMode(attached);
+    if (attached)
+        TestController::singleton().restoreDefaultKeyboardInputModeIfNeeded();
 }
 
 void UIScriptControllerIOS::setShowKeyboardAfterElementFocusDelay(double delay)

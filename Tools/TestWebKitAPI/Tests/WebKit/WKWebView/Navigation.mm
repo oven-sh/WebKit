@@ -30,6 +30,7 @@
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/cocoa/SiteIsolationUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/TestDownloadDelegate.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestProtocol.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
@@ -4516,6 +4517,148 @@ TEST(WKNavigation, LeakCheckNoPageCache)
     runNavigationLeakCheck(ShouldEnablePageCache::No);
 }
 
+// Reading a weak reference autoreleases the object, so each check needs its own pool or the
+// read itself keeps the navigation alive.
+static bool waitForNavigationToBeDestroyed(__weak WKNavigation *&navigation)
+{
+    for (unsigned i = 0; i < 100; ++i) {
+        @autoreleasepool {
+            if (!navigation)
+                return true;
+        }
+        TestWebKitAPI::Util::runFor(0.1_s);
+    }
+    return false;
+}
+
+static void loadAndWaitForPath(TestWKWebView *webView, TestNavigationDelegate *delegate, NSURLRequest *request)
+{
+    __block bool finished = false;
+    delegate.didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        if ([webView.URL.path isEqualToString:request.URL.path])
+            finished = true;
+    };
+    [webView loadRequest:request];
+    TestWebKitAPI::Util::run(&finished);
+    delegate.didFinishNavigation = nil;
+}
+
+TEST(WKNavigation, LeakCheckPolicyCheckCancelledBeforeReply)
+{
+    using namespace TestWebKitAPI;
+    HTTPServer server({
+        { "/first"_s, { "first"_s } },
+        { "/cancelled"_s, { "cancelled"_s } },
+        { "/second"_s, { "second"_s } },
+    });
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero]);
+    RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+
+    __block __weak WKNavigation *cancelledNavigation = nil;
+    __block bool decidedCancelledNavigation = false;
+    __block bool finishedSecond = false;
+    delegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *action, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        if ([action.request.URL.path isEqualToString:@"/cancelled"]) {
+            cancelledNavigation = action._mainFrameNavigation;
+            decidedCancelledNavigation = true;
+        }
+        decisionHandler(WKNavigationActionPolicyAllow);
+    };
+
+    @autoreleasepool {
+        loadAndWaitForPath(webView.get(), delegate.get(), server.request("/first"_s));
+
+        delegate.get().didFinishNavigation = ^(WKWebView *view, WKNavigation *) {
+            if ([view.URL.path isEqualToString:@"/second"])
+                finishedSecond = true;
+        };
+        // The second click cancels the policy check of the first one before its reply arrives.
+        [webView evaluateJavaScript:@"for (const path of ['/cancelled', '/second']) { const a = document.createElement('a'); a.href = path; document.body.appendChild(a); a.click(); }" completionHandler:nil];
+        Util::run(&finishedSecond);
+    }
+
+    EXPECT_TRUE(decidedCancelledNavigation);
+    EXPECT_TRUE(waitForNavigationToBeDestroyed(cancelledNavigation));
+}
+
+TEST(WKNavigation, LeakCheckInitialEmptyDocumentLoadFromScript)
+{
+    using namespace TestWebKitAPI;
+    HTTPServer server({
+        { "/next"_s, { "next"_s } },
+    });
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero]);
+    RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+
+    __block __weak WKNavigation *initialEmptyDocumentNavigation = nil;
+    __block bool decidedInitialEmptyDocumentNavigation = false;
+    delegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *action, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        if ([action.request.URL.absoluteString isEqualToString:@"about:blank?initial"]) {
+            initialEmptyDocumentNavigation = action._mainFrameNavigation;
+            decidedInitialEmptyDocumentNavigation = true;
+        }
+        decisionHandler(WKNavigationActionPolicyAllow);
+    };
+
+    @autoreleasepool {
+        [webView evaluateJavaScript:@"location.href = 'about:blank?initial'" completionHandler:nil];
+        Util::run(&decidedInitialEmptyDocumentNavigation);
+        loadAndWaitForPath(webView.get(), delegate.get(), server.request("/next"_s));
+    }
+
+    EXPECT_TRUE(waitForNavigationToBeDestroyed(initialEmptyDocumentNavigation));
+}
+
+TEST(WKNavigation, LeakCheckNavigationActionBecomesDownload)
+{
+    using namespace TestWebKitAPI;
+    HTTPServer server({
+        { "/page"_s, { "<a id='link' href='/file' download>download</a>"_s } },
+        { "/file"_s, { "file"_s } },
+    });
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero]);
+    RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+
+    RetainPtr downloadDelegate = adoptNS([TestDownloadDelegate new]);
+    __block bool downloadEnded = false;
+    downloadDelegate.get().decideDestinationUsingResponse = ^(WKDownload *, NSURLResponse *, NSString *, void (^completionHandler)(NSURL *)) {
+        completionHandler(nil);
+    };
+    downloadDelegate.get().didFailWithError = ^(WKDownload *, NSError *, NSData *) {
+        downloadEnded = true;
+    };
+
+    __block __weak WKNavigation *downloadNavigation = nil;
+    __block bool decidedDownloadNavigation = false;
+    delegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *action, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        if ([action.request.URL.path isEqualToString:@"/file"]) {
+            downloadNavigation = action._mainFrameNavigation;
+            decidedDownloadNavigation = true;
+            decisionHandler(WKNavigationActionPolicyDownload);
+            return;
+        }
+        decisionHandler(WKNavigationActionPolicyAllow);
+    };
+    delegate.get().navigationActionDidBecomeDownload = ^(WKNavigationAction *, WKDownload *download) {
+        download.delegate = downloadDelegate.get();
+    };
+
+    @autoreleasepool {
+        loadAndWaitForPath(webView.get(), delegate.get(), server.request("/page"_s));
+        [webView evaluateJavaScript:@"document.getElementById('link').click()" completionHandler:nil];
+        Util::run(&downloadEnded);
+    }
+
+    EXPECT_TRUE(decidedDownloadNavigation);
+    EXPECT_TRUE(waitForNavigationToBeDestroyed(downloadNavigation));
+}
+
 TEST(WKNavigation, Multiple303Redirects)
 {
     using namespace TestWebKitAPI;
@@ -5803,4 +5946,67 @@ TEST(WKNavigation, BackForwardCacheRestoreAcrossOriginsReportsRestoredDocument)
 TEST(WKNavigation, BackForwardCacheRestoreAfterProcessSwapReportsRestoredDocument)
 {
     testBackForwardCacheRestoreReportsRestoredDocument(BackForwardCacheRestoreShape::CrossSite);
+}
+
+enum class PagehideBeaconNavigationShape : bool { SameOrigin, CrossSite };
+
+static void testBackForwardCacheRestoreAfterPagehideBeacon(PagehideBeaconNavigationShape shape)
+{
+    using namespace TestWebKitAPI;
+
+    HTTPServer server({
+        { "/first"_s, { "<script>addEventListener('pagehide', () => navigator.sendBeacon('/beacon', 'data'));</script><body>first</body>"_s } },
+        { "/beacon"_s, { HTTPResponse::Behavior::NeverSendResponse } },
+        { "/second"_s, { "<body>second</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/first"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView objectByEvaluatingJavaScript:@"window.marker = 'first document'"];
+
+    NSString *secondURL = shape == PagehideBeaconNavigationShape::CrossSite ? @"https://webkit.org/second" : @"https://example.com/second";
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:secondURL]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    // The beacon sent from the pagehide handler is still in flight when the page enters the back/forward cache.
+    EXPECT_TRUE(Util::waitFor([&] {
+        return server.totalRequests() >= 3;
+    }));
+
+    __block bool navigationDidEnd = false;
+    __block bool didFinishNavigation = false;
+    __block RetainPtr<NSError> navigationError;
+    navigationDelegate.get().didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        didFinishNavigation = true;
+        navigationDidEnd = true;
+    };
+    navigationDelegate.get().didFailNavigation = ^(WKWebView *, WKNavigation *, NSError *error) {
+        navigationError = error;
+        navigationDidEnd = true;
+    };
+
+    [webView goBack];
+    EXPECT_TRUE(Util::runFor(&navigationDidEnd, 10_s));
+
+    // If this fails the page was reloaded rather than restored and the checks below are vacuous.
+    EXPECT_WK_STREQ("first document", [webView objectByEvaluatingJavaScript:@"String(window.marker)"]);
+
+    EXPECT_TRUE(didFinishNavigation);
+    EXPECT_NULL(navigationError.get()) << "didFailNavigation: " << navigationError.get().domain.UTF8String << " " << navigationError.get().code;
+}
+
+TEST(WKNavigation, BackForwardCacheRestoreAfterPagehideBeaconFinishesNavigation)
+{
+    testBackForwardCacheRestoreAfterPagehideBeacon(PagehideBeaconNavigationShape::SameOrigin);
+}
+
+TEST(WKNavigation, BackForwardCacheRestoreAfterProcessSwapAndPagehideBeaconFinishesNavigation)
+{
+    testBackForwardCacheRestoreAfterPagehideBeacon(PagehideBeaconNavigationShape::CrossSite);
 }

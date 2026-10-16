@@ -33,6 +33,7 @@
 #include "PaintInfo.h"
 #include "PaintInfoInlines.h"
 #include "RenderBox.h"
+#include "RenderElementInlines.h"
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -55,10 +56,10 @@ InlineContentPainter::InlineContentPainter(PaintInfo& paintInfo, const LayoutPoi
 
 void InlineContentPainter::paintEllipsis(size_t lineIndex)
 {
-    if ((m_paintInfo.phase != PaintPhase::Foreground && m_paintInfo.phase != PaintPhase::TextClip) || root().style().usedVisibility() != Visibility::Visible)
+    if ((m_paintInfo.phase != PaintPhase::Foreground && m_paintInfo.phase != PaintPhase::TextClip) || root().usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
-    auto lineBox = InlineIterator::LineBox { InlineIterator::LineBoxIteratorModernPath { m_inlineContent, lineIndex } };
+    auto lineBox = InlineIterator::LineBox { m_inlineContent, lineIndex };
     if (!lineBox.hasEllipsis())
         return;
     EllipsisBoxPainter { lineBox, m_paintInfo, m_paintOffset, root().selectionForegroundColor(), root().selectionBackgroundColor() }.paint();
@@ -128,7 +129,8 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
     if (CheckedPtr renderer = dynamicDowncast<RenderBox>(box.layoutBox().rendererForIntegration()); renderer) {
         if (m_paintInfo.shouldPaintWithinRoot(*renderer)) {
             // FIXME: Painting should not require a non-const renderer.
-            CheckedRef paintRenderer = const_cast<RenderBox&>(*renderer);
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST CheckedRef paintRenderer = const_cast<RenderBox&>(*renderer);
             auto flippedOffset = flippedContentOffsetIfNeeded(*renderer);
             if (box.isBlockLevelBox()) {
                 // Blocks-in-inline.

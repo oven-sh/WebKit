@@ -355,3 +355,10 @@ selectors = [
     { name = "_setInternal:", class = "_UIVolumetricWindowSceneActivationRequestOptions" },
 ]
 requires = ["PLATFORM_VISION", "ENABLE_CONNECTED_VOLUMETRIC_SCENE"]
+
+# Older equivalent of OS 26+ Task.immediate
+[[staging]]
+symbols = [
+    "$sScTss5NeverORs_rlE16startOnMainActor8priority_ScTyxABGScPSg_xyYaYbScMYccntFZ",
+]
+requires = ["!HAVE_SWIFT_STDLIB_6_2"]

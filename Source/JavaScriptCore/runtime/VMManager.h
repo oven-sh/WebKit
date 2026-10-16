@@ -271,9 +271,9 @@ public:
     JS_EXPORT_PRIVATE static Info info();
     static unsigned numberOfVMs() { return singleton().m_numberOfVMs; }
 
-    JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnStop(StopTheWorldCallback);
-    JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnResume(PostResumeCallback);
-    JS_EXPORT_PRIVATE static void NODELETE setMemoryDebuggerCallback(StopTheWorldCallback);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setWasmDebuggerOnStop(StopTheWorldCallback);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setWasmDebuggerOnResume(PostResumeCallback);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE setMemoryDebuggerCallback(StopTheWorldCallback);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE static void setJSDebuggerCallback(StopTheWorldCallback);
 #endif
@@ -329,7 +329,7 @@ private:
     JS_EXPORT_PRIVATE CONCURRENT_SAFE void requestResumeAllInternal(StopReason);
 
     void resumeTheWorld() WTF_REQUIRES_LOCK(m_worldLock);
-    void NODELETE incrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
+    void LEGACY_NODELETE incrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void decrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void handleVMExit(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void enterStopTheWorldParticipation(VM&, StopTheWorldEvent);
@@ -377,9 +377,8 @@ private:
     // Only notifyVMStop() may modify m_currentStopReason.
     StopReason m_currentStopReason { StopReason::None };
 
-    // Flags whether WasmDebugger post-resume callback is pending. Set when servicing WasmDebugger
-    // stop, atomically read-and-cleared by last VM exiting notifyVMStop().
-    Atomic<bool> m_needsWasmDebuggerOnResume { false };
+    // Flags whether WasmDebugger post-resume callback is pending. Set when servicing WasmDebugger stop.
+    Atomic<bool> m_wasmDebuggerResumePending { false };
 
     // Indicates the VM that will service the StopTheWorld request (i.e. drive the
     // enterStopTheWorldParticipation loop and invoke the callback), or the VM that may

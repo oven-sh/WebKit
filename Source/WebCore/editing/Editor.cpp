@@ -201,12 +201,12 @@ static String inputEventDataForEditingStyleAndAction(const StyleProperties* styl
 
     switch (action) {
     case EditAction::SetColor:
-        return style->getPropertyValue(CSSPropertyColor);
+        return style->getPropertyValue(CSSPropertyID::Color);
     case EditAction::SetBackgroundColor:
-        return style->getPropertyValue(CSSPropertyBackgroundColor);
+        return style->getPropertyValue(CSSPropertyID::BackgroundColor);
     case EditAction::SetInlineWritingDirection:
     case EditAction::SetBlockWritingDirection:
-        return style->getPropertyValue(CSSPropertyDirection);
+        return style->getPropertyValue(CSSPropertyID::Direction);
     default:
         return { };
     }
@@ -1131,7 +1131,7 @@ void Editor::applyParagraphStyleToSelection(StyleProperties* style, EditAction e
 
 bool Editor::selectionStartHasStyle(CSSPropertyID propertyID, const String& value) const
 {
-    if (auto editingStyle = EditingStyle::styleAtSelectionStart(document().selection().selection(), propertyID == CSSPropertyBackgroundColor))
+    if (auto editingStyle = EditingStyle::styleAtSelectionStart(document().selection().selection(), propertyID == CSSPropertyID::BackgroundColor))
         return editingStyle->hasStyle(propertyID, value);
     return false;
 }
@@ -1145,11 +1145,11 @@ String Editor::selectionStartCSSPropertyValue(CSSPropertyID propertyID)
 {
     Ref document = this->document();
     RefPtr<EditingStyle> selectionStyle = EditingStyle::styleAtSelectionStart(document->selection().selection(),
-        propertyID == CSSPropertyBackgroundColor);
+        propertyID == CSSPropertyID::BackgroundColor);
     if (!selectionStyle || !selectionStyle->style())
         return String();
 
-    if (propertyID == CSSPropertyFontSize)
+    if (propertyID == CSSPropertyID::FontSize)
         return String::number(selectionStyle->legacyFontSize(document));
     return protect(selectionStyle->style())->getPropertyValue(propertyID);
 }
@@ -1164,7 +1164,7 @@ static void notifyTextFromControls(Element* startRoot, Element* endRoot, bool wa
         endingTextControl->didEditInnerTextValue(wasUserEdit);
 }
 
-static inline bool NODELETE shouldRemoveAutocorrectionIndicator(bool shouldConsiderApplyingAutocorrection, bool autocorrectionWasApplied, bool isAutocompletion)
+static inline bool LEGACY_NODELETE shouldRemoveAutocorrectionIndicator(bool shouldConsiderApplyingAutocorrection, bool autocorrectionWasApplied, bool isAutocompletion)
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS)
     bool shouldRemoveIndicator = shouldConsiderApplyingAutocorrection && !autocorrectionWasApplied;
@@ -1210,7 +1210,7 @@ static inline bool didApplyAutocorrection(Document& document, AlternativeTextCon
 #endif
 }
 
-static inline void NODELETE adjustMarkerTypesToRemoveForWordsAffectedByEditing(OptionSet<DocumentMarkerType>& markerTypes)
+static inline void LEGACY_NODELETE adjustMarkerTypesToRemoveForWordsAffectedByEditing(OptionSet<DocumentMarkerType>& markerTypes)
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS) && PLATFORM(IOS_FAMILY)
     markerTypes.remove(DocumentMarkerType::CorrectionIndicator);
@@ -1642,14 +1642,9 @@ void Editor::performCutOrCopy(EditorActionSpecifier action)
         if (action == CopyAction && !isSelectionInImageOverlay)
             imageElement = imageElementFromImageDocument(document);
 
-        if (imageElement) {
-#if !PLATFORM(WIN)
+        if (imageElement)
             writeImageToPasteboard(*Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(document->pageID())), *imageElement, document->url(), document->title());
-#else
-            // FIXME: Delete after <http://webkit.org/b/177618> lands.
-            Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(document->pageID()))->writeImage(*imageElement, document->url(), document->title());
-#endif
-        } else {
+        else {
 #if !PLATFORM(WIN)
             writeSelectionToPasteboard(*Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(document->pageID())));
 #else
@@ -1826,8 +1821,6 @@ PasteboardWriterData::URLData Editor::pasteboardWriterURL(const URL& url, const 
     return result;
 }
 
-#if !PLATFORM(IOS_FAMILY)
-
 void Editor::copyImage(const HitTestResult& result)
 {
     RefPtr element { result.innerNonSharedElement() };
@@ -1838,15 +1831,8 @@ void Editor::copyImage(const HitTestResult& result)
     if (url.isEmpty())
         url = result.absoluteImageURL();
 
-#if !PLATFORM(WIN)
     writeImageToPasteboard(*Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(document().pageID())), *element, url, result.altDisplayString());
-#else
-    // FIXME: Delete after <http://webkit.org/b/177618> lands.
-    Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(document().pageID()))->writeImage(*element, url, result.altDisplayString());
-#endif
 }
-
-#endif
 
 void Editor::revealSelectionIfNeededAfterLoadingImageForElement(HTMLImageElement& element)
 {
@@ -2204,39 +2190,39 @@ void Editor::setTextAlignmentForChangedBaseWritingDirection(WritingDirection dir
     if (!selectionStyle || !selectionStyle->style())
         return;
 
-    auto value = protect(selectionStyle->style())->propertyAsValueID(CSSPropertyTextAlign);
+    auto value = protect(selectionStyle->style())->propertyAsValueID(CSSPropertyID::TextAlign);
     if (!value)
         return;
 
-    auto newValue = CSSValueInvalid;
+    auto newValue = CSSValueID::Invalid;
     switch (*value) {
-    case CSSValueStart:
-    case CSSValueEnd:
+    case CSSValueID::Start:
+    case CSSValueID::End:
         switch (direction) {
         case WritingDirection::Natural:
             return;
         case WritingDirection::LeftToRight:
-            newValue = CSSValueLeft;
+            newValue = CSSValueID::Left;
             break;
         case WritingDirection::RightToLeft:
-            newValue = CSSValueRight;
+            newValue = CSSValueID::Right;
             break;
         default:
             ASSERT_NOT_REACHED();
             return;
         }
         break;
-    case CSSValueLeft:
-    case CSSValueWebkitLeft:
-        newValue = CSSValueRight;
+    case CSSValueID::Left:
+    case CSSValueID::WebkitLeft:
+        newValue = CSSValueID::Right;
         break;
-    case CSSValueRight:
-    case CSSValueWebkitRight:
-        newValue = CSSValueLeft;
+    case CSSValueID::Right:
+    case CSSValueID::WebkitRight:
+        newValue = CSSValueID::Left;
         break;
-    case CSSValueCenter:
-    case CSSValueWebkitCenter:
-    case CSSValueJustify:
+    case CSSValueID::Center:
+    case CSSValueID::WebkitCenter:
+    case CSSValueID::Justify:
         return;
     default:
         ASSERT_NOT_REACHED();
@@ -2258,7 +2244,7 @@ void Editor::setTextAlignmentForChangedBaseWritingDirection(WritingDirection dir
     }
 
     Ref style = MutableStyleProperties::create();
-    style->setProperty(CSSPropertyTextAlign, newValue);
+    style->setProperty(CSSPropertyID::TextAlign, newValue);
     applyParagraphStyle(style.ptr());
 }
 
@@ -2287,7 +2273,7 @@ void Editor::setBaseWritingDirection(WritingDirection direction)
     }
 
     auto style = MutableStyleProperties::create();
-    style->setProperty(CSSPropertyDirection, direction == WritingDirection::LeftToRight ? "ltr"_s : direction == WritingDirection::RightToLeft ? "rtl"_s : "inherit"_s);
+    style->setProperty(CSSPropertyID::Direction, direction == WritingDirection::LeftToRight ? "ltr"_s : direction == WritingDirection::RightToLeft ? "rtl"_s : "inherit"_s);
     applyParagraphStyleToSelection(style.ptr(), EditAction::SetBlockWritingDirection);
 }
 
@@ -2752,30 +2738,30 @@ void Editor::setComposition(const String& text, const Vector<CompositionUnderlin
 #endif
 }
 
-void Editor::ignoreSpelling()
+void Editor::ignoreSpelling(const std::optional<SimpleRange>& range)
 {
     if (!client())
         return;
 
-    if (auto selectedRange = document().selection().selection().toNormalizedRange())
-        removeMarkers(*selectedRange, DocumentMarkerType::Spelling);
+    if (auto rangeToIgnore = range ?: document().selection().selection().toNormalizedRange())
+        removeMarkers(*rangeToIgnore, DocumentMarkerType::Spelling);
 
-    String text = selectedText();
+    String text = range ? plainText(*range) : selectedText();
     ASSERT(text.length());
     textChecker()->ignoreWordInSpellDocument(text);
 }
 
-void Editor::learnSpelling()
+void Editor::learnSpelling(const std::optional<SimpleRange>& range)
 {
     if (!client())
         return;
-        
+
     // FIXME: On macOS, when use "learn" button on "Spelling and Grammar" panel, we don't call this function. It should remove misspelling markers around the learned word, see <rdar://problem/5396072>.
 
-    if (auto selectedRange = document().selection().selection().toNormalizedRange())
-        removeMarkers(*selectedRange, DocumentMarkerType::Spelling);
+    if (auto rangeToLearn = range ?: document().selection().selection().toNormalizedRange())
+        removeMarkers(*rangeToLearn, DocumentMarkerType::Spelling);
 
-    String text = selectedText();
+    String text = range ? plainText(*range) : selectedText();
     ASSERT(text.length());
     textChecker()->learnWord(text);
 }
@@ -3021,6 +3007,14 @@ TextCheckingGuesses Editor::guessesForMisspelledOrUngrammatical()
     if (misspelledWord.isEmpty())
         return { };
     return { guessesForMisspelledWord(misspelledWord), true, false };
+}
+
+TextCheckingGuesses Editor::guessesForMisspelledOrUngrammatical(const SimpleRange& range)
+{
+    CheckedPtr client = this->client();
+    if (!client)
+        return { };
+    return TextCheckingHelper(*client, range).guessesForMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
 }
 
 void Editor::showSpellingGuessPanel()
@@ -3339,7 +3333,7 @@ void Editor::markAllMisspellingsAndBadGrammarInRanges(OptionSet<TextCheckingType
 #endif
 }
 
-static bool NODELETE isAutomaticTextReplacementType(TextCheckingType type)
+static bool LEGACY_NODELETE isAutomaticTextReplacementType(TextCheckingType type)
 {
     switch (type) {
     case TextCheckingType::None:
@@ -4096,9 +4090,9 @@ void Editor::applyEditingStyleToBodyElement() const
     RefPtr body { document().body() };
     if (!body)
         return;
-    body->setInlineStyleProperty(CSSPropertyOverflowWrap, CSSValueBreakWord);
-    body->setInlineStyleProperty(CSSPropertyWebkitNbspMode, CSSValueSpace);
-    body->setInlineStyleProperty(CSSPropertyLineBreak, CSSValueAfterWhiteSpace);
+    body->setInlineStyleProperty(CSSPropertyID::OverflowWrap, CSSValueID::BreakWord);
+    body->setInlineStyleProperty(CSSPropertyID::WebkitNbspMode, CSSValueID::Space);
+    body->setInlineStyleProperty(CSSPropertyID::LineBreak, CSSValueID::AfterWhiteSpace);
 }
 
 std::optional<SimpleRange> Editor::findString(const String& target, FindOptions options)
@@ -4133,12 +4127,12 @@ std::optional<SimpleRange> Editor::findString(const String& target, FindOptions 
     return resultRange;
 }
 
-template<typename T> static auto& NODELETE start(T& range, FindOptions options)
+template<typename T> static auto& LEGACY_NODELETE start(T& range, FindOptions options)
 {
     return options.contains(FindOption::Backwards) ? range.end : range.start;
 }
 
-template<typename T> static auto& NODELETE end(T& range, FindOptions options)
+template<typename T> static auto& LEGACY_NODELETE end(T& range, FindOptions options)
 {
     return options.contains(FindOption::Backwards) ? range.start : range.end;
 }
@@ -4790,7 +4784,7 @@ FontAttributes Editor::fontAttributesAtSelectionStart()
 
     // FIXME: for now, always report the colors after applying -apple-color-filter. In future not all clients
     // may want this, so we may have to add a setting to control it. See also editingAttributedStringFromRange().
-    auto backgroundColor = style->visitedDependentBackgroundColorApplyingColorFilter();
+    auto backgroundColor = style->visitedDependentUsedBackgroundColorApplyingColorFilter();
     if (backgroundColor.isVisible())
         attributes.backgroundColor = backgroundColor;
 
@@ -4861,10 +4855,10 @@ FontAttributes Editor::fontAttributesAtSelectionStart()
 
     RefPtr typingStyle { document().selection().typingStyle() };
     if (typingStyle && typingStyle->style()) {
-        if (RefPtr value = dynamicDowncast<CSSValueList>(protect(typingStyle->style())->getPropertyCSSValue(CSSPropertyWebkitTextDecorationsInEffect))) {
-            if (value->hasValue(CSSValueLineThrough))
+        if (RefPtr value = dynamicDowncast<CSSValueList>(protect(typingStyle->style())->getPropertyCSSValue(CSSPropertyID::WebkitTextDecorationsInEffect))) {
+            if (value->hasValue(CSSValueID::LineThrough))
                 attributes.hasStrikeThrough = true;
-            if (value->hasValue(CSSValueUnderline))
+            if (value->hasValue(CSSValueID::Underline))
                 attributes.hasUnderline = true;
         }
     } else {
@@ -5163,7 +5157,8 @@ RefPtr<Font> Editor::fontForSelection(bool& hasMultipleFonts)
         if (renderer->isBR()) {
             if (!lineBreakFont) {
                 Ref primaryFont = protect(renderer->style().fontCascade())->primaryFont();
-                lineBreakFont = const_cast<Font*>(primaryFont.ptr());
+                // FIXME: Remove suppression once rdar://189998365 is fixed.
+                SUPPRESS_MEMORY_UNSAFE_CAST lineBreakFont = const_cast<Font*>(primaryFont.ptr());
             }
             continue;
         }
@@ -5172,9 +5167,10 @@ RefPtr<Font> Editor::fontForSelection(bool& hasMultipleFonts)
         if (!node->isTextNode() && !TextNodeTraversal::firstChild(node))
             continue;
         Ref primaryFont = protect(renderer->style().fontCascade())->primaryFont();
-        if (!font)
-            font = const_cast<Font*>(primaryFont.ptr());
-        else if (font != primaryFont.ptr()) {
+        if (!font) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST font = const_cast<Font*>(primaryFont.ptr());
+        } else if (font != primaryFont.ptr()) {
             hasMultipleFonts = true;
             break;
         }

@@ -230,11 +230,11 @@ bool Styleable::mayHaveNonZeroOpacity() const
     if (!renderer->style().opacity().isZero())
         return true;
 
-    if (renderer->style().willChange().containsProperty(CSSPropertyOpacity))
+    if (renderer->style().willChange().containsProperty(CSSPropertyID::Opacity))
         return true;
 
     auto* effectStack = keyframeEffectStack();
-    return effectStack && effectStack->containsProperty(CSSPropertyOpacity);
+    return effectStack && effectStack->containsProperty(CSSPropertyID::Opacity);
 }
 
 bool Styleable::isRunningAcceleratedAnimationOfProperty(CSSPropertyID property) const
@@ -567,9 +567,9 @@ static void compileTransitionPropertiesInStyle(const Style::ComputedStyle& style
                 auto resolvedPropertyID = CSSProperty::resolveDirectionAwareProperty(singleProperty.propertyID, style.writingMode());
                 if (isShorthand(resolvedPropertyID)) {
                     for (auto longhand : shorthandForProperty(resolvedPropertyID))
-                        transitionProperties.m_properties.set(longhand);
-                } else if (resolvedPropertyID != CSSPropertyInvalid)
-                    transitionProperties.m_properties.set(resolvedPropertyID);
+                        transitionProperties.m_properties.set(std::to_underlying(longhand));
+                } else if (resolvedPropertyID != CSSPropertyID::Invalid)
+                    transitionProperties.m_properties.set(std::to_underlying(resolvedPropertyID));
             }
         );
     }
@@ -801,9 +801,9 @@ void Styleable::updateCSSTransitions(const Style::ComputedStyle& currentStyle, c
                 [&](CSSPropertyID propertyId) {
                     if (isShorthand(propertyId)) {
                         for (auto longhand : shorthandForProperty(propertyId))
-                            transitionProperties.m_properties.set(longhand);
-                    } else if (propertyId != CSSPropertyInvalid)
-                        transitionProperties.m_properties.set(propertyId);
+                            transitionProperties.m_properties.set(std::to_underlying(longhand));
+                    } else if (propertyId != CSSPropertyID::Invalid)
+                        transitionProperties.m_properties.set(std::to_underlying(propertyId));
                 },
                 [&](const AtomString&) { }
             );

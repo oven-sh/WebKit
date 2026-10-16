@@ -31,6 +31,7 @@
 #include "SVGElementTypeHelpers.h"
 
 #if ENABLE(DRAG_SUPPORT)
+#include "BitmapImage.h"
 #include "BoundaryPointInlines.h"
 #include "CachedImage.h"
 #include "ColorSerialization.h"
@@ -214,9 +215,10 @@ void DragController::clearDragCaret()
     m_page->dragCaretController().clear();
 }
 
-void DragController::dragEnded()
+void DragController::dragEnded(MayExtendDragSession mayExtendDragSession)
 {
-    m_dragInitiator = nullptr;
+    if (mayExtendDragSession == MayExtendDragSession::No)
+        m_dragInitiator = nullptr;
     m_didInitiateDrag = false;
     m_documentUnderMouse = nullptr;
     clearDragCaret();
@@ -235,7 +237,7 @@ void DragController::dragExited(LocalFrame& frame, DragData&& dragData)
         fileInput->setCanReceiveDroppedFiles(false);
 }
 
-inline static bool NODELETE dragIsHandledByDocument(DragHandlingMethod dragHandlingMethod)
+inline static bool LEGACY_NODELETE dragIsHandledByDocument(DragHandlingMethod dragHandlingMethod)
 {
     return dragHandlingMethod != DragHandlingMethod::None && dragHandlingMethod != DragHandlingMethod::PageLoad;
 }
@@ -268,8 +270,11 @@ DragEventTargetData DragController::performDragOperation(DragData&& dragData, Lo
     if (RefPtr document = m_documentUnderMouse)
         shouldOpenExternalURLsPolicy = document->shouldOpenExternalURLsPolicyToPropagate();
 
-    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(EventHandler::subframeForTargetNode(protect(hitTestResult.targetNode()).get())))
-        return { remoteFrame->frameID() };
+    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(EventHandler::subframeForTargetNode(protect(hitTestResult.targetNode()).get()))) {
+        if (auto remoteEventData = frame.eventHandler().userInputEventDataForRemoteFrame(remoteFrame.get(), hitTestResult.roundedPointInInnerNodeFrame()))
+            return *remoteEventData;
+        return { DragEventHandled::No };
+    }
 
     if (m_dragDestinationActionMask.contains(DragDestinationAction::DHTML) && dragIsHandledByDocument(m_dragHandlingMethod) && frame.view()) {
         client().willPerformDragDestinationAction(DragDestinationAction::DHTML, dragData);
@@ -385,13 +390,13 @@ static RefPtr<HTMLInputElement> asFileInput(Node& node)
     return inputElement && inputElement->isFileUpload() ? inputElement : nullptr;
 }
 
-static bool NODELETE isEnabledColorInput(Node& node)
+static bool LEGACY_NODELETE isEnabledColorInput(Node& node)
 {
     auto* input = dynamicDowncast<HTMLInputElement>(node);
     return input && input->isColorControl() && !input->isDisabledFormControl();
 }
 
-static bool NODELETE isInShadowTreeOfEnabledColorInput(Node& node)
+static bool LEGACY_NODELETE isInShadowTreeOfEnabledColorInput(Node& node)
 {
     auto* host = node.shadowHost();
     return host && isEnabledColorInput(*host);
@@ -432,8 +437,14 @@ DragHandlingMethod DragController::tryDocumentDrag(LocalFrame& frame, const Drag
     if (!m_documentUnderMouse)
         return DragHandlingMethod::None;
 
-    if (m_dragInitiator && !protect(protect(m_documentUnderMouse)->securityOrigin())->canReceiveDragData(protect(protect(m_dragInitiator)->securityOrigin())))
+    if (m_dragInitiator) {
+        if (!protect(protect(m_documentUnderMouse)->securityOrigin())->canReceiveDragData(protect(protect(m_dragInitiator)->securityOrigin())))
+            return DragHandlingMethod::None;
+    } else if (dragData.flags().contains(DragApplicationFlags::IsSource)) {
+        // The drag was initiated by this page, but from a frame in another process.
+        // We can't check its origin but we know it is not a same-origin drag.
         return DragHandlingMethod::None;
+    }
 
     bool isHandlingDrag = false;
     if (destinationActionMask.contains(DragDestinationAction::DHTML)) {
@@ -459,7 +470,7 @@ DragHandlingMethod DragController::tryDocumentDrag(LocalFrame& frame, const Drag
         return DragHandlingMethod::NonDefault;
     }
 
-    if (destinationActionMask.contains(DragDestinationAction::Edit) && canProcessDrag(dragData)) {
+    if (destinationActionMask.contains(DragDestinationAction::Edit) && canProcessDrag(frame, dragData)) {
         if (dragData.containsColor()) {
             dragOperation = DragOperation::Generic;
             return DragHandlingMethod::SetColor;
@@ -599,7 +610,7 @@ bool DragController::concludeEditDrag(const DragData& dragData)
         if (!innerRange)
             return false;
         Ref style = MutableStyleProperties::create();
-        style->setProperty(CSSPropertyColor, serializationForHTML(color));
+        style->setProperty(CSSPropertyID::Color, serializationForHTML(color));
         if (!protect(innerFrame->editor())->shouldApplyStyle(style, *innerRange))
             return false;
         client().willPerformDragDestinationAction(DragDestinationAction::Edit, dragData);
@@ -617,7 +628,7 @@ bool DragController::concludeEditDrag(const DragData& dragData)
         return fileInput->receiveDroppedFiles(dragData);
     }
 
-    if (!m_page->dragController().canProcessDrag(dragData))
+    if (!canProcessDrag(*innerFrame, dragData))
         return false;
 
     VisibleSelection dragCaret = m_page->dragCaretController().caretPosition();
@@ -681,18 +692,16 @@ bool DragController::concludeEditDrag(const DragData& dragData)
     return true;
 }
 
-bool DragController::canProcessDrag(const DragData& dragData)
+bool DragController::canProcessDrag(LocalFrame& frame, const DragData& dragData)
 {
-    RefPtr localMainFrame = m_page->localMainFrame();
-    if (!localMainFrame)
-        return false;
-    IntPoint point = protect(localMainFrame->view())->windowToContents(dragData.clientPosition());
+    Ref rootFrame = frame.rootFrame();
+    IntPoint point = protect(rootFrame->view())->windowToContents(dragData.clientPosition());
     HitTestResult result = HitTestResult(point);
-    if (!localMainFrame->contentRenderer())
+    if (!rootFrame->contentRenderer())
         return false;
 
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowChildFrameContent };
-    result = localMainFrame->eventHandler().hitTestResultAtPoint(point, hitType);
+    result = rootFrame->eventHandler().hitTestResultAtPoint(point, hitType);
 
     RefPtr dragNode = result.innerNonSharedNode();
     if (!dragNode)
@@ -902,7 +911,7 @@ static void selectElement(Element& element)
     }
 }
 
-static IntPoint NODELETE dragLocForDHTMLDrag(const IntPoint& mouseDraggedPoint, const IntPoint& dragOrigin, const IntPoint& dragImageOffset, bool isLinkImage)
+static IntPoint LEGACY_NODELETE dragLocForDHTMLDrag(const IntPoint& mouseDraggedPoint, const IntPoint& dragOrigin, const IntPoint& dragImageOffset, bool isLinkImage)
 {
     // dragImageOffset is the cursor position relative to the lower-left corner of the image.
 #if PLATFORM(MAC)
@@ -963,7 +972,7 @@ void DragController::prepareForDragStart(LocalFrame& source, OptionSet<DragSourc
 
     RefPtr image = getImage(element);
     auto imageURL = hitTestResult->absoluteImageURL();
-    if (actionMask.contains(DragSourceAction::Image) && !imageURL.isEmpty() && image && !image->isNull()) {
+    if (actionMask.contains(DragSourceAction::Image) && !imageURL.isEmpty() && image && image->hasSomethingToDraw()) {
         editor->writeImageToPasteboard(pasteboard, element, imageURL, { });
         return;
     }
@@ -1133,7 +1142,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         return false;
     }
 
-    if (!imageURL.isEmpty() && image && !image->isNull() && m_dragSourceAction.contains(DragSourceAction::Image)) {
+    if (!imageURL.isEmpty() && image && image->hasSomethingToDraw() && m_dragSourceAction.contains(DragSourceAction::Image)) {
         // We shouldn't be starting a drag for an image that can't provide an extension.
         // This is an early detection for problems encountered later upon drop.
         ASSERT(!image->filenameExtension().isEmpty());
@@ -1304,10 +1313,12 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         dragImage = DragImage { createDragImageForNode(src, *modelElement) };
 
         PasteboardImage pasteboardImage;
+#if PLATFORM(IOS_FAMILY)
         pasteboardImage.suggestedName = modelElement->model()->filename();
+#endif
         pasteboardImage.resourceMIMEType = modelElement->model()->mimeType();
         pasteboardImage.resourceData = modelElement->model()->data();
-        dataTransfer->pasteboard().write(pasteboardImage);
+        dataTransfer->pasteboard().write(WTF::move(pasteboardImage));
 
         dragImageOffset = IntPoint { dragImageSize(dragImage.get()) };
         dragLoc = dragLocForDHTMLDrag(mouseDraggedPoint, dragOrigin, dragImageOffset, false);
@@ -1328,6 +1339,20 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
     return false;
 }
 
+static DragImageRef createDragImageForElementImage(Element& element, Image& image, LocalFrame& frame)
+{
+    CheckedPtr renderer = element.renderer();
+    auto* hostWindow = frame.view() ? protect(frame.view())->hostWindow() : nullptr;
+    float deviceScaleFactor = protect(element.document())->deviceScaleFactor();
+
+    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer.get())) {
+        if (RefPtr nativeImage = renderImage->createNativeImageAsPainted(deviceScaleFactor, DragController::maxDragImageSize()))
+            return createDragImageFromImage(BitmapImage::create(nativeImage.releaseNonNull()).ptr(), ImageOrientation::Orientation::None, hostWindow, 1);
+    }
+
+    return createDragImageFromImage(&image, renderer->imageOrientation(), hostWindow, deviceScaleFactor);
+}
+
 void DragController::doImageDrag(Element& element, const IntPoint& dragOrigin, const IntRect& layoutRect, LocalFrame& frame, IntPoint& dragImageOffset, const DragState& state, PromisedAttachmentInfo&& attachmentInfo)
 {
     IntPoint mouseDownPoint = dragOrigin;
@@ -1338,11 +1363,9 @@ void DragController::doImageDrag(Element& element, const IntPoint& dragOrigin, c
     if (!renderer)
         return;
 
-    auto orientation = renderer->imageOrientation();
-
     RefPtr image = getImage(element);
     if (image && !layoutRect.isEmpty() && shouldUseCachedImageForDragImage(*image)
-        && (dragImage = DragImage { createDragImageFromImage(image.get(), orientation, frame.view() ? protect(frame.view())->hostWindow() : nullptr, protect(element.document())->deviceScaleFactor()) })) {
+        && (dragImage = DragImage { createDragImageForElementImage(element, *image, frame) })) {
         dragImage = DragImage { fitDragImageToMaxSize(dragImage.get(), layoutRect.size(), maxDragImageSize()) };
         IntSize fittedSize = dragImageSize(dragImage.get());
 
@@ -1394,7 +1417,7 @@ void DragController::beginDrag(DragItem dragItem, LocalFrame& frame, const IntPo
     client().beginDrag(WTF::move(dragItem), frame, mouseDownPointInRootViewCoordinates, mouseDraggedPointInRootViewCoordinates, dataTransfer, dragSourceAction);
 }
 
-static RefPtr<Element> NODELETE containingLinkElement(Element& element)
+static RefPtr<Element> LEGACY_NODELETE containingLinkElement(Element& element)
 {
     for (auto& currentElement : lineageOfType<Element>(element)) {
         if (currentElement.isLink())
@@ -1541,8 +1564,8 @@ void DragController::insertDroppedImagePlaceholdersAtCaret(const Vector<IntSize>
         Ref image = HTMLImageElement::create(*document);
         image->setAttributeWithoutSynchronization(HTMLNames::widthAttr, AtomString::number(size.width()));
         image->setAttributeWithoutSynchronization(HTMLNames::heightAttr, AtomString::number(size.height()));
-        image->setInlineStyleProperty(CSSPropertyMaxWidth, 100, CSSUnitType::Percentage);
-        image->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForCSS(Color { Color::black.colorWithAlphaByte(13) }));
+        image->setInlineStyleProperty(CSSPropertyID::MaxWidth, 100, CSSUnitType::Percentage);
+        image->setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForCSS(Color { Color::black.colorWithAlphaByte(13) }));
         image->setIsDroppedImagePlaceholder();
         fragment->appendChild(WTF::move(image));
     }
@@ -1597,7 +1620,7 @@ void DragController::finalizeDroppedImagePlaceholder(HTMLImageElement& placehold
     protect(protect(placeholder.document())->eventLoop())->queueTask(TaskSource::InternalAsyncTask, [completion = WTF::move(completion), placeholder = Ref { placeholder }] () mutable {
         if (placeholder->isDroppedImagePlaceholder()) {
             placeholder->removeAttribute(HTMLNames::heightAttr);
-            placeholder->removeInlineStyleProperty(CSSPropertyBackgroundColor);
+            placeholder->removeInlineStyleProperty(CSSPropertyID::BackgroundColor);
         }
         completion();
     });

@@ -43,7 +43,7 @@ public:
     RenderMathMLOperator(Type, Document&, Style::ComputedStyle&&);
     virtual ~RenderMathMLOperator();
 
-    MathMLOperatorElement& NODELETE element() const;
+    MathMLOperatorElement& LEGACY_NODELETE element() const;
 
     void stretchTo(LayoutUnit heightAboveBaseline, LayoutUnit depthBelowBaseline);
     void stretchTo(LayoutUnit width);
@@ -83,7 +83,8 @@ private:
     bool isInvisibleOperator() const;
 
     std::optional<LayoutUnit> firstLineBaseline() const final;
-    RenderMathMLOperator* unembellishedOperator() const final { return const_cast<RenderMathMLOperator*>(this); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    CheckedPtr<RenderMathMLOperator> unembellishedOperator() const final { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderMathMLOperator*>(this); }
 
     LayoutUnit verticalStretchedOperatorShift() const;
 

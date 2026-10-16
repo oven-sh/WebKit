@@ -53,7 +53,7 @@
 
 namespace WebCore {
 
-static inline bool NODELETE isRenderingMaskImage(const RenderObject& object)
+static inline bool LEGACY_NODELETE isRenderingMaskImage(const RenderObject& object)
 {
     return object.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask);
 }
@@ -116,7 +116,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
     bool isRenderingMask = isRenderingMaskImage(*m_renderer);
     // RenderLayer takes care of root opacity.
     float opacity = (renderer.isLegacyRenderSVGRoot() || isRenderingMask) ? 1 : Style::evaluate<float>(style.opacity());
-    bool hasBlendMode = style.blendMode() != BlendMode::Normal;
+    bool hasBlendMode = style.usedBlendMode() != BlendMode::Normal;
     bool hasIsolation = style.isolation() != Isolation::Auto;
     bool isolateMaskForBlending = false;
 
@@ -131,7 +131,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
             m_paintInfo->context().clip(repaintRect);
 
             if (hasBlendMode)
-                m_paintInfo->context().setCompositeOperation(m_paintInfo->context().compositeOperation(), style.blendMode());
+                m_paintInfo->context().setCompositeOperation(m_paintInfo->context().compositeOperation(), style.usedBlendMode());
 
             m_paintInfo->context().beginTransparencyLayer(opacity);
 
@@ -202,7 +202,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
     m_renderingFlags |= RenderingPrepared;
 }
 
-static AffineTransform& NODELETE currentContentTransformation()
+static AffineTransform& LEGACY_NODELETE currentContentTransformation()
 {
     static NeverDestroyed<AffineTransform> s_currentContentTransformation;
     return s_currentContentTransformation;

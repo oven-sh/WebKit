@@ -186,6 +186,12 @@ JSValue JSExposedStar::getConstructor(VM& vm, const JSGlobalObject* globalObject
     return getDOMConstructor<JSExposedStarDOMConstructor, DOMConstructorID::ExposedStar>(vm, *uncheckedDowncast<JSDOMGlobalObject>(globalObject));
 }
 
+bool JSExposedStar::isExposedInGlobalObject(JSDOMGlobalObject& globalObject)
+{
+    UNUSED_PARAM(globalObject);
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsExposedStarConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

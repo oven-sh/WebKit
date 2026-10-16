@@ -196,7 +196,7 @@ func addPSKTests() {
 				Bugs: ProtocolBugs{
 					// The shim will import two PSKs from the credential, so
 					// only indices 0 and 1 are valid,
-					AlwaysSelectPSKIdentity: ptrTo(uint16(2)),
+					AlwaysSelectPSKIdentity: new(uint16(2)),
 				},
 			},
 			shimCredentials: []*Credential{&pskSHA256Credential},
@@ -215,7 +215,7 @@ func addPSKTests() {
 					// The shim will import two PSKs from the credential, but
 					// then prune them in the second ClientHello, so only index
 					// 0 is valid.
-					AlwaysSelectPSKIdentity: ptrTo(uint16(1)),
+					AlwaysSelectPSKIdentity: new(uint16(1)),
 				},
 			},
 			shimCredentials: []*Credential{&pskSHA256Credential},

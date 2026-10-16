@@ -20,19 +20,42 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import annotations
+
+import functools
 import time
 from collections import defaultdict
+from typing import Any, Callable, Generic, Protocol, TypeVar, cast, overload
+
+R = TypeVar('R')
+R_co = TypeVar('R_co', covariant=True)
+C = TypeVar('C', bound=Callable[..., Any])
+
+
+class Memoized(Protocol[R_co]):
+    """A function wrapped by Memoize.
+
+    Memoized functions accept `timeout` and `cached` keyword arguments (unless the wrapped
+    function declares them itself), which prevents type-checking their other arguments.
+    """
+
+    def __call__(self, *args: Any, **kwargs: Any) -> R_co:
+        ...
+
+    def clear(self) -> None:
+        ...
 
 
 class Memoize(object):
-    def __init__(self, timeout=None, cached=True):
-        self._cache = defaultdict(dict)
-        self._last_called = defaultdict(dict)
+    def __init__(self, timeout: float | None = None, cached: bool = True) -> None:
+        self._cache: defaultdict[Callable[..., Any], dict[tuple[Any, ...], Any]] = defaultdict(dict)
+        self._last_called: defaultdict[Callable[..., Any], dict[tuple[Any, ...], float]] = defaultdict(dict)
         self.timeout = timeout
         self.cached = cached
 
-    def __call__(self, function):
-        def decorator(*args, **kwargs):
+    def __call__(self, function: Callable[..., R]) -> Memoized[R]:
+        @functools.wraps(function)
+        def decorator(*args: Any, **kwargs: Any) -> R:
             fargs = function.__code__.co_varnames[:function.__code__.co_argcount]
 
             timeout = self.timeout
@@ -51,37 +74,50 @@ class Memoize(object):
             if timeout and timeout < time.time() - last_called:
                 is_cached = False
             if is_cached:
-                return self._cache[function].get(keyargs, None)
+                result: R = self._cache[function][keyargs]
+                return result
 
             value = function(*args, **kwargs)
             self._last_called[function][keyargs] = time.time()
             self._cache[function][keyargs] = value
             return value
 
-        decorator.clear = self.clear
-        return decorator
+        setattr(decorator, 'clear', self.clear)
+        return cast('Memoized[R]', decorator)
 
-    def clear(self):
+    def clear(self) -> None:
         self._cache = defaultdict(dict)
         self._last_called = defaultdict(dict)
 
 
-class hybridmethod(object):
-    def __init__(self, function):
+class hybridmethod(Generic[C]):
+    """A method that receives its instance when called on an instance, or its class when called on the class."""
+
+    @overload
+    def __init__(self: hybridmethod[Memoized[R]], function: Memoized[R]) -> None:
+        ...
+
+    @overload
+    def __init__(self: hybridmethod[Callable[..., R]], function: Callable[..., R]) -> None:
+        ...
+
+    def __init__(self, function: Callable[..., Any]) -> None:
         self.function = function
 
-    def __get__(self, obj, cls):
+    def __get__(self, obj: object, cls: type | None = None) -> C:
         context = obj if obj is not None else cls
 
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             return self.function(context, *args, **kwargs)
 
         wrapper.__name__ = self.function.__name__
         wrapper.__doc__ = self.function.__doc__
-        wrapper.__func__ = wrapper.im_func = self.function
-        wrapper.__self__ = wrapper.im_self = context
+        setattr(wrapper, '__func__', self.function)
+        setattr(wrapper, 'im_func', self.function)
+        setattr(wrapper, '__self__', context)
+        setattr(wrapper, 'im_self', context)
         for attribute in ['clear']:
             if getattr(self.function, attribute, None):
                 setattr(wrapper, attribute, getattr(self.function, attribute))
 
-        return wrapper
+        return cast(C, wrapper)

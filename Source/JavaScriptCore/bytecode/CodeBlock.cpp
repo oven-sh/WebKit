@@ -48,7 +48,6 @@
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
 #include "EvalCodeBlock.h"
-#include "FullCodeOrigin.h"
 #include "FunctionCodeBlock.h"
 #include "FunctionExecutableDump.h"
 #include "GetPutInfo.h"
@@ -83,7 +82,6 @@
 #include "ReduceWhitespace.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
-#include "StackVisitor.h"
 #include "SymbolTableInlines.h"
 #include "TypeLocationCache.h"
 #include "TypeProfiler.h"
@@ -204,8 +202,6 @@ void CodeBlock::dumpAssumingJITType(PrintStream& out, JITType jitType) const
     if (codeType() == FunctionCode)
         out.print(specializationKind());
     out.print(", ", instructionsSize());
-    if (this->jitType() == JITType::BaselineJIT && m_shouldAlwaysBeInlined)
-        out.print(" (ShouldAlwaysBeInlined)");
     if (ownerExecutable()->neverInline())
         out.print(" (NeverInline)");
     if (ownerExecutable()->neverOptimize())
@@ -304,7 +300,6 @@ private:
 CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock& other)
     : JSCell(vm, structure)
     , m_globalObject(other.m_globalObject)
-    , m_shouldAlwaysBeInlined(true)
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
@@ -343,7 +338,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     constexpr bool allocateArgumentValueProfiles = false;
     setNumParameters(other.numParameters(), allocateArgumentValueProfiles);
 
-    ASSERT(m_couldBeTainted == (taintednessToTriState(source().provider()->sourceTaintedOrigin()) != TriState::False));
+    ASSERT(m_couldBeTainted == source().provider()->couldBeTainted());
 #if USE(BUN_JSC_ADDITIONS)
     m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
 #endif
@@ -365,7 +360,6 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
 CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
     : JSCell(vm, structure)
     , m_globalObject(scope->realm(), WriteBarrierEarlyInit)
-    , m_shouldAlwaysBeInlined(true)
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
@@ -1045,19 +1039,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         // rely on the instruction count (and are in theory permitted to also inspect the instruction stream to more accurate assess the cost of tier-up).
         // And the data is stored in JITData.
         optimizeAfterWarmUp();
-    }
-
-    switch (codeType()) {
-    case GlobalCode:
-    case ModuleCode:
-    case EvalCode:
-        m_shouldAlwaysBeInlined = false;
-        break;
-    case FunctionCode:
-        // We could have already set it to false because we detected an uninlineable call.
-        // Don't override that observation.
-        m_shouldAlwaysBeInlined &= canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
-        break;
     }
 
     if (jitCode->m_isShareable && !unlinkedCodeBlock()->m_unlinkedBaselineCode && Options::useBaselineJITCodeSharing())
@@ -2928,46 +2909,6 @@ JSGlobalObject* CodeBlock::globalObjectFor(CodeOrigin codeOrigin)
     return inlineCallFrame->baselineCodeBlock->globalObject();
 }
 
-class RecursionCheckFunctor {
-public:
-    RecursionCheckFunctor(CallFrame* startCallFrame, CodeBlock* codeBlock, unsigned depthToCheck)
-        : m_startCallFrame(startCallFrame)
-        , m_codeBlock(codeBlock)
-        , m_depthToCheck(depthToCheck)
-        , m_foundStartCallFrame(false)
-        , m_didRecurse(false)
-    { }
-
-    IterationStatus NODELETE operator()(StackVisitor& visitor) const
-    {
-        CallFrame* currentCallFrame = visitor->callFrame();
-
-        if (currentCallFrame == m_startCallFrame)
-            m_foundStartCallFrame = true;
-
-        if (m_foundStartCallFrame) {
-            if (visitor->codeBlock() == m_codeBlock) {
-                m_didRecurse = true;
-                return IterationStatus::Done;
-            }
-
-            if (!m_depthToCheck--)
-                return IterationStatus::Done;
-        }
-
-        return IterationStatus::Continue;
-    }
-
-    bool NODELETE didRecurse() const { return m_didRecurse; }
-
-private:
-    CallFrame* const m_startCallFrame;
-    CodeBlock* const m_codeBlock;
-    mutable unsigned m_depthToCheck;
-    mutable bool m_foundStartCallFrame;
-    mutable bool m_didRecurse;
-};
-
 void CodeBlock::noticeIncomingCall(JSCell* caller)
 {
     RELEASE_ASSERT(!m_isJettisoned);
@@ -2975,70 +2916,6 @@ void CodeBlock::noticeIncomingCall(JSCell* caller)
     CodeBlock* callerCodeBlock = dynamicDowncast<CodeBlock>(caller);
     
     dataLogLnIf(Options::verboseCallLink(), "Noticing call link from ", pointerDump(callerCodeBlock), " to ", *this);
-    
-#if ENABLE(DFG_JIT)
-    if (!m_shouldAlwaysBeInlined)
-        return;
-    
-    if (!callerCodeBlock) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is native.");
-        return;
-    }
-
-    if (!hasBaselineJITProfiling())
-        return;
-
-    if (!DFG::mightInlineFunction(JITType::FTLJIT, this))
-        return;
-
-    if (!canInline(capabilityLevelState()))
-        return;
-    
-    if (!DFG::isSmallEnoughToInlineCodeInto(callerCodeBlock)) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is too large.");
-        return;
-    }
-
-    if (callerCodeBlock->jitType() == JITType::InterpreterThunk) {
-        // If the caller is still in the interpreter, then we can't expect inlining to
-        // happen anytime soon. Assume it's profitable to optimize it separately. This
-        // ensures that a function is SABI only if it is called no more frequently than
-        // any of its callers.
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is in LLInt.");
-        return;
-    }
-    
-    if (JSC::JITCode::isOptimizingJIT(callerCodeBlock->jitType())) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI bcause caller was already optimized.");
-        return;
-    }
-    
-    if (callerCodeBlock->codeType() != FunctionCode) {
-        // If the caller is either eval or global code, assume that that won't be
-        // optimized anytime soon. For eval code this is particularly true since we
-        // delay eval optimization by a *lot*.
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is not a function.");
-        return;
-    }
-
-    // Recursive calls won't be inlined.
-    if (callerCodeBlock->capabilityLevelState() == DFG::CapabilityLevelNotSet) {
-        dataLog("In call from ", FullCodeOrigin(callerCodeBlock, CodeOrigin { }), " to ", *this, ": caller's DFG capability level is not set.\n");
-        CRASH();
-    }
-    
-    if (canCompile(callerCodeBlock->capabilityLevelState()))
-        return;
-    
-    dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because the caller is not a DFG candidate.");
-    
-    m_shouldAlwaysBeInlined = false;
-#endif
 }
 
 unsigned CodeBlock::reoptimizationRetryCounter() const
@@ -3178,7 +3055,7 @@ double CodeBlock::optimizationThresholdScalingFactor() const
     return result;
 }
 
-static int32_t NODELETE clipThreshold(double threshold)
+static int32_t LEGACY_NODELETE clipThreshold(double threshold)
 {
     if (threshold < 1.0)
         return 1;
@@ -4247,12 +4124,34 @@ CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSL
     return m_jitCode->addressForCall(arityCheck);
 }
 
+#if ENABLE(FTL_JIT)
+static unsigned approximateBytecodeCostForFTLNodes(unsigned numberOfCompiledDFGNodes)
+{
+    return numberOfCompiledDFGNodes * Options::ratioFTLNodesToBytecodeCost();
+}
+#endif
+
 unsigned CodeBlock::bytecodeCost() const
 {
 #if ENABLE(FTL_JIT)
     if (jitType() == JITType::FTLJIT) {
         if (auto* jitCode = static_cast<FTL::JITCode*>(m_jitCode.get()))
-            return std::min(static_cast<unsigned>(jitCode->numberOfCompiledDFGNodes() * Options::ratioFTLNodesToBytecodeCost()), m_bytecodeCost);
+            return std::min(approximateBytecodeCostForFTLNodes(jitCode->numberOfCompiledDFGNodes()), m_bytecodeCost);
+    }
+#endif
+    return m_bytecodeCost;
+}
+
+unsigned CodeBlock::bytecodeCostForFTLInlining() const
+{
+#if ENABLE(FTL_JIT)
+    if (jitType() == JITType::FTLJIT)
+        return bytecodeCost();
+
+    const CodeBlock* baseline = m_alternative ? m_alternative.get() : this;
+    if (baseline->jitType() == JITType::BaselineJIT) {
+        if (unsigned numberOfCompiledFTLNodes = static_cast<BaselineJITCode*>(baseline->m_jitCode.get())->numberOfCompiledFTLNodes())
+            return std::min(approximateBytecodeCostForFTLNodes(numberOfCompiledFTLNodes), m_bytecodeCost);
     }
 #endif
     return m_bytecodeCost;

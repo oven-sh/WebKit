@@ -33,6 +33,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/RunLoop.h>
 #import <wtf/darwin/DispatchExtras.h>
+#import <wtf/darwin/XPCExtras.h>
 #import <wtf/text/UTF8CStringView.h>
 
 namespace WebKit {
@@ -73,7 +74,7 @@ void ConnectionToMachService<Traits>::initializeConnectionIfNeeded() const
 {
     if (m_connection)
         return;
-    m_connection = adoptOSObject(xpc_connection_create_mach_service(m_machServiceName.legacyCStringPointer(), mainDispatchQueueSingleton(), 0));
+    m_connection = adoptOSObject(xpcConnectionCreateMachService(m_machServiceName, mainDispatchQueueSingleton(), 0));
     xpc_connection_set_event_handler(m_connection.get(), [weakThis = WeakPtr { *this }](xpc_object_t event) {
         // Promote `weakThis` to a stack-local strong reference before doing anything else.
         // Clearing m_connection below may release the last strong reference to the

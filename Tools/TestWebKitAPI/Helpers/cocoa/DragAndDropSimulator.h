@@ -67,6 +67,7 @@ typedef NSDictionary<NSNumber *, NSValue *> *ProgressToCGPointValueMap;
 @end
 
 @interface MockDropSession : MockDragDropSession <UIDropSession>
+@property (nonatomic, strong) id<UIDragSession> localDragSession;
 @end
 
 @interface MockDragSession : MockDragDropSession <UIDragSession>

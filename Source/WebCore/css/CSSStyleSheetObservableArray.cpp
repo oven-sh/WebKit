@@ -62,12 +62,15 @@ bool CSSStyleSheetObservableArray::setValueAt(JSC::JSGlobalObject* lexicalGlobal
         return false;
     }
 
+    RefPtr<CSSStyleSheet> oldSheet;
     if (index == m_sheets.size())
         m_sheets.append(protect(sheetConversionResult.returnValue()));
     else
-        m_sheets[index] = sheetConversionResult.returnValue();
+        oldSheet = std::exchange(m_sheets[index], sheetConversionResult.returnValue());
 
     didAddSheet(protect(sheetConversionResult.returnValue()));
+    if (oldSheet)
+        didRemoveSheet(*oldSheet);
     return true;
 }
 
@@ -75,13 +78,16 @@ void CSSStyleSheetObservableArray::removeLast()
 {
     RELEASE_ASSERT(!m_sheets.isEmpty());
     auto sheet = m_sheets.takeLast();
-    willRemoveSheet(sheet);
+    didRemoveSheet(sheet);
 }
 
 void CSSStyleSheetObservableArray::shrinkTo(unsigned length)
 {
     RELEASE_ASSERT(length <= m_sheets.size());
+    auto removedSheets = m_sheets.subvector(length);
     m_sheets.shrink(length);
+    for (auto& sheet : removedSheets)
+        didRemoveSheet(sheet);
 }
 
 JSC::JSValue CSSStyleSheetObservableArray::valueAt(JSC::JSGlobalObject* lexicalGlobalObject, unsigned index) const
@@ -98,11 +104,11 @@ ExceptionOr<void> CSSStyleSheetObservableArray::setSheets(Vector<Ref<CSSStyleShe
             return WTF::move(*exception);
     }
 
-    for (auto& sheet : m_sheets)
-        willRemoveSheet(sheet);
-    m_sheets = WTF::move(sheets);
+    auto oldSheets = std::exchange(m_sheets, WTF::move(sheets));
     for (auto& sheet : m_sheets)
         didAddSheet(sheet);
+    for (auto& sheet : oldSheets)
+        didRemoveSheet(sheet);
 
     return { };
 }
@@ -132,10 +138,13 @@ void CSSStyleSheetObservableArray::didAddSheet(CSSStyleSheet& sheet)
         sheet.addAdoptingTreeScope(*protect(m_treeScope));
 }
 
-void CSSStyleSheetObservableArray::willRemoveSheet(CSSStyleSheet& sheet)
+void CSSStyleSheetObservableArray::didRemoveSheet(CSSStyleSheet& sheet)
 {
-    if (m_treeScope)
-        sheet.removeAdoptingTreeScope(*protect(m_treeScope));
+    if (!m_treeScope)
+        return;
+    if (m_sheets.containsIf([&](auto& remainingSheet) { return remainingSheet.ptr() == &sheet; }))
+        return;
+    sheet.removeAdoptingTreeScope(*protect(m_treeScope));
 }
 
 } // namespace WebCore

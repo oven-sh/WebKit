@@ -66,7 +66,7 @@ void ElementAnimationRareData::setLastStyleChangeEventStyle(std::unique_ptr<cons
 {
     if (m_keyframeEffectStack && m_lastStyleChangeEventStyle != style) {
         auto previousStyleChangeEventStyle = std::exchange(m_lastStyleChangeEventStyle, WTF::move(style));
-        m_keyframeEffectStack->lastStyleChangeEventStyleDidChange(previousStyleChangeEventStyle.get(), m_lastStyleChangeEventStyle.get());
+        m_keyframeEffectStack->lastStyleChangeEventStyleDidChange(protect(previousStyleChangeEventStyle), protect(m_lastStyleChangeEventStyle));
         return;
     }
 

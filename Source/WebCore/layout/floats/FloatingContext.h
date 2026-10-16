@@ -25,8 +25,9 @@
 
 #pragma once
 
-#include "FormattingContext.h"
+#include <WebCore/FormattingConstraints.h>
 #include <WebCore/LayoutElementBox.h>
+#include <WebCore/LayoutUnits.h>
 #include <WebCore/PlacedFloats.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -67,15 +68,15 @@ public:
 
     PlacedFloats::Item makeFloatItem(const Box& floatBox, const BoxGeometry&, std::optional<size_t> line = { }) const;
 
-    bool NODELETE isStartPositioned(const Box& floatBox) const;
+    bool LEGACY_NODELETE isStartPositioned(const Box& floatBox) const;
 
 private:
-    bool NODELETE isFloatingCandidateStartPositionedInBlockFormattingContext(const Box&) const;
-    Clear NODELETE clearInBlockFormattingContext(const Box&) const;
+    bool LEGACY_NODELETE isFloatingCandidateStartPositionedInBlockFormattingContext(const Box&) const;
+    Clear LEGACY_NODELETE clearInBlockFormattingContext(const Box&) const;
 
     const ElementBox& root() const { return m_formattingContextRoot; }
     // FIXME: Turn this into an actual geometry cache.
-    const LayoutState& NODELETE containingBlockGeometries() const LIFETIME_BOUND;
+    const LayoutState& LEGACY_NODELETE containingBlockGeometries() const LIFETIME_BOUND;
 
     void findPositionForFormattingContextRoot(FloatAvoider&, BoxGeometry::HorizontalEdges containingBlockContentBoxEdges) const;
 

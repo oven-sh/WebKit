@@ -68,11 +68,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC::LOL {
 
 namespace LOLJITInternal {
-#ifdef NDEBUG
 static constexpr bool verbose = false;
-#else
-static constexpr bool verbose = true;
-#endif
 }
 
 LOLJIT::LOLJIT(VM& vm, BaselineJITPlan& plan, CodeBlock* codeBlock)

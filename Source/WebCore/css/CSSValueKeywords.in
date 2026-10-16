@@ -32,7 +32,8 @@ double
 caption
 icon
 menu
-message-box
+// Not 'MessageBox', which <windows.h> defines as a macro.
+message-box id=MessageBoxKeyword
 small-caption
 -webkit-mini-control
 -webkit-small-control

@@ -30,9 +30,10 @@
 
 #import "Logging.h"
 #import <string.h>
+#import <wtf/Borrow.h>
 #import <wtf/FileSystem.h>
+#import <wtf/darwin/DarwinExtras.h>
 #import <wtf/posix/POSIXExtras.h>
-#import <wtf/spi/darwin/SandboxSPI.h>
 #import <wtf/text/CString.h>
 
 namespace WebKit {
@@ -59,7 +60,7 @@ SandboxExtensionImpl::~SandboxExtensionImpl()
 
 [[nodiscard]] bool SandboxExtensionImpl::consume()
 {
-    m_handle = sandbox_extension_consume(m_token.legacyCStringPointer());
+    m_handle = sandboxExtensionConsume(m_token);
 #if PLATFORM(IOS_FAMILY_SIMULATOR)
     return !sandbox_check(getpid(), 0, SANDBOX_FILTER_NONE);
 #else
@@ -84,7 +85,6 @@ const UTF8CString& SandboxExtensionImpl::getSerializedFormat() LIFETIME_BOUND
 
 UTF8CString SandboxExtensionImpl::sandboxExtensionForType(const UTF8CString& path, SandboxExtension::Type type, std::optional<audit_token_t> auditToken, OptionSet<SandboxExtension::Flags> flags)
 {
-    auto* pathPointer = path.legacyCStringPointer();
     auto sandboxExtension = [&] {
         uint32_t extensionFlags = 0;
         if (flags & SandboxExtension::Flags::NoReport)
@@ -94,26 +94,26 @@ UTF8CString SandboxExtensionImpl::sandboxExtensionForType(const UTF8CString& pat
 
         switch (type) {
         case SandboxExtension::Type::ReadOnly:
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file(APP_SANDBOX_READ, pathPointer, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueFile(APP_SANDBOX_READ, path, extensionFlags), free);
         case SandboxExtension::Type::ReadWrite:
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file(APP_SANDBOX_READ_WRITE, pathPointer, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueFile(APP_SANDBOX_READ_WRITE, path, extensionFlags), free);
         case SandboxExtension::Type::Mach:
             if (!auditToken)
-                return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_mach("com.apple.webkit.extension.mach", pathPointer, extensionFlags), free);
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_mach_to_process("com.apple.webkit.extension.mach", pathPointer, extensionFlags, *auditToken), free);
+                return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueMach("com.apple.webkit.extension.mach", path, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueMachToProcess("com.apple.webkit.extension.mach", path, extensionFlags, *auditToken), free);
         case SandboxExtension::Type::IOKit:
             if (!auditToken)
-                return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_iokit_registry_entry_class("com.apple.webkit.extension.iokit", pathPointer, extensionFlags), free);
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_iokit_registry_entry_class_to_process("com.apple.webkit.extension.iokit", pathPointer, extensionFlags, *auditToken), free);
+                return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueIOKitRegistryEntryClass("com.apple.webkit.extension.iokit", path, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueIOKitRegistryEntryClassToProcess("com.apple.webkit.extension.iokit", path, extensionFlags, *auditToken), free);
         case SandboxExtension::Type::Generic:
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_generic(pathPointer, extensionFlags), free);
+            return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueGeneric(path, extensionFlags), free);
         case SandboxExtension::Type::ReadByProcess:
             if (!auditToken)
                 return std::unique_ptr<char, decltype(free)*>(nullptr, free);
 #if PLATFORM(MAC)
             extensionFlags |= SANDBOX_EXTENSION_USER_INTENT;
 #endif
-            return std::unique_ptr<char, decltype(free)*>(sandbox_extension_issue_file_to_process(APP_SANDBOX_READ, pathPointer, extensionFlags, *auditToken), free);
+            return std::unique_ptr<char, decltype(free)*>(sandboxExtensionIssueFileToProcess(APP_SANDBOX_READ, path, extensionFlags, *auditToken), free);
         }
     }();
 
@@ -239,18 +239,19 @@ auto SandboxExtension::createHandleForTemporaryFile(StringView prefix, Type type
     ASSERT(!handle.m_sandboxExtension);
     
     Vector<char> path(PATH_MAX);
-    if (!confstr(_CS_DARWIN_USER_TEMP_DIR, path.mutableSpan().data(), path.size()))
+    if (!confstr(_CS_DARWIN_USER_TEMP_DIR, borrow(path)->mutableSpan().data(), path.size()))
         return std::nullopt;
     
     // Shrink the vector.   
-    path.shrink(strlenSpan(path.span()));
+    auto pathLength = strlenSpan(borrow(path)->span());
+    path.shrink(pathLength);
 
     ASSERT(path.last() == '/');
 
     // Append the file name.
     path.append(prefix.utf8().span());
 
-    auto pathString = String::fromUTF8(path.span());
+    auto pathString = String::fromUTF8(borrow(path)->span());
     if (pathString.isNull())
         return std::nullopt;
     
@@ -419,7 +420,7 @@ bool SandboxExtension::consumePermanently(const Handle& handle)
 bool SandboxExtension::consumePermanently(const Vector<Handle>& handleArray)
 {
     bool allSucceeded = true;
-    for (auto& handle : handleArray) {
+    for (auto& handle : borrow(handleArray)) {
         if (!handle.m_sandboxExtension)
             continue;
 

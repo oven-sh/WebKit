@@ -26,8 +26,8 @@
 #pragma once
 
 #include <WebCore/QuirkBehaviors.h>
+#include <WebCore/QuirkMatchPattern.h>
 #include <WebCore/QuirksData.h>
-#include <WebCore/URLMatch.h>
 #include <algorithm>
 #include <array>
 #include <initializer_list>
@@ -65,52 +65,22 @@ private:
 
 enum class IsTopDocument : bool { No, Yes };
 
-class QuirkURLMatch {
-public:
-    constexpr QuirkURLMatch(URLMatch match)
-        : m_kind(Kind::TopURL)
-        , m_match(match)
-    {
-    }
-
-    static constexpr QuirkURLMatch embeddedDocument(URLMatch match)
-    {
-        return QuirkURLMatch { Kind::EmbeddedDocument, match };
-    }
-
-    static constexpr QuirkURLMatch embeddedDocumentInTopMatch(URLMatch topMatch, URLMatch documentMatch)
-    {
-        return QuirkURLMatch { Kind::EmbeddedDocumentInTopURL, documentMatch, topMatch };
-    }
-
-    [[nodiscard]] WEBCORE_EXPORT bool matches(const URLMatchContext& topContext, const URLMatchContext& documentContext, IsTopDocument) const;
-
-private:
-    enum class Kind : uint8_t { TopURL, EmbeddedDocument, EmbeddedDocumentInTopURL };
-
-    constexpr QuirkURLMatch(Kind kind, URLMatch match, std::optional<URLMatch> topMatch = std::nullopt)
-        : m_kind(kind)
-        , m_match(match)
-        , m_topMatch(topMatch)
-    {
-    }
-
-    Kind m_kind;
-    URLMatch m_match;
-    std::optional<URLMatch> m_topMatch;
-};
-
 struct Quirk {
-    QuirkURLMatch match;
+    URLPatternList matches { };
+    URLPatternList embeddedMatches { };
+    URLPatternList excludeMatches { };
+    ASCIILiteral queryContains { };
+    ASCIILiteral fragmentContains { };
+    std::optional<URLEnvironment> environment { };
     QuirkBehaviorList behaviors { };
     bool isAvailable { true };
-
-    void apply(QuirksData&) const;
 };
 
 WEBCORE_EXPORT QuirksData resolveSiteSpecificQuirks(const URL& topURL, const URL& documentURL, IsTopDocument);
 
 // For callers with no Document, which therefore only see top-URL quirks.
 WEBCORE_EXPORT QuirksData resolveTopURLQuirks(const URL&);
+
+WEBCORE_EXPORT std::span<const Quirk> compiledQuirks();
 
 } // namespace WebCore

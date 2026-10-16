@@ -115,6 +115,7 @@ class FrameDamageHistory;
 class FrameSelection;
 class Geolocation;
 class GraphicsLayer;
+class GraphicsContext;
 class GraphicsLayerFactory;
 class HTMLAttachmentElement;
 class HTMLFrameOwnerElement;
@@ -309,6 +310,7 @@ public:
     virtual void relayAccessibilityNotification(String&&, RetainPtr<NSData>&&) const = 0;
     virtual void relayAriaNotifyNotification(AriaNotifyData&&) const = 0;
     virtual void relayLiveRegionNotification(LiveRegionAnnouncementData&&) const = 0;
+    virtual void didDisplayCaptions(Vector<String>&&) const { }
 #endif
 
     virtual void translateAccessibilityAnnouncementStrings(const Vector<String>& strings, const String& targetLocaleIdentifier, CompletionHandler<void(Vector<String>&&)>&& completion) { UNUSED_PARAM(strings); UNUSED_PARAM(targetLocaleIdentifier); completion({ }); }
@@ -337,10 +339,11 @@ public:
 
     virtual bool shouldUseMouseEventForSelection(const PlatformMouseEvent&) { return true; }
 
-    virtual FloatSize screenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize availableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideAvailableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    virtual FloatSize screenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize availableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideAvailableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
 
     virtual void dispatchDisabledAdaptationsDidChange(const OptionSet<DisabledAdaptations>&) const { }
     virtual void dispatchViewportPropertiesDidChange(const ViewportArguments&) const { }
@@ -460,7 +463,7 @@ public:
         completionHandler(false);
     }
 
-    WEBCORE_EXPORT virtual ExceptionOr<Vector<ValidatedDigitalCredentialRequest>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&);
+    WEBCORE_EXPORT virtual ExceptionOr<Vector<std::optional<ValidatedDigitalCredentialRequest>>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&);
 #endif
 
     // Asynchronous request to load an icon for specified filenames.
@@ -470,6 +473,9 @@ public:
     virtual void elementDidRefocus(Element&, const FocusOptions&) { }
 
     virtual void focusedElementDidChangeInputMode(Element&, InputMode) { }
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    virtual void focusedElementDidChangeReadOnly(Element&) { }
+#endif
     virtual void focusedSelectElementDidChangeOptions(const HTMLSelectElement&) { }
 
     virtual bool shouldPaintEntireContents() const { return false; }
@@ -491,6 +497,12 @@ public:
     // nullopt means frames from another process can no longer be applied to a layer directly.
     virtual void offscreenCanvasPlaceholderLayerChanged(PlaceholderRenderingContextIdentifier, std::optional<PlatformLayerIdentifier>) { }
 #endif
+
+    // Frames hosted elsewhere that are painted into the context record themselves into the same
+    // rendering. Resolves, once every frame has recorded, to an image whose pixels this process
+    // never sees, which only the compositor can display. Null when this page cannot record outside
+    // this process.
+    WEBCORE_EXPORT virtual RefPtr<NativePromise<Ref<NativeImage>, void>> createDisplayOnlyImage(FrameIdentifier, const FloatSize&, float scale, const ColorSpace&, NOESCAPE const Function<void(GraphicsContext&)>& paint);
 
 #if ENABLE(WEBGL)
     WEBCORE_EXPORT virtual RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const;

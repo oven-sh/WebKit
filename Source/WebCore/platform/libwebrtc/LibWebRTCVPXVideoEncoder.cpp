@@ -28,10 +28,12 @@
 
 #if USE(LIBWEBRTC) && PLATFORM(COCOA)
 
+#include "FourCC.h"
 #include "ImageTransferSessionVT.h"
 #include "LibWebRTCMacros.h"
 #include "LibWebRTCColorSpaceUtilities.h"
 #include "LibWebRTCVideoFrameUtilities.h"
+#include "Logging.h"
 #include "VideoFrameLibWebRTC.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -96,6 +98,7 @@ private:
     bool m_hasEncoded { false };
     bool m_hasMultipleTemporalLayers { false };
     bool m_shouldCallDescriptionCallback { true };
+    bool m_hasLoggedPixelFormatConversion { false };
     std::optional<PlatformVideoColorSpace> m_currentColorSpace;
 };
 
@@ -278,13 +281,26 @@ Ref<VideoEncoder::EncodePromise> LibWebRTCVPXInternalVideoEncoder::encode(VideoE
     Ref protectedFrame = rawFrame.frame;
     RetainPtr buffer = protectedFrame->pixelBuffer();
     auto colorSpace = protectedFrame->colorSpace();
-    if (auto pixelFormat = convertVideoFramePixelFormat(protectedFrame->pixelFormat(), true)) {
-        if (isRGBVideoPixelFormat(*pixelFormat)) {
-            // We do our own conversion to get matching color space handling, instead of letting libwebrtc do it.
-            colorSpace = srgbColorSpace();
-            buffer = ImageTransferSessionVT::convertPixelBuffer(buffer.get(), kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, ImageTransferSessionVT::DestinationColorSpace::BT709);
+    if (auto pixelFormat = convertVideoFramePixelFormat(protectedFrame->pixelFormat(), true); pixelFormat && isRGBVideoPixelFormat(*pixelFormat)) {
+        // We do our own conversion to get matching color space handling, instead of letting libwebrtc do it.
+        colorSpace = srgbColorSpace();
+        buffer = ImageTransferSessionVT::convertPixelBuffer(buffer.get(), kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, ImageTransferSessionVT::DestinationColorSpace::BT709);
+    } else if (buffer) {
+        auto bufferPixelFormat = CVPixelBufferGetPixelFormatType(buffer.get());
+        if (bufferPixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange && bufferPixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
+            // FIXME: Encode high bit depth and non-4:2:0 formats natively instead of converting to 8-bit NV12.
+            if (!m_hasLoggedPixelFormatConversion) {
+                m_hasLoggedPixelFormatConversion = true;
+                RELEASE_LOG_ERROR(Media, "LibWebRTCVPXInternalVideoEncoder::encode converting unsupported pixel format '%{public}s' to 8-bit NV12", FourCC { bufferPixelFormat }.string().data());
+            }
+            bool fullRange = colorSpace.fullRange.value_or(false);
+            colorSpace = { .primaries = PlatformVideoColorPrimaries::Bt709, .transfer = PlatformVideoTransferCharacteristics::Bt709, .matrix = PlatformVideoMatrixCoefficients::Bt709, .fullRange = fullRange };
+            buffer = ImageTransferSessionVT::convertPixelBuffer(buffer.get(), fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, ImageTransferSessionVT::DestinationColorSpace::BT709);
         }
     }
+
+    if (!buffer)
+        return VideoEncoder::EncodePromise::createAndReject("Unsupported pixel format"_s);
 
     auto frameBuffer = webrtc::pixelBufferToFrame(buffer.get());
     if (m_config.width != static_cast<size_t>(frameBuffer->width()) || m_config.height != static_cast<size_t>(frameBuffer->height()))

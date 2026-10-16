@@ -28,6 +28,7 @@
 #include "DrawingAreaInfo.h"
 #include "FrameTreeCreationParameters.h"
 #include "LayerTreeContext.h"
+#include "PDFDisplayMode.h"
 #include "ProvisionalFrameCreationParameters.h"
 #include "SandboxExtension.h"
 #include "SessionState.h"
@@ -39,7 +40,6 @@
 #include "WebPageGroupData.h"
 #include "WebPageProxyIdentifier.h"
 #include "WebPreferencesStore.h"
-#include <WebCore/BrowsingContextGroupIdentifier.h>
 #include "WebURLSchemeHandlerIdentifier.h"
 #include "WebsitePoliciesData.h"
 #include <WebCore/ActivityState.h>
@@ -61,6 +61,7 @@
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
 #include <WebCore/ViewportArguments.h>
+#include <WebCore/ViewportSegments.h>
 #include <WebCore/WindowFeatures.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/text/WTFString.h>
@@ -124,7 +125,6 @@ struct WebPageCreationParameters {
     DrawingAreaIdentifier drawingAreaIdentifier;
     WebPageProxyIdentifier webPageProxyIdentifier;
     WebPageGroupData pageGroupData;
-    std::optional<WebCore::BrowsingContextGroupIdentifier> browsingContextGroupIdentifier;
 
     bool isEditable { false };
 
@@ -153,6 +153,7 @@ struct WebPageCreationParameters {
     double gapBetweenPages { 0 };
     
     String userAgent { };
+    bool hasCustomUserAgent { false };
 
     VisitedLinkTableIdentifier visitedLinkTableID;
     bool canRunBeforeUnloadConfirmPanel { false };
@@ -183,6 +184,7 @@ struct WebPageCreationParameters {
     WebCore::IntSize sizeToContentAutoSizeMaximumSize { };
     bool autoSizingShouldExpandToViewHeight { false };
     std::optional<WebCore::FloatSize> viewportSizeForCSSViewportUnits { };
+    WebCore::ViewportSegments viewportSegments { };
     
     WebCore::ScrollPinningBehavior scrollPinningBehavior { WebCore::ScrollPinningBehavior::DoNotPin };
 
@@ -228,6 +230,10 @@ struct WebPageCreationParameters {
     bool canShowWhileLocked { false };
     bool isCapturingScreen { false };
     WebCore::Color insertionPointColor { };
+    String contentSizeCategory { };
+#endif
+#if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
+    PDFPluginDisplayMode initialPDFDisplayMode { PDFPluginDisplayMode::SinglePageContinuous };
 #endif
 #if PLATFORM(COCOA)
     bool smartInsertDeleteEnabled { false };

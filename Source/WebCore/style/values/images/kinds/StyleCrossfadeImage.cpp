@@ -38,12 +38,13 @@
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
 #include "ImageQualityController.h"
-#include "NinePieceGeometry.h"
 #include "RenderElement.h"
 #include "RenderObjectDocument.h"
+#include "StyleCrossfadeInputSizing.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include <wtf/PointerComparison.h>
+#include <wtf/ZippedRange.h>
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
 #include <WebKitAdditions/AXCustomColorModeController.h>
@@ -52,22 +53,74 @@
 namespace WebCore {
 namespace Style {
 
-CrossfadeImage::CrossfadeImage(RefPtr<Image>&& from, RefPtr<Image>&& to, Progress progress, bool isPrefixed)
-    : GeneratedImage { Type::CrossfadeImage, CrossfadeImage::isFixedSize }
-    , m_from { WTF::move(from) }
-    , m_to { WTF::move(to) }
-    , m_progress { progress }
-    , m_isPrefixed { isPrefixed }
+CrossfadeImage::CrossfadeImage(CrossfadeFunction&& function)
+    : GeneratedImage { Type::CrossfadeImage }
+    , m_function { WTF::move(function) }
     , m_inputImagesAreReady { false }
 {
+    normalizePercentages();
+}
+
+CrossfadeImage::CrossfadeImage(WebkitCrossfadeFunction&& function)
+    : GeneratedImage { Type::CrossfadeImage }
+    , m_function { WTF::move(function) }
+    , m_inputImagesAreReady { false }
+{
+    normalizePercentages();
+}
+
+Ref<CrossfadeImage> CrossfadeImage::create(CrossfadeFunction&& function)
+{
+    return adoptRef(*new CrossfadeImage(WTF::move(function)));
+}
+
+Ref<CrossfadeImage> CrossfadeImage::create(WebkitCrossfadeFunction&& function)
+{
+    return adoptRef(*new CrossfadeImage(WTF::move(function)));
 }
 
 CrossfadeImage::~CrossfadeImage()
 {
-    if (m_cachedFromImage)
-        protect(m_cachedFromImage)->removeClient(*this);
-    if (m_cachedToImage)
-        protect(m_cachedToImage)->removeClient(*this);
+    for (auto& cachedImage : m_cachedImages) {
+        if (cachedImage)
+            protect(cachedImage)->removeClient(*this);
+    }
+}
+
+namespace {
+
+struct CrossfadeInput {
+    using Percentage = Style::Percentage<CSS::ClosedPercentageRange>;
+
+    RefPtr<Image> image;
+    std::optional<Percentage> percentage;
+};
+
+}
+
+decltype(auto) CrossfadeImage::withInputs(NOESCAPE auto&& function) const
+{
+    return WTF::switchOn(m_function,
+        [&](const CrossfadeFunction& crossfade) -> decltype(auto) {
+            return function(crossfade.parameters.components.value | std::views::transform([](const auto& component) {
+                return CrossfadeInput { .image = component.image.value.ptr(), .percentage = component.percentage };
+            }));
+        },
+        [&](const WebkitCrossfadeFunction& crossfade) -> decltype(auto) {
+            auto progress = crossfade.parameters.progress.value.value;
+            return function(std::array {
+                CrossfadeInput { .image = crossfade.parameters.from.tryStyleImage(), .percentage = CrossfadeInput::Percentage { 100 * (1 - progress) } },
+                CrossfadeInput { .image = crossfade.parameters.to.tryStyleImage(), .percentage = CrossfadeInput::Percentage { 100 * progress } },
+            });
+        }
+    );
+}
+
+void CrossfadeImage::normalizePercentages()
+{
+    m_normalizedPercentages = withInputs([](const auto& inputs) {
+        return CSS::normalizedMixPercentages<CSS::ForceNormalization::No, Vector<double, 2>>(inputs);
+    });
 }
 
 bool CrossfadeImage::operator==(const Image& other) const
@@ -78,37 +131,65 @@ bool CrossfadeImage::operator==(const Image& other) const
 
 bool CrossfadeImage::equals(const CrossfadeImage& other) const
 {
-    return equalInputImages(other)
-        && m_progress == other.m_progress;
+    return m_function == other.m_function;
 }
 
 bool CrossfadeImage::equalInputImages(const CrossfadeImage& other) const
 {
-    return arePointingToEqualData(m_from, other.m_from)
-        && arePointingToEqualData(m_to, other.m_to);
+    if (m_function.index() != other.m_function.index())
+        return false;
+
+    return withInputs([&](const auto& inputs) {
+        return other.withInputs([&](const auto& otherInputs) {
+            return std::ranges::equal(inputs, otherInputs, [](const auto& input, const auto& otherInput) {
+                return arePointingToEqualData(input.image, otherInput.image);
+            });
+        });
+    });
 }
 
 RefPtr<CrossfadeImage> CrossfadeImage::blend(const CrossfadeImage& from, const BlendingContext& context) const
 {
     ASSERT(equalInputImages(from));
 
-    if (!m_cachedToImage || !m_cachedFromImage)
+    if (m_cachedImages.isEmpty() || m_cachedImages.containsIf([](auto& cachedImage) { return !cachedImage; }))
         return nullptr;
 
-    auto newProgress = Style::blend(from.m_progress, m_progress, context);
-    return CrossfadeImage::create(m_from, m_to, newProgress, from.m_isPrefixed && m_isPrefixed);
+    return WTF::switchOn(m_function,
+        [&](const CrossfadeFunction& function) -> RefPtr<CrossfadeImage> {
+            auto& fromComponents = std::get<CrossfadeFunction>(from.m_function).parameters.components.value;
+            auto& toComponents = function.parameters.components.value;
+
+            CommaSeparatedVector<CrossfadeComponent> components;
+            for (auto [fromComponent, toComponent] : zippedRange(fromComponents, toComponents)) {
+                if (!fromComponent.percentage != !toComponent.percentage)
+                    return nullptr;
+                std::optional<CrossfadeComponent::Percentage> percentage;
+                if (toComponent.percentage)
+                    percentage = Style::blend(*fromComponent.percentage, *toComponent.percentage, context);
+                components.value.append({ .image = toComponent.image, .percentage = percentage });
+            }
+            return CrossfadeImage::create(CrossfadeFunction { .parameters = { .components = WTF::move(components) } });
+        },
+        [&](const WebkitCrossfadeFunction& function) -> RefPtr<CrossfadeImage> {
+            auto& fromParameters = std::get<WebkitCrossfadeFunction>(from.m_function).parameters;
+            return CrossfadeImage::create(WebkitCrossfadeFunction {
+                .parameters = {
+                    .from = function.parameters.from,
+                    .to = function.parameters.to,
+                    .progress = Style::blend(fromParameters.progress, function.parameters.progress, context),
+                }
+            });
+        }
+    );
 }
 
 Ref<CSSValue> CrossfadeImage::computedStyleValue(const Style::ComputedStyle& style) const
 {
-    auto fromComputedValue = m_from ? protect(m_from)->computedStyleValue(style) : upcast<CSSValue>(CSSKeywordValue::create(CSSValueNone));
-    auto toComputedValue = m_to ? protect(m_to)->computedStyleValue(style) : upcast<CSSValue>(CSSKeywordValue::create(CSSValueNone));
-
-    return CSSCrossfadeValue::create(
-        WTF::move(fromComputedValue),
-        WTF::move(toComputedValue),
-        toCSS(m_progress, style),
-        m_isPrefixed
+    return WTF::switchOn(m_function,
+        [&](const auto& function) -> Ref<CSSValue> {
+            return CSSCrossfadeValue::create(toCSS(function, style));
+        }
     );
 }
 
@@ -119,53 +200,51 @@ Ref<DeprecatedCSSOMValue> CrossfadeImage::computedStyleDeprecatedCSSOMValue(CSSV
 
 bool CrossfadeImage::isPending() const
 {
-    if (m_from && protect(m_from)->isPending())
-        return true;
-    if (m_to && protect(m_to)->isPending())
-        return true;
-    return false;
+    return withInputs([](const auto& inputs) {
+        return std::ranges::any_of(inputs, [](const auto& input) {
+            return input.image && protect(input.image)->isPending();
+        });
+    });
 }
 
 void CrossfadeImage::load(CachedResourceLoader& loader, const ResourceLoaderOptions& options)
 {
-    auto oldCachedFromImage = m_cachedFromImage;
-    auto oldCachedToImage = m_cachedToImage;
+    auto cachedImages = withInputs([&](const auto& inputs) {
+        return decltype(m_cachedImages)::map(inputs, [&](const auto& input) -> CachedResourceHandle<WebCore::CachedImage> {
+            RefPtr image = input.image;
+            if (!image)
+                return nullptr;
+            if (image->isPending())
+                image->load(loader, options);
+            return CachedResourceHandle<WebCore::CachedImage> { image->cachedImage() };
+        });
+    });
 
-    if (m_from) {
-        RefPtr from = m_from;
-        if (from->isPending())
-            from->load(loader, options);
-        m_cachedFromImage = from->cachedImage();
-    } else
-        m_cachedFromImage = nullptr;
-
-    if (m_to) {
-        RefPtr to = m_to;
-        if (to->isPending())
-            to->load(loader, options);
-        m_cachedToImage = to->cachedImage();
-    } else
-        m_cachedToImage = nullptr;
-
-    if (m_cachedFromImage != oldCachedFromImage) {
-        if (oldCachedFromImage)
-            protect(oldCachedFromImage)->removeClient(*this);
-        if (m_cachedFromImage)
-            protect(m_cachedFromImage)->addClient(*this);
+    auto count = std::max(cachedImages.size(), m_cachedImages.size());
+    for (size_t i = 0; i < count; ++i) {
+        auto oldCachedImage = i < m_cachedImages.size() ? m_cachedImages[i] : nullptr;
+        auto newCachedImage = i < cachedImages.size() ? cachedImages[i] : nullptr;
+        if (newCachedImage == oldCachedImage)
+            continue;
+        if (oldCachedImage)
+            protect(oldCachedImage)->removeClient(*this);
+        if (newCachedImage)
+            protect(newCachedImage)->addClient(*this);
     }
-
-    if (m_cachedToImage != oldCachedToImage) {
-        if (oldCachedToImage)
-            protect(oldCachedToImage)->removeClient(*this);
-        if (m_cachedToImage)
-            protect(m_cachedToImage)->addClient(*this);
-    }
+    m_cachedImages = WTF::move(cachedImages);
 
     m_inputImagesAreReady = true;
 }
 
-static void drawCrossfadeInput(GraphicsContext& context, const RenderElement& renderer, const Image& input, ImagePaintingOptions inputOptions, CompositeOperator operation, float opacity, const FloatSize& crossfadeSize, bool isForFirstLine)
+static void drawCrossfadeInput(GraphicsContext& context, const RenderElement& renderer, const Image& input, ImagePaintingOptions inputOptions, CompositeOperator operation, float opacity, ConcreteObjectSize crossfadeSize, bool isForFirstLine)
 {
+    auto concreteSize = input.negotiate(renderer, CrossfadeInputSizing { crossfadeSize });
+    auto imageSize = concreteSize.size();
+
+    // A zero-sized input would produce a non-finite scale below, poisoning the CTM.
+    if (imageSize.isEmpty())
+        return;
+
     // SVGImage resets the opacity when painting, so we have to use transparency layers to accurately paint one at a given opacity.
     bool useTransparencyLayer = input.drawsSVGImage();
 
@@ -180,51 +259,46 @@ static void drawCrossfadeInput(GraphicsContext& context, const RenderElement& re
         options = { options, operation };
     }
 
-    auto rect = FloatRect { { }, crossfadeSize };
-    input.draw(context, renderer, ConcreteObjectSize::fixed(crossfadeSize), rect, rect, options, isForFirstLine);
+    if (auto targetSize = crossfadeSize.size(); targetSize != imageSize)
+        context.scale(targetSize / imageSize);
+
+    input.draw(context, renderer, concreteSize, FloatRect { { }, imageSize }, FloatRect { { }, imageSize }, options, isForFirstLine);
 
     if (useTransparencyLayer)
         context.endTransparencyLayer();
 }
 
-ImageDrawResult CrossfadeImage::drawCrossfade(GraphicsContext& context, const RenderElement& renderer, const FloatSize& crossfadeSize, bool isForFirstLine) const
+void CrossfadeImage::drawCrossfade(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, bool isForFirstLine) const
 {
-    if (crossfadeSize.isEmpty())
-        return ImageDrawResult::DidNothing;
+    // https://drafts.csswg.org/css-images-4/#cross-fade-painting
 
-    ImagePaintingOptions inputOptions;
+    if (concreteObjectSize.size().isEmpty())
+        return;
+
+    withInputs([&](const auto& inputs) {
+        if (std::ranges::any_of(inputs, [&](const auto& input) { return !input.image || !protect(input.image)->canDraw(renderer); }))
+            return;
+
+        GraphicsContextStateSaver stateSaver(context);
+
+        context.clip(FloatRect { { }, concreteObjectSize.size() });
+        context.beginTransparencyLayer(1);
+
+        // The final image is the weighted average of the inputs, rescaled to the concrete object size, with any
+        // leftover percentage given to transparent black.
+        auto operation = CompositeOperator::SourceOver;
+        for (auto [input, percentage] : zippedRange(inputs, m_normalizedPercentages.percentages)) {
+            Ref image = *input.image;
+            ImagePaintingOptions inputOptions;
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-    inputOptions = ImagePaintingOptions { AXCustomColorModeController::shouldInvertSVGImage(renderer) ? InvertContent::Yes : InvertContent::No };
+            inputOptions = ImagePaintingOptions { AXCustomColorModeController::shouldInvertSVGImage(renderer, image) ? InvertContent::Yes : InvertContent::No };
 #endif
+            drawCrossfadeInput(context, renderer, image, inputOptions, operation, percentage / 100, concreteObjectSize, isForFirstLine);
+            operation = CompositeOperator::PlusLighter;
+        }
 
-    GraphicsContextStateSaver stateSaver(context);
-
-    context.clip(FloatRect { { }, crossfadeSize });
-    context.beginTransparencyLayer(1);
-
-    auto progress = m_progress.value.value;
-    drawCrossfadeInput(context, renderer, protect(*m_from), inputOptions, CompositeOperator::SourceOver, 1 - progress, crossfadeSize, isForFirstLine);
-    drawCrossfadeInput(context, renderer, protect(*m_to), inputOptions, CompositeOperator::PlusLighter, progress, crossfadeSize, isForFirstLine);
-
-    context.endTransparencyLayer();
-
-    return ImageDrawResult::DidDraw;
-}
-
-ImageDrawResult CrossfadeImage::drawInCrossfadeSpace(GraphicsContext& context, const RenderElement& renderer, const FloatSize& crossfadeSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool isForFirstLine) const
-{
-    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
-        return drawCrossfade(context, renderer, crossfadeSize, isForFirstLine);
+        context.endTransparencyLayer();
     });
-}
-
-ImageDrawResult CrossfadeImage::drawPatternInCrossfadeSpace(GraphicsContext& context, const RenderElement& renderer, const FloatSize& crossfadeSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
-{
-    if (auto imageBuffer = context.createImageBuffer(crossfadeSize)) {
-        drawCrossfade(imageBuffer->context(), renderer, crossfadeSize, isForFirstLine);
-        context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
-    }
-    return ImageDrawResult::DidDraw;
 }
 
 ImageDrawResult CrossfadeImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool isForFirstLine) const
@@ -232,98 +306,143 @@ ImageDrawResult CrossfadeImage::draw(GraphicsContext& context, const RenderEleme
     if (isPending() || !canDrawAtSize(renderer, flooredIntSize(destination.size())))
         return ImageDrawResult::DidNothing;
 
-    auto crossfadeSize = fixedSize(renderer);
-    return drawInCrossfadeSpace(context, renderer, crossfadeSize, destination, mapSourceToSize(source, concreteObjectSize, crossfadeSize), options, isForFirstLine);
+    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+        drawCrossfade(context, renderer, concreteObjectSize, isForFirstLine);
+        return ImageDrawResult::DidDraw;
+    });
 }
 
 ImageDrawResult CrossfadeImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
-    if (!canDrawAtSize(renderer, size) || context.paintingDisabled())
+    if (!canDrawAtSize(renderer, concreteObjectSize.size()) || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
-    return drawPatternInCrossfadeSpace(context, renderer, fixedSize(renderer), destination, tile, patternTransform, phase, spacing, options, isForFirstLine);
-}
-
-ImageDrawResult CrossfadeImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
-{
-    if (!canDrawAtSize(renderer, tileSize) || context.paintingDisabled())
+    RefPtr imageBuffer = context.createImageBuffer(concreteObjectSize.size());
+    if (!imageBuffer)
         return ImageDrawResult::DidNothing;
 
-    auto crossfadeSize = fixedSize(renderer);
-    return drawTiledUsing(context, NaturalDimensions::fixed(crossfadeSize), [&](GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
-        return drawInCrossfadeSpace(context, renderer, crossfadeSize, destination, source, options, isForFirstLine);
-    }, [&](GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
-        return drawPatternInCrossfadeSpace(context, renderer, crossfadeSize, destination, tile, patternTransform, phase, spacing, options, isForFirstLine);
-    }, ConcreteObjectSize::fixed(crossfadeSize), destination, phase, tileSize, spacing, options);
-}
+    drawCrossfade(imageBuffer->context(), renderer, concreteObjectSize, isForFirstLine);
+    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
 
-ImageDrawResult CrossfadeImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImagePaintingOptions options) const
-{
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
-    if (!canDrawAtSize(renderer, size) || context.paintingDisabled())
-        return ImageDrawResult::DidNothing;
-
-    auto crossfadeSize = fixedSize(renderer);
-    return drawNinePieceUsing(context, [&](GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
-        return drawInCrossfadeSpace(context, renderer, crossfadeSize, destination, source, options, false);
-    }, [&](GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
-        return drawPatternInCrossfadeSpace(context, renderer, crossfadeSize, destination, tile, patternTransform, phase, spacing, { options.compositeOperator(), options.interpolationQuality() }, false);
-    }, ConcreteObjectSize::fixed(crossfadeSize), geometry);
+    return ImageDrawResult::DidDraw;
 }
 
 bool CrossfadeImage::currentFrameIsComplete(const RenderElement* renderer) const
 {
-    if (m_from && !protect(m_from)->currentFrameIsComplete(renderer))
-        return false;
-    if (m_to && !protect(m_to)->currentFrameIsComplete(renderer))
-        return false;
-    return true;
+    return withInputs([&](const auto& inputs) {
+        return std::ranges::all_of(inputs, [&](const auto& input) {
+            return !input.image || protect(input.image)->currentFrameIsComplete(renderer);
+        });
+    });
 }
 
 bool CrossfadeImage::knownToBeOpaque(const RenderElement& renderer) const
 {
-    if (m_from && !protect(m_from)->knownToBeOpaque(renderer))
+    // Any leftover percentage is transparent black.
+    if (m_normalizedPercentages.leftover)
         return false;
-    if (m_to && !protect(m_to)->knownToBeOpaque(renderer))
-        return false;
-    return true;
+
+    return withInputs([&](const auto& inputs) {
+        return std::ranges::all_of(inputs, [&](const auto& input) {
+            return !input.image || protect(input.image)->knownToBeOpaque(renderer);
+        });
+    });
+}
+
+bool CrossfadeImage::containsCurrentColor() const
+{
+    return withInputs([](const auto& inputs) {
+        return std::ranges::any_of(inputs, [](const auto& input) {
+            return input.image && protect(input.image)->containsCurrentColor();
+        });
+    });
 }
 
 bool CrossfadeImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& size) const
 {
-    return !size.isEmpty() && m_from && m_to && protect(m_from)->canDrawAtSize(renderer, size) && protect(m_to)->canDrawAtSize(renderer, size);
+    if (size.isEmpty())
+        return false;
+
+    return withInputs([&](const auto& inputs) {
+        return std::ranges::all_of(inputs, [&](const auto& input) {
+            return input.image && protect(input.image)->canDrawAtSize(renderer, size);
+        });
+    });
 }
 
-FloatSize CrossfadeImage::fixedSize(const RenderElement& renderer) const
+InterpolationQuality CrossfadeImage::interpolationQualityForImageDraw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const void* layer, const LayoutSize& size) const
 {
-    if (!m_from || !m_to)
-        return { };
-
-    auto fromImageSize = protect(m_from)->imageSize(&renderer, 1);
-    auto toImageSize = protect(m_to)->imageSize(&renderer, 1);
-
-    // Rounding issues can cause transitions between images of equal size to return
-    // a different fixed size; avoid performing the interpolation if the images are the same size.
-    if (fromImageSize == toImageSize)
-        return fromImageSize;
-
-    float progress = m_progress.value.value;
-    float inverseProgress = 1 - progress;
-
-    return fromImageSize * inverseProgress + toImageSize * progress;
+    return ImageQualityController::chooseInterpolationQualityForBitmapOfSize(context, renderer, expandedIntSize(concreteObjectSize.size()), layer, size);
 }
 
-InterpolationQuality CrossfadeImage::interpolationQualityForImageDraw(GraphicsContext& context, const RenderElement& renderer, const void* layer, const LayoutSize& size) const
+NaturalDimensions CrossfadeImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext& context) const
 {
-    return ImageQualityController::chooseInterpolationQualityForBitmapOfSize(context, renderer, expandedIntSize(fixedSize(renderer)), layer, size);
-}
+    // https://drafts.csswg.org/css-images-4/#cross-fade-sizing
 
-NaturalDimensions CrossfadeImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext&) const
-{
-    // FIXME: Add support for negotiating each input in the given context as per https://drafts.csswg.org/css-images-4/#cross-fade-sizing.
+    return withInputs([&](const auto& arguments) {
+        // A -webkit-cross-fade() with an argument of none: nothing to draw, and an empty image rather than one sized by its box.
+        if (std::ranges::any_of(arguments, [](const auto& argument) { return !argument.image; }))
+            return NaturalDimensions::zero();
 
-    return NaturalDimensions::fixed(floorSizeToDevicePixels(LayoutSize(fixedSize(renderer)), protect(renderer.document())->deviceScaleFactor()));
+        // 1. Normalize mix percentages from the function’s arguments, and let args and leftover be the result.
+
+        // NOTE: Done at construction, in m_normalizedPercentages.
+
+        // 2. If leftover is 100%, return no natural dimensions.
+        if (m_normalizedPercentages.leftover == 100)
+            return NaturalDimensions::none();
+
+        // 3. Let images be an empty list.
+        struct Item {
+            FloatSize size;
+            double percentage;
+        };
+        Vector<Item, 2> images;
+
+        // 4. For each <cf-image> argument of the function’s arguments:
+        for (auto [argument, percentage] : zippedRange(arguments, m_normalizedPercentages.percentages)) {
+            // 4.1 If argument is not an <image>, or is an <image> with no natural dimensions, continue.
+            // FIXME: Add support non-image arguments.
+            auto naturalDimensions = protect(argument.image)->naturalDimensions(renderer, context);
+            if (naturalDimensions.isNone())
+                continue;
+
+            // 4.2 Let item be a tuple consisting of a width, a height, and a percentage.
+            // 4.3 Run the object size negotiation algorithm for the <image>, as appropriate for the context in which the cross-fade() appears, and set item’s width and height to the width and height of the resulting concrete object size.
+            // 4.4 Set item’s percentage to the argument’s percentage.
+            images.append(Item { context.resolve(naturalDimensions).size(), percentage });
+        }
+
+        // 5. If images is empty, return no natural dimensions.
+        if (images.isEmpty())
+            return NaturalDimensions::none();
+
+        // 6. Return a natural width and natural height that are weighted averages of the width and height of each item in images, according to their corresponding percentages.
+
+        // FIXME: This device-pixel floor is a painting rule, not a property of the image -- a
+        // cross-fade interpolates between its inputs and lands between pixels -- and it belongs
+        // with the caller that is about to rasterize.
+        auto flooredToDevicePixels = [&](FloatSize size) {
+            return NaturalDimensions::fixed(floorSizeToDevicePixels(LayoutSize(size), protect(renderer.document())->deviceScaleFactor()));
+        };
+
+        // Rounding issues can cause transitions between images of equal size to return a
+        // different size; avoid performing the interpolation if the sizes agree.
+        if (images.size() == 2 && images[0].size == images[1].size)
+            return flooredToDevicePixels(images[0].size);
+
+        // The percentages of the items in images can sum to less than 100%, so the average is over their sum.
+        double total = 0;
+        auto weighted = FloatSize { };
+        for (auto& image : images) {
+            weighted = weighted + image.size * image.percentage;
+            total += image.percentage;
+        }
+        if (!total)
+            return NaturalDimensions::none();
+
+        return flooredToDevicePixels(weighted / total);
+    });
 }
 
 void CrossfadeImage::imageChanged(WebCore::CachedImage*, const IntRect*)

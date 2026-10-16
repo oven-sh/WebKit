@@ -81,6 +81,7 @@ std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionCo
     m_source = source;
     m_destination = FetchOptions::Destination::Script;
     m_isCOEPEnabled = scriptExecutionContext->settingsValues().crossOriginEmbedderPolicyEnabled;
+    m_isSecureContext = scriptExecutionContext->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No;
     m_advancedPrivacyProtections = scriptExecutionContext->advancedPrivacyProtections();
     m_globalPrivacyControlEnabled = scriptExecutionContext->settingsValues().globalPrivacyControlEnabled;
 
@@ -137,6 +138,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     m_source = source;
     m_destination = fetchOptions.destination;
     m_isCOEPEnabled = scriptExecutionContext.settingsValues().crossOriginEmbedderPolicyEnabled;
+    m_isSecureContext = scriptExecutionContext.isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No;
     m_clientIdentifier = clientIdentifier;
     m_advancedPrivacyProtections = scriptExecutionContext.advancedPrivacyProtections();
     m_globalPrivacyControlEnabled = scriptExecutionContext.settingsValues().globalPrivacyControlEnabled;
@@ -158,7 +160,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     options.serviceWorkersMode = serviceWorkerMode;
     if (scriptExecutionContext.settingsValues().serviceWorkersEnabled && clientIdentifier) {
         ASSERT(m_destination == FetchOptions::Destination::Worker || m_destination == FetchOptions::Destination::Sharedworker);
-        m_topOriginForServiceWorkerRegistration = SecurityOriginData { scriptExecutionContext.topOrigin().data() };
+        m_topOriginForServiceWorkerRegistration = SecurityOriginData { scriptExecutionContext.storageTopOrigin().data() };
         options.clientIdentifier = scriptExecutionContext.identifier().object();
         options.resultingClientIdentifier = clientIdentifier->object();
         Ref serviceWorkerDataManager = ServiceWorkerDataManager::create(*clientIdentifier);
@@ -255,7 +257,7 @@ void WorkerScriptLoader::didReceiveResponse(ScriptExecutionContextIdentifier mai
     m_isRedirected = response.isRedirected();
     m_contentSecurityPolicy = ContentSecurityPolicyResponseHeaders { response };
     if (m_isCOEPEnabled)
-        m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, nullptr);
+        m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, m_isSecureContext, nullptr);
     m_referrerPolicy = response.httpHeaderField(HTTPHeaderName::ReferrerPolicy);
 
     if (m_topOriginForServiceWorkerRegistration && response.source() == ResourceResponse::Source::MemoryCache && m_context) {

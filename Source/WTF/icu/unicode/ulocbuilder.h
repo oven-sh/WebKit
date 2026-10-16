@@ -3,6 +3,9 @@
 #ifndef __ULOCBUILDER_H__
 #define __ULOCBUILDER_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/localpointer.h"
 #include "unicode/ulocale.h"
 #include "unicode/utypes.h"

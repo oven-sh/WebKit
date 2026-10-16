@@ -123,7 +123,7 @@ static ImageEventSender& loadEventSenderSingleton()
     return sender;
 }
 
-static inline bool NODELETE pageIsBeingDismissed(Document& document)
+static inline bool LEGACY_NODELETE pageIsBeingDismissed(Document& document)
 {
     auto* frame = document.frame();
     return frame && frame->loader().pageDismissalEventBeingDispatched() != FrameLoader::PageDismissalType::None;
@@ -288,6 +288,8 @@ void ImageLoader::updateFromElement(RelevantMutation relevantMutation)
     }
     ResourceRequest resourceRequest(WTF::move(imageURL));
     resourceRequest.setInspectorInitiatorNodeIdentifier(InspectorInstrumentation::identifierForNode(element));
+    resourceRequest.setShouldBlockThirdPartyStorage(document->shouldBlockThirdPartyStorage());
+    resourceRequest.setFirstPartyForCookies(document->firstPartyForCookies());
 
     auto request = createPotentialAccessControlRequest(WTF::move(resourceRequest), WTF::move(options), document, crossOriginAttribute);
     request.setInitiator(element);

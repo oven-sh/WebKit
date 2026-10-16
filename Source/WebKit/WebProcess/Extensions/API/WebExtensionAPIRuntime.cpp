@@ -640,11 +640,11 @@ void WebExtensionContextProxy::internalDispatchRuntimeConnectEvent(WebExtensionC
         if (!matchesTarget(frame, targetParameters))
             return;
 
-        WebExtensionAPIEvent::ListenerVector listeners;
-        if (sourceContentWorldType == WebExtensionContentWorldType::WebPage)
-            listeners = namespaceObject.runtime().onConnectExternal().listeners();
-        else
-            listeners = namespaceObject.runtime().onConnect().listeners();
+        const WebExtensionAPIEvent::ListenerVector listeners = [&] {
+            if (sourceContentWorldType == WebExtensionContentWorldType::WebPage)
+                return protect(namespaceObject.runtime())->onConnectExternal().listeners();
+            return protect(namespaceObject.runtime())->onConnect().listeners();
+        }();
 
         if (listeners.isEmpty())
             return;
@@ -719,14 +719,14 @@ void WebExtensionContextProxy::dispatchRuntimeInstalledEvent(WebExtensionContext
         details->setString(previousVersionKey, previousVersion);
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.runtime().onInstalled().invokeListenersWithJSONArgument(details->toJSONString());
+        protect(protect(namespaceObject.runtime())->onInstalled())->invokeListenersWithJSONArgument(details->toJSONString());
     });
 }
 
 void WebExtensionContextProxy::dispatchRuntimeStartupEvent()
 {
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.runtime().onStartup().invokeListeners();
+        protect(protect(namespaceObject.runtime())->onStartup())->invokeListeners();
     });
 }
 

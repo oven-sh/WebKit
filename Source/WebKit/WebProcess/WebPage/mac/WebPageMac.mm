@@ -45,6 +45,7 @@
 #import "UserData.h"
 #import "WKAccessibilityWebPageObjectMac.h"
 #import "WebEventConversion.h"
+#import "WebEventPhase.h"
 #import "WebFrame.h"
 #import "WebHitTestResultData.h"
 #import "WebImage.h"
@@ -82,6 +83,7 @@
 #import <WebCore/HTMLAttachmentElement.h>
 #import <WebCore/HTMLImageElement.h>
 #import <WebCore/HTMLPlugInElement.h>
+#import <WebCore/HandleUserInputEventResult.h>
 #import <WebCore/HitTestResult.h>
 #import <WebCore/ImageOverlay.h>
 #import <WebCore/ImmediateActionStage.h>
@@ -114,6 +116,7 @@
 #import <pal/spi/cocoa/LaunchServicesSPI.h>
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <pal/spi/mac/NSApplicationSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/SetForScope.h>
 #import <wtf/SortedArrayMap.h>
@@ -180,6 +183,10 @@ void WebPage::createMockAccessibilityElement(pid_t pid)
 
 void WebPage::platformReinitializeAccessibilityToken()
 {
+    // platformInitializeAccessibility will transfer the token once the mock element is created.
+    if (!m_mockAccessibilityElement)
+        return;
+
     RefPtr frame = m_page->focusController().focusedOrMainFrame();
     if (!frame)
         return;
@@ -252,10 +259,10 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
 
     auto quads = RenderObject::absoluteTextQuads(*selectedRange);
     if (!quads.isEmpty())
-        postLayoutData.selectionBoundingRect = protect(frame.view())->contentsToWindow(enclosingIntRect(unitedBoundingBoxes(quads)));
+        postLayoutData.selectionBoundingRect = protect(frame.view())->contentsToMainFrameView(enclosingIntRect(unitedBoundingBoxes(quads)));
     else if (selection.isCaret()) {
         // Quads will be empty at the start of a paragraph.
-        postLayoutData.selectionBoundingRect = protect(frame.view())->contentsToWindow(protect(frame.selection())->absoluteCaretBounds());
+        postLayoutData.selectionBoundingRect = protect(frame.view())->contentsToMainFrameView(protect(frame.selection())->absoluteCaretBounds());
     }
 }
 
@@ -289,7 +296,7 @@ static String commandNameForSelectorName(const String& selectorName)
     return selectorName.left(selectorNameLength - 1);
 }
 
-static LocalFrame* NODELETE frameForEvent(KeyboardEvent* event)
+static LocalFrame* LEGACY_NODELETE frameForEvent(KeyboardEvent* event)
 {
     ASSERT(event->target());
     ASSERT(downcast<Node>(event->target())->document().frame());
@@ -305,8 +312,9 @@ bool WebPage::executeKeypressCommandsInternal(const Vector<WebCore::KeypressComm
 
     Ref editor = frame->editor();
     bool eventWasHandled = false;
-    for (size_t i = 0; i < commands.size(); ++i) {
-        auto& currentCommand = commands[i];
+    Borrow borrowedCommands = commands;
+    for (size_t i = 0; i < borrowedCommands->size(); ++i) {
+        auto& currentCommand = borrowedCommands[i];
         if (currentCommand.commandName == "insertText:"_s) {
             if (editor->hasComposition()) {
                 eventWasHandled = true;
@@ -340,11 +348,11 @@ bool WebPage::executeKeypressCommandsInternal(const Vector<WebCore::KeypressComm
                 bool commandExecutedByEditor = command.execute(event);
                 eventWasHandled |= commandExecutedByEditor;
                 if (!commandExecutedByEditor) {
-                    bool performedNonEditingBehavior = event->underlyingPlatformEvent()->type() == PlatformEvent::Type::RawKeyDown && performNonEditingBehaviorForSelector(commands[i].commandName, event);
+                    bool performedNonEditingBehavior = event->underlyingPlatformEvent()->type() == PlatformEvent::Type::RawKeyDown && performNonEditingBehaviorForSelector(borrowedCommands[i].commandName, event);
                     eventWasHandled |= performedNonEditingBehavior;
                 }
             } else {
-                auto sendResult = protect(WebProcess::singleton().parentProcessConnection())->sendSync(Messages::WebPageProxy::ExecuteSavedCommandBySelector(commands[i].commandName), m_identifier);
+                auto sendResult = protect(WebProcess::singleton().parentProcessConnection())->sendSync(Messages::WebPageProxy::ExecuteSavedCommandBySelector(borrowedCommands[i].commandName), m_identifier);
                 auto [commandWasHandledByUIProcess] = sendResult.takeReplyOr(false);
                 eventWasHandled |= commandWasHandledByUIProcess;
             }
@@ -381,7 +389,7 @@ bool WebPage::handleEditingKeyboardEvent(KeyboardEvent& event)
     // (e.g. Tab that inserts a Tab character, or Enter).
     bool haveTextInsertionCommands = false;
     Ref editor = frame->editor();
-    for (auto& command : commands) {
+    for (auto& command : borrow(commands)) {
         if (editor->command(commandNameForSelectorName(command.commandName)).isTextInsertion())
             haveTextInsertionCommands = true;
     }
@@ -495,7 +503,7 @@ void WebPage::updateRemotePageOffsetInMainFrame(WebCore::FrameIdentifier, WebCor
 
 void WebPage::registerRemoteFrameAccessibilityTokens(pid_t pid, WebCore::AccessibilityRemoteToken elementToken, WebCore::FrameIdentifier frameID)
 {
-    RetainPtr elementTokenData = toNSData(elementToken.bytes);
+    RetainPtr elementTokenData = toNSData(borrow(elementToken.bytes)->span());
     auto remoteElement = [elementTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:elementTokenData.get()]) : nil;
 
     // Each local root frame gets a mock accessibility element that serves as the target for the
@@ -511,8 +519,8 @@ void WebPage::registerRemoteFrameAccessibilityTokens(pid_t pid, WebCore::Accessi
 
 void WebPage::registerUIProcessAccessibilityTokens(WebCore::AccessibilityRemoteToken elementToken, WebCore::AccessibilityRemoteToken windowToken)
 {
-    RetainPtr elementTokenData = toNSData(elementToken.bytes);
-    RetainPtr windowTokenData = toNSData(windowToken.bytes);
+    RetainPtr elementTokenData = toNSData(borrow(elementToken.bytes)->span());
+    RetainPtr windowTokenData = toNSData(borrow(windowToken.bytes)->span());
     auto remoteElement = [elementTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:elementTokenData.get()]) : nil;
     auto remoteWindow = [windowTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:windowTokenData.get()]) : nil;
 
@@ -843,7 +851,7 @@ void WebPage::performImmediateActionHitTestAtLocation(WebCore::FrameIdentifier f
 
     // The UI process will hit-test again in the remote frame's process, so this one must not act on the hit test.
     auto subframe = EventHandler::subframeForTargetNode(protect(hitTestResult.targetNode()).get());
-    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(subframe).get()) {
+    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(subframe)) {
         if (RefPtr remoteFrameView = remoteFrame->view()) {
             return completionHandler(RemoteUserInputEventData {
                 remoteFrame->frameID(),
@@ -956,28 +964,36 @@ std::optional<WebCore::SimpleRange> WebPage::lookupTextAtLocation(FrameIdentifie
     }));
 }
 
-void WebPage::immediateActionDidUpdate()
+static RefPtr<LocalFrame> immediateActionFrame(WebPage& page, FrameIdentifier frameID)
 {
-    if (auto* localMainFrame = corePage()->localMainFrame())
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionUpdated);
+    RefPtr frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame || frame->page() != &page)
+        return nullptr;
+    return frame->coreLocalFrame();
 }
 
-void WebPage::immediateActionDidCancel()
+void WebPage::immediateActionDidUpdate(FrameIdentifier frameID)
 {
-    auto* localMainFrame = corePage()->localMainFrame();
-    if (!localMainFrame)
+    if (RefPtr frame = immediateActionFrame(*this, frameID))
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionUpdated);
+}
+
+void WebPage::immediateActionDidCancel(FrameIdentifier frameID)
+{
+    RefPtr frame = immediateActionFrame(*this, frameID);
+    if (!frame)
         return;
-    ImmediateActionStage lastStage = localMainFrame->eventHandler().immediateActionStage();
+    ImmediateActionStage lastStage = frame->eventHandler().immediateActionStage();
     if (lastStage == ImmediateActionStage::ActionUpdated)
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledAfterUpdate);
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledAfterUpdate);
     else
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledWithoutUpdate);
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledWithoutUpdate);
 }
 
-void WebPage::immediateActionDidComplete()
+void WebPage::immediateActionDidComplete(FrameIdentifier frameID)
 {
-    if (auto* localMainFrame = corePage()->localMainFrame())
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCompleted);
+    if (RefPtr frame = immediateActionFrame(*this, frameID))
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCompleted);
 }
 
 void WebPage::dataDetectorsDidPresentUI(PageOverlay::PageOverlayID overlayID)
@@ -1002,13 +1018,11 @@ void WebPage::dataDetectorsDidChangeUI(PageOverlay::PageOverlayID overlayID)
     }
 }
 
-void WebPage::dataDetectorsDidHideUI(PageOverlay::PageOverlayID overlayID)
+void WebPage::dataDetectorsDidHideUI(FrameIdentifier frameID, PageOverlay::PageOverlayID overlayID)
 {
-    RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(corePage()->mainFrame());
-    if (!localMainFrame)
-        return;
     // Dispatching a fake mouse event will allow clients to display any UI that is normally displayed on hover.
-    localMainFrame->eventHandler().dispatchFakeMouseMoveEventSoon();
+    if (RefPtr frame = immediateActionFrame(*this, frameID))
+        frame->eventHandler().dispatchFakeMouseMoveEventSoon();
 
     for (const auto& overlay : corePage()->pageOverlayController().pageOverlays()) {
         if (overlay->pageOverlayID() == overlayID) {
@@ -1202,8 +1216,7 @@ void WebPage::updatePDFHUDLocationsAfterRemoteFrameGeometryChange()
 {
     // A remote parent's geometry changes but a cross-origin <iframe> plugin's
     // local root view transform stays unchanged, so we ask the plugin to re-report
-    // its HUD location to the UI process, which runs the main frame conversion
-    // with newer geometry.
+    // its HUD location in main frame view coordinates with newer geometry.
     for (WeakPtr weakPlugin : m_pdfPlugInsWithHUD.values()) {
         if (RefPtr plugin = weakPlugin.get())
             plugin->updateHUDLocation();
@@ -1211,6 +1224,57 @@ void WebPage::updatePDFHUDLocationsAfterRemoteFrameGeometryChange()
 }
 
 #endif // ENABLE(PDF_PLUGIN)
+
+void WebPage::dispatchTrackedPointerEvent(std::optional<FrameIdentifier> frameID, WebEventPhase phase, FloatPoint locationInRootView, OptionSet<WebEventModifier> modifiers, CompletionHandler<void(bool, std::optional<RemoteUserInputEventData>)>&& completionHandler)
+{
+    RefPtr localRootFrame = this->localRootFrame(frameID);
+    if (!localRootFrame)
+        return completionHandler(false, std::nullopt);
+
+    bool isPressed = phase == WebEventPhase::Began || phase == WebEventPhase::Changed;
+    auto previousLocation = std::exchange(m_lastTrackedPointerLocation, isPressed ? std::optional { locationInRootView } : std::nullopt);
+
+    DoublePoint position { locationInRootView.x(), locationInRootView.y() };
+    if (phase == WebEventPhase::Cancelled) {
+        auto result = localRootFrame->eventHandler().cancelTrackedPointer(position, mousePointerID);
+        return completionHandler(false, result.remoteUserInputEventData());
+    }
+
+    auto type = [&] {
+        switch (phase) {
+        case WebEventPhase::Began:
+            return PlatformEvent::Type::MousePressed;
+        case WebEventPhase::Changed:
+            return PlatformEvent::Type::MouseMoved;
+        case WebEventPhase::Ended:
+            return PlatformEvent::Type::MouseReleased;
+        default:
+            return PlatformEvent::Type::NoType;
+        }
+    }();
+
+    if (type == PlatformEvent::Type::NoType)
+        return completionHandler(false, std::nullopt);
+
+    DoublePoint globalPosition = position;
+    if (RefPtr view = localRootFrame->view()) {
+        auto locationAcrossIsolatedFrames = view->convertToRootViewAcrossIsolatedFrames(locationInRootView);
+        globalPosition = { locationAcrossIsolatedFrames.x(), locationAcrossIsolatedFrames.y() };
+    }
+
+    DoublePoint movementDelta;
+    if (type == PlatformEvent::Type::MouseMoved && previousLocation)
+        movementDelta = { locationInRootView.x() - previousLocation->x(), locationInRootView.y() - previousLocation->y() };
+
+    SetForScope userIsInteractingChange { m_userIsInteracting, true };
+
+    PlatformMouseEvent platformEvent { position, globalPosition, MouseButton::Left, type, 1, platform(modifiers), MonotonicTime::now(), isPressed ? ForceAtClick : 0, SyntheticClickType::NoTap, MouseEventInputSource::Automation, mousePointerID, movementDelta };
+    // Pointer events report `buttons`, and a mouse pointer's `pressure`, from this.
+    platformEvent.setButtons(isPressed ? 1 : 0);
+
+    auto result = localRootFrame->eventHandler().dispatchTrackedPointerEvent(platformEvent);
+    completionHandler(result.wasHandled(), result.remoteUserInputEventData());
+}
 
 } // namespace WebKit
 

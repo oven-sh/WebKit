@@ -6,17 +6,9 @@ import("//build/config/arm.gni")
 import("//testing/test.gni")
 
 # If ARM optimizations shall be used to accelerate performance.
-use_opus_arm_optimization =
-    current_cpu == "arm" ||
-    (current_cpu == "arm64" && (is_fuchsia || is_ios || is_win))
+use_opus_arm_optimization = current_cpu == "arm" || current_cpu == "arm64"
 
 use_opus_x86_optimization = current_cpu == "x86" || current_cpu == "x64"
-
-# If OPUS Run Time CPU Detections (RTCD) shall be used.
-# Based on the conditions in celt/arm/armcpu.c:
-# defined(_MSC_VER) || defined(__linux__).
-use_opus_arm_rtcd =
-    current_cpu == "arm" && (is_win || is_android || is_linux || is_chromeos)
 
 config("opus_config") {
   include_dirs = [ "src/include" ]
@@ -83,9 +75,12 @@ config("opus_private_config") {
       # Some systems may have SSE4.1+ support.
       "OPUS_X86_MAY_HAVE_SSE4_1",
 
-      # At present libopus has no AVX functions so no sources are add for this,
-      # if you see linker errors on AVX code the this flag is why.
-      "OPUS_X86_MAY_HAVE_AVX",
+      # Some systems may have AVX2 support. libopus provides AVX2 kernels
+      # (celt_pitch_xcorr, silk_NSQ_del_dec, silk_inner_product_FLP) that are
+      # selected at runtime via RTCD; the actual sources are built in the
+      # ":opus_avx2" source_set below. MAY_HAVE (not PRESUME) so non-AVX2 CPUs
+      # fall back to SSE4.1/C at runtime.
+      "OPUS_X86_MAY_HAVE_AVX2",
     ]
   }
 
@@ -95,31 +90,22 @@ config("opus_private_config") {
         "OPUS_ARM_ASM",
         "OPUS_ARM_INLINE_ASM",
         "OPUS_ARM_INLINE_EDSP",
-      ]
-    }
-
-    if (use_opus_arm_rtcd) {
-      defines += [
         "OPUS_ARM_MAY_HAVE_EDSP",
         "OPUS_ARM_MAY_HAVE_MEDIA",
-        "OPUS_HAVE_RTCD",
+        "OPUS_ARM_PRESUME_EDSP",
+        "OPUS_ARM_PRESUME_MEDIA",
       ]
     }
 
-    if (arm_use_neon) {
-      defines += [
-        "OPUS_ARM_MAY_HAVE_NEON",
-        "OPUS_ARM_MAY_HAVE_NEON_INTR",
-      ]
-    }
+    defines += [
+      "OPUS_ARM_MAY_HAVE_NEON",
+      "OPUS_ARM_MAY_HAVE_NEON_INTR",
+      "OPUS_ARM_PRESUME_NEON",
+      "OPUS_ARM_PRESUME_NEON_INTR",
+    ]
 
-    if (is_ios && current_cpu == "arm64") {
-      # Runtime detection of CPU features not available on iOS.
-      defines += [
-        "OPUS_ARM_MAY_HAVE_NEON_INTR",
-        "OPUS_ARM_PRESUME_NEON_INTR",
-        "OPUS_ARM_PRESUME_AARCH64_NEON_INTR",
-      ]
+    if (current_cpu == "arm64") {
+      defines += [ "OPUS_ARM_PRESUME_AARCH64_NEON_INTR" ]
     }
   }
 }
@@ -154,19 +140,6 @@ config("opus_test_no_nonnull_config") {
   }
 }
 
-if (use_opus_arm_rtcd) {
-  action("convert_rtcd_assembler") {
-    script = "convert_rtcd_assembler.py"
-    outputs = [ "$target_gen_dir/celt_pitch_xcorr_arm_gnu.S" ]
-    args = [
-      rebase_path("//third_party/opus/src/celt/arm/arm2gnu.pl", root_build_dir),
-      rebase_path("//third_party/opus/src/celt/arm/celt_pitch_xcorr_arm.s",
-                  root_build_dir),
-      rebase_path("$target_gen_dir/celt_pitch_xcorr_arm_gnu.S", root_build_dir),
-    ]
-  }
-}
-
 if (use_opus_x86_optimization) {
   source_set("opus_sse41") {
     sources = [
@@ -188,7 +161,32 @@ if (use_opus_x86_optimization) {
       cflags = [ "-msse4.1" ]
     }
   }
-  # TODO(dalecurtis): If libopus ever adds AVX support, add an opus_avx block.
+
+  source_set("opus_avx2") {
+    sources = [
+      "src/celt/x86/pitch_avx.c",
+      "src/silk/float/x86/inner_product_FLP_avx2.c",
+      "src/silk/x86/NSQ_del_dec_avx2.c",
+    ]
+
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [ "//build/config/compiler:no_chromium_code" ]
+    configs += [
+      ":opus_private_config",
+      ":opus_config",
+    ]
+
+    if (!is_win || is_clang) {
+      # Matches upstream DEFAULT_X86_AVX2_CFLAGS (configure.ac).
+      cflags = [
+        "-mavx",
+        "-mfma",
+        "-mavx2",
+      ]
+    } else {
+      cflags = [ "/arch:AVX2" ]
+    }
+  }
 }
 
 # Note: Do not add any defines or include_dirs to this target, those should all
@@ -434,53 +432,36 @@ static_library("opus") {
       "src/silk/x86/main_sse.h",
       "src/silk/x86/x86_silk_map.c",
     ]
-    deps += [ ":opus_sse41" ]
+    deps += [
+      ":opus_avx2",
+      ":opus_sse41",
+    ]
   }
 
   if (use_opus_arm_optimization) {
     sources += [
+      "src/celt/arm/celt_neon_intr.c",
       "src/celt/arm/fixed_arm64.h",
       "src/celt/arm/fixed_armv4.h",
       "src/celt/arm/fixed_armv5e.h",
       "src/celt/arm/kiss_fft_armv4.h",
       "src/celt/arm/kiss_fft_armv5e.h",
       "src/celt/arm/pitch_arm.h",
+      "src/celt/arm/pitch_neon_intr.c",
+      "src/silk/arm/LPC_inv_pred_gain_arm.h",
+      "src/silk/arm/LPC_inv_pred_gain_neon_intr.c",
+      "src/silk/arm/NSQ_del_dec_arm.h",
+      "src/silk/arm/NSQ_del_dec_neon_intr.c",
+      "src/silk/arm/NSQ_neon.c",
+      "src/silk/arm/NSQ_neon.h",
       "src/silk/arm/SigProc_FIX_armv4.h",
       "src/silk/arm/SigProc_FIX_armv5e.h",
+      "src/silk/arm/biquad_alt_arm.h",
+      "src/silk/arm/biquad_alt_neon_intr.c",
       "src/silk/arm/macros_arm64.h",
       "src/silk/arm/macros_armv4.h",
       "src/silk/arm/macros_armv5e.h",
     ]
-
-    if (use_opus_arm_rtcd) {
-      sources += [
-        "$target_gen_dir/celt_pitch_xcorr_arm_gnu.S",
-        "src/celt/arm/arm_celt_map.c",
-        "src/celt/arm/armcpu.c",
-        "src/celt/arm/armcpu.h",
-        "src/celt/arm/fft_arm.h",
-        "src/celt/arm/mdct_arm.h",
-        "src/celt/arm/pitch_arm.h",
-        "src/silk/arm/arm_silk_map.c",
-        "src/silk/fixed/main_FIX.h",
-      ]
-      deps += [ ":convert_rtcd_assembler" ]
-    }
-
-    if (arm_use_neon) {
-      sources += [
-        "src/celt/arm/celt_neon_intr.c",
-        "src/celt/arm/pitch_neon_intr.c",
-        "src/silk/arm/LPC_inv_pred_gain_arm.h",
-        "src/silk/arm/LPC_inv_pred_gain_neon_intr.c",
-        "src/silk/arm/NSQ_del_dec_arm.h",
-        "src/silk/arm/NSQ_del_dec_neon_intr.c",
-        "src/silk/arm/NSQ_neon.c",
-        "src/silk/arm/NSQ_neon.h",
-        "src/silk/arm/biquad_alt_arm.h",
-        "src/silk/arm/biquad_alt_neon_intr.c",
-      ]
-    }
   }
 }
 

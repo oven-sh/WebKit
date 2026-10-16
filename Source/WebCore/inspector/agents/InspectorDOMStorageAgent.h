@@ -76,7 +76,7 @@ public:
     static Ref<Inspector::Protocol::DOMStorage::StorageId> storageId(const SecurityOrigin&, bool isLocalStorage);
 
 private:
-    RefPtr<StorageArea> findStorageArea(Inspector::Protocol::ErrorString&, Ref<JSON::Object>&& storageId, LocalFrame*&);
+    RefPtr<StorageArea> findStorageArea(Inspector::Protocol::ErrorString&, Ref<JSON::Object>&& storageId, RefPtr<LocalFrame>& targetFrame);
 
     const UniqueRef<Inspector::DOMStorageFrontendDispatcher> m_frontendDispatcher;
     const Ref<Inspector::DOMStorageBackendDispatcher> m_backendDispatcher;

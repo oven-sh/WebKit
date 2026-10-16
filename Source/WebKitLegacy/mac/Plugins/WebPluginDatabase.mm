@@ -47,7 +47,7 @@
 #import "WebUIKitSupport.h"
 #endif
 
-static void checkCandidate(WebBasePluginPackage **currentPlugin, WebBasePluginPackage **candidatePlugin);
+static void checkCandidate(WebBasePluginPackage * __weak *currentPlugin, WebBasePluginPackage **candidatePlugin);
 
 @interface WebPluginDatabase (Internal)
 + (NSArray *)_defaultPlugInPaths;
@@ -57,9 +57,16 @@ static void checkCandidate(WebBasePluginPackage **currentPlugin, WebBasePluginPa
 - (NSMutableSet *)_scanForNewPlugins;
 @end
 
-@implementation WebPluginDatabase
+@implementation WebPluginDatabase {
+    RetainPtr<NSMutableDictionary> plugins;
+    RetainPtr<NSMutableSet> registeredMIMETypes;
+    RetainPtr<NSArray> plugInPaths;
 
-static RetainPtr<WebPluginDatabase>& NODELETE sharedDatabase()
+    // Set of views with plugins attached
+    RetainPtr<NSMutableSet> pluginInstanceViews;
+}
+
+static RetainPtr<WebPluginDatabase>& LEGACY_NODELETE sharedDatabase()
 {
     static NeverDestroyed<RetainPtr<WebPluginDatabase>> sharedDatabase;
     return sharedDatabase;
@@ -87,7 +94,7 @@ static RetainPtr<WebPluginDatabase>& NODELETE sharedDatabase()
     [sharedDatabase() close];
 }
 
-static void checkCandidate(WebBasePluginPackage * __strong *currentPlugin, WebBasePluginPackage * __strong *candidatePlugin)
+static void checkCandidate(WebBasePluginPackage * __weak *currentPlugin, WebBasePluginPackage **candidatePlugin)
 {
     if (!*currentPlugin) {
         *currentPlugin = *candidatePlugin;
@@ -132,8 +139,8 @@ struct PluginPackageCandidates {
         return nil;
     }
     
-    WebBasePluginPackage *webPlugin;
-    WebBasePluginPackage *netscapePlugin;
+    __weak WebBasePluginPackage *webPlugin;
+    __weak WebBasePluginPackage *netscapePlugin;
 };
 
 - (WebBasePluginPackage *)pluginForMIMEType:(NSString *)MIMEType
@@ -181,7 +188,7 @@ struct PluginPackageCandidates {
     return [protect(plugins) allValues];
 }
 
-static RetainPtr<NSArray>& NODELETE additionalWebPlugInPaths()
+static RetainPtr<NSArray>& LEGACY_NODELETE additionalWebPlugInPaths()
 {
     static NeverDestroyed<RetainPtr<NSArray>> _additionalWebPlugInPaths;
     return _additionalWebPlugInPaths;
@@ -205,10 +212,8 @@ static RetainPtr<NSArray>& NODELETE additionalWebPlugInPaths()
 {
     if (plugInPaths == newPaths)
         return;
-        
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [plugInPaths release];
-    plugInPaths = [newPaths copy];
+
+    plugInPaths = adoptNS([newPaths copy]);
 }
 
 - (void)close
@@ -217,7 +222,6 @@ static RetainPtr<NSArray>& NODELETE additionalWebPlugInPaths()
     WebBasePluginPackage *plugin;
     while ((plugin = [pluginEnumerator nextObject]) != nil)
         [self _removePlugin:plugin];
-    SUPPRESS_UNRETAINED_ARG [plugins release];
     plugins = nil;
 }
 
@@ -226,20 +230,10 @@ static RetainPtr<NSArray>& NODELETE additionalWebPlugInPaths()
     if (!(self = [super init]))
         return nil;
         
-    registeredMIMETypes = [[NSMutableSet alloc] init];
-    pluginInstanceViews = [[NSMutableSet alloc] init];
+    registeredMIMETypes = adoptNS([[NSMutableSet alloc] init]);
+    pluginInstanceViews = adoptNS([[NSMutableSet alloc] init]);
     
     return self;
-}
-
-- (void)dealloc
-{
-    SUPPRESS_UNRETAINED_ARG [plugInPaths release];
-    SUPPRESS_UNRETAINED_ARG [plugins release];
-    SUPPRESS_UNRETAINED_ARG [registeredMIMETypes release];
-    SUPPRESS_UNRETAINED_ARG [pluginInstanceViews release];
-    
-    [super dealloc];
 }
 
 - (void)refresh
@@ -249,7 +243,7 @@ static RetainPtr<NSArray>& NODELETE additionalWebPlugInPaths()
     @autoreleasepool {
         // Create map from plug-in path to WebBasePluginPackage
         if (!plugins)
-            plugins = [[NSMutableDictionary alloc] initWithCapacity:12];
+            plugins = adoptNS([[NSMutableDictionary alloc] initWithCapacity:12]);
         RetainPtr pluginMap = plugins;
 
         // Find all plug-ins on disk
@@ -398,7 +392,7 @@ static RetainPtr<NSArray>& NODELETE additionalWebPlugInPaths()
         // backward compatibility with earlier versions of the +setAdditionalWebPlugInPaths: SPI,
         // which simply saved a copy of the additional paths and did not cause the plugin DB to 
         // refresh.  See Radars 4608487 and 4609047.
-        auto modifiedPlugInPaths = adoptNS([plugInPaths mutableCopy]);
+        RetainPtr modifiedPlugInPaths = adoptNS([protect(plugInPaths) mutableCopy]);
         [modifiedPlugInPaths addObjectsFromArray:additionalWebPlugInPaths().get()];
         return modifiedPlugInPaths.autorelease();
     }

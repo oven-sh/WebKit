@@ -49,7 +49,9 @@ auto FrameInfo::stateSnapshot(WebCore::FrameIdentifier frameID) -> StateSnapshot
         frame->certificateInfo(),
         parent ? std::optional(parent->frameID()) : std::nullopt,
         frame->title(),
-        frame->isMainFrame()
+        frame->isMainFrame(),
+        frame->processID(),
+        frame->page()
     };
 }
 
@@ -73,12 +75,12 @@ RefPtr<FrameHandle> FrameInfo::parentFrameHandle() const
 
 const WebKit::WebPageProxy* FrameInfo::page() const
 {
-    return WebKit::WebPageProxy::fromIdentifier(m_data.webPageProxyID);
+    return m_stateSnapshot.page.get();
 }
 
 WebKit::WebPageProxy* FrameInfo::page()
 {
-    return WebKit::WebPageProxy::fromIdentifier(m_data.webPageProxyID);
+    return m_stateSnapshot.page.get();
 }
 
 } // namespace API

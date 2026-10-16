@@ -244,7 +244,6 @@ WI.contentLoaded = function()
 
     WI.settings.showJavaScriptTypeInformation.addEventListener(WI.Setting.Event.Changed, WI._showJavaScriptTypeInformationSettingChanged, WI);
     WI.settings.enableControlFlowProfiler.addEventListener(WI.Setting.Event.Changed, WI._enableControlFlowProfilerSettingChanged, WI);
-    WI.settings.resourceCachingDisabled.addEventListener(WI.Setting.Event.Changed, WI._resourceCachingDisabledSettingChanged, WI);
     WI.settings.clearNetworkOnNavigate.addEventListener(WI.Setting.Event.Changed, WI._clearResourceDataOnNavigateSettingChanged, WI);
     WI.settings.experimentalAllowInspectingInspector.addEventListener(WI.Setting.Event.Changed, WI._allowInspectingInspectorSettingChanged, WI);
 
@@ -1491,7 +1490,7 @@ WI.showSourceCode = function(sourceCode, options = {})
         representedObject = representedObject.resource || representedObject;
     }
 
-    let cookie = {};
+    let cookie = {forceUnformatted: options.forceUnformatted};
 
     let positionToReveal = options.positionToReveal;
     if (positionToReveal) {
@@ -2087,7 +2086,7 @@ WI._domStorageWasInspected = function(event)
 
 WI._domNodeWasInspected = function(event)
 {
-    WI.domManager.highlightDOMNodeForTwoSeconds(event.data.node.id);
+    WI.domManager.highlightDOMNodeForTwoSeconds(event.data.node);
 
     InspectorFrontendHost.bringToFront();
 
@@ -2667,17 +2666,6 @@ WI._enableControlFlowProfilerSettingChanged = function(event)
             target.RuntimeAgent.enableControlFlowProfiler();
         else
             target.RuntimeAgent.disableControlFlowProfiler();
-    }
-};
-
-WI._resourceCachingDisabledSettingChanged = function(event)
-{
-    for (let target of WI.targets) {
-        // FIXME: <https://webkit.org/b/298979> Add Network support for FrameTarget.
-        if (target instanceof WI.FrameTarget)
-            continue;
-
-        target.NetworkAgent.setResourceCachingDisabled(WI.settings.resourceCachingDisabled.value);
     }
 };
 

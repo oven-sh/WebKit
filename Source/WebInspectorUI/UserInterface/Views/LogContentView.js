@@ -1210,12 +1210,10 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         this._unfilteredMessageElements().forEach(function(message) {
             let matchRanges = [];
             let text = message.textContent;
-            let match = searchRegex.exec(text);
-            while (match) {
+            WI.SearchUtilities.forEachMatch(searchRegex, text, (match) => {
                 numberOfResults++;
                 matchRanges.push({offset: match.index, length: match[0].length});
-                match = searchRegex.exec(text);
-            }
+            });
 
             if (!isEmptyObject(matchRanges))
                 this._highlightRanges(message, matchRanges);
@@ -1301,8 +1299,14 @@ WI.LogContentView = class LogContentView extends WI.ContentView
 
         this._startedProvisionalLoad = false;
 
-        for (let provisionalMessage of this._provisionalMessages)
+        for (let provisionalMessage of this._provisionalMessages) {
+            let scope = this._scopeFromMessageLevel(provisionalMessage.level);
+            this._scopesWithMessages.add(scope);
+
             this._logViewController.appendConsoleMessage(provisionalMessage);
+        }
+
+        this._showOrHideConditionallyVisibleScopeBarItemsAsNeeded();
 
         this._provisionalMessages = [];
     }

@@ -60,8 +60,11 @@ public:
     void setPrev(BasicRawSentinelNode* prev) { m_prev = prev; }
     void setNext(BasicRawSentinelNode* next) { m_next = next; }
     
-    T* prev() const { return static_cast<T*>(PtrTraits::unwrap(m_prev)); }
-    T* next() const { return static_cast<T*>(PtrTraits::unwrap(m_next)); }
+    T* prev() const { return derivedOrNull(PtrTraits::unwrap(m_prev)); }
+    T* next() const { return derivedOrNull(PtrTraits::unwrap(m_next)); }
+
+    T* derived() { return static_cast<T*>(this); }
+    const T* derived() const { return static_cast<const T*>(this); }
     
     bool isOnList() const
     {
@@ -75,6 +78,8 @@ public:
     void append(BasicRawSentinelNode*);
     
 private:
+    static T* derivedOrNull(BasicRawSentinelNode* node) { return node ? node->derived() : nullptr; }
+
     typename PtrTraits::StorageType m_next { nullptr };
     typename PtrTraits::StorageType m_prev { nullptr };
 };
@@ -91,9 +96,9 @@ public:
         {
         }
         
-        auto& operator*() const { return static_cast<NodeType&>(*m_node); }
+        auto& operator*() const { return *m_node->derived(); }
 
-        auto* operator->() const { return static_cast<NodeType*>(m_node); }
+        auto* operator->() const { return m_node->derived(); }
 
         BaseIterator& operator++()
         {
@@ -167,13 +172,13 @@ template <typename T, typename PtrTraits> void BasicRawSentinelNode<T, PtrTraits
 template <typename T, typename PtrTraits> void BasicRawSentinelNode<T, PtrTraits>::prepend(BasicRawSentinelNode* node)
 {
     SentinelLinkedList<T, BasicRawSentinelNode>::prepend(
-        static_cast<T*>(this), static_cast<T*>(node));
+        static_cast<T*>(this), node->derived());
 }
 
 template <typename T, typename PtrTraits> void BasicRawSentinelNode<T, PtrTraits>::append(BasicRawSentinelNode* node)
 {
     SentinelLinkedList<T, BasicRawSentinelNode>::append(
-        static_cast<T*>(this), static_cast<T*>(node));
+        static_cast<T*>(this), node->derived());
 }
 
 template <typename T, typename RawNode> inline typename SentinelLinkedList<T, RawNode>::iterator SentinelLinkedList<T, RawNode>::begin() LIFETIME_BOUND

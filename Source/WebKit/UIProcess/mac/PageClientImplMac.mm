@@ -92,6 +92,7 @@
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/SpanCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/CString.h>
 #import <wtf/text/WTFString.h>
 
@@ -362,6 +363,12 @@ void PageClientImpl::setCursor(const WebCore::Cursor& cursor)
     if ([NSApp _cursorRectCursor])
         return;
 
+    // The web process sends the cursor on every mouse move, and it is usually the one already showing.
+    // Check that first, since the checks below ask the window server which window is under the mouse.
+    RetainPtr platformCursor = cursor.platformCursor();
+    if ([NSCursor currentCursor] == platformCursor.get())
+        return;
+
     RetainPtr view = m_view.get();
     if (!view)
         return;
@@ -381,10 +388,6 @@ void PageClientImpl::setCursor(const WebCore::Cursor& cursor)
     RetainPtr contentView = [window contentView];
     RetainPtr hitView = [contentView hitTest:[[contentView superview] convertPoint:mouseLocationInWindow fromView:nil]];
     if (![hitView isDescendantOf:view])
-        return;
-
-    RetainPtr platformCursor = cursor.platformCursor();
-    if ([NSCursor currentCursor] == platformCursor.get())
         return;
 
     if (protect(m_impl)->imageAnalysisOverlayViewHasCursorAtPoint([view convertPoint:mouseLocationInScreen fromView:nil]))
@@ -786,7 +789,7 @@ String PageClientImpl::dismissCorrectionPanelSoon(WebCore::ReasonForDismissingAl
 #endif
 }
 
-static inline NSCorrectionResponse NODELETE toCorrectionResponse(AutocorrectionResponse response)
+static inline NSCorrectionResponse LEGACY_NODELETE toCorrectionResponse(AutocorrectionResponse response)
 {
     switch (response) {
     case WebCore::AutocorrectionResponse::Reverted:
@@ -1246,7 +1249,7 @@ bool PageClientImpl::appUsesCustomAccentColor()
     static BOOL usesCustomAppAccentColor = [] {
         RetainPtr bundleForAccentColor = [NSBundle mainBundle];
         RetainPtr info = [bundleForAccentColor infoDictionary];
-        RetainPtr<NSString> accentColorName = info.get()[@"NSAccentColorName"];
+        RetainPtr accentColorName = dynamic_objc_cast<NSString>(info.get()[@"NSAccentColorName"]);
         BOOL usesCustomAppAccentColor = NO;
         if ([accentColorName length])
             usesCustomAppAccentColor = !![NSColor colorNamed:accentColorName.get() bundle:bundleForAccentColor.get()];

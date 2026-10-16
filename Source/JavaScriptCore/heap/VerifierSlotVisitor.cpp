@@ -113,10 +113,12 @@ VerifierSlotVisitor::VerifierSlotVisitor(Collector& collector)
 
 VerifierSlotVisitor::~VerifierSlotVisitor()
 {
-    m_collector.heap().objectSpace().forEachBlock(
-        [&] (MarkedBlock::Handle* handle) {
-            handle->block().setVerifierMemo(nullptr);
-        });
+    m_collector.forEachHeap([](JSC::Heap& heap) {
+        heap.objectSpace().forEachBlock(
+            [](MarkedBlock::Handle* handle) {
+                handle->block().setVerifierMemo(nullptr);
+            });
+    });
 }
 
 void VerifierSlotVisitor::addParallelConstraintTask(RefPtr<SharedTask<void(AbstractSlotVisitor&)>> task)
@@ -351,11 +353,11 @@ void VerifierSlotVisitor::markAuxiliary(const void* base)
 {
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
 
-    ASSERT(cell->heap() == &m_collector.heap());
+    ASSERT(m_collector.hasHeap(*cell->heap()));
     testAndSetMarked(cell);
 }
 
-bool VerifierSlotVisitor::mutatorIsStopped() const
+bool VerifierSlotVisitor::mutatorsAreStopped() const
 {
     return true;
 }

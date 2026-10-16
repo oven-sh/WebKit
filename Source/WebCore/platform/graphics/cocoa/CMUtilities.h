@@ -55,7 +55,7 @@ WEBCORE_EXPORT RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrac
 WEBCORE_EXPORT RefPtr<AudioInfo> createAudioInfoFromFormatDescription(CMFormatDescriptionRef);
 // audioStreamDescriptFromAudioInfo only works with compressed audio format (non PCM)
 WEBCORE_EXPORT CAAudioStreamDescription audioStreamDescriptionFromAudioInfo(const AudioInfo&);
-WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef);
+WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef, std::optional<uint8_t> reorderQueueMaxSize = { });
 WEBCORE_EXPORT Ref<SharedBuffer> sharedBufferFromCMBlockBuffer(CMBlockBufferRef);
 WEBCORE_EXPORT RetainPtr<CMBlockBufferRef> ensureContiguousBlockBuffer(CMBlockBufferRef);
 
@@ -82,7 +82,7 @@ PlatformVideoColorSpace computeVideoFrameColorSpace(CVPixelBufferRef);
 WEBCORE_EXPORT Vector<Ref<SharedBuffer>> getKeyIDs(CMFormatDescriptionRef);
 #endif
 
-WEBCORE_EXPORT FourCC NODELETE computeBoxType(FourCC);
+WEBCORE_EXPORT FourCC LEGACY_NODELETE computeBoxType(FourCC);
 
 WEBCORE_EXPORT std::pair<std::unique_ptr<AudioChannelLayout, WTF::SystemFree<AudioChannelLayout>>, size_t> channelLayoutFromChannelLayoutTag(UInt32);
 // Retrieve channel layout name string for debugging.
@@ -96,7 +96,7 @@ public:
 
     bool isValid() const { return m_isValid; }
     size_t framesInPacket(std::span<const uint8_t>);
-    void NODELETE reset();
+    void LEGACY_NODELETE reset();
 
 private:
     uint32_t m_audioFormatID { 0 };

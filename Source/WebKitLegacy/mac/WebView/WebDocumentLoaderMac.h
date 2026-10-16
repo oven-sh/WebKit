@@ -51,8 +51,8 @@ public:
     }
 
     void setDataSource(WebDataSource *, WebView*);
-    void NODELETE detachDataSource();
-    WebDataSource *NODELETE dataSource() const;
+    void LEGACY_NODELETE detachDataSource();
+    WebDataSource *LEGACY_NODELETE dataSource() const;
 
     void increaseLoadCount(WebCore::ResourceLoaderIdentifier);
     void decreaseLoadCount(WebCore::ResourceLoaderIdentifier);
@@ -69,7 +69,7 @@ private:
     void retainDataSource();
     void releaseDataSource();
 
-    WebDataSource *m_dataSource;
+    __weak WebDataSource *m_dataSource;
     bool m_isDataSourceRetained;
     RetainPtr<id> m_resourceLoadDelegate;
     RetainPtr<id> m_downloadDelegate;

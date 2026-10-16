@@ -40,9 +40,10 @@ namespace TestWebKitAPI {
 
 struct FrameSpec {
     String host { "a.com"_s };
-    String body;
-    String iframeAttributes;
-    Vector<FrameSpec> children;
+    String body { };
+    String iframeAttributes { };
+    Vector<FrameSpec> children { };
+    String iframeContainerStyle { };
 };
 
 enum class SiteIsolation : bool { Off, On };

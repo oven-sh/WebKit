@@ -35,6 +35,7 @@
 #include "RenderBlockFlowInlines.h"
 #include "RenderStyleConstants.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
 #include "TextBoxTrimmer.h"
@@ -157,21 +158,22 @@ static inline void populateIFCWithNewlyPlacedFloats(auto& blockRenderer, auto& p
         auto shapeOutsideInfo = floatingObject->renderer()->shapeOutsideInfo();
         RefPtr shape = shapeOutsideInfo ? &shapeOutsideInfo->computedShape() : nullptr;
 
-        auto usedPosition = Style::ComputedStyle::usedFloat(*floatingObject->renderer()) == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
+        auto usedPosition = floatingObject->renderer()->usedStyle().floating() == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
         placedFloats.add({ usedPosition, boxGeometry, borderBoxTopLeft, WTF::move(shape) });
     }
 }
 
-static inline size_t NODELETE remainingLinesForLineClamp(auto& inlineLayoutState)
+static inline size_t LEGACY_NODELETE remainingLinesForLineClamp(auto& inlineLayoutState)
 {
     // The lines we have already put on the parent's own lines (and in its earlier nested blocks) are part of the clamp's
     // budget, and the nested block has to lay out within what is left of it. A block level sibling gets this from
     // LineClampUpdater, which drops each preceding sibling's line count from the budget as it goes.
     auto maximumLines = inlineLayoutState.parentBlockLayoutState().lineClamp()->maximumLines;
-    return maximumLines - std::min(maximumLines, inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks());
+    auto lineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+    return maximumLines > lineCount ? maximumLines - lineCount : 0;
 }
 
-static inline void NODELETE updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline void updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
@@ -188,10 +190,10 @@ static inline void NODELETE updateRenderTreeLineClampBeforeLayout(auto& inlineLa
     }
 
     if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp())
-        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow });
+        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow, renderTreeLineClamp->clampAfterBox, renderTreeLineClamp->isStableTextWrap, renderTreeLineClamp->hasConstrainedTextWrapContent });
 }
 
-static inline void NODELETE updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline void updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 

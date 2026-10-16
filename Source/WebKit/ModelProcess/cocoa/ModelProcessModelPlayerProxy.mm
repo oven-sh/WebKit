@@ -239,7 +239,7 @@ public:
     RKUSDModelLoadScheduler() = default;
 
     Ref<REModelLoader> scheduleModelLoad(Model&, const std::optional<String>& attributionTaskID, std::optional<int> entityMemoryLimit, REModelLoaderClient&);
-    void scheduleModelConversion(Ref<WebCore::SharedBuffer>&&, ThreadSafeWeakPtr<ModelProcessModelPlayerProxy>&&, Function<void(ModelProcessModelPlayerProxy&, RetainPtr<NSData>&&)>&&);
+    void scheduleModelConversion(Ref<WebCore::SharedBuffer>&&, const String& mimeType, ThreadSafeWeakPtr<ModelProcessModelPlayerProxy>&&, Function<void(ModelProcessModelPlayerProxy&, RetainPtr<NSData>&&)>&&);
 
 private:
     void loadNextModel();
@@ -270,14 +270,14 @@ Ref<REModelLoader> RKUSDModelLoadScheduler::scheduleModelLoad(Model& model, cons
     return loader;
 }
 
-void RKUSDModelLoadScheduler::scheduleModelConversion(Ref<WebCore::SharedBuffer>&& modelData, ThreadSafeWeakPtr<ModelProcessModelPlayerProxy>&& player, Function<void(ModelProcessModelPlayerProxy&, RetainPtr<NSData>&&)>&& completion)
+void RKUSDModelLoadScheduler::scheduleModelConversion(Ref<WebCore::SharedBuffer>&& modelData, const String& mimeType, ThreadSafeWeakPtr<ModelProcessModelPlayerProxy>&& player, Function<void(ModelProcessModelPlayerProxy&, RetainPtr<NSData>&&)>&& completion)
 {
-    m_conversionQueue->dispatch([modelData = WTF::move(modelData), player = WTF::move(player), completion = WTF::move(completion)] () mutable {
+    m_conversionQueue->dispatch([modelData = WTF::move(modelData), mimeType = mimeType.isolatedCopy(), player = WTF::move(player), completion = WTF::move(completion)] mutable {
         // Skip the copy + conversion if the player is already gone (e.g. its <model> element was unloaded).
         if (!player.get())
             return;
 
-        RetainPtr usdzData = [WKUSDStageConverter convert:modelData->createNSData()];
+        RetainPtr usdzData = [WKUSDStageConverter convert:modelData->createNSData() mimeType:mimeType.createNSString().get()];
 
         dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([player = WTF::move(player), completion = WTF::move(completion), usdzData = WTF::move(usdzData)] () mutable {
             if (RefPtr protectedPlayer = player.get())
@@ -419,7 +419,8 @@ void ModelProcessModelPlayerProxy::loadModel(WebCore::NodeIdentifier nodeID, Ref
 #if HAVE(CORE_RE)
     if (model->mimeType() != usdzMIMEType) {
         Ref<WebCore::SharedBuffer> modelData = model->data();
-        RKUSDModelLoadScheduler::singleton().scheduleModelConversion(WTF::move(modelData), ThreadSafeWeakPtr { *this }, [model = WTF::move(model), layoutSize, isForImmersive, nodeID](ModelProcessModelPlayerProxy& proxy, RetainPtr<NSData>&& usdzData) mutable {
+        String mimeType = model->mimeType();
+        RKUSDModelLoadScheduler::singleton().scheduleModelConversion(WTF::move(modelData), mimeType, ThreadSafeWeakPtr { *this }, [model = WTF::move(model), layoutSize, isForImmersive, nodeID](ModelProcessModelPlayerProxy& proxy, RetainPtr<NSData>&& usdzData) mutable {
             dispatch_assert_queue(mainDispatchQueueSingleton());
 
             if (usdzData) {
@@ -2209,6 +2210,14 @@ void ModelProcessModelPlayerProxy::applyVolumetricPresentationTransform()
     if (m_stageModeInteractionDriver)
         [m_stageModeInteractionDriver setContainerTransformInPortal];
 #endif
+
+    simd_float3 center = fitSRT->translation + simd_act(fitSRT->rotation, fitSRT->scale * bounds->center);
+    std::pair hitSphere { WebCore::FloatPoint3D { center.x, center.y, center.z }, fitSRT->scale.x * bounds->boundingRadius };
+    if (hitSphere == m_lastSentVolumetricHitSphere)
+        return;
+
+    m_lastSentVolumetricHitSphere = hitSphere;
+    send(Messages::ModelProcessModelPlayer::DidUpdateVolumetricHitSphere(hitSphere.first, hitSphere.second));
 }
 
 void ModelProcessModelPlayerProxy::setGroundingShadowsEnabled(bool enabled)
@@ -2246,6 +2255,7 @@ void ModelProcessModelPlayerProxy::exitVolumetricPresentation()
 {
     setGroundingShadowsEnabled(false);
     m_volumeSizeInMeters = { };
+    m_lastSentVolumetricHitSphere = std::nullopt;
 
     setPresentationMode(WebCore::ModelPresentationMode::Inline);
 }

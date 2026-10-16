@@ -30,19 +30,17 @@
 #include "RFC8941.h"
 #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
-#include "SecurityOrigin.h"
 #include "Settings.h"
 
 namespace WebCore {
 
 // https://html.spec.whatwg.org/multipage/origin.html#initialise-the-document-object
 // (the Origin-Agent-Cluster portion)
-OriginKeyed obtainOriginAgentClusterPolicy(const ResourceResponse& response, const URL& topLevelCreationURL, const ScriptExecutionContext* context)
+OriginKeyed obtainOriginAgentClusterPolicy(const ResourceResponse& response, IsSecureContext isSecureContext, const ScriptExecutionContext* context)
 {
-    if (context && !context->settingsValues().originAgentClusterEnabled)
+    if (isSecureContext == IsSecureContext::No)
         return OriginKeyed::No;
-    // FIXME: Determine once per navigation whether the reserved environment is a secure context.
-    if (!SecurityOrigin::create(response.url())->isPotentiallyTrustworthy() || !SecurityOrigin::create(topLevelCreationURL)->isPotentiallyTrustworthy())
+    if (context && !context->settingsValues().originAgentClusterEnabled)
         return OriginKeyed::No;
 
     auto parsingResult = RFC8941::parseItemStructuredFieldValue(response.httpHeaderField(HTTPHeaderName::OriginAgentCluster));

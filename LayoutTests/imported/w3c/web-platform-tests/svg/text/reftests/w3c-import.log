@@ -134,6 +134,9 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-transform-002-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-transform-002-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-transform-002.html
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-unknown-element-not-rendered-expected.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-unknown-element-not-rendered-ref.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-unknown-element-not-rendered.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-xml-space-001-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-xml-space-001-ref.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/text-xml-space-001.svg
@@ -226,6 +229,12 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-005-expected.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-005-ref.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-005.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-right-startoffset-expected.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-right-startoffset-ref.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-right-startoffset.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-right-subpaths-expected.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-right-subpaths-ref.svg
+/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-right-subpaths.svg
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/transform-dynamic-change-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/transform-dynamic-change-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/transform-dynamic-change-root-expected.html

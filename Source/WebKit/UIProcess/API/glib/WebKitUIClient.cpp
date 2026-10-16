@@ -20,6 +20,7 @@
 #include "config.h"
 #include "WebKitUIClient.h"
 
+#include "APIPageConfiguration.h"
 #include "APIUIClient.h"
 #include "DrawingAreaProxy.h"
 #include "GeolocationPermissionRequestProxy.h"
@@ -77,6 +78,7 @@ private:
 
     void showPage(WebPageProxy*) final
     {
+        m_wasReadyToShowEmitted = true;
         webkitWebViewReadyToShowPage(m_webView);
     }
 
@@ -175,7 +177,7 @@ private:
         RunLoop::currentSingleton().stop();
     }
 
-    void setWindowFrame(WebPageProxy&, const WebCore::FloatRect& frame) final
+    void setWindowFrame(WebPageProxy& page, const WebCore::FloatRect& frame) final
     {
 #if PLATFORM(GTK)
         GdkRectangle geometry = WebCore::IntRect(frame);
@@ -230,9 +232,14 @@ private:
 #else
             g_signal_handler_disconnect(window, signalID);
 #endif
-        } else
-            webkitWindowPropertiesSetGeometry(webkit_web_view_get_window_properties(m_webView), &geometry);
+            return;
+        }
 #endif // PLATFORM(GTK)
+
+        auto* windowProperties = webkit_web_view_get_window_properties(m_webView);
+        webkitWindowPropertiesSetGeometry(windowProperties, WebCore::IntRect(frame));
+        if (m_wasReadyToShowEmitted || !page.configuration().windowFeatures())
+            webkitWindowPropertiesSetHasCustomGeometry(windowProperties, true);
     }
 
     void windowFrame(WebPageProxy&, Function<void(std::optional<WebCore::FloatRect>)>&& completionHandler) final
@@ -394,6 +401,7 @@ private:
 #endif
 
     WebKitWebView* m_webView;
+    bool m_wasReadyToShowEmitted { false };
 #if ENABLE(POINTER_LOCK)
     GWeakPtr<WebKitPointerLockPermissionRequest> m_pointerLockPermissionRequest { nullptr };
 #endif

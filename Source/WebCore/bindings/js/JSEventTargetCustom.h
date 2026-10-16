@@ -49,7 +49,8 @@ public:
     operator JSC::JSObject&() { ASSERT(m_wrapper); return *m_wrapper; }
 
 private:
-    EventTarget* m_wrapped { nullptr };
+    // Only lives on the stack, while the JS wrapper keeps the wrapped object alive.
+    SUPPRESS_UNCOUNTED_MEMBER EventTarget* m_wrapped { nullptr };
     JSC::JSObject* m_wrapper { nullptr };
 };
 

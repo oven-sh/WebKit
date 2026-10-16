@@ -29,7 +29,9 @@
 
 #include "AuxiliaryProcess.h"
 #include "GPUProcessPreferences.h"
+#include "ImageBufferBackendHandle.h"
 #include "RemoteSerializedImageBufferIdentifier.h"
+#include <WebCore/ColorSpace.h>
 #include <WebCore/ImageBufferTransferIdentifier.h>
 #include "RemoteSnapshotIdentifier.h"
 #include "SandboxExtension.h"
@@ -113,22 +115,22 @@ public:
 
     void prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&&);
     void processDidResume();
-    void NODELETE resume();
+    void LEGACY_NODELETE resume();
 
-    void NODELETE connectionToWebProcessClosed(IPC::Connection&);
+    void LEGACY_NODELETE connectionToWebProcessClosed(IPC::Connection&);
 
     GPUConnectionToWebProcess* webProcessConnection(WebCore::ProcessIdentifier) const;
 
     // Never sent to the WebContent process.
     const SecurityFlags& securityFlags() const LIFETIME_BOUND { return m_securityFlags; }
 
-    const String& NODELETE mediaCacheDirectory(PAL::SessionID) const LIFETIME_BOUND;
+    const String& LEGACY_NODELETE mediaCacheDirectory(PAL::SessionID) const LIFETIME_BOUND;
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA) || ENABLE(ENCRYPTED_MEDIA)
-    const String& NODELETE mediaKeysStorageDirectory(PAL::SessionID) const LIFETIME_BOUND;
+    const String& LEGACY_NODELETE mediaKeysStorageDirectory(PAL::SessionID) const LIFETIME_BOUND;
 #endif
 
 #if ENABLE(GPU_PROCESS) && USE(AUDIO_SESSION)
-    RemoteAudioSessionProxyManager& audioSessionManager() const;
+    RemoteAudioSessionProxyManager& audioSessionManager();
 #endif
 
     WebCore::NowPlayingManager& nowPlayingManager() LIFETIME_BOUND;
@@ -172,7 +174,7 @@ public:
 #endif
 
 #if ENABLE(WEBXR)
-    std::optional<WebCore::ProcessIdentity> NODELETE immersiveModeProcessIdentity() const;
+    std::optional<WebCore::ProcessIdentity> LEGACY_NODELETE immersiveModeProcessIdentity() const;
 #endif
 
 #if HAVE(AUDIT_TOKEN)
@@ -252,7 +254,7 @@ private:
     void removeSession(PAL::SessionID);
     void updateSandboxAccess(const Vector<SandboxExtension::Handle>&);
 
-    bool NODELETE updatePreference(std::optional<bool>& oldPreference, std::optional<bool>& newPreference);
+    bool LEGACY_NODELETE updatePreference(std::optional<bool>& oldPreference, std::optional<bool>& newPreference);
     void userPreferredLanguagesChanged(Vector<String>&&);
 
 #if ENABLE(MEDIA_STREAM)
@@ -276,13 +278,16 @@ private:
     void cancelGetDisplayMediaPrompt();
 #endif
 #if PLATFORM(MAC)
-    void NODELETE setScreenProperties(const WebCore::ScreenProperties&);
+    void LEGACY_NODELETE setScreenProperties(const WebCore::ScreenProperties&);
     void updateProcessName();
 #endif
 #if PLATFORM(COCOA)
     void sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
 #endif
-    void sinkCompletedSnapshotToBitmap(WebKit::RemoteSnapshotIdentifier, WebCore::FrameIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+    void sinkCompletedSnapshotToBitmap(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+#if HAVE(IOSURFACE)
+    void sinkCompletedSnapshotToIOSurface(RemoteSnapshotIdentifier, float scale, const WebCore::ColorSpace&, WebCore::FrameIdentifier, CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&)>&&);
+#endif
     void releaseSnapshot(RemoteSnapshotIdentifier);
     void snapshotFrameWillBeDrawnByProcess(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, WebCore::ProcessIdentifier);
     void waitForSnapshot(RemoteSnapshotIdentifier, CompletionHandler<void()>&&);
@@ -291,6 +296,7 @@ private:
     // Takes the snapshot once it is complete, or passes null if it failed.
     void takeSnapshotWhenComplete(RemoteSnapshotIdentifier, WebCore::FrameIdentifier rootFrameIdentifier, CompletionHandler<void(RefPtr<RemoteSnapshot>&&)>&&);
     void abandonSnapshotFramesOwnedBy(WebCore::ProcessIdentifier);
+    void removeSnapshotsForProcess(WebCore::ProcessIdentifier);
 
 #if USE(OS_STATE)
     RetainPtr<NSDictionary> additionalStateForDiagnosticReport() const final;

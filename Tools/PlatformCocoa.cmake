@@ -13,14 +13,7 @@ if (ENABLE_SWIFTBROWSER AND ENABLE_WEBKIT)
     add_subdirectory(SwiftBrowser)
 endif ()
 
-# WebKitTestRunner for layout tests (https://bugs.webkit.org/show_bug.cgi?id=231776).
-# DumpRenderTree is WK1-only -- not built here.
-option(ENABLE_WEBKIT_TEST_RUNNER "Build WebKitTestRunner for layout tests" ON)
-if (ENABLE_WEBKIT_TEST_RUNNER AND ENABLE_WEBKIT)
-    add_subdirectory(ImageDiff)
-    add_subdirectory(TestRunnerShared)
-    add_subdirectory(WebKitTestRunner)
-
+if (ENABLE_LAYOUT_TESTS)
     # LayoutTestHelper locks screen color profile during test runs (mac.py:start_helper).
     # FIXME: Stub config.h works around DRT/config.h pulling in JSC headers.
     # https://bugs.webkit.org/show_bug.cgi?id=312070

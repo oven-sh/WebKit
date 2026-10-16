@@ -149,7 +149,7 @@ static os_log_t webkitSubsystemForGenericOSLog()
 static void logToStderr([[maybe_unused]] WTFLogChannel* channel, UTF8CStringView buffer)
 {
 #if PLATFORM(COCOA)
-    os_log(channel ? channel->osLogChannel : webkitSubsystemForGenericOSLog(), "%s", buffer.utf8());
+    SAFE_OS_LOG(channel ? channel->osLogChannel : webkitSubsystemForGenericOSLog(), "%s", buffer);
 #elif OS(ANDROID)
     __android_log_write(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, buffer.utf8());
 #endif
@@ -611,7 +611,7 @@ void WTFLogAlwaysAndCrash(const char* format, ...)
     CRASH();
 }
 
-static void NODELETE setStateOfAllChannels(WTFLogChannel* channels[], size_t channelCount, WTFLogChannelState state)
+static void LEGACY_NODELETE setStateOfAllChannels(WTFLogChannel* channels[], size_t channelCount, WTFLogChannelState state)
 {
     for (size_t i = 0; i < channelCount; ++i)
         channels[i]->state = state;
@@ -683,7 +683,8 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
 
 #if !ASAN_ENABLED && (OS(DARWIN) || PLATFORM(PLAYSTATION)) && (CPU(X86_64) || CPU(ARM64))
 
-void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5, UCPURegister misc6)
+// The crash instruction is inline assembly, which the static analyzer cannot prove runs no destructors.
+SUPPRESS_NODELETE void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5, UCPURegister misc6)
 {
     register UCPURegister reasonGPR __asm__(CRASH_GPR0) = reason;
     register UCPURegister misc1GPR __asm__(CRASH_GPR1) = misc1;
@@ -696,7 +697,8 @@ void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UC
     __builtin_unreachable();
 }
 
-void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5)
+// The crash instruction is inline assembly, which the static analyzer cannot prove runs no destructors.
+SUPPRESS_NODELETE void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5)
 {
     register UCPURegister reasonGPR __asm__(CRASH_GPR0) = reason;
     register UCPURegister misc1GPR __asm__(CRASH_GPR1) = misc1;

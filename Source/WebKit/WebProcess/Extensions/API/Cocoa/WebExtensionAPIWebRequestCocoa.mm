@@ -35,6 +35,7 @@
 #import "WebExtensionAPIWebRequest.h"
 #import <WebCore/HTTPStatusCodes.h>
 #import <WebCore/ResourceResponse.h>
+#import <wtf/Borrow.h>
 #import <wtf/URLParser.h>
 
 #if ENABLE(WK_WEB_EXTENSIONS)
@@ -145,7 +146,7 @@ static NSString *toWebAPI(const WebCore::FormData& formData, const String& conte
     for (const WebCore::FormDataElement& element : formData.elements()) {
         if (auto* data = std::get_if<Vector<uint8_t>>(&element.data)) {
             if (isURLEncoded) {
-                auto dataString = String::fromUTF8(data->span());
+                auto dataString = String::fromUTF8(borrow(*data)->span());
 
                 for (auto& pair : URLParser::parseURLEncodedForm(dataString)) {
                     RetainPtr key = pair.key.createNSString();
@@ -288,7 +289,7 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
     auto contentType = request.httpContentType();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onBeforeRequest().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
+        protect(protect(namespaceObject.webRequest())->onBeforeRequest())->enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (formData && extraInfo.contains(String(requestBodyKey))) {
                 if (auto *requestBody = toWebAPI(*formData, contentType, listener.globalContext()))
                     [details setObject:requestBody forKey:requestBodyKey];
@@ -302,7 +303,7 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
 
     RetainPtr<NSArray> requestHeaders;
 
-    auto handleListeners = [&](auto& listeners) {
+    auto handleListeners = [&](WebExtensionAPIWebRequestEvent& listeners) {
         listeners.enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(requestHeadersKey))) {
                 if (!requestHeaders)
@@ -317,8 +318,8 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
     };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onBeforeSendHeaders());
-        handleListeners(namespaceObject.webRequest().onSendHeaders());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onBeforeSendHeaders()));
+        handleListeners(protect(protect(namespaceObject.webRequest())->onSendHeaders()));
     });
 }
 
@@ -327,7 +328,7 @@ void WebExtensionContextProxy::resourceLoadDidBlockBeforeRequest(WebExtensionTab
     auto *details = webRequestDetailsForResourceLoad(resourceLoad, tabID);
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onBeforeRequest().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto&) {
+        protect(protect(namespaceObject.webRequest())->onBeforeRequest())->enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto&) {
             listener.call(toJSValueRef(listener.globalContext(), details));
         });
     });
@@ -338,7 +339,7 @@ void WebExtensionContextProxy::resourceLoadDidPerformHTTPRedirection(WebExtensio
     auto *details = headersReceivedDetails(resourceLoad, tabID, response);
     NSArray *responseHeaders;
 
-    auto handleListeners = [&](auto& listeners) {
+    auto handleListeners = [&](WebExtensionAPIWebRequestEvent& listeners) {
         listeners.enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(responseHeadersKey))) {
                 if (!responseHeaders)
@@ -353,13 +354,13 @@ void WebExtensionContextProxy::resourceLoadDidPerformHTTPRedirection(WebExtensio
     };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onHeadersReceived());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onHeadersReceived()));
     });
 
     details[redirectURLKey] = newRequest.url().string().createNSString().get();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onBeforeRedirect());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onBeforeRedirect()));
     });
 }
 
@@ -389,7 +390,7 @@ void WebExtensionContextProxy::resourceLoadDidReceiveChallenge(WebExtensionTabId
         details[realmKey] = realm;
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onAuthRequired().invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
+        protect(protect(namespaceObject.webRequest())->onAuthRequired())->invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
     });
 }
 
@@ -398,7 +399,7 @@ void WebExtensionContextProxy::resourceLoadDidReceiveResponse(WebExtensionTabIde
     auto *details = headersReceivedDetails(resourceLoad, tabID, response);
     NSArray *responseHeaders;
 
-    auto handleListeners = [&](auto& listeners) {
+    auto handleListeners = [&](WebExtensionAPIWebRequestEvent& listeners) {
         listeners.enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(responseHeadersKey))) {
                 if (!responseHeaders)
@@ -413,8 +414,8 @@ void WebExtensionContextProxy::resourceLoadDidReceiveResponse(WebExtensionTabIde
     };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onHeadersReceived());
-        handleListeners(namespaceObject.webRequest().onResponseStarted());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onHeadersReceived()));
+        handleListeners(protect(protect(namespaceObject.webRequest())->onResponseStarted()));
     });
 }
 
@@ -429,7 +430,7 @@ void WebExtensionContextProxy::resourceLoadDidCompleteWithError(WebExtensionTabI
         }];
 
         enumerateNamespaceObjects([&](auto& namespaceObject) {
-            namespaceObject.webRequest().onErrorOccurred().invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
+            protect(protect(namespaceObject.webRequest())->onErrorOccurred())->invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
         });
 
         return;
@@ -440,7 +441,7 @@ void WebExtensionContextProxy::resourceLoadDidCompleteWithError(WebExtensionTabI
     NSArray *responseHeaders;
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onCompleted().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
+        protect(protect(namespaceObject.webRequest())->onCompleted())->enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(responseHeadersKey))) {
                 if (!responseHeaders)
                     responseHeaders = convertHeaderFieldsToWebExtensionFormat(response.httpHeaderFields());

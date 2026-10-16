@@ -36,6 +36,7 @@
 
 #if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
 #import "VolumetricSceneContentContext.h"
+#import <WebCore/FloatPoint3D.h>
 #import <WebCore/NodeIdentifier.h>
 #import <wtf/CompletionHandler.h>
 #endif
@@ -71,6 +72,7 @@ public:
     void reconnectVolumetricSceneToContentContext(WebCore::NodeIdentifier, const VolumetricSceneContentContext&);
     void hideVolumetricScene(WebCore::NodeIdentifier);
     void hideAllVolumetricScenes();
+    void updateVolumetricSceneHitSphere(WebCore::NodeIdentifier, const WebCore::FloatPoint3D& center, float radius);
 #endif
 
 private:

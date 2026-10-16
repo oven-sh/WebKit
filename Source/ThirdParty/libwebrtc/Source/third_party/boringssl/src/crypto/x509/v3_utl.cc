@@ -498,8 +498,12 @@ static int sk_strcmp(const char *const *a, const char *const *b) {
 }
 
 STACK_OF(OPENSSL_STRING) *X509_get1_email(const X509 *x) {
+  int critical;
   UniquePtr<GENERAL_NAMES> gens(reinterpret_cast<GENERAL_NAMES *>(
-      X509_get_ext_d2i(x, NID_subject_alt_name, nullptr, nullptr)));
+      X509_get_ext_d2i(x, NID_subject_alt_name, &critical, nullptr)));
+  if (!gens && critical != -1) {
+    return nullptr;
+  }
   return get_email(X509_get_subject_name(x), gens.get()).release();
 }
 
@@ -526,8 +530,12 @@ STACK_OF(OPENSSL_STRING) *X509_get1_ocsp(const X509 *x) {
 
 STACK_OF(OPENSSL_STRING) *X509_REQ_get1_email(const X509_REQ *x) {
   UniquePtr<STACK_OF(X509_EXTENSION)> exts(X509_REQ_get_extensions(x));
+  int critical;
   UniquePtr<GENERAL_NAMES> gens(reinterpret_cast<GENERAL_NAMES *>(
-      X509V3_get_d2i(exts.get(), NID_subject_alt_name, nullptr, nullptr)));
+      X509V3_get_d2i(exts.get(), NID_subject_alt_name, &critical, nullptr)));
+  if (!gens && critical != -1) {
+    return nullptr;
+  }
   return get_email(X509_REQ_get_subject_name(x), gens.get()).release();
 }
 

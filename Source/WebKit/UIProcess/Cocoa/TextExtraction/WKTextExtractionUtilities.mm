@@ -38,7 +38,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-inline static WKTextExtractionContainer NODELETE containerType(TextExtraction::ContainerType type)
+inline static WKTextExtractionContainer LEGACY_NODELETE containerType(TextExtraction::ContainerType type)
 {
     switch (type) {
     case TextExtraction::ContainerType::ViewportConstrained:
@@ -70,7 +70,7 @@ inline static WKTextExtractionContainer NODELETE containerType(TextExtraction::C
     }
 }
 
-static WKTextExtractionEventListenerTypes NODELETE eventListenerTypes(OptionSet<TextExtraction::EventListenerCategory> eventListeners)
+static WKTextExtractionEventListenerTypes LEGACY_NODELETE eventListenerTypes(OptionSet<TextExtraction::EventListenerCategory> eventListeners)
 {
     WKTextExtractionEventListenerTypes result = WKTextExtractionEventListenerTypeNone;
     if (eventListeners.contains(TextExtraction::EventListenerCategory::Click))
@@ -241,6 +241,15 @@ inline static RetainPtr<WKTextExtractionItem> createItemWithChildren(const TextE
                 ariaAttributes:ariaAttributes.get()
                 accessibilityRole:accessibilityRole.get()
                 nodeIdentifier:nodeIdentifier.get()]);
+        }, [&](const TextExtraction::MediaItemData& data) -> RetainPtr<WKTextExtractionItem> {
+            return adoptNS([[WKTextExtractionContainerItem alloc]
+                initWithContainer:data.type == TextExtraction::MediaType::Video ? WKTextExtractionContainerVideo : WKTextExtractionContainerAudio
+                rectInWebView:rectInWebView
+                children:children
+                eventListeners:eventListeners
+                ariaAttributes:ariaAttributes.get()
+                accessibilityRole:accessibilityRole.get()
+                nodeIdentifier:nodeIdentifier.get()]);
         }, [&](TextExtraction::ContainerType type) -> RetainPtr<WKTextExtractionItem> {
             return adoptNS([[WKTextExtractionContainerItem alloc]
                 initWithContainer:containerType(type)
@@ -283,7 +292,8 @@ void requestTextExtractionFilterRuleData(CompletionHandler<void(Vector<TextExtra
         }
 
         HashMap<String, TextExtraction::FilterRuleData> allData;
-        for (NSString *nsKeyIdentifier : data) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *nsKeyIdentifier : data) {
             auto keyIdentifier = String { nsKeyIdentifier };
             auto keyIdentifierComponents = keyIdentifier.split('/');
             if (keyIdentifierComponents.size() != 2)

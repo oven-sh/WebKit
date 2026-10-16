@@ -721,21 +721,32 @@ webkit_target_add_swift_options(TestWebKitAPILibrary
     "-import-objc-header ${TESTWEBKITAPI_DIR}/Runner/TestWebKitAPI-Bridging-Header.h"
 )
 
+foreach (_target IN ITEMS TestWTF TestWebKit TestWebKitAPILibrary)
+    WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(${_target} 6)
+endforeach ()
+
 list(APPEND TestWebKit_SOURCES
     "Tests/WebKit/WebPage/AppKit Gesture Tests/AppKitGesturesTestsSupport.swift"
     "Tests/WebKit/WebPage/AppKit Gesture Tests/BasicAppKitGesturesTests.swift"
     "Tests/WebKit/WebPage/AppKit Gesture Tests/DoubleClickGesturesTests.swift"
     "Tests/WebKit/WebPage/AppKit Gesture Tests/EmbeddedAppKitGesturesTests.swift"
     "Tests/WebKit/WebPage/AppKit Gesture Tests/InactiveWindowAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/QuirksAppKitGesturesTests.swift"
     "Tests/WebKit/WebPage/AppKit Gesture Tests/RefreshControlGesturesTests.swift"
     "Tests/WebKit/WebPage/AppKit Gesture Tests/SiteIsolationAppKitGesturesTests.swift"
 
     Tests/WebKit/WKWebView/CodingTests.swift
     Tests/WebKit/WKWebView/HTTP2Server.swift
     Tests/WebKit/WKWebView/HTTP3Server.swift
+    Tests/WebKit/WKWebView/SiteIsolationCookieTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationEditingTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationNavigationTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationServiceWorkerTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationSessionStateTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationUIDelegateTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationUserAgentTests.swift
     Tests/WebKit/WKWebView/TextExtractionTests.swift
     Tests/WebKit/WKWebView/TextFragments.swift
-    Tests/WebKit/WKWebView/TextManipulation.swift
     Tests/WebKit/WKWebView/TextPlaceholderTests.swift
     Tests/WebKit/WKWebView/TextSize.swift
     Tests/WebKit/WKWebView/TextWidth.swift
@@ -752,17 +763,13 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WKWebView/WKWebExtensionAPINamespace.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIOffscreen.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIPermissions.swift
-    Tests/WebKit/WKWebView/WKWebExtensionAPITest.swift
-    Tests/WebKit/WKWebView/WKWebExtensionAPIWebNavigation.swift
-    Tests/WebKit/WKWebView/WKWebExtensionAPIWebRequest.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIWindows.swift
-    Tests/WebKit/WKWebView/WKWebExtensionContext.swift
-    Tests/WebKit/WKWebView/WKWebExtensionController.swift
     Tests/WebKit/WKWebView/WKWebExtensionControllerConfiguration.swift
     Tests/WebKit/WKWebView/WKWebExtensionDataRecord.swift
     Tests/WebKit/WKWebView/WKWebExtensionMatchPattern.swift
     Tests/WebKit/WKWebView/WKWebExtensionTab.swift
     Tests/WebKit/WKWebView/WKWebExtensionWindow.swift
+    Tests/WebKit/WKWebView/WKWebViewHitTestTests.swift
     Tests/WebKit/WKWebView/WKWebViewSwiftOverlayTests.swift
 
     Tests/WebKit/WebPage/ControlledByExternalAgent.swift
@@ -874,7 +881,6 @@ add_library(TestWebKitAPIWebProcessPlugIn MODULE
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/ClearWrappersNavigatePlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/ContentFilteringPlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/ContentWorldPlugIn.mm
-    ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/DisableSpellcheckPlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/GetComputedStyleAfterIframeRemovalPlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/InjectedBundleHitTestPlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/PageOverlayPlugin.mm
@@ -889,7 +895,6 @@ add_library(TestWebKitAPIWebProcessPlugIn MODULE
 
     # Also in TestWebKit via SourcesCocoa.txt; WEBKIT_COMPUTE_SOURCES marks the
     # originals HEADER_FILE_ONLY, so build them here via #include shims.
-    ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-AutoFillAvailable.mm
     ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-ClickAutoFillButton.mm
     ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-InjectedBundleNodeHandleIsSelectElement.mm
     ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-InjectedBundleNodeHandleIsTextField.mm
@@ -897,7 +902,6 @@ add_library(TestWebKitAPIWebProcessPlugIn MODULE
 )
 
 foreach (_dual_src
-    AutoFillAvailable
     ClickAutoFillButton
     InjectedBundleNodeHandleIsSelectElement
     InjectedBundleNodeHandleIsTextField
@@ -1049,6 +1053,14 @@ _testwebkitapi_stage_resources("${TESTWEBKITAPI_DIR}/Resources" "^(cocoa|glib)/"
 # are staged with the cocoa/ prefix stripped so paths match what tests pass to
 # URLForResource:.
 _testwebkitapi_stage_resources("${TESTWEBKITAPI_DIR}/Resources/cocoa" "")
+
+# The shipped quirk table, which the Quirks tests parse.
+add_custom_command(OUTPUT "${_resources_dir}/QuirkTable.json"
+    COMMAND ${CMAKE_COMMAND} -E copy "${WEBCORE_DIR}/page/QuirkTable.json" "${_resources_dir}/QuirkTable.json"
+    MAIN_DEPENDENCY "${WEBCORE_DIR}/page/QuirkTable.json"
+    VERBATIM
+)
+list(APPEND _resources_dst_files "${_resources_dir}/QuirkTable.json")
 
 add_custom_target(TestWebKitAPIResources ALL DEPENDS ${_resources_dst_files})
 # Ensure all test targets depend on the resources bundle.

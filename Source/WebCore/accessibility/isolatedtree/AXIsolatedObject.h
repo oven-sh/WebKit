@@ -226,7 +226,7 @@ private:
         // AXObjectCache ID, then having the main-thread re-hydrate the equivalent main-thread accessibility object,
         // if it's still alive by the time the dispatch is serviced.
         Accessibility::performFunctionOnMainThread([lambda = WTF::move(lambda), axID = objectID(), cacheID = treeID()] () mutable {
-            WeakPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(cacheID);
+            CheckedPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(cacheID);
             if (!cache)
                 return;
             if (RefPtr object = cache->objectForID(axID))
@@ -559,7 +559,7 @@ private:
     bool hasUnderline() const final { return colorAttributeValue(AXProperty::UnderlineColor) != Accessibility::defaultColor(); }
     AXTextMarkerRange textInputMarkedTextMarkerRange() const final;
     Element* element() const final;
-    Node* NODELETE node() const final;
+    Node* LEGACY_NODELETE node() const final;
     RenderObject* renderer() const final;
 
     AccessibilityChildrenVector relatedObjects(AXRelation) const final;
@@ -585,7 +585,7 @@ private:
 #if PLATFORM(COCOA)
     RetainPtr<NSAttributedString> attributedStringForTextMarkerRange(AXTextMarkerRange&&, SpellCheck) const final;
 #endif
-    AXObjectCache* NODELETE axObjectCache() const;
+    AXObjectCache* LEGACY_NODELETE axObjectCache() const;
     Element* actionElement() const final;
     Path elementPath() const final;
     bool supportsPath() const final;

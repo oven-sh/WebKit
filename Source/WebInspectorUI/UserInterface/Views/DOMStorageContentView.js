@@ -107,6 +107,9 @@ WI.DOMStorageContentView = class DOMStorageContentView extends WI.ContentView
     itemRemoved(event)
     {
         for (let node of this._dataGrid.children) {
+            if (node.isPlaceholderNode)
+                continue;
+
             if (node.data.key === event.data.key)
                 return this._dataGrid.removeChild(node);
         }
@@ -119,8 +122,10 @@ WI.DOMStorageContentView = class DOMStorageContentView extends WI.ContentView
         let {key, value} = event.data;
         let displayValue = this._truncateValue(value);
 
-        // Enforce key uniqueness.
         for (let node of this._dataGrid.children) {
+            if (node.isPlaceholderNode)
+                continue;
+
             if (node.data.key === key)
                 return;
         }
@@ -136,6 +141,9 @@ WI.DOMStorageContentView = class DOMStorageContentView extends WI.ContentView
 
         let keyFound = false;
         for (let childNode of this._dataGrid.children) {
+            if (childNode.isPlaceholderNode)
+                continue;
+
             if (childNode.data.key === key) {
                 // Remove any rows that are now duplicates.
                 if (keyFound) {
@@ -166,9 +174,6 @@ WI.DOMStorageContentView = class DOMStorageContentView extends WI.ContentView
                 return;
 
             for (let [key, value] of entries) {
-                if (!key || !value)
-                    continue;
-
                 let displayValue = this._truncateValue(value);
                 let node = new WI.DataGridNode({key, value, displayValue});
                 this._dataGrid.appendChild(node);

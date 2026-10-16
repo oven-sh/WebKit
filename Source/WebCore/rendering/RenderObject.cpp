@@ -46,7 +46,6 @@
 #include "HitTestResult.h"
 #include "InspectorInstrumentation.h"
 #include "LayoutBox.h"
-#include "LayoutIntegrationCoverage.h"
 #include "LegacyRenderSVGModelObject.h"
 #include "LegacyRenderSVGRoot.h"
 #include "LocalFrame.h"
@@ -108,6 +107,10 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakRandomNumber.h>
 #include <wtf/text/TextStream.h>
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorSVGClassifier.h>
+#endif
 
 namespace WebCore {
 
@@ -489,12 +492,14 @@ RenderLayer* RenderObject::enclosingLayer() const
 
 RenderBox& RenderObject::enclosingBox() const
 {
-    return *lineageOfType<RenderBox>(const_cast<RenderObject&>(*this)).first();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return *lineageOfType<RenderBox>(const_cast<RenderObject&>(*this)).first();
 }
 
 RenderBoxModelObject& RenderObject::enclosingBoxModelObject() const
 {
-    return *lineageOfType<RenderBoxModelObject>(const_cast<RenderObject&>(*this)).first();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return *lineageOfType<RenderBoxModelObject>(const_cast<RenderObject&>(*this)).first();
 }
 
 RenderBox* RenderObject::enclosingScrollableContainer() const
@@ -727,7 +732,8 @@ void RenderObject::setLayerNeedsFullRepaintForOutOfFlowMovementLayout()
 
 RenderBlock* RenderElement::nearestNonAnonymousContainingBlockIncludingSelf() const
 {
-    auto* renderer = const_cast<RenderElement*>(this);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto* renderer = const_cast<RenderElement*>(this);
     while (renderer && (!is<RenderBlock>(*renderer) || renderer->isAnonymousBlock()))
         renderer = renderer->containingBlock();
     return downcast<RenderBlock>(renderer);
@@ -891,7 +897,7 @@ LayoutRect RenderObject::subtreePaintRootRect(LayoutRect& topLevelRect, RespectT
     return result;
 }
 
-static inline bool NODELETE canRelyOnAncestorLayerFullRepaint(const RenderObject& rendererToRepaint, const RenderLayer& ancestorLayer)
+static inline bool LEGACY_NODELETE canRelyOnAncestorLayerFullRepaint(const RenderObject& rendererToRepaint, const RenderLayer& ancestorLayer)
 {
     auto* renderElement = dynamicDowncast<RenderElement>(rendererToRepaint);
     if (!renderElement || !renderElement->hasSelfPaintingLayer())
@@ -968,7 +974,8 @@ void RenderObject::propagateRepaintToParentWithOutlineAutoIfNeeded(const RenderL
         if (!repaintRectNeedsConverting)
             repaintContainer.repaintRectangle(adjustedRepaintRect);
         else if (CheckedPtr rendererWithOutline = dynamicDowncast<RenderLayerModelObject>(*originalRenderer)) {
-            adjustedRepaintRect = LayoutRect(repaintContainer.localToContainerQuad(FloatRect(adjustedRepaintRect), rendererWithOutline.get()).boundingBox());
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST adjustedRepaintRect = LayoutRect(repaintContainer.localToContainerQuad(FloatRect(adjustedRepaintRect), rendererWithOutline.get()).boundingBox());
             rendererWithOutline->repaintRectangle(adjustedRepaintRect);
         }
         return;
@@ -1371,7 +1378,7 @@ void RenderObject::showLineTreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     outputRenderObject(stream, false, 1);
-    blockFlow->outputLineTreeAndMark(stream, nullptr, 2);
+    blockFlow->outputLineTree(stream, 2);
     SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
 }
 
@@ -1478,7 +1485,7 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
 
     if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*this); renderBlock && renderBlock->createsNewFormattingContext()) {
         if (CheckedPtr blockBox = dynamicDowncast<RenderBlockFlow>(*renderBlock))
-            stream << (blockBox->childrenInline() && LayoutIntegration::canUseForLineLayout(*blockBox) ? "M" : "L");
+            stream << (blockBox->childrenInline() ? "M" : "L");
         else if (is<RenderFlexibleBox>(*renderBlock))
             stream << "M";
         else
@@ -1602,7 +1609,7 @@ void RenderObject::outputRenderSubTreeAndMark(TextStream& stream, const RenderOb
 
     if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(*this)) {
         blockFlow->outputFloatingObjects(stream, depth + 1);
-        blockFlow->outputLineTreeAndMark(stream, nullptr, depth + 1);
+        blockFlow->outputLineTree(stream, depth + 1);
     }
 
     for (CheckedPtr child = firstChildSlow(); child; child = child->nextSibling())
@@ -1955,9 +1962,9 @@ void RenderObject::willBeDestroyed()
 
 void RenderObject::insertedIntoTree()
 {
-    // FIXME: We should ASSERT(isRooted()) here but generated content makes some out-of-order insertion.
-    if (!isFloating() && parent()->isSVGRenderer() && parent()->childrenInline())
-        protect(parent())->dirtyLineFromChangedChild();
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::invalidateCharacteristics(*this);
+#endif
 }
 
 void RenderObject::willBeRemovedFromTree()
@@ -1965,6 +1972,10 @@ void RenderObject::willBeRemovedFromTree()
     // FIXME: We should ASSERT(isRooted()) but we have some out-of-order removals which would need to be fixed first.
     // Update cached boundaries in SVG renderers, if a child is removed.
     protect(parent())->invalidateCachedBoundaries();
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::invalidateCharacteristics(*this);
+#endif
 }
 
 void RenderObject::destroy()
@@ -2168,9 +2179,9 @@ bool RenderObject::useDarkAppearance() const
     return protect(document())->useDarkAppearance(&style());
 }
 
-OptionSet<StyleColorOptions> RenderObject::styleColorOptions() const
+OptionSet<StyleColorOptions> RenderObject::styleColorOptions(StyleColorOptionsPurpose purpose) const
 {
-    return protect(document())->styleColorOptions(&style());
+    return protect(document())->styleColorOptions(&style(), purpose);
 }
 
 void RenderObject::setSelectionState(HighlightState state)
@@ -2410,7 +2421,7 @@ Vector<IntRect> RenderObject::absoluteTextRects(const SimpleRange& range, Option
         CheckedPtr renderer = node->renderer();
         if (auto* lineBreakRenderer = dynamicDowncast<RenderLineBreak>(renderer.get()); lineBreakRenderer && lineBreakRenderer->isBR())
             lineBreakRenderer->boundingRects(rects, flooredLayoutPoint(renderer->localToAbsolute()));
-        else if (auto* textNode = dynamicDowncast<Text>(node.get())) {
+        else if (RefPtr textNode = dynamicDowncast<Text>(node)) {
             for (auto& rect : absoluteRectsForRangeInText(range, *textNode, behavior))
                 rects.append(LayoutRect { rect });
         }
@@ -2454,8 +2465,8 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
     }
 
     for (Ref node : intersectingNodesWithDeprecatedZeroOffsetStartQuirk(range)) {
-        auto* element = dynamicDowncast<Element>(node.get());
-        if (textOnly == TextOnly::No && element && selectedElementsSet.contains(element) && (useVisibleBounds || !node->parentElement() || !selectedElementsSet.contains(node->parentElement()))) {
+        RefPtr element = dynamicDowncast<Element>(node);
+        if (textOnly == TextOnly::No && element && selectedElementsSet.contains(element.get()) && (useVisibleBounds || !node->parentElement() || !selectedElementsSet.contains(node->parentElement()))) {
             if (CheckedPtr renderer = element->renderBoxModelObject()) {
                 if (useVisibleBounds) {
                     auto rootClippedBounds = renderer->computeClippedRectInContentCoordinates(renderer->borderBoundingBox());
@@ -2474,7 +2485,7 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
                     protect(node->document())->convertAbsoluteToClientQuads(elementQuads, renderer->style());
                 rects.appendVector(boundingBoxes(elementQuads));
             }
-        } else if (auto* textNode = dynamicDowncast<Text>(node.get())) {
+        } else if (RefPtr textNode = dynamicDowncast<Text>(node)) {
             if (CheckedPtr renderer = textNode->renderer()) {
                 auto clippedRects = absoluteRectsForRangeInText(range, *textNode, behavior);
                 if (space == CoordinateSpace::Client)
@@ -2775,7 +2786,7 @@ static void adjustTextDirectionForCoalescedGeometries(const SelectionEndpointDir
     }
 }
 
-static bool NODELETE shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
+static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
 {
     if (!currentRenderer)
         return false;
@@ -2789,7 +2800,7 @@ static bool NODELETE shouldRenderSelectionOnSeparateLine(const RenderObject* cur
     return false;
 }
 
-static bool NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
+static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
 {
     for (auto* current = descendant; current; current = current->parent()) {
         if (current->isOutOfFlowPositioned())
@@ -2802,7 +2813,7 @@ static bool NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject* descen
     return false;
 }
 
-static bool NODELETE shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
+static bool LEGACY_NODELETE shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
 {
     if (!previousRenderer || !stayWithin)
         return false;

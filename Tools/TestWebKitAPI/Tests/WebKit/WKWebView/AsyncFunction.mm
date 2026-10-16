@@ -35,6 +35,10 @@
 #import <WebKit/WKProcessPoolPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 
+#if PLATFORM(IOS_FAMILY)
+#import "Helpers/ios/IOSMouseEventTestHarness.h"
+#endif
+
 namespace TestWebKitAPI {
 
 TEST(AsyncFunction, Basic)
@@ -397,6 +401,139 @@ TEST(AsyncFunction, TransientActivation)
     TestWebKitAPI::Util::run(&done);
     done = false;
 }
+
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION) || PLATFORM(MAC)
+
+// Evaluates without a user gesture, so that querying the state neither grants nor removes activation.
+static bool hasTransientActivation(TestWKWebView *webView)
+{
+    __block bool done = false;
+    __block bool hasActivation = false;
+    [webView _evaluateJavaScriptWithoutUserGesture:@"window.internals.hasTransientActivation()" completionHandler:^(id result, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_TRUE([result isKindOfClass:[NSNumber class]]);
+        hasActivation = [result isEqualToNumber:@1];
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    return hasActivation;
+}
+
+static void simulateUserGesture(TestWKWebView *webView)
+{
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION)
+    TestWebKitAPI::MouseEventTestHarness testHarness { webView };
+    testHarness.mouseMove(100, 100);
+    testHarness.mouseDown();
+    testHarness.mouseUp();
+#else
+    [webView sendClickAtPoint:NSMakePoint(100, 100)];
+#endif
+}
+
+TEST(AsyncFunction, TransientActivationFromUserGestureIsPreserved)
+{
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    // Needs a host window so that a real user gesture can be sent.
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration addToWindow:YES]);
+
+    [webView synchronouslyLoadHTMLString:@"<body style='margin: 0; width: 100%; height: 100%' onclick='window.webkit.messageHandlers.testHandler.postMessage(\"gesture\")' ontouchend='window.webkit.messageHandlers.testHandler.postMessage(\"gesture\")'></body>"];
+
+    simulateUserGesture(webView.get());
+    [webView waitForMessage:@"gesture"];
+
+    EXPECT_TRUE(hasTransientActivation(webView.get()));
+
+    __block bool done = false;
+    [webView evaluateJavaScript:@"1" completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    // Evaluating JavaScript must not leave behind the transient activation it grants itself, but it
+    // also must not take away the transient activation the user's gesture gave the page.
+    EXPECT_TRUE(hasTransientActivation(webView.get()));
+}
+
+static void evaluateJavaScriptWithUserGesture(TestWKWebView *webView, NSString *script)
+{
+    __block bool done = false;
+    [webView evaluateJavaScript:script completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+}
+
+static void evaluateJavaScriptWithoutUserGesture(TestWKWebView *webView, NSString *script)
+{
+    __block bool done = false;
+    [webView _evaluateJavaScriptWithoutUserGesture:script completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+}
+
+TEST(AsyncFunction, TransientActivationFromOverlappingForcedUserGesturesIsRevoked)
+{
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration addToWindow:NO]);
+
+    [webView synchronouslyLoadHTMLString:@"Hello"];
+
+    EXPECT_FALSE(hasTransientActivation(webView.get()));
+
+    // Each pending timer keeps its forced user gesture alive, so that the first one can end before the second.
+    evaluateJavaScriptWithUserGesture(webView.get(), @"window.firstTimer = setTimeout(() => { }, 100000); 1");
+    evaluateJavaScriptWithUserGesture(webView.get(), @"window.secondTimer = setTimeout(() => { }, 100000); 1");
+
+    evaluateJavaScriptWithoutUserGesture(webView.get(), @"clearTimeout(window.firstTimer)");
+
+    // The second forced user gesture has not ended, so the activation it granted remains.
+    EXPECT_TRUE(hasTransientActivation(webView.get()));
+
+    evaluateJavaScriptWithoutUserGesture(webView.get(), @"clearTimeout(window.secondTimer)");
+
+    // Once both forced user gestures end, the page must not be left with the activation either one granted.
+    EXPECT_FALSE(hasTransientActivation(webView.get()));
+}
+
+TEST(AsyncFunction, TransientActivationConsumedDuringForcedUserGestureIsNotRestored)
+{
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    // Needs a host window so that a real user gesture can be sent.
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration addToWindow:YES]);
+
+    [webView synchronouslyLoadHTMLString:@"<body style='margin: 0; width: 100%; height: 100%' onclick='window.webkit.messageHandlers.testHandler.postMessage(\"gesture\")' ontouchend='window.webkit.messageHandlers.testHandler.postMessage(\"gesture\")'></body>"];
+
+    simulateUserGesture(webView.get());
+    [webView waitForMessage:@"gesture"];
+
+    EXPECT_TRUE(hasTransientActivation(webView.get()));
+
+    // The pending timer keeps the forced user gesture alive while the page consumes the activation.
+    evaluateJavaScriptWithUserGesture(webView.get(), @"window.pendingTimer = setTimeout(() => { }, 100000); 1");
+
+    __block bool done = false;
+    [webView _evaluateJavaScriptWithoutUserGesture:@"window.internals.consumeTransientActivation()" completionHandler:^(id result, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_TRUE([result isEqualToNumber:@1]);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    EXPECT_FALSE(hasTransientActivation(webView.get()));
+
+    evaluateJavaScriptWithoutUserGesture(webView.get(), @"clearTimeout(window.pendingTimer)");
+
+    // The page consumed the activation, so the activation the user's gesture gave it must not come back
+    // when the forced user gesture ends.
+    EXPECT_FALSE(hasTransientActivation(webView.get()));
+}
+
+#endif // PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION) || PLATFORM(MAC)
 
 } // namespace TestWebKitAPI
 

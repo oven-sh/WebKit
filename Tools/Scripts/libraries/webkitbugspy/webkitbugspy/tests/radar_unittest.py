@@ -550,6 +550,30 @@ What version of 'WebKit Text' should the bug be associated with?:
                 'An example issue for testing',
             )
 
+    def test_set_component_single_component(self):
+        projects = dict(WebKit=dict(
+            mocks.PROJECTS['WebKit'],
+            components=dict(Tables=mocks.PROJECTS['WebKit']['components']['Tables']),
+        ))
+        with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES, projects=projects):
+            radar.Tracker(project='WebKit').issue(1).set_component(project='WebKit', version='Safari 15')
+
+            issue = radar.Tracker(project='WebKit').issue(1)
+            self.assertEqual(issue.component, 'Tables')
+            self.assertEqual(issue.version, 'Safari 15')
+
+    def test_clone_no_radar(self):
+        with mocks.NoRadar(), OutputCapture() as captured:
+            self.assertIsNone(radar.Tracker().clone(None, reason='Cloning for merge-back'))
+        self.assertEqual(captured.stderr.getvalue(), 'radarclient inaccessible on this machine\n')
+
+    def test_mock_relationships_unknown_type(self):
+        with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES):
+            model = radar.Tracker().client.radar_for_id(1)
+            with self.assertRaises(ValueError) as context:
+                model.relationships(['unknown-type'])
+        self.assertEqual(str(context.exception), "Unknown relationship type 'unknown-type'")
+
     def test_set_keywords(self):
         with wkmocks.Environment(RADAR_USERNAME='tcontributor'), mocks.Radar(issues=mocks.ISSUES, projects=mocks.PROJECTS):
             tracker = radar.Tracker()

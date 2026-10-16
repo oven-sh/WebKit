@@ -966,8 +966,8 @@ DebuggableInfoData WebInspectorUIProxy::infoForLocalDebuggable()
     DebuggableInfoData result;
     result.debuggableType = Inspector::DebuggableType::WebPage;
     result.targetPlatformName = "macOS"_s;
-    result.targetBuildVersion = plist.get()[static_cast<NSString *>(_kCFSystemVersionBuildVersionKey)];
-    result.targetProductVersion = plist.get()[static_cast<NSString *>(_kCFSystemVersionProductUserVisibleVersionKey)];
+    result.targetBuildVersion = checked_objc_cast<NSString>(plist.get()[static_cast<NSString *>(_kCFSystemVersionBuildVersionKey)]);
+    result.targetProductVersion = checked_objc_cast<NSString>(plist.get()[static_cast<NSString *>(_kCFSystemVersionProductUserVisibleVersionKey)]);
     result.targetIsSimulator = false;
 
     return result;
@@ -975,7 +975,7 @@ DebuggableInfoData WebInspectorUIProxy::infoForLocalDebuggable()
 
 void WebInspectorUIProxy::applyForcedAppearance()
 {
-    NSAppearance *platformAppearance;
+    RetainPtr<NSAppearance> platformAppearance;
     switch (m_frontendAppearance) {
     case InspectorFrontendClient::Appearance::System:
         platformAppearance = nil;
@@ -991,9 +991,9 @@ void WebInspectorUIProxy::applyForcedAppearance()
     }
 
     if (RetainPtr window = m_inspectorWindow.get())
-        window.get().appearance = platformAppearance;
+        window.get().appearance = platformAppearance.get();
 
-    [m_inspectorViewController webView].appearance = platformAppearance;
+    [m_inspectorViewController webView].appearance = platformAppearance.get();
 }
 
 } // namespace WebKit

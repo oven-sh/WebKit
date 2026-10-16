@@ -155,7 +155,7 @@ enum class ViewportDimension : uint8_t {
 };
 
 template<LogicalBoxAxis axis>
-static double NODELETE resolveViewportLogicalAxis(const FloatSize& size, const ComputedStyle& style)
+static double LEGACY_NODELETE resolveViewportLogicalAxis(const FloatSize& size, const ComputedStyle& style)
 {
     switch (mapAxisLogicalToPhysical(style.writingMode(), axis)) {
     case BoxAxis::Horizontal:
@@ -253,7 +253,7 @@ static std::optional<double> resolveContainerUnit(CQ::Axis physicalAxis, const a
             auto adjustedWidthOrHeight = widthOrHeight.toDouble();
 
             // FIXME: Document why `font-size` is excluded or remove this special case.
-            if (adaptor.property() != CSSPropertyFontSize)
+            if (adaptor.property() != CSSPropertyID::FontSize)
                 adjustedWidthOrHeight = adjustedWidthOrHeight / adaptor.renderViewForViewportUnits()->pageZoomFactor();
 
             return adjustedWidthOrHeight / 100;
@@ -291,27 +291,27 @@ struct CSSToLengthConversionDataAdaptor {
         // FIXME: This should be generated but first we need to determine if using `font-*` so literally is the right choice. It might make more sense to have this be all properties that effect font-relative units, so would need to include things like `math-depth`.
         // See https://github.com/w3c/csswg-drafts/issues/14306.
         switch (conversionData.property()) {
-        case CSSPropertyFontFeatureSettings:
-        case CSSPropertyFontKerning:
-        case CSSPropertyFontPalette:
-        case CSSPropertyFontSize:
-        case CSSPropertyFontSizeAdjust:
-        case CSSPropertyFontStyle:
-        case CSSPropertyFontSynthesisSmallCaps:
-        case CSSPropertyFontSynthesisStyle:
-        case CSSPropertyFontSynthesisWeight:
-        case CSSPropertyFontVariantAlternates:
-        case CSSPropertyFontVariantCaps:
-        case CSSPropertyFontVariantEastAsian:
-        case CSSPropertyFontVariantEmoji:
-        case CSSPropertyFontVariantLigatures:
-        case CSSPropertyFontVariantNumeric:
-        case CSSPropertyFontVariantPosition:
-        case CSSPropertyFontWeight:
-        case CSSPropertyFontWidth:
+        case CSSPropertyID::FontFeatureSettings:
+        case CSSPropertyID::FontKerning:
+        case CSSPropertyID::FontPalette:
+        case CSSPropertyID::FontSize:
+        case CSSPropertyID::FontSizeAdjust:
+        case CSSPropertyID::FontStyle:
+        case CSSPropertyID::FontSynthesisSmallCaps:
+        case CSSPropertyID::FontSynthesisStyle:
+        case CSSPropertyID::FontSynthesisWeight:
+        case CSSPropertyID::FontVariantAlternates:
+        case CSSPropertyID::FontVariantCaps:
+        case CSSPropertyID::FontVariantEastAsian:
+        case CSSPropertyID::FontVariantEmoji:
+        case CSSPropertyID::FontVariantLigatures:
+        case CSSPropertyID::FontVariantNumeric:
+        case CSSPropertyID::FontVariantPosition:
+        case CSSPropertyID::FontWeight:
+        case CSSPropertyID::FontWidth:
 #if ENABLE(VARIATION_FONTS)
-        case CSSPropertyFontOpticalSizing:
-        case CSSPropertyFontVariationSettings:
+        case CSSPropertyID::FontOpticalSizing:
+        case CSSPropertyID::FontVariationSettings:
 #endif
             return true;
         default:
@@ -321,7 +321,7 @@ struct CSSToLengthConversionDataAdaptor {
 
     bool computingLineHeightProperty() const
     {
-        return conversionData.property() == CSSPropertyLineHeight;
+        return conversionData.property() == CSSPropertyID::LineHeight;
     }
 
     double applyTextZoom(double value) const
@@ -465,7 +465,7 @@ static double resolveLengthImpl(double value, CSS::LengthUnit lengthUnit, const 
     using enum CSS::LengthUnit;
 
     auto applyTextZoomIfComputingLineHeight = [&](double value) {
-        return adaptor.property() == CSSPropertyLineHeight ? adaptor.applyTextZoom(value) : value;
+        return adaptor.property() == CSSPropertyID::LineHeight ? adaptor.applyTextZoom(value) : value;
     };
 
     switch (lengthUnit) {

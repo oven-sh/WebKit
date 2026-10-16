@@ -26,19 +26,8 @@
 #include "config.h"
 #include "ShareableBitmapUtilities.h"
 
-#include <WebCore/CachedImage.h>
-#include <WebCore/FrameSnapshotting.h>
-#include <WebCore/GeometryUtilities.h>
-#include <WebCore/GraphicsContext.h>
 #include <WebCore/HTMLVideoElement.h>
-#include <WebCore/ImageBuffer.h>
-#include <WebCore/IntSize.h>
-#include <WebCore/LocalFrame.h>
-#include <WebCore/LocalFrameView.h>
-#include <WebCore/NativeImage.h>
-#include <WebCore/PlatformScreen.h>
 #include <WebCore/RenderImage.h>
-#include <WebCore/RenderObjectDocument.h>
 #include <WebCore/RenderVideo.h>
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/NativePromise.h>
@@ -46,78 +35,13 @@
 namespace WebKit {
 using namespace WebCore;
 
-RefPtr<ShareableBitmap> createShareableBitmap(RenderImage& renderImage, CreateShareableBitmapFromImageOptions&& options)
-{
-    Ref frame = renderImage.frame();
-    auto colorSpaceForBitmap = screenColorSpace(protect(protect(frame->mainFrame())->virtualView()).get());
-    if (!renderImage.isRenderMedia() && !opacity(renderImage) && options.useSnapshotForTransparentImages == UseSnapshotForTransparentImages::Yes) {
-        auto snapshotRect = renderImage.absoluteBoundingBoxRect();
-        if (snapshotRect.isEmpty())
-            return { };
-
-        OptionSet<SnapshotFlags> snapshotFlags { SnapshotFlags::ExcludeSelectionHighlighting, SnapshotFlags::PaintEverythingExcludingSelection };
-        auto imageBuffer = snapshotFrameRect(frame.get(), snapshotRect, { snapshotFlags, PixelFormat::BGRA8, ColorSpace::SRGB() });
-        if (!imageBuffer)
-            return { };
-
-        auto snapshotImage = ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
-        if (!snapshotImage)
-            return { };
-
-        auto bitmap = ShareableBitmap::create({ snapshotImage->size(), WTF::move(colorSpaceForBitmap) });
-        if (!bitmap)
-            return { };
-
-        auto context = bitmap->createGraphicsContext();
-        if (!context)
-            return { };
-        FloatRect imageRect { { }, snapshotImage->size() };
-        context->drawNativeImage(*snapshotImage, imageRect, imageRect);
-        return bitmap;
-    }
-
-#if ENABLE(VIDEO)
-    if (CheckedPtr renderVideo = dynamicDowncast<RenderVideo>(renderImage))
-        return protect(renderVideo->videoElement())->bitmapImageForCurrentTimeSync();
-#endif // ENABLE(VIDEO)
-
-    RefPtr cachedImage = renderImage.cachedImage();
-    if (!cachedImage || cachedImage->errorOccurred())
-        return { };
-
-    RefPtr image = cachedImage->image();
-    if (!image || image->width() <= 1 || image->height() <= 1)
-        return { };
-
-    if (options.allowAnimatedImages == AllowAnimatedImages::No && image->isAnimated())
-        return { };
-
-    auto bitmapSize = RenderImage::imageSizeAsRendered(*cachedImage, &renderImage);
-    if (options.screenSizeInPixels) {
-        auto scaledSize = largestRectWithAspectRatioInsideRect(bitmapSize.width() / bitmapSize.height(), { FloatPoint(), *options.screenSizeInPixels }).size();
-        bitmapSize = scaledSize.width() < bitmapSize.width() ? scaledSize : bitmapSize;
-    }
-
-    // FIXME: Only select ExtendedColor on images known to need wide gamut.
-    auto sharedBitmap = ShareableBitmap::create({ IntSize(bitmapSize), WTF::move(colorSpaceForBitmap) });
-    if (!sharedBitmap)
-        return { };
-
-    auto graphicsContext = sharedBitmap->createGraphicsContext();
-    if (!graphicsContext)
-        return { };
-
-    graphicsContext->drawImage(*image, ConcreteObjectSize::fixed(image->size(renderImage.imageOrientation())), FloatRect(0, 0, bitmapSize.width(), bitmapSize.height()), { renderImage.imageOrientation() });
-    return sharedBitmap;
-}
-
-Ref<NativePromise<Ref<WebCore::ShareableBitmap>, void>> createShareableBitmapAsync(WebCore::RenderImage& renderImage, CreateShareableBitmapFromImageOptions&& options)
+Ref<NativePromise<Ref<WebCore::ShareableBitmap>, void>> createShareableBitmapAsync(WebCore::RenderImage& renderImage, WebCore::CreateShareableBitmapFromImageOptions&& options)
 {
 #if ENABLE(VIDEO)
     if (CheckedPtr renderVideo = dynamicDowncast<RenderVideo>(renderImage))
         return protect(renderVideo->videoElement())->bitmapImageForCurrentTime();
 #endif
-    if (RefPtr shareableBitmap = createShareableBitmap(renderImage, WTF::move(options)))
+    if (RefPtr shareableBitmap = renderImage.createShareableBitmap(options))
         return NativePromise<Ref<WebCore::ShareableBitmap>, void>::createAndResolve(shareableBitmap.releaseNonNull());
     return NativePromise<Ref<WebCore::ShareableBitmap>, void>::createAndReject();
 }

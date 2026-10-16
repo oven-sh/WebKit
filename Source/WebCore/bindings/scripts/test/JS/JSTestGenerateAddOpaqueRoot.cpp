@@ -207,7 +207,8 @@ void JSTestGenerateAddOpaqueRoot::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSTestGenerateAddOpaqueRoot>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    addWebCoreOpaqueRoot(visitor, thisObject->wrapped().ownerObjectConcurrently());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, thisObject->wrapped().ownerObjectConcurrently());
 }
 
 DEFINE_VISIT_CHILDREN(JSTestGenerateAddOpaqueRoot);

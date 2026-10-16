@@ -37,6 +37,7 @@
 #include "PaintInfo.h"
 #include "PaintInfoInlines.h"
 #include "RenderBlockFlow.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderInline.h"
 #include "RenderLayer.h"
@@ -47,11 +48,6 @@
 #include "StyleMaskBorder.h"
 
 namespace WebCore {
-
-InlineBoxPainter::InlineBoxPainter(const LegacyInlineFlowBox& inlineBox, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : InlineBoxPainter(*InlineIterator::inlineBoxFor(inlineBox), paintInfo, paintOffset)
-{
-}
 
 InlineBoxPainter::InlineBoxPainter(const LayoutIntegration::InlineContent& inlineContent, const InlineDisplay::Box& box, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     : InlineBoxPainter(*InlineIterator::inlineBoxFor(inlineContent, box), paintInfo, paintOffset)
@@ -74,7 +70,7 @@ InlineBoxPainter::~InlineBoxPainter() = default;
 void InlineBoxPainter::paint()
 {
     if (m_paintInfo.phase == PaintPhase::Outline || m_paintInfo.phase == PaintPhase::SelfOutline) {
-        if (renderer().style().usedVisibility() != Visibility::Visible || !renderer().hasOutline() || m_isRootInlineBox)
+        if (renderer().usedStyle().visibility() != UsedVisibility::Visible || !renderer().hasOutline() || m_isRootInlineBox)
             return;
 
         auto& inlineFlow = downcast<RenderInline>(renderer());
@@ -169,7 +165,7 @@ LayoutRect InlineBoxPainter::computeNinePieceImageStrip(const LayoutPoint& adjus
 
 void InlineBoxPainter::paintMask()
 {
-    if (!m_paintInfo.shouldPaintWithinRoot(renderer()) || renderer().style().usedVisibility() != Visibility::Visible || m_paintInfo.phase != PaintPhase::Mask)
+    if (!m_paintInfo.shouldPaintWithinRoot(renderer()) || renderer().usedStyle().visibility() != UsedVisibility::Visible || m_paintInfo.phase != PaintPhase::Mask)
         return;
 
     // Move x/y to our coordinates.
@@ -210,14 +206,14 @@ void InlineBoxPainter::paintMask()
     BorderPainter borderPainter { renderer(), m_paintInfo };
 
     if (!m_inlineBox.isSplit())
-        borderPainter.paintNinePieceImage(LayoutRect(adjustedPaintOffset, localRect.size()), renderer().style(), maskBorder, compositeOp);
+        borderPainter.paintNinePieceImage(LayoutRect(adjustedPaintOffset, localRect.size()), renderer().usedStyle(), maskBorder, compositeOp);
     else {
         // We have a mask image that spans multiple lines.
         LayoutRect imageStrip = computeNinePieceImageStrip(adjustedPaintOffset, localRect);
         LayoutRect clipRect = clipRectForNinePieceImageStrip(m_inlineBox, maskBorder, paintRect);
         GraphicsContextStateSaver stateSaver(m_paintInfo.context());
         m_paintInfo.context().clip(clipRect);
-        borderPainter.paintNinePieceImage(imageStrip, renderer().style(), maskBorder, compositeOp);
+        borderPainter.paintNinePieceImage(imageStrip, renderer().usedStyle(), maskBorder, compositeOp);
     }
 
     if (pushTransparencyLayer)
@@ -226,7 +222,7 @@ void InlineBoxPainter::paintMask()
 
 void InlineBoxPainter::paintDecorations()
 {
-    if (!m_paintInfo.shouldPaintWithinRoot(renderer()) || renderer().style().usedVisibility() != Visibility::Visible || m_paintInfo.phase != PaintPhase::Foreground)
+    if (!m_paintInfo.shouldPaintWithinRoot(renderer()) || renderer().usedStyle().visibility() != UsedVisibility::Visible || m_paintInfo.phase != PaintPhase::Foreground)
         return;
 
     if (!m_isRootInlineBox && !renderer().hasVisibleBoxDecorations())
@@ -247,7 +243,7 @@ void InlineBoxPainter::paintDecorations()
     if (!BackgroundPainter::boxShadowShouldBeAppliedToBackground(renderer(), adjustedPaintoffset, BleedAvoidance::None, m_inlineBox))
         paintBoxShadow(Style::ShadowStyle::Normal, paintRect);
 
-    auto color = style.visitedDependentBackgroundColor(m_paintInfo.paintBehavior);
+    auto color = style.visitedDependentUsedBackgroundColor(m_paintInfo.paintBehavior);
     auto compositeOp = protect(renderer().document())->compositeOperatorForBackgroundColor(color, renderer());
 
     Style::ColorResolver colorResolver { style };
@@ -271,7 +267,7 @@ void InlineBoxPainter::paintDecorations()
 
     if (!hasBorderImage || !m_inlineBox.isSplit()) {
         auto closedEdges = m_inlineBox.closedEdges();
-        borderPainter.paintBorder(paintRect, style, BleedAvoidance::None, closedEdges);
+        borderPainter.paintBorder(paintRect, usedStyle(), BleedAvoidance::None, closedEdges);
         return;
     }
 
@@ -280,7 +276,7 @@ void InlineBoxPainter::paintDecorations()
     LayoutRect clipRect = clipRectForNinePieceImageStrip(m_inlineBox, borderImage, paintRect);
     GraphicsContextStateSaver stateSaver(context);
     context.clip(clipRect);
-    borderPainter.paintBorder(imageStrip, style);
+    borderPainter.paintBorder(imageStrip, usedStyle());
 }
 
 template<typename Layers> void InlineBoxPainter::paintFillLayers(const Color& color, const Layers& fillLayers, Style::ZoomFactor zoom, const LayoutRect& rect, CompositeOperator op)
@@ -347,19 +343,24 @@ void InlineBoxPainter::paintBoxShadow(Style::ShadowStyle shadowStyle, const Layo
     BackgroundPainter backgroundPainter { renderer(), m_paintInfo };
 
     if (!m_inlineBox.isSplit() || m_isRootInlineBox) {
-        backgroundPainter.paintBoxShadow(paintRect, style(), shadowStyle);
+        backgroundPainter.paintBoxShadow(paintRect, usedStyle(), shadowStyle);
         return;
     }
 
     // FIXME: We can do better here in the multi-line case. We want to push a clip so that the shadow doesn't
     // protrude incorrectly at the edges, and we want to possibly include shadows cast from the previous/following lines
     auto closedEdges = m_inlineBox.closedEdges();
-    backgroundPainter.paintBoxShadow(paintRect, style(), shadowStyle, closedEdges);
+    backgroundPainter.paintBoxShadow(paintRect, usedStyle(), shadowStyle, closedEdges);
 }
 
 const Style::ComputedStyle& InlineBoxPainter::style() const
 {
     return m_isFirstLineBox ? renderer().firstLineStyle() : renderer().style();
+}
+
+UsedStyle InlineBoxPainter::usedStyle() const
+{
+    return m_isFirstLineBox ? renderer().firstLineUsedStyle() : renderer().usedStyle();
 }
 
 }

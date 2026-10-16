@@ -260,8 +260,11 @@ public:
     void assertIsOwner() const { m_writerLock.assertIsOwner(); }
 };
 
-inline ReadLockView& ReadWriteLock::read() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { return *static_cast<ReadLockView*>(this); }
-inline WriteLockView& ReadWriteLock::write() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { return *static_cast<WriteLockView*>(this); }
+// ReadLockView and WriteLockView only add member functions, so a ReadWriteLock can be viewed as either.
+static_assert(sizeof(ReadLockView) == sizeof(ReadWriteLock));
+static_assert(sizeof(WriteLockView) == sizeof(ReadWriteLock));
+inline ReadLockView& ReadWriteLock::read() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { SUPPRESS_MEMORY_UNSAFE_CAST return *static_cast<ReadLockView*>(this); }
+inline WriteLockView& ReadWriteLock::write() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { SUPPRESS_MEMORY_UNSAFE_CAST return *static_cast<WriteLockView*>(this); }
 
 } // namespace WTF
 

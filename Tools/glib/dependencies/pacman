@@ -8,12 +8,15 @@ PACKAGES=(
     bubblewrap
     clang
     cmake
+    enchant
     file
     findutils
     flite
     gawk
     gcc
     gi-docgen
+    glib2-devel
+    gobject-introspection
     gperf
     grep
     groff
@@ -22,6 +25,7 @@ PACKAGES=(
     gtk-doc
     gzip
     harfbuzz-icu
+    hyphen
     intltool
     itstool
     lcms2
@@ -37,6 +41,7 @@ PACKAGES=(
     libsystemd
     libtasn1
     libtool
+    libva
     libwebp
     libxslt
     m4
@@ -53,6 +58,7 @@ PACKAGES=(
     sqlite
     texinfo
     volk
+    vulkan-headers
     wayland
     wayland-protocols
     which

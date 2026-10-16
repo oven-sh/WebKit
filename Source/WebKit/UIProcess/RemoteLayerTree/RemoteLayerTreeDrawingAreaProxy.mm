@@ -129,6 +129,10 @@ void RemoteLayerTreeDrawingAreaProxy::removeRemotePageDrawingAreaProxy(RemotePag
 {
     ASSERT(m_remotePageProcessState.contains(proxy.process().coreProcessIdentifier()));
     m_remotePageProcessState.remove(proxy.process().coreProcessIdentifier());
+
+    // The process may outlive its part in this page.
+    if (m_remoteLayerTreeHost)
+        m_remoteLayerTreeHost->removeDisplayOnlyImagesForProcess(proxy.process().coreProcessIdentifier());
 }
 
 ProcessState::ProcessState(WebProcessProxy& webProcess)
@@ -175,6 +179,8 @@ void RemoteLayerTreeDrawingAreaProxy::remotePageProcessDidTerminate(WebCore::Pro
 {
     if (!m_remoteLayerTreeHost)
         return;
+
+    m_remoteLayerTreeHost->removeDisplayOnlyImagesForProcess(processIdentifier);
 
     if (CheckedPtr scrollingCoordinator = page() ? page()->scrollingCoordinatorProxy() : nullptr) {
         scrollingCoordinator->willCommitLayerAndScrollingTrees();
@@ -564,6 +570,22 @@ void RemoteLayerTreeDrawingAreaProxy::asyncSetLayerContents(IPC::Connection& con
 void RemoteLayerTreeDrawingAreaProxy::setLayerContentsFromAnotherProcess(WebCore::PlatformLayerIdentifier layerID, RemoteLayerBackingStoreProperties&& properties)
 {
     m_remoteLayerTreeHost->asyncSetLayerContents(layerID, WTF::move(properties));
+}
+
+bool RemoteLayerTreeDrawingAreaProxy::startDisplayOnlyImage(RemoteSnapshotIdentifier image)
+{
+    return m_remoteLayerTreeHost && m_remoteLayerTreeHost->startDisplayOnlyImage(image);
+}
+
+bool RemoteLayerTreeDrawingAreaProxy::completeDisplayOnlyImage(RemoteSnapshotIdentifier image, ImageBufferBackendHandle&& handle)
+{
+    return m_remoteLayerTreeHost && m_remoteLayerTreeHost->completeDisplayOnlyImage(image, WTF::move(handle));
+}
+
+void RemoteLayerTreeDrawingAreaProxy::releaseDisplayOnlyImage(RemoteSnapshotIdentifier image)
+{
+    if (m_remoteLayerTreeHost)
+        m_remoteLayerTreeHost->releaseDisplayOnlyImage(image);
 }
 
 void RemoteLayerTreeDrawingAreaProxy::acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier layerID, const String& key, MonotonicTime startTime)

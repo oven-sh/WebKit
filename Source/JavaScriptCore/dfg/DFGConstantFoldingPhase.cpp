@@ -1282,6 +1282,27 @@ private:
             }
 
             case ObjectDefineProperty: {
+                Edge keyEdge = node->child2();
+                bool canFoldKey = false;
+                switch (keyEdge.useKind()) {
+                case StringUse:
+                case SymbolUse:
+                case Int32Use:
+                case NumberUse:
+                    canFoldKey = true;
+                    break;
+                case UntypedUse: {
+                    SpeculatedType keyType = m_state.forNode(keyEdge).m_type;
+                    canFoldKey = keyType && !(keyType & SpecObject);
+                    break;
+                }
+                default:
+                    RELEASE_ASSERT_NOT_REACHED();
+                    break;
+                }
+                if (!canFoldKey)
+                    break;
+
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
                 VM& vm = m_graph.m_vm;
 
@@ -1357,7 +1378,6 @@ private:
 
                 NodeOrigin origin = node->origin;
                 Edge targetEdge = node->child1();
-                Edge keyEdge = node->child2();
                 Edge descriptorEdge = node->child3();
 
                 m_insertionSet.insertCheck(m_graph, indexInBlock, node);
@@ -1391,7 +1411,7 @@ private:
                 node->convertToObjectDefinePropertyFromFields(
                     m_graph,
                     Edge(targetEdge.node(), ObjectUse),
-                    Edge(keyEdge.node(), UntypedUse),
+                    Edge(keyEdge.node(), keyEdge.useKind()),
                     slotEdges[Node::EnumerableSlot],
                     slotEdges[Node::ConfigurableSlot],
                     slotEdges[Node::ValueSlot],
@@ -1499,7 +1519,7 @@ private:
                     node->convertToDefineDataProperty(
                         m_graph,
                         Edge(targetEdge.node(), ObjectUse),
-                        Edge(keyEdge.node(), UntypedUse),
+                        Edge(keyEdge.node(), keyEdge.useKind()),
                         Edge(valueNode, UntypedUse),
                         Edge(attrsNode, Int32Use));
 
@@ -1539,7 +1559,7 @@ private:
                     node->convertToDefineAccessorProperty(
                         m_graph,
                         Edge(targetEdge.node(), ObjectUse),
-                        Edge(keyEdge.node(), UntypedUse),
+                        Edge(keyEdge.node(), keyEdge.useKind()),
                         Edge(getterNode, CellUse),
                         Edge(setterNode, CellUse),
                         Edge(attrsNode, Int32Use));

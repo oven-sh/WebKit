@@ -790,7 +790,7 @@ void WebFullScreenManager::requestRestoreFullScreen(CompletionHandler<void(bool)
 
     ALWAYS_LOG(LOGIDENTIFIER, "<", element->tagName(), " id=\"", element->getIdAttribute(), "\">");
     WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, protect(element->document()).ptr());
-    protect(protect(element->document())->fullscreen())->requestFullscreen(*element, WebCore::DocumentFullscreen::ExemptIFrameAllowFullscreenRequirement, [completionHandler = WTF::move(completionHandler)] (auto result) mutable {
+    protect(protect(element->document())->fullscreen())->requestFullscreen(*element, WebCore::DocumentFullscreen::FullscreenCheckType::ExemptIFrameAllowFullscreenRequirement, [completionHandler = WTF::move(completionHandler)](auto result) mutable {
         completionHandler(!result.hasException());
     });
 }

@@ -51,6 +51,11 @@
 @implementation WebNotificationPrivate
 @end
 
+@interface WebNotification () {
+    RetainPtr<WebNotificationPrivate> _private;
+}
+@end
+
 #if ENABLE(NOTIFICATIONS)
 @implementation WebNotification (WebNotificationInternal)
 
@@ -58,7 +63,7 @@
 {
     if (!(self = [super init]))
         return nil;
-    _private = [[WebNotificationPrivate alloc] init];
+    _private = adoptNS([[WebNotificationPrivate alloc] init]);
     _private->_internal = WTF::move(coreNotification);
     return self;
 }
@@ -69,13 +74,6 @@
 - (id)init
 {
     return nil;
-}
-
-- (void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
-    [super dealloc];
 }
 
 - (NSString *)title

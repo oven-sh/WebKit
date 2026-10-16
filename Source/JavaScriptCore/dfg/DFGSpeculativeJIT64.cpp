@@ -9168,9 +9168,8 @@ void SpeculativeJIT::compileStringIteratorNext(Node* node)
     JumpList slowCases;
     JumpList doneCases;
 
-    // Inline only the resolved 8-bit single-character fast path. 8-bit characters are never
-    // surrogates, so the result is always a cached single-character string with no allocation.
-    // Ropes, 16-bit strings, and surrogate pairs fall back to operationStringIteratorNext.
+    // Inline only characters up to maxSingleCharacterString, which are cached single-character strings.
+    // Ropes and larger characters fall back to operationStringIteratorNext.
     loadPtr(Address(stringGPR, JSString::offsetOfValue()), resultValueGPR);
     slowCases.append(branchIfRopeStringImpl(resultValueGPR));
     load32(Address(resultValueGPR, StringImpl::lengthMemoryOffset()), resultPositionGPR);
@@ -9178,15 +9177,20 @@ void SpeculativeJIT::compileStringIteratorNext(Node* node)
     // position >= length is an unsigned compare, which also catches position == doneIndex (-1).
     Jump isDone = branch32(AboveOrEqual, positionGPR, resultPositionGPR);
 
-    slowCases.append(branchTest32(Zero, Address(resultValueGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    loadPtr(Address(resultValueGPR, StringImpl::dataOffset()), resultPositionGPR);
+    Jump is16Bit = branchTest32(Zero, Address(resultValueGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
 
-    loadPtr(Address(resultValueGPR, StringImpl::dataOffset()), resultValueGPR);
-    load8(BaseIndex(resultValueGPR, positionGPR, TimesOne, 0), resultValueGPR);
-    lshift32(TrustedImm32(3), resultValueGPR);
-    addPtr(TrustedImmPtr(vm.smallStrings.singleCharacterStrings()), resultValueGPR);
-    loadPtr(Address(resultValueGPR), resultValueGPR);
+    load8(BaseIndex(resultPositionGPR, positionGPR, TimesOne), resultValueGPR);
+    Label haveCharacter = label();
+    move(TrustedImmPtr(vm.smallStrings.singleCharacterStrings()), resultPositionGPR);
+    loadPtr(BaseIndex(resultPositionGPR, resultValueGPR, ScalePtr), resultValueGPR);
     add32(TrustedImm32(1), positionGPR, resultPositionGPR);
     doneCases.append(jump());
+
+    is16Bit.link(this);
+    load16(BaseIndex(resultPositionGPR, positionGPR, TimesTwo), resultValueGPR);
+    slowCases.append(branch32(Above, resultValueGPR, TrustedImm32(maxSingleCharacterString)));
+    jump().linkTo(haveCharacter, this);
 
     isDone.link(this);
     if (isStringIteratorNextWithUndefined)

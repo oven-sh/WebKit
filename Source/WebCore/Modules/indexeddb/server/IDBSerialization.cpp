@@ -34,6 +34,7 @@
 
 #if USE(GLIB)
 #include <glib.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #endif
 
@@ -100,7 +101,7 @@ bool deserializeIDBKeyPath(std::span<const uint8_t> data, std::optional<IDBKeyPa
     return true;
 }
 
-static bool NODELETE isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
+static bool LEGACY_NODELETE isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
 {
 #if USE(CF)
     // This is the magic character that begins serialized PropertyLists, and tells us whether
@@ -110,7 +111,7 @@ static bool NODELETE isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
         return true;
 #elif USE(GLIB)
     // KeyedEncoderGLib uses a GVariant dictionary, so check if the given data is a valid GVariant dictionary.
-    GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(data.data(), data.size()));
+    GRefPtr bytes = gBytesNew(data);
     GRefPtr<GVariant> variant = g_variant_new_from_bytes(G_VARIANT_TYPE("a{sv}"), bytes.get(), FALSE);
     return g_variant_is_normal_form(variant.get());
 #else
@@ -190,7 +191,7 @@ template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T v
     buffer.append(asByteSpan(value));
 }
 
-template <typename T> static bool NODELETE readLittleEndian(std::span<const uint8_t>& data, T& value)
+template <typename T> static bool LEGACY_NODELETE readLittleEndian(std::span<const uint8_t>& data, T& value)
 {
     if (data.size() < sizeof(value))
         return false;
@@ -204,7 +205,7 @@ static void writeDouble(Vector<uint8_t>& data, double d)
     writeLittleEndian(data, *reinterpret_cast<uint64_t*>(&d));
 }
 
-static bool NODELETE readDouble(std::span<const uint8_t>& data, double& d)
+static bool LEGACY_NODELETE readDouble(std::span<const uint8_t>& data, double& d)
 {
     return readLittleEndian(data, *reinterpret_cast<uint64_t*>(&d));
 }

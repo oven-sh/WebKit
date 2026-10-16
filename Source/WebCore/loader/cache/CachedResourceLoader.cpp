@@ -266,7 +266,7 @@ CachedResource* CachedResourceLoader::cachedResource(const URL& url) const
     return m_documentResources.get(url.string()).get();
 }
 
-LocalFrame* NODELETE CachedResourceLoader::frame() const
+LocalFrame* LEGACY_NODELETE CachedResourceLoader::frame() const
 {
     return m_documentLoader ? m_documentLoader->frame() : nullptr;
 }
@@ -447,7 +447,7 @@ ResourceErrorOr<Ref<CachedRawResource>> CachedResourceLoader::requestModelResour
 }
 #endif
 
-static MixedContentChecker::IsUpgradable NODELETE isUpgradableTypeFromResourceType(CachedResource::Type type)
+static MixedContentChecker::IsUpgradable LEGACY_NODELETE isUpgradableTypeFromResourceType(CachedResource::Type type)
 {
     // https://www.w3.org/TR/mixed-content/#category-upgradeable
     // Editor’s Draft, 23 February 2023
@@ -899,7 +899,7 @@ bool CachedResourceLoader::shouldContinueAfterNotifyingLoadedFromMemoryCache(con
         newRequest.setInspectorInitiatorNodeIdentifier(*inspectorInitiatorNodeIdentifier);
     if (request.resourceRequest().hiddenFromInspector())
         newRequest.setHiddenFromInspector(true);
-    frame()->loader().loadedResourceFromMemoryCache(resource, newRequest, error);
+    protect(frame()->loader())->loadedResourceFromMemoryCache(resource, newRequest, error);
 
     // FIXME <http://webkit.org/b/113251>: If the delegate modifies the request's
     // URL, it is no longer appropriate to use this CachedResource.
@@ -945,7 +945,7 @@ bool CachedResourceLoader::shouldUpdateCachedResourceWithCurrentRequest(const Ca
     return false;
 }
 
-static inline bool NODELETE isResourceSuitableForDirectReuse(const CachedResource& resource, const CachedResourceRequest& request)
+static inline bool LEGACY_NODELETE isResourceSuitableForDirectReuse(const CachedResource& resource, const CachedResourceRequest& request)
 {
     // FIXME: For being loaded requests, the response tainting may not be correctly computed if the fetch mode is not the same.
     // Even if the fetch mode is the same, we are not sure that the resource can be reused (Vary: Origin header for instance).
@@ -1052,7 +1052,7 @@ void CachedResourceLoader::updateHTTPRequestHeaders(FrameLoader& frameLoader, Ca
     request.updateAcceptEncodingHeader();
 }
 
-static FetchOptions::Destination NODELETE destinationForType(CachedResource::Type type, LocalFrame& frame)
+static FetchOptions::Destination LEGACY_NODELETE destinationForType(CachedResource::Type type, LocalFrame& frame)
 {
     switch (type) {
     case CachedResource::Type::MainResource:
@@ -1113,7 +1113,7 @@ static inline SVGImage* cachedResourceSVGImage(CachedResource* resource)
     return cachedImage ? dynamicDowncast<SVGImage>(cachedImage->image()) : nullptr;
 }
 
-static bool NODELETE computeMayAddToMemoryCache(const CachedResourceRequest& newRequest, const CachedResource* existingResource)
+static bool LEGACY_NODELETE computeMayAddToMemoryCache(const CachedResourceRequest& newRequest, const CachedResource* existingResource)
 {
     return !existingResource || !existingResource->isPreloaded() || newRequest.options().serviceWorkersMode != ServiceWorkersMode::None || existingResource->options().serviceWorkersMode == ServiceWorkersMode::None;
 }
@@ -1264,7 +1264,7 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
             && type == CachedResource::Type::MainResource
             && m_documentLoader->isLoadingMainResource()) {
             // This is to make sure the correct 'new' URL shows in the location bar.
-            m_documentLoader->frameLoader()->client().dispatchDidChangeProvisionalURL();
+            protect(m_documentLoader->frameLoader()->client())->dispatchDidChangeProvisionalURL();
         }
         url = request.resourceRequest().url(); // The content extension could have changed it from http to https.
         url = MemoryCache::removeFragmentIdentifierIfNeeded(url); // Might need to remove fragment identifier again.
@@ -1503,7 +1503,7 @@ Ref<CachedResource> CachedResourceLoader::loadResource(CachedResource::Type type
     return resource;
 }
 
-static inline bool NODELETE mustReloadFromServiceWorkerOptions(const ResourceLoaderOptions& options, const ResourceLoaderOptions& cachedOptions)
+static inline bool LEGACY_NODELETE mustReloadFromServiceWorkerOptions(const ResourceLoaderOptions& options, const ResourceLoaderOptions& cachedOptions)
 {
     if (cachedOptions.cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch)
         return false;
@@ -1533,6 +1533,11 @@ CachedResourceLoader::RevalidationPolicy CachedResourceLoader::determineRevalida
 
     if (mustReloadFromServiceWorkerOptions(cachedResourceRequest.options(), existingResource->options())) {
         LOG(ResourceLoading, "CachedResourceLoader::determineRevalidationPolicy reloading because selected service worker may differ");
+        return Reload;
+    }
+
+    if (existingResource->isPreloaded() && existingResource->errorOccurred()) {
+        CACHEDRESOURCELOADER_RELEASE_LOG("determineRevalidationPolicy: reloading because a preload failed");
         return Reload;
     }
 

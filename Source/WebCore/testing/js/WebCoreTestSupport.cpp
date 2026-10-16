@@ -39,6 +39,7 @@
 #include "JSInternals.h"
 #include "JSServiceWorkerInternals.h"
 #include "JSWorkerGlobalScope.h"
+#include "JSWorkerInternals.h"
 #include "LocalFrame.h"
 #include "LogInitialization.h"
 #include "Logging.h"
@@ -48,6 +49,9 @@
 #include "ServiceWorkerGlobalScope.h"
 #include "SincResampler.h"
 #include "WheelEventTestMonitor.h"
+#include "WorkerGlobalScope.h"
+#include "WorkerInternals.h"
+#include "WorkerThread.h"
 #include "XMLDocument.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/CallFrame.h>
@@ -277,6 +281,25 @@ void setupNewlyCreatedServiceWorker(uint64_t serviceWorkerIdentifier)
         JSLockHolder locker(vm);
         auto* contextWrapper = script->globalScopeWrapper();
         contextWrapper->putDirect(vm, Identifier::fromString(vm, Internals::internalsId), toJS(&globalObject, contextWrapper, ServiceWorkerInternals::create(globalScope, identifier)));
+    });
+}
+
+void setupWorkerInternals()
+{
+    WorkerThread::setGlobalScopeCreatedCallbackForTesting([](WorkerGlobalScope& globalScope) {
+        // Service workers get ServiceWorkerInternals from setupNewlyCreatedServiceWorker().
+        if (is<ServiceWorkerGlobalScope>(globalScope))
+            return;
+
+        CheckedPtr script = globalScope.script();
+        if (!script)
+            return;
+
+        auto& globalObject = *globalScope.globalObject();
+        auto& vm = globalObject.vm();
+        JSLockHolder locker(vm);
+        auto* contextWrapper = script->globalScopeWrapper();
+        contextWrapper->putDirect(vm, Identifier::fromString(vm, Internals::internalsId), toJS(&globalObject, contextWrapper, WorkerInternals::create()));
     });
 }
 

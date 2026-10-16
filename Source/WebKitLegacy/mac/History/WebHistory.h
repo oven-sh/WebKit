@@ -32,7 +32,6 @@
 @class NSError;
 
 @class WebHistoryItem;
-@class WebHistoryPrivate;
 
 /*
     @discussion Notifications sent when history is modified. 
@@ -59,10 +58,7 @@ extern NSString * const WebHistoryItemsKey WEBKIT_DEPRECATED_MAC(10_3, 10_14);
     by WebKit.
 */
 WEBKIT_CLASS_DEPRECATED_MAC(10_3, 10_14)
-@interface WebHistory : NSObject {
-@package
-    WebHistoryPrivate *_historyPrivate;
-}
+@interface WebHistory : NSObject
 
 /*!
     @method optionalSharedHistory

@@ -69,6 +69,10 @@ messages -> WebProcessProxy WantsDispatchMessage {
     SetTaskNamePort(MachSendRight taskNamePort)
 #endif
 
+#if PLATFORM(IOS_FAMILY) && ENABLE(UIPROCESS_PERIODIC_MEMORY_MONITOR)
+    DidComputeAvailableMemory(uint64_t availableMemory)
+#endif
+
 #if HAVE(DISPLAY_LINK)
     StartDisplayLink(WebKit::DisplayLinkObserverID observerID, uint32_t displayID, unsigned preferredFramesPerSecond)
     StopDisplayLink(WebKit::DisplayLinkObserverID observerID, uint32_t displayID)
@@ -135,5 +139,10 @@ messages -> WebProcessProxy WantsDispatchMessage {
     OffscreenCanvasPlaceholderCreated(WebCore::PlaceholderRenderingContextIdentifier identifier)
     OffscreenCanvasPlaceholderDestroyed(WebCore::PlaceholderRenderingContextIdentifier identifier)
     CommitOffscreenCanvasPlaceholderFrame(WebCore::RemotePlaceholderRenderingContextIdentifier identifier, struct WebCore::ImageBufferTransferHandle transferHandle, std::optional<WebKit::ImageBufferBackendHandle> layerContentsHandle, bool originClean, bool opaque) -> (bool placeholderMayExist)
+#endif
+
+#if HAVE(IOSURFACE)
+    [EnabledBy=RemoteSnapshottingEnabled] CompleteDisplayOnlyImage(WebCore::PageIdentifier pageID, WebKit::RemoteSnapshotIdentifier imageIdentifier, WebCore::FrameIdentifier rootFrameIdentifier, float scale, WebCore::ColorSpace colorSpace) -> (bool success)
+    [EnabledBy=RemoteSnapshottingEnabled] ReleaseDisplayOnlyImage(WebCore::PageIdentifier pageID, WebKit::RemoteSnapshotIdentifier imageIdentifier)
 #endif
 }

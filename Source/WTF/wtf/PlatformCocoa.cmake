@@ -87,6 +87,7 @@ list(APPEND WTF_PUBLIC_HEADERS
     cocoa/TypeCastsCocoa.h
     cocoa/VectorCocoa.h
 
+    darwin/DarwinExtras.h
     darwin/OSLogPrintStream.h
     darwin/WeakLinking.h
     darwin/XPCExtras.h

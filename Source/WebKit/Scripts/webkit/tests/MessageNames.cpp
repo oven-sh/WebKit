@@ -134,6 +134,8 @@ const MessageDescriptionsArray messageDescriptions {
     MessageDescription { "TestWithSwift_TestAsyncMessage"_s, ReceiverName::TestWithSwift, false, false, false, ProcessName::Unknown, ProcessName::Unknown },
     MessageDescription { "TestWithSwift_TestAsyncMessageReply"_s, ReceiverName::TestWithSwift, false, false, true, ProcessName::Unknown, ProcessName::Unknown },
     MessageDescription { "TestWithSwift_TestMessageWithAliasedParameter"_s, ReceiverName::TestWithSwift, false, false, false, ProcessName::Unknown, ProcessName::Unknown },
+    MessageDescription { "TestWithSwift_TestMessageWithEmptyReply"_s, ReceiverName::TestWithSwift, false, false, false, ProcessName::Unknown, ProcessName::Unknown },
+    MessageDescription { "TestWithSwift_TestMessageWithEmptyReplyReply"_s, ReceiverName::TestWithSwift, false, false, true, ProcessName::Unknown, ProcessName::Unknown },
     MessageDescription { "TestWithSwift_TestThrowingMessageWithoutReply"_s, ReceiverName::TestWithSwift, false, false, false, ProcessName::Unknown, ProcessName::Unknown },
     MessageDescription { "TestWithValidator_AlwaysEnabled"_s, ReceiverName::TestWithValidator, false, false, false, ProcessName::Unknown, ProcessName::Unknown },
     MessageDescription { "TestWithValidator_EnabledIfPassValidation"_s, ReceiverName::TestWithValidator, false, false, false, ProcessName::Unknown, ProcessName::Unknown },

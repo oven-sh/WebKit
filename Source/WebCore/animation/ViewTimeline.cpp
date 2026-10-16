@@ -108,7 +108,7 @@ void ViewTimeline::setSubject(const Styleable& styleable)
 
     removeTimelineFromDocument(protect(previousSubject.get()));
 
-    protect(styleable.element.document())->ensureTimelinesController().addTimeline(*this);
+    protect(protect(styleable.element.document())->ensureTimelinesController())->addTimeline(*this);
 }
 
 AnimationTimelinesController* ViewTimeline::controller() const

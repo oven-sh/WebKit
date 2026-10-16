@@ -38,10 +38,9 @@
 #include "RenderObjectInlines.h"
 #include "RenderSVGText.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGInlineTextBoxInlines.h"
 #include "SVGRenderingContext.h"
-#include "SVGRootInlineBox.h"
 #include "SVGTextBoxPainter.h"
+#include "SVGTextFragment.h"
 #include "SVGTransformComputation.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleResolver.h"
@@ -87,12 +86,6 @@ RenderSVGInlineText::RenderSVGInlineText(Text& textNode, const String& string)
 
 RenderSVGInlineText::~RenderSVGInlineText() = default;
 
-void RenderSVGInlineText::willBeDestroyed()
-{
-    removeAndDestroyLegacyTextBoxes();
-    RenderText::willBeDestroyed();
-}
-
 String RenderSVGInlineText::originalText() const
 {
     return textNode().data();
@@ -101,7 +94,6 @@ String RenderSVGInlineText::originalText() const
 void RenderSVGInlineText::setTextInternal(const String& newText, bool force)
 {
     RenderText::setTextInternal(newText, force);
-    m_legacyLineBoxes.dirtyForTextChange(*this);
     if (!force)
         setRenderedText(newText);
     if (auto* textAncestor = RenderSVGText::locateRenderSVGTextAncestor(*this))
@@ -131,13 +123,6 @@ void RenderSVGInlineText::styleDidChange(Style::Difference diff, const Style::Co
     // The text metrics may be influenced by style changes.
     if (auto* textAncestor = RenderSVGText::locateRenderSVGTextAncestor(*this))
         textAncestor->setNeedsLayout();
-}
-
-std::unique_ptr<LegacyInlineTextBox> RenderSVGInlineText::createTextBox()
-{
-    auto box = makeUnique<SVGInlineTextBox>(*this);
-    box->setHasVirtualLogicalHeight();
-    return box; 
 }
 
 FloatRect RenderSVGInlineText::floatLinesBoundingBox() const
@@ -279,22 +264,6 @@ bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& rende
     scaledFont = FontCascade(WTF::move(fontDescription));
     scaledFont.update(protect(protect(renderer.document())->fontSelector()).ptr());
     return true;
-}
-
-void RenderSVGInlineText::deleteLegacyLineBoxes()
-{
-    m_legacyLineBoxes.deleteAll();
-}
-
-void RenderSVGInlineText::removeAndDestroyLegacyTextBoxes()
-{
-    if (!renderTreeBeingDestroyed())
-        m_legacyLineBoxes.removeAllFromParent(*this);
-#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
-    else
-        m_legacyLineBoxes.invalidateParentChildLists();
-#endif
-    deleteLegacyLineBoxes();
 }
 
 }

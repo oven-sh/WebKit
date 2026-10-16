@@ -20,7 +20,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import annotations
+
 import io
+from typing import Any, Sequence, overload
 
 
 basestring = str
@@ -31,19 +34,69 @@ UnicodeIO = io.StringIO
 unicode = str
 
 
-def encode(string, encoding='utf-8', errors='strict', target_type=bytes):
+@overload
+def encode(string: str, encoding: str = ..., errors: str = ..., target_type: type[bytes] = ...) -> bytes:
+    ...
+
+
+@overload
+def encode(string: bytes, encoding: str = ..., errors: str = ..., target_type: type[Any] = ...) -> bytes:
+    ...
+
+
+@overload
+def encode(string: None, encoding: str = ..., errors: str = ..., target_type: type[Any] = ...) -> None:
+    ...
+
+
+@overload
+def encode(string: str, encoding: str = ..., errors: str = ..., *, target_type: type[str]) -> str:
+    ...
+
+
+@overload
+def encode(string: Any, encoding: str = ..., errors: str = ..., target_type: type[Any] = ...) -> Any:
+    ...
+
+
+def encode(string: Any, encoding: str = 'utf-8', errors: str = 'strict', target_type: type[Any] = bytes) -> Any:
     if type(string) == unicode and target_type == bytes:
         return string.encode(encoding, errors=errors)
     return string
 
 
-def decode(data, encoding='utf-8', errors='strict', target_type=unicode):
+@overload
+def decode(data: bytes, encoding: str = ..., errors: str = ..., target_type: type[str] = ...) -> str:
+    ...
+
+
+@overload
+def decode(data: str, encoding: str = ..., errors: str = ..., target_type: type[Any] = ...) -> str:
+    ...
+
+
+@overload
+def decode(data: None, encoding: str = ..., errors: str = ..., target_type: type[Any] = ...) -> None:
+    ...
+
+
+@overload
+def decode(data: bytes, encoding: str = ..., errors: str = ..., *, target_type: type[bytes]) -> bytes:
+    ...
+
+
+@overload
+def decode(data: Any, encoding: str = ..., errors: str = ..., target_type: type[Any] = ...) -> Any:
+    ...
+
+
+def decode(data: Any, encoding: str = 'utf-8', errors: str = 'strict', target_type: type[Any] = unicode) -> Any:
     if type(data) == bytes and target_type == unicode:
         return data.decode(encoding, errors=errors)
     return data
 
 
-def ordinal(number):
+def ordinal(number: int | str) -> str:
     number = int(number)
     if 10 < number % 100 < 20:
         return '{}th'.format(number)
@@ -56,7 +109,7 @@ def ordinal(number):
     )
 
 
-def pluralize(number, string, plural=None):
+def pluralize(number: int, string: str, plural: str | None = None) -> str:
     if number == 1:
         return '1 {}'.format(string)
     if plural:
@@ -64,7 +117,7 @@ def pluralize(number, string, plural=None):
     return '{} {}s'.format(number, string)
 
 
-def join(list, conjunction='and'):
+def join(list: Sequence[str], conjunction: str = 'and') -> str:
     if not list:
         return 'Nothing'
     if len(list) == 1:
@@ -73,7 +126,7 @@ def join(list, conjunction='and'):
     return '{}{}{}'.format(', '.join(list[:-1]), conjunctionWithSerialCommaIfNeeded, list[-1])
 
 
-def split(string, conjunctions=None):
+def split(string: str | None, conjunctions: list[str] | None = None) -> list[str]:
     conjunctions = ['and', 'or']
     if not string:
         return []
@@ -86,13 +139,13 @@ def split(string, conjunctions=None):
     return [word.strip() for clause in result for word in clause.split(',') if word.strip()]
 
 
-def out_of(number, base):
+def out_of(number: int | str, base: int | str) -> str:
     number = str(number)
     base = str(base)
     return '[{}{}/{}]'.format(' ' * (len(base) - len(number)), number, base)
 
 
-def elapsed(seconds):
+def elapsed(seconds: float) -> str:
     if seconds <= 0:
         return 'no time'
     elif seconds < 1:

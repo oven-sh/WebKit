@@ -178,6 +178,23 @@ void ViewGestureController::handleMagnificationGesture(double scale, WebEventPha
         endMagnificationGesture();
 }
 
+void ViewGestureController::moveMagnificationOrigin(FloatPoint origin)
+{
+    if (m_activeGestureType != ViewGestureType::Magnification || !m_visibleContentRectIsValid || m_frameHandlesMagnificationGesture)
+        return;
+
+    RefPtr page = m_webPageProxy.get();
+    if (!page)
+        return;
+
+    auto obscuredContentInsets = page->obscuredContentInsets();
+    origin.move(-obscuredContentInsets.left(), -obscuredContentInsets.top());
+
+    willBeginGesture(ViewGestureType::Magnification);
+    m_magnificationOrigin = origin;
+    applyMagnification();
+}
+
 void ViewGestureController::handleSmartMagnificationGesture(FloatPoint gestureLocationInViewCoordinates)
 {
     if (m_activeGestureType != ViewGestureType::None)

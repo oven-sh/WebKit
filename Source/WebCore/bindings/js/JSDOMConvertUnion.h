@@ -187,7 +187,8 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
 
                 using RawType = typename Type::RawType;
 
-                auto castedValue = JSToWrappedOverloader<RawType>::toWrapped(lexicalGlobalObject, value);
+                // This template is instantiated for every IDL interface type, not all of which are ref counted, so we can't use RefPtr here.
+                SUPPRESS_UNCOUNTED_LOCAL auto castedValue = JSToWrappedOverloader<RawType>::toWrapped(lexicalGlobalObject, value);
                 if (!castedValue)
                     return;
 

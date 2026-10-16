@@ -45,10 +45,10 @@ public:
     Ref<const WebCore::DisplayList::DisplayList> takeDisplayList() { return m_recorder->takeDisplayList(); }
 
 private:
-    RemoteDisplayListRecorder(UniqueRef<WebCore::DisplayList::RecorderImpl>&&, RemoteDisplayListRecorderIdentifier, RemoteRenderingBackend&);
+    RemoteDisplayListRecorder(Ref<WebCore::DisplayList::RecorderImpl>&&, RemoteDisplayListRecorderIdentifier, RemoteRenderingBackend&);
     void startListeningForIPC();
 
-    const UniqueRef<WebCore::DisplayList::RecorderImpl> m_recorder;
+    const Ref<WebCore::DisplayList::RecorderImpl> m_recorder;
     const RemoteDisplayListRecorderIdentifier m_identifier;
 };
 

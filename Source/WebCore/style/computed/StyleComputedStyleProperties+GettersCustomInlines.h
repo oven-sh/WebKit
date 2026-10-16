@@ -272,54 +272,54 @@ inline WebkitLocale ComputedStyleProperties::locale() const
 
 // MARK: - Custom ColorPropertyTrait function definitions
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyColor>>::color(const ComputedStyleProperties&)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Color>>::color(const ComputedStyleProperties&)
 {
     // FIXME: This works because because `currentColor` will be resolved to `color()`. It would be slightly nicer if we could return an actual `Style::Color`, but `color()` is currently stored as a `WebCore::Color` and therefore we cannot return it as a reference.
     return Color::currentColor();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyColor>>::visitedLinkColor(const ComputedStyleProperties&)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Color>>::visitedLinkColor(const ComputedStyleProperties&)
 {
     // FIXME: This works because because `currentColor` will be resolved to `visitedLinkColor()`. It would be slightly nicer if we could return an actual `Style::Color`, but `visitedLinkColor()` is currently stored as a `WebCore::Color` and therefore we cannot return it as a reference.
     return Color::currentColor();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyAccentColor>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::AccentColor>>::color(const ComputedStyleProperties& style)
 {
     return style.accentColor().colorOrDefaultColor();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyCaretColor>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::CaretColor>>::color(const ComputedStyleProperties& style)
 {
     return style.caretColor().colorOrCurrentColor();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyCaretColor>>::visitedLinkColor(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::CaretColor>>::visitedLinkColor(const ComputedStyleProperties& style)
 {
     return style.visitedLinkCaretColor().colorOrCurrentColor();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyFill>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Fill>>::color(const ComputedStyleProperties& style)
 {
     return style.fill().colorDisregardingType();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyFill>>::visitedLinkColor(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Fill>>::visitedLinkColor(const ComputedStyleProperties& style)
 {
     return style.visitedLinkFill().colorDisregardingType();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyStroke>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Stroke>>::color(const ComputedStyleProperties& style)
 {
     return style.stroke().colorDisregardingType();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyStroke>>::visitedLinkColor(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Stroke>>::visitedLinkColor(const ComputedStyleProperties& style)
 {
     return style.visitedLinkStroke().colorDisregardingType();
 }
 
-inline WebCore::Color ColorPropertyTraits<PropertyNameConstant<CSSPropertyTextDecorationColor>>::colorResolvingCurrentColor(const ComputedStyleProperties& style)
+inline WebCore::Color ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TextDecorationColor>>::colorResolvingCurrentColor(const ComputedStyleProperties& style)
 {
     auto& result = style.textDecorationColor();
     if (result.isCurrentColor()) {
@@ -340,7 +340,7 @@ inline WebCore::Color ColorPropertyTraits<PropertyNameConstant<CSSPropertyTextDe
     return result.resolveColor(ResolvedColors::fromStyle(style));
 }
 
-inline WebCore::Color ColorPropertyTraits<PropertyNameConstant<CSSPropertyTextDecorationColor>>::visitedLinkColorResolvingCurrentColor(const ComputedStyleProperties& style)
+inline WebCore::Color ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TextDecorationColor>>::visitedLinkColorResolvingCurrentColor(const ComputedStyleProperties& style)
 {
     auto& result = style.visitedLinkTextDecorationColor();
     if (result.isCurrentColor()) {
@@ -361,7 +361,7 @@ inline WebCore::Color ColorPropertyTraits<PropertyNameConstant<CSSPropertyTextDe
     return result.resolveColor(ResolvedColors::fromVisitedLinkStyle(style));
 }
 
-inline bool ColorPropertyTraits<PropertyNameConstant<CSSPropertyBackgroundColor>>::excludesVisitedLinkColor(const WebCore::Color& visitedLinkColor)
+inline bool ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::BackgroundColor>>::excludesVisitedLinkColor(const WebCore::Color& visitedLinkColor)
 {
     // FIXME: Technically someone could explicitly specify the color transparent, but for now we'll just
     // assume that if the background color is transparent that it wasn't set. Note that it's weird that

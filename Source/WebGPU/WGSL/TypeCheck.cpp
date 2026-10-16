@@ -230,8 +230,8 @@ private:
     [[nodiscard]] Result<void> introduceFunction(const AST::Identifier&, const Type*);
     [[nodiscard]] Result<void> convertValue(const SourceSpan&, const Type*, std::optional<ConstantValue>&);
 
-    void NODELETE evaluated(Evaluation);
-    void NODELETE inferred(const Type*);
+    void LEGACY_NODELETE evaluated(Evaluation);
+    void LEGACY_NODELETE inferred(const Type*);
     [[nodiscard]] bool unify(const Type*, const Type*);
 
     [[nodiscard]] Result<void> binaryExpression(const SourceSpan&, AST::Expression*, AST::BinaryOperation, AST::Expression&, AST::Expression&);
@@ -240,7 +240,7 @@ private:
     [[nodiscard]] Result<void> allocateSimpleConstructor(ASCIILiteral, TargetConstructor, const Validator&, Arguments&&...);
     [[nodiscard]] Result<void> allocateTextureStorageConstructor(ASCIILiteral, Types::TextureStorage::Kind);
 
-    bool NODELETE isModuleScope() const;
+    bool LEGACY_NODELETE isModuleScope() const;
 
     [[nodiscard]] Result<AccessMode> accessMode(AST::Expression&);
     [[nodiscard]] Result<TexelFormat> texelFormat(AST::Expression&);
@@ -2687,7 +2687,12 @@ Result<void> TypeChecker::introduceFunction(const AST::Identifier& name, const T
 
 std::optional<FailedCheck> typeCheck(ShaderModule& shaderModule)
 {
-    return TypeChecker(shaderModule).check();
+    auto result = TypeChecker(shaderModule).check();
+    // Every module builds its own copy of the builtin overload candidates, several hundred kilobytes
+    // of them, and nothing resolves an overload after this. Free them now rather than when the page
+    // lets go of the module.
+    shaderModule.releaseOverloadCandidates();
+    return result;
 }
 
 template<typename TargetConstructor, typename Validator, typename... Arguments>

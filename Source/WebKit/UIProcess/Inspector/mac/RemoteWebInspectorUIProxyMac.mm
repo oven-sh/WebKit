@@ -208,7 +208,7 @@ void RemoteWebInspectorUIProxy::platformSetSheetRect(const FloatRect& rect)
 
 void RemoteWebInspectorUIProxy::platformSetForcedAppearance(InspectorFrontendClient::Appearance appearance)
 {
-    NSAppearance *platformAppearance;
+    RetainPtr<NSAppearance> platformAppearance;
     switch (appearance) {
     case InspectorFrontendClient::Appearance::System:
         platformAppearance = nil;
@@ -223,11 +223,11 @@ void RemoteWebInspectorUIProxy::platformSetForcedAppearance(InspectorFrontendCli
         break;
     }
 
-    protect(webView()).get().appearance = platformAppearance;
+    protect(webView()).get().appearance = platformAppearance.get();
 
     RetainPtr window = m_window.get();
     ASSERT(window);
-    window.get().appearance = platformAppearance;
+    window.get().appearance = platformAppearance.get();
 }
 
 void RemoteWebInspectorUIProxy::platformStartWindowDrag()

@@ -1,6 +1,1 @@
-bridge/objc/WebScriptObject.mm
-platform/graphics/cg/GraphicsContextCG.cpp
-platform/graphics/cg/PathCG.cpp
-[ iOS ] platform/ios/wak/WKView.mm
-rendering/AttachmentLayout.mm
 [ iOS ] rendering/ios/RenderThemeIOS.mm

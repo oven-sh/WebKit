@@ -617,7 +617,7 @@ class AutoInstall(importlib.abc.MetaPathFinder):
         try:
             response = AutoInstall._request('https://{}/simple/pip/'.format(cls.index), ca_cert_path=cls.ca_cert_path)
             if response.code != 200:
-                error('Failed to set AutoInstall index to {}, received {} response when searching for simple/pip'.format(index, response.code))
+                error('Failed to set AutoInstall index to {}, received {} response when searching for simple/pip'.format(cls.index, response.code))
 
         except URLError:
             error('Failed to set AutoInstall index to {}, no response from the server'.format(cls.index))

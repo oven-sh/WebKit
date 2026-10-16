@@ -92,6 +92,9 @@ Ref<Document> XSLTProcessor::createDocumentFromSource(const String& sourceString
             result->setTransformSourceDocument(oldDocument.get());
             result->takeDOMWindowFrom(*oldDocument);
             result->setSecurityOriginPolicy(oldDocument->securityOriginPolicy());
+            result->setIsOriginKeyed(oldDocument->isOriginKeyed());
+            result->setDocumentIsolationPolicy(oldDocument->documentIsolationPolicy());
+            result->setAgentClusterIdentifier(oldDocument->agentClusterIdentifier());
             result->setCookieURL(oldDocument->cookieURL());
             result->setFirstPartyForCookies(oldDocument->firstPartyForCookies());
             result->setSiteForCookies(oldDocument->siteForCookies());

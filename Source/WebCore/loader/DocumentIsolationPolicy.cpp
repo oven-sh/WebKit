@@ -29,14 +29,13 @@
 #include "HTTPHeaderNames.h"
 #include "RFC8941.h"
 #include "ResourceResponse.h"
-#include "ScriptExecutionContext.h"
-#include "Settings.h"
 
 namespace WebCore {
 
-DocumentIsolationPolicy obtainDocumentIsolationPolicy(const ResourceResponse& response, const ScriptExecutionContext& context)
+DocumentIsolationPolicy obtainDocumentIsolationPolicy(const ResourceResponse& response, IsSecureContext isSecureContext)
 {
-    if (!context.settingsValues().documentIsolationPolicyEnabled || !context.settingsValues().siteIsolationEnabled || !context.isSecureContext())
+    // FIXME: Get the blob URL entry's policy container directly instead of reading the headers it is reflected as.
+    if (isSecureContext == IsSecureContext::No && !response.url().protocolIsBlob())
         return DocumentIsolationPolicy::None;
 
     auto parsedItem = RFC8941::parseItemStructuredFieldValue(response.httpHeaderField(HTTPHeaderName::DocumentIsolationPolicy));

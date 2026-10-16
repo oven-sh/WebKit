@@ -32,6 +32,7 @@
 #import <Security/SecItem.h>
 #import <WebCore/AuthenticatorAssertionResponse.h>
 #import <WebCore/ExceptionData.h>
+#import <wtf/Borrow.h>
 #import <wtf/RunLoop.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/TypeCastsCF.h>
@@ -150,7 +151,7 @@ void MockLocalConnection::filterResponses(Vector<Ref<AuthenticatorAssertionRespo
         return;
 
     RefPtr<AuthenticatorAssertionResponse> matchingResponse;
-    for (auto& response : responses) {
+    for (auto& response : borrow(responses)) {
         RefPtr rawId = response->rawId();
         ASSERT(rawId);
         auto rawIdBase64 = base64EncodeToString(rawId->span());
@@ -183,7 +184,7 @@ RetainPtr<NSArray> MockLocalConnection::getExistingCredentials(const String& rpI
     // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
     SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr nsAttributesArray = bridge_cast(adoptCF(checked_cf_cast<CFArrayRef>(attributesArrayRef)));
     return [nsAttributesArray sortedArrayUsingComparator:^(NSDictionary *a, NSDictionary *b) {
-        return [retainPtr(b[(id)kSecAttrModificationDate]) compare:retainPtr(a[(id)kSecAttrModificationDate]).get()];
+        return [protect(checked_objc_cast<NSDate>(b[(id)kSecAttrModificationDate])) compare:protect(checked_objc_cast<NSDate>(a[(id)kSecAttrModificationDate]))];
     }];
 }
 

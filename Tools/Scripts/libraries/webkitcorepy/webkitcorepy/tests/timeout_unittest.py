@@ -52,6 +52,11 @@ class TimeoutTests(unittest.TestCase):
             self.assertTrue(time.time() + 1 >= tmp.data.alarm_time)
         self.assertEqual(None, tmp.data)
 
+    def test_timeout_data_invalid_comparison(self):
+        with self.assertRaises(ValueError) as context:
+            Timeout.Data(1, None) < 1
+        self.assertEqual(str(context.exception), "Expected {} in comparison, received <class 'int'>".format(Timeout.Data))
+
     def test_difference(self):
         with mocks.Time:
             with Timeout(1):

@@ -30,6 +30,7 @@ enum BinaryType { "blob", "arraybuffer" };
     Conditional=WEB_RTC,
     EnabledBySetting=PeerConnectionEnabled,
     Exposed=(Window,Worker),
+    Transferable,
 ] interface RTCDataChannel : EventTarget {
     // FIXME: Add support for priority attribute.
 

@@ -716,12 +716,6 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
-    FeatureInfo expandFragmentOutputsToVec4 = {
-        "expandFragmentOutputsToVec4",
-        FeatureCategory::OpenGLWorkarounds,
-        &members,
-    };
-
     FeatureInfo recreateMipmapLevelsBeforeGenerate = {
         "recreateMipmapLevelsBeforeGenerate",
         FeatureCategory::OpenGLWorkarounds,
@@ -802,6 +796,18 @@ struct FeaturesGL : FeatureSetBase
 
     FeatureInfo useTexSubImageForClientDataNpotUploads = {
         "useTexSubImageForClientDataNpotUploads",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo doubleClearForRobustInit = {
+        "doubleClearForRobustInit",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo deferGlDeleteBuffers = {
+        "deferGlDeleteBuffers",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };

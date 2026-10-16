@@ -60,7 +60,6 @@ endif ()
 WEBKIT_COMPUTE_SOURCES(WebKitLegacy)
 
 list(APPEND WebKitLegacy_SOURCES
-    WebCoreSupport/LegacySocketProvider.cpp
     WebCoreSupport/LegacyWebPageDebuggable.cpp
     WebCoreSupport/LegacyWebPageInspectorController.cpp
     WebCoreSupport/WebCryptoClient.mm
@@ -1071,6 +1070,9 @@ set(_wkl_excluded_for_ios
     WebVisitedLinkStore.h
     WebWindowAnimation.h
 )
+
+# The foreach below stages these postprocessed; a plain copy would replace them.
+list(REMOVE_ITEM WebKitLegacy_PUBLIC_FRAMEWORK_HEADERS ${WebKitLegacy_LEGACY_FORWARDING_HEADERS_FILES})
 
 # Apply the same exclusion to WebKitLegacy_PUBLIC_FRAMEWORK_HEADERS so
 # WEBKIT_COPY_FILES doesn't stage them. Also drop ${WEBCORE_DIR} entries: the

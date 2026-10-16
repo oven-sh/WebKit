@@ -105,7 +105,8 @@ static std::optional<Vector<uint8_t>> createAndStoreMasterKey()
     OSStatus status;
 
 #if USE(KEYCHAIN_ACCESS_CONTROL_LISTS)
-    SecAccessRef accessRef;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL SecAccessRef accessRef;
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     status = SecAccessCreate(bridge_cast(localizedItemName.get()), nullptr, &accessRef);
 ALLOW_DEPRECATED_DECLARATIONS_END
@@ -120,7 +121,8 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
     RetainPtr<SecACLRef> acl = checked_cf_cast<SecACLRef>(CFArrayGetValueAtIndex(acls.get(), 0));
 
-    SecTrustedApplicationRef trustedAppRef;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL SecTrustedApplicationRef trustedAppRef;
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     status = SecTrustedApplicationCreateFromPath(0, &trustedAppRef);
 ALLOW_DEPRECATED_DECLARATIONS_END
@@ -173,7 +175,8 @@ static std::optional<Vector<uint8_t>> findMasterKey()
         (id)kSecReturnData : @YES,
     };
 
-    CFDataRef keyDataRef;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CFDataRef keyDataRef;
     OSStatus status = SecItemCopyMatching((CFDictionaryRef)query, (CFTypeRef*)&keyDataRef);
     if (status) {
         if (status != errSecItemNotFound && status != errSecUserCanceled)
@@ -278,7 +281,7 @@ static std::optional<std::array<uint8_t, size>> createArrayFromData(NSData * dat
 
 std::optional<struct WrappedCryptoKey> readSerializedCryptoKey(const Vector<uint8_t>& wrappedKey)
 {
-    RetainPtr<NSDictionary> dictionary = [NSPropertyListSerialization propertyListWithData:toNSDataNoCopy(wrappedKey.span(), FreeWhenDone::No).get() options:0 format:nullptr error:nullptr];
+    RetainPtr dictionary = dynamic_objc_cast<NSDictionary>([NSPropertyListSerialization propertyListWithData:toNSDataNoCopy(wrappedKey.span(), FreeWhenDone::No).get() options:0 format:nullptr error:nullptr]);
     if (!dictionary)
         return std::nullopt;
 
@@ -288,20 +291,20 @@ std::optional<struct WrappedCryptoKey> readSerializedCryptoKey(const Vector<uint
     if ([versionObject unsignedIntegerValue] > currentSerializationVersion)
         return std::nullopt;
 
-    id wrappedKEKObject = [dictionary objectForKey:wrappedKEKKey];
-    if (![wrappedKEKObject isKindOfClass:[NSData class]])
+    RetainPtr wrappedKEKObject = dynamic_objc_cast<NSData>([dictionary objectForKey:wrappedKEKKey]);
+    if (!wrappedKEKObject)
         return std::nullopt;
     auto wrappedKEK = createArrayFromData<wrappedKekSize>(wrappedKEKObject);
     if (!wrappedKEK)
         return std::nullopt;
 
-    id encryptedKeyObject = [dictionary objectForKey:encryptedKeyKey];
-    if (![encryptedKeyObject isKindOfClass:[NSData class]])
+    RetainPtr encryptedKeyObject = dynamic_objc_cast<NSData>([dictionary objectForKey:encryptedKeyKey]);
+    if (!encryptedKeyObject)
         return std::nullopt;
     auto encryptedKey = Vector<uint8_t>(span(encryptedKeyObject));
 
-    id tagObject = [dictionary objectForKey:tagKey];
-    if (![tagObject isKindOfClass:[NSData class]])
+    RetainPtr tagObject = dynamic_objc_cast<NSData>([dictionary objectForKey:tagKey]);
+    if (!tagObject)
         return std::nullopt;
     auto tag = createArrayFromData<expectedTagLengthAES>(tagObject);
     if (!tag)

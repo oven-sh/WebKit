@@ -29,6 +29,7 @@
 #include "absl/base/config.h"
 #include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
@@ -36,8 +37,6 @@
 #include "absl/types/source_location.h"
 #include "absl/types/span.h"
 
-#ifndef SWIG
-// Disabled for SWIG as it doesn't parse attributes correctly.
 namespace absl {
 ABSL_NAMESPACE_BEGIN
 // Returned Status objects may not be ignored. Codesearch doesn't handle ifdefs
@@ -53,13 +52,6 @@ class ABSL_MUST_USE_RESULT ABSL_ATTRIBUTE_TRIVIAL_ABI
     Status;
 #endif
 
-ABSL_NAMESPACE_END
-}  // namespace absl
-#endif  // !SWIG
-
-namespace absl {
-ABSL_NAMESPACE_BEGIN
-
 enum class StatusCode : int;
 enum class StatusToStringMode : int;
 
@@ -68,10 +60,8 @@ template <typename T>
 class StatusOr;
 
 namespace status_internal {
-#ifndef SWIG
 class StatusPrivateAccessor;
 class StatusPrivateAccessorForStatusBuilder;
-#endif  // !SWIG
 
 // Container for status payloads.
 struct Payload {
@@ -80,6 +70,9 @@ struct Payload {
 };
 
 using Payloads = absl::InlinedVector<Payload, 1>;
+
+template <typename T>
+using EnableIfString = std::enable_if_t<std::is_same_v<T, std::string>>;
 
 // Reference-counted representation of Status data.
 class StatusRep {
@@ -91,8 +84,7 @@ class StatusRep {
         message_(message_arg),
         payloads_(std::move(payloads_arg)) {}
 
-  template <typename String,
-            typename = std::enable_if_t<std::is_same_v<String, std::string>>>
+  template <typename String, typename = EnableIfString<String>>
   StatusRep(absl::StatusCode code_arg, String&& message_arg,
             std::unique_ptr<status_internal::Payloads> payloads_arg)
       : ref_(int32_t{1}),
@@ -144,6 +136,8 @@ class StatusRep {
   StatusRep* absl_nonnull CloneAndUnref() const;
 
  private:
+  friend class absl::Status;
+
   mutable std::atomic<int32_t> ref_;
   absl::StatusCode code_;
 

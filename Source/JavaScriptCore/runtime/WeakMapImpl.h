@@ -237,7 +237,7 @@ public:
 
     ~WeakMapImpl()
     {
-        if (m_buffer != emptyBuffer())
+        if (hasOutOfLineBuffer())
             WeakMapBufferType::destroy(m_buffer);
     }
 
@@ -372,6 +372,16 @@ private:
         return m_buffer->buffer();
     }
 
+    WeakMapBufferType* inlineBuffer() const
+    {
+        return std::bit_cast<WeakMapBufferType*>(const_cast<std::byte*>(m_inlineStorage));
+    }
+
+    bool hasOutOfLineBuffer() const
+    {
+        return m_buffer != emptyBuffer() && m_buffer != inlineBuffer();
+    }
+
     enum class IterationState { Continue, Stop };
     template<typename Functor>
     void forEach(Functor functor)
@@ -459,11 +469,18 @@ private:
 
     // Overwrites m_buffer without freeing the previous one. Callers must have already taken
     // ownership of the old buffer (rehash) or be replacing the shared empty buffer (add).
+    // Most tables never grow past initialCapacity, so that capacity lives inside the cell.
     void makeAndSetNewBuffer(uint32_t capacity)
     {
         ASSERT(!(capacity & (capacity - 1)));
 
-        m_buffer = WeakMapBufferType::create(capacity).leakPtr();
+        if (capacity == initialCapacity) {
+            ASSERT(m_buffer != inlineBuffer());
+            WeakMapBufferType* buffer = inlineBuffer();
+            buffer->reset(capacity);
+            m_buffer = buffer;
+        } else
+            m_buffer = WeakMapBufferType::create(capacity).leakPtr();
         m_capacity = capacity;
         ASSERT(m_buffer);
         assertBufferIsEmpty();
@@ -484,6 +501,9 @@ private:
     uint32_t m_capacity { emptyCapacity };
     uint32_t m_keyCount { 0 };
     uint32_t m_deleteCount { 0 };
+    // Left uninitialized: JIT-inlined allocation does not run the constructor, and the storage is
+    // only read once makeAndSetNewBuffer() has cleared it and pointed m_buffer at it.
+    alignas(WeakMapBucketType) std::byte m_inlineStorage[initialCapacity * sizeof(WeakMapBucketType)];
 };
 
 template<> void WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::takeSnapshot(MarkedArgumentBuffer&, unsigned);

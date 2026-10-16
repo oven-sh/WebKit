@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "api/crypto/crypto_options.h"
+#include "api/peer_connection_tracer_interface.h"  // IWYU pragma: keep
 #include "api/scoped_refptr.h"
 #include "api/transport/enums.h"
 #include "api/turn_customizer.h"
@@ -188,7 +189,8 @@ bool PeerConnectionInterface::RTCConfiguration::operator==(
          port_allocator_config.flags == o.port_allocator_config.flags &&
          pacer_burst_interval == o.pacer_burst_interval &&
          always_negotiate_data_channels == o.always_negotiate_data_channels &&
-         max_sctp_streams == o.max_sctp_streams;
+         max_sctp_streams == o.max_sctp_streams &&
+         enable_sctp_snap == o.enable_sctp_snap;
 }
 
 bool PeerConnectionInterface::RTCConfiguration::operator!=(

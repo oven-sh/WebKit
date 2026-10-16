@@ -341,14 +341,14 @@ void SourceBufferPrivateAVFObjC::updateTrackIds(Vector<std::pair<TrackID, TrackI
 void SourceBufferPrivateAVFObjC::processFormatDescriptionForTrackId(Ref<TrackInfo>&& formatDescription, TrackID trackId)
 {
     assertIsCurrent(m_dispatcher.get());
-    if (auto videoDescription = dynamicDowncast<VideoInfo>(formatDescription)) {
+    if (RefPtr videoDescription = dynamicDowncast<VideoInfo>(formatDescription)) {
         auto result = m_videoTracks.find(trackId);
         if (result != m_videoTracks.end())
             protect(result->second)->setFormatDescription(videoDescription.releaseNonNull());
         return;
     }
 
-    if (auto audioDescription = dynamicDowncast<AudioInfo>(formatDescription)) {
+    if (RefPtr audioDescription = dynamicDowncast<AudioInfo>(formatDescription)) {
         auto result = m_audioTracks.find(trackId);
         if (result != m_audioTracks.end())
             protect(result->second)->setFormatDescription(audioDescription.releaseNonNull());

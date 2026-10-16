@@ -729,7 +729,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * simple synchronous storage access.
      *
      * HTML5 local storage specification is available at
-     * http://dev.w3.org/html5/webstorage/.
+     * https://html.spec.whatwg.org/multipage/webstorage.html.
      */
     sObjProperties[PROP_ENABLE_HTML5_LOCAL_STORAGE] =
         g_param_spec_boolean(

@@ -214,7 +214,7 @@ CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& re
     std::optional<CrossOriginEmbedderPolicy> coep;
     auto ensureCOEP = [&coep, &response]() -> CrossOriginEmbedderPolicy& {
         if (!coep)
-            coep = obtainCrossOriginEmbedderPolicy(response, nullptr);
+            coep = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, nullptr);
         return *coep;
     };
     auto parseCOOP = [&response, &ensureCOEP](HTTPHeaderName headerName, auto& value, auto& reportingEndpoint) {

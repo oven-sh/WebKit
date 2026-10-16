@@ -95,7 +95,7 @@ const GlobalObjectMethodTable* JSDOMWindowBase::globalObjectMethodTable()
         shouldInterruptScript,
         javaScriptRuntimeFlags,
         shouldInterruptScriptBeforeTimeout,
-        nullptr, // moduleTypeIsAllowed
+        moduleTypeIsAllowed,
         moduleLoaderImportModule,
         moduleLoaderResolve,
         moduleLoaderFetch,
@@ -114,7 +114,6 @@ const GlobalObjectMethodTable* JSDOMWindowBase::globalObjectMethodTable()
         nullptr,
         nullptr,
 #endif
-        deriveShadowRealmGlobalObject,
         codeForEval,
         canCompileStrings,
         trustedScriptStructure,
@@ -212,7 +211,7 @@ bool JSDOMWindowBase::supportsRichSourceInfo(const JSGlobalObject* object)
     return enabled;
 }
 
-static inline bool NODELETE shouldInterruptScriptToPreventInfiniteRecursionWhenClosingPage(Page* page)
+static inline bool LEGACY_NODELETE shouldInterruptScriptToPreventInfiniteRecursionWhenClosingPage(Page* page)
 {
     // See <rdar://problem/5479443>. We don't think that page can ever be NULL
     // in this case, but if it is, we've gotten into a lexicalGlobalObject where we may have
@@ -319,7 +318,7 @@ JSValue toJS(JSGlobalObject* lexicalGlobalObject, DOMWindow& domWindow)
 
 JSDOMWindow* toJSDOMWindow(LocalFrame& frame, DOMWrapperWorld& world)
 {
-    return uncheckedDowncast<JSDOMWindow>(frame.script().globalObject(world));
+    return uncheckedDowncast<JSDOMWindow>(protect(frame.script())->globalObject(world));
 }
 
 LocalDOMWindow& incumbentDOMWindow(JSGlobalObject& fallbackGlobalObject, CallFrame& callFrame)

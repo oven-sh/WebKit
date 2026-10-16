@@ -355,9 +355,9 @@ void ScrollingTree::removeFromActiveNodes(ScrollingTreeNode& node)
 {
     // The active node sets hold refs, so a node removed from m_nodeMap would otherwise stay in
     // them and remain unresolvable via nodeForID() for the rest of the tree's lifetime.
-    if (auto* positionedNode = dynamicDowncast<ScrollingTreePositionedNode>(node))
+    if (RefPtr positionedNode = dynamicDowncast<ScrollingTreePositionedNode>(node))
         m_activePositionedNodes.remove(*positionedNode);
-    else if (auto* scrollProxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(node))
+    else if (RefPtr scrollProxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(node))
         m_activeOverflowScrollProxyNodes.remove(*scrollProxyNode);
 
     // Active nodes can also reference the node going away, and those references resolve

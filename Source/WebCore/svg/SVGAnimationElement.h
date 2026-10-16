@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006 Rob Buis <buis@kde.org>
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2008-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Cameron McCormack <cam@mcc.id.au>
  * Copyright (C) Research In Motion Limited 2011. All rights reserved.
  *
@@ -54,6 +54,8 @@ public:
 
     static bool isTargetAttributeCSSProperty(SVGElement*, const QualifiedName&);
 
+    bool isValid() const override { return SVGTests::isValid(); }
+
     bool isAdditive() const override;
     bool isAccumulated() const;
     AnimationMode animationMode() const { return m_animationMode; }
@@ -94,9 +96,9 @@ protected:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
 
-    String NODELETE toValue() const;
-    String NODELETE byValue() const;
-    String NODELETE fromValue() const;
+    String LEGACY_NODELETE toValue() const;
+    String LEGACY_NODELETE byValue() const;
+    String LEGACY_NODELETE fromValue() const;
 
     // from SVGSMILElement
     void startedActiveInterval() override;
@@ -123,14 +125,14 @@ private:
     virtual void calculateAnimatedValue(float percent, unsigned repeatCount) = 0;
     virtual std::optional<float> calculateDistance(const String& /*fromString*/, const String& /*toString*/) = 0;
 
-    const Vector<float>& NODELETE keyTimes() const;
+    const Vector<float>& LEGACY_NODELETE keyTimes() const;
     void currentValuesForValuesAnimation(float percent, float& effectivePercent, String& from, String& to);
     void calculateKeyTimesForCalcModePaced();
     float calculatePercentFromKeyPoints(float percent) const;
     void currentValuesFromKeyPoints(float percent, float& effectivePercent, String& from, String& to) const;
     float calculatePercentForSpline(float percent, unsigned splineIndex) const;
-    float NODELETE calculatePercentForFromTo(float percent) const;
-    unsigned NODELETE calculateKeyTimesIndex(float percent) const;
+    float LEGACY_NODELETE calculatePercentForFromTo(float percent) const;
+    unsigned LEGACY_NODELETE calculateKeyTimesIndex(float percent) const;
 
     void setCalcMode(const AtomString&);
 

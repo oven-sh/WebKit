@@ -568,7 +568,7 @@ RefPtr<AudioInfo> createAudioInfoFromFormatDescription(CMFormatDescriptionRef de
     });
 }
 
-RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef description)
+RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef description, std::optional<uint8_t> reorderQueueMaxSize)
 {
     // This method currently only works for compressed content.
     auto mediaType = PAL::CMFormatDescriptionGetMediaType(description);
@@ -606,6 +606,7 @@ RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef de
             .fieldCount = fieldCountFromFormatDescription(description),
             .fieldDetail = fieldDetailFromFormatDescription(description),
             .extensionAtoms = WTF::move(extensionAtoms),
+            .reorderQueueMaxSize = reorderQueueMaxSize,
 #if PLATFORM(VISION)
             .immersiveVideoMetadata = immersiveVideoMetadataFromFormatDescription(description)
 #endif
@@ -1206,7 +1207,8 @@ RetainPtr<CMBlockBufferRef> ensureContiguousBlockBuffer(CMBlockBufferRef rawBloc
 {
     if (PAL::CMBlockBufferIsRangeContiguous(rawBlockBuffer, 0, 0))
         return rawBlockBuffer;
-    CMBlockBufferRef contiguousBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMBlockBufferRef contiguousBuffer;
     if (auto status = PAL::CMBlockBufferCreateContiguous(nullptr, rawBlockBuffer, nullptr, nullptr, 0, 0, 0, &contiguousBuffer)) {
         RELEASE_LOG_FAULT(Media, "Failed to create contiguous blockBuffer with error:%d", static_cast<int>(status));
         return nullptr;
@@ -1369,7 +1371,8 @@ String channelLayoutDescription(UInt32 channelLayoutTag)
     auto channelLayout = channelLayoutFromChannelLayoutTag(channelLayoutTag);
     if (!channelLayout.first)
         return { };
-    CFStringRef channelLayoutName;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CFStringRef channelLayoutName;
     UInt32 stringSize = sizeof(channelLayoutName);
     if (PAL::AudioFormatGetProperty(kAudioFormatProperty_ChannelLayoutName, channelLayout.second, channelLayout.first.get(), &stringSize, &channelLayoutName))
         return { };
@@ -1378,7 +1381,8 @@ String channelLayoutDescription(UInt32 channelLayoutTag)
 
 RetainPtr<CMSampleBufferRef> sampleBufferFromVideoData(std::span<const uint8_t> buffer, CMVideoFormatDescriptionRef videoFormat)
 {
-    CMBlockBufferRef newVlockBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMBlockBufferRef newVlockBuffer;
     if (auto error = PAL::CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, NULL, buffer.size(), kCFAllocatorDefault, NULL, 0, buffer.size(), kCMBlockBufferAssureMemoryNowFlag, &newVlockBuffer)) {
         RELEASE_LOG_ERROR(Media, "CMBlockBufferCreateWithMemoryBlock failed with: %d", (int)error);
         return nullptr;

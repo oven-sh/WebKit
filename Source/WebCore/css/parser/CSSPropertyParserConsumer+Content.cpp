@@ -57,11 +57,11 @@ static std::optional<CSS::Quotes> consumeUnresolvedQuotes(CSSParserTokenRange& r
     CSSParserTokenRangeGuard guard { range };
 
     switch (range.peek().id()) {
-    case CSSValueNone:
+    case CSSValueID::None:
         range.consumeIncludingWhitespace();
         guard.commit();
         return CSS::Quotes { CSS::Keyword::None { } };
-    case CSSValueAuto:
+    case CSSValueID::Auto:
         range.consumeIncludingWhitespace();
         guard.commit();
         return CSS::Quotes { CSS::Keyword::Auto { } };
@@ -115,7 +115,7 @@ static std::optional<CSS::Content::CounterFunction> consumeUnresolvedContentCoun
         if (!counterStyle)
             return std::nullopt;
     } else
-        counterStyle = CSS::CounterStyle { CSS::Keyword { CSSValueDecimal } };
+        counterStyle = CSS::CounterStyle { CSS::Keyword { CSSValueID::Decimal } };
 
     if (!args.atEnd())
         return std::nullopt;
@@ -150,7 +150,7 @@ static std::optional<CSS::Content::CountersFunction> consumeUnresolvedContentCou
         if (!counterStyle)
             return std::nullopt;
     } else
-        counterStyle = CSS::CounterStyle { CSS::Keyword { CSSValueDecimal } };
+        counterStyle = CSS::CounterStyle { CSS::Keyword { CSSValueID::Decimal } };
 
     if (!args.atEnd())
         return std::nullopt;
@@ -160,41 +160,6 @@ static std::optional<CSS::Content::CountersFunction> consumeUnresolvedContentCou
             WTF::move(*customIdent),
             WTF::move(*separator),
             WTF::move(*counterStyle)
-        }
-    };
-}
-
-static std::optional<CSS::Content::LegacyAttrFunction> consumeUnresolvedContentLegacyAttrFunction(CSSParserTokenRange args, CSS::PropertyParserState& state)
-{
-    // FIXME: Remove this when removing the `cssAttrSubstitutionFunctionEnabled` setting.
-
-    if (args.peek().type() != IdentToken)
-        return std::nullopt;
-
-    auto token = args.consumeIncludingWhitespace();
-
-    auto attrName = [&] {
-        if (state.context.isHTMLDocument)
-            return CSS::CustomIdent { token.value().convertToASCIILowercaseAtom() };
-        return CSS::CustomIdent { token.value().toAtomString() };
-    }();
-
-    if (!args.atEnd() && !consumeCommaIncludingWhitespace(args))
-        return std::nullopt;
-
-    std::optional<CSS::String> fallback;
-    if (args.peek().type() == StringToken) {
-        token = args.consumeIncludingWhitespace();
-        fallback = CSS::String { token.value().toString() };
-    }
-
-    if (!args.atEnd())
-        return std::nullopt;
-
-    return CSS::Content::LegacyAttrFunction {
-        .parameters = {
-            WTF::move(attrName),
-            WTF::move(fallback),
         }
     };
 }
@@ -209,11 +174,11 @@ static std::optional<CSS::Content> consumeUnresolvedContent(CSSParserTokenRange&
     CSSParserTokenRangeGuard guard { range };
 
     switch (range.peek().id()) {
-    case CSSValueNone:
+    case CSSValueID::None:
         range.consumeIncludingWhitespace();
         guard.commit();
         return CSS::Content { CSS::Keyword::None { } };
-    case CSSValueNormal:
+    case CSSValueID::Normal:
         range.consumeIncludingWhitespace();
         guard.commit();
         return CSS::Content { CSS::Keyword::Normal { } };
@@ -239,11 +204,9 @@ static std::optional<CSS::Content> consumeUnresolvedContent(CSSParserTokenRange&
         }
 
         switch (range.peek().functionId()) {
-        case CSSValueAttr:
-            return consumeUnresolvedContentLegacyAttrFunction(consumeFunction(range), state);
-        case CSSValueCounter:
+        case CSSValueID::Counter:
             return consumeUnresolvedContentCounterFunction(consumeFunction(range), state);
-        case CSSValueCounters:
+        case CSSValueID::Counters:
             return consumeUnresolvedContentCountersFunction(consumeFunction(range), state);
         default:
             break;
@@ -280,13 +243,6 @@ static std::optional<CSS::Content> consumeUnresolvedContent(CSSParserTokenRange&
             return CSS::Content::Text { WTF::move(*string) };
 
         // FIXME: <alt-content> should support <counter> as well.
-        switch (range.peek().functionId()) {
-        case CSSValueAttr:
-            return consumeUnresolvedContentLegacyAttrFunction(consumeFunction(range), state);
-        default:
-            break;
-        }
-
         return std::nullopt;
     };
 

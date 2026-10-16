@@ -28,7 +28,9 @@
 
 #include "InlineDamage.h"
 #include "InlineSoftLineBreakItem.h"
+#include "InlineTextItem.h"
 #include "LayoutElementBox.h"
+#include "LayoutInlineTextBox.h"
 #include "LayoutUnit.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextBreakingPositionContext.h"
@@ -357,7 +359,7 @@ static std::optional<InlineItemPosition> inlineItemPositionForDamagedContentPosi
     return { };
 }
 
-static bool NODELETE isValidInlineItemPositionForLine(const InlineItemPosition& inlineItemPosition, size_t lineIndex)
+static bool LEGACY_NODELETE isValidInlineItemPositionForLine(const InlineItemPosition& inlineItemPosition, size_t lineIndex)
 {
     // It's clearly not correct when starting position is 0 while the damaged line is not the first one.
     if (!inlineItemPosition && lineIndex)
@@ -420,6 +422,13 @@ static std::optional<InvalidatedLine> invalidatedLineByDamagedBox(const DamagedC
     return { };
 }
 
+static bool LEGACY_NODELETE startsAtRemovedBox(const InvalidatedLine& invalidatedLine, const Box& removedBox, const InlineItemList& inlineItemList)
+{
+    // Partial inline item building starts at the leading inline item's layout box, so that box has to stay in the tree.
+    auto& startPosition = invalidatedLine.leadingInlineItemPosition;
+    return startPosition && &inlineItemList[startPosition.index].layoutBox() == &removedBox;
+}
+
 static InlineDamage::TrailingDisplayBoxList trailingDisplayBoxesAfterDamagedLine(size_t damagedLineIndex, const InlineDisplay::Content& displayContent)
 {
     auto trailingDisplayBoxes = InlineDamage::TrailingDisplayBoxList { };
@@ -480,7 +489,7 @@ bool InlineInvalidation::updateInlineDamage(const InvalidatedLine& invalidatedLi
     return true;
 }
 
-static bool NODELETE isSupportedContent(const Box& layoutBox)
+static bool LEGACY_NODELETE isSupportedContent(const Box& layoutBox)
 {
     return is<InlineTextBox>(layoutBox) || layoutBox.isLineBreakBox() || layoutBox.isReplacedBox() || layoutBox.isInlineBox();
 }
@@ -561,7 +570,9 @@ bool InlineInvalidation::textWillBeRemoved(const InlineTextBox& damagedInlineTex
     if (setFullLayoutIfNeeded(damagedInlineTextBox))
         return false;
 
-    if (auto invalidatedLine = invalidatedLineByDamagedBox({ damagedInlineTextBox, offset.value_or(0), DamagedContent::Type::Removal }, m_inlineItemList, displayBoxes()))
+    auto invalidatedLine = invalidatedLineByDamagedBox({ damagedInlineTextBox, offset.value_or(0), DamagedContent::Type::Removal }, m_inlineItemList, displayBoxes());
+    // No offset means the text box itself is removed from the tree.
+    if (invalidatedLine && (offset || !startsAtRemovedBox(*invalidatedLine, damagedInlineTextBox, m_inlineItemList)))
         return updateInlineDamage(*invalidatedLine, InlineDamage::Reason::Remove, ShouldApplyRangeLayout::No);
 
     m_inlineDamage.resetLayoutPosition();
@@ -608,7 +619,8 @@ bool InlineInvalidation::inlineLevelBoxWillBeRemoved(const Box& layoutBox)
     if (setFullLayoutIfNeeded(layoutBox))
         return false;
 
-    if (auto invalidatedLine = invalidatedLineByDamagedBox({ layoutBox, { }, DamagedContent::Type::Removal }, m_inlineItemList, displayBoxes()))
+    auto invalidatedLine = invalidatedLineByDamagedBox({ layoutBox, { }, DamagedContent::Type::Removal }, m_inlineItemList, displayBoxes());
+    if (invalidatedLine && !startsAtRemovedBox(*invalidatedLine, layoutBox, m_inlineItemList))
         return updateInlineDamage(*invalidatedLine, InlineDamage::Reason::Remove, ShouldApplyRangeLayout::Yes);
 
     m_inlineDamage.resetLayoutPosition();
@@ -631,6 +643,18 @@ void InlineInvalidation::resetInlineDamage(InlineDamage& inlineDamage)
 {
     inlineDamage.setInlineItemListDirty();
     inlineDamage.resetLayoutPosition();
+}
+
+void InlineInvalidation::inlineItemListWillChange(InlineDamage& inlineDamage)
+{
+    inlineDamage.setInlineItemListDirty();
+}
+
+bool InlineInvalidation::isSafeToRemoveWithoutFullInvalidation(const Box& layoutBox)
+{
+    // Intrinsic width computation may have built state for content that was never laid out. For text and line breaks
+    // that is only inline items. Anything else (floats, list markers, nested inline layout) may have left more behind.
+    return is<InlineTextBox>(layoutBox) || layoutBox.isLineBreakBox();
 }
 
 }

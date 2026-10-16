@@ -29,7 +29,7 @@
 #include <JavaScriptCore/Microtask.h>
 #include <JavaScriptCore/RegExpGlobalData.h>
 #include <JavaScriptCore/RuntimeFlags.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/StructureCache.h>
 #include <JavaScriptCore/Watchpoint.h>
 #include <JavaScriptCore/WeakGCMap.h>
@@ -40,19 +40,6 @@
 #include <wtf/FixedVector.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/WeakPtr.h>
-
-#if USE(APPLE_INTERNAL_SDK)
-// FIXME: Properly support using WKA in modules.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
-#include <WebKitAdditions/JSGlobalObjectAdditions.h>
-#pragma clang diagnostic pop
-#else
-#define JS_GLOBAL_OBJECT_ADDITIONS_1
-#define JS_GLOBAL_OBJECT_ADDITIONS_2
-#define JS_GLOBAL_OBJECT_ADDITIONS_3
-#define JS_GLOBAL_OBJECT_ADDITIONS_4
-#endif
 
 struct OpaqueJSClass;
 struct OpaqueJSClassContextData;
@@ -265,8 +252,6 @@ public:
     WriteBarrier<JSCallee> m_zombieFrameCallee;
     WriteBarrier<JSCallee> m_evalCallee;
 
-    JS_GLOBAL_OBJECT_ADDITIONS_1;
-
     LazyClassStructure m_evalErrorStructure;
     LazyClassStructure m_rangeErrorStructure;
     LazyClassStructure m_referenceErrorStructure;
@@ -313,6 +298,10 @@ public:
     WriteBarrier<IntlCollator> m_cachedLocaleCompareCollator;
     String m_cachedLocaleCompareCollatorLocale;
     uint64_t m_cachedLocaleCompareCollatorLanguagesEpoch { 0 };
+
+    WriteBarrier<IntlNumberFormat> m_cachedToLocaleStringNumberFormat;
+    String m_cachedToLocaleStringNumberFormatLocale;
+    uint64_t m_cachedToLocaleStringNumberFormatLanguagesEpoch { 0 };
 
     LazyClassStructure m_durationStructure;
     LazyClassStructure m_instantStructure;
@@ -622,9 +611,9 @@ public:
     void installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
     void installChainedWatchpoint(InlineWatchpointSet& from, InlineWatchpointSet& to);
 
-    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
-    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
-    inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
+    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& LEGACY_NODELETE typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
+    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& LEGACY_NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
+    inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& LEGACY_NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
 
     void addWeakTicket(DeferredWorkTimer::Ticket&);
     void clearWeakTickets();
@@ -800,7 +789,7 @@ public:
 #endif
 
     bool hasDebugger() const { return m_debugger; }
-    bool NODELETE hasInteractiveDebugger() const;
+    bool LEGACY_NODELETE hasInteractiveDebugger() const;
     const RuntimeFlags& runtimeFlags() const LIFETIME_BOUND { return m_runtimeFlags; }
 
 #if ENABLE(DFG_JIT)
@@ -847,7 +836,7 @@ public:
 
     JSScope* globalScopeExtension() LIFETIME_BOUND { return m_globalScopeExtension.get(); }
     void setGlobalScopeExtension(JSScope*);
-    void NODELETE clearGlobalScopeExtension();
+    void LEGACY_NODELETE clearGlobalScopeExtension();
 
     JSCallee* globalCallee() LIFETIME_BOUND { return m_globalCallee.get(); }
     JSCallee* evalCallee() LIFETIME_BOUND { return m_evalCallee.get(); }
@@ -873,6 +862,7 @@ public:
     IntlDateTimeFormat* defaultDateFormat() const LIFETIME_BOUND { return m_defaultDateFormat.get(this); }
     IntlDateTimeFormat* defaultTimeFormat() const LIFETIME_BOUND { return m_defaultTimeFormat.get(this); }
     IntlNumberFormat* defaultNumberFormat() const LIFETIME_BOUND { return m_defaultNumberFormat.get(this); }
+    IntlNumberFormat* cachedToLocaleStringNumberFormat(JSString* locale);
 
     NullGetterFunction* nullGetterFunction() const LIFETIME_BOUND { return m_nullGetterFunction.get(); }
     NullSetterFunction* nullSetterFunction() const LIFETIME_BOUND { return m_nullSetterFunction.get(); }
@@ -1156,7 +1146,7 @@ public:
     JS_EXPORT_PRIVATE void setInspectable(bool);
     JS_EXPORT_PRIVATE bool inspectable() const;
 
-    void NODELETE setIsITML();
+    void LEGACY_NODELETE setIsITML();
 
     RegExpGlobalData& regExpGlobalData() LIFETIME_BOUND { return m_regExpGlobalData; }
     static constexpr ptrdiff_t regExpGlobalDataOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_regExpGlobalData); }
@@ -1186,7 +1176,7 @@ public:
 
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
-    Inspector::JSGlobalObjectInspectorController& NODELETE inspectorController() const;
+    Inspector::JSGlobalObjectInspectorController& LEGACY_NODELETE inspectorController() const;
     JSGlobalObjectDebuggable& inspectorDebuggable() { return *m_inspectorDebuggable; }
 #endif
 
@@ -1195,8 +1185,8 @@ public:
     static constexpr ptrdiff_t globalLexicalBindingEpochOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     unsigned* addressOfGlobalLexicalBindingEpoch() LIFETIME_BOUND { return &m_globalLexicalBindingEpoch; }
 
-    JS_EXPORT_PRIVATE void NODELETE setConsoleClient(WeakPtr<ConsoleClient>&&);
-    JS_EXPORT_PRIVATE CheckedPtr<ConsoleClient> NODELETE consoleClient() const;
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE setConsoleClient(WeakPtr<ConsoleClient>&&);
+    JS_EXPORT_PRIVATE CheckedPtr<ConsoleClient> LEGACY_NODELETE consoleClient() const;
 
     void setName(const String&);
     const String& name() const LIFETIME_BOUND { return m_name; }
@@ -1209,7 +1199,7 @@ public:
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }
 
-    static void NODELETE reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
+    static void LEGACY_NODELETE reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
     static JSObject* currentScriptExecutionOwner(JSGlobalObject* global) { return global; }
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*) { return ScriptExecutionStatus::Running; }
     static void reportViolationForUnsafeEval(JSGlobalObject*, const String&) { }
@@ -1376,7 +1366,7 @@ public:
     WriteBarrier<JSObject>* addressOfGlobalThis() LIFETIME_BOUND { return &m_globalThis; }
     OptionSet<CodeGenerationMode> defaultCodeGenerationMode() const;
 
-    FunctionExecutable* tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin&, SourceTaintedOrigin, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures, FunctionConstructionMode);
+    FunctionExecutable* tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin&, SourceTaintedness, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures, FunctionConstructionMode);
     void cachedFunctionExecutableForFunctionConstructor(FunctionExecutable*);
 
     static inline Structure* createStructure(VM&, JSValue prototype);
@@ -1443,7 +1433,7 @@ protected:
 private:
     friend class LLIntOffsetsExtractor;
 
-    static const GlobalObjectMethodTable* NODELETE baseGlobalObjectMethodTable();
+    static const GlobalObjectMethodTable* LEGACY_NODELETE baseGlobalObjectMethodTable();
 
     void notifyArrayBufferDetachingSlow();
     void fireWatchpointAndMakeAllArrayStructuresSlowPut(VM&);

@@ -367,20 +367,21 @@ void NetworkLoadChecker::checkRequest(ResourceRequest&& request, ContentSecurity
             return;
         }
 
-        if (!weakThis)
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
             return handler({ ResourceError { ResourceError::Type::Cancellation }});
 
         if (result.value().results.shouldBlock()) {
-            handler(weakThis->accessControlErrorForValidationHandler("Blocked by content extension"_s));
+            handler(protectedThis->accessControlErrorForValidationHandler("Blocked by content extension"_s));
             return;
         }
 
-        if (weakThis->shouldBlockForTrackingPolicy(result.value().request)) {
-            handler(weakThis->accessControlErrorForValidationHandler("Blocked by tracking protections"_s));
+        if (protectedThis->shouldBlockForTrackingPolicy(result.value().request)) {
+            handler(protectedThis->accessControlErrorForValidationHandler("Blocked by tracking protections"_s));
             return;
         }
 
-        weakThis->continueCheckingRequestOrDoSyntheticRedirect(WTF::move(originalRequest), WTF::move(result.value().request), WTF::move(handler));
+        protectedThis->continueCheckingRequestOrDoSyntheticRedirect(WTF::move(originalRequest), WTF::move(result.value().request), WTF::move(handler));
     });
 #else
     this->continueCheckingRequestOrDoSyntheticRedirect(WTF::move(originalRequest), WTF::move(request), WTF::move(handler));

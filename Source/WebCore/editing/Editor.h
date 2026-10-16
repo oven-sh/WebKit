@@ -36,6 +36,7 @@
 #include <WebCore/LocalFrame.h>
 #include <WebCore/PasteboardWriterData.h>
 #include <WebCore/ScrollView.h>
+#include <WebCore/SimpleRange.h>
 #include <WebCore/Text.h>
 #include <WebCore/TextChecking.h>
 #include <WebCore/TextEventInputType.h>
@@ -209,14 +210,14 @@ public:
         AsQuotation = 1 << 2,
     };
 
-    WEBCORE_EXPORT EditorClient* NODELETE client() const;
+    WEBCORE_EXPORT EditorClient* LEGACY_NODELETE client() const;
     WEBCORE_EXPORT TextCheckerClient* textChecker() const;
 
     CompositeEditCommand* lastEditCommand() { return m_lastEditCommand.get(); }
 
-    Document& NODELETE document() const;
+    Document& LEGACY_NODELETE document() const;
 
-    WEBCORE_EXPORT void NODELETE ref() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
 
     void handleKeyboardEvent(KeyboardEvent&);
@@ -237,7 +238,7 @@ public:
     WEBCORE_EXPORT bool canCopy() const;
     WEBCORE_EXPORT bool canDelete() const;
     WEBCORE_EXPORT bool canSmartCopyOrDelete();
-    bool NODELETE shouldSmartDelete();
+    bool LEGACY_NODELETE shouldSmartDelete();
     bool canCopyFont() const;
 
     enum class FromMenuOrKeyBinding : bool { No, Yes };
@@ -255,9 +256,8 @@ public:
     WEBCORE_EXPORT void copyURL(const URL&, const String& title);
     void copyURL(const URL&, const String& title, Pasteboard&);
     PasteboardWriterData::URLData pasteboardWriterURL(const URL&, const String& title);
-#if !PLATFORM(IOS_FAMILY)
+
     WEBCORE_EXPORT void copyImage(const HitTestResult&);
-#endif
 
     void renderLayerDidScroll(const RenderLayer&);
     void revealSelectionIfNeededAfterLoadingImageForElement(HTMLImageElement&);
@@ -370,14 +370,15 @@ public:
     WEBCORE_EXPORT void toggleContinuousSpellChecking();
     bool isGrammarCheckingEnabled();
     void toggleGrammarChecking();
-    void ignoreSpelling();
-    void learnSpelling();
+    void ignoreSpelling(const std::optional<SimpleRange>& = std::nullopt);
+    void learnSpelling(const std::optional<SimpleRange>& = std::nullopt);
     int spellCheckerDocumentTag();
     WEBCORE_EXPORT bool isSelectionUngrammatical();
     String misspelledSelectionString() const;
     String misspelledWordAtCaretOrRange(Node* clickedNode) const;
     Vector<String> guessesForMisspelledWord(const String&) const;
     TextCheckingGuesses guessesForMisspelledOrUngrammatical();
+    TextCheckingGuesses guessesForMisspelledOrUngrammatical(const SimpleRange&);
     bool isSpellCheckingEnabledInFocusedNode() const;
     bool isSpellCheckingEnabledFor(Node*) const;
     WEBCORE_EXPORT void markMisspellingsAfterTypingToWord(const VisiblePosition& wordStart, const VisibleSelection& selectionAfterTyping, AllowTextReplacement);
@@ -445,7 +446,7 @@ public:
     WEBCORE_EXPORT bool getCompositionSelection(unsigned& selectionStart, unsigned& selectionEnd) const;
     bool hasDeadKeyComposition() const;
 
-    // getting international text input composition state (for use by LegacyInlineTextBox)
+    // getting international text input composition state (for use by text painting)
     Text* compositionNode() const { return m_compositionNode.get(); }
     unsigned compositionStart() const { return m_compositionStart; }
     unsigned compositionEnd() const { return m_compositionEnd; }
@@ -473,7 +474,7 @@ public:
     PAL::KillRing& killRing() const LIFETIME_BOUND { return m_killRing; }
     SpellChecker& spellChecker() const { return m_spellChecker; }
 
-    EditingBehavior NODELETE behavior() const;
+    EditingBehavior LEGACY_NODELETE behavior() const;
 
     WEBCORE_EXPORT std::optional<SimpleRange> selectedRange();
 
@@ -612,7 +613,7 @@ public:
     static RefPtr<SharedBuffer> dataInRTFDFormat(NSAttributedString *);
     static RefPtr<SharedBuffer> dataInRTFFormat(NSAttributedString *);
 
-    static bool NODELETE writingSuggestionsSupportsSuffix();
+    static bool LEGACY_NODELETE writingSuggestionsSupportsSuffix();
 #endif
 
 #if PLATFORM(MAC)
@@ -621,9 +622,10 @@ public:
 
     bool canCopyExcludingStandaloneImages() const;
 
+    WEBCORE_EXPORT void writeImageToPasteboard(Pasteboard&, Element& imageElement, const URL&, const String& title);
+
 #if !PLATFORM(WIN)
     WEBCORE_EXPORT void writeSelectionToPasteboard(Pasteboard&);
-    WEBCORE_EXPORT void writeImageToPasteboard(Pasteboard&, Element& imageElement, const URL&, const String& title);
     void writeSelection(PasteboardWriterData&);
 #endif
 
@@ -668,8 +670,8 @@ public:
     WritingSuggestionData* writingSuggestionData() const LIFETIME_BOUND { return m_writingSuggestionData.get(); }
     bool isInsertingTextForWritingSuggestion() const { return m_isInsertingTextForWritingSuggestion; }
 
-    RenderBoxModelObject* NODELETE writingSuggestionRenderer() const;
-    void NODELETE setWritingSuggestionRenderer(RenderBoxModelObject&);
+    RenderBoxModelObject* LEGACY_NODELETE writingSuggestionRenderer() const;
+    void LEGACY_NODELETE setWritingSuggestionRenderer(RenderBoxModelObject&);
 
     WEBCORE_EXPORT void closeTyping();
 

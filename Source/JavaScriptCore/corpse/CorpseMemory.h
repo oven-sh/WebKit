@@ -131,7 +131,7 @@ private:
     };
 
     struct MapResult {
-        RefPtr<Region> region;
+        RefPtr<Region> region { };
         const uint8_t* data { nullptr };
         Error error { Error::None };
         kern_return_t kernResult { KERN_SUCCESS };

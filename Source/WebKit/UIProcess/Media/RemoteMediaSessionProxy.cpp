@@ -67,7 +67,7 @@ RemoteMediaSessionProxy::~RemoteMediaSessionProxy()
 void RemoteMediaSessionProxy::updateState(const RemoteMediaSessionState& remoteState)
 {
     m_sessionState = remoteState;
-    downcast<RemoteMediaSessionClientProxy>(protect(client())).updateState(remoteState);
+    downcast<RemoteMediaSessionClientProxy>(protect(client()))->updateState(remoteState);
 }
 
 std::optional<WebCore::QualifiedMediaSessionIdentifier> RemoteMediaSessionProxy::qualifiedSessionIdentifier() const

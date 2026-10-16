@@ -30,6 +30,7 @@
 
 #include "RemoteBufferMessages.h"
 #include "WebGPUConvertToBackingContext.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit::WebGPU {
@@ -61,7 +62,7 @@ void RemoteBufferProxy::mapAsync(WebCore::WebGPU::MapModeFlags mapModeFlags, Web
     UNUSED_PARAM(sendResult);
 }
 
-static bool NODELETE offsetOrSizeExceedsBounds(size_t dataSize, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> requestedSize)
+static bool LEGACY_NODELETE offsetOrSizeExceedsBounds(size_t dataSize, WebCore::WebGPU::Size64 offset, std::optional<WebCore::WebGPU::Size64> requestedSize)
 {
     return offset >= dataSize || (requestedSize.has_value() && requestedSize.value() + offset > dataSize);
 }
@@ -78,7 +79,7 @@ void RemoteBufferProxy::getMappedRange(WebCore::WebGPU::Size64 offset, std::opti
         return;
     }
 
-    callback(data->mutableSpan().subspan(offset));
+    callback(borrow(*data)->mutableSpan().subspan(offset));
 }
 
 std::span<uint8_t> RemoteBufferProxy::getBufferContents()

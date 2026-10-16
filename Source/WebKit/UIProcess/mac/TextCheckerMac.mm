@@ -36,6 +36,7 @@
 #import <wtf/CrossThreadCopier.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/StringView.h>
 
@@ -386,7 +387,8 @@ Vector<TextCheckingResult> TextChecker::checkTextOfParagraph(SpellDocumentTag sp
                                                          inSpellDocumentWithTag:spellDocumentTag 
                                                                     orthography:NULL
                                                                       wordCount:NULL];
-    for (NSTextCheckingResult *incomingResult in incomingResults.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSTextCheckingResult *incomingResult in incomingResults.get()) {
         NSTextCheckingType resultType = [incomingResult resultType];
         ASSERT(incomingResult.range.location != NSNotFound);
         ASSERT(incomingResult.range.length > 0);
@@ -402,7 +404,8 @@ Vector<TextCheckingResult> TextChecker::checkTextOfParagraph(SpellDocumentTag sp
             result.type = TextCheckingType::Grammar;
             result.range = resultRange;
             result.details.reserveInitialCapacity(details.get().count);
-            for (NSDictionary *incomingDetail in details.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *incomingDetail in details.get()) {
                 ASSERT(incomingDetail);
                 GrammarDetail detail;
                 RetainPtr detailRangeAsNSValue = [incomingDetail objectForKey:NSGrammarRange];
@@ -411,10 +414,10 @@ Vector<TextCheckingResult> TextChecker::checkTextOfParagraph(SpellDocumentTag sp
                 ASSERT(detailNSRange.location != NSNotFound);
                 ASSERT(detailNSRange.length > 0);
                 detail.range = detailNSRange;
-                detail.userDescription = [incomingDetail objectForKey:NSGrammarUserDescription];
-                RetainPtr<NSArray> guesses = [incomingDetail objectForKey:NSGrammarCorrections];
+                detail.userDescription = dynamic_objc_cast<NSString>([incomingDetail objectForKey:NSGrammarUserDescription]);
+                RetainPtr guesses = dynamic_objc_cast<NSArray>([incomingDetail objectForKey:NSGrammarCorrections]);
                 detail.guesses = makeVector<String>(guesses.get());
-                detail.uuid = [incomingDetail objectForKey:@"NSGrammarUUID"];
+                detail.uuid = dynamic_objc_cast<NSString>([incomingDetail objectForKey:@"NSGrammarUUID"]);
                 result.details.append(WTF::move(detail));
             }
             results.append(result);
@@ -460,8 +463,8 @@ Vector<TextCheckingResult> TextChecker::checkTextOfParagraph(SpellDocumentTag sp
                     ASSERT(detailNSRange.length > 0);
 
                     detail.range = detailNSRange;
-                    detail.userDescription = [incomingDetail objectForKey:NSGrammarUserDescription];
-                    RetainPtr<NSArray> guesses = [incomingDetail objectForKey:NSGrammarCorrections];
+                    detail.userDescription = dynamic_objc_cast<NSString>([incomingDetail objectForKey:NSGrammarUserDescription]);
+                    RetainPtr guesses = dynamic_objc_cast<NSArray>([incomingDetail objectForKey:NSGrammarCorrections]);
                     detail.guesses = makeVector<String>(guesses.get());
                     result.details.append(WTF::move(detail));
                 }
@@ -556,7 +559,8 @@ void TextChecker::requestCheckingOfString(Ref<TextCheckerCompletion>&&, int32_t)
 static Vector<TextCheckingResult> convertExtendedCheckingResults(NSArray<NSTextCheckingResult *> *incomingResults)
 {
     Vector<TextCheckingResult> results;
-    for (NSTextCheckingResult *incomingResult in incomingResults) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSTextCheckingResult *incomingResult in incomingResults) {
         NSTextCheckingType resultType = [incomingResult resultType];
         auto resultRange = incomingResult.range;
         if (resultType == NSTextCheckingTypeGrammar) {
@@ -565,15 +569,16 @@ static Vector<TextCheckingResult> convertExtendedCheckingResults(NSArray<NSTextC
             result.type = TextCheckingType::Grammar;
             result.range = resultRange;
             result.details.reserveInitialCapacity(details.get().count);
-            for (NSDictionary *incomingDetail in details.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *incomingDetail in details.get()) {
                 GrammarDetail detail;
                 RetainPtr detailRangeAsNSValue = [incomingDetail objectForKey:NSGrammarRange];
                 NSRange detailNSRange = [detailRangeAsNSValue rangeValue];
                 detail.range = detailNSRange;
-                detail.userDescription = [incomingDetail objectForKey:NSGrammarUserDescription];
-                RetainPtr<NSArray> guesses = [incomingDetail objectForKey:NSGrammarCorrections];
+                detail.userDescription = dynamic_objc_cast<NSString>([incomingDetail objectForKey:NSGrammarUserDescription]);
+                RetainPtr guesses = dynamic_objc_cast<NSArray>([incomingDetail objectForKey:NSGrammarCorrections]);
                 detail.guesses = makeVector<String>(guesses.get());
-                detail.uuid = [incomingDetail objectForKey:@"NSGrammarUUID"];
+                detail.uuid = dynamic_objc_cast<NSString>([incomingDetail objectForKey:@"NSGrammarUUID"]);
                 result.details.append(WTF::move(detail));
             }
             results.append(result);

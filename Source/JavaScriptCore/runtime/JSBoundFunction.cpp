@@ -200,7 +200,7 @@ JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, J
     }
 
     bool isJSFunction = getJSFunction(targetFunction);
-    NativeExecutable* executable = vm.getBoundFunction(isJSFunction, source.provider()->sourceTaintedOrigin());
+    NativeExecutable* executable = vm.getBoundFunction(isJSFunction, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
     Structure* structure = getBoundFunctionStructure(vm, globalObject, targetFunction);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, structure, targetFunction, boundThis, args.size(), boundArgs[0], boundArgs[1], boundArgs[2], nameMayBeNull, length, source);
@@ -211,7 +211,7 @@ JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, J
 
 JSBoundFunction* JSBoundFunction::createRaw(VM& vm, JSGlobalObject* globalObject, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode& source)
 {
-    NativeExecutable* executable = vm.getBoundFunction(/* isJSFunction */ true, source.provider()->sourceTaintedOrigin());
+    NativeExecutable* executable = vm.getBoundFunction(/* isJSFunction */ true, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
     JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, globalObject->boundFunctionStructure(), targetFunction, boundThis, boundArgsLength, arg0, arg1, arg2, nullptr, PNaN, source);
     function->finishCreation(vm);
     return function;
@@ -229,7 +229,7 @@ JSBoundFunction::JSBoundFunction(VM& vm, NativeExecutable* executable, JSGlobalO
     , m_nameMayBeNull(nameMayBeNull, WriteBarrierEarlyInit)
     , m_length(length)
     , m_boundArgsLength(boundArgsLength)
-    , m_isTainted(source.provider()->sourceTaintedOrigin() >= SourceTaintedOrigin::IndirectlyTainted)
+    , m_isTainted(source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy) >= SourceTaintedOrigin::IndirectlyTainted)
 {
     m_boundArgs[0].setWithoutWriteBarrier(arg0);
     m_boundArgs[1].setWithoutWriteBarrier(arg1);

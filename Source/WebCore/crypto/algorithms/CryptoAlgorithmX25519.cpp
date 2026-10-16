@@ -81,9 +81,9 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         exceptionCallback(ExceptionCode::InvalidAccessError);
         return;
     }
-    auto& ecBaseKey = downcast<CryptoKeyOKP>(baseKey.get());
+    Ref ecBaseKey = downcast<CryptoKeyOKP>(baseKey);
     Ref ecPublicKey = downcast<CryptoKeyOKP>(*(ecParameters.publicKey.get()));
-    if (ecBaseKey.namedCurve() != ecPublicKey->namedCurve()) {
+    if (ecBaseKey->namedCurve() != ecPublicKey->namedCurve()) {
         exceptionCallback(ExceptionCode::InvalidAccessError);
         return;
     }

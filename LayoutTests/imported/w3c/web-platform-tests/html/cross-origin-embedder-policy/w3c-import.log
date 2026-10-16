@@ -38,6 +38,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/javascript.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/javascript.https.html.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/meta-http-equiv.https.html
+/LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/no-secure-context-https-iframe.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/no-secure-context.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/no-secure-context.html.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/non-initial-about-blank.https.html
@@ -56,6 +57,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/report-only-require-corp.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/report-only-require-corp.https.html.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/reporting-navigation.https.html
+/LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/reporting-report-to-must-be-string.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/reporting-subresource-corp.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/reporting-to-document-reporting-endpoint.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-embedder-policy/reporting-to-endpoint.https.html

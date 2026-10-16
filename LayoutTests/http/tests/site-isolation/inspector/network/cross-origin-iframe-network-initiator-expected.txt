@@ -6,6 +6,8 @@ Test that Network initiator information (script stack traces and parser URLs) re
 -- Running test case: SiteIsolation.Network.Initiator.CrossOriginIFrame.Script
 PASS: Resource should have an initiator stack trace.
 PASS: Initiator stack should name the function that called fetch.
+PASS: Initiator frame should resolve to the iframe's own script.
+PASS: No initiator frame should resolve to a script owned by another target.
 
 -- Running test case: SiteIsolation.Network.Initiator.CrossOriginIFrame.AsyncScript
 PASS: Resource should have an initiator stack trace.

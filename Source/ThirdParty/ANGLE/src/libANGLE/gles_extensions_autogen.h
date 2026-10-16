@@ -780,6 +780,9 @@ struct Extensions
     // GL_ANGLE_texture_rectangle
     bool textureRectangleANGLE = false;
 
+    // GL_ANGLE_trim_memory
+    bool trimMemoryANGLE = false;
+
     // GL_ANGLE_variable_rasterization_rate_metal
     bool variableRasterizationRateMetalANGLE = false;
 

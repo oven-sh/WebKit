@@ -121,6 +121,7 @@
 		4606FEE72B1E901800D704F1 /* WeakRef.h in Headers */ = {isa = PBXBuildFile; fileRef = 4606FEE62B1E901800D704F1 /* WeakRef.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		461229722ACF6B3100BB1CCC /* FastCharacterComparison.h in Headers */ = {isa = PBXBuildFile; fileRef = 461229712ACF6B3100BB1CCC /* FastCharacterComparison.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4628C0952E9D026A00462A50 /* AbstractCanMakeCheckedPtr.h in Headers */ = {isa = PBXBuildFile; fileRef = 4628C0942E9D026A00462A50 /* AbstractCanMakeCheckedPtr.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		4C7D2A1E2F00000000DA0002 /* DarwinExtras.h in Headers */ = {isa = PBXBuildFile; fileRef = 4C7D2A1E2F00000000DA0001 /* DarwinExtras.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		46335BED2E778B1300860373 /* DispatchExtras.h in Headers */ = {isa = PBXBuildFile; fileRef = 46335BEC2E778B1300860373 /* DispatchExtras.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		46335BEE2E778B1300860374 /* DispatchOSObject.h in Headers */ = {isa = PBXBuildFile; fileRef = 46335BED2E778B1300860374 /* DispatchOSObject.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		46335BEF2E778B1300860375 /* NetworkOSObject.h in Headers */ = {isa = PBXBuildFile; fileRef = 46335BEE2E778B1300860375 /* NetworkOSObject.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -1390,6 +1391,7 @@
 		461229712ACF6B3100BB1CCC /* FastCharacterComparison.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = FastCharacterComparison.h; sourceTree = "<group>"; };
 		46209A27266D543A007F8F4A /* CancellableTask.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CancellableTask.h; sourceTree = "<group>"; };
 		4628C0942E9D026A00462A50 /* AbstractCanMakeCheckedPtr.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AbstractCanMakeCheckedPtr.h; sourceTree = "<group>"; };
+		4C7D2A1E2F00000000DA0001 /* DarwinExtras.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DarwinExtras.h; sourceTree = "<group>"; };
 		46335BEC2E778B1300860373 /* DispatchExtras.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DispatchExtras.h; sourceTree = "<group>"; };
 		46335BED2E778B1300860374 /* DispatchOSObject.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DispatchOSObject.h; sourceTree = "<group>"; };
 		46335BEE2E778B1300860375 /* NetworkOSObject.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NetworkOSObject.h; sourceTree = "<group>"; };
@@ -2268,6 +2270,7 @@
 		37C7CC281EA40A54007BD956 /* darwin */ = {
 			isa = PBXGroup;
 			children = (
+				4C7D2A1E2F00000000DA0001 /* DarwinExtras.h */,
 				46335BEC2E778B1300860373 /* DispatchExtras.h */,
 				46335BED2E778B1300860374 /* DispatchOSObject.h */,
 				6311592428989A55006A9A12 /* LibraryPathDiagnostics.h */,
@@ -3659,6 +3662,7 @@
 				DD3DC8B727A4BF8E007E5B61 /* CryptographicUtilities.h in Headers */,
 				DDF307E127C086DF006A526F /* CString.h in Headers */,
 				463CCFBF2B251D78009AB04E /* CurrentThread.h in Headers */,
+				4C7D2A1E2F00000000DA0002 /* DarwinExtras.h in Headers */,
 				DD3DC8E327A4BF8E007E5B61 /* DataLog.h in Headers */,
 				DD4901E927B4748A00D7E50D /* DataMutex.h in Headers */,
 				DD3DC94227A4BF8E007E5B61 /* DataRef.h in Headers */,

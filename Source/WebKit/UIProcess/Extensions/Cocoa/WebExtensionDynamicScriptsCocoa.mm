@@ -53,6 +53,7 @@
 #import <wtf/CallbackAggregator.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 namespace WebKit {
@@ -120,7 +121,7 @@ class InjectionResultHolder : public RefCounted<InjectionResultHolder> {
 
 public:
     template<typename... Args>
-    static Ref<InjectionResultHolder> NODELETE create(Args&&... args)
+    static Ref<InjectionResultHolder> LEGACY_NODELETE create(Args&&... args)
     {
         return adoptRef(*new InjectionResultHolder(std::forward<Args>(args)...));
     }
@@ -159,15 +160,15 @@ void executeScript(const SourcePairs& scriptPairs, WKWebView *webView, API::Cont
                 RetainPtr javaScript = adoptNS([[NSString alloc] initWithFormat:@"return (%@)(...arguments)", parameters.function.value().createNSString().get()]);
                 NSArray *arguments = parameters.arguments ? parseJSON(protect(parameters.arguments.value()), JSONOptions::FragmentsAllowed) : @[ ];
 
-                [webView _callAsyncJavaScript:javaScript.get() arguments:@{ @"arguments": arguments } inFrame:frameInfo inContentWorld:executionWorld->wrapper() withUserGesture:userGesture completionHandler:makeBlockPtr([injectionResults, aggregator, frameInfo](id resultOfExecution, NSError *error) mutable {
+                [webView _callAsyncJavaScript:javaScript.get() arguments:@{ @"arguments": arguments } inFrame:frameInfo inContentWorld:checked_objc_cast<WKContentWorld>(executionWorld->wrapper()) withUserGesture:userGesture completionHandler:makeBlockPtr([injectionResults, aggregator, frameInfo](id resultOfExecution, NSError *error) mutable {
                     injectionResults->results.append(toInjectionResultParameters(resultOfExecution, frameInfo, error.localizedDescription));
                 }).get()];
 
                 continue;
             }
 
-            for (auto& script : scriptPairs) {
-                [webView _evaluateJavaScript:script.first.createNSString().get() withSourceURL:script.second.createNSURL().get() inFrame:frameInfo inContentWorld:executionWorld->wrapper() withUserGesture:userGesture completionHandler:makeBlockPtr([injectionResults, aggregator, frameInfo](id resultOfExecution, NSError *error) mutable {
+            for (auto& script : borrow(scriptPairs)) {
+                [webView _evaluateJavaScript:script.first.createNSString().get() withSourceURL:script.second.createNSURL().get() inFrame:frameInfo inContentWorld:checked_objc_cast<WKContentWorld>(executionWorld->wrapper()) withUserGesture:userGesture completionHandler:makeBlockPtr([injectionResults, aggregator, frameInfo](id resultOfExecution, NSError *error) mutable {
                     injectionResults->results.append(toInjectionResultParameters(resultOfExecution, frameInfo, error.localizedDescription));
                 }).get()];
             }
@@ -179,7 +180,7 @@ void injectStyleSheets(const SourcePairs& styleSheetPairs, WKWebView *webView, A
 {
     Ref page = *webView._page;
 
-    for (auto& styleSheet : styleSheetPairs) {
+    for (auto& styleSheet : borrow(styleSheetPairs)) {
         auto userStyleSheet = API::UserStyleSheet::create(WebCore::UserStyleSheet { styleSheet.first, styleSheet.second, { }, { }, injectedFrames, WebCore::UserContentMatchParentFrame::Never, styleLevel, std::nullopt }, executionWorld, page.ptr());
 
         Ref controller = page->userContentController();
@@ -194,8 +195,8 @@ void removeStyleSheets(const SourcePairs& styleSheetPairs, WKWebView *webView,  
     UserStyleSheetVector styleSheetsToRemove;
     auto& dynamicallyInjectedUserStyleSheets = context.dynamicallyInjectedUserStyleSheets();
 
-    for (auto& styleSheetContent : styleSheetPairs) {
-        for (Ref userStyleSheet : borrow(dynamicallyInjectedUserStyleSheets).get()) {
+    for (auto& styleSheetContent : borrow(styleSheetPairs)) {
+        for (Ref userStyleSheet : borrow(dynamicallyInjectedUserStyleSheets)) {
             if (userStyleSheetMatchesContent(userStyleSheet, styleSheetContent, injectedFrames)) {
                 styleSheetsToRemove.append(userStyleSheet);
                 Ref controller = webView._page.get()->userContentController();
@@ -203,7 +204,7 @@ void removeStyleSheets(const SourcePairs& styleSheetPairs, WKWebView *webView,  
             }
         }
 
-        for (auto& stylesheet : styleSheetsToRemove)
+        for (auto& stylesheet : borrow(styleSheetsToRemove))
             dynamicallyInjectedUserStyleSheets.removeFirst(stylesheet);
 
         styleSheetsToRemove.clear();
@@ -289,7 +290,7 @@ void WebExtensionRegisteredScript::removeUserScriptsAndStyleSheets(const String&
 
 void WebExtensionRegisteredScript::removeUserScripts(const String& identifier)
 {
-    auto userScripts = m_userScriptsMap.take(identifier);
+    const Vector userScripts = m_userScriptsMap.take(identifier);
     auto allUserContentControllers = m_extensionContext->extensionController()->allUserContentControllers();
 
     for (auto& userScript : userScripts) {
@@ -300,7 +301,7 @@ void WebExtensionRegisteredScript::removeUserScripts(const String& identifier)
 
 void WebExtensionRegisteredScript::removeUserStyleSheets(const String& identifier)
 {
-    auto userStyleSheets = m_userStyleSheetsMap.take(identifier);
+    const Vector userStyleSheets = m_userStyleSheetsMap.take(identifier);
     auto allUserContentControllers = m_extensionContext->extensionController()->allUserContentControllers();
 
     for (auto& userStyleSheet : userStyleSheets) {

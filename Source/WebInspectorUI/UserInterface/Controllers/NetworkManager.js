@@ -63,6 +63,8 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
         WI.targetManager.addEventListener(WI.TargetManager.Event.TargetRemoved, this._handleTargetRemoved, this);
 
+        WI.settings.resourceCachingDisabled.addEventListener(WI.Setting.Event.Changed, this._handleResourceCachingDisabledSettingChanged, this);
+
         if (NetworkManager.supportsOverridingResponses()) {
             WI.Resource.addEventListener(WI.SourceCode.Event.ContentDidChange, this._handleResourceContentChangedForLocalResourceOverride, this);
             WI.Resource.addEventListener(WI.Resource.Event.RequestDataDidChange, this._handleResourceContentChangedForLocalResourceOverride, this);
@@ -264,6 +266,9 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             // that finished before the frontend attached, so fold in the aggregated tree now that
             // ProxyingPageAgent is live.
             this._requestAggregatedResourceTree();
+
+            if (this._bootstrapScript && this._bootstrapScriptEnabledSetting.value && WI.backendTarget?.hasCommand("Page.setBootstrapScript"))
+                WI.backendTarget.PageAgent.setBootstrapScript(this._bootstrapScript.content);
         }
     }
 
@@ -289,6 +294,14 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     get frames()
     {
         return Array.from(this._frameIdentifierMap.values());
+    }
+
+    get resourceSearchTarget()
+    {
+        // Under Site Isolation, only the WebPage target can search frames in every process.
+        if (this._enabledPageForSiteIsolation && WI.backendTarget)
+            return WI.backendTarget;
+        return WI.assumingMainTarget();
     }
 
     get interceptionEnabled()
@@ -410,12 +423,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         this._bootstrapScriptEnabledSetting.value = !!enabled;
 
         let source = this._bootstrapScriptEnabledSetting.value ? this._bootstrapScript.content : undefined;
-
-        // COMPATIBILITY (iOS 13.0): Page.setBootstrapScript did not exist yet.
-        for (let target of WI.targets) {
-            if (target.hasCommand("Page.setBootstrapScript"))
-                target.PageAgent.setBootstrapScript(source);
-        }
+        this._setBootstrapScriptSource(source);
 
         this.dispatchEventToListeners(NetworkManager.Event.BootstrapScriptEnabledChanged, {bootstrapScript: this._bootstrapScript});
     }
@@ -470,11 +478,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         this._bootstrapScript = null;
         WI.objectStores.general.delete(NetworkManager.bootstrapScriptSourceObjectStoreKey);
 
-        // COMPATIBILITY (iOS 13.0): Page.setBootstrapScript did not exist yet.
-        for (let target of WI.targets) {
-            if (target.hasCommand("Page.setBootstrapScript"))
-                target.PageAgent.setBootstrapScript();
-        }
+        this._setBootstrapScriptSource(undefined);
 
         this.dispatchEventToListeners(NetworkManager.Event.BootstrapScriptDestroyed, {bootstrapScript});
     }
@@ -656,23 +660,10 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
         var frame = this.frameForIdentifier(framePayload.id);
         if (!frame) {
-            // If the frame wasn't known before now, then the main resource was loaded instantly (about:blank, etc.)
-            // Make a new resource (which will make the frame). Mark will mark it as loaded at the end too since we
-            // don't expect any more events about the load finishing for these frames.
-            let resourceOptions = {
-                loaderIdentifier: framePayload.loaderId,
-            };
-            let frameOptions = {
-                name: framePayload.name,
-                securityOrigin: framePayload.securityOrigin,
-            };
-            let frameResource = this._addNewResourceToFrameOrTarget(framePayload.url, framePayload.id, resourceOptions, frameOptions);
-            frame = frameResource.parentFrame;
+            // No request was seen for this load (about:blank, etc.), so describe the frame from the payload.
+            frame = this._createFrame(framePayload);
+            this._dispatchFrameWasAddedEvent(frame);
             frameWasLoadedInstantly = true;
-
-            console.assert(frame);
-            if (!frame)
-                return;
         }
 
         if (framePayload.loaderId === frame.provisionalLoaderIdentifier) {
@@ -1225,6 +1216,20 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
     // Private
 
+    _handleResourceCachingDisabledSettingChanged(event)
+    {
+        let targets = new Set(WI.targets);
+
+        // Under Site Isolation, cross-origin frames are reached only through the multiplexing target.
+        if (this._enabledNetworkForSiteIsolation && WI.backendTarget)
+            targets.add(WI.backendTarget);
+
+        for (let target of targets) {
+            if (target.hasCommand("Network.setResourceCachingDisabled"))
+                target.NetworkAgent.setResourceCachingDisabled(WI.settings.resourceCachingDisabled.value);
+        }
+    }
+
     _associateTargetExecutionContextsWithFrame(frame)
     {
         // A frame target reports its realm as soon as the document's window object is set up, which
@@ -1279,7 +1284,9 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         // tree fills those gaps, but live events can arrive before it has been merged, so still create a
         // stub frame on demand: the resource is then added as a subresource (firing ResourceWasAdded)
         // rather than being treated as the main resource of a brand-new frame (firing FrameWasAdded).
-        if (!frame && frameIdentifier.startsWith("frame-")) {
+        // A document request is the frame's own load, so it takes the new-frame path below instead.
+        let isDocument = resourceOptions.type === InspectorBackend.Enum.Page.ResourceType.Document;
+        if (!frame && !isDocument && frameIdentifier.startsWith("frame-")) {
             let mainResource = new WI.Resource("about:blank");
             frame = new WI.Frame(frameIdentifier, frameOptions.name, frameOptions.securityOrigin, null, mainResource);
             this._frameIdentifierMap.set(frame.id, frame);
@@ -1291,7 +1298,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         }
 
         if (frame) {
-            if (resourceOptions.type === InspectorBackend.Enum.Page.ResourceType.Document && frame.provisionalMainResource && frame.provisionalMainResource.url === url && frame.provisionalLoaderIdentifier === resourceOptions.loaderIdentifier)
+            if (isDocument && frame.provisionalMainResource && frame.provisionalMainResource.url === url && frame.provisionalLoaderIdentifier === resourceOptions.loaderIdentifier)
                 resource = frame.provisionalMainResource;
             else {
                 resource = new WI.Resource(url, resourceOptions);
@@ -1335,7 +1342,9 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         console.assert(frame);
         console.assert(resource);
 
-        if (resource.loaderIdentifier !== frame.loaderIdentifier && frame.loaderIdentifier && !frame.provisionalLoaderIdentifier) {
+        // A document request starts the frame's next load even when the frame doesn't know its current loader yet.
+        let startsNewLoad = frame.loaderIdentifier || resource.type === WI.Resource.Type.Document;
+        if (resource.loaderIdentifier !== frame.loaderIdentifier && startsNewLoad && !frame.provisionalLoaderIdentifier) {
             // This is the start of a provisional load which happens before frameDidNavigate is called.
             // This resource will be the new mainResource if frameDidNavigate is called.
             frame.startProvisionalLoad(resource);
@@ -1523,12 +1532,12 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         return frame;
     }
 
-    _createResource(payload, framePayload)
+    _createResource(payload, frame)
     {
         let resource = new WI.Resource(payload.url, {
             mimeType: payload.mimeType,
             type: payload.type,
-            loaderIdentifier: framePayload.loaderId,
+            loaderIdentifier: frame.loaderIdentifier,
             targetId: payload.targetId,
         });
 
@@ -1556,7 +1565,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             if (resourcePayload.type === "Document" && resourcePayload.url === payload.frame.url)
                 continue;
 
-            var resource = this._createResource(resourcePayload, payload);
+            var resource = this._createResource(resourcePayload, frame);
             if (resource.target === WI.pageTarget)
                 frame.addResource(resource);
             else if (resource.target)
@@ -1638,7 +1647,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             if (frame.resourceCollection.resourcesForURL(resourcePayload.url).size)
                 continue;
 
-            let resource = this._createResource(resourcePayload, payload);
+            let resource = this._createResource(resourcePayload, frame);
             if (resource.target === WI.pageTarget)
                 frame.addResource(resource);
             else if (resource.target)
@@ -1922,8 +1931,19 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         if (!this._bootstrapScriptEnabledSetting.value)
             return;
 
-        // COMPATIBILITY (iOS 13.0): Page.setBootstrapScript did not exist yet.
-        for (let target of WI.targets) {
+        this._setBootstrapScriptSource(source);
+    }
+
+    _setBootstrapScriptSource(source)
+    {
+        let targets = WI.targets;
+
+        // `WI.targets` excludes the WebPage target, whose ProxyingPageAgent forwards the script to cross-origin frames' processes under Site Isolation.
+        if (this._enabledPageForSiteIsolation && WI.backendTarget && !targets.includes(WI.backendTarget))
+            targets = [...targets, WI.backendTarget];
+
+        for (let target of targets) {
+            // COMPATIBILITY (iOS 13.0): Page.setBootstrapScript did not exist yet.
             if (target.hasCommand("Page.setBootstrapScript"))
                 target.PageAgent.setBootstrapScript(source);
         }

@@ -19,6 +19,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/fs/resources/bfcache-test-worker.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/resources/change-observer-scope-test.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/resources/collecting-file-system-observer.js
+/LayoutTests/imported/w3c/web-platform-tests/fs/resources/insecure-context-message-host.html
+/LayoutTests/imported/w3c/web-platform-tests/fs/resources/insecure-context-message-target.html
 /LayoutTests/imported/w3c/web-platform-tests/fs/resources/message-target-dedicated-worker.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/resources/message-target-service-worker.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/resources/message-target-shared-worker.js

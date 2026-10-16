@@ -617,8 +617,7 @@ void ObjCInspectorDomainBackendDispatcher::Command(long protocol_requestId)
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{

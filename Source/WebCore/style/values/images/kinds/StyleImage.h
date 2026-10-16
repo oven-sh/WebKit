@@ -88,13 +88,16 @@ public:
     virtual bool hasClient(RenderElement&) const = 0;
 
     // Size / scale.
-    virtual FloatSize imageSize(const RenderElement*, float multiplier, WebCore::CachedImage::SizeType = WebCore::CachedImage::UsedSize) const = 0;
     virtual float imageScaleFactor() const { return 1; }
     virtual NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const = 0;
+
+    // https://drafts.csswg.org/css-images-3/#object-negotiation
+    ConcreteObjectSize negotiate(const RenderElement&, const ImageSizingContext&) const;
 
     // Platform Image.
     virtual WebCore::CachedImage* cachedImage() const { return nullptr; }
     virtual bool currentFrameIsComplete(const RenderElement*) const { return true; }
+    virtual std::optional<IntPoint> hotSpot() const { return std::nullopt; }
 
     // Multiple Image selection.
     virtual Image* selectedImage() { return this; }
@@ -102,10 +105,10 @@ public:
 
     // Rendering.
     virtual bool canRender(const RenderElement*) const { return true; }
-    virtual void setContainerSizeForRenderer(const RenderElement&, const FloatSize&) { }
     virtual ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&) const { return { }; }
     virtual bool knownToBeOpaque(const RenderElement&) const = 0;
     virtual bool canDraw(const RenderElement&) const { return true; }
+    virtual bool containsCurrentColor() const = 0;
     virtual bool canDrawAtSize(const RenderElement&, const FloatSize& size) const { return !size.isEmpty(); }
     virtual bool drawsSVGImage() const { return false; }
     virtual WTF::String accessibilityDescription() const { return { }; }
@@ -118,10 +121,13 @@ public:
     virtual ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const = 0;
     virtual ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions = { }, bool isForFirstLine = false) const;
     virtual ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions = { }) const;
+    // Rasterizes the image at its concrete object size, with resolutionScale pixels per unit rounded up to whole pixels.
+    // A bitmap is its own pixels, whatever size it is asked for.
+    virtual RefPtr<NativeImage> nativeImage(const RenderElement&, ConcreteObjectSize, float resolutionScale, ImagePaintingOptions = { }) const;
 
     // Drawing options
     virtual DecodingMode decodingModeForImageDraw(const RenderBoxModelObject&, const PaintInfo&) const { return DecodingMode::Synchronous; }
-    virtual InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, const void*, const LayoutSize&) const { return InterpolationQuality::Default; }
+    virtual InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void*, const LayoutSize&) const { return InterpolationQuality::Default; }
 
     // Derived type.
     ALWAYS_INLINE bool isCachedImage() const { return m_type == Type::CachedImage; }
@@ -163,7 +169,7 @@ protected:
 
     ImageDrawResult drawResolved(GraphicsContext&, const RenderElement&, WebCore::Image&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions) const;
     ImageDrawResult drawResolvedAsPattern(GraphicsContext&, const RenderElement&, WebCore::Image&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) const;
-    ImageDrawResult drawResolvedTiled(GraphicsContext&, const RenderElement&, WebCore::Image&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions) const;
+    ImageDrawResult drawResolvedTiled(GraphicsContext&, const RenderElement&, WebCore::Image&, NaturalDimensions tileNaturalDimensions, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions) const;
     ImageDrawResult drawResolvedNinePiece(GraphicsContext&, const RenderElement&, WebCore::Image&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions) const;
 
     using DestinationPaint = ImageDrawResult(GraphicsContext&);

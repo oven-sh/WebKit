@@ -36,12 +36,12 @@ struct ZoomFactor;
 
 namespace Layout {
 
-struct AxisConstraint;
+struct AutoRepeatConstraint;
 
 // https://drafts.csswg.org/css-grid-1/#auto-repeat
 class AutoRepeatResolver {
 public:
-    static size_t resolveRepetitions(const Style::GridTemplateList&, const AxisConstraint&, LayoutUnit usedGap, Style::ZoomFactor);
+    static size_t resolveRepetitions(const Style::GridTemplateList&, const AutoRepeatConstraint&, LayoutUnit usedGap, Style::ZoomFactor);
 };
 
 } // namespace Layout

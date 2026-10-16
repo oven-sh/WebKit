@@ -56,7 +56,7 @@ NSString * const WebScriptErrorLineNumberKey = @"WebScriptErrorLineNumber";
 
 @interface WebScriptCallFramePrivate : NSObject {
 @public
-    WebScriptObject        *globalObject;   // the global object's proxy (not retained)
+    __weak WebScriptObject *globalObject; // the global object's proxy (not retained).
     String functionName;
     JSC::JSValue exceptionValue;
 }
@@ -78,12 +78,17 @@ NSString * const WebScriptErrorLineNumberKey = @"WebScriptErrorLineNumber";
 // The delegate can assign a "wrapper" to each frame object so it can relay calls through its
 // own exported interface.  This class is private to WebCore (and the delegate).
 
+@interface WebScriptCallFrame () {
+    RetainPtr<WebScriptCallFramePrivate> _private;
+}
+@end
+
 @implementation WebScriptCallFrame (WebScriptDebugDelegateInternal)
 
 - (WebScriptCallFrame *)_initWithGlobalObject:(WebScriptObject *)globalObj functionName:(String)functionName exceptionValue:(JSC::JSValue)exceptionValue
 {
     if ((self = [super init])) {
-        _private = [[WebScriptCallFramePrivate alloc] init];
+        _private = adoptNS([[WebScriptCallFramePrivate alloc] init]);
         _private->globalObject = globalObj;
         _private->functionName = functionName;
         _private->exceptionValue = exceptionValue;
@@ -121,7 +126,6 @@ NSString * const WebScriptErrorLineNumberKey = @"WebScriptErrorLineNumber";
 {
     // Retaining the member just to release it would be pointless.
     SUPPRESS_UNRETAINED_ARG [_userInfo release];
-    SUPPRESS_UNRETAINED_ARG [_private release];
     [super dealloc];
 }
 

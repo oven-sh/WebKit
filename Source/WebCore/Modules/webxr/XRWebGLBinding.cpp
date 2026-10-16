@@ -544,7 +544,7 @@ ExceptionOr<Ref<XREquirectLayer>> XRWebGLBinding::createEquirectLayer(ScriptExec
             if (!init.space->isReferenceSpace())
                 return Exception { ExceptionCode::TypeError, "The space is not a reference space."_s };
 
-            if (downcast<WebXRReferenceSpace>(init.space)->type() == XRReferenceSpaceType::Viewer)
+            if (downcast<WebXRReferenceSpace>(init.space).type() == XRReferenceSpaceType::Viewer)
                 return Exception { ExceptionCode::TypeError, "Viewer space is not allowed for equirect layers."_s };
 
             auto validateInitResult = validateCompositionLayerInitParameters(init);
@@ -595,7 +595,7 @@ ExceptionOr<Ref<XRCylinderLayer>> XRWebGLBinding::createCylinderLayer(ScriptExec
             if (!init.space->isReferenceSpace())
                 return Exception { ExceptionCode::TypeError, "The space is not a reference space."_s };
 
-            if (downcast<WebXRReferenceSpace>(init.space)->type() == XRReferenceSpaceType::Viewer)
+            if (downcast<WebXRReferenceSpace>(init.space).type() == XRReferenceSpaceType::Viewer)
                 return Exception { ExceptionCode::TypeError, "Viewer space is not allowed for cylinder layers."_s };
 
             auto validateInitResult = validateCompositionLayerInitParameters(init);
@@ -649,7 +649,7 @@ ExceptionOr<Ref<XRCubeLayer>> XRWebGLBinding::createCubeLayer(ScriptExecutionCon
             if (!init.space->isReferenceSpace())
                 return Exception { ExceptionCode::TypeError, "The space is not a reference space."_s };
 
-            if (downcast<WebXRReferenceSpace>(init.space)->type() == XRReferenceSpaceType::Viewer)
+            if (downcast<WebXRReferenceSpace>(init.space).type() == XRReferenceSpaceType::Viewer)
                 return Exception { ExceptionCode::TypeError, "Viewer space is not allowed for cube layers."_s };
 
             if (init.layout == XRLayerLayout::Default || init.layout == XRLayerLayout::StereoLeftRight || init.layout == XRLayerLayout::StereoTopBottom)

@@ -58,6 +58,10 @@ void TestWithSwiftMessageForwarder::didReceiveMessage(IPC::Connection& connectio
         IPC::handleMessage<Messages::TestWithSwift::TestThrowingMessageWithoutReply>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestThrowingMessageWithoutReply);
         return;
     }
+    if (decoder.messageName() == Messages::TestWithSwift::TestMessageWithEmptyReply::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSwift::TestMessageWithEmptyReply>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestMessageWithEmptyReply);
+        return;
+    }
     UNUSED_PARAM(connection);
     RELEASE_LOG_ERROR(IPC, "Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
     decoder.markInvalid();
@@ -119,6 +123,11 @@ void completeWithDefaultReply(TestAsyncMessageCompletionHandler& completionHandl
     IPC::Connection::cancelReply<Messages::TestWithSwift::TestAsyncMessage>(*completionHandler);
 }
 
+void completeWithDefaultReply(TestMessageWithEmptyReplyCompletionHandler& completionHandler)
+{
+    IPC::Connection::cancelReply<Messages::TestWithSwift::TestMessageWithEmptyReply>(*completionHandler);
+}
+
 } // namespace TestWithSwift
 } // namespace CompletionHandlers
 
@@ -158,9 +167,21 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::Tes
 {
     return jsValueForDecodedArguments<Messages::TestWithSwift::TestThrowingMessageWithoutReply::Arguments>(globalObject, decoder);
 }
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestMessageWithEmptyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReply::ReplyArguments>(globalObject, decoder);
+}
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessageReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithSwift::TestAsyncMessageReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReplyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReplyReply::Arguments>(globalObject, decoder);
 }
 
 }

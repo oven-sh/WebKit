@@ -148,6 +148,7 @@ TEST(CMUtilities, EncryptedVideoExtensionAtomsRoundTripDoesNotDuplicate)
 
     WebCore::EncryptionDataCollection encryptionCollection {
         .encryptionData = { WebCore::EncryptionBoxType::CommonEncryptionTrackEncryptionBox, WebCore::SharedBuffer::create(std::span<const uint8_t> { tencData, sizeof(tencData) }) },
+        .encryptionOriginalFormat = std::nullopt,
     };
 
     auto videoInfo = WebCore::VideoInfo::create({

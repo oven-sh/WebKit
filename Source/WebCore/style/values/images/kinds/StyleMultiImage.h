@@ -40,7 +40,7 @@ namespace Style {
 struct ImageWithScale {
     RefPtr<Image> image { InvalidImage::create() };
     Style::Resolution<> scaleFactor { 1 };
-    std::optional<FunctionNotation<CSSValueType, Style::String>> mimeType;
+    std::optional<FunctionNotation<CSSValueID::Type, Style::String>> mimeType;
 
     bool operator==(const ImageWithScale& other) const
     {
@@ -70,9 +70,7 @@ private:
     bool isLoaded(const RenderElement*) const final;
     bool errorOccurred() const final;
     bool hasDecodedImage() const final;
-    FloatSize imageSize(const RenderElement*, float multiplier, WebCore::CachedImage::SizeType = WebCore::CachedImage::UsedSize) const final;
     NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
-    void setContainerSizeForRenderer(const RenderElement&, const FloatSize&) override;
     ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&) const override;
     void addClient(RenderElement&) final;
     void removeClient(RenderElement&) final;
@@ -81,10 +79,13 @@ private:
     ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
     ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
     ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions) const final;
+    RefPtr<NativeImage> nativeImage(const RenderElement&, ConcreteObjectSize, float resolutionScale, ImagePaintingOptions) const final;
     bool currentFrameIsComplete(const RenderElement*) const final;
+    std::optional<IntPoint> hotSpot() const final;
     float imageScaleFactor() const final;
     bool knownToBeOpaque(const RenderElement&) const final;
     bool canDraw(const RenderElement&) const final;
+    bool containsCurrentColor() const final;
     bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
     bool drawsSVGImage() const final;
     WTF::String accessibilityDescription() const final;
@@ -92,7 +93,7 @@ private:
     void stopAnimation() final;
     void resetAnimation() final;
     DecodingMode decodingModeForImageDraw(const RenderBoxModelObject&, const PaintInfo&) const final;
-    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, const void* layer, const LayoutSize&) const final;
+    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
     const Image* selectedImage() const final { return m_selectedImage.get(); }
     Image* selectedImage() final { return m_selectedImage.get(); }
 

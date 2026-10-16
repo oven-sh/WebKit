@@ -136,7 +136,6 @@ public:
     JSC::SourceElements* createSourceElements() { return new (m_parserArena) JSC::SourceElements(); }
 
     int features() const { return m_scope.m_features; }
-    int numConstants() const { return m_scope.m_numConstants; }
 
     ExpressionNode* makeAssignNode(const JSTokenLocation&, ExpressionNode* left, Operator, ExpressionNode* right, bool leftHasAssignments, bool rightHasAssignments, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end);
     ExpressionNode* makePrefixNode(const JSTokenLocation&, ExpressionNode*, Operator, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end);
@@ -166,10 +165,16 @@ public:
 
         return new (m_parserArena) LogicalNotNode(location, expr);
     }
-    ExpressionNode* createUnaryPlus(const JSTokenLocation& location, ExpressionNode* expr) { return new (m_parserArena) UnaryPlusNode(location, expr); }
+    ExpressionNode* createUnaryPlus(const JSTokenLocation& location, ExpressionNode* expr)
+    {
+        // Unary plus is ToNumber, which is the identity for Number. For anything else, it is observable.
+        if (expr->resultDescriptor().definitelyIsNumber())
+            return expr;
+
+        return new (m_parserArena) UnaryPlusNode(location, expr);
+    }
     ExpressionNode* createVoid(const JSTokenLocation& location, ExpressionNode* expr)
     {
-        incConstants();
         return new (m_parserArena) VoidNode(location, expr);
     }
     ExpressionNode* createThisExpr(const JSTokenLocation& location)
@@ -219,51 +224,41 @@ public:
 
     ExpressionNode* createArray(const JSTokenLocation& location, int elisions)
     {
-        if (elisions)
-            incConstants();
         return new (m_parserArena) ArrayNode(location, elisions);
     }
 
     ExpressionNode* createArray(const JSTokenLocation& location, ElementNode* elems) { return new (m_parserArena) ArrayNode(location, elems); }
     ExpressionNode* createArray(const JSTokenLocation& location, int elisions, ElementNode* elems)
     {
-        if (elisions)
-            incConstants();
         return new (m_parserArena) ArrayNode(location, elisions, elems);
     }
     ExpressionNode* createDoubleExpr(const JSTokenLocation& location, double d)
     {
-        incConstants();
         return new (m_parserArena) DoubleNode(location, d);
     }
     ExpressionNode* createIntegerExpr(const JSTokenLocation& location, double d)
     {
-        incConstants();
         return new (m_parserArena) IntegerNode(location, d);
     }
-    
+
     ExpressionNode* createBigInt(const JSTokenLocation& location, const Identifier* bigInt, uint8_t radix)
     {
-        incConstants();
         return new (m_parserArena) BigIntNode(location, *bigInt, radix);
     }
 
     ExpressionNode* createString(const JSTokenLocation& location, const Identifier* string)
     {
         ASSERT(string);
-        incConstants();
         return new (m_parserArena) StringNode(location, *string);
     }
 
     ExpressionNode* createBoolean(const JSTokenLocation& location, bool b)
     {
-        incConstants();
         return new (m_parserArena) BooleanNode(location, b);
     }
 
     ExpressionNode* createNull(const JSTokenLocation& location)
     {
-        incConstants();
         return new (m_parserArena) NullNode(location);
     }
 
@@ -1121,13 +1116,9 @@ public:
 
 private:
     struct Scope {
-        Scope()
-            : m_features(0)
-            , m_numConstants(0)
-        {
-        }
-        int m_features;
-        int m_numConstants;
+        Scope() = default;
+
+        int m_features { 0 };
     };
 
     void checkArgumentsLengthModification(const ExpressionNode* node)
@@ -1144,7 +1135,6 @@ private:
         node->setExceptionSourceCode(divot, divotStart, divotEnd);
     }
 
-    void incConstants() { m_scope.m_numConstants++; }
     void usesThis() { m_scope.m_features |= ThisFeature; }
     void usesArrowFunction() { m_scope.m_features |= ArrowFunctionFeature; }
     void usesArguments() { m_scope.m_features |= ArgumentsFeature; }
@@ -1284,30 +1274,17 @@ ExpressionNode* ASTBuilder::makeBitwiseNotNode(const JSTokenLocation& location, 
 
 ExpressionNode* ASTBuilder::makePowNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    auto* strippedExpr1 = expr1->stripUnaryPlus();
-    auto* strippedExpr2 = expr2->stripUnaryPlus();
-
-    if (strippedExpr1->isNumber() && strippedExpr2->isNumber()) {
-        const NumberNode& numberExpr1 = static_cast<NumberNode&>(*strippedExpr1);
-        const NumberNode& numberExpr2 = static_cast<NumberNode&>(*strippedExpr2);
+    if (expr1->isNumber() && expr2->isNumber()) {
+        const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
+        const NumberNode& numberExpr2 = static_cast<NumberNode&>(*expr2);
         return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
     }
-
-    if (strippedExpr1->isNumber())
-        expr1 = strippedExpr1;
-    if (strippedExpr2->isNumber())
-        expr2 = strippedExpr2;
 
     return new (m_parserArena) PowNode(location, expr1, expr2, rightHasAssignments);
 }
 
 ExpressionNode* ASTBuilder::makeMultNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
-
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*expr2);
@@ -1315,21 +1292,16 @@ ExpressionNode* ASTBuilder::makeMultNode(const JSTokenLocation& location, Expres
     }
 
     if (expr1->isNumber() && static_cast<NumberNode*>(expr1)->value() == 1)
-        return new (m_parserArena) UnaryPlusNode(location, expr2);
+        return createUnaryPlus(location, expr2);
 
     if (expr2->isNumber() && static_cast<NumberNode*>(expr2)->value() == 1)
-        return new (m_parserArena) UnaryPlusNode(location, expr1);
+        return createUnaryPlus(location, expr1);
 
     return new (m_parserArena) MultNode(location, expr1, expr2, rightHasAssignments);
 }
 
 ExpressionNode* ASTBuilder::makeDivNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
-
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*expr2);
@@ -1343,11 +1315,6 @@ ExpressionNode* ASTBuilder::makeDivNode(const JSTokenLocation& location, Express
 
 ExpressionNode* ASTBuilder::makeModNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
-
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*expr2);
@@ -1369,11 +1336,6 @@ ExpressionNode* ASTBuilder::makeAddNode(const JSTokenLocation& location, Express
 
 ExpressionNode* ASTBuilder::makeSubNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
-
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*expr2);

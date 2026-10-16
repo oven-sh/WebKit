@@ -165,82 +165,82 @@ static bool isValueOutOfRangeForProperty(CSSPropertyID propertyID, double value,
         return true;
 
     switch (propertyID) {
-    case CSSPropertyOrder:
-    case CSSPropertyZIndex:
+    case CSSPropertyID::Order:
+    case CSSPropertyID::ZIndex:
         return round(value) != value;
-    case CSSPropertyTabSize:
+    case CSSPropertyID::TabSize:
         return value < 0 || (unit == CSSUnitType::Number && round(value) != value);
-    case CSSPropertyOrphans:
-    case CSSPropertyWidows:
-    case CSSPropertyColumnCount:
+    case CSSPropertyID::Orphans:
+    case CSSPropertyID::Widows:
+    case CSSPropertyID::ColumnCount:
         return round(value) != value || value < 1;
-    case CSSPropertyAnimationDuration:
-    case CSSPropertyAnimationIterationCount:
-    case CSSPropertyBackgroundSize:
-    case CSSPropertyBlockSize:
-    case CSSPropertyBorderBlockEndWidth:
-    case CSSPropertyBorderBlockStartWidth:
-    case CSSPropertyBorderBottomLeftRadius:
-    case CSSPropertyBorderBottomRightRadius:
-    case CSSPropertyBorderBottomWidth:
-    case CSSPropertyBorderImageOutset:
-    case CSSPropertyBorderImageSlice:
-    case CSSPropertyBorderImageWidth:
-    case CSSPropertyBorderInlineEndWidth:
-    case CSSPropertyBorderInlineStartWidth:
-    case CSSPropertyBorderLeftWidth:
-    case CSSPropertyBorderRightWidth:
-    case CSSPropertyBorderTopLeftRadius:
-    case CSSPropertyBorderTopRightRadius:
-    case CSSPropertyBorderTopWidth:
-    case CSSPropertyColumnGap:
-    case CSSPropertyColumnRuleWidth:
-    case CSSPropertyColumnWidth:
-    case CSSPropertyFlexBasis:
-    case CSSPropertyFlexGrow:
-    case CSSPropertyFlexShrink:
-    case CSSPropertyFontSize:
-    case CSSPropertyFontSizeAdjust:
-    case CSSPropertyFontWidth:
-    case CSSPropertyGridAutoColumns:
-    case CSSPropertyGridAutoRows:
-    case CSSPropertyGridTemplateColumns:
-    case CSSPropertyGridTemplateRows:
-    case CSSPropertyInlineSize:
-    case CSSPropertyLineHeight:
-    case CSSPropertyMaxBlockSize:
-    case CSSPropertyMaxInlineSize:
-    case CSSPropertyMaxHeight:
-    case CSSPropertyMaxWidth:
-    case CSSPropertyMinBlockSize:
-    case CSSPropertyMinInlineSize:
-    case CSSPropertyOutlineWidth:
-    case CSSPropertyPerspective:
-    case CSSPropertyR:
-    case CSSPropertyRowGap:
-    case CSSPropertyRx:
-    case CSSPropertyRy:
-    case CSSPropertyScrollPaddingBlockEnd:
-    case CSSPropertyScrollPaddingBlockStart:
-    case CSSPropertyScrollPaddingBottom:
-    case CSSPropertyScrollPaddingInlineEnd:
-    case CSSPropertyScrollPaddingInlineStart:
-    case CSSPropertyScrollPaddingLeft:
-    case CSSPropertyScrollPaddingRight:
-    case CSSPropertyScrollPaddingTop:
-    case CSSPropertyStrokeDasharray:
-    case CSSPropertyStrokeMiterlimit:
-    case CSSPropertyStrokeWidth:
-    case CSSPropertyTransitionDuration:
+    case CSSPropertyID::AnimationDuration:
+    case CSSPropertyID::AnimationIterationCount:
+    case CSSPropertyID::BackgroundSize:
+    case CSSPropertyID::BlockSize:
+    case CSSPropertyID::BorderBlockEndWidth:
+    case CSSPropertyID::BorderBlockStartWidth:
+    case CSSPropertyID::BorderBottomLeftRadius:
+    case CSSPropertyID::BorderBottomRightRadius:
+    case CSSPropertyID::BorderBottomWidth:
+    case CSSPropertyID::BorderImageOutset:
+    case CSSPropertyID::BorderImageSlice:
+    case CSSPropertyID::BorderImageWidth:
+    case CSSPropertyID::BorderInlineEndWidth:
+    case CSSPropertyID::BorderInlineStartWidth:
+    case CSSPropertyID::BorderLeftWidth:
+    case CSSPropertyID::BorderRightWidth:
+    case CSSPropertyID::BorderTopLeftRadius:
+    case CSSPropertyID::BorderTopRightRadius:
+    case CSSPropertyID::BorderTopWidth:
+    case CSSPropertyID::ColumnGap:
+    case CSSPropertyID::ColumnRuleWidth:
+    case CSSPropertyID::ColumnWidth:
+    case CSSPropertyID::FlexBasis:
+    case CSSPropertyID::FlexGrow:
+    case CSSPropertyID::FlexShrink:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::FontSizeAdjust:
+    case CSSPropertyID::FontWidth:
+    case CSSPropertyID::GridAutoColumns:
+    case CSSPropertyID::GridAutoRows:
+    case CSSPropertyID::GridTemplateColumns:
+    case CSSPropertyID::GridTemplateRows:
+    case CSSPropertyID::InlineSize:
+    case CSSPropertyID::LineHeight:
+    case CSSPropertyID::MaxBlockSize:
+    case CSSPropertyID::MaxInlineSize:
+    case CSSPropertyID::MaxHeight:
+    case CSSPropertyID::MaxWidth:
+    case CSSPropertyID::MinBlockSize:
+    case CSSPropertyID::MinInlineSize:
+    case CSSPropertyID::OutlineWidth:
+    case CSSPropertyID::Perspective:
+    case CSSPropertyID::R:
+    case CSSPropertyID::RowGap:
+    case CSSPropertyID::Rx:
+    case CSSPropertyID::Ry:
+    case CSSPropertyID::ScrollPaddingBlockEnd:
+    case CSSPropertyID::ScrollPaddingBlockStart:
+    case CSSPropertyID::ScrollPaddingBottom:
+    case CSSPropertyID::ScrollPaddingInlineEnd:
+    case CSSPropertyID::ScrollPaddingInlineStart:
+    case CSSPropertyID::ScrollPaddingLeft:
+    case CSSPropertyID::ScrollPaddingRight:
+    case CSSPropertyID::ScrollPaddingTop:
+    case CSSPropertyID::StrokeDasharray:
+    case CSSPropertyID::StrokeMiterlimit:
+    case CSSPropertyID::StrokeWidth:
+    case CSSPropertyID::TransitionDuration:
         return value < 0;
-    case CSSPropertyFontWeight:
+    case CSSPropertyID::FontWeight:
         return value < 1 || value > 1000;
     default:
         return false;
     }
 }
 
-static CSS::Range NODELETE rangeForProperty(CSSPropertyID propertyID, CSSUnitType)
+static CSS::Range LEGACY_NODELETE rangeForProperty(CSSPropertyID propertyID, CSSUnitType)
 {
     // FIXME: Merge with isValueOutOfRangeForProperty.
 
@@ -248,79 +248,79 @@ static CSS::Range NODELETE rangeForProperty(CSSPropertyID propertyID, CSSUnitTyp
         return *valueRange;
 
     switch (propertyID) {
-    case CSSPropertyAnimationDuration:
-    case CSSPropertyAnimationIterationCount:
-    case CSSPropertyBackgroundSize:
-    case CSSPropertyBlockSize:
-    case CSSPropertyBorderBlockEndWidth:
-    case CSSPropertyBorderBlockStartWidth:
-    case CSSPropertyBorderBottomLeftRadius:
-    case CSSPropertyBorderBottomRightRadius:
-    case CSSPropertyBorderBottomWidth:
-    case CSSPropertyBorderImageOutset:
-    case CSSPropertyBorderImageSlice:
-    case CSSPropertyBorderImageWidth:
-    case CSSPropertyBorderInlineEndWidth:
-    case CSSPropertyBorderInlineStartWidth:
-    case CSSPropertyBorderLeftWidth:
-    case CSSPropertyBorderRightWidth:
-    case CSSPropertyBorderTopLeftRadius:
-    case CSSPropertyBorderTopRightRadius:
-    case CSSPropertyBorderTopWidth:
-    case CSSPropertyColumnGap:
-    case CSSPropertyColumnRuleWidth:
-    case CSSPropertyColumnWidth:
-    case CSSPropertyFlexBasis:
-    case CSSPropertyFlexGrow:
-    case CSSPropertyFlexShrink:
-    case CSSPropertyFontSize:
-    case CSSPropertyFontSizeAdjust:
-    case CSSPropertyFontWidth:
-    case CSSPropertyGridAutoColumns:
-    case CSSPropertyGridAutoRows:
-    case CSSPropertyGridTemplateColumns:
-    case CSSPropertyGridTemplateRows:
-    case CSSPropertyInlineSize:
-    case CSSPropertyLineHeight:
-    case CSSPropertyMaxBlockSize:
-    case CSSPropertyMaxInlineSize:
-    case CSSPropertyMaxHeight:
-    case CSSPropertyMaxWidth:
-    case CSSPropertyMinBlockSize:
-    case CSSPropertyMinInlineSize:
-    case CSSPropertyOutlineWidth:
-    case CSSPropertyPerspective:
-    case CSSPropertyR:
-    case CSSPropertyRowGap:
-    case CSSPropertyRx:
-    case CSSPropertyRy:
-    case CSSPropertyScrollPaddingBlockEnd:
-    case CSSPropertyScrollPaddingBlockStart:
-    case CSSPropertyScrollPaddingBottom:
-    case CSSPropertyScrollPaddingInlineEnd:
-    case CSSPropertyScrollPaddingInlineStart:
-    case CSSPropertyScrollPaddingLeft:
-    case CSSPropertyScrollPaddingRight:
-    case CSSPropertyScrollPaddingTop:
-    case CSSPropertyStrokeDasharray:
-    case CSSPropertyStrokeMiterlimit:
-    case CSSPropertyStrokeWidth:
-    case CSSPropertyTransitionDuration:
-    case CSSPropertyTabSize:
-    case CSSPropertyFontWeight:     // FIXME: Support more fine-grain ranges: `<number [1,1000]>`
-    case CSSPropertyOrphans:        // FIXME: Support more fine-grain ranges: `<integer [1,∞]>`
-    case CSSPropertyWidows:         // FIXME: Support more fine-grain ranges: `<integer [1,∞]>`
-    case CSSPropertyColumnCount:    // FIXME: Support more fine-grain ranges: `<integer [1,∞]>`
+    case CSSPropertyID::AnimationDuration:
+    case CSSPropertyID::AnimationIterationCount:
+    case CSSPropertyID::BackgroundSize:
+    case CSSPropertyID::BlockSize:
+    case CSSPropertyID::BorderBlockEndWidth:
+    case CSSPropertyID::BorderBlockStartWidth:
+    case CSSPropertyID::BorderBottomLeftRadius:
+    case CSSPropertyID::BorderBottomRightRadius:
+    case CSSPropertyID::BorderBottomWidth:
+    case CSSPropertyID::BorderImageOutset:
+    case CSSPropertyID::BorderImageSlice:
+    case CSSPropertyID::BorderImageWidth:
+    case CSSPropertyID::BorderInlineEndWidth:
+    case CSSPropertyID::BorderInlineStartWidth:
+    case CSSPropertyID::BorderLeftWidth:
+    case CSSPropertyID::BorderRightWidth:
+    case CSSPropertyID::BorderTopLeftRadius:
+    case CSSPropertyID::BorderTopRightRadius:
+    case CSSPropertyID::BorderTopWidth:
+    case CSSPropertyID::ColumnGap:
+    case CSSPropertyID::ColumnRuleWidth:
+    case CSSPropertyID::ColumnWidth:
+    case CSSPropertyID::FlexBasis:
+    case CSSPropertyID::FlexGrow:
+    case CSSPropertyID::FlexShrink:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::FontSizeAdjust:
+    case CSSPropertyID::FontWidth:
+    case CSSPropertyID::GridAutoColumns:
+    case CSSPropertyID::GridAutoRows:
+    case CSSPropertyID::GridTemplateColumns:
+    case CSSPropertyID::GridTemplateRows:
+    case CSSPropertyID::InlineSize:
+    case CSSPropertyID::LineHeight:
+    case CSSPropertyID::MaxBlockSize:
+    case CSSPropertyID::MaxInlineSize:
+    case CSSPropertyID::MaxHeight:
+    case CSSPropertyID::MaxWidth:
+    case CSSPropertyID::MinBlockSize:
+    case CSSPropertyID::MinInlineSize:
+    case CSSPropertyID::OutlineWidth:
+    case CSSPropertyID::Perspective:
+    case CSSPropertyID::R:
+    case CSSPropertyID::RowGap:
+    case CSSPropertyID::Rx:
+    case CSSPropertyID::Ry:
+    case CSSPropertyID::ScrollPaddingBlockEnd:
+    case CSSPropertyID::ScrollPaddingBlockStart:
+    case CSSPropertyID::ScrollPaddingBottom:
+    case CSSPropertyID::ScrollPaddingInlineEnd:
+    case CSSPropertyID::ScrollPaddingInlineStart:
+    case CSSPropertyID::ScrollPaddingLeft:
+    case CSSPropertyID::ScrollPaddingRight:
+    case CSSPropertyID::ScrollPaddingTop:
+    case CSSPropertyID::StrokeDasharray:
+    case CSSPropertyID::StrokeMiterlimit:
+    case CSSPropertyID::StrokeWidth:
+    case CSSPropertyID::TransitionDuration:
+    case CSSPropertyID::TabSize:
+    case CSSPropertyID::FontWeight: // FIXME: Support more fine-grain ranges: `<number [1,1000]>`
+    case CSSPropertyID::Orphans: // FIXME: Support more fine-grain ranges: `<integer [1,∞]>`
+    case CSSPropertyID::Widows: // FIXME: Support more fine-grain ranges: `<integer [1,∞]>`
+    case CSSPropertyID::ColumnCount: // FIXME: Support more fine-grain ranges: `<integer [1,∞]>`
         return CSS::Nonnegative;
 
-    case CSSPropertyOrder:          // FIXME: Support more fine-grain ranges: `<integer>`
-    case CSSPropertyZIndex:         // FIXME: Support more fine-grain ranges: `<integer>`
+    case CSSPropertyID::Order: // FIXME: Support more fine-grain ranges: `<integer>`
+    case CSSPropertyID::ZIndex: // FIXME: Support more fine-grain ranges: `<integer>`
     default:
         return CSS::All;
     }
 }
 
-static CSS::Category NODELETE calculationCategoryForProperty(CSSPropertyID, CSSUnitType unit)
+static CSS::Category LEGACY_NODELETE calculationCategoryForProperty(CSSPropertyID, CSSUnitType unit)
 {
     // FIXME: This should be looking up the supported calculation categories for the CSSPropertyID and picking the one that best matches the unit.
 

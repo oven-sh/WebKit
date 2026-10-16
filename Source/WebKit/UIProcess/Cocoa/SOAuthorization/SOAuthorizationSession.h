@@ -97,7 +97,7 @@ protected:
     WebPageProxy* page() const { return m_page.get(); }
     State state() const { return m_state; }
     ASCIILiteral stateString() const;
-    ASCIILiteral NODELETE initiatingActionString() const;
+    ASCIILiteral LEGACY_NODELETE initiatingActionString() const;
     void setState(State state) { m_state = state; }
     const API::NavigationAction* navigationAction() { return m_navigationAction.get(); }
     Ref<API::NavigationAction> releaseNavigationAction();
@@ -127,7 +127,6 @@ private:
 
     RetainPtr<SOAuthorizationViewController> m_viewController;
 #if PLATFORM(MAC)
-    RetainPtr<NSViewController> m_presentingViewController;
     RetainPtr<NSWindow> m_sheetWindow;
     RetainPtr<NSObject> m_sheetWindowWillCloseObserver;
     RetainPtr<NSObject> m_presentingWindowDidDeminiaturizeObserver;

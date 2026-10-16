@@ -11,7 +11,7 @@
 <div id="console"></div>
 <script>
 "use strict";
-description("Test that resizing the canvas clears color, depth and stencil of the default framebuffer, even when state that affects gl.clear() is set when the resize happens.");
+description("Test that resizing the canvas clears color, depth and stencil of the default framebuffer, even when state that affects gl.clear() is set when the resize is applied. The resize is applied when the default framebuffer is next used. Resizing the canvas and resizing it back reallocates the storage to the size it already has, so the storage may keep its contents and only the clear clears it.");
 if (window.internals)
     window.internals.settings.setWebGLErrorsToConsoleEnabled(false);
 
@@ -76,10 +76,10 @@ function drawQuad(program, z, color)
     wtu.drawUnitQuad(gl);
 }
 
-function runCase(attributes, stateCase)
+function runCase(attributes, stateCase, resizeBack)
 {
     debug("");
-    debug("Testing " + stateCase.name + " with " + JSON.stringify(attributes));
+    debug("Testing " + stateCase.name + " with " + JSON.stringify(attributes) + (resizeBack ? ", resized back" : ""));
 
     var canvas = document.createElement("canvas");
     canvas.width = 16;
@@ -105,27 +105,35 @@ function runCase(attributes, stateCase)
     stateCase.set();
     canvas.width = 20;
     canvas.height = 20;
+    if (resizeBack) {
+        canvas.width = 16;
+        canvas.height = 16;
+    }
+    // Use the default framebuffer while the state is set, so that the resize is applied with the
+    // state set. The read is not affected by the state.
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
     stateCase.reset();
     wtu.glErrorShouldBe(gl, gl.NO_ERROR, "no errors from resize");
-    shouldBe("gl.drawingBufferWidth", "20");
-    shouldBe("gl.drawingBufferHeight", "20");
-    gl.viewport(0, 0, 20, 20);
+    var size = resizeBack ? 16 : 20;
+    shouldBe("gl.drawingBufferWidth", "" + size);
+    shouldBe("gl.drawingBufferHeight", "" + size);
+    gl.viewport(0, 0, size, size);
 
-    wtu.checkCanvasRect(gl, 0, 0, 20, 20, [0, 0, 0, 0], "after resize, color should be transparent black");
+    wtu.checkCanvasRect(gl, 0, 0, size, size, [0, 0, 0, 0], "after resize, color should be transparent black");
 
     // Passes only where depth is cleared to 1.0.
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LESS);
     drawQuad(program, 0.5, [0, 1, 0, 1]);
     gl.disable(gl.DEPTH_TEST);
-    wtu.checkCanvasRect(gl, 0, 0, 20, 20, [0, 255, 0, 255], "after resize, depth should be 1.0");
+    wtu.checkCanvasRect(gl, 0, 0, size, size, [0, 255, 0, 255], "after resize, depth should be 1.0");
 
     // Passes only where stencil is cleared to 0.
     gl.enable(gl.STENCIL_TEST);
     gl.stencilFunc(gl.EQUAL, 0, 0xff);
     drawQuad(program, 0, [0, 0, 1, 1]);
     gl.disable(gl.STENCIL_TEST);
-    wtu.checkCanvasRect(gl, 0, 0, 20, 20, [0, 0, 255, 255], "after resize, stencil should be 0");
+    wtu.checkCanvasRect(gl, 0, 0, size, size, [0, 0, 255, 255], "after resize, stencil should be 0");
 
     wtu.glErrorShouldBe(gl, gl.NO_ERROR, "no errors");
 
@@ -138,8 +146,10 @@ function runCase(attributes, stateCase)
 }
 
 for (var attributes of attributeCases) {
-    for (var stateCase of stateCases)
-        runCase(attributes, stateCase);
+    for (var stateCase of stateCases) {
+        runCase(attributes, stateCase, false);
+        runCase(attributes, stateCase, true);
+    }
 }
 
 debug("");

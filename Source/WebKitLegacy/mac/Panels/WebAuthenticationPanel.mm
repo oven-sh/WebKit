@@ -45,6 +45,7 @@
 @implementation WebAuthenticationPanel {
     RetainPtr<id> callback;
     RetainPtr<NSURLAuthenticationChallenge> challenge;
+    RetainPtr<NSArray> topLevelObjects;
 }
 
 -(id)initWithCallback:(id)cb selector:(SEL)sel
@@ -55,15 +56,6 @@
         selector = sel;
     }
     return self;
-}
-
-
-- (void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [panel release];
-
-    [super dealloc];
 }
 
 // IB actions
@@ -108,9 +100,9 @@
 - (BOOL)loadNib
 {
     if (!nibLoaded) {
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        if ([NSBundle loadNibNamed:WebAuthenticationPanelNibName owner:self]) {
-ALLOW_DEPRECATED_DECLARATIONS_END
+        NSArray *nibTopLevelObjects = nil;
+        if ([[NSBundle bundleForClass:[self class]] loadNibNamed:WebAuthenticationPanelNibName owner:self topLevelObjects:&nibTopLevelObjects]) {
+            topLevelObjects = nibTopLevelObjects;
             nibLoaded = YES;
             [protect(imageView) setImage:[NSImage imageNamed:@"NSApplicationIcon"]];
         } else {
