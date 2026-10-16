@@ -56,6 +56,32 @@ void FreeList::initialize(FreeCell* start, uint64_t secret, unsigned bytes)
     m_originalSize = bytes;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+unsigned FreeList::hideCellsForSampling(unsigned cells, char*& savedIntervalEnd, FreeCell*& savedNextInterval)
+{
+    if (m_intervalStart >= m_intervalEnd) {
+        if (isSentinel(m_nextInterval))
+            return 0;
+        FreeCell::advance(m_secret, m_nextInterval, m_intervalStart, m_intervalEnd);
+    }
+    unsigned visible = std::min<uint64_t>(cells, (m_intervalEnd - m_intervalStart) / m_cellSize);
+    savedIntervalEnd = m_intervalEnd;
+    savedNextInterval = m_nextInterval;
+    m_intervalEnd = m_intervalStart + static_cast<size_t>(visible) * m_cellSize;
+    m_nextInterval = std::bit_cast<FreeCell*>(static_cast<uintptr_t>(1));
+    return visible;
+}
+
+unsigned FreeList::restoreHiddenCells(char* savedIntervalEnd, FreeCell* savedNextInterval)
+{
+    ASSERT(m_intervalStart <= m_intervalEnd);
+    unsigned notTaken = (m_intervalEnd - m_intervalStart) / m_cellSize;
+    m_intervalEnd = savedIntervalEnd;
+    m_nextInterval = savedNextInterval;
+    return notTaken;
+}
+#endif
+
 void FreeList::dump(PrintStream& out) const
 {
     out.print("{nextInterval = ", RawPointer(nextInterval()), ", secret = ", m_secret, ", intervalStart = ", RawPointer(m_intervalStart), ", intervalEnd = ", RawPointer(m_intervalEnd), ", originalSize = ", m_originalSize, "}");

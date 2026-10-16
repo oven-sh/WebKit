@@ -110,6 +110,15 @@ public:
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
     unsigned cellSize() const { return m_cellSize; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // For allocation sampling (LocalAllocator). Hides every cell past the first `cells` of the current interval, so
+    // the bump allocators (C++ and JIT) take the slow path there, and returns how many cells stay visible. The hidden
+    // bounds go to the out-parameters for restore(). Steps to the next interval first if the current one is used up.
+    unsigned hideCellsForSampling(unsigned cells, char*& savedIntervalEnd, FreeCell*& savedNextInterval);
+    // Returns how many of the visible cells were not taken.
+    unsigned restoreHiddenCells(char* savedIntervalEnd, FreeCell* savedNextInterval);
+#endif
     
 private:
     FreeCell* nextInterval() const { return m_nextInterval; }

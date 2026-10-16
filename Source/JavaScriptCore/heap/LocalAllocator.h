@@ -58,13 +58,24 @@ public:
     BlockDirectory& directory() const { return *m_directory; }
 
     // Intended for diagnostics only (rdar://157153895)
-    bool isFreeListedCell(const void*) const;
+    bool isFreeListedCell(const void*);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Heap::startAllocationSampling / stopAllocationSampling, through the directory.
+    void configureAllocationSampling(bool);
+#endif
 
 private:
     friend class BlockDirectory;
     
     void reset();
     JS_EXPORT_PRIVATE void* allocateSlowCase(Heap&, size_t, GCDeferralContext*, AllocationFailureMode);
+#if USE(BUN_JSC_ADDITIONS)
+    void* allocateAtSamplingBoundary(Heap&, size_t cellSize);
+    void noteAllocationForSampling(Heap&, void* cell, size_t cellSize);
+    void hideCellsForSampling();
+    void restoreHiddenCells();
+#endif
     void didConsumeFreeList();
     void* tryAllocateWithoutCollecting(size_t);
     void* tryAllocateIn(MarkedBlock::Handle*, size_t);
@@ -80,6 +91,14 @@ private:
     // After you do something to a block based on one of these cursors, you clear the bit in the
     // corresponding bitvector and leave the cursor where it was.
     unsigned m_allocationCursor { 0 }; // Points to the next block that is a candidate for allocation.
+#if USE(BUN_JSC_ADDITIONS)
+    // Allocation sampling. The free list shows only the cells up to the next pick; the rest of its current interval
+    // and the intervals after it wait here. Non-null savedIntervalEnd means cells are hidden.
+    char* m_savedIntervalEnd { nullptr };
+    FreeCell* m_savedNextInterval { nullptr };
+    uint32_t m_cellsUntilSample { 0 }; // Cells to hand out before the pick, the visible ones already subtracted.
+    bool m_isSamplingAllocations { false };
+#endif
 };
 
 inline constexpr ptrdiff_t LocalAllocator::offsetOfFreeList()
