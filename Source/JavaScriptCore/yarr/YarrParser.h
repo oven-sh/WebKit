@@ -2212,7 +2212,7 @@ private:
     NamedCaptureGroups m_namedCaptureGroups;
     UncheckedKeyHashSet<String> m_forwardReferenceNames;
 
-    static constexpr unsigned maxPatternSize = 1024 * 1024; // Derived by empirical testing of compile time in PCRE and WREC.
+    static constexpr unsigned maxPatternSize = 16 * 1024 * 1024;
     static constexpr unsigned maxCapturesCount = (1 << 16) / 2; // Derived from V8's configuration.
 };
 
