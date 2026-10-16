@@ -364,11 +364,13 @@ public:
         return node;
     }
 
-    ExpressionNode* createOptionalChain(const JSTokenLocation& location, ExpressionNode* base, ExpressionNode* expr, bool isOutermost)
+    ExpressionNode* createOptionalChain(const JSTokenLocation& location, ExpressionNode* base, ExpressionNode* expr, bool isOutermost, const JSTextPosition& end)
     {
         if (base)
             base->setIsOptionalChainBase();
-        return new (m_parserArena) OptionalChainNode(location, expr, isOutermost);
+        auto* node = new (m_parserArena) OptionalChainNode(location, expr, isOutermost);
+        setEndOffset(node, end.offset);
+        return node;
     }
 
     ExpressionNode* createConditionalExpr(const JSTokenLocation& location, ExpressionNode* condition, ExpressionNode* lhs, ExpressionNode* rhs)
@@ -1242,12 +1244,16 @@ ExpressionNode* ASTBuilder::makeDeleteNode(const JSTokenLocation& location, Expr
     }
     if (expr->isBracketAccessorNode()) {
         BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(expr);
-        return new (m_parserArena) DeleteBracketNode(location, bracket->base(), bracket->subscript(), divot, start, end);
+        auto* node = new (m_parserArena) DeleteBracketNode(location, bracket->base(), bracket->subscript(), divot, start, end);
+        node->setSubexpressionInfo(bracket->divot(), bracket->divotEnd().offset);
+        return node;
     }
     ASSERT(expr->isDotAccessorNode());
     checkArgumentsLengthModification(expr);
     DotAccessorNode* dot = static_cast<DotAccessorNode*>(expr);
-    return new (m_parserArena) DeleteDotNode(location, dot->base(), dot->identifier(), divot, start, end);
+    auto* node = new (m_parserArena) DeleteDotNode(location, dot->base(), dot->identifier(), divot, start, end);
+    node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
+    return node;
 }
 
 ExpressionNode* ASTBuilder::makeNegateNode(const JSTokenLocation& location, ExpressionNode* n)
@@ -1411,6 +1417,7 @@ ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, Ex
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr1);
         if (!optionalChain->expr()->isDeleteNode()) {
             constexpr bool hasAbsorbedOptionalChain = true;
+            setEndOffset(optionalChain->expr(), optionalChain->endOffset());
             return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain);
         }
     }
@@ -1499,13 +1506,22 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
 ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int token, std::pair<ExpressionNode*, BinaryOpInfo> lhs, std::pair<ExpressionNode*, BinaryOpInfo> rhs)
 {
     switch (token) {
+    // The control flow profiler starts a basic block after the left operand of a
+    // short-circuit operator and ends one after the right operand, so both operands
+    // keep their end offsets (like the arms of a ConditionalNode do).
     case COALESCE:
+        setEndOffset(lhs.first, lhs.second.end.offset);
+        setEndOffset(rhs.first, rhs.second.end.offset);
         return makeCoalesceNode(location, lhs.first, rhs.first);
 
     case OR:
+        setEndOffset(lhs.first, lhs.second.end.offset);
+        setEndOffset(rhs.first, rhs.second.end.offset);
         return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::Or);
 
     case AND:
+        setEndOffset(lhs.first, lhs.second.end.offset);
+        setEndOffset(rhs.first, rhs.second.end.offset);
         return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::And);
 
     case BITOR:

@@ -6069,10 +6069,14 @@ void BytecodeGenerator::discardOptionalChainTarget()
     m_optionalChainTargetStack.removeLast();
 }
 
-void BytecodeGenerator::emitOptionalCheck(RegisterID* src)
+void BytecodeGenerator::emitOptionalCheck(RegisterID* src, int linkTextOffset)
 {
     ASSERT(m_optionalChainTargetStack.size());
     emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), m_optionalChainTargetStack.last().get());
+    // The rest of the chain runs only when the check passes, so it is a basic
+    // block of its own for the control flow profiler. It starts at the `?.`
+    // (or `[`) of this link.
+    emitProfileControlFlow(linkTextOffset);
 }
 
 template <typename OldOpType, typename NewOpType, typename TupleType>
