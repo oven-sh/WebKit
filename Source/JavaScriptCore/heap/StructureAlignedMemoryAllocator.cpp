@@ -60,6 +60,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #include <wtf/OSAllocator.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+// Defined by Bun: prints an error that names the sizes and the limits of the process, then exits.
+// reservedBytes is 0 when every size was refused, else the size that was reserved and could not be used.
+// Null in the JSC shell, which keeps the assertions. No fallback definition: see RunLoopBun.cpp.
+extern "C" __attribute__((weak)) void Bun__structureHeapReservationFailed(size_t largestTriedBytes, size_t smallestTriedBytes, size_t reservedBytes);
+#endif
+
 namespace JSC {
 
 StructureAlignedMemoryAllocator::StructureAlignedMemoryAllocator() = default;
@@ -120,6 +127,15 @@ public:
                 break;
             mappedHeapSize /= 2;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (!g_jscConfig.startOfStructureHeap) [[unlikely]] {
+            // The loop halved mappedHeapSize once more after the last size it tried.
+            if (Bun__structureHeapReservationFailed) {
+                Bun__structureHeapReservationFailed(preferredStructureHeapSize, mappedHeapSize * 2, 0);
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+#endif
         RELEASE_ASSERT(g_jscConfig.startOfStructureHeap, g_jscConfig.startOfStructureHeap, preferredStructureHeapSize, mappedHeapSize);
         RELEASE_ASSERT(hasOneBitSet(mappedHeapSize), mappedHeapSize);
         uintptr_t alignmentMask = mappedHeapSize - 1;
@@ -147,7 +163,16 @@ public:
             // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
             // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
             // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.
-            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena));
+            bool isManaged = mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena);
+#if USE(BUN_JSC_ADDITIONS)
+            if (!isManaged) [[unlikely]] {
+                if (Bun__structureHeapReservationFailed) {
+                    Bun__structureHeapReservationFailed(preferredStructureHeapSize, mappedHeapSize, mappedHeapSize);
+                    RELEASE_ASSERT_NOT_REACHED();
+                }
+            }
+#endif
+            RELEASE_ASSERT(isManaged);
             structureHeap = mi_heap_new_in_arena(structureArena);
 #if OS(LINUX) && defined(MADV_DOFORK)
             // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
