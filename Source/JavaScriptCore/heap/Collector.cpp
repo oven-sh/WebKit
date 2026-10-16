@@ -124,7 +124,10 @@ Collector::Collector()
     , m_helperClient(&heapHelperPool())
     , m_constraintSet(makeUnique<MarkingConstraintSet>())
     , m_threadLock(Box<Lock>::create())
-    , m_threadCondition(AutomaticThreadCondition::create())
+    // If the OS refuses to create the collector thread (pthread_create EAGAIN under a thread or pid
+    // limit), a mutator finishes the collection itself. See takeConnBecauseThreadCouldNotStart() and
+    // Heap::collectAsTheCollectorBecauseCollectorThreadCouldNotStart().
+    , m_threadCondition(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
 {
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
@@ -236,9 +239,26 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     m_requests.append(request);
     m_lastGrantedTicket++;
     // A mutator that has the conn serves the request at its next poll, and otherwise the collector thread does.
-    if (!anyMutatorHasConnWithLock())
-        m_threadCondition->notifyOne(locker);
+    if (!anyMutatorHasConnWithLock() && !m_threadCondition->notifyOne(locker) && hasHeap(requester))
+        takeConnBecauseThreadCouldNotStart(locker, requester);
     return m_lastGrantedTicket;
+}
+
+// The OS refused to create the collector thread (pthread_create EAGAIN: RLIMIT_NPROC, a cgroup pids
+// limit). Nothing else can serve the pending work, so the mutator of `heap` keeps the conn and runs the
+// collection itself at its stopIfNecessary() polls, the same way it does after stealing the conn in
+// requestCollection(). A stop request that Heap::releaseAccessSlow() left for the collector is withdrawn
+// for the same reason: the collector that would have resumed the mutator does not exist.
+void Collector::takeConnBecauseThreadCouldNotStart(const AbstractLocker&, Heap& heap)
+{
+    ASSERT(hasHeap(heap));
+    dataLogLnIf(CollectorInternal::verbose, "Taking the conn: the collector thread could not start.");
+    for (;;) {
+        unsigned oldState = heap.m_worldState.load();
+        unsigned newState = (oldState | Heap::mutatorHasConnBit) & ~Heap::stoppedBit;
+        if (heap.m_worldState.compareExchangeWeak(oldState, newState))
+            return;
+    }
 }
 
 bool Collector::shouldCollectInCollectorThread()
@@ -822,10 +842,11 @@ auto Collector::requestMembershipChange(MembershipChange&& change) -> Membership
         ++m_lastAppliedMembershipChange;
         return ticket;
     }
+    Heap& heap = *change.heap;
     m_membershipChanges.append(WTF::move(change));
     // A mutator that has the conn applies the change at its next poll, and otherwise the collector thread does.
-    if (!anyMutatorHasConnWithLock())
-        m_threadCondition->notifyOne(locker);
+    if (!anyMutatorHasConnWithLock() && !m_threadCondition->notifyOne(locker) && hasHeap(heap))
+        takeConnBecauseThreadCouldNotStart(locker, heap);
     return ticket;
 }
 

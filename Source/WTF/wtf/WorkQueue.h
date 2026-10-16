@@ -94,6 +94,8 @@ class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE WorkQueue : public WorkQue
 public:
     static WorkQueue& mainSingleton();
     static Ref<WorkQueue> create(ASCIILiteral name, QOS = QOS::Default);
+    // Returns nullptr when the OS refused the queue's thread.
+    static RefPtr<WorkQueue> tryCreate(ASCIILiteral name, QOS = QOS::Default);
 
 
     // WorkQueueBase
