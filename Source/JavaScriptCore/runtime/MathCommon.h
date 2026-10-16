@@ -148,11 +148,12 @@ ALWAYS_INLINE Int toIntImpl(double number)
 // it maps to INT64_MIN: NaN, the infinities, and every |number| >= 2^63. Their exponent is at
 // least 63, so unlike toIntImpl this needs no rounding towards zero, and no restore of the
 // implicit leading mantissa bit, which at 2^63 or above cannot reach the low 32 bits.
+// It must not assert that: FTL calls it without effects, so B3 may hoist the call above the
+// branch on the fast path's result, where it runs for any double and its result goes unused.
 ALWAYS_INLINE int32_t toInt32AfterFailedTruncation(double number)
 {
     uint64_t bits = std::bit_cast<uint64_t>(number);
     int32_t exp = (static_cast<int32_t>(bits >> 52) & 0x7ff) - 0x3ff;
-    ASSERT(exp >= 63);
 
     // Past a shift of 31 every mantissa bit weighs 2^32 or more, so nothing survives ToInt32.
     // NaN and the infinities exit here too, on their all-ones exponent field. The unsigned
