@@ -96,6 +96,11 @@ public:
 
     void runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>>);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether the helper threads have joined the marking of the current cycle.
+    bool parallelMarkersStarted();
+#endif
+
     template<typename Func>
     void runFunctionInParallel(const Func& func)
     {
@@ -185,6 +190,11 @@ private:
     bool runConcurrentPhase(GCConductor);
     bool runReloopPhase(GCConductor);
     bool runEndPhase(GCConductor);
+
+    // Hands the helper threads the marking of the current cycle. Once per cycle: the begin phase, or with
+    // Options::minimumBytesMarkedForParallelMarking the first place that shows the helpers would have work.
+    void startParallelMarkers(const AbstractLocker&) WTF_REQUIRES_LOCK(m_markingMutex);
+
     bool changePhase(GCConductor, CollectorPhase);
     bool finishChangingPhase(GCConductor);
 
@@ -226,6 +236,9 @@ private:
     Condition m_markingConditionVariable;
     Condition m_bonusVisitorTaskConditionVariable;
     bool m_parallelMarkersShouldExit { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_parallelMarkersStarted WTF_GUARDED_BY_LOCK(m_markingMutex) { false };
+#endif
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);

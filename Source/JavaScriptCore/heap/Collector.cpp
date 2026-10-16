@@ -415,27 +415,19 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 
     m_parallelMarkersShouldExit = false;
 
-    m_helperClient.setFunction(
-        [this] () {
-            SlotVisitor* visitor;
-            {
-                Locker locker { m_parallelSlotVisitorLock };
-                RELEASE_ASSERT_WITH_MESSAGE(!m_availableParallelSlotVisitors.isEmpty(), "Parallel SlotVisitors are allocated apriori");
-                visitor = m_availableParallelSlotVisitors.takeLast();
-            }
-
-            Thread::registerGCThread(GCThreadType::Helper);
-
-            {
-                ParallelModeEnabler parallelModeEnabler(*visitor);
-                visitor->drainFromShared(SlotVisitor::HelperDrain);
-            }
-
-            {
-                Locker locker { m_parallelSlotVisitorLock };
-                m_availableParallelSlotVisitors.append(visitor);
-            }
-        });
+#if USE(BUN_JSC_ADDITIONS)
+    {
+        Locker locker { m_markingMutex };
+        m_parallelMarkersStarted = false;
+        // Otherwise the helpers join once this cycle has shown enough marking for them to be worth their wake-up (the
+        // collector visitor's donateKnownParallel), or when the mutator resumes with marking left (runFixpointPhase).
+        // With one marker there is nobody to join, and the cycle is scheduled as if they had.
+        if (!Options::minimumBytesMarkedForParallelMarking() || Options::numberOfGCMarkers() == 1)
+            startParallelMarkers(locker);
+    }
+#else
+    startParallelMarkers(Locker { m_markingMutex });
+#endif
 
     m_constraintSet->didStartMarking();
 
@@ -564,6 +556,11 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         double thisPauseMS = (MonotonicTime::now() - m_stopTime).milliseconds();
         dataLog("p=", thisPauseMS, "ms (max ", maxPauseMS(thisPauseMS), ")...]\n");
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Marking goes on while the mutator runs, and when the mutator has the conn nothing but the helpers can do it.
+    startParallelMarkers(Locker { m_markingMutex });
+#endif
 
     // Forgive the mutator for its past failures to keep up.
     // FIXME: Figure out if moving this to different places results in perf changes.
@@ -982,6 +979,44 @@ void Collector::endSignpost()
         return;
     WTFEndSignpost(this, JSCGarbageCollector, "%" PUBLIC_LOG_STRING, m_signpostMessage.isNull() ? "(nullptr)"_s : m_signpostMessage);
     m_signpostMessage = { };
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+bool Collector::parallelMarkersStarted()
+{
+    Locker locker { m_markingMutex };
+    return m_parallelMarkersStarted;
+}
+#endif
+
+void Collector::startParallelMarkers(const AbstractLocker&)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_parallelMarkersStarted)
+        return;
+    m_parallelMarkersStarted = true;
+#endif
+    m_helperClient.setFunction(
+        [this] () {
+            SlotVisitor* visitor;
+            {
+                Locker locker { m_parallelSlotVisitorLock };
+                RELEASE_ASSERT_WITH_MESSAGE(!m_availableParallelSlotVisitors.isEmpty(), "Parallel SlotVisitors are allocated apriori");
+                visitor = m_availableParallelSlotVisitors.takeLast();
+            }
+
+            Thread::registerGCThread(GCThreadType::Helper);
+
+            {
+                ParallelModeEnabler parallelModeEnabler(*visitor);
+                visitor->drainFromShared(SlotVisitor::HelperDrain);
+            }
+
+            {
+                Locker locker { m_parallelSlotVisitorLock };
+                m_availableParallelSlotVisitors.append(visitor);
+            }
+        });
 }
 
 void Collector::runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>> task)
