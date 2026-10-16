@@ -2454,10 +2454,8 @@ private:
                 && !m_graph.hasExitSite(node->origin.semantic, BadIndexingType)
                 && !m_graph.hasExitSite(node->origin.semantic, ExoticObjectMode)) {
                 
-                if (uid == vm().propertyNames->length.impl()) {
-                    attemptToMakeGetArrayLength(node);
+                if (uid == vm().propertyNames->length.impl() && attemptToMakeGetArrayLength(node))
                     break;
-                }
 
                 if (uid == vm().propertyNames->lastIndex.impl()
                     && node->child1()->shouldSpeculateRegExpObject()) {

@@ -2881,7 +2881,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
             alternative()->optimizeAfterWarmUp();
 
         if (reason != Profiler::JettisonDueToOldAge && reason != Profiler::JettisonDueToVMTraps)
-            tallyFrequentExitSites();
+            tallyFrequentExitSites(reason);
 #endif // ENABLE(DFG_JIT)
 
         // Jettison can happen during GC. We don't want to install code to a dead executable
@@ -3617,7 +3617,61 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
 }
 
 #if ENABLE(DFG_JIT)
-void CodeBlock::tallyFrequentExitSites()
+// An array that fails the array check of one site does not reach the checks of the sites after it. So the exit teaches
+// only that site's ArrayProfile, and ArrayMode::fromObserved keeps ignoring ArrayStorage at the other sites until each of
+// them has failed in a compilation of its own. But the sites that ran after the exit did see the array, in the Baseline
+// code that the exit continued in. So when one of the exits of jettisoned code is an array check that failed on
+// ArrayStorage, an ArrayStorage array that a site of this CodeBlock saw last is that site's speculation failure too.
+void CodeBlock::recordArrayStorageSamplesAsSpeculationFailures(ExitKind exitKind, BytecodeIndex exitIndex)
+{
+    ASSERT(JITCode::isBaselineCode(jitType()));
+
+    if (!m_metadata || (exitKind != BadCache && exitKind != BadIndexingType))
+        return;
+
+    auto isArrayStorage = [](StructureID structureID) {
+        return structureID && hasArrayStorage(structureID.decode()->indexingType());
+    };
+
+    if (ArrayProfile* exitProfile = getArrayProfile(exitIndex)) {
+        if (!exitProfile->speculationFailedOnArrayStorage() && !isArrayStorage(exitProfile->m_speculationFailureStructureID))
+            return;
+    } else if (exitKind != BadIndexingType) {
+        // Without a profile, only a CheckArray is known to be an array check. DFGTypeCheckHoistingPhase hoists one to
+        // where its variable is set, and no profile there says which array failed it.
+        return;
+    }
+
+    auto process = [&](ArrayProfile* profile) {
+        if (!profile || profile->m_speculationFailureStructureID)
+            return;
+        StructureID lastSeenStructureID = profile->m_lastSeenStructureID;
+        if (!isArrayStorage(lastSeenStructureID))
+            return;
+        // ArrayMode::fromObserved ignores ArrayStorage only for these profiles.
+        ArrayModes observed = profile->m_observedArrayModes;
+        bool hasSeenOtherShapes = arrayModesIncludeIgnoringTypedArrays(observed, UndecidedShape) || arrayModesIncludeIgnoringTypedArrays(observed, Int32Shape) || arrayModesIncludeIgnoringTypedArrays(observed, DoubleShape) || arrayModesIncludeIgnoringTypedArrays(observed, ContiguousShape);
+        if (!hasSeenOtherShapes || arrayModesIncludeIgnoringTypedArrays(observed, SlowPutArrayStorageShape))
+            return;
+        profile->m_speculationFailureStructureID = lastSeenStructureID;
+        // The exit stub also adds the array's mode to the profile. Without that, the next update would prune away the
+        // other shape of a profile that has seen one shape only, and the next compile would speculate on ArrayStorage.
+        profile->m_arrayProfileFlags.add(ArrayProfileFlag::DidPerformFirstRunPruning);
+    };
+
+#define VISIT(__op) \
+    m_metadata->forEach<__op>([&] (auto& metadata) { process(arrayProfileFor(metadata)); });
+
+    FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(VISIT)
+
+#undef VISIT
+
+    m_metadata->forEach<OpIteratorNext>([&] (auto& metadata) {
+        process(&metadata.m_iterableProfile);
+    });
+}
+
+void CodeBlock::tallyFrequentExitSites(Profiler::JettisonReason reason)
 {
     ASSERT(JSC::JITCode::isOptimizingJIT(jitType()));
     ASSERT(JITCode::isBaselineCode(alternative()->jitType()));
@@ -3626,10 +3680,25 @@ void CodeBlock::tallyFrequentExitSites()
     
     switch (jitType()) {
     case JITType::DFGJIT: {
+        // DFG code that is jettisoned for exiting too often before it reaches the FTL did not run for long, so its
+        // speculation fails often. Code that reached the FTL, or that is never going to, can have run for long before
+        // it exited this often. Its failures can be rare, and then the site that exits is the only one that should
+        // learn from them.
+        bool exitedEarlyAndOften = Options::useArrayStorageSamplesAsSpeculationFailures()
+            && !profiledBlock->m_didFailFTLCompilation
+            && (reason == Profiler::JettisonDueToOSRExit
+                || reason == Profiler::JettisonDueToBaselineLoopReoptimizationTrigger
+                || reason == Profiler::JettisonDueToBaselineLoopReoptimizationTriggerOnOSREntryFail);
         auto* jitCode = m_jitCode->dfg();
         if (auto* jitData = dfgJITData()) {
-            for (auto& stub : jitData->exitStubs())
-                jitCode->m_osrExits.at(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
+            for (auto& stub : jitData->exitStubs()) {
+                auto exit = jitCode->m_osrExits.at(stub.exitIndex);
+                exit.considerAddingAsFrequentExitSite(profiledBlock);
+                if (!exitedEarlyAndOften)
+                    continue;
+                if (CodeBlock* exitBlock = baselineCodeBlockForOriginAndBaselineCodeBlock(exit.m_codeOriginForExitProfile, profiledBlock))
+                    exitBlock->recordArrayStorageSamplesAsSpeculationFailures(exit.m_kind, exit.m_codeOriginForExitProfile.bytecodeIndex());
+            }
         }
         break;
     }
