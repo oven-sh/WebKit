@@ -81,6 +81,7 @@ struct StringJumpTable;
 enum class AccessType : int8_t;
 enum class CompilationResult : uint8_t;
 enum class JITType : uint8_t;
+enum ExitKind : uint8_t;
 enum ReoptimizationMode { DontCountReoptimization, CountReoptimization };
 
 #if ENABLE(JIT)
@@ -957,9 +958,10 @@ protected:
     void reconcileJITInlineCachesAtGCEnd();
 #endif
 #if ENABLE(DFG_JIT)
-    void tallyFrequentExitSites();
+    void tallyFrequentExitSites(Profiler::JettisonReason);
+    void recordArrayStorageSamplesAsSpeculationFailures(ExitKind, BytecodeIndex);
 #else
-    void tallyFrequentExitSites() { }
+    void tallyFrequentExitSites(Profiler::JettisonReason) { }
 #endif
 
 private:

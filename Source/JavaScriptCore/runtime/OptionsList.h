@@ -454,6 +454,7 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, reoptimizationRetryCounterMax, 0, Normal, nullptr)  \
     v(Unsigned, weakReferenceJettisonReoptimizationLimit, 4, Normal, "Optimized code jettisoned because a cell it references weakly died counts toward the reoptimization back-off of its function, like code jettisoned for exiting too often, while the function's reoptimization retry counter is below this value. 0: it never counts."_s) \
+    v(Bool, useArrayStorageSamplesAsSpeculationFailures, true, Normal, "When DFG code is jettisoned for exiting too often and one of its array checks failed on ArrayStorage, an ArrayStorage array that another array profile of the same function saw last is that profile's speculation failure too, unless it is the profile of a call. If false, a profile learns from its own exit only."_s) \
     \
     v(Unsigned, minimumOptimizationDelay, 1, Normal, nullptr) \
     v(Unsigned, maximumOptimizationDelay, 5, Normal, nullptr) \
