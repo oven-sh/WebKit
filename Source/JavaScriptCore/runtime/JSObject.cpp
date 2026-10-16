@@ -971,10 +971,12 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         if (slot.attributes() & PropertyAttribute::CustomValue) {
-            // (Not for a receiver with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
+            // The holder is not the receiver if that is a Proxy without a getOwnPropertyDescriptor trap, which answers with its target's slot.
+            // (Not for a holder with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
+            JSObject* holder = slot.slotBase();
             PutValueFunc customSetter = slot.customSetter();
-            if (customSetter && !receiver->structure()->hasImmutableProperties())
-                RELEASE_AND_RETURN(scope, customSetter(receiver->realm(), JSValue::encode(receiver), JSValue::encode(value), propertyName));
+            if (customSetter && !holder->structure()->hasImmutableProperties())
+                RELEASE_AND_RETURN(scope, customSetter(holder->realm(), JSValue::encode(holder), JSValue::encode(value), propertyName));
         }
 
         PropertyDescriptor descriptor;
@@ -3203,6 +3205,8 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
                 // Leave the rest lazy on throw; the caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]]
                     return;
+                if (JSGlobalObject* realm = this->realm(); realm->hasImmutableGlobals()) [[unlikely]]
+                    realm->didReifyStaticProperty(vm, this, value, getDirect(vm, key));
             }
         }
     }

@@ -1076,6 +1076,8 @@ private:
 #if PLATFORM(COCOA)
         enableAllSDKAlignedBehaviors();
 #endif
+
+        applyImmutableGlobalsOption(vm);
     }
 
 public:

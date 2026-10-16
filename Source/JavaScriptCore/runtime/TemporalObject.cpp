@@ -71,7 +71,9 @@ static JSValue createNowObject(VM& vm, JSObject* object)
 {
     TemporalObject* temporalObject = uncheckedDowncast<TemporalObject>(object);
     JSGlobalObject* globalObject = temporalObject->realm();
-    return TemporalNow::create(vm, TemporalNow::createStructure(vm, globalObject));
+    TemporalNow* now = TemporalNow::create(vm, TemporalNow::createStructure(vm, globalObject));
+    globalObject->didCreateBuiltin(vm, now);
+    return now;
 }
 
 static JSValue createDurationConstructor(VM&, JSObject* object)

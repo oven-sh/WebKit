@@ -445,7 +445,9 @@ static JSValue createAtomicsProperty(VM& vm, JSObject *object)
 static JSValue createConsoleProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, constructEmptyObject(global)));
+    JSObject* prototype = constructEmptyObject(global);
+    global->didCreateBuiltin(vm, prototype);
+    return ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, prototype));
 }
 
 static JSValue createWebAssemblyProperty(VM& vm, JSObject* object)
@@ -1089,6 +1091,17 @@ SUPPRESS_ASAN inline void JSGlobalObject::initStaticGlobals(VM& vm)
     addStaticGlobals(staticGlobals);
 }
 
+template<typename Functor>
+static void forEachEntryOfImmutableGlobalsOption(NOESCAPE const Functor& functor)
+{
+    auto* list = Options::immutableGlobals();
+    if (!list) [[likely]]
+        return;
+    String string { list };
+    for (StringView entry : StringView(string).split(','))
+        functor(entry.trim(isASCIIWhitespace<char16_t>));
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void JSGlobalObject::init(VM& vm)
@@ -1098,6 +1111,12 @@ void JSGlobalObject::init(VM& vm)
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     convertToDictionary(vm);
+
+    forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
+        m_hasImmutableGlobals = true;
+        if (entry == "*"_s)
+            m_immutableBuiltins = ImmutableBuiltins::OnceOptionIsApplied;
+    });
 
     m_debugger = nullptr;
     updateCanFastQueueMicrotask();
@@ -1240,6 +1259,7 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
+            init.owner->didCreateBuiltin(init.vm, constructor);
         });
 
 #define INIT_TYPED_ARRAY_LATER(type) \
@@ -1692,6 +1712,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentIteratorPrototype* segmentIteratorPrototype = IntlSegmentIteratorPrototype::create(init.vm, IntlSegmentIteratorPrototype::createStructure(init.vm, globalObject, globalObject->iteratorPrototype()));
             init.set(IntlSegmentIterator::createStructure(init.vm, globalObject, segmentIteratorPrototype));
+            globalObject->didCreateBuiltin(init.vm, segmentIteratorPrototype);
         });
     m_segmenterStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -1704,6 +1725,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentsPrototype* segmentsPrototype = IntlSegmentsPrototype::create(init.vm, globalObject, IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
             init.set(IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
+            globalObject->didCreateBuiltin(init.vm, segmentsPrototype);
         });
     m_segmentDataObjectStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -2244,7 +2266,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_ffiCallbackStructure.initLater(
         [] (const Initializer<Structure>& init) {
-            init.set(JSFFICallback::createStructure(init.vm, init.owner, JSFFICallback::createPrototype(init.vm, init.owner)));
+            JSObject* prototype = JSFFICallback::createPrototype(init.vm, init.owner);
+            init.set(JSFFICallback::createStructure(init.vm, init.owner, prototype));
+            init.owner->didCreateBuiltin(init.vm, prototype);
         });
 #endif
 
@@ -2295,7 +2319,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             });
         m_webAssemblyJSTag.initLater(
             [] (const Initializer<JSWebAssemblyTag>& init) {
-                init.set(JSWebAssemblyTag::create(init.vm, init.owner, init.owner->webAssemblyTagStructure(), Wasm::Tag::jsExceptionTag()));
+                auto* tag = JSWebAssemblyTag::create(init.vm, init.owner, init.owner->webAssemblyTagStructure(), Wasm::Tag::jsExceptionTag());
+                init.set(tag);
+                init.owner->didCreateBuiltin(init.vm, tag);
             });
 
 #define CREATE_WEBASSEMBLY_PROTOTYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
@@ -2427,6 +2453,16 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
+
+    // So far the global object's properties are JavaScriptCore's own. From here on they may be an embedder's.
+    if (m_immutableBuiltins != ImmutableBuiltins::No) [[unlikely]] {
+        structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            JSValue value = getDirect(entry.offset());
+            if (value.isObject() && !PropertyName(entry.key()).isPrivateName())
+                didCreateBuiltin(vm, asObject(value));
+            return true;
+        });
+    }
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -3273,6 +3309,12 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             }
         }
     }
+
+    if (thisObject->m_immutableBuiltins == ImmutableBuiltins::OnceOptionIsApplied) [[unlikely]] {
+        Locker locker { thisObject->cellLock() };
+        for (JSObject* object : thisObject->m_builtinsCreatedBeforeOptionIsApplied)
+            visitor.appendUnbarriered(object);
+    }
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -3935,6 +3977,9 @@ WatchpointSet& JSGlobalObject::ensureReferencedPropertyWatchpointSet(UniquedStri
 
 std::optional<unsigned> JSGlobalObject::stackTraceLimit() const
 {
+    if (m_stackTraceLimitOverride) [[unlikely]]
+        return m_stackTraceLimitOverride;
+
     JSObject* errorConstructor = m_errorStructure.constructorConcurrently();
     if (!errorConstructor)
         return Options::defaultErrorStackTraceLimit();
@@ -3950,10 +3995,146 @@ std::optional<unsigned> JSGlobalObject::stackTraceLimit() const
     return clampToUnsigned(limit);
 }
 
+using ObjectsToMakeImmutable = Vector<JSObject*, 32>;
+
+static void appendFunctionsOfProperty(VM& vm, ObjectsToMakeImmutable& objects, JSObject* holder, UniquedStringImpl* key, JSValue value)
+{
+    if (auto* getterSetter = dynamicDowncast<GetterSetter>(value)) {
+        if (!getterSetter->isGetterNull())
+            objects.append(getterSetter->getter());
+        if (!getterSetter->isSetterNull())
+            objects.append(getterSetter->setter());
+        return;
+    }
+    if (value.isCallable() || (value.isObject() && key == vm.propertyNames->prototype.impl() && holder->isCallable()))
+        objects.append(asObject(value));
+}
+
+static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable& objects)
+{
+    DeferGC deferGC(vm); // The collector does not see the list.
+    while (!objects.isEmpty()) {
+        JSObject* object = objects.takeLast();
+        if (object->type() == GlobalProxyType)
+            object = uncheckedDowncast<JSGlobalProxy>(object)->target();
+        if (object->structure()->hasImmutableProperties())
+            continue;
+        if (!object->makePropertiesImmutable(vm)) {
+            dataLogLnIf(Options::logImmutableGlobals(), "immutableGlobals: left mutable: an object of class ", object->classInfo()->className, ", which has write hooks of its own");
+            continue;
+        }
+        object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
+            return true;
+        });
+    }
+}
+
+void JSGlobalObject::makeObjectAndItsFunctionsImmutable(VM& vm, JSObject* object)
+{
+    m_hasImmutableGlobals = true;
+    ObjectsToMakeImmutable objects;
+    objects.append(object);
+    makeObjectsAndTheirFunctionsImmutable(vm, objects);
+}
+
+void JSGlobalObject::didReifyStaticProperty(VM& vm, JSObject* holder, const HashTableValue& entry, JSValue value)
+{
+    ASSERT(m_hasImmutableGlobals);
+    // What JavaScriptCore's own table gives the global object is a built-in, whatever kind of object it is. (A subclass has a table of its own.)
+    const HashTable* table = info()->staticPropHashTable;
+    if (holder == this && m_immutableBuiltins != ImmutableBuiltins::No && &entry >= table->values && &entry < table->values + table->numberOfValues) {
+        if (value.isObject() && value != globalThis())
+            didCreateBuiltin(vm, asObject(value));
+        return;
+    }
+    if (!holder->structure()->hasImmutableProperties())
+        return;
+    ObjectsToMakeImmutable objects;
+    appendFunctionsOfProperty(vm, objects, holder, nullptr, value);
+    makeObjectsAndTheirFunctionsImmutable(vm, objects);
+}
+
+void JSGlobalObject::didCreateBuiltinSlow(VM& vm, JSObject* object)
+{
+    if (m_immutableBuiltins == ImmutableBuiltins::Yes) {
+        makeObjectAndItsFunctionsImmutable(vm, object);
+        return;
+    }
+    Locker locker { cellLock() };
+    m_builtinsCreatedBeforeOptionIsApplied.append(object);
+    vm.writeBarrier(this, object);
+}
+
+void JSGlobalObject::makeAllBuiltinsImmutable(VM& vm)
+{
+    ObjectsToMakeImmutable objects;
+    {
+        Locker locker { cellLock() };
+        m_immutableBuiltins = ImmutableBuiltins::Yes;
+        objects.appendVector(std::exchange(m_builtinsCreatedBeforeOptionIsApplied, { }));
+    }
+
+    // What init() creates and no function in a property of the global object leads to.
+    objects.appendList<JSObject*>({
+        m_iteratorHelperPrototype.get(),
+        m_asyncIteratorPrototype.get(),
+        m_arrayIteratorPrototype.get(),
+        m_mapIteratorPrototype.get(),
+        m_setIteratorPrototype.get(),
+        m_wrapForValidIteratorStructure->storedPrototypeObject(),
+        m_asyncFromSyncIteratorStructure->storedPrototypeObject(),
+        m_regExpStringIteratorStructure->storedPrototypeObject(),
+        m_generatorPrototype.get(),
+        m_generatorFunctionPrototype.get(),
+        m_asyncFunctionPrototype.get(),
+        m_asyncGeneratorPrototype.get(),
+        m_asyncGeneratorFunctionPrototype.get(),
+    });
+#define APPEND_PROTOTYPE_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
+    if (featureFlag) \
+        objects.append(m_ ## lowerName ## Prototype.get());
+    FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(APPEND_PROTOTYPE_FOR_SIMPLE_TYPE)
+#undef APPEND_PROTOTYPE_FOR_SIMPLE_TYPE
+
+    makeObjectsAndTheirFunctionsImmutable(vm, objects);
+}
+
+bool JSGlobalObject::immutableGlobalsOptionLists(StringView name)
+{
+    bool result = false;
+    forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
+        result |= entry == name;
+    });
+    return result;
+}
+
+void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
+{
+    DeferTermination deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
+        if (entry == "*"_s) {
+            makeAllBuiltinsImmutable(vm);
+            return;
+        }
+        JSValue value = get(this, Identifier::fromString(vm, entry.toString()));
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return;
+        }
+        if (value.isObject())
+            makeObjectAndItsFunctionsImmutable(vm, asObject(value));
+        else
+            dataLogLnIf(Options::logImmutableGlobals(), "immutableGlobals: ", entry, " is not the name of an object in this global object");
+    });
+}
+
 JSGlobalObject* JSGlobalObject::create(VM& vm, Structure* structure)
 {
     JSGlobalObject* globalObject = new (NotNull, allocateCell<JSGlobalObject>(vm)) JSGlobalObject(vm, structure);
     globalObject->finishCreation(vm);
+    globalObject->applyImmutableGlobalsOption(vm);
     return globalObject;
 }
 
@@ -3961,6 +4142,7 @@ JSGlobalObject* JSGlobalObject::createWithCustomMethodTable(VM& vm, Structure* s
 {
     JSGlobalObject* globalObject = new (NotNull, allocateCell<JSGlobalObject>(vm)) JSGlobalObject(vm, structure, methodTable);
     globalObject->finishCreation(vm);
+    globalObject->applyImmutableGlobalsOption(vm);
     return globalObject;
 }
 

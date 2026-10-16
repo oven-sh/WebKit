@@ -715,6 +715,14 @@ public:
 
     TrustedTypesEnforcement m_trustedTypesEnforcement { TrustedTypesEnforcement::None };
 
+    // See applyImmutableGlobalsOption().
+    enum class ImmutableBuiltins : uint8_t { No, OnceOptionIsApplied, Yes };
+    ImmutableBuiltins m_immutableBuiltins { ImmutableBuiltins::No };
+    bool m_hasImmutableGlobals { false };
+    Vector<JSObject*> m_builtinsCreatedBeforeOptionIsApplied;
+
+    std::optional<unsigned> m_stackTraceLimitOverride;
+
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
         static unsigned hash(T*);
@@ -790,6 +798,10 @@ public:
 #endif
 
     std::optional<unsigned> stackTraceLimit() const;
+    // Takes the place of Error.stackTraceLimit while it is set: for an embedder's own code, which would otherwise assign that property
+    // and put the old value back, and cannot once Error has immutable properties.
+    std::optional<unsigned> stackTraceLimitOverride() const { return m_stackTraceLimitOverride; }
+    void setStackTraceLimitOverride(std::optional<unsigned> limit) { m_stackTraceLimitOverride = limit; }
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);
@@ -1255,6 +1267,27 @@ public:
         
     void haveABadTime(VM&);
 
+    // Makes immutable what Options::immutableGlobals() lists, and does nothing if that is empty. An embedder calls it once it has
+    // added its own globals and its own properties of built-ins; create() and createWithCustomMethodTable() call it themselves.
+    // '*' does not include the global object. What '*' covers and is created later is made immutable when it is created.
+    JS_EXPORT_PRIVATE void applyImmutableGlobalsOption(VM&);
+    bool hasImmutableGlobals() const { return m_hasImmutableGlobals; }
+    // For an embedder that creates the value of a global later than applyImmutableGlobalsOption() looks the name up, or while it does.
+    JS_EXPORT_PRIVATE static bool immutableGlobalsOptionLists(StringView name);
+    // JSObject::makePropertiesImmutable() for the object, for the functions its properties hold (methods, getters and setters) and,
+    // if it is a function, for its "prototype"; then the same for each of those. An object of a class that does not support it is
+    // skipped. A function that one of these objects creates later, for a property it has not materialized yet, is covered too.
+    JS_EXPORT_PRIVATE void makeObjectAndItsFunctionsImmutable(VM&, JSObject*);
+    // For a built-in of JavaScriptCore's own that no property of another built-in holds as a function.
+    void didCreateBuiltin(VM& vm, JSObject* object)
+    {
+        if (m_immutableBuiltins != ImmutableBuiltins::No) [[unlikely]]
+            didCreateBuiltinSlow(vm, object);
+    }
+    void didReifyStaticProperty(VM&, JSObject* holder, const HashTableValue&, JSValue);
+    // JavaScriptCore's own lazy fields are in JSGlobalObject itself, an embedder's are in its subclass.
+    bool isFieldOfJSGlobalObject(const void* field) const { return std::bit_cast<uintptr_t>(field) - std::bit_cast<uintptr_t>(this) < sizeof(JSGlobalObject); }
+
     void notifyArrayBufferDetaching();
 
     void clearStructureCache(VM&);
@@ -1415,6 +1448,8 @@ private:
     JS_EXPORT_PRIVATE void init(VM&);
     void initStaticGlobals(VM&);
     void fixupPrototypeChainWithObjectPrototype(VM&);
+    void didCreateBuiltinSlow(VM&, JSObject*);
+    void makeAllBuiltinsImmutable(VM&);
 
     JS_EXPORT_PRIVATE static void clearRareData(JSCell*);
 
