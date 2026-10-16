@@ -39,6 +39,8 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetPlainlyAndFill, EncodedJSValue
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetByKeyPlainly, EncodedJSValue, (JSCell* base, JSCell* key, Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyPlainly, size_t, (JSCell* base, JSCell* key, EncodedJSValue, Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTHasByKeyPlainly, size_t, (JSCell* base, JSCell* key, Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareGetOfProxy, uintptr_t, (Instance*, JSCell* proxy, uint32_t name, EncodedJSValue* results));
+JSC_DECLARE_JIT_OPERATION(operationAOTValidateGetOfProxy, EncodedJSValue, (Instance*, JSCell* target, uint32_t name, EncodedJSValue answer));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
@@ -59,6 +61,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance*, Encod
 JSC_DECLARE_JIT_OPERATION(operationAOTDeleteByValAndCache, void, (Instance*, EncodedJSValue base, EncodedJSValue property, uint32_t, Slot*, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property, uint32_t, Slot*, uint32_t));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
+#if AOT_TESTS_SHADOW_IN_COMPILED_CODE
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (void*, uint32_t, Instance*));
+#endif
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM*, Instance*));

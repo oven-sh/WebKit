@@ -10848,6 +10848,259 @@ class YarrGenerator final : public YarrJITInfo {
         return pointer;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    enum class WordsOfClass : uint8_t { Low, High, Both };
+#endif
+#if USE(BUN_JSC_ADDITIONS) && (CPU(X86_64) || CPU(ARM64))
+    bool generateSearchForOneClass()
+    {
+        if (!m_forImage || m_decodeSurrogatePairs || m_executionMode != ExecutionMode::IncludeSubpatterns || m_pattern.sticky() || m_pattern.m_numSubpatterns || m_pattern.m_body->m_alternatives.size() != 1)
+            return false;
+        auto& terms = m_pattern.m_body->m_alternatives[0]->m_terms;
+        if (terms.size() != 1)
+            return false;
+        const PatternTerm& term = terms[0];
+        if (term.type != PatternTerm::Type::CharacterClass || term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1 || term.matchDirection() != Forward || term.characterClass->m_anyCharacter)
+            return false;
+        static_assert(sizeof(BoyerMooreBitmap::Map::WordType) == sizeof(uint64_t) && BoyerMooreBitmap::Map::size() == 128);
+        BoyerMooreBitmap::Map map;
+        unsigned membersFrom128 = 0;
+        for (unsigned character = 0; character < 256; ++character) {
+            bool isListed = term.characterClass->m_matches8.contains(character);
+            for (auto& range : term.characterClass->m_ranges8)
+                isListed |= range.begin <= character && character <= range.end;
+            if (isListed == term.invert())
+                continue;
+            if (character < 128)
+                map.set(character);
+            else
+                ++membersFrom128;
+        }
+        if ((membersFrom128 && membersFrom128 != 128) || (map.isEmpty() && !membersFrom128))
+            return false;
+        bool isWide = m_charSize != CharSize::Char8;
+        if (isWide) {
+            constexpr unsigned first = 0x100;
+            constexpr unsigned last = 0xffff;
+            unsigned listed = 0;
+            for (char32_t character : term.characterClass->m_matches32)
+                listed += character >= first && character <= last;
+            for (auto& range : term.characterClass->m_ranges32) {
+                if (range.begin <= last && range.end >= first)
+                    listed += std::min<unsigned>(range.end, last) - std::max<unsigned>(range.begin, first) + 1;
+            }
+            unsigned members = term.invert() ? last - first + 1 - listed : listed;
+            if (members != (membersFrom128 ? last - first + 1 : 0))
+                return false;
+        }
+        uint64_t lowWord = map.storage()[0];
+        uint64_t highWord = map.storage()[1];
+        WordsOfClass words = !highWord ? WordsOfClass::Low : !lowWord ? WordsOfClass::High : WordsOfClass::Both;
+        if (words == WordsOfClass::Both) {
+            auto span = getBoyerMooreBitmap(map);
+            moveTableAddress(span.data(), span.size_bytes(), TableOwnership::OwnedByPattern, m_regs.regT1);
+        } else
+            moveConstant(lowWord ? lowWord : highWord, m_regs.regT1);
+        m_classRoutines.append(ClassRoutine { m_regs.regT0, m_regs.regT1, { }, { }, { } });
+        m_classRoutines.last().searchesForOneClass = true;
+        m_classRoutines.last().wordsOfClass = words;
+        m_classRoutines.last().holdsAllFrom128 = membersFrom128;
+        m_classRoutines.last().searchesWideSubject = isWide;
+        m_classRoutines.last().calls.append(m_jit.nearTailCall());
+        return true;
+    }
+
+    void generateRoutineThatSearchesForOneClass(WordsOfClass words, bool holdsAllFrom128, bool isWide)
+    {
+        constexpr int32_t charactersInVector = 16;
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+        const MacroAssembler::RegisterID bitmap = m_regs.regT1;
+        const MacroAssembler::RegisterID scratch = m_regs.regT2;
+        const MacroAssembler::RegisterID limit = m_regs.regT3;
+        MacroAssembler::BaseIndex subject(m_regs.input, m_regs.index, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne);
+        MacroAssembler::JumpList isMember;
+        MacroAssembler::JumpList isNowhere;
+        auto askBit = [&](MacroAssembler::RegisterID word) {
+#if CPU(X86_64)
+            isMember.append(m_jit.branchTestBit64(MacroAssembler::NonZero, word, character));
+#else
+            m_jit.urshift64(word, character, scratch);
+            isMember.append(m_jit.branchTest64(MacroAssembler::NonZero, scratch, MacroAssembler::TrustedImm32(1)));
+#endif
+        };
+        auto askOneCharacter = [&] {
+            MacroAssembler::JumpList isNoMember;
+            if (isWide) {
+                m_jit.load16(subject, character);
+                (holdsAllFrom128 ? isMember : isNoMember).append(m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(0x80)));
+            } else {
+                m_jit.load8(subject, character);
+                if (holdsAllFrom128)
+                    isMember.append(m_jit.branchTest32(MacroAssembler::NonZero, character, MacroAssembler::TrustedImm32(0x80)));
+            }
+            bool isBelow128 = holdsAllFrom128 || isWide;
+            switch (words) {
+            case WordsOfClass::Low:
+                isNoMember.append(m_jit.branchTest32(MacroAssembler::NonZero, character, MacroAssembler::TrustedImm32(isBelow128 ? 0x40 : 0xc0)));
+                askBit(bitmap);
+                break;
+            case WordsOfClass::High:
+                if (isBelow128)
+                    isNoMember.append(m_jit.branchTest32(MacroAssembler::Zero, character, MacroAssembler::TrustedImm32(0x40)));
+                else {
+                    m_jit.and32(MacroAssembler::TrustedImm32(0xc0), character, scratch);
+                    isNoMember.append(m_jit.branch32(MacroAssembler::NotEqual, scratch, MacroAssembler::TrustedImm32(0x40)));
+                }
+                askBit(bitmap);
+                break;
+            case WordsOfClass::Both:
+                if (!isBelow128)
+                    isNoMember.append(m_jit.branchTest32(MacroAssembler::NonZero, character, MacroAssembler::TrustedImm32(0x80)));
+                m_jit.urshift32(character, MacroAssembler::TrustedImm32(6), scratch);
+                m_jit.load64(MacroAssembler::BaseIndex(bitmap, scratch, MacroAssembler::TimesEight), scratch);
+                askBit(scratch);
+                break;
+            }
+            isNoMember.link(&m_jit);
+            m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
+        };
+
+        isNowhere.append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.index, m_regs.length));
+        askOneCharacter();
+        m_jit.add32(MacroAssembler::TrustedImm32(charactersInVector), m_regs.index, limit);
+        MacroAssembler::Jump isLong = m_jit.branch32(MacroAssembler::BelowOrEqual, limit, m_regs.length);
+        isNowhere.append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.index, m_regs.length));
+        MacroAssembler::Label next = m_jit.label();
+        askOneCharacter();
+        m_jit.branch32(MacroAssembler::Below, m_regs.index, m_regs.length).linkTo(next, &m_jit);
+        isNowhere.link(&m_jit);
+        MacroAssembler::Label fails = m_jit.label();
+        m_jit.move(MacroAssembler::TrustedImm64(-1), m_regs.returnRegister);
+        m_jit.move(MacroAssembler::TrustedImm32(0), m_regs.returnRegister2);
+        m_jit.ret();
+
+        isMember.link(&m_jit);
+        MacroAssembler::Label isFound = m_jit.label();
+        m_jit.store32(m_regs.index, MacroAssembler::Address(m_regs.output));
+        m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index, scratch);
+        m_jit.store32(scratch, MacroAssembler::Address(m_regs.output, sizeof(int)));
+        m_jit.zeroExtend32ToWord(m_regs.index, m_regs.returnRegister);
+        m_jit.move(scratch, m_regs.returnRegister2);
+        m_jit.ret();
+
+        isLong.link(&m_jit);
+        m_jit.sub32(m_regs.length, MacroAssembler::TrustedImm32(charactersInVector), limit);
+#if CPU(X86_64)
+        RELEASE_ASSERT(character == X86Registers::eax && bitmap == X86Registers::r9 && scratch == X86Registers::r10 && m_regs.input == X86Registers::edi && m_regs.index == X86Registers::esi);
+        auto emit = [&](std::initializer_list<uint8_t> bytes) {
+            for (uint8_t byte : bytes)
+                m_jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+        };
+        switch (words) {
+        case WordsOfClass::Low:
+            emit({ 0x66, 0x49, 0x0f, 0x6e, 0xc1 });
+            break;
+        case WordsOfClass::High:
+            emit({ 0x66, 0x49, 0x0f, 0x6e, 0xc1, 0x66, 0x0f, 0x73, 0xf8, 0x08 });
+            break;
+        case WordsOfClass::Both:
+            emit({ 0xf3, 0x41, 0x0f, 0x6f, 0x01 });
+            break;
+        }
+        m_jit.move(MacroAssembler::TrustedImm32(0x0f0f0f0f), character);
+        emit({ 0x66, 0x0f, 0x6e, 0xc8, 0x66, 0x0f, 0x70, 0xc9, 0x00 });
+        m_jit.move(MacroAssembler::TrustedImm32(0x07070707), character);
+        emit({ 0x66, 0x0f, 0x6e, 0xf8, 0x66, 0x0f, 0x70, 0xff, 0x00 });
+        m_jit.move(MacroAssembler::TrustedImm64(0x8040201008040201ULL), character);
+        emit({ 0x66, 0x48, 0x0f, 0x6e, 0xd0, 0x66, 0x0f, 0x6c, 0xd2 });
+        if (isWide) {
+            m_jit.move(MacroAssembler::TrustedImm32(0x00ff00ff), character);
+            emit({ 0x66, 0x44, 0x0f, 0x6e, 0xc0, 0x66, 0x45, 0x0f, 0x70, 0xc0, 0x00 });
+        }
+        MacroAssembler::Label nextVector = m_jit.label();
+        if (isWide) {
+            emit({ 0xf3, 0x0f, 0x6f, 0x1c, 0x77, 0xf3, 0x0f, 0x6f, 0x64, 0x77, 0x10 });
+            emit({ 0x66, 0x41, 0x0f, 0x38, 0x3a, 0xd8, 0x66, 0x41, 0x0f, 0x38, 0x3a, 0xe0, 0x66, 0x0f, 0x67, 0xdc });
+        } else
+            emit({ 0xf3, 0x0f, 0x6f, 0x1c, 0x37 });
+        emit({ 0x66, 0x44, 0x0f, 0xd7, 0xd3 });
+        emit({ 0x66, 0x0f, 0x6f, 0xe3, 0x66, 0x0f, 0x71, 0xd4, 0x03, 0x66, 0x0f, 0xdb, 0xe1, 0x66, 0x0f, 0xdb, 0xdf });
+        emit({ 0x66, 0x0f, 0x6f, 0xe8, 0x66, 0x0f, 0x38, 0x00, 0xec, 0x66, 0x0f, 0x6f, 0xf2, 0x66, 0x0f, 0x38, 0x00, 0xf3 });
+        emit({ 0x66, 0x0f, 0xdb, 0xee, 0x66, 0x0f, 0x74, 0xee, 0x66, 0x0f, 0xd7, 0xc5 });
+        if (holdsAllFrom128)
+            m_jit.or32(scratch, character);
+        else {
+            m_jit.not32(scratch);
+            m_jit.and32(scratch, character);
+        }
+        MacroAssembler::Jump isInVector = m_jit.branchTest32(MacroAssembler::NonZero, character);
+#else
+        constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::Unsigned };
+        constexpr SIMDInfo whole { SIMDLane::v128, SIMDSignMode::None };
+        auto repeated = [](uint64_t half) {
+            v128_t value;
+            value.u64x2[0] = value.u64x2[1] = half;
+            return value;
+        };
+        switch (words) {
+        case WordsOfClass::Low:
+            m_jit.move64ToDouble(bitmap, m_regs.vectorTemp0);
+            break;
+        case WordsOfClass::High:
+            m_jit.moveZeroToVector(m_regs.vectorTemp0);
+            m_jit.vectorReplaceLane(SIMDLane::i64x2, MacroAssembler::TrustedImm32(1), bitmap, m_regs.vectorTemp0);
+            break;
+        case WordsOfClass::Both:
+            m_jit.loadVector(MacroAssembler::Address(bitmap), m_regs.vectorTemp0);
+            break;
+        }
+        m_jit.move128ToVector(repeated(0x07070707'07070707ULL), m_regs.vectorTemp1);
+        m_jit.move128ToVector(repeated(0x80402010'08040201ULL), m_regs.vectorTemp2);
+        if (holdsAllFrom128)
+            m_jit.move128ToVector(repeated(0x80808080'80808080ULL), m_regs.vectorTemp3);
+        if (isWide)
+            m_jit.move128ToVector(repeated(0x00ff00ff'00ff00ffULL), m_regs.vectorTemp4);
+        MacroAssembler::Label nextVector = m_jit.label();
+        m_jit.loadVector(subject, m_regs.vectorInput0);
+        if (isWide) {
+            constexpr SIMDInfo words16 { SIMDLane::i16x8, SIMDSignMode::Unsigned };
+            m_jit.loadVector(MacroAssembler::BaseIndex(m_regs.input, m_regs.index, MacroAssembler::TimesTwo, 16), m_regs.vectorInput1);
+            m_jit.vectorMin(words16, m_regs.vectorInput0, m_regs.vectorTemp4, m_regs.vectorInput0);
+            m_jit.vectorMin(words16, m_regs.vectorInput1, m_regs.vectorTemp4, m_regs.vectorInput1);
+            m_jit.vectorUnzipEven(bytes, m_regs.vectorInput0, m_regs.vectorInput1, m_regs.vectorInput0);
+        }
+        m_jit.vectorUshrInt8(m_regs.vectorInput0, 3, m_regs.vectorScratch1);
+        m_jit.vectorAnd(whole, m_regs.vectorInput0, m_regs.vectorTemp1, m_regs.vectorScratch0);
+        m_jit.vectorSwizzle(m_regs.vectorTemp0, m_regs.vectorScratch1, m_regs.vectorScratch2);
+        m_jit.vectorSwizzle(m_regs.vectorTemp2, m_regs.vectorScratch0, m_regs.vectorScratch3);
+        m_jit.vectorTest(bytes, m_regs.vectorScratch2, m_regs.vectorScratch3, m_regs.vectorScratch0);
+        if (holdsAllFrom128) {
+            m_jit.vectorTest(bytes, m_regs.vectorInput0, m_regs.vectorTemp3, m_regs.vectorScratch1);
+            m_jit.vectorOr(whole, m_regs.vectorScratch0, m_regs.vectorScratch1, m_regs.vectorScratch0);
+        }
+        m_jit.vectorShrnInt8(m_regs.vectorScratch0, 4, m_regs.vectorScratch0);
+        m_jit.moveDoubleTo64(m_regs.vectorScratch0, character);
+        MacroAssembler::Jump isInVector = m_jit.branchTest64(MacroAssembler::NonZero, character);
+#endif
+        m_jit.add32(MacroAssembler::TrustedImm32(charactersInVector), m_regs.index);
+        m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, limit).linkTo(nextVector, &m_jit);
+        m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.index, m_regs.length).linkTo(fails, &m_jit);
+        m_jit.move(limit, m_regs.index);
+        m_jit.jump().linkTo(nextVector, &m_jit);
+
+        isInVector.link(&m_jit);
+#if CPU(X86_64)
+        emit({ 0x0f, 0xbc, 0xc0 });
+#else
+        m_jit.reverseBits64(character, character);
+        m_jit.countLeadingZeros64(character, character);
+        m_jit.urshift64(MacroAssembler::TrustedImm32(2), character);
+#endif
+        m_jit.add32(character, m_regs.index);
+        m_jit.jump().linkTo(isFound, &m_jit);
+    }
+#endif
+
     // Generate the scalar Boyer-Moore search loop.
     // This handles both the characters fast path (1-2 candidate characters) and the bitmap path.
     // Parameters:
@@ -11880,6 +12133,15 @@ public:
 #endif
         m_calleeSaves = RegisterAtOffsetList(calleeSaveRegisters());
 
+#if USE(BUN_JSC_ADDITIONS) && (CPU(X86_64) || CPU(ARM64))
+        startOfMainCode = m_jit.label();
+        bool isSearchForOneClass = generateSearchForOneClass();
+        if (isSearchForOneClass && m_disassembler) {
+            m_disassembler->setEndOfGenerate(m_jit.label());
+            m_disassembler->setEndOfBacktrack(m_jit.label());
+        }
+        if (!isSearchForOneClass) {
+#endif
         generateEnter();
 
         startOfMainCode = m_jit.label();
@@ -11982,8 +12244,8 @@ public:
             return;
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-
+#if USE(BUN_JSC_ADDITIONS) && (CPU(X86_64) || CPU(ARM64))
+        }
 #endif
         ptrdiff_t codeSize = MacroAssembler::differenceBetween(startOfMainCode, m_jit.label());
         bool canInline = ([&] -> bool {
@@ -12091,6 +12353,12 @@ public:
         for (auto& routine : m_classRoutines) {
             classRoutineLabels.append(m_jit.label());
             m_jit.tagReturnAddress();
+#if CPU(X86_64) || CPU(ARM64)
+            if (routine.searchesForOneClass) {
+                generateRoutineThatSearchesForOneClass(routine.wordsOfClass, routine.holdsAllFrom128, routine.searchesWideSubject);
+                continue;
+            }
+#endif
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
             if (routine.readsCodePoint) {
                 readCodePointThatBeginsWithSurrogateImpl(m_jit);
@@ -12190,8 +12458,12 @@ public:
                     m_forImage->routines.append(Vector<uint8_t>(bytes.span().subspan(begin, end - begin)));
                     for (auto& call : m_classRoutines[i].calls) {
                         uint32_t behindCall = static_cast<uint32_t>(static_cast<const uint8_t*>(linkBuffer.locationOfNearCall<NoPtrTag>(call).untaggedPtr()) - start);
+#if CPU(ARM64)
+                        if (m_classRoutines[i].searchesForOneClass)
+                            behindCall += sizeOfCall;
+#endif
                         RELEASE_ASSERT(behindCall >= sizeOfCall && behindCall <= offsetOf(classRoutineLabels[0]));
-                        m_forImage->routineCalls.append({ behindCall - sizeOfCall, static_cast<uint32_t>(i), !m_classRoutines[i].clearsSubpatterns });
+                        m_forImage->routineCalls.append({ behindCall - sizeOfCall, static_cast<uint32_t>(i), !m_classRoutines[i].clearsSubpatterns, m_classRoutines[i].searchesForOneClass });
                     }
                 }
                 bytes.shrink(offsetOf(classRoutineLabels[0]));
@@ -12641,6 +12913,10 @@ public:
         PairAdvance pairAdvance { PairAdvance::LeftToCaller };
         InputCheck inputCheck { InputCheck::DoneByCaller };
         bool clearsSubpatterns { false };
+        bool searchesForOneClass { false };
+        bool holdsAllFrom128 { false };
+        bool searchesWideSubject { false };
+        WordsOfClass wordsOfClass { WordsOfClass::Low };
     };
     Vector<ClassRoutine> m_classRoutines;
     Vector<std::unique_ptr<ClassTable>> m_classTables;
@@ -12998,6 +13274,12 @@ void tidyBodyForImage(YarrCodeForImage& code)
 #if CPU(X86_64) || CPU(ARM64)
     if (code.bytes.isEmpty())
         return;
+    for (auto& call : code.routineCalls) {
+        if (call.isTailCall) {
+            appendLiteralPool(code);
+            return;
+        }
+    }
     constexpr unsigned maxOptimizedLoopSize = isX86_64() ? 64 : 96;
     Vector<ReferenceOfBody> references = referencesOf(code);
     ImageBody::Body body;

@@ -2428,6 +2428,10 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
 #if ENABLE(AOT)
     if (m_aotPlaceTable)
         m_aotPlaceTable->didChangePrototype(nameOfProperty);
+    for (AOT::Instance* instance : m_aotInstances) {
+        if (instance->typed && instance->typed->hasLookedAtPrototypesOfHeirs()) [[unlikely]]
+            instance->typed->didChangePrototypeOfHeirs(*this, changed, nameOfProperty);
+    }
 #endif
     auto* megamorphicCache = this->megamorphicCache();
     if (megamorphicCache && megamorphicCache->mayHoldFactThrough(changed) && (!nameOfProperty || megamorphicCache->mayHoldFactAbout(*nameOfProperty)))

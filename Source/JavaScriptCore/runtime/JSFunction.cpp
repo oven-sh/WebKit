@@ -439,6 +439,19 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
         slot.disableCaching();
         if (vm.auditsImmutableIntrinsics() && slot.thisValue() == thisObject) [[unlikely]]
             ImmutableIntrinsicsAudit::willReplacePrototypeProperty(globalObject, thisObject, value, slot.isStrictMode());
+        if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && slot.thisValue() == thisObject && !thisObject->isHostOrBuiltinFunction() && thisObject->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]] {
+            SourceParseMode parseMode = thisObject->jsExecutable()->parseMode();
+            if (isGeneratorWrapperParseMode(parseMode) || isAsyncGeneratorWrapperParseMode(parseMode)) {
+                JSValue current = thisObject->get(globalObject, propertyName);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (current == value)
+                    return true;
+                if (!slot.isStrictMode() && slot.context() == PutPropertySlot::ReflectSet)
+                    return false;
+                throwTypeError(globalObject, scope, withAOTErrorNote(makeString("Cannot replace 'prototype' of generator function '"_s, thisObject->jsExecutable()->ecmaName().string(), "': it is fixed when the program is compiled"_s)));
+                return false;
+            }
+        }
         if (FunctionRareData* rareData = thisObject->rareData())
             rareData->clear("Store to prototype property of a function");
         if (thisObject->mayHaveNonReifiedPrototype()) {

@@ -426,8 +426,11 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     LValue data = slot ? loadICData() : nullptr;
     PatchpointValue* patchpoint = m_out.patchpoint(type);
     applyEffects(patchpoint, effects);
+    bool takesReceiverWhereItLies = hasFormsThatTakeReceiverInOtherRegisters(stub) && type != Void && operands.size() == 1 && operands[0].second == firstStubOperandGPR && immediate && immediate->first == stubImmediateGPR && !thunkFor(stub, immediate->second) && !slot && !number;
     for (auto& [value, reg] : operands)
-        patchpoint->append(ConstrainedValue(value, ValueRep::reg(reg)));
+        patchpoint->append(ConstrainedValue(value, takesReceiverWhereItLies ? ValueRep::SomeRegister : ValueRep::reg(reg)));
+    if (takesReceiverWhereItLies)
+        patchpoint->clobberEarly(RegisterSet { stubTemporaryGPRs[0], stubTemporaryGPRs[2], stubTemporaryGPRs[4], GPRInfo::argumentGPR1 });
     unsigned indexOfData = (type != Void) + operands.size();
     int32_t offsetOfSlot = 0;
     GPRReg slotGPR = InvalidGPRReg;
@@ -459,7 +462,7 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     CallSite site;
     if (mayThrow)
         site.bits = nextSite();
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site, indexOfData, offsetOfSlot, slotGPR, yieldsValue = type != Void](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site, indexOfData, offsetOfSlot, slotGPR, takesReceiverWhereItLies, yieldsValue = type != Void](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (slotGPR != InvalidGPRReg)
             jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[indexOfData].gpr(), slotGPR);
@@ -468,6 +471,17 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
             if (yieldsValue)
                 live.remove(GPRInfo::returnValueGPR);
             Stub called = formOfStubThatKeeps(stub, live);
+            if (takesReceiverWhereItLies) {
+                called = formOfStubForName(called, immediate->second);
+                Stub head = formOfStubThatTakesReceiverIn(called, params[1].gpr());
+                if (head == called) {
+                    jit.move(params[1].gpr(), firstStubOperandGPR);
+                    head = formOfStubThatTakesReceiverIn(called, firstStubOperandGPR);
+                }
+                jit.move(CCallHelpers::TrustedImm32(immediate->second), GPRInfo::argumentGPR1);
+                stubCalls->call(jit, head, site);
+                return;
+            }
             if (!thunkFor(called, immediate->second))
                 called = formOfStubForName(called, immediate->second);
             stubCalls->call(jit, called, immediate->second, site);

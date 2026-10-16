@@ -762,7 +762,7 @@ protected:
 #else
                 bool isCompiledObject = false;
 #endif
-                if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != ObjectPrototype::info() && !isCompiledObject)
+                if (inObject->type() != FinalObjectType && inObject->classInfo() != ObjectPrototype::info() && !isCompiledObject)
                     return SerializationReturnCode::DataCloneError;
                 inputObjectStack.append(inObject);
                 indexStack.append(0);

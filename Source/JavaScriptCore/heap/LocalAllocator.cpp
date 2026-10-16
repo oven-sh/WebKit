@@ -315,7 +315,7 @@ void LocalAllocator::doTestCollectionsIfNeeded(JSC::Heap& heap, GCDeferralContex
             if (deferralContext)
                 deferralContext->m_shouldGC = true;
             else
-                heap.collectNow(Sync, CollectionScope::Full);
+                heap.collectNow(Sync, Options::useEdenCollectionsAtSlowPathAllocs() ? CollectionScope::Eden : CollectionScope::Full);
         }
     }
     if (++allocationCount >= Options::slowPathAllocsBetweenGCs())

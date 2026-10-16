@@ -9998,6 +9998,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE static void useOnlyFeaturesOfBuildTarget();
     JS_EXPORT_PRIVATE static unsigned featuresOfBuildTarget();
+    JS_EXPORT_PRIVATE static bool setSupportsAVX(bool);
 #endif
 
     JS_EXPORT_PRIVATE static CPUIDCheckState s_sse3CheckState;

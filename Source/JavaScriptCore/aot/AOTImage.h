@@ -84,6 +84,8 @@ struct ImageHeader {
     uint32_t returnsFromFindingTargets[maxReturnsIntoFramesOfHostFunctions];
     uint32_t stubOffsets[numberOfStubs];
     uint32_t codeGranuleShift;
+    uint32_t webAssemblyDirectoryOffset;
+    uint32_t webAssemblyCodeOffset;
 };
 
 struct ImageRegExp {
@@ -165,6 +167,11 @@ public:
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
     void setTypedData(Vector<uint8_t>&& data) { m_typedData = WTF::move(data); }
+    void setWebAssembly(Vector<uint8_t>&& directory, Vector<uint8_t>&& code)
+    {
+        m_webAssemblyDirectory = WTF::move(directory);
+        m_webAssemblyCode = WTF::move(code);
+    }
     class RegExpsCompiledAhead;
     void takeRegExpsCompiledAhead(RegExpsCompiledAhead&);
     void requestRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>, bool isFoundByEvaluator = false);
@@ -259,6 +266,8 @@ private:
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
     Vector<uint8_t> m_typedData;
+    Vector<uint8_t> m_webAssemblyDirectory;
+    Vector<uint8_t> m_webAssemblyCode;
     Vector<RegExpCode> m_regExps;
     RegExpOutcomes m_regExpsCompiledAhead;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
@@ -332,6 +341,7 @@ public:
         return false;
     }
     static Image* withCode();
+    JS_EXPORT_PRIVATE static std::pair<const uint8_t*, const uint8_t*> webAssembly();
     // Whether a realm has to have its intrinsics numbered: see ImageHeader::intrinsicHash. Also where there is no image: the compiler.
     JS_EXPORT_PRIVATE static bool usesNumberedIntrinsics();
     const void* code() const { return m_code; }

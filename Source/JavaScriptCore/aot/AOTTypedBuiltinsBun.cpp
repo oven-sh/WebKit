@@ -15,6 +15,7 @@
 #include "CommonSlowPaths.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
+#include "JSDestructibleObject.h"
 #include "JSInternalFieldObjectImpl.h"
 #include "LinkTimeConstant.h"
 #include "ProxyObject.h"
@@ -148,6 +149,8 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
         return Writes::Pure;
     case InlineBuiltin::IsCallable:
     case InlineBuiltin::GetInternalField:
+    case InlineBuiltin::HasCachedValueOfHostObject:
+    case InlineBuiltin::CachedValueOfHostObject:
         return Writes::Nothing;
     // It is made the first time it is asked for.
     case InlineBuiltin::LinkTimeConstant:
@@ -163,6 +166,35 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+bool Lowering::isTestOfCachedValueOfHostObject(const Value& value) const
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return false;
+    auto& implementation = m_builtins.at(value.builtin()).implementation;
+    return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::HasCachedValueOfHostObject;
+}
+
+void Lowering::branchOnCachedValueOfHostObject(const Value& value, LBasicBlock isCached, LBasicBlock isNot)
+{
+    auto integer32 = [&](unsigned index) {
+        ValueID id = value.arguments[index];
+        while (m_function.at(id).opcode == Opcode::Cast)
+            id = m_function.at(id).child(0);
+        RELEASE_ASSERT(m_function.at(id).opcode == Opcode::Integer);
+        return static_cast<uint32_t>(m_function.at(id).integer());
+    };
+    if (integer32(1) >= Instance::numberOfHostClasses) {
+        m_out.jump(isNot);
+        return;
+    }
+    Boxed receiver = in<Boxed>(value.arguments[0]);
+    orElse(isCell(receiver), isNot);
+    CellPointer cell = asCell(receiver);
+    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfStructureIDOfHostClass(integer32(1))))), isNot);
+    Boxed cached(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, cell.value(), sizeof(JSDestructibleObject) + integer32(2))));
+    m_out.branch(isNotEmpty(cached).value(), unsure(isCached), unsure(isNot));
 }
 
 std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID result, const Value& value, Writes writes)
@@ -272,6 +304,21 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     }
     case InlineBuiltin::GetOwnProperty:
         return ensure(AOT_TYPED_OPERATION(GetOwnProperty, in<Boxed>(arguments[0]), name(1)), type);
+    case InlineBuiltin::HasCachedValueOfHostObject: {
+        if (m_isCarriedOutByBranch.get(result.index()))
+            return yieldBoolean(boolean(false), type);
+        LBasicBlock isCached = m_out.newBlock();
+        LBasicBlock isNot = m_out.newBlock();
+        Join join(m_out, Rep::Int32, Int32);
+        branchOnCachedValueOfHostObject(value, isCached, isNot);
+        m_out.appendTo(isCached);
+        join.add(boolean(true));
+        m_out.appendTo(isNot);
+        join.add(boolean(false));
+        return yieldBoolean(join.finish().as<Word32>(), type);
+    }
+    case InlineBuiltin::CachedValueOfHostObject:
+        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);
     case InlineBuiltin::LinkTimeConstant:
         RELEASE_ASSERT(integer32(0) < std::size(linkTimeConstants));
         return ensure(box(AOT_TYPED_OPERATION(LinkTimeConstant, word32(static_cast<uint32_t>(linkTimeConstants[integer32(0)])))), type);

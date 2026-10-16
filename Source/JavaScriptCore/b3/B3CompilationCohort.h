@@ -32,7 +32,7 @@
 #include <wtf/ScopedLambda.h>
 #include <wtf/text/ASCIILiteral.h>
 
-#if ((CPU(X86_64) && OS(LINUX)) || (CPU(ARM64) && OS(DARWIN))) && !ASAN_ENABLED
+#if ((CPU(X86_64) && OS(LINUX)) || (CPU(ARM64) && OS(DARWIN))) && !ASAN_ENABLED && !TSAN_ENABLED
 #define B3_COMPILATION_COHORT_INTERLEAVES_MEMBERS 1
 #else
 #define B3_COMPILATION_COHORT_INTERLEAVES_MEMBERS 0

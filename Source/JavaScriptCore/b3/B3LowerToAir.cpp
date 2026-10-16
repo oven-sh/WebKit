@@ -726,6 +726,68 @@ private:
             m_locked.add(value);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool tryAppendBranchOnInt32Overflow()
+    {
+        if (!m_procedure.positionIndependent())
+            return false;
+        Value* comparison = m_value->child(0);
+        if (comparison->opcode() != Equal && comparison->opcode() != NotEqual)
+            return false;
+        for (unsigned i = 0; i < 2; ++i) {
+            Value* extended = comparison->child(i);
+            Value* exact = comparison->child(1 - i);
+            if (extended->opcode() != SExt32 || extended->child(0)->opcode() != Trunc || extended->child(0)->child(0) != exact)
+                continue;
+            if ((exact->opcode() != Add && exact->opcode() != Sub) || exact->type() != Int64)
+                continue;
+            Value* low = extended->child(0);
+            Value* left = exact->child(0);
+            Value* right = exact->child(1);
+            bool rightIsConstant = right->hasInt64() && right->asInt64() == static_cast<int32_t>(right->asInt64()) && Arg::isValidImmForm(right->asInt64());
+            if (left->opcode() != SExt32 || (right->opcode() != SExt32 && !rightIsConstant))
+                continue;
+            if (extended->owner != m_block || low->owner != m_block || exact->owner != m_block)
+                continue;
+            if (!canBeInternal(extended) || m_useCounts.numUses(exact) != 2 || m_valueToTmp[exact] || m_locked.contains(exact) || m_locked.contains(low) || m_locked.contains(extended))
+                continue;
+            bool isWantedInBlock = false;
+            for (Value* value : *m_block) {
+                if (value == extended)
+                    continue;
+                for (Value* child : value->children())
+                    isWantedInBlock |= child == low;
+            }
+            if (isWantedInBlock)
+                continue;
+
+            Tmp result = tmp(low);
+            Arg overflow = Arg::resCond(MacroAssembler::Overflow);
+            Air::Opcode opcode = exact->opcode() == Add ? Air::BranchAdd32 : Air::BranchSub32;
+            if (!rightIsConstant && isValidForm(opcode, Arg::ResCond, Arg::Tmp, Arg::Tmp, Arg::Tmp))
+                append(opcode, overflow, tmp(left->child(0)), tmp(right->child(0)), result);
+            else {
+                append(Air::Move32, tmp(left->child(0)), result);
+                append(opcode, overflow, rightIsConstant ? Arg::imm(right->asInt64()) : Arg(tmp(right->child(0))), result);
+            }
+            commitInternal(comparison);
+            commitInternal(extended);
+            commitInternal(low);
+            commitInternal(exact);
+            if (canBeInternal(left))
+                commitInternal(left);
+            if (!rightIsConstant && right != left && canBeInternal(right))
+                commitInternal(right);
+            if (comparison->opcode() == Equal) {
+                auto& successors = m_blockToBlock[m_block]->successors();
+                std::swap(successors[0], successors[1]);
+            }
+            return true;
+        }
+        return false;
+    }
+#endif
+
     bool crossesInterference(Value* value)
     {
         // If it's in a foreign block, then be conservative. We could handle this if we were
@@ -6815,6 +6877,10 @@ private:
 
         case Branch: {
             if (canBeInternal(m_value->child(0))) {
+#if USE(BUN_JSC_ADDITIONS)
+                if (tryAppendBranchOnInt32Overflow())
+                    return;
+#endif
 #if CPU(ARM64)
                 if (tryEmitConditionalCompareChain(m_value))
                     return;

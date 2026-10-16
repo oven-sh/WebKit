@@ -1,0 +1,56 @@
+# The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
+
+inline JSONOpen
+inline JSONTextOf
+inline JSONClose
+inline JSONAbandon
+inline JSONByteAt
+inline JSONStartsWith
+inline JSONStringAt
+inline JSONNumberAt
+inline JSONNumber
+inline JSONValueAt
+inline JSONKeyAt
+inline JSONHasStackSpace
+inline JSONCursor
+inline JSONSetCursor
+inline JSONSkipWhitespace
+inline JSONSkipValue
+inline JSONSkipMember
+inline JSONGiveUpIfEscaped
+inline JSONGiveUpIfRepeated
+inline JSONGiveUp
+inline Likely
+
+runtime JSONOpen : RuntimeState void* (EncodedJSValue text, uint64_t frame) noexcept
+runtime JSONTextOf : RuntimeState EncodedJSValue (EncodedJSValue value) noexcept
+runtime JSONStringAt : RuntimeState JSCell* (uint64_t cursor) noexcept
+runtime JSONNumberAt : RuntimeState void* (uint64_t cursor) noexcept
+runtime JSONKeyAt : RuntimeState JSCell* (uint64_t cursor) noexcept
+runtime JSONValueAt : RuntimeState EncodedJSValue (uint64_t cursor) noexcept
+runtime JSONSkipValue : RuntimeState void* (uint64_t cursor) noexcept
+runtime JSONSkipMember : RuntimeState void* (uint64_t cursor) noexcept
+runtime JSONGiveUpIfEscaped : RuntimeState void (uint64_t cursor) noexcept
+runtime JSONGiveUpIfRepeated : RuntimeState void (uint64_t cursor, JSCell* name) noexcept
+
+operation JSONOpen (any/-) -> int[0,4503599627370496] ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONOpen, None)
+operation JSONTextOf (any/R) -> anything ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONTextOf, None)
+operation JSONClose (any/-) -> boolean ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONClose, None)
+operation JSONAbandon () -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONAbandon, None)
+operation JSONByteAt (any/-) -> int[0,255] ; ReadsRuntimeState ; Inline(JSONByteAt, None)
+operation JSONStartsWith (any/-, any/-, any/-) -> boolean ; ReadsRuntimeState ; Inline(JSONStartsWith, None)
+operation JSONStringAt (any/-) -> string ; Allocates ReadsRuntimeState WritesRuntimeState ; Inline(JSONStringAt, None)
+operation JSONNumberAt (any/-) -> int[0,4503599627370496] ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONNumberAt, None)
+operation JSONNumber () -> number ; ReadsRuntimeState ; Inline(JSONNumber, None)
+operation JSONValueAt (any/-) -> anything/N ; Allocates ReadsRuntimeState WritesRuntimeState ; Inline(JSONValueAt, None)
+operation JSONKeyAt (any/-) -> string ; Allocates ReadsRuntimeState WritesRuntimeState ; Inline(JSONKeyAt, None)
+operation JSONHasStackSpace () -> boolean ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONHasStackSpace, None)
+operation JSONCursor () -> int[0,4503599627370496] ; ReadsRuntimeState ; Inline(JSONCursor, None)
+operation JSONSetCursor (any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONSetCursor, None)
+operation JSONSkipWhitespace (any/-) -> int[0,4503599627370496] ; ReadsRuntimeState ; Inline(JSONSkipWhitespace, None)
+operation JSONSkipValue (any/-) -> int[0,4503599627370496] ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONSkipValue, None)
+operation JSONSkipMember (any/-) -> int[0,4503599627370496] ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONSkipMember, None)
+operation JSONGiveUpIfEscaped (any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUpIfEscaped, None)
+operation JSONGiveUpIfRepeated (any/-, any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUpIfRepeated, None)
+operation JSONGiveUp () -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUp, None)
+operation Likely (any/-) -> boolean ; Pure ; Inline(Likely, None)

@@ -1056,12 +1056,13 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     if (sourceStructure->compiledLayout() && !target->structure()->compiledLayout()) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer values;
-        bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+        EnsureStillAliveScope sourceScope(source);
+        bool isWalked = AOT::Typed::forEachOwnPropertyOfCompiledObject(source, [&](UniquedStringImpl& name, JSValue value) {
             properties.append(&name);
             values.appendWithCrashOnOverflow(value);
             return true;
         });
-        if (hasOnlyFields) {
+        if (isWalked) {
             if (properties.size())
                 target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
             return target;

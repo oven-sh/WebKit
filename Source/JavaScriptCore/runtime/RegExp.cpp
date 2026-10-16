@@ -188,7 +188,7 @@ void RegExp::finishCreation(VM& vm)
     auto code = vm.useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt;
     countDigest(vm, code);
     if (code && code->hasCode)
-        m_workInInterpreter = codeWasFoundInImage;
+        m_codeWasFoundInImage = true;
     m_sourceIsPattern = code && code->sourceIsPattern;
     if (code && !code->keepsMoreOfPattern) {
         if (code->recordOfTextInPieces) {
@@ -337,7 +337,7 @@ RegExp* RegExp::tryCreateFromImage(VM& vm, const String& patternString, OptionSe
         return nullptr;
     RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
     regExp->Base::finishCreation(vm);
-    regExp->m_workInInterpreter = codeWasFoundInImage;
+    regExp->m_codeWasFoundInImage = true;
     regExp->m_specificPattern = code->specificPattern;
     regExp->m_numSubpatterns = code->numSubpatterns;
     regExp->m_sourceIsPattern = code->sourceIsPattern;
@@ -416,15 +416,6 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     }
 }
 
-bool RegExp::startsInterpreted(std::optional<StringView> subject) const
-{
-    if (Options::useJIT() || !Options::useRegExpJIT())
-        return false;
-    if (m_patternString.length() > maxPatternLengthForJITAfterInterpreter)
-        return true;
-    return m_workInInterpreter + (subject ? subject->length() / 32 : 0) < workBeforeJIT();
-}
-
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 // Without a Yarr::YarrPattern: finishCreation() made none either.
 void RegExp::makePatternOfPieces() const
@@ -435,7 +426,7 @@ void RegExp::makePatternOfPieces() const
 
 bool RegExp::takeCodeFromImage(VM& vm)
 {
-    auto code = hasTextInPieces() && m_rareData && m_rareData->m_recordOfTextInPieces ? std::optional { AOT::Image::codeOfRegExp(*m_rareData->m_recordOfTextInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags, m_workInInterpreter == codeWasFoundInImage);
+    auto code = hasTextInPieces() && m_rareData && m_rareData->m_recordOfTextInPieces ? std::optional { AOT::Image::codeOfRegExp(*m_rareData->m_recordOfTextInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage);
     countDigest(vm, code);
     if (!code || code->keepsMoreOfPattern || !code->hasCode)
         return false;
@@ -477,7 +468,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_workInInterpreter == codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
+    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;
@@ -489,11 +480,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
     }
 #endif
-    bool isInitiallyInterpreted = startsInterpreted(sampleString);
-    bool wasInitiallyInterpreted = m_workInInterpreter == workBeforeJIT();
-    if (!isInitiallyInterpreted)
-        m_workInInterpreter = jitWasConsidered;
-    if (!isInitiallyInterpreted && !pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
 #endif
@@ -505,18 +492,15 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
             dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
-            if (wasInitiallyInterpreted)
-                m_regExpBytecode = nullptr;
             return;
         }
     }
 #else
     UNUSED_PARAM(charSize);
     UNUSED_PARAM(sampleString);
-    constexpr bool isInitiallyInterpreted = false;
 #endif
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), isInitiallyInterpreted ? "Interpreting this regular expression at first: \"/" : "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
@@ -579,7 +563,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         return;
 #endif
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    bool willUseInterpreter = vm->useImmutableIntrinsics && (!Options::useRegExpJIT() || startsInterpreted(sampleString));
+    bool willUseInterpreter = vm->useImmutableIntrinsics && !Options::useRegExpJIT();
 #else
     constexpr bool willUseInterpreter = false;
 #endif
@@ -600,7 +584,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_workInInterpreter == codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
+    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;
@@ -612,11 +596,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
     }
 #endif
-    bool isInitiallyInterpreted = startsInterpreted(sampleString);
-    bool wasInitiallyInterpreted = m_workInInterpreter == workBeforeJIT();
-    if (!isInitiallyInterpreted)
-        m_workInInterpreter = jitWasConsidered;
-    if (!isInitiallyInterpreted && !pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
 #endif
@@ -628,18 +608,15 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
             dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
-            if (wasInitiallyInterpreted)
-                m_regExpBytecode = nullptr;
             return;
         }
     }
 #else
     UNUSED_PARAM(charSize);
     UNUSED_PARAM(sampleString);
-    constexpr bool isInitiallyInterpreted = false;
 #endif
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), isInitiallyInterpreted ? "Interpreting this regular expression at first: \"/" : "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
     // m_regExpBytecode is shared with capture-observing operations (exec/match) and the Yarr

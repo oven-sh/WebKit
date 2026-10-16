@@ -62,6 +62,11 @@ class MemoryInformation;
 class OptimizingJITCallee;
 class TierUpCount;
 
+struct CodeForImage {
+    Vector<uint32_t> callsToStubThatThrows;
+    String whyDeclined;
+};
+
 struct CompilationContext {
     std::unique_ptr<CCallHelpers> jsToWasmJIT;
     std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
@@ -72,6 +77,7 @@ struct CompilationContext {
     Box<PCToCodeOriginMapBuilder> pcToCodeOriginMapBuilder;
     Vector<CCallHelpers::Label> catchEntrypoints;
     SegmentedVector<WasmOrigin> origins;
+    CodeForImage* codeForImage { nullptr };
 };
 
 } // namespace Wasm

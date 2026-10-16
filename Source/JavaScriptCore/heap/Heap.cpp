@@ -1023,6 +1023,11 @@ void Heap::prepareForAllocation()
         m_sweeper->startSweeping(*this);
 
     m_objectSpace.prepareForAllocation();
+#if ASAN_ENABLED
+    m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+        handle->poisonDeadCellsIfUnswept();
+    });
+#endif
     updateAllocationLimits();
 
     if (m_verifier) [[unlikely]] {
@@ -2741,7 +2746,7 @@ void Heap::disableStopIfNecessaryTimer()
 bool Heap::shouldSweepSynchronously()
 {
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
-    return overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
+    return ASAN_ENABLED || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -3208,6 +3213,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                 }
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
                 for (AOT::Instance* instance : vm().m_aotInstances) {
+                    instance->visitWhatCompiledCodeLeaves(visitor);
                     if (!instance->typed || !instance->typed->isOfLockedRealm)
                         continue;
                     if (instance->globalObject->aotInstance() == instance || (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))))

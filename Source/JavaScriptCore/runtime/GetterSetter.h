@@ -116,6 +116,9 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     static constexpr uintptr_t getterShortcutIsCode = 1;
+    static constexpr uintptr_t getterYieldsByteLengthOfTypedArray = 2;
+    static constexpr uintptr_t getterYieldsByteOffsetOfTypedArray = 4;
+    void setWhatGetterYields(uintptr_t what) { m_getterShortcut = what; }
     static constexpr ptrdiff_t offsetOfGetterShortcut() { return OBJECT_OFFSETOF(GetterSetter, m_getterShortcut); }
     uintptr_t getterShortcut() const { return m_getterShortcut; }
     void setCodeOfGetter(const void* code) { m_getterShortcut = std::bit_cast<uintptr_t>(code) & getterShortcutIsCode ? 0 : std::bit_cast<uintptr_t>(code) | getterShortcutIsCode; }

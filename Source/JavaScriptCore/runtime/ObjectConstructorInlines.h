@@ -29,6 +29,7 @@
 #include "JSObjectInlines.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
+#include "StructureArrayStorageInlines.h"
 #include "StructureCreateInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -61,8 +62,12 @@ ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    bool mayBeIntercepted = target->structure()->holesMustForwardToPrototype(target);
     source->forEachOwnIndexedProperty<>(globalObject, [&](unsigned index, JSValue value) {
-        target->putDirectIndex(globalObject, index, value);
+        if (mayBeIntercepted) [[unlikely]]
+            target->methodTable()->putByIndex(target, globalObject, index, value, true);
+        else
+            target->putDirectIndex(globalObject, index, value);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         return IterationStatus::Continue;
     });
@@ -316,12 +321,13 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 #if ENABLE(AOT)
         // The names live as long as the program.
         if (sourceStructure->compiledLayout()) {
-            bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+            EnsureStillAliveScope sourceScope(source);
+            bool isWalked = AOT::Typed::forEachOwnPropertyOfCompiledObject(source, [&](UniquedStringImpl& name, JSValue value) {
                 properties.append(&name);
                 values.appendWithCrashOnOverflow(value);
                 return true;
             });
-            if (!hasOnlyFields)
+            if (!isWalked)
                 return false;
             if (properties.size())
                 target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());

@@ -600,8 +600,9 @@ public:
     JS_EXPORT_PRIVATE bool inheritsImmutableProperty(VM&, PropertyName);
     // With immutable intrinsics, ArrayType says that an array is as the engine makes them: it inherits from Array.prototype directly, has
     // no property of its own under a name it inherits, and no element that is an accessor. One that is about to be given any of these
-    // is of DerivedArrayType from then on, as what a class that extends Array makes is from the start, and keeps its elements in
-    // ArrayStorage, which it never leaves: code that stores or reads elements in place by their shape does not take it for what it was.
+    // is of DerivedArrayType from then on, and keeps its elements in ArrayStorage, which it never leaves: code that stores or reads
+    // elements in place by their shape does not take it for what it was. What a class that extends Array makes is of DerivedArrayType from
+    // the start, and keeps its elements as any array does: nothing has taken it for a plain array.
     JS_EXPORT_PRIVATE void becomeDerivedArray(VM&);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
@@ -619,6 +620,8 @@ public:
     JS_EXPORT_PRIVATE bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl* name, bool isAnswered, bool isDelete = false);
     JS_EXPORT_PRIVATE String wordsOfRefusalByLock(VM&, UniquedStringImpl* name, ASCIILiteral otherwise);
     JS_EXPORT_PRIVATE bool isRefusedByLockAlone(VM&, UniquedStringImpl* name, JSValue& held);
+    JS_EXPORT_PRIVATE void fixAsPrototypeOfClass(JSGlobalObject*, std::span<const Identifier> replaceable, bool constructorMayBeReplaced);
+    JS_EXPORT_PRIVATE bool becomeGuarded(VM&);
     bool isLockedBuiltin() const { return structure()->hasImmutableProperties() || structure()->inheritorsMayOverrideReadOnlyProperties() || isGlobalObject() || type() == GlobalProxyType; }
 #else
     void noteRefusalByLock(VM&, UniquedStringImpl* = nullptr, ASCIILiteral = { }, bool = false) { }

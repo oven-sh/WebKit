@@ -41,6 +41,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
     // proto objects: https://bugs.webkit.org/show_bug.cgi?id=177517
 
     bool isPolyProto = false;
+    bool isGuarded = functionRareData && functionRareData->allocatesGuardedObjects();
     FunctionExecutable* executable = nullptr;
     if (constructor) {
         // FIXME: A JSFunction should watch the poly proto watchpoint if it is not invalidated.
@@ -51,7 +52,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
 
         executable = constructor->jsExecutable();
 
-        if (Structure* structure = executable->cachedPolyProtoStructure()) {
+        if (Structure* structure = isGuarded ? nullptr : executable->cachedPolyProtoStructure()) {
             RELEASE_ASSERT(structure->typeInfo().type() == FinalObjectType);
             m_allocator = Allocator();
             m_structure.set(vm, owner, structure);
@@ -60,7 +61,9 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
         }
 
         isPolyProto = false;
-        if (Options::forcePolyProto())
+        if (isGuarded)
+            isPolyProto = false;
+        else if (Options::forcePolyProto())
             isPolyProto = true;
         else
             isPolyProto = executable->ensurePolyProtoWatchpoint().hasBeenInvalidated() && executable->singleton().hasBeenInvalidated();
@@ -109,7 +112,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
             inlineCapacity = JSFinalObject::maxInlineCapacity;
     }
 
-    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, inlineCapacity, isPolyProto, executable);
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, inlineCapacity, isPolyProto, executable, isGuarded);
 
     if (isPolyProto) {
         ASSERT(structure->hasPolyProto());

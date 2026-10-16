@@ -1129,8 +1129,8 @@ private:
 
     JSValue operate(const Format::Value& value, std::span<const JSValue> arguments)
     {
-        auto is = [&](ASCIILiteral name) {
-            return isNamed(value.immediates[0], name);
+        auto is = [&](BuiltinID operation) {
+            return value.immediates[0] == operation.index();
         };
         auto argument = [&](unsigned index) {
             return index < arguments.size() ? arguments[index] : jsUndefined();
@@ -1138,7 +1138,7 @@ private:
         auto isObject = [&](unsigned index) {
             return index < arguments.size() && arguments[index] && arguments[index].isObject();
         };
-        if (is("DefineField"_s) || is("PutByValDirect"_s) || is("PrivateFieldAdd"_s) || is("DefineMethod"_s)) {
+        if (is(Operations::DefineField) || is(Operations::PutByValDirect) || is(Operations::PrivateFieldAdd) || is(Operations::DefineMethod)) {
             if (!isObject(0) || !argument(1) || !isCheapToConvert(argument(1)))
                 return { };
             return attempt([&](TopExceptionScope& scope) -> JSValue {
@@ -1149,11 +1149,11 @@ private:
                 return argument(0);
             });
         }
-        if (is("RegExpLiteral"_s))
+        if (is(Operations::RegExpLiteral))
             return makeRegExp(arguments, false);
-        if (is("HasOriginalStructure"_s) || is("IsOriginalArray"_s))
+        if (is(Operations::HasOriginalStructure) || is(Operations::IsOriginalArray))
             return jsBoolean(false);
-        if (is("AppendSpread"_s)) {
+        if (is(Operations::AppendSpread)) {
             auto* array = argument(0) ? dynamicDowncast<JSArray>(argument(0)) : nullptr;
             auto elements = array ? elementsOf(argument(1)) : std::nullopt;
             if (!elements)
@@ -1167,21 +1167,21 @@ private:
                 return array;
             });
         }
-        if (is("Apply"_s) || is("CallWithSpread"_s)) {
+        if (is(Operations::Apply) || is(Operations::CallWithSpread)) {
             auto elements = elementsOf(argument(2));
             return elements ? call(argument(0), argument(1), elements->span()) : JSValue();
         }
-        if (is("Call"_s) || is("CallNoInline"_s))
+        if (is(Operations::Call) || is(Operations::CallNoInline))
             return arguments.size() >= 2 ? call(arguments[0], arguments[1], arguments.subspan(2)) : JSValue();
-        if (is("ConstructWithArray"_s)) {
+        if (is(Operations::ConstructWithArray)) {
             auto elements = elementsOf(argument(1));
             return elements ? construct(argument(0), elements->span()) : JSValue();
         }
-        if (is("CopyDataProperties"_s))
+        if (is(Operations::CopyDataProperties))
             return call(m_objectAssign, jsUndefined(), std::array { argument(0), argument(1) });
-        if (is("CloneObject"_s) || is("CloneObjectWith"_s))
+        if (is(Operations::CloneObject) || is(Operations::CloneObjectWith))
             return call(m_objectAssign, jsUndefined(), std::array { JSValue(constructEmptyObject(m_globalObject)), argument(0) });
-        if (is("CopyDataPropertiesExcluding"_s)) {
+        if (is(Operations::CopyDataPropertiesExcluding)) {
             JSValue copy = call(m_objectAssign, jsUndefined(), std::array { JSValue(constructEmptyObject(m_globalObject)), argument(0) });
             if (!copy || !copy.isObject())
                 return { };
@@ -1199,9 +1199,9 @@ private:
                 return copy;
             });
         }
-        if (is("ForInKeys"_s))
+        if (is(Operations::ForInKeys))
             return argument(0) && argument(0).isUndefinedOrNull() ? newArray({ }) : call(m_objectKeys, jsUndefined(), std::array { argument(0) });
-        if (is("HasEnumerableProperty"_s)) {
+        if (is(Operations::HasEnumerableProperty)) {
             if (!isObject(0) || !argument(1) || !isCheapToConvert(argument(1)))
                 return { };
             return attempt([&](TopExceptionScope& scope) -> JSValue {
@@ -1211,13 +1211,13 @@ private:
                 return jsBoolean(asObject(argument(0))->hasProperty(m_globalObject, name));
             });
         }
-        if (is("GetTemplateObject"_s)) {
+        if (is(Operations::GetTemplateObject)) {
             if (!isObject(0) || !isObject(1))
                 return { };
             asObject(argument(0))->putDirect(m_vm, m_vm.propertyNames->raw, argument(1), static_cast<unsigned>(PropertyAttribute::DontEnum));
             return argument(0);
         }
-        if (is("ParseJSON"_s)) {
+        if (is(Operations::ParseJSON)) {
             auto text = toText(argument(0));
             if (!text)
                 return { };
@@ -1226,27 +1226,27 @@ private:
                 return JSONParseWithException(m_globalObject, *text);
             });
         }
-        if (is("IsCallable"_s))
+        if (is(Operations::IsCallable))
             return argument(0) ? jsBoolean(argument(0).isCallable()) : JSValue();
-        if (is("IsObject"_s))
+        if (is(Operations::IsObject))
             return argument(0) ? jsBoolean(argument(0).isObject()) : JSValue();
-        if (is("ConstructorResult"_s) || is("DerivedConstructorResult"_s))
+        if (is(Operations::ConstructorResult) || is(Operations::DerivedConstructorResult))
             return isObject(0) ? argument(0) : argument(1);
-        if (is("NewPrivateName"_s))
+        if (is(Operations::NewPrivateName))
             return Symbol::create(m_vm);
-        if (is("PrivateGet"_s)) {
+        if (is(Operations::PrivateGet)) {
             if (!isObject(0) || !argument(1) || !argument(1).isSymbol())
                 return { };
             return attempt([&] {
                 return argument(0).get(m_globalObject, Identifier::fromUid(asSymbol(argument(1))->privateName()));
             });
         }
-        if (is("PrivateSet"_s)) {
+        if (is(Operations::PrivateSet)) {
             if (isObject(0) && argument(1) && argument(1).isSymbol())
                 asObject(argument(0))->putDirect(m_vm, Identifier::fromUid(asSymbol(argument(1))->privateName()), toStored(argument(2)));
             return jsUndefined();
         }
-        if (is("SetFunctionName"_s))
+        if (is(Operations::SetFunctionName))
             return jsUndefined();
         return { };
     }
@@ -1688,7 +1688,7 @@ private:
             String name;
             JSValue receiver = first != Format::none ? frame.slots[first] : JSValue();
             if (value.opcode == Format::Opcode::Operation)
-                name = decode(bytesOf(value.immediates[0]));
+                name = value.immediates[0] < numberOfBuiltins ? String(Builtins::singleton().at(BuiltinID(value.immediates[0])).name) : String();
             else if ((value.opcode == Format::Opcode::CallMethod || value.opcode == Format::Opcode::GetById) && receiver && !receiver.isUndefinedOrNull() && !identifierOf(value.immediates[0]).isNull()) {
                 JSValue prototype = attempt([&]() -> JSValue {
                     return receiver.isObject() ? asObject(receiver)->getPrototype(m_globalObject) : JSValue(receiver.synthesizePrototype(m_globalObject));
@@ -1977,7 +1977,7 @@ void addRegExpLiterals(VM& vm, const Program& program, ImageBuilder& builder)
                 Vector<uint8_t> source;
                 if (!appendConstantText(program, function, value.arguments[0], source))
                     continue;
-                String pattern = EvaluatorOfTexts::decode(source.span());
+                String pattern = source.isEmpty() ? emptyString() : EvaluatorOfTexts::decode(source.span());
                 if (pattern.isNull())
                     continue;
                 PossibleFlags all;

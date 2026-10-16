@@ -126,6 +126,34 @@ ALWAYS_INLINE void noteNamedAccess(Instance* instance, const char* operation, JS
         countNamedAccess(instance, operation, base, key, name);
 }
 
+inline NEVER_INLINE void countLookup(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name)
+{
+    auto& table = runtimeTable(*instance->vm);
+    NamedAccess access = classifyNamedAccess(base, key, name);
+    if (!name && key.isSymbol())
+        name = &asSymbol(key)->uid();
+    if (const StringImpl* text = !name && key.isString() ? asString(key)->tryGetValueImpl() : nullptr; text && text->isAtom())
+        name = static_cast<UniquedStringImpl*>(const_cast<StringImpl*>(text));
+    if (!name) {
+        table.countOperation(operation, "key-is-no-name");
+        return;
+    }
+    uint64_t shape = base.isCell() ? base.asCell()->structureID().bits() : 0;
+    if (table.noteLookup(operation, shape, name)) {
+        table.countOperation(operation, "new-pair");
+        return;
+    }
+    table.countOperation(operation, "pair-again");
+    const char* primitive = base.isString() ? "string" : base.isSymbol() ? "symbol" : base.isNumber() ? "number" : base.isBoolean() ? "boolean" : base.isBigInt() ? "bigint" : "";
+    table.noteGuest("looked-up-again", makeString(StringView::fromLatin1(operation), ' ', StringView::fromLatin1(access.receiver), ':', access.className.isEmpty() ? StringView::fromLatin1(primitive) : StringView(access.className), ' ', StringView::fromLatin1(access.place), " ."_s, StringView(name)), String());
+}
+
+ALWAYS_INLINE void noteLookup(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        countLookup(instance, operation, base, key, name);
+}
+
 ALWAYS_INLINE void countOperationBySlotState(Instance* instance, const char* name, const Slot* slot)
 {
     if (Options::useAOTOperationCounters()) [[unlikely]]
@@ -135,6 +163,8 @@ ALWAYS_INLINE void countOperationBySlotState(Instance* instance, const char* nam
 ALWAYS_INLINE void countOperationAtSite(Instance* instance, CallFrame* callFrame, const char* name)
 {
     if (!Options::useAOTOperationCounters()) [[likely]]
+        return;
+    if (classifyAddress(removeCodePtrTag(callFrame->rawReturnPC())).kind != ImageAddressInfo::Function)
         return;
     FunctionRef function = callerBytecodeOwner(instance, callFrame);
     BytecodeIndex bytecodeIndex = callerBytecodeIndex(instance, callFrame);

@@ -11,6 +11,8 @@ inline GetOwnProperty
 inline LinkTimeConstant
 inline RequireBuiltinModule
 inline NativeBinding
+inline HasCachedValueOfHostObject
+inline CachedValueOfHostObject
 
 runtime RequireBuiltinModule : Heap EncodedJSValue (uint32_t id)
 runtime NativeBinding : Heap EncodedJSValue (uint32_t index)
@@ -32,6 +34,8 @@ operation PutInternalField (any/w, any/-, any/KR) -> arg2 ; WritesArguments ; In
 operation ToLength (any/G) -> number ; CallsUserCode ; Inline(ToLength)
 operation GetOwnProperty (any/GP, any/-) -> anything ; CallsUserCode ; Inline(GetOwnProperty)
 operation PutByValDirect (any/Ww, any/G, any/KR) -> arg2 ; CallsUserCode ; Inline(PutByValDirect)
+operation HasCachedValueOfHostObject (any/-, any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasCachedValueOfHostObject)
+operation CachedValueOfHostObject (any/P, any/-) -> anything ; ReadsArguments ; Inline(CachedValueOfHostObject)
 
 # JavaScriptCore's bytecode intrinsics: bytecompiler/NodesCodegen.cpp, emit_intrinsic_*.
 $argument Call = Argument

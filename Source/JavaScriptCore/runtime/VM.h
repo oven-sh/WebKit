@@ -528,6 +528,8 @@ public:
 
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
     bool hasRealmWithImmutableIntrinsics { false };
+    using GuardOfDeclaredObjects = String (*)(JSGlobalObject*, JSObject*, unsigned change, UniquedStringImpl* name, unsigned given, JSValue);
+    GuardOfDeclaredObjects guardOfDeclaredObjects { nullptr };
     using ImmutableIntrinsicsAuditReporter = void (*)(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column);
     ImmutableIntrinsicsAuditReporter immutableIntrinsicsAuditReporter() const { return m_immutableIntrinsicsAuditReporter; }
     void setImmutableIntrinsicsAuditReporter(ImmutableIntrinsicsAuditReporter reporter) { m_immutableIntrinsicsAuditReporter = useImmutableIntrinsics ? nullptr : reporter; }

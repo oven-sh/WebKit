@@ -60,6 +60,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
                 instance->typedKeyLists[Instance::indexOfTypedKeyList(Typed::shapeWordOf(ofProgram->shape()), ofProgram->orderWord())] = { ofProgram->orderWord(), Typed::shapeWordOf(ofProgram->shape()), keys };
             OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly()));
         }
+        if (inheritsNone && ofProgram->extraProperties()) {
+            ofProgram->knowExtraPropertiesByStructure(vm);
+            if (JSArray* keys = ofProgram->tryListKeysWithExtraProperties(globalObject))
+                OPERATION_RETURN(scope, keys);
+        }
     }
 
     // The engine keeps it for the Structure where it can.
@@ -120,6 +125,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDecrement, EncodedJSValue, (Instance* 
     if (numeric.isBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::dec(globalObject, numeric.asHeapBigInt())));
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() - 1)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedListFieldsBelow, size_t, (Instance* instance, JSCell* cell, uint32_t end))
+{
+    auto* object = instance->typed->compiledObject(cell);
+    if (!object)
+        return 0;
+    uint32_t wordBefore = object->orderWord();
+    if (end & Typed::listsFieldNamed) {
+        if (const Typed::FieldData* field = object->fieldNamed(*instance->typed, instance->typed->name(*instance->vm, end & ~Typed::listsFieldNamed)))
+            object->listFieldStoredEarly(*instance->typed, *field);
+    } else
+        object->listFieldsBelow(*instance->typed, end & ~Typed::listsFieldsWithoutUnlisting, !(end & Typed::listsFieldsWithoutUnlisting));
+    return wordBefore & INT32_MAX;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetSuperConstructor, EncodedJSValue, (Instance* instance, JSCell* classObject))
@@ -238,7 +257,7 @@ Operand Lowering::lowerForInKeys(ValueID result, const Value& value)
 {
     Boxed object = in<Boxed>(value.arguments[0]);
     CellPointer keys = listKeysForIn(object, typeOf(value.arguments[0]));
-    Word32 isShared = hasBits(indexingModeOf(keys, CopyOnWrite), CopyOnWrite);
+    Word32 isShared = hasBits(indexingModeOfAnyArray(keys, CopyOnWrite), CopyOnWrite);
     Word32 structureID = either<Word32>(isShared, [&] {
         return loadField<Word32>(asCell(object), m_heaps.JSCell_structureID);
     }, [&] {
@@ -446,7 +465,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
             LBasicBlock continuation = m_out.newBlock();
             m_out.branch(isCell(base).value(), unsure(isCellCase), unsure(continuation));
             m_out.appendTo(isCellCase);
-            m_out.branch(logicalAnd(isPlainArray(asCell(base)), below(indexingModeOf(asCell(base), IndexingShapeMask), word32(ArrayStorageShape))).value(), unsure(isPlain), unsure(continuation));
+            m_out.branch(logicalAnd(isPlainArray(asCell(base)), below(indexingModeOfAnyArray(asCell(base), IndexingShapeMask), word32(ArrayStorageShape))).value(), unsure(isPlain), unsure(continuation));
             m_out.appendTo(isPlain);
             Boxed general = getByValGenerally(object, key);
             Word32 isSame = logicalOr(equal(element, general), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(general.value()))));
@@ -503,17 +522,16 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
     if (operand.rep == Rep::JSValue)
         orElse(isCell(operand.as<Boxed>()), generic);
     CellPointer array = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
-    orElse(isPlainArray(array), generic);
     Integer index = indexOrElse(key, generic);
-    Pointer butterfly = butterflyOf(array);
-    orElse(below(index, publicLength(butterfly)), absent);
-    Word32 shape = indexingModeOf(array, IndexingShapeMask);
+    Word32 shape = indexingModeOfAnyArray(array, IndexingShapeMask);
     LBasicBlock isDouble = m_out.newBlock();
     LBasicBlock isNotDouble = m_out.newBlock();
     m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(isDouble), unsure(isNotDouble));
 
     m_out.appendTo(isDouble);
-    Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), index.value())));
+    Pointer doubles = butterflyOf(array);
+    orElse(below(index, publicLength(doubles)), absent);
+    Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, doubles.value(), index.value())));
     orElse(equal(asDouble, asDouble), absent);
     if (isGet)
         join.add(ensure(asDouble, m_program.at(m_program.types.number), type));
@@ -526,7 +544,9 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
     m_out.appendTo(isNotDouble);
     orElse(notEqual(shape, word32(UndecidedShape)), absent);
     orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), generic);
-    Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
+    Pointer values = butterflyOf(array);
+    orElse(below(index, publicLength(values)), absent);
+    Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, values.value(), index.value())));
     orElse(isNotEmpty(element), absent);
     if (isGet)
         join.add(ensure(element, type));
@@ -537,6 +557,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
 
     // What is no array index may be the name of a property.
     m_out.appendTo(absent);
+    orElse(isPlainArray(array), generic);
     orElse(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), generic);
     if (isGet)
         join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));

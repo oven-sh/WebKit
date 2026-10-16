@@ -10,6 +10,7 @@
 #include "CodeType.h"
 #include "Identifier.h"
 #include "LineColumn.h"
+#include "PropertySlot.h"
 #include "WriteBarrier.h"
 #include <optional>
 #include <span>
@@ -22,6 +23,7 @@
 
 namespace JSC {
 
+class AbstractModuleRecord;
 class CallFrame;
 class CodeBlock;
 class FunctionExecutable;
@@ -118,6 +120,7 @@ struct FunctionRef::Location {
 // Functions compiled from types have no executable. Stack frames report them from Typed::Data, which lives in the image: no cells, no
 // Instance, usable on any thread.
 JS_EXPORT_PRIVATE String typedFunctionName(uint32_t function, bool asWritten = false);
+JS_EXPORT_PRIVATE String typedFunctionName(VM&, uint32_t function, bool asWritten = false);
 JS_EXPORT_PRIVATE CodeType typedFunctionCodeType(uint32_t function);
 JS_EXPORT_PRIVATE bool typedFunctionIsConstructor(uint32_t function);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
@@ -162,6 +165,7 @@ namespace Typed {
 // Whether an entry function of a program that was compiled from types runs in the place of the top-level code of the module, which is named
 // as the program data names it (ProgramModule::entryOffset: SourceProvider::aotModuleID() less one). False where there is no image.
 JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
+JS_EXPORT_PRIVATE JSValue requireCompiledEntryPoint(JSGlobalObject*, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE void detachModuleNamespace(JSGlobalObject*, JSObject*);
 Identifier tryMakeIdentifier(VM&, uint32_t identifier);
@@ -192,16 +196,30 @@ JSValue tryGetOwnDataOfCompiledObject(VM&, JSCell*, UniquedStringImpl*);
 std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfFieldForInterpreter(JSCell*, UniquedStringImpl*);
 bool isFieldThatReadsAsUndefinedWhereAbsent(JSGlobalObject*, JSCell*, UniquedStringImpl*);
 bool isNameThatReadsAsUndefinedByStructure(JSGlobalObject*, JSCell*, UniquedStringImpl*);
+bool isAbsentFromCompiledObjectByStructure(Structure*, UniquedStringImpl*);
+void countIfCompiledObject(VM&, JSValue, const char* operation);
 bool tryStorePrimitiveIntoFieldOfCompiledObject(VM&, JSCell*, UniquedStringImpl*, JSValue);
+std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfStoreForInterpreter(VM&, JSCell*, const Identifier&);
+bool storeExtraPropertyOfCompiledObject(JSCell*, int offset, JSValue);
+JSValue extraPropertyOfCompiledObject(JSCell*, int offset);
+std::optional<std::pair<uint16_t, uint16_t>> placeOfExtraPropertyForInterpreter(VM&, JSCell*, const Identifier&);
 bool tryAssignPrimitivesToFieldsOfCompiledObject(VM&, JSObject* target, JSObject* source);
 // After `prototype` has been stored to a function with putDirect(), which goes past the function's own methods. Any cell will do.
 JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
 // For the host, right after it has made a global object that the built-ins table calls replaceable, before anything else sees it.
 JS_EXPORT_PRIVATE void didCreateReplaceableGlobal(JSGlobalObject*, ASCIILiteral name, JSObject*);
+struct CachedGetterOfHostClass {
+    GetValueFunc::Ptr getter;
+    uint32_t offsetOfCachedValue;
+};
+JS_EXPORT_PRIVATE void setCachedGettersOfHostClasses(std::span<const CachedGetterOfHostClass>);
+static constexpr unsigned maxNumberOfHostClasses = 128;
+JS_EXPORT_PRIVATE void didCreateStructureOfHostClass(JSGlobalObject*, unsigned number, Structure*);
 
 } // namespace Typed
 
 void destroyJSONBuffers(Instance&);
+void destroyJSONSource(Instance&);
 String takePreparedJSON(Instance&, JSValue);
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
 JS_EXPORT_PRIVATE void noteAsyncLocalStorage(JSGlobalObject*, JSObject* storage, JSObject* frame, JSCell* getStore);

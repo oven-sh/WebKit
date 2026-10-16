@@ -155,9 +155,13 @@ public:
     void* tryTake()
     {
         Locker locker { *m_lock };
+        if (m_requestsBeforeRestart) {
+            --m_requestsBeforeRestart;
+            return nullptr;
+        }
         void* result = m_blocks.isEmpty() ? nullptr : m_blocks.takeLast();
         m_demandSinceRefill = true;
-        m_demandSinceIdleCheck = true;
+        ++m_requestsSinceIdleCheck;
         // A miss means the mutator is about to take the very fault this exists to avoid, and it is
         // also the only thing that brings the helper back once it has shut itself down. While it is
         // standing down, a notify would only postpone the timeout that lifts the stand-down.
@@ -221,7 +225,7 @@ private:
         bool shouldSleep(const AbstractLocker&) final
         {
             assertIsHeld(*m_provider.m_lock);
-            if (!std::exchange(m_provider.m_demandSinceIdleCheck, false) || m_provider.m_phase == Phase::Ended)
+            if (std::exchange(m_provider.m_requestsSinceIdleCheck, 0) < Options::warmUpMarkedBlockStartAfterBlocks() || m_provider.m_phase == Phase::Ended)
                 return true;
             m_provider.m_phase = Phase::Armed;
             return false;
@@ -233,6 +237,7 @@ private:
             // Freeing does not reach back into this lock, so it is safe to do with it held.
             if (m_provider.m_phase != Phase::Ended)
                 m_provider.m_phase = Phase::Stopped;
+            m_provider.m_requestsBeforeRestart = Options::warmUpMarkedBlockStartAfterBlocks();
             for (void* block : std::exchange(m_provider.m_blocks, { }))
                 m_provider.freeBlock(block);
             if (m_provider.m_cage)
@@ -308,7 +313,8 @@ private:
     Vector<void*, 32> m_blocks WTF_GUARDED_BY_LOCK(*m_lock);
     Phase m_phase WTF_GUARDED_BY_LOCK(*m_lock) { Phase::Stopped };
     bool m_demandSinceRefill WTF_GUARDED_BY_LOCK(*m_lock) { false };
-    bool m_demandSinceIdleCheck WTF_GUARDED_BY_LOCK(*m_lock) { false };
+    unsigned m_requestsSinceIdleCheck WTF_GUARDED_BY_LOCK(*m_lock) { 0 };
+    unsigned m_requestsBeforeRestart WTF_GUARDED_BY_LOCK(*m_lock) { 0 };
 };
 
 WarmUpBlockProvider* FastMallocAlignedMemoryAllocator::warmUpBlockProviderIfStarted()
@@ -394,6 +400,15 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 #endif
     }
 
+    return tryAllocateUntouchedAlignedMemory(alignment, size);
+#endif
+}
+
+void* FastMallocAlignedMemoryAllocator::tryAllocateUntouchedAlignedMemory(size_t alignment, size_t size)
+{
+#if ENABLE(MALLOC_HEAP_BREAKDOWN)
+    return m_heap.memalign(alignment, size, true);
+#else
     if (MarkedBlockCage::isEnabled()) {
         RELEASE_ASSERT(alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize);
         return tryAllocateBlockMemory(&m_markedBlockCage);

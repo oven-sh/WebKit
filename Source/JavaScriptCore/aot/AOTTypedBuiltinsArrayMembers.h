@@ -33,13 +33,16 @@
     std::optional<InitialCapacity> inferInitialCapacity(ValueID literal);
     bool m_didFindArrayPushes { false };
     UncheckedKeyHashMap<uint32_t, Vector<std::pair<BlockID, unsigned>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_arrayPushesByReceiver;
+    UncheckedKeyHashMap<uint32_t, Vector<std::pair<BlockID, ValueID>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_arrayStoresByReceiver;
     BitVector m_blocksWithAppendSpread;
     UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_spreadsCarriedOutAtBirth;
     bool m_isFillingArrayAtBirth { false };
     void updateVectorLengthHint(CellPointer array, ValueID receiver);
     Type arrayTypeAtBirth(ValueID) const;
     ValueID emptyLiteralBehind(ValueID receiver);
+    UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_emptyLiteralsBehindParameters;
     Word32 turnsLeftInLoop();
+    LValue whatIsExpectedOfArrayStoredTo(ValueID receiver, ValueID key, bool isNumberAmongNumbers);
     std::optional<Word32> mostPushedInLoopOverCollection(ValueID literal);
     unsigned numberOfElementsPushedTo(ValueID array);
     LBasicBlock appendSpread(const Value&);

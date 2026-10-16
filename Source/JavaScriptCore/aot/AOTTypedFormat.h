@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed { namespace Format {
 // The program as the front end hands it over: one buffer of 32-bit words, read in place. src/aot/format.rs in Bun mirrors this file.
 
 static constexpr uint32_t magic = 0x52495442;
-static constexpr uint32_t version = 35;
+static constexpr uint32_t version = 37;
 static constexpr uint32_t none = UINT32_MAX;
 
 struct Section {
@@ -477,6 +477,7 @@ enum class CastReason : uint32_t {
     CoerceFreshObject,
     CoerceFreshGraph,
     AsFreshObject,
+    Member,
 };
 // Of a Cast for the reason Coerce, in Value::immediates[1] from bit 8 on. Nobody else can hold the object that the operand yields: `{ ...a } as T`,
 // `Object.fromEntries(..) as T`: plain data is copied into the layout as `As` does it, and what it holds stays what it is. Nor anything that
@@ -582,6 +583,7 @@ struct Header {
     Span entries;
     Span regExpLiterals;
     Span sites;
+    Span webAssemblyModules;
     uint32_t recordSizes[12];
 };
 

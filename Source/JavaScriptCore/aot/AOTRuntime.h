@@ -53,6 +53,15 @@ struct State;
 }
 struct JSONWideSegment;
 
+#if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
+#define AOT_TESTS_SHADOW_IN_COMPILED_CODE 1
+#define FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
+    v(operationAOTReportPoisonedAccess)
+#else
+#define AOT_TESTS_SHADOW_IN_COMPILED_CODE 0
+#define FOR_EACH_AOT_OPERATION_FOR_ASAN(v)
+#endif
+
 #define FOR_EACH_AOT_OPERATION(v) \
     v(operationAOTValueAdd) \
     v(operationAOTValueSub) \
@@ -94,10 +103,13 @@ struct JSONWideSegment;
     v(operationAOTGetByKeyPlainly) \
     v(operationAOTPutByKeyPlainly) \
     v(operationAOTHasByKeyPlainly) \
+    v(operationAOTPrepareGetOfProxy) \
+    v(operationAOTValidateGetOfProxy) \
     FOR_EACH_AOT_OBJECT_OPERATION(v) \
     FOR_EACH_AOT_BUILTIN_OPERATION(v) \
     FOR_EACH_AOT_TYPED_OPERATION(v) \
     FOR_EACH_AOT_TYPED_BUILTIN_OPERATION(v) \
+    FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
     FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
 
 #define FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
@@ -158,11 +170,16 @@ struct JSONWideSegment;
     v(RawTypedPutExtra) \
     v(RawTypedGetExtra) \
     v(RawTypedConstruct) \
+    v(RawTypedCloneObject) \
+    v(RawTypedCloneObjectForMore) \
+    v(RawTypedConstructSuper) \
+    v(ClassInfoOfErrorConstructor) \
     v(HostFunctionThatIsNoConstructor) \
     v(NewArraySlowPath) \
     v(ValueAddSlowPath) \
     v(ClassInfoOfAsyncGenerators) \
     v(ReturnAddressOfResumeFunctions) \
+    v(ClassInfoOfWebAssemblyFunctions) \
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_ENTRY(name) name,
@@ -230,6 +247,7 @@ public:
         countOperation(kind, m_filledPairs.add({ kind, uid, structureIDs }).isNewEntry ? "new-pair" : "pair-again");
     }
     void forgetFilledPairsOfDeadStructures(VM&);
+    bool noteLookup(const char* operation, uint64_t structureID, const void* uid) { return m_filledPairs.add({ operation, uid, structureID }).isNewEntry; }
     void noteGuest(const char* kind, StringView group, String&& sample);
     uint64_t operationCount(StringView nameAndDetail) const;
     void dumpOperationCounts(PrintStream&) const;
@@ -372,6 +390,8 @@ struct Slot {
         // The name is no field of the layout: an extra property, if anything. No stub serves that: it goes to the operation by the shortest way.
         static constexpr uint32_t isNoField = 1u << 13;
         static constexpr uint32_t isInGlobalProxyTarget = 1u << 14;
+        static constexpr uint32_t isInExtension = isNoField;
+        static constexpr uint32_t saysNothingOfField = isNoField | isInGlobalProxyTarget | 1u << 31;
         static constexpr unsigned offsetBits = 16;
         static constexpr unsigned typeShift = 15;
         static constexpr unsigned typeBitsInUpperHalf = 15;
@@ -384,6 +404,11 @@ struct Slot {
     static constexpr uint64_t absentFieldIsUndefined = 1ull << (fieldReadShift + 3);
     // The offset is one in the extension of the object, where the slot holds a JSValue. An extension that ends before it: the field is absent.
     static constexpr uint64_t fieldIsInExtension = 1ull << (fieldReadShift + 4);
+    static constexpr uint64_t fieldHoldsClosureMadeWhenRead = 1ull << (fieldReadShift + 7);
+    static constexpr unsigned closureOfFieldShift = fieldReadShift + 8;
+    static constexpr unsigned kindOfClosureOfFieldShift = 62;
+    static constexpr uint64_t closureOfFieldCapturesItsHolder = 1ull << 63;
+    static_assert(closureOfFieldShift + ClosureWord::numberOfFunctionBits <= kindOfClosureOfFieldShift);
     bool isPolymorphic() const { return !structureID && (offset & flagsMask) == polymorphicFlags; }
     bool isNameOnly() const { return !structureID && !(offset & (flagsMask | attemptsMask)) && offset >> nameIDShift; }
     bool readsExtraProperty() const
@@ -587,6 +612,7 @@ struct Instance {
     JS_EXPORT_PRIVATE static void destroy(Instance*);
 
     template<typename Visitor> void visit(Visitor&, bool newOnly);
+    template<typename Visitor> void visitWhatCompiledCodeLeaves(Visitor&);
     void finalizeUnconditionally(bool newOnly);
     void clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollection = false, bool newOnly = false);
     void sweepKeyedTables(bool newOnly);
@@ -666,10 +692,13 @@ struct Instance {
     Structure* literalStructure(Structure* empty, std::span<UniquedStringImpl* const>, uint32_t numberOfRowPlusOne = 0);
     Structure* emptyStructureWithoutPrototype(unsigned inlineCapacity);
 
+    enum class RoomOfRun : uint8_t { None, UnderSymbols, OfCopiedNames };
     struct PropertyRunTarget {
         Structure* last { nullptr };
         Vector<StructureID, 4> prototypeStructures;
+        RoomOfRun room { RoomOfRun::None };
     };
+    bool takeRoomForPropertyRunTarget(RoomOfRun);
     const PropertyRunTarget& propertyRunTarget(Structure*, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames);
     // One address for every row of the same names, for `run`: so that whoever adds them to an object of a structure comes to the same one.
     const uint32_t* canonicalPropertyRun(std::span<UniquedStringImpl* const>);
@@ -739,6 +768,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfCellCageBase() { return OBJECT_OFFSETOF(Instance, cellCageBase); }
     static constexpr ptrdiff_t offsetOfNumberTag() { return OBJECT_OFFSETOF(Instance, numberTag); }
     static constexpr ptrdiff_t offsetOfNotCellMask() { return OBJECT_OFFSETOF(Instance, notCellMask); }
+    static constexpr ptrdiff_t offsetOfNotUndefinedOrNullMask() { return offsetBelow(OBJECT_OFFSETOF(FieldsBelow, notUndefinedOrNullMask)); }
     static constexpr ptrdiff_t offsetOfNumberBoxBase() { return OBJECT_OFFSETOF(Instance, numberBoxBase); }
     static constexpr ptrdiff_t offsetOfBoxedNaN() { return offsetBelow(OBJECT_OFFSETOF(FieldsBelow, boxedNaN)); }
     static constexpr int leastIntegerKeptAsDouble = -1;
@@ -772,6 +802,7 @@ struct Instance {
         uint64_t newArrayWithInt32Header;
         uint64_t newArrayWithDoubleHeader;
         uint64_t newArrayWithContiguousHeader;
+        int64_t notUndefinedOrNullMask;
         uint64_t newCopyOnWriteArrayWithContiguousHeader;
         uint64_t stringHeader;
         void* ropeStringAllocator;
@@ -963,12 +994,22 @@ struct Instance {
     void* handlersOfReadsByName[3][numberOfKindsOfEntriesByName] { };
     void* handlersOfStoresByName[6][numberOfKindsOfEntriesByName] { };
     JSObject* objectPrototype;
+    JSObject* prototypeOfStrings { nullptr };
+    JSObject* prototypeOfNumbers { nullptr };
+    JSObject* prototypeOfBooleans { nullptr };
+    JSObject* prototypeOfSymbols { nullptr };
+    static constexpr ptrdiff_t offsetOfPrototypeOfStrings() { return OBJECT_OFFSETOF(Instance, prototypeOfStrings); }
+    static constexpr ptrdiff_t offsetOfPrototypeOfNumbers() { return OBJECT_OFFSETOF(Instance, prototypeOfNumbers); }
+    static constexpr ptrdiff_t offsetOfPrototypeOfBooleans() { return OBJECT_OFFSETOF(Instance, prototypeOfBooleans); }
+    static constexpr ptrdiff_t offsetOfPrototypeOfSymbols() { return OBJECT_OFFSETOF(Instance, prototypeOfSymbols); }
     JSCell* functionPrototypeCall { nullptr };
     uint32_t boundFunctionStructureID { 0 };
     uint32_t hostFunctionStructureID { 0 };
     uintptr_t fieldIDAtDirectLocationBase;
     JSObject* objectPrototypeOfRealm { nullptr };
     static constexpr ptrdiff_t offsetOfObjectPrototypeOfRealm() { return OBJECT_OFFSETOF(Instance, objectPrototypeOfRealm); }
+    JSObject* objectPrototypeOfLockedRealm { nullptr };
+    static constexpr ptrdiff_t offsetOfObjectPrototypeOfLockedRealm() { return OBJECT_OFFSETOF(Instance, objectPrototypeOfLockedRealm); }
     const uint32_t* displacementsOfNames { nullptr };
     static constexpr ptrdiff_t offsetOfDisplacementsOfNames() { return OBJECT_OFFSETOF(Instance, displacementsOfNames); }
     const uint32_t* placesByNameAndRow { nullptr };
@@ -1075,6 +1116,7 @@ struct Instance {
     // No Structure has the ID.
     static constexpr uint32_t bufferAccessorIsNotLookedFor = 1;
     uint32_t bufferAccessorStructureIDs[numberOfBufferAccessors] { };
+    static constexpr uint8_t maxBufferAccessorAttempts = 16;
     uint8_t bufferAccessorAttempts[numberOfBufferAccessors] { };
     JSCell* bufferAccessors[numberOfBufferAccessors] { };
     Structure* bufferStructure { nullptr };
@@ -1103,11 +1145,24 @@ struct Instance {
     StringImpl* preparedJSONText { nullptr };
     Vector<JSONWideSegment>* jsonWideSegments { nullptr };
     uint32_t jsonWideSegmentCount { 0 };
+    uint32_t jsonParserGaveUp { 0 };
+    uint32_t jsonSourceIsUTF8 { 0 };
+    uint8_t* jsonSourceStart { nullptr };
+    const uint8_t* jsonSourceEnd { nullptr };
+    size_t jsonSourceCapacity { 0 };
+    uint64_t jsonCursor { 0 };
+    double jsonNumber { 0 };
+    uint64_t jsonParserFrame { 0 };
     static constexpr ptrdiff_t offsetOfYoungRootsCursor() { return OBJECT_OFFSETOF(Instance, youngRootsCursor); }
     static constexpr ptrdiff_t offsetOfYoungRootsEnd() { return OBJECT_OFFSETOF(Instance, youngRootsEnd); }
     static constexpr ptrdiff_t offsetOfJSONBufferStart() { return OBJECT_OFFSETOF(Instance, jsonBufferStart); }
     static constexpr ptrdiff_t offsetOfJSONBufferEnd() { return OBJECT_OFFSETOF(Instance, jsonBufferEnd); }
     static constexpr ptrdiff_t offsetOfJSONWideSegmentCount() { return OBJECT_OFFSETOF(Instance, jsonWideSegmentCount); }
+    static constexpr ptrdiff_t offsetOfJSONParserGaveUp() { return OBJECT_OFFSETOF(Instance, jsonParserGaveUp); }
+    static constexpr ptrdiff_t offsetOfJSONSourceEnd() { return OBJECT_OFFSETOF(Instance, jsonSourceEnd); }
+    static constexpr ptrdiff_t offsetOfJSONCursor() { return OBJECT_OFFSETOF(Instance, jsonCursor); }
+    static constexpr ptrdiff_t offsetOfJSONNumber() { return OBJECT_OFFSETOF(Instance, jsonNumber); }
+    static constexpr ptrdiff_t offsetOfJSONParserFrame() { return OBJECT_OFFSETOF(Instance, jsonParserFrame); }
     static constexpr ptrdiff_t offsetOfBarrierThreshold() { return OBJECT_OFFSETOF(Instance, barrierThreshold); }
     static constexpr ptrdiff_t offsetOfMutatorShouldBeFenced() { return OBJECT_OFFSETOF(Instance, mutatorShouldBeFenced); }
     double integersKeptAsDoubles[greatestIntegerKeptAsDouble - leastIntegerKeptAsDouble + 1];
@@ -1131,13 +1186,17 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfIntStrings() { return OBJECT_OFFSETOF(Instance, intStrings); }
     uint64_t hashSecrets[2] { };
     static constexpr ptrdiff_t offsetOfHashSecrets() { return OBJECT_OFFSETOF(Instance, hashSecrets); }
-    enum class InlineAllocation : unsigned { Promise, Generator, AsyncFunctionGenerator, Map, Set, BoundFunction, BigInt, DataPropertyDescriptor, RegExpObject, Arguments };
-    static constexpr unsigned numberOfInlineAllocations = 10;
+    enum class InlineAllocation : unsigned { Promise, Generator, AsyncFunctionGenerator, Map, Set, BoundFunction, BigInt, DataPropertyDescriptor, RegExpObject, Arguments, GetterSetter };
+    static constexpr unsigned numberOfInlineAllocations = 11;
     struct InlineAllocationData {
         void* allocator;
         uint64_t header;
     };
     InlineAllocationData inlineAllocations[numberOfInlineAllocations] { };
+    JSObject* nullGetterFunction { nullptr };
+    JSObject* nullSetterFunction { nullptr };
+    static constexpr ptrdiff_t offsetOfNullGetterFunction() { return OBJECT_OFFSETOF(Instance, nullGetterFunction); }
+    static constexpr ptrdiff_t offsetOfNullSetterFunction() { return OBJECT_OFFSETOF(Instance, nullSetterFunction); }
     struct TypedArrayAllocation {
         void* allocator;
         uint64_t header;
@@ -1231,6 +1290,7 @@ struct Instance {
     static constexpr uint16_t maxRunsOfCopiedNames = 1024;
     uint16_t roomForRunsUnderSymbols;
     uint16_t roomForRunsOfCopiedNames;
+    RoomOfRun roomTakenForNextPropertyRunTarget;
     Slot* thisAllocationFor(const JSCell* newTarget) { return &thisAllocations[(std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfThisAllocations - 1)) * slotsPerThisAllocation]; }
     static constexpr ptrdiff_t offsetOfThisAllocations() { return OBJECT_OFFSETOF(Instance, thisAllocations); }
     Structure* emptyStructuresOfLiterals[16] { };
@@ -1244,14 +1304,16 @@ struct Instance {
         JSObject* passedForReceiver;
         JSGlobalObject* globalObject;
         uint32_t lastSerial;
-        uint32_t padding[3];
+        uint32_t offsetOfCachedValue;
+        uint32_t padding[2];
     };
     static_assert(sizeof(CustomGetter) == 64);
-    static constexpr unsigned numberOfCustomGetters = 128;
+    static constexpr unsigned numberOfCustomGetters = 256;
     static_assert(numberOfCustomGetters * sizeof(CustomGetter) < 1ull << (64 - Slot::customGetterPlaceShift));
     CustomGetter* customGetters { nullptr };
     static constexpr ptrdiff_t offsetOfCustomGetters() { return OBJECT_OFFSETOF(Instance, customGetters); }
-    static unsigned indexOfCustomGetter(uint32_t structureID, UniquedStringImpl* uid) { return ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfCustomGetters; }
+    static_assert(numberOfCustomGetters == 1u << 8);
+    static unsigned indexOfCustomGetter(uint32_t structureID, UniquedStringImpl* uid) { return ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4) * 0x85ebca6bu) * 0x9e3779b1u >> (32 - 8); }
     static constexpr unsigned placesForCustomGetter = 4;
     const CustomGetter* customGetterFor(uint32_t structureID, UniquedStringImpl* uid) const
     {
@@ -1278,7 +1340,11 @@ struct Instance {
             if (!empty && !record.serial)
                 empty = &record;
         }
-        return empty ? *empty : customGetters[first];
+        if (empty)
+            return *empty;
+        keyedTableRandomState = keyedTableRandomState * 1664525u + 1013904223u;
+        static_assert(placesForCustomGetter == 4);
+        return customGetters[(first + (keyedTableRandomState >> 30)) % numberOfCustomGetters];
     }
     struct PropertyRun {
         uint32_t structureID;
@@ -1328,6 +1394,56 @@ struct Instance {
     static_assert(hasOneBitSet(numberOfCaseConversions));
     CaseConversion caseConversions[2][numberOfCaseConversions] { };
     bool hasCaseConversions { false };
+    struct CopyForStubs {
+        uint64_t more;
+        uint64_t header;
+        void* allocator;
+        uint32_t structureID;
+        uint8_t wordsCopied;
+        uint8_t wordsCleared;
+        uint8_t places[2];
+    };
+    static_assert(sizeof(CopyForStubs) == 32);
+    static constexpr unsigned numberOfCopiesForStubs = 512;
+    static_assert(hasOneBitSet(numberOfCopiesForStubs));
+    CopyForStubs* copiesForStubs { nullptr };
+    bool hasCopiesForStubs { false };
+    struct OrderOfCopy {
+        uint64_t wordsOfSource;
+        const Slot* site;
+        uint32_t orderWordAndSource;
+        uint32_t unused[3];
+    };
+    static_assert(sizeof(OrderOfCopy) == 32);
+    static constexpr unsigned numberOfOrdersOfCopies = 512;
+    static constexpr unsigned shiftOfProductOfOrdersOfCopies = 32 - 9;
+    static_assert(numberOfOrdersOfCopies == 1u << (32 - shiftOfProductOfOrdersOfCopies));
+    static constexpr unsigned shiftOfSiteOfOrderOfCopy = 4;
+    static constexpr uint32_t orderOfCopyIsOfSecondSource = 1u << 31;
+    static constexpr uint32_t copyIsNeverMade = 1u << 30;
+    OrderOfCopy* ordersOfCopies { nullptr };
+    bool hasOrdersOfCopies { false };
+    static constexpr ptrdiff_t offsetOfOrdersOfCopies() { return OBJECT_OFFSETOF(Instance, ordersOfCopies); }
+    void noteOrderOfCopy(uint64_t wordsOfSource, const Slot* site, uint32_t orderWordAndSource)
+    {
+        uint32_t mixed = static_cast<uint32_t>(wordsOfSource) ^ static_cast<uint32_t>(wordsOfSource >> 32) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(site) >> shiftOfSiteOfOrderOfCopy);
+        ordersOfCopies[mixed * factorOfCopiesForStubs >> shiftOfProductOfOrdersOfCopies] = { wordsOfSource, site, orderWordAndSource, { } };
+        hasOrdersOfCopies = true;
+    }
+    static constexpr unsigned numberOfKeysHandedToTraps = 256;
+    JSString* keysHandedToTraps[numberOfKeysHandedToTraps] { };
+    bool hasKeysHandedToTraps { false };
+    JS_EXPORT_PRIVATE JSString* keyHandedToTraps(VM&, UniquedStringImpl*);
+    static constexpr ptrdiff_t offsetOfCopiesForStubs() { return OBJECT_OFFSETOF(Instance, copiesForStubs); }
+    static constexpr unsigned shiftOfSecondNameInMore = 24;
+    static constexpr uint32_t factorOfCopiesForStubs = 0x9e3779b1u;
+    static constexpr unsigned shiftOfProductOfCopiesForStubs = 32 - 8;
+    static_assert(numberOfCopiesForStubs == 2u << (32 - shiftOfProductOfCopiesForStubs));
+    static unsigned indexOfCopyForStubs(uint32_t structureID, uint64_t more)
+    {
+        uint32_t names = (static_cast<uint32_t>(more) ^ static_cast<uint32_t>(more >> shiftOfSecondNameInMore)) * factorOfCopiesForStubs;
+        return ((structureID ^ names) * factorOfCopiesForStubs >> shiftOfProductOfCopiesForStubs) * 2;
+    }
     static constexpr ptrdiff_t offsetOfCaseConversions(bool isUpper) { return OBJECT_OFFSETOF(Instance, caseConversions) + isUpper * numberOfCaseConversions * sizeof(CaseConversion); }
     void noteCaseConversion(JSCell* source, JSCell* result, bool isUpper)
     {
@@ -1366,15 +1482,15 @@ struct Instance {
     static constexpr size_t bytesInGroupOfKeyedEntries = 256;
     void didHandOutKeyedEntry(const void*);
     template<typename Entry>
-    ALWAYS_INLINE Entry* placeInKeyedTable(Entry* table, unsigned numberOfEntries, StructureID structureID, const JSCell* key)
+    ALWAYS_INLINE Entry* placeInKeyedTable(Entry* table, unsigned numberOfEntries, StructureID structureID, const JSCell* key, bool mayReplaceAnotherPair = true)
     {
-        Entry* place = findPlaceInKeyedTable(table, numberOfEntries, structureID, key);
+        Entry* place = findPlaceInKeyedTable(table, numberOfEntries, structureID, key, mayReplaceAnotherPair);
         if (place)
             didHandOutKeyedEntry(place);
         return place;
     }
     template<typename Entry>
-    ALWAYS_INLINE Entry* findPlaceInKeyedTable(Entry* table, unsigned numberOfEntries, StructureID structureID, const JSCell* key)
+    ALWAYS_INLINE Entry* findPlaceInKeyedTable(Entry* table, unsigned numberOfEntries, StructureID structureID, const JSCell* key, bool mayReplaceAnotherPair = true)
     {
         constexpr unsigned shift = std::countr_zero(sizeof(Entry));
         static_assert(hasOneBitSet(sizeof(Entry)) && shift >= keyedKeyShift && shift <= keyedStructureShift);
@@ -1391,7 +1507,7 @@ struct Instance {
         if (!slotAt(0).structureID || isOfPair(slotAt(0)))
             return &at(0);
         keyedTableRandomState = keyedTableRandomState * 1664525u + 1013904223u;
-        if (keyedTableRandomState >> 30)
+        if (mayReplaceAnotherPair && keyedTableRandomState >> 30)
             return nullptr;
         Entry* firstFree = nullptr;
         for (unsigned place = 1; place < placesOfKeyedPair; ++place) {
@@ -1402,7 +1518,7 @@ struct Instance {
         }
         if (firstFree)
             return firstFree;
-        if (keyedTableRandomState >> 29)
+        if (!mayReplaceAnotherPair || keyedTableRandomState >> 29)
             return nullptr;
         static_assert(placesOfKeyedPair == 4);
         return &at(keyedTableRandomState >> 27 & 3);
@@ -1433,8 +1549,12 @@ struct Instance {
     void validateKeyedTables();
     static constexpr uint32_t keyIsLookedUp = Slot::isGetter | Slot::isIndirect | Slot::pointerIsNotCell;
     static constexpr uint32_t keyIsAbsentForGood = Slot::isGetter | Slot::pointerIsNotCell | Slot::pointerIsCell;
+    static constexpr uint32_t ownAccessorIsAtLocation = 1u << (Slot::offsetBits + 1);
+    static constexpr uint32_t keyIsOwnAccessor = Slot::isGetter | ownAccessorIsAtLocation;
+    static_assert(!(ownAccessorIsAtLocation & (Slot::offsetMask | Slot::flagsMask | keyMayNotBeReplaced)));
     static constexpr uint32_t keyedHasIsLookedUp = Slot::isGetter | Slot::pointerIsNotCell;
     static constexpr size_t cannotLookUp = 2;
+    static constexpr uint32_t nameIsNumberOfIdentifier = 1u << 31;
     // The definition of a property that the object lacks: where it goes, and the structure the object has afterwards.
     struct KeyedAddition {
         Slot slot;
@@ -1446,10 +1566,20 @@ struct Instance {
         uint32_t numberOfValuesOfHolder;
     };
     static_assert(sizeof(KeyedAddition) == 32);
+    static constexpr uintptr_t keyedAdditionIsOfGetter = 1;
+    static constexpr uintptr_t keyedAdditionIsOfSetter = 2;
+    static constexpr uintptr_t bitsSetInKeyOfKeyedAddition = keyedAdditionIsOfGetter | keyedAdditionIsOfSetter;
+    static constexpr uint32_t keyedAdditionCompletesPair = 2;
+    static constexpr uintptr_t keyedAdditionIsDeletion = keyedAdditionIsOfGetter | keyedAdditionIsOfSetter;
+    static_assert(bitsSetInKeyOfKeyedAddition < 1u << keyedKeyShift);
+    static constexpr uint32_t keyedAdditionIsOfExtraProperty = UINT32_MAX;
+    static constexpr uint32_t keyedAdditionOfExtraPropertyWasSeenOnce = UINT32_MAX - 1;
+    static constexpr unsigned shiftOfEpochOfKeyedExtraProperty = 16;
     static constexpr unsigned numberOfKeyedAdditions = 1024;
     static_assert(hasOneBitSet(numberOfKeyedAdditions));
     KeyedAddition& keyedAdditionFor(StructureID structureID, const JSCell* key) { return keyedEntryFor(keyedAdditions, numberOfKeyedAdditions, structureID, key); }
     KeyedAddition* placeForKeyedAddition(StructureID structureID, const JSCell* key) { return placeInKeyedTable(keyedAdditions, numberOfKeyedAdditions, structureID, key); }
+    KeyedAddition* freePlaceForKeyedAddition(StructureID structureID, const JSCell* key) { return placeInKeyedTable(keyedAdditions, numberOfKeyedAdditions, structureID, key, false); }
     static constexpr size_t sizeOfKeyedTables = numberOfKeyedReads * sizeof(KeyedRead) + numberOfKeyedAdditions * sizeof(KeyedAddition) + numberOfKeyedHas * sizeof(Slot);
     static_assert(!(sizeOfKeyedTables % (16 * KB)));
     static constexpr ptrdiff_t offsetOfKeyedAdditions() { return OBJECT_OFFSETOF(Instance, keyedAdditions); }
@@ -1465,15 +1595,46 @@ struct Instance {
     static_assert(hasOneBitSet(numberOfNamedFields) && sizeof(NamedField) == 16);
     NamedField* namedFieldReads { nullptr };
     NamedField* namedFieldWrites { nullptr };
+    struct FixedElement {
+        uint64_t cellAndIndex;
+        EncodedJSValue value;
+    };
+    static constexpr unsigned numberOfFixedElements = 1024;
+    static constexpr unsigned bitsOfIndexOfFixedElement = 16;
+    static_assert(hasOneBitSet(numberOfFixedElements) && sizeof(FixedElement) == 16);
+    FixedElement* fixedElements { nullptr };
+    bool hasFixedElements { false };
+    static constexpr ptrdiff_t offsetOfFixedElements() { return OBJECT_OFFSETOF(Instance, fixedElements); }
+    void rememberFixedElement(JSCell* cell, uint32_t index, JSValue value)
+    {
+        uintptr_t bits = std::bit_cast<uintptr_t>(cell);
+        uint64_t cellAndIndex = static_cast<uint64_t>(bits) << bitsOfIndexOfFixedElement | index;
+        unsigned first = ((bits >> 4) + index) & (numberOfFixedElements - 1);
+        unsigned second = first ^ numberOfFixedElements / 2;
+        auto mayBeTaken = [&](unsigned place) {
+            return !fixedElements[place].cellAndIndex || fixedElements[place].cellAndIndex == cellAndIndex;
+        };
+        unsigned place = mayBeTaken(first) ? first : second;
+        if (!mayBeTaken(place)) {
+            keyedTableRandomState = keyedTableRandomState * 1664525u + 1013904223u;
+            if (keyedTableRandomState >> 30)
+                return;
+            place = keyedTableRandomState >> 29 & 1 ? first : second;
+        }
+        fixedElements[place] = { cellAndIndex, JSValue::encode(value) };
+        hasFixedElements = true;
+    }
     EncodedJSValue thrownValue { 0 };
     void* typedKnownStoreTransitions { nullptr };
-    void* typedExtraPropertiesOfObjects { nullptr };
+    void* typedSegmentsOfHandlesOfExtraProperties { nullptr };
     void* typedPlacesOfExtraProperties { nullptr };
+    void* typedCreationsBehindExtraProperties { nullptr };
     static constexpr ptrdiff_t offsetOfNamedFieldReads() { return OBJECT_OFFSETOF(Instance, namedFieldReads); }
     static constexpr ptrdiff_t offsetOfNamedFieldWrites() { return OBJECT_OFFSETOF(Instance, namedFieldWrites); }
     static constexpr ptrdiff_t offsetOfTypedKnownStoreTransitions() { return OBJECT_OFFSETOF(Instance, typedKnownStoreTransitions); }
-    static constexpr ptrdiff_t offsetOfTypedExtraPropertiesOfObjects() { return OBJECT_OFFSETOF(Instance, typedExtraPropertiesOfObjects); }
+    static constexpr ptrdiff_t offsetOfTypedSegmentsOfHandlesOfExtraProperties() { return OBJECT_OFFSETOF(Instance, typedSegmentsOfHandlesOfExtraProperties); }
     static constexpr ptrdiff_t offsetOfTypedPlacesOfExtraProperties() { return OBJECT_OFFSETOF(Instance, typedPlacesOfExtraProperties); }
+    static constexpr ptrdiff_t offsetOfTypedCreationsBehindExtraProperties() { return OBJECT_OFFSETOF(Instance, typedCreationsBehindExtraProperties); }
     static void noteNamedField(NamedField* table, uint32_t shapeWord, uint32_t name, uint64_t access)
     {
         table[((shapeWord << namedFieldShapeShift) + name) % numberOfNamedFields] = { shapeWord | static_cast<uint64_t>(name) << 32, access };
@@ -1601,6 +1762,9 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedExecutable(unsigned kind) { return OBJECT_OFFSETOF(Instance, typedExecutables) + kind * sizeof(JSCell*); }
     static constexpr ptrdiff_t offsetOfTypedClosures() { return OBJECT_OFFSETOF(Instance, typedClosures); }
     static constexpr ptrdiff_t offsetOfTypedBuiltins() { return offsetBelow(OBJECT_OFFSETOF(FieldsBelow, typedBuiltins)); }
+    static constexpr unsigned numberOfHostClasses = Typed::maxNumberOfHostClasses;
+    uint32_t structureIDsOfHostClasses[numberOfHostClasses] { };
+    static constexpr ptrdiff_t offsetOfStructureIDOfHostClass(unsigned number) { return OBJECT_OFFSETOF(Instance, structureIDsOfHostClasses) + number * sizeof(uint32_t); }
     BiasedDataPointer sharedDataOfLinkedFunctions;
     BiasedDataPointer ownData[maxNumberOfOwnData];
     static constexpr unsigned numberOfTypedStringsWithWord = 4096;
@@ -1674,14 +1838,13 @@ public:
     static constexpr uint32_t maxName = (1u << 15) - 1;
     static constexpr uint32_t isElsewhere = 1u << 15;
     static constexpr uint32_t numberOfBases = 1u << 21;
-    static constexpr uint32_t numberOfColumns = 1u << 11;
-    static constexpr uint32_t columnOf(uint32_t name) { return name & (numberOfColumns - 1); }
+    static constexpr uint32_t numberOfColumns = maxName + 1;
+    static constexpr uint32_t numberOfBusyNames = 1u << 11;
     static constexpr uint32_t multiplierOfBusyNames = 1779;
     static constexpr uint32_t inverseOfMultiplierOfBusyNames = 571;
-    static_assert(multiplierOfBusyNames * inverseOfMultiplierOfBusyNames % numberOfColumns == 1);
-    static constexpr uint32_t nameOfIdentifierNumbered(uint32_t number) { return number < numberOfColumns ? number * multiplierOfBusyNames % numberOfColumns : number; }
-    static constexpr uint32_t numberOfIdentifierNamed(uint32_t name) { return name < numberOfColumns ? name * inverseOfMultiplierOfBusyNames % numberOfColumns : name; }
-    static constexpr uint32_t columnInOverflowOf(uint32_t name) { return (name ^ name >> 4) & (numberOfColumns - 1); }
+    static_assert(multiplierOfBusyNames * inverseOfMultiplierOfBusyNames % numberOfBusyNames == 1);
+    static constexpr uint32_t nameOfIdentifierNumbered(uint32_t number) { return number < numberOfBusyNames ? number * multiplierOfBusyNames % numberOfBusyNames : number; }
+    static constexpr uint32_t numberOfIdentifierNamed(uint32_t name) { return name < numberOfBusyNames ? name * inverseOfMultiplierOfBusyNames % numberOfBusyNames : name; }
     static constexpr int32_t offsetOfFirstColumn = 0;
     static constexpr uint32_t entriesPerPlane = numberOfBases + numberOfColumns + 1;
     struct Cell {
@@ -1721,7 +1884,7 @@ public:
         FieldDouble,
         FieldBoolean,
         FieldOptionalBoolean,
-        ExtraAccessorInLine,
+        ExtraProperty,
         KnownCustomGetter,
         ArrayLength,
         LazyClosure,
@@ -1739,6 +1902,8 @@ public:
     static constexpr int32_t offsetOfPlaceToStoreInEntry = OBJECT_OFFSETOF(Cell, kindOrPlaceToStore);
     static constexpr int32_t offsetOfKindInEntry = OBJECT_OFFSETOF(Cell, kindOrPlaceToStore);
     static constexpr int32_t offsetOfNameInEntry = OBJECT_OFFSETOF(Cell, name);
+    static constexpr uint8_t rowHasNamesInOverflow = 1;
+    static constexpr int32_t offsetOfFlagsOfRow = offsetOfFirstColumn - static_cast<int32_t>(sizeof(Cell)) + offsetOfCodeInEntry;
     static constexpr unsigned bitsOfKind = 5;
     static_assert(numberOfKinds <= 1u << bitsOfKind);
     static constexpr uint8_t valueIsInStorage = 1u << bitsOfKind;
@@ -1776,10 +1941,29 @@ public:
     }
     static constexpr int32_t maxPlaceOutOfLine = 125;
     static constexpr uint32_t codeOfPlaceOutOfLine(uint32_t place) { return static_cast<uint8_t>(-static_cast<int32_t>(place) - 2); }
+    static constexpr uint32_t maxOwnPlaceOutOfLine = (1u << 18) - 3;
+    static constexpr uint32_t distanceBelowStorage(uint32_t place) { return (place + 2) * static_cast<uint32_t>(sizeof(uint64_t)); }
+    static constexpr uint32_t wordOfOwnPlaceOutOfLine(uint32_t place) { return 0 - distanceBelowStorage(place); }
+    static constexpr uint32_t ownAccessorIsInObject = 2;
+    static constexpr uint32_t wordOfOwnAccessorInObject(uint32_t place) { return place * static_cast<uint32_t>(sizeof(uint64_t)) | ownAccessorIsInObject; }
+    static constexpr uint32_t leastWordOfHolder = 1u << 21;
+    static constexpr uint8_t codeOfFarInheritedPlace = 1;
+    static constexpr uint32_t codeAndKindOfFarInheritedPlace = codeOfFarInheritedPlace | static_cast<uint32_t>(Kind::Unknown) << 8;
+    static_assert(offsetOfKindInEntry == offsetOfCodeInEntry + 1);
     static constexpr uint32_t firstCodeOutOfLine = 0x80;
     static constexpr uint32_t needsFirstStorage = 2;
     static constexpr uint32_t growsStorage = 4;
     static constexpr uint32_t flagsOfStructureAfter = needsFirstStorage | growsStorage;
+    static constexpr uint32_t storeAddsExtraProperty = 0x80;
+    static constexpr uint32_t onlyDefinitionAddsExtraProperty = 0x40;
+    static constexpr uint32_t extraPropertyIsBehindHandle = 0x40;
+    static constexpr uint32_t firstCodeOfExtraPropertyOutOfLine = 0x20;
+    static constexpr uint32_t extraPropertyIsAccessor = 2;
+    static constexpr uint32_t extraPropertyIsStoredTo = 4;
+    static constexpr uint32_t extraPropertyHasDefaultAttributes = 8;
+    static constexpr unsigned shiftOfOffsetOfExtraProperties = 8;
+    static constexpr uint32_t extraPropertyIsKnownToBeAbsent = needsFirstStorage;
+    static constexpr uint32_t storeMakesExtraProperties = growsStorage;
 
     enum class Access : uint8_t { Read, Store, Define };
     static constexpr uint32_t payloadIsSlots = 1;
@@ -1799,10 +1983,11 @@ public:
     bool setAbsent(Structure*, uint32_t name, UniquedStringImpl* uidIfItDependsOnPrototypes);
     bool setInherited(Structure*, uint32_t name, JSCell* holder, PropertyOffset, UniquedStringImpl* uidIfItDependsOnPrototypes);
     bool setInheritedInPlaceOfSlot(Structure*, uint32_t name, JSCell* holder, PropertyOffset);
-    bool setExtraAccessorInPlaceOfSlot(Structure*, uint32_t name, StructureID ofExtraProperties, uint32_t offsetInBytes);
+    bool setExtraProperty(Structure*, uint32_t name, PropertyOffset, bool isAccessor, bool isStoredTo, bool hasDefaultAttributes = false);
+    bool setExtraPropertyAdded(Structure*, uint32_t name, Structure* after, PropertyOffset, bool makesExtraProperties, UniquedStringImpl* uid, bool isByDefinition = false);
     bool setAccessor(Structure*, uint32_t name, JSCell* holderUnlessOwn, PropertyOffset, UniquedStringImpl* uidIfItDependsOnPrototypes, bool storesCallIt = false);
     bool setField(Structure*, uint32_t name, uint64_t howTheFieldIsRead);
-    void setKnownCustomGetterIsInSlot(Structure*, uint32_t name);
+    void setKnownCustomGetterIsInSlot(Structure*, uint32_t name, uint32_t offsetOfCachedValue, UniquedStringImpl*);
     bool setArrayLength(Structure*, uint32_t name, bool holdsDoubles);
     bool setLazyClosure(Structure*, uint32_t name, PropertyOffset, Structure* after);
     bool setExportOfNamespace(Structure*, uint32_t name, uint32_t number);
@@ -1824,7 +2009,7 @@ public:
 
     void noteDeathOf(Structure*);
     void keepIfShapeHasDiedBefore(SlotVisitor&, StructureID);
-    void keepShapesThatHaveDiedBefore(SlotVisitor&);
+    void keepShapesThatHaveDiedBefore(SlotVisitor&, uint32_t version);
     void finalizeUnconditionally(VM&, bool isEdenCollection);
     void didCreate(Instance*);
     void willDestroy(Instance*);
@@ -1842,11 +2027,14 @@ private:
         Structure* owner { nullptr };
         Vector<uint16_t, 4> names;
     };
-    static constexpr uint32_t markOfBase = 0xffff0000;
+    static constexpr uint32_t markOfBase = 0xfffe0000;
+    static constexpr uint32_t markOfBaseWithNamesInOverflow = markOfBase | static_cast<uint32_t>(rowHasNamesInOverflow) << 16;
+    static bool isMarkOfBase(uint32_t entry) { return entry == markOfBase || entry == markOfBaseWithNamesInOverflow; }
 
     static constexpr uint16_t isInOverflow = 1u << 15;
     static bool isInObject(uint32_t entry) { return entry & maxName && !(entry & isElsewhere); }
     static bool isInObject(const Cell& cell) { return static_cast<uint16_t>(cell.name - 1) < maxName; }
+    static bool holdsOwnPlaceInWord(uint32_t entry) { return isInObject(entry) || (entry & isElsewhere && (kindOf(entry) == Kind::OutOfLine || kindOf(entry) == Kind::OutOfLineAndStoredTo)); }
     uint32_t entryAt(uint32_t index) const
     {
         static_assert(offsetOfCodeInEntry == 4 && offsetOfKindInEntry == 5 && offsetOfNameInEntry == 6);
@@ -1877,22 +2065,24 @@ private:
     }
     Slot* slotsAt(uint32_t index) { return payload(index) & payloadIsSlots ? m_slots + (payload(index) >> 1) : nullptr; }
     static bool usesPayloadItself(Kind);
-    static bool payloadIsStructure(Kind kind) { return adds(kind) || kind == Kind::ExtraAccessorInLine || kind == Kind::LazyClosure; }
-    static bool usesPayloadItself(uint32_t entry) { return entry & isElsewhere && usesPayloadItself(kindOf(entry)); }
+    static bool addsExtraProperty(uint32_t entry) { return entry & isElsewhere && kindOf(entry) == Kind::ExtraProperty && codeOf(entry) & storeAddsExtraProperty; }
+    static bool payloadIsStructure(uint32_t entry) { return adds(kindOf(entry)) || kindOf(entry) == Kind::LazyClosure || addsExtraProperty(entry); }
+    static bool isFarInheritedPlace(uint32_t entry) { return entry & isElsewhere && kindOf(entry) == Kind::Unknown && codeOf(entry) == codeOfFarInheritedPlace; }
+    static bool usesPayloadItself(uint32_t entry) { return entry & isElsewhere && (usesPayloadItself(kindOf(entry)) || isFarInheritedPlace(entry)); }
     static Kind kindOf(uint32_t entry) { return static_cast<Kind>(entry >> 24); }
     static uint32_t codeOf(uint32_t entry) { return entry >> 16 & 0xff; }
     static uint32_t entryElsewhere(uint32_t name, Kind kind, uint32_t code) { return name | isElsewhere | code << 16 | static_cast<uint32_t>(kind) << 24; }
     bool isElsewhereEntryOf(uint32_t entry, uint32_t name) const { return (entry & 0xffff) == (name | isElsewhere); }
     bool isEntryOf(uint32_t entry, uint32_t name) const { return (entry & maxName) == name && (entry & 0xffff); }
     uint32_t baseOf(Structure*) const;
-    static uint32_t indexOf(uint32_t base, uint32_t name) { return base + 1 + columnOf(name); }
-    static uint32_t indexOfListed(uint32_t base, uint16_t listed) { return listed & isInOverflow ? entriesPerPlane + base + 1 + columnInOverflowOf(listed & maxName) : indexOf(base, listed); }
+    static uint32_t indexOf(uint32_t base, uint32_t name) { return base + 1 + name; }
+    static uint32_t indexOfListed(uint32_t base, uint16_t listed) { return listed & isInOverflow ? entriesPerPlane + indexOf(base, listed & maxName) : indexOf(base, listed); }
     uint32_t findIndex(Structure*, uint32_t name) const;
     uint32_t findIndexOfSlots(Structure*, uint32_t name) const;
     uint32_t ensureIndexInOverflow(Structure*, uint32_t name);
     static size_t bitOf(uint32_t index) { return index; }
     Row& rowAt(uint32_t base) { return m_rows[payload(base)]; }
-    uint32_t ensureIndex(Structure*, uint32_t name, bool mayBeInOverflow = false);
+    uint32_t ensureIndex(Structure*, uint32_t name);
     uint32_t makeRow(Structure*, uint32_t name);
     uint32_t moveRow(uint32_t base, std::optional<uint16_t> listedToAdd);
     uint64_t freeCellsFrom(uint32_t index) const;
@@ -1905,14 +2095,36 @@ private:
     bool releaseSlotsUnlessStoresUseThem(uint32_t index);
     static uint32_t entryForOwnPlace(uint32_t name, PropertyOffset);
     bool setElsewhere(Structure*, uint32_t name, Kind, uint32_t code, uint32_t payload, UniquedStringImpl* uidIfItDependsOnPrototypes);
+    bool setInheritedFarOutOfLine(Structure*, uint32_t name, JSCell* holder, uint32_t place, UniquedStringImpl* uidIfItDependsOnPrototypes);
     void setDependsOnPrototypes(uint32_t index, uint32_t name, UniquedStringImpl*);
     uint32_t rowOfEntry(uint32_t index, uint32_t name) const;
-    void appendToNameList(uint32_t row, uint32_t name);
+    void appendToNameList(uint32_t row, uint32_t& head);
     void freeNameList(uint32_t name);
     void clearNameLists();
+    static constexpr uint32_t namesPerGroupOfHeads = 4;
+    using GroupOfNameListHeads = std::array<uint32_t, namesPerGroupOfHeads>;
+    uint32_t* nameListHeadIfMade(uint32_t name)
+    {
+        uint16_t group = m_groupOfNameListHead[name / namesPerGroupOfHeads];
+        return group ? &m_nameListHeads[group - 1][name % namesPerGroupOfHeads] : nullptr;
+    }
+    uint32_t nameListHead(uint32_t name) const
+    {
+        uint16_t group = m_groupOfNameListHead[name / namesPerGroupOfHeads];
+        return group ? m_nameListHeads[group - 1][name % namesPerGroupOfHeads] : 0;
+    }
+    uint32_t& ensureNameListHead(uint32_t name)
+    {
+        uint16_t& group = m_groupOfNameListHead[name / namesPerGroupOfHeads];
+        if (!group) [[unlikely]] {
+            m_nameListHeads.append(GroupOfNameListHeads { });
+            group = static_cast<uint16_t>(m_nameListHeads.size());
+        }
+        return m_nameListHeads[group - 1][name % namesPerGroupOfHeads];
+    }
     template<typename Functor> void forEachIndexInNameList(uint32_t name, const Functor& functor) const
     {
-        for (uint32_t position = m_nameListHeads[name]; position; position = m_nameListLinks[position - 1].next) {
+        for (uint32_t position = nameListHead(name); position; position = m_nameListLinks[position - 1].next) {
             Structure* owner = m_rows[m_nameListLinks[position - 1].row].owner;
             if (uint32_t index = owner ? findIndex(owner, name) : 0)
                 functor(index);
@@ -1928,12 +2140,18 @@ private:
     uint64_t* m_occupied { nullptr };
     Vector<Row> m_rows;
     Vector<uint32_t> m_freeRows;
+    struct RowBegunLast {
+        uint16_t name { 0 };
+        uint32_t row { 0 };
+    };
+    std::array<RowBegunLast, 256> m_rowsBegunLast { };
     BitVector m_dependsOnPrototypes;
     Vector<Structure*> m_structuresWithRowsMadeSinceLastCollection;
     static constexpr unsigned bitsOfPlaceOfShapeThatDied = 11;
     static uint32_t wordOfShape(Structure*);
     uint32_t& placeOfShapeThatDied(uint32_t word) { return m_shapesThatDied[word * 0x9e3779b1u >> (32 - bitsOfPlaceOfShapeThatDied)]; }
     std::array<uint32_t, 1u << bitsOfPlaceOfShapeThatDied> m_shapesThatDied { };
+    uint32_t m_versionWhenNewShapesWereLookedAt { 0 };
     Vector<uint32_t> m_indicesOfAdditions;
     Vector<uint32_t> m_indicesOfAdditionsMadeSinceLastCollection;
     struct NameListLink {
@@ -1942,7 +2160,9 @@ private:
     };
     UncheckedKeyHashMap<UniquedStringImpl*, uint16_t> m_nameByUID;
     BitVector m_registeredNames;
-    uint32_t* m_nameListHeads { nullptr };
+    static_assert((maxName + 1) / namesPerGroupOfHeads <= UINT16_MAX);
+    std::array<uint16_t, (maxName + 1) / namesPerGroupOfHeads> m_groupOfNameListHead { };
+    Vector<GroupOfNameListHeads> m_nameListHeads;
     SegmentedVector<NameListLink, 512> m_nameListLinks;
     uint32_t m_firstFreeNameListLink { 0 };
 
@@ -2200,6 +2420,7 @@ void* stubAddress(Stub);
 Stub handlerOfReadByName(unsigned form, PlaceTable::Kind);
 Stub handlerOfStoreByName(unsigned variant, PlaceTable::Kind);
 static_assert(Instance::numberOfKindsOfEntriesByName == PlaceTable::numberOfKinds);
+static_assert(PlaceTable::distanceBelowStorage(PlaceTable::maxOwnPlaceOutOfLine) < PlaceTable::leastWordOfHolder && PlaceTable::wordOfOwnAccessorInObject(UINT8_MAX) < PlaceTable::leastWordOfHolder);
 static_assert(PlaceTable::kindThatAdds(true, true, PlaceTable::WhereAdded::OutOfLine) == PlaceTable::Kind::AbsentAndStoreAddsOutOfLine && PlaceTable::kindThatAdds(false, false, PlaceTable::WhereAdded::InNewStorage) == PlaceTable::Kind::DefinitionAddsInNewStorage && PlaceTable::storesAdd(PlaceTable::Kind::StoreAddsInObject) && !PlaceTable::storesAdd(PlaceTable::Kind::DefinitionAddsInNewStorage));
 
 } } // namespace JSC::AOT

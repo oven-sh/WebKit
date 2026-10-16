@@ -220,6 +220,7 @@ static constexpr unsigned numberOfPreludeFunctions = 0
     ;
 
 static constexpr bool leavesNoFrameInStackTraces(PreludeFunction which) { return which == PreludeFunction::ArrayFlatMap; }
+static constexpr bool isChosenByCallbackHandedOver(PreludeFunction which) { return which == PreludeFunction::ArrayFilterTruthy || which == PreludeFunction::ArrayMapByNumber; }
 uint32_t visibilityInEngine(uint32_t builtinFunction);
 bool isStrictInEngine(uint32_t builtinFunction);
 
@@ -306,8 +307,9 @@ struct EngineClass {
     // An heir of Array is an array as well, and code that is not typed may change any array. So what is TAKEN for an array (a cast, a
     // claim, a store from code that is not typed), and what HOLDS of it as long as it lives, is no more than this:
     // - it is a cell of ArrayType or DerivedArrayType whose ClassInfo is JSArray's, so it is laid out as a JSArray;
-    // - it has a butterfly with an indexing header, so the length is where it is for every array;
-    // - if it is of DerivedArrayType, its elements are in ArrayStorage.
+    // - it has a butterfly with an indexing header, so the length is where it is for every array.
+    // An element of its own is read and stored in place whichever of the two it is. Whatever goes by more than that asks for ArrayType in
+    // one with the way the elements are kept: Lowering::indexingModeOf().
     JSType type { CellType };
     // Among Builtins::cellOfOriginalStructure(): the structures the engine gives a new instance.
     uint8_t firstOriginalStructure { 0 };
@@ -331,10 +333,12 @@ enum class GlobalInterface : uint8_t {
 struct BuiltinNameData {
     static constexpr uint16_t noClass = UINT16_MAX;
     static constexpr uint16_t severalClasses = UINT16_MAX - 1;
+    static constexpr uint16_t noOperation = UINT16_MAX;
 
     ASCIILiteral text;
     uint16_t engineClass;
     uint16_t classSpeculatedFor;
+    uint16_t operation;
     bool isGlobal;
     bool isReplaceable;
     bool mayBeExtended;
@@ -343,6 +347,12 @@ struct BuiltinNameData {
 extern const Builtin builtinEntries[numberOfBuiltins];
 // In ascending order of their bytes.
 extern const BuiltinNameData builtinNames[numberOfBuiltinNames];
+
+namespace Operations {
+#define AOT_TYPED_DEFINE_OPERATION(name, entry, nameOfEntry) inline constexpr BuiltinID name { entry };
+FOR_EACH_AOT_TYPED_IR_OPERATION(AOT_TYPED_DEFINE_OPERATION)
+#undef AOT_TYPED_DEFINE_OPERATION
+}
 extern const EngineClass engineClasses[numberOfEngineClasses];
 
 class Builtins {
@@ -373,6 +383,12 @@ public:
     BuiltinID findForInstance(BuiltinKind, const EngineClass&, BuiltinName) const;
     BuiltinID findConstructor(BuiltinName global) const;
     const EngineClass* classNamed(BuiltinName) const;
+    // For `Holder.prototype.name`: what is found there is fixed. Not for Error: JSGlobalObject::makeIntrinsicImmutable() leaves its prototype to the program.
+    const EngineClass* classWithFixedPrototypeNamed(BuiltinName name) const
+    {
+        const EngineClass* engineClass = classNamed(name);
+        return engineClass && engineClass->type != ErrorInstanceType ? engineClass : nullptr;
+    }
     std::span<const EngineClass> classes() const { return engineClasses; }
     GlobalInterface interfaceNamed(BuiltinName) const;
     BuiltinName prototypeName() const { return BuiltinName(AOT_TYPED_BUILTIN_NAME_prototype); }
@@ -392,6 +408,7 @@ public:
     BuiltinID entryCarriedOutBy(PreludeFunction) const;
     bool isHostFunctionInEngine(BuiltinID) const;
     // The operations that passes create or rewrite.
+    BuiltinID operationNamed(BuiltinName name) const { return name ? BuiltinID(builtinNames[name.index()].operation) : BuiltinID(); }
     BuiltinID hasOriginalStructureOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_HasOriginalStructure); }
     BuiltinID callIntrinsic() const { return BuiltinID(AOT_TYPED_BUILTIN_Call); }
 
@@ -400,7 +417,7 @@ public:
     // properties that cannot be replaced or deleted and, for what the typed arrays share, by a prototype that cannot be changed: lookUp()
     // tests every step. An original structure is a member of JSGlobalObject that is never assigned again. The functions of replaceable
     // globals are the exception: see captureCell().
-    static constexpr unsigned numberOfCells() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures; }
+    static constexpr unsigned numberOfCells() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures + numberOfEngineClasses; }
     // The function the entry describes: a method, a static function, a getter or setter. Of a constant: the symbol.
     unsigned cellOf(BuiltinID id) const { return id.index(); }
     bool hasCell(BuiltinID id) const { return hasCell(cellOf(id)); }
@@ -409,6 +426,8 @@ public:
     // What the global object has under the name: isGlobal() holds for it.
     unsigned cellOf(BuiltinName global) const { return numberOfBuiltins + global.index(); }
     unsigned cellOfOriginalStructure(unsigned index) const { return numberOfBuiltins + numberOfBuiltinNames + index; }
+    static constexpr unsigned firstCellOfPrototypes() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures; }
+    unsigned cellOfPrototype(const EngineClass& engineClass) const { return firstCellOfPrototypes() + engineClass.index; }
     JSCell* findCell(JSGlobalObject*, unsigned) const;
     unsigned cellOfGlobal(ASCIILiteral) const;
     unsigned cellOfStaticFunction(ASCIILiteral global, ASCIILiteral name) const;

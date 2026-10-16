@@ -67,6 +67,40 @@ void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref
     m_jitCodeForConstructWithArityCheck = m_jitCodeForConstruct->addressForCall(ArityCheckMode::MustCheckArity);
     m_name = name;
     m_length = length;
+#if ENABLE(AOT)
+    m_builtInServedByStubs = static_cast<uint8_t>([&] {
+        switch (intrinsic()) {
+        case JSMapGetIntrinsic:
+            return BuiltInServedByStubs::MapGet;
+        case JSMapHasIntrinsic:
+            return BuiltInServedByStubs::MapHas;
+        case JSMapSetIntrinsic:
+            return BuiltInServedByStubs::MapSet;
+        case JSSetHasIntrinsic:
+            return BuiltInServedByStubs::SetHas;
+        case JSSetAddIntrinsic:
+            return BuiltInServedByStubs::SetAdd;
+        case JSWeakMapGetIntrinsic:
+            return BuiltInServedByStubs::WeakMapGet;
+        case JSWeakMapHasIntrinsic:
+            return BuiltInServedByStubs::WeakMapHas;
+        case JSWeakMapSetIntrinsic:
+            return BuiltInServedByStubs::WeakMapSet;
+        case JSWeakSetHasIntrinsic:
+            return BuiltInServedByStubs::WeakSetHas;
+        case StringPrototypeStartsWithIntrinsic:
+            return BuiltInServedByStubs::StringStartsWith;
+        case StringPrototypeIndexOfIntrinsic:
+            return BuiltInServedByStubs::StringIndexOf;
+        case ArrayIsArrayIntrinsic:
+            return BuiltInServedByStubs::ArrayIsArray;
+        case ArrayPushIntrinsic:
+            return BuiltInServedByStubs::ArrayPush;
+        default:
+            return BuiltInServedByStubs::None;
+        }
+    }());
+#endif
 
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForCall->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForConstruct->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());

@@ -538,7 +538,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             if (structure->inheritorsMayOverrideReadOnlyProperties() && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
                 return ReadonlyPropertyWriteError;
         }
-        if (type() == ArrayType && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]] {
+        if (type() == ArrayType && structure->get(vm, propertyName) == invalidOffset && (inheritsImmutableProperty(vm, propertyName) || (vm.useImmutableIntrinsics && propertyName == vm.propertyNames->toJSON))) [[unlikely]] {
             becomeDerivedArray(vm);
             return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
         }
@@ -666,7 +666,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (structure->inheritorsMayOverrideReadOnlyProperties() && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
             return ReadonlyPropertyWriteError;
     }
-    if (type() == ArrayType && inheritsImmutableProperty(vm, propertyName)) [[unlikely]] {
+    if (type() == ArrayType && (inheritsImmutableProperty(vm, propertyName) || (vm.useImmutableIntrinsics && propertyName == vm.propertyNames->toJSON))) [[unlikely]] {
         becomeDerivedArray(vm);
         return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
     }

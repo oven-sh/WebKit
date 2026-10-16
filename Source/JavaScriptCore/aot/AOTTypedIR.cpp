@@ -295,9 +295,10 @@ private:
         case Opcode::InById:
         case Opcode::DeleteById:
         case Opcode::CallMethod:
-        case Opcode::Operation:
             m_out.print(" ");
             quoted(value.string());
+            if (value.isOnSlowPath)
+                m_out.print(" on the slow path");
             if (value.opcode == Opcode::GetById && value.readsMethodFor())
                 m_out.print(" unless original");
             if (value.opcode == Opcode::PutById && value.isInitialStore())
@@ -312,6 +313,9 @@ private:
                 m_out.print(", row ", value.birthOfFirstStore() - 1);
             if (value.isFirstStoreToThis())
                 m_out.print(value.isDefinitionInRowOfThis() ? " a definition" : "", " of the row of this, place ", value.knownPlace(), ", row ", static_cast<int>(value.birthOfFirstStore()) - 1);
+            break;
+        case Opcode::Operation:
+            m_out.print(" \"", Builtins::singleton().at(value.builtin()).name, "\"");
             break;
         case Opcode::FunctionReference:
         case Opcode::NewClosure:
@@ -375,7 +379,7 @@ private:
             m_out.print(" shape ", value.layout().index(), " field ", value.field());
             break;
         case Opcode::Cast: {
-            static constexpr ASCIILiteral reasons[] = { "Store"_s, "As"_s, "NonNull"_s, "Claim"_s, "Flow"_s, "Upcast"_s, "Coerce"_s };
+            static constexpr ASCIILiteral reasons[] = { "Store"_s, "As"_s, "NonNull"_s, "Claim"_s, "Flow"_s, "Upcast"_s, "Coerce"_s, "CoerceFreshObject"_s, "CoerceFreshGraph"_s, "AsFreshObject"_s, "Member"_s };
             m_out.print(" ", reasons[static_cast<unsigned>(value.castReason())]);
             if (value.castReason() == CastReason::Coerce) {
                 m_out.print(value.freshness() == Format::Freshness::WholeGraph ? " fresh graph " : value.coercesFreshData() ? " fresh " : " ");

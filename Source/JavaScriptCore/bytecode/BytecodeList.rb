@@ -1488,6 +1488,8 @@ op :llint_predecoded_get_by_id_inline
 op :llint_predecoded_get_by_id_out_of_line
 op :llint_predecoded_get_by_id_unset
 op :llint_predecoded_get_by_id_custom_accessor
+op :llint_predecoded_get_by_id_prototype_inline
+op :llint_predecoded_get_by_id_prototype_out_of_line
 op :llint_predecoded_get_by_id_cell32
 op :llint_predecoded_get_by_id_int32_or_elsewhere
 op :llint_predecoded_get_by_id_js_value

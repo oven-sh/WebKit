@@ -86,7 +86,7 @@ ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
     if (hasCode()) {
 #if ENABLE(YARR_JIT)
         if (m_state != JITCode)
-            return m_workInInterpreter != workBeforeJIT();
+            return true;
         ASSERT(m_regExpJITCode);
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCode()))
             return true;
@@ -112,14 +112,6 @@ ALWAYS_INLINE void RegExp::noteUse(VM& vm)
 {
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
         m_lastUseEpoch = currentUseEpoch(vm);
-}
-
-ALWAYS_INLINE void RegExp::noteWorkInInterpreter(unsigned subjectLength)
-{
-    unsigned limit = workBeforeJIT();
-    if (m_workInInterpreter >= limit || m_patternString.length() > maxPatternLengthForJITAfterInterpreter)
-        return;
-    m_workInInterpreter = std::min<unsigned>(m_workInInterpreter + 1 + subjectLength / 32, limit);
 }
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
@@ -253,8 +245,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     } else
 #endif
     {
-        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
-            noteWorkInInterpreter(s.length() - startOffset);
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
@@ -278,7 +268,7 @@ ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
     if (hasCode()) {
 #if ENABLE(YARR_JIT)
         if (m_state != JITCode)
-            return m_workInInterpreter != workBeforeJIT();
+            return true;
         ASSERT(m_regExpJITCode);
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCodeMatchOnly()))
             return true;
@@ -416,8 +406,6 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     nonReturnedOvector.grow(offsetVectorSize());
     offsetVector = nonReturnedOvector.mutableSpan().data();
     {
-        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
-            noteWorkInInterpreter(s.length() - startOffset);
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }

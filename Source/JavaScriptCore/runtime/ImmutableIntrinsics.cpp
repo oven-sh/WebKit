@@ -521,7 +521,7 @@ void ImmutableIntrinsicsAudit::willReplacePrototypeProperty(JSGlobalObject* glob
 
 void ImmutableIntrinsicsAudit::didAccessCallerOrArguments(JSGlobalObject* globalObject, JSFunction* function, PropertyName name)
 {
-    reportRefusal(globalObject, "function-caller-arguments"_s, "get"_s, function, name, RestrictedPropertyAccessError, true);
+    reportRefusal(globalObject, "function-caller-arguments"_s, "get"_s, function, name, "answers null"_s, true);
 }
 
 } // namespace JSC

@@ -27,7 +27,10 @@
         std::span<const uint8_t> name;
         bool mayBeLeftOut;
     };
+    enum class JSONSeparator : uint8_t { None, Always, Unknown };
+    template<typename Append> void appendMember(JSONOutput&, JSONSeparator&, JSONMember, const Append&);
     template<typename Describe, typename Append> void appendMembers(JSONOutput&, unsigned count, const Describe&, const Append&);
+    void appendObjectByItsOwnKeys(JSONOutput&, CellPointer, LayoutID, LBasicBlock otherwise, JSONExit& continuation);
     struct JSONLiteralMember {
         StringID name;
         ValueID value;

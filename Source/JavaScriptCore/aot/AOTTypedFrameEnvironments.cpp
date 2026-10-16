@@ -649,8 +649,12 @@ void findOperandsOnlyCalled(Program& program)
         std::ranges::sort(callees[i]);
         callees[i].shrink(std::ranges::unique(callees[i]).begin() - callees[i].begin());
     });
-    for (uint8_t numberSaid : numbersSaid)
-        numberOfOperands += numberSaid;
+    Vector<unsigned> candidates;
+    for (unsigned i = 0; i < count; ++i) {
+        numberOfOperands += numbersSaid[i];
+        if (numbersSaid[i])
+            candidates.append(i);
+    }
     Vector<uint8_t> hasChanged;
     Vector<uint8_t> isScanned;
     Vector<uint64_t> notOnlyCalled;
@@ -662,7 +666,8 @@ void findOperandsOnlyCalled(Program& program)
     unsigned numberOfScans = 0;
     for (bool changed = true; changed;) {
         bool isFirstRound = !numberOfRounds++;
-        forEachIndexInParallel(count, [&](unsigned i) {
+        forEachIndexInParallel(candidates.size(), [&](unsigned k) {
+            unsigned i = candidates[k];
             auto& function = std::as_const(program).functions[i];
             notOnlyCalled[i] = 0;
             isScanned[i] = 0;
@@ -678,12 +683,16 @@ void findOperandsOnlyCalled(Program& program)
             notOnlyCalled[i] = operandsNotOnlyCalled(program, function, operands.span());
         });
         changed = false;
-        for (unsigned i = 0; i < count; ++i) {
+        for (unsigned i : candidates) {
             numberOfScans += isScanned[i];
             hasChanged[i] = !!notOnlyCalled[i];
+            changed |= !!notOnlyCalled[i];
+            numberLeft -= std::popcount(notOnlyCalled[i]);
+        }
+        forEachIndexInParallel(candidates.size(), [&](unsigned k) {
+            unsigned i = candidates[k];
             if (!notOnlyCalled[i])
-                continue;
-            changed = true;
+                return;
             auto& function = program.functions.withSameValues(i);
             Vector<Operand, 16> said;
             forEachOperandSaid(function, [&](ValueID, Operand operand) {
@@ -692,10 +701,10 @@ void findOperandsOnlyCalled(Program& program)
             for (uint64_t rest = notOnlyCalled[i]; rest; rest &= rest - 1) {
                 auto& operand = said[WTF::ctz(rest)];
                 (operand.isCapture ? function.capturesOnlyCalled : function.parametersOnlyCalled).clear(operand.index);
-                --numberLeft;
             }
-        }
+        });
     }
+    destroyBeside(WTF::move(callees));
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: of ", numberOfOperands, " operands that may hold objects of any kind, or functions, ", numberLeft, " are seen to be only called, in ", numberOfRounds, " rounds and ", numberOfScans, " scans of a function");
 }
 
@@ -1242,44 +1251,83 @@ void reuseEnvironments(Program& program)
             auto& value = function.at(id);
             return value.opcode == Opcode::PutField && program.at(value.layout()).reuseVariable && value.field() + 1 == program.at(value.layout()).fields.size();
         };
+        struct WhatAliasesGoBy {
+            Vector<std::pair<uint32_t, uint32_t>> valuesByView;
+            Vector<ValueID> castsAndClosuresInFrame;
+            Vector<std::pair<ValueID, ValueID>> argumentsAndParameters;
+            Vector<unsigned> blockOfValue;
+        };
+        std::optional<WhatAliasesGoBy> gathered;
+        auto mayBeAliasByType = [&](const Value& value) {
+            bool isBlockParameter = value.opcode == Opcode::Parameter && value.immediates[0];
+            return value.opcode != Opcode::NewObjectWithShape && value.opcode != Opcode::Cast && !isBlockParameter;
+        };
+        auto whatAliasesGoBy = [&]() -> const WhatAliasesGoBy& {
+            if (gathered)
+                return *gathered;
+            gathered.emplace();
+            for (unsigned v = 0; v < function.values.size(); ++v) {
+                auto& value = function.values[v];
+                if (!mayBeAliasByType(value))
+                    continue;
+                RELEASE_ASSERT(value.type);
+                if (!hasCandidateForView.quickGet(value.type.index()))
+                    continue;
+                for (LayoutID view : program.at(value.type).views) {
+                    if (isCandidate.quickGet(view.index()))
+                        gathered->valuesByView.append({ view.index(), v });
+                }
+            }
+            std::ranges::sort(gathered->valuesByView);
+            gathered->blockOfValue.fill(UINT_MAX, function.values.size());
+            for (unsigned b = 0; b < function.blocks.size(); ++b) {
+                for (ValueID id : function.blocks[b].values) {
+                    gathered->blockOfValue[id.index()] = b;
+                    if (auto& value = function.at(id); value.opcode == Opcode::Cast || value.isClosureInFrame())
+                        gathered->castsAndClosuresInFrame.append(id);
+                }
+                for (auto& target : function.blocks[b].terminator.targets) {
+                    auto& parameters = function.at(target.block).parameters;
+                    for (unsigned k = 0; k < target.arguments.size() && k < parameters.size(); ++k)
+                        gathered->argumentsAndParameters.append({ target.arguments[k], parameters[k] });
+                }
+            }
+            return *gathered;
+        };
         auto isUsedBehind = [&](unsigned releaseBlock, size_t releaseIndex, ValueID environment) {
             if (function.at(environment).opcode != Opcode::NewObjectWithShape)
                 return true;
             LayoutID layout = function.at(environment).layout();
+            auto& goBy = whatAliasesGoBy();
             BitVector isAlias(function.values.size());
             isAlias.quickSet(environment.index());
-            for (unsigned v = 0; v < function.values.size(); ++v) {
-                auto& value = function.values[v];
-                bool isBlockParameter = value.opcode == Opcode::Parameter && value.immediates[0];
-                if (value.opcode != Opcode::NewObjectWithShape && value.opcode != Opcode::Cast && !isBlockParameter && program.at(value.type).views.contains(layout))
-                    isAlias.quickSet(v);
+            if (isCandidate.quickGet(layout.index())) {
+                for (auto found = std::ranges::lower_bound(goBy.valuesByView, std::pair { layout.index(), 0u }); found != goBy.valuesByView.end() && found->first == layout.index(); ++found)
+                    isAlias.quickSet(found->second);
+            } else {
+                for (unsigned v = 0; v < function.values.size(); ++v) {
+                    if (mayBeAliasByType(function.values[v]) && program.at(function.values[v].type).views.contains(layout))
+                        isAlias.quickSet(v);
+                }
             }
-            unsigned birthBlock = UINT_MAX;
+            unsigned birthBlock = goBy.blockOfValue[environment.index()];
             for (bool changed = true; changed;) {
                 changed = false;
-                for (unsigned b = 0; b < function.blocks.size(); ++b) {
-                    for (ValueID id : function.blocks[b].values) {
-                        if (id == environment)
-                            birthBlock = b;
-                        auto& value = function.at(id);
-                        if (isAlias.quickGet(id.index()) || (value.opcode != Opcode::Cast && !value.isClosureInFrame()))
-                            continue;
-                        bool holds = false;
-                        value.forEachChild([&](ValueID child) {
-                            holds |= isAlias.quickGet(child.index());
-                        });
-                        if (holds) {
-                            isAlias.quickSet(id.index());
-                            changed = true;
-                        }
+                for (ValueID id : goBy.castsAndClosuresInFrame) {
+                    if (isAlias.quickGet(id.index()))
+                        continue;
+                    bool holds = false;
+                    function.at(id).forEachChild([&](ValueID child) {
+                        holds |= isAlias.quickGet(child.index());
+                    });
+                    if (holds) {
+                        isAlias.quickSet(id.index());
+                        changed = true;
                     }
-                    for (auto& target : function.blocks[b].terminator.targets) {
-                        auto& parameters = function.at(target.block).parameters;
-                        for (unsigned k = 0; k < target.arguments.size() && k < parameters.size(); ++k) {
-                            if (isAlias.quickGet(target.arguments[k].index()) && !isAlias.quickSet(parameters[k].index()))
-                                changed = true;
-                        }
-                    }
+                }
+                for (auto [argument, parameter] : goBy.argumentsAndParameters) {
+                    if (isAlias.quickGet(argument.index()) && !isAlias.quickSet(parameter.index()))
+                        changed = true;
                 }
             }
             auto usesIn = [&](unsigned b, size_t from) {

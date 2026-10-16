@@ -110,7 +110,7 @@ Number Lowering::asNumericOperand(ValueID id)
         return in<Number>(id);
     // What stands for `undefined` among doubles is itself not a number.
     OptionalNumber optional = in<OptionalNumber>(id);
-    Number number = assumedNumber(optional);
+    Number number(m_out.m_block->appendNew<B3::Value>(m_proc, B3::Identity, m_out.origin(), optional.value()));
     if (!(type.primitives & Primitive::Null))
         return number;
     return select(equal(bitsOf(optional), integer(bitsOfMarker(Primitive::Null, Rep::OptionalDouble))), this->number(0), number);
@@ -272,6 +272,7 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
     if (areExpectedToBeNumbers({ a, b })) {
         bool hasCodeForInt32 = value.opcode != Opcode::Div && value.opcode != Opcode::Pow;
         bool isSum = value.opcode == Opcode::Add || value.opcode == Opcode::Sub;
+        bool isOnBits = value.opcode == Opcode::BitAnd || value.opcode == Opcode::BitOr || value.opcode == Opcode::BitXor || value.opcode == Opcode::LShift || value.opcode == Opcode::RShift || value.opcode == Opcode::URShift;
         return ifNumbersAsExpected({ a, b }, rep, hasCodeForInt32, [&](LBasicBlock otherwise) {
             if (isSum && !(isWithinInt32(typeOf(a)) && isWithinInt32(typeOf(b)))) {
                 Integer x = get(a).as<Integer>();
@@ -286,7 +287,7 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
                 return ensure(boxNumber(lowerNumericBinary(value.opcode, a, b, numberType).as<Number>()), numberType, type);
             }
             return lowerNumericBinary(value.opcode, a, b, type);
-        }, generally, isSum);
+        }, generally, isSum || isOnBits);
     }
 
     // A string and a string, or a string and a number, which as a rule is an int32 where it is made part of a string.
@@ -739,7 +740,7 @@ Operand Lowering::lowerUnary(ValueID result, const Value& value)
         case Opcode::ToNumeric:
             if (given.isNumber())
                 return yieldNumeric(get(a), given, type, typeIsFact);
-            return yieldNumeric(asNumericOperand(a), numberType, type, typeIsFact);
+            return yieldNumeric(purified(asNumericOperand(a)), numberType, type, typeIsFact);
         case Opcode::Negate:
             // Zero negated is negative zero, which no integer stands for: where the result is an integer for a fact, it is not zero that is negated.
             if (given.isInteger() && (!given.integers.contains(0) || (typeIsFact && type.isInteger())))
@@ -881,6 +882,8 @@ Word32 Lowering::lowerRelational(const Value& value)
     }
     if (auto answer = lowerRelationalWithLikelyInteger(value))
         return *answer;
+    if (auto answer = lowerRelationalWithOptionalInteger(value))
+        return *answer;
     if (auto answer = lowerRelationalWithIntegerBound(value))
         return *answer;
     if (isNumericOperand(left) && isNumericOperand(right)) {
@@ -922,6 +925,20 @@ Word32 Lowering::lowerRelational(const Value& value)
         Opcode opcode = value.opcode;
         if (!i)
             opcode = opcode == Opcode::Less ? Opcode::Greater : opcode == Opcode::Greater ? Opcode::Less : opcode == Opcode::LessEq ? Opcode::GreaterEq : Opcode::LessEq;
+        if (auto kept = codeUnitOfString(subject)) {
+            static_assert(codeUnitOfUndefined < codeUnitOfEmptyString && codeUnitOfEmptyString < 0);
+            Integer literal = integer(static_cast<uint8_t>((*text)[0]));
+            switch (opcode) {
+            case Opcode::Less:
+                return logicalAnd(lessThan(*kept, literal), notEqual(*kept, integer(codeUnitOfUndefined)));
+            case Opcode::LessEq:
+                return logicalAnd(lessThanOrEqual(*kept, literal), notEqual(*kept, integer(codeUnitOfUndefined)));
+            case Opcode::Greater:
+                return greaterThan(*kept, literal);
+            default:
+                return greaterThanOrEqual(*kept, literal);
+            }
+        }
         LBasicBlock otherwise = newColdBlock();
         Join join(m_out, Rep::Int32, Int32);
         StringReceiver receiver = stringReceiver(subject);
@@ -1137,10 +1154,9 @@ std::optional<Word32> Lowering::areLiteralStringsEqual(ValueID a, ValueID b)
     return join.finish().as<Word32>();
 }
 
-void Lowering::findRepeatedComparisonsWithIntegers(const Vector<BlockID>& order)
+template<typename Qualifies>
+void Lowering::findRepeatedComparisons(const Vector<BlockID>& order, FirstOfRepeatedComparisons& firstOfRepeatedComparisons, unsigned leastNumber, const Qualifies& qualifies)
 {
-    if (Options::auditAOTTypedAssertions())
-        return;
     struct Comparison {
         ValueID id;
         BlockID block;
@@ -1153,7 +1169,7 @@ void Lowering::findRepeatedComparisonsWithIntegers(const Vector<BlockID>& order)
                 continue;
             for (unsigned i = 0; i < 2; ++i) {
                 ValueID operand = value.child(i);
-                if (m_function.at(value.child(1 - i)).opcode != Opcode::Integer || m_function.at(operand).rep != Rep::JSValue || isFetchedWhereNeeded(operand))
+                if (!qualifies(block, value.child(1 - i)) || m_function.at(operand).rep != Rep::JSValue || isFetchedWhereNeeded(operand))
                     continue;
                 comparisonsOf.add(operand.index(), Vector<Comparison, 4>()).iterator->value.append(Comparison { id, block });
                 break;
@@ -1162,7 +1178,7 @@ void Lowering::findRepeatedComparisonsWithIntegers(const Vector<BlockID>& order)
     }
     constexpr unsigned mostFirstComparisons = 8;
     for (auto& comparisons : comparisonsOf.values()) {
-        if (comparisons.size() < 2)
+        if (comparisons.size() < leastNumber)
             continue;
         Vector<Comparison, mostFirstComparisons> firsts;
         for (auto& comparison : comparisons) {
@@ -1172,12 +1188,31 @@ void Lowering::findRepeatedComparisonsWithIntegers(const Vector<BlockID>& order)
                     first = &candidate;
             }
             if (first) {
-                m_firstOfRepeatedComparisons.add(first->id.index(), first->id.index());
-                m_firstOfRepeatedComparisons.add(comparison.id.index(), first->id.index());
+                firstOfRepeatedComparisons.add(first->id.index(), first->id.index());
+                firstOfRepeatedComparisons.add(comparison.id.index(), first->id.index());
             } else if (firsts.size() < mostFirstComparisons)
                 firsts.append(comparison);
         }
     }
+}
+
+void Lowering::findRepeatedComparisonsWithIntegers(const Vector<BlockID>& order)
+{
+    if (Options::auditAOTTypedAssertions())
+        return;
+    findRepeatedComparisons(order, m_firstOfRepeatedComparisons, 2, [&](BlockID, ValueID constant) {
+        return m_function.at(constant).opcode == Opcode::Integer;
+    });
+}
+
+void Lowering::findRepeatedComparisonsWithShortTexts(const Vector<BlockID>& order)
+{
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || (!m_isCompact && m_program.isHotOutsideItsLoops(m_id)))
+        return;
+    findRepeatedComparisons(order, m_firstOfRepeatedComparisonsWithShortTexts, m_isCompact ? 2 : 3, [&](BlockID block, ValueID constant) {
+        auto text = m_loopBlocks.get(block.index()) ? std::nullopt : constantASCIIText(constant);
+        return text && text->size() <= maxLengthOfShortText;
+    });
 }
 
 Integer Lowering::integerEqualTo(Boxed value)
@@ -1216,6 +1251,33 @@ std::optional<Word32> Lowering::compareWithIntegerFoundEarlier(ValueID a, ValueI
     }
     auto found = m_integersFoundByComparisons.find(first->value);
     if (found == m_integersFoundByComparisons.end() || found->value.first != value.value)
+        return std::nullopt;
+    return equal(Integer(found->value.second), wanted);
+}
+
+std::optional<Word32> Lowering::compareWithShortTextFoundEarlier(ValueID a, ValueID b)
+{
+    if (m_firstOfRepeatedComparisonsWithShortTexts.isEmpty() || m_currentIndexInBlock >= m_currentBlock->values.size() || m_out.m_block != m_unconditionalBlock)
+        return std::nullopt;
+    ValueID comparison = m_currentBlock->values[m_currentIndexInBlock];
+    auto& compared = m_function.at(comparison);
+    if (compared.opcode != Opcode::StrictEq || compared.child(0) != a || compared.child(1) != b)
+        return std::nullopt;
+    auto first = m_firstOfRepeatedComparisonsWithShortTexts.find(comparison.index());
+    if (first == m_firstOfRepeatedComparisonsWithShortTexts.end())
+        return std::nullopt;
+    auto [operand, constant] = stringConstantOf(b) ? std::pair { a, b } : std::pair { b, a };
+    Operand value = get(operand);
+    if (value.rep != Rep::JSValue)
+        return std::nullopt;
+    Integer wanted = integer(shortTextWord(*constantASCIIText(constant)));
+    if (first->value == comparison.index()) {
+        LValue found = callAllocationStub(Stub::ShortTextOfValue, { { value.value, stubTemporaryGPRs[2] } }, { Writes::Pure, false }, false);
+        m_shortTextsFoundByComparisons.add(comparison.index(), std::pair { value.value, found });
+        return equal(Integer(found), wanted);
+    }
+    auto found = m_shortTextsFoundByComparisons.find(first->value);
+    if (found == m_shortTextsFoundByComparisons.end() || found->value.first != value.value)
         return std::nullopt;
     return equal(Integer(found->value.second), wanted);
 }
@@ -1266,6 +1328,8 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
             return equal(*asInteger, get(other).as<Integer>());
     }
     if (auto isEqual = compareWithIntegerFoundEarlier(a, b))
+        return *isEqual;
+    if (auto isEqual = compareWithShortTextFoundEarlier(a, b))
         return *isEqual;
     auto kept = [&](ValueID id) -> const IntegerOfNumber* {
         auto found = m_integersOfNumbers.find(id.index());
@@ -1503,17 +1567,18 @@ void Lowering::branchOnTruthinessByOneCall(Boxed value, FTL::WeightedTarget isTr
     patchpoint->setGenerator([context = &m_context](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         context->stubCalls.call(jit, Stub::ValueIsTruthy, CallSite { });
+        bool leavesIfTruthy = params.fallsThroughToSuccessor(0);
 #if CPU(X86_64)
-        CCallHelpers::Jump isFalsy = CCallHelpers::Jump(jit.m_assembler.jCC(X86Assembler::ConditionE));
+        CCallHelpers::Jump leaves = CCallHelpers::Jump(jit.m_assembler.jCC(leavesIfTruthy ? X86Assembler::ConditionNE : X86Assembler::ConditionE));
 #else
-        CCallHelpers::Jump isFalsy = jit.branchOnFlags(CCallHelpers::Equal);
+        CCallHelpers::Jump leaves = jit.branchOnFlags(leavesIfTruthy ? CCallHelpers::NotEqual : CCallHelpers::Equal);
 #endif
         CCallHelpers::Jump isTruthy;
-        if (!params.fallsThroughToSuccessor(1))
+        if (!leavesIfTruthy && !params.fallsThroughToSuccessor(1))
             isTruthy = jit.jump();
         Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         params.addLatePath([=](CCallHelpers& jit) {
-            isFalsy.linkTo(*labels[0], &jit);
+            leaves.linkTo(*labels[leavesIfTruthy], &jit);
             if (isTruthy.isSet())
                 isTruthy.linkTo(*labels[1], &jit);
         });

@@ -5406,7 +5406,8 @@ private:
         for (Tmp tmp : m_newlySpilledTmps) {
             ASSERT(tmp.bank() == bank);
             TmpData& tmpData = m_map.get<bank>(tmp);
-            ASSERT(tmpData.stage == Stage::Spilled);
+            if (tmpData.stage != Stage::Spilled)
+                continue;
 
             ensureSpillSlotTableEntry(tmpData);
             StackSlot*& slot = m_spillSlotTable[tmpData.spillSlotTableIndex];

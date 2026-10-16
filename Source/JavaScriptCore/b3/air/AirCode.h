@@ -372,6 +372,13 @@ public:
     JS_EXPORT_PRIVATE void setCalleeSavesLostAtSuspensions(const RegisterSet&);
     const RegisterSet& calleeSavesLostAtSuspensions() const { return m_calleeSavesLostAtSuspensions; }
     void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
+    struct MaskInMemory {
+        int64_t mask;
+        GPRReg base;
+        int32_t offset;
+    };
+    void setMaskInMemory(int64_t mask, GPRReg base, int32_t offset) { m_maskInMemory = MaskInMemory { mask, base, offset }; }
+    const std::optional<MaskInMemory>& maskInMemory() const { return m_maskInMemory; }
     void setLaysRareBlocksInGaps() { m_laysRareBlocksInGaps = true; }
     bool laysRareBlocksInGaps() const { return m_laysRareBlocksInGaps; }
     void setOrdersBlocksByEdgeFrequency() { m_ordersBlocksByEdgeFrequency = true; }
@@ -425,6 +432,7 @@ private:
     RegisterSet m_unsavedCalleeSaves;
     RegisterSet m_calleeSavesLostAtSuspensions;
     bool m_chargesForCalleeSaves { false };
+    std::optional<MaskInMemory> m_maskInMemory;
     bool m_laysRareBlocksInGaps { false };
     bool m_ordersBlocksByEdgeFrequency { false };
     bool m_mayPlaceSpillsAboveFrameRecord { false };

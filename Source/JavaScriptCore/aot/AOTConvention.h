@@ -33,6 +33,7 @@ static constexpr GPRReg calleeGPR = ARM64Registers::x10;
 static constexpr GPRReg callMarkerGPR = ARM64Registers::lr;
 static constexpr bool hasStubsForFunctionsWithoutFrame = true;
 static constexpr GPRReg stubTemporaryGPRs[] = { ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15 };
+static constexpr GPRReg offsetOfLastCopiedChunksGPR = ARM64Registers::x14;
 static constexpr GPRReg keyOfLazyConstantGPR = ARM64Registers::x9;
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
@@ -44,6 +45,7 @@ static constexpr GPRReg calleeGPR = X86Registers::r8;
 static constexpr GPRReg callMarkerGPR = X86Registers::ebp;
 static constexpr bool hasStubsForFunctionsWithoutFrame = false;
 static constexpr GPRReg stubTemporaryGPRs[] = { X86Registers::r10, X86Registers::r8, X86Registers::r9, X86Registers::edi, X86Registers::r12 };
+static constexpr GPRReg offsetOfLastCopiedChunksGPR = X86Registers::r8;
 static constexpr GPRReg keyOfLazyConstantGPR = X86Registers::eax;
 static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::r12;
 static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::ebx;
@@ -62,6 +64,7 @@ static constexpr GPRReg calleeGPR = InvalidGPRReg;
 static constexpr GPRReg callMarkerGPR = InvalidGPRReg;
 static constexpr bool hasStubsForFunctionsWithoutFrame = false;
 static constexpr GPRReg stubTemporaryGPRs[] = { InvalidGPRReg };
+static constexpr GPRReg offsetOfLastCopiedChunksGPR = InvalidGPRReg;
 static constexpr GPRReg keyOfLazyConstantGPR = InvalidGPRReg;
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }

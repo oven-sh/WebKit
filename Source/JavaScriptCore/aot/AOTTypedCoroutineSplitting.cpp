@@ -164,14 +164,6 @@ public:
                     field.name = names[field.name.index() - firstProvisionalName];
             }
         }
-        for (FunctionID id : { numbers.ramp, numbers.resume, std::as_const(program).at(numbers.ramp).startFunction }) {
-            if (!id)
-                continue;
-            for (auto& value : program.at(id).values) {
-                if (value.opcode == Opcode::Operation && value.immediates[0] != Format::none && value.immediates[0] >= firstProvisionalName)
-                    value.immediates[0] = names[value.immediates[0] - firstProvisionalName].index();
-            }
-        }
     }
 
     static void removeUnusedParameters(const Program& program, Function& function)
@@ -236,10 +228,9 @@ public:
 
     static void recordCellsLiveAcrossAwaits(const Program& program, Function& function)
     {
-        std::optional<StringID> name = program.find(asBytes("AwaitBySavingFrame"_s.span8()));
         auto savesFrame = [&](const Value& value) {
             if (value.opcode == Opcode::Operation)
-                return name && value.string() == *name;
+                return program.operationOf(value) == Operations::AwaitBySavingFrame;
             if (value.opcode != Opcode::CallBuiltin)
                 return false;
             auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
@@ -270,32 +261,67 @@ public:
         if (!program.hasAllocationAssertions)
             removeUnusedParameters(program, function);
         auto liveAtHead = liveAtHeadsOf(function, isAskedAbout);
-        BitVector isSeen(function.values.size());
-        for (auto [b, index] : sites) {
-            auto& block = function.blocks[b];
-            ValueID await = block.values[index];
-            Arguments kept = function.at(await).arguments;
-            kept.shrink(2);
-            isSeen.clearAll();
-            isSeen.set(kept[1].index());
-            for (unsigned i = index; i < block.values.size(); ++i)
-                isSeen.set(block.values[i].index());
-            auto keep = [&](ValueID live) {
-                if (!live || isSeen.set(live.index()) || !program.at(function.at(live).type).hasCells() || isMadeAnewWhereverAsked(program, function.at(live)))
+        BitVector isLive(function.values.size());
+        Vector<uint64_t> firstUse(function.values.size());
+        Vector<ValueID> live;
+        Vector<ValueID> listed;
+        Vector<Arguments> keptAt(sites.size());
+        for (size_t end = sites.size(); end;) {
+            size_t begin = end;
+            while (begin && sites[begin - 1].block == sites[end - 1].block)
+                --begin;
+            auto& block = function.blocks[sites[begin].block];
+            uint64_t place = block.values.size();
+            uint32_t ordinal = 0;
+            auto use = [&](ValueID used) {
+                uint32_t number = ordinal++;
+                if (!used)
                     return;
-                kept.append(live);
+                if (!isLive.set(used.index()))
+                    live.append(used);
+                else if (firstUse[used.index()] >> 32 == place)
+                    return;
+                firstUse[used.index()] = place << 32 | number;
             };
-            for (unsigned i = index + 1; i < block.values.size(); ++i)
-                std::as_const(function.at(block.values[i])).forEachChild(keep);
-            keep(block.terminator.value);
+            use(block.terminator.value);
             for (auto& target : block.terminator.targets) {
                 for (ValueID argument : target.arguments)
-                    keep(argument);
-                for (uint32_t live : liveAtHead[target.block.index()])
-                    keep(ValueID(live));
+                    use(argument);
+                for (uint32_t atHead : liveAtHead[target.block.index()])
+                    use(ValueID(atHead));
             }
-            function.at(await).arguments = WTF::move(kept);
+            size_t site = end;
+            while (place-- > sites[begin].index) {
+                ValueID id = block.values[place];
+                isLive.clear(id.index());
+                if (site > begin && sites[site - 1].index == place) {
+                    --site;
+                    Arguments kept = function.at(id).arguments;
+                    kept.shrink(2);
+                    live.removeAllMatching([&](ValueID one) {
+                        return !isLive.get(one.index());
+                    });
+                    listed.shrink(0);
+                    for (ValueID one : live) {
+                        if (one != kept[1] && program.at(function.at(one).type).hasCells() && !isMadeAnewWhereverAsked(program, function.at(one)))
+                            listed.append(one);
+                    }
+                    std::ranges::sort(listed, { }, [&](ValueID one) {
+                        return firstUse[one.index()];
+                    });
+                    kept.appendVector(listed);
+                    keptAt[site] = WTF::move(kept);
+                }
+                ordinal = 0;
+                std::as_const(function.at(id)).forEachChild(use);
+            }
+            for (ValueID one : live)
+                isLive.clear(one.index());
+            live.shrink(0);
+            end = begin;
         }
+        for (size_t site = 0; site < sites.size(); ++site)
+            function.at(function.blocks[sites[site].block].values[sites[site].index]).arguments = WTF::move(keptAt[site]);
     }
 
     static BitVector objectsLiveAcrossSuspensions(const Function& function)
@@ -542,10 +568,10 @@ private:
         return value;
     }
 
-    Value operation(ASCIILiteral name, TypeID type, std::initializer_list<ValueID> arguments)
+    Value operation(BuiltinID which, TypeID type, std::initializer_list<ValueID> arguments) const
     {
         Value value = typed(Opcode::Operation, type);
-        value.immediates[0] = provisionalNameOf(name).index();
+        value.immediates[0] = which.index();
         for (ValueID argument : arguments)
             value.arguments.append(argument);
         return value;
@@ -786,7 +812,7 @@ private:
             Value original = function.at(suspension);
             m_position = original.position;
             bool isHeld = original.assertedType() || !m_program.at(original.type).isAnything();
-            Value awaited = operation("AwaitBySavingFrame"_s, m_program.types.anything, { original.child(0), promise });
+            Value awaited = operation(Operations::AwaitBySavingFrame, m_program.types.anything, { original.child(0), promise });
             ValueID comesBack = suspension;
             if (isHeld) {
                 comesBack = addValue(function, WTF::move(awaited));
@@ -835,7 +861,7 @@ private:
             ValueID result = function.at(block).terminator.value;
             if (!result)
                 result = append(function, block, undefined());
-            append(function, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
+            append(function, block, operation(Operations::ResolvePromise, m_program.types.undefined, { promise, result }));
             function.at(block).terminator.value = append(function, block, undefined());
         }
 
@@ -928,8 +954,7 @@ private:
         {
             auto& from = m_body.at(suspendBlock);
             auto& to = m_body.at(continuation);
-            for (unsigned i = index + 1; i < from.values.size(); ++i)
-                to.values.append(from.values[i]);
+            to.values.append(from.values.span().subspan(index + 1));
             to.terminator = std::exchange(from.terminator, Terminator { });
             from.values.shrink(index);
         }
@@ -1023,8 +1048,8 @@ private:
             BlockID inPlaceBlock = addBlock(m_body);
             BlockID parkBlock = addBlock(m_body);
             m_inPlaceBlocks.set(inPlaceBlock.index());
-            branch(suspendBlock, append(m_body, suspendBlock, operation("AwaitMayContinue"_s, m_program.types.boolean, { operand, m_resumeMode })), inPlaceBlock, parkBlock);
-            goOnWith(inPlaceBlock, append(m_body, inPlaceBlock, operation("AwaitedValue"_s, m_program.types.anything, { operand })));
+            branch(suspendBlock, append(m_body, suspendBlock, operation(Operations::AwaitMayContinue, m_program.types.boolean, { operand, m_resumeMode })), inPlaceBlock, parkBlock);
+            goOnWith(inPlaceBlock, append(m_body, inPlaceBlock, operation(Operations::AwaitedValue, m_program.types.anything, { operand })));
             suspendBlock = parkBlock;
         }
 
@@ -1036,7 +1061,7 @@ private:
         if (!isYield || m_yieldsThatAwait.get(suspension.index())) {
             // What goes wrong with what is awaited is not thrown here: the function is resumed with it.
             ValueID closure = append(m_body, suspendBlock, getField(m_frame, m_isGenerator ? CoroutineFrame::promiseField : CoroutineFrame::resumeClosureField));
-            m_suspensionPoints.last().registration = append(m_body, suspendBlock, operation(isYield ? "AsyncGeneratorYield"_s : m_isGenerator ? "Await"_s : "SuspendAsyncFunction"_s, m_program.types.undefined, { closure, operand }));
+            m_suspensionPoints.last().registration = append(m_body, suspendBlock, operation(isYield ? Operations::AsyncGeneratorYield : m_isGenerator ? Operations::Await : Operations::SuspendAsyncFunction, m_program.types.undefined, { closure, operand }));
             returned = append(m_body, suspendBlock, undefined());
         }
         m_body.at(suspendBlock).terminator.kind = TerminatorKind::Return;
@@ -1076,7 +1101,7 @@ private:
             if (isReachedByFirstActivation.get(b))
                 read.setPrediction(m_driverType);
             ValueID promise = append(m_body, block, WTF::move(read));
-            append(m_body, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
+            append(m_body, block, operation(Operations::ResolvePromise, m_program.types.undefined, { promise, result }));
             m_body.at(block).terminator.value = append(m_body, block, undefined());
         }
     }
@@ -1221,6 +1246,7 @@ private:
         TypeID type;
         ValueByBlock atTail;
         ValueByBlock atHead;
+        Vector<BlockID, 4> resumeBlocksWhereLive;
     };
 
     void spillAndReload()
@@ -1256,7 +1282,7 @@ private:
                     if (definingBlock[index])
                         result.atTail.add(definingBlock[index].index(), variable);
                     return result;
-                });
+                }).iterator->value.resumeBlocksWhereLive.append(point.resumeBlock);
                 if (isRematerializable(variable))
                     continue;
                 uint32_t field = spillFields.ensure(index, [&] {
@@ -1293,15 +1319,42 @@ private:
                 note(child, Use { BlockID(b), ValueID() });
             });
         }
-        chooseValuesThatLiveInFields(definingBlock, spillFields, uses);
+        chooseValuesThatLiveInFields(definingBlock, spillFields, uses, definitions);
+        struct Kept {
+            ValueID variable;
+            std::optional<uint32_t> field;
+            Definitions* definitions;
+            Vector<Use>* uses;
+            ReloadPlan plan;
+        };
+        Vector<Kept> kept;
         for (auto& entry : definitions) {
             auto field = spillFields.find(entry.key);
-            auto& usesOfVariable = uses.find(entry.key)->value;
-            placeReloads(ValueID(entry.key), definingBlock[entry.key], field == spillFields.end() ? std::nullopt : std::optional<uint32_t>(field->value), entry.value, usesOfVariable);
-            repairSSA(ValueID(entry.key), definingBlock[entry.key], entry.value, usesOfVariable);
+            kept.append(Kept { ValueID(entry.key), field == spillFields.end() ? std::nullopt : std::optional<uint32_t>(field->value), &entry.value, &uses.find(entry.key)->value, { } });
+        }
+        auto plan = [&](Kept& one) {
+            one.plan = planReloads(definingBlock[one.variable.index()], one.field, *one.uses, m_livesInField.get(one.variable.index()), m_program.at(m_body.at(one.variable).type).hasCells(), one.definitions->resumeBlocksWhereLive);
+        };
+        bool plansAhead = m_suspensionPoints.size() > maxSuspensionsKeptInRegisters;
+        if (plansAhead) {
+            forEachIndexInParallel(kept.size(), [&](unsigned i) {
+                plan(kept[i]);
+            });
+        }
+        for (auto& one : kept) {
+            if (!plansAhead)
+                plan(one);
+            placeReloads(one.variable, definingBlock[one.variable.index()], one.field, *one.definitions, *one.uses, one.plan);
+            repairSSA(one.variable, definingBlock[one.variable.index()], *one.definitions, *one.uses);
+            one.plan = { };
         }
         if (m_hasStartFunction || !m_predecessors[m_start.index()].isEmpty())
             return;
+        Vector<BlockID, 4> reachableResumeBlocks;
+        for (auto& point : m_suspensionPoints) {
+            if (point.isReachable)
+                reachableResumeBlocks.append(point.resumeBlock);
+        }
         for (unsigned i = 0; i < m_arguments.size(); ++i) {
             if (!m_program.at(m_argumentTypes[i]).hasCells())
                 continue;
@@ -1311,7 +1364,7 @@ private:
                     hasRead.set(use.block.index());
             }
             ReloadPlan plan;
-            planClears(plan, m_start, hasRead, true);
+            planClears(plan, m_start, hasRead, true, reachableResumeBlocks);
             clearField(plan, CoroutineFrame::firstArgumentField + i, m_argumentTypes[i]);
         }
     }
@@ -1438,7 +1491,7 @@ private:
         return user.opcode == Opcode::PutField && user.child(0) == m_frame && user.field() == *field;
     }
 
-    void planClears(ReloadPlan& plan, BlockID definingBlock, const BitVector& hasRead, bool holdsFromBirth)
+    void planClears(ReloadPlan& plan, BlockID definingBlock, const BitVector& hasRead, bool holdsFromBirth, const Vector<BlockID, 4>& resumeBlocksWhereLive)
     {
         unsigned numberOfBlocks = m_body.blocks.size();
         Vector<BlockID> worklist;
@@ -1477,10 +1530,8 @@ private:
             if (isLiveAtHead.get(block.index()) && !holdsAtHead.set(block.index()))
                 worklist.append(block);
         };
-        for (auto& point : m_suspensionPoints) {
-            if (point.isReachable)
-                enter(point.resumeBlock);
-        }
+        for (BlockID resumeBlock : resumeBlocksWhereLive)
+            enter(resumeBlock);
         if (holdsFromBirth && definingBlock) {
             leave(definingBlock);
             for (auto& target : m_body.at(definingBlock).terminator.targets)
@@ -1511,7 +1562,7 @@ private:
         }
     }
 
-    ReloadPlan planReloads(BlockID definingBlock, std::optional<uint32_t> field, const Vector<Use>& uses, bool livesInField, bool holdsCells)
+    ReloadPlan planReloads(BlockID definingBlock, std::optional<uint32_t> field, const Vector<Use>& uses, bool livesInField, bool holdsCells, const Vector<BlockID, 4>& resumeBlocksWhereLive)
     {
         unsigned numberOfBlocks = m_body.blocks.size();
         ReloadPlan plan;
@@ -1544,7 +1595,7 @@ private:
             hasUse.set(use.block.index());
         }
         if (field && holdsCells)
-            planClears(plan, definingBlock, hasRead, livesInField);
+            planClears(plan, definingBlock, hasRead, livesInField, resumeBlocksWhereLive);
 
         BitVector& isLiveAtHead = plan.isLiveAtHead;
         isLiveAtHead.ensureSize(numberOfBlocks);
@@ -1576,8 +1627,8 @@ private:
                 if (isLiveAtHead.get(block.index()) && !isMissingAtHead.set(block.index()) && !hasUse.get(block.index()))
                     worklist.append(block);
             };
-            for (auto& point : m_suspensionPoints)
-                enter(point.resumeBlock);
+            for (BlockID resumeBlock : resumeBlocksWhereLive)
+                enter(resumeBlock);
             while (!worklist.isEmpty()) {
                 for (auto& target : m_body.at(worklist.takeLast()).terminator.targets)
                     enter(target.block);
@@ -1672,8 +1723,8 @@ private:
         return block.terminator.kind != TerminatorKind::Invoke || block.values.isEmpty() || block.values.last() != variable;
     }
 
-    template<typename Fields, typename Uses>
-    void chooseValuesThatLiveInFields(const Vector<BlockID>& definingBlock, const Fields& spillFields, const Uses& uses)
+    template<typename Fields, typename Uses, typename DefinitionsByValue>
+    void chooseValuesThatLiveInFields(const Vector<BlockID>& definingBlock, const Fields& spillFields, const Uses& uses, const DefinitionsByValue& definitions)
     {
         m_livesInField.clearAll();
         m_resumeBlockOf = resumeBlocksBySuspendBlock();
@@ -1748,12 +1799,13 @@ private:
             std::optional<uint32_t> field = spillFields.get(index);
             auto& usesOfVariable = uses.find(index)->value;
             bool holdsCells = m_program.at(m_body.at(variable).type).hasCells();
-            ReloadPlan asBefore = planReloads(defining, field, usesOfVariable, false, holdsCells);
+            auto& resumeBlocksWhereLive = definitions.find(index)->value.resumeBlocksWhereLive;
+            ReloadPlan asBefore = planReloads(defining, field, usesOfVariable, false, holdsCells, resumeBlocksWhereLive);
             unsigned before = asBefore.numberOfSpillsKept + asBefore.reloadBlocks.bitCount();
             if (before < 3)
                 continue;
             before += asBefore.clearsAtHead.bitCount() + asBefore.clearsAtTail.bitCount();
-            ReloadPlan kept = planReloads(defining, field, usesOfVariable, true, holdsCells);
+            ReloadPlan kept = planReloads(defining, field, usesOfVariable, true, holdsCells, resumeBlocksWhereLive);
             unsigned inField = !!defining + kept.reloadBlocks.bitCount() + kept.clearsAtHead.bitCount() + kept.clearsAtTail.bitCount();
             if (holdsCells && defining) {
                 auto numberNotRare = [&](const BitVector& blocks) {
@@ -1791,10 +1843,9 @@ private:
         }
     }
 
-    void placeReloads(ValueID variable, BlockID definingBlock, std::optional<uint32_t> field, Definitions& definitions, Vector<Use>& uses)
+    void placeReloads(ValueID variable, BlockID definingBlock, std::optional<uint32_t> field, Definitions& definitions, Vector<Use>& uses, const ReloadPlan& plan)
     {
         bool livesInField = m_livesInField.get(variable.index());
-        ReloadPlan plan = planReloads(definingBlock, field, uses, livesInField, m_program.at(m_body.at(variable).type).hasCells());
         if (livesInField && definingBlock) {
             auto& values = m_body.at(definingBlock).values;
             size_t index = values.find(variable);
@@ -1802,8 +1853,13 @@ private:
                 index = !values.isEmpty() && m_body.at(values[0]).opcode == Opcode::CatchValue ? 1 : 0;
             else {
                 ++index;
-                while (index < values.size() && (m_body.at(values[index]).opcode == Opcode::PutField || m_body.at(values[index]).opcode == Opcode::PutById) && m_body.at(values[index]).child(0) == variable)
-                    ++index;
+                for (size_t next = index; next < values.size(); ++next) {
+                    auto& value = m_body.at(values[next]);
+                    if ((value.opcode == Opcode::PutField || value.opcode == Opcode::PutById) && value.child(0) == variable)
+                        index = next + 1;
+                    else if (value.opcode != Opcode::GetField || value.child(0) != m_frame)
+                        break;
+                }
             }
             values.insert(index, addValue(m_body, putField(m_frame, *field, variable)));
         }
@@ -1918,7 +1974,7 @@ private:
                 ValueID result = function.at(block).terminator.value;
                 if (!result)
                     result = append(function, block, undefined());
-                append(function, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
+                append(function, block, operation(Operations::ResolvePromise, m_program.types.undefined, { promise, result }));
                 function.at(block).terminator.value = append(function, block, undefined());
                 continue;
             }
@@ -1945,7 +2001,7 @@ private:
             closure.arguments.append(frame);
             ValueID resumeClosure = append(function, block, WTF::move(closure));
             append(function, block, putField(frame, CoroutineFrame::resumeClosureField, resumeClosure));
-            append(function, block, operation("SuspendAsyncFunction"_s, m_program.types.undefined, { resumeClosure, operand }));
+            append(function, block, operation(Operations::SuspendAsyncFunction, m_program.types.undefined, { resumeClosure, operand }));
             function.at(block).terminator.kind = TerminatorKind::Return;
             function.at(block).terminator.value = append(function, block, undefined());
         }
@@ -1988,7 +2044,7 @@ private:
             arguments.append(addParameter(ramp, entry, type));
 
         if (m_hasStartFunction) {
-            ValueID promise = append(ramp, entry, operation("NewPromise"_s, m_driverType, { }));
+            ValueID promise = append(ramp, entry, operation(Operations::NewPromise, m_driverType, { }));
             Value start = typed(Opcode::CallDirect, m_program.types.undefined);
             start.immediates[0] = ramp.startFunction.index();
             start.arguments.appendVector(arguments);
@@ -2000,7 +2056,7 @@ private:
 
         ValueID promise;
         if (!m_isGenerator)
-            promise = append(ramp, entry, operation("NewPromise"_s, m_driverType, { }));
+            promise = append(ramp, entry, operation(Operations::NewPromise, m_driverType, { }));
         ValueID notStarted = append(ramp, entry, integer(0, m_program.types.int32));
         Value allocation = typed(Opcode::NewObjectWithShape, m_frameType);
         allocation.immediates[0] = m_frameLayout.index();
@@ -2024,12 +2080,12 @@ private:
         }
 
         // The body does not start before the first call of next().
-        ValueID generator = append(ramp, entry, operation(m_isAsync ? "NewAsyncGenerator"_s : "NewGenerator"_s, m_driverType, { resumeClosure }));
+        ValueID generator = append(ramp, entry, operation(m_isAsync ? Operations::NewAsyncGenerator : Operations::NewGenerator, m_driverType, { resumeClosure }));
         // Resumption from an await finds the driver here.
         if (m_isAsync)
             append(ramp, entry, putField(frame, CoroutineFrame::promiseField, generator));
         if (m_startsEagerly && m_isAsync)
-            append(ramp, entry, operation("StartAsyncGenerator"_s, m_program.types.undefined, { generator }));
+            append(ramp, entry, operation(Operations::StartAsyncGenerator, m_program.types.undefined, { generator }));
         else if (m_startsEagerly) {
             // What it throws, the call throws.
             ValueID mode = append(ramp, entry, integer(resumeModeNormal, m_resumeModeType));

@@ -1446,6 +1446,7 @@ private:
 
         case NewInternalFieldObject:
         case NewPromise:
+        case NewArrayWithSizeAndStructure:
             setPrediction(speculationFromStructure(m_currentNode->structure().get()));
             break;
             
@@ -1455,7 +1456,6 @@ private:
         case NewArrayWithSpread:
         case NewArray:
         case NewArrayWithSize:
-        case NewArrayWithSizeAndStructure:
         case CreateRest:
         case NewArrayBuffer:
         case ObjectKeys:

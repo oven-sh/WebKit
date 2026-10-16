@@ -635,7 +635,7 @@ Integer Lowering::positionOf(ValueID id)
     Operand operand = get(id);
     if (operand.rep == Rep::Int64)
         return operand.as<Integer>();
-    Number asNumber = operand.as<Number>();
+    Number asNumber = operand.rep == Rep::OptionalDouble ? assumedNumber(operand.as<OptionalNumber>()) : operand.as<Number>();
 #if CPU(ARM64)
     // The conversion yields 0 for what is not a number.
     return truncateToInteger(asNumber);
@@ -657,6 +657,8 @@ Integer Lowering::placeInString(ValueID id, Integer length, bool isRelativeToEnd
         // Likewise, and the least or the greatest integer for what does not fit.
         x = truncateToInteger(operand.as<Number>());
 #else
+        if (!m_out.m_block->frequency())
+            return Integer(AOT_TYPED_OPERATION(PlaceInString, operand.as<Number>(), length, word32(isRelativeToEnd)).value());
         // No string is as long as the limit.
         Number limit = number(static_cast<double>(1ll << 32));
         Number given = operand.as<Number>();
@@ -2409,8 +2411,11 @@ Word32 Lowering::hasTextAt(const StringReceiver& receiver, Integer place, ValueI
 Word32 Lowering::areBytesEqual(Pointer p, Pointer q, Integer length)
 {
     LBasicBlock isShort = m_out.newBlock();
-    LBasicBlock byteLoop = m_out.newBlock();
-    LBasicBlock nextByte = m_out.newBlock();
+    LBasicBlock hasFour = m_out.newBlock();
+    LBasicBlock isBelowFour = m_out.newBlock();
+    LBasicBlock hasTwo = m_out.newBlock();
+    LBasicBlock isBelowTwo = m_out.newBlock();
+    LBasicBlock hasOne = m_out.newBlock();
     LBasicBlock wordLoop = m_out.newBlock();
     LBasicBlock nextWord = m_out.newBlock();
     LBasicBlock lastWord = m_out.newBlock();
@@ -2420,6 +2425,16 @@ Word32 Lowering::areBytesEqual(Pointer p, Pointer q, Integer length)
     auto byteAt = [&](Pointer data, LValue index) {
         return marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(data.value(), index))), IsFixed);
     };
+    auto twoAt = [&](Pointer data, LValue index) {
+        return marked(m_out.load16ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(data.value(), index))), IsFixed);
+    };
+    auto fourAt = [&](Pointer data, LValue index) {
+        return marked(m_out.load32(TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(data.value(), index))), IsFixed);
+    };
+    auto areFirstAndLastEqual = [&](auto& at, int64_t width) {
+        LValue last = m_out.sub(length.value(), m_out.constInt64(width));
+        return Word32(m_out.isZero32(m_out.bitOr(m_out.bitXor(at(p, m_out.int64Zero), at(q, m_out.int64Zero)), m_out.bitXor(at(p, last), at(q, last)))));
+    };
     auto wordAt = [&](Pointer data, LValue index) {
         return marked(m_out.load64(TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(data.value(), index))), IsFixed);
     };
@@ -2427,15 +2442,17 @@ Word32 Lowering::areBytesEqual(Pointer p, Pointer q, Integer length)
     m_out.branch(below(length, integer(8)).value(), unsure(isShort), unsure(wordLoop));
 
     m_out.appendTo(isShort);
-    ValueFromBlock firstByte = m_out.anchor(m_out.int64Zero);
-    m_out.branch(isZero(length).value(), rarely(isSame), usually(byteLoop));
-    m_out.appendTo(byteLoop);
-    LValue byteIndex = m_out.phi(Int64, firstByte);
-    m_out.branch(m_out.equal(byteAt(p, byteIndex), byteAt(q, byteIndex)), unsure(nextByte), unsure(isDifferent));
-    m_out.appendTo(nextByte);
-    LValue nextByteIndex = m_out.add(byteIndex, m_out.constInt64(1));
-    m_out.addIncomingToPhi(byteIndex, m_out.anchor(nextByteIndex));
-    m_out.branch(m_out.below(nextByteIndex, length.value()), unsure(byteLoop), unsure(isSame));
+    m_out.branch(below(length, integer(4)).value(), unsure(isBelowFour), unsure(hasFour));
+    m_out.appendTo(hasFour);
+    join.add(areFirstAndLastEqual(fourAt, 4));
+    m_out.appendTo(isBelowFour);
+    m_out.branch(below(length, integer(2)).value(), unsure(isBelowTwo), unsure(hasTwo));
+    m_out.appendTo(hasTwo);
+    join.add(areFirstAndLastEqual(twoAt, 2));
+    m_out.appendTo(isBelowTwo);
+    m_out.branch(isZero(length).value(), rarely(isSame), usually(hasOne));
+    m_out.appendTo(hasOne);
+    join.add(Word32(m_out.equal(byteAt(p, m_out.int64Zero), byteAt(q, m_out.int64Zero))));
 
     m_out.appendTo(wordLoop);
     LValue wordIndex = m_out.phi(Int64, firstWord);
@@ -2508,17 +2525,18 @@ void Lowering::branchOnTextByOneCall(LValue value, bool isString, ValueID consta
             jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
 #endif
         context->stubCalls.call(jit, isLeaf ? static_cast<Stub>(static_cast<unsigned>(stub) + 1) : stub, CallSite { });
+        bool leavesIfSame = params.fallsThroughToSuccessor(0);
 #if CPU(X86_64)
-        CCallHelpers::Jump differs = CCallHelpers::Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
+        CCallHelpers::Jump leaves = CCallHelpers::Jump(jit.m_assembler.jCC(leavesIfSame ? X86Assembler::ConditionE : X86Assembler::ConditionNE));
 #else
-        CCallHelpers::Jump differs = jit.branchOnFlags(CCallHelpers::NotEqual);
+        CCallHelpers::Jump leaves = jit.branchOnFlags(leavesIfSame ? CCallHelpers::Equal : CCallHelpers::NotEqual);
 #endif
         CCallHelpers::Jump isSame;
-        if (!params.fallsThroughToSuccessor(1))
+        if (!leavesIfSame && !params.fallsThroughToSuccessor(1))
             isSame = jit.jump();
         Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         params.addLatePath([=](CCallHelpers& jit) {
-            differs.linkTo(*labels[0], &jit);
+            leaves.linkTo(*labels[leavesIfSame], &jit);
             if (isSame.isSet())
                 isSame.linkTo(*labels[1], &jit);
         });
@@ -2734,7 +2752,7 @@ std::optional<Lowering::ComparisonWithText> Lowering::comparisonWithTextBranched
 // The comparison is carried out by the Branch.
 std::optional<Operand> Lowering::deferToBranchOnText(ValueID id, const Value& value)
 {
-    if (value.opcode != Opcode::StrictEq || m_currentBlock->terminator.value != id)
+    if (value.opcode != Opcode::StrictEq || m_currentBlock->terminator.value != id || m_firstOfRepeatedComparisonsWithShortTexts.contains(id.index()))
         return std::nullopt;
     // There every value is looked at by itself.
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
@@ -2785,6 +2803,15 @@ void Lowering::lowerBranchOnText()
         if (!onlyCompares)
             break;
         m_blocksTakenIntoBranchOnText.set(next.block.index());
+        for (ValueID id : following.values) {
+            if (id == following.terminator.value || m_function.at(id).rep != Rep::LiteralString)
+                continue;
+            bool isUsedFurtherOn = isUsedByTerminator(id);
+            for (ValueID user : usersOf(id))
+                isUsedFurtherOn |= user != following.terminator.value;
+            if (isUsedFurtherOn)
+                define(id, literalStringConstant(m_function.at(id).string()));
+        }
         block = &following;
     }
     LBasicBlock otherwise = edgeTo(block->terminator.targets[1], true);

@@ -3928,6 +3928,26 @@ public:
         m_formatter.twoByteOp(OP2_MOVAPS_VpsWps, (RegisterID)dst, (RegisterID)src);
     }
 
+    void movups_mr(int offset, RegisterID base, XMMRegisterID dst)
+    {
+        m_formatter.twoByteOp(OP2_MOVUPS_VsdWsd, (RegisterID)dst, base, offset);
+    }
+
+    void movups_mr(int offset, RegisterID base, RegisterID index, int scale, XMMRegisterID dst)
+    {
+        m_formatter.twoByteOp(OP2_MOVUPS_VsdWsd, dst, base, index, scale, offset);
+    }
+
+    void movups_rm(XMMRegisterID src, int offset, RegisterID base)
+    {
+        m_formatter.twoByteOp(OP2_MOVUPS_WsdVsd, (RegisterID)src, base, offset);
+    }
+
+    void movups_rm(XMMRegisterID src, int offset, RegisterID base, RegisterID index, int scale)
+    {
+        m_formatter.twoByteOp(OP2_MOVUPS_WsdVsd, (RegisterID)src, base, index, scale, offset);
+    }
+
     void movhlps_rr(XMMRegisterID src, XMMRegisterID dst)
     {
         m_formatter.twoByteOp(OP2_MOVHLPS_VqUq, (RegisterID)dst, (RegisterID)src);

@@ -822,8 +822,6 @@ void Options::notifyOptionsChanged()
         Options::useMiniVMModeWithoutJIT() = false;
         if (!OptionsHelper::wasOverridden(heapGrowthMaxIncreaseID))
             Options::heapGrowthMaxIncrease() = 1;
-        if (!OptionsHelper::wasOverridden(jitMemoryReservationSizeID))
-            Options::jitMemoryReservationSize() = 64 * MB;
         Options::sizeClassProgression() = sizeClassProgressionWithAOT();
     }
 
@@ -901,13 +899,9 @@ void Options::notifyOptionsChanged()
 #if USE(BUN_JSC_ADDITIONS)
     if (!g_compilerHooks.areInstalled())
         Options::useJIT() = false;
-    bool useRegExpJITWithoutJIT = Options::useAOT() && Options::useRegExpJIT() && g_compilerHooks.compileRegExp;
-#else
-    bool useRegExpJITWithoutJIT = false;
 #endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
-        Options::useRegExpJIT() = useRegExpJITWithoutJIT;
 #if OS(DARWIN)
         // If we don't know what the sandbox policy is on mach exception handler use is, we'll
         // take the default behavior of blocking its use if the JIT is disabled. JIT disablement

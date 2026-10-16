@@ -46,7 +46,22 @@ namespace Typed {
 
 class Extension;
 struct EngineClass;
+struct ExtraPropertiesHandle;
 struct State;
+struct ListedProperty {
+    UniquedStringImpl* name;
+    const FieldData* field;
+    PropertyOffset offsetInExtraProperties;
+};
+struct ListingWithExtraProperties {
+    StructureID structureIDOfExtraProperties;
+    uint32_t shapeWord { 0 };
+    uint32_t orderAndCount { 0 };
+    bool hasLookedForStructureOfPlainCopy { false };
+    JSCellButterfly* keys { nullptr };
+    Structure* structureOfPlainCopy { nullptr };
+    Vector<ListedProperty> properties;
+};
 struct TransitionPlan;
 
 // In place of the number of an order: the keys are in the order of the fields of the layout. For a shape that has run out of numbers.
@@ -118,30 +133,35 @@ public:
     bool write(VM&, const FieldData&, JSValue);
     // A store by code that was not compiled with the type: see State::holdToTypeOf(). False: it has thrown.
     bool assign(JSGlobalObject*, const FieldData&, JSValue, bool* givesUp = nullptr);
-    JSObject* becomeOrdinary(VM&);
-    JSFinalObject* copyAsOrdinary(VM&, unsigned inlineCapacity);
+    JSObject* becomeOrdinary(VM&, JSValue prototype = { });
+    JSFinalObject* copyAsOrdinary(VM&, unsigned inlineCapacity, JSValue prototype = { });
     // Store::Int32OrElsewhere: a number, as a rule one that the word cannot hold. Also for compiled code, whose first stores to the object
     // may not be over: this looks at the word of the field only.
     void storeElsewhere(VM&, const FieldData&, JSValue);
 
-    uint32_t orderWord() const { return at<uint32_t>(offsetOfOrderWord); }
+    uint32_t orderWord() const
+    {
+        uint32_t word = at<uint32_t>(offsetOfOrderWord);
+        return word & orderWordHasExtraProperties ? orderWordOfMarkedObject(word) : word;
+    }
     // With the shape word above it.
-    uint64_t orderAndShapeWords() const { return at<uint64_t>(offsetOfOrderWord); }
+    uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(at<uint32_t>(offsetOfShapeWord)) << 32 | orderWord(); }
     uint32_t shape() const { return shapeOf(at<uint32_t>(offsetOfShapeWord)); }
     bool isFrozen() const;
+    bool hasFlagsInOrderWord() const { return at<uint32_t>(offsetOfOrderWord) & ~orderAndCountMask; }
     unsigned attributesOf(const FieldData& field) const
     {
-        uint32_t word = orderWord();
+        uint32_t word = at<uint32_t>(offsetOfOrderWord);
         if (word & orderWordIsFrozen) [[unlikely]]
             return attributesOfFieldOfWhatAsks(field);
         return static_cast<unsigned>(word & orderWordIsSealed ? PropertyAttribute::DontDelete : PropertyAttribute::None);
     }
     unsigned attributesOfFieldOfWhatAsks(const FieldData&) const;
     void setAttributesOf(VM&, const FieldData&, unsigned);
-    bool isSealed() const { return orderWord() & orderWordIsSealed; }
-    bool isNotExtensible() const { return orderWord() & orderWordIsNotExtensible; }
+    bool isSealed() const { return at<uint32_t>(offsetOfOrderWord) & orderWordIsSealed; }
+    bool isNotExtensible() const { return at<uint32_t>(offsetOfOrderWord) & orderWordIsNotExtensible; }
     // The Structure says so too: see State::structureFor().
-    bool hasExtraProperties() const { return orderWord() & orderWordHasExtraProperties; }
+    bool hasExtraProperties() const { return at<uint32_t>(offsetOfOrderWord) & orderWordHasExtraProperties; }
     // For whoever caches by Structure. No object of the Structure has an own property of the name, now or later. (A field may be absent in
     // one object and there in the next: that is not by Structure.)
     static bool absenceIsByStructure(Structure*, UniquedStringImpl*);
@@ -164,8 +184,29 @@ public:
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
     bool setIntegrity(JSGlobalObject*, Integrity);
     // The properties the layout has no field for, in an ordinary object that nobody else sees.
-    JSObject* extraProperties() const;
-    void setExtraProperties(VM&, JSObject*);
+    JSObject* extraProperties() const { return hasExtraProperties() ? extraPropertiesOfMarkedObject() : nullptr; }
+    JSObject* extraPropertiesOfMarkedObject() const;
+    void setExtraProperties(VM&, JSObject*, bool isForTableOfPlaces = false);
+    struct ExtraProperty {
+        UniquedStringImpl* name;
+        JSValue value;
+    };
+    static JSObject* makeExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
+    void giveExtraProperties(VM&, std::span<const ExtraProperty> inOrder);
+    void didChangeExtraProperties(VM&);
+    void knowExtraPropertiesByStructure(VM&);
+    static bool knowExtraPropertiesByStructureIfNotYet(VM& vm, JSCell* cell)
+    {
+        Structure* structure = cell->structure();
+        if (!structure->compiledLayout() || !(structure->markingStampAndFlags() & Structure::isOfObjectsWithExtraProperties) || structure->structureIDOfExtraProperties()) [[likely]]
+            return false;
+        uncheckedDowncast<Object>(cell)->knowExtraPropertiesByStructure(vm);
+        return cell->structure() != structure;
+    }
+    static std::optional<PropertyOffset> offsetOfExtraProperty(VM&, JSCell*, PropertyName, unsigned& attributes);
+    enum class ExtraPropertyStore : uint8_t { NotServed, Replaced, Added };
+    ExtraPropertyStore tryStoreExtraProperty(VM&, PropertyName, JSValue, PropertyOffset&, bool isKnownToBeNoField = false, bool isDefinition = false, bool* hasDefaultAttributes = nullptr, bool isForTableOfPlaces = false);
+    static bool putKnowingField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
     bool mayDefineAccessorOnExtraProperties(VM&, State&, PropertyName, JSObject*& extra);
     const FieldData* fieldNamed(State&, PropertyName) const;
     // The own properties in key order, for the engine's own algorithms (JSON.stringify): name and value of each field that is set and is no
@@ -178,10 +219,26 @@ public:
     // objects of the layout with the keys in that order, as the engine has one for a Structure. Null: the object has extra properties, or
     // its layout keeps no orders. It may collect garbage.
     JSCellButterfly* keys(VM&) const;
+    JSCellButterfly* keysWithExtraProperties(VM&) const;
+    JSArray* tryListKeysWithExtraProperties(JSGlobalObject*) const;
+    bool appendValuesOfPlainCopy(VM&, Vector<JSValue, 16>&) const;
     // The field is absent and is about to be stored to: it is the last of the keys now. If it is out of line, the object has an extension
     // of its own from here on: compiled code loads the pointer again. That may collect garbage.
     void didCreateField(State&, const FieldData&, bool withStorage = true);
     bool isAmongKeysInOrder(State&, const FieldData&) const;
+    static bool didCreateOneField(uint32_t orderWordBefore, uint32_t orderWordAfter)
+    {
+        uint32_t before = countOf(orderWordBefore);
+        uint32_t after = countOf(orderWordAfter);
+        return orderWordBefore & orderWordHasExtraProperties ? after > before : after == before + 1;
+    }
+    void listFieldsDefinedSoFar(State&, const FieldData&, bool includesField, bool mayUnlist);
+    void listFieldsBelow(State&, uint32_t end, bool mayUnlist);
+    void listFieldStoredEarly(State&, const FieldData&);
+    bool isNotDefinedYet(const FieldData&, JSValue held) const;
+    JSValue makeClosureHeldBy(const FieldData&);
+    bool holdsClosureNotMade(const FieldData& field) const { return field.flags & fieldHoldsClosureMadeWhenRead && at<uint32_t>(field.offset) == closureNotMadeCell32; }
+    void makeClosuresNotMade();
     void willKeepKeysInLayoutOrder();
     void ensureStorageFor(VM& vm, State& state, const FieldData& field) { ensureExtensionCovers(vm, state, field); }
     void ensureStorageOfSize(VM&, State&, uint32_t size);
@@ -266,13 +323,27 @@ private:
     {
         if (orderOf(orderAndCount) == keysAreInLayoutOrder && orderOf(orderWord()) != keysAreInLayoutOrder) [[unlikely]]
             willKeepKeysInLayoutOrder();
-        at<uint32_t>(offsetOfOrderWord) = (orderWord() & ~orderAndCountMask) | orderAndCount;
+        if (ExtraPropertiesHandle* handle = handleOfExtraProperties())
+            setOrderAndCount(handle, orderAndCount);
+        else
+            at<uint32_t>(offsetOfOrderWord) = (at<uint32_t>(offsetOfOrderWord) & ~orderAndCountMask) | orderAndCount;
     }
-    // The entries of the object's key order: a field index, or from LayoutData::numberOfFields on a placed extra key (State::extraKeyName).
+    uint32_t orderWordOfMarkedObject(uint32_t word) const;
+    ExtraPropertiesHandle* handleOfExtraProperties() const;
+    static void setOrderAndCount(ExtraPropertiesHandle*, uint32_t orderAndCount);
+    // The entries of the object's key order: a field index, or LayoutData::numberOfFields + i: the extra properties with strings for keys, in the order of their creation, up to the i-th, but for those that an entry before it stands for.
     void forEachKeyInOrder(State&, const Invocable<void(uint16_t)> auto&) const;
+    void forEachListedKey(State&, const Invocable<void(uint16_t)> auto&) const;
+    ListingWithExtraProperties* listingWithExtraProperties(VM&) const;
+    JSValue readListed(const ListedProperty&, JSObject* extra) const;
+    JSFinalObject* tryCopyByListing(VM&, Structure*) const;
+    bool keysGoByStructureAndOrderWord() const;
     void forEachFieldInKeyOrder(State&, const Invocable<void(uint16_t)> auto&) const;
-    void removeExtraKey(State&, PropertyName);
+    Vector<UniquedStringImpl*, 16> namesOfExtraKeys() const;
+    std::optional<uint16_t> ordinalOfExtraKey(PropertyName) const;
+    void didRemoveExtraKey(State&, uint16_t ordinal, const FieldData* inItsPlace = nullptr);
     JSObject* ensureExtraProperties(VM&);
+    JSFinalObject* tryCopyExtraPropertiesForClone(VM&) const;
     void willAddExtraProperty(VM&, PropertyName);
     void dropExtraPropertiesIfEmpty(VM&);
     // From here on it is an object of the shape, which is among the specializations of its own. What that has more is absent. It keeps its
@@ -285,12 +356,14 @@ private:
 
 ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
 {
-    if (field.flags & fieldIsOutOfLine) [[unlikely]]
+    if (field.flags & (fieldIsOutOfLine | fieldMayBeUnlisted)) [[unlikely]]
         return read(field);
     switch (field.store()) {
     case Store::Cell32:
     case Store::OptionalCell32: {
         uint32_t word = at<uint32_t>(field.offset);
+        if (word == closureNotMadeCell32) [[unlikely]]
+            return read(field);
         return word <= undefinedCell32 ? JSValue::decode(word) : JSValue(MarkedBlockCage::decode(word));
     }
     case Store::Int32OrElsewhere:
@@ -345,7 +418,7 @@ struct TransitionPlan {
 // What Stub::PutById goes by where the site of a store has seen it make a transition: see Slot::isStoreTransition and State::storeTransitionFor(). Plain data. It stays as long as the State.
 struct StoreTransition {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StoreTransition);
-    static constexpr unsigned maxHolders = 2;
+    static constexpr unsigned maxHolders = 4;
     struct Cleared {
         uint32_t offset;
         // In bytes: 1, 4 or 8.
@@ -423,15 +496,45 @@ inline void Object::setExtension(Extension* extension)
     at<uint32_t>(offsetOfExtension) = extension ? MarkedBlockCage::encode(std::bit_cast<const JSCell*>(extension)) : 0;
 }
 
-// By the object, its extra properties. An entry lives as long as its key, which is what visits the value.
-struct ExtraPropertiesOfObject {
-    static constexpr unsigned bitsOfPlace = 11;
-    static constexpr uint32_t multiplier = 0x9e3779b1;
-    static unsigned placeOf(const JSCell* object) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(object) >> 4) * multiplier) >> (32 - bitsOfPlace); }
+struct ExtraPropertiesHandle {
     const JSCell* object;
     JSObject* extraProperties;
+    uint32_t orderAndCount;
+    uint32_t nextFree;
 };
-static_assert(sizeof(ExtraPropertiesOfObject) == 16);
+static_assert(sizeof(ExtraPropertiesHandle) == 24);
+
+class ExtraPropertiesHandles : public RefCounted<ExtraPropertiesHandles> {
+    WTF_MAKE_NONCOPYABLE(ExtraPropertiesHandles);
+public:
+    static Ref<ExtraPropertiesHandles> of(VM&, Instance&);
+    ~ExtraPropertiesHandles();
+
+    static constexpr unsigned bitsOfPlaceInSegment = 14;
+    static constexpr uint32_t handlesInSegment = 1 << bitsOfPlaceInSegment;
+
+    ExtraPropertiesHandle* of(const JSCell* object, uint32_t number) const { return number ? numbered(number) : m_withoutNumber.get(object); }
+    JSObject* extraPropertiesConcurrently(const JSCell* object, uint32_t number);
+    uint32_t take(const JSCell* object, JSObject* extraProperties, uint32_t orderAndCount);
+    void release(const JSCell* object, uint32_t number);
+    void didBecome(const JSCell* object, uint32_t number, const JSCell* itself);
+    void releaseThoseOfDeadObjects(VM&);
+
+private:
+    static constexpr uint32_t handlesAddedAtOnce = 1 << 7;
+
+    explicit ExtraPropertiesHandles(VM&);
+
+    ExtraPropertiesHandle* numbered(uint32_t number) const { return m_segments[number >> bitsOfPlaceInSegment] + (number & (handlesInSegment - 1)); }
+    bool hasFreeHandle() const { return m_end && m_segments[0]->nextFree; }
+    bool tryAddMore();
+
+    VM& m_vm;
+    ExtraPropertiesHandle** m_segments { nullptr };
+    uint32_t m_end { 0 };
+    Lock m_lock;
+    UncheckedKeyHashMap<const JSCell*, std::unique_ptr<ExtraPropertiesHandle>> m_withoutNumber;
+};
 
 struct PlaceOfExtraProperty {
     static constexpr unsigned bitsOfPlace = 8;
@@ -444,15 +547,24 @@ struct PlaceOfExtraProperty {
 };
 static_assert(sizeof(PlaceOfExtraProperty) == 16);
 
+struct alignas(32) CreationBehindExtraProperties {
+    static constexpr unsigned bitsOfPlace = 10;
+    static constexpr uint32_t multiplier = 0x9e3779b1;
+    static constexpr unsigned placeOf(uint32_t structureIDOfExtraProperties, uint32_t shapeWord, uint32_t orderAndCountBefore, uint64_t slotKeys) { return ((structureIDOfExtraProperties ^ shapeWord ^ orderAndCountBefore ^ static_cast<uint32_t>(slotKeys)) * multiplier) >> (32 - bitsOfPlace); }
+    uint64_t slotKeys;
+    uint32_t structureIDOfExtraProperties;
+    uint32_t shapeWord;
+    uint32_t orderAndCountBefore;
+    uint32_t orderAndCountAfter;
+};
+static_assert(sizeof(CreationBehindExtraProperties) == 32);
+
 class ExtraPropertiesTable final : public WeakGCHashTable {
     WTF_MAKE_NONCOPYABLE(ExtraPropertiesTable);
 public:
     explicit ExtraPropertiesTable(VM&);
     ~ExtraPropertiesTable() final;
 
-    JSObject* get(const Object* object) const { return m_map.get(const_cast<Object*>(object)); }
-    // For the collector, which may be marking while the program adds to the table.
-    JSObject* getConcurrently(const Object*);
     void set(Object*, JSObject*);
     void remove(Object*);
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
@@ -462,7 +574,6 @@ public:
         for (auto& entry : m_map)
             functor(entry.key, entry.value);
     }
-    ExtraPropertiesOfObject* recentlyRead { nullptr };
 
 private:
     VM& m_vm;
@@ -861,6 +972,25 @@ private:
     uint64_t m_declaredMemberLookups { 0 };
 };
 
+class GuardedObject final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = JSFinalObject::StructureFlags | OverridesPut;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+
+    DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
+    static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
+};
+
 // The namespace object of a compiled ES module: what JSModuleNamespaceObject is for a module of the engine's own loader. An export is whatever `read` yields for its number, each time it is
 // asked: a variable, a closure, a class object, what another module exports; or `read` throws, in the dead zone. See MakeModuleNamespace.
 class ModuleNamespace final : public JSNonFinalObject {
@@ -1197,11 +1327,13 @@ JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBehind(JSPromise*);
 JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* resumeClosure);
 JS_EXPORT_PRIVATE JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* resumeClosure, size_t maxStackSize);
 // Of the structure of compiled objects, for isDefinitelyNonThenable().
-bool closureLacksWhatItsStructureLacks(VM&, JSCell*, UniquedStringImpl*, bool isReceiver = true);
+bool lacksWhatItsStructureLacks(VM&, JSCell*, UniquedStringImpl*, bool isReceiver = true);
 bool closureAnswersForPrototypeProperty(JSCell*);
 GetValueFunc getterOfPrototypePropertyOfClosures();
 bool hasFieldNamedThen(Structure*);
 bool neverHasThen(Structure*);
+bool isPrototypeOfClassThatDeclaresNoThen(JSObject*);
+void countLookupOfThen(VM&);
 
 struct DescribedType {
     uint32_t primitives { 0 };
@@ -1232,6 +1364,8 @@ struct State {
     JSString* stringForLiteralStringWord(uint64_t);
     uint64_t literalStringWordFor(JSString*);
     JSString* makeAndKeepStringConstant(VM&, uint32_t);
+    JSCell* bigIntConstantIfMade(uint32_t index) const { return m_bigIntConstants.get(index); }
+    void keepBigIntConstant(uint32_t, JSCell*);
     JSString* makeStringConstant(VM&, uint32_t);
     const LayoutData& layoutOfShape(uint32_t shape) const { return *data.at<LayoutData>(data.at<uint32_t>(data.layoutsOffset)[shape]); }
     bool hasLayoutOfShape(uint32_t shape) const { return data.at<uint32_t>(data.layoutsOffset)[shape]; }
@@ -1255,6 +1389,11 @@ struct State {
     Structure* structure(VM&, uint32_t shape);
     // There is one for each layout, prototype, and whether its objects have extra properties.
     Structure* structureFor(VM&, uint32_t shape, JSValue prototype, bool hasExtraProperties = false);
+    Structure* structureFor(VM&, uint32_t shape, JSValue prototype, Structure& ofExtraProperties);
+    Structure* structureFoundLatelyFor(uint32_t shape, JSValue prototype, Structure& ofExtraProperties) const;
+    Structure* structureIfMadeFor(uint32_t shape, JSValue prototype, Structure& ofExtraProperties);
+    void forgetStructuresFoundLately() { m_structuresByExtraPropertiesFoundLately.fill({ }); }
+    Structure* structureWithExtraPropertiesLike(VM&, Structure* model, uint32_t shape, JSValue prototype);
     bool isOfObjectsWithoutExtraProperties(Structure*);
     // The first one gives the allocation its row: see Instance::typedAllocationRows.
     JSCell* allocate(VM&, uint32_t allocation);
@@ -1319,7 +1458,12 @@ struct State {
     // Null: neither an object of the class nor the class object has been made.
     JSObject* prototypeOfClassIfExists(uint32_t classIndex) const { return prototypesOfClasses.get(classIndex); }
     // Whether it is what compiled code takes an object of the layout to inherit from: see mayInherit().
-    bool isPrototypeByLayout(const LayoutData&, JSValue prototype) const;
+    bool isPrototypeByLayout(const LayoutData&, JSValue prototype);
+    void noteWhetherPrototypeIsByLayout(Structure*);
+    void judgePrototypesAnew(VM&, const ScopedLambda<bool(Structure*, const LayoutData&)>& isOfObjectsToJudge);
+    void didChangePrototypeOfHeirs(VM&, JSObject* changed, UniquedStringImpl* nameOfProperty);
+    bool hasLookedAtPrototypesOfHeirs() const { return !m_prototypesOfHeirs.isEmpty(); }
+    void forgetPrototypesOfHeirsThatAreDead(VM&);
     // Something has been defined on it, or has come to be inherited through it, that compiled code does not know of: what inherits from it asks from now on.
     void didAlterPrototypeObject(VM&, PrototypeObject*);
     uint32_t orderWordAtBirth(VM&, const AllocationData&, Structure*);
@@ -1392,6 +1536,7 @@ struct State {
     // Whether what an object of the layout inherits under the name is a method or accessor, of its class or of one that class extends,
     // that the program is not seen to replace: compiled code goes by the shape of the object for it, and does not look.
     bool hasFixedMethod(const LayoutData&, UniquedStringImpl*) const;
+    bool storeNeverSpecializes(const LayoutData&, UniquedStringImpl*) const;
     bool declaresMethod(const LayoutData&, UniquedStringImpl*) const;
     std::optional<JSObject*> declaredMethod(VM&, const LayoutData&, UniquedStringImpl*);
     GetterSetter* declaredAccessor(VM&, const LayoutData&, UniquedStringImpl*);
@@ -1582,7 +1727,7 @@ struct State {
             if (entry >> 32 != hash)
                 continue;
             auto* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(static_cast<uint32_t>(entry)));
-            if (CompactTable::hasCharacters<Latin1Character>(*candidate->tryGetValueImpl(), characters))
+            if (auto* impl = candidate->tryGetValueImpl(); impl->is8Bit() && CompactTable::hasCharacters<Latin1Character>(*impl, characters))
                 return candidate;
         }
         return nullptr;
@@ -1592,7 +1737,14 @@ struct State {
     void forgetMadeKeysThatAreDead(VM&);
     void noteExtraPropertyRead(Object*, JSObject* extraProperties, uint32_t name, PropertyOffset, unsigned attributes);
     void forgetExtraPropertyReads();
-    void noteExtraPropertiesOf(Object*, JSObject* extraProperties);
+    std::optional<uint32_t> orderAfterCreatingBehindExtraProperties(const Object&, JSObject* extraProperties, uint64_t slotKeys) const;
+    void noteCreationBehindExtraProperties(const Object&, JSObject* extraProperties, uint32_t orderWordBefore, uint64_t slotKeys);
+    void forgetCreationsBehindExtraProperties();
+    static constexpr unsigned numberOfListingsWithExtraProperties = 256;
+    ListingWithExtraProperties& placeOfListingWithExtraProperties(StructureID, uint32_t shapeWord, uint32_t orderAndCount);
+    Structure* structureOfPlainCopy(VM&, ListingWithExtraProperties&);
+    void forgetListingsWithExtraProperties();
+    void forgetExtraPropertiesOf(Object*);
     uint8_t kindsTakenBy(const RuntimeType&) const;
     Object* copyWhatStaysAsItIsByPlan(VM&, JSObject*, const RuntimeType&, bool mayBecomeIt = false);
     Object* tryBecomeOrCopyByPlan(VM&, JSObject*, const PlanOfCoercion&, bool mayBecomeIt);
@@ -1613,6 +1765,9 @@ struct State {
     bool storeByKnownTransition(VM&, Object*, UniquedStringImpl* name, JSValue);
     // After that has said yes, for the site of the store. The Structure and the words are those the object had, `fieldWrite` is for the field in the layout it has now. Null: not for a site to remember.
     const StoreTransition* storeTransitionFor(Structure* before, uint64_t wordsBefore, Object*, UniquedStringImpl* name, uint64_t fieldWrite);
+    const StoreTransition* storeTransitionThatCreates(const FieldData&, uint64_t wordsBefore, Object*, uint64_t fieldWrite, bool asksPrototypeChain);
+    bool tryCreateFieldAsBefore(VM&, Object*, const FieldData&, JSValue);
+    void forgetStoreTransitionsOfDeadStructures(VM&);
     // The fields of `to` that are required and that `from` has none for, by their indices in `to`.
     const Vector<uint16_t, 2>& requiredFieldsAdded(const LayoutData& from, const LayoutData& to);
     // Options::auditAOTTypedAssertions(): the value is not of the type it is held to at the place, where it would be turned away. Prints a
@@ -1696,6 +1851,8 @@ struct State {
     // An object got a table for the properties its layout has no field for. A property was created in such a table.
     void countExtraPropertyTable(const LayoutData&);
     void countExtraProperty(const LayoutData&, PropertyName);
+    void didBecomePrototype(const LayoutData&);
+    bool isShapeOfPrototypes(uint32_t shape) const { return m_shapesOfPrototypes.get(shape); }
     // What has happened to a CompactTable with that many entries.
     void countCompactTable(const String& event, uint32_t entries);
     // An access by name that compiled code left to the run time: by call site (the return address into compiled code), name, what the
@@ -1735,6 +1892,8 @@ struct State {
         const FieldData* field;
     };
     std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord);
+    bool leavesFieldsUnlisted(const LayoutData&, uint32_t orderWord);
+    static bool isDefinedByConstructor(const LayoutData& layout, uint16_t key) { return layout.kind == LayoutKind::Instance && key < layout.numberOfFields && !(layout.fields()[key].flags & (fieldIsAbsentAtBirth | fieldIsPlaceholder)); }
     struct KeysAsJSON {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(KeysAsJSON);
         struct Key {
@@ -1837,8 +1996,7 @@ struct State {
     const PlanOfMerge* planOfMerge(const KeyOfMerge& key) const { return m_plansOfMerges.get(key); }
     void addPlanOfMerge(const KeyOfMerge& key, std::unique_ptr<PlanOfMerge>&& plan) { m_plansOfMerges.add(key, WTF::move(plan)); }
     // The entry that stands for an extra property of that name in the key orders of the layout. Nothing: there is none, or no room for one.
-    std::optional<uint16_t> extraKeyEntry(const LayoutData&, UniquedStringImpl*, bool create);
-    const Identifier& extraKeyName(const LayoutData&, uint16_t entry);
+    bool allExtraKeysHavePlaces(const LayoutData&, uint32_t orderWord, JSObject* extraProperties);
 
     JSObject* prototypeForObjectsOf(VM&, Closure*);
     void didChangePrototypeOf(VM&, Closure*);
@@ -1911,6 +2069,8 @@ struct State {
     };
     UncheckedKeyHashMap<JSObject*, UnmadeHeirs> unmadeHeirs;
     ExtraPropertiesTable extraProperties;
+    Ref<ExtraPropertiesHandles> handlesOfExtraPropertiesOfVM;
+    ExtraPropertiesHandles& handlesOfExtraProperties;
     NumberBoxTable numberBoxes;
     FieldAttributesTable fieldAttributes;
     // Coercion::keep() has failed for an object of the Structure at the type, which has one layout to make objects of: at this property. Empty after a collection: the number of a Structure that has died may be given out again.
@@ -2009,12 +2169,15 @@ private:
         std::span<const FieldAsProperty> lastProperties;
         uint32_t orderWordOfLastKeysAsJSON { UINT32_MAX };
         const KeysAsJSON* lastKeysAsJSON { nullptr };
-        // Entry LayoutData::numberOfFields + i of an order stands for an extra property of this name.
-        Vector<Identifier> extraKeys;
-        UncheckedKeyHashMap<UniquedStringImpl*, uint16_t> indexesOfExtraKeys;
+        struct ExtraKeysInOrder {
+            uint16_t count { 0 };
+            uint16_t end { 0 };
+        };
+        static_assert(sizeof(ExtraKeysInOrder) == 2 * sizeof(uint16_t));
+        Vector<ExtraKeysInOrder> extraKeysInAddedOrders;
         // See Instance::typedOrderKeys. Empty: nothing has asked yet.
         Vector<uintptr_t> orderKeys;
-        // The words of each order as Instance::typedOrderKeys describes them: the length, the slots of the keys, the pairs.
+        // The words of each order as Instance::typedOrderKeys describes them: the length, the slots of the keys, the pairs, ExtraKeysInOrder.
         Vector<Vector<uint16_t>> slotsInOrder;
         // By the offset of a slot in the cell, the index of its field.
         Vector<uint16_t> fieldsBySlot;
@@ -2035,8 +2198,6 @@ private:
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_structureIDsOfAllocationsWithoutRow;
     const LayoutData* baseOf(const LayoutData& layout) const { return layout.base() == LayoutData::noBase ? nullptr : classWithIndex(layout.base()); }
     bool isFixedIn(std::span<const MethodData>, UniquedStringImpl*, bool& isDeclared) const;
-    // The class of the engine, of those whose objects compiled code knows by their type, that has this constructor.
-    const EngineClass* engineClassConstructedBy(JSObject*);
     OrderTable& ordersOf(const LayoutData&);
     // The order is new, or has been made longer.
     void didChangeOrder(const LayoutData&, OrderTable&, uint32_t order);
@@ -2099,6 +2260,15 @@ private:
     };
     std::array<GeneratorStructureOfClosure, 16> m_generatorStructuresOfClosures { };
     HeapVersion m_versionOfGeneratorStructures { 0 };
+    struct ObjectAtBirth {
+        Closure* constructor { nullptr };
+        JSObject* newTarget { nullptr };
+        Structure* structure { nullptr };
+        uint32_t epoch { 0 };
+        Vector<uint8_t> body;
+    };
+    std::array<ObjectAtBirth, 16> m_objectsAtBirthByNewTarget;
+    HeapVersion m_versionOfObjectsAtBirth { 0 };
     JSFunction* m_liveBindingGetter { nullptr };
     uint64_t m_answersForAsyncGenerators[16] { UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX };
     CustomGetterSetter* m_liveBindingAccessor { nullptr };
@@ -2139,6 +2309,9 @@ private:
     UncheckedKeyHashMap<std::pair<Structure*, const RuntimeType*>, std::unique_ptr<PlanOfCoercion>> m_plansOfCoercions;
     bool m_hasAddedPlansOfCoercionsSinceLastCollection { false };
     bool m_hasNotedExtraPropertyReads { false };
+    bool m_hasNotedCreationsBehindExtraProperties { false };
+    bool m_hasListingsWithExtraProperties { false };
+    std::unique_ptr<std::array<ListingWithExtraProperties, numberOfListingsWithExtraProperties>> m_listingsWithExtraProperties;
     struct PlanOfCoercionLastAskedFor {
         Structure* structure { nullptr };
         const RuntimeType* type { nullptr };
@@ -2210,6 +2383,8 @@ private:
     bool store(VM&, Object*, const TransitionsOfStore&, JSValue);
     UncheckedKeyHashMap<std::tuple<Structure*, RefPtr<UniquedStringImpl>, EncodedJSValue>, std::unique_ptr<TransitionsOfStore>> m_transitionsOfStores;
     UncheckedKeyHashMap<std::pair<const TransitionPlan*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_storeTransitions;
+    UncheckedKeyHashMap<std::pair<Structure*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_storeTransitionsThatCreate[2];
+    UncheckedKeyHashMap<std::pair<Structure*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_storeTransitionsThatCreateBehindExtraProperties[2];
     // What was last found there: so the table behind keeps the name of an entry. The two are emptied together.
     struct CachedStore {
         Structure* structure;
@@ -2243,9 +2418,18 @@ private:
     UncheckedKeyHashMap<std::pair<uint32_t, uint32_t>, MallocSpan<uint8_t>> m_fieldTemplates;
     // By shape and prototype, where that is not the usual one. They live as long as their objects.
     WeakGCMap<std::pair<uint32_t, JSObject*>, Structure> m_structuresWithOtherPrototype;
+    WeakGCMap<std::tuple<uint32_t, JSObject*, Structure*>, Structure> m_structuresByExtraProperties;
+    static constexpr unsigned bitsOfPlaceOfStructureFoundLately = 7;
+    static unsigned placeOfStructureFoundLately(uint32_t shape, Structure& ofExtraProperties) { return (ofExtraProperties.id().bits() * 0x9e3779b1u ^ shape * 0x85ebca6bu) >> (32 - bitsOfPlaceOfStructureFoundLately); }
+    std::array<StructureID, 1u << bitsOfPlaceOfStructureFoundLately> m_structuresByExtraPropertiesFoundLately { };
+    static constexpr unsigned bitsOfPlaceInStructuresAskedFor = 12;
+    static unsigned placeInStructuresAskedFor(Structure& ofExtraProperties) { return ofExtraProperties.id().bits() * 0x9e3779b1u >> (32 - bitsOfPlaceInStructuresAskedFor); }
+    WTF::BitSet<1u << bitsOfPlaceInStructuresAskedFor> m_structuresOfExtraPropertiesAskedFor;
+    bool heirsAddNothing(JSObject* prototype, JSObject* prototypeOfClass);
+    UncheckedKeyHashMap<JSObject*, JSObject*> m_prototypesOfClassesBelowHeirs;
+    UncheckedKeyHashSet<JSObject*> m_prototypesOfHeirs;
+    UncheckedKeyHashSet<JSObject*> m_alteredPrototypesOfHeirs;
     Vector<std::unique_ptr<WatchedMembers>> m_watchedMembers;
-    // By constructor: EngineClass::index. Filled when first asked. The global object keeps them.
-    UncheckedKeyHashMap<JSObject*, uint16_t> m_engineClassesByConstructor;
     // Instance::typedStrings. The program alone writes it, under m_cellsLock: the collector visits it meanwhile.
     JSCell* stringIfMade(uint32_t) const;
     void keepString(uint32_t, JSCell*);
@@ -2271,6 +2455,7 @@ private:
     void rememberFirstKeyByParts(const KeyByParts&, JSString*);
     void makeRoomForKeysByParts();
     Vector<JSCell*> m_wideStrings;
+    UncheckedKeyHashMap<uint32_t, JSCell*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bigIntConstants;
     Vector<std::pair<String, JSObject*>> m_importMetaOfModules;
     // What an earlier collection has marked stays marked in a collection of the young, which is handed those alone that were made since the last visit of the collection before: as Cell32;
     // how many of them the collector had been handed at its last visit; which collection that visit was of.
@@ -2290,6 +2475,7 @@ private:
     MadeLately m_closuresMadeLately;
     static constexpr unsigned closuresInStretchShift = 10;
     BitVector m_stretchesWithClosures;
+    BitVector m_shapesOfPrototypes;
     // The closures, prototypes and Structures that were made to stay. The collector visits them while the program adds to them.
     Lock m_cellsLock;
     Vector<JSCell*> m_cells WTF_GUARDED_BY_LOCK(m_cellsLock);

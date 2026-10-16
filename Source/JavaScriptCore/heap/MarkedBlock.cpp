@@ -56,14 +56,14 @@ static size_t balance;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlock);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlockHandle);
 
-MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)
+MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, IsFirstInDirectory isFirstInDirectory)
 {
     if (computeBalance) {
         balance++;
         if (!(balance % 10))
             dataLog("MarkedBlock Balance: ", balance, "\n");
     }
-    void* blockSpace = alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
+    void* blockSpace = isFirstInDirectory == IsFirstInDirectory::Yes ? alignedMemoryAllocator->tryAllocateUntouchedAlignedMemory(blockSize, blockSize) : alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
     if (!blockSpace)
         return nullptr;
     if (scribbleFreeCells())
@@ -90,6 +90,9 @@ MarkedBlock::Handle::~Handle()
     }
     m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
     recommitPages();
+#if ASAN_ENABLED
+    unpoisonCells();
+#endif
     m_block->~MarkedBlock();
     m_alignedMemoryAllocator->freeAlignedMemory(m_block);
     heap.didFreeBlock(blockSize);
@@ -247,6 +250,9 @@ void MarkedBlock::Handle::lastChanceToFinalize()
 {
     // Concurrent sweeper is shut down at this point.
     m_directory->assertSweeperIsSuspended();
+#if ASAN_ENABLED
+    unpoisonCells();
+#endif
     m_directory->setIsAllocated(this, false);
     m_directory->setIsDestructible(this, true);
     m_directory->setIsUnswept(this, true);
@@ -696,6 +702,55 @@ void MarkedBlock::Handle::recommitPages()
     m_decommittedPages = 0;
 }
 
+#if ASAN_ENABLED
+void MarkedBlock::Handle::poisonDeadCells()
+{
+    if (m_isFreeListed)
+        return;
+    size_t size = cellSize();
+    char* begin = nullptr;
+    char* end = nullptr;
+    forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        char* address = std::bit_cast<char*>(cell);
+        if (address != end) {
+            if (begin)
+                __asan_poison_memory_region(begin, end - begin);
+            begin = address;
+        }
+        end = address + size;
+        return IterationStatus::Continue;
+    });
+    if (begin)
+        __asan_poison_memory_region(begin, end - begin);
+    m_weakSet.forEachBlock([&](WeakBlock& block) {
+        block.unpoisonCellsAwaitingFinalizers();
+    });
+}
+
+void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
+{
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    bool cellsHaveJustDied = false;
+    forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        cellsHaveJustDied = !__asan_address_is_poisoned(cell);
+        return cellsHaveJustDied ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    if (cellsHaveJustDied) {
+        Locker locker { m_directory->bitvectorLock() };
+        m_directory->setIsCanAllocate(this, false);
+        m_directory->setIsEmpty(this, false);
+    }
+    bool owesDestructors = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    if (m_directory->isUnswept(this) && !owesDestructors)
+        poisonDeadCells();
+}
+
+void MarkedBlock::Handle::unpoisonCells()
+{
+    __asan_unpoison_memory_region(&block(), blockSize);
+}
+#endif
+
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
@@ -717,6 +772,14 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
         m_markingVersionAtLastSweep = space()->markingVersion();
 
     SweepingScope sweepingScope(*heap());
+
+#if ASAN_ENABLED
+    unpoisonCells();
+    auto poisonAgain = makeScopeExit([&] {
+        if (sweepMode == SweepOnly && !heap()->isShuttingDown())
+            poisonDeadCells();
+    });
+#endif
 
     m_weakSet.sweep();
 

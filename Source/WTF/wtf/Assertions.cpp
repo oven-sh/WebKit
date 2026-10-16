@@ -351,6 +351,10 @@ void WTFReportBacktraceWithPrefixAndPrintStream(PrintStream& out, const char* pr
         out.print("%sno stacktrace available", prefix);
 }
 
+#if ASAN_ENABLED
+extern "C" void __sanitizer_print_stack_trace(void);
+#endif
+
 void WTFReportBacktrace()
 {
     std::array<void*, kDefaultFramesToShow + kDefaultFramesToSkip> samples;
@@ -359,8 +363,13 @@ void WTFReportBacktrace()
     WTFGetBacktrace(samples.data(), &frames);
     if (frames > kDefaultFramesToSkip)
         WTFPrintBacktrace(std::span { samples }.subspan(kDefaultFramesToSkip, frames - kDefaultFramesToSkip));
-    else
+    else {
+#if ASAN_ENABLED
+        __sanitizer_print_stack_trace();
+#else
         CrashLogPrintStream { }.print("no stacktrace available");
+#endif
+    }
 }
 
 void WTFPrintBacktraceWithPrefixAndPrintStream(PrintStream& out, std::span<void* const> stack, const char* prefix)

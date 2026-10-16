@@ -24,6 +24,7 @@
 #include "config.h"
 #include "JSObject.h"
 
+#include "AOTLockWords.h"
 #include "AllocationFailureMode.h"
 #include "BlockDirectory.h"
 #include "ClonedArguments.h"
@@ -1162,7 +1163,7 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
         if (!shouldThrow && !thisObject->isRefusedByLockAlone(vm, nullptr, held))
             return false;
         thisObject->noteRefusalByLock(vm);
-        return typeError(globalObject, scope, true, thisObject->wordsOfRefusalByLock(vm, nullptr, ReadonlyPropertyWriteError));
+        return typeError(globalObject, scope, true, AOT::wordsOfLock(vm, thisObject, AOT::RefusedByLock::Change, Identifier::from(vm, propertyName).impl()));
     }
 
     if (thisObject->structure()->typeInfo().wouldHaveImmutableProperties()) [[unlikely]]
@@ -2371,6 +2372,8 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
     // properties, and its copy-on-write elements stay readable in place.
     if (!tryMakeWritable(vm)) [[unlikely]]
         return;
+    if (hasSlowPutArrayStorage(indexingType())) [[unlikely]]
+        return;
 
     switch (indexingType()) {
     case ArrayClass:
@@ -2485,7 +2488,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         if (shouldThrowIfCantSet && isLockedBuiltin() && this != globalObject->objectPrototype()) {
             noteRefusalByLock(vm);
             if (!this->structure()->isImmutablePrototypeExoticObject())
-                return typeError(globalObject, scope, true, withAOTErrorNote("Cannot set prototype of immutable prototype object"_s));
+                return typeError(globalObject, scope, true, AOT::wordsOfLock(vm, this, AOT::RefusedByLock::ChangeOfPrototype));
         }
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
@@ -3478,6 +3481,9 @@ bool JSObject::tryFreezeArrayInPlace(VM& vm)
     StructureID oldStructureID = structureID();
     Structure* newStructure = Structure::freezeTransition(vm, globalObject->originalArrayStructureForIndexingType(indexingMode() | CopyOnWrite));
     RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()));
+    Structure* oldStructure = oldStructureID.decode();
+    oldStructure->didTransitionFromThisStructureWithoutFiringWatchpoint();
+    oldStructure->fireStructureTransitionWatchpoint(nullptr);
     if (copyOnWriteButterfly)
         nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
     setStructure(vm, newStructure);
@@ -3694,7 +3700,7 @@ ALWAYS_INLINE static bool canDoFastPutDirectIndex(JSObject* object)
     if (object->inSparseIndexingMode())
         return false;
 
-    return (isJSArray(object) && !isCopyOnWrite(object->indexingMode()))
+    return ((isJSArray(object) || object->type() == DerivedArrayType) && !isCopyOnWrite(object->indexingMode()))
         || is<JSFinalObject>(object);
 }
 
@@ -4750,7 +4756,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isUnchanged)
-            return typeError(globalObject, scope, throwException, withAOTErrorNote(ImmutablePropertyDefineError));
+            return typeError(globalObject, scope, throwException, AOT::wordsOfLock(vm, object, AOT::RefusedByLock::Change, propertyName.uid()));
         return true;
     }
 

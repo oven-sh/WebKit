@@ -13,6 +13,7 @@
 
 #include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"
+#include "AOTTypedObject.h"
 #include "AOTTypedOperations.h"
 #include "ArrayConstructor.h"
 #include "ArrayPrototypeInlines.h"
@@ -33,6 +34,7 @@
 #include "JSGeneratorFunction.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMapInlines.h"
+#include "JSWeakMapInlines.h"
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
 #include "JSPropertyNameEnumeratorInlines.h"
@@ -83,6 +85,39 @@ bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObjec
     }
     for (unsigned i = 0; i < copied.offsets.size(); ++i)
         target->putDirectOffset(vm, copied.offsets[i].second, source->getDirect(copied.offsets[i].first));
+    if (last != targetStructure || oldCapacity != newCapacity)
+        target->setStructure(vm, last);
+    return true;
+}
+
+bool tryCopyDataPropertiesOfRecord(Instance* instance, VM& vm, JSObject* target, JSObject* object, const char* operation)
+{
+    const Typed::LayoutData* layout = object->structure()->compiledLayout();
+    if (!layout || !Typed::isObjectLayout(layout->kind))
+        return false;
+    auto* record = uncheckedDowncast<Typed::Object>(object);
+    Structure* ofPlainCopy = record->structureOfPlainCopy(instance->globalObject);
+    Structure* targetStructure = target->structure();
+    if (!ofPlainCopy || ofPlainCopy->hasUnderscoreProtoPropertyExcludingOriginalProto() || targetStructure->hasImmutableShape() || targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto())
+        return false;
+
+    DeferGC deferGC(vm);
+    auto& copied = instance->copiedProperties(targetStructure, ofPlainCopy, nullptr);
+    Structure* last = copied.last;
+    if (!last)
+        return false;
+    Vector<JSValue, 16> values;
+    if (!record->appendValuesOfPlainCopy(vm, values))
+        return false;
+    countOperationNamed(instance, operation, "copied-from-a-record");
+    size_t oldCapacity = targetStructure->outOfLineCapacity();
+    size_t newCapacity = last->outOfLineCapacity();
+    if (oldCapacity != newCapacity) {
+        Butterfly* butterfly = target->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
+        target->nukeStructureAndSetButterfly(vm, targetStructure->id(), butterfly);
+    }
+    for (auto [from, to] : copied.offsets)
+        target->putDirectOffset(vm, to, values[from]);
     if (last != targetStructure || oldCapacity != newCapacity)
         target->setStructure(vm, last);
     return true;
@@ -159,8 +194,10 @@ static NEVER_INLINE void cacheInstanceOfWhereLeftSideIsNoObject(Instance* instan
     PropertyOffset offset = constructor->structure()->get(vm, vm.propertyNames->prototype, attributes);
     bool isPlainValue = isValidOffset(offset) && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue));
     countOperationNamed(instance, "operationAOTInstanceofAndCache", isPlainValue ? "left-side-is-no-object" : "left-side-is-no-object:no-prototype-in-the-structure");
-    if (!isPlainValue)
+    if (!isPlainValue) {
+        cacheHasInstance(globalObject, callerData(instance, callFrame), cache, constructor, structureBefore, hasInstance, false);
         return;
+    }
     PropertySlot prototype(constructor, PropertySlot::InternalMethodType::VMInquiry, &vm);
     prototype.setValue(constructor, attributes, constructor->getDirect(offset), offset);
     cacheInstanceOf(globalObject, callerData(instance, callFrame), cache, constructor, structureBefore, hasInstance, prototype);
@@ -184,8 +221,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceofAndCache, size_t, (Instance* inst
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     JSValue hasInstance = hasHasInstance ? hasInstanceSlot.getValue(globalObject, vm.propertyNames->hasInstanceSymbol) : jsUndefined();
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
-    if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() || !constructorObject->structure()->typeInfo().implementsDefaultHasInstance())
+    if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() || !constructorObject->structure()->typeInfo().implementsDefaultHasInstance()) {
+        if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() && hasInstance.isCallable())
+            cacheHasInstance(globalObject, callerData(instance, callFrame), cache, constructorObject, structureBefore, hasInstanceSlot, true);
         OPERATION_RETURN(scope, constructorObject->hasInstance(globalObject, value, hasInstance));
+    }
     if (!value.isObject()) {
         cacheInstanceOfWhereLeftSideIsNoObject(instance, callFrame, globalObject, cache, constructorObject, structureBefore, hasInstanceSlot);
         OPERATION_RETURN(scope, false);
@@ -292,6 +332,34 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance* instance
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     uncheckedDowncast<JSSet>(set)->addNormalized(globalObject, JSValue::decode(key), JSValue(), hash);
     OPERATION_RETURN(scope, JSValue::encode(set));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTWeakMapSet, EncodedJSValue, (Instance* instance, JSCell* map, JSCell* key, EncodedJSValue value))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    uncheckedDowncast<JSWeakMap>(map)->set(vm, key, JSValue::decode(value));
+    OPERATION_RETURN(scope, JSValue::encode(map));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringStartsWith, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* other))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto characters = uncheckedDowncast<JSString>(string)->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    auto sought = uncheckedDowncast<JSString>(other)->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(characters->startsWith(sought.data))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOf, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* other))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto characters = uncheckedDowncast<JSString>(string)->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    auto sought = uncheckedDowncast<JSString>(other)->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    size_t place = characters->find(sought.data);
+    OPERATION_RETURN(scope, JSValue::encode(place == notFound ? jsNumber(-1) : jsNumber(place)));
 }
 
 } } // namespace JSC::AOT

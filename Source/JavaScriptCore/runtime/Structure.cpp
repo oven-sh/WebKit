@@ -705,6 +705,10 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
     return table;
 }
 
+#if ENABLE(AOT)
+bool compiledObjectHasIndexedProperties(JSObject*);
+#endif
+
 bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
 {
     ASSERT(base->structure() == this);
@@ -721,6 +725,10 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
         Structure& structure = *object->structure();
         if (hasIndexedProperties(object->indexingType()) || structure.mayInterceptIndexedAccesses())
             return true;
+#if ENABLE(AOT)
+        if (structure.compiledLayout() && compiledObjectHasIndexedProperties(object)) [[unlikely]]
+            return true;
+#endif
         prototype = structure.storedPrototype(object);
         if (!prototype.isObject())
             return false;
@@ -1692,6 +1700,8 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->aotFieldsOrEmpty().aotInstance) [[unlikely]] {
         visitor.appendUnbarriered(AOT::ownerOf(thisObject->aotFieldsOrEmpty().aotInstance));
         visitor.appendUnbarriered(AOT::tokenOf(thisObject->aotFieldsOrEmpty().aotInstance));
+        if (StructureID ofExtraProperties = thisObject->compiledLayout() ? thisObject->structureIDOfExtraProperties() : StructureID())
+            visitor.appendUnbarriered(ofExtraProperties.decode());
     }
 #endif
     if (!thisObject->isObject()) {

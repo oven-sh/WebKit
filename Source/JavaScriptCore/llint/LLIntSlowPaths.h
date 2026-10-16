@@ -33,6 +33,7 @@ namespace JSC {
 
 class CallFrame;
 struct ProtoCallFrame;
+union GetByIdModeMetadata;
 
 namespace LLInt {
 
@@ -45,6 +46,9 @@ void* handleUnlinkedCall(VM&, CallFrame* calleeFrame);
 extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" void SYSV_ABI llint_write_barrier_slow(CallFrame*, JSCell*) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" UGPRPair SYSV_ABI llint_call_cached_custom_accessor(CallFrame*, EncodedJSValue base, GetByIdModeMetadata*, unsigned property) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" size_t SYSV_ABI llint_store_extra_property_of_compiled_object(JSCell*, unsigned offset, EncodedJSValue) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" EncodedJSValue SYSV_ABI llint_extra_property_of_compiled_object(JSCell*, unsigned offset) REFERENCED_FROM_ASM WTF_INTERNAL;
 
 #define LLINT_SLOW_PATH_DECL(name) \
     extern "C" UGPRPair SYSV_ABI llint_##name(CallFrame* callFrame, const JSInstruction* pc)
@@ -77,7 +81,6 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_create_scoped_arguments);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_create_cloned_arguments);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_by_id_direct);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_by_id);
-LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_by_id_custom_accessor);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_length);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_by_id_with_this);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_hasInstance_from_instanceof);

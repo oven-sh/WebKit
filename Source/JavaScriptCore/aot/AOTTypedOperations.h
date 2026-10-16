@@ -34,6 +34,7 @@ struct Slot;
     v(operationAOTTypedGetSuperPropertyByName) \
     v(operationAOTTypedSetByName) \
     v(operationAOTTypedSetByNameSloppy) \
+    v(operationAOTTypedThrowIfReadOnly) \
     v(operationAOTTypedGetStaticField) \
     v(operationAOTTypedSetStaticField) \
     v(operationAOTTypedSetByNameInRowOfThis) \
@@ -51,10 +52,12 @@ struct Slot;
     v(operationAOTTypedCall) \
     v(operationAOTTypedThrowUnlessCallable) \
     v(operationAOTTypedThrowMethodIsNotAFunction) \
+    v(operationAOTTypedThrowUnlessMethodIsCallable) \
     v(operationAOTTypedMethodOfTable) \
     v(operationAOTTypedHasByName) \
     v(operationAOTTypedThrowAtSite) \
     v(operationAOTTypedLanguageOperation) \
+    v(operationAOTTypedMakeModuleNamespace) \
     v(operationAOTTypedCreateArguments) \
     v(operationAOTTypedCopyDataProperties) \
     v(operationAOTTypedObjectEntriesInOneList) \
@@ -71,6 +74,7 @@ struct Slot;
     v(operationAOTTypedAwait) \
     v(operationAOTTypedGetExternalModule) \
     v(operationAOTTypedConstruct) \
+    v(operationAOTTypedConstructSuper) \
     v(operationAOTTypedConstructWith) \
     v(operationAOTTypedDefineAccessors) \
     v(operationAOTTypedAdd) \
@@ -106,12 +110,15 @@ struct Slot;
     v(operationAOTTypedInheritsFromClass) \
     v(operationAOTTypedInstanceOf) \
     v(operationAOTTypedInstanceOfClass) \
+    v(operationAOTTypedInstanceOfEngineClass) \
     v(operationAOTTypedToString) \
     v(operationAOTTypedToKey) \
     v(operationAOTTypedFmod) \
     v(operationAOTTypedPow) \
     v(operationAOTTypedToInt32) \
+    v(operationAOTTypedPlaceInString) \
     v(operationAOTTypedToLiteralString) \
+    v(operationAOTTypedShortTextOfString) \
     v(operationAOTTypedLiteralStringToString) \
     v(operationAOTTypedIntegerEqualTo) \
     v(operationAOTTypedAllocSlow) \
@@ -181,6 +188,8 @@ struct Slot;
     v(operationAOTTypedPrivateHas) \
     v(operationAOTTypedPrivateFieldAdd) \
     v(operationAOTTypedDefineByKey) \
+    v(operationAOTTypedDefineGetterUnderKey) \
+    v(operationAOTTypedDefineSetterUnderKey) \
     v(operationAOTTypedPrivateMethodsAdd) \
     v(operationAOTTypedNewArray) \
     v(operationAOTTypedTryGetByValWithKeyParts) \
@@ -201,6 +210,7 @@ struct Slot;
     v(operationAOTTypedArrayElementAs) \
     v(operationAOTTypedArrayElementAtNumberAs) \
     v(operationAOTTypedArrayPutAtIndex) \
+    v(operationAOTTypedArrayPutAtIndexExpecting) \
     v(operationAOTTypedArrayPutNumberAtIndex) \
     v(operationAOTTypedArrayPutAtNumber) \
     v(operationAOTTypedArrayTryMakeWritableDouble) \
@@ -285,6 +295,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByName, Heap, EncodedJSValue, (I
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetSuperPropertyByName, Heap, EncodedJSValue, (Instance*, EncodedJSValue home, EncodedJSValue receiver, uint32_t nameInTable));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByName, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameSloppy, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowIfReadOnly, Nothing, void, (Instance*, JSCell* object, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetStaticField, Heap, EncodedJSValue, (Instance*, uint32_t ofClass, uint32_t field));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetStaticField, Heap, void, (Instance*, uint32_t ofClass, uint32_t field, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameInRowOfThis, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
@@ -318,6 +329,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCall, Heap, EncodedJSValue, (Instan
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetExternalModule, Heap, EncodedJSValue, (Instance*, uint32_t));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFailModuleCycle, Fields, void, (Instance*, uint64_t row, uint32_t numberOfRows, EncodedJSValue error));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedLanguageOperation, Heap, EncodedJSValue, (Instance*, uint32_t, uint32_t, const EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMakeModuleNamespace, Heap, EncodedJSValue, (Instance*, uint32_t numberOfNames, uint32_t rowOfNames, uint32_t count, const EncodedJSValue* readerAndWhatFollowsTheNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateArguments, RuntimeState, JSCell*, (Instance*, JSCell* list));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCopyDataProperties, Heap, void, (Instance*, JSCell* target, EncodedJSValue source));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectEntriesInOneList, Heap, JSCell*, (Instance*, EncodedJSValue object));
@@ -336,6 +348,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSuspendAtFirstAwait, Heap, void, (I
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAwait, Heap, void, (Instance*, JSCell*, EncodedJSValue, uint32_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowUnlessCallable, Nothing, void, (Instance*, EncodedJSValue callee, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowMethodIsNotAFunction, Nothing, void, (Instance*, EncodedJSValue callee, uint32_t identifierOfSite));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowUnlessMethodIsCallable, Nothing, void, (Instance*, EncodedJSValue callee, uint32_t identifierOfSite));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMethodOfTable, Heap, EncodedJSValue, (Instance*, JSCell* table, uint32_t method));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasByName, Heap, EncodedJSValue, (Instance*, JSCell* table, EncodedJSValue key, EncodedJSValue method));
 // What a site that only throws throws. The words behind the call say it: see Typed::Lowering::throwAt().
@@ -368,6 +381,7 @@ struct ThrowSite {
 };
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowAtSite, Nothing, void, (Instance*, const uint64_t* registers, const uint32_t* site, uint32_t isTrap));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConstruct, Heap, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t, const EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConstructSuper, Heap, EncodedJSValue, (Instance*, EncodedJSValue classObject, EncodedJSValue newTarget, EncodedJSValue list, EncodedJSValue parentIfRead));
 // [[Construct]] with the object it would make already made, as nobody has seen it yet. A callee that makes its own does.
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConstructWith, Heap, EncodedJSValue, (Instance*, EncodedJSValue callee, JSCell* object, uint32_t, const EncodedJSValue*));
 // The accessor functions of an object literal, in the order of the text, four values each: an Int32, the number of the string that is the key; the
@@ -402,6 +416,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStrictEq, RuntimeState, size_t, (In
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedLooseEq, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedInstanceOf, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedInstanceOfClass, Heap, size_t, (Instance*, EncodedJSValue, uint32_t ofClass));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedInstanceOfEngineClass, Heap, size_t, (Instance*, EncodedJSValue, uint32_t numberOfClass));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTruthy, RuntimeState, size_t, (Instance*, EncodedJSValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTypeOf, Nothing, JSCell*, (Instance*, EncodedJSValue));
 // Of an object: a TypeofType.
@@ -414,7 +429,9 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToKey, Heap, EncodedJSValue, (Insta
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFmod, Pure, double, (double, double));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPow, Pure, double, (double, double));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedToInt32, Pure, size_t, (double));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPlaceInString, Pure, int64_t, (double, uint64_t length, uint32_t isRelativeToEnd));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedToLiteralString, Pure, EncodedJSValue, (Instance*, EncodedJSValue));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedShortTextOfString, Pure, EncodedJSValue, (Instance*, EncodedJSValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLiteralStringToString, Pure, JSCell*, (Instance*, uint64_t word));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIntegerEqualTo, Pure, int64_t, (EncodedJSValue));
 // Gives the allocation its row of Instance::typedAllocationRows. The cell has its header and both words. Every field that can be absent is, the others are clear.
@@ -514,6 +531,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateSetAtSite, Heap, void, (Inst
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateHas, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateFieldAdd, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue name, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineByKey, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue key, EncodedJSValue value));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineGetterUnderKey, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue key, EncodedJSValue function));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineSetterUnderKey, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue key, EncodedJSValue function));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateMethodsAdd, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue holder));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisWithFields, RuntimeState, JSCell*, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* values, uint32_t rowOfNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisOfCapacity, RuntimeState, JSCell*, (Instance*, JSCell* constructor, JSCell* newTarget, uint32_t inlineCapacity));
@@ -556,6 +575,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayGetAtIndexAsNumber, Nothing, d
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayElementAs, RuntimeState, EncodedJSValue, (Instance*, JSCell* array, uint64_t key, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayElementAtNumberAs, RuntimeState, EncodedJSValue, (Instance*, JSCell* array, double key, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutAtIndex, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t key));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutAtIndexExpecting, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t key, uint64_t expectedAndSite));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutNumberAtIndex, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutAtNumber, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, double key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedArrayTryMakeWritableDouble, Nothing, size_t, (Instance*, JSCell* array));

@@ -359,6 +359,50 @@ private:
                 stack.append({ target, 0u });
         }
         m_blockOrder.reverse();
+        Vector<unsigned> place(FillWith { }, numberOfBlocks, UINT_MAX);
+        for (unsigned k = 0; k < m_blockOrder.size(); ++k)
+            place[m_blockOrder[k]] = k;
+        m_isLedBackTo.ensureSize(numberOfBlocks);
+        for (unsigned b : m_blockOrder) {
+            for (auto& edge : m_predecessors[b]) {
+                if (place[edge.from] >= place[b])
+                    m_isLedBackTo.quickSet(b);
+            }
+        }
+        m_firstThatActsWithoutObjects.fill(0, numberOfBlocks + 1);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            m_firstThatActsWithoutObjects[b] = m_valuesThatActWithoutObjects.size();
+            for (ValueID id : m_function.blocks[b].values) {
+                auto& value = m_function.at(id);
+                switch (value.opcode) {
+                case Opcode::IsClosureOf:
+                case Opcode::GetCapture:
+                case Opcode::LogicalNot:
+                case Opcode::AssertNotAllocated:
+                    m_valuesThatActWithoutObjects.append(id);
+                    break;
+                case Opcode::PutField:
+                    if (m_program.at(value.layout()).reuseVariable)
+                        m_valuesThatActWithoutObjects.append(id);
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        m_firstThatActsWithoutObjects[numberOfBlocks] = m_valuesThatActWithoutObjects.size();
+    }
+
+    void findBlocksThatHoldObjects()
+    {
+        m_holdsObjects.clearAll();
+        m_holdsObjects.ensureSize(m_function.blocks.size());
+        for (auto& object : m_candidates) {
+            if (object.isAbandoned)
+                continue;
+            m_holdsObjects.quickSet(object.block);
+            m_holdsObjects.merge(object.liveAtHead);
+        }
     }
 
     void reset()
@@ -389,6 +433,7 @@ private:
     bool pruneBlockLocalCandidates()
     {
         reset();
+        findBlocksThatHoldObjects();
         m_mode = Mode::Analyze;
         for (unsigned b : m_blockOrder)
             processBlock(b);
@@ -608,13 +653,18 @@ private:
     void analyze()
     {
         reset();
+        findBlocksThatHoldObjects();
         m_mode = Mode::Analyze;
         m_meet.fill(Meet { }, m_candidates.size());
+        bool isFirstSweep = true;
         for (bool changed = true; changed;) {
             changed = false;
+            bool everyBlockIsReached = true;
             for (unsigned b : m_blockOrder) {
-                if (b && !computeHead(b, changed))
+                if (b && !computeHead(b, changed)) {
+                    everyBlockIsReached = false;
                     continue;
+                }
                 changed |= !m_isReached.set(b);
                 State tail = std::exchange(m_tail[b], State { });
                 bool wasHandlerEdgeDead = m_isHandlerEdgeDead.get(b);
@@ -622,12 +672,32 @@ private:
                 processBlock(b);
                 changed |= tail != m_tail[b] || wasHandlerEdgeDead != m_isHandlerEdgeDead.get(b) || previousDeadTarget != m_deadTarget[b];
             }
+            if (std::exchange(isFirstSweep, false) && everyBlockIsReached && nothingComesBack())
+                break;
         }
+    }
+
+    bool nothingComesBack() const
+    {
+        for (size_t b : m_isLedBackTo) {
+            if (!m_head[b].isEmpty())
+                return false;
+            for (ValueID parameter : m_function.blocks[b].parameters) {
+                if (m_alias[parameter.index()] != none)
+                    return false;
+            }
+        }
+        return true;
     }
 
     bool computeHead(unsigned b, bool& changed)
     {
         auto& parameters = m_function.blocks[b].parameters;
+        if (parameters.isEmpty() && !m_holdsObjects.quickGet(b)) {
+            return m_predecessors[b].containsIf([&](const Edge& edge) {
+                return m_isReached.get(edge.from) && !isDeadEdge(edge);
+            });
+        }
         Vector<uint32_t, 4> common;
         common.fill(unvisited, parameters.size());
         unsigned numberOfEdges = 0;
@@ -1281,8 +1351,16 @@ private:
         }
         auto& values = m_mode == Mode::Rewrite ? valuesBeforeRewriting : m_function.blocks[b].values;
         bool lastValueIsUnchanged = true;
-        for (ValueID id : values)
-            lastValueIsUnchanged = execute(id);
+        if (m_mode != Mode::Rewrite && !m_holdsObjects.quickGet(b)) {
+            for (ValueID id : m_valuesThatActWithoutObjects.span().subspan(m_firstThatActsWithoutObjects[b], m_firstThatActsWithoutObjects[b + 1] - m_firstThatActsWithoutObjects[b])) {
+                bool isUnchanged = execute(id);
+                if (id == values.last())
+                    lastValueIsUnchanged = isUnchanged;
+            }
+        } else {
+            for (ValueID id : values)
+                lastValueIsUnchanged = execute(id);
+        }
         bool isHandlerEdgeDead = hasInvokedValue(b) && !lastValueIsUnchanged;
         m_isHandlerEdgeDead.set(b, isHandlerEdgeDead);
         TerminatorKind kind = m_function.blocks[b].terminator.kind;
@@ -1483,6 +1561,8 @@ private:
 
     void processEdges(unsigned b)
     {
+        if (m_mode == Mode::Count && m_tracked.isEmpty())
+            return;
         TerminatorKind kind = m_function.blocks[b].terminator.kind;
         unsigned numberOfTargets = m_function.blocks[b].terminator.targets.size();
         if (kind == TerminatorKind::Invoke && m_isHandlerEdgeDead.get(b))
@@ -1678,6 +1758,10 @@ private:
     BitVector m_isTracked;
     Vector<Meet> m_meet;
     BitVector m_mayWriteFields;
+    BitVector m_holdsObjects;
+    BitVector m_isLedBackTo;
+    Vector<ValueID> m_valuesThatActWithoutObjects;
+    Vector<uint32_t> m_firstThatActsWithoutObjects;
     Vector<Edge> m_ignoredEdges;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_ignoredEdgeSet;
     Vector<unsigned> m_deadTarget;

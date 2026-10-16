@@ -89,6 +89,7 @@ constexpr BuiltinImplementation prelude(PreludeFunction which) { return { Builti
 
 constexpr uint16_t noClass = BuiltinNameData::noClass;
 constexpr uint16_t severalClasses = BuiltinNameData::severalClasses;
+constexpr uint16_t noOperation = BuiltinNameData::noOperation;
 
 } // anonymous namespace
 
@@ -141,6 +142,10 @@ static_assert([] {
     }
     return true;
 }());
+
+#define AOT_TYPED_CHECK_OPERATION(spelled, entry, nameOfEntry) static_assert(builtinEntries[entry].kind == BuiltinKind::Operation && viewOf(builtinEntries[entry].name) == #spelled && builtinEntries[entry].nameName == BuiltinName(nameOfEntry) && builtinNames[nameOfEntry].operation == entry);
+FOR_EACH_AOT_TYPED_IR_OPERATION(AOT_TYPED_CHECK_OPERATION)
+#undef AOT_TYPED_CHECK_OPERATION
 
 static constinit const Builtins theBuiltins;
 
@@ -487,6 +492,14 @@ std::expected<JSCell*, String> Builtins::findOriginalStructure(JSGlobalObject* g
 
 std::expected<JSCell*, String> Builtins::lookUp(JSGlobalObject* globalObject, unsigned index, JSObject* holder) const
 {
+    if (index >= firstCellOfPrototypes()) {
+        auto prototype = findGlobal(globalObject, engineClasses[index - firstCellOfPrototypes()].text);
+        if (prototype)
+            prototype = findObject(globalObject, *prototype, globalObject->vm().propertyNames->prototype);
+        if (!prototype)
+            return makeUnexpected(String(prototype.error()));
+        return static_cast<JSCell*>(*prototype);
+    }
     if (index >= cellOfOriginalStructure(0))
         return findOriginalStructure(globalObject, index - cellOfOriginalStructure(0));
     if (index >= numberOfBuiltins) {
@@ -583,6 +596,8 @@ unsigned Builtins::cellOfStaticFunction(ASCIILiteral global, ASCIILiteral name) 
 // Whether compiled code may ask for the cell.
 bool Builtins::hasCell(unsigned index) const
 {
+    if (index >= firstCellOfPrototypes())
+        return isGlobal(engineClasses[index - firstCellOfPrototypes()].name);
     if (index >= cellOfOriginalStructure(0))
         return true;
     if (index >= numberOfBuiltins)

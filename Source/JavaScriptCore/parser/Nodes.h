@@ -191,6 +191,7 @@ namespace JSC {
         virtual bool isAssignmentLocation() const { return isLocation(); }
         virtual bool isResolveNode() const { return false; }
         virtual bool isAuditedExpressionNode() const { return false; }
+        virtual bool isReadModifyNode() const { return false; }
         virtual bool isAssignResolveNode() const { return false; }
         virtual bool isBracketAccessorNode() const { return false; }
         virtual bool isDotAccessorNode() const { return false; }
@@ -1485,6 +1486,7 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        bool isReadModifyNode() const final { return true; }
 
         const Identifier& m_ident;
         ExpressionNode* m_right;
@@ -1525,6 +1527,7 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        bool isReadModifyNode() const final { return true; }
 
         ExpressionNode* m_base;
         ExpressionNode* m_subscript;
@@ -1580,6 +1583,7 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        bool isReadModifyNode() const final { return true; }
 
         ExpressionNode* m_right;
         Operator m_operator;

@@ -636,6 +636,8 @@ public:
         runStep("capLayouts"_s, &Placement::capLayouts);
         runStep("widenNumbersWhereBytesAreFree"_s, &Placement::widenNumbersWhereBytesAreFree);
         runStep("pinLiterals"_s, &Placement::pinLiterals);
+        runStep("findRoomForExtraProperties"_s, &Placement::findRoomForExtraProperties);
+        runStep("widenReferencesWhereBytesAreFree"_s, &Placement::widenReferencesWhereBytesAreFree);
         runStep("sizeAllocations"_s, &Placement::sizeAllocations);
         runStep("collectOrders"_s, &Placement::collectOrders);
         runStep("numberShapes"_s, &Placement::numberShapes);
@@ -644,7 +646,10 @@ public:
         runStep("placeArraySites"_s, &Placement::placeArraySites);
         runStep("placeRegExpLiterals"_s, &Placement::placeRegExpLiterals);
         runStep("findFieldsWithSlotInEveryMember"_s, &Placement::findFieldsWithSlotInEveryMember);
+        runStep("findFieldsThatMayBeUnlisted"_s, &Placement::findFieldsThatMayBeUnlisted);
+        runStep("findClosuresMadeWhenRead"_s, &Placement::findClosuresMadeWhenRead);
         runStep("checkPlacement"_s, &Placement::checkPlacement);
+        runStep("findFieldsThatEveryMemberHasFromTheStart"_s, &Placement::findFieldsThatEveryMemberHasFromTheStart);
         m_program.sizeOfStaticsAsPlaced = m_program.sizeOfStatics;
         m_program.types.freeze();
     }
@@ -673,6 +678,306 @@ private:
         });
         for (auto& ofFunction : found)
             take(WTF::move(ofFunction));
+    }
+
+    void findFieldsThatEveryMemberHasFromTheStart()
+    {
+        for (auto& layout : m_program.layouts) {
+            for (auto& field : layout.fields)
+                field.storedInSlot = field.stored;
+        }
+        Vector<TypeID> typesWithoutAbsent;
+        unsigned numberOfFields = 0;
+        for (auto& layout : m_program.layouts) {
+            if (!isObjectLayout(layout.kind) || layout.members.isEmpty())
+                continue;
+            for (auto& field : layout.fields) {
+                if (!exists(field) || !field.storedInSlot || field.isOutOfLine || field.isLackedBySomeMember || field.isElsewhereInSomeMember)
+                    continue;
+                if (!(m_program.at(field.storedInSlot).primitives & Primitive::Absent))
+                    continue;
+                bool isThere = std::ranges::all_of(layout.members, [&](LayoutID member) {
+                    auto& fields = std::as_const(m_program).at(member).fields;
+                    auto own = std::as_const(m_program).at(member).fieldNamed(field.name);
+                    return own && fields[*own].flags & fieldIsNeverSeenAbsent && fields[*own].slot == field.slot;
+                });
+                if (!isThere)
+                    continue;
+                uint32_t index = field.storedInSlot.index();
+                if (typesWithoutAbsent.size() <= index)
+                    typesWithoutAbsent.grow(index + 1);
+                if (!typesWithoutAbsent[index])
+                    typesWithoutAbsent[index] = m_program.types.intern(m_program.at(field.storedInSlot).withoutPrimitives(Primitive::Absent));
+                field.stored = typesWithoutAbsent[index];
+                ++numberOfFields;
+            }
+        }
+        report(numberOfFields, " fields of views share a slot that may hold nothing, and no member is ever seen without them");
+    }
+
+    void findClosuresMadeWhenRead()
+    {
+        if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions())
+            return;
+        struct StoreOfClosure {
+            uint32_t function;
+            ValueID store;
+            uint32_t slot;
+            FunctionID closure;
+            LayoutID ofClass;
+        };
+        Vector<StoreOfClosure> stores;
+        for (uint32_t number = 0; number < m_program.functions.size(); ++number) {
+            auto& function = std::as_const(m_program).functions[number];
+            if (function.kind != FunctionKind::Constructor || !function.has(Format::FunctionHasThis) || function.isGenericEntrypoint() || function.blocks.isEmpty() || function.blocks[0].parameters.size() <= function.captureTypes.size())
+                continue;
+            ValueID self = function.blocks[0].parameters[function.captureTypes.size()];
+            LayoutID ofClass = m_program.typeOf(function, self).onlyView();
+            if (!ofClass)
+                continue;
+            auto& layout = m_program.at(ofClass);
+            if (layout.kind != LayoutKind::Instance || layout.base || !layout.isLaidOut || layout.admitsForeignObjects || layout.mayGiveUp || layout.constructor != FunctionID(number))
+                continue;
+            auto isSelf = [&](ValueID id) {
+                while (function.at(id).opcode == Opcode::Cast && function.at(id).castReason() == CastReason::Upcast)
+                    id = function.at(id).child(0);
+                return id == self;
+            };
+            Vector<uint8_t> uses;
+            auto numberOfUsesOf = [&](ValueID id) {
+                if (uses.isEmpty()) {
+                    uses.fill(0, function.values.size());
+                    auto note = [&](ValueID used) {
+                        if (used && uses[used.index()] < 2)
+                            ++uses[used.index()];
+                    };
+                    for (auto& block : function.blocks) {
+                        for (ValueID user : block.values)
+                            function.at(user).forEachChild(note);
+                        note(block.terminator.value);
+                        for (auto& target : block.terminator.targets) {
+                            for (ValueID argument : target.arguments)
+                                note(argument);
+                        }
+                    }
+                }
+                return uses[id.index()];
+            };
+            for (ValueID id : function.blocks[0].values) {
+                auto& value = function.at(id);
+                bool runsNoCode = !value.inlineFrame;
+                switch (value.opcode) {
+                case Opcode::Undefined:
+                case Opcode::Null:
+                case Opcode::Boolean:
+                case Opcode::Integer:
+                case Opcode::Double:
+                case Opcode::String:
+                case Opcode::FunctionReference:
+                case Opcode::BuiltinFunction:
+                case Opcode::NewObject:
+                case Opcode::NewArray:
+                case Opcode::NewClosure:
+                    break;
+                case Opcode::Cast:
+                    runsNoCode &= value.castReason() == CastReason::Upcast;
+                    break;
+                case Opcode::PutById: {
+                    auto named = isSelf(value.child(0)) ? layout.fieldNamed(value.string()) : std::nullopt;
+                    runsNoCode &= !!named;
+                    if (!runsNoCode)
+                        break;
+                    auto& field = layout.fields[*named];
+                    auto& stored = function.at(value.child(1));
+                    if (stored.opcode != Opcode::NewClosure || stored.inlineFrame || stored.arguments.size() > 1 || (stored.arguments.size() && !isSelf(stored.arguments[0])) || numberOfUsesOf(value.child(1)) != 1)
+                        break;
+                    auto& callee = m_program.at(stored.function());
+                    unsigned captures = stored.arguments.size();
+                    if (callee.kind == FunctionKind::Constructor || m_program.isResumeFunction(callee) || !m_program.makesSlimClosures(callee) || m_program.referencesAndCapturesOfClosures(callee) != std::pair(captures, captures) || !m_program.genericEntrypoints.contains(stored.function().index()))
+                        break;
+                    if (!m_program.namesOfClosuresMadeWhenRead.get(field.name.index()) || !exists(field) || field.isOutOfLine || field.store != Store::OptionalCell32 || field.isPinned || field.flags & (fieldIsAbsentAtBirth | fieldIsImmutable | fieldIsPlaceholder | fieldMayBeUnlisted) || m_program.at(field.slot).isDiscriminant || isPrivateName(m_program.string(field.name)))
+                        break;
+                    stores.append({ number, id, field.slot.index(), stored.function(), ofClass });
+                    break;
+                }
+                default:
+                    runsNoCode = false;
+                    break;
+                }
+                if (!runsNoCode)
+                    break;
+            }
+        }
+        forEachFunctionInOrder<Vector<StoreOfClosure>>([&](Function& function) {
+            Vector<StoreOfClosure> found;
+            Vector<uint8_t> uses;
+            auto isUsedOnce = [&](ValueID id) {
+                if (uses.isEmpty()) {
+                    uses.fill(0, function.values.size());
+                    auto note = [&](ValueID used) {
+                        if (used && uses[used.index()] < 2)
+                            ++uses[used.index()];
+                    };
+                    for (auto& block : function.blocks) {
+                        for (ValueID user : block.values)
+                            std::as_const(function).at(user).forEachChild(note);
+                        note(block.terminator.value);
+                        for (auto& target : block.terminator.targets) {
+                            for (ValueID argument : target.arguments)
+                                note(argument);
+                        }
+                    }
+                }
+                return uses[id.index()] == 1;
+            };
+            std::optional<BitVector> copied;
+            auto isCopiedHere = [&](ValueID object) {
+                if (!copied) {
+                    copied.emplace();
+                    for (auto& value : std::as_const(function).values) {
+                        if (value.opcode != Opcode::CallBuiltin && value.opcode != Opcode::Operation)
+                            continue;
+                        auto operation = languageOperationOf(m_program, value);
+                        if (operation != LanguageOperation::CopyDataProperties && operation != LanguageOperation::CopyDataPropertiesExcluding && operation != LanguageOperation::CloneObject && operation != LanguageOperation::CloneObjectWith && operation != LanguageOperation::CloneObjectAfter)
+                            continue;
+                        for (ValueID argument : value.arguments) {
+                            while (function.at(argument).opcode == Opcode::Cast)
+                                argument = function.at(argument).child(0);
+                            copied->set(argument.index());
+                        }
+                    }
+                }
+                return copied->get(object.index());
+            };
+            for (auto& block : function.blocks) {
+                for (size_t at = 0; at < block.values.size(); ++at) {
+                    ValueID object = block.values[at];
+                    if (function.at(object).opcode != Opcode::NewObjectWithShape)
+                        continue;
+                    LayoutID made = function.at(object).layout();
+                    auto& layout = m_program.at(made);
+                    auto& allocation = m_program.allocations[function.at(object).allocation()];
+                    if (layout.kind != LayoutKind::Record || allocation.layout != made || allocation.numberOfLiterals || allocation.discriminant != UINT16_MAX || !layout.specializations.isEmpty() || layout.mayGiveUp)
+                        continue;
+                    for (size_t next = at + 1; next < block.values.size() && (function.at(block.values[next]).opcode == Opcode::NewClosure || isInitializingStore(m_program, function, block, next)); ++next) {
+                        auto& store = function.at(block.values[next]);
+                        auto named = store.opcode == Opcode::PutById ? layout.fieldNamed(store.string()) : std::nullopt;
+                        if (!named && (store.opcode != Opcode::PutField || store.layout() != made))
+                            continue;
+                        uint32_t index = named ? *named : store.field();
+                        auto& field = layout.fields[index];
+                        auto& stored = function.at(store.child(1));
+                        unsigned captures = stored.arguments.size();
+                        if (stored.opcode != Opcode::NewClosure || captures > 1 || (captures && stored.arguments[0] != object) || !isUsedOnce(store.child(1)))
+                            continue;
+                        auto& callee = m_program.at(stored.function());
+                        if (callee.kind == FunctionKind::Constructor || m_program.isResumeFunction(callee) || !m_program.makesSlimClosures(callee) || m_program.referencesAndCapturesOfClosures(callee) != std::pair(captures, captures) || !m_program.genericEntrypoints.contains(stored.function().index()))
+                            continue;
+                        if (!m_program.namesOfClosuresMadeWhenRead.get(field.name.index()) || !exists(field) || field.isOutOfLine || field.store != Store::OptionalCell32 || field.isPinned || field.flags & (fieldIsImmutable | fieldIsPlaceholder | fieldMayBeUnlisted) || m_program.at(field.slot).isDiscriminant || isPrivateName(m_program.string(field.name)))
+                            continue;
+                        auto born = allocation.order.span().first(allocation.born);
+                        if (std::ranges::find(born, static_cast<uint16_t>(index)) == born.end() || isCopiedHere(object))
+                            continue;
+                        found.append({ static_cast<uint32_t>(&function - &std::as_const(m_program.functions)[0]), block.values[next], field.slot.index(), stored.function(), made });
+                    }
+                }
+            }
+            return found;
+        }, [&](Vector<StoreOfClosure>&& found) {
+            stores.appendVector(found);
+        }, holdsNewObjectWithShape);
+        if (stores.isEmpty())
+            return;
+        Vector<FunctionID> closureOfSlot(m_program.slots.size());
+        BitVector isRuledOut;
+        isRuledOut.ensureSize(m_program.slots.size());
+        for (auto& store : stores) {
+            if (closureOfSlot[store.slot] && closureOfSlot[store.slot] != store.closure)
+                isRuledOut.quickSet(store.slot);
+            closureOfSlot[store.slot] = store.closure;
+        }
+        for (auto& layout : m_program.layouts) {
+            if (!hasObjects(layout))
+                continue;
+            for (auto& field : layout.fields) {
+                if (!exists(field) || !closureOfSlot[field.slot.index()])
+                    continue;
+                if ((layout.kind == LayoutKind::Instance && (layout.admitsForeignObjects || layout.mayGiveUp)) || field.isOutOfLine || field.store != Store::OptionalCell32 || field.flags & fieldMayBeUnlisted)
+                    isRuledOut.quickSet(field.slot.index());
+            }
+        }
+        forEachFunctionInOrder<Vector<uint32_t>>([&](Function& function) {
+            Vector<uint32_t> read;
+            for (auto& value : std::as_const(function).values) {
+                if (value.opcode != Opcode::GetField || !isObjectLayout(m_program.at(value.layout()).kind))
+                    continue;
+                if (auto& field = m_program.at(value.layout()).fields[value.field()]; exists(field) && closureOfSlot[field.slot.index()])
+                    read.append(field.slot.index());
+            }
+            return read;
+        }, [&](Vector<uint32_t>&& read) {
+            for (uint32_t slot : read)
+                isRuledOut.quickSet(slot);
+        });
+        unsigned numberOfFields = 0;
+        for (auto& layout : m_program.layouts) {
+            for (auto& field : layout.fields) {
+                if (!isObjectLayout(layout.kind) || !exists(field) || !closureOfSlot[field.slot.index()] || isRuledOut.quickGet(field.slot.index()))
+                    continue;
+                field.flags |= fieldHoldsClosureMadeWhenRead;
+                field.closureMadeWhenRead = closureOfSlot[field.slot.index()];
+                ++numberOfFields;
+            }
+        }
+        unsigned numberOfStores = 0;
+        for (auto& store : stores) {
+            if (isRuledOut.quickGet(store.slot))
+                continue;
+            m_program.functions[store.function].at(store.store).storesClosureMadeWhenRead = true;
+            ++numberOfStores;
+        }
+        report(numberOfStores, " closures are made when their fields are read, not when their objects are constructed; ", numberOfFields, " fields of layouts and views hold them");
+    }
+
+    void findFieldsThatMayBeUnlisted()
+    {
+        auto& builtins = Builtins::singleton();
+        BitVector mayBeUnlisted;
+        mayBeUnlisted.ensureSize(m_program.slots.size());
+        forEachFunctionInOrder<Vector<uint32_t>>([&](Function& function) {
+            Vector<uint32_t> slots;
+            for (auto& value : function.values) {
+                if (value.opcode != Opcode::CallBuiltin)
+                    continue;
+                auto& implementation = builtins.at(value.builtin()).implementation;
+                if (implementation.kind != BuiltinImplementation::Operation || (implementation.operation != LanguageOperation::UnlistFields && implementation.operation != LanguageOperation::ListFields))
+                    continue;
+                auto& name = function.at(value.arguments[1]);
+                for (LayoutID view : m_program.typeOf(function, value.arguments[0]).views) {
+                    for (LayoutID member : m_program.at(view).members) {
+                        auto& layout = m_program.at(member);
+                        auto named = name.opcode == Opcode::String ? layout.fieldNamed(name.string()) : std::nullopt;
+                        for (unsigned index = named.value_or(0); layout.kind == LayoutKind::Instance && index < layout.fields.size(); ++index) {
+                            auto& field = layout.fields[index];
+                            if (exists(field) && !(field.flags & (fieldIsAbsentAtBirth | fieldIsPlaceholder)))
+                                slots.append(field.slot.index());
+                        }
+                    }
+                }
+            }
+            return slots;
+        }, [&](Vector<uint32_t>&& slots) {
+            for (uint32_t slot : slots)
+                mayBeUnlisted.quickSet(slot);
+        }, holdsCallBuiltin);
+        if (mayBeUnlisted.isEmpty())
+            return;
+        for (auto& layout : m_program.layouts) {
+            for (auto& field : layout.fields) {
+                if (isObjectLayout(layout.kind) && exists(field) && mayBeUnlisted.quickGet(field.slot.index()))
+                    field.flags |= fieldMayBeUnlisted;
+            }
+        }
     }
 
     static constexpr uint8_t holdsNewObjectWithShape = 1;
@@ -2394,8 +2699,11 @@ private:
         }
         for (auto& layout : layouts) {
             for (auto& field : layout.fields) {
-                if (layout.kind == LayoutKind::Instance && hasObjects(layout) && exists(field) && !(field.flags & fieldIsAbsentAtBirth))
+                if (layout.kind == LayoutKind::Instance && hasObjects(layout) && exists(field) && !(field.flags & fieldIsAbsentAtBirth)) {
                     m_existsFromBirth.quickSet(field.slot.index());
+                    if (field.flags & fieldIsSetAtCreation)
+                        m_isFirstStoredWithValue.quickSet(field.slot.index());
+                }
             }
         }
         for (size_t slot : m_existsFromBirth) {
@@ -2437,7 +2745,7 @@ private:
             uint32_t slot = order[index];
             return WhatTheOrderGoesBy { scoreOf(slot), uses[slot].numberOfLayouts, uses[slot].deadline, slot, static_cast<uint8_t>(sizeOf(slots[slot].store)), mayBeOutOfLine.quickGet(slot), mayBeOutOfLine.quickGet(slot) && comesAboutByTransitionAlone.quickGet(slot) };
         });
-        std::ranges::sort(ordered, [](const WhatTheOrderGoesBy& a, const WhatTheOrderGoesBy& b) {
+        sortOnPool(ordered.mutableSpan(), [](const WhatTheOrderGoesBy& a, const WhatTheOrderGoesBy& b) {
             if (a.mayBeOutOfLine != b.mayBeOutOfLine)
                 return !a.mayBeOutOfLine;
             if (a.comesAboutByTransitionAlone != b.comesAboutByTransitionAlone)
@@ -2713,7 +3021,7 @@ private:
         uint32_t bytesBeyondCreation = referencesBeyondCreation * sizeOf(Store::Cell32);
         Vector<uint32_t> caps(FillWith { }, layouts.size(), noCap);
         for (unsigned i = 0; i < layouts.size(); ++i) {
-            uint32_t cap = std::max<uint32_t>(withTheLeast[i], std::min<uint32_t>(cellSizeFor(std::max(atCreation[i], endOfWhatHasToBeInLine[i]) + bytesBeyondCreation), mostRoomInLine));
+            uint32_t cap = std::max<uint32_t>({ withTheLeast[i], std::min<uint32_t>(cellSizeFor(std::max(atCreation[i], endOfWhatHasToBeInLine[i]) + bytesBeyondCreation), mostRoomInLine), std::min<uint32_t>(cellSizeFor(atCreation[i]), mostRoomInLineAtCreation) });
             if (withEverything[i] > cap)
                 caps[i] = cap;
         }
@@ -2817,13 +3125,31 @@ private:
     }
 
     // What has been turned into one of a specialization may be turned into one of a specialization of that.
-    void widenNumbersWhereBytesAreFree()
+    void widenNumbersWhereBytesAreFree() { widenWhereBytesAreFree(false); }
+    void widenReferencesWhereBytesAreFree() { widenWhereBytesAreFree(true); }
+
+    void widenWhereBytesAreFree(bool widensReferences)
     {
         auto& layouts = m_program.layouts;
         auto& slots = m_program.slots;
+        auto isNarrow = [&](Store store) {
+            return widensReferences ? store == Store::Cell32 || store == Store::OptionalCell32 : store == Store::Int32OrElsewhere;
+        };
+        BitVector staysNarrow;
+        staysNarrow.ensureSize(slots.size());
+        if (widensReferences) {
+            for (auto& layout : layouts) {
+                for (auto& field : layout.fields) {
+                    if (exists(field) && m_program.namesOfClosuresMadeWhenRead.get(field.name.index()))
+                        staysNarrow.quickSet(field.slot.index());
+                }
+            }
+        }
         Vector<uint32_t> candidates;
         for (unsigned i = 0; i < slots.size(); ++i) {
-            if (slots[i].store == Store::Int32OrElsewhere && !slots[i].isOutOfLine)
+            if (widensReferences && m_program.at(slots[i].type).primitives & (Primitive::String | Primitive::Symbol | Primitive::LiteralString))
+                staysNarrow.quickSet(i);
+            if (isNarrow(slots[i].store) && !slots[i].isOutOfLine && !staysNarrow.quickGet(i))
                 candidates.append(i);
         }
         if (candidates.isEmpty())
@@ -2841,11 +3167,13 @@ private:
             auto& words = occupied[i];
             words.fill(0, layout.size / 64 + 1);
             words[0] = bytesAt(0, offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0));
+            if (layout.offsetOfExtraProperties && layout.offsetOfExtraProperties < layout.size)
+                words[layout.offsetOfExtraProperties / 64] |= bytesAt(layout.offsetOfExtraProperties, sizeOfExtraPropertiesWord);
             for (auto& field : layout.fields) {
                 if (!exists(field) || field.isOutOfLine)
                     continue;
                 words[field.offset / 64] |= bytesAt(field.offset, sizeOf(field.store));
-                if (field.store == Store::Int32OrElsewhere)
+                if (isNarrow(field.store) && !staysNarrow.quickGet(field.slot.index()))
                     layoutsOfSlots.append({ field.slot.index(), i });
             }
         }
@@ -2860,7 +3188,7 @@ private:
             if (layout.kind != LayoutKind::Record)
                 continue;
             for (auto& field : layout.fields) {
-                if (!exists(field) || field.store != Store::Int32OrElsewhere)
+                if (!exists(field) || !isNarrow(field.store) || staysNarrow.quickGet(field.slot.index()))
                     continue;
                 uint32_t group = groupOfName.ensure(field.name.index(), [&] {
                     groups.append({ });
@@ -2968,8 +3296,11 @@ private:
                 }
                 for (auto [index, offset] : found) {
                     auto& slot = slots[index];
-                    m_isExpectedInt32.quickClear(index);
-                    slot.store = storeFor(m_program.at(slot.type), false, m_keepsWideReferences.quickGet(index));
+                    if (widensReferences)
+                        m_keepsWideReferences.quickSet(index);
+                    else
+                        m_isExpectedInt32.quickClear(index);
+                    slot.store = storeFor(m_program.at(slot.type), m_isExpectedInt32.quickGet(index), m_keepsWideReferences.quickGet(index));
                     RELEASE_ASSERT(sizeOf(slot.store) == wide);
                     slot.offset = offset;
                     ++numberWidened;
@@ -2989,7 +3320,64 @@ private:
                 field.offset = slot.offset;
             }
         }
-        report(candidates.size() - numberWidened, " of ", candidates.size(), " slots of numbers that are expected to be int32s take 32 bits: the others have found 64 that were free");
+        report(candidates.size() - numberWidened, " of ", candidates.size(), widensReferences ? " slots of references" : " slots of numbers that are expected to be int32s", " take 32 bits: the others have found 64 that were free");
+    }
+
+    void findRoomForExtraProperties()
+    {
+        if (Options::useAOTWideReferences())
+            return;
+        auto& layouts = m_program.layouts;
+        Vector<uint32_t> group(layouts.size(), [](size_t index) {
+            return static_cast<uint32_t>(index);
+        });
+        auto find = [&](uint32_t layout) {
+            while (group[layout] != layout)
+                layout = group[layout] = group[group[layout]];
+            return layout;
+        };
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            for (LayoutID target : layouts[i].specializations) {
+                auto [least, other] = std::minmax({ find(i), find(target.index()) });
+                group[other] = least;
+            }
+        }
+        struct Room {
+            uint32_t end { LayoutData::endOfPlacesOfExtraProperties };
+            std::array<uint64_t, LayoutData::endOfPlacesOfExtraProperties / 64> occupied { };
+        };
+        Vector<Room> rooms(layouts.size());
+        auto occupy = [](Room& room, uint32_t first, uint32_t end) {
+            for (uint32_t byte = first; byte < std::min(end, LayoutData::endOfPlacesOfExtraProperties); ++byte)
+                room.occupied[byte / 64] |= 1ull << byte % 64;
+        };
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            auto& layout = layouts[i];
+            if (!hasObjects(layout))
+                continue;
+            Room& room = rooms[find(i)];
+            room.end = std::min<uint32_t>(room.end, cellSizeFor(layout.size));
+            occupy(room, 0, offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0));
+            for (auto& field : layout.fields) {
+                if (exists(field) && !field.isOutOfLine)
+                    occupy(room, field.offset, field.offset + sizeOf(field.store));
+            }
+        }
+        unsigned numberOfLayouts = 0;
+        unsigned numberOfLayoutsWithRoom = 0;
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            auto& layout = layouts[i];
+            if (!hasObjects(layout))
+                continue;
+            ++numberOfLayouts;
+            Room& room = rooms[find(i)];
+            for (uint32_t offset = offsetOfFirstField; offset + sizeOfExtraPropertiesWord <= room.end && !layout.offsetOfExtraProperties; offset += sizeOfExtraPropertiesWord) {
+                if (!(room.occupied[offset / 64] >> offset % 64 & ((1ull << sizeOfExtraPropertiesWord) - 1)))
+                    layout.offsetOfExtraProperties = offset;
+            }
+            numberOfLayoutsWithRoom += !!layout.offsetOfExtraProperties;
+        }
+        report(numberOfLayoutsWithRoom, " of ", numberOfLayouts, " allocated layouts of objects have four bytes free for a reference to extra properties");
     }
 
     void makeRoomToSpecialize()
@@ -3192,6 +3580,7 @@ private:
         unsigned count = family.finalLayouts.size();
         family.baseSizes.fill(layouts[family.base].size, count + 1);
         uint32_t sizeOfAbstract = layouts[family.base].size;
+        uint32_t sizeOfLastAbstract = 0;
         BitVector isListed;
         auto countsFor = [&](uint32_t layout, std::span<const Literal> constants, bool lists) {
             for (auto& constant : constants) {
@@ -3210,12 +3599,13 @@ private:
                 continue;
             }
             sizeOfAbstract = std::max(sizeOfAbstract, layouts[layout].size);
+            if (layouts[layout].specializations.isEmpty())
+                sizeOfLastAbstract = std::max(sizeOfLastAbstract, layouts[layout].size);
             for (LayoutID subtype : layouts[layout].members)
                 countsFor(layout, constantsOf(subtype.index(), family.discriminant), false);
         }
         for (unsigned k = 0; k <= count; ++k) {
-            if (!isListed.get(k))
-                family.baseSizes[k] = sizeOfAbstract;
+            family.baseSizes[k] = isListed.get(k) ? std::max(family.baseSizes[k], sizeOfLastAbstract) : sizeOfAbstract;
         }
     }
 
@@ -3868,21 +4258,6 @@ private:
             variable.store = storeOf(type);
             variable.hasCard = true;
         }
-        Vector<unsigned> timesStoredLater;
-        timesStoredLater.fill(0, variables.size());
-        forEachIndexInParallel(m_program.functions.size(), [&](unsigned index) {
-            auto& function = std::as_const(m_program).functions[index];
-            if ((function.kind == FunctionKind::Module && function.parameterTypes.isEmpty()) || (function.module && m_program.modules[function.module.index()].initializer == FunctionID(index)))
-                return;
-            for (auto& value : function.values) {
-                if (value.opcode == Opcode::PutModuleVariable)
-                    WTF::atomicExchangeAdd(&timesStoredLater[value.variable().index()], 1u, std::memory_order_relaxed);
-            }
-        });
-        for (unsigned index = 0; index < variables.size(); ++index) {
-            if (timesStoredLater[index])
-                variables[index].hasCard = false;
-        }
         constexpr unsigned numberOfGroupsThatAreFilled = 5;
         BitVector isModuleOfHost(m_program.modules.size());
         auto addModuleOf = [&](FunctionID function) {
@@ -3985,16 +4360,24 @@ private:
             unsigned group = groupOf(variables[index]);
             return group < numberOfGroupsThatAreFilled && !isFilledAtBirth.get(index) ? group : group + numberOfGroupsThatAreFilled;
         };
-        Vector<unsigned> order(variables.size(), [](size_t index) {
-            return static_cast<unsigned>(index);
+        constexpr unsigned numberOfPlaces = placeOfModuleEvaluationErrors + 1;
+        std::array<unsigned, numberOfPlaces> nextOfPlace { };
+        Vector<uint8_t> places(variables.size(), [&](size_t index) {
+            unsigned place = placeOf(index);
+            RELEASE_ASSERT(place < numberOfPlaces);
+            ++nextOfPlace[place];
+            return static_cast<uint8_t>(place);
         });
-        std::ranges::stable_sort(order, [&](unsigned a, unsigned b) {
-            return placeOf(a) < placeOf(b);
-        });
+        unsigned numberAhead = 0;
+        for (unsigned& next : nextOfPlace)
+            numberAhead += std::exchange(next, numberAhead);
+        Vector<unsigned> order(FillWith { }, variables.size(), 0u);
+        for (unsigned index = 0; index < variables.size(); ++index)
+            order[nextOfPlace[places[index]]++] = index;
         uint32_t offset = 0;
         auto place = [&](bool isFilledLate) {
             for (unsigned i : order) {
-                if ((placeOf(i) < numberOfGroupsThatAreFilled) != isFilledLate)
+                if ((places[i] < numberOfGroupsThatAreFilled) != isFilledLate)
                     continue;
                 offset = static_cast<uint32_t>(WTF::roundUpToMultipleOf(sizeOf(variables[i].store), offset));
                 variables[i].offset = offset;
@@ -4578,7 +4961,12 @@ private:
             }
             RELEASE_ASSERT(extensionExtents.isEmpty() ? !layout.extensionSize : layout.extensionSize == extensionEnd);
             for (LayoutID target : layout.specializations)
-                RELEASE_ASSERT(m_program.at(target).hasExtension == layout.hasExtension);
+                RELEASE_ASSERT(m_program.at(target).hasExtension == layout.hasExtension && (!m_program.at(target).isAllocated || m_program.at(target).offsetOfExtraProperties == layout.offsetOfExtraProperties));
+            if (uint32_t offset = layout.offsetOfExtraProperties) {
+                RELEASE_ASSERT(isObjectLayout(layout.kind) && !(offset % sizeOfExtraPropertiesWord) && offset + sizeOfExtraPropertiesWord <= cellSizeFor(layout.size) && offset < LayoutData::endOfPlacesOfExtraProperties);
+                for (auto [first, last] : extents)
+                    RELEASE_ASSERT(last <= offset || first >= offset + sizeOfExtraPropertiesWord);
+            }
             RELEASE_ASSERT(end <= layout.size && layout.size <= layout.sizeWithRoomToSpecialize);
             for (LayoutID specialization : layout.specializations)
                 RELEASE_ASSERT(m_program.at(specialization).size <= layout.sizeWithRoomToSpecialize);
@@ -4645,6 +5033,7 @@ private:
     static constexpr uint32_t noCap = UINT32_MAX;
     static constexpr uint32_t referencesBeyondCreation = 4;
     static constexpr uint32_t mostRoomInLine = 128;
+    static constexpr uint32_t mostRoomInLineAtCreation = 512;
     // By layout: where the inline slots that may as well be out of line end. noCap: it has no extension.
     Vector<uint32_t> m_inlineCap;
     // With what typeSlots() made of them.
@@ -4760,7 +5149,6 @@ public:
             case Opcode::InById:
             case Opcode::DeleteById:
             case Opcode::CallMethod:
-            case Opcode::Operation:
             case Opcode::Call:
                 noteNamed(value.string());
                 break;
@@ -5047,17 +5435,11 @@ public:
         Vector<uint32_t> functionsInSourceOrder(m_program.functions.size(), [&](size_t index) {
             return placesAndNumbers[index][2];
         });
-        std::array<std::atomic<int8_t>, 256> namesString { };
+        static constexpr OpcodeSet opcodesThatNameAString { Opcode::String, Opcode::GetGlobal, Opcode::GetGlobalForTypeOf, Opcode::PutGlobal, Opcode::GetById, Opcode::PutById, Opcode::InById, Opcode::DeleteById, Opcode::CallMethod };
         Vector<Vector<uint32_t>> textsOfFunctions(m_program.functions.size());
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
             for (auto& value : m_program.functions[i].values) {
-                int8_t names = namesString[static_cast<uint8_t>(value.opcode)].load(std::memory_order_relaxed);
-                if (!names) {
-                    StringView name { nameOf(value.opcode) };
-                    names = value.opcode == Opcode::String || name.find("ById"_s) != notFound || name.find("Method"_s) != notFound || name.find("Global"_s) != notFound ? 1 : -1;
-                    namesString[static_cast<uint8_t>(value.opcode)].store(names, std::memory_order_relaxed);
-                }
-                if (names > 0)
+                if (opcodesThatNameAString.contains(value.opcode))
                     textsOfFunctions[i].append(value.immediates[0]);
             }
         });
@@ -5216,6 +5598,13 @@ public:
 
         Vector<uint32_t> shapes(FillWith { }, m_program.numberOfShapes + 1, 0);
         Vector<uint32_t> classes(FillWith { }, m_program.layouts.size(), 0);
+        m_namesTakenForAbsent.ensureSize(strings.size());
+        for (auto& layout : m_program.layouts) {
+            for (auto& field : layout.fields) {
+                if (field.name)
+                    m_namesTakenForAbsent.quickSet(field.name.index());
+            }
+        }
         for (unsigned i = 0; i < m_program.layouts.size(); ++i) {
             auto& layout = m_program.layouts[i];
             // The prototype of a class nothing allocates is on the chain of the classes that extend it.
@@ -5386,10 +5775,6 @@ public:
             header.placesByNameAndRowOffset = append(places);
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT image: places by name and row: ", order.size(), " names in rows, ", places.size(), " entries, ", displacements.size(), " displacements");
         }
-        Vector<uint8_t> extendedClasses;
-        for (auto& engineClass : Builtins::singleton().classes())
-            extendedClasses.append(m_program.isExtended(engineClass.name));
-        header.extendedClassesOffset = append(extendedClasses);
         Vector<uint32_t> builtinCellsFilledFromStart;
         for (size_t cell : m_program.builtinCellsComparedWith)
             builtinCellsFilledFromStart.append(static_cast<uint32_t>(cell));
@@ -5578,13 +5963,25 @@ public:
             moduleEvaluations[row] = offsetOf(evaluation.isEvaluated);
             moduleEvaluations[numberOfModuleEvaluations + row] = moduleEvaluations.size();
             moduleEvaluations.append(evaluation.error ? offsetOf(evaluation.error) : std::numeric_limits<uint32_t>::max());
-            moduleEvaluations.append(moduleEvaluations.size() + 1 + 2 * evaluation.callees.size());
+            moduleEvaluations.append(moduleEvaluations.size() + 1 + 2 * (evaluation.callees.size() + evaluation.fetches.size()));
+            size_t numberOfCalleesAhead = 0;
+            size_t nextFetch = 0;
+            auto appendFetches = [&] {
+                for (; nextFetch < evaluation.fetches.size() && evaluation.fetches[nextFetch].numberOfCalleesAhead <= numberOfCalleesAhead; ++nextFetch) {
+                    moduleEvaluations.append(Program::ModuleEvaluation::markOfFetch);
+                    moduleEvaluations.append(evaluation.fetches[nextFetch].externalModule);
+                }
+            };
             for (FunctionID callee : evaluation.callees) {
+                appendFetches();
+                ++numberOfCalleesAhead;
                 auto other = m_program.moduleEvaluationOfFunction.find(callee.index());
                 bool isRow = other != m_program.moduleEvaluationOfFunction.end();
                 moduleEvaluations.append(isRow ? offsetOf(m_program.moduleEvaluations[other->value].isEvaluated) : std::numeric_limits<uint32_t>::max());
                 moduleEvaluations.append(isRow ? other->value : callee.index() + rowsLeftOutAheadOfClosures);
             }
+            appendFetches();
+            RELEASE_ASSERT(nextFetch == evaluation.fetches.size());
         }
         header.moduleEvaluationsOffset = append(moduleEvaluations);
         Vector<std::array<uint8_t, 2>> closureCounts;
@@ -5873,6 +6270,13 @@ public:
                 if (found != entries.end() && std::get<0>(*found) == std::get<0>(key) && std::get<1>(*found) == std::get<1>(key) && std::get<2>(*found) == std::get<2>(key))
                     owner[i] = owner[std::get<3>(*found)];
             }
+            Vector<uint32_t> first(owner.size(), [](size_t index) {
+                return static_cast<uint32_t>(index);
+            });
+            for (unsigned i = 0; i < owner.size(); ++i)
+                first[owner[i]] = std::min(first[owner[i]], i);
+            for (auto& one : owner)
+                one = first[one];
             for (auto& [function, entrypoint] : m_program.genericEntrypoints)
                 owner[entrypoint.index()] = owner[function];
             Vector<uint32_t> runsOfAliases;
@@ -5883,7 +6287,7 @@ public:
             for (unsigned i = 0; i < owner.size(); ++i) {
                 if (owner[i] == i)
                     continue;
-                if (runsOfAliases.isEmpty() || i != behindLastAlias)
+                if (runsOfAliases.isEmpty() || i != behindLastAlias || owner[i] < owner[i - 1])
                     runsOfAliases.appendList({ static_cast<uint32_t>(i), static_cast<uint32_t>(highBytesOfOwners.size()) });
                 behindLastAlias = i + 1;
                 lowHalvesOfOwners.append(static_cast<uint16_t>(owner[i]));
@@ -5896,6 +6300,8 @@ public:
             aliases.append(asBytes(lowHalvesOfOwners.span()));
             aliases.appendVector(highBytesOfOwners);
             header.functionAliasesOffset = append(aliases);
+            header.firstGenericEntrypoint = m_program.firstGenericEntrypoint;
+            header.numberOfConsecutiveGenericEntrypoints = m_program.numberOfConsecutiveGenericEntrypoints;
         }
         if (header.isCompiledForAudit) {
             Vector<uint32_t> sources;
@@ -6240,7 +6646,7 @@ private:
             return true;
         if (m_timesNameIsPrinted.isEmpty()) {
             for (auto& other : m_program.layouts) {
-                if (isObjectLayout(other.kind))
+                if (isObjectLayout(other.kind) && !other.isMemberOnlyView)
                     ++m_timesNameIsPrinted.add(printedNameOf(other), 0).iterator->value;
             }
         }
@@ -6372,7 +6778,8 @@ private:
                     flags |= methodHasComputedName;
                     name = variables.size();
                     variables.append({ m_program.emptyString, method.key, { } });
-                }
+                } else if (auto text = m_program.string(method.name); m_namesTakenForAbsent.get(name) || isOnObjectPrototype(m_program, method.name) || equalSpans(text, asBytes("then"_s.span8())) || equalSpans(text, asBytes("toJSON"_s.span8())) || parseIndex(text))
+                    flags |= methodHasNameThatIsTakenForAbsent;
                 RELEASE_ASSERT(name < 1u << 24 && static_cast<uint32_t>(method.kind) < 16 && flags < 16);
                 methods.append(MethodData { name, static_cast<uint32_t>(method.kind), flags, entrypointOf(method.function) });
             }
@@ -6441,13 +6848,13 @@ private:
         };
         for (unsigned i = 0; i < layout.fields.size(); ++i) {
             if (isDescribed(i))
-                appendTypesOfField(layout.fields[i].stored, layout.fields[i].type, layout.fields[i].literals.size(), literalsOffsets[i]);
+                appendTypesOfField(layout.fields[i].storedInSlot, layout.fields[i].type, layout.fields[i].literals.size(), layout.fields[i].flags & fieldHoldsClosureMadeWhenRead ? entrypointOf(layout.fields[i].closureMadeWhenRead) | (m_program.at(layout.fields[i].closureMadeWhenRead).captureTypes.isEmpty() ? 0 : closureMadeWhenReadCapturesItsObject) : literalsOffsets[i]);
         }
         for (auto [name, number, typeOfStaticField] : variables) {
             if (typeOfStaticField)
                 appendTypesOfField(typeOfStaticField, typeOfStaticField, 0, 0);
             else if (layout.environment)
-                appendTypesOfField(m_program.at(layout.environment).fields[number].stored, m_program.at(layout.environment).fields[number].type, 0, 0);
+                appendTypesOfField(m_program.at(layout.environment).fields[number].storedInSlot, m_program.at(layout.environment).fields[number].type, 0, 0);
             else
                 appendTypesOfField(m_program.variables[number].type ? m_program.variables[number].type : m_program.types.anything, m_program.variables[number].type, 0, 0);
         }
@@ -6484,6 +6891,7 @@ private:
         data.isAbstract = layout.isAbstract;
         data.referencesOffset = referencesOffset ? static_cast<int32_t>(referencesOffset) - static_cast<int32_t>(offset) : 0;
         data.hasExtension = layout.hasExtension;
+        data.placeOfExtraProperties = layout.offsetOfExtraProperties / sizeOfExtraPropertiesWord;
         if (isClass) {
             auto& ofClass = data.classData();
             ofClass.base = layout.base ? layout.base.index() : LayoutData::noBase;
@@ -6519,7 +6927,7 @@ private:
             if (!isDescribed(i))
                 continue;
             uint32_t pinned = field.isPinned ? fieldIsPinned | field.slot.index() % numberOfGuardsOfPinnedFields << guardOfPinnedFieldShift : 0;
-            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned, field.stored);
+            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned, field.storedInSlot);
         }
         memcpySpan(m_result.mutableSpan().subspan(next), asBytes(methods.span()));
         next += methods.sizeInBytes();
@@ -6529,7 +6937,7 @@ private:
                 appendField(name, 0, Store::JSValue, fieldIsAnnotated, typeOfStaticField);
             else if (layout.environment) {
                 auto& field = m_program.at(layout.environment).fields[number];
-                appendField(name, field.offset, field.store, field.flags, field.stored);
+                appendField(name, field.offset, field.store, field.flags, field.storedInSlot);
             } else {
                 auto& variable = m_program.variables[number];
                 appendField(name, variable.offset, variable.store, 0, variable.type ? variable.type : m_program.types.anything);
@@ -6540,6 +6948,7 @@ private:
 
     const Program& m_program;
     Vector<uint8_t> m_result;
+    BitVector m_namesTakenForAbsent;
     // By TypeID.
     Vector<uint32_t> m_offsetOfType;
     UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keepsTypeText;
@@ -6599,13 +7008,17 @@ static void findTypesNamedAtRunTime(Program& program)
     };
     auto noteFieldsOf = [&](const Layout& layout) {
         for (auto& field : layout.fields) {
-            note(field.stored);
+            note(field.storedInSlot);
             note(field.type);
         }
         for (auto& field : layout.staticFields)
             note(field.type);
     };
     note(program.types.anything);
+    if (Options::auditAOTTypedAssertions()) [[unlikely]] {
+        for (uint32_t type = 0; type < program.types.size(); ++type)
+            note(TypeID(type));
+    }
     Vector<uint8_t> isNamedByValue(FillWith { }, program.types.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto mark = [&](TypeID type) {
@@ -6623,6 +7036,8 @@ static void findTypesNamedAtRunTime(Program& program)
             case Opcode::NewObjectWithShape:
                 break;
             case Opcode::Cast:
+                if (value.castReason() == CastReason::Member)
+                    break;
                 if (value.castReason() == CastReason::Coerce)
                     mark(value.coercedType());
                 [[fallthrough]];

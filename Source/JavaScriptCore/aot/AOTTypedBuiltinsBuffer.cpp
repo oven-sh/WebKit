@@ -40,7 +40,6 @@ static_assert(std::size(bufferAccessors) == Instance::numberOfBufferAccessors);
 // Whether every object with the structure of the receiver finds, under the name of the row, the function the embedder has registered as what the row says. Runs no code of the program.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLookForBufferAccessor, void, (Instance* instance, JSCell* receiver, uint32_t row))
 {
-    static constexpr unsigned maxAttempts = 16;
     VM& vm = *instance->vm;
     auto& accessor = bufferAccessors[row];
     if (instance->bufferAccessorStructureIDs[row])
@@ -78,11 +77,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLookForBufferAccessor, void, 
         instance->bufferAccessorHolder = holder;
         return function;
     };
-    if (JSCell* function = find()) {
+    JSCell* function = find();
+    countOperationNamed(instance, "operationAOTTypedLookForBufferAccessor", function ? "found" : "not-found");
+    if (function) {
         instance->bufferAccessors[row] = function;
         instance->bufferAccessorStructureIDs[row] = receiver->structureID().bits();
         vm.writeBarrier(instance->globalObject);
-    } else if (++instance->bufferAccessorAttempts[row] == maxAttempts)
+    } else if (++instance->bufferAccessorAttempts[row] == Instance::maxBufferAccessorAttempts)
         instance->bufferAccessorStructureIDs[row] = Instance::bufferAccessorIsNotLookedFor;
 }
 

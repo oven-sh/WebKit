@@ -596,6 +596,13 @@ void MacroAssemblerX86_64::useOnlyFeaturesOfBuildTarget()
 #endif
 }
 
+bool MacroAssemblerX86_64::setSupportsAVX(bool supportsAVX)
+{
+    bool supportedAVX = s_avxCheckState == CPUIDCheckState::Set;
+    s_avxCheckState = supportsAVX ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+    return supportedAVX;
+}
+
 unsigned MacroAssemblerX86_64::featuresOfBuildTarget()
 {
     unsigned features = 0;

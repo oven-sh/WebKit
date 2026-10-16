@@ -31,14 +31,24 @@ public:
         Vector<unsigned> sizes(count);
         Vector<BitVector> neverReturn(count);
         Vector<Program::FactsForInlining> facts(count);
+        Vector<uint32_t> onlyMakers(FillWith { }, count, Program::hasNoMakerOfClosures);
         forEachIndexInParallel(count, [&](unsigned i) {
             Function none;
             Inlining inlining(program, FunctionID(i), none);
             sizes[i] = inlining.sizeOf(std::as_const(program).functions[i], UINT_MAX);
             neverReturn[i] = inlining.neverReturnsIn(FunctionID(i));
+            for (auto& value : std::as_const(program).functions[i].values) {
+                if (value.opcode != Opcode::NewClosure && value.opcode != Opcode::NewClosureOnce && value.opcode != Opcode::FunctionReference)
+                    continue;
+                uint32_t* maker = &onlyMakers[value.function().index()];
+                uint32_t previous = WTF::atomicCompareExchangeStrong(maker, Program::hasNoMakerOfClosures, i, std::memory_order_relaxed);
+                if (previous != Program::hasNoMakerOfClosures && previous != i)
+                    WTF::atomicStore(maker, Program::hasSeveralMakersOfClosures, std::memory_order_relaxed);
+            }
             if (!std::as_const(program).functions[i].blocks.isEmpty())
                 facts[i] = { inlining.isAccessor(FunctionID(i)), inlining.returnsMethodTable(FunctionID(i)), inlining.parametersCalledBy(FunctionID(i)), inlining.parametersCalledInLoopsBy(FunctionID(i)) };
         });
+        program.onlyMakersOfClosures = WTF::move(onlyMakers);
         program.factsForInlining = WTF::move(facts);
         program.sizesForInlining = WTF::move(sizes);
         program.blocksThatNeverReturn = WTF::move(neverReturn);
@@ -85,7 +95,9 @@ public:
                     continue;
                 FunctionID callee = m_caller.at(call).function();
                 // One level more where the copy makes a call of a value a call of a function.
-                bool isTooDeep = depthOf(m_caller.at(call)) >= maxDepth + (isHandedFunctionItCalls(callee, m_caller.at(call)) || isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call)));
+                uint32_t depthThatIsTooDeep = maxDepth + (isHandedFunctionItCalls(callee, m_caller.at(call)) || isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call)));
+                bool isTooDeep = depthOf(m_caller.at(call)) >= depthThatIsTooDeep;
+                bool isShallowerByLevels = isTooDeep && depthOf(m_caller.at(call), Copies::ThatAreLevels) < depthThatIsTooDeep;
                 // The call is one of the worker from here on: it is looked at again.
                 if (m_program.at(callee).nilOfResults && takeApartResultOrNil(m_program, m_caller, call)) {
                     didChangeCaller();
@@ -108,7 +120,7 @@ public:
                 bool callerIsHot = m_program.isHotByText(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInItsLoops(m_id));
                 if (m_program.at(callee).worker && !isMerelyRead(call))
                     continue;
-                if (isOwnWorker(callee))
+                if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinyWhereNotHot + 1) > tinyWhereNotHot)
                     continue;
                 // Its first stores are lowered together, in one block. What is copied in the place of a call that a handler watches is split at whatever may throw.
                 if (k + 1 == m_caller.at(block).values.size() && m_caller.at(block).terminator.kind == TerminatorKind::Invoke && !initialStoresOf(m_program.at(callee)).empty() && !initialStoresCannotThrowAt(block, k, m_program.at(callee)))
@@ -138,7 +150,7 @@ public:
                     limit = maxHandedLiteral;
                     licence = 'h';
                 }
-                if (!isTooDeep && limit < smallWhereMoreIsGained && callerSuspends() && isHandedObjectItOnlyReads(m_caller.at(call))) {
+                if (!isTooDeep && limit < smallWhereMoreIsGained && ((callerSuspends() && isHandedObjectItOnlyReads(m_caller.at(call))) || isHandedObjectItDestructures(m_caller.at(call)))) {
                     limit = smallWhereMoreIsGained;
                     licence = 'h';
                 }
@@ -160,7 +172,7 @@ public:
                     }
                 }
                 const BitVector* head = nullptr;
-                if (isTooDeep || (!isBuiltin && !isMoved && growsBy > limit)) {
+                if ((isTooDeep && !isShallowerByLevels) || (!isBuiltin && !isMoved && growsBy > limit)) {
                     if (!callerIsHot || runsOnceOrWaits())
                         continue;
                     auto& found = headOf(callee);
@@ -602,12 +614,11 @@ private:
 
     bool isUsedBehindSuspension(ValueID object) const
     {
-        std::optional<StringID> nameOfAwait = m_program.find(asBytes("AwaitBySavingFrame"_s.span8()));
         auto suspends = [&](const Value& value) {
             if (value.opcode == Opcode::Await || value.opcode == Opcode::Yield)
                 return true;
             if (value.opcode == Opcode::Operation)
-                return nameOfAwait && value.string() == *nameOfAwait;
+                return m_program.operationOf(value) == Operations::AwaitBySavingFrame;
             if (value.opcode != Opcode::CallBuiltin)
                 return false;
             auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
@@ -678,6 +689,21 @@ private:
             while (m_caller.at(argument).opcode == Opcode::Cast)
                 argument = m_caller.at(argument).child(0);
             if (m_caller.at(argument).opcode == Opcode::NewObjectWithShape && isUsedBehindSuspension(argument) && onlyReadsFieldsOfParameter(callee, i))
+                return true;
+        }
+        return false;
+    }
+
+    bool isHandedObjectItDestructures(const Value& call) const
+    {
+        auto& callee = m_program.at(call.function());
+        if (!callee.onlyDestructuresParameter || callee.blocks.isEmpty() || callee.blocks[0].parameters.size() != call.arguments.size())
+            return false;
+        for (unsigned i = 0; i < call.arguments.size(); ++i) {
+            ValueID argument = call.arguments[i];
+            while (m_caller.at(argument).opcode == Opcode::Cast)
+                argument = m_caller.at(argument).child(0);
+            if (m_caller.at(argument).opcode == Opcode::NewObjectWithShape && onlyReadsFieldsOfParameter(callee, i))
                 return true;
         }
         return false;
@@ -933,7 +959,7 @@ private:
         if (m_program.numberOfDirectCalls[callee.index()] != 1 || m_program.genericEntrypoints.contains(callee.index()))
             return false;
         // A ramp is copied nowhere either.
-        return (m_program.at(m_id).resumeFunction || m_program.at(m_id).startFunction || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
+        return (m_program.at(m_id).resumeFunction || m_program.at(m_id).startFunction || m_currentBlockIsInLoopOfCaller || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
     }
 
     // Whatever it returns is an object that it has made, or that a function it calls has.
@@ -1322,7 +1348,8 @@ private:
     // A constructor that does nothing but store to `this` is smaller than the call of it, wherever the call stands. So is an accessor.
     bool isOwnWorker(FunctionID callee) const { return m_program.at(m_id).worker == callee; }
 
-    uint32_t depthOf(const Value& call) const
+    enum class Copies : bool { All, ThatAreLevels };
+    uint32_t depthOf(const Value& call, Copies counted = Copies::All) const
     {
         // A wrapper is taken in wherever its call stands. How deep that is, the frames say to the call of the worker.
         if (m_program.at(call.function()).worker || isOwnWorker(call.function()))
@@ -1335,8 +1362,25 @@ private:
             return 0;
         uint32_t depth = call.immediates[1] == Format::none ? 0 : call.immediates[1];
         uint32_t frames = 0;
-        for (uint32_t frame = call.inlineFrame; frame; frame = m_caller.inlineFrames[frame].parent)
-            frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker;
+        uint32_t innermostFrame = call.inlineFrame;
+        uint32_t maker = call.function().index() < m_program.onlyMakersOfClosures.size() ? m_program.onlyMakersOfClosures[call.function().index()] : Program::hasNoMakerOfClosures;
+        if (counted == Copies::ThatAreLevels && innermostFrame && maker < Program::hasSeveralMakersOfClosures && m_caller.inlineFrames[innermostFrame].callee.index() != maker) {
+            uint32_t frameOfMaker = innermostFrame;
+            bool standsInCopyOfItself = false;
+            while (frameOfMaker && m_caller.inlineFrames[frameOfMaker].callee.index() != maker) {
+                standsInCopyOfItself |= m_caller.inlineFrames[frameOfMaker].callee == call.function();
+                frameOfMaker = m_caller.inlineFrames[frameOfMaker].parent;
+            }
+            if (!standsInCopyOfItself && (frameOfMaker || maker == m_id.index())) {
+                innermostFrame = frameOfMaker;
+                depth = 0;
+            }
+        }
+        bool isInInnermostBuiltins = counted == Copies::ThatAreLevels;
+        for (uint32_t frame = innermostFrame; frame; frame = m_caller.inlineFrames[frame].parent) {
+            isInInnermostBuiltins = isInInnermostBuiltins && m_program.at(m_caller.inlineFrames[frame].callee).has(Format::FunctionIsBuiltin);
+            frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker && !isInInnermostBuiltins;
+        }
         // The body of its own function is not a copy that came along with anything.
         if (frames && m_caller.isGenericEntrypoint())
             --frames;
@@ -1824,9 +1868,8 @@ private:
     bool saysCallNoInline(FunctionID id) const
     {
         return m_saysCallNoInline.ensure(id.index(), [&] {
-            static const BuiltinID callNoInline = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("CallNoInline"_s.span8())));
             for (auto& value : m_program.at(id).values) {
-                if (value.opcode == Opcode::Operation ? Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(value.string())) == callNoInline : value.opcode == Opcode::CallBuiltin && value.builtin() == callNoInline)
+                if (m_program.operationOf(value) == Operations::CallNoInline)
                     return true;
             }
             return false;
@@ -1890,7 +1933,7 @@ private:
         Value callOfRest(m_caller.at(call));
         Arguments arguments = m_caller.at(call).arguments;
         uint32_t position = m_caller.at(call).position;
-        uint32_t depth = m_isTakingOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call)) + 1;
+        uint32_t depth = m_isTakingOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::ThatAreLevels) + !callee.has(Format::FunctionIsBuiltin);
         uint32_t outerFrame = m_caller.at(call).inlineFrame;
         if (m_caller.inlineFrames.isEmpty())
             m_caller.inlineFrames.append(InlineFrame { });

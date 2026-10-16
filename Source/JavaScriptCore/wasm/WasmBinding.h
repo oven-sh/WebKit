@@ -32,6 +32,7 @@
 
 namespace JSC {
 
+class CCallHelpers;
 class CallLinkInfo;
 
 namespace Wasm {
@@ -41,6 +42,7 @@ enum class BindingFailure {
 };
 
 std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation&, unsigned importIndex);
+void emitWasmToWasm(CCallHelpers&, const Wasm::ModuleInformation&, unsigned importIndex);
 
 } } // namespace JSC::Wasm
 

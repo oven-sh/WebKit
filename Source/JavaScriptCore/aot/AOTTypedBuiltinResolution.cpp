@@ -128,9 +128,13 @@ KeyedAccess keyedAccessOf(const Program& program, const Function& function, cons
     default:
         return KeyedAccess::Generic;
     }
-    if (!program.typeOf(function, value.child(1)).isNumber())
-        return KeyedAccess::Generic;
+    auto& key = program.typeOf(function, value.child(1));
     auto& receiver = program.typeOf(function, value.child(0));
+    if (!key.isNumber()) {
+        auto* engineClass = receiver.onlyEngineClass();
+        bool isNumberOrNil = key.primitives & Primitive::Number && key.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+        return value.opcode == Opcode::GetByVal && isNumberOrNil && engineClass && engineClass->type == ArrayType ? KeyedAccess::Array : KeyedAccess::Generic;
+    }
     if (auto* engineClass = receiver.onlyEngineClass()) {
         if (engineClass->type == ArrayType)
             return KeyedAccess::Array;
@@ -424,7 +428,7 @@ private:
         auto& value = definitionOf(id);
         if (value.opcode != Opcode::GetById || nameOf(value) != m_builtins.prototypeName())
             return nullptr;
-        return m_builtins.classNamed(globalDefinedBy(value.child(0)));
+        return m_builtins.classWithFixedPrototypeNamed(globalDefinedBy(value.child(0)));
     }
 
     const EngineClass* classOfEmptyLiteralReadOnce(ValueID id) const
@@ -596,6 +600,44 @@ private:
         }
     }
 
+    bool isOnlyComparedOrAskedForItsBits(ValueID id) const
+    {
+        for (auto& block : m_function.blocks) {
+            for (ValueID userID : block.values) {
+                auto& user = m_function.at(userID);
+                bool uses = false;
+                user.forEachChild([&](ValueID child) {
+                    uses |= child == id;
+                });
+                if (!uses)
+                    continue;
+                switch (user.opcode) {
+                case Opcode::BitAnd:
+                case Opcode::BitOr:
+                case Opcode::BitXor:
+                case Opcode::LShift:
+                case Opcode::RShift:
+                case Opcode::URShift:
+                case Opcode::Less:
+                case Opcode::LessEq:
+                case Opcode::Greater:
+                case Opcode::GreaterEq:
+                case Opcode::StrictEq:
+                    break;
+                default:
+                    return false;
+                }
+            }
+            bool isHandedOn = false;
+            const_cast<Terminator&>(block.terminator).forEachChild([&](ValueID& child) {
+                isHandedOn |= child == id;
+            });
+            if (isHandedOn)
+                return false;
+        }
+        return true;
+    }
+
     // The receiver: `this`, of what takes one. The class: of the receiver, or the one the function or the constructor was found on.
     // `methodRead`: see Value::methodRead().
     void become(Value& value, BuiltinID entry, const EngineClass* engineClass, ValueID receiver, Arguments&& arguments, ValueID methodRead = { })
@@ -624,6 +666,8 @@ private:
         TypeID yielded = m_program.integersYieldedByBuiltins[entry.index()];
         if (!yielded && builtin.result.kinds == BuiltinResult::Boolean && !builtin.result.arguments)
             yielded = m_program.types.boolean;
+        if (!yielded && builtin.implementation.kind == BuiltinImplementation::Inline && builtin.implementation.inlined == InlineBuiltin::StringCharCodeAt && isOnlyComparedOrAskedForItsBits(ValueID(static_cast<uint32_t>(&value - m_function.values.span().data()))))
+            yielded = m_program.types.number;
         if (!yielded || !m_program.at(yielded).isWithin(m_program.at(value.type), m_program) || m_program.at(value.type).isWithin(m_program.at(yielded), m_program))
             return;
         if (builtin.takesReceiver() && typeOf(receiver).hasObjects() && (builtin.kind != BuiltinKind::Getter || hasGenericFallback(m_program, m_function, value)))
@@ -792,7 +836,7 @@ private:
             }
             return;
         case Opcode::Operation: {
-            BuiltinID entry = applicableEntry(m_builtins.find(BuiltinKind::Operation, { }, nameOf(value)), typesOf(value.arguments.span()).span());
+            BuiltinID entry = applicableEntry(value.builtin(), typesOf(value.arguments.span()).span());
             RELEASE_ASSERT(entry);
             if (entry == m_builtins.callIntrinsic()) {
                 convertCallIntrinsicToCall(value);

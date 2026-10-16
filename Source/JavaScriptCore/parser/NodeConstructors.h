@@ -842,7 +842,7 @@ namespace JSC {
     }
 
     inline AuditedExpressionNode::AuditedExpressionNode(ExpressionNode* expr, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most)
-        : ExpressionNode(JSTokenLocation(), expr->resultDescriptor())
+        : ExpressionNode(JSTokenLocation(), passes.contains(AuditedValueClass::Acts) ? ResultType::unknownType() : expr->resultDescriptor())
         , m_expr(expr)
         , m_id(id)
         , m_passes(passes)

@@ -31,6 +31,7 @@
 #include "B3BasicBlockInlines.h"
 #include "B3CaseCollectionInlines.h"
 #include "B3InsertionSet.h"
+#include "B3LoopUtilities.h"
 #include "B3PhaseScope.h"
 #include "B3SwitchValue.h"
 #include "B3UseCounts.h"
@@ -127,6 +128,12 @@ private:
         
         BasicBlock* predecessor = block->predecessor(0);
 #if USE(BUN_JSC_ADDITIONS)
+        if (m_proc.positionIndependent()) {
+            for (const FrequentedBlock& successor : predecessor->successors()) {
+                if (successor.block() == block && isRareForItsPlace(successor, predecessor))
+                    return false;
+            }
+        }
         if (SwitchValue* grown = predecessor->last()->as<SwitchValue>(); grown && grown->numCaseValues() >= minCasesToGrowInPlace) {
             if (auto result = tryGrowInPlace(block, description, predecessor, grown))
                 return *result;

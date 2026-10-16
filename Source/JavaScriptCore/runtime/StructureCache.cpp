@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StructureCache.h"
 
+#include "AOTTypedObject.h"
 #include "JSCInlines.h"
 #include <wtf/Locker.h>
 
@@ -104,18 +105,25 @@ Structure* StructureCache::emptyStructureForPrototypeFromBaseStructure(JSGlobalO
     TypeInfo typeInfo = baseStructure->typeInfo();
     JSType type = typeInfo.type();
     // See JSObject::becomeDerivedArray().
-    if (type == ArrayType && globalObject->vm().useImmutableIntrinsics && baseStructure->storedPrototype() != JSValue(prototype)) [[unlikely]] {
+    if (type == ArrayType && globalObject->vm().useImmutableIntrinsics && baseStructure->storedPrototype() != JSValue(prototype)) [[unlikely]]
         type = DerivedArrayType;
-        if (!hasAnyArrayStorage(indexingType))
-            indexingType = (indexingType & ~(IndexingShapeMask | CopyOnWrite)) | ArrayStorageShape;
-    }
 
     return createEmptyStructure(globalObject, prototype, TypeInfo(type, typeInfo.inlineTypeFlags(), typeInfo.outOfLineTypeFlags()), baseStructure->classInfoForCells(), indexingType, 0, false, nullptr, shouldCacheStructure);
 }
 
-Structure* StructureCache::emptyObjectStructureForPrototype(JSGlobalObject* globalObject, JSObject* prototype, unsigned inlineCapacity, bool makePolyProtoStructure, FunctionExecutable* executable)
+Structure* StructureCache::emptyObjectStructureForPrototype(JSGlobalObject* globalObject, JSObject* prototype, unsigned inlineCapacity, bool makePolyProtoStructure, FunctionExecutable* executable, bool isGuarded)
 {
-    return createEmptyStructure(globalObject, prototype, JSFinalObject::typeInfo(), JSFinalObject::info(), JSFinalObject::defaultIndexingType, inlineCapacity, makePolyProtoStructure, executable, ShouldCacheStructure::Yes);
+    const ClassInfo* classInfo = JSFinalObject::info();
+    TypeInfo typeInfo = JSFinalObject::typeInfo();
+#if ENABLE(AOT)
+    if (isGuarded) {
+        classInfo = AOT::Typed::GuardedObject::info();
+        typeInfo = TypeInfo(FinalObjectType, AOT::Typed::GuardedObject::StructureFlags);
+    }
+#else
+    UNUSED_PARAM(isGuarded);
+#endif
+    return createEmptyStructure(globalObject, prototype, typeInfo, classInfo, JSFinalObject::defaultIndexingType, inlineCapacity, makePolyProtoStructure, executable, ShouldCacheStructure::Yes);
 }
 
 } // namespace JSC

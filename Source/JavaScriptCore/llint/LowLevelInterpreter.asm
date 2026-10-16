@@ -2301,7 +2301,7 @@ if not C_LOOP
         crash()
 
     op(llint_leave_predecoded_instructions, macro ()
-        loadi PredecodedBytecodeOffset[PB, PC, 1], PC
+        loadi PredecodedBytecodeOffset[PC], PC
         loadp PredecodedBytecode[PB], PB
         nextInstruction()
     end)

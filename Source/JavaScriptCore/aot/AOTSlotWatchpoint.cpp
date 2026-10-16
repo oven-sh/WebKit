@@ -127,7 +127,7 @@ static bool interceptsNoStore(const ObjectPropertyCondition& key)
 
 static NEVER_INLINE bool isAbsenceDeterminedByStructure(const ObjectPropertyCondition& key)
 {
-    return key.kind() == PropertyCondition::Absence && Typed::closureLacksWhatItsStructureLacks(key.object()->vm(), key.object(), key.uid(), false);
+    return key.kind() == PropertyCondition::Absence && Typed::lacksWhatItsStructureLacks(key.object()->vm(), key.object(), key.uid(), false);
 }
 
 static ALWAYS_INLINE bool isWatchable(const ObjectPropertyCondition& key, PropertyCondition::WatchabilityEffort effort)

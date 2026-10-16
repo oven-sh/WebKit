@@ -40,7 +40,7 @@ namespace JSC { namespace AOT {
 #if CPU(ARM64) || CPU(X86_64)
 
 // The ways out of a block that are not rare are as likely as one another, except that a loop goes around ten times before it is left.
-void estimateFrequencies(B3::Procedure& proc)
+void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
 {
     constexpr double coldFrequency = 1.0 / 1024;
     proc.resetReachability();
@@ -52,8 +52,9 @@ void estimateFrequencies(B3::Procedure& proc)
 
     // What a block starts with is its weight among the successors of a branch: see Typed::Lowering::newUnlikelyBlock().
     IndexMap<B3::BasicBlock*, double> weight(proc.size(), 1.0);
+    constexpr double weightOfBlockThatReturns = 0.25;
     for (B3::BasicBlock* block : proc)
-        weight[block] = std::clamp(block->frequency(), coldFrequency, 1.0);
+        weight[block] = std::clamp(block->frequency(), coldFrequency, returnsAreUnlikely && block->last()->opcode() == B3::Return ? weightOfBlockThatReturns : 1.0);
 
     IndexMap<B3::BasicBlock*, double> incoming(proc.size(), 0.0);
     Vector<double, 16> entering(FillWith { }, cycles.size(), 0.0);

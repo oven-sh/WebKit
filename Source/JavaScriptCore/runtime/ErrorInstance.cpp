@@ -639,6 +639,11 @@ static bool isErrorInfoProperty(VM& vm, PropertyName propertyName)
         || propertyName == vm.propertyNames->stack;
 }
 
+bool ErrorInstance::isMadeWhenAskedFor(VM& vm, PropertyName propertyName)
+{
+    return isErrorInfoProperty(vm, propertyName);
+}
+
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyName)
 {
     if (isErrorInfoProperty(vm, propertyName))

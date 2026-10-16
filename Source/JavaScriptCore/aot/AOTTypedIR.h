@@ -323,6 +323,7 @@ static constexpr uint32_t closureIsInFrame = 1;
 
 static constexpr uint32_t shapeTestIsExact = 1;
 static constexpr uint32_t shapeTestIsForThisInstance = 2;
+static constexpr uint32_t shapeTestGuardsFastPath = 3;
 
 enum class MethodAskedByStub : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest, StringMatch };
 
@@ -337,9 +338,12 @@ struct Value {
     bool receiverHasOriginalStructure : 1 { false };
     bool operandClassIsProven : 1 { false };
     bool mustBeProperTailCall : 1 { false };
+    bool isOnSlowPath : 1 { false };
+    bool guardsFastPath : 1 { false };
     bool dropsDroppableCallerFrame : 1 { false };
     bool leavesDroppableFrame : 1 { false };
     bool receiverIsExpectedOfOneRow : 1 { false };
+    bool storesClosureMadeWhenRead : 1 { false };
     MethodAskedByStub methodAskedByStub : 4 { MethodAskedByStub::None };
     uint8_t classExpectedOfReceiverPlusOne : 6 { 0 };
     uint32_t position { 0 };
@@ -731,6 +735,7 @@ struct Function {
     bool isUsedAsObject { false };
     bool isBodyOfSeveralSites { false };
     bool isGuardedPreludeEntry { false };
+    bool onlyDestructuresParameter { false };
     bool copiesFirstArgumentOutOfFrame { false };
     uint8_t numberOfCapturesOfCopiedArgument { 0 };
     Vector<FunctionID> guardedPreludeEntriesWantedLater;
@@ -856,13 +861,15 @@ static constexpr uint32_t fieldKeepsWideReference = 524288;
 // Those of AOTTypedData.h too: each has a bit of its own.
 static_assert((fieldIsOptional + fieldIsOutOfLine + fieldIsImmutable + fieldAllowsUndefined + fieldAllowsNull + fieldIsAnnotated + fieldIsMethod + fieldIsNeverSeenUninitialized
     + fieldIsStoredOnce + fieldIsNeverStored + fieldIsExpectedInt32 + fieldIsSetAtCreation + fieldMayBeSetAtCreation + fieldIsAbsentAtBirth + fieldHoldsClosureMadeOnce + fieldIsNeverSeenAbsent + fieldDoesNotAdmitUndefined
-    + fieldIsPinned + fieldIsNeverSeenAbsentAsWritten + fieldMayExistWithoutStorage + fieldIsPlaceholder)
+    + fieldIsPinned + fieldIsNeverSeenAbsentAsWritten + fieldMayExistWithoutStorage + fieldIsPlaceholder + fieldMayBeUnlisted + fieldHoldsClosureMadeWhenRead)
     == (fieldIsOptional | fieldIsOutOfLine | fieldIsImmutable | fieldAllowsUndefined | fieldAllowsNull | fieldIsAnnotated | fieldIsMethod | fieldIsNeverSeenUninitialized
     | fieldIsStoredOnce | fieldIsNeverStored | fieldIsExpectedInt32 | fieldIsSetAtCreation | fieldMayBeSetAtCreation | fieldIsAbsentAtBirth | fieldHoldsClosureMadeOnce | fieldIsNeverSeenAbsent | fieldDoesNotAdmitUndefined
-    | fieldIsPinned | fieldIsNeverSeenAbsentAsWritten | fieldMayExistWithoutStorage | fieldIsPlaceholder));
+    | fieldIsPinned | fieldIsNeverSeenAbsentAsWritten | fieldMayExistWithoutStorage | fieldIsPlaceholder | fieldMayBeUnlisted | fieldHoldsClosureMadeWhenRead));
 static_assert(fieldIsNeverSeenAbsentAsWritten < 1u << guardOfPinnedFieldShift);
 static_assert(fieldMayExistWithoutStorage < 1u << guardOfPinnedFieldShift);
 static_assert(fieldIsPlaceholder < 1u << guardOfPinnedFieldShift);
+static_assert(fieldMayBeUnlisted < 1u << guardOfPinnedFieldShift);
+static_assert(fieldHoldsClosureMadeWhenRead < 1u << guardOfPinnedFieldShift);
 
 // Which shapes pass. Program::passes() says it in code.
 //
@@ -919,6 +926,7 @@ struct Field {
     // `stored`, an offset that no object reaches, and no member has it.
     SlotID slot;
     TypeID stored;
+    TypeID storedInSlot;
     Store store { Store::JSValue };
     uint32_t offset { 0 };
     // The slot is in the extension, and `offset` is from the start of that: see offsetOfExtension in AOTTypedData.h. Then `store` is
@@ -946,6 +954,7 @@ struct Field {
     bool onlyFunctionIsFact { false };
     bool onlyFunctionOrNil { false };
     FunctionID otherFunction;
+    FunctionID closureMadeWhenRead;
     ExpectedBuiltins expectedBuiltins;
     StringID placeholderFor;
     bool hasSlotInEveryMember { false };
@@ -1026,6 +1035,7 @@ struct Layout {
     bool admitsForeignObjects { false };
     bool isOpenedForLog { false };
     bool admitsOnlyOtherLayouts { false };
+    bool isMemberOnlyView { false };
     bool checksForeignObjects() const { return isOpenedForLog || admitsOnlyOtherLayouts; }
     bool admitsUncheckedObjects() const { return admitsForeignObjects && (!admitsOnlyOtherLayouts || isOpenedForLog); }
     // An object of it, and not `undefined` or `null`: Type::view(this layout). Of every layout, from before types are frozen.
@@ -1057,6 +1067,7 @@ struct Layout {
     // transition to or from. extensionSize: see LayoutData.
     bool hasExtension { false };
     uint32_t extensionSize { 0 };
+    uint32_t offsetOfExtraProperties { 0 };
     // In a family, and does not list exactly one constant for the discriminant: an abstract supertype or a union. Coerce never transitions
     // an object into it. A layout that lists one constant only transitions to layouts that list the same one.
     bool isAbstract { false };
@@ -1268,6 +1279,8 @@ public:
     std::span<const uint8_t> string(StringID id) const { return strings[id.index()]; }
     // What the table knows the string as, if it does.
     BuiltinName builtinName(StringID id) const { return m_builtinNames[id.index()]; }
+    BuiltinID operationOf(const Value& value) const { return value.opcode == Opcode::CallBuiltin || value.opcode == Opcode::Operation ? value.builtin() : BuiltinID(); }
+    bool usesOperation(BuiltinID operation) const { return m_operationsUsed[operation.index() / 32] >> operation.index() % 32 & 1; }
     // The other way around. Nothing: the program has no such string.
     StringID stringOf(BuiltinName name) const { return name.index() < m_stringsOfBuiltinNames.size() ? m_stringsOfBuiltinNames[name.index()] : StringID(); }
     Function& at(FunctionID id) { return functions[id.index()]; }
@@ -1359,6 +1372,7 @@ public:
     // By the index of the string. See Format::Header.
     BitVector prototypePropertyNames;
     BitVector methodFieldNames;
+    BitVector namesOfClosuresMadeWhenRead;
     BitVector namesThatMayBeAccessors;
     void findNamesThatMayBeAccessors();
     Vector<std::pair<StringID, StringID>> regExpLiterals;
@@ -1439,6 +1453,7 @@ public:
 
     std::span<const uint8_t> buffer;
     Vector<std::span<const uint8_t>> strings;
+    Vector<std::span<const uint8_t>> webAssemblyModules;
     Vector<Layout> layouts;
     Vector<Variable> variables;
     Vector<Module> modules;
@@ -1454,6 +1469,9 @@ public:
         BitVector parametersCalledInLoops;
     };
     Vector<FactsForInlining> factsForInlining;
+    static constexpr uint32_t hasNoMakerOfClosures = UINT32_MAX;
+    static constexpr uint32_t hasSeveralMakersOfClosures = UINT32_MAX - 1;
+    Vector<uint32_t> onlyMakersOfClosures;
     Vector<BitVector> blocksThatNeverReturn;
     // What is left of that behind the inlining: no path from the first block reaches a return.
     BitVector functionsThatNeverReturn;
@@ -1471,6 +1489,7 @@ public:
     struct UsesOfName {
         StringID name;
         uint32_t uses { 0 };
+        uint32_t usesThatAskTheTable { 0 };
         std::array<uint32_t, 4> usesByAccess { };
     };
     Vector<UsesOfName> genericAccessIdentifiersAndNumberOfUses() const;
@@ -1503,6 +1522,8 @@ public:
     // From the effect summaries on. Some layout has specializations, so that an `as` or `!` may write the shape word of an object.
     bool castsMayRetag { false };
     bool mayRunInSeveralInstances { false };
+    Vector<LayoutID> memberOnlyViews;
+    BitVector viewsThatKeepTheirMembers;
     // From before the functions are optimized on. By layout, as a view: a cast to it may turn an object into one of a specialization of
     // its layout where it is. That is the layout itself if objects are made of it, else one of its members.
     BitVector viewsRetaggedTo;
@@ -1584,6 +1605,8 @@ public:
     uint32_t numberOfStaticFieldPlaces { 0 };
     uint32_t staticFieldPlacesOffset { 0 };
     UncheckedKeyHashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> genericEntrypoints;
+    uint32_t firstGenericEntrypoint { 0 };
+    uint32_t numberOfConsecutiveGenericEntrypoints { 0 };
     Vector<CallSignature> callSignatures;
     struct ShapeOfValueCall {
         Vector<TypeID, 4> parameters;
@@ -1610,6 +1633,11 @@ public:
     };
     mutable std::array<AnswersByViewAndName, 64> whetherOnlyFieldsSupply;
     mutable std::array<AnswersByViewAndName, 64> whetherStoreMayTransition;
+    struct TypesByViewAndName {
+        Lock lock;
+        UncheckedKeyHashMap<uint64_t, TypeID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> types;
+    };
+    mutable std::array<TypesByViewAndName, 64> widestTypesStoredInFields;
     bool isHotByText(FunctionID id) const { return functionsHotByText.get(id.index()); }
     BitVector functionsWarmByText;
     bool isWarmByText(FunctionID id) const { return functionsWarmByText.get(id.index()); }
@@ -1661,6 +1689,13 @@ public:
         VariableID isEvaluated;
         VariableID error;
         Vector<FunctionID, 4> callees;
+        struct Fetch {
+            uint32_t numberOfCalleesAhead;
+            uint32_t externalModule;
+        };
+        Vector<Fetch> fetches;
+        static constexpr uint32_t markOfFunction = std::numeric_limits<uint32_t>::max();
+        static constexpr uint32_t markOfFetch = markOfFunction - 1;
     };
     Vector<ModuleEvaluation> moduleEvaluations;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> moduleEvaluationOfFunction;
@@ -1739,7 +1774,9 @@ private:
     friend class Reader;
 
     Vector<Vector<uint8_t>> m_ownStrings;
-    UncheckedKeyHashMap<String, uint32_t> m_stringIDs;
+    static constexpr unsigned numberOfTablesOfStringIDs = 16;
+    static unsigned tableOfStringWithHash(unsigned hash) { return hash >> 20 & (numberOfTablesOfStringIDs - 1); }
+    std::array<UncheckedKeyHashMap<String, uint32_t>, numberOfTablesOfStringIDs> m_stringIDs;
     struct NamesAndStringsInValues {
         Vector<Vector<StringID>> namesDefinedAsAccessors;
         Vector<UsesOfName> usesOfNames;
@@ -1750,6 +1787,7 @@ private:
 
     Vector<BuiltinName> m_builtinNames;
     Vector<StringID> m_stringsOfBuiltinNames;
+    std::array<uint32_t, (numberOfBuiltins + 31) / 32> m_operationsUsed { };
 };
 
 } } } // namespace JSC::AOT::Typed

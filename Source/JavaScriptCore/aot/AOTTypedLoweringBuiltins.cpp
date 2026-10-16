@@ -218,6 +218,37 @@ bool Lowering::makesTableWithStringKeys(const Value& value)
     return false;
 }
 
+bool Lowering::isUntouchedSinceBirth(ValueID object) const
+{
+    if (m_function.at(object).opcode != Opcode::NewObjectWithShape)
+        return false;
+    auto& values = m_currentBlock->values;
+    for (size_t i = m_currentIndexInBlock; i--;) {
+        if (values[i] == object)
+            return true;
+        switch (m_function.at(values[i]).opcode) {
+        case Opcode::Undefined:
+        case Opcode::Null:
+        case Opcode::Boolean:
+        case Opcode::Integer:
+        case Opcode::Double:
+        case Opcode::String:
+        case Opcode::FunctionReference:
+        case Opcode::BuiltinFunction:
+        case Opcode::NewClosure:
+            continue;
+        case Opcode::PutField:
+        case Opcode::PutById:
+            if (m_function.at(values[i]).child(0) == object && isInitializingStore(m_program, m_function, *m_currentBlock, i))
+                continue;
+            return false;
+        default:
+            return false;
+        }
+    }
+    return false;
+}
+
 Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects, std::optional<Boxed> calledOn)
 {
     if (!m_isMakingTableGenerally && makesTableWithStringKeys(value)) {
@@ -230,6 +261,36 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
             SetForScope isMakingTableGenerally(m_isMakingTableGenerally, true);
             return callBuiltinFunction(value, effects, calledOn);
         });
+    }
+    if (auto& called = m_builtins.at(value.builtin()); !m_isFreezingGenerally && called.kind == BuiltinKind::StaticFunction && called.holder == "Object"_s && called.name == "freeze"_s && value.arguments.size() == 1) {
+        auto& type = typeOf(value.arguments[0]);
+        bool holdsOnlyObjectsLaidOut = !type.anyObject && !type.views.isEmpty() && !type.admitsForeignObjects(m_program) && std::ranges::all_of(type.views, [&](LayoutID view) {
+            return std::ranges::all_of(m_program.at(view).members, [&](LayoutID member) {
+                auto& layout = m_program.at(member);
+                return isObjectLayout(layout.kind) && layout.shape && layout.mayBeFrozen && !layout.mayGiveUp && !layout.admitsForeignObjects;
+            });
+        });
+        Word32 frozen = word32(static_cast<int32_t>(orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible));
+        if (holdsOnlyObjectsLaidOut && isUntouchedSinceBirth(value.arguments[0])) {
+            CellPointer object = in<CellPointer>(value.arguments[0]);
+            storeField(object, m_heaps.AOTTypedObject_orderWord, bitOr(orderWordOf(object), frozen));
+            return box(object);
+        }
+        if (holdsOnlyObjectsLaidOut) {
+            Boxed object = in<Boxed>(value.arguments[0]);
+            LBasicBlock generally = newUnlikelyBlock();
+            Join join(m_out, Rep::JSValue, Int64);
+            orElse(isCell(object, type), generally);
+            Word32 word = orderWordOf(asCell(object));
+            orElse(below(word, word32(orderWordHasExtraProperties)), generally);
+            static_assert(orderWordHasExtraProperties < orderWordIsFrozen && orderWordIsFrozen < orderWordIsSealed && orderWordIsSealed < orderWordIsNotExtensible);
+            storeField(asCell(object), m_heaps.AOTTypedObject_orderWord, bitOr(word, frozen));
+            join.add(object);
+            m_out.appendTo(generally);
+            SetForScope isFreezingGenerally(m_isFreezingGenerally, true);
+            join.add(callBuiltinFunction(value, effects, calledOn));
+            return join.finish().as<Boxed>();
+        }
     }
     if (auto& called = m_builtins.at(value.builtin()); !m_isApplyingGenerally && called.kind == BuiltinKind::StaticFunction && called.holder == "Reflect"_s && called.name == "apply"_s && value.arguments.size() == 3) {
         Boxed function = in<Boxed>(value.arguments[0]);

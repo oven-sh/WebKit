@@ -282,6 +282,8 @@ public:
     bool hasEverAdded(Opcode opcode) const { return m_opcodesEverAdded.get(opcode); }
 #endif
     bool positionIndependent() const { return m_positionIndependent; }
+    void setKeepsDataInCode() { m_keepsDataInCode = true; }
+    bool keepsDataInCode() const { return m_keepsDataInCode || m_positionIndependent; }
     void setMaterializesConstantsByFrequency() { m_materializesConstantsByFrequency = true; }
     bool materializesConstantsByFrequency() const { return m_materializesConstantsByFrequency; }
     void setRotatesLoops() { m_rotatesLoops = true; }
@@ -417,6 +419,7 @@ private:
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
     bool m_positionIndependent { false };
+    bool m_keepsDataInCode { false };
     bool m_materializesConstantsByFrequency { false };
     bool m_rotatesLoops { false };
     bool m_namesPinnedArgumentRegistersDirectly { false };

@@ -28,6 +28,7 @@
 
 #include "JSWebAssemblyInstance.h"
 #include "Options.h"
+#include "WasmCodeInImage.h"
 #include "WasmFaultSignalHandler.h"
 #include <cstring>
 #include <mutex>
@@ -52,8 +53,18 @@ namespace JSC {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryHandle);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryManager);
 
+static unsigned maxFastMemoryCount()
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    constexpr unsigned countForCodeInImage = 4096;
+    if (Wasm::CodeInImage::isInProcess())
+        return std::max(Options::maxNumWasmFastMemories(), countForCodeInImage);
+#endif
+    return Options::maxNumWasmFastMemories();
+}
+
 BufferMemoryManager::BufferMemoryManager()
-    : m_maxFastMemoryCount(Options::maxNumWasmFastMemories())
+    : m_maxFastMemoryCount(maxFastMemoryCount())
 { }
 
 size_t BufferMemoryHandle::fastMappedRedzoneBytes()

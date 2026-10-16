@@ -203,6 +203,37 @@ std::optional<Word32> Lowering::lowerRelationalWithLikelyInteger(const Value& va
     });
 }
 
+std::optional<Word32> Lowering::lowerRelationalWithOptionalInteger(const Value& value)
+{
+    bool integerIsFirst = typeOf(value.child(0)).isInteger();
+    ValueID integerOperand = value.child(integerIsFirst ? 0 : 1);
+    ValueID optionalOperand = value.child(integerIsFirst ? 1 : 0);
+    auto& optionalType = typeOf(optionalOperand);
+    if (!typeOf(integerOperand).isInteger() || !isNumericOperand(optionalType) || optionalType.primitives & Primitive::Null)
+        return std::nullopt;
+    Operand optional = get(optionalOperand);
+    if (optional.rep != Rep::OptionalInt64)
+        return std::nullopt;
+    Integer kept = assumedInteger(optional.as<OptionalInteger>());
+    bool neitherIsNegative = optionalType.integers.least >= 0 && typeOf(integerOperand).integers.least >= 0;
+    return either<Word32>(lessThan(kept, integer(undefinedInteger)), [&] {
+        Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
+        Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);
+        switch (value.opcode) {
+        case Opcode::Less:
+            return neitherIsNegative ? below(x, y) : lessThan(x, y);
+        case Opcode::Greater:
+            return neitherIsNegative ? below(y, x) : greaterThan(x, y);
+        case Opcode::LessEq:
+            return neitherIsNegative ? belowOrEqual(x, y) : lessThanOrEqual(x, y);
+        default:
+            return neitherIsNegative ? belowOrEqual(y, x) : greaterThanOrEqual(x, y);
+        }
+    }, [&] {
+        return boolean(false);
+    });
+}
+
 // ToInt32 of a sum or a difference of numbers of which one is kept as an integer. Where the other is an int32 too, -0 counting as 0, and a double stands for the result exactly, that is the low half of what integers come out with.
 std::optional<Word32> Lowering::toInt32OfSum(ValueID id)
 {

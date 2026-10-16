@@ -32,10 +32,14 @@
 #if ENABLE(B3_JIT)
 
 #include "B3Dominators.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3InsertionSetInlines.h"
+#include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
+#include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
+#include "CCallHelpers.h"
 #include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
@@ -678,12 +682,24 @@ private:
 
     void lowerMaterializationCostHeavyConstants()
     {
-        if (m_proc.positionIndependent()) {
+        if (m_proc.keepsDataInCode()) {
             for (BasicBlock* block : m_proc) {
                 for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
                     Value* value = block->at(valueIndex);
-                    if (value->opcode() != ConstDouble || !goesInTable(value))
+                    if (!goesInTable(value))
                         continue;
+                    if (value->opcode() == Const128) {
+                        auto* patchpoint = m_insertionSet.insert<PatchpointValue>(valueIndex, V128, value->origin());
+                        patchpoint->effects = Effects::none();
+                        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+                        patchpoint->clobber(RegisterSet::macroClobberedFPRs());
+                        patchpoint->setGenerator([constant = value->asV128()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                            AllowMacroScratchRegisterUsage allowScratch(jit);
+                            jit.move128ToVector(constant, params[0].fpr());
+                        });
+                        value->replaceWithIdentity(patchpoint);
+                        continue;
+                    }
                     Value* bits = m_insertionSet.insertIntConstant(valueIndex, value->origin(), Int64, std::bit_cast<int64_t>(value->asDouble()));
                     value->replaceWithIdentity(m_insertionSet.insert<Value>(valueIndex, BitwiseCast, value->origin(), bits));
                 }

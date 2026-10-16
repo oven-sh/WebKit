@@ -1906,6 +1906,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/WasmCalleeGroup.h
     wasm/WasmCallingConvention.h
     wasm/WasmCapabilities.h
+    wasm/WasmCodeInImage.h
     wasm/WasmCompilationContext.h
     wasm/WasmCompilationMode.h
     wasm/WasmConstExprGenerator.h

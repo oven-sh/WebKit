@@ -36,6 +36,7 @@
 #include "NativeCalleeRegistry.h"
 #include "WasmCallee.h"
 #include "WasmCapabilities.h"
+#include "WasmCodeInImage.h"
 #include "WasmContext.h"
 #include "WasmExceptionType.h"
 #include "WasmMemory.h"
@@ -77,7 +78,11 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
     // First we need to make sure we are in JIT code or Wasm IPInt code before we can aquire any locks. Otherwise,
     // we might have crashed in code that is already holding one of the locks we want to aquire.
     assertIsNotTagged(faultingInstruction);
-    if (isJITPC(faultingInstruction) || LLInt::isWasmIPIntPC(faultingInstruction)) {
+    bool isInCodeInImage = false;
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    isInCodeInImage = CodeInImage::contains(faultingInstruction);
+#endif
+    if (isJITPC(faultingInstruction) || LLInt::isWasmIPIntPC(faultingInstruction) || isInCodeInImage) {
         std::optional<Wasm::ExceptionType> exception;
         {
             void* faultingAddress = sigInfo.faultingAddress;

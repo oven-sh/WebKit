@@ -204,7 +204,9 @@ public:
             uint32_t first = firstPlacesOfFunctions[number];
             uint32_t end = number + 1 < firstPlacesOfFunctions.size() ? firstPlacesOfFunctions[number + 1] : m_placesChosen.size();
             m_result.places[m_placesChosen[first].function] = Vector<OutlinedPlace>(end - first, [&](size_t i) {
-                return m_placesChosen[first + i].place;
+                OutlinedPlace place = m_placesChosen[first + i].place;
+                place.offset = m_offsets[place.offset];
+                return place;
             });
         });
         report();
@@ -681,10 +683,24 @@ private:
             waiting += some.capacity() * sizeof(uint32_t);
         m_peak = std::max(m_peak, sizeOfUnits() + waiting + (m_active.capacity() + m_stillActive.capacity() + starts.capacity()) * sizeof(uint32_t) + (m_found.capacity() + m_windows.capacity()) * sizeof(Window) + 2 * families.capacity() * sizeof(Family));
         Vector<std::pair<uint32_t, unsigned>> chosen;
-        for (auto& family : families) {
+        for (size_t number = 0; number < families.size(); ++number) {
+            constexpr uint32_t windowsAhead = 16;
+            constexpr size_t familiesAheadForWindows = 8;
+            constexpr size_t familiesAheadForFlags = 4;
+            constexpr uint32_t windowsInCacheLine = 4;
+            auto& family = families[number];
+            if (number + familiesAheadForWindows < families.size())
+                __builtin_prefetch(&m_windows[families[number + familiesAheadForWindows].begin]);
+            if (number + familiesAheadForFlags < families.size()) {
+                auto& later = families[number + familiesAheadForFlags];
+                for (uint32_t i = later.begin; i < std::min(later.end, later.begin + windowsInCacheLine); ++i)
+                    __builtin_prefetch(&m_flags[m_windows[i].unit]);
+            }
             chosen.shrink(0);
             uint32_t behindLast = 0;
             for (uint32_t i = family.begin; i < family.end; ++i) {
+                if (family.end - i > windowsAhead)
+                    __builtin_prefetch(&m_flags[m_windows[i + windowsAhead].unit]);
                 uint32_t unit = m_windows[i].unit;
                 if ((!chosen.isEmpty() && unit < behindLast) || !isFree(unit, length))
                     continue;
@@ -707,7 +723,7 @@ private:
             for (auto& [unit, function] : chosen) {
                 for (unsigned i = 0; i < length; ++i)
                     m_flags[unit + i] |= IsTaken;
-                m_placesChosen.append({ function, { m_offsets[unit], bytes, body } });
+                m_placesChosen.append({ function, { unit, bytes, body } });
                 if (function != chosen[0].second)
                     onlyCaller = Outlining::none;
             }

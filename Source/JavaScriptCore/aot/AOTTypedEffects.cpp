@@ -94,6 +94,8 @@ bool isInitializingStore(const Program& program, const Function& function, const
         auto& store = function.at(id);
         if (store.opcode == Opcode::PutField && store.layout() == made && store.child(0) == object && store.child(1) != object)
             continue;
+        if (store.opcode == Opcode::NewClosure && i < index && program.at(made).kind == LayoutKind::Record)
+            continue;
         if (!isForFunction)
             isForFunction = isBornUnderAnyPrototype(program, function, object);
         if (!fieldStoredTo(program, function, object, store, *isForFunction))
@@ -150,6 +152,8 @@ void assignAllocations(const Program& program, Function& function)
             if (layout.kind == LayoutKind::Record) {
                 BitVector isInOrder;
                 for (size_t next = at + 1; next < block.values.size(); ++next) {
+                    if (function.at(block.values[next]).opcode == Opcode::NewClosure)
+                        continue;
                     auto field = fieldStoredTo(program, function, object, function.at(block.values[next]), false);
                     if (!field)
                         break;
@@ -481,6 +485,7 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::Store:
         return claimMayMakeObjects(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
     case CastReason::NonNull:
+    case CastReason::Member:
         return Writes::Nothing;
     case CastReason::Flow:
         return narrowingMayRetag(program, program.at(value.type)) || claimMayMakeObjects(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
@@ -670,6 +675,7 @@ public:
             for (auto [dependent, summary] : parts)
                 dependsOn(dependent, summary);
         }
+        destroyBeside(WTF::move(partsOf));
 
         Vector<unsigned> worklist;
         for (unsigned summary = 0; summary < m_effects.size(); ++summary) {
@@ -683,6 +689,7 @@ public:
                     worklist.append(dependent);
             }
         }
+        destroyBeside(WTF::move(m_dependents));
 
         forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
             FunctionID id(i);
@@ -957,6 +964,8 @@ private:
                 return changes(Writes::Heap);
             if (fieldReadMayMakeObjects(m_program, function, value))
                 return { Writes::RuntimeState, m_program.castsMayRetag };
+            if (m_program.namesOfClosuresMadeWhenRead.get(value.string().index()))
+                return changes(Writes::RuntimeState);
             return changes(Writes::Nothing);
         case Opcode::PutById:
             if (isInitializingStore(m_program, function, block, index))

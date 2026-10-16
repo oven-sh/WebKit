@@ -814,6 +814,8 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
             return;
 
         const auto& omgCallee = uncheckedDowncast<const Wasm::OptimizingJITCallee>(wasmCallee);
+        if (!omgCallee.hasCallSiteIndexMap())
+            return;
         bool isInlined = false;
 
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.

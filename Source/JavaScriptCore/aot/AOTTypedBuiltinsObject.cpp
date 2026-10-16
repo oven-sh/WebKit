@@ -420,10 +420,8 @@ static bool tryCopyOwnPropertyDescriptors(Instance* instance, JSGlobalObject* gl
         for (size_t k = i; canAddRuns && k < properties.size() && properties[k].isNew && !properties[k].attributes; ++k)
             run.append(properties[k].name);
         bool mayAddRun = run.size() > 1 && !before->isDictionary() && before->transitionCountEstimate() <= Structure::s_maxTransitionLength;
-        if (mayAddRun && !instance->hasPropertyRunTarget(before, run.span())) {
-            mayAddRun = instance->roomForRunsOfCopiedNames;
-            instance->roomForRunsOfCopiedNames -= mayAddRun;
-        }
+        if (mayAddRun && !instance->hasPropertyRunTarget(before, run.span()))
+            mayAddRun = instance->takeRoomForPropertyRunTarget(Instance::RoomOfRun::OfCopiedNames);
         Structure* newStructure = mayAddRun ? structureBehindRun(instance, vm, before, run.span()) : nullptr;
         if (newStructure) {
             if (before->outOfLineCapacity() != newStructure->outOfLineCapacity())
@@ -490,12 +488,12 @@ static void assignFrom(Instance* instance, JSGlobalObject* globalObject, JSObjec
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexThatAStoreDoesNotDefine(targetObject))) {
-        if (Structure* structure = targetObject->structure(); source->type() == FinalObjectType && !structure->mayBePrototype() && !structure->isWatchingReplacement() && tryCopyDataProperties(instance, vm, targetObject, source, nullptr, "operationAOTTypedObjectAssignFrom"))
-            return;
         if (!source->staticPropertiesReified()) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
+        if (Structure* structure = targetObject->structure(); !structure->mayBePrototype() && !structure->isWatchingReplacement() && (source->type() == FinalObjectType ? tryCopyDataProperties(instance, vm, targetObject, source, nullptr, "operationAOTTypedObjectAssignFrom") : tryCopyDataPropertiesOfRecord(instance, vm, targetObject, source, "operationAOTTypedObjectAssignFrom")))
+            return;
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer values;
         bool isDone = objectAssignFast(globalObject, targetObject, source, properties, values);
@@ -522,7 +520,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectAssignToNew, JSCell*, (Instance*
     if (sourceValue.isObject()) {
         JSObject* source = asObject(sourceValue);
         Structure* structure = source->structure();
-        if (source->staticPropertiesReified() && structure->canPerformFastPropertyEnumerationCommon()) {
+        if (!source->hasNonReifiedStaticProperties() && structure->canPerformFastPropertyEnumerationCommon()) {
             if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, source))
                 OPERATION_RETURN(scope, copy);
         } else if (const Typed::LayoutData* layout = structure->compiledLayout(); layout && Typed::isObjectLayout(layout->kind)) {
@@ -979,7 +977,7 @@ CellPointer Lowering::listKeysForIn(Boxed value, const Type& type)
     orElse(isCell(value, type), slowPath);
     CellPointer object = asCell(value);
     auto enumeratorKeptFor = [&](CellPointer cell, LBasicBlock otherwise) {
-        orElse(belowOrEqual(indexingModeOf(cell, IndexingTypeMask), word32(ArrayWithUndecided)), otherwise);
+        orElse(belowOrEqual(indexingModeOfAnyArray(cell, IndexingTypeMask), word32(ArrayWithUndecided)), otherwise);
         LValue previousOrRareData = m_out.loadPtr(structureOf(cell.value()), m_heaps.Structure_previousOrRareData);
         orElse(m_out.notNull(previousOrRareData), otherwise);
         orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), otherwise);

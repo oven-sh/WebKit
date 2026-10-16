@@ -258,7 +258,7 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
             static_assert(!NoIndexingShape);
             LValue name = m_out.loadPtr(builtinCell(m_builtins.cellOf(iterator)).value(), m_heaps.Symbol_symbolImpl);
             Word32 hasNotSeenName(m_out.notEqual(m_out.bitAnd(m_out.loadPtr(structure, m_heaps.Structure_seenProperties), name), name));
-            Word32 isOrdinary = logicalAnd(Word32(isCellOfType(cell.value(), FinalObjectType)), isZero(indexingModeOf(cell, IndexingShapeMask)));
+            Word32 isOrdinary = logicalAnd(Word32(isCellOfType(cell.value(), FinalObjectType)), isZero(indexingModeOfAnyArray(cell, IndexingShapeMask)));
             LValue orderAndShapeWords = m_out.load64(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(offsetOfOrderWord))));
             Word32 isOfProgramWithFieldsAlone(m_out.bitAnd(m_out.aboveOrEqual(orderAndShapeWords, m_out.constInt64(0xffULL << 56)), m_out.testIsZero64(orderAndShapeWords, m_out.constInt64(orderWordHasExtraProperties))));
             return yieldBoolean(logicalAnd(Word32(m_out.equal(m_out.load64(structure, m_heaps.Structure_prototype), objectPrototype)), logicalOr(logicalAnd(isOrdinary, hasNotSeenName), isOfProgramWithFieldsAlone)), type);
@@ -270,9 +270,9 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     case InlineBuiltin::IsDoubleArray:
         if (!mayHoldNumbers(arguments[0]))
             return yieldBoolean(boolean(false), type);
-        return yieldBoolean(equal(indexingModeOf(arrayOperand(arguments[0]), IndexingShapeMask), word32(DoubleShape)), type);
+        return yieldBoolean(equal(indexingModeOfAnyArray(arrayOperand(arguments[0]), IndexingShapeMask), word32(DoubleShape)), type);
     case InlineBuiltin::IsContiguousArray: {
-        Word32 shape = indexingModeOf(arrayOperand(arguments[0]), IndexingShapeMask);
+        Word32 shape = indexingModeOfAnyArray(arrayOperand(arguments[0]), IndexingShapeMask);
         Word32 isContiguous = equal(shape, word32(ContiguousShape));
         if (!mayHoldNumbers(arguments[0]))
             return yieldBoolean(isContiguous, type);
@@ -281,7 +281,9 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     case InlineBuiltin::GetDoubleIndex:
         return ensure(Number(m_out.loadDouble(doubleAt(arrayOperand(arguments[0]), indexOperand(arguments[1])))), m_program.at(m_program.types.number), type);
     case InlineBuiltin::HasContiguousIndex: {
-        LValue element = m_out.load64(valueAt(arrayOperand(arguments[0]), indexOperand(arguments[1])));
+        CellPointer array = arrayOperand(arguments[0]);
+        LValue element = m_out.load64(valueAt(array, indexOperand(arguments[1])));
+        ensureStillAliveHere(array);
         auto& terminator = m_currentBlock->terminator;
         if (terminator.kind == TerminatorKind::Branch && terminator.value == result && m_currentBlock->values.last() == result) {
             BlockID hasIt = terminator.targets[0].block;
@@ -290,10 +292,14 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         }
         return yieldBoolean(isNotEmpty(Boxed(element)), type);
     }
-    case InlineBuiltin::GetContiguousIndex:
+    case InlineBuiltin::GetContiguousIndex: {
         if (LValue element = elementLoadedAhead(arguments[0], arguments[1]))
             return ensure(Boxed(element), type);
-        return ensure(Boxed(m_out.load64(valueAt(arrayOperand(arguments[0]), indexOperand(arguments[1])))), type);
+        CellPointer array = arrayOperand(arguments[0]);
+        Boxed element(m_out.load64(valueAt(array, indexOperand(arguments[1]))));
+        ensureStillAliveHere(array);
+        return ensure(element, type);
+    }
     case InlineBuiltin::NewArrayWithSpecies:
     case InlineBuiltin::NewArrayWithCapacity:
         return ensure(newArrayWithHoles(result, value, which == InlineBuiltin::NewArrayWithCapacity), Type::engineClass(m_builtins.arrayClass()), type);
@@ -363,7 +369,7 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         LBasicBlock continuation = m_out.newBlock();
         didEmitWrite(inPlace);
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-        Word32 kind = binary<Word32>(&Output::sub, indexingModeOf(array, IndexingShapeAndWritabilityMask), word32(Int32Shape));
+        Word32 kind = binary<Word32>(&Output::sub, indexingModeOfAnyArray(array, IndexingShapeAndWritabilityMask), word32(Int32Shape));
         orElse(belowOrEqual(kind, word32(ContiguousShape - Int32Shape)), slowPath);
         static_assert(OBJECT_OFFSETOF(Instance::FieldsBelow, newArrayWithDoubleHeader) == OBJECT_OFFSETOF(Instance::FieldsBelow, newArrayWithInt32Header) + sizeof(uint64_t) && OBJECT_OFFSETOF(Instance::FieldsBelow, newArrayWithContiguousHeader) == OBJECT_OFFSETOF(Instance::FieldsBelow, newArrayWithInt32Header) + 2 * sizeof(uint64_t));
         LValue headers = m_out.add(m_instance, m_out.shl(m_out.zeroExtPtr(kind.value()), m_out.constInt32(2)));

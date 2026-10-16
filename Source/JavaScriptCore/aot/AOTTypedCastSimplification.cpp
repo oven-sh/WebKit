@@ -946,7 +946,11 @@ private:
                 allocation.discriminant = m_function.allocations[m_function.at(object).allocation()].discriminant;
                 UnchangingFunctionScope unchangingFunctionScope;
                 BitVector isInOrder;
-                for (size_t next = i + 1; next < block.values.size() && isInitializingStore(m_program, m_function, block, next); ++next) {
+                for (size_t next = i + 1; next < block.values.size(); ++next) {
+                    if (m_function.at(block.values[next]).opcode == Opcode::NewClosure)
+                        continue;
+                    if (!isInitializingStore(m_program, m_function, block, next))
+                        break;
                     uint16_t field = *layout.fieldNamed(fieldStoredTo(m_function.at(block.values[next])).name);
                     if (!isInOrder.set(field))
                         allocation.order.append(field);

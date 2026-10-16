@@ -29,6 +29,11 @@ enum class AuditedValueClass : uint16_t {
     Function = 1 << 9,
     // No class of its own: a plain object with a property that is not enumerable, as the audit's tag is, or whose prototype is a plain object.
     TaggedObject = 1 << 10,
+    Acts = 1 << 11,
+    HasSecondBody = 1 << 12,
+    ReadsElementOfArray = 1 << 13,
+    Array = 1 << 14,
+    StoresThroughUntyped = 1 << 15,
 };
 
 struct AuditedExpression {
@@ -64,12 +69,22 @@ public:
 
     static constexpr OptionSet<AuditedValueClass> valueClasses(uint32_t passes)
     {
-        return OptionSet<AuditedValueClass>::fromRaw(static_cast<uint16_t>(passes)) & (allValueClasses() | AuditedValueClass::TaggedObject);
+        return OptionSet<AuditedValueClass>::fromRaw(static_cast<uint16_t>(passes)) & (allValueClasses() | AuditedValueClass::TaggedObject | AuditedValueClass::Acts | AuditedValueClass::HasSecondBody | AuditedValueClass::Array | AuditedValueClass::ReadsElementOfArray);
     }
 
     std::span<const AuditedExpression> find(uint32_t start, uint32_t end) const
     {
         return std::span<const AuditedExpression>(std::ranges::equal_range(m_expressions.span(), AuditedExpression { start, end, 0, 0 }, isBefore));
+    }
+
+    bool storesThroughUntyped(uint32_t startOfTarget, uint32_t endOfTarget) const
+    {
+        auto expressions = m_expressions.span();
+        for (auto site = std::ranges::lower_bound(expressions, startOfTarget, { }, &AuditedExpression::start); site != expressions.end() && site->start == startOfTarget; ++site) {
+            if (site->end <= endOfTarget && site->passes & static_cast<uint32_t>(AuditedValueClass::StoresThroughUntyped))
+                return true;
+        }
+        return false;
     }
 
     std::span<const AuditedParameter> parametersOfFunction(uint32_t functionStart) const

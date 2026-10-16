@@ -56,6 +56,8 @@ public:
         for (auto& version : m_versions) {
             for (BasicBlock* block : version.hotBlocks)
                 m_originalFrequencies.add(block, block->frequency());
+            for (BasicBlock* block : version.blocksOfExcursion)
+                m_originalFrequencies.add(block, block->frequency());
         }
         // Reverse order: a version's pre-header branches to the next version's.
         for (unsigned i = m_versions.size(); i--;)
@@ -72,6 +74,7 @@ private:
     static constexpr unsigned maxNumberOfClonedValues = 48;
     static constexpr unsigned maxNumberOfClonedValuesWhereRangesAreHidden = 100;
     static constexpr unsigned maxNumberOfClonedValuesWhenUnswitching = 64;
+    static constexpr unsigned maxNumberOfClonedValuesOfExcursion = 128;
     static constexpr unsigned minNumberOfHoistedValues = 2;
     static constexpr double frequencyScaleOfOriginalLoop = 1.0 / 1024;
 
@@ -112,6 +115,8 @@ private:
         BasicBlock* lastPreHeaderOfFastVersion { nullptr };
         bool hidesRanges { false };
         Vector<std::pair<Value*, Opcode>, 2> phisNarrowedOnEntry;
+        Vector<BasicBlock*, 8> blocksOfExcursion;
+        IndexSet<Value*> hoistedValuesThatHoldInExcursion;
     };
 
     // A guard: a Branch, or a patchpoint that branches, with one successor that is rare or, if none is, leaves the loop.
@@ -186,7 +191,10 @@ private:
             return;
 
         auto addVersion = [&](Version&& version) {
+            findExcursion(loops, loop, version);
             for (BasicBlock* block : version.hotBlocks)
+                m_hotBlocks.add(block);
+            for (BasicBlock* block : version.blocksOfExcursion)
                 m_hotBlocks.add(block);
             m_versions.append(WTF::move(version));
         };
@@ -195,10 +203,10 @@ private:
         m_seesWhatIsOneValue = false;
         UnswitchCandidate candidate;
         std::optional<Version> version = tryCreateVersion(loops, loop, preHeader, nullptr, nullptr, &candidate);
-        if (versionTestedAtTheTop && versionTestedAtTheTop->isTestedAtTheTop) {
+        if (versionTestedAtTheTop) {
             unsigned stays = versionTestedAtTheTop->numberOfClonedValues - versionTestedAtTheTop->numberOfHoistedValues;
             unsigned staysOtherwise = version ? version->numberOfClonedValues - version->numberOfHoistedValues : versionTestedAtTheTop->numberOfClonedValues;
-            if (stays * 4 <= staysOtherwise * 3) {
+            if (versionTestedAtTheTop->isTestedAtTheTop ? stays * 4 <= staysOtherwise * 3 : stays < staysOtherwise) {
                 addVersion(WTF::move(*versionTestedAtTheTop));
                 return;
             }
@@ -218,6 +226,78 @@ private:
         }
         if (version)
             addVersion(WTF::move(*version));
+    }
+
+    void findExcursion(NaturalLoops& loops, const NaturalLoop& loop, Version& version)
+    {
+        IndexSet<BasicBlock*> hotBlocks;
+        for (BasicBlock* block : version.hotBlocks)
+            hotBlocks.add(block);
+        RangeSet<HeapRange> readsOfHoistedValues;
+        bool hoistedValuesReadPinned = false;
+        IndexSet<Value*> holdInFastVersionOnly;
+        for (Value* value : version.hoistedValues) {
+            Effects effects = value->effects();
+            if (effects.readsMutability != Mutability::Immutable)
+                readsOfHoistedValues.add(effects.reads);
+            hoistedValuesReadPinned |= effects.readsPinned;
+            bool holdsInFastVersionOnly = value->opcode() == Phi;
+            for (Value* child : value->children())
+                holdsInFastVersionOnly |= holdInFastVersionOnly.contains(child);
+            if (holdsInFastVersionOnly)
+                holdInFastVersionOnly.add(value);
+            else
+                version.hoistedValuesThatHoldInExcursion.add(value);
+        }
+
+        IndexSet<BasicBlock*> comeBack;
+        IndexSet<BasicBlock*> asked;
+        Vector<BasicBlock*, 16> worklist { loop.header() };
+        while (!worklist.isEmpty()) {
+            for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
+                if (predecessor == loop.header() || !loops.belongsTo(predecessor, loop) || !asked.add(predecessor))
+                    continue;
+                bool canBeCloned = true;
+                if (!hotBlocks.contains(predecessor)) {
+                    for (Value* value : *predecessor) {
+                        Effects effects = value->effects();
+                        canBeCloned &= canCloneForLoop(value) && !isCall(value) && !effects.fence && !(effects.writesPinned && hoistedValuesReadPinned) && !readsOfHoistedValues.overlaps(effects.writes);
+                    }
+                }
+                if (!canBeCloned)
+                    continue;
+                comeBack.add(predecessor);
+                worklist.append(predecessor);
+            }
+        }
+
+        IndexSet<BasicBlock*> reached;
+        auto add = [&](BasicBlock* block) {
+            if (comeBack.contains(block) && reached.add(block))
+                version.blocksOfExcursion.append(block);
+        };
+        for (BasicBlock* block : version.hotBlocks) {
+            if (version.hoistedValueSet.contains(block->last()))
+                continue;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                if (!hotBlocks.contains(successor))
+                    add(successor);
+            }
+        }
+        unsigned numberOfClonedValues = 0;
+        for (unsigned i = 0; i < version.blocksOfExcursion.size(); ++i) {
+            BasicBlock* block = version.blocksOfExcursion[i];
+            for (Value* value : *block)
+                numberOfClonedValues += takesInstructions(value) && !version.hoistedValuesThatHoldInExcursion.contains(value);
+            if (version.hoistedValuesThatHoldInExcursion.contains(block->last())) {
+                add(version.likelySuccessorsOfHoistedGuards.get(block->last()));
+                continue;
+            }
+            for (BasicBlock* successor : block->successorBlocks())
+                add(successor);
+        }
+        if (numberOfClonedValues > maxNumberOfClonedValuesOfExcursion)
+            version.blocksOfExcursion.clear();
     }
 
     std::optional<Version> tryCreateVersion(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* preHeader, BasicBlock* unswitchedBlock, BasicBlock* takenSuccessor, UnswitchCandidate* candidate)
@@ -332,6 +412,53 @@ private:
             }
             return true;
         };
+        Vector<Value*, 16> valuesAheadOfFastLoop;
+        {
+            IndexSet<Value*> seen;
+            Vector<Value*, 16> worklist;
+            auto addChildrenAheadOfLoop = [&](Value* value) {
+                for (Value* child : value->children()) {
+                    if (takesInstructions(child) && !loops.belongsTo(child->owner, loop) && seen.add(child))
+                        worklist.append(child);
+                }
+            };
+            for (BasicBlock* block : version.hotBlocks) {
+                for (Value* value : *block)
+                    addChildrenAheadOfLoop(value);
+            }
+            for (Value* value : *preHeader) {
+                if (value->opcode() == Upsilon)
+                    addChildrenAheadOfLoop(value);
+            }
+            auto nothingHasWrittenSince = [&](Value* load, HeapRange reads) {
+                static constexpr unsigned maxNumberOfBlocks = 4;
+                BasicBlock* block = preHeader;
+                for (unsigned i = 0; i < maxNumberOfBlocks; ++i) {
+                    for (unsigned index = block->size(); index--;) {
+                        Value* value = block->at(index);
+                        if (value == load)
+                            return true;
+                        Effects effects = value->effects();
+                        if (effects.fence || effects.writes.overlaps(reads))
+                            return false;
+                    }
+                    if (block->numPredecessors() != 1)
+                        return false;
+                    block = block->predecessor(0);
+                }
+                return false;
+            };
+            while (!worklist.isEmpty()) {
+                Value* value = worklist.takeLast();
+                Effects effects = value->effects();
+                if (effects.mustExecute() || effects.readsLocalState || effects.readsPinned)
+                    continue;
+                if (effects.reads && effects.readsMutability != Mutability::Immutable && !(value->as<MemoryValue>() && nothingHasWrittenSince(value, effects.reads)))
+                    continue;
+                valuesAheadOfFastLoop.append(value);
+                addChildrenAheadOfLoop(value);
+            }
+        }
         // A load from where a hoisted load loads from is as safe as that one, whatever guards it. By the hoisted load it repeats, so that what hangs on the two is seen to repeat too.
         UncheckedKeyHashMap<Value*, Value*> repeatedLoads;
         auto& repeatedValues = m_seesWhatIsOneValue ? version.repeatedValues : repeatedLoads;
@@ -348,7 +475,7 @@ private:
             auto* load = value->as<MemoryValue>();
             if (!load || !load->isLoad())
                 return false;
-            for (Value* hoisted : version.hoistedValues) {
+            for (Value* hoisted : valuesAheadOfFastLoop) {
                 auto* other = hoisted->as<MemoryValue>();
                 if (!other || other->opcode() != load->opcode() || other->type() != load->type() || other->offset() != load->offset())
                     continue;
@@ -387,7 +514,7 @@ private:
             default:
                 return false;
             }
-            for (Value* hoisted : version.hoistedValues) {
+            for (Value* hoisted : valuesAheadOfFastLoop) {
                 if (hoisted->kind() != value->kind() || hoisted->type() != value->type() || version.repeatedValues.contains(hoisted))
                     continue;
                 bool hasSameChildren = true;
@@ -424,7 +551,7 @@ private:
             int64_t end = begin + load->accessByteSize();
             std::optional<int64_t> beginOfLower;
             std::optional<int64_t> endOfUpper;
-            for (Value* hoisted : version.hoistedValues) {
+            for (Value* hoisted : valuesAheadOfFastLoop) {
                 auto* other = hoisted->as<MemoryValue>();
                 if (!other || !other->isLoad() || version.repeatedValues.contains(hoisted) || withoutRepetition(other->lastChild()) != withoutRepetition(load->lastChild()))
                     continue;
@@ -441,10 +568,12 @@ private:
         BasicBlock* testAtTheTop = nullptr;
         IndexSet<BasicBlock*> blocksReachedWithoutTestAtTheTop;
         bool everyGuardSoFarIsHoisted = true;
+        bool hoistsGuard = false;
         unsigned numberOfHoistedValues = 0;
         auto hoist = [&](Value* value) {
             version.hoistedValues.append(value);
             version.hoistedValueSet.add(value);
+            valuesAheadOfFastLoop.append(value);
             numberOfHoistedValues += takesInstructions(value);
         };
         IndexSet<BasicBlock*> visited;
@@ -494,6 +623,7 @@ private:
                 return std::nullopt;
             if (hasInvariantChildren(block->last())) {
                 hoist(block->last());
+                hoistsGuard = true;
                 version.likelySuccessorsOfHoistedGuards.add(block->last(), likelySuccessor);
                 if (block->last()->opcode() == Branch)
                     conditionsOfHoistedGuards.add(withoutRepetition(block->last()->child(0)), likelySuccessor == block->successorBlock(0));
@@ -507,7 +637,7 @@ private:
             }
             block = likelySuccessor;
         }
-        if ((!version.hidesRanges && numberOfHoistedValues < minNumberOfHoistedValues) || (unswitchedBlock && !version.hoistedValueSet.contains(unswitchedBlock->last())))
+        if ((!version.hidesRanges && !hoistsGuard && numberOfHoistedValues < minNumberOfHoistedValues) || (unswitchedBlock && !version.hoistedValueSet.contains(unswitchedBlock->last())))
             return std::nullopt;
         if (!version.hidesRanges && numberOfClonedValues - numberOfHoistedValues > maxNumberOfClonedValues)
             return std::nullopt;
@@ -690,23 +820,30 @@ private:
         demoteValues(m_proc, valuesToDemote);
     }
 
-    void fillClonesOfHotBlocks(Version& version, const UncheckedKeyHashMap<BasicBlock*, BasicBlock*>& clones, BasicBlock* headerOfNextTurn, Variable* nextOfInductionVariable)
+    using Clones = UncheckedKeyHashMap<BasicBlock*, BasicBlock*>;
+
+    void fillClonesOfHotBlocks(Version& version, const Clones& clones, BasicBlock* headerOfNextTurn, Variable* nextOfInductionVariable, const Clones* excursion = nullptr)
     {
-        for (BasicBlock* block : version.hotBlocks) {
+        fillClones(version, version.hotBlocks, clones, headerOfNextTurn, nextOfInductionVariable, excursion, false);
+    }
+
+    void fillClones(Version& version, const Vector<BasicBlock*, 8>& blocks, const Clones& clones, BasicBlock* headerOfNextTurn, Variable* nextOfInductionVariable, const Clones* excursion, bool isExcursion)
+    {
+        const IndexSet<Value*>& hoistedValueSet = isExcursion ? version.hoistedValuesThatHoldInExcursion : version.hoistedValueSet;
+        for (BasicBlock* block : blocks) {
             BasicBlock* cloneOfBlock = clones.get(block);
             UncheckedKeyHashMap<Value*, Value*> map;
             for (Value* value : *block) {
-                if (version.omittedValues.contains(value))
+                if (!isExcursion && version.omittedValues.contains(value))
                     continue;
-                if (Value* hoisted = version.hoistedClones.get(value)) {
-                    map.add(value, hoisted);
+                if (hoistedValueSet.contains(value)) {
+                    if (Value* hoisted = version.hoistedClones.get(value))
+                        map.add(value, hoisted);
+                    else
+                        cloneOfBlock->appendNew<Value>(m_proc, Jump, value->origin());
                     continue;
                 }
-                if (version.hoistedValueSet.contains(value)) {
-                    cloneOfBlock->appendNew<Value>(m_proc, Jump, value->origin());
-                    continue;
-                }
-                if (auto outcome = version.outcomesOfComparisons.find(value); outcome != version.outcomesOfComparisons.end()) {
+                if (auto outcome = version.outcomesOfComparisons.find(value); !isExcursion && outcome != version.outcomesOfComparisons.end()) {
                     map.add(value, cloneOfBlock->appendNew<Const32Value>(m_proc, value->origin(), outcome->value));
                     continue;
                 }
@@ -721,7 +858,7 @@ private:
                 if (nextOfInductionVariable && value == (version.isTestedAtTheTop ? version.countedLoop->inductionVariable : version.countedLoop->next))
                     cloneOfBlock->appendNew<VariableValue>(m_proc, Set, value->origin(), nextOfInductionVariable, clone);
             }
-            if (version.hoistedValueSet.contains(block->last()))
+            if (hoistedValueSet.contains(block->last()))
                 cloneOfBlock->setSuccessors(FrequentedBlock(version.likelySuccessorsOfHoistedGuards.get(block->last())));
             else
                 cloneOfBlock->successors() = block->successors();
@@ -730,20 +867,35 @@ private:
                     successor = headerOfNextTurn;
                 else if (BasicBlock* cloneOfSuccessor = clones.get(successor))
                     successor = cloneOfSuccessor;
+                else if (BasicBlock* cloneOfSuccessor = excursion ? excursion->get(successor) : nullptr)
+                    successor = cloneOfSuccessor;
             }
         }
     }
 
     void cloneHotBlocks(Version& version)
     {
-        UncheckedKeyHashMap<BasicBlock*, BasicBlock*> clones;
+        Clones clones;
         for (BasicBlock* block : version.hotBlocks)
             clones.add(block, m_proc.addBlock(m_originalFrequencies.get(block)));
         Variable* nextOfInductionVariable = version.poll ? m_proc.addVariable(Int64) : nullptr;
-        fillClonesOfHotBlocks(version, clones, clones.get(version.header), nextOfInductionVariable);
+        Clones excursion;
+        BasicBlock* endOfExcursion = nullptr;
+        if (!version.blocksOfExcursion.isEmpty()) {
+            double frequency = 0;
+            for (BasicBlock* block : version.blocksOfExcursion) {
+                if (!clones.contains(block))
+                    frequency = std::max(frequency, m_originalFrequencies.get(block));
+            }
+            for (BasicBlock* block : version.blocksOfExcursion)
+                excursion.add(block, m_proc.addBlock(std::min(frequency, m_originalFrequencies.get(block))));
+            endOfExcursion = m_proc.addBlock(frequency);
+            fillClones(version, version.blocksOfExcursion, excursion, endOfExcursion, nextOfInductionVariable, nullptr, true);
+        }
+        fillClonesOfHotBlocks(version, clones, clones.get(version.header), nextOfInductionVariable, &excursion);
         BasicBlock* whereNarrowingFails = version.header;
         if (!version.phisNarrowedOnEntry.isEmpty()) {
-            UncheckedKeyHashMap<BasicBlock*, BasicBlock*> firstTurn;
+            Clones firstTurn;
             for (BasicBlock* block : version.hotBlocks)
                 firstTurn.add(block, m_proc.addBlock(m_originalFrequencies.get(block) * frequencyScaleOfOriginalLoop));
             fillClonesOfHotBlocks(version, firstTurn, clones.get(version.header), nullptr);
@@ -751,8 +903,19 @@ private:
         }
         for (BasicBlock* block : version.hotBlocks)
             block->setFrequency(m_originalFrequencies.get(block) * frequencyScaleOfOriginalLoop);
+        for (BasicBlock* block : version.blocksOfExcursion)
+            block->setFrequency(m_originalFrequencies.get(block) * frequencyScaleOfOriginalLoop);
         if (version.poll)
-            stripMine(version, clones, nextOfInductionVariable);
+            stripMine(version, clones, excursion, nextOfInductionVariable);
+        if (endOfExcursion) {
+            Origin origin = version.header->at(0)->origin();
+            BasicBlock* whereExcursionComesBack = m_proc.addBlock(version.lastPreHeaderOfFastVersion->frequency());
+            version.lastPreHeaderOfFastVersion->appendNew<Value>(m_proc, Jump, origin);
+            version.lastPreHeaderOfFastVersion->setSuccessors(FrequentedBlock(whereExcursionComesBack));
+            version.lastPreHeaderOfFastVersion = whereExcursionComesBack;
+            endOfExcursion->appendNew<Value>(m_proc, Jump, origin);
+            endOfExcursion->setSuccessors(FrequentedBlock(whereExcursionComesBack));
+        }
         for (auto [phi, extension] : version.phisNarrowedOnEntry) {
             auto* read = phi->opcode() == Identity ? phi->child(0)->as<VariableValue>() : nullptr;
             if (!read || read->opcode() != Get)
@@ -775,7 +938,7 @@ private:
     }
 
     // As B3::stripMineLoops() does it, on variables. Where a stop is requested the original loop goes on, which polls every time around.
-    void stripMine(Version& version, const UncheckedKeyHashMap<BasicBlock*, BasicBlock*>& clones, Variable* nextOfInductionVariable)
+    void stripMine(Version& version, const Clones& clones, const Clones& excursion, Variable* nextOfInductionVariable)
     {
         const CountedLoop& loop = *version.countedLoop;
         Origin origin = loop.test->last()->origin();
@@ -792,10 +955,15 @@ private:
         };
 
         BasicBlock* exit = test->successorBlock(1 - loop.indexOfLatchInSuccessors);
-        test->removeLast(m_proc);
-        Value* nextAtTest = get(test, nextOfInductionVariable);
-        test->appendNew<Value>(m_proc, Branch, origin, test->appendNew<Value>(m_proc, loop.relation, origin, nextAtTest, get(test, version.endOfStrip)));
-        test->setSuccessors(FrequentedBlock(latch), FrequentedBlock(realTest, version.isTestedAtTheTop ? FrequencyClass::Rare : FrequencyClass::Normal));
+        auto testEndOfStrip = [&](BasicBlock* test, BasicBlock* latch) {
+            test->removeLast(m_proc);
+            Value* nextAtTest = get(test, nextOfInductionVariable);
+            test->appendNew<Value>(m_proc, Branch, origin, test->appendNew<Value>(m_proc, loop.relation, origin, nextAtTest, get(test, version.endOfStrip)));
+            test->setSuccessors(FrequentedBlock(latch), FrequentedBlock(realTest, version.isTestedAtTheTop ? FrequencyClass::Rare : FrequencyClass::Normal));
+        };
+        testEndOfStrip(test, latch);
+        if (!version.isTestedAtTheTop && excursion.contains(loop.test) && excursion.contains(loop.latch))
+            testEndOfStrip(excursion.get(loop.test), excursion.get(loop.latch));
 
         Value* nextAtRealTest = get(realTest, nextOfInductionVariable);
         realTest->appendNew<Value>(m_proc, Branch, origin, realTest->appendNew<Value>(m_proc, loop.relation, origin, nextAtRealTest, get(realTest, version.bound)));
@@ -886,9 +1054,8 @@ bool foldComparisonsWithWhatIsOutOfRange(Procedure& proc)
     return changed;
 }
 
-bool narrowPhisOfExtendedWords(Procedure& proc)
+static bool narrowPhisOfExtendedWordsOnce(Procedure& proc)
 {
-    PhaseScope phaseScope(proc, "narrowPhisOfExtendedWords"_s);
     enum class Sources : uint8_t { ConstantsOnly, ExtendedWords, ZeroExtendedWords, Other };
     UncheckedKeyHashMap<Value*, Sources> sourcesOf;
     UncheckedKeyHashMap<Value*, std::pair<int64_t, int64_t>> constantsOf;
@@ -946,12 +1113,25 @@ bool narrowPhisOfExtendedWords(Procedure& proc)
         }
         insertionSet.execute(block);
     }
+    for (Value* value : proc.values())
+        value->performSubstitution();
     return true;
+}
+
+bool narrowPhisOfExtendedWords(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "narrowPhisOfExtendedWords"_s);
+    bool changed = false;
+    while (narrowPhisOfExtendedWordsOnce(proc))
+        changed = true;
+    return changed;
 }
 
 bool eliminateRedundantPhiCycles(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "eliminateRedundantPhiCycles"_s);
+    for (Value* value : proc.values())
+        value->performSubstitution();
     PhiChildren phiChildren(proc);
     const auto& phis = phiChildren.phis();
     if (phis.isEmpty())

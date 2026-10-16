@@ -191,6 +191,23 @@ Boxed Lowering::boxNumber(Number value)
     return select(equal(bitsOf(toNumber(low)), bitsOf(value)), boxInt32(low), box(purified(value)));
 }
 
+bool Lowering::tryTailCallBoxNumber(ValueID returned)
+{
+    Operand operand = get(returned);
+    if ((operand.rep != Rep::Double && operand.rep != Rep::OptionalDouble) || m_boxedBeforeUnboxing.get(operand.value) || operand.value->hasDouble() || (operand.value->opcode() == B3::IToD && operand.value->child(0)->type() == Int32))
+        return false;
+    PatchpointValue* jump = m_out.patchpoint(Void);
+    jump->append(ConstrainedValue(operand.value, ValueRep::reg(FPRInfo::returnValueFPR)));
+    jump->clobber(RegisterSet::macroClobberedGPRs());
+    jump->effects.terminal = true;
+    jump->setGenerator([context = &m_context, stub = operand.rep == Rep::Double ? Stub::BoxNumber : Stub::BoxOptionalNumber](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        context->emitFrameTeardown(jit, params.proc().code());
+        context->stubCalls.tailCall(jit, stub);
+    });
+    return true;
+}
+
 Word32 Lowering::isWithin(Integer value, Range range)
 {
     if (range.least > range.most)
@@ -453,6 +470,9 @@ Word32 Lowering::toInt32(ValueID id)
     default:
         if (auto found = m_int32sOfNumbers.find(operand.value); found != m_int32sOfNumbers.end())
             return Word32(found->value);
+        static_assert(!static_cast<uint32_t>(INT64_MIN));
+        if (auto found = m_integersOfNumbers.find(id.index()); found != m_integersOfNumbers.end() && found->value.least && found->value.number == operand.value)
+            return low32(Integer(found->value.integer));
         if (LValue phi = m_int32Phis.get(id.index()))
             return Word32(phi);
         if (auto ofSum = toInt32OfSum(id))

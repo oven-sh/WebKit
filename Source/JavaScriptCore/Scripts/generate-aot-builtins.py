@@ -147,7 +147,7 @@ EVERYTHING = (1 << len(USES)) - 1
 entries, classes, structures, replaceable, predicted, twins, errors = [], [], [], [], [], [], []
 families, inline_builtins, runtime_operations, intrinsics, hardened = [], {}, [], [], set()
 omitted, written = [], []
-FAMILY_NAMES = {'regexp': 'RegExp', 'typedarray': 'TypedArray', 'error-json-global': 'ErrorJSONGlobal', 'json': 'JSON'}
+FAMILY_NAMES = {'regexp': 'RegExp', 'typedarray': 'TypedArray', 'error-json-global': 'ErrorJSONGlobal', 'json': 'JSON', 'json-parse': 'JSONParse'}
 WRITES = ['Pure', 'Nothing', 'RuntimeState', 'TypedArrayProperties', 'Fields', 'Heap']
 
 
@@ -500,13 +500,14 @@ def array(declaration, lines):
     return 'constexpr %s = {\n%s};\n\n' % (declaration, ''.join('    %s,\n' % line for line in lines))
 
 
+operation_numbers = {entry['name']: number for number, entry in enumerate(entries) if entry['table_kind'] == 'Operation' and entry['is_first']}
 first_entries = sorted((KIND_NUMBERS.index(entry['table_kind']) << 32 | (name_numbers[entry['holder']] if entry['holder'] else 0xffff) << 16 | name_numbers[entry['name']], number, entry)
                        for number, entry in enumerate(entries) if entry['is_first'])
 table = array('BuiltinParameter builtinParameterPool[]', pool)
 table += array('Builtin builtinEntries[numberOfBuiltins]', ['{ BuiltinKind::%s, "%s"_s, "%s"_s, %s, %s, %s }' % (entry['table_kind'], entry['holder'], entry['name'], cpp_name(entry['holder']), cpp_name(entry['name']), rest)
                                                             for entry, rest in rows])
-table += array('BuiltinNameData builtinNames[numberOfBuiltinNames]', ['{ "%s"_s, %s, %s, %s, %s, %s }' % (
-    text, class_numbers.get(text, 'noClass'), class_numbers.get(speculated[text], 'severalClasses') if text in speculated else 'noClass',
+table += array('BuiltinNameData builtinNames[numberOfBuiltinNames]', ['{ "%s"_s, %s, %s, %s, %s, %s, %s }' % (
+    text, class_numbers.get(text, 'noClass'), class_numbers.get(speculated[text], 'severalClasses') if text in speculated else 'noClass', operation_numbers.get(text, 'noOperation'),
     *('true' if text in texts_with else 'false' for texts_with in (is_global, replaceable, may_be_extended))) for text in texts])
 table += array('EngineClass engineClasses[numberOfEngineClasses]', ['{ "%s"_s, %d, %s, %s, %s, %s, %d, %d }' % (
     engine['text'], number, cpp_name(engine['text']), cpp_name(engine['listed_as']), engine['typed_array_type'], engine['type'], engine['first'], engine['count']) for number, engine in enumerate(engine_classes)])
@@ -588,7 +589,6 @@ if bun:
                 errors.append('engine.def: src/aot/prelude/engine/%s.ts has no `export function %s`' % (file, aot_engine_builtins.exported_name(function)))
 if len(structures) > 255 or len(engine_classes) > 255 or len(entries) >= 0xfffe or len(texts) >= 0xfffe:
     errors.append('too many entries, names, classes or structures')
-operation_numbers = {entry['name']: number for number, entry in enumerate(entries) if entry['table_kind'] == 'Operation' and entry['is_first']}
 for text in WELL_KNOWN_OPERATIONS:
     if text not in operation_numbers:
         errors.append('there is no operation %s' % text)
@@ -601,7 +601,7 @@ for where, name, is_prefix, position, what, payload in intrinsics:
     if what in BARE_INTRINSICS and payload is None:
         variant = what
     elif what == 'Operation' and any(entry['kind'] == 'operation' and entry['name'] == payload for entry in entries):
-        variant = 'Operation("%s")' % payload
+        variant = 'Operation(Operation::%s)' % payload
     elif what == 'HasJSType' and len(parts) == 2:
         for part in parts:
             if part not in js_type_names:
@@ -665,6 +665,7 @@ lists += x_macro('FOR_EACH_AOT_TYPED_BUILTIN_FAMILY', map(family_name, families)
 lists += x_macro('FOR_EACH_AOT_TYPED_INLINE_BUILTIN', ['%s, %s, %s' % (name, family_name(family), 'true' if is_exact else 'false') for name, (family, is_exact) in inline_builtins.items()])
 lists += x_macro('FOR_EACH_AOT_TYPED_BUILTIN_OPERATION', ['operationAOTTyped' + operation[0] for operation in runtime_operations])
 lists += x_macro('FOR_EACH_AOT_TYPED_LANGUAGE_OPERATION', operations)
+lists += x_macro('FOR_EACH_AOT_TYPED_IR_OPERATION', ['%s, %d, %d' % (name, number, name_numbers[name]) for name, number in sorted(operation_numbers.items(), key=lambda operation: operation[1])])
 lists += x_macro('FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION', ['%s, "%s"' % (enumerator_of(function), function) for function, family, name in prelude_functions])
 lists += x_macro('FOR_EACH_AOT_TYPED_ENGINE_BUILTIN_FUNCTION', ['%s, %d' % (code, number) for file, function, code, number in engine_functions])
 lists += x_macro('FOR_EACH_AOT_TYPED_ORIGINAL_STRUCTURE', ['%d, %s' % numbered for numbered in enumerate(structures)])
@@ -774,9 +775,24 @@ front_end += '/// `Format::Header::builtinsHash` of the engine.\npub(crate) cons
 front_end += '/// The files of the prelude: name and text.\npub const PRELUDE_FILES: &[(&str, &str)] = &[\n%s];\n\n' % ''.join('    ("%s.ts", include_str!("prelude/%s.ts")),\n' % (family, family) for family in prelude_files)
 front_end += '/// The name of a built-in, and a function of the prelude that the engine may call in its place.\npub const PRELUDE_FUNCTIONS: &[(&str, &str)] = &[\n%s];\n' % ''.join(
     '    ("%s", "%s"),\n' % (name, function) for function, family, name in prelude_functions)
+front_end += '\n#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]\n#[repr(u16)]\npub enum Operation {\n%s}\n' % ''.join('    %s = %d,\n' % operation for operation in sorted(operation_numbers.items(), key=lambda operation: operation[1]))
+front_end += '\nimpl Operation {\n    const BY_NAME: &[(&str, Operation)] = &[\n%s    ];\n' % ''.join('        ("%s", Operation::%s),\n' % (name, name) for name in sorted(operation_numbers))
+front_end += '\n    pub(crate) fn name(self) -> &\'static str {\n        match self {\n%s        }\n    }\n' % ''.join('            Operation::%s => "%s",\n' % (name, name) for name in sorted(operation_numbers, key=operation_numbers.get))
+front_end += '''
+    pub(crate) fn named(name: &[u8]) -> Option<Operation> {
+        Self::BY_NAME.binary_search_by(|entry| entry.0.as_bytes().cmp(name)).ok().map(|at| Self::BY_NAME[at].1)
+    }
+
+    pub(crate) fn numbered(number: u32) -> Option<Operation> {
+        Self::BY_NAME.iter().find(|entry| entry.1 as u32 == number).map(|entry| entry.1)
+    }
+}
+'''
 
 intrinsics_rs = '// %s\n' % NOTICE + '''
 //! What a `$name` is in a file of Bun's src/js (an internal module, a file of builtin functions) that does not declare it.
+
+use crate::builtins_generated::Operation;
 
 /// Where the name stands.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -792,7 +808,7 @@ pub(crate) enum Position {
 #[derive(Clone, Copy)]
 pub(crate) enum Intrinsic {
     /// `Op::Operation` of that name, with the arguments as written.
-    Operation(&'static str),
+    Operation(Operation),
     /// `Operation HasJSType(value, Int(first), Int(last))`: numbers in the engine's list of the JSTypes that are asked for.
     HasJSType { first: u8, last: u8 },
     /// The public function, which no program can replace: `holder.name`, or the global function `name` if there is no holder.

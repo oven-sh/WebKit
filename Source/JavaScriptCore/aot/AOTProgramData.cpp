@@ -520,17 +520,92 @@ public:
         ahead.hash = hashForAppendOnce(ahead.handlersAndPositions.span());
     }
 
-    void fillTypedInfo(const ImageView::Function& function, const Vector<uint8_t>& positions, const TypedInfoMadeAhead& ahead)
+    void fillTypedInfos(std::span<const std::optional<ImageView::Function>> functions, std::span<const Vector<uint8_t>> positions, std::span<const TypedInfoMadeAhead> madeAhead)
     {
-        if (ahead.handlersAndPositions.isEmpty()) {
-            uint32_t offset = appendOnce(positions.span(), 1, ahead.hash);
-            RELEASE_ASSERT(!(offset >> 31));
-            m_functionMetadataOffsets[function.index] = offset << 1 | FunctionMetadata::isPositionsOfTypedFunction;
-            return;
+        struct Row {
+            uint64_t hash { 0 };
+            uint32_t number { 0 };
+        };
+        auto bytesOf = [&](uint32_t number) {
+            return madeAhead[number].handlersAndPositions.isEmpty() ? positions[number].span() : madeAhead[number].handlersAndPositions.span();
+        };
+        Vector<Row> rows;
+        rows.reserveInitialCapacity(functions.size());
+        for (uint32_t number = 0; number < functions.size(); ++number) {
+            if (functions[number])
+                rows.append(Row { madeAhead[number].hash, number });
         }
-        uint32_t offset = appendOnce(ahead.handlersAndPositions.span(), 1, ahead.hash);
-        RELEASE_ASSERT(!(offset >> 30));
-        m_functionMetadataOffsets[function.index] = offset << 2 | FunctionMetadata::isHandlersAndPositionsOfTypedFunction;
+        Typed::sortOnPool(rows.mutableSpan(), [](const Row& a, const Row& b) {
+            return a.hash != b.hash ? a.hash < b.hash : a.number < b.number;
+        });
+        Vector<uint32_t> firstWithBytesOf;
+        Vector<uint32_t> sizesOfNewBytes;
+        Vector<uint32_t> offsets;
+        firstWithBytesOf.fill(0, functions.size());
+        sizesOfNewBytes.fill(0, functions.size());
+        offsets.fill(0, functions.size());
+        constexpr size_t rowsInChunk = 4096;
+        Typed::forEachIndexInParallel((rows.size() + rowsInChunk - 1) / rowsInChunk, [&](unsigned chunk) {
+            size_t end = std::min(rows.size(), (static_cast<size_t>(chunk) + 1) * rowsInChunk);
+            size_t at = static_cast<size_t>(chunk) * rowsInChunk;
+            while (at && at < end && rows[at].hash == rows[at - 1].hash)
+                ++at;
+            Vector<uint32_t, 4> firsts;
+            while (at < end) {
+                uint64_t hash = rows[at].hash;
+                auto writtenBefore = m_copies.find(hash | 1);
+                firsts.shrink(0);
+                for (; at < rows.size() && rows[at].hash == hash; ++at) {
+                    uint32_t number = rows[at].number;
+                    auto bytes = bytesOf(number);
+                    RELEASE_ASSERT(!bytes.empty());
+                    firstWithBytesOf[number] = number;
+                    bool isWritten = false;
+                    if (writtenBefore != m_copies.end()) {
+                        for (auto [offset, size] : writtenBefore->value) {
+                            if (size == bytes.size() && equalSpans(m_out.span().subspan(offset, size), bytes)) {
+                                offsets[number] = offset;
+                                isWritten = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (isWritten)
+                        continue;
+                    size_t same = firsts.findIf([&](uint32_t first) {
+                        return equalSpans(bytesOf(first), bytes);
+                    });
+                    if (same != notFound) {
+                        firstWithBytesOf[number] = firsts[same];
+                        continue;
+                    }
+                    firsts.append(number);
+                    sizesOfNewBytes[number] = safeCast<uint32_t>(bytes.size());
+                }
+            }
+        });
+        size_t sizeOfOutput = m_out.size();
+        for (uint32_t number = 0; number < functions.size(); ++number) {
+            if (!sizesOfNewBytes[number])
+                continue;
+            offsets[number] = safeCast<uint32_t>(sizeOfOutput);
+            sizeOfOutput += sizesOfNewBytes[number];
+        }
+        m_out.grow(sizeOfOutput);
+        Typed::forEachIndexInParallel(functions.size(), [&](unsigned number) {
+            if (!functions[number])
+                return;
+            uint32_t offset = offsets[firstWithBytesOf[number]];
+            if (sizesOfNewBytes[number])
+                memcpySpan(m_out.mutableSpan().subspan(offset, sizesOfNewBytes[number]), bytesOf(number));
+            if (madeAhead[number].handlersAndPositions.isEmpty()) {
+                RELEASE_ASSERT(!(offset >> 31));
+                m_functionMetadataOffsets[functions[number]->index] = offset << 1 | FunctionMetadata::isPositionsOfTypedFunction;
+                return;
+            }
+            RELEASE_ASSERT(!(offset >> 30));
+            m_functionMetadataOffsets[functions[number]->index] = offset << 2 | FunctionMetadata::isHandlersAndPositionsOfTypedFunction;
+        });
     }
 
     void fillTopLevelCodeInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, uint32_t numberOfTopLevelCode, LineStartTable& lineStarts)
@@ -928,6 +1003,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             }
         }
     });
+    builder.fillTypedInfos(typedFunctions.span(), typedPositions.span(), madeAhead.span());
     for (size_t i = 0; i < keys.size(); ++i) {
         auto& key = keys[i];
         if (key.record & ImageKey::isEntryInsideFunction) {
@@ -936,8 +1012,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             typedEntries[key.start] = madeAhead[i].closureWord;
             continue;
         }
-        if (auto& function = typedFunctions[i]) {
-            builder.fillTypedInfo(*function, typedPositions[i], madeAhead[i]);
+        if (typedFunctions[i]) {
             // A continuation: only its function enters it.
             if (key.kind != ImageKey::typedFunction)
                 continue;

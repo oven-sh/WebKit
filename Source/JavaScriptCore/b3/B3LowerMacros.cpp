@@ -1185,6 +1185,12 @@ private:
                 GPRReg result = params[0].gpr();
 #if CPU(ARM64)
                 jit.m_assembler.adr(result, 0);
+#elif CPU(X86_64)
+                auto& buffer = jit.m_assembler.buffer();
+                buffer.putByte(static_cast<int8_t>(0x48 | (static_cast<unsigned>(result) >> 3) << 2));
+                buffer.putByte(static_cast<int8_t>(0x8d));
+                buffer.putByte(static_cast<int8_t>((static_cast<unsigned>(result) & 7) << 3 | 5));
+                buffer.putInt(0);
 #else
                 UNUSED_PARAM(result);
                 RELEASE_ASSERT_NOT_REACHED();
@@ -1242,6 +1248,10 @@ private:
                         memcpy(&adr, instruction, sizeof(adr));
                         adr |= (distance & 3) << 29 | (distance >> 2) << 5;
                         performJITMemcpy<jitMemcpyRepatch>(instruction, &adr, sizeof(adr));
+#elif CPU(X86_64)
+                        constexpr size_t sizeOfInstruction = 7;
+                        int32_t distance = safeCast<int32_t>(table - (instruction + sizeOfInstruction));
+                        performJITMemcpy<jitMemcpyRepatch>(instruction + sizeOfInstruction - sizeof(distance), &distance, sizeof(distance));
 #else
                         UNUSED_PARAM(instruction);
 #endif
@@ -1291,6 +1301,12 @@ private:
             return std::popcount(a.mask) > std::popcount(b.mask);
         });
         bool coversAll = covered == (limit == 63 ? ~0ull : (1ull << (limit + 1)) - 1);
+        if (!coversAll && needsRangeCheck && first < 64 && first + limit < 64) {
+            for (BitTest& test : tests)
+                test.mask <<= first;
+            limit += first;
+            first = 0;
+        }
 
         unsigned costOfTree = 4;
         for (unsigned remaining = size; remaining > 3; remaining = (remaining + 1) / 2)
@@ -1406,7 +1422,7 @@ private:
                 if (index->type() != pointerType() && index->type() == Int32)
                     index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);
 
-                if (m_proc.positionIndependent()) {
+                if (m_proc.keepsDataInCode()) {
                     appendJumpThroughTableInCode(cases, fallThrough, start, end, before, index, tableSize);
                     return;
                 }

@@ -257,18 +257,14 @@ static JSValue retrieveArguments(VM& vm, CallFrame* callFrame, JSFunction* funct
     return functor.result();
 }
 
-static String restrictedPropertyAccessErrorFor(VM& vm, JSValue receiver)
+static bool isSloppyFunctionCompiledAheadOfTime(JSValue receiver)
 {
 #if ENABLE(AOT)
-    if (receiver.isCell() && AOT::isSloppyPlainClosure(receiver.asCell())) {
-        asObject(receiver)->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
-        return withAOTErrorNote(RestrictedPropertyAccessError);
-    }
+    return receiver.isCell() && AOT::isSloppyPlainClosure(receiver.asCell());
 #else
-    UNUSED_PARAM(vm);
     UNUSED_PARAM(receiver);
+    return false;
 #endif
-    return RestrictedPropertyAccessError;
 }
 
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#get-functionprototypearguments
@@ -278,14 +274,19 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
-        return throwVMTypeError(globalObject, scope, restrictedPropertyAccessErrorFor(vm, JSValue::decode(thisValue)));
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+        if (isSloppyFunctionCompiledAheadOfTime(JSValue::decode(thisValue)))
+            return JSValue::encode(jsNull());
+        return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
 
-    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->arguments);
+    if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && thisObj->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]]
+        return JSValue::encode(jsNull());
 
     JSValue result = retrieveArguments(vm, vm.topCallFrame, thisObj);
     EXCEPTION_ASSERT(scope.exception() || result);
+    if (vm.auditsImmutableIntrinsics() && result && !result.isNull()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->arguments);
     return JSValue::encode(result);
 }
 
@@ -352,11 +353,14 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
-        return throwVMTypeError(globalObject, scope, restrictedPropertyAccessErrorFor(vm, JSValue::decode(thisValue)));
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+        if (isSloppyFunctionCompiledAheadOfTime(JSValue::decode(thisValue)))
+            return JSValue::encode(jsNull());
+        return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
 
-    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->caller);
+    if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && thisObj->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]]
+        return JSValue::encode(jsNull());
 
     JSValue caller = retrieveCallerFunction(vm, vm.topCallFrame, thisObj);
     if (caller.isNull())
@@ -378,19 +382,19 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     if (isGeneratorParseMode(parseMode) || isAsyncFunctionParseMode(parseMode))
         return JSValue::encode(jsNull());
 
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->caller);
     return JSValue::encode(caller);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue, PropertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
-        throwTypeError(globalObject, scope, restrictedPropertyAccessErrorFor(vm, JSValue::decode(thisValue)));
-    else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, propertyName);
+    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyFunctionCompiledAheadOfTime(JSValue::decode(thisValue)))
+        throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
     return true;
 }

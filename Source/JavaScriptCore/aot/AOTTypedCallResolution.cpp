@@ -76,11 +76,10 @@ const Function* rampBehind(const Program& program, const Function& callee)
 TypeID typeOfPromiseOf(const Program& program, const Function& callee)
 {
     auto* ramp = rampBehind(program, callee);
-    auto newPromise = program.find(asBytes("NewPromise"_s.span8()));
-    if (!ramp || !newPromise || !program.find(asBytes("RejectPromise"_s.span8())))
+    if (!ramp)
         return { };
     for (auto& value : ramp->values) {
-        if (value.opcode == Opcode::Operation && value.string() == *newPromise)
+        if (value.opcode == Opcode::Operation && program.operationOf(value) == Operations::NewPromise)
             return value.type;
     }
     return { };
@@ -92,25 +91,6 @@ public:
         : m_program(program)
         , m_function(function)
         , m_mayGuess(mayGuess)
-        , m_constructWith(program.find(asBytes("ConstructWith"_s.span8())).value_or(StringID()))
-        , m_superGet(program.find(asBytes("SuperGet"_s.span8())).value_or(StringID()))
-        , m_superSet(program.find(asBytes("SuperSet"_s.span8())).value_or(StringID()))
-        , m_apply([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("Apply"_s.span8())));
-            return found;
-        }())
-        , m_isObject([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("IsObject"_s.span8())));
-            return found;
-        }())
-        , m_callNoInline([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("CallNoInline"_s.span8())));
-            return found;
-        }())
-        , m_defineField([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("DefineField"_s.span8())));
-            return found;
-        }())
     {
     }
 
@@ -125,27 +105,22 @@ public:
 
     void expandDisposableStacks()
     {
-        StringID newDisposableStack = m_program.find(asBytes("NewDisposableStack"_s.span8())).value_or(StringID());
         bool didLookUp = false;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             for (unsigned i = 0; i < m_function.blocks[b].values.size(); ++i) {
                 ValueID id = m_function.blocks[b].values[i];
-                if (m_function.at(id).opcode != Opcode::Operation || m_function.at(id).string() != newDisposableStack)
+                if (m_function.at(id).opcode != Opcode::Operation || m_program.operationOf(m_function.at(id)) != Operations::NewDisposableStack)
                     continue;
                 if (!std::exchange(didLookUp, true)) {
-                    auto& builtins = Builtins::singleton();
-                    m_addDisposableResource = m_program.find(asBytes("AddDisposableResource"_s.span8())).value_or(StringID());
-                    m_disposeResources = m_program.find(asBytes("DisposeResources"_s.span8())).value_or(StringID());
                     m_usingTakesObjects = m_program.find(asBytes("The value of a using declaration must be an object, null or undefined"_s.span8())).value_or(StringID());
                     m_usingTakesDisposables = m_program.find(asBytes("The value of a using declaration has no callable dispose method"_s.span8())).value_or(StringID());
-                    m_isCallable = builtins.find(BuiltinKind::Operation, { }, builtins.nameOf(asBytes("IsCallable"_s.span8())));
                     m_symbol = m_program.find(asBytes("Symbol"_s.span8())).value_or(StringID());
                     m_dispose = m_program.find(asBytes("dispose"_s.span8())).value_or(StringID());
                     m_typeError = m_program.find(asBytes("TypeError"_s.span8())).value_or(StringID());
                     m_suppressedError = m_program.find(asBytes("SuppressedError"_s.span8())).value_or(StringID());
                     countUsesAndFindUnreachedBlocks();
                 }
-                if (!m_addDisposableResource || !m_disposeResources || !m_usingTakesObjects || !m_usingTakesDisposables || !m_isObject || !m_isCallable || !m_symbol || !m_dispose || !m_typeError || !m_suppressedError)
+                if (!m_usingTakesObjects || !m_usingTakesDisposables || !m_symbol || !m_dispose || !m_typeError || !m_suppressedError)
                     return;
                 expandDisposableStack(BlockID(b), id);
             }
@@ -526,14 +501,14 @@ private:
                     isUsedOtherwise = true;
                     continue;
                 }
-                if (value.string() == m_disposeResources && !dispose) {
+                if (m_program.operationOf(value) == Operations::DisposeResources && !dispose) {
                     dispose = block.values[i];
                     disposedIn = BlockID(b);
                     continue;
                 }
                 auto& isAsync = m_function.at(value.arguments[2]);
                 bool isWatched = i + 1 == block.values.size() && block.terminator.kind == TerminatorKind::Invoke;
-                if (value.string() != m_addDisposableResource || isAsync.opcode != Opcode::Boolean || isAsync.boolean() || !isWatched || resources.size() == maxResources) {
+                if (m_program.operationOf(value) != Operations::AddDisposableResource || isAsync.opcode != Opcode::Boolean || isAsync.boolean() || !isWatched || resources.size() == maxResources) {
                     isUsedOtherwise = true;
                     continue;
                 }
@@ -685,14 +660,14 @@ private:
             open(resource.addedIn, m_function.at(resource.addedIn).values.size() - 1);
             m_function.at(resource.method).type = anything;
             m_function.at(resource.method).rep = repOf(m_program.at(anything));
-            BlockID isNoObject = branch(appendTest(m_isObject, resource.value));
+            BlockID isNoObject = branch(appendTest(Operations::IsObject, resource.value));
             Value symbol = make(Opcode::GetById, anything);
             symbol.children[0] = appendGlobal(m_symbol);
             symbol.immediates[0] = m_dispose.index();
             Value read = make(Opcode::GetByVal, anything);
             read.children = { resource.value, appendThrowing(WTF::move(symbol)) };
             ValueID method = appendThrowing(WTF::move(read));
-            BlockID isNotCallable = branch(appendTest(m_isCallable, method));
+            BlockID isNotCallable = branch(appendTest(Operations::IsCallable, method));
             finish(method);
             moveTo(isNotCallable);
             finishByThrowingTypeError(m_usingTakesDisposables);
@@ -818,8 +793,7 @@ private:
     {
         if ((user.opcode != Opcode::Operation && user.opcode != Opcode::CallBuiltin) || user.arguments.isEmpty() || user.arguments[0] != literal)
             return false;
-        BuiltinID entry = user.opcode == Opcode::Operation ? Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(user.string())) : user.builtin();
-        return entry && entry == m_defineField;
+        return m_program.operationOf(user) == Operations::DefineField;
     }
 
     Vector<ValueID, 2> literalsHandedToRecordParameters(ValueID call, FunctionID callee) const
@@ -982,10 +956,10 @@ private:
         moveTo(refused);
         ValueID error = append(make(Opcode::CatchValue, m_program.types.anything));
         Value newPromise = make(Opcode::Operation, promiseType);
-        newPromise.immediates[0] = m_program.find(asBytes("NewPromise"_s.span8()))->index();
+        newPromise.immediates[0] = Operations::NewPromise.index();
         ValueID promise = append(WTF::move(newPromise));
         Value reject = make(Opcode::Operation, m_program.types.undefined);
-        reject.immediates[0] = m_program.find(asBytes("RejectPromise"_s.span8()))->index();
+        reject.immediates[0] = Operations::RejectPromise.index();
         reject.arguments = { promise, error };
         append(WTF::move(reject));
         finishWithCast(held(promise, type, CastReason::Claim));
@@ -1510,8 +1484,8 @@ private:
     bool resolveSuper(BlockID block, unsigned index)
     {
         Value original = m_function.at(m_function.at(block).values[index]);
-        bool isGet = original.string() == m_superGet;
-        if ((!isGet && original.string() != m_superSet) || original.arguments.size() != (isGet ? 4u : 5u))
+        bool isGet = m_program.operationOf(original) == Operations::SuperGet;
+        if ((!isGet && m_program.operationOf(original) != Operations::SuperSet) || original.arguments.size() != (isGet ? 4u : 5u))
             return false;
         LayoutID around = classDefinedBy(original.arguments[0]);
         ValueID keyID = m_program.constantOf(m_function, original.arguments[1]);
@@ -1733,8 +1707,7 @@ private:
     bool resolveCallNoInline(BlockID block, unsigned index)
     {
         auto& value = m_function.at(m_function.at(block).values[index]);
-        BuiltinID entry = value.opcode == Opcode::Operation ? Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(value.string())) : value.builtin();
-        if (!entry || entry != m_callNoInline || value.arguments.size() < 2)
+        if (m_program.operationOf(value) != Operations::CallNoInline || value.arguments.size() < 2)
             return false;
         auto known = knownCallee(value.arguments[0]);
         if (!known || !known->isCertain || !mayBeCalledDirectly(known->function))
@@ -1926,7 +1899,19 @@ private:
         if (site.opcode != Opcode::Call || !callee.entry || callee.path.isOnPrototype || (site.child(1) && !typeOf(site.child(1)).isUndefinedOrNull()))
             return false;
         auto& builtins = Builtins::singleton();
-        return builtins.classNamed(callee.global) != &builtins.promiseClass() && callee.global != BuiltinName(AOT_TYPED_BUILTIN_NAME_TypedArray);
+        return builtins.classNamed(callee.global) != &builtins.promiseClass() && builtins.at(callee.entry).holderName != BuiltinName(AOT_TYPED_BUILTIN_NAME_TypedArray);
+    }
+
+    bool isMethodOfLiteralCalledOnIt(const Value& site) const
+    {
+        if (site.opcode != Opcode::Call || !site.child(1))
+            return false;
+        auto& read = m_function.at(originOf(site.child(0)));
+        if (read.opcode != Opcode::GetById)
+            return false;
+        ValueID holder = originOf(read.child(0));
+        Opcode opcode = m_function.at(holder).opcode;
+        return (opcode == Opcode::NewArray || opcode == Opcode::NewObject) && holder == originOf(site.child(1));
     }
 
     bool resolveCallOfExpectedBuiltin(BlockID block, unsigned index)
@@ -1934,7 +1919,7 @@ private:
         ValueID id = m_function.at(block).values[index];
         Value original = m_function.at(id);
         ValueID operand = original.child(0);
-        if (isReadFromGlobal(operand))
+        if (isReadFromGlobal(operand) || isMethodOfLiteralCalledOnIt(original))
             return false;
         ExpectedBuiltins expected = m_program.expectedBuiltins(m_function, operand);
         std::optional<StringID> prototype = m_program.find(asBytes("prototype"_s.span8()));
@@ -2030,7 +2015,7 @@ private:
         Value direct = make(Opcode::Call, original.type);
         if (isApply && given.size() > 1 && !typeOf(given[1]).isUndefinedOrNull()) {
             direct.opcode = Opcode::CallBuiltin;
-            direct.immediates[0] = m_apply.index();
+            direct.immediates[0] = Operations::Apply.index();
             direct.arguments = Arguments { function, thisValue, given[1] };
         } else {
             direct.children = { function, thisValue, ValueID() };
@@ -2137,7 +2122,7 @@ private:
             made = returned;
         else if (mayReturnObject(callee)) {
             Value test = make(Opcode::CallBuiltin, m_program.types.boolean);
-            test.immediates[0] = m_isObject.index();
+            test.immediates[0] = Operations::IsObject.index();
             test.arguments.append(returned);
             BlockID isNoObject = branch(append(WTF::move(test)));
             finish(held(returned, original.type, CastReason::Claim));
@@ -2164,7 +2149,7 @@ private:
     bool superIsResolved(LayoutID ofClass) const
     {
         FunctionID parent = m_program.at(ofClass).declaredParentConstructor;
-        return parent && m_isObject && constructsOrdinaryObject(parent) && m_program.at(parent).captureTypes.isEmpty();
+        return parent && constructsOrdinaryObject(parent) && m_program.at(parent).captureTypes.isEmpty();
     }
 
     // The class that the function constructs and those it extends, as far up as resolveConstructSuper() finds the constructor.
@@ -2230,7 +2215,7 @@ private:
         if (!ofClass || m_asksClassObject[block.index()] == ofClass)
             return false;
         FunctionID parent = m_program.at(ofClass).declaredParentConstructor;
-        if (!parent || !m_isObject || !constructsOrdinaryObject(parent) || !m_program.at(parent).captureTypes.isEmpty())
+        if (!parent || !constructsOrdinaryObject(parent) || !m_program.at(parent).captureTypes.isEmpty())
             return false;
         auto& callee = m_program.at(parent);
         ValueID newTarget = original.child(1);
@@ -2263,7 +2248,7 @@ private:
             made = returned;
         else if (mayReturnObject(callee)) {
             Value test = make(Opcode::CallBuiltin, m_program.types.boolean);
-            test.immediates[0] = m_isObject.index();
+            test.immediates[0] = Operations::IsObject.index();
             test.arguments.append(returned);
             BlockID isNoObject = branch(append(WTF::move(test)));
             finish(held(returned, original.type, CastReason::Claim));
@@ -2296,7 +2281,7 @@ private:
     {
         ValueID id = m_function.at(block).values[index];
         Value original = m_function.at(id);
-        if (original.string() != m_constructWith || original.arguments.size() < 2)
+        if (m_program.operationOf(original) != Operations::ConstructWith || original.arguments.size() < 2)
             return false;
         auto known = knownCallee(original.arguments[0]);
         if (!known || !mayConstructDirectly(known->function, true) || isRefuted(block, *known))
@@ -2374,7 +2359,7 @@ private:
             allocation.constructedBy = known->function;
             if (!allocation.layout || m_program.at(allocation.layout).kind != LayoutKind::Record || !m_program.at(allocation.layout).isAllocated)
                 return false;
-        } else if (m_isObject && constructsOrdinaryObject(known->function))
+        } else if (constructsOrdinaryObject(known->function))
             return resolveConstructOfOrdinaryObject(block, index, *known);
         else
             return false;
@@ -2408,24 +2393,13 @@ private:
     Function& m_function;
     // Whether a call of what is only expected to be a closure of a function gets a test and a direct call.
     bool m_mayGuess;
-    StringID m_constructWith;
-    StringID m_superGet;
-    StringID m_superSet;
-    // The operation: a call with the arguments in a list.
-    BuiltinID m_apply;
-    BuiltinID m_isObject;
-    BuiltinID m_callNoInline;
-    BuiltinID m_defineField;
     Vector<ValueID, 2> m_literalsNobodyElseHolds;
-    StringID m_addDisposableResource;
-    StringID m_disposeResources;
     StringID m_usingTakesObjects;
     StringID m_usingTakesDisposables;
     StringID m_symbol;
     StringID m_dispose;
     StringID m_typeError;
     StringID m_suppressedError;
-    BuiltinID m_isCallable;
     Vector<uint32_t> m_numberOfUses;
     unsigned m_numberOfBlocksAsRead { 0 };
     BitVector m_isReached;
@@ -3288,8 +3262,14 @@ void createValueEntrypoints(Program& program)
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::Call) {
-                    if (function.at(value.child(0)).opcode == Opcode::GetGlobal)
+                    auto& callee = function.at(value.child(0));
+                    if (callee.opcode == Opcode::GetGlobal)
                         continue;
+                    if (callee.opcode == Opcode::GetById && value.child(1) && callee.child(0) == value.child(1)) {
+                        auto& receiver = asRead.typeOf(function, value.child(1));
+                        if (!receiver.anyObject && !receiver.anyFunction && receiver.views.isEmpty())
+                            continue;
+                    }
                     if (value.child(1))
                         isHanded(value.child(1));
                     for (ValueID argument : value.arguments)
@@ -3492,8 +3472,7 @@ void callValuesBySignature(Program& program)
 
 void findDeclaredParents(Program& program)
 {
-    auto makeClass = program.find(asBytes("MakeClass"_s.span8()));
-    if (!makeClass)
+    if (!program.usesOperation(Operations::MakeClass))
         return;
     Vector<Vector<std::pair<LayoutID, FunctionID>>> found(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
@@ -3508,7 +3487,7 @@ void findDeclaredParents(Program& program)
             return function.at(id).opcode == Opcode::FunctionReference ? function.at(id).function() : FunctionID();
         };
         for (auto& value : function.values) {
-            if (value.opcode != Opcode::Operation || value.string() != *makeClass || value.arguments.size() != 2)
+            if (value.opcode != Opcode::Operation || program.operationOf(value) != Operations::MakeClass || value.arguments.size() != 2)
                 continue;
             FunctionID constructor = constantClosure(value.arguments[0]);
             FunctionID parent = constantClosure(value.arguments[1]);
@@ -3620,6 +3599,8 @@ void createGenericEntrypoints(Program& program)
     }
     unsigned firstEntry = program.functions.size();
     program.functions.grow(firstEntry + entered.size());
+    program.firstGenericEntrypoint = firstEntry;
+    program.numberOfConsecutiveGenericEntrypoints = entered.size();
     forEachIndexInParallel(entered.size(), [&](unsigned k) {
         program.functions[firstEntry + k] = createGenericEntrypoint(program, FunctionID(entered[k]), program.functions[entered[k]].writtenEntry);
     });
@@ -3698,7 +3679,7 @@ static Function createBoundFunction(const Program& program, FunctionID id, unsig
 
 void expandDisposableStacks(Program& program)
 {
-    if (!program.find(asBytes("NewDisposableStack"_s.span8())))
+    if (!program.usesOperation(Operations::NewDisposableStack))
         return;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         CallResolution(program, program.functions[i]).expandDisposableStacks();

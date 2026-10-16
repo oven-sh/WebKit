@@ -2652,6 +2652,14 @@ private:
                 replaceWithNew<Value>(SExt16To64, m_value->origin(), m_value->child(0)->child(0));
                 break;
             }
+
+            if (m_value->child(0)->opcode() == Trunc && m_value->child(0)->child(0)->type() == Int64) {
+                IntRange range = rangeFor(m_value->child(0)->child(0));
+                if (range.min() >= std::numeric_limits<int32_t>::min() && range.max() <= std::numeric_limits<int32_t>::max()) {
+                    replaceWithIdentity(m_value->child(0)->child(0));
+                    break;
+                }
+            }
             break;
 
         case ZExt32:
@@ -4803,6 +4811,10 @@ private:
         case SExt16To64:
         case SExt32:
         case ZExt32:
+        case Load8Z:
+        case Load8S:
+        case Load16Z:
+        case Load16S:
             return true;
         default:
             return false;
@@ -4848,9 +4860,19 @@ private:
         }
     }
 
+    Value* withoutNarrowingWithinItsRange(Value* value)
+    {
+        if (value->opcode() != SExt32 || value->child(0)->opcode() != Trunc || value->child(0)->child(0)->type() != Int64)
+            return value;
+        IntRange range = rangeFor(value->child(0)->child(0));
+        if (range.min() < std::numeric_limits<int32_t>::min() || range.max() > std::numeric_limits<int32_t>::max())
+            return value;
+        return value->child(0)->child(0);
+    }
+
     bool answersForOneInteger(Opcode opcode, Value* left, Value* right)
     {
-        if (!isSameInteger(left, right))
+        if (!isSameInteger(withoutNarrowingWithinItsRange(left), withoutNarrowingWithinItsRange(right)))
             return false;
         return answer(opcode == Equal || opcode == LessEqual || opcode == GreaterEqual);
     }
@@ -4957,6 +4979,8 @@ private:
             }
             if (!left->isInteger())
                 return false;
+            if (left->type() == Int64 && answersForOneInteger(opcode, left, right))
+                return true;
             if ((opcode == Equal || opcode == NotEqual) && left->opcode() == BitwiseCast && right->opcode() == BitwiseCast && left->type() == Int64) {
                 auto first = wholeNumberFor(left->child(0));
                 auto second = first ? wholeNumberFor(right->child(0)) : std::nullopt;
@@ -5098,6 +5122,15 @@ private:
 
         case ZExt32:
             DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).zExt32());
+
+        case Load8Z:
+            DUMP_INT_RANGE_AND_RETURN(IntRange(0, std::numeric_limits<uint8_t>::max()));
+        case Load8S:
+            DUMP_INT_RANGE_AND_RETURN(IntRange(std::numeric_limits<int8_t>::min(), std::numeric_limits<int8_t>::max()));
+        case Load16Z:
+            DUMP_INT_RANGE_AND_RETURN(IntRange(0, std::numeric_limits<uint16_t>::max()));
+        case Load16S:
+            DUMP_INT_RANGE_AND_RETURN(IntRange(std::numeric_limits<int16_t>::min(), std::numeric_limits<int16_t>::max()));
 
         default:
             break;

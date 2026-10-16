@@ -35,6 +35,9 @@ struct Slot;
     v(operationAOTWriteBarrierAfterPut) \
     v(operationAOTMapSet) \
     v(operationAOTSetAdd) \
+    v(operationAOTWeakMapSet) \
+    v(operationAOTStringStartsWith) \
+    v(operationAOTStringIndexOf) \
     v(operationAOTEnsureData) \
     v(operationAOTNoteFilledSlots) \
 
@@ -55,6 +58,7 @@ enum class FunctionKind : uint32_t {
 };
 
 bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation);
+bool tryCopyDataPropertiesOfRecord(Instance*, VM&, JSObject* target, JSObject* record, const char* operation);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, uint32_t indexOfPlace));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfFilledRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
@@ -69,6 +73,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdReallocating, void, (VM*, JSObject*
 JSC_DECLARE_JIT_OPERATION(operationAOTWriteBarrierAfterPut, void, (VM*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance*, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance*, JSCell* set, EncodedJSValue key, int32_t hash));
+JSC_DECLARE_JIT_OPERATION(operationAOTWeakMapSet, EncodedJSValue, (Instance*, JSCell* map, JSCell* key, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTStringStartsWith, EncodedJSValue, (Instance*, JSCell* string, JSCell* other));
+JSC_DECLARE_JIT_OPERATION(operationAOTStringIndexOf, EncodedJSValue, (Instance*, JSCell* string, JSCell* other));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilledSlots, void, (Data*));

@@ -45,10 +45,22 @@ inline void JSObject::setStructure(VM& vm, Structure* structure)
     JSCell::setStructure(vm, structure);
 }
 
+#if ENABLE(AOT)
+void compiledObjectDidBecomePrototype(JSObject*);
+#endif
+
 inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
+#if ENABLE(AOT)
+    if (oldStructure->compiledLayout()) [[unlikely]]
+        compiledObjectDidBecomePrototype(this);
+#endif
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
+#if ENABLE(AOT)
+        if (reifyIfSlimClosure(vm))
+            oldStructure = structure();
+#endif
         if (hasFrozenElementsInPlace()) [[unlikely]] {
             moveFrozenElementsToSparseMap(vm);
             oldStructure = structure();

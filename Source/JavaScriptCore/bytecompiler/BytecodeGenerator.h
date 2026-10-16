@@ -381,6 +381,26 @@ namespace JSC {
 
         bool isConstructor() const { return m_codeBlock->isConstructor(); }
         bool allowsTailCallOptimization() const { return m_allowTailCallOptimization; }
+        std::optional<uint32_t> auditedTailCall() const { return m_auditedTailCall; }
+        void setAuditedTailCall(std::optional<uint32_t> id) { m_auditedTailCall = id; }
+        void setAuditedElementRead(uint32_t id) { m_auditedElementRead = id; }
+        std::optional<uint32_t> takeAuditedElementRead() { return std::exchange(m_auditedElementRead, std::nullopt); }
+        struct AuditOfStoredValue {
+            uint32_t id;
+            OptionSet<AuditedValueClass> passes;
+            int32_t least;
+            int32_t most;
+            JSTextPosition position;
+        };
+        void setAuditOfStoredValue(AuditOfStoredValue audit) { m_auditOfStoredValue = audit; }
+        std::optional<AuditOfStoredValue> takeAuditOfStoredValue() { return std::exchange(m_auditOfStoredValue, std::nullopt); }
+        void emitAuditOfStoredValue(RegisterID* value, const std::optional<AuditOfStoredValue>& audit)
+        {
+            if (!audit) [[likely]]
+                return;
+            emitExpressionInfo(audit->position, audit->position, audit->position);
+            emitAudit(value, audit->id, audit->passes, audit->least, audit->most);
+        }
         DerivedContextType derivedContextType() const { return m_derivedContextType; }
         bool usesArrowFunction() const { return m_scopeNode->usesArrowFunction(); }
         bool needsToUpdateArrowFunctionContext() const { return m_needsToUpdateArrowFunctionContext; }
@@ -637,7 +657,10 @@ namespace JSC {
 
             unsigned instructionOffset = instructions().size();
             m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
+            m_lastExpressionInfo = { divot, divotStart, divotEnd };
         }
+
+        std::array<JSTextPosition, 3> lastExpressionInfo() const { return m_lastExpressionInfo; }
 
 
         ALWAYS_INLINE bool leftHandSideNeedsCopy(bool rightHasAssignments, bool rightIsPure)
@@ -970,6 +993,7 @@ namespace JSC {
         RegisterID* emitIsUndefinedOrNull(RegisterID* dst, RegisterID* src);
         RegisterID* emitIsEmpty(RegisterID* dst, RegisterID* src);
         void emitAudit(RegisterID* value, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most);
+        void emitAuditOfElementRead(RegisterID* base, RegisterID* subscript, uint32_t id);
         RegisterID* emitIsDerivedArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DerivedArrayType); }
         RegisterID* emitIsDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DisposableStackType); }
         RegisterID* emitIsAsyncDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, AsyncDisposableStackType); }
@@ -1279,6 +1303,12 @@ namespace JSC {
         void initializeParameters(FunctionParameters&);
         void emitAuditOfParameters(const AuditSites&, FunctionParameters&);
         unsigned m_costOfAudits { 0 };
+        std::array<JSTextPosition, 3> m_lastExpressionInfo;
+        RefPtr<RegisterID> m_auditsAreOff;
+        std::optional<uint32_t> m_auditedTailCall;
+        std::optional<uint32_t> m_auditedElementRead;
+        std::optional<AuditOfStoredValue> m_auditOfStoredValue;
+        RefPtr<RegisterID> emitAskWhetherCallerHoldsResult(uint32_t id);
         void emitJumpIfValueClassIsIn(RegisterID* value, OptionSet<AuditedValueClass>, Label& target);
         void initializeVarLexicalEnvironment(int symbolTableConstantIndex, SymbolTable* functionSymbolTable, bool hasCapturedVariables);
         void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, NOESCAPE const ScopedLambda<bool(UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);

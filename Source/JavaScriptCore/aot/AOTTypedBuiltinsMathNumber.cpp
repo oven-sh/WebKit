@@ -150,7 +150,9 @@ std::optional<Writes> writesOfInlineMathNumber(InlineBuiltin which, std::span<co
     case InlineBuiltin::ToNumber:
         if (arguments.size() == 1 && arguments[0].isString())
             return Writes::RuntimeState;
-        return writesIf(arguments.size() <= 1 && areNumbers(arguments), Writes::Pure);
+        if (arguments.size() == 1 && !areNumbers(arguments))
+            return arguments[0].hasObjects() ? Writes::Heap : Writes::RuntimeState;
+        return writesIf(arguments.size() <= 1, Writes::Pure);
     case InlineBuiltin::ParseInt:
         return writesIf(!arguments.empty() && arguments.size() <= 2 && arguments[0].isString() && (arguments.size() == 1 || (arguments[1].isInteger() && arguments[1].integers.isWithin(Range::int32()))), Writes::RuntimeState);
     default:
@@ -259,30 +261,44 @@ void Lowering::findNumbersJoinedWithIntegers(const Vector<BlockID>& order)
     }
     if (passedTo.isEmpty())
         return;
-    // A parameter comes behind those that are passed to it, but around a loop.
-    for (BlockID block : order) {
-        if (!block.index())
-            continue;
-        for (ValueID id : m_function.at(block).parameters) {
-            auto found = passedTo.find(id.index());
-            if (found == passedTo.end())
+    constexpr int64_t nothingPassedYet = std::numeric_limits<int64_t>::max();
+    for (auto& entry : passedTo)
+        m_leastOfNumbersJoinedWithIntegers.add(entry.key, nothingPassedYet);
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (BlockID block : order) {
+            if (!block.index())
                 continue;
-            std::optional<int64_t> least;
-            bool areAllIntegersOrNaN = true;
-            for (ValueID argument : found->value) {
-                if (argument == id)
+            for (ValueID id : m_function.at(block).parameters) {
+                auto known = m_leastOfNumbersJoinedWithIntegers.find(id.index());
+                if (known == m_leastOfNumbersJoinedWithIntegers.end())
                     continue;
-                auto leastOfArgument = leastIfIntegerOrNaN(argument);
-                if (!leastOfArgument) {
-                    areAllIntegersOrNaN = false;
-                    break;
+                int64_t least = known->value;
+                bool areAllIntegersOrNaN = true;
+                for (ValueID argument : passedTo.find(id.index())->value) {
+                    if (argument == id)
+                        continue;
+                    auto leastOfArgument = leastIfIntegerOrNaN(argument);
+                    if (!leastOfArgument) {
+                        areAllIntegersOrNaN = false;
+                        break;
+                    }
+                    least = std::min(least, *leastOfArgument);
                 }
-                least = least ? std::min(*least, *leastOfArgument) : *leastOfArgument;
+                if (!areAllIntegersOrNaN) {
+                    m_leastOfNumbersJoinedWithIntegers.remove(known);
+                    changed = true;
+                } else if (least != known->value) {
+                    known->value = least;
+                    changed = true;
+                }
             }
-            if (areAllIntegersOrNaN && least)
-                m_leastOfNumbersJoinedWithIntegers.add(id.index(), *least);
         }
     }
+    m_leastOfNumbersJoinedWithIntegers.removeIf([&](auto& entry) {
+        return entry.value == nothingPassedYet;
+    });
 }
 
 void Lowering::findJoinsOfConstantsTakenAsNumbers()
@@ -472,6 +488,8 @@ std::optional<Number> Lowering::powerWithConstantExponent(Number base, ValueID e
         return select(equal(abs(base), number(0)), infinity, select(equal(abs(base), infinity), number(0), div(number(1), sqrt(base))));
     if (!(y >= 0 && y <= maxExponentForIntegerMathPow) || y != std::trunc(y))
         return std::nullopt;
+    if (y == 1)
+        return purified(base);
     Number result;
     Number power = base;
     for (unsigned bits = static_cast<unsigned>(y); bits; bits >>= 1) {
@@ -509,7 +527,7 @@ std::optional<Number> Lowering::powerWithConstantBase(ValueID base, ValueID expo
 
     LBasicBlock generally = newUnlikelyBlock();
     Join join(m_out, Rep::Double, Double);
-    Number y = in<Number>(exponent);
+    Number y = asNumericOperand(exponent);
     Integer k;
     if (type.isInteger())
         k = in<Integer>(exponent);
@@ -759,7 +777,7 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         auto yield = [&](CellPointer string) {
             // What the table says is a string is neither `undefined` nor `null`, whatever the type of the value admits. Not where this is one arm of a test on what is expected.
             if (isOnTrunk())
-                m_passedNilTestIn.add(result.index(), Vector<BlockID, 1> { }).iterator->value.append(m_currentBlockID);
+                didPassNilTest(result, m_currentBlockID);
             return ensure(string, stringType, type);
         };
         auto generally = [&] {
@@ -883,6 +901,30 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
             return ofLatin1Characters(arguments[0], [&](const Characters& characters) {
                 return AOT_TYPED_OPERATION(StringToNumber8, characters.data, low32(characters.length));
             });
+        }
+        if (!typeOf(arguments[0]).isNumber()) {
+            Rep rep = repOf(type);
+            Boxed operand = in<Boxed>(arguments[0]);
+            LBasicBlock isNoCell = m_out.newBlock();
+            LBasicBlock otherwise = newBlockForGeneralCall(value);
+            Join join(m_out, rep, b3TypeOf(rep));
+            orElse(isCell(operand), isNoCell);
+            CellPointer cell = asCell(operand);
+            orElse(equal(typeOfCell(cell), word32(StringType)), otherwise);
+            Characters characters = charactersOf(stringReceiver(cell), otherwise);
+            orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
+            Number yielded = AOT_TYPED_OPERATION(StringToNumber8, characters.data, low32(characters.length));
+            ensureStillAliveHere(characters.owner);
+            join.add(yieldNumber(yielded, type));
+            m_out.appendTo(isNoCell);
+            orElse(isNumber(operand), otherwise);
+            join.add(ensure(operand, m_program.at(m_program.types.number), type));
+            if (!isGeneralArmOnOffer(otherwise)) {
+                m_out.appendTo(otherwise);
+                Boxed generally = callBuiltinFunction(value, OperationEffects { writes, true });
+                join.add(vouchesForItsType(m_program, m_function, m_function.at(result)) ? convert(generally, type, rep) : ensure(generally, type));
+            }
+            return join.finish();
         }
         return yieldValue(arguments[0], type);
     // No radix is as good as zero.

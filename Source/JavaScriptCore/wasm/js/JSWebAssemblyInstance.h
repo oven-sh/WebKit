@@ -185,6 +185,7 @@ public:
 
     static constexpr ptrdiff_t offsetOfJSModule() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_jsModule); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_vm); }
+    static constexpr ptrdiff_t offsetOfPointersOfCodeInImage() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_pointersOfCodeInImage); }
     static constexpr ptrdiff_t offsetOfModuleRecord() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_moduleRecord); }
 
     static constexpr ptrdiff_t offsetOfSoftStackLimit() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit(); }
@@ -524,6 +525,7 @@ private:
     BitVector m_passiveDataSegments;
     FixedVector<RefPtr<const Wasm::Tag>> m_tags;
     void* m_faultPC { nullptr };
+    void* const* m_pointersOfCodeInImage { nullptr };
     // Used by builtin trampolines to quickly fetch callee bits to store in the call frame.
     // The actual callees are owned by builtins. Populated by WebAssemblyModuleRecord::initializeImports().
     CalleeBits m_builtinCalleeBits[WASM_BUILTIN_COUNT];

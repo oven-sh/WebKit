@@ -97,6 +97,10 @@ public:
     void setIsSharedByAOTTypedClosures() { m_isSharedByAOTTypedClosures = true; }
 #endif
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
+#if ENABLE(AOT)
+    enum class BuiltInServedByStubs : uint8_t { None, MapGet, MapHas, MapSet, SetHas, SetAdd, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas, StringStartsWith, StringIndexOf, ArrayIsArray, ArrayPush };
+    static constexpr ptrdiff_t offsetOfBuiltInServedByStubs() { return OBJECT_OFFSETOF(NativeExecutable, m_builtInServedByStubs); }
+#endif
 private:
     NativeExecutable(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility);
     void finishCreation(VM&, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, unsigned length, const String& name);
@@ -106,8 +110,9 @@ private:
     TaggedNativeFunction m_function;
     TaggedNativeFunction m_constructor;
 
-    unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
-    unsigned m_isSharedByAOTTypedClosures : 1 { 0 };
+    uint8_t m_implementationVisibility : bitWidthOfImplementationVisibility;
+    uint8_t m_isSharedByAOTTypedClosures : 1 { 0 };
+    uint8_t m_builtInServedByStubs { 0 };
     unsigned m_length { 0 };
 
     String m_name;

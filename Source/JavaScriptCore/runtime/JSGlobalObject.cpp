@@ -3567,10 +3567,22 @@ void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyNam
     makeIntrinsicImmutable(object, IntrinsicKind::Other);
 }
 
+// Error.prototype and what inherits from it. A program may change them: it gives errors a look of their own, names and fields.
+static bool isPrototypeOfErrors(JSObject* object)
+{
+    for (; object; object = object->getPrototypeDirect().getObject()) {
+        if (object->inherits<ErrorPrototype>())
+            return true;
+    }
+    return false;
+}
+
 void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind)
 {
     VM& vm = this->vm();
     if (object->structure()->inheritorsMayOverrideReadOnlyProperties() || object->structure()->typeInfo().wouldHaveFixedProperties())
+        return;
+    if (kind == IntrinsicKind::Prototype && isPrototypeOfErrors(object))
         return;
     if (m_isNumberingIntrinsics && object->hasNonReifiedStaticProperties())
         object->reifyAllStaticProperties(this);

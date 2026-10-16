@@ -30,6 +30,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(JIT)
 
+#include "AOTLockWords.h"
 #include "ArithProfile.h"
 #include "ArrayConstructor.h"
 #include "CacheableIdentifierInlines.h"
@@ -4167,6 +4168,17 @@ JSC_DEFINE_JIT_OPERATION(operationGetPrivateNameByIdGeneric, EncodedJSValue, (JS
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
+static bool isDeleteOfBuiltinFunction(VM& vm)
+{
+    CallFrame* frame = vm.topCallFrame;
+    CodeBlock* codeBlock = frame && !frame->isNativeCalleeFrame() ? frame->codeBlock() : nullptr;
+    if (!codeBlock)
+        return false;
+    if (auto* inlined = frame->codeOrigin().inlineCallFrame())
+        codeBlock = inlined->baselineCodeBlock.get();
+    return codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
+}
+
 static bool deleteById(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot& slot, JSValue base, PropertyName propertyName, ECMAMode ecmaMode)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4177,7 +4189,9 @@ static bool deleteById(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot&
         return false;
     bool couldDelete = baseObj->methodTable()->deleteProperty(baseObj, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!couldDelete && ecmaMode.isStrict())
+    if (!couldDelete && baseObj->noteIfRefusedByLockAlone(vm, propertyName.uid(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true))
+        throwTypeError(globalObject, scope, AOT::wordsOfLock(vm, baseObj, AOT::RefusedByLock::Delete, propertyName.uid()));
+    else if (!couldDelete && ecmaMode.isStrict())
         throwTypeError(globalObject, scope, UnableToDeletePropertyError);
     return couldDelete;
 }
@@ -4300,6 +4314,11 @@ static bool deleteByVal(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot
         Identifier property = key.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         couldDelete = baseObj->methodTable()->deleteProperty(baseObj, globalObject, property, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!couldDelete && baseObj->noteIfRefusedByLockAlone(vm, property.impl(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true)) {
+            throwTypeError(globalObject, scope, AOT::wordsOfLock(vm, baseObj, AOT::RefusedByLock::Delete, property.impl()));
+            return false;
+        }
     }
     RETURN_IF_EXCEPTION(scope, false);
     if (!couldDelete && ecmaMode.isStrict())

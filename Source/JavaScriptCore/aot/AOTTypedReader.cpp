@@ -52,12 +52,38 @@ public:
         if (m_failed)
             return "a section extends outside the program"_s;
 
-        for (auto& string : section<Format::String>(m_header->strings)) {
-            if (static_cast<uint64_t>(string.offset) + string.length > bytes.size())
+        {
+            auto strings = section<Format::String>(m_header->strings);
+            constexpr size_t stringsInChunk = 1024;
+            m_program.strings.grow(strings.size());
+            m_program.m_builtinNames.grow(strings.size());
+            std::atomic<bool> someStringExtendsOutside { false };
+            std::atomic<bool> someStringIsModuleGraph { false };
+            forEachIndexInParallel(static_cast<unsigned>((strings.size() + stringsInChunk - 1) / stringsInChunk), [&](unsigned chunk) {
+                size_t end = std::min(strings.size(), (static_cast<size_t>(chunk) + 1) * stringsInChunk);
+                for (size_t index = static_cast<size_t>(chunk) * stringsInChunk; index < end; ++index) {
+                    auto& string = strings[index];
+                    if (static_cast<uint64_t>(string.offset) + string.length > bytes.size()) {
+                        someStringExtendsOutside = true;
+                        return;
+                    }
+                    m_program.strings[index] = bytes.subspan(string.offset, string.length);
+                    if (equalSpans(m_program.strings[index], asBytes("ModuleGraph"_s.span8())))
+                        someStringIsModuleGraph = true;
+                    m_program.m_builtinNames[index] = Builtins::singleton().nameOf(m_program.strings[index]);
+                }
+            });
+            if (someStringExtendsOutside)
                 return "a string extends outside the program"_s;
-            m_program.strings.append(bytes.subspan(string.offset, string.length));
-            m_program.mayRunInSeveralInstances |= equalSpans(m_program.strings.last(), asBytes("ModuleGraph"_s.span8()));
-            m_program.noteString(StringID(m_program.strings.size() - 1));
+            m_program.mayRunInSeveralInstances |= someStringIsModuleGraph;
+            for (size_t index = 0; index < strings.size(); ++index) {
+                BuiltinName name = m_program.m_builtinNames[index];
+                if (!name)
+                    continue;
+                if (m_program.m_stringsOfBuiltinNames.size() <= name.index())
+                    m_program.m_stringsOfBuiltinNames.grow(name.index() + 1);
+                m_program.m_stringsOfBuiltinNames[name.index()] = StringID(index);
+            }
         }
         for (auto& declared : section<Format::DeclaredType>(m_header->declaredTypes)) {
             m_callSignatureRead = Format::none;
@@ -126,8 +152,6 @@ public:
                     field.name = StringID(from.name);
                     field.type = typeReliedOn(from.declaredType);
                     field.flags = (from.flags & (fieldIsOptional | fieldIsImmutable)) | (from.flags & Format::FieldIsMethod ? fieldIsMethod : 0) | (from.flags & Format::FieldIsAnnotated ? fieldIsAnnotated : 0);
-                    if (layout.kind == LayoutKind::Instance && from.flags & Format::FieldIsMethod)
-                        m_program.methodFieldNames.set(from.name);
                     if (layout.kind == LayoutKind::Environment && from.flags & Format::FieldIsNeverSeenUninitialized)
                         field.flags |= fieldIsNeverSeenUninitialized | (from.flags & Format::FieldIsStoredOnce ? fieldIsStoredOnce : 0);
                     if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsNeverStored)
@@ -199,6 +223,14 @@ public:
         }
         for (auto& keys : keysThatAreSymbolsOfShapes)
             m_keysThatAreSymbols.appendVector(keys);
+        for (auto& layout : m_program.layouts) {
+            if (layout.kind != LayoutKind::Instance)
+                continue;
+            for (auto& field : layout.fields) {
+                if (field.flags & fieldIsMethod)
+                    m_program.methodFieldNames.set(field.name.index());
+            }
+        }
         for (auto& layout : m_program.layouts)
             layout.mayGiveUp = isObjectLayout(layout.kind) && layout.isAllocated && layout.admitsForeignObjects && !layout.checksForeignObjects() && !Options::auditAOTTypedAssertions();
         for (auto& view : m_program.layouts) {
@@ -347,6 +379,14 @@ public:
             m_program.regExpLiterals.append({ StringID(regExpLiterals[i]), StringID(regExpLiterals[i + 1]) });
         }
         m_program.sites = Vector<uint32_t>(slice(m_words, m_header->sites));
+        auto webAssemblyModules = slice(m_words, m_header->webAssemblyModules);
+        if (webAssemblyModules.size() % 2)
+            return "the WebAssembly modules are not pairs"_s;
+        for (size_t i = 0; i < webAssemblyModules.size(); i += 2) {
+            if (static_cast<uint64_t>(webAssemblyModules[i]) + webAssemblyModules[i + 1] > bytes.size())
+                return "a WebAssembly module extends outside the program"_s;
+            m_program.webAssemblyModules.append(bytes.subspan(webAssemblyModules[i], webAssemblyModules[i + 1]));
+        }
         auto builtinModules = slice(m_words, m_header->builtinModules);
         if (builtinModules.size() % 2)
             return "the list of builtin modules does not consist of pairs"_s;
@@ -978,6 +1018,15 @@ private:
                 }
                 value.isInTailPosition = value.immediates[1] == Format::CallIsInTailPosition;
                 value.immediates[1] = Format::none;
+            }
+            if (value.opcode == Opcode::Operation) {
+                uint32_t operation = value.immediates[0];
+                if (operation >= numberOfBuiltins || Builtins::singleton().operationNamed(Builtins::singleton().at(BuiltinID(operation)).nameName) != BuiltinID(operation)) {
+                    m_failed = true;
+                    break;
+                }
+                if (!(WTF::atomicLoad(&m_program.m_operationsUsed[operation / 32], std::memory_order_relaxed) >> operation % 32 & 1))
+                    WTF::atomicExchangeOr(&m_program.m_operationsUsed[operation / 32], 1u << operation % 32, std::memory_order_relaxed);
             }
             if (value.opcode == Opcode::StrictEq && value.immediates[0] != Format::none) {
                 m_failed = true;

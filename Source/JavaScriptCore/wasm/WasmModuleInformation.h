@@ -223,6 +223,8 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     mutable Atomic<bool> m_usesModernExceptions { false };
 
     Vector<FunctionData> functions;
+    bool lacksInterpreterMetadata { false };
+    Lock interpreterMetadataLock;
 
     Vector<Export> exports;
     std::optional<uint32_t> startFunctionIndexSpace;
@@ -242,6 +244,9 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     };
     Vector<ConstantExpression> constantExpressions;
     Name sourceURL;
+    std::array<uint8_t, 20> digestOfSource { };
+    size_t sizeOfSource { 0 };
+    bool hasDigestOfSource { false };
     uint64_t requestIdentifier { 0 };
     Name sourceMappingURL;
 #if ENABLE(WEBASSEMBLY_DEBUGGER)

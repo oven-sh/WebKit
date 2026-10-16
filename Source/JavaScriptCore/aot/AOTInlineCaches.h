@@ -34,7 +34,12 @@ bool noteNativeSetter(JSGlobalObject*, Instance&, JSObject* base, Structure* str
 void cachePrivateNameTransition(VM&, Data*, Slot* cache, JSObject* base, Structure* oldStructure, JSValue name, std::optional<PropertyOffset>);
 // After a miss of GetByValCached or PutByValCached: an entry of Instance::keyedReads. No offset: the pair is not for the table.
 void cacheKeyedAccess(Slot& entry, Structure*, JSCell* key, std::optional<PropertyOffset>);
-void cacheKeyedDefinition(Instance*, VM&, Structure* before, Structure* after, JSCell* key, UniquedStringImpl*);
+enum class StorageAfterAddition : uint8_t { IsNotForStubs, Stays, IsFirst, IsDoubled };
+bool holdsOnlyNamesOutOfLine(Structure* before, Structure* after);
+StorageAfterAddition storageAfterAddition(Structure* before, Structure* after, PropertyOffset);
+void cacheKeyedDefinition(Instance*, VM&, Structure* before, Structure* after, JSCell* key, UniquedStringImpl*, unsigned attributesDefined = 0, uintptr_t bitsSetInKey = 0);
+void cacheKeyedAdditionOfExtraProperty(Instance*, Structure* before, Structure* after, JSCell* key, PropertyOffset, bool makesExtraProperties);
+void noteKeyedAdditionOfExtraProperty(Instance::KeyedAddition&, Structure* before, JSCell* key);
 // Behind that, where it was told that the pair is not for the table and the object is of a compiled layout: if the name is that of a field, the entry says where it is. See Instance::keyIsCompiledField.
 void cacheKeyedReadOfCompiledField(JSGlobalObject*, Instance::KeyedRead&, JSObject*, const Identifier&);
 // After a read by name that Typed::Object::tryGetOwnData() has answered. See Slot::compiledFieldFlags.
@@ -45,7 +50,9 @@ void noteNamedFieldWrite(Instance*, JSCell* object, const Identifier&, uint32_t 
 void cacheKeyedStoreToCompiledField(Instance*, JSCell* object, JSCell* key, const Identifier&);
 // After a miss of DeleteByValCached, the property being gone. Two slots. No offset: what has happened is not for them.
 void cacheKeyedDelete(VM&, Data*, Slot* cache, JSObject* base, Structure* oldStructure, JSValue key, std::optional<PropertyOffset>);
+void cacheKeyedDeletion(Instance*, Structure* before, Structure* after, JSValue key, UniquedStringImpl*, const DeletePropertySlot&);
 void cacheInstanceOf(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype);
+void cacheHasInstance(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, bool isCalled);
 
 void makePrototypeChainWatchable(VM&, JSCell* base);
 
@@ -62,6 +69,8 @@ void cachePutById(Instance*, Data*, JSValue base, Structure* oldStructure, const
 // After Typed::State::storeByKnownTransition() has taken a store at the site. `wordsBefore`: Typed::Object::orderAndShapeWords() as it was.
 void cacheStoreTransition(Instance*, Data*, JSCell* object, Structure* oldStructure, uint64_t wordsBefore, const Identifier&, Slot* cache);
 void noteKnownStoreTransition(Instance*, JSCell* object, Structure* oldStructure, uint64_t wordsBefore, const Identifier&, uint32_t name);
+bool cacheCreationOfField(Instance*, Data*, JSCell* object, uint64_t wordsBefore, const Identifier&, Slot* cache, bool asksPrototypeChain);
+void noteCreationOfField(Instance*, JSCell* object, uint64_t wordsBefore, const Identifier&);
 
 void fillAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uint32_t payload = 0, JSCell* extra = nullptr);
 bool tryGetFromOrdinaryObject(JSGlobalObject*, JSValue base, UniquedStringImpl*, PropertySlot&, JSValue& result, bool fillsMegamorphicCache = true, bool* lacksItByStructure = nullptr);

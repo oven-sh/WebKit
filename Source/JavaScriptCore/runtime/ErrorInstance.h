@@ -130,6 +130,7 @@ public:
 
     bool materializeErrorInfoIfNeeded(VM&);
     bool materializeErrorInfoIfNeeded(VM&, PropertyName);
+    static bool isMadeWhenAskedFor(VM&, PropertyName);
 
     // Replaces the stack trace captured by finishCreationForEmbedderError() with information that
     // came from somewhere else, such as a structured clone of an embedder error. The properties are

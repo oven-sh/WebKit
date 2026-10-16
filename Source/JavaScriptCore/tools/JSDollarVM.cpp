@@ -2210,6 +2210,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpCell);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpHeapSnapshot);
 static JSC_DECLARE_HOST_FUNCTION(functionIndexingMode);
 static JSC_DECLARE_HOST_FUNCTION(functionInlineCapacity);
+static JSC_DECLARE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty);
 static JSC_DECLARE_HOST_FUNCTION(functionClearLinkBufferStats);
 static JSC_DECLARE_HOST_FUNCTION(functionLinkBufferStats);
 static JSC_DECLARE_HOST_FUNCTION(functionValue);
@@ -3177,6 +3178,22 @@ JSC_DEFINE_HOST_FUNCTION(functionInlineCapacity, (JSGlobalObject*, CallFrame* ca
         return JSValue::encode(jsNumber(object->structure()->inlineCapacity()));
 
     return encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* object = dynamicDowncast<JSFinalObject>(callFrame->argument(0));
+    if (!object)
+        return encodedJSUndefined();
+
+    Structure* structure = object->structure();
+    auto* slots = std::bit_cast<const EncodedJSValue*>(object->inlineStorage());
+    for (unsigned i = structure->inlineSize(); i < structure->inlineCapacity(); ++i) {
+        if (slots[i])
+            return JSValue::encode(jsBoolean(false));
+    }
+    return JSValue::encode(jsBoolean(true));
 }
 
 // Clears the LinkBuffer profile statistics.
@@ -6269,6 +6286,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "indexingMode"_s, functionIndexingMode, 1);
     addFunction(vm, allowIfNotFuzz, "inlineCapacity"_s, functionInlineCapacity, 1);
+    addFunction(vm, allowIfNotFuzz, "unusedInlineStorageIsEmpty"_s, functionUnusedInlineStorageIsEmpty, 1);
     addFunction(vm, allowIfNotFuzz, "clearLinkBufferStats"_s, functionClearLinkBufferStats, 0);
     addFunction(vm, allowIfNotFuzz, "linkBufferStats"_s, functionLinkBufferStats, 0);
     addFunction(vm, allowIfNotFuzz, "value"_s, functionValue, 1);

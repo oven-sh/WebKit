@@ -3884,7 +3884,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case NewArrayWithSizeAndStructure: {
-        setTypeForNode(node, SpecArray);
+        setTypeForNode(node, speculationFromStructure(node->structure().get()));
         break;
     }
 

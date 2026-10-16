@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ProxyObject.h"
 
+#include "AOTRuntime.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
@@ -152,6 +153,15 @@ void ProxyObject::clearHandlerTrapsOffsetsCache()
 
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
 
+static ALWAYS_INLINE JSValue keyForTrap(VM& vm, PropertyName propertyName)
+{
+#if ENABLE(AOT)
+    if (!vm.m_aotInstances.isEmpty() && !propertyName.isSymbol())
+        return vm.m_aotInstances[0]->keyHandedToTraps(vm, propertyName.uid());
+#endif
+    return identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()));
+}
+
 static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyObject, JSValue receiver, PropertyName propertyName)
 {
     NO_TAIL_CALLS();
@@ -192,7 +202,7 @@ static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyO
 
     auto arguments = WTF::toArray<EncodedJSValue>({
         JSValue::encode(target),
-        JSValue::encode(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()))),
+        JSValue::encode(keyForTrap(vm, propertyName)),
         JSValue::encode(receiver.toThis(globalObject, ECMAMode::strict())),
     });
     JSValue trapResult = call(globalObject, getHandler, callData, handler, ArgList { arguments.data(), arguments.size() });
@@ -298,7 +308,7 @@ bool ProxyObject::performInternalMethodGetOwnProperty(JSGlobalObject* globalObje
 
     auto arguments = WTF::toArray<EncodedJSValue>({
         JSValue::encode(target),
-        JSValue::encode(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()))),
+        JSValue::encode(keyForTrap(vm, propertyName)),
     });
     JSValue trapResult = call(globalObject, getOwnPropertyDescriptorMethod, callData, handler, ArgList { arguments.data(), arguments.size() });
     RETURN_IF_EXCEPTION(scope, false);
@@ -405,7 +415,7 @@ bool ProxyObject::performHasProperty(JSGlobalObject* globalObject, PropertyName 
 
     auto arguments = WTF::toArray<EncodedJSValue>({
         JSValue::encode(target),
-        JSValue::encode(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()))),
+        JSValue::encode(keyForTrap(vm, propertyName)),
     });
     JSValue trapResult = call(globalObject, hasMethod, callData, handler, ArgList { arguments.data(), arguments.size() });
     RETURN_IF_EXCEPTION(scope, false);
@@ -521,7 +531,7 @@ bool ProxyObject::performPut(JSGlobalObject* globalObject, JSValue putValue, JSV
 
     auto arguments = WTF::toArray<EncodedJSValue>({
         JSValue::encode(target),
-        JSValue::encode(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()))),
+        JSValue::encode(keyForTrap(vm, propertyName)),
         JSValue::encode(putValue),
         JSValue::encode(thisValue.toThis(globalObject, ECMAMode::strict())),
     });
@@ -740,7 +750,7 @@ bool ProxyObject::performDelete(JSGlobalObject* globalObject, PropertyName prope
 
     auto arguments = WTF::toArray<EncodedJSValue>({
         JSValue::encode(target),
-        JSValue::encode(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()))),
+        JSValue::encode(keyForTrap(vm, propertyName)),
     });
     JSValue trapResult = call(globalObject, deletePropertyMethod, callData, handler, ArgList { arguments.data(), arguments.size() });
     RETURN_IF_EXCEPTION(scope, false);
@@ -944,7 +954,7 @@ bool ProxyObject::performDefineOwnProperty(JSGlobalObject* globalObject, Propert
 
     auto arguments = WTF::toArray<EncodedJSValue>({
         JSValue::encode(target),
-        JSValue::encode(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()))),
+        JSValue::encode(keyForTrap(vm, propertyName)),
         JSValue::encode(descriptorObject),
     });
     JSValue trapResult = call(globalObject, definePropertyMethod, callData, handler, ArgList { arguments.data(), arguments.size() });

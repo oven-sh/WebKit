@@ -64,6 +64,7 @@ method Array.prototype.toSorted this/GP (any/C) -> new Array/N ; CallsUserCode ;
 method Array.prototype.toSorted this/GP (any/C?, any/-...) -> new Array/N ; CallsUserCode ; HostCall
 method Array.prototype.filter this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$filter)
 method Array.prototype.filter this/GPA (any/C?, any/A?, any/-...) -> anything ; CallsUserCode ; Call
+method Array.prototype.filter this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$filterTruthy)
 method Array.prototype.find this/GPA (any/C, any/A?) -> anything ; CallsUserCode ; Prelude(Array$find)
 method Array.prototype.find this/GPA (any/C?, any/A?, any/-...) -> anything ; CallsUserCode ; Call
 method Array.prototype.findLast this/GPA (any/C, any/A?) -> anything ; CallsUserCode ; Prelude(Array$findLast)
@@ -72,6 +73,7 @@ method Array.prototype.flatMap this/GPA (any/C, any/A?) -> new Array/S ; CallsUs
 method Array.prototype.flatMap this/GPA (any/C?, any/A?, any/-...) -> anything ; CallsUserCode ; Call
 method Array.prototype.map this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$map)
 method Array.prototype.map this/GPA (any/C?, any/A?, any/-...) -> anything ; CallsUserCode ; Call
+method Array.prototype.map this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$mapByNumber)
 method Array.prototype.reduce this/GPA (any/C) -> anything ; CallsUserCode ; Prelude(Array$reduceWithoutInitialValue)
 method Array.prototype.reduce this/GPA (any/C, any/RA) -> anything ; CallsUserCode ; Prelude(Array$reduce)
 method Array.prototype.reduce this/GPA (any/C?, any/RA?, any/-...) -> anything ; CallsUserCode ; Call

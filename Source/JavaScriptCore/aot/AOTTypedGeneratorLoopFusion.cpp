@@ -129,7 +129,6 @@ private:
     {
         if (!ramp.resumeFunction || ramp.startFunction || (ramp.declaredAs & (functionIsAsync | functionIsGenerator)) != functionIsGenerator || ramp.blocks.size() != 1)
             return std::nullopt;
-        auto newGenerator = m_program.find(asBytes("NewGenerator"_s.span8()));
         Frame frame;
         for (ValueID id : ramp.blocks[0].values) {
             auto& value = ramp.at(id);
@@ -156,7 +155,7 @@ private:
                     return std::nullopt;
                 break;
             case Opcode::Operation:
-                if (!newGenerator || value.string() != *newGenerator)
+                if (m_program.operationOf(value) != Operations::NewGenerator)
                     return std::nullopt;
                 break;
             default:
@@ -570,9 +569,8 @@ private:
 
     bool fuseSpread(ValueID made)
     {
-        auto appendSpread = m_program.find(asBytes("AppendSpread"_s.span8()));
         auto push = m_program.find(asBytes("push"_s.span8()));
-        if (at(made).opcode != Opcode::CallDirect || !appendSpread || !push)
+        if (at(made).opcode != Opcode::CallDirect || !push)
             return false;
         auto& ramp = m_program.at(at(made).function());
         auto frame = frameMadeBy(ramp);
@@ -598,7 +596,7 @@ private:
                 user.forEachChild([&](ValueID& child) {
                     if (!aliases.contains(child) || aliases.contains(id))
                         return;
-                    if (user.opcode == Opcode::Operation && user.string() == *appendSpread && user.arguments.size() == 2 && &child == &user.arguments[1] && !spread)
+                    if (user.opcode == Opcode::Operation && m_program.operationOf(user) == Operations::AppendSpread && user.arguments.size() == 2 && &child == &user.arguments[1] && !spread)
                         spread = id;
                     else
                         isOnlySpread = false;
@@ -697,7 +695,7 @@ private:
 
 void internNamesForGeneratorLoopFusion(Program& program)
 {
-    if (program.find(asBytes("AppendSpread"_s.span8())))
+    if (program.usesOperation(Operations::AppendSpread))
         program.intern(asBytes("push"_s.span8()));
 }
 

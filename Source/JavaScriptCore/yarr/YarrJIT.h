@@ -514,6 +514,7 @@ struct YarrCodeForImage {
         uint32_t offset;
         uint32_t routine;
         bool usesRegistersOnly { false };
+        bool isTailCall { false };
     };
     Vector<Vector<uint8_t>> routines;
     Vector<RoutineCall> routineCalls;

@@ -278,13 +278,6 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
-    static constexpr unsigned maxPatternLengthForJITAfterInterpreter = 65536;
-    static constexpr uint16_t jitWasConsidered = std::numeric_limits<uint16_t>::max();
-    static constexpr uint16_t codeWasFoundInImage = jitWasConsidered - 1;
-    uint16_t workBeforeJIT() const { return 256 + std::min(m_patternString.length(), maxPatternLengthForJITAfterInterpreter) / 64; }
-    bool startsInterpreted(std::optional<StringView> subject) const;
-    void noteWorkInInterpreter(unsigned subjectLength);
-
     static uint8_t currentUseEpoch(VM&);
     template<Yarr::MatchFrom> void noteUse(VM&);
 
@@ -333,7 +326,7 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
-    uint16_t m_workInInterpreter { 0 };
+    bool m_codeWasFoundInImage { false };
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;

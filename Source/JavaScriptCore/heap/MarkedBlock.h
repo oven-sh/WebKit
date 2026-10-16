@@ -154,6 +154,12 @@ public:
         // the block. If it's not set and the block has nothing marked, then we'll make the
         // mistake of making a pop freelist rather than a bump freelist.
         void sweep(FreeList*);
+
+#if ASAN_ENABLED
+        void poisonDeadCells();
+        void poisonDeadCellsIfUnswept();
+        void unpoisonCells();
+#endif
         
         // This is to be called by Subspace.
         template<typename DestroyFunc>
@@ -399,7 +405,8 @@ public:
     static_assert(endAtom * atomSize == blockSize);
     static_assert(endAtom - firstPayloadRegionAtom == numberOfPayloadAtoms);
 
-    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*);
+    enum class IsFirstInDirectory : bool { No, Yes };
+    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*, IsFirstInDirectory = IsFirstInDirectory::No);
         
     Handle& handle();
     const Handle& handle() const;

@@ -1127,7 +1127,11 @@ static void appendRestOf(JSGlobalObject* globalObject, JSArray* target, Iterator
         }
     }
     JSValue value;
-    while (iterator->next(globalObject, value)) {
+    while (true) {
+        bool hasNext = iterator->next(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!hasNext)
+            return;
         target->push(globalObject, value);
         RETURN_IF_EXCEPTION(scope, void());
     }

@@ -20,11 +20,7 @@ namespace {
 bool isOperation(const Program& program, const Value& value, LanguageOperation operation)
 {
     auto& builtins = Builtins::singleton();
-    BuiltinID entry;
-    if (value.opcode == Opcode::Operation)
-        entry = builtins.find(BuiltinKind::Operation, { }, program.builtinName(value.string()));
-    else if (value.opcode == Opcode::CallBuiltin)
-        entry = value.builtin();
+    BuiltinID entry = program.operationOf(value);
     return entry && builtins.at(entry).implementation.kind == BuiltinImplementation::Operation && builtins.at(entry).implementation.operation == operation;
 }
 
@@ -170,7 +166,7 @@ Need needOf(const Program& program, const Function& function, const Value& user,
     case Opcode::Operation:
     case Opcode::CallBuiltin: {
         auto& builtins = Builtins::singleton();
-        BuiltinID entry = user.opcode == Opcode::CallBuiltin ? user.builtin() : builtins.find(BuiltinKind::Operation, { }, program.builtinName(user.string()));
+        BuiltinID entry = program.operationOf(user);
         if (!entry)
             return Need::Object;
         auto& builtin = builtins.at(entry);
@@ -733,7 +729,7 @@ uint16_t lettersOf(const Program& program, const Function& function, const Value
     case Opcode::Operation:
     case Opcode::CallBuiltin: {
         auto& builtins = Builtins::singleton();
-        BuiltinID entry = user.opcode == Opcode::CallBuiltin ? user.builtin() : builtins.find(BuiltinKind::Operation, { }, program.builtinName(user.string()));
+        BuiltinID entry = program.operationOf(user);
         uint16_t result = entry && builtins.at(entry).implementation.kind == BuiltinImplementation::Inline ? IsGivenToInlineBuiltin : IsGivenToBuiltin;
         if (need == Need::Store)
             result |= IsWrittenByBuiltin;

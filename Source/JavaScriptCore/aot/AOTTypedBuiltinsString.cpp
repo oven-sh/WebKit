@@ -207,6 +207,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringIsTextInRegister, size_
     return Typed::textInRegister(std::span<const char16_t> { units }.first(length)) == text;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedShortTextOfString, EncodedJSValue, (Instance*, EncodedJSValue encoded))
+{
+    JSString* string = asString(JSValue::decode(encoded));
+    unsigned length = string->length();
+    RELEASE_ASSERT(length <= Typed::maxLengthOfShortText);
+    std::array<char16_t, Typed::maxLengthOfShortText> units;
+    string->resolveToBuffer(std::span { units }.first(length));
+    for (unsigned i = 0; i < length; ++i) {
+        if (!isLatin1(units[i]))
+            return static_cast<EncodedJSValue>(Typed::noShortText);
+    }
+    return static_cast<EncodedJSValue>(Typed::shortTextWord(std::span<const char16_t> { units }.first(length)));
+}
+
 // What Stub::StringIsText leaves: a rope, which stays one, and 16 bits. The text is all ASCII.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringIsText, size_t, (Instance* instance, JSCell* cell, uint32_t text))
 {
@@ -571,6 +585,11 @@ static bool areStrings(std::span<const Type> types)
     return true;
 }
 
+static bool isNumberOrNil(const Type& type)
+{
+    return type.isNumber() || repOf(type) == Rep::OptionalDouble;
+}
+
 std::optional<Writes> writesOfInlineString(InlineBuiltin which, std::span<const Type> arguments)
 {
     switch (which) {
@@ -587,10 +606,10 @@ std::optional<Writes> writesOfInlineString(InlineBuiltin which, std::span<const 
     case InlineBuiltin::StringSubstr:
         return writesIf(!arguments.empty() && areNumbers(arguments), Writes::RuntimeState);
     case InlineBuiltin::StringRepeat:
-        return writesIf(arguments.size() == 1 && arguments[0].isNumber(), Writes::RuntimeState);
+        return writesIf(arguments.size() == 1 && isNumberOrNil(arguments[0]), Writes::RuntimeState);
     case InlineBuiltin::StringPadStart:
     case InlineBuiltin::StringPadEnd:
-        return writesIf(!arguments.empty() && arguments.size() <= 2 && arguments[0].isNumber() && (arguments.size() == 1 || arguments[1].isString()), Writes::RuntimeState);
+        return writesIf(!arguments.empty() && arguments.size() <= 2 && isNumberOrNil(arguments[0]) && (arguments.size() == 1 || arguments[1].isString()), Writes::RuntimeState);
     case InlineBuiltin::StringLocaleCompare:
         return writesIf(arguments.size() == 1 && arguments[0].isString(), Writes::RuntimeState);
     case InlineBuiltin::StringStartsWith:
@@ -785,7 +804,7 @@ std::optional<Operand> Lowering::lowerInlineString(InlineBuiltin which, ValueID 
     Operand yielded = lowerStringBuiltin(which, result, value);
     // What the table says is a string is neither `undefined` nor `null`, whatever the type of the value admits. Not where this is one arm of a test on what is expected.
     if (isOnTrunk() && m_builtins.at(value.builtin()).result.kinds == BuiltinResult::String && !m_builtins.at(value.builtin()).result.arguments)
-        m_passedNilTestIn.add(result.index(), Vector<BlockID, 1> { }).iterator->value.append(m_currentBlockID);
+        didPassNilTest(result, m_currentBlockID);
     return yielded;
 }
 

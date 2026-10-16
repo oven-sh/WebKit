@@ -37,6 +37,7 @@ static ParallelHelperPool& helpers()
 void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(unsigned)>& functor)
 {
     constexpr unsigned longestRun = 256;
+    constexpr unsigned mostTakenAtOnce = 16;
     constexpr unsigned wordsOfSlot = 16;
     constexpr uint64_t moveBegins = 1;
     constexpr uint64_t moveEnds = 1ull << 32;
@@ -64,9 +65,11 @@ void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(uns
         unsigned run = 1;
         for (;;) {
             for (uint64_t range = own.load(); firstOf(range) < endOf(range);) {
-                if (!own.compare_exchange_weak(range, range + 1))
+                unsigned taken = std::clamp((endOf(range) - firstOf(range)) / 8, 1u, mostTakenAtOnce);
+                if (!own.compare_exchange_weak(range, range + taken))
                     continue;
-                functor(firstOf(range));
+                for (unsigned index = firstOf(range); index < firstOf(range) + taken; ++index)
+                    functor(index);
                 range = own.load();
             }
             uint64_t movesBefore = moves.load();

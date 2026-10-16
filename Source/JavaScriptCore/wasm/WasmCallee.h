@@ -130,6 +130,11 @@ public:
 
 #if ENABLE(JIT)
     void setEntrypoint(Wasm::Entrypoint&&);
+    void setCodeInImage(std::span<const uint8_t> code, RegisterAtOffsetList&& savedRegisters)
+    {
+        m_codeInImage = code;
+        m_entrypoint.calleeSaveRegisters = WTF::move(savedRegisters);
+    }
 #endif
 
 protected:
@@ -139,12 +144,19 @@ protected:
 #if ENABLE(JIT)
     std::tuple<void*, void*> rangeImpl() const
     {
+        if (!m_codeInImage.empty())
+            return { const_cast<uint8_t*>(m_codeInImage.data()), const_cast<uint8_t*>(std::to_address(m_codeInImage.end())) };
         void* start = m_entrypoint.compilation->codeRef().executableMemory()->start().untaggedPtr();
         void* end = m_entrypoint.compilation->codeRef().executableMemory()->end().untaggedPtr();
         return { start, end };
     }
 
-    CodePtr<WasmEntryPtrTag> entrypointImpl() const { return m_entrypoint.compilation->code().retagged<WasmEntryPtrTag>(); }
+    CodePtr<WasmEntryPtrTag> entrypointImpl() const
+    {
+        if (!m_codeInImage.empty())
+            return CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(m_codeInImage.data()));
+        return m_entrypoint.compilation->code().retagged<WasmEntryPtrTag>();
+    }
 
     const RegisterAtOffsetList* calleeSaveRegistersImpl() LIFETIME_BOUND { return &m_entrypoint.calleeSaveRegisters; }
 #else
@@ -156,6 +168,7 @@ protected:
     FixedVector<UnlinkedWasmToWasmCall> m_wasmToWasmCallsites;
 #if ENABLE(JIT)
     Wasm::Entrypoint m_entrypoint;
+    std::span<const uint8_t> m_codeInImage;
 #endif
 };
 
@@ -286,6 +299,7 @@ public:
     IndexOrName getOrigin(unsigned csi, unsigned depth, bool& isInlined) const;
     IndexOrName getIndexOrName(const WasmCodeOrigin*) const;
     std::optional<CallSiteIndex> tryGetCallSiteIndex(const void*) const;
+    bool hasCallSiteIndexMap() const { return !!m_callSiteIndexMap; }
 
     Box<PCToCodeOriginMap> materializePCToOriginMap(B3::PCToOriginMap&&, LinkBuffer&);
 
@@ -481,6 +495,7 @@ public:
     void setEntrypoint(CodePtr<WasmEntryPtrTag>);
     void setEntrypointWithoutRegistration(CodePtr<WasmEntryPtrTag>);
     void setName(std::pair<const Name*, RefPtr<NameSection>>&& name) { setIndexOrName(IndexOrName(index(), WTF::move(name))); }
+    void takeMetadata(FunctionIPIntMetadataGenerator&);
     const uint8_t* bytecode() const { return m_bytecode; }
     const uint8_t* bytecodeEnd() const { return m_bytecodeEnd; }
     const uint8_t* metadata() const LIFETIME_BOUND { return m_metadata.span().data(); }

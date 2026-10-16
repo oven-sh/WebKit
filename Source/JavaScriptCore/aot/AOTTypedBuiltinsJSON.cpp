@@ -378,7 +378,7 @@ static NEVER_INLINE JSCell* finishWithWideSegments(Instance* instance, JSGlobalO
         text = makeTextWithWideSegments({ instance->jsonBufferStart, std::bit_cast<Latin1Character*>(cursor) }, instance->jsonWideSegments->span().first(instance->jsonWideSegmentCount));
     instance->jsonWideSegments->clear();
     instance->jsonWideSegmentCount = 0;
-    return text ? jsNontrivialString(vm, String { text.releaseNonNull() }) : nullptr;
+    return text ? jsString(vm, String { text.releaseNonNull() }) : nullptr;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendElementsFrom, void*, (Instance* instance, uint64_t cursorBits, JSCell* array, uint64_t index))
@@ -395,6 +395,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendElementsFrom, void*
     return isWritten ? cursor : nullptr;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONKeyOrdersOf, void*, (Instance* instance, JSCell* cell))
+{
+    auto& object = *uncheckedDowncast<Typed::Object>(cell);
+    auto& layout = object.layout();
+    for (auto& field : std::span { layout.fields(), layout.numberOfFields }) {
+        if (uint32_t key = Typed::slotKeyFor(field.offset, field.flags & Typed::fieldIsOutOfLine)) {
+            object.state().fieldAt(layout, key);
+            return instance->typedOrderKeys[instance->typedPlacesOfOrderKeys[layout.shape]];
+        }
+    }
+    return nullptr;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instance* instance, uint64_t cursor))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -406,7 +419,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instanc
         std::span<Latin1Character> copy;
         if (auto impl = StringImpl::tryCreateUninitialized(characters.size(), copy)) [[likely]] {
             memcpy(copy.data(), characters.data(), characters.size());
-            result = jsNontrivialString(vm, String { impl.releaseNonNull() });
+            result = jsString(vm, String { impl.releaseNonNull() });
         }
     }
     if (static_cast<size_t>(instance->jsonBufferEnd - instance->jsonBufferStart) > mostCapacityOfJSONBufferKept) [[unlikely]] {
@@ -479,7 +492,7 @@ std::optional<Writes> writesOfInlineJSON(InlineBuiltin which, std::span<const Ty
 {
     if (which == InlineBuiltin::AppendJSON)
         return Writes::RuntimeState;
-    return writesIf(!arguments.empty() && arguments[0].hasObjects(), Writes::Heap);
+    return writesIf(!arguments.empty() && (arguments[0].hasObjects() || arguments[0].withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent).isString()), Writes::Heap);
 }
 
 std::optional<Operand> Lowering::lowerInlineJSON(InlineBuiltin which, ValueID result, const Value& value, Writes)
@@ -495,6 +508,13 @@ static bool isWrittenAsItIsInJSON(std::span<const uint8_t> name)
 {
     return std::ranges::all_of(name, [](uint8_t character) {
         return character >= ' ' && character < 0x7f && character != '"' && character != '\\';
+    });
+}
+
+static bool mayBeBuiltUp(const Program& program, LayoutID id)
+{
+    return std::ranges::any_of(program.at(id).fields, [&](const Field& field) {
+        return field.flags & (fieldIsOptional | fieldIsAbsentAtBirth) && !(field.flags & fieldIsNeverStored);
     });
 }
 
@@ -586,7 +606,7 @@ void createJSONSerializers(Program& program)
     static constexpr unsigned maxFields = 32;
     auto& builtins = Builtins::singleton();
     BuiltinID stringify = builtins.findStatic(BuiltinKind::StaticFunction, builtins.nameOf(asBytes("JSON"_s.span8())), builtins.nameOf(asBytes("stringify"_s.span8())));
-    BuiltinID append = builtins.find(BuiltinKind::Operation, { }, builtins.nameOf(asBytes("AppendJSON"_s.span8())));
+    BuiltinID append = Operations::AppendJSON;
     BuiltinID responseJSON = builtins.find(BuiltinKind::StaticFunction, builtins.nameOf(asBytes("Response"_s.span8())), builtins.nameOf(asBytes("json"_s.span8())));
     RELEASE_ASSERT(stringify && append && responseJSON);
     unsigned count = program.functions.size();
@@ -627,9 +647,9 @@ void createJSONSerializers(Program& program)
                 for (LayoutID member : program.at(view).members) {
                     if (!isTaken(member))
                         continue;
-                    if (depth + 1 + levels >= maxDepthOfJSONInPlace)
+                    if (depth + 1 + levels >= maxDepthOfJSONInPlace || mayBeBuiltUp(program, member))
                         giveFunction(member);
-                    else
+                    if (depth + 1 + levels < maxDepthOfJSONInPlace)
                         self(self, member, depth + 1 + levels);
                 }
             });
@@ -651,7 +671,7 @@ void createJSONSerializers(Program& program)
                     continue;
                 if (isWrittenInPlace && depth + levels < maxDepthOfJSONInPlace)
                     visit(visit, member, depth + levels);
-                else
+                if (!isWrittenInPlace || depth + levels >= maxDepthOfJSONInPlace || mayBeBuiltUp(program, member))
                     giveFunction(member);
             }
         });
@@ -1201,10 +1221,21 @@ void Lowering::appendObject(JSONOutput& output, CellPointer cell, const Type& ty
     flushText(output);
     unsigned capacity = output.knownCapacity;
     JSONExit continuation { m_out.newBlock() };
+    bool triesFunction = serializersFor(type).containsIf([&](auto& serializer) {
+        return mayBeBuiltUp(m_program, serializer.first);
+    });
     LBasicBlock handsOverRestOfList = std::exchange(output.handsOverRestOfList, nullptr);
-    LBasicBlock otherwise = handsOverRestOfList ? handsOverRestOfList : depth ? newColdBlock() : output.givesUp;
+    LBasicBlock otherwise = triesFunction ? newColdBlock() : handsOverRestOfList ? handsOverRestOfList : depth ? newColdBlock() : output.givesUp;
     appendObjectInPlace(output, cell, orders, depth, otherwise, continuation);
-    if (depth && !handsOverRestOfList) {
+    if (triesFunction) {
+        output.handsOverRestOfList = handsOverRestOfList;
+        m_out.appendTo(otherwise);
+        output.knownCapacity = capacity;
+        appendObjectBeyondPlace(output, cell, type, position, nothing);
+        if (continuation.knownCapacity != UINT_MAX)
+            reserveCapacity(output, continuation.knownCapacity);
+        m_out.jump(exitThrough(output, continuation));
+    } else if (depth && !handsOverRestOfList) {
         m_out.appendTo(otherwise);
         output.knownCapacity = capacity;
         appendGenerally(output, box(cell), position, nothing);
@@ -1214,57 +1245,141 @@ void Lowering::appendObject(JSONOutput& output, CellPointer cell, const Type& ty
     output.knownCapacity = continuation.knownCapacity;
 }
 
+template<typename Append>
+void Lowering::appendMember(JSONOutput& output, JSONSeparator& separator, JSONMember member, const Append& append)
+{
+    auto [name, mayBeLeftOut] = member;
+    LValue separatorLength = nullptr;
+    unsigned lengthOfKey = 0;
+    if (mayBeLeftOut || separator == JSONSeparator::Unknown)
+        flushText(output);
+    if (separator == JSONSeparator::Unknown) {
+        reserveCapacity(output, 1);
+        LValue cursor = cursorOf(output);
+        LValue previous = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(cursor, m_out.constIntPtr(-1))));
+        m_out.store32As8(m_out.constInt32(','), m_out.address(m_heaps.AOTTyped_argumentBuffer, cursor, 0));
+        separatorLength = m_out.zeroExtPtr(m_out.notEqual(previous, m_out.constInt32('{')));
+        setCursor(output, m_out.add(cursor, separatorLength));
+        output.knownCapacity -= 1;
+    } else if (separator == JSONSeparator::Always) {
+        appendText(output, ","_s);
+        ++lengthOfKey;
+    }
+    appendText(output, "\""_s);
+    appendText(output, name);
+    appendText(output, "\":"_s);
+    lengthOfKey += name.size() + 3;
+    if (!mayBeLeftOut) {
+        JSONExit never { output.givesUp };
+        append(never);
+        separator = JSONSeparator::Always;
+        return;
+    }
+    flushText(output);
+    JSONExit isLeftOut { m_out.newBlock() };
+    JSONExit isDone { m_out.newBlock() };
+    append(isLeftOut);
+    flushText(output);
+    m_out.jump(exitThrough(output, isDone));
+    m_out.appendTo(isLeftOut.block);
+    output.knownCapacity = isLeftOut.knownCapacity == UINT_MAX ? 0 : isLeftOut.knownCapacity;
+    LValue rewound = m_out.sub(cursorOf(output), m_out.constInt64(lengthOfKey));
+    setCursor(output, separatorLength ? m_out.sub(rewound, separatorLength) : rewound);
+    m_out.jump(exitThrough(output, isDone));
+    m_out.appendTo(isDone.block);
+    output.knownCapacity = isDone.knownCapacity;
+    if (separator == JSONSeparator::None)
+        separator = JSONSeparator::Unknown;
+}
+
 template<typename Describe, typename Append>
 void Lowering::appendMembers(JSONOutput& output, unsigned count, const Describe& describe, const Append& append)
 {
     appendText(output, "{"_s);
-    enum class Separator : uint8_t { None, Always, Unknown };
-    Separator separator = Separator::None;
+    JSONSeparator separator = JSONSeparator::None;
     for (unsigned i = 0; i < count; ++i) {
-        auto [name, mayBeLeftOut] = describe(i);
-        LValue separatorLength = nullptr;
-        unsigned lengthOfKey = 0;
-        if (mayBeLeftOut || separator == Separator::Unknown)
-            flushText(output);
-        if (separator == Separator::Unknown) {
-            reserveCapacity(output, 1);
-            LValue cursor = cursorOf(output);
-            LValue previous = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(cursor, m_out.constIntPtr(-1))));
-            m_out.store32As8(m_out.constInt32(','), m_out.address(m_heaps.AOTTyped_argumentBuffer, cursor, 0));
-            separatorLength = m_out.zeroExtPtr(m_out.notEqual(previous, m_out.constInt32('{')));
-            setCursor(output, m_out.add(cursor, separatorLength));
-            output.knownCapacity -= 1;
-        } else if (separator == Separator::Always) {
-            appendText(output, ","_s);
-            ++lengthOfKey;
-        }
-        appendText(output, "\""_s);
-        appendText(output, name);
-        appendText(output, "\":"_s);
-        lengthOfKey += name.size() + 3;
-        if (!mayBeLeftOut) {
-            JSONExit never { output.givesUp };
-            append(i, never);
-            separator = Separator::Always;
-            continue;
-        }
-        flushText(output);
-        JSONExit isLeftOut { m_out.newBlock() };
-        JSONExit isDone { m_out.newBlock() };
-        append(i, isLeftOut);
-        flushText(output);
-        m_out.jump(exitThrough(output, isDone));
-        m_out.appendTo(isLeftOut.block);
-        output.knownCapacity = isLeftOut.knownCapacity == UINT_MAX ? 0 : isLeftOut.knownCapacity;
-        LValue rewound = m_out.sub(cursorOf(output), m_out.constInt64(lengthOfKey));
-        setCursor(output, separatorLength ? m_out.sub(rewound, separatorLength) : rewound);
-        m_out.jump(exitThrough(output, isDone));
-        m_out.appendTo(isDone.block);
-        output.knownCapacity = isDone.knownCapacity;
-        if (separator == Separator::None)
-            separator = Separator::Unknown;
+        appendMember(output, separator, describe(i), [&](JSONExit& nothing) {
+            append(i, nothing);
+        });
     }
     appendText(output, "}"_s);
+}
+
+void Lowering::appendObjectByItsOwnKeys(JSONOutput& output, CellPointer cell, LayoutID id, LBasicBlock otherwise, JSONExit& continuation)
+{
+    auto& layout = m_program.at(id);
+    flushText(output);
+    auto at = [&](LValue base, LValue offset) {
+        return TypedPointer(m_heaps.root, m_out.add(base, offset));
+    };
+    LValue structure = structureWithID(loadField<Word32>(cell, m_heaps.JSCell_structureID).value());
+    orElse(Word32(m_out.equal(m_out.load64(structure, m_heaps.Structure_prototype), fixedPointer(Instance::offsetOfObjectPrototype()))), otherwise);
+    LValue words = m_out.load64(at(cell.value(), m_out.constIntPtr(offsetOfOrderWord)));
+    uint64_t shapeAndExtraProperties = 0xffffffffull << 32 | orderWordHasExtraProperties;
+    orElse(Word32(m_out.equal(m_out.bitAnd(words, integer(static_cast<int64_t>(shapeAndExtraProperties)).value()), integer(static_cast<int64_t>(static_cast<uint64_t>(Typed::shapeWordOf(layout.shape)) << 32)).value())), otherwise);
+    LValue places = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfTypedPlacesOfOrderKeys()));
+    LValue place = m_out.zeroExtPtr(m_out.load16ZeroExt32(at(places, m_out.constIntPtr(sizeof(uint16_t) * layout.shape))));
+    LValue tables = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfTypedOrderKeys()));
+    LValue known = m_out.load64(at(tables, m_out.shl(place, m_out.constInt32(3))));
+    LBasicBlock isNotAskedYet = newColdBlock();
+    LBasicBlock hasOrders = m_out.newBlock();
+    ValueFromBlock whereKnown = m_out.anchor(known);
+    m_out.branch(m_out.notZero64(known), usually(hasOrders), rarely(isNotAskedYet));
+    m_out.appendTo(isNotAskedYet);
+    Pointer asked = AOT_TYPED_OPERATION(JSONKeyOrdersOf, cell);
+    orElse(Word32(m_out.notZero64(asked.value())), otherwise);
+    ValueFromBlock whereAsked = m_out.anchor(asked.value());
+    m_out.jump(hasOrders);
+    m_out.appendTo(hasOrders);
+    LValue orders = m_out.phi(Int64, whereKnown, whereAsked);
+    LValue order = m_out.bitAnd(words, m_out.constInt64(0xffff));
+    orElse(Word32(m_out.below(order, m_out.load64(at(orders, m_out.constIntPtr(0))))), otherwise);
+    LValue keys = m_out.load64(at(orders, m_out.add(m_out.shl(order, m_out.constInt32(3)), m_out.constIntPtr(sizeof(uintptr_t)))));
+    LValue count = m_out.bitAnd(m_out.lShr(words, m_out.constInt32(16)), m_out.constInt64(maxFieldsInOrder));
+    appendText(output, "{"_s);
+    flushText(output);
+    LBasicBlock header = m_out.newBlock();
+    LBasicBlock body = m_out.newBlock();
+    LBasicBlock next = m_out.newBlock();
+    LBasicBlock done = m_out.newBlock();
+    ValueFromBlock first = m_out.anchor(m_out.int64Zero);
+    m_out.jump(header);
+    m_out.appendTo(header);
+    LValue index = m_out.phi(Int64, first);
+    m_out.branch(m_out.below(index, count), usually(body), rarely(done));
+    m_out.appendTo(body);
+    LValue key = m_out.load16ZeroExt32(at(keys, m_out.add(m_out.shl(index, m_out.constInt32(1)), m_out.constIntPtr(sizeof(uint16_t)))));
+    Vector<FTL::SwitchCase> cases;
+    Vector<std::pair<LBasicBlock, const Field*>> blocks;
+    for (auto& field : layout.fields) {
+        uint32_t slotKey = slotKeyFor(field.offset, field.isOutOfLine);
+        if (!slotKey || field.flags & fieldIsNeverStored)
+            continue;
+        blocks.append({ m_out.newBlock(), &field });
+        cases.append(FTL::SwitchCase(m_out.constInt32(static_cast<int32_t>(slotKey)), blocks.last().first, FTL::Weight()));
+    }
+    m_out.switchInstruction(key, cases, output.givesUp, FTL::Weight());
+    for (auto [block, field] : blocks) {
+        m_out.appendTo(block);
+        output.knownCapacity = 0;
+        auto name = m_program.string(field->name);
+        if (!isPrivateName(name)) {
+            JSONSeparator separator = JSONSeparator::Unknown;
+            appendMember(output, separator, { name, !!(m_program.at(field->stored).primitives & (Primitive::Absent | Primitive::Undefined | Primitive::Symbol)) }, [&, field = field](JSONExit& nothing) {
+                appendField(output, cell, *field, 1, nothing);
+            });
+            flushText(output);
+        }
+        m_out.jump(next);
+    }
+    m_out.appendTo(next);
+    m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.constInt64(1))));
+    m_out.jump(header);
+    m_out.appendTo(done);
+    output.knownCapacity = 0;
+    appendText(output, "}"_s);
+    flushText(output);
+    m_out.jump(exitThrough(output, continuation));
 }
 
 std::optional<Vector<Lowering::JSONLiteralMember, 8>> Lowering::membersOfFreshLiteral(ValueID argument, ValueID holder) const
@@ -1449,9 +1564,10 @@ Operand Lowering::lowerAppendJSON(const Value& value)
     output.cursor = m_proc.addVariable(Int64);
     setCursor(output, start.value());
     JSONExit continuation { m_out.newBlock() };
-    LBasicBlock otherwise = newColdBlock();
-    orElse(Word32(m_out.aboveOrEqual(m_out.sub(m_out.framePointer(), m_out.constInt64(stackKeptFreeByJSONSerializers)), changing64(Instance::offsetOfSoftStackLimit()))), output.givesUp);
     LayoutID layout(static_cast<uint32_t>(written));
+    bool goesByItsOwnKeys = mayBeBuiltUp(m_program, layout);
+    LBasicBlock otherwise = goesByItsOwnKeys ? m_out.newBlock() : newColdBlock();
+    orElse(Word32(m_out.aboveOrEqual(m_out.sub(m_out.framePointer(), m_out.constInt64(stackKeptFreeByJSONSerializers)), changing64(Instance::offsetOfSoftStackLimit()))), output.givesUp);
     output.fieldsLeft = maxFieldsOfJSONInPlaceInFunction;
     auto orders = keyOrdersForJSON(std::span<const LayoutID> { &layout, 1 });
     if (orders.isEmpty())
@@ -1459,6 +1575,13 @@ Operand Lowering::lowerAppendJSON(const Value& value)
     else
         appendObjectInPlace(output, cell, orders, 0, otherwise, continuation);
     m_out.appendTo(otherwise);
+    if (goesByItsOwnKeys) {
+        LBasicBlock isNotWritten = newColdBlock();
+        output.knownCapacity = 0;
+        output.fieldsLeft = maxFieldsOfJSONInPlaceInFunction;
+        appendObjectByItsOwnKeys(output, cell, layout, isNotWritten, continuation);
+        m_out.appendTo(isNotWritten);
+    }
     orElse(Word32(m_out.notEqual(start.value(), m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONBufferStart())))), output.givesUp);
     output.knownCapacity = 0;
     JSONExit never { output.givesUp };
@@ -1487,7 +1610,7 @@ void Lowering::appendArray(JSONOutput& output, CellPointer array, const Type& ty
     JSONExit continuation { m_out.newBlock() };
     LBasicBlock otherwise = depth ? newColdBlock() : output.givesUp;
     orElse(isPlainArray(array), otherwise);
-    Word32 shape = indexingModeOf(array, IndexingShapeMask);
+    Word32 shape = indexingModeOfAnyArray(array, IndexingShapeMask);
     Pointer butterfly = butterflyOf(array);
     Integer length = publicLength(butterfly);
     auto whereKeptAs = [&](IndexingType kept, bool isLast, const auto& appendElement) {
@@ -1578,7 +1701,7 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
 {
     Type expected = expectedTypeOf(argument);
     auto literal = membersOfFreshLiteral(argument, { });
-    bool goesByShape = !literal && !hasCodeForJSON(expected);
+    bool goesByShape = !literal && !expected.withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent).isString() && !hasCodeForJSON(expected);
     if (Options::auditAOTTypedAssertions() || (goesByShape && !(m_program.jsonDispatcher && m_program.hasCode(m_program.jsonDispatcher) && expected.hasObjects())))
         return false;
     output.givesUp = newColdBlock();

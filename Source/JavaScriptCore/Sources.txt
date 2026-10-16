@@ -75,6 +75,7 @@ aot/AOTTypedBuiltinsHost.cpp @no-unify
 aot/AOTTypedBuiltinsIntlTemporal.cpp @no-unify
 aot/AOTTypedBuiltinsIterator.cpp @no-unify
 aot/AOTTypedBuiltinsJSON.cpp @no-unify
+aot/AOTTypedBuiltinsJSONParse.cpp @no-unify
 aot/AOTTypedBuiltinsLanguage.cpp @no-unify
 aot/AOTTypedBuiltinsMapSet.cpp @no-unify
 aot/AOTTypedBuiltinsMathNumber.cpp @no-unify
@@ -116,6 +117,7 @@ aot/AOTTypedRegExpLiterals.cpp @no-unify
 aot/AOTTypedThreads.cpp @no-unify
 aot/AOTTypedType.cpp @no-unify
 aot/AOTTypedVerifier.cpp @no-unify
+aot/AOTWebAssembly.cpp @no-unify
 aot/AOTTypedObjectAllocationSinking.cpp @no-unify
 
 assembler/AbstractMacroAssembler.cpp
@@ -1275,6 +1277,7 @@ wasm/WasmCallProfile.cpp
 wasm/WasmCallee.cpp
 wasm/WasmCalleeGroup.cpp
 wasm/WasmCallingConvention.cpp
+wasm/WasmCodeInImage.cpp @no-unify
 wasm/WasmCompilationMode.cpp
 wasm/WasmConstExprGenerator.cpp
 wasm/WasmContext.cpp

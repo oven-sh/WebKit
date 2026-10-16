@@ -63,6 +63,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(TailCallList) \
     v(CheckCallable) \
     v(CheckCallableNamed) \
+    v(FindMethodByName) \
     v(Enter) \
     v(EnterModule) \
     v(EnterClosure) \
@@ -143,6 +144,18 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafAllocateTypedObject) \
     v(AllocateTypedObjectFromTemplate) \
     v(LeafAllocateTypedObjectFromTemplate) \
+    v(CopyTypedObject16) \
+    v(LeafCopyTypedObject16) \
+    v(CopyTypedObject32) \
+    v(LeafCopyTypedObject32) \
+    v(CopyTypedObject48) \
+    v(LeafCopyTypedObject48) \
+    v(CopyTypedObject64) \
+    v(LeafCopyTypedObject64) \
+    v(CopyTypedObjectOfAnySize) \
+    v(LeafCopyTypedObjectOfAnySize) \
+    v(OrderWordOfCopy) \
+    v(LeafOrderWordOfCopy) \
     v(AllocateTypedExtension16) \
     v(AllocateTypedExtension32) \
     v(AllocateTypedExtension48) \
@@ -173,6 +186,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafNewTypedClosureOnce) \
     v(NewTypedClosureOnce32) \
     v(LeafNewTypedClosureOnce32) \
+    v(NewTypedClosureWithoutCaptureOnce32) \
+    v(LeafNewTypedClosureWithoutCaptureOnce32) \
     v(InitializeTypedClosure0) \
     v(LeafInitializeTypedClosure0) \
     v(InitializeTypedClosure1) \
@@ -194,6 +209,24 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafTypedString) \
     v(CallModuleFunction) \
     v(TypedStringFillingWord) \
+    v(TypedStringInRCX) \
+    v(TypedStringInRDX) \
+    v(TypedStringInRBX) \
+    v(TypedStringInRSI) \
+    v(TypedStringInRDI) \
+    v(TypedStringInR8) \
+    v(TypedStringInR9) \
+    v(TypedStringInR12) \
+    v(TypedStringInR15) \
+    v(TypedClosureInRCX) \
+    v(TypedClosureInRDX) \
+    v(TypedClosureInRBX) \
+    v(TypedClosureInRSI) \
+    v(TypedClosureInRDI) \
+    v(TypedClosureInR8) \
+    v(TypedClosureInR9) \
+    v(TypedClosureInR12) \
+    v(TypedClosureInR15) \
     v(TypedStringMadeOnce) \
     v(LeafTypedStringMadeOnce) \
     v(TypedStringInBlock1) \
@@ -232,6 +265,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafLiteralStringToString) \
     v(ToLiteralString) \
     v(LeafToLiteralString) \
+    v(ShortTextOfValue) \
+    v(LeafShortTextOfValue) \
     v(ValueIsTextOfLength1) \
     v(LeafValueIsTextOfLength1) \
     v(StringIsTextOfLength1) \
@@ -332,6 +367,16 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafArrayLiteral3) \
     v(ArrayLiteral4) \
     v(LeafArrayLiteral4) \
+    v(ArrayLiteralOfDoubles1) \
+    v(LeafArrayLiteralOfDoubles1) \
+    v(ArrayLiteralOfDoubles2) \
+    v(LeafArrayLiteralOfDoubles2) \
+    v(ArrayLiteralOfDoubles3) \
+    v(LeafArrayLiteralOfDoubles3) \
+    v(ArrayLiteralOfDoubles4) \
+    v(LeafArrayLiteralOfDoubles4) \
+    v(ArrayLiteralOfDoublesByOperation) \
+    v(LeafArrayLiteralOfDoublesByOperation) \
     v(ElementOrNothing) \
     v(LeafElementOrNothing) \
     v(ArrayOfDoubles) \
@@ -382,6 +427,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafArrayElementAs) \
     v(ArrayElement) \
     v(LeafArrayElement) \
+    v(AbsentFieldOfMarkedObject) \
+    v(LeafAbsentFieldOfMarkedObject) \
+    v(AbsentFieldOfMarkedObjectHeld) \
+    v(LeafAbsentFieldOfMarkedObjectHeld) \
+    v(AbsentFieldOfMarkedObjectAsNumber) \
+    v(LeafAbsentFieldOfMarkedObjectAsNumber) \
     v(ArraySlice) \
     v(LeafArraySlice) \
     v(ArrayCopy) \
@@ -508,7 +559,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ReadFieldOptionalBooleanByName) \
     v(ReadOwnAccessorByName) \
     v(ReadAccessorByName) \
-    v(ReadExtraAccessorByName) \
+    v(ReadExtraPropertyByName) \
     v(ReadKnownCustomGetterByName) \
     v(ReadLazyClosureByName) \
     v(ReadExportOfNamespaceByName) \
@@ -521,7 +572,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ReadFieldOptionalBooleanByNameKeepingTwo) \
     v(ReadOwnAccessorByNameKeepingTwo) \
     v(ReadAccessorByNameKeepingTwo) \
-    v(ReadExtraAccessorByNameKeepingTwo) \
+    v(ReadExtraPropertyByNameKeepingTwo) \
     v(ReadKnownCustomGetterByNameKeepingTwo) \
     v(ReadLazyClosureByNameKeepingTwo) \
     v(ReadExportOfNamespaceByNameKeepingTwo) \
@@ -534,7 +585,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ReadFieldOptionalBooleanByNameWithinFrame) \
     v(ReadOwnAccessorByNameWithinFrame) \
     v(ReadAccessorByNameWithinFrame) \
-    v(ReadExtraAccessorByNameWithinFrame) \
+    v(ReadExtraPropertyByNameWithinFrame) \
     v(ReadKnownCustomGetterByNameWithinFrame) \
     v(ReadLazyClosureByNameWithinFrame) \
     v(ReadExportOfNamespaceByNameWithinFrame) \
@@ -545,6 +596,34 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByNameWithinFrame) \
     v(GetByNameBelowNumberOfColumns) \
     v(GetByNameBelowNumberOfColumnsKeepingTwo) \
+    v(GetByNameWithReceiverInRCX) \
+    v(GetByNameWithReceiverInRDX) \
+    v(GetByNameWithReceiverInRBX) \
+    v(GetByNameWithReceiverInRAX) \
+    v(GetByNameWithReceiverInRDI) \
+    v(GetByNameWithReceiverInR8) \
+    v(GetByNameWithReceiverInR15) \
+    v(GetByNameKeepingTwoWithReceiverInRCX) \
+    v(GetByNameKeepingTwoWithReceiverInRDX) \
+    v(GetByNameKeepingTwoWithReceiverInRBX) \
+    v(GetByNameKeepingTwoWithReceiverInRAX) \
+    v(GetByNameKeepingTwoWithReceiverInRDI) \
+    v(GetByNameKeepingTwoWithReceiverInR8) \
+    v(GetByNameKeepingTwoWithReceiverInR15) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInRCX) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInRDX) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInRBX) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInRAX) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInRDI) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInR8) \
+    v(GetByNameBelowNumberOfColumnsWithReceiverInR15) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRCX) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRDX) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRBX) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRDI) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInR8) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInR15) \
     v(GetLengthByName) \
     v(GetLengthByNameKeepingTwo) \
     v(GetParentDataByName) \
@@ -563,6 +642,18 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PutByNameThroughAccessorKeepingTwo) \
     v(PutByNameSetsArrayLength) \
     v(PutByNameSetsArrayLengthKeepingTwo) \
+    v(PutByNameStoresExtraProperty) \
+    v(PutByNameStoresExtraPropertyKeepingTwo) \
+    v(PutByNameStoresFieldCell32) \
+    v(PutByNameStoresFieldCell32KeepingTwo) \
+    v(PutByNameStoresFieldInt32) \
+    v(PutByNameStoresFieldInt32KeepingTwo) \
+    v(PutByNameStoresFieldBoxed) \
+    v(PutByNameStoresFieldBoxedKeepingTwo) \
+    v(PutByNameStoresFieldDouble) \
+    v(PutByNameStoresFieldDoubleKeepingTwo) \
+    v(PutByNameStoresFieldBoolean) \
+    v(PutByNameStoresFieldBooleanKeepingTwo) \
     v(PutByName) \
     v(PutByNameKeepingTwo) \
     v(PutByNameBelowNumberOfColumns) \
@@ -579,6 +670,18 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PutByNameSloppyThroughAccessorKeepingTwo) \
     v(PutByNameSloppySetsArrayLength) \
     v(PutByNameSloppySetsArrayLengthKeepingTwo) \
+    v(PutByNameSloppyStoresExtraProperty) \
+    v(PutByNameSloppyStoresExtraPropertyKeepingTwo) \
+    v(PutByNameSloppyStoresFieldCell32) \
+    v(PutByNameSloppyStoresFieldCell32KeepingTwo) \
+    v(PutByNameSloppyStoresFieldInt32) \
+    v(PutByNameSloppyStoresFieldInt32KeepingTwo) \
+    v(PutByNameSloppyStoresFieldBoxed) \
+    v(PutByNameSloppyStoresFieldBoxedKeepingTwo) \
+    v(PutByNameSloppyStoresFieldDouble) \
+    v(PutByNameSloppyStoresFieldDoubleKeepingTwo) \
+    v(PutByNameSloppyStoresFieldBoolean) \
+    v(PutByNameSloppyStoresFieldBooleanKeepingTwo) \
     v(PutByNameSloppy) \
     v(PutByNameSloppyKeepingTwo) \
     v(PutByNameSloppyBelowNumberOfColumns) \
@@ -590,6 +693,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(DefineByNameAddsStorageKeepingTwo) \
     v(DefineByNameThroughSlots) \
     v(DefineByNameThroughSlotsKeepingTwo) \
+    v(DefineByNameStoresExtraProperty) \
+    v(DefineByNameStoresExtraPropertyKeepingTwo) \
     v(DefineByName) \
     v(DefineByNameKeepingTwo) \
     v(DefineByNameBelowNumberOfColumns) \
@@ -612,12 +717,16 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PrivateFieldAdd) \
     v(DefineByKeyCached) \
     v(PutByValDirectCached) \
+    v(DefineGetterCached) \
+    v(DefineSetterCached) \
+    v(ToPropertyKey) \
     v(PrivateMethodsAdd) \
     v(InByValCached) \
     v(DeleteByValCached) \
     v(DeleteByValCachedSloppy) \
-    v(InstanceOf) \
+    v(InstanceOfEngineClass) \
     v(InstanceOfCached) \
+    v(CallHasInstance) \
     v(InstanceOfClass) \
     v(InstanceOfLeafClass) \
     v(MapGetAskingReceiver) \
@@ -647,6 +756,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(MapSetByBits) \
     v(SetHasByBits) \
     v(SetAddByBits) \
+    v(WeakMapGet) \
+    v(WeakMapHas) \
+    v(WeakSetHas) \
+    v(WeakMapSet) \
+    v(StringStartsWith) \
+    v(StringIndexOf) \
     v(ArrayIncludes) \
     v(ArrayIndexOf) \
     v(ArrayIncludesOrCall) \
@@ -699,6 +814,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(FrontEndTypedPutExtra) \
     v(FrontEndTypedGetExtra) \
     v(FrontEndTypedConstruct) \
+    v(FrontEndTypedCloneObject) \
+    v(FrontEndTypedCloneObjectForMore) \
+    v(FrontEndTypedConstructSuper) \
     FOR_EACH_AOT_HELPER(v) \
     v(NewArrayWithFastPath) \
     v(ValueAddWithFastPath) \
@@ -718,6 +836,28 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(NewObjectOfRow6) \
     v(CreateThisByNewTarget) \
     v(ConstructClosureList) \
+    v(BoxNumber) \
+    v(BoxOptionalNumber) \
+    v(UnboxNumberArgument0ToFPR0) \
+    v(LeafUnboxNumberArgument0ToFPR0) \
+    v(UnboxNumberArgument1ToFPR0) \
+    v(LeafUnboxNumberArgument1ToFPR0) \
+    v(UnboxNumberArgument1ToFPR1) \
+    v(LeafUnboxNumberArgument1ToFPR1) \
+    v(UnboxNumberArgument2ToFPR0) \
+    v(LeafUnboxNumberArgument2ToFPR0) \
+    v(UnboxNumberArgument2ToFPR1) \
+    v(LeafUnboxNumberArgument2ToFPR1) \
+    v(UnboxNumberArgument2ToFPR2) \
+    v(LeafUnboxNumberArgument2ToFPR2) \
+    v(UnboxNumberArgument3ToFPR0) \
+    v(LeafUnboxNumberArgument3ToFPR0) \
+    v(UnboxNumberArgument3ToFPR1) \
+    v(LeafUnboxNumberArgument3ToFPR1) \
+    v(UnboxNumberArgument3ToFPR2) \
+    v(LeafUnboxNumberArgument3ToFPR2) \
+    v(UnboxNumberArgument3ToFPR3) \
+    v(LeafUnboxNumberArgument3ToFPR3) \
 
 enum class Stub : uint16_t {
 #define AOT_DEFINE_STUB(name) name,
@@ -734,6 +874,9 @@ ASCIILiteral nameOf(Stub);
 static constexpr Stub askingReceiver(Stub stub) { return static_cast<Stub>(static_cast<unsigned>(stub) - 1); }
 static_assert(askingReceiver(Stub::MapGet) == Stub::MapGetAskingReceiver && askingReceiver(Stub::MapHas) == Stub::MapHasAskingReceiver && askingReceiver(Stub::MapSet) == Stub::MapSetAskingReceiver && askingReceiver(Stub::SetHas) == Stub::SetHasAskingReceiver && askingReceiver(Stub::SetAdd) == Stub::SetAddAskingReceiver && askingReceiver(Stub::MapSetWithStringKey) == Stub::MapSetWithStringKeyAskingReceiver && askingReceiver(Stub::SetAddWithStringKey) == Stub::SetAddWithStringKeyAskingReceiver && askingReceiver(Stub::MapGetWithStringKey) == Stub::MapGetWithStringKeyAskingReceiver && askingReceiver(Stub::MapHasWithStringKey) == Stub::MapHasWithStringKeyAskingReceiver && askingReceiver(Stub::SetHasWithStringKey) == Stub::SetHasWithStringKeyAskingReceiver);
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
+static constexpr unsigned maxArgumentsUnboxedByStub = 4;
+static constexpr Stub unboxNumberArgumentStub(unsigned argument, unsigned fpr, bool isLeaf) { return static_cast<Stub>(static_cast<unsigned>(Stub::UnboxNumberArgument0ToFPR0) + 2 * (argument * (argument + 1) / 2 + fpr) + isLeaf); }
+static_assert(unboxNumberArgumentStub(maxArgumentsUnboxedByStub - 1, maxArgumentsUnboxedByStub - 1, true) == Stub::LeafUnboxNumberArgument3ToFPR3 && unboxNumberArgumentStub(2, 1, false) == Stub::UnboxNumberArgument2ToFPR1);
 static_assert(maxLiteralPropertiesInRegisters <= 6 && maxArrayElementsInRegisters <= 4);
 // For code compiled from types. Each is followed by its variant for a caller without a frame.
 // What Stub::ArrayOfDoubles and Stub::ArrayOfInt32s are handed: the length, and above it the capacity, which is odd.
@@ -743,6 +886,8 @@ static constexpr unsigned arraySiteBornShift = 8;
 static constexpr uint32_t arraySiteInterval = 64;
 static constexpr unsigned maxCapacityOfArrayOfNumbers = 127;
 static constexpr Stub arrayLiteralStub(unsigned count) { return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayLiteral0) + 2 * count); }
+static constexpr Stub arrayLiteralOfDoublesStub(unsigned count) { return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayLiteralOfDoubles1) + 2 * (count - 1)); }
+static constexpr unsigned shiftOfNumbersInArrayLiteralOfDoubles = 8;
 
 
 struct Site {
@@ -880,9 +1025,16 @@ GPRReg defaultOperandRegister(Stub);
 bool preservesOperandRegister(Stub);
 std::optional<RegisterSet> registersChangedBy(Stub);
 Stub formOfStubThatKeeps(Stub, const RegisterSet& live);
+bool hasFormsThatYieldInOtherRegisters(Stub);
+Stub formOfStubThatYieldsIn(Stub, GPRReg result);
 Stub formOfStubForName(Stub, uint32_t name);
+bool hasFormsThatTakeReceiverInOtherRegisters(Stub);
+Stub formOfStubThatTakesReceiverIn(Stub, GPRReg receiver);
 enum class StubOfOneNameIsFor : uint8_t { Reads, Stores, Definitions, Calls };
 void forgetNamesWithStubOfTheirOwn();
+enum class MethodOfTables : uint8_t { None, Get, Has, Set, Add };
+MethodOfTables methodOfTablesNamed(std::span<const uint8_t> name);
+void setMethodOfTablesNamed(uint32_t name, MethodOfTables);
 void setHasStubOfItsOwn(StubOfOneNameIsFor, uint32_t numberOfIdentifier);
 bool callOfMethodHasStubOfItsName(unsigned count, uint32_t name);
 void dumpRegistersChangedByStubs(PrintStream&);
@@ -895,8 +1047,8 @@ struct StubBlob {
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
 };
-std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& thunksThatAreCalled, const BitVector& stubsThatAreCalled);
-constexpr bool isMadeOnlyIfCalled(Stub stub) { return stub >= Stub::GetByIdAsDouble && stub <= Stub::GetByNameAsArrayOrNilKeepingTwo; }
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& thunksThatAreCalled, const BitVector& stubsThatAreCalled, bool imageHoldsWebAssembly);
+constexpr bool isMadeOnlyIfCalled(Stub stub) { return (stub >= Stub::GetByIdAsDouble && stub <= Stub::GetByNameAsArrayOrNilKeepingTwo) || (stub >= Stub::UnboxNumberArgument0ToFPR0 && stub <= Stub::LeafUnboxNumberArgument3ToFPR3); }
 bool thunkIsMadeOnlyIfCalled(unsigned thunk);
 
 struct IndexReference {

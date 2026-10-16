@@ -332,7 +332,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // FIXME: Extend this for non JSFinalObject. For example, we would like to use this fast path for function objects too.
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
-    bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+    bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible() && !targetObject->structure()->typeInfo().overridesPut();
 #if USE(BUN_JSC_ADDITIONS)
     if (targetCanPerformFastPut && targetObject->structure()->hasImmutableShape()) [[unlikely]]
         targetCanPerformFastPut = false;
@@ -461,11 +461,14 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
         if (!canUseFastPath && target->structure()->compiledLayout()) {
             auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
             keysOfTypedObject = typedObject->keys(vm);
-            canUseFastPath = typedObject->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+            if (!keysOfTypedObject)
+                keysOfTypedObject = typedObject->keysWithExtraProperties(vm);
+            auto collect = [&](UniquedStringImpl& name, JSValue value) {
                 properties.append(&name);
                 values.appendWithCrashOnOverflow(value);
                 return true;
-            });
+            };
+            canUseFastPath = typedObject->forEachFieldAsProperty(collect) || typedObject->forEachFieldAndExtraProperty(collect);
         }
 #endif
 
@@ -620,11 +623,12 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
 #if ENABLE(AOT)
             else if (targetStructure->compiledLayout()) {
                 MarkedArgumentBuffer fields;
-                bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(target)->forEachFieldAsProperty([&](UniquedStringImpl&, JSValue value) {
+                auto collect = [&](UniquedStringImpl&, JSValue value) {
                     fields.appendWithCrashOnOverflow(value);
                     return true;
-                });
-                if (hasOnlyFields) {
+                };
+                auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
+                if (typedObject->forEachFieldAsProperty(collect) || typedObject->forEachFieldAndExtraProperty(collect)) {
                     // As below. (constructArray() without a profile starts from an array of undecided shape, which each new kind of value converts.)
                     JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), fields.size());
                     if (!result) [[unlikely]] {
@@ -1212,7 +1216,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     }
 #endif
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+    if (object->classInfo() == JSFinalObject::info() && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
@@ -1254,7 +1258,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     }
 #endif
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+    if (object->classInfo() == JSFinalObject::info() && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
@@ -1403,8 +1407,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
 #if ENABLE(AOT)
         // Without extra properties all its keys are strings, and all its properties are enumerable.
         if (!Inherit && propertyNameMode != PropertyNameMode::Symbols && object->structure()->compiledLayout()) [[unlikely]] {
-            if (auto* keys = uncheckedDowncast<AOT::Typed::Object>(object)->keys(vm))
+            auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(object);
+            if (auto* keys = typedObject->keys(vm))
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+            if (JSArray* keys = typedObject->tryListKeysWithExtraProperties(globalObject))
+                return keys;
         }
 #endif
     }

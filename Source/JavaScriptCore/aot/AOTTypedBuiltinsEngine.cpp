@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLockWords.h"
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
 #include "AOTTypedObject.h"
@@ -58,7 +59,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByValSloppy, size_t, (Instance* 
     bool isDeleted = JSCell::deleteProperty(object, globalObject, property);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     if (!isDeleted && object->noteIfRefusedByLockAlone(vm, property.impl(), true, true)) {
-        throwTypeError(globalObject, scope, object->wordsOfRefusalByLock(vm, property.impl(), UnableToDeletePropertyError));
+        throwTypeError(globalObject, scope, AOT::wordsOfLock(vm, object, AOT::RefusedByLock::Delete, property.impl()));
         OPERATION_RETURN(scope, 0);
     }
     OPERATION_RETURN(scope, isDeleted);

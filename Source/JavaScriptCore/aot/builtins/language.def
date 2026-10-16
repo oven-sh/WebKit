@@ -16,6 +16,7 @@ runtime HasEnumerableProperty : Heap size_t (EncodedJSValue object, EncodedJSVal
 runtime GetSuperConstructor : Nothing EncodedJSValue (JSCell* classObject)
 runtime Increment : Heap EncodedJSValue (EncodedJSValue value)
 runtime Decrement : Heap EncodedJSValue (EncodedJSValue value)
+runtime ListFieldsBelow : Fields size_t (JSCell* object, uint32_t end) noexcept
 
 operation CopyDataProperties (any/WwR, any/GP) -> arg0 ; CallsUserCode ; Operation(CopyDataProperties)
 operation CopyDataPropertiesExcluding (any/GP, any/G...) -> new Object ; CallsUserCode ; Operation(CopyDataPropertiesExcluding)
@@ -23,6 +24,8 @@ operation CloneObject (any/GP) -> new Object ; CallsUserCode ; Operation(CloneOb
 operation CloneObjectWith (any/GP, any/G...) -> new Object ; CallsUserCode ; Operation(CloneObjectWith)
 operation CloneObjectAfter (any/GP, any/KG...) -> new Object ; CallsUserCode ; Operation(CloneObjectAfter)
 operation DefineField (any/WwG, any/G, any/K) -> undefined ; CallsUserCode ; Operation(DefineField)
+operation UnlistFields (any/w, any/-) -> int[0,INT32_MAX] ; MayThrow Allocates WritesArguments ; Operation(UnlistFields)
+operation ListFields (any/w, any/-, any/-, any/-?, any/-?, any/-?) -> undefined ; MayThrow Allocates WritesArguments ; Operation(ListFields)
 operation Initialize (any, any...) -> undefined ; CallsUserCode ; Operation(Initialize)
 operation DefineGetter (any/WwG, any/G, any/WK, any/-, any/K?) -> undefined ; CallsUserCode ; Operation(DefineGetter)
 operation DefineSetter (any/WwG, any/G, any/WK, any/-, any/K?) -> undefined ; CallsUserCode ; Operation(DefineSetter)

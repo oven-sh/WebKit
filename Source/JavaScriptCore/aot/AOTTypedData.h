@@ -129,6 +129,7 @@ inline bool refersToNumberBox(int32_t word) { return word > nullInt32 && word < 
 static constexpr unsigned cell32Shift = MarkedBlockCage::shift;
 static constexpr bool cell32IsPointer = false;
 static constexpr uint32_t absentCell32 = 0;
+static constexpr uint32_t closureNotMadeCell32 = 1;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
 
@@ -140,6 +141,16 @@ static constexpr uint32_t literalStringIndex(uint32_t word) { return (word - emp
 static constexpr uint32_t minCell32 = MarkedBlockCage::minIndex;
 static_assert(literalStringWord(maxLiteralStrings) <= minCell32);
 inline bool isLiteralStringWord(uint64_t word) { return word - emptyLiteralStringWord < minCell32 - emptyLiteralStringWord; }
+static constexpr size_t maxLengthOfShortText = 7;
+static constexpr uint64_t noShortText = UINT64_MAX;
+template<typename CharacterType>
+inline uint64_t shortTextWord(std::span<const CharacterType> text)
+{
+    uint64_t characters = 0;
+    for (size_t i = 0; i < text.size(); ++i)
+        characters |= static_cast<uint64_t>(text[i]) << (8 * i);
+    return characters << 3 | text.size();
+}
 static constexpr unsigned literalStringCacheIndexBits = 8;
 static constexpr unsigned literalStringCacheIndexShift = 5;
 static constexpr unsigned literalStringCacheWordBits = 20;
@@ -180,6 +191,7 @@ static constexpr uint32_t offsetOfFirstField = 16;
 
 static constexpr uint32_t offsetOfExtension = 16;
 static constexpr uint32_t sizeOfExtensionWord = 4;
+static constexpr uint32_t sizeOfExtraPropertiesWord = 4;
 static constexpr uint32_t offsetOfExtensionSize = 0;
 static constexpr uint32_t offsetOfFirstExtensionSlot = 4;
 static constexpr uint32_t leastExtensionSize = 16;
@@ -197,6 +209,8 @@ static constexpr uint32_t orderWordHasExtraProperties = 1u << 28;
 static constexpr uint32_t orderWordIsFrozen = 1u << 29;
 static constexpr uint32_t orderWordIsSealed = 1u << 30;
 static constexpr uint32_t orderWordIsNotExtensible = 1u << 31;
+static constexpr uint32_t listsFieldsWithoutUnlisting = 1u << 31;
+static constexpr uint32_t listsFieldNamed = 1u << 30;
 
 // `#name` of a class that is laid out, spelled `\xFE#name@class` by the front end. No text has that byte, so no key of the program is such a name.
 inline bool isPrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfe; }
@@ -226,6 +240,9 @@ static constexpr uint32_t fieldIsNeverSeenAbsentAsWritten = 262144;
 static constexpr uint32_t fieldIsPinned = 131072;
 static constexpr uint32_t fieldMayExistWithoutStorage = 1048576;
 static constexpr uint32_t fieldIsPlaceholder = 2097152;
+static constexpr uint32_t fieldMayBeUnlisted = 8388608;
+static constexpr uint32_t fieldHoldsClosureMadeWhenRead = 4194304;
+static constexpr uint32_t closureMadeWhenReadCapturesItsObject = 1u << 31;
 static constexpr uint32_t nameOfFieldCreatedWithoutStorage = 1u << 31;
 static constexpr uint32_t guardOfPinnedFieldShift = 24;
 static constexpr uint32_t numberOfGuardsOfPinnedFields = 256;
@@ -417,6 +434,7 @@ static constexpr uint32_t methodHasComputedName = 1;
 static constexpr uint32_t methodTakesEnvironment = 2;
 // See Format::MethodMayBeReplaced.
 static constexpr uint32_t methodMayBeReplaced = 4;
+static constexpr uint32_t methodHasNameThatIsTakenForAbsent = 8;
 
 struct MethodData {
     uint32_t name : 24;
@@ -477,6 +495,7 @@ struct LayoutData {
     uint8_t constructorMayBeReplaced : 1;
     uint8_t hasRareData : 1;
     uint8_t hasMessageData : 1;
+    uint8_t placeOfExtraProperties : 7;
     uint32_t index;
     uint32_t shape;
     uint32_t name;
@@ -502,6 +521,8 @@ struct LayoutData {
     uint32_t discriminant() const { return hasRareData ? rareData().discriminant : noBase; }
     uint32_t fieldsByNameOffset() const { return hasRareData ? rareData().fieldsByNameOffset : 0; }
     uint32_t literalsWithoutFieldOffset() const { return hasRareData ? rareData().literalsWithoutFieldOffset : 0; }
+    static constexpr uint32_t endOfPlacesOfExtraProperties = sizeOfExtraPropertiesWord << 7;
+    uint32_t offsetOfExtraProperties() const { return placeOfExtraProperties * sizeOfExtraPropertiesWord; }
     bool isClass() const { return kind == LayoutKind::Instance; }
     const ClassData& classData() const { return reinterpret_cast<const ClassData*>(reinterpret_cast<const uint8_t*>(this) - (hasRareData ? sizeof(RareLayoutData) : 0) - (hasMessageData ? sizeof(MessageLayoutData) : 0))[-1]; }
     ClassData& classData() { return const_cast<ClassData&>(const_cast<const LayoutData*>(this)->classData()); }
@@ -631,8 +652,6 @@ struct Data {
     uint32_t displacementsOfNamesOffset;
     uint32_t placesByNameAndRowOffset;
     static constexpr uint32_t nameIsOnObjectPrototype = 1u << 31;
-    // By EngineClass::index, in bytes: whether the front end has seen a class of the program extend the class.
-    uint32_t extendedClassesOffset;
     uint32_t numberOfBuiltinCellsFilledFromStart;
     uint32_t builtinCellsFilledFromStartOffset;
     // The bits of the tests that are no range, in 32-bit words: bit n is bit n % 32 of word n / 32.
@@ -724,10 +743,12 @@ struct Data {
     uint32_t usesWideReferences;
     uint32_t functionLengthsAreBytes;
     // Pairs of a function and the function it belongs to, sorted by the first: a generic entrypoint and what it wraps, the function that
-    // runs a coroutine's body and the coroutine. For matching a stack frame against a closure. The first of each pair is not written: those with numbers in a row are a run. The runs, two words each, sorted: the first function of the run, and where what it belongs to stands among the seconds. Then the seconds: the low 16 bits of all, then the high 8 bits of all.
+    // runs a coroutine's body and the coroutine. For matching a stack frame against a closure. The first of each pair is not written: those with numbers in a row whose seconds do not fall are a run. The runs, two words each, sorted: the first function of the run, and where what it belongs to stands among the seconds. Then the seconds: the low 16 bits of all, then the high 8 bits of all.
     uint32_t numberOfFunctionAliases;
     uint32_t numberOfRunsOfFunctionAliases;
     uint32_t functionAliasesOffset;
+    uint32_t firstGenericEntrypoint;
+    uint32_t numberOfConsecutiveGenericEntrypoints;
     // With isCompiledForAudit: for each function the string that is its source path, for the audit's lines.
     uint32_t functionSourcesOffset;
     uint32_t functionTextsOffset;

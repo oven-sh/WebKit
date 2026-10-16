@@ -34,6 +34,7 @@
 #include "Options.h"
 #include "ParseInt.h"
 #include "SourceProvider.h"
+#include "WasmCodeInImage.h"
 #include "YarrClassTablePacker.h"
 #include "YarrSyntaxChecker.h"
 #include <wtf/FilePrintStream.h>
@@ -49,8 +50,13 @@
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 #include <sys/mman.h>
 #if OS(DARWIN)
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#endif
+#if OS(LINUX)
+#include <link.h>
 #endif
 #elif OS(WINDOWS)
 #include <windows.h>
@@ -60,6 +66,60 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBuilder);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Image);
+
+#if OS(LINUX)
+static int addBuildIDOfProgram(struct dl_phdr_info* info, size_t, void* context)
+{
+    auto& identity = *static_cast<uint64_t*>(context);
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        auto& segment = info->dlpi_phdr[i];
+        if (segment.p_type != PT_NOTE)
+            continue;
+        const uint8_t* at = reinterpret_cast<const uint8_t*>(info->dlpi_addr + segment.p_vaddr);
+        const uint8_t* end = at + segment.p_memsz;
+        while (static_cast<size_t>(end - at) >= sizeof(ElfW(Nhdr))) {
+            auto& note = *reinterpret_cast<const ElfW(Nhdr)*>(at);
+            size_t nameSize = WTF::roundUpToMultipleOf<4>(static_cast<size_t>(note.n_namesz));
+            size_t descriptionSize = WTF::roundUpToMultipleOf<4>(static_cast<size_t>(note.n_descsz));
+            at += sizeof(ElfW(Nhdr));
+            if (static_cast<size_t>(end - at) < nameSize + descriptionSize)
+                break;
+            if (note.n_type == NT_GNU_BUILD_ID && note.n_namesz == 4 && !memcmp(at, "GNU", 4)) {
+                for (size_t byte = 0; byte < note.n_descsz; ++byte)
+                    identity = (identity ^ at[nameSize + byte]) * 0x100000001b3ULL;
+            }
+            at += nameSize + descriptionSize;
+        }
+    }
+    // The first is the program itself.
+    return 1;
+}
+#endif
+
+// What the linker says of this very binary. An image holds numbers and offsets of the engine that made it, more of them than imageStamp() lists:
+// two builds are two engines to it, though they be of one text. A copy, a stripped copy and an executable made from the binary keep what is read here.
+static uint64_t identityOfThisBinary()
+{
+    static const uint64_t result = [] {
+        uint64_t identity = 0;
+#if OS(LINUX)
+        dl_iterate_phdr(addBuildIDOfProgram, &identity);
+#elif OS(DARWIN)
+        auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(0));
+        auto* command = reinterpret_cast<const uint8_t*>(header + 1);
+        for (uint32_t i = 0; header && i < header->ncmds; ++i) {
+            auto& loadCommand = *reinterpret_cast<const load_command*>(command);
+            if (loadCommand.cmd == LC_UUID) {
+                for (uint8_t byte : reinterpret_cast<const uuid_command*>(command)->uuid)
+                    identity = (identity ^ byte) * 0x100000001b3ULL;
+            }
+            command += loadCommand.cmdsize;
+        }
+#endif
+        return identity;
+    }();
+    return result;
+}
 
 uint64_t imageStamp()
 {
@@ -84,6 +144,7 @@ uint64_t imageStamp()
     mix(Instance::roomForEnvironments);
     mix(Instance::roomForRows);
     mix(static_cast<uint64_t>(Instance::offsetOfNumberTag()) << 16 | Instance::offsetOfNotCellMask());
+    mix(Instance::offsetOfNotUndefinedOrNullMask());
     mix(Instance::granuleBelowInstance);
     mix(Instance::typedCardShift);
     mix(Typed::Data::bitsOfStringLength);
@@ -114,6 +175,7 @@ uint64_t imageStamp()
     mix(sizeof(Instance::FieldsBelow));
     mix(Typed::builtinsHash);
     mix(Typed::Format::version);
+    mix(identityOfThisBinary());
     return stamp;
 }
 
@@ -2217,7 +2279,7 @@ Vector<uint8_t> ImageBuilder::finish()
         noteThunkOfMoves(moves, stubsThatAreCalled, thunksThatAreCalled);
     std::unique_ptr<StubBlob> stubsOfImage;
     Ref makerOfStubs = Thread::create("AOT image"_s, [&] {
-        stubsOfImage = createStubBlob(codeGranuleShift, !m_typedData.isEmpty() && reinterpret_cast<const Typed::Data*>(m_typedData.span().data())->functionLengthsAreBytes, thunksThatAreCalled, stubsThatAreCalled);
+        stubsOfImage = createStubBlob(codeGranuleShift, !m_typedData.isEmpty() && reinterpret_cast<const Typed::Data*>(m_typedData.span().data())->functionLengthsAreBytes, thunksThatAreCalled, stubsThatAreCalled, !m_webAssemblyCode.isEmpty());
     }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(4 * MB));
     Vector<const ArgumentMoves*> argumentMoves;
     auto argumentMovesAreInOrder = [](const ArgumentMoves* a, const ArgumentMoves* b) {
@@ -2385,6 +2447,7 @@ Vector<uint8_t> ImageBuilder::finish()
         if (mayBeCut)
             jumpToNext[index] = safeCast<uint32_t>(last);
     });
+    size_t numberOfJumpsReturnedTo = 0;
     for (size_t index = 0, sizeOfRun = 0; index + 1 < m_functions.size(); ++index) {
         constexpr size_t maxSizeOfRun = 1 << 20;
         auto& function = m_functions[index].code;
@@ -2397,6 +2460,17 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         size_t offset = calls[last].offset;
         size_t filling = WTF::roundUpToMultipleOf<imageFunctionAlignment>(offset) - offset;
+        bool isReturnedTo = calls.containsIf([&](const StubCall& call) {
+            return !call.isTailCall && call.offset + sizeOfNearCall == offset;
+        });
+        if (isReturnedTo && !filling) {
+            ++numberOfJumpsReturnedTo;
+            if (!isX86()) {
+                sizeOfRun = 0;
+                continue;
+            }
+            filling = imageFunctionAlignment;
+        }
         calls.removeAt(last);
         function.bytes.shrink(offset);
         if (!function.instructions.isEmpty()) {
@@ -2415,7 +2489,12 @@ Vector<uint8_t> ImageBuilder::finish()
 #endif
         fallsIntoNext.quickSet(index);
     }
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", fallsIntoNext.bitCount(), " functions fall into the function that is placed next; ", sharesItsKey.bitCount(), " share their key with another and are left as they are");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", fallsIntoNext.bitCount(), " functions fall into the function that is placed next; ", sharesItsKey.bitCount(), " share their key with another and are left as they are; ", numberOfJumpsReturnedTo, " such jumps stand where a call returns to, with no filling behind");
+    Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        auto& function = m_functions[index].code;
+        for (auto& call : function.info.stubCalls)
+            RELEASE_ASSERT_WITH_MESSAGE(call.isTailCall || call.stub == Stub::PollAtPrologue || call.offset + sizeOfNearCall < function.bytes.size(), "AOT: a function ends in a call: its return address would be taken for the next function's");
+    });
     endStep("functions that fall into the next"_s);
     Vector<uint8_t> callSites { 0 };
     Vector<uint32_t> functionCallSites;
@@ -2553,27 +2632,35 @@ Vector<uint8_t> ImageBuilder::finish()
         static_assert(!((1 << minCodeGranuleShift) % imageFunctionAlignment));
         codeSize = WTF::roundUpToMultipleOf(static_cast<size_t>(1) << codeGranuleShift, codeSize + sizeOfStubs + sizeAheadOfNext);
     };
-    for (size_t functionIndex = 0; functionIndex < m_functions.size(); ++functionIndex) {
-        auto& function = m_functions[functionIndex];
-        recordsSize += sizeof(ImageFunction) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.plans.sizeInBytes() + (function.code.info.quotes.isEmpty() && function.code.info.constructSites.isEmpty() ? 0 : sizeof(uint32_t));
+    Vector<size_t> sizesOfRecords(m_functions.size());
+    Vector<size_t> sizesAhead(m_functions.size());
+    Vector<size_t> sizesWithVeneers(m_functions.size());
+    Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        auto& function = m_functions[index];
+        sizesOfRecords[index] = sizeof(ImageFunction) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.plans.sizeInBytes() + (function.code.info.quotes.isEmpty() && function.code.info.constructSites.isEmpty() ? 0 : sizeof(uint32_t));
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
-        codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + sizeAheadOf(functionIndex));
+        sizesAhead[index] = sizeAheadOf(index);
+        sizesWithVeneers[index] = sizeWithVeneers(index);
+    });
+    for (size_t functionIndex = 0; functionIndex < m_functions.size(); ++functionIndex) {
+        recordsSize += sizesOfRecords[functionIndex];
+        codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + sizesAhead[functionIndex]);
         bool isFallenInto = functionIndex && fallsIntoNext.quickGet(functionIndex - 1);
         RELEASE_ASSERT(!isFallenInto || codeSize == placement.last().first + m_functions[functionIndex - 1].code.bytes.size());
-        size_t sizeOfRun = sizeWithVeneers(functionIndex);
+        size_t sizeOfRun = sizesWithVeneers[functionIndex];
         for (size_t last = functionIndex; !isFallenInto && fallsIntoNext.quickGet(last); ++last)
-            sizeOfRun += sizeWithVeneers(last + 1);
+            sizeOfRun += sizesWithVeneers[last + 1];
         if (!isAheadOfStubs && stubsServeBothSides && !isFallenInto && codeSize + sizeOfRun - stubsAt.last() > reach) {
             isAheadOfStubs = true;
             firstFunctionAheadOfStubs = placement.size();
             startOfCodeAheadOfStubs = codeSize;
         }
         if (isAheadOfStubs ? !isFallenInto && codeSize + sizeOfRun + imageStubsAlignment + sizeOfStubs - startOfCodeAheadOfStubs > reach : stubsAt.isEmpty() || (!isFallenInto && codeSize + sizeOfRun - stubsAt.last() > reach))
-            layStubs(sizeAheadOf(functionIndex));
+            layStubs(sizesAhead[functionIndex]);
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
         if (Options::logAOTTypeInference()) [[unlikely]]
             dataLogLn("PLACED @", m_functions[placement.size() - 1].key.module, ":", m_functions[placement.size() - 1].key.start, ":", m_functions[placement.size() - 1].key.kind, " ", codeSize);
-        codeSize += sizeWithVeneers(functionIndex);
+        codeSize += sizesWithVeneers[functionIndex];
     }
     if (isAheadOfStubs && firstFunctionAheadOfStubs < placement.size())
         layStubs(0);
@@ -2589,7 +2676,7 @@ Vector<uint8_t> ImageBuilder::finish()
         return copyOfStubs + (jump.thunk ? offsetOfThunk(jump.thunk - 1) : stubs.offsets[static_cast<unsigned>(jump.stub)]);
     };
     for (size_t index = 0; index < m_functions.size(); ++index) {
-        size_t at = placement[index].first + sizeWithVeneers(index) - sizeOfOwnBodiesOf[index];
+        size_t at = placement[index].first + sizesWithVeneers[index] - sizeOfOwnBodiesOf[index];
         for (uint32_t number : ownBodiesOf[index]) {
             placeOfOwnBody[number] = at;
             at += ownBodies.sizeOf(number);
@@ -3007,6 +3094,12 @@ Vector<uint8_t> ImageBuilder::finish()
             imageRegExps[number].codeFor16Bit = safeCast<uint32_t>(regExpPlacement[number][1]);
         }
     }
+    size_t webAssemblyCodeAt = 0;
+    if (!m_webAssemblyCode.isEmpty()) {
+        codeSize = WTF::roundUpToMultipleOf<16>(codeSize);
+        webAssemblyCodeAt = codeSize;
+        codeSize += m_webAssemblyCode.size();
+    }
     layerOfGranulesAndFaultingAccesses->waitForCompletion();
     endStep("placing the regular expressions"_s);
     RELEASE_ASSERT(recordsSize < std::numeric_limits<uint32_t>::max());
@@ -3074,6 +3167,8 @@ Vector<uint8_t> ImageBuilder::finish()
     header.framesOffset = place(frames.sizeInBytes());
     header.typedDataOffset = place(m_typedData.size());
     header.typedDataSize = safeCast<uint32_t>(m_typedData.size());
+    header.webAssemblyDirectoryOffset = m_webAssemblyDirectory.isEmpty() ? 0 : place(m_webAssemblyDirectory.size());
+    header.webAssemblyCodeOffset = safeCast<uint32_t>(webAssemblyCodeAt);
     for (size_t index = 0; index < imageRegExps.size(); ++index)
         imageRegExps[index].text = safeCast<uint32_t>(static_cast<uint64_t>(imageRegExps[index].text) + (regExpTextIsInTypedData.get(index) ? header.typedDataOffset : header.regExpTextOffset));
     header.functionsEnd = safeCast<uint32_t>(functionsEnd);
@@ -3126,6 +3221,10 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.faultingAccessesOffset, faultingAccesses.span().data(), faultingAccesses.sizeInBytes());
     memcpy(base + header.framesOffset, frames.span().data(), frames.sizeInBytes());
     memcpy(base + header.typedDataOffset, m_typedData.span().data(), m_typedData.size());
+    if (!m_webAssemblyDirectory.isEmpty()) {
+        memcpy(base + header.webAssemblyDirectoryOffset, m_webAssemblyDirectory.span().data(), m_webAssemblyDirectory.size());
+        memcpy(code + webAssemblyCodeAt, m_webAssemblyCode.span().data(), m_webAssemblyCode.size());
+    }
     endStep("copying the tables"_s);
     for (auto& [table, at] : regExpTables) {
         for (auto& regExp : m_regExps) {
@@ -3178,7 +3277,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 size_t routineAt = regExpRoutineTargets[index][i][k];
 #if CPU(X86_64)
                 constexpr size_t sizeOfCall = 5;
-                RELEASE_ASSERT(regExpCode.routineCalls[k].offset + sizeOfCall <= regExpCode.bytes.size() && code[instructionAt] == 0xe8);
+                RELEASE_ASSERT(regExpCode.routineCalls[k].offset + sizeOfCall <= regExpCode.bytes.size() && code[instructionAt] == (regExpCode.routineCalls[k].isTailCall ? 0xe9 : 0xe8));
                 int64_t distance = static_cast<int64_t>(routineAt) - static_cast<int64_t>(instructionAt + sizeOfCall);
                 RELEASE_ASSERT(distance == static_cast<int32_t>(distance));
                 int32_t displacement = static_cast<int32_t>(distance);
@@ -3187,7 +3286,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 RELEASE_ASSERT(regExpCode.routineCalls[k].offset + sizeof(uint32_t) <= regExpCode.bytes.size());
                 int64_t delta = static_cast<int64_t>(routineAt) - static_cast<int64_t>(instructionAt);
                 RELEASE_ASSERT(!(delta & 3) && delta >= -(1 << 27) && delta < (1 << 27));
-                uint32_t call = 0x94000000u | (static_cast<uint32_t>(delta >> 2) & 0x3ffffffu);
+                uint32_t call = (regExpCode.routineCalls[k].isTailCall ? 0x14000000u : 0x94000000u) | (static_cast<uint32_t>(delta >> 2) & 0x3ffffffu);
                 memcpy(code + instructionAt, &call, sizeof(call));
 #endif
             }
@@ -3507,6 +3606,10 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         RELEASE_ASSERT(!header.codeSize || !other->header().codeSize);
     all.images.append(image);
     all.hasAny.store(true, std::memory_order_release);
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (header.webAssemblyDirectoryOffset)
+        Wasm::CodeInImage::setRange(static_cast<const uint8_t*>(image->m_code) + header.webAssemblyCodeOffset, header.codeSize - header.webAssemblyCodeOffset);
+#endif
 #if CPU(X86_64) && OS(LINUX)
     bool mayTrapAtPrologues = header.codeSize;
 #else
@@ -3599,7 +3702,7 @@ bool Image::usesNumberedIntrinsics()
 {
     auto& all = registry();
     if (!all.hasAny.load(std::memory_order_acquire))
-        return true;
+        return Options::useAOT();
     for (unsigned i = 0; i < all.images.size(); ++i) {
         if (all.images[i]->header().intrinsicHash)
             return true;
@@ -3617,6 +3720,14 @@ Image* Image::withCode()
             return all.images[i];
     }
     return nullptr;
+}
+
+std::pair<const uint8_t*, const uint8_t*> Image::webAssembly()
+{
+    Image* image = withCode();
+    if (!image || !image->header().webAssemblyDirectoryOffset)
+        return { nullptr, nullptr };
+    return { image->at<uint8_t>(image->header().webAssemblyDirectoryOffset), static_cast<const uint8_t*>(image->m_code) + image->header().webAssemblyCodeOffset };
 }
 
 static const ImageHeader* s_imageHeader;

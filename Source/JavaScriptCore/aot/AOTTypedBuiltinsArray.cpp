@@ -355,6 +355,44 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithIndexingType, JSCell*, (In
     OPERATION_RETURN(scope, array);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayOfDoubles, JSCell*, (Instance* instance, uint32_t countAndWhichAreNumbers, double first, double second, double third, double fourth))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    double given[] = { first, second, third, fourth };
+    unsigned count = countAndWhichAreNumbers & ((1u << shiftOfNumbersInArrayLiteralOfDoubles) - 1);
+    bool fit = true;
+    for (unsigned i = 0; i < count; ++i)
+        fit &= given[i] == given[i];
+    if (fit && !globalObject->isHavingABadTime()) {
+        unsigned capacity = vectorLengthOfArrayLiteral(count);
+        void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
+        if (!storage) {
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, nullptr);
+        }
+        Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
+        butterfly->setVectorLength(capacity);
+        butterfly->setPublicLength(count);
+        for (unsigned i = 0; i < capacity; ++i)
+            butterfly->contiguousDouble().atUnsafe(i) = i < count ? given[i] : PNaN;
+        OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble), butterfly));
+    }
+    ObjectInitializationScope initializationScope(vm);
+    JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(fit ? ArrayWithDouble : ArrayWithContiguous), count);
+    if (!array) {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+    IndexingType made = array->indexingType();
+    for (unsigned i = 0; i < count; ++i) {
+        uint64_t bits = std::bit_cast<uint64_t>(given[i]);
+        bool isNumber = countAndWhichAreNumbers >> (shiftOfNumbersInArrayLiteralOfDoubles + i) & 1;
+        JSValue value = !isNumber && bits == Typed::nullDouble ? jsNull() : !isNumber && (bits == Typed::undefinedDouble || bits == Typed::absentDouble) ? jsUndefined() : jsNumber(purifyNaN(given[i]));
+        array->initializeIndex(initializationScope, i, value, made);
+    }
+    OPERATION_RETURN(scope, array);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayOfConstants, JSCell*, (Instance* instance, uint32_t literal, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -433,6 +471,13 @@ Type Lowering::arrayTypeAtBirth(ValueID id) const
 {
     if (TypeID prediction = m_function.at(id).prediction(); prediction && m_program.at(prediction).elements)
         return m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull);
+    if (m_function.at(id).opcode == Opcode::NewArray && m_function.at(id).arguments.isEmpty()) {
+        for (ValueID user : const_cast<Lowering*>(this)->usersOf(id)) {
+            auto& spread = m_function.at(user);
+            if (languageOperationOf(m_program, spread) == LanguageOperation::AppendSpread && spread.arguments.size() == 2 && spread.arguments[0] == id && spread.type && m_program.at(spread.type).elements)
+                return m_program.at(spread.type).withoutPrimitives(Primitive::UndefinedOrNull);
+        }
+    }
     return typeOf(id);
 }
 
@@ -583,6 +628,15 @@ CellPointer Lowering::newArrayOfType(const Arguments& elements, const Type& type
     };
     if (length > maxInlineLength)
         return outOfLine();
+    if (indexingType == ArrayWithDouble && length && length <= maxArrayElementsInRegisters) {
+        Vector<LValue, 4> numbers;
+        uint32_t countAndWhichAreNumbers = length;
+        for (unsigned i = 0; i < length; ++i) {
+            numbers.append(numberOrMarker(elements[i]).value());
+            countAndWhichAreNumbers |= static_cast<uint32_t>(get(elements[i]).rep != Rep::OptionalDouble) << (shiftOfNumbersInArrayLiteralOfDoubles + i);
+        }
+        return CellPointer(callAllocationStub(arrayLiteralOfDoublesStub(length), { { m_out.constInt64(countAndWhichAreNumbers), stubTemporaryGPRs[4] } }, effectsOfOperation<operationAOTTypedNewArrayOfDoubles>(), true, false, false, numbers[0], std::nullopt, Stub::TypedString, 0, numbers.span().subspan(1)));
+    }
 
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -723,6 +777,8 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
                     m_blocksWithAppendSpread.set(b);
                 if (isInlineBuiltin(id, InlineBuiltin::ArrayPush))
                     m_arrayPushesByReceiver.add(originOf(value.child(0)).index(), Vector<std::pair<BlockID, unsigned>, 1> { }).iterator->value.append({ BlockID(b), static_cast<unsigned>(value.arguments.size()) });
+                if (value.opcode == Opcode::PutByVal)
+                    m_arrayStoresByReceiver.add(originOf(value.child(0)).index(), Vector<std::pair<BlockID, ValueID>, 1> { }).iterator->value.append({ BlockID(b), value.child(1) });
             }
         }
     }
@@ -750,12 +806,20 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
             pushedCount += numberOfElements;
         }
     }
+    ValueID keyStoredAt;
+    if (auto stores = m_arrayStoresByReceiver.find(literal.index()); pushBlocks.isEmpty() && stores != m_arrayStoresByReceiver.end() && stores->value.size() == 1) {
+        pushBlocks.append(stores->value[0].first);
+        pushedCount = 1;
+        keyStoredAt = originOf(stores->value[0].second);
+    }
     if (pushBlocks.isEmpty())
         return std::nullopt;
     bool isPushedInLoop = pushBlocks.containsIf([&](BlockID block) {
         return m_innermostLoop[block.index()] != m_innermostLoop[m_currentBlockID.index()];
     });
     if (!isPushedInLoop) {
+        if (keyStoredAt)
+            return std::nullopt;
         bool isUnconditional = !pushBlocks.containsIf([&](BlockID block) {
             return block != m_currentBlockID;
         });
@@ -768,6 +832,9 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
         return std::nullopt;
     auto counted = countedLoopContaining(pushBlocks[0]);
     if (!counted)
+        return std::nullopt;
+    bool isStoredAtCounter = keyStoredAt && keyStoredAt == originOf(counted->counter);
+    if (keyStoredAt && !isStoredAtCounter && !(isInlineBuiltin(keyStoredAt, InlineBuiltin::ArrayLength) && originOf(m_function.at(keyStoredAt).child(0)) == literal))
         return std::nullopt;
     auto& loop = m_loops[counted->index];
     if (loop.blocks.get(m_currentBlockID.index()) || !dominates(m_currentBlockID, loop.header))
@@ -791,13 +858,16 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
     }
     if (!start || *start < 0)
         return std::nullopt;
-    room.constant = -*start;
+    room.constant = isStoredAtCounter ? 0 : -*start;
     ValueID iteratedArray = counted->iteratedArray;
     if (!iteratedArray) {
         ValueID bound = originOf(counted->bound);
         if (isInlineBuiltin(bound, InlineBuiltin::ArrayLength))
             iteratedArray = m_function.at(bound).child(0);
-        else if (isAvailableAtCurrentValue(bound) && get(bound).value && get(bound).rep == Rep::Int64) {
+        else if (Range range = typeOf(bound).integers; range.least == range.most && range.least >= 0 && range.least <= maxCapacityOfArrayOfNumbers) {
+            room.constant += range.least;
+            return room;
+        } else if (isAvailableAtCurrentValue(bound) && get(bound).value && get(bound).rep == Rep::Int64) {
             room.count = bound;
             return room;
         } else
@@ -977,6 +1047,8 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
             if (indexingType == ArrayWithDouble && m_function.at(element).opcode == Opcode::Double && std::isnan(std::bit_cast<double>(m_function.at(element).bits())))
                 indexingType = ArrayWithContiguous;
         }
+        if (m_program.isRareByText(m_id) && !m_isInLoop)
+            return AOT_TYPED_OPERATION(NewArrayBufferFromData, word32(value.copyOnWriteButterflyOffset()), word32(indexingType));
         LBasicBlock slowPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         LValue shared = m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, statics, value.copyOnWriteButterflyOffset()));
@@ -1090,20 +1162,22 @@ ValueID Lowering::emptyLiteralBehind(ValueID receiver)
     size_t position = m_function.at(meeting).parameters.find(origin);
     if (position == notFound)
         return ValueID();
-    ValueID found;
-    for (auto& block : m_function.blocks) {
-        for (auto& target : block.terminator.targets) {
-            if (target.block != meeting || position >= target.arguments.size())
-                continue;
-            ValueID incoming = originOf(target.arguments[position]);
-            if (m_function.at(incoming).opcode != Opcode::NewArray || incoming == found)
-                continue;
-            if (found)
-                return ValueID();
-            found = incoming;
+    return m_emptyLiteralsBehindParameters.ensure(origin.index(), [&] {
+        ValueID found;
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                if (target.block != meeting || position >= target.arguments.size())
+                    continue;
+                ValueID incoming = originOf(target.arguments[position]);
+                if (m_function.at(incoming).opcode != Opcode::NewArray || incoming == found)
+                    continue;
+                if (found)
+                    return ValueID();
+                found = incoming;
+            }
         }
-    }
-    return found;
+        return found;
+    }).iterator->value;
 }
 
 void Lowering::updateVectorLengthHint(CellPointer array, ValueID receiver)
@@ -1136,6 +1210,25 @@ Word32 Lowering::turnsLeftInLoop()
     Integer bound = counted->iteratedArray ? arrayLength(asCell(in<Boxed>(m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0)))) : in<Integer>(counted->bound);
     Integer turns = sub(bound, in<Integer>(counted->counter));
     return low32(select(below(turns, integer(maxTurns)), turns, integer(0)));
+}
+
+LValue Lowering::whatIsExpectedOfArrayStoredTo(ValueID receiver, ValueID key, bool isNumberAmongNumbers)
+{
+    ValueID literal = emptyLiteralBehind(receiver);
+    bool hasSite = literal && m_function.at(literal).vectorLengthHintOffset() != Format::none;
+    auto counted = countedLoopContaining(m_currentBlockID);
+    auto isLengthOfReceiver = [&](ValueID id) {
+        return id && isInlineBuiltin(originOf(id), InlineBuiltin::ArrayLength) && originOf(m_function.at(originOf(id)).child(0)) == originOf(receiver);
+    };
+    bool staysWithinLength = counted && (isLengthOfReceiver(counted->bound) || (counted->iteratedArray && originOf(counted->iteratedArray) == originOf(receiver)));
+    bool fillsAsTheLoopGoes = counted && !staysWithinLength && (originOf(key) == originOf(counted->counter) || isLengthOfReceiver(key));
+    Word32 turns = fillsAsTheLoopGoes ? turnsLeftInLoop() : word32(0);
+    if (!hasSite && turns.value()->isInt32(0))
+        return nullptr;
+    LValue expectedAndSite = m_out.shl(m_out.zeroExtPtr(turns.value()), m_out.constInt32(32));
+    if (hasSite)
+        expectedAndSite = m_out.bitOr(expectedAndSite, m_out.constInt64((static_cast<uint64_t>(m_function.at(literal).vectorLengthHintOffset()) + 1) << 1));
+    return isNumberAmongNumbers ? m_out.bitOr(expectedAndSite, m_out.constInt64(1)) : expectedAndSite;
 }
 
 std::optional<Word32> Lowering::mostPushedInLoopOverCollection(ValueID literal)
@@ -1221,6 +1314,7 @@ LBasicBlock Lowering::appendSpread(const Value& value)
     if (auto isBornForIt = m_spreadsCarriedOutAtBirth.getOptional(m_currentBlock->values[m_currentIndexInBlock].index()); isBornForIt && m_function.at(literal).opcode == Opcode::NewArray) {
         orElse(Word32(*isBornForIt), otherwise);
         didEmitWrite(effectsOfBuiltinCall(value).writes);
+        m_spreadIsLeftToStub = true;
         return otherwise;
     }
     if (iterable.rep != Rep::Cell)
@@ -1350,7 +1444,7 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
         arrays.append(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()));
     }
     static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-    Word32 shape = indexingModeOf(arrays[0], IndexingShapeMask);
+    Word32 shape = indexingModeOfAnyArray(arrays[0], IndexingShapeMask);
     orElse(belowOrEqual(binary<Word32>(&Output::sub, shape, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), slowPath);
     static_assert(Instance::arrayKindShift == 1);
     auto originalStructureID = [&](Word32 mode) {
@@ -1366,7 +1460,7 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
             length = add(length, integer(1));
             continue;
         }
-        Word32 mode = indexingModeOf(array, IndexingShapeMask | CopyOnWrite);
+        Word32 mode = indexingModeOfAnyArray(array, IndexingShapeMask | CopyOnWrite);
         orElse(equal(binary<Word32>(&Output::bitAnd, mode, word32(IndexingShapeMask)), shape), slowPath);
         orElse(equal(loadField<Word32>(array, m_heaps.JSCell_structureID), originalStructureID(mode)), slowPath);
         butterflies.append(butterflyOf(array));

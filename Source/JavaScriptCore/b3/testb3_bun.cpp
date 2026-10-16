@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
 
 #include "AOTAirPasses.h"
+#include "AOTCompiler.h"
 #include "AirGenerate.h"
 #include "B3BasicBlockUtils.h"
 #include "B3CompilationCohort.h"
@@ -20,6 +21,7 @@
 #include "B3Generate.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3InferSwitches.h"
+#include "B3LowerMacros.h"
 #include "B3NaturalLoops.h"
 #include "B3RotateLoops.h"
 #include "B3SeparateIntegerPaths.h"
@@ -1067,6 +1069,47 @@ static void testVersionLoopsHoistsLoadAndGuard()
     checkLoopWithInvariantGuard(proc);
 }
 
+static void testVersionLoopsHoistsGuardOnWhatStandsAheadOfLoop()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* rare = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    graph.branch(loop.body, loop.extra, FrequentedBlock(hot), rarely(rare));
+    graph.increase(rare, loop.sum, 1000);
+    graph.jump(rare, hot);
+    graph.increase(hot, loop.sum, 7);
+    loop.endBody(hot);
+    loop.rotate();
+    checkNumberOfValuesInEachLoop(proc, Branch, { 2 });
+
+    CHECK(rotateAndVersionLoops(proc));
+    checkNumberOfValuesInEachLoop(proc, Branch, { 1, 2 });
+    auto code = compileProc(proc);
+    for (int64_t bound : { -1, 0, 1, 2, 9 }) {
+        int64_t turns = std::max<int64_t>(bound, 0);
+        CHECK_EQ(run(*code, bound, nullptr, 1), turns * 7);
+        CHECK_EQ(run(*code, bound, nullptr, 0), turns * 1007);
+    }
+}
+
+static void testVersionLoopsSkipsLoopWithOneValueToHoistThatIsNoGuard()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    graph.increase(loop.body, loop.sum, graph.load(loop.body, Int64, loop.pointer, 0, firstHeap));
+    loop.endBody(loop.body);
+    loop.rotate();
+
+    CHECK(!rotateAndVersionLoops(proc));
+    auto code = compileProc(proc);
+    int64_t memory[1] = { 7 };
+    for (int64_t bound : { -1, 0, 1, 2, 9 })
+        CHECK_EQ(run(*code, bound, memory), std::max<int64_t>(bound, 0) * 7);
+}
+
 static void testVersionLoopsHoistsLoadPastStoreToDisjointHeap()
 {
     Procedure proc;
@@ -1197,28 +1240,256 @@ static void testVersionLoopsOnlyInnermostLoops()
     CHECK_EQ(run(*compileProc(proc), 3, memory, 2), 30);
 }
 
-static void testVersionLoopsRareEdgeContinuesInOriginalLoop()
+static void testVersionLoopsRareEdgeContinuesInOriginalLoopWhereItsWayCannotBeCloned()
+{
+    enum class RareWay : uint8_t { Calls, StoresToWhatWasHoisted };
+    for (RareWay rareWay : { RareWay::Calls, RareWay::StoresToWhatWasHoisted }) {
+        Procedure proc;
+        Graph graph { proc };
+        TopTestedLoop loop(graph);
+        BasicBlock* special = proc.addBlock();
+        BasicBlock* hot = proc.addBlock();
+        Value* increment = graph.make(loop.body, Add, graph.load(loop.body, Int64, loop.pointer, 0, firstHeap), graph.int64(loop.body, 1));
+        graph.branch(loop.body, graph.make(loop.body, Equal, graph.get(loop.body, loop.index), loop.extra), rarely(special), FrequentedBlock(hot));
+        graph.increase(special, loop.sum, 1000);
+        if (rareWay == RareWay::Calls)
+            graph.callLikePatchpoint(special);
+        else
+            graph.store(special, graph.int64(special, 8), loop.pointer, 0, firstHeap);
+        graph.jump(special, hot);
+        graph.increase(hot, loop.sum, increment);
+        loop.endBody(hot);
+        loop.rotate();
+
+        CHECK(rotateAndVersionLoops(proc));
+        CHECK_EQ(numberOfValuesInEachLoop(proc, Load).first(), 0u);
+        CHECK_EQ(numberOfValues(proc, Load), 2u);
+        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 1u);
+        auto code = compileProc(proc);
+        for (int64_t special : { -1, 0, 4, 9, 10 }) {
+            int64_t memory[1] = { 5 };
+            bool isMet = special >= 0 && special < 10;
+            int64_t turnsBehind = isMet && rareWay == RareWay::StoresToWhatWasHoisted ? 9 - special : 0;
+            CHECK_EQ(run(*code, 10, memory, special), 60 + (isMet ? 1000 : 0) + 3 * turnsBehind);
+        }
+    }
+}
+
+static void testVersionLoopsRareWayThatCanBeClonedComesBackAheadOfFastVersion()
 {
     Procedure proc;
     Graph graph { proc };
     TopTestedLoop loop(graph);
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* expected = proc.addBlock();
     BasicBlock* special = proc.addBlock();
     BasicBlock* hot = proc.addBlock();
-    Value* increment = graph.make(loop.body, Add, graph.load(loop.body, Int64, loop.pointer, 0, firstHeap), graph.int64(loop.body, 1));
-    graph.branch(loop.body, graph.make(loop.body, Equal, graph.get(loop.body, loop.index), loop.extra), rarely(special), FrequentedBlock(hot));
+    Value* loaded = graph.load(loop.body, Int64, loop.pointer, 0, firstHeap);
+    graph.branch(loop.body, graph.make(loop.body, Below, loaded, graph.int64(loop.body, 100)), FrequentedBlock(expected), rarely(unexpected));
+    graph.callLikePatchpoint(unexpected);
+    graph.jump(unexpected, expected);
+    graph.branch(expected, graph.make(expected, Equal, graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3)), loop.extra), rarely(special), FrequentedBlock(hot));
     graph.increase(special, loop.sum, 1000);
     graph.jump(special, hot);
-    graph.increase(hot, loop.sum, increment);
+    graph.increase(hot, loop.sum, graph.make(hot, Mul, loaded, graph.get(hot, loop.index)));
+    loop.endBody(hot);
+    loop.rotate();
+    checkNumberOfValuesInEachLoop(proc, Mul, { 1 });
+
+    CHECK(rotateAndVersionLoops(proc));
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 2u);
+    CHECK_EQ(numberOfValues(proc, Mul), 3u);
+    CHECK_EQ(numberOfValues(proc, Load), 2u);
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    unsigned numberOfFastVersions = 0;
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
+        const B3::NaturalLoop& fastVersion = loops.loop(loopIndex);
+        const B3::NaturalLoop* outer = loops.innerMostOuterLoop(fastVersion);
+        if (!outer)
+            continue;
+        ++numberOfFastVersions;
+        unsigned numberOfLatches = 0;
+        for (BasicBlock* predecessor : fastVersion.header()->predecessors())
+            numberOfLatches += loops.belongsTo(predecessor, fastVersion);
+        CHECK_EQ(numberOfLatches, 1u);
+        CHECK_EQ(fastVersion.header()->numPredecessors(), 2u);
+        unsigned numberOfProductsInFastVersion = 0;
+        unsigned numberOfProductsAroundIt = 0;
+        unsigned numberOfLoads = 0;
+        for (unsigned i = 0; i < outer->size(); ++i) {
+            (loops.belongsTo(outer->at(i), fastVersion) ? numberOfProductsInFastVersion : numberOfProductsAroundIt) += numberOfValues(outer->at(i), Mul);
+            numberOfLoads += numberOfValues(outer->at(i), Load);
+        }
+        CHECK_EQ(numberOfProductsInFastVersion, 1u);
+        CHECK_EQ(numberOfProductsAroundIt, 1u);
+        CHECK_EQ(numberOfLoads, 0u);
+    }
+    CHECK_EQ(numberOfFastVersions, 1u);
+
+    auto code = compileProc(proc);
+    for (int64_t bound : { -1, 0, 1, 2, 5, 40 }) {
+        for (int64_t special : { -1, 0, 1, 3, 4 }) {
+            for (int64_t factor : { 7, 200 }) {
+                int64_t memory[1] = { factor };
+                int64_t sum = 0;
+                for (int64_t i = 0; i < bound; ++i)
+                    sum += ((i & 3) == special ? 1000 : 0) + factor * i;
+                CHECK_EQ(run(*code, bound, memory, special), sum);
+            }
+        }
+    }
+}
+
+static void testVersionLoopsPhiWithOneInputInFastVersionIsReadAnewInExcursion()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* given = proc.addBlock();
+    BasicBlock* replaced = proc.addBlock();
+    BasicBlock* merged = proc.addBlock();
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    Variable* key = proc.addVariable(Int64);
+    Value* first = graph.load(loop.body, Int64, loop.pointer, 0, firstHeap);
+    Value* second = graph.load(loop.body, Int64, loop.pointer, 8, firstHeap);
+    graph.branch(loop.body, graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), graph.int64(loop.body, 3)), graph.int64(loop.body, 2)), rarely(replaced), FrequentedBlock(given));
+    graph.set(given, key, loop.extra);
+    graph.jump(given, merged);
+    graph.set(replaced, key, graph.int64(replaced, 5));
+    graph.jump(replaced, merged);
+    graph.branch(merged, graph.make(merged, Equal, graph.get(merged, key), first), FrequentedBlock(hot), rarely(unexpected));
+    graph.increase(unexpected, loop.sum, 100);
+    graph.jump(unexpected, hot);
+    graph.increase(hot, loop.sum, graph.make(hot, Add, graph.get(hot, key), second));
     loop.endBody(hot);
     loop.rotate();
 
     CHECK(rotateAndVersionLoops(proc));
-    CHECK_EQ(numberOfValuesInEachLoop(proc, Load).first(), 0u);
-    CHECK_EQ(numberOfValues(proc, Load), 2u);
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(100); }), 2u);
     auto code = compileProc(proc);
-    int64_t memory[1] = { 5 };
-    for (int64_t special : { -1, 0, 4, 9, 10 })
-        CHECK_EQ(run(*code, 10, memory, special), 60 + (special >= 0 && special < 10 ? 1000 : 0));
+    for (int64_t bound : { -1, 0, 1, 2, 3, 4, 11 }) {
+        for (int64_t handed : { 4, 5 }) {
+            for (int64_t first : { 4, 5 }) {
+                int64_t memory[2] = { first, 7 };
+                int64_t sum = 0;
+                for (int64_t i = 0; i < bound; ++i) {
+                    int64_t chosen = (i & 3) == 2 ? 5 : handed;
+                    sum += (chosen == first ? 0 : 100) + chosen + 7;
+                }
+                CHECK_EQ(run(*code, bound, memory, handed), sum);
+            }
+        }
+    }
+}
+
+static void testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop()
+{
+    enum class LoadAhead : uint8_t { IsImmutable, IsMutable, IsMutableAndWrittenToSince };
+    for (LoadAhead loadAhead : { LoadAhead::IsImmutable, LoadAhead::IsMutable, LoadAhead::IsMutableAndWrittenToSince }) {
+        Procedure proc;
+        Graph graph { proc };
+        TopTestedLoop loop(graph);
+        BasicBlock* special = proc.addBlock();
+        BasicBlock* guarded = proc.addBlock();
+        BasicBlock* unexpected = proc.addBlock();
+        BasicBlock* hot = proc.addBlock();
+        MemoryValue* ahead = proc.add<MemoryValue>(Load, Int64, Origin(), loop.pointer, 0, firstHeap);
+        ahead->setReadsMutability(loadAhead == LoadAhead::IsImmutable ? Mutability::Immutable : Mutability::Mutable);
+        loop.root->appendNonTerminal(ahead);
+        if (loadAhead == LoadAhead::IsMutableAndWrittenToSince)
+            loop.root->appendNonTerminal(proc.add<MemoryValue>(Store, Origin(), ahead, loop.pointer, 0, firstHeap));
+        graph.branch(loop.body, graph.make(loop.body, Equal, graph.get(loop.body, loop.index), ahead), rarely(special), FrequentedBlock(guarded));
+        graph.increase(special, loop.sum, 1000);
+        graph.jump(special, guarded);
+        Value* loaded = graph.load(guarded, Int64, loop.pointer, 0, firstHeap);
+        graph.branch(guarded, graph.make(guarded, Equal, loaded, loop.extra), FrequentedBlock(hot), rarely(unexpected));
+        graph.increase(unexpected, loop.sum, 100);
+        graph.jump(unexpected, hot);
+        graph.increase(hot, loop.sum, loaded);
+        loop.endBody(hot);
+        loop.rotate();
+
+        CHECK_EQ(rotateAndVersionLoops(proc), loadAhead != LoadAhead::IsMutableAndWrittenToSince);
+        auto code = compileProc(proc);
+        int64_t memory[1] = { 4 };
+        CHECK_EQ(run(*code, 10, memory, 4), 1040);
+        CHECK_EQ(run(*code, 10, memory, 5), 2040);
+        CHECK_EQ(run(*code, 3, memory, 4), 12);
+        CHECK_EQ(run(*code, 0, memory, 4), 0);
+    }
+}
+
+static void testVersionLoopsSeesPhiWithOneInputInFastVersionOfLoopThatIsNotCounted()
+{
+    for (bool keyHasOneInput : { true, false }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* preHeader = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* given = proc.addBlock();
+        BasicBlock* fetched = proc.addBlock();
+        BasicBlock* merged = proc.addBlock();
+        BasicBlock* unexpected = proc.addBlock();
+        BasicBlock* expected = proc.addBlock();
+        BasicBlock* odd = proc.addBlock();
+        BasicBlock* even = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        Variable* key = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+        Value* bound = arguments[0];
+        Value* pointer = arguments[1];
+        Value* extra = arguments[2];
+        graph.set(root, index, graph.int64(root, 0));
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.branch(root, graph.make(root, LessThan, graph.int64(root, 0), bound), preHeader, exit);
+        graph.jump(preHeader, header);
+        if (keyHasOneInput)
+            graph.branch(header, extra, FrequentedBlock(given), rarely(fetched));
+        else
+            graph.branch(header, graph.make(header, BitAnd, graph.get(header, index), graph.int64(header, 2)), given, fetched);
+        graph.set(given, key, extra);
+        graph.jump(given, merged);
+        graph.set(fetched, key, graph.int64(fetched, 5));
+        graph.jump(fetched, merged);
+        graph.branch(merged, graph.make(merged, Equal, graph.get(merged, key), graph.load(merged, Int64, pointer, 0, firstHeap)), FrequentedBlock(expected), rarely(unexpected));
+        graph.increase(unexpected, sum, 100);
+        graph.jump(unexpected, expected);
+        graph.increase(expected, sum, graph.load(expected, Int64, pointer, 8, firstHeap));
+        graph.branch(expected, graph.make(expected, BitAnd, graph.get(expected, index), graph.int64(expected, 1)), odd, even);
+        for (auto [block, step] : { std::pair { odd, 2 }, std::pair { even, 1 } }) {
+            graph.increase(block, index, step);
+            graph.branch(block, graph.make(block, LessThan, graph.get(block, index), bound), header, exit);
+        }
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+        validate(proc);
+        checkNumberOfValuesInEachLoop(proc, Load, { 2 });
+
+        CHECK_EQ(rotateAndVersionLoops(proc), keyHasOneInput);
+        if (keyHasOneInput)
+            checkNumberOfValuesInEachLoop(proc, Load, { 0, 2 });
+        else
+            checkNumberOfValuesInEachLoop(proc, Load, { 2 });
+        auto code = compileProc(proc);
+        for (int64_t limit : { -1, 0, 1, 2, 3, 9 }) {
+            for (int64_t handed : { 0, 4, 5 }) {
+                for (int64_t first : { 4, 5 }) {
+                    int64_t memory[2] = { first, 7 };
+                    int64_t result = 0;
+                    for (int64_t i = 0; i < limit; i += i & 1 ? 2 : 1) {
+                        int64_t chosen = (keyHasOneInput ? handed : i & 2) ? handed : 5;
+                        result += (chosen == first ? 0 : 100) + 7;
+                    }
+                    CHECK_EQ(run(*code, limit, memory, handed), result);
+                }
+            }
+        }
+    }
 }
 
 static void testVersionLoopsUnswitchesInvariantBranch()
@@ -1309,6 +1580,56 @@ static void testVersionLoopsStripMinesPollInFastVersion()
     CHECK_EQ(state.numberOfStops, 1);
     CHECK_EQ(state.limit, 0);
     CHECK_EQ(state.numberOfPolls, 1 + turns - maxIterationsPerStrip);
+}
+
+static void testVersionLoopsTurnsThatEndInExcursionCountTowardsStrip()
+{
+    Procedure proc;
+    Graph graph { proc };
+    PollState state;
+    TopTestedLoop loop(graph);
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* expected = proc.addBlock();
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    BasicBlock* block = appendPoll(graph, loop.body, state);
+    Value* loaded = graph.load(block, Int64, loop.pointer, 0, firstHeap);
+    graph.branch(block, graph.make(block, Below, loaded, graph.int64(block, 100)), FrequentedBlock(expected), rarely(unexpected));
+    graph.callLikePatchpoint(unexpected);
+    graph.jump(unexpected, expected);
+    graph.branch(expected, graph.make(expected, Below, graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3)), loop.extra), rarely(special), FrequentedBlock(hot));
+    graph.increase(special, loop.sum, 1000);
+    graph.jump(special, hot);
+    graph.increase(hot, loop.sum, loaded);
+    loop.endBody(hot);
+    loop.rotate();
+
+    CHECK(rotateAndVersionLoops(proc));
+    CHECK(!stripMineLoops(proc));
+    auto code = compileProc(proc);
+    int64_t memory[1] = { 7 };
+    constexpr int64_t turns = 3 * maxIterationsPerStrip + 100;
+
+    CHECK_EQ(run(*code, turns, memory, 0), turns * 7);
+    CHECK_EQ(state.numberOfPolls, 3);
+
+    for (int64_t numberOfRareTurnsInFour : { 1, 4 }) {
+        state = { };
+        CHECK_EQ(run(*code, turns, memory, numberOfRareTurnsInFour), turns * 7 + turns / 4 * numberOfRareTurnsInFour * 1000);
+        CHECK_EQ(state.numberOfPolls, 3);
+        CHECK_EQ(state.numberOfStops, 0);
+
+        state = { };
+        CHECK_EQ(run(*code, 400, memory, numberOfRareTurnsInFour), 400 * 7 + 100 * numberOfRareTurnsInFour * 1000);
+        CHECK_EQ(state.numberOfPolls, 0);
+
+        state = { };
+        state.limit = -1;
+        CHECK_EQ(run(*code, turns, memory, numberOfRareTurnsInFour), turns * 7 + turns / 4 * numberOfRareTurnsInFour * 1000);
+        CHECK_EQ(state.numberOfStops, 1);
+        CHECK_EQ(state.limit, 0);
+        CHECK_EQ(state.numberOfPolls, 1 + turns - maxIterationsPerStrip);
+    }
 }
 
 static void buildRotatedLoopWithPoll(Graph& graph, TopTestedLoop& loop, PollState& state)
@@ -1724,6 +2045,96 @@ static void testSinkValuesDoesNotSinkFromPreHeaderIntoLoop()
 
     CHECK(!sinkValues(proc));
     CHECK_EQ(numberOfValues(root, Mul), 1u);
+}
+
+struct CountedCycleWithTwoEntries {
+    CountedCycleWithTwoEntries(Graph& graph, BasicBlock* from)
+        : from(from)
+        , first(graph.proc.addBlock(0.1))
+        , second(graph.proc.addBlock(0.1))
+        , behind(graph.proc.addBlock())
+    {
+    }
+
+    void finish(Graph& graph, Value* entersAtFirst, Value* turns, Value* stepInFirst)
+    {
+        Value* leftInFirst = graph.phi(first, Int64);
+        Value* leftInSecond = graph.phi(second, Int64);
+        graph.upsilon(from, turns, leftInFirst);
+        graph.upsilon(from, turns, leftInSecond);
+        graph.branch(from, entersAtFirst, first, second);
+        graph.upsilon(first, graph.make(first, Sub, leftInFirst, stepInFirst), leftInSecond);
+        graph.jump(first, second);
+        left = graph.make(second, Sub, leftInSecond, graph.int64(second, 1));
+        graph.upsilon(second, left, leftInFirst);
+        graph.branch(second, graph.make(second, GreaterThan, left, graph.int64(second, 0)), first, behind);
+    }
+
+    BasicBlock* from;
+    BasicBlock* first;
+    BasicBlock* second;
+    BasicBlock* behind;
+    Value* left { nullptr };
+};
+
+static void testSinkValuesSinksBehindAndBetweenCyclesWithTwoEntries()
+{
+    for (bool hasCycleBehindRareBlock : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+        Value* selector = arguments[0];
+        Value* operand = arguments[1];
+        Value* turns = arguments[2];
+        Value* product = graph.make(root, Mul, operand, operand);
+        Value* entersAtFirst = graph.make(root, Equal, selector, graph.int64(root, 1));
+        CountedCycleWithTwoEntries cycle(graph, root);
+        cycle.finish(graph, entersAtFirst, turns, graph.int64(cycle.first, 1));
+        BasicBlock* rare = proc.addBlock(0.01);
+        BasicBlock* hot = proc.addBlock();
+        graph.branch(cycle.behind, graph.make(cycle.behind, Equal, selector, graph.int64(cycle.behind, 2)), rarely(rare), FrequentedBlock(hot));
+        Value* sum = graph.make(rare, Add, product, selector);
+        if (hasCycleBehindRareBlock) {
+            CountedCycleWithTwoEntries next(graph, rare);
+            next.finish(graph, entersAtFirst, turns, graph.int64(next.first, 1));
+            graph.ret(next.behind, sum);
+        } else
+            graph.ret(rare, sum);
+        graph.ret(hot, cycle.left);
+        proc.resetReachability();
+        validate(proc);
+
+        CHECK(sinkValues(proc));
+        validate(proc);
+        CHECK_EQ(numberOfValues(root, Mul), 0u);
+        CHECK_EQ(numberOfValues(rare, Mul), 1u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 2, 5, 7), 27);
+        CHECK_EQ(invoke<int64_t>(*code, 1, 5, 7), -1);
+        CHECK_EQ(invoke<int64_t>(*code, 3, 5, 7), 0);
+    }
+}
+
+static void testSinkValuesDoesNotSinkIntoCycleWithTwoEntries()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+    Value* product = graph.make(root, Mul, arguments[1], arguments[1]);
+    CountedCycleWithTwoEntries cycle(graph, root);
+    cycle.finish(graph, graph.make(root, Equal, arguments[0], graph.int64(root, 1)), arguments[2], product);
+    graph.ret(cycle.behind, cycle.left);
+    proc.resetReachability();
+    validate(proc);
+
+    CHECK(!sinkValues(proc));
+    CHECK_EQ(numberOfValues(root, Mul), 1u);
+    CHECK_EQ(numberOfValues(proc, Mul), 1u);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 1, 7), -1);
+    CHECK_EQ(invoke<int64_t>(*code, 3, 1, 7), 0);
 }
 
 static void testCycleForestNestedLoops()
@@ -2964,6 +3375,61 @@ static void testShiftsAndSwitchesOfExtendedWordsAreNarrowed()
     }
 }
 
+static void testReduceStrengthKnowsRangeOfWhatNarrowLoadYields()
+{
+    for (B3::Opcode opcode : { Load8Z, Load8S, Load16Z, Load16S, Load }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* pointer = cCallArgumentValues<int32_t*>(proc, root)[0];
+        Value* loaded = root->appendNew<MemoryValue>(proc, opcode, Int32, Origin(), pointer, 0, firstHeap);
+        Value* wide = graph.make(root, opcode == Load8S || opcode == Load16S ? SExt32 : ZExt32, loaded);
+        Value* first = graph.make(root, Sub, wide, graph.int64(root, 48));
+        Value* second = graph.make(root, Sub, wide, graph.int64(root, 48));
+        Value* fits = graph.make(root, Equal, graph.make(root, SExt32, graph.make(root, Trunc, first)), second);
+        graph.ret(root, graph.make(root, Add, graph.make(root, ZExt32, fits), graph.make(root, Shl, first, graph.int32(root, 1))));
+        reduceStrengthOnce(proc, true);
+        CHECK_EQ(numberOfValues(proc, Equal), opcode == Load ? 1u : 0u);
+        CHECK_EQ(numberOfValues(proc, Trunc), opcode == Load ? 1u : 0u);
+        auto code = compileProc(proc);
+        for (int32_t word : { 0, 1, 47, 48, 127, 128, 255, 256, 32767, 32768, 65535, 65536, -1, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() }) {
+            int64_t value = opcode == Load8Z ? static_cast<uint8_t>(word) : opcode == Load8S ? static_cast<int8_t>(word) : opcode == Load16Z ? static_cast<uint16_t>(word) : opcode == Load16S ? static_cast<int16_t>(word) : static_cast<int64_t>(static_cast<uint32_t>(word));
+            int64_t difference = value - 48;
+            CHECK_EQ(invoke<int64_t>(*code, &word), (difference == static_cast<int32_t>(difference)) + difference * 2);
+        }
+    }
+}
+
+static void testReduceStrengthAnswersWhetherWholeNumberMadeOfNarrowLoadFitsInt32()
+{
+    for (B3::Opcode opcode : { Load8Z, Load16S, Load }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* pointer = cCallArgumentValues<int32_t*>(proc, root)[0];
+        Value* loaded = root->appendNew<MemoryValue>(proc, opcode, Int32, Origin(), pointer, 0, firstHeap);
+        Value* wide = graph.make(root, opcode == Load16S ? SExt32 : ZExt32, loaded);
+        Value* number = graph.make(root, Sub, graph.make(root, IToD, wide), graph.number(root, 48));
+        PatchpointValue* conversion = root->appendNew<PatchpointValue>(proc, Int32, Origin());
+        conversion->effects = Effects::none();
+        conversion->pureFunctionOfChildrenKey = keyOfConversionToInt32;
+        conversion->appendSomeRegister(number);
+        conversion->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+        });
+        graph.ret(root, graph.make(root, ZExt32, graph.make(root, Equal, number, graph.make(root, IToD, conversion))));
+        reduceStrengthOnce(proc, true);
+        CHECK_EQ(numberOfValues(proc, Patchpoint), 0u);
+        CHECK_EQ(numberOfValues(proc, Equal), opcode == Load ? 1u : 0u);
+        auto code = compileProc(proc);
+        for (int32_t word : { 0, 47, 48, 255, 256, 32768, 65535, -1, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() }) {
+            int64_t value = opcode == Load8Z ? static_cast<int64_t>(static_cast<uint8_t>(word)) : opcode == Load16S ? static_cast<int64_t>(static_cast<int16_t>(word)) : static_cast<int64_t>(static_cast<uint32_t>(word));
+            int64_t difference = value - 48;
+            CHECK_EQ(invoke<int64_t>(*code, &word), static_cast<int64_t>(difference == static_cast<int32_t>(difference)));
+        }
+    }
+}
+
 static void testReduceStrengthMergesBlockChain()
 {
     for (bool isPositionIndependent : { true, false }) {
@@ -3731,6 +4197,42 @@ static void testFoldPathConstantsFoldsSelect()
     }
 }
 
+static void testEstimateFrequenciesTakesWayThatReturnsForUnlikely()
+{
+    for (bool returnsAreUnlikely : { true, false }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* returnsEarly = proc.addBlock();
+        BasicBlock* goesOn = proc.addBlock();
+        BasicBlock* returnsRarely = proc.addBlock(0);
+        BasicBlock* goesOnFurther = proc.addBlock();
+        BasicBlock* returnsOne = proc.addBlock();
+        BasicBlock* returnsOther = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+        graph.branch(root, arguments[0], FrequentedBlock(returnsEarly), FrequentedBlock(goesOn));
+        graph.ret(returnsEarly, graph.int64(returnsEarly, 1));
+        graph.branch(goesOn, arguments[1], FrequentedBlock(returnsRarely), FrequentedBlock(goesOnFurther));
+        graph.ret(returnsRarely, graph.int64(returnsRarely, 2));
+        graph.branch(goesOnFurther, arguments[2], FrequentedBlock(returnsOne), FrequentedBlock(returnsOther));
+        graph.ret(returnsOne, graph.int64(returnsOne, 3));
+        graph.ret(returnsOther, graph.int64(returnsOther, 4));
+
+        AOT::estimateFrequencies(proc, returnsAreUnlikely);
+        auto isNear = [](double frequency, double expected) {
+            return std::abs(frequency - expected) < expected / 1000;
+        };
+        double shareThatGoesOn = returnsAreUnlikely ? 0.8 : 0.5;
+        CHECK(isNear(root->frequency(), 1));
+        CHECK(isNear(returnsEarly->frequency(), 1 - shareThatGoesOn));
+        CHECK(isNear(goesOn->frequency(), shareThatGoesOn));
+        CHECK(isNear(returnsRarely->frequency(), shareThatGoesOn / 1025));
+        CHECK(isNear(goesOnFurther->frequency(), shareThatGoesOn * 1024 / 1025));
+        CHECK(isNear(returnsOne->frequency(), goesOnFurther->frequency() / 2));
+        CHECK(isNear(returnsOther->frequency(), goesOnFurther->frequency() / 2));
+    }
+}
+
 static void testSwitchInPositionIndependentCode()
 {
     struct Case {
@@ -3761,6 +4263,46 @@ static void testSwitchInPositionIndependentCode()
             CHECK_EQ(invoke<int64_t>(*code, i + 10), static_cast<int64_t>(i * 3 + 1));
         for (int64_t other : { static_cast<int64_t>(-1), static_cast<int64_t>(0), static_cast<int64_t>(9), static_cast<int64_t>(testCase.degree + 10), static_cast<int64_t>(1) << 40, std::numeric_limits<int64_t>::min() })
             CHECK_EQ(invoke<int64_t>(*code, other), -1);
+    }
+}
+
+static void testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction()
+{
+    struct Case {
+        Vector<int64_t> values;
+        bool subtracts;
+        bool testsBit;
+    };
+    for (const Case& testCase : { Case { { 9, 10, 13, 32 }, false, true }, Case { { 0, 1, 4, 23 }, false, true }, Case { { 109, 110, 113, 132 }, true, true }, Case { { 40, 50, 60, 70 }, true, true }, Case { { -3, -2, 1, 20 }, true, true }, Case { { 48, 49, 50, 51, 52, 53 }, true, false } }) {
+        auto build = [&](Procedure& proc) {
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* found = proc.addBlock();
+            BasicBlock* otherwise = proc.addBlock();
+            SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), cCallArgumentValues<int64_t>(proc, root)[0]);
+            switchValue->setFallThrough(FrequentedBlock(otherwise));
+            for (int64_t value : testCase.values)
+                switchValue->appendCase(SwitchCase(value, FrequentedBlock(found)));
+            graph.ret(found, graph.int64(found, 1));
+            graph.ret(otherwise, graph.int64(otherwise, 0));
+            proc.setPositionIndependent(true);
+        };
+        {
+            Procedure proc;
+            build(proc);
+            proc.resetReachability();
+            CHECK(lowerMacros(proc));
+            CHECK_EQ(numberOfValues(proc, Switch), 0u);
+            CHECK_EQ(numberOfValues(proc, Sub), testCase.subtracts ? 1u : 0u);
+            CHECK_EQ(numberOfValues(proc, ZShr), testCase.testsBit ? 1u : 0u);
+        }
+        Procedure proc;
+        build(proc);
+        auto code = compileProc(proc);
+        for (int64_t value = -140; value <= 200; ++value)
+            CHECK_EQ(invoke<int64_t>(*code, value), static_cast<int64_t>(testCase.values.contains(value)));
+        for (int64_t value : { static_cast<int64_t>(9) + (static_cast<int64_t>(1) << 32), static_cast<int64_t>(1) << 40, std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max() })
+            CHECK_EQ(invoke<int64_t>(*code, value), 0);
     }
 }
 
@@ -3812,6 +4354,48 @@ static void testInferSwitchesManyCases()
         CHECK_EQ(invoke<int64_t>(*code, caseValueAt(i), 0), static_cast<int64_t>(i == 200 ? 5 : i));
     CHECK_EQ(invoke<int64_t>(*code, 1, 0), -1);
     CHECK_EQ(invoke<int64_t>(*code, 200 * 7, 0), -1);
+}
+
+static void testInferSwitchesStopsAtRareEdge()
+{
+    enum class ThirdTest : uint8_t { IsAsLikelyAsItsPlaceInChain, IsReachedByRareEdge, IsCold };
+    constexpr unsigned degree = 8;
+    for (bool isPositionIndependent : { false, true }) {
+        for (ThirdTest thirdTest : { ThirdTest::IsAsLikelyAsItsPlaceInChain, ThirdTest::IsReachedByRareEdge, ThirdTest::IsCold }) {
+            Procedure proc;
+            Graph graph { proc };
+            double frequency = 1;
+            BasicBlock* block = proc.addBlock(frequency);
+            Value* subject = cCallArgumentValues<int64_t>(proc, block)[0];
+            for (unsigned i = 0; i < degree; ++i) {
+                frequency /= 2;
+                BasicBlock* target = proc.addBlock(frequency);
+                bool nextIsThirdTest = i == 1;
+                if (nextIsThirdTest && thirdTest == ThirdTest::IsCold)
+                    frequency /= 1024;
+                BasicBlock* next = proc.addBlock(frequency);
+                graph.branch(block, graph.make(block, Equal, subject, graph.int64(block, i * 10)), FrequentedBlock(target), nextIsThirdTest && thirdTest == ThirdTest::IsReachedByRareEdge ? rarely(next) : FrequentedBlock(next));
+                graph.ret(target, graph.int64(target, i));
+                block = next;
+            }
+            graph.ret(block, graph.int64(block, -1));
+            proc.resetReachability();
+            proc.setPositionIndependent(isPositionIndependent);
+
+            CHECK(inferSwitches(proc));
+            proc.setPositionIndependent(false);
+            validate(proc);
+            bool stops = isPositionIndependent && thirdTest != ThirdTest::IsAsLikelyAsItsPlaceInChain;
+            CHECK_EQ(numberOfValues(proc, Branch), 0u);
+            CHECK_EQ(numberOfValues(proc, Switch), stops ? 2u : 1u);
+            CHECK_EQ(proc.at(0)->last()->as<SwitchValue>()->numCaseValues(), stops ? 2u : degree);
+            auto code = compileProc(proc);
+            for (unsigned i = 0; i < degree; ++i)
+                CHECK_EQ(invoke<int64_t>(*code, i * 10), static_cast<int64_t>(i));
+            CHECK_EQ(invoke<int64_t>(*code, 5), -1);
+            CHECK_EQ(invoke<int64_t>(*code, degree * 10), -1);
+        }
+    }
 }
 
 static void testInferSwitchesIgnoresTestOfOtherValue()
@@ -4248,6 +4832,74 @@ static void testRedundantZeroExtension()
     CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, shift(SShr, 3)), 1u);
     CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, binary(Shl)), 1u);
     CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, truncation), 1u);
+}
+
+static void testBranchOnWhetherExactSumIsInt32()
+{
+    enum class Right : uint8_t { IsWord, IsConstant, IsWideConstant };
+    struct Case {
+        B3::Opcode opcode;
+        B3::Opcode comparison;
+        Right right;
+        bool sumIsWantedInBlock;
+    };
+    constexpr int64_t constant = 100;
+    constexpr int64_t wideConstant = 1ll << 31;
+    constexpr int64_t markOfOverflow = 1ll << 40;
+    auto build = [&](Procedure& proc, Case testCase, bool isPositionIndependent) {
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* fits = proc.addBlock();
+        BasicBlock* overflows = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+        Value* left = graph.make(root, SExt32, graph.make(root, Trunc, arguments[0]));
+        Value* right = testCase.right == Right::IsWord ? graph.make(root, SExt32, graph.make(root, Trunc, arguments[1])) : graph.int64(root, testCase.right == Right::IsConstant ? constant : wideConstant);
+        Value* exact = graph.make(root, testCase.opcode, left, right);
+        Value* low = graph.make(root, Trunc, exact);
+        Value* wanted = testCase.sumIsWantedInBlock ? graph.make(root, ZExt32, low) : nullptr;
+        Value* isInt32 = graph.make(root, testCase.comparison, graph.make(root, SExt32, low), exact);
+        if (testCase.comparison == Equal)
+            graph.branch(root, isInt32, FrequentedBlock(fits), rarely(overflows));
+        else
+            graph.branch(root, isInt32, rarely(overflows), FrequentedBlock(fits));
+        graph.ret(fits, wanted ? wanted : graph.make(fits, ZExt32, low));
+        graph.ret(overflows, graph.make(overflows, Add, wanted ? wanted : graph.make(overflows, ZExt32, low), graph.int64(overflows, markOfOverflow)));
+        proc.resetReachability();
+        proc.setPositionIndependent(isPositionIndependent);
+    };
+    for (B3::Opcode opcode : { Add, Sub }) {
+        for (B3::Opcode comparison : { Equal, NotEqual }) {
+            for (Right right : { Right::IsWord, Right::IsConstant, Right::IsWideConstant }) {
+                for (bool sumIsWantedInBlock : { false, true }) {
+                    for (bool isPositionIndependent : { false, true }) {
+                        Case testCase { opcode, comparison, right, sumIsWantedInBlock };
+                        Procedure lowered;
+                        build(lowered, testCase, isPositionIndependent);
+                        lowerToAirForTesting(lowered);
+                        unsigned numberOfBranchesOnOverflow = 0;
+                        for (Air::BasicBlock* block : lowered.code()) {
+                            for (Air::Inst& inst : *block)
+                                numberOfBranchesOnOverflow += inst.kind.opcode == Air::BranchAdd32 || inst.kind.opcode == Air::BranchSub32;
+                        }
+                        CHECK_EQ(numberOfBranchesOnOverflow, isPositionIndependent && right != Right::IsWideConstant && !sumIsWantedInBlock ? 1u : 0u);
+
+                        Procedure proc;
+                        build(proc, testCase, isPositionIndependent);
+                        auto code = compileProc(proc);
+                        for (int64_t a : { 0ll, 1ll, -1ll, 100ll, -100ll, 0x7fffffffll, 0x7fffff9cll, 0x7fffff9bll, -0x80000000ll, -0x7fffff9cll, -0x7fffff9dll, 0x123456787fffffffll, 0x1234567880000000ll }) {
+                            for (int64_t b : { 0ll, 1ll, -1ll, 0x7fffffffll, -0x80000000ll, 0x7654321000000001ll }) {
+                                int64_t x = static_cast<int32_t>(a);
+                                int64_t y = right == Right::IsWord ? static_cast<int64_t>(static_cast<int32_t>(b)) : right == Right::IsConstant ? constant : wideConstant;
+                                int64_t sum = opcode == Add ? x + y : x - y;
+                                int64_t expected = static_cast<int64_t>(static_cast<uint32_t>(sum)) + (sum == static_cast<int32_t>(sum) ? 0 : markOfOverflow);
+                                CHECK_EQ(invoke<int64_t>(*code, a, b), expected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 static void testZeroExtensionClearsUpperHalfInPositionIndependentCode()
@@ -6858,6 +7510,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testNarrowPhisOfExtendedWords());
     RUN(testFoldComparisonsWithWhatIsOutOfRange());
     RUN(testVersionLoopsHoistsLoadAndGuard());
+    RUN(testVersionLoopsHoistsGuardOnWhatStandsAheadOfLoop());
+    RUN(testVersionLoopsSkipsLoopWithOneValueToHoistThatIsNoGuard());
     RUN(testVersionLoopsHoistsLoadPastStoreToDisjointHeap());
     RUN(testVersionLoopsKeepsLoadClobberedByLoop());
     RUN(testVersionLoopsSkipsLoopWithCall());
@@ -6865,7 +7519,12 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testVersionLoopsKeepsDeepArmOfChainInFastVersion());
     RUN(testVersionLoopsSkipsLoopWithNothingToHoist());
     RUN(testVersionLoopsOnlyInnermostLoops());
-    RUN(testVersionLoopsRareEdgeContinuesInOriginalLoop());
+    RUN(testVersionLoopsRareEdgeContinuesInOriginalLoopWhereItsWayCannotBeCloned());
+    RUN(testVersionLoopsRareWayThatCanBeClonedComesBackAheadOfFastVersion());
+    RUN(testVersionLoopsPhiWithOneInputInFastVersionIsReadAnewInExcursion());
+    RUN(testVersionLoopsTurnsThatEndInExcursionCountTowardsStrip());
+    RUN(testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop());
+    RUN(testVersionLoopsSeesPhiWithOneInputInFastVersionOfLoopThatIsNotCounted());
     RUN(testVersionLoopsUnswitchesInvariantBranch());
     RUN(testVersionLoopsKeepsVariantBranch());
     RUN(testVersionLoopsStripMinesPollInFastVersion());
@@ -6886,6 +7545,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testSinkValuesKeepsOpaque());
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
+    RUN(testSinkValuesSinksBehindAndBetweenCyclesWithTwoEntries());
+    RUN(testSinkValuesDoesNotSinkIntoCycleWithTwoEntries());
     RUN(testCycleForestNestedLoops());
     RUN(testCycleForestAcyclic());
     RUN(testCycleForestIrreducibleCycle());
@@ -6925,6 +7586,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testBitwiseOperationsOnSignExtendedWordsAreNarrowed());
     RUN(testEqualityOfExtendedWordsIsNarrowed());
     RUN(testShiftsAndSwitchesOfExtendedWordsAreNarrowed());
+    RUN(testReduceStrengthKnowsRangeOfWhatNarrowLoadYields());
+    RUN(testReduceStrengthAnswersWhetherWholeNumberMadeOfNarrowLoadFitsInt32());
     RUN(testReduceStrengthMergesBlockChain());
     RUN(testReduceStrengthEliminatesSingleValuePhi());
     RUN(testMemoryNumberingWhenEdgeIntoJoinIsRemoved());
@@ -6950,8 +7613,11 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testDuplicateTailsSkipsTailWithPatchpoint());
     RUN(testDuplicateTailsSkipsLoopHeader());
     RUN(testFoldPathConstantsFoldsSelect());
+    RUN(testEstimateFrequenciesTakesWayThatReturnsForUnlikely());
     RUN(testSwitchInPositionIndependentCode());
+    RUN(testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction());
     RUN(testInferSwitchesManyCases());
+    RUN(testInferSwitchesStopsAtRareEdge());
     RUN(testInferSwitchesIgnoresTestOfOtherValue());
     RUN(testHoistLoopInvariantValuesOnlyFromGuaranteedBlocks());
     RUN(testHoistLoopInvariantValuesKeepsLoadsInLoopsWithCalls());
@@ -6967,6 +7633,7 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testCompilationCohortCompilesProcedures());
     RUN(testUseCountsDuplicateChild());
     RUN(testRedundantZeroExtension());
+    RUN(testBranchOnWhetherExactSumIsInt32());
     RUN(testZeroExtensionClearsUpperHalfInPositionIndependentCode());
     RUN(testSignExtendingLoad32());
     RUN(testDominatorsAfterLoopHeaderBecomesJump());

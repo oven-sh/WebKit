@@ -34,6 +34,7 @@
 #include "AOTCompiler.h"
 #include "AOTTypedPasses.h"
 #include "AOTTypedThreads.h"
+#include "AOTWebAssembly.h"
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
@@ -6093,10 +6094,10 @@ struct BytecodeLinkEncoder::Impl {
             }
             if (typedProgram) {
                 typedProgram->findNamesThatMayBeAccessors();
-                for (auto& [name, uses, usesByAccess] : typedProgram->genericAccessIdentifiersAndNumberOfUses()) {
+                for (auto& [name, uses, usesThatAskTheTable, usesByAccess] : typedProgram->genericAccessIdentifiersAndNumberOfUses()) {
                     auto bytesOfName = typedProgram->string(name);
-                    Identifier identifier = AOT::Typed::isConstantSymbol(bytesOfName) ? Identifier::fromUid(SymbolImpl::create(*String(byteCast<Latin1Character>(bytesOfName)).impl()).get()) : Identifier::fromString(vm, String::fromUTF8(bytesOfName));
-                    identifierIndices.add(identifier.impl(), 0).iterator->value += uses;
+                    Identifier identifier = AOT::Typed::isConstantSymbol(bytesOfName) || AOT::Typed::isEnginePrivateName(bytesOfName) ? Identifier::fromUid(SymbolImpl::create(*String(byteCast<Latin1Character>(bytesOfName)).impl()).get()) : Identifier::fromString(vm, String::fromUTF8(bytesOfName));
+                    identifierIndices.add(identifier.impl(), 0).iterator->value += std::min<uint32_t>(uses, INT16_MAX) + (std::min<uint32_t>(usesThatAskTheTable, INT16_MAX) << 16);
                     typedIdentifiers.append({ name, WTF::move(identifier) });
                     usesByAccessOfTypedIdentifiers.append(usesByAccess);
                 }
@@ -6124,6 +6125,8 @@ struct BytecodeLinkEncoder::Impl {
                     if (usesByAccessOfTypedIdentifiers[i][access] >= usesThatPayForStubsOfOneName)
                         AOT::setHasStubOfItsOwn(static_cast<AOT::StubOfOneNameIsFor>(access), number);
                 }
+                if (AOT::methodOfTablesNamed(typedProgram->string(typedIdentifiers[i].first)) != AOT::MethodOfTables::None)
+                    AOT::setHasStubOfItsOwn(AOT::StubOfOneNameIsFor::Calls, number);
             }
             AOT::setTypedStringsWithWord(typedProgram ? typedProgram->keysOfStringsAskedForMost(AOT::Instance::numberOfTypedStringsWithWord) : Vector<uint32_t>());
             AOT::setProgramIdentifierIndices(&identifierIndices);
@@ -6449,6 +6452,8 @@ struct BytecodeLinkEncoder::Impl {
                 builder.set(firstPlaceInBuilder + whereItWillStand[place], AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
             });
             endPhase("adding the functions to the image"_s);
+            AOT::addWebAssemblyModules(vm, *typedProgram, builder);
+            endPhase("WebAssembly"_s);
             AOT::Typed::destroyBeside(WTF::move(typedProgram));
             endPhase("freeing the typed functions"_s);
         }
@@ -6861,7 +6866,21 @@ class CachedProgramObjects {
 public:
     void encode(Encoder& encoder, const ProgramObjects& objects)
     {
-        m_identifiers.encodeRange(encoder, objects.identifiers.size(), objects.identifiers | std::views::transform([&](UniquedStringImpl* impl) {
+        Vector<uint32_t> numbersOfIdentifiers;
+        Vector<UniquedStringImpl*> identifiers;
+        for (size_t number = 0; number < objects.identifiers.size(); ++number) {
+            if (objects.identifiers[number]) {
+                numbersOfIdentifiers.append(static_cast<uint32_t>(number));
+                identifiers.append(objects.identifiers[number]);
+            }
+        }
+        m_identifiersAreListedByNumber = identifiers.size() * 2 < objects.identifiers.size();
+        if (!m_identifiersAreListedByNumber) {
+            numbersOfIdentifiers.clear();
+            identifiers = Vector<UniquedStringImpl*> { objects.identifiers };
+        }
+        m_numbersOfIdentifiers.encode(encoder, numbersOfIdentifiers);
+        m_identifiers.encodeRange(encoder, identifiers.size(), identifiers | std::views::transform([&](UniquedStringImpl* impl) {
             return impl ? Identifier::fromUid(encoder.vm(), impl) : Identifier();
         }));
         {
@@ -6892,8 +6911,16 @@ public:
         }
     }
 
-    Identifier identifier(Decoder& decoder, uint32_t number) const { return m_identifiers.elements()[number].decode(decoder); }
-    String identifierAsPlainString(Decoder& decoder, uint32_t number) const { return m_identifiers.elements()[number].decodePlainString(decoder); }
+    Identifier identifier(Decoder& decoder, uint32_t number) const
+    {
+        auto place = placeOfIdentifier(number);
+        return place ? m_identifiers.elements()[*place].decode(decoder) : Identifier();
+    }
+    String identifierAsPlainString(Decoder& decoder, uint32_t number) const
+    {
+        auto place = placeOfIdentifier(number);
+        return place ? m_identifiers.elements()[*place].decodePlainString(decoder) : String();
+    }
     JSValue constant(Decoder& decoder, uint32_t number) const { return m_constants.elements()[number].decode(decoder, static_cast<CachedJSValue::Kind>(m_constantKinds.elements()[number])); }
     std::optional<uint32_t> constantAliasTarget(uint32_t number) const
     {
@@ -6909,6 +6936,19 @@ public:
     }
 
 private:
+    std::optional<uint32_t> placeOfIdentifier(uint32_t number) const
+    {
+        if (!m_identifiersAreListedByNumber)
+            return number;
+        auto numbers = m_numbersOfIdentifiers.borrow();
+        auto found = std::ranges::lower_bound(numbers, number);
+        if (found == numbers.end() || *found != number)
+            return std::nullopt;
+        return static_cast<uint32_t>(found - numbers.begin());
+    }
+
+    uint32_t m_identifiersAreListedByNumber;
+    CachedVector<uint32_t> m_numbersOfIdentifiers;
     CachedVector<CachedIdentifier> m_identifiers;
     CachedVector<CachedJSValue> m_constants;
     CachedVector<uint8_t> m_constantKinds;

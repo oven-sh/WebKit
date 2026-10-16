@@ -10,6 +10,7 @@
 
 #include "AOTImage.h"
 #include "AOTInlineCaches.h"
+#include "AOTLockWords.h"
 #include "AOTModuleEvaluation.h"
 #include "AOTOperationHelpers.h"
 #include "AOTOperationsObjects.h"
@@ -19,6 +20,7 @@
 #include "AOTTypedCompactTable.h"
 #include "AOTTypedObject.h"
 #include "AOTTypedType.h"
+#include "ArrayPrototype.h"
 #include "AbstractModuleRecord.h"
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
@@ -487,19 +489,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPrivateFieldAdd, void, (Instance* inst
     Structure* before = object->structure();
     privateAdd(globalObject, vm, object, PropertyName(symbol->privateName()), JSValue::decode(value), 0);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    Structure* after = object->structure();
-    auto isPlain = [](Structure* structure) {
-        return !structure->compiledLayout() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->mayBePrototype();
-    };
-    if (!isPlain(before) || !isPlain(after) || after->previousID() != before || before->outOfLineCapacity() != after->outOfLineCapacity() || before->typeInfoBlob() != after->typeInfoBlob())
-        OPERATION_RETURN(scope);
-    unsigned attributes;
-    auto& entry = instance->keyedAdditionFor(before->id(), symbol);
-    cacheKeyedAccess(entry.slot, before, symbol, after->get(vm, PropertyName(symbol->privateName()), attributes));
-    entry.newStructureID = after->id();
-    entry.epoch = 0;
-    entry.capacityOfNewStorage = 0;
-    entry.numberOfValuesOfHolder = 0;
+    cacheKeyedDefinition(instance, vm, before, object->structure(), symbol, &symbol->privateName()->uid());
     OPERATION_RETURN(scope);
 }
 
@@ -532,23 +522,28 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPrivateMethodsAdd, EncodedJSValue, (In
     auto isPlain = [](Structure* structure) {
         return !structure->compiledLayout() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->mayBePrototype();
     };
-    if (!isPlain(before) || !isPlain(after) || !isPlain(structureOfHolder) || holder->type() != FinalObjectType || before->outOfLineCapacity() != after->outOfLineCapacity() || before->typeInfoBlob() != after->typeInfoBlob())
+    if (!isPlain(before) || !isPlain(after) || !isPlain(structureOfHolder) || holder->type() != FinalObjectType || before->typeInfoBlob() != after->typeInfoBlob())
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     PropertyOffset first = Instance::offsetAfter(before->maxOffset(), before->inlineCapacity());
+    bool isInline = isInlineOffset(first);
+    unsigned capacityBefore = before->outOfLineCapacity();
+    unsigned capacityAfter = after->outOfLineCapacity();
+    if (capacityAfter != capacityBefore && (isInline || !holdsOnlyNamesOutOfLine(before, after) || capacityAfter * sizeof(EncodedJSValue) > MarkedSpace::largeCutoff))
+        OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     unsigned count = 0;
     bool areSideBySide = true;
     structureOfHolder->forEachProperty(vm, [&](const auto& entry) {
-        areSideBySide &= isInlineOffset(entry.offset()) && isInlineOffset(first + entry.offset()) && after->get(vm, entry.key()) == first + entry.offset();
+        areSideBySide &= isInlineOffset(entry.offset()) && after->get(vm, entry.key()) == first + entry.offset();
         ++count;
         return true;
     });
-    if (!areSideBySide || !count || structureOfHolder->maxOffset() != static_cast<PropertyOffset>(count - 1) || after->maxOffset() != static_cast<PropertyOffset>(first + count - 1) || first + count > before->inlineCapacity())
+    if (!areSideBySide || !count || structureOfHolder->maxOffset() != static_cast<PropertyOffset>(count - 1) || after->maxOffset() != static_cast<PropertyOffset>(first + count - 1) || (isInline && first + count > before->inlineCapacity()))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     auto& entry = instance->keyedAdditionFor(before->id(), holder);
     cacheKeyedAccess(entry.slot, before, holder, first);
     entry.newStructureID = after->id();
     entry.epoch = 0;
-    entry.capacityOfNewStorage = 0;
+    entry.capacityOfNewStorage = capacityAfter != capacityBefore ? capacityAfter : 0;
     entry.numberOfValuesOfHolder = count;
     OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -620,6 +615,30 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutLazyClosure, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
+static Typed::Object* objectOfLayout(JSValue value)
+{
+    const Typed::LayoutData* layout = value.isCell() ? value.asCell()->structure()->compiledLayout() : nullptr;
+    return layout && Typed::isObjectLayout(layout->kind) ? uncheckedDowncast<Typed::Object>(value.asCell()) : nullptr;
+}
+
+static void putToObjectOfLayout(Instance* instance, JSGlobalObject* globalObject, Typed::Object* object, const Identifier& name, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    State& state = object->state();
+    const Typed::FieldData* field = object->fieldNamed(state, name);
+    if (field && object->hasExtraProperties() && !object->read(*field))
+        object->knowExtraPropertiesByStructure(vm);
+    if (field && state.tryCreateFieldAsBefore(vm, object, *field, value))
+        return;
+    Structure* structureBefore = object->structure();
+    uint64_t wordsBefore = object->orderAndShapeWords();
+    Typed::Object::putKnowingField(object, globalObject, name, value, slot, field);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (field && object->structure() == structureBefore && Typed::Object::didCreateOneField(static_cast<uint32_t>(wordsBefore), object->orderWord()) && Typed::Object::tryGetOwnData(vm, object, name))
+        noteCreationOfField(instance, object, wordsBefore, name);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetByName, void, (Instance* instance, EncodedJSValue base, uint32_t name, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -633,7 +652,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetByName, void, (Instance* instance, 
         OPERATION_RETURN(scope);
     }
     PutPropertySlot slot(JSValue::decode(base), true);
-    JSValue::decode(base).put(globalObject, identifier, JSValue::decode(value), slot);
+    if (Typed::Object* object = objectOfLayout(JSValue::decode(base)))
+        putToObjectOfLayout(instance, globalObject, object, identifier, JSValue::decode(value), slot);
+    else
+        JSValue::decode(base).put(globalObject, identifier, JSValue::decode(value), slot);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowIfReadOnly, void, (Instance* instance, JSCell* cell, uint32_t name))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* object = uncheckedDowncast<Typed::Object>(cell);
+    const Typed::FieldData* field = object->fieldNamed(object->state(), nameAt(instance, name));
+    if (field && object->attributesOf(*field) & PropertyAttribute::ReadOnly)
+        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
     OPERATION_RETURN(scope);
 }
 
@@ -646,7 +678,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetByNameSloppy, void, (Instance* inst
         OPERATION_RETURN(scope);
     }
     PutPropertySlot slot(JSValue::decode(base), false);
-    JSValue::decode(base).put(globalObject, identifier, JSValue::decode(value), slot);
+    if (Typed::Object* object = objectOfLayout(JSValue::decode(base)))
+        putToObjectOfLayout(instance, globalObject, object, identifier, JSValue::decode(value), slot);
+    else
+        JSValue::decode(base).put(globalObject, identifier, JSValue::decode(value), slot);
     OPERATION_RETURN(scope);
 }
 
@@ -898,7 +933,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByName, size_t, (Instance* insta
     bool deleted = JSCell::deleteProperty(object, globalObject, nameAt(instance, name));
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     if (!deleted)
-        throwTypeError(globalObject, scope, object->noteIfRefusedByLockAlone(vm, nameAt(instance, name).impl(), false, true) ? withAOTErrorNote(UnableToDeletePropertyError) : String(UnableToDeletePropertyError));
+        throwTypeError(globalObject, scope, object->noteIfRefusedByLockAlone(vm, nameAt(instance, name).impl(), false, true) ? AOT::wordsOfLock(vm, object, AOT::RefusedByLock::Delete, nameAt(instance, name).impl()) : String(UnableToDeletePropertyError));
     OPERATION_RETURN(scope, deleted);
 }
 
@@ -994,7 +1029,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByKey, size_t, (Instance* instan
     bool deleted = JSCell::deleteProperty(object, globalObject, property);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     if (!deleted)
-        throwTypeError(globalObject, scope, object->noteIfRefusedByLockAlone(vm, property.impl(), false, true) ? withAOTErrorNote(UnableToDeletePropertyError) : String(UnableToDeletePropertyError));
+        throwTypeError(globalObject, scope, object->noteIfRefusedByLockAlone(vm, property.impl(), false, true) ? AOT::wordsOfLock(vm, object, AOT::RefusedByLock::Delete, property.impl()) : String(UnableToDeletePropertyError));
     OPERATION_RETURN(scope, deleted);
 }
 
@@ -1052,6 +1087,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowMethodIsNotAFunction, void, (Inst
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     throwNotAFunction(globalObject, scope, identifierAt(instance, callFrame, identifierOfSite), JSValue::decode(callee));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowUnlessMethodIsCallable, void, (Instance* instance, EncodedJSValue callee, uint32_t identifierOfSite))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (!JSValue::decode(callee).isCallable())
+        throwNotAFunction(globalObject, scope, identifierAt(instance, callFrame, identifierOfSite), JSValue::decode(callee));
     OPERATION_RETURN(scope);
 }
 
@@ -1122,7 +1165,9 @@ static JSObject* toESM(JSGlobalObject* globalObject, Instance* instance, JSValue
     RETURN_IF_EXCEPTION(scope, nullptr);
     // The property is read from `module.exports` on each use.
     for (auto& name : names) {
-        if (result->hasOwnProperty(globalObject, name))
+        bool isThereAlready = result->hasOwnProperty(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isThereAlready)
             continue;
         if (!parseIndex(name)) {
             result->putDirectCustomAccessor(vm, name, instance->typed->liveBindingAccessor(vm), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
@@ -1133,6 +1178,7 @@ static JSObject* toESM(JSGlobalObject* globalObject, Instance* instance, JSValue
         JSObject* getter = JSBoundFunction::create(vm, globalObject, instance->typed->liveBindingGetter(vm), source, boundArguments, 0, nullptr, SourceTaintedOrigin::Untainted);
         RETURN_IF_EXCEPTION(scope, nullptr);
         result->putDirectAccessor(globalObject, name, GetterSetter::create(vm, globalObject, getter, nullptr), PropertyAttribute::Accessor | PropertyAttribute::DontDelete);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;
 }
@@ -1147,7 +1193,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFailModuleCycle, void, (Insta
     auto forEachRowCalledBy = [&](uint32_t row, auto&& functor) {
         uint32_t start = words[numberOfRows + row];
         for (uint32_t cursor = start + 2; cursor != words[start + 1]; cursor += 2) {
-            if (words[cursor] != none)
+            if (words[cursor] < none - 1)
                 functor(words[cursor + 1]);
         }
     };
@@ -1185,6 +1231,70 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFailModuleCycle, void, (Insta
         instance->typedStatics[words[row]] = static_cast<uint8_t>(JSValue::encode(jsBoolean(false)));
         put(errorAt, error);
     }
+}
+
+static EncodedJSValue makeModuleNamespace(Instance* instance, std::span<const uint32_t> numbersOfNames, std::span<const EncodedJSValue> values)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned count = values.size();
+    auto argument = [&](unsigned index) {
+        return index < count ? JSValue::decode(values[index]) : jsUndefined();
+    };
+    bool isDeferred = argument(count - 1).isNull();
+    count -= isDeferred;
+    bool hasFlag = argument(count - 1).isBoolean();
+    bool hasPrototypeOfHost = hasFlag && argument(count - 1).isTrue();
+    unsigned end = count - hasFlag;
+    JSObject* star = end > 1 ? argument(end - 1).getObject() : nullptr;
+    end -= !!star;
+    RELEASE_ASSERT(numbersOfNames.empty() || end == 1);
+    unsigned numberOfNames = numbersOfNames.empty() ? end - 1 : numbersOfNames.size();
+    auto nameAt = [&](unsigned index) {
+        return numbersOfNames.empty() ? asString(argument(index + 1)) : instance->typed->string(vm, numbersOfNames[index]);
+    };
+    auto* names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numberOfNames);
+    for (unsigned i = 0; i < numberOfNames; ++i) {
+        // It is looked for by its address first.
+        nameAt(i)->toIdentifier(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        // The numbers are the front end's, and so is the order.
+        RELEASE_ASSERT(!i || codePointCompare(StringView(*nameAt(i - 1)->tryGetValueImpl()), StringView(*nameAt(i)->tryGetValueImpl())) < 0);
+        names->setIndex(vm, i, nameAt(i));
+    }
+    JSCellButterfly* namesOfStar = nullptr;
+    if (star) {
+        PropertyNameArrayBuilder found(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        star->methodTable()->getOwnPropertyNames(star, globalObject, found, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        Vector<Identifier> brought;
+        for (auto& name : found) {
+            bool isOwn = name == vm.propertyNames->defaultKeyword;
+            for (unsigned i = 0; i < numberOfNames && !isOwn; ++i)
+                isOwn = nameAt(i)->tryGetValueImpl() == name.impl();
+            if (!isOwn)
+                brought.append(name);
+        }
+        std::sort(brought.begin(), brought.end(), [](const Identifier& a, const Identifier& b) {
+            return codePointCompare(StringView(*a.impl()), StringView(*b.impl())) < 0;
+        });
+        namesOfStar = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, brought.size());
+        for (unsigned i = 0; i < brought.size(); ++i) {
+            JSString* text = jsString(vm, brought[i].string());
+            text->toIdentifier(globalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            namesOfStar->setIndex(vm, i, text);
+        }
+    }
+    return JSValue::encode(Typed::ModuleNamespace::create(vm, instance->typed->structureForNewModuleNamespace(vm, hasPrototypeOfHost), asObject(argument(0)), names, star, namesOfStar, isDeferred));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedMakeModuleNamespace, EncodedJSValue, (Instance* instance, uint32_t numberOfNames, uint32_t rowOfNames, uint32_t count, const EncodedJSValue* readerAndWhatFollowsTheNames))
+{
+    AOT_OPERATION_BEGIN(instance);
+    const uint32_t* numbersOfNames = caller(instance, callFrame).info().function()->plans() + rowOfNames;
+    OPERATION_RETURN(scope, makeModuleNamespace(instance, std::span { numbersOfNames, numberOfNames }, std::span { readerAndWhatFollowsTheNames, count }));
 }
 
 static EncodedJSValue namespaceOfExternalModule(JSGlobalObject* globalObject, Instance* instance, JSModuleLoader* loader, const Identifier& name, RefPtr<ScriptFetchParameters>&& parameters)
@@ -1387,6 +1497,36 @@ static void defineAccessor(JSGlobalObject* globalObject, JSValue object, JSValue
         compiled->placeExtraKey(compiled->state(), property, position.asUInt32());
 }
 
+static void defineEnumerableAccessorAndCache(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue object, JSValue key, JSValue function, bool isGetter)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!instance->nullGetterFunction) {
+        instance->nullGetterFunction = globalObject->nullGetterFunction();
+        instance->nullSetterFunction = globalObject->nullSetterFunction();
+        prepareInlineAllocation<GetterSetter>(instance, Instance::InlineAllocation::GetterSetter, vm.getterSetterStructure.get());
+    }
+    Structure* before = asObject(object)->structure();
+    defineAccessor(globalObject, object, key, function, true, isGetter, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, void());
+    StringImpl* name = key.isString() ? asString(key)->tryGetValueImpl() : nullptr;
+    if (name && name->isAtom())
+        cacheKeyedDefinition(instance, vm, before, asObject(object)->structure(), key.asCell(), static_cast<UniquedStringImpl*>(name), static_cast<unsigned>(PropertyAttribute::Accessor), isGetter ? Instance::keyedAdditionIsOfGetter : Instance::keyedAdditionIsOfSetter);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineGetterUnderKey, void, (Instance* instance, EncodedJSValue object, EncodedJSValue key, EncodedJSValue function))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    defineEnumerableAccessorAndCache(instance, globalObject, vm, JSValue::decode(object), JSValue::decode(key), JSValue::decode(function), true);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineSetterUnderKey, void, (Instance* instance, EncodedJSValue object, EncodedJSValue key, EncodedJSValue function))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    defineEnumerableAccessorAndCache(instance, globalObject, vm, JSValue::decode(object), JSValue::decode(key), JSValue::decode(function), false);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineAccessors, void, (Instance* instance, JSCell* object, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -1400,11 +1540,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineAccessors, void, (Instance* inst
         auto* compiled = dynamicDowncast<Typed::Object>(object);
         bool isDefinedOnExtra = compiled && compiled->mayDefineAccessorOnExtraProperties(vm, compiled->state(), name, extra);
         defineAccessor(globalObject, isDefinedOnExtra ? extra : asObject(object), name, value(1), value(2).asInt32() & 2, value(2).asInt32() & 1);
+        if (isDefinedOnExtra)
+            compiled->didChangeExtraProperties(vm);
         OPERATION_RETURN_IF_EXCEPTION(scope);
         namesAndPositions.append({ name.impl(), value(3).asUInt32() });
     }
-    if (auto* compiled = dynamicDowncast<Typed::Object>(object))
+    if (auto* compiled = dynamicDowncast<Typed::Object>(object)) {
+        compiled->knowExtraPropertiesByStructure(vm);
         compiled->placeExtraKeys(compiled->state(), namesAndPositions.span());
+    }
     OPERATION_RETURN(scope);
 }
 
@@ -1505,7 +1649,7 @@ static NEVER_INLINE bool inheritsIterationOfArrays(JSArray* array)
     VM& vm = globalObject->vm();
     if (!vm.useImmutableIntrinsics || !globalObject->isArrayPrototypeIteratorProtocolFastAndNonObservable())
         return false;
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PropertySlot slot(array, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool isFound = array->getPropertySlot(globalObject, vm.propertyNames->iteratorSymbol, slot);
     scope.assertNoException();
@@ -1516,7 +1660,7 @@ static NEVER_INLINE bool inheritsIterationOfArrays(JSArray* array)
 static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSValue iterable)
 {
     auto* source = dynamicDowncast<JSArray>(iterable);
-    if (!source || source->classInfo() != JSArray::info() || !source->isIteratorProtocolFastAndNonObservable())
+    if (!source || source->classInfo() != JSArray::info() || (!source->isIteratorProtocolFastAndNonObservable() && !inheritsIterationOfArrays(source)))
         return false;
     // The iteration yields `undefined` for a hole.
     IndexingType type = source->indexingType();
@@ -1559,11 +1703,57 @@ static Structure* emptyStructureOfLiteralForCopy(JSGlobalObject* globalObject, V
 }
 
 // `{ ...source }`. `keepsLayout`: it is all of the literal, and the copy of a record of the program is of its layout. Otherwise the copy is an ordinary object, for more to be defined on.
+static Instance::CopyForMore planCopyForMore(Instance*, JSGlobalObject*, VM&, Structure* source, uint64_t more);
+
+static void tellStubsOfCopy(Instance* instance, VM& vm, JSObject* object, Structure* structure, uint64_t more, const Instance::CopyForMore& plan)
+{
+    Structure* ofCopy = plan.structure;
+    if (!ofCopy || object->butterfly() || structure->outOfLineCapacity() || ofCopy->outOfLineCapacity())
+        return;
+    Instance::CopyForStubs* pair = &instance->copiesForStubs[Instance::indexOfCopyForStubs(structure->id().bits(), more)];
+    auto mayBeTaken = [&](const Instance::CopyForStubs& place) {
+        return !place.structureID || (place.structureID == structure->id().bits() && place.more == more);
+    };
+    Instance::CopyForStubs* place = mayBeTaken(pair[0]) ? &pair[0] : mayBeTaken(pair[1]) ? &pair[1] : nullptr;
+    if (!place) {
+        instance->keyedTableRandomState = instance->keyedTableRandomState * 1664525u + 1013904223u;
+        if (instance->keyedTableRandomState >> 30)
+            return;
+        place = &pair[instance->keyedTableRandomState >> 29 & 1];
+    }
+    unsigned copied = ofCopy->inlineCapacity() == structure->inlineCapacity() ? structure->inlineCapacity() : structure->inlineSize();
+    auto placeOf = [](PropertyOffset offset) {
+        return static_cast<uint8_t>(isValidOffset(offset) ? JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset : 0);
+    };
+    static_assert(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + JSFinalObject::maxInlineCapacity <= UINT8_MAX);
+    *place = {
+        more,
+        static_cast<uint64_t>(ofCopy->typeInfoBlob()) << 32 | ofCopy->id().bits(),
+        subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(ofCopy->inlineCapacity()), AllocatorForMode::EnsureAllocator).localAllocator(),
+        structure->id().bits(),
+        static_cast<uint8_t>(copied),
+        static_cast<uint8_t>(ofCopy->inlineCapacity() - copied),
+        { placeOf(plan.offsets[0]), placeOf(plan.offsets[1]) },
+    };
+    instance->hasCopiesForStubs = true;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObject, JSCell*, (Instance* instance, EncodedJSValue source, uint32_t keepsLayout))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     if (Typed::Object* record = keepsLayout ? instance->typed->compiledObject(JSValue::decode(source)) : nullptr; record && record->layout().kind == Typed::LayoutKind::Record)
         OPERATION_RETURN(scope, record->clone(globalObject));
+    if (JSValue value = JSValue::decode(source); value.isCell() && value.asCell()->type() == FinalObjectType && !asObject(value)->butterfly()) {
+        Structure* structure = value.asCell()->structure();
+        Instance::CopyForMore plan;
+        if (auto* known = instance->copyForMore(structure, 0))
+            plan = *known;
+        else {
+            DeferGC deferGC(vm);
+            plan = *instance->setCopyForMore(structure, 0, planCopyForMore(instance, globalObject, vm, structure, 0));
+        }
+        tellStubsOfCopy(instance, vm, asObject(value), structure, 0, plan);
+    }
     OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, JSValue::decode(source)));
 }
 
@@ -1575,7 +1765,7 @@ static PropertyOffset offsetOfPropertyInOrder(Structure* structure, size_t place
 
 static Instance::CopyForMore planCopyForMore(Instance* instance, JSGlobalObject* globalObject, VM& vm, Structure* source, uint64_t more)
 {
-    if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source) || !source->didTransition())
+    if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source) || (!source->didTransition() && isValidOffset(source->maxOffset())))
         return { };
     if (source->realm() != globalObject || source->storedPrototype() != JSValue(globalObject->objectPrototype()))
         return { };
@@ -1612,7 +1802,7 @@ static Instance::CopyForMore planCopyForMore(Instance* instance, JSGlobalObject*
                 DeferredStructureTransitionWatchpointFire deferred(vm, result.structure);
                 next = Structure::addNewPropertyTransition(vm, result.structure, defined[i], 0, offset, PutPropertySlot::UnknownContext, &deferred);
             }
-            if (next->isDictionary() || next->outOfLineCapacity() != result.structure->outOfLineCapacity())
+            if (storageAfterAddition(result.structure, next, offset) != StorageAfterAddition::Stays)
                 return { };
             result.structure = next;
         }
@@ -1725,6 +1915,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectForMore, JSCell*, (Instance
             DeferGC deferGC(vm);
             plan = *instance->setCopyForMore(structure, more, planCopyForMore(instance, globalObject, vm, structure, more));
         }
+        tellStubsOfCopy(instance, vm, object, structure, more, plan);
         if (Structure* ofCopy = plan.structure) {
             auto offsets = plan.offsets;
             JSFinalObject* copy;
@@ -1856,8 +2047,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryCopyRecordAsAt, JSCell*, (Instance*
         Slot& slot = cache[shapeOfRecord != firstShape];
         slot.offset = copy->orderWord();
         slot.pointer = std::bit_cast<void*>(words);
+        instance->noteOrderOfCopy(words, cache, copy->orderWord() | (shapeOfRecord != firstShape ? Instance::orderOfCopyIsOfSecondSource : 0));
     } else if (isNeverCopied && !SharedData::contains(cache))
-        cache[!!firstShape + !!secondShape].pointer = std::bit_cast<void*>(words);
+        instance->noteOrderOfCopy(words, cache, Instance::copyIsNeverMade);
     OPERATION_RETURN(scope, copy);
 }
 
@@ -1896,6 +2088,8 @@ static void copyDataProperties(Instance* instance, JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, void());
     if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType && tryCopyDataProperties(instance, vm, target, from, nullptr, "operationAOTTypedLanguageOperation"))
         return;
+    if (excluded.isEmpty() && target->type() == FinalObjectType && tryCopyDataPropertiesOfRecord(instance, vm, target, from, "operationAOTTypedLanguageOperation"))
+        return;
     // What Object.assign() does where nobody can tell a store from a definition. False: it has done nothing.
     if (auto* ordinary = dynamicDowncast<JSFinalObject>(target); ordinary && excluded.isEmpty() && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible()) {
         Vector<UniquedStringImpl*, 8> properties;
@@ -1910,6 +2104,23 @@ static void copyDataProperties(Instance* instance, JSGlobalObject* globalObject,
             return;
         if (tryCopyPropertiesOntoRecord(vm, *record, from))
             return;
+    }
+    if (auto* ordinary = dynamicDowncast<JSFinalObject>(target); ordinary && from->structure()->compiledLayout() && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible()) {
+        Vector<UniquedStringImpl*, 8> properties;
+        MarkedArgumentBuffer valuesOfProperties;
+        EnsureStillAliveScope fromScope(from);
+        bool isWalked = Typed::forEachOwnPropertyOfCompiledObject(from, [&](UniquedStringImpl& name, JSValue value) {
+            if (!excluded.contains(&name)) {
+                properties.append(&name);
+                valuesOfProperties.appendWithCrashOnOverflow(value);
+            }
+            return true;
+        });
+        if (isWalked) {
+            if (properties.size())
+                ordinary->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), valuesOfProperties.data(), properties.size());
+            return;
+        }
     }
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     from->methodTable()->getOwnPropertyNames(from, globalObject, names, DontEnumPropertiesMode::Include);
@@ -2149,6 +2360,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetAsyncIterator, EncodedJSValue, (Ins
     OPERATION_RETURN(scope, JSValue::encode(getAsyncIterator(globalObject, vm, JSValue::decode(iterable))));
 }
 
+static JSValue constructParent(JSGlobalObject* globalObject, JSValue classObject, JSValue newTarget, const ArgList& arguments, JSValue parentIfRead)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue parent = parentIfRead ? parentIfRead : asObject(classObject)->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto constructData = JSC::getConstructData(parent);
+    if (constructData.type == CallData::Type::None) {
+        throwTypeError(globalObject, scope, "The superclass is not a constructor."_s);
+        return { };
+    }
+    if (auto* errorConstructor = dynamicDowncast<ErrorConstructor>(parent); errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != parent) {
+        Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, asObject(newTarget), errorConstructor);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
+    }
+    RELEASE_AND_RETURN(scope, construct(globalObject, parent, constructData, arguments, newTarget));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (Instance* instance, uint32_t which, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -2217,6 +2447,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         createDataProperty(globalObject, asObject(argument(0)), key, argument(2));
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+    }
+    case Typed::LanguageOperation::UnlistFields:
+    case Typed::LanguageOperation::ListFields: {
+        bool unlists = static_cast<Typed::LanguageOperation>(which) == Typed::LanguageOperation::UnlistFields;
+        auto key = argument(1).toPropertyKey(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        uint32_t wordBefore = 0;
+        if (auto* object = instance->typed->compiledObject(argument(0))) {
+            wordBefore = object->orderWord();
+            if (const Typed::FieldData* field = object->fieldNamed(*instance->typed, key))
+                object->listFieldsDefinedSoFar(*instance->typed, *field, !unlists && argument(2).isTrue(), unlists || (count == 3 && !argument(2).isTrue()));
+        }
+        OPERATION_RETURN(scope, JSValue::encode(unlists ? jsNumber(static_cast<int32_t>(wordBefore & INT32_MAX)) : jsUndefined()));
     }
     case Typed::LanguageOperation::DefineGetter:
     case Typed::LanguageOperation::DefineSetter:
@@ -2423,20 +2666,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
             RELEASE_ASSERT(classObject && classObject->classData());
             OPERATION_RETURN(scope, JSValue::encode(classObject->callAsConstructor(globalObject, argument(1), argument(2), arguments)));
         }
-        JSValue parent = count > 3 ? argument(3) : asObject(argument(0))->getPrototype(globalObject);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        auto constructData = JSC::getConstructData(parent);
-        if (constructData.type == CallData::Type::None) {
-            throwTypeError(globalObject, scope, "The superclass is not a constructor."_s);
-            OPERATION_RETURN(scope, encodedJSValue());
-        }
-        if (auto* errorConstructor = dynamicDowncast<ErrorConstructor>(parent); errorConstructor && errorConstructor->realm() == globalObject && argument(1).isObject() && argument(1) != parent) {
-            JSObject* newTarget = asObject(argument(1));
-            Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, newTarget, errorConstructor);
-            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-            OPERATION_RETURN(scope, JSValue::encode(ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, newTarget)));
-        }
-        OPERATION_RETURN(scope, JSValue::encode(construct(globalObject, parent, constructData, arguments, argument(1))));
+        OPERATION_RETURN(scope, JSValue::encode(constructParent(globalObject, argument(0), argument(1), arguments, count > 3 ? argument(3) : JSValue())));
     }
     case Typed::LanguageOperation::ConstructorResult:
         OPERATION_RETURN(scope, values[argument(0).isObject() ? 0 : 1]);
@@ -2612,49 +2842,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
     }
     case Typed::LanguageOperation::ToESM:
         OPERATION_RETURN(scope, JSValue::encode(toESM(globalObject, instance, argument(0), argument(1).isTrue())));
-    case Typed::LanguageOperation::MakeModuleNamespace: {
-        bool isDeferred = argument(count - 1).isNull();
-        count -= isDeferred;
-        bool hasFlag = argument(count - 1).isBoolean();
-        bool hasPrototypeOfHost = hasFlag && argument(count - 1).isTrue();
-        unsigned end = count - hasFlag;
-        JSObject* star = end > 1 ? argument(end - 1).getObject() : nullptr;
-        end -= !!star;
-        auto* names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, end - 1);
-        for (unsigned i = 1; i < end; ++i) {
-            // It is looked for by its address first.
-            asString(argument(i))->toIdentifier(globalObject);
-            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-            // The numbers are the front end's, and so is the order.
-            RELEASE_ASSERT(i == 1 || codePointCompare(StringView(*asString(argument(i - 1))->tryGetValueImpl()), StringView(*asString(argument(i))->tryGetValueImpl())) < 0);
-            names->setIndex(vm, i - 1, argument(i));
-        }
-        JSCellButterfly* namesOfStar = nullptr;
-        if (star) {
-            PropertyNameArrayBuilder found(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            star->methodTable()->getOwnPropertyNames(star, globalObject, found, DontEnumPropertiesMode::Include);
-            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-            Vector<Identifier> brought;
-            for (auto& name : found) {
-                bool isOwn = name == vm.propertyNames->defaultKeyword;
-                for (unsigned i = 1; i < end && !isOwn; ++i)
-                    isOwn = asString(argument(i))->tryGetValueImpl() == name.impl();
-                if (!isOwn)
-                    brought.append(name);
-            }
-            std::sort(brought.begin(), brought.end(), [](const Identifier& a, const Identifier& b) {
-                return codePointCompare(StringView(*a.impl()), StringView(*b.impl())) < 0;
-            });
-            namesOfStar = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, brought.size());
-            for (unsigned i = 0; i < brought.size(); ++i) {
-                JSString* text = jsString(vm, brought[i].string());
-                text->toIdentifier(globalObject);
-                OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-                namesOfStar->setIndex(vm, i, text);
-            }
-        }
-        OPERATION_RETURN(scope, JSValue::encode(Typed::ModuleNamespace::create(vm, instance->typed->structureForNewModuleNamespace(vm, hasPrototypeOfHost), asObject(argument(0)), names, star, namesOfStar, isDeferred)));
-    }
+    case Typed::LanguageOperation::MakeModuleNamespace:
+        OPERATION_RETURN(scope, makeModuleNamespace(instance, { }, std::span { values, count }));
     case Typed::LanguageOperation::ParseJSON: {
         auto text = asString(argument(0))->value(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -2884,6 +3073,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwait, void, (Instance* instance, JSCe
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedConstructSuper, EncodedJSValue, (Instance* instance, EncodedJSValue classObject, EncodedJSValue newTarget, EncodedJSValue list, EncodedJSValue parentIfRead))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSArray* array = uncheckedDowncast<JSArray>(JSValue::decode(list));
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < array->length(); ++i) {
+        arguments.append(array->getIndex(globalObject, i));
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
+    if (arguments.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(constructParent(globalObject, JSValue::decode(classObject), JSValue::decode(newTarget), arguments, JSValue::decode(parentIfRead))));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue callee, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -2981,6 +3186,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedInstanceOfClass, size_t, (Instance* in
     OPERATION_RETURN(scope, classObject->hasInstance(globalObject, JSValue::decode(value)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedInstanceOfEngineClass, size_t, (Instance* instance, EncodedJSValue value, uint32_t numberOfClass))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto& builtins = Typed::Builtins::singleton();
+    auto& engineClass = builtins.classes()[numberOfClass];
+    if (globalObject->hasImmutableIntrinsics()) {
+        JSCell*& prototype = instance->fieldsBelow().typedBuiltins[builtins.cellOfPrototype(engineClass)];
+        if (!prototype)
+            prototype = builtins.findCell(globalObject, builtins.cellOfPrototype(engineClass));
+        OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, JSValue::decode(value), prototype));
+    }
+    JSValue constructor = globalObject->get(globalObject, Identifier::fromString(vm, engineClass.text));
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (!constructor.isObject()) {
+        throwException(globalObject, scope, createInvalidInstanceofParameterErrorNotFunction(globalObject, constructor));
+        OPERATION_RETURN(scope, 0);
+    }
+    OPERATION_RETURN(scope, asObject(constructor)->hasInstance(globalObject, JSValue::decode(value)));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTruthy, size_t, (Instance* instance, EncodedJSValue operand))
 {
     return JSValue::decode(operand).toBoolean(instance->globalObject);
@@ -3023,6 +3248,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFmod, double, (double a, doub
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedPow, double, (double a, double b))
 {
     return operationMathPow(a, b);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedPlaceInString, int64_t, (double position, uint64_t length, uint32_t isRelativeToEnd))
+{
+    if (position != position)
+        return 0;
+    double truncated = std::trunc(position);
+    double end = static_cast<double>(length);
+    if (truncated >= 0)
+        return truncated > end ? static_cast<int64_t>(length) : static_cast<int64_t>(truncated);
+    if (!isRelativeToEnd || end + truncated < 0)
+        return 0;
+    return static_cast<int64_t>(end + truncated);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedToInt32, size_t, (double value))
@@ -3248,11 +3486,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedDidCreateFieldsAt, void, (Ins
     State& state = *instance->typed;
     auto* object = uncheckedDowncast<Typed::Object>(cell);
     uint32_t orderWord = object->orderWord();
-    for (; offsets; offsets >>= 16) {
-        const Typed::FieldData& field = state.fieldAt(object->layout(), static_cast<uint16_t>(offsets));
+    uint32_t flagsOfFields = 0;
+    for (uint64_t rest = offsets; rest; rest >>= 16) {
+        const Typed::FieldData& field = state.fieldAt(object->layout(), static_cast<uint16_t>(rest));
+        flagsOfFields |= field.flags;
         if (!object->read(field))
             object->didCreateField(state, field);
     }
+    if (JSObject* extra = object->extraProperties(); extra && !(flagsOfFields & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted))) [[unlikely]]
+        state.noteCreationBehindExtraProperties(*object, extra, orderWord, offsets);
     if (SharedData::contains(cache) || orderWord & ~Typed::orderAndCountMask || Typed::orderOf(object->orderWord()) == Typed::keysAreInLayoutOrder)
         return;
     cache->offset = orderWord ^ object->orderWord();
@@ -3333,7 +3575,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedHasExtra, size_t, (Instance* 
     if (name & Typed::nameMayBeOfOwnField) [[unlikely]] {
         name &= ~Typed::nameMayBeOfOwnField;
         if (const Typed::FieldData* field = object->fieldNamed(*instance->typed, nameAt(instance, name)))
-            return !!object->read(*field);
+            return object->holdsClosureNotMade(*field) || object->read(*field);
     }
     JSObject* extra = object->extraProperties();
     return extra && extra->getDirectOffset(*instance->vm, nameAt(instance, name)) != invalidOffset;
@@ -3380,10 +3622,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedInheritsFromClass, size_t, (Instance* 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedBigIntConstant, EncodedJSValue, (Instance* instance, uint32_t index))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (JSCell* kept = instance->typed->bigIntConstantIfMade(index))
+        OPERATION_RETURN(scope, JSValue::encode(JSValue(kept)));
     String text = nameAt(instance, index).string();
     if (text.endsWith('n'))
         text = text.left(text.length() - 1);
     JSValue result = JSBigInt::parseInt(globalObject, text, JSBigInt::ErrorParseMode::ThrowExceptions);
+    if (result && result.isCell())
+        instance->typed->keepBigIntConstant(index, result.asCell());
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
@@ -3630,10 +3876,37 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHold, EncodedJSValue, (Instance* insta
     OPERATION_RETURN(scope, value);
 }
 
+static JSValue getFromObjectThatIsAsked(JSGlobalObject* globalObject, JSObject* object, const Identifier& name)
+{
+    VM& vm = globalObject->vm();
+    Typed::Object* ofLayout = objectOfLayout(object);
+    if (!ofLayout || parseIndex(name))
+        return object->get(globalObject, name);
+    if (const Typed::FieldData* field = ofLayout->fieldNamed(ofLayout->state(), name)) {
+        if (JSValue held = ofLayout->read(*field))
+            return held;
+    } else if (JSObject* extra = ofLayout->extraProperties()) {
+        unsigned attributes;
+        if (PropertyOffset offset = extra->structure()->get(vm, name, attributes); isValidOffset(offset))
+            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? object->get(globalObject, name) : extra->getDirect(offset);
+    }
+    JSValue prototype = object->getPrototypeDirect();
+    if (!prototype.isObject())
+        return jsUndefined();
+    JSObject* above = asObject(prototype);
+    if (auto* found = vm.megamorphicCache() ? vm.megamorphicCache()->findLoad(above->structureID(), name.impl()) : nullptr) {
+        if (!found->m_holder)
+            return jsUndefined();
+        return (found->m_holder == JSCell::seenMultipleCalleeObjects() ? above : asObject(found->m_holder))->getDirect(found->m_offset);
+    }
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    return getByIdAndFillMegamorphicCache(globalObject, above, name, slot);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameHeld, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t name, uint32_t type))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSValue value = asObject(cell)->get(globalObject, nameAt(instance, name));
+    JSValue value = getFromObjectThatIsAsked(globalObject, asObject(cell), nameAt(instance, name));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (!instance->typed->accepts(globalObject, instance->typed->type(type), value)) [[unlikely]]
         throwTypeMismatch(instance, globalObject, scope, value, type);
@@ -3643,7 +3916,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameHeld, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameHeldAsNumber, double, (Instance* instance, JSCell* cell, uint32_t name, uint32_t type))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSValue value = asObject(cell)->get(globalObject, nameAt(instance, name));
+    JSValue value = getFromObjectThatIsAsked(globalObject, asObject(cell), nameAt(instance, name));
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     if (!instance->typed->fits(instance->typed->type(type), value) || !(value.isNumber() || value.isUndefinedOrNull())) [[unlikely]] {
         throwTypeMismatch(instance, globalObject, scope, value, type);
@@ -4266,8 +4539,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateThisAt, JSCell*, (Instance* inst
     Structure* empty;
     if (isSlimClosureType(constructor->type()) || isSlimClosureType(newTarget->type())) [[unlikely]] {
         empty = instance->typed->structureForThisWithSlimClosure(globalObject, asObject(constructor), asObject(newTarget), JSFinalObject::defaultInlineCapacity);
-        if (!empty)
-            OPERATION_RETURN(scope, Typed::ordinaryCreateFromConstructor(globalObject, asObject(newTarget)));
+        auto* closure = dynamicDowncast<Typed::Closure>(constructor);
+        bool readsNewTarget = closure && closure->isDeclaredAs(Typed::functionReadsNewTarget);
+        if (!empty || readsNewTarget) {
+            JSObject* made = empty ? constructEmptyObject(vm, empty) : Typed::ordinaryCreateFromConstructor(globalObject, asObject(newTarget));
+            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+            if (readsNewTarget)
+                instance->typed->newTarget = newTarget;
+            OPERATION_RETURN(scope, made);
+        }
     } else {
         auto* closure = uncheckedDowncast<Typed::Closure>(constructor);
         empty = instance->typed->structureForThis(globalObject, closure, asObject(newTarget), JSFinalObject::defaultInlineCapacity);
@@ -4669,10 +4949,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryPutProperties, size_t, (Instance* i
         Structure* last = structure;
         if (isServed && !added.isEmpty()) {
             makePrototypeChainWatchable(vm, object);
-            if (addsUnderSymbol && !instance->hasPropertyRunTarget(structure, added.span())) {
-                isServed = instance->roomForRunsUnderSymbols;
-                instance->roomForRunsUnderSymbols -= isServed;
-            }
+            if (addsUnderSymbol && !instance->hasPropertyRunTarget(structure, added.span()))
+                isServed = instance->takeRoomForPropertyRunTarget(Instance::RoomOfRun::UnderSymbols);
             last = isServed ? structureBehindRun(instance, vm, structure, added.span()) : nullptr;
             isServed = last && last->outOfLineCapacity() == structure->outOfLineCapacity() && isInlineOffset(last->maxOffset());
         }
@@ -4694,11 +4972,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryPutProperties, size_t, (Instance* i
     }
     // Ahead of what remembers the structures of the chain.
     makePrototypeChainWatchable(vm, object);
-    if (!keys.isEmpty() && !instance->hasPropertyRunTarget(structure, names.span())) {
-        if (!instance->roomForRunsUnderSymbols)
-            OPERATION_RETURN(scope, refuse());
-        --instance->roomForRunsUnderSymbols;
-    }
+    if (!keys.isEmpty() && !instance->hasPropertyRunTarget(structure, names.span()) && !instance->takeRoomForPropertyRunTarget(Instance::RoomOfRun::UnderSymbols))
+        OPERATION_RETURN(scope, refuse());
     Structure* last = structureBehindRun(instance, vm, structure, names.span());
     if (!last) {
         if (isPlainRun && cache->structureID && cache->structureID != structure->id())
@@ -4709,7 +4984,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryPutProperties, size_t, (Instance* i
     // As JSObject::putDirectInternal() does it: the collector goes by the Structure, which comes last.
     bool grows = structure->outOfLineCapacity() != last->outOfLineCapacity();
     // What Stub::PutPropertiesWithStorage can do again. All by name: such a run has a second slot. A butterfly with elements is not copied there.
-    bool mayBeRememberedWithStorage = !keyed && (!grows || !hasIndexedProperties(structure->indexingType()));
+    bool mayBeRememberedWithStorage = !keyed && (!grows || holdsOnlyNamesOutOfLine(structure, last));
     if (grows)
         object->nukeStructureAndSetButterfly(vm, structure->id(), object->allocateMoreOutOfLineStorage(vm, structure->outOfLineCapacity(), last->outOfLineCapacity()));
     for (unsigned i = 0; i < count; ++i) {
@@ -4811,6 +5086,11 @@ static OperationReturnType<EncodedJSValue> pushToArray(Instance* instance, CallF
         bool hasReadMethod = expectedAndSite & 1;
         JSValue callee = (hasReadMethod ? globalObject->arrayPrototype() : array)->get(globalObject, vm.propertyNames->builtinNames().pushPublicName());
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (auto* function = dynamicDowncast<JSFunction>(callee); function && function->isHostFunction() && function->nativeFunction() == TaggedNativeFunction(arrayProtoFuncPush) && function->realm() == globalObject) {
+            array->push(globalObject, JSValue::decode(value));
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            OPERATION_RETURN(scope, JSValue::encode(jsNumber(array->length())));
+        }
         OPERATION_RETURN(scope, JSValue::encode(callValue(globalObject, vm, callee, array, 1, &value)));
     }
     if (unsigned newLength = pushToFullVector(vm, array, JSValue::decode(value), expected))
@@ -4931,6 +5211,11 @@ static bool reportOrThrowWouldRunCode(JSGlobalObject* globalObject, State& state
     return state.reportOrThrow(globalObject, { .kind = "array-not-plain"_s }, "Cannot read array element: the array or its prototype chain has accessors or a Proxy, which are not run for an array of a declared element type"_s, State::InAudit::Ignored);
 }
 
+static bool reportOrThrowHasItsOwnIterator(JSGlobalObject* globalObject, State& state)
+{
+    return state.reportOrThrow(globalObject, { .kind = "array-not-plain"_s }, "Cannot iterate over the array: it has its own Symbol.iterator method, which is not called where the declared type is an array, a tuple or a typed array"_s, State::InAudit::Ignored);
+}
+
 // [[Get]] as far as that runs no code of the program. Nothing: it would, and that has been thrown.
 static std::optional<JSValue> getWithoutRunningCode(JSGlobalObject* globalObject, State& state, JSArray* array, PropertyName name, std::optional<uint32_t> index)
 {
@@ -4961,7 +5246,7 @@ static OperationReturnType<EncodedJSValue> getFromArray(Instance* instance, Call
     std::optional<uint32_t> index = JSValue::decode(key).tryGetAsUint32Index();
     Identifier name;
     if (!index)
-        name = Identifier::from(vm, JSValue::decode(key).asNumber());
+        name = JSValue::decode(key).isNumber() ? Identifier::from(vm, JSValue::decode(key).asNumber()) : JSValue::decode(key).isNull() ? vm.propertyNames->nullKeyword : vm.propertyNames->undefinedKeyword;
     auto value = getWithoutRunningCode(globalObject, *instance->typed, array, name, index);
     if (value && value->isDouble())
         value = jsNumber(value->asDouble());
@@ -4981,6 +5266,11 @@ static OperationReturnType<EncodedJSValue> getFromArrayAs(Instance* instance, Ca
     JSValue boxedKey = jsNumber(purifyNaN(key));
     state.countArrayGet(array, boxedKey);
     std::optional<uint32_t> index = boxedKey.tryGetAsUint32Index();
+    if (index && array->canGetIndexQuickly(*index)) {
+        JSValue own = array->getIndexQuickly(*index);
+        if (!own.isDouble() && state.fits(state.type(type), own))
+            OPERATION_RETURN(scope, JSValue::encode(own));
+    }
     Identifier name;
     if (!index)
         name = Identifier::from(vm, boxedKey.asNumber());
@@ -5059,10 +5349,12 @@ static void convertArrayStorageToContiguous(VM& vm, JSArray* array)
     vm.writeBarrier(array);
 }
 
-static ALWAYS_INLINE void putIndexOfArrayInline(JSGlobalObject* globalObject, VM& vm, JSArray* array, uint32_t index, JSValue value, bool isStrict)
+static ALWAYS_INLINE void putIndexOfArrayInline(JSGlobalObject* globalObject, VM& vm, JSArray* array, uint32_t index, JSValue value, bool isStrict, unsigned expected = 0)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned vectorLength = array->indexingType() & IndexingShapeMask ? array->butterfly()->vectorLength() : 0;
+    if (index == vectorLength && pushToFullVector(vm, array, value, expected))
+        return;
     if (array->type() == ArrayType && mayGrowVector(vectorLength, index) && array->tryPutIndexInPlace(vm, index, value))
         return;
     bool hadSparseMap = sparseMapOf(array);
@@ -5076,7 +5368,7 @@ void putIndexOfArray(JSGlobalObject* globalObject, JSArray* array, uint32_t inde
     putIndexOfArrayInline(globalObject, globalObject->vm(), array, index, value, isStrict);
 }
 
-static OperationReturnType<void> putToArray(Instance* instance, CallFrame* callFrame, JSCell* cell, EncodedJSValue key, EncodedJSValue value)
+static OperationReturnType<void> putToArray(Instance* instance, CallFrame* callFrame, JSCell* cell, EncodedJSValue key, EncodedJSValue value, unsigned expected = 0)
 {
     AOT_OPERATION_BEGIN_IN_FRAME(instance, callFrame, "operationAOTTypedArrayPut");
     JSArray* array = uncheckedDowncast<JSArray>(cell);
@@ -5091,7 +5383,7 @@ static OperationReturnType<void> putToArray(Instance* instance, CallFrame* callF
         // vector grows instead where it at most doubles, as it may by being appended to. Farther out the elements go to a map, until one
         // slot in eight is filled.
         scope.release();
-        putIndexOfArrayInline(globalObject, vm, array, *index, JSValue::decode(value), true);
+        putIndexOfArrayInline(globalObject, vm, array, *index, JSValue::decode(value), true, expected);
         OPERATION_RETURN(scope);
     }
     PutPropertySlot slot(array, true);
@@ -5164,6 +5456,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayPutNumberAtIndex, void, (Instance
     return putToArray(instance, callFrame, cell, JSValue::encode(jsNumber(static_cast<double>(static_cast<int64_t>(key)))), value);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayPutAtIndexExpecting, void, (Instance* instance, JSCell* cell, EncodedJSValue value, uint64_t key, uint64_t expectedAndSite))
+{
+    CallFrame* callFrame = DECLARE_CALL_FRAME(*instance->vm);
+    if (JSValue number = JSValue::decode(value); expectedAndSite & 1 && number.isNumber() && !std::isnan(number.asNumber()) && hasInt32(cell->indexingType()))
+        asObject(cell)->tryMakeWritableDouble(*instance->vm);
+    if (uint32_t site = static_cast<uint32_t>(expectedAndSite) >> 1)
+        operationAOTTypedUpdateVectorLengthHint(instance, cell, site - 1);
+    return putToArray(instance, callFrame, cell, JSValue::encode(jsNumber(static_cast<double>(static_cast<int64_t>(key)))), value, expectedAndSite >> 32);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayPutAtNumber, void, (Instance* instance, JSCell* cell, EncodedJSValue value, double key))
 {
     return putToArray(instance, DECLARE_CALL_FRAME(*instance->vm), cell, JSValue::encode(jsNumber(purifyNaN(key))), value);
@@ -5223,7 +5525,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedOpenChangedArray, void, (Instance* ins
     auto found = getWithoutRunningCode(globalObject, *instance->typed, uncheckedDowncast<JSArray>(cell), vm.propertyNames->iteratorSymbol, std::nullopt);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (*found != JSValue(globalObject->linkTimeConstant(LinkTimeConstant::arrayProtoValues)) && !isValuesOfAnotherRealmWhoseIterationIsUntouched(*found))
-        reportOrThrowWouldRunCode(globalObject, *instance->typed);
+        reportOrThrowHasItsOwnIterator(globalObject, *instance->typed);
     OPERATION_RETURN(scope);
 }
 
@@ -5236,8 +5538,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTypedArrayIteratorOpen, void, (Instanc
         PropertySlot slot(view, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool isFound = view->getPropertySlot(globalObject, vm.propertyNames->iteratorSymbol, slot);
         scope.assertNoException();
-        if (slot.isTaintedByOpaqueObject() || !isFound || !slot.isValue() || slot.getValue(globalObject, vm.propertyNames->iteratorSymbol) != common->getDirect(vm, vm.propertyNames->iteratorSymbol)) {
+        if (slot.isTaintedByOpaqueObject() || !isFound || !slot.isValue()) {
             reportOrThrowWouldRunCode(globalObject, *instance->typed);
+            OPERATION_RETURN(scope);
+        }
+        if (slot.getValue(globalObject, vm.propertyNames->iteratorSymbol) != common->getDirect(vm, vm.propertyNames->iteratorSymbol)) {
+            reportOrThrowHasItsOwnIterator(globalObject, *instance->typed);
             OPERATION_RETURN(scope);
         }
     }

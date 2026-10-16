@@ -56,6 +56,7 @@ enum class GetByIdCompiledFieldKind : uint32_t {
     Int64,
     OptionalInt64,
     OptionalBoolean,
+    ExtraProperty,
 };
 enum class InByIdKind : uint32_t {
     ByStructure,
@@ -70,6 +71,21 @@ static constexpr unsigned getByIdShiftOfCell32 = 3;
 static constexpr unsigned getByIdBitsOfMarkedBlockCage = 35;
 static constexpr int32_t getByIdLeastInt32InPlace = -(1 << 30);
 static constexpr int32_t getByIdAbsentInt32 = INT32_MIN + 1;
+enum class PutByIdCompiledFieldKind : uint32_t {
+    Int32OrElsewhere,
+    Double,
+    OptionalDouble,
+    Int32,
+    Boolean,
+    JSValue,
+    StringInCell32,
+    ExtraProperty,
+};
+static constexpr unsigned putByIdShiftOfCompiledFieldKind = 16;
+static constexpr unsigned putByIdShiftOfOffsetOfExtraProperty = 20;
+static constexpr uint32_t putByIdOffsetOfOrderWord = 8;
+static constexpr uint32_t putByIdOrderWordIsFrozen = 1u << 29;
+static constexpr uint64_t putByIdAbsentDouble = 0x7ffcull << 48;
 
 struct GetByIdModeMetadataDefault {
     StructureID structureID;

@@ -510,6 +510,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, minHeapUtilization, 0.8, Normal, nullptr) \
     v(Double, minMarkedBlockUtilization, 0.9, Normal, nullptr) \
     v(Unsigned, slowPathAllocsBetweenGCs, 0, Normal, "force a GC on every Nth slow path alloc, where N is specified by this option"_s) \
+    v(Bool, useEdenCollectionsAtSlowPathAllocs, false, Normal, "the GCs that slowPathAllocsBetweenGCs forces are eden collections, which depend on write barriers"_s) \
     /* WARNING: this option is important for compatibility be *VERY* careful when lowering it. See: rdar://145585141 and https://bugs.webkit.org/show_bug.cgi?id=289330 */ \
     /* Cap on the bytecode RegExp interpreter's backtracking-context pool (allocated a page at a time, only while a match runs, and released after it). Each quantified-group iteration takes a context sized by the pattern's call frame, which grew with the ParenthesesOnce/BackReference slots and the alternation folding; 192MB keeps the reach interpreter-only patterns had at 128MB (prism/highlight.js tokenizers over ~600KB inputs). */ \
     v(Unsigned, maxRegExpStackSize, 192 * MB, Normal, nullptr) \

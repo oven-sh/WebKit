@@ -23,6 +23,7 @@
 #include "StringPrototype.h"
 
 #include "DeferTermination.h"
+#include "ErrorConstructor.h"
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "JSTemplateObjectDescriptor.h"
@@ -69,6 +70,7 @@
 #include "StackFrame.h"
 #include "ThunkGenerators.h"
 #include "VMTrapsInlines.h"
+#include "WebAssemblyFunction.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include <mutex>
 #include <wtf/FilePrintStream.h>
@@ -532,6 +534,7 @@ struct Instance::Collections {
     UncheckedKeyHashMap<uint64_t, Structure*> shapes;
     Vector<uint32_t> filledRows;
     size_t numberOfFilledRowsLookedAt { 0 };
+    HeapVersion versionWhenNewShapesWereLookedAt { MarkedSpace::nullVersion };
     Vector<uint32_t> placesOfRowsGivenBack;
     uint32_t numberOfPlacesOfRowsTaken { 0 };
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructuresWithoutPrototype;
@@ -589,7 +592,7 @@ struct Instance::Collections {
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
 static_assert(!Instance::offsetOfSharedData());
 static_assert(Instance::offsetOfWordOfTypedString(Instance::numberOfTypedStringsWithWord) >> 12 < 4096);
-static_assert(Instance::offsetBelow(OBJECT_OFFSETOF(Instance::FieldsBelow, newArrayWithDoubleHeader)) == -128, "On x86-64 an operand within 128 bytes below the Instance takes one byte of displacement and four beyond. A new field goes ahead of these.");
+static_assert(Instance::offsetBelow(OBJECT_OFFSETOF(Instance::FieldsBelow, newArrayWithContiguousHeader)) == -128, "On x86-64 an operand within 128 bytes below the Instance takes one byte of displacement and four beyond. A new field goes ahead of these.");
 static_assert(!(Instance::offsetOfOwnData() % sizeof(Data*)) && Instance::offsetOfOwnData() / sizeof(Data*) + Instance::maxNumberOfOwnData <= std::numeric_limits<uint16_t>::max() + 1);
 static_assert(Instance::stateOfLinkedWithoutData() + 1 == Instance::offsetOfOwnData() / sizeof(Data*));
 static_assert(Instance::cacheMissLimitFor(FunctionInfo::maxEncodedSlots) < std::numeric_limits<uint16_t>::max());
@@ -725,6 +728,12 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     static_assert(!(numberOfNamedFields * sizeof(NamedField) % (16 * KB)));
     instance->namedFieldReads = static_cast<NamedField*>(OSAllocator::reserveAndCommit(numberOfNamedFields * sizeof(NamedField), OSAllocator::FastMallocPages));
     instance->namedFieldWrites = static_cast<NamedField*>(OSAllocator::reserveAndCommit(numberOfNamedFields * sizeof(NamedField), OSAllocator::FastMallocPages));
+    static_assert(!(numberOfFixedElements * sizeof(FixedElement) % (16 * KB)));
+    instance->fixedElements = static_cast<FixedElement*>(OSAllocator::reserveAndCommit(numberOfFixedElements * sizeof(FixedElement), OSAllocator::FastMallocPages));
+    static_assert(!(numberOfCopiesForStubs * sizeof(CopyForStubs) % (16 * KB)));
+    instance->copiesForStubs = static_cast<CopyForStubs*>(OSAllocator::reserveAndCommit(numberOfCopiesForStubs * sizeof(CopyForStubs), OSAllocator::FastMallocPages));
+    static_assert(!(numberOfOrdersOfCopies * sizeof(OrderOfCopy) % (16 * KB)));
+    instance->ordersOfCopies = static_cast<OrderOfCopy*>(OSAllocator::reserveAndCommit(numberOfOrdersOfCopies * sizeof(OrderOfCopy), OSAllocator::FastMallocPages));
     instance->collections->loader = loader;
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
@@ -758,11 +767,16 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         RELEASE_ASSERT(instance->returnAddressOfSavedFrames && instance->returnAddressOfResumeFunctions());
     }
     instance->runtimeTable[static_cast<unsigned>(Entry::ClassInfoOfAsyncGenerators)] = const_cast<ClassInfo*>(Typed::AsyncGenerator::info());
+    instance->runtimeTable[static_cast<unsigned>(Entry::ClassInfoOfErrorConstructor)] = const_cast<ClassInfo*>(ErrorConstructor::info());
+#if ENABLE(WEBASSEMBLY)
+    instance->runtimeTable[static_cast<unsigned>(Entry::ClassInfoOfWebAssemblyFunctions)] = const_cast<ClassInfo*>(WebAssemblyFunction::info());
+#endif
     instance->fieldsBelow().structureIDBase = JSC::structureIDBase();
     instance->placesByNameOfStructureIDZero = instance->fieldsBelow().structureIDBase + Structure::offsetOfPlacesByName();
     instance->cellCageBase = MarkedBlockCage::base();
     instance->numberTag = JSValue::NumberTag;
     instance->notCellMask = JSValue::NotCellMask;
+    instance->fieldsBelow().notUndefinedOrNullMask = ~static_cast<int64_t>(JSValue::ValueUndefined);
     instance->numberBoxBase = Typed::NumberBoxTable::base();
     instance->fieldsBelow().boxedNaN = JSValue::encode(jsNaN());
     for (int integer = Instance::leastIntegerKeptAsDouble; integer <= Instance::greatestIntegerKeptAsDouble; ++integer)
@@ -1167,8 +1181,12 @@ void Instance::destroy(Instance* instance)
     fastFree(instance->customGetters);
     fastFree(instance->propertyRuns);
     destroyJSONBuffers(*instance);
+    destroyJSONSource(*instance);
     OSAllocator::decommitAndRelease(instance->namedFieldReads, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->namedFieldWrites, numberOfNamedFields * sizeof(NamedField));
+    OSAllocator::decommitAndRelease(instance->fixedElements, numberOfFixedElements * sizeof(FixedElement));
+    OSAllocator::decommitAndRelease(instance->copiesForStubs, numberOfCopiesForStubs * sizeof(CopyForStubs));
+    OSAllocator::decommitAndRelease(instance->ordersOfCopies, numberOfOrdersOfCopies * sizeof(OrderOfCopy));
     OSAllocator::decommitAndRelease(instance->keyedReads, sizeOfKeyedTables);
     OSAllocator::decommitAndRelease(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
 }
@@ -2332,7 +2350,8 @@ void Instance::visit(Visitor& visitor, bool newOnly)
     for (Data* data : visitsEverything ? collections->all : collections->filledSinceLastCollection)
         data->visit(visitor);
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
-        if (newOnly) {
+        if (HeapVersion version = vm->heap.objectSpace().newlyAllocatedVersion(); newOnly && collections->versionWhenNewShapesWereLookedAt != version) {
+            collections->versionWhenNewShapesWereLookedAt = version;
             PlaceTable& table = PlaceTable::of(*vm);
             for (Data* data : collections->filledSinceLastCollection) {
                 for (Slot& slot : std::span { data->slots, data->numSlots }) {
@@ -2346,7 +2365,7 @@ void Instance::visit(Visitor& visitor, bool newOnly)
             }
             for (uint32_t number : collections->filledRows.span().subspan(collections->numberOfFilledRowsLookedAt))
                 table.keepIfShapeHasDiedBefore(visitor, row(number).structureID);
-            table.keepShapesThatHaveDiedBefore(visitor);
+            table.keepShapesThatHaveDiedBefore(visitor, version);
         }
     }
     auto visitTransitions = [&](const Vector<Slot*>& slots) {
@@ -2512,15 +2531,29 @@ bool Instance::hasPropertyRunTarget(Structure* structure, std::span<UniquedStrin
     return found != collections->canonicalPropertyRuns.end() && collections->propertyRunTargets.contains({ structure, found->value.get() });
 }
 
+bool Instance::takeRoomForPropertyRunTarget(RoomOfRun room)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.takeRoomForPropertyRunTarget(room);
+    uint16_t& left = room == RoomOfRun::UnderSymbols ? roomForRunsUnderSymbols : roomForRunsOfCopiedNames;
+    if (!left)
+        return false;
+    --left;
+    roomTakenForNextPropertyRunTarget = room;
+    return true;
+}
+
 const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* structure, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
         return realmInstance.propertyRunTarget(structure, run, collectNames);
     if (auto it = collections->propertyRunTargets.find({ structure, run }); it != collections->propertyRunTargets.end())
         return it->value;
+    DeferGCForAWhile deferGC(*vm);
     Vector<UniquedStringImpl*, 16> names;
     collectNames(names);
     PropertyRunTarget target;
+    target.room = std::exchange(roomTakenForNextPropertyRunTarget, RoomOfRun::None);
     bool mayBeIntercepted = names.contains(vm->propertyNames->underscoreProto.impl());
     for (JSValue next = structure->storedPrototype(); next.isObject() && !mayBeIntercepted;) {
         JSObject* prototype = asObject(next);
@@ -2670,6 +2703,18 @@ Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringI
 }
 template void Instance::visit(AbstractSlotVisitor&, bool);
 template void Instance::visit(SlotVisitor&, bool);
+
+template<typename Visitor>
+void Instance::visitWhatCompiledCodeLeaves(Visitor& visitor)
+{
+    visitor.appendUnbarriered(waiterToResume);
+    visitor.appendUnbarriered(JSValue::decode(resolutionForWaiter));
+    visitor.appendUnbarriered(JSValue::decode(asyncContextOfWaiter));
+    visitor.appendUnbarriered(savedFrameEntered);
+    visitor.appendUnbarriered(JSValue::decode(thrownValue));
+}
+template void Instance::visitWhatCompiledCodeLeaves(AbstractSlotVisitor&);
+template void Instance::visitWhatCompiledCodeLeaves(SlotVisitor&);
 
 void Instance::noteOutOfLineProperty(Structure* structure)
 {
@@ -3165,7 +3210,7 @@ void Instance::sweepKeyedTables(bool newOnly)
         return epoch == currentEpoch || epoch == MegamorphicCache::permanentEpoch;
     };
     auto namesLiveCells = [&](const Slot& slot) {
-        return isLive(slot.structureID) && heap.isMarked(static_cast<JSCell*>(slot.pointer));
+        return isLive(slot.structureID) && heap.isMarked(std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(slot.pointer) & ~bitsSetInKeyOfKeyedAddition));
     };
     bool validates = Options::validateAOTTypedFacts();
     auto forEachEntryToSweep = [&](auto* table, unsigned numberOfEntries, const auto& sweep) {
@@ -3195,7 +3240,7 @@ void Instance::sweepKeyedTables(bool newOnly)
         if (!read.slot.structureID)
             return;
         uint32_t flags = read.slot.offset & Slot::flagsMask;
-        bool stays = namesLiveCells(read.slot) && flags != Slot::isGetter;
+        bool stays = namesLiveCells(read.slot) && (flags != Slot::isGetter || read.slot.offset & ownAccessorIsAtLocation);
         if (stays && flags & Slot::isGetter && flags & Slot::pointerIsCell) {
             uint32_t epoch = read.epoch & ~epochIsValidated;
             if (epoch & epochIsOfDictionary)
@@ -3217,7 +3262,8 @@ void Instance::sweepKeyedTables(bool newOnly)
         if (!addition.slot.structureID)
             return;
         bool isStoreToCompiledField = addition.slot.offset & Slot::isGetter;
-        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && (!isLive(addition.newStructureID) || (addition.epoch != currentEpoch && addition.epoch != MegamorphicCache::invalidEpoch))))
+        uint32_t epoch = addition.epoch == keyedAdditionIsOfExtraProperty ? addition.numberOfValuesOfHolder >> shiftOfEpochOfKeyedExtraProperty : addition.epoch;
+        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
             zeroBytes(addition);
     });
     groupsToSweep.clearAll();
@@ -3245,6 +3291,21 @@ void Instance::sweepKeyedTables(bool newOnly)
     }
 }
 
+JSString* Instance::keyHandedToTraps(VM& vm, UniquedStringImpl* name)
+{
+    static_assert(hasOneBitSet(numberOfKeysHandedToTraps));
+    unsigned first = name->existingHash() * 2 % numberOfKeysHandedToTraps;
+    for (unsigned place : { first, first + 1 }) {
+        if (JSString* known = keysHandedToTraps[place]; known && known->tryGetValueImpl() == name)
+            return known;
+    }
+    JSString* made = jsString(vm, String(name));
+    keysHandedToTraps[first + 1] = keysHandedToTraps[first];
+    keysHandedToTraps[first] = made;
+    hasKeysHandedToTraps = true;
+    return made;
+}
+
 void Instance::clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollection, bool newOnly)
 {
     if (propertyRuns)
@@ -3262,6 +3323,8 @@ void Instance::clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollect
         }
     }
     zeroSpan(std::span { inheritedSetters });
+    if (std::exchange(hasFixedElements, false))
+        zeroSpan(std::span { fixedElements, numberOfFixedElements });
     if (isAtEndOfCollection) {
         sweepKeyedTables(newOnly);
         return;
@@ -3290,8 +3353,14 @@ void Instance::finalizeUnconditionally(bool newOnly)
     }
     if (typed) {
         typed->forgetPlansOfCoercionsOfDeadStructures(*vm, newOnly);
+        typed->forgetPrototypesOfHeirsThatAreDead(*vm);
         typed->forgetMadeKeysThatAreDead(*vm);
         typed->forgetExtraPropertyReads();
+        typed->forgetListingsWithExtraProperties();
+        typed->forgetCreationsBehindExtraProperties();
+        typed->forgetStoreTransitionsOfDeadStructures(*vm);
+        typed->forgetStructuresFoundLately();
+        typed->handlesOfExtraProperties.releaseThoseOfDeadObjects(*vm);
     }
     if (std::exchange(hasHeirsOfPrototypes, false))
         zeroSpan(std::span { heirsOfPrototypes });
@@ -3299,6 +3368,12 @@ void Instance::finalizeUnconditionally(bool newOnly)
         zeroSpan(std::span { thisAllocations });
     if (std::exchange(hasCaseConversions, false))
         zeroBytes(caseConversions);
+    if (std::exchange(hasCopiesForStubs, false))
+        zeroSpan(std::span { copiesForStubs, numberOfCopiesForStubs });
+    if (std::exchange(hasOrdersOfCopies, false))
+        zeroSpan(std::span { ordersOfCopies, numberOfOrdersOfCopies });
+    if (std::exchange(hasKeysHandedToTraps, false))
+        zeroSpan(std::span { keysHandedToTraps });
     zeroSpan(std::span { emptyStructuresOfLiterals });
     if (newOnly && Options::validateAOTTypedFacts()) [[unlikely]] {
         for (uint32_t number : collections->filledRows.span().first(collections->numberOfFilledRowsLookedAt))
@@ -3360,10 +3435,20 @@ void Instance::finalizeUnconditionally(bool newOnly)
             });
         };
         walkWeakTable(Collections::PropertyRunTargets, collections->propertyRunTargets, [&](auto& entry) {
-            if (!vm->heap.isMarked(entry.key.first) || (entry.value.last && !vm->heap.isMarked(entry.value.last)))
-                return true;
-            return std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
+            bool isDead = !vm->heap.isMarked(entry.key.first) || (entry.value.last && !vm->heap.isMarked(entry.value.last))
+                || std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
+            if (isDead && entry.value.room != RoomOfRun::None)
+                ++(entry.value.room == RoomOfRun::UnderSymbols ? roomForRunsUnderSymbols : roomForRunsOfCopiedNames);
+            return isDead;
         });
+        if (!newOnly) {
+            UncheckedKeyHashSet<const uint32_t*> runsOfTargets;
+            for (auto& key : collections->propertyRunTargets.keys())
+                runsOfTargets.add(key.second);
+            collections->canonicalPropertyRuns.removeIf([&](auto& entry) {
+                return !runsOfTargets.contains(entry.value.get());
+            });
+        }
         walkWeakTable(Collections::ConstructorsByFirstStructure, collections->constructorsByFirstStructure, [&](auto& entry) {
             return !vm->heap.isMarked(entry.key) || !vm->heap.isMarked(entry.value);
         });
@@ -3407,6 +3492,12 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (!newOnly) {
         for (Data* data : collections->all)
             data->retryAbandonedSlots();
+        for (unsigned row = 0; row < numberOfBufferAccessors; ++row) {
+            if (bufferAccessorAttempts[row] != maxBufferAccessorAttempts)
+                continue;
+            bufferAccessorAttempts[row] = 0;
+            bufferAccessorStructureIDs[row] = 0;
+        }
         auto& transitions = collections->transitions;
         std::ranges::sort(transitions);
         transitions.shrink(std::ranges::unique(transitions).begin() - transitions.begin());

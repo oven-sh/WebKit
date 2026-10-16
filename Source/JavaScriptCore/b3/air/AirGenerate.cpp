@@ -149,6 +149,18 @@ void prepareForGeneration(Code& code)
 #if USE(BUN_JSC_ADDITIONS)
     if (code.chargesForCalleeSaves() && code.needsUsedRegisters())
         forwardRegisterCopies(code);
+#if CPU(X86_64)
+    if (auto& inMemory = code.maskInMemory()) {
+        for (BasicBlock* block : code) {
+            for (Inst& inst : *block) {
+                if (inst.kind.opcode != BranchTest64 || !inst.args()[1].isTmp() || !inst.args()[2].isBitImm() || inst.args()[2].value() != inMemory->mask)
+                    continue;
+                inst.args()[2] = inst.args()[1];
+                inst.args()[1] = Arg::addr(Tmp(inMemory->base), inMemory->offset);
+            }
+        }
+    }
+#endif
 #endif
 
     // Not worth a whole-graph liveness scan just for the dead assignments it also kills, so this runs

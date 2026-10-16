@@ -962,10 +962,15 @@ public:
                 layout = &layoutOfEnvironment(*aotFields.dataOfCompiledEnvironments(), structure->firstShapeOfCompiledEnvironments(), cell);
             const uint8_t* fields = reinterpret_cast<const uint8_t*>(cell);
             if (!appendStructure(structure)) [[unlikely]] {
-                storeTop();
-                visitThroughMethodTable(visitor, structure, cell);
-                loadTop();
-                return true;
+                uint32_t offsetOfExtraProperties = layout->offsetOfExtraProperties();
+                if (!offsetOfExtraProperties) {
+                    storeTop();
+                    visitThroughMethodTable(visitor, structure, cell);
+                    loadTop();
+                    return true;
+                }
+                appendCell(structure);
+                appendNarrowReference(*reinterpret_cast<const uint32_t*>(fields + offsetOfExtraProperties));
             }
             if (!layout->referencesOffset)
                 return true;

@@ -2126,6 +2126,14 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
                 LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpGetLength>().metadata(this).m_modeMetadata);
                 break;
             }
+            case op_put_by_id: {
+                auto& metadata = instruction->as<OpPutById>().metadata(this);
+                metadata.m_oldStructureID = StructureID();
+                metadata.m_offset = 0;
+                metadata.m_newStructureID = StructureID();
+                metadata.m_structureChain.clear();
+                break;
+            }
             case op_iterator_open: {
                 dataLogLnIf(Options::verboseOSR(), "Clearing LLInt iterator open property access.");
                 LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpIteratorOpen>().metadata(this).m_modeMetadata);

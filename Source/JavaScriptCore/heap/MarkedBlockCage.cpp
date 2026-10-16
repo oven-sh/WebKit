@@ -359,11 +359,19 @@ void* MarkedBlockCage::tryAllocateBlock()
         m_manager.store(manager, std::memory_order_release);
         makeCurrent();
     }
-    return manager->tryAllocateBlock();
+    void* block = manager->tryAllocateBlock();
+#if ASAN_ENABLED
+    if (block)
+        __asan_unpoison_memory_region(block, MarkedBlock::blockSize);
+#endif
+    return block;
 }
 
 void MarkedBlockCage::freeBlock(void* block)
 {
+#if ASAN_ENABLED
+    __asan_poison_memory_region(block, MarkedBlock::blockSize);
+#endif
     m_manager.load(std::memory_order_relaxed)->freeBlock(block);
 }
 

@@ -27,7 +27,6 @@ public:
         , m_function(function)
         , m_findings(findings)
         , m_scope(scope)
-        , m_newObjectOfClass(program.find(asBytes("NewObjectOfClass"_s.span8())).value_or(StringID()))
     {
     }
 
@@ -555,12 +554,12 @@ private:
             Vector<Type, 4> arguments;
             for (ValueID argument : value.arguments)
                 arguments.append(typeOf(argument));
-            if (!applicableEntry(Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(value.string())), arguments.span())) {
+            if (!applicableEntry(m_program.operationOf(value), arguments.span())) {
                 StringPrintStream out;
-                out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", id.index(), " Operation ", String::fromUTF8(m_program.string(value.string())), ": the built-ins table has no entry for its ", value.arguments.size(), " arguments");
+                out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", id.index(), " Operation ", Builtins::singleton().at(value.builtin()).name, ": the built-ins table has no entry for its ", value.arguments.size(), " arguments");
                 m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
             }
-            if (value.string() == m_newObjectOfClass) {
+            if (m_program.operationOf(value) == Operations::NewObjectOfClass) {
                 LayoutID made = m_program.at(value.assertedType() ? value.assertedType() : value.type).onlyView();
                 if (!made || m_program.at(made).kind != LayoutKind::Instance || !m_program.at(made).isAllocated)
                     fail(id, "creates an instance of a layout that is not an instantiable class"_s);
@@ -601,7 +600,6 @@ private:
     const Function& m_function;
     Vector<String>& m_findings;
     VerifierScope m_scope;
-    StringID m_newObjectOfClass;
 };
 
 } // anonymous namespace

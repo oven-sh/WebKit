@@ -25,6 +25,23 @@ inline bool isRare(const FrequentedBlock& successor, BasicBlock* from)
     return successor.frequency() == FrequencyClass::Rare || successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency();
 }
 
+inline bool isRareForItsPlace(const FrequentedBlock& successor, BasicBlock* from)
+{
+    if (from->last()->opcode() != Switch || successor.frequency() == FrequencyClass::Rare)
+        return isRare(successor, from);
+    unsigned numberOfCases = from->numSuccessors() - 1;
+    double shareInChain = 0;
+    double shareOfCase = 1;
+    for (unsigned i = 0; i < numberOfCases; ++i) {
+        shareOfCase /= 2;
+        if (from->successorBlock(i) == successor.block())
+            shareInChain += shareOfCase;
+    }
+    if (from->successorBlock(numberOfCases) == successor.block())
+        shareInChain += shareOfCase;
+    return successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency() * std::min(shareInChain, 1.0 / from->numSuccessors());
+}
+
 // A stub that keeps the registers of its caller is none.
 inline bool isCall(Value* value)
 {

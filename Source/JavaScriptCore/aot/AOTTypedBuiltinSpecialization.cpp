@@ -60,7 +60,6 @@ public:
         , m_function(function)
         , m_builtins(Builtins::singleton())
         , m_mode(mode)
-        , m_callIntrinsic(program.stringOf(m_builtins.at(m_builtins.callIntrinsic()).nameName))
     {
     }
 
@@ -80,13 +79,13 @@ public:
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             for (unsigned i = m_numberOfValuesLeftBehind[b]; i < m_function.blocks[b].values.size(); ++i) {
                 auto& value = m_function.at(m_function.blocks[b].values[i]);
-                if (value.opcode == Opcode::Operation && m_callIntrinsic && value.string() == m_callIntrinsic) {
+                if (value.opcode == Opcode::Operation && value.builtin() == m_builtins.callIntrinsic()) {
                     convertCallIntrinsicToCall(value);
                     ++changed;
                     continue;
                 }
                 m_blockOfSite = BlockID(b);
-                if ((m_mode == Mode::Speculation && takeTimeOfDates(BlockID(b), i)) || specialize(BlockID(b), i)) {
+                if ((m_mode == Mode::Speculation && (takeTimeOfDates(BlockID(b), i) || readNumberOnEachWay(BlockID(b), i))) || specialize(BlockID(b), i)) {
                     ++changed;
                     break;
                 }
@@ -167,6 +166,25 @@ private:
         if (!entry || m_builtins.at(entry).implementation.kind != BuiltinImplementation::Prelude)
             return { };
         return m_program.preludeFunctions[static_cast<unsigned>(m_builtins.at(entry).implementation.prelude)];
+    }
+
+    FunctionID preludeFunctionFor(BuiltinID entry, const Value& call) const
+    {
+        FunctionID callee = preludeFunctionOf(entry);
+        if (!callee || call.arguments.isEmpty())
+            return callee;
+        BuiltinName callback = globalDefinedBy(call.arguments[0]);
+        if (!callback)
+            return callee;
+        static const BuiltinName booleanConstructor = Builtins::singleton().nameOf(asBytes("Boolean"_s.span8()));
+        static const BuiltinName numberConstructor = Builtins::singleton().nameOf(asBytes("Number"_s.span8()));
+        PreludeFunction which = m_builtins.at(entry).implementation.prelude;
+        FunctionID withoutCalls;
+        if (which == PreludeFunction::ArrayFilter && callback == booleanConstructor)
+            withoutCalls = m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayFilterTruthy)];
+        else if (which == PreludeFunction::ArrayMap && callback == numberConstructor)
+            withoutCalls = m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayMapByNumber)];
+        return withoutCalls ? withoutCalls : callee;
     }
 
     bool isStringClass(const EngineClass& engineClass) const { return engineClass.index == m_builtins.stringClass().index; }
@@ -263,6 +281,70 @@ private:
         return true;
     }
 
+    bool readNumberOnEachWay(BlockID block, unsigned index)
+    {
+        auto& values = m_function.at(block).values;
+        ValueID id = values[index];
+        auto& read = m_function.at(id);
+        if (read.opcode != Opcode::GetById || read.isOnSlowPath || read.hasWordOfKnownPlace() || read.immediates[1] != Format::none || !read.type || index + 1 == values.size())
+            return false;
+        switch (auto& next = m_function.at(values[index + 1]); next.opcode) {
+        case Opcode::Less:
+        case Opcode::LessEq:
+        case Opcode::Greater:
+        case Opcode::GreaterEq:
+            if (next.child(0) != id && next.child(1) != id)
+                return false;
+            break;
+        default:
+            return false;
+        }
+        ValueID receiver = read.child(0);
+        TypeID prediction = m_function.at(receiver).prediction();
+        if (!prediction || !typeOf(receiver).anyObject)
+            return false;
+        auto* engineClass = m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull).onlyEngineClass();
+        if (!engineClass || engineClass->type == ArrayType || !engineClass->canCheckOriginalStructure())
+            return false;
+        if (auto& refuted = m_refuted[block.index()]; refuted.engineClass == engineClass->index && refuted.receiver == originOf(receiver))
+            return false;
+        BuiltinName name = m_program.builtinName(read.string());
+        BuiltinID entry = name ? m_builtins.findForInstance(BuiltinKind::Getter, *engineClass, name) : BuiltinID();
+        if (!entry || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Generic)
+            return false;
+        TypeID yielded = m_program.integersYieldedByBuiltins[entry.index()];
+        auto& number = m_program.at(m_program.types.number);
+        if (!yielded || !m_program.at(yielded).isWithin(number, m_program) || read.type == m_program.types.number || !number.isWithin(m_program.at(read.type), m_program))
+            return false;
+        if (m_isInLoop.isEmpty()) {
+            m_isInLoop.fill(false, m_function.blocks.size());
+            for (size_t inLoop : blocksInLoops(m_function))
+                m_isInLoop[inLoop] = true;
+        }
+        if (!m_isInLoop[block.index()] || numberOfUsesOf(id) != 1)
+            return false;
+
+        Value original = read;
+        open(block, index);
+        Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
+        guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), engineClass->index };
+        guard.arguments.append(receiver);
+        guard.guardsFastPath = true;
+        BlockID slow = branch(append(WTF::move(guard)));
+        Value onObject = original;
+        onObject.children[0] = held(receiver, m_program.engineClassTypes[engineClass->index]);
+        onObject.type = yielded;
+        onObject.rep = repOf(m_program.at(onObject.type));
+        onObject.takePredictionOf(Value { });
+        finish(appendThrowing(WTF::move(onObject)));
+
+        moveTo(slow);
+        m_refuted[slow.index()] = { originOf(receiver), engineClass->index };
+        original.isOnSlowPath = true;
+        finish(appendThrowing(WTF::move(original)));
+        return true;
+    }
+
     // Whether the value at the index was replaced: then the block ends before it.
     bool specialize(BlockID block, unsigned index)
     {
@@ -327,7 +409,7 @@ private:
             return false;
         FunctionID callee;
         if (m_mode == Mode::Prelude) {
-            callee = preludeFunctionOf(entry);
+            callee = preludeFunctionFor(entry, m_function.at(id));
             if (!callee)
                 return false;
         } else if (isKnown)
@@ -669,6 +751,8 @@ private:
         m_numberOfValuesLeftBehind.append(0);
         if (!m_isColdByText.isEmpty())
             m_isColdByText.append(m_isColdByText[m_blockOfSite.index()]);
+        if (!m_isInLoop.isEmpty())
+            m_isInLoop.append(m_isInLoop[m_blockOfSite.index()]);
         return BlockID(m_function.blocks.size() - 1);
     }
 
@@ -796,12 +880,12 @@ private:
     Function& m_function;
     const Builtins& m_builtins;
     Mode m_mode;
-    StringID m_callIntrinsic;
     // By block.
     Vector<Refuted> m_refuted;
     Vector<bool> m_holdsDatesAsTheyWere;
     Vector<unsigned> m_numberOfValuesLeftBehind;
     Vector<bool> m_isColdByText;
+    Vector<bool> m_isInLoop;
     BlockID m_blockOfSite;
     // Of the value that is being replaced.
     uint32_t m_position { 0 };
@@ -1794,6 +1878,8 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
             return true;
         if (function.at(value).opcode != Opcode::Parameter)
             return false;
+        if (auto& parameter = function.at(value); !parameter.parameterBlock().index() && parameter.parameterIndex() < function.blocks[0].parameters.size() && function.blocks[0].parameters[parameter.parameterIndex()] == value)
+            return false;
         for (unsigned join = 1; join < function.blocks.size(); ++join) {
             size_t index = function.blocks[join].parameters.span().size();
             for (size_t i = 0; i < function.blocks[join].parameters.size(); ++i) {
@@ -1811,6 +1897,38 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
             return false;
         }
         return false;
+    };
+    Vector<unsigned> numbersOfUses;
+    auto numberOfUsesOf = [&](ValueID value) {
+        if (numbersOfUses.isEmpty()) {
+            numbersOfUses.fill(0, function.values.size());
+            auto count = [&](ValueID used) {
+                if (used)
+                    ++numbersOfUses[used.index()];
+            };
+            for (auto& other : function.blocks) {
+                for (ValueID user : other.values)
+                    std::as_const(function.at(user)).forEachChild(count);
+                other.terminator.forEachChild(count);
+            }
+        }
+        return numbersOfUses[value.index()];
+    };
+    auto forgetUsesBy = [&](auto& user) {
+        if (numbersOfUses.isEmpty())
+            return;
+        user.forEachChild([&](ValueID used) {
+            if (used)
+                --numbersOfUses[used.index()];
+        });
+    };
+    auto countUsesBy = [&](auto& user) {
+        if (numbersOfUses.isEmpty())
+            return;
+        user.forEachChild([&](ValueID used) {
+            if (used)
+                ++numbersOfUses[used.index()];
+        });
     };
     std::optional<BitVector> isInLoop;
     unsigned changed = 0;
@@ -1849,7 +1967,7 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
         if (generic.arguments.size() > Program::maxArgumentsOfGuardedPreludeEntry || call.opcode != Opcode::CallDirect || generic.isInTailPosition)
             continue;
         bool holdsResultToType = generic.type != program.types.anything;
-        if (holdsResultToType ? generic.rep != call.rep || call.type != program.at(call.function()).resultType : call.rep != Rep::JSValue && call.rep != Rep::Cell)
+        if (holdsResultToType ? generic.rep != call.rep || call.type != program.at(call.function()).resultType || !program.at(generic.type).isWithin(program.at(call.type), program) : call.rep != Rep::JSValue && call.rep != Rep::Cell)
             continue;
         bool isResolved = generic.opcode == Opcode::CallBuiltin;
         if (isResolved) {
@@ -1883,16 +2001,7 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
                     isUnobservable = isFound;
                 }
             }
-            unsigned uses = 0;
-            auto count = [&](ValueID used) {
-                uses += used == read;
-            };
-            for (auto& other : function.blocks) {
-                for (ValueID user : other.values)
-                    std::as_const(function.at(user)).forEachChild(count);
-                other.terminator.forEachChild(count);
-            }
-            if (!isFound || uses != 1)
+            if (!isFound || numberOfUsesOf(read) != 1)
                 continue;
         } else if (!isResolved && (generic.opcode != Opcode::CallMethod || generic.child(0) != receiver))
             continue;
@@ -1904,17 +2013,8 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
             ValueID argument = generic.arguments[i];
             if (function.at(argument).opcode != Opcode::NewClosure)
                 continue;
-            unsigned uses = 0;
-            auto count = [&](ValueID used) {
-                uses += used == argument;
-            };
-            for (auto& other : function.blocks) {
-                for (ValueID user : other.values)
-                    std::as_const(function.at(user)).forEachChild(count);
-                other.terminator.forEachChild(count);
-            }
             unsigned usesByTheTwoCalls = 1 + (i + 1 < call.arguments.size() && call.arguments[i + 1] == argument);
-            if (uses != usesByTheTwoCalls)
+            if (numberOfUsesOf(argument) != usesByTheTwoCalls)
                 continue;
             matches &= !i && !capturesEnvironment(function.at(argument)) && program.makesSlimClosures(program.at(function.at(argument).function()));
             numberOfCapturesOfCopiedArgument = function.at(argument).arguments.size();
@@ -1960,6 +2060,7 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
             undefinedValue.inlineFrame = function.at(read).inlineFrame;
             undefinedValue.type = program.types.undefined;
             undefinedValue.rep = repOf(program.at(undefinedValue.type));
+            forgetUsesBy(std::as_const(function.at(read)));
             function.at(read) = WTF::move(undefinedValue);
         }
         Value callOfEntry;
@@ -1973,19 +2074,27 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
         callOfEntry.immediates = { entry.index(), Format::none };
         callOfEntry.arguments.append(receiver);
         callOfEntry.arguments.appendVector(generic.arguments);
+        forgetUsesBy(std::as_const(generic));
         generic = WTF::move(callOfEntry);
+        countUsesBy(std::as_const(generic));
+        forgetUsesBy(std::as_const(function.at(block.values.last())));
         block.values.removeLast();
         block.values.appendVector(slow.values);
+        forgetUsesBy(block.terminator);
         block.terminator = WTF::move(slow.terminator);
         slow.values.clear();
         slow.terminator = Terminator { };
         if (receiversThatMayYetBeProven == ReceiversThatMayYetBeProven::Wait) {
-            fast.values.clear();
-            fast.terminator = Terminator { };
-            for (BlockID blockOfCasts : blocksOfCasts) {
-                function.at(blockOfCasts).values.clear();
-                function.at(blockOfCasts).terminator = Terminator { };
-            }
+            auto empty = [&](Block& left) {
+                for (ValueID value : left.values)
+                    forgetUsesBy(std::as_const(function.at(value)));
+                forgetUsesBy(left.terminator);
+                left.values.clear();
+                left.terminator = Terminator { };
+            };
+            empty(fast);
+            for (BlockID blockOfCasts : blocksOfCasts)
+                empty(function.at(blockOfCasts));
         }
         ++changed;
     }

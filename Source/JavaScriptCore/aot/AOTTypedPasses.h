@@ -141,6 +141,7 @@ enum class CleanUpTiming : bool { Immediate, Deferred };
 bool threadOwnKeysOfForIn(const Program&, Function&);
 unsigned flattenIteratedObjectEntries(const Program&, Function&);
 unsigned fuseOwnPropertyDescriptorCopies(const Program&, Function&);
+unsigned splitDefinePropertiesOverLiterals(const Program&, Function&);
 unsigned hoistDefinePropertyIntoPredecessors(Function&);
 // Behind all passes on the function, once: the birth that a wrapper (Function::worker) has brought along and that is still there goes from the block where the ways out of the worker meet into each of them.
 void moveBirthsIntoArms(const Program&, Function&);
@@ -189,6 +190,7 @@ void reuseEnvironments(Program&);
 std::optional<bool> areEqualConstants(const Program&, const Value&, const Value&, bool isStrict);
 // Part of cleanUp(): a read of a field or a variable that repeats one whose outcome still holds becomes an Upcast of that one. Yields whether there was one.
 bool eliminateRedundantReads(const Program&, Function&);
+bool hoistReadsOutOfLoops(const Program&, Function&);
 enum class AllocationSinkingPolicy : uint8_t { EliminateOnly, AllowMaterialization };
 bool sinkObjectAllocations(const Program&, Function&, AllocationSinkingPolicy);
 BlockID splitEdge(Function&, BlockID from, unsigned targetIndex);

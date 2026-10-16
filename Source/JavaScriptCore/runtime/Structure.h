@@ -737,9 +737,21 @@ public:
     void setCompiledLayout(const AOT::Typed::LayoutData* layout) { aotFields().compiledLayoutOrData = std::bit_cast<uintptr_t>(layout); }
     static constexpr uint8_t markingStampMask = 3;
     static constexpr uint8_t isOfObjectsWithExtraProperties = 4;
-    static_assert(!((markingStampMask | isOfObjectsWithExtraProperties) & (IndexingTypeLockIsHeld | IndexingTypeLockHasParked)));
+    static constexpr uint8_t hasPrototypeOfLayout = 8;
+    static_assert(!((markingStampMask | isOfObjectsWithExtraProperties | hasPrototypeOfLayout) & (IndexingTypeLockIsHeld | IndexingTypeLockHasParked)));
     static constexpr uint8_t markingStampFor(uint32_t markingVersion) { return (markingVersion & 1) + 1; }
     uint8_t& markingStampAndFlags() { return *(reinterpret_cast<uint8_t*>(this) + indexingTypeAndMiscOffset()); }
+    static_assert(sizeof(SeenProperties) == sizeof(uint64_t));
+    static constexpr unsigned shiftOfOffsetOfExtraProperties = 32;
+    static constexpr unsigned shiftOfSizeOfExtraProperties = 48;
+    StructureID structureIDOfExtraProperties() const { return std::bit_cast<StructureID>(static_cast<uint32_t>(m_seenProperties.bits())); }
+    void setStructureOfExtraProperties(Structure* structure, uint16_t offsetInObject, uint16_t sizeOfCell)
+    {
+        ASSERT(compiledLayout());
+        m_seenProperties = SeenProperties(static_cast<uint64_t>(structure ? structure->id().bits() : 0) | static_cast<uint64_t>(offsetInObject) << shiftOfOffsetOfExtraProperties | static_cast<uint64_t>(sizeOfCell) << shiftOfSizeOfExtraProperties);
+    }
+    static constexpr ptrdiff_t offsetOfStructureIDOfExtraProperties() { return seenPropertiesOffset(); }
+    static constexpr ptrdiff_t offsetOfOffsetOfExtraProperties() { return seenPropertiesOffset() + shiftOfOffsetOfExtraProperties / 8; }
     // Of the environments of 65,536 shapes. Which of them a cell is of is in its header: see AOT::Typed::layoutOfEnvironment().
     const AOT::Typed::Data* dataOfCompiledEnvironments() const { return aotFieldsOrEmpty().dataOfCompiledEnvironments(); }
     uint32_t firstShapeOfCompiledEnvironments() const { return static_cast<uint32_t>(m_pageOfEnvironmentShapes) << 16; }
@@ -781,6 +793,11 @@ public:
     static constexpr ptrdiff_t propertyTableUnsafeOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_propertyTableUnsafe);
+    }
+
+    static constexpr ptrdiff_t maxOffsetOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_maxOffset);
     }
 
     static constexpr ptrdiff_t inlineCapacityOffset()

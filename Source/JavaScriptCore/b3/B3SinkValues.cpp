@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
 
 #include "B3BasicBlockInlines.h"
+#include "B3CycleForest.h"
 #include "B3Dominators.h"
 #include "B3NaturalLoops.h"
 #include "B3PatchpointValue.h"
@@ -237,6 +238,18 @@ private:
                 if (!--pending[successor])
                     worklist.append(successor);
             });
+        }
+        bool isReducible = true;
+        for (BasicBlock* candidate : m_proc)
+            isReducible &= m_isOrdered[candidate];
+        if (!isReducible) {
+            CycleForest cycles(m_proc);
+            for (BasicBlock* candidate : m_proc) {
+                bool isOnCycleWithSeveralEntries = false;
+                for (unsigned cycle = cycles.innermost(candidate); cycle != CycleForest::none; cycle = cycles[cycle].parent)
+                    isOnCycleWithSeveralEntries |= !cycles[cycle].isReducible();
+                m_isOrdered[candidate] = !isOnCycleWithSeveralEntries;
+            }
         }
         return m_isOrdered[block];
     }

@@ -28,7 +28,7 @@ namespace AOT {
 
 struct CompiledCode;
 
-void estimateFrequencies(B3::Procedure&);
+void estimateFrequencies(B3::Procedure&, bool returnsAreUnlikely);
 CCallHelpers::JumpList emitStackCheck(CCallHelpers&, unsigned frameSize);
 void emitStackOverflow(CCallHelpers&, StubCalls&, const CCallHelpers::JumpList&, unsigned frameSize);
 #if CPU(ARM64)

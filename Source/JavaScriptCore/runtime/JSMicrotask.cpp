@@ -1456,7 +1456,9 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
             }
 #if ENABLE(AOT)
             if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::importOfCompiledEntryPoint(record) : nullptr) {
-                JSValue imported = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
+                MarkedArgumentBuffer onlyWaits;
+                onlyWaits.append(jsNull());
+                JSValue imported = call(globalObject, import, JSC::getCallData(import), jsUndefined(), onlyWaits);
                 if (scope.exception()) [[unlikely]] {
                     resultPromise->rejectWithCaughtException(vm, scope);
                     return;
