@@ -1043,6 +1043,28 @@ void testAdd64Imm32()
     }
 }
 
+void testAdd64RegisterAddress()
+{
+    auto add = compile([] (CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.add64(GPRInfo::argumentGPR1, CCallHelpers::Address(GPRInfo::argumentGPR0, sizeof(uint64_t)));
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    for (auto initial : int64Operands()) {
+        for (auto source : int64Operands()) {
+            uint64_t values[] = { 0x0123456789abcdefULL, static_cast<uint64_t>(initial), 0xfedcba9876543210ULL };
+            auto result = invoke<uint64_t>(add, values, static_cast<uint64_t>(source));
+            CHECK_EQ(values[1], static_cast<uint64_t>(initial) + static_cast<uint64_t>(source));
+            CHECK_EQ(result, static_cast<uint64_t>(source));
+            CHECK_EQ(values[0], 0x0123456789abcdefULL);
+            CHECK_EQ(values[2], 0xfedcba9876543210ULL);
+        }
+    }
+}
+
 void testAdd64ArgImm32()
 {
     for (auto immediate : int32Operands()) {
@@ -8892,6 +8914,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testAdd32Imm());
     RUN(testAdd32ArgImm());
     RUN(testAdd64Imm32());
+    RUN(testAdd64RegisterAddress());
     RUN(testAdd64ArgImm32());
     RUN(testAdd64Imm64());
     RUN(testAdd64ArgImm64());
