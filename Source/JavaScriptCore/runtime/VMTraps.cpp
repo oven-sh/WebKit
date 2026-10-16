@@ -307,7 +307,10 @@ private:
         if (optionalOwnerThread) {
             auto expectedUID = optionalOwnerThread.value()->uid();
             ThreadSuspendLocker locker;
-            sendMessage(locker, *optionalOwnerThread.value().get(), [&] (PlatformRegisters& registers) -> void {
+            // Foreign native stacks may wait for another VM to run. Leave the
+            // trap pending and release the global suspension lock before the
+            // scheduled retry, so that VM's collector can make progress.
+            WTF::trySendMessage(locker, *optionalOwnerThread.value().get(), [&](PlatformRegisters& registers) -> void {
                 auto signalContext = SignalContext::tryCreate(registers);
                 if (!signalContext)
                     return;
