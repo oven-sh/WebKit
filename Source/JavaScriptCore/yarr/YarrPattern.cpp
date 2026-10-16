@@ -1970,8 +1970,11 @@ public:
         std::unique_ptr<PatternDisjunction> newDisjunction;
         for (unsigned alt = 0; alt < disjunction->m_alternatives.size(); ++alt) {
             PatternAlternative* alternative = disjunction->m_alternatives[alt].get();
-            if (filterStartsWithBOL && alternative->m_startsWithBOL && alternative->matchDirection() != Backward)
+            if (filterStartsWithBOL && alternative->m_startsWithBOL) {
+                ASSERT(alternative->matchDirection() == Forward);
+                ++m_alternativesFilteredOut;
                 continue;
+            }
 
             Vector<unsigned> sourceTermIndices;
             auto copiedTerms = copyTerms(alternative, filterStartsWithBOL, sourceTermIndices);
@@ -2040,7 +2043,18 @@ public:
         if ((term.type != PatternTerm::Type::ParenthesesSubpattern) && (term.type != PatternTerm::Type::ParentheticalAssertion))
             return PatternTerm(term);
         
-        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL && !term.invert())) {
+        unsigned alternativesFilteredOutBefore = m_alternativesFilteredOut;
+        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL && !term.invert() && term.matchDirection() == Forward)) {
+            // Both matchers try the loop copy at the first index too, after the once-through alternatives
+            // fail there, and a lookahead never backtracks into its content. A lookahead that lost its ^
+            // alternative would take a later alternative at the start of the input, and a backreference
+            // would read other captures: /(?=^(a)|a)\1a/ must not match "ab". So when a backreference
+            // can read what a lookahead captures, the filter takes all of it (no copy, below) or nothing.
+            if (alternativesFilteredOutBefore != m_alternativesFilteredOut && term.type == PatternTerm::Type::ParentheticalAssertion && term.containsAnyCaptures() && m_pattern.m_containsBackreferences) {
+                newDisjunction = copyDisjunction(term.parentheses.disjunction, /* filterStartsWithBOL */ false);
+                if (!newDisjunction)
+                    return std::nullopt;
+            }
             PatternTerm termCopy = term;
             termCopy.parentheses.disjunction = newDisjunction;
             m_pattern.m_hasCopiedParenSubexpressions = true;
@@ -3846,6 +3860,9 @@ private:
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
     ErrorCode m_error { ErrorCode::NoError };
+    // Alternatives copyDisjunction() has skipped for m_startsWithBOL. copyTerm() reads it before and
+    // after a copy to learn if the filter took anything out of that copy.
+    unsigned m_alternativesFilteredOut { 0 };
     bool m_invertCharacterClass;
     ParenthesisContext m_parenthesisContext;
 
