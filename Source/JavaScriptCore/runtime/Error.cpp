@@ -255,7 +255,8 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
 #if USE(BUN_JSC_ADDITIONS)
         // A host that formats the stack itself (VM::onComputeErrorInfo; Bun) reads the parser's position from these
         // fields, maps it through its source maps and hands back the line to report: what it computed stands. It is
-        // only asked when the stack has a frame.
+        // only asked here when the stack has a frame. An error with none gets its lazy stack, which asks the host when
+        // it is read, and the line and sourceURL stay the parser's.
         bool hostComputes = (vm.onComputeErrorInfoJSValue() || vm.onComputeErrorInfo())
             && !errorInstance->hasMaterializedErrorInfo() && errorInstance->stackTrace() && !errorInstance->stackTrace()->isEmpty();
 

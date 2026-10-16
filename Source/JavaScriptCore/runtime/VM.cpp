@@ -2250,6 +2250,9 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_emptyPropertyNameEnumerator);
     visitor.append(m_orderedHashTableDeletedValue);
     visitor.append(m_orderedHashTableSentinel);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(m_errorInstanceLazyStackGetterSetter);
+#endif
     visitor.append(m_sentinelStructure);
     visitor.append(m_fastArrayValuesSentinel);
     visitor.append(m_fastArrayKeysSentinel);

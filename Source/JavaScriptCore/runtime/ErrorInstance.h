@@ -112,6 +112,10 @@ public:
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
 
+    // An error that has no frame to format owns a stack too, as in V8: a lazy property, which the first lookup of the error
+    // installs. A read of the property formats the stack. A store, a delete and a lookup that does not read it do not.
+    JSValue materializeLazyStack(VM&);
+
 #endif
 
     JS_EXPORT_PRIVATE String sanitizedToString(JSGlobalObject*);
@@ -185,7 +189,11 @@ protected:
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_stackStringIsFramesOnly : 1;
+    // The error had no frame to format at its first lookup, and got its lazy stack then. It does not get another: a stack
+    // that is deleted stays deleted.
+    bool m_lazyStackInstalled : 1;
     JSValue stackWithHeader(VM&, String&& frames);
+    void installLazyStack(VM&);
 #endif
 };
 

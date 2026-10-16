@@ -39,13 +39,35 @@ const ClassInfo ErrorInstance::s_info = { "Error"_s, &JSNonFinalObject::s_info, 
 
 static JSC_DECLARE_CUSTOM_GETTER(errorInstanceMaterializingStackGetter);
 
+// The getter of every stack that an ErrorInstance holds as a custom value: the one Error.captureStackTrace() saves, and the
+// lazy stack of an error that has no frame to format. A compiled lookup knows the getter from the Structure alone, and the
+// two have the same Structure, so they cannot have a getter each.
 JSC_DEFINE_CUSTOM_GETTER(errorInstanceMaterializingStackGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();
     auto* errorInstance = uncheckedDowncast<ErrorInstance>(JSValue::decode(thisValue));
+#if USE(BUN_JSC_ADDITIONS)
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    errorInstance->materializeErrorInfoIfNeeded(vm);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(errorInstance->materializeLazyStack(vm)));
+#else
     errorInstance->materializeErrorInfoIfNeeded(vm);
     return JSValue::encode(errorInstance->getDirect(vm, vm.propertyNames->stack));
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// One for the VM, which every error with a lazy stack shares.
+static JSCell* lazyStackGetterSetter(VM& vm)
+{
+    if (JSCell* getterSetter = vm.m_errorInstanceLazyStackGetterSetter.get()) [[likely]]
+        return getterSetter;
+    auto* getterSetter = CustomGetterSetter::create(vm, errorInstanceMaterializingStackGetter, nullptr);
+    vm.m_errorInstanceLazyStackGetterSetter.setWithoutWriteBarrier(getterSetter);
+    return getterSetter;
+}
+#endif
 
 ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     : Base(vm, structure)
@@ -62,6 +84,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #endif // ENABLE(WEBASSEMBLY)
 #if USE(BUN_JSC_ADDITIONS)
     , m_stackStringIsFramesOnly(false)
+    , m_lazyStackInstalled(false)
 #endif
 {
 }
@@ -540,9 +563,74 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         }
         m_errorInfoMaterialized = true;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    else if (fn)
+        installLazyStack(vm);
+#endif
 
     return true;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The error has no frame to format, and the host formats stacks as V8 does. In V8 every error owns a stack, so this one does
+// from its first lookup: a custom value, which a store replaces and a delete removes without a call of its getter. Nothing is
+// formatted here, so no code of the host or of the user runs.
+void ErrorInstance::installLazyStack(VM& vm)
+{
+    if (m_lazyStackInstalled)
+        return;
+    m_lazyStackInstalled = true;
+    // Native code can have put a stack on the error directly.
+    if (isValidOffset(getDirectOffset(vm, vm.propertyNames->stack)))
+        return;
+    // An error has its stack from the start, so one with immutable properties still gets it.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    putDirectCustomAccessor(vm, vm.propertyNames->stack, lazyStackGetterSetter(vm), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+}
+
+// The value of a stack that is a custom value, for its getter, after materializeErrorInfoIfNeeded(). That has put the stack
+// there if the error had something to format. If the lazy stack is still in place, the error has nothing: its stack is
+// formatted here, and the error info is materialized from then on.
+JSValue ErrorInstance::materializeLazyStack(VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    unsigned attributes = 0;
+    JSValue current = getDirect(vm, vm.propertyNames->stack, attributes);
+    if (!current || (attributes & PropertyAttribute::Accessor))
+        return jsUndefined();
+    if (!(attributes & PropertyAttribute::CustomValue))
+        return current;
+
+    // The host's formatter is reading the stack that it formats.
+    if (m_errorInfoMaterialized)
+        return jsUndefined();
+
+    bool capturedStack = !!m_stackTrace;
+    ASSERT(!capturedStack || m_stackTrace->isEmpty());
+    {
+        Locker locker { cellLock() };
+        m_stackTrace = nullptr;
+    }
+    m_errorInfoMaterialized = true;
+
+    // A stack that was captured with no frame in it is the header: the host formats it, and Error.prepareStackTrace gets no
+    // call site. If no stack was captured (Error.stackTraceLimit was not a number), the stack is undefined. Both as in V8.
+    JSValue stack = jsUndefined();
+    if (auto& fn = vm.onComputeErrorInfoJSValue(); fn && capturedStack) {
+        Vector<StackFrame> noFrames;
+        stack = fn(vm, noFrames, m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
+        if (!stack) [[unlikely]]
+            stack = jsUndefined();
+    }
+
+    // The formatter can have thrown. The error then keeps what the formatter returned, as an error with frames does.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    putDirect(vm, vm.propertyNames->stack, stack, attributes & ~PropertyAttribute::CustomValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    return stack;
+}
+#endif
 
 static bool isErrorInfoProperty(VM& vm, PropertyName propertyName)
 {

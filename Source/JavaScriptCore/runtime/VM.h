@@ -619,6 +619,10 @@ public:
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
+#if USE(BUN_JSC_ADDITIONS)
+    // The custom value that every error with a lazy stack holds (ErrorInstance::installLazyStack()). The first of them makes it.
+    WriteBarrier<JSCell> m_errorInstanceLazyStackGetterSetter;
+#endif
 
     WriteBarrier<Structure> m_sentinelStructure;
     WriteBarrier<JSSentinel> m_fastArrayValuesSentinel;
