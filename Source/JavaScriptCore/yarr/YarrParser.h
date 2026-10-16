@@ -101,7 +101,7 @@ public:
      */
     ErrorCode parse()
     {
-        if (m_size > maxPatternSize)
+        if (m_size > maxPatternSize && (m_size > maxPatternSizeWithCharacterClasses || sizeOutsideCharacterClasses() > maxPatternSize))
             return ErrorCode::PatternTooLarge;
 
         parseTokens();
@@ -2189,6 +2189,49 @@ private:
             m_errorCode = ErrorCode::TooManyCaptures;
     }
 
+    // However long a character class is written, it ends up as one set of characters, which is one term.
+    // A class counts as one character here. The strings of a \q{...} become alternatives, so they count in full.
+    unsigned sizeOutsideCharacterClasses() const
+    {
+        unsigned size = 0;
+        unsigned classDepth = 0;
+        bool inClassStrings = false;
+        for (unsigned index = 0; index < m_size; ++index) {
+            char32_t ch = m_data[index];
+            if (ch == '\\') {
+                if (classDepth && !inClassStrings && isUnicodeSetsCompilation() && index + 2 < m_size && m_data[index + 1] == 'q' && m_data[index + 2] == '{') {
+                    inClassStrings = true;
+                    index += 2;
+                    continue;
+                }
+                ++index;
+                if (!classDepth || inClassStrings)
+                    size += 2;
+                continue;
+            }
+            if (inClassStrings) {
+                if (ch == '}')
+                    inClassStrings = false;
+                else
+                    ++size;
+                continue;
+            }
+            if (!classDepth) {
+                ++size;
+                if (ch == '[')
+                    classDepth = 1;
+                continue;
+            }
+            if (ch == ']')
+                --classDepth;
+            else if (ch == '[' && isUnicodeSetsCompilation()) {
+                ++classDepth;
+                ++size;
+            }
+        }
+        return size;
+    }
+
     bool isLegacyCompilation() const { return m_compileMode == CompileMode::Legacy; }
     bool isUnicodeCompilation() const { return m_compileMode == CompileMode::Unicode; }
     bool isUnicodeSetsCompilation() const { return m_compileMode == CompileMode::UnicodeSets; }
@@ -2213,6 +2256,7 @@ private:
     UncheckedKeyHashSet<String> m_forwardReferenceNames;
 
     static constexpr unsigned maxPatternSize = 1024 * 1024; // Derived by empirical testing of compile time in PCRE and WREC.
+    static constexpr unsigned maxPatternSizeWithCharacterClasses = 16 * maxPatternSize;
     static constexpr unsigned maxCapturesCount = (1 << 16) / 2; // Derived from V8's configuration.
 };
 
