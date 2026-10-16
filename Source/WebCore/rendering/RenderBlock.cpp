@@ -64,6 +64,7 @@
 #include "RenderChildIterator.h"
 #include "RenderCombineText.h"
 #include "RenderDeprecatedFlexibleBox.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderFragmentedFlow.h"
@@ -238,7 +239,7 @@ public:
             m_containerMap.remove(renderer);
     }
     
-    TrackedRendererListHashSet* NODELETE positionedRenderers(const RenderBlock& containingBlock) const
+    TrackedRendererListHashSet* LEGACY_NODELETE positionedRenderers(const RenderBlock& containingBlock) const
     {
         return m_descendantsMap.get(containingBlock);
     }
@@ -251,7 +252,7 @@ private:
     ContainerMap m_containerMap;
 };
 
-static OutOfFlowDescendantsMap& NODELETE outOfFlowDescendantsMap()
+static OutOfFlowDescendantsMap& LEGACY_NODELETE outOfFlowDescendantsMap()
 {
     static NeverDestroyed<OutOfFlowDescendantsMap> mapForOutOfFlowDescendants;
     return mapForOutOfFlowDescendants;
@@ -318,15 +319,15 @@ bool RenderBlock::scrollbarWidthDidChange(const Style::ComputedStyle& oldStyle, 
 bool RenderBlock::contentBoxLogicalWidthChanged(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
 {
     if (newStyle.writingMode().isHorizontal()) {
-        return oldStyle.usedBorderLeftWidth() != newStyle.usedBorderLeftWidth()
-            || oldStyle.usedBorderRightWidth() != newStyle.usedBorderRightWidth()
+        return Style::effectiveBorderWidths(oldStyle).left() != Style::effectiveBorderWidths(newStyle).left()
+            || Style::effectiveBorderWidths(oldStyle).right() != Style::effectiveBorderWidths(newStyle).right()
             || oldStyle.paddingLeft() != newStyle.paddingLeft()
             || oldStyle.paddingRight() != newStyle.paddingRight()
             || scrollbarWidthDidChange(oldStyle, newStyle, ScrollbarOrientation::Vertical);
     }
 
-    return oldStyle.usedBorderTopWidth() != newStyle.usedBorderTopWidth()
-        || oldStyle.usedBorderBottomWidth() != newStyle.usedBorderBottomWidth()
+    return Style::effectiveBorderWidths(oldStyle).top() != Style::effectiveBorderWidths(newStyle).top()
+        || Style::effectiveBorderWidths(oldStyle).bottom() != Style::effectiveBorderWidths(newStyle).bottom()
         || oldStyle.paddingTop() != newStyle.paddingTop()
         || oldStyle.paddingBottom() != newStyle.paddingBottom()
         || scrollbarWidthDidChange(oldStyle, newStyle, ScrollbarOrientation::Horizontal);
@@ -338,8 +339,8 @@ bool RenderBlock::paddingBoxLogicalHeightChanged(const Style::ComputedStyle& old
         return (orientation == ScrollbarOrientation::Vertical ? includeVerticalScrollbarSize() : includeHorizontalScrollbarSize()) && oldStyle.scrollbarWidth() != newStyle.scrollbarWidth();
     };
     if (newStyle.writingMode().isHorizontal())
-        return oldStyle.usedBorderTopWidth() != newStyle.usedBorderTopWidth() || oldStyle.usedBorderBottomWidth() != newStyle.usedBorderBottomWidth() || scrollbarHeightDidChange(ScrollbarOrientation::Horizontal);
-    return oldStyle.usedBorderLeftWidth() != newStyle.usedBorderLeftWidth() || oldStyle.usedBorderRightWidth() != newStyle.usedBorderRightWidth() || scrollbarHeightDidChange(ScrollbarOrientation::Vertical);
+        return Style::effectiveBorderWidths(oldStyle).top() != Style::effectiveBorderWidths(newStyle).top() || Style::effectiveBorderWidths(oldStyle).bottom() != Style::effectiveBorderWidths(newStyle).bottom() || scrollbarHeightDidChange(ScrollbarOrientation::Horizontal);
+    return Style::effectiveBorderWidths(oldStyle).left() != Style::effectiveBorderWidths(newStyle).left() || Style::effectiveBorderWidths(oldStyle).right() != Style::effectiveBorderWidths(newStyle).right() || scrollbarHeightDidChange(ScrollbarOrientation::Vertical);
 }
 
 void RenderBlock::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
@@ -353,12 +354,11 @@ void RenderBlock::styleDidChange(Style::Difference diff, const Style::ComputedSt
 
     // It's possible for our border/padding to change, but for the overall logical width of the block to
     // end up being the same. We keep track of this change so in layoutBlock, we can know to set relayoutChildren=true.
-    auto shouldForceRelayoutChildren = false;
     if (oldStyle && diff == Style::DifferenceResult::Layout && needsLayout()) {
         // Out-of-flow boxes anchored to the padding box.
-        shouldForceRelayoutChildren = contentBoxLogicalWidthChanged(*oldStyle, style()) || (outOfFlowBoxes() && paddingBoxLogicalHeightChanged(*oldStyle, style()));
+        if (contentBoxLogicalWidthChanged(*oldStyle, style()) || (outOfFlowBoxes() && paddingBoxLogicalHeightChanged(*oldStyle, style())))
+            setShouldForceRelayoutChildren(true);
     }
-    setShouldForceRelayoutChildren(shouldForceRelayoutChildren);
 }
 
 bool RenderBlock::childrenPreventSelfCollapsing() const
@@ -506,7 +506,7 @@ void RenderBlock::endAndCommitUpdateScrollInfoAfterLayoutTransaction()
     }
 }
 
-static inline bool NODELETE isDelayingUpdateScrollInfoAfterLayout(const RenderBlock& renderer)
+static inline bool LEGACY_NODELETE isDelayingUpdateScrollInfoAfterLayout(const RenderBlock& renderer)
 {
     auto* transaction = renderer.view().frameView().layoutContext().updateScrollInfoAfterLayoutTransactionIfExists();
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=97937
@@ -874,19 +874,11 @@ void RenderBlock::markFixedPositionBoxForLayoutIfNeeded(RenderBox& positionedChi
 
 std::pair<LayoutUnit, LayoutUnit> RenderBlock::intrinsicLogicalMarginStartAndEnd(const RenderBox& child) const
 {
-    // A margin has three types: fixed, percentage, and auto (variable).
-    // Auto and percentage margins become 0 when computing min/max width.
-    // Fixed margins can be added in as is.
-    // For calc() expressions like calc(10% + 100px), the percentage resolves to 0
-    // and only the fixed part contributes.
-    auto& marginStart = child.style().marginStart(writingMode());
-    auto& marginEnd = child.style().marginEnd(writingMode());
-    auto startValue = LayoutUnit { };
-    auto endValue = LayoutUnit { };
-    if (!marginStart.isAuto())
-        startValue = Style::evaluateMinimum<LayoutUnit>(marginStart, 0_lu, child.style().usedZoomForLength());
-    if (!marginEnd.isAuto())
-        endValue = Style::evaluateMinimum<LayoutUnit>(marginEnd, 0_lu, child.style().usedZoomForLength());
+    // Resolving against a zero reference makes auto and percentage margins 0 (only the fixed
+    // part of a calc() contributes), as required when computing min/max width.
+    auto usedStyle = child.usedStyle();
+    auto startValue = usedStyle.marginStart(writingMode(), 0_lu).value_or(0_lu);
+    auto endValue = usedStyle.marginEnd(writingMode(), 0_lu).value_or(0_lu);
     return { startValue, endValue };
 }
 
@@ -1060,7 +1052,7 @@ void RenderBlock::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     // sit above the background/border.
     if (phase == PaintPhase::BlockBackground || phase == PaintPhase::ChildBlockBackground) {
         CheckedPtr layer = this->layer();
-        if (hasNonVisibleOverflow() && layer && layer->scrollableArea() && style().usedVisibility() == Visibility::Visible
+        if (hasNonVisibleOverflow() && layer && layer->scrollableArea() && usedStyle().visibility() == UsedVisibility::Visible
             && paintInfo.shouldPaintWithinRoot(*this) && !paintInfo.paintRootBackgroundOnly()) {
             protect(layer->scrollableArea())->paintOverflowControls(paintInfo.context(), paintInfo.paintBehavior, roundedIntPoint(adjustedPaintOffset), snappedIntRect(paintInfo.rect));
         }
@@ -1235,7 +1227,7 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     auto shouldPaintContent = !isSkippedContentRoot(*this);
 
     // 1. paint background, borders etc
-    if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && style().usedVisibility() == Visibility::Visible) {
+    if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && usedStyle().visibility() == UsedVisibility::Visible) {
         if (hasVisibleBoxDecorations())
             paintBoxDecorations(paintInfo, paintOffset);
         paintDebugBoxShadowIfApplicable(paintInfo.context(), { paintOffset, borderBoxSize() });
@@ -1245,12 +1237,12 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     if (shouldPaintContent && (paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground || paintPhase == PaintPhase::Selection))
         paintExcludedChildrenInBorder(paintInfo, paintOffset);
     
-    if (paintPhase == PaintPhase::Mask && style().usedVisibility() == Visibility::Visible) {
+    if (paintPhase == PaintPhase::Mask && usedStyle().visibility() == UsedVisibility::Visible) {
         paintMask(paintInfo, paintOffset);
         return;
     }
 
-    if (paintPhase == PaintPhase::ClippingMask && style().usedVisibility() == Visibility::Visible) {
+    if (paintPhase == PaintPhase::ClippingMask && usedStyle().visibility() == UsedVisibility::Visible) {
         paintClippingMask(paintInfo, paintOffset);
         return;
     }
@@ -1272,7 +1264,7 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
 
         Ref document = this->document();
         if (paintInfo.paintBehavior.contains(PaintBehavior::EventRegionIncludeBackground) && visibleToHitTesting()) {
-            auto borderShape = BorderShape::shapeForBorderRect(style(), borderRect);
+            auto borderShape = BorderShape::shapeForBorderRect(usedStyle(), borderRect);
             LOG_WITH_STREAM(EventRegions, stream << "RenderBlock " << *this << " uniting region " << borderShape.deprecatedRoundedRect() << " event listener types " << style().eventListenerRegionTypes());
             bool overrideUserModifyIsEditable = isRenderTextControl() && protect(downcast<RenderTextControl>(*this).textFormControlElement())->isInnerTextElementEditable();
             paintInfo.eventRegionContext()->unite(borderShape.deprecatedPixelSnappedRoundedRect(document->deviceScaleFactor()), *this, style(), overrideUserModifyIsEditable);
@@ -1324,7 +1316,7 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     // Column rules need to account for scrolling and clipping.
     // FIXME: Clipping of column rules does not work. We will need a separate paint phase for column rules I suspect in order to get
     // clipping correct (since it has to paint as background but is still considered "contents").
-    if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && style().usedVisibility() == Visibility::Visible)
+    if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && usedStyle().visibility() == UsedVisibility::Visible)
         paintColumnRules(paintInfo, scrolledOffset);
 
     // Done with backgrounds, borders and column rules.
@@ -1359,7 +1351,7 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     }
 
     // 5. paint outline.
-    if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && hasOutline() && style().usedVisibility() == Visibility::Visible)
+    if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && hasOutline() && usedStyle().visibility() == UsedVisibility::Visible)
         paintOutline(paintInfo, LayoutRect(paintOffset, borderBoxSize()));
 
     // 7. paint caret.
@@ -1392,13 +1384,19 @@ bool RenderBlock::establishesIndependentFormattingContextIgnoringDisplayType(con
         || style.containerType().hasSizeContainment()
         || Style::ContainmentChecker { style, *element }.shouldApplyPaintContainment()
         || (style.display().isBlockType() && !style.blockStepSize().isNone())
-        || style.overflowContinue() == OverflowContinue::Discard;
+        || (style.display().doesGenerateBlockContainer() && (style.overflowContinue() == OverflowContinue::Discard || style.overflowContinue() == OverflowContinue::Collapse));
 }
 
 bool RenderBlock::establishesIndependentFormattingContext() const
 {
     auto& style = this->style();
     if (establishesIndependentFormattingContextIgnoringDisplayType(style))
+        return true;
+
+    // flow-root "always establishes a new block formatting context for its contents", and "unless otherwise specified,
+    // however, establishing a new formatting context creates an independent formatting context."
+    // https://drafts.csswg.org/css-display-3/#valdef-display-flow-root
+    if (style.display() == Style::DisplayType::BlockFlowRoot)
         return true;
 
     if (isGridItem()) {
@@ -1436,13 +1434,12 @@ bool RenderBlock::createsNewFormattingContext() const
         || isRenderOrLegacyRenderSVGForeignObject()
         || style.specifiesColumns()
         || style.columnSpan() == ColumnSpan::All
-        || style.display() == Style::DisplayType::BlockFlowRoot
         || establishesIndependentFormattingContext();
 }
 
 bool RenderBlock::shouldPaintSelectionGaps() const
 {
-    return selectionState() != HighlightState::None && style().usedVisibility() == Visibility::Visible && isSelectionRoot();
+    return selectionState() != HighlightState::None && usedStyle().visibility() == UsedVisibility::Visible && isSelectionRoot();
 }
 
 bool RenderBlock::isSelectionRoot() const
@@ -1511,7 +1508,8 @@ void RenderBlock::paintSelection(PaintInfo& paintInfo, const LayoutPoint& paintO
                 if (!hasLayer()) {
                     LayoutRect localBounds(gapRectsBounds);
                     flipForWritingMode(localBounds);
-                    gapRectsBounds = localToContainerQuad(FloatRect(localBounds), &layer->renderer()).enclosingBoundingBox();
+                    // FIXME: Remove suppression once rdar://189998444 is fixed.
+                    SUPPRESS_MEMORY_UNSAFE_CAST gapRectsBounds = localToContainerQuad(FloatRect(localBounds), &layer->renderer()).enclosingBoundingBox();
                     if (layer->renderer().isRenderBox())
                         gapRectsBounds.moveBy(layer->renderBox()->scrollPosition());
                 }
@@ -1610,7 +1608,7 @@ GapRects RenderBlock::selectionGaps(RenderBlock& rootBlock, const LayoutPoint& r
     return result;
 }
 
-GapRects NODELETE RenderBlock::inlineSelectionGaps(RenderBlock&, const LayoutPoint&, const LayoutSize&, LayoutUnit&, LayoutUnit&, LayoutUnit&, const LogicalSelectionOffsetCaches&, const PaintInfo*)
+GapRects LEGACY_NODELETE RenderBlock::inlineSelectionGaps(RenderBlock&, const LayoutPoint&, const LayoutSize&, LayoutUnit&, LayoutUnit&, LayoutUnit&, const LogicalSelectionOffsetCaches&, const PaintInfo*)
 {
     ASSERT_NOT_REACHED();
     return GapRects();
@@ -2198,10 +2196,10 @@ PositionWithAffinity RenderBlock::positionForPointWithInlineChildren(const Layou
     return PositionWithAffinity();
 }
 
-static inline bool NODELETE isChildHitTestCandidate(const RenderBox& box, HitTestSource source)
+static inline bool LEGACY_NODELETE isChildHitTestCandidate(const RenderBox& box, HitTestSource source)
 {
-    auto visibility = source == HitTestSource::Script ? box.style().visibility() : box.style().usedVisibility();
-    return box.borderBoxHeight() && visibility == Visibility::Visible && !box.isOutOfFlowPositioned() && !box.isRenderFragmentedFlow();
+    auto isVisible = source == HitTestSource::Script ? box.style().visibility() == Visibility::Visible : box.usedStyle().visibility() == UsedVisibility::Visible;
+    return box.borderBoxHeight() && isVisible && !box.isOutOfFlowPositioned() && !box.isRenderFragmentedFlow();
 }
 
 // Valid candidates in a FragmentedFlow must be rendered by the fragment.
@@ -2429,7 +2427,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeBlockIntrinsicLogicalWidth
         auto childAvoidsFloats = childBox.avoidsFloats() || (childBox.isAnonymousBlock() && childBox.childrenInline());
         if (childBox.isFloating() || childAvoidsFloats) {
             LayoutUnit floatTotalWidth = floatLeftWidth + floatRightWidth;
-            auto childUsedClear = Style::ComputedStyle::usedClear(childBox);
+            auto childUsedClear = childBox.usedStyle().clear();
             if (childUsedClear == UsedClear::Left || childUsedClear == UsedClear::Both) {
                 maxLogicalWidth = std::max(floatTotalWidth, maxLogicalWidth);
                 floatLeftWidth = 0.f;
@@ -2445,7 +2443,8 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeBlockIntrinsicLogicalWidth
 
         // An orthogonal child contributes its block-axis size (its logical height) to our inline axis
         auto [childMinContentInParentInlineAxis, childMaxContentInParentInlineAxis] = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
-            auto& box = const_cast<RenderBox&>(childBox);
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST auto& box = const_cast<RenderBox&>(childBox);
             if (writingMode().isOrthogonal(box.writingMode())) {
                 auto intrinsicBlockSize = box.computeIntrinsicLogicalHeight();
                 return { intrinsicBlockSize, intrinsicBlockSize };
@@ -2481,7 +2480,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeBlockIntrinsicLogicalWidth
         }
 
         if (childBox.isFloating()) {
-            if (Style::ComputedStyle::usedFloat(childBox) == UsedFloat::Left)
+            if (childBox.usedStyle().floating() == UsedFloat::Left)
                 floatLeftWidth += logicalWidth;
             else
                 floatRightWidth += logicalWidth;
@@ -2584,7 +2583,7 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
     return lastInFlowBaseline();
 }
 
-static inline bool NODELETE isRenderBlockFlowOrRenderButton(RenderElement& renderElement)
+static inline bool LEGACY_NODELETE isRenderBlockFlowOrRenderButton(RenderElement& renderElement)
 {
     // We include isRenderButton in this check because buttons are implemented
     // using flex box but should still support first-line|first-letter.
@@ -2694,12 +2693,14 @@ void RenderBlock::setCachedEnclosingFragmentedFlowNeedsUpdate()
 RenderFragmentedFlow* RenderBlock::updateCachedEnclosingFragmentedFlow(RenderFragmentedFlow* fragmentedFlow) const
 {
     if (!fragmentedFlow) {
-        if (auto* rareData = const_cast<RenderBlock&>(*this).blockRareData())
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST if (auto* rareData = const_cast<RenderBlock&>(*this).blockRareData())
             rareData->m_enclosingFragmentedFlow = { };
         return { };
     }
 
-    const_cast<RenderBlock&>(*this).ensureBlockRareData().m_enclosingFragmentedFlow = fragmentedFlow;
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderBlock&>(*this).ensureBlockRareData().m_enclosingFragmentedFlow = fragmentedFlow;
     return fragmentedFlow;
 }
 
@@ -3291,8 +3292,10 @@ RenderBox* RenderBlock::findFieldsetLegend(FieldsetFindLegendOption option) cons
     for (auto& legend : childrenOfType<RenderBox>(*this)) {
         if (option == FieldsetIgnoreFloatingOrOutOfFlow && legend.isFloatingOrOutOfFlowPositioned())
             continue;
-        if (legend.isLegend())
-            return const_cast<RenderBox*>(&legend);
+        if (legend.isLegend()) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderBox*>(&legend);
+        }
     }
     return { };
 }

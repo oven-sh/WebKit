@@ -47,6 +47,26 @@ extension RangeReplaceableCollection {
     }
 }
 
+extension Array where Element: Equatable {
+    /// Returns whether the array has the same elements as another array, in any order.
+    ///
+    /// Unlike comparing sets, this counts repeated elements, so `[a, a, b]` doesn't match `[a, b, b]`.
+    func hasSameElementsInAnyOrder(as other: [Element]) -> Bool {
+        guard count == other.count else {
+            return false
+        }
+
+        var unmatched = other
+        for element in self {
+            guard let index = unmatched.firstIndex(of: element) else {
+                return false
+            }
+            unmatched.remove(at: index)
+        }
+        return true
+    }
+}
+
 extension AsyncSequence {
     /// Waits for the current sequence to terminate or throw a failure.
     ///

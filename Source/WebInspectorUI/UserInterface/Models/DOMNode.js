@@ -65,13 +65,6 @@ WI.DOMNode = class DOMNode extends WI.Object
         this._layoutOverlayShowing = false;
         this._layoutOverlayColorSetting = null;
 
-        // FIXME: <https://webkit.org/b/298980> Workaround for missing FrameCSSAgent.
-        // Without this, CSS.nodeLayoutFlagsChanged is never sent for frame-target nodes,
-        // so the Elements panel hides them as "not rendered." Force Rendered until
-        // FrameCSSAgent exists to provide real layout flags.
-        if (this._owningTarget && payload.nodeType === Node.ELEMENT_NODE)
-            this._layoutFlags = [WI.DOMNode.LayoutFlag.Rendered];
-
         if (this._nodeType === Node.DOCUMENT_NODE)
             this.ownerDocument = this;
         else
@@ -172,17 +165,13 @@ WI.DOMNode = class DOMNode extends WI.Object
             WI.DOMNode.addEventListener(WI.DOMNode.Event.DidFireEvent, this._handleDOMNodeDidFireEvent, this);
 
         // COMPATIBILITY (macOS 13.0, iOS 16.0): CSS.LayoutContextType was renamed/expanded to CSS.LayoutFlag.
-        // Frame-target nodes don't receive layout flags from the backend (no FrameCSSAgent yet).
-        // Their flags were already set above in the constructor workaround — don't overwrite them.
-        if (!frameTarget) {
-            if (!InspectorBackend.Enum.CSS.LayoutFlag) {
-                let layoutFlags = [WI.DOMNode.LayoutFlag.Rendered];
-                if (payload.layoutContextType)
-                    layoutFlags.push(payload.layoutContextType);
-                this.layoutFlags = layoutFlags;
-            } else
-                this.layoutFlags = payload.layoutFlags;
-        }
+        if (!InspectorBackend.Enum.CSS.LayoutFlag) {
+            let layoutFlags = [WI.DOMNode.LayoutFlag.Rendered];
+            if (payload.layoutContextType)
+                layoutFlags.push(payload.layoutContextType);
+            this.layoutFlags = layoutFlags;
+        } else
+            this.layoutFlags = payload.layoutFlags;
     }
 
     // Static
@@ -668,18 +657,18 @@ WI.DOMNode = class DOMNode extends WI.Object
         if (this._destroyed)
             return;
 
-        // FIXME: <https://webkit.org/b/298980> Highlighting cross-origin frame nodes requires page-level coordination.
-        if (this.owningTarget)
-            return;
+        // The two-second auto-hide timeout lives on DOMManager, not here.
+        WI.domManager.cancelPendingHighlightHide();
 
-        if (this._hideDOMNodeHighlightTimeout) {
-            clearTimeout(this._hideDOMNodeHighlightTimeout);
-            this._hideDOMNodeHighlightTimeout = undefined;
-        }
+        let target = this.owningTarget || WI.assumingMainTarget();
 
-        let target = WI.assumingMainTarget();
+        // Each target holds its own highlight state, so clear the others. Otherwise highlighting a
+        // node inside a frame leaves the page target still highlighting the owner iframe element,
+        // and both draw at once.
+        WI.domManager.hideDOMNodeHighlight({excludedTargets: new Set([target])});
+
         target.DOMAgent.highlightNode.invoke({
-            nodeId: this.id,
+            nodeId: this.backendNodeId,
             ...WI.DOMManager.buildHighlightConfigs(mode),
         });
     }
@@ -690,18 +679,14 @@ WI.DOMNode = class DOMNode extends WI.Object
         if (this._destroyed)
             return Promise.reject("ERROR: node is destroyed");
 
-        // FIXME: <https://webkit.org/b/298980> Layout overlays for cross-origin frame nodes are not yet supported.
-        if (this.owningTarget)
-            return Promise.reject("ERROR: not supported on cross-origin frame nodes");
-
         console.assert(Object.values(WI.DOMNode._LayoutContextTypes).includes(this.layoutContextType), this);
 
         console.assert(!color || color instanceof WI.Color, color);
         color ||= this.layoutOverlayColor;
 
-        let target = WI.assumingMainTarget();
+        let target = this.owningTarget || WI.assumingMainTarget();
         let agentCommandFunction = null;
-        let agentCommandArguments = {nodeId: this.id};
+        let agentCommandArguments = {nodeId: this.backendNodeId};
 
         switch (this.layoutContextType) {
         case WI.DOMNode.LayoutFlag.Grid:
@@ -768,15 +753,11 @@ WI.DOMNode = class DOMNode extends WI.Object
         if (this._destroyed)
             return Promise.reject("ERROR: node is destroyed");
 
-        // FIXME: <https://webkit.org/b/298980> Layout overlays for cross-origin frame nodes are not yet supported.
-        if (this.owningTarget)
-            return Promise.reject("ERROR: not supported on cross-origin frame nodes");
-
         console.assert(Object.values(WI.DOMNode._LayoutContextTypes).includes(this.layoutContextType), this);
 
-        let target = WI.assumingMainTarget();
+        let target = this.owningTarget || WI.assumingMainTarget();
         let agentCommandFunction;
-        let agentCommandArguments = {nodeId: this.id};
+        let agentCommandArguments = {nodeId: this.backendNodeId};
 
         switch (this.layoutContextType) {
         case WI.DOMNode.LayoutFlag.Grid:
@@ -1446,15 +1427,20 @@ WI.DOMNode._defaultLayoutOverlayConfiguration = {
 };
 
 WI.DOMNode.Event = {
-    EnabledPseudoClassesChanged: "dom-node-enabled-pseudo-classes-did-change",
     AttributeModified: "dom-node-attribute-modified",
     AttributeRemoved: "dom-node-attribute-removed",
-    EventListenersChanged: "dom-node-event-listeners-changed",
+    CharacterDataModified: "dom-node-character-data-modified",
+    ChildNodeCountUpdated: "dom-node-child-node-count-updated",
+    CustomElementStateChanged: "dom-node-custom-element-state-changed",
     DidFireEvent: "dom-node-did-fire-event",
-    PowerEfficientPlaybackStateChanged: "dom-node-power-efficient-playback-state-changed",
+    EnabledPseudoClassesChanged: "dom-node-enabled-pseudo-classes-did-change",
+    EventListenersChanged: "dom-node-event-listeners-changed",
+    Inserted: "dom-node-inserted",
     LayoutFlagsChanged: "dom-node-layout-flags-changed",
-    LayoutOverlayShown: "dom-node-layout-overlay-shown",
     LayoutOverlayHidden: "dom-node-layout-overlay-hidden",
+    LayoutOverlayShown: "dom-node-layout-overlay-shown",
+    PowerEfficientPlaybackStateChanged: "dom-node-power-efficient-playback-state-changed",
+    Removed: "dom-node-removed",
 };
 
 WI.DOMNode.PseudoElementType = {

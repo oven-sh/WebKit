@@ -20,9 +20,9 @@ static constexpr unsigned minClobberedArgumentGPRsOfCall = 4;
 static constexpr double maxRatioOfHeaderToLikelyBlock = 16;
 
 // Going by the edge, and by the block: a Jump has no way to say so.
-inline bool isRare(const FrequentedBlock& successor, BasicBlock* header)
+inline bool isRare(const FrequentedBlock& successor, BasicBlock* from)
 {
-    return successor.frequency() == FrequencyClass::Rare || successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < header->frequency();
+    return successor.frequency() == FrequencyClass::Rare || successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency();
 }
 
 // A stub that keeps the registers of its caller is none.

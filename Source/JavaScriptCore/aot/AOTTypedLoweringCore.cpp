@@ -40,7 +40,7 @@ Lowering::Lowering(Procedure& proc, const Program& program, FunctionID id, const
     , m_isEntry(program.isEntry(id))
     , m_context(context)
     , m_builtins(Builtins::singleton())
-    , m_length(program.find("length"_s.span8()).value_or(StringID()))
+    , m_length(program.find(asBytes("length"_s.span8())).value_or(StringID()))
 {
     m_out.noteFoldedConstantsIn(m_context.wideIntegerConstants);
     m_context.generatorOfNothing = m_generatorOfNothing;
@@ -58,6 +58,7 @@ LType Lowering::b3TypeOf(Rep rep)
     case Rep::OptionalInt64:
     case Rep::Cell:
     case Rep::JSValue:
+    case Rep::LiteralString:
         return Int64;
     case Rep::Double:
     case Rep::OptionalDouble:
@@ -278,6 +279,7 @@ void Lowering::lowerTerminator(const Terminator& terminator)
     if (std::exchange(m_owesPoll, false))
         poll();
     openStringsInFrontOfLoopsEnteredBy(terminator);
+    convertNumberArraysInFrontOfLoopsEnteredBy(terminator, false);
     switch (terminator.kind) {
     case TerminatorKind::Unreachable:
         // What is said never to come back may, where what it is said of is not what is there.
@@ -346,6 +348,20 @@ void Lowering::lowerTerminator(const Terminator& terminator)
                 m_out.appendTo(here);
                 ifNil = edge;
             }
+        }
+        if (std::exchange(m_truthinessLeftToBranch, ValueID()) == terminator.value) {
+            std::pair<FTL::WeightedTarget, FTL::WeightedTarget> successorsWithWeights { unsure(taken), unsure(notTaken) };
+            if (m_blocksThatEvaluateModules.get(terminator.targets[0].block.index()) && notTaken->frequency())
+                successorsWithWeights = { rarely(taken), usually(notTaken) };
+            else if (m_blocksThatEvaluateModules.get(terminator.targets[1].block.index()) && taken->frequency())
+                successorsWithWeights = { usually(taken), rarely(notTaken) };
+            SetForScope indexOfTest(m_currentIndexInBlock, m_currentBlock->values.size() - 1);
+            m_successorsOfTruthiness = successorsWithWeights;
+            condition = lowerToBoolean(m_function.at(terminator.value).child(0));
+            m_successorsOfTruthiness = std::nullopt;
+            if (condition.value())
+                m_out.branch(condition.value(), successorsWithWeights.first, successorsWithWeights.second);
+            return;
         }
         if (m_blocksThatEvaluateModules.get(terminator.targets[0].block.index()) && notTaken->frequency())
             m_out.branch(condition.value(), rarely(taken), usually(notTaken));
@@ -577,9 +593,14 @@ bool Lowering::verifyDefinitions(const Vector<BlockID>& order) const
 // Of the value, or of what it is a cast of, but for a Coerce, which may make something else of its operand. The value that is being lowered is kept as its declared type says.
 bool Lowering::hasPassedNilTest(ValueID id) const
 {
-    if (m_passedNilTestIn.isEmpty() || !m_currentBlock || (m_currentIndexInBlock < m_currentBlock->values.size() && m_currentBlock->values[m_currentIndexInBlock] == id))
+    if (!m_currentBlock || (m_currentIndexInBlock < m_currentBlock->values.size() && m_currentBlock->values[m_currentIndexInBlock] == id))
         return false;
     for (ValueID value = id;; value = m_function.at(value).child(0)) {
+        if (auto& made = m_function.at(value); made.opcode == Opcode::CallBuiltin) {
+            auto& implementation = m_builtins.at(made.builtin()).implementation;
+            if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::RegExpNew)
+                return true;
+        }
         if (auto found = m_passedNilTestIn.find(value.index()); found != m_passedNilTestIn.end()) {
             for (BlockID block : found->value) {
                 if (dominates(block, m_currentBlockID))
@@ -589,6 +610,40 @@ bool Lowering::hasPassedNilTest(ValueID id) const
         if (m_function.at(value).opcode != Opcode::Cast || m_function.at(value).castReason() == CastReason::Coerce)
             return false;
     }
+}
+
+void Lowering::widenLiteralStringOperands(const Value& value)
+{
+    switch (value.opcode) {
+    case Opcode::Cast:
+    case Opcode::StrictEq:
+    case Opcode::ToBoolean:
+    case Opcode::IsUndefinedOrNull:
+    case Opcode::PutField:
+    case Opcode::PutById:
+    case Opcode::PutModuleVariable:
+    case Opcode::NewObjectWithShape:
+    case Opcode::NewClosure:
+    case Opcode::NewClosureOnce:
+    case Opcode::CallDirect:
+    case Opcode::Results:
+        return;
+    default:
+        break;
+    }
+    value.forEachChild([&](ValueID child) {
+        widenLiteralString(child);
+    });
+}
+
+void Lowering::widenLiteralString(ValueID id)
+{
+    if (!typeOf(id).hasLiteralString())
+        return;
+    auto& asString = *m_widenedLiteralStringTypes.ensure(m_function.at(id).type.index(), [&] {
+        return makeUniqueWithoutFastMallocCheck<Type>(m_program.at(m_function.at(id).type).withLiteralStringWidened());
+    }).iterator->value;
+    m_assumptions.append(Assumption { id, convert(get(id), m_program.at(m_function.at(id).type), repOf(asString)), &asString });
 }
 
 const Type& Lowering::withoutNil(TypeID type) const
@@ -722,12 +777,13 @@ void Lowering::lowerBlock(BlockID id)
             didDefineNumber(parameter, m_function.at(parameter), Number(operand.value));
     }
     materializeFinalStringBuilderStates(block);
+    convertNumberArraysInFrontOfLoopsEnteredBy(block.terminator, true);
     auto classForMap = [&](ValueID id) -> uintptr_t {
         if (!id)
             return 0;
         auto& type = typeOf(id);
         if (type.anyObject)
-            return m_function.at(id).prediction ? 2 : 1;
+            return m_function.at(id).prediction() ? 2 : 1;
         bool mayBeNil = type.mayBeUndefinedOrNull();
         if (type.hasObjects()) {
             if (type.primitives & ~Primitive::UndefinedOrNull)
@@ -788,10 +844,17 @@ void Lowering::lowerBlock(BlockID id)
         if (Options::aotMapFilePath()) [[unlikely]]
             m_out.setOrigin(std::bit_cast<DFG::Node*>(std::bit_cast<uintptr_t>(originForMap(m_function, value)) | static_cast<uintptr_t>(valueID.index() + 1) << 32 | classForMap(value.child(0)) << 56 | ((value.opcode == Opcode::GetById || value.opcode == Opcode::PutById) && valueID.index() + 1 < 1u << 20 ? (valueID.index() + 1 < 1u << 17 ? formForMap(valueID, value) << 3 | (value.rep == Rep::Int32 && typeOf(valueID).isBoolean() ? 0 : static_cast<uintptr_t>(value.rep)) : 15 << 3) : 0) << 49 | static_cast<uintptr_t>(m_isInLoop)));
         double frequency = m_out.m_block->frequency();
+        size_t numberOfAssumptions = m_assumptions.size();
+        widenLiteralStringOperands(value);
         m_tailCall = m_tailCallCandidates.get(valueID.index()) ? &value : nullptr;
         m_tailCallReturnsArgument = m_tailCallsReturningArgument.get(valueID.index());
+        m_dropsDroppableCallerFrame = value.dropsDroppableCallerFrame && tailCallDropsMachineFrame(block, value) && !passesPointerIntoFrame(value);
+        m_leavesDroppableFrame = value.leavesDroppableFrame && tailCallDropsMachineFrame(block, value) && !passesPointerIntoFrame(value) && !m_watchingHandler;
         Operand result = lower(valueID, value);
+        m_assumptions.shrink(numberOfAssumptions);
         m_tailCall = nullptr;
+        m_dropsDroppableCallerFrame = false;
+        m_leavesDroppableFrame = false;
         didLowerWatchedOperation();
         if (!m_whyFailed.isNull())
             return;
@@ -822,7 +885,7 @@ void Lowering::lowerBlock(BlockID id)
         didDefineReceiverOfRun(valueID);
         if (result.rep == Rep::Double || result.rep == Rep::OptionalDouble)
             didDefineNumber(valueID, value, Number(result.value));
-        if (value.assertedType && value.opcode != Opcode::Cast) [[unlikely]]
+        if (value.assertedType() && value.opcode != Opcode::Cast) [[unlikely]]
             auditResult(result, value);
         if (Options::validateAOTTypedFacts()) [[unlikely]]
             validateFact(result, valueID, typeOf(valueID));
@@ -843,6 +906,8 @@ void Lowering::lowerBlock(BlockID id)
 #endif
     if (m_context.emitsCalls)
         m_context.blocksThatEmitCalls.set(id.index());
+    if (!m_blocks[id.index()]->frequency())
+        m_context.blocksThatAreNotRun.set(id.index());
     m_context.emitsCalls |= didEmitCalls;
 }
 
@@ -1093,6 +1158,16 @@ bool Lowering::run()
         if (m_function.at(block).terminator.kind == TerminatorKind::Unreachable || m_function.at(block).terminator.kind == TerminatorKind::Throw || m_handlersEnteredByBranch.get(block.index()))
             m_blocks[block.index()]->setFrequency(0);
     }
+    for (BlockID block : order) {
+        auto& terminator = m_function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || terminator.targets[0].block == terminator.targets[1].block || !isGuardOfReceiver(m_function.at(terminator.value)))
+            continue;
+        auto& guard = m_function.at(terminator.value);
+        auto* engineClass = typeOf(guard.arguments[0]).onlyEngineClass();
+        BlockID otherwise = terminator.targets[1].block;
+        if (engineClass && engineClass->index == guard.engineClass() && m_blocks[otherwise.index()] && numberOfPredecessorsOf(otherwise) == 1)
+            m_blocks[otherwise.index()]->setFrequency(0);
+    }
     // A call of a function that never returns is a throw. What only leads to blocks that are not run is not run.
     for (unsigned i = order.size(); i--;) {
         auto& block = m_function.at(order[i]);
@@ -1140,6 +1215,7 @@ bool Lowering::run()
     findPartsOfStringsThatAreOnlyLookedAt();
     findConcatenationsWithNumbers();
     findStringsReadInLoops();
+    findNumberArraysUsedInLoops();
     findIterationsOfStrings();
     findEntriesOfArrays();
     findElementsTakenAtOnce();
@@ -1250,7 +1326,11 @@ bool Lowering::lowerEntryParameters()
         Rep rep = repOf(typePassedAs(m_function, i));
         bool isDouble = b3TypeOf(rep) == Double;
         LValue value;
-        if (isDouble && nextFPR < FPRInfo::numberOfArgumentRegisters)
+        if (i < 2 && m_function.isValueEntry && !m_function.isTwinOfItsFunction)
+            value = registerOnEntry(i ? thisGPR : calleeGPR);
+        else if (m_function.takesCapturesFromClosure && i < m_function.captureTypes.size())
+            value = captureOfClosure(CellPointer(registerOnEntry(calleeGPR)), m_function, i).value;
+        else if (isDouble && nextFPR < FPRInfo::numberOfArgumentRegisters)
             value = registerOnEntry(FPRInfo::toArgumentRegister(nextFPR++));
         else if (!isDouble && nextGPR < numberOfDirectArgumentGPRs) {
             value = registerOnEntry(directArgumentGPR(nextGPR++));
@@ -1464,30 +1544,40 @@ std::optional<Boxed> Lowering::getMemberOfGlobal(ValueID base, StringID name)
     auto& global = m_function.at(base);
     if (global.opcode != Opcode::GetGlobal || !m_out.m_block->frequency())
         return std::nullopt;
+    bool isReadFromCache = !m_function.readsMemberOfHostObject && m_program.isFunctionOfHostObject(global.string(), name);
+    if (isReadFromCache ? m_out.m_block->frequency() < 1 || (!m_isInLoop && !m_program.isWarmByText(m_id) && !m_program.isHotByText(m_id)) : !m_function.readsMemberOfHostObject)
+        return std::nullopt;
     uint32_t cacheNumber = m_program.memberOfGlobalCacheNumber(global.string(), name);
     if (!cacheNumber)
         return std::nullopt;
     Boxed holder = in<Boxed>(base);
-    LBasicBlock hit = m_out.newBlock();
-    LBasicBlock miss = newUnlikelyBlock();
+    if (isReadFromCache) {
+        LBasicBlock miss = newColdBlock();
+        LBasicBlock looks = newColdBlock();
+        LBasicBlock reads = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue cached = wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value));
+        ValueFromBlock known = m_out.anchor(cached);
+        m_out.branch(m_out.notZero64(cached), usually(continuation), rarely(miss));
+        m_out.appendTo(miss);
+        m_out.branch(m_out.isZero64(wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, location))), unsure(looks), unsure(reads));
+        m_out.appendTo(looks);
+        AOT_TYPED_OPERATION(LookForMemberOfGlobal, holder, word32(global.string().index()), word32(name.index()), word32(cacheNumber));
+        m_out.jump(reads);
+        m_out.appendTo(reads);
+        ValueFromBlock found = m_out.anchor(emitGetById(holder, name).value());
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return Boxed(m_out.phi(Int64, known, found));
+    }
     LBasicBlock look = newColdBlock();
-    LBasicBlock read = newUnlikelyBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    LValue cached = wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value));
-    m_out.branch(m_out.notZero64(cached), usually(hit), rarely(miss));
-    m_out.appendTo(hit);
-    ValueFromBlock known = m_out.anchor(cached);
-    m_out.jump(continuation);
-    m_out.appendTo(miss);
+    LBasicBlock read = m_out.newBlock();
     m_out.branch(m_out.isZero64(wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, location))), rarely(look), usually(read));
     m_out.appendTo(look);
     AOT_TYPED_OPERATION(LookForMemberOfGlobal, holder, word32(global.string().index()), word32(name.index()), word32(cacheNumber));
     m_out.jump(read);
     m_out.appendTo(read);
-    ValueFromBlock found = m_out.anchor(emitGetById(holder, name).value());
-    m_out.jump(continuation);
-    m_out.appendTo(continuation);
-    return Boxed(m_out.phi(Int64, known, found));
+    return emitGetById(holder, name);
 }
 
 void Lowering::lowerPutGlobal(const Value& value)
@@ -1796,12 +1886,15 @@ void Lowering::lowerResolvePromise(const Value& value)
     OperationEffects effects = effectsOfBuiltinCall(value);
     // Read out of the frame: the function has been suspended, its caller has the promise and waits for it as a rule.
     auto& source = m_function.at(value.arguments[0]);
-    if (source.opcode == Opcode::GetField && m_program.at(source.layout()).isCoroutineFrame && !source.prediction) {
-        AOT_TYPED_OPERATION_WITH_EFFECTS(ResolvePromise, effects, promise, resolution);
+    auto resolveByStub = [&] {
+        callICStub(Stub::ResolvePromiseBehindAwait, Void, { { promise.value(), GPRInfo::argumentGPR1 }, { resolution.value(), GPRInfo::argumentGPR2 } }, std::nullopt, effects);
+    };
+    if (source.opcode == Opcode::GetField && m_program.at(source.layout()).isCoroutineFrame && !source.prediction()) {
+        resolveByStub();
         return;
     }
     if (m_function.savesItsFrame && (!isReachedWithoutAwaiting() || (goesGenerallyWhereTextIsCold() && !isPromiseOfUnsuspendedFunction(value.arguments[0])))) {
-        callICStub(Stub::ResolvePromiseBehindAwait, Void, { { promise.value(), GPRInfo::argumentGPR1 }, { resolution.value(), GPRInfo::argumentGPR2 } }, std::nullopt, effects);
+        resolveByStub();
         return;
     }
     auto& type = typeOf(value.arguments[1]);
@@ -1809,7 +1902,7 @@ void Lowering::lowerResolvePromise(const Value& value)
     bool mayBePrimitiveCell = type.primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt);
     bool lacksThenUnlessMarked = this->lacksThenUnlessMarked(type);
     if (isFresh && type.isObject() && !lacksThenUnlessMarked) {
-        AOT_TYPED_OPERATION_WITH_EFFECTS(ResolvePromise, effects, promise, resolution);
+        resolveByStub();
         return;
     }
     bool mayGoOutOfLine = !isFresh || type.hasObjects();
@@ -1846,7 +1939,7 @@ void Lowering::lowerResolvePromise(const Value& value)
     m_out.jump(continuation);
     if (mayGoOutOfLine) {
         m_out.appendTo(outOfLine);
-        AOT_TYPED_OPERATION_WITH_EFFECTS(ResolvePromise, effects, promise, resolution);
+        resolveByStub();
         m_out.jump(continuation);
     }
     m_out.appendTo(continuation);
@@ -1900,6 +1993,10 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         }
         if (auto& name = m_function.at(value.arguments[1]); name.opcode == Opcode::String && emitDefineByName(in<Boxed>(value.arguments[0]), name.string(), in<Boxed>(value.arguments[2])))
             return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+        if (value.arguments.size() == 3 && m_function.at(value.arguments[1]).opcode != Opcode::String) {
+            callICStub(Stub::DefineByKeyCached, Void, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[2]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
+            return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+        }
         break;
     case LanguageOperation::DefineGetter:
     case LanguageOperation::DefineSetter:
@@ -1925,11 +2022,25 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         break;
     case LanguageOperation::PrivateGet:
     case LanguageOperation::PrivateHas: {
+        if (builtin.implementation.operation == LanguageOperation::PrivateGet) {
+            if (auto read = lowerPrivateAccessAtSite(value, false))
+                return ensure(*read, type);
+        }
         Stub stub = builtin.implementation.operation == LanguageOperation::PrivateGet ? Stub::PrivateGet : Stub::PrivateHas;
         return ensure(Boxed(callICStub(stub, Int64, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsOfBuiltinCall(value))), type);
     }
+    case LanguageOperation::PrivateMethodsAdd:
+        callICStub(Stub::PrivateMethodsAdd, Void, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsOfBuiltinCall(value));
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     case LanguageOperation::PrivateSet:
     case LanguageOperation::PrivateFieldAdd: {
+        if (auto* run = builtin.implementation.operation == LanguageOperation::PrivateFieldAdd ? propertyRunAt(m_currentIndexInBlock) : nullptr) {
+            if (m_currentIndexInBlock == run->stores.last().index)
+                lowerPropertyRun(*run);
+            return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+        }
+        if (builtin.implementation.operation == LanguageOperation::PrivateSet && lowerPrivateAccessAtSite(value, true))
+            return ensure(undefined(), m_program.at(m_program.types.undefined), type);
         Stub stub = builtin.implementation.operation == LanguageOperation::PrivateSet ? Stub::PrivateSet : Stub::PrivateFieldAdd;
         callICStub(stub, Void, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[2]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
@@ -1995,7 +2106,10 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         auto& closure = m_function.at(value.arguments[0]);
         bool isAsyncFunction = closure.opcode == Opcode::GetField && m_program.at(closure.layout()).isCoroutineFrame
             && m_program.at(m_program.at(closure.layout()).fields[CoroutineFrame::promiseField].type).onlyEngineClass() == &m_builtins.promiseClass();
-        AOT_TYPED_OPERATION_WITH_EFFECTS(Await, effectsOfBuiltinCall(value), in<CellPointer>(value.arguments[0]), in<Boxed>(value.arguments[1]), boolean(isAsyncFunction));
+        if (isAsyncFunction)
+            AOT_TYPED_OPERATION_WITH_EFFECTS(Await, effectsOfBuiltinCall(value), in<CellPointer>(value.arguments[0]), in<Boxed>(value.arguments[1]), boolean(true));
+        else
+            callICStub(Stub::AwaitInAsyncGenerator, Void, { { in<CellPointer>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     default:
@@ -2006,6 +2120,25 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         Boxed result = AOT_TYPED_OPERATION_WITH_EFFECTS(LanguageOperation, effectsOfBuiltinCall(value), word32(static_cast<int32_t>(builtin.implementation.operation)), count, list);
         return vouchesForItsType(m_program, m_function, value) ? convert(result, type, value.rep) : ensure(result, type);
     };
+    if (builtin.implementation.operation == LanguageOperation::SuperGet && value.arguments.size() == 4) {
+        auto& key = m_function.at(value.arguments[1]);
+        auto& looksFromHome = m_function.at(value.arguments[3]);
+        auto prototype = m_program.find(asBytes("prototype"_s.span8()));
+        auto number = key.opcode == Opcode::String && looksFromHome.opcode == Opcode::Boolean && (looksFromHome.boolean() || prototype) ? numberForTableOf(key.string()) : std::nullopt;
+        if (number) {
+            LBasicBlock isNotInTable = newColdBlock();
+            Join join(m_out, value.rep, b3TypeOf(value.rep));
+            Boxed home = in<Boxed>(value.arguments[0]);
+            if (!looksFromHome.boolean())
+                home = emitCachedGetByIdOnItsOwn(home, *prototype);
+            Boxed found(callICStub(Stub::GetParentDataByName, Int64, { { home.value(), firstStubOperandGPR } }, std::pair { GPRInfo::argumentGPR1, *number }, { Writes::Nothing, false }));
+            orElse(isNotEmpty(found), isNotInTable);
+            join.add(yielded(found));
+            m_out.appendTo(isNotInTable);
+            join.add(yielded(AOT_TYPED_OPERATION_WITH_EFFECTS(GetSuperPropertyByName, effectsOfBuiltinCall(value), home, in<Boxed>(value.arguments[2]), word32(*number))));
+            return join.finish();
+        }
+    }
     if (builtin.implementation.operation == LanguageOperation::RequireIteratorResultObject) {
         Boxed step = in<Boxed>(value.arguments[0]);
         LBasicBlock isCellCase = m_out.newBlock();
@@ -2106,11 +2239,15 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::Double:
         return convert(number(std::bit_cast<double>(value.bits())), type, value.rep);
     case Opcode::String:
+        if (value.rep == Rep::LiteralString)
+            return literalStringConstant(value.string());
         if (isFetchedWhereNeeded(id))
             return Operand(value.rep, nullptr);
         return convert(stringConstant(value.string()), type, value.rep);
     case Opcode::BigInt:
         return convert(AOT_TYPED_OPERATION(BigIntConstant, word32(value.string().index())), type, value.rep);
+    case Opcode::ConstantSymbol:
+        return convert(AOT_TYPED_OPERATION(ConstantSymbol, word32(value.string().index())), type, value.rep);
     case Opcode::FunctionReference:
         if (isNamedOnlyWhereInstanceOfGoesByShape(id))
             return placeholder(value.rep);
@@ -2122,7 +2259,7 @@ Operand Lowering::lower(ValueID id, const Value& value)
             putLazyClosure(in<Boxed>(store->child(0)), store->string(), value.function());
             return placeholder(value.rep);
         }
-        if (isResumeClosureMadeWhereItSuspends(m_currentIndexInBlock))
+        if (isResumeClosureMadeWhereItSuspends(m_currentIndexInBlock) || isMadeWithPropertyRun(id))
             return placeholder(value.rep);
         return convert(lowerNewClosure(value), type, value.rep);
     case Opcode::NewClosureOnce:
@@ -2160,14 +2297,19 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return captureOfClosure(closure.rep == Rep::JSValue ? asCell(closure.as<Boxed>()) : closure.as<CellPointer>(), m_program.at(value.function()), value.captureIndex());
     }
     case Opcode::GetModuleVariable:
+        if (isKeyReadWherePropertyRunMisses(id))
+            return placeholder(value.rep);
         return lowerGetModuleVariable(id, value);
     case Opcode::PutModuleVariable:
         lowerPutModuleVariable(value);
         return undefined();
     case Opcode::GetGlobal:
     case Opcode::GetGlobalForTypeOf:
-        if (BuiltinName name = m_program.builtinName(value.string()); m_builtins.isGlobal(name) && !m_program.isExtended(name))
+        if (BuiltinName name = m_program.builtinName(value.string()); m_builtins.isGlobal(name) && !m_program.isExtended(name)) {
+            if (isUsedOnlyByInlineInstanceOf(id))
+                return placeholder(value.rep);
             return convert(builtinCell(m_builtins.cellOf(name)), type, value.rep);
+        }
         return ensure(lowerGetGlobal(value), type);
     case Opcode::PutGlobal:
         lowerPutGlobal(value);
@@ -2317,22 +2459,32 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::ToBoolean:
         if (auto fused = lowerFusedUse(m_currentIndexInBlock))
             return *fused;
+        if (m_isTruthinessOnlyBranchedOn.get(id.index()) && get(value.child(0)).rep == Rep::JSValue && toBooleanTakesStub(typeOf(value.child(0)))) {
+            m_truthinessLeftToBranch = id;
+            return boolean(false);
+        }
         return lowerToBoolean(value.child(0));
     case Opcode::TypeOf:
         return convert(AOT_TYPED_OPERATION(TypeOf, in<Boxed>(value.child(0))), type, value.rep);
     case Opcode::InstanceOf:
         if (instanceOfGoesByShape(value))
             return lowerInstanceOfByShape(value);
-        if (m_context.sites.size() < std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots)) {
-            m_context.sites.append(Site { });
-            Pointer slot = slotAddress(m_context.sites.size() - 1);
-            return Word32(callICStub(Stub::InstanceOfCached, Int32, { { in<Boxed>(value.child(0)).value(), firstStubOperandGPR }, { in<Boxed>(value.child(1)).value(), GPRInfo::argumentGPR1 }, { slot.value(), GPRInfo::argumentGPR2 } }));
-        }
-        return AOT_TYPED_OPERATION(InstanceOf, in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
+        if (auto* engineClass = engineClassTestedByInstanceOf(value))
+            return lowerInstanceOfEngineClass(value, *engineClass);
+        return lowerGenericInstanceOf(in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
     case Opcode::ToString:
         return convert(toStringCell(value.child(0)), type, value.rep);
-    case Opcode::ToPropertyKey:
-        return ensure(AOT_TYPED_OPERATION(ToKey, in<Boxed>(value.child(0))), type);
+    case Opcode::ToPropertyKey: {
+        Boxed operand = in<Boxed>(value.child(0));
+        LBasicBlock isConverted = newUnlikelyBlock();
+        Join join(m_out, Rep::JSValue, Int64);
+        orElse(isCell(operand, typeOf(value.child(0))), isConverted);
+        orElse(Word32(m_out.bitOr(isCellOfType(asCell(operand).value(), StringType), isCellOfType(asCell(operand).value(), SymbolType))), isConverted);
+        join.add(operand);
+        m_out.appendTo(isConverted);
+        join.add(AOT_TYPED_OPERATION(ToKey, operand));
+        return ensure(join.finish().as<Boxed>(), type);
+    }
     case Opcode::IsUndefinedOrNull:
         return lowerIsUndefinedOrNull(value.child(0));
     case Opcode::IsInstanceOfClass:
@@ -2949,17 +3101,20 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
 #if CPU(X86_64)
     proc.code().setUnsavedCalleeSaves(RegisterSet { X86Registers::r12 });
     if (function.savesItsFrame)
-        proc.pinRegister(GPRInfo::notCellMaskRegister);
+        proc.code().setCalleeSavesLostAtSuspensions(RegisterSet { X86Registers::r15 });
 #elif CPU(ARM64)
     if (function.savesItsFrame) {
+        RegisterSet lostAtSuspensions;
         for (GPRReg reg : { ARM64Registers::x19, ARM64Registers::x20, ARM64Registers::x21, ARM64Registers::x22, ARM64Registers::x23, ARM64Registers::x24 })
-            proc.pinRegister(reg);
+            lostAtSuspensions.add(reg, IgnoreVectors);
+        proc.code().setCalleeSavesLostAtSuspensions(lostAtSuspensions);
         for (FPRReg reg : { ARM64Registers::q8, ARM64Registers::q9, ARM64Registers::q10, ARM64Registers::q11, ARM64Registers::q12, ARM64Registers::q13, ARM64Registers::q14, ARM64Registers::q15 })
             proc.pinRegister(reg);
     }
 #endif
     proc.code().setChargesForCalleeSaves();
     proc.code().setLaysRareBlocksInGaps();
+    proc.code().setOrdersBlocksByEdgeFrequency();
     proc.code().setNotesStartOfRareCode();
     if (Options::aotMapFilePath()) [[unlikely]]
         proc.setNeedsPCToOriginMap();
@@ -2987,7 +3142,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         return false;
     }
     CompilationCohort::yieldBeforePhase("prepareForB3"_s);
-    if (split && context.emitsCalls && !context.readsCallerFrame && splitFunction(program, id, function, context.blocksThatEmitCalls, *split))
+    if (split && context.emitsCalls && !context.readsCallerFrame && splitFunction(program, id, function, context.blocksThatEmitCalls, context.blocksThatAreNotRun, *split))
         return true;
     splitBranchConditions(proc);
     estimateFrequencies(proc);
@@ -3024,7 +3179,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     CCallHelpers::JumpList frameDoesNotFit;
     bool fitsByProof = false;
     CCallHelpers::Label behindQuestionWithoutFrame;
-    proc.code().setPrologueForEntrypoint(0, createSharedTask<Air::PrologueGeneratorFunction>([&](CCallHelpers& jit, Air::Code& code) {
+    proc.code().setPrologueForEntrypoint(0, createSharedTask<Air::PrologueGeneratorFunction>([&](CCallHelpers& jit, Air::Code& code, Air::GenerationContext&) {
         if (context.hasNoFrame(code)) {
             if (context.callsKeepWhatIsLive && !program.isEnteredWithRoomOnStack(id)) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -3087,7 +3242,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         if (!arePushed)
             jit.emitSave(saves);
     }));
-    proc.code().setEpilogueGenerator(createSharedTask<Air::PrologueGeneratorFunction>([&](CCallHelpers& jit, Air::Code& code) {
+    proc.code().setEpilogueGenerator(createSharedTask<Air::EpilogueGeneratorFunction>([&](CCallHelpers& jit, Air::Code& code) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         context.emitFrameTeardown(jit, code);
         jit.ret();
@@ -3147,6 +3302,21 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         info.convention = Convention { program.at(id).has(FunctionUsesArgumentBuffer) ? Signature::List : Signature::Registers, lowering.genericEntrypointParameterCount(), true };
     info.frameSizeInBytes = proc.frameSize();
     info.knownCallees = WTF::move(context.knownCallees);
+    if (function.resultOfAdapter != Format::none) {
+        info.resultOfAdapter = function.resultOfAdapter;
+        info.sizeOfResultsHoldingWhatIsYielded = program.sizeOfResultsHoldingWhatIsYielded;
+        info.numberOfArgumentsOfAdapter = function.blocks[0].parameters.size() - 2;
+    } else if (function.isValueEntry && !function.functionOfValueEntry)
+        info.adapterOfSignature = program.indexOfSignatureOf(id);
+    if (uint64_t results = function.resultsHoldingWhatIsYielded & program.resultsThatCallsGoBy; results && !program.valueEntryWithCodeOf(id) && info.convention.signature == Signature::Registers) {
+        info.resultsHoldingWhatIsYielded = results;
+        info.sizeOfResultsHoldingWhatIsYielded = program.sizeOfResultsHoldingWhatIsYielded;
+    }
+    if (FunctionID entry = program.valueEntryWithCodeOf(id)) {
+        info.valueEntry = info.knownCallees.size();
+        info.signatureAnswered = program.indexOfSignatureOf(program.at(entry).adapterOfValueEntry);
+        info.knownCallees.append(keyOf(entry));
+    }
     info.indexReferences = context.indexReferences.link(linkBuffer);
     info.numSlots = context.sites.size();
     info.numberOfEmptyArrayLiteralsMadeInPlace = context.numberOfEmptyArrayLiteralsMadeInPlace;
@@ -3188,7 +3358,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     info.isEnteredWithoutStackCheck = frameDoesNotFit.empty() && !asksWithoutFrame;
     info.fitsOnStackByProof = fitsByProof || (context.callsKeepWhatIsLive && info.hasNoFrame && !asksWithoutFrame);
     info.stackTakenAtCalls = context.stackTakenAtCalls;
-    info.typedFunction = id.index();
+    info.typedFunction = function.isTwinOfItsFunction ? function.functionOfValueEntry.index() : id.index();
     info.isGenericEntrypoint = function.isGenericEntrypoint();
     info.kindByte = kindByteOf(program, function);
     // By index into info.typedSourceNames.

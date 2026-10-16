@@ -94,7 +94,7 @@ namespace WebKit {
 using namespace WebCore;
 
 #if ENABLE(MEDIA_STREAM) && HAVE(AUDIT_TOKEN)
-static bool NODELETE shouldCreateAppleCameraServiceSandboxExtension()
+static bool LEGACY_NODELETE shouldCreateAppleCameraServiceSandboxExtension()
 {
 #if !PLATFORM(MAC) && !PLATFORM(MACCATALYST)
     return false;
@@ -106,13 +106,13 @@ static bool NODELETE shouldCreateAppleCameraServiceSandboxExtension()
 }
 #endif
 
-static WeakPtr<GPUProcessProxy>& NODELETE singleton()
+static WeakPtr<GPUProcessProxy>& LEGACY_NODELETE singleton()
 {
     static NeverDestroyed<WeakPtr<GPUProcessProxy>> singleton;
     return singleton;
 }
 
-static RefPtr<GPUProcessProxy>& NODELETE keptAliveGPUProcessProxy()
+static RefPtr<GPUProcessProxy>& LEGACY_NODELETE keptAliveGPUProcessProxy()
 {
     static MainRunLoopNeverDestroyed<RefPtr<GPUProcessProxy>> keptAliveGPUProcessProxy;
     return keptAliveGPUProcessProxy.get();
@@ -1030,6 +1030,15 @@ bool GPUProcessProxy::waitForSnapshot(RemoteSnapshotIdentifier identifier, Secon
     // so that the sink's reply is sent first.
     return sendSync(Messages::GPUProcess::WaitForSnapshot(identifier), 0, timeout, IPC::SendSyncOption::MaintainOrderingWithAsyncMessages).succeeded();
 }
+
+#if HAVE(IOSURFACE)
+
+void GPUProcessProxy::sinkCompletedSnapshotToIOSurface(RemoteSnapshotIdentifier identifier, float scale, const WebCore::ColorSpace& colorSpace, WebCore::FrameIdentifier rootFrameIdentifier, CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::GPUProcess::SinkCompletedSnapshotToIOSurface(identifier, scale, colorSpace, rootFrameIdentifier), WTF::move(completionHandler));
+}
+
+#endif
 
 } // namespace WebKit
 

@@ -22,7 +22,7 @@ func addServerPaddingTests() {
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				SendServerPaddingLength: ptrTo(uint16(10)),
+				SendServerPaddingLength: new(uint16(10)),
 			},
 		},
 		flags: []string{
@@ -37,7 +37,7 @@ func addServerPaddingTests() {
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				SendServerPaddingLength: ptrTo(uint16(0)),
+				SendServerPaddingLength: new(uint16(0)),
 			},
 		},
 		flags: []string{
@@ -52,7 +52,7 @@ func addServerPaddingTests() {
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				SendServerPaddingLength: ptrTo(uint16(16384)),
+				SendServerPaddingLength: new(uint16(16384)),
 			},
 		},
 		flags: []string{
@@ -68,7 +68,7 @@ func addServerPaddingTests() {
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				SendServerPaddingLength: ptrTo(uint16(5)),
+				SendServerPaddingLength: new(uint16(5)),
 			},
 		},
 		flags: []string{
@@ -86,7 +86,7 @@ func addServerPaddingTests() {
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				SendServerPaddingLength: ptrTo(uint16(50)),
+				SendServerPaddingLength: new(uint16(50)),
 			},
 		},
 		flags: []string{
@@ -127,7 +127,7 @@ func addServerPaddingTests() {
 		config: Config{
 			MaxVersion: VersionTLS12,
 			Bugs: ProtocolBugs{
-				SendServerPaddingLength: ptrTo(uint16(10)),
+				SendServerPaddingLength: new(uint16(10)),
 			},
 		},
 		flags: []string{
@@ -152,7 +152,7 @@ func addServerPaddingTests() {
 		testType: serverTest,
 		config: Config{
 			MinVersion:           VersionTLS13,
-			RequestServerPadding: ptrTo(uint16(10)),
+			RequestServerPadding: new(uint16(10)),
 		},
 	})
 	// Runner requests padding, shim sends padding.
@@ -161,7 +161,7 @@ func addServerPaddingTests() {
 		testType: serverTest,
 		config: Config{
 			MinVersion:           VersionTLS13,
-			RequestServerPadding: ptrTo(uint16(10)),
+			RequestServerPadding: new(uint16(10)),
 			Bugs: ProtocolBugs{
 				ExpectedServerPadding: true,
 			},
@@ -175,7 +175,7 @@ func addServerPaddingTests() {
 		testType: serverTest,
 		config: Config{
 			MinVersion:           VersionTLS13,
-			RequestServerPadding: ptrTo(uint16(0)),
+			RequestServerPadding: new(uint16(0)),
 			Bugs: ProtocolBugs{
 				ExpectedServerPadding: true,
 			},
@@ -189,7 +189,7 @@ func addServerPaddingTests() {
 		testType: serverTest,
 		config: Config{
 			MinVersion:           VersionTLS13,
-			RequestServerPadding: ptrTo(uint16(16384)),
+			RequestServerPadding: new(uint16(16384)),
 			Bugs: ProtocolBugs{
 				ExpectedServerPadding: true,
 			},
@@ -205,7 +205,7 @@ func addServerPaddingTests() {
 		testType: serverTest,
 		config: Config{
 			MinVersion:           VersionTLS13,
-			RequestServerPadding: ptrTo(uint16(16385)),
+			RequestServerPadding: new(uint16(16385)),
 		},
 		flags: []string{
 			"-server-supports-padding",
@@ -218,7 +218,7 @@ func addServerPaddingTests() {
 		testType: serverTest,
 		config: Config{
 			MaxVersion:           VersionTLS12,
-			RequestServerPadding: ptrTo(uint16(1024)),
+			RequestServerPadding: new(uint16(1024)),
 		},
 		flags: []string{
 			"-server-supports-padding",
@@ -233,7 +233,7 @@ func addServerPaddingTests() {
 		resumeSession: true,
 		config: Config{
 			MinVersion:           VersionTLS13,
-			RequestServerPadding: ptrTo(uint16(10)),
+			RequestServerPadding: new(uint16(10)),
 			Bugs: ProtocolBugs{
 				ExpectedServerPadding: true,
 			},

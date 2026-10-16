@@ -334,7 +334,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto source = string->value(globalObject);
+    auto source = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     unsigned sourceLen = source->length();
@@ -364,8 +364,11 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
         if (callData.type == CallData::Type::None && !replacementString.length())
             RELEASE_AND_RETURN(scope, removeAllUsingRegExpSearch(vm, globalObject, string, source, regExp));
 
-        if (callData.type == CallData::Type::JS && !hasNamedCaptures && sourceLen >= Options::thresholdForStringReplaceCache())
-            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, source, regExp, uncheckedDowncast<JSFunction>(replaceValue)));
+        if (callData.type == CallData::Type::JS && !hasNamedCaptures && sourceLen >= Options::thresholdForStringReplaceCache()) {
+            auto resolved = string->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, asObject(replaceValue)));
+        }
     }
 
     if (callData.type == CallData::Type::None) {
@@ -388,7 +391,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
         int argCount = regExp->numSubpatterns() + 1 + 2;
         if (hasNamedCaptures)
             ++argCount;
-        JSFunction* func = uncheckedDowncast<JSFunction>(replaceValue);
+        JSObject* func = asObject(replaceValue);
         std::optional<CachedCall> cachedCallHolder;
         CachedCall* cachedCall = nullptr;
         while (true) {
@@ -479,7 +482,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
                 startPosition++;
                 if (startPosition > sourceLen)
                     break;
-                if (regExp->eitherUnicode() && U16_IS_LEAD(source[startPosition - 1]) && U16_IS_TRAIL(source[startPosition])) {
+                if (regExp->eitherUnicode() && startPosition < sourceLen && U16_IS_LEAD(source[startPosition - 1]) && U16_IS_TRAIL(source[startPosition])) {
                     startPosition++;
                     if (startPosition > sourceLen)
                         break;
@@ -571,7 +574,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
                 startPosition++;
                 if (startPosition > sourceLen)
                     break;
-                if (regExp->eitherUnicode() && U16_IS_LEAD(source[startPosition - 1]) && U16_IS_TRAIL(source[startPosition])) {
+                if (regExp->eitherUnicode() && startPosition < sourceLen && U16_IS_LEAD(source[startPosition - 1]) && U16_IS_TRAIL(source[startPosition])) {
                     startPosition++;
                     if (startPosition > sourceLen)
                         break;
@@ -870,6 +873,11 @@ static EncodedJSValue stringIndexOfImpl(JSGlobalObject* globalObject, CallFrame*
 
     if (thisJSString->length() < otherJSString->length() + pos)
         return JSValue::encode(jsNumber(-1));
+
+    if (otherJSString->length() == 1 && !thisJSString->isRope() && !otherJSString->isRope()) {
+        size_t result = thisJSString->tryGetValueImpl()->find((*otherJSString->tryGetValueImpl())[0], pos);
+        return JSValue::encode(result == notFound ? jsNumber(-1) : jsNumber(result));
+    }
 
     if (otherJSString->length() == 1 && thisJSString->isRope() && thisJSString->length() >= JSString::minLengthForRopeWalk) {
         auto otherView = otherJSString->view(globalObject);
@@ -1947,7 +1955,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncTrimEnd, (JSGlobalObject* globalObject, 
     return JSValue::encode(trimString<TrimKind::TrimEnd>(globalObject, thisValue));
 }
 
-static inline unsigned NODELETE clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
+static inline unsigned LEGACY_NODELETE clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
 {
     if (value < min)
         return min;

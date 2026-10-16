@@ -56,28 +56,28 @@ SharedCursor::~SharedCursor()
     DestroyIcon(m_nativeCursor);
 }
 
-static Ref<SharedCursor> createSharedCursor(Image* img, const IntPoint& hotSpot)
+static Ref<SharedCursor> createSharedCursor(NativeImage& image, const IntPoint& hotSpot)
 {
-    IntPoint effectiveHotSpot = determineHotSpot(img, hotSpot);
-    BitmapInfo cursorImage = BitmapInfo::create(IntSize(img->width(), img->height()));
+    auto cursorSize = image.size();
+    BitmapInfo cursorImage = BitmapInfo::create(cursorSize);
 
     HWndDC dc(0);
     auto workingDC = adoptGDIObject(::CreateCompatibleDC(dc));
     auto hCursor = adoptGDIObject(::CreateDIBSection(dc, &cursorImage, DIB_RGB_COLORS, nullptr, 0, 0));
 
-    img->adapter().getHBITMAP(hCursor.get());
+    BitmapImage::create(Ref { image })->adapter().getHBITMAP(hCursor.get());
     HBITMAP hOldBitmap = (HBITMAP)SelectObject(workingDC.get(), hCursor.get());
     SetBkMode(workingDC.get(), TRANSPARENT);
     SelectObject(workingDC.get(), hOldBitmap);
 
     Vector<unsigned char, 128> maskBits;
-    maskBits.fill(0xff, (img->width() + 7) / 8 * img->height());
-    auto hMask = adoptGDIObject(::CreateBitmap(img->width(), img->height(), 1, 1, maskBits.span().data()));
+    maskBits.fill(0xff, (cursorSize.width() + 7) / 8 * cursorSize.height());
+    auto hMask = adoptGDIObject(::CreateBitmap(cursorSize.width(), cursorSize.height(), 1, 1, maskBits.span().data()));
 
     ICONINFO ii;
     ii.fIcon = FALSE;
-    ii.xHotspot = effectiveHotSpot.x();
-    ii.yHotspot = effectiveHotSpot.y();
+    ii.xHotspot = hotSpot.x();
+    ii.yHotspot = hotSpot.y();
     ii.hbmMask = hMask.get();
     ii.hbmColor = hCursor.get();
 
@@ -93,9 +93,11 @@ static Ref<SharedCursor> loadCursorByName(const char* name, int x, int y)
 {
     IntPoint hotSpot(x, y);
     Ref cursorImage = ImageAdapter::loadPlatformResource(name);
-    if (!cursorImage->isNull())
-        return createSharedCursor(cursorImage.ptr(), hotSpot);
-    return loadSharedCursor(0, IDC_ARROW);
+    RefPtr nativeImage = cursorImage->currentNativeImage();
+    if (!nativeImage)
+        return loadSharedCursor(0, IDC_ARROW);
+
+    return createSharedCursor(*nativeImage, determineHotSpot(nativeImage->size(), hotSpot, cursorImage->hotSpot()));
 }
 
 void Cursor::ensurePlatformCursor() const
@@ -220,10 +222,10 @@ void Cursor::ensurePlatformCursor() const
         m_platformCursor = loadCursorByName("zoomOutCursor", 7, 7);
         break;
     case Type::Custom:
-        if (m_image->isNull())
-            m_platformCursor = loadSharedCursor(0, IDC_ARROW);
+        if (RefPtr image = m_image; image && !image->size().isEmpty())
+            m_platformCursor = createSharedCursor(*image, m_hotSpot);
         else
-            m_platformCursor = createSharedCursor(m_image.get(), m_hotSpot);
+            m_platformCursor = loadSharedCursor(0, IDC_ARROW);
         break;
     case Type::Invalid:
     default:

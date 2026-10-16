@@ -44,15 +44,16 @@
 #include "InlineTextItem.h"
 #include "IntrinsicWidthHandler.h"
 #include "LayoutBox.h"
-#include "LayoutContext.h"
 #include "LayoutDescendantIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
 #include "LayoutInlineTextBox.h"
 #include "LayoutIntegrationUtils.h"
 #include "LayoutState.h"
+#include "LineClampUpdater.h"
 #include "Logging.h"
 #include "RangeBasedLineBuilder.h"
+#include "RenderBox.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextOnlySimpleLineBuilder.h"
 #include "TextUtil.h"
@@ -66,7 +67,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineContentCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineFormattingContext);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineLayoutResult);
 
-static std::optional<InlineItemRange> NODELETE partialRangeForDamage(const InlineItemList& inlineItemList, const InlineDamage& lineDamage)
+static std::optional<InlineItemRange> LEGACY_NODELETE partialRangeForDamage(const InlineItemList& inlineItemList, const InlineDamage& lineDamage)
 {
     auto layoutStartPosition = lineDamage.layoutStartPosition()->inlineItemPosition;
     if (layoutStartPosition.index >= inlineItemList.size()) {
@@ -81,7 +82,7 @@ static std::optional<InlineItemRange> NODELETE partialRangeForDamage(const Inlin
     return InlineItemRange { layoutStartPosition, { inlineItemList.size(), 0 } };
 }
 
-static bool NODELETE isEmptyInlineContent(const InlineItemList& inlineItemList)
+static bool LEGACY_NODELETE isEmptyInlineContent(const InlineItemList& inlineItemList)
 {
     if (inlineItemList.isEmpty())
         return true;
@@ -170,10 +171,11 @@ std::unique_ptr<InlineLayoutResult> InlineFormattingContext::layout(const Constr
     // FIXME: This needs partial support when line-clamped content has nested blocks.
     inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(inlineLayoutState.lineCount());
 
-    auto textWrapStyle = root().style().textWrapStyle();
-    if (root().style().textWrapMode() == TextWrapMode::Wrap && (textWrapStyle == TextWrapStyle::Balance || textWrapStyle == TextWrapStyle::Pretty)) {
+    auto lineClamp = inlineLayoutState.parentBlockLayoutState().lineClamp();
+    auto isStableTextWrap = lineClamp && lineClamp->isStableTextWrap;
+    if (!isStableTextWrap && InlineContentConstrainer::constrainsContent(root().style())) {
         auto constrainer = InlineContentConstrainer { *this, inlineItemList, constraints.horizontal() };
-        auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(textWrapStyle);
+        auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle());
         if (constrainedLineWidths)
             inlineLayoutState.setAvailableLineWidthOverride({ *constrainedLineWidths });
     }
@@ -495,6 +497,11 @@ void InlineFormattingContext::resetBoxGeometriesForDiscardedContent(const Inline
     if (discardedRange.isEmpty() && suspendedFloats.isEmpty())
         return;
 
+    auto setIsForcedHidden = [](auto& box) {
+        if (CheckedPtr renderer = dynamicDowncast<RenderElement>(box.rendererForIntegration()))
+            LineClampUpdater::setIsForcedHidden(*renderer, true);
+    };
+
     auto& inlineItemList = inlineContentCache().inlineItems().content();
     for (auto index = discardedRange.startIndex(); index < discardedRange.endIndex(); ++index) {
         auto& inlineItem = inlineItemList[index];
@@ -502,10 +509,17 @@ void InlineFormattingContext::resetBoxGeometriesForDiscardedContent(const Inline
         if (!hasBoxGeometry)
             continue;
         geometryForBox(inlineItem.layoutBox()).reset();
+        // Floats, atomic inline-level boxes and inline boxes that start after the clamp point are invisible boxes, and so is "any absolutely
+        // positioned box which has an invisible box within its containing block chain" (see LineClampUpdater::setIsForcedHidden).
+        // https://drafts.csswg.org/css-overflow-4/#line-clamp-containers
+        if (inlineItem.isFloat() || inlineItem.isAtomicInlineBox() || inlineItem.isInlineBoxStart())
+            setIsForcedHidden(inlineItem.layoutBox());
     }
 
-    for (CheckedPtr floatBox : suspendedFloats)
+    for (CheckedPtr floatBox : suspendedFloats) {
         geometryForBox(*floatBox).reset();
+        setIsForcedHidden(*floatBox);
+    }
 }
 
 bool InlineFormattingContext::createDisplayContentForLineFromCachedContent(const ConstraintsForInlineContent& constraints, InlineLayoutResult& layoutResult, bool mayUseSimplifiedDisplayContentBuild)

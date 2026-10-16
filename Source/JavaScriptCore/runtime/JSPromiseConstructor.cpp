@@ -214,7 +214,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncWithResolvers, (JSGlobalObject* g
     return JSValue::encode(JSPromise::createNewPromiseCapability(globalObject, thisValue));
 }
 
-static bool NODELETE isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
+static bool LEGACY_NODELETE isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
 {
     if (value != globalObject->promiseConstructor()) [[unlikely]]
         return false;
@@ -285,7 +285,7 @@ static JSObject* promiseRaceSlow(JSGlobalObject* globalObject, CallFrame* callFr
     std::optional<CachedCall> cachedCallHolder;
     CachedCall* cachedCall = nullptr;
     if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
+        cachedCallHolder.emplace(globalObject, asObject(promiseResolveValue), 1);
         if (scope.exception()) [[unlikely]] {
             callRejectWithScopeException();
             return promise;
@@ -440,7 +440,7 @@ static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFra
     std::optional<CachedCall> cachedCallHolder;
     CachedCall* cachedCall = nullptr;
     if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
+        cachedCallHolder.emplace(globalObject, asObject(promiseResolveValue), 1);
         if (scope.exception()) [[unlikely]] {
             callRejectWithScopeException();
             return promise;
@@ -744,7 +744,7 @@ static JSObject* promiseAllSettledSlow(JSGlobalObject* globalObject, CallFrame* 
     std::optional<CachedCall> cachedCallHolder;
     CachedCall* cachedCall = nullptr;
     if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
+        cachedCallHolder.emplace(globalObject, asObject(promiseResolveValue), 1);
         if (scope.exception()) [[unlikely]] {
             callRejectWithScopeException();
             return promise;
@@ -1206,7 +1206,7 @@ static JSObject* promiseAnySlow(JSGlobalObject* globalObject, CallFrame* callFra
     std::optional<CachedCall> cachedCallHolder;
     CachedCall* cachedCall = nullptr;
     if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
+        cachedCallHolder.emplace(globalObject, asObject(promiseResolveValue), 1);
         if (scope.exception()) [[unlikely]] {
             callRejectWithScopeException();
             return promise;

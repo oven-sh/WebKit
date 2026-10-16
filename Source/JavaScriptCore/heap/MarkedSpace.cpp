@@ -289,8 +289,10 @@ void MarkedSpace::sweepPreciseAllocations()
 void MarkedSpace::prepareForAllocation()
 {
     ASSERT(!Thread::mayBeGCThread() || heap().worldIsStopped());
-    for (Subspace* subspace : m_subspaces)
-        subspace->prepareForAllocation();
+    if (!heap().isCollectingYoungWhileNothingIsYoung()) {
+        for (Subspace* subspace : m_subspaces)
+            subspace->prepareForAllocation();
+    }
 
     m_activeWeakSets.takeFrom(m_newActiveWeakSets);
     
@@ -323,6 +325,8 @@ void MarkedSpace::reapWeakSets()
 void MarkedSpace::stopAllocating()
 {
     ASSERT(!isIterating());
+    if (!heap().m_hasAllocatedSinceLastCollection)
+        return;
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocating();
@@ -357,6 +361,8 @@ void MarkedSpace::prepareForConservativeScan()
 void MarkedSpace::resumeAllocating()
 {
     m_conservativeScanIsPrepared = false;
+    if (!heap().m_hasAllocatedSinceLastCollection)
+        return;
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.resumeAllocating();
@@ -416,7 +422,7 @@ void MarkedSpace::beginMarking()
         if (nextVersion(m_markingVersion) == initialVersion) [[unlikely]] {
             forEachBlock(
                 [&] (MarkedBlock::Handle* handle) {
-                    handle->block().resetMarks();
+                    handle->block().resetMarksForVersionWrap();
                 });
         }
 
@@ -446,7 +452,7 @@ void MarkedSpace::endMarking()
     if (nextVersion(m_newlyAllocatedVersion) == initialVersion) [[unlikely]] {
         forEachBlock(
             [&] (MarkedBlock::Handle* handle) {
-                handle->block().resetAllocated();
+                handle->block().resetNewlyAllocatedForVersionWrap();
             });
     }
     
@@ -460,11 +466,13 @@ void MarkedSpace::endMarking()
             ASSERT_UNUSED(allocation, !allocation->isNewlyAllocated());
     }
 
-    forEachDirectory(
-        [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.endMarking();
-            return IterationStatus::Continue;
-        });
+    if (!heap().isCollectingYoungWhileNothingIsYoung()) {
+        forEachDirectory(
+            [&] (BlockDirectory& directory) -> IterationStatus {
+                directory.endMarking();
+                return IterationStatus::Continue;
+            });
+    }
     
     m_isMarking = false;
 }

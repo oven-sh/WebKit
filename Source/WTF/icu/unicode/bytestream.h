@@ -32,6 +32,9 @@
 #ifndef __BYTESTREAM_H__
 #define __BYTESTREAM_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: Interface for writing bytes, and implementation classes.

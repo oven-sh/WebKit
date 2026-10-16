@@ -44,6 +44,7 @@
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/ExceptionData.h>
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/IPAddressSpace.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/LoadSchedulingMode.h>
 #include <WebCore/MessagePortChannelProvider.h>
@@ -56,6 +57,7 @@
 #include <WebCore/PushSubscriptionIdentifier.h>
 #include <WebCore/RTCDataChannelIdentifier.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/SecurityOriginData.h>
 #include <WebCore/WebSocketIdentifier.h>
 #include <WebCore/WebTransportConnectionInfo.h>
 #include <optional>
@@ -178,6 +180,9 @@ public:
     SharedPreferencesForWebProcess sharedPreferencesForWebProcessValue() const { return m_sharedPreferencesForWebProcess; }
     void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess&&);
 
+    // std::nullopt means the process may host documents from any site.
+    void setHostedDomains(std::optional<HashSet<WebCore::RegistrableDomain>>&& domains) { m_hostedDomains = WTF::move(domains); }
+
     PAL::SessionID sessionID() const { return m_sessionID; }
     NetworkSession* networkSession();
 
@@ -188,6 +193,13 @@ public:
     bool blobFileAccessEnforcementEnabled() const { return m_sharedPreferencesForWebProcess.blobFileAccessEnforcementEnabled; }
     bool compressionDictionaryEnabled() const { return m_sharedPreferencesForWebProcess.compressionDictionaryEnabled; }
     bool localNetworkAccessEnabled() const { return m_sharedPreferencesForWebProcess.localNetworkAccessEnabled; }
+
+    struct LocalNetworkAccessFrameRecord {
+        WebCore::IPAddressSpace addressSpace;
+        WebCore::SecurityOriginData origin;
+    };
+    void recordLocalNetworkAccessFrame(WebCore::FrameIdentifier, LocalNetworkAccessFrameRecord&&);
+    std::optional<LocalNetworkAccessFrameRecord> localNetworkAccessFrameRecord(WebCore::FrameIdentifier, std::optional<WebCore::FrameIdentifier> parentFrameID) const;
 
     void didCleanupResourceLoader(NetworkResourceLoader&);
     void transferKeptAliveLoad(NetworkResourceLoader&);
@@ -240,7 +252,7 @@ public:
     std::optional<NetworkActivityTracker> startTrackingResourceLoad(WebCore::PageIdentifier, WebCore::ResourceLoaderIdentifier resourceID, bool isTopResource);
     void stopTrackingResourceLoad(WebCore::ResourceLoaderIdentifier resourceID, NetworkActivityTracker::CompletionCode);
 
-    Vector<Ref<WebCore::BlobDataFileReference>> resolveBlobReferences(const NetworkResourceLoadParameters&);
+    Vector<Ref<WebCore::BlobDataFileReference>> resolveBlobReferences(NetworkResourceLoadParameters&);
 
     void removeSocketChannel(WebCore::WebSocketIdentifier);
 
@@ -285,9 +297,9 @@ public:
     void allowAccessToFile(const String& path);
     void loadCancelledDownloadRedirectRequestInFrame(const WebCore::ResourceRequest&, const WebCore::FrameIdentifier&, const WebCore::PageIdentifier&);
 
-    bool NODELETE isAlwaysOnLoggingAllowed() const;
+    bool LEGACY_NODELETE isAlwaysOnLoggingAllowed() const;
 
-    std::optional<NetworkActivityTracker::CompletionCode> NODELETE lastRootActivityCompletionCodeForTesting(WebCore::PageIdentifier) const;
+    std::optional<NetworkActivityTracker::CompletionCode> LEGACY_NODELETE lastRootActivityCompletionCodeForTesting(WebCore::PageIdentifier) const;
 
     // Called by NetworkSession when draining the deferred-claim queue for a parked loader.
     void completeQueuedExistingLoaderResume(Ref<NetworkResourceLoader>&&, NetworkResourceLoadParameters&&);
@@ -297,7 +309,7 @@ private:
     NetworkConnectionToWebProcess(NetworkProcess&, WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier&&);
 
     void didFinishPreconnection(WebCore::ResourceLoaderIdentifier preconnectionIdentifier, const WebCore::ResourceError&);
-    NetworkStorageSession* NODELETE storageSession();
+    NetworkStorageSession* LEGACY_NODELETE storageSession();
 
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -331,7 +343,9 @@ private:
     void registerURLSchemesAsCORSEnabled(Vector<String>&& schemes);
 
     enum class CookieAccess : uint8_t { Disallow, Allow, Terminate };
-    CookieAccess validateCookieAccess(ASCIILiteral messageName, const URL& firstParty, const URL&, const WebCore::SameSiteInfo*, std::optional<WebPageProxyIdentifier>);
+    enum class AllowUnhostedURL : bool { No, Yes };
+    CookieAccess validateCookieAccess(ASCIILiteral messageName, const URL& firstParty, const URL&, const WebCore::SameSiteInfo*, std::optional<WebPageProxyIdentifier>, AllowUnhostedURL = AllowUnhostedURL::No);
+    bool hostsDomain(const WebCore::RegistrableDomain&) const;
 
     void cookiesForDOM(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, WebCore::IncludeSecureCookies, WebPageProxyIdentifier, CompletionHandler<void(String cookieString, bool secureCookiesAccessed)>&&);
     void setCookiesFromDOM(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::FrameIdentifier, const String& cookieString, WebCore::RequiresScriptTrackingPrivacy, WebPageProxyIdentifier);
@@ -439,7 +453,7 @@ private:
 
     MessageBatchIdentifier nextMessageBatchIdentifier(CompletionHandler<void()>&&);
 
-    void domCookiesForHost(const URL& host, CompletionHandler<void(const Vector<WebCore::Cookie>&)>&&);
+    void domCookiesForHost(const URL& host, CompletionHandler<void(std::optional<Vector<WebCore::Cookie>>&&)>&&);
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
     void subscribeToCookieChangeNotifications(const URL&, const URL& firstParty, WebCore::FrameIdentifier, WebPageProxyIdentifier, CompletionHandler<void(bool)>&&);
@@ -538,6 +552,7 @@ private:
     NetworkResourceLoadMap m_networkResourceLoaders;
     Vector<ResourceNetworkActivityTracker> m_networkActivityTrackers;
     HashMap<WebCore::PageIdentifier, NetworkActivityTracker::CompletionCode> m_lastRootActivityCompletionCodesForTesting;
+    HashMap<WebCore::FrameIdentifier, LocalNetworkAccessFrameRecord> m_localNetworkAccessFrameRecords;
 
     HashMap<WebCore::ResourceLoaderIdentifier, std::unique_ptr<WebCore::NetworkLoadInformation>> m_networkLoadInformationByID;
 
@@ -577,6 +592,7 @@ private:
     HashSet<BlobURLKey> m_blobURLs;
     HashCountedSet<BlobURLKey> m_blobURLHandles;
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
+    std::optional<HashSet<WebCore::RegistrableDomain>> m_hostedDomains;
     HashSet<String> m_allowedFilePaths;
 #if ENABLE(IPC_TESTING_API)
     const Ref<IPCTester> m_ipcTester;

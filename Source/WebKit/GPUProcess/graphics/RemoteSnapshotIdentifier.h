@@ -25,18 +25,21 @@
 
 #pragma once
 
+#include <WebCore/ProcessQualified.h>
+#include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/UUID.h>
 
 namespace WebKit {
 
-// Names a snapshot to every process that records into it or draws it. Unguessable, since holding one
-// is all it takes to record into the snapshot, or to abandon or fail it.
-using RemoteSnapshotIdentifier = WTF::UUID;
+// Minted by the UI process or by a web process. The process part tells the UI process who may display
+// the snapshot. The rest is unguessable, since holding one is all it takes to record into the
+// snapshot, or to abandon or fail it.
+using RemoteSnapshotIdentifier = WebCore::ProcessQualified<WTF::UUID>;
 
-// Cryptographically random, unlike WTF::UUID::createVersion4Weak().
+// Cryptographically random, unlike ProcessQualified<WTF::UUID>::generate().
 inline RemoteSnapshotIdentifier generateRemoteSnapshotIdentifier()
 {
-    return WTF::UUID::createVersion4();
+    return { WTF::UUID::createVersion4(), WebCore::Process::identifier() };
 }
 
-}
+} // namespace WebKit

@@ -47,7 +47,7 @@ NSString * const WebPlugInContainingElementKey =       @"WebPlugInContainingElem
     if (!(self = [super initWithPath:pluginPath]))
         return nil;
 
-    nsBundle = [[NSBundle alloc] initWithPath:path.createNSString().get()];
+    nsBundle = adoptNS([[NSBundle alloc] initWithPath:path.createNSString().get()]);
 
     if (!nsBundle) {
         [self release];
@@ -79,14 +79,6 @@ NSString * const WebPlugInContainingElementKey =       @"WebPlugInContainingElem
     }
 
     return self;
-}
-
-- (void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [nsBundle release];
-
-    [super dealloc];
 }
 
 - (Class)viewFactory

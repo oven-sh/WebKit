@@ -264,7 +264,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             if (disassembler)
                 disassembler->startEntrypoint(jit); 
 
-            code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(jit, code);
+            code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(jit, code, context);
 
             if (disassembler)
                 disassembler->endEntrypoint(jit); 

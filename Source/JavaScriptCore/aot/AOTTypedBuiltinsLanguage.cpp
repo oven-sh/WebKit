@@ -69,8 +69,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
     uint32_t numberOfNames = enumerator->sizeOfPropertyNames();
     if (!indexedLength && !numberOfNames)
         OPERATION_RETURN(scope, instance->emptyKeyList);
-    if (mayShare && !indexedLength && numberOfNames && enumerator->endStructurePropertyIndex() == numberOfNames && enumerator->cachedStructureID() == object->structureID())
-        OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude));
+    if (mayShare && !indexedLength && numberOfNames && enumerator->cachedStructureID() == object->structureID() && (enumerator->endStructurePropertyIndex() == numberOfNames || object->structure()->canCacheOwnPropertyNames())) {
+        JSArray* own = ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        if (own->length() == numberOfNames)
+            OPERATION_RETURN(scope, own);
+    }
 
     JSArray* keys = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), indexedLength + numberOfNames);
     if (!keys) [[unlikely]] {
@@ -250,6 +254,12 @@ Operand Lowering::lowerForInKeys(ValueID result, const Value& value)
     if (isAskedForFinalObject(result)) {
         Word32 isFinal = either<Word32>(isShared, [&] {
             return Word32(isCellOfType(asCell(object).value(), FinalObjectType));
+        }, [&] {
+            return word32(0);
+        });
+        isFinal = either<Word32>(isFinal, [&] {
+            constexpr uint32_t asked = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_dictionaryKindBits;
+            return equal(bitAnd(Word32(m_out.load32(structureOf(asCell(object).value()), m_heaps.Structure_bitField)), word32(asked)), word32(Structure::s_isQuickPropertyAccessAllowedForEnumerationBits));
         }, [&] {
             return word32(0);
         });

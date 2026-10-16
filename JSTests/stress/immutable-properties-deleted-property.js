@@ -30,7 +30,7 @@ for (const fix of [false, true]) {
             if ("value" in d) { o[k] = "other"; shouldBe(o[k], values[i], what + ": " + String(k) + " keeps its value"); shouldThrow(() => { "use strict"; o[k] = "other"; }, what + ": " + String(k) + ", strict"); }
             shouldBe(delete o[k], false, what + ": " + String(k) + " is not deleted"); shouldBe(Object.hasOwn(o, k), true, what + ": " + String(k) + " is there");
         });
-        const heir = Object.create(o); for (const k of keys) { const d = Object.getOwnPropertyDescriptor(o, k); if (typeof k !== "string" || !("value" in d)) continue; heir[k] = "own"; shouldBe(Object.hasOwn(heir, k), fix || d.writable, what + ": an heir has its own " + k + ", unless it was read-only all along"); }
+        const heir = Object.create(o); for (const k of keys) { const d = Object.getOwnPropertyDescriptor(o, k); if (fix || typeof k !== "string" || !("value" in d)) continue; heir[k] = "own"; shouldBe(Object.hasOwn(heir, k), d.writable, what + ": an heir has its own " + k + ", unless it is read-only"); }
         heir.a = "own"; shouldBe(heir.a, "own", what + ": and what was lost");
         shouldBe($vm.hasImmutableProperties({ ...o }), false, what + ": a copy is not immutable"); shouldBe(Object.keys({ ...o }).join(), Object.keys(o).join(), what + ": a copy has its keys");
     }

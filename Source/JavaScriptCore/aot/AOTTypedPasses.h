@@ -38,7 +38,10 @@ Vector<String> optimize(Program&);
 void prepare(Program&);
 void expandDisposableStacks(Program&);
 // Splits each async function and generator into a ramp and a resume function with a coroutine frame.
-void splitCoroutines(Program&);
+Vector<std::pair<FunctionID, Function>> splitCoroutines(Program&);
+void splitOptimizedGenerators(Program&, Vector<std::pair<FunctionID, Function>>&&);
+void recordCellsLiveAcrossAwaits(const Program&, Function&);
+BitVector objectsLiveAcrossSuspensions(const Function&);
 BitVector blocksInLoops(const Function&);
 constexpr unsigned isInNoCycle = UINT_MAX;
 Vector<unsigned> cycleOfEachBlock(const Function&);
@@ -47,6 +50,11 @@ bool mayLeaveConstructionToBody(const Program&, FunctionID, const Function&, con
 // For every function that is used as a value, every method and every constructor of a class: what someone calls who does not know the
 // function. It holds the arguments to the types of the parameters (Cast: As where the type is written down, else Store) and calls the function.
 void createGenericEntrypoints(Program&);
+void createValueEntrypoints(Program&);
+void createAdaptersOfResults(Program&);
+void forgetResultsThatCallersCheck(Program&);
+void callValuesBySignature(Program&);
+void createJSONSerializers(Program&);
 // `class Q extends P` in untyped text: Layout::declaredParentConstructor of Q, read off `MakeClass (Q, P)` where both are constants.
 void findDeclaredParents(Program&);
 // `f.bind(t, a)` where `f` is known: a function that captures `t` and `a` and calls `f`, for each `f` and number of arguments that a site names. resolveCalls() makes closures of them.
@@ -54,6 +62,7 @@ void createBoundFunctions(Program&);
 // Gives every NewObjectWithShape its Allocation, in Function::allocations. Of a record: the fields its initializing stores create, in
 // that order, all of them born. Of anything else: every field, in the order of the layout, all of them born.
 void assignAllocations(Program&);
+void assignAllocations(const Program&, Function&);
 // Program::viewsRetaggedTo, from the lists of specializations as they are given, and viewsLeftAlone.
 void findViewsRetaggedTo(Program&);
 // After the functions have been optimized: Function::allocations become Program::allocations, in the order of the functions. Then come
@@ -128,6 +137,7 @@ void verifyRegExpLiterals(const Program&, Vector<String>& findings);
 void cleanUp(const Program&, Function&);
 void compactBlocks(Function&);
 void cleanUpIfAnythingFolds(const Program&, Function&);
+enum class CleanUpTiming : bool { Immediate, Deferred };
 bool threadOwnKeysOfForIn(const Program&, Function&);
 unsigned flattenIteratedObjectEntries(const Program&, Function&);
 unsigned fuseOwnPropertyDescriptorCopies(const Program&, Function&);
@@ -135,6 +145,7 @@ unsigned hoistDefinePropertyIntoPredecessors(Function&);
 // Behind all passes on the function, once: the birth that a wrapper (Function::worker) has brought along and that is still there goes from the block where the ways out of the worker meet into each of them.
 void moveBirthsIntoArms(const Program&, Function&);
 void removeTrivialParameters(const Program&, Function&);
+bool askForTruthOnTheWaysIn(const Program&, Function&);
 // AssertNotAllocated: at that point of the program the operand is no allocated object. It is no use of the operand: a pass that does away with the allocation on the ways that lead
 // there takes the assertion out. Under Options::useDollarVM() a call of `function assertNotAllocated(_: unknown): void {}` is one. What is left of them in a function that has code is a finding.
 void convertAllocationAssertions(Program&, Vector<String>& findings);
@@ -184,25 +195,28 @@ BlockID splitEdge(Function&, BlockID from, unsigned targetIndex);
 // A call of a method, an accessor or a constructor through a view becomes a call of the function, or a choice among the functions by
 // shape. So does an access to a static method or accessor on the class object of a class that is evaluated once, and one through `super`
 // in such a class. Yields how much it changed.
-unsigned resolveCalls(const Program&, Function&, bool mayGuess);
+unsigned resolveCalls(const Program&, Function&, bool mayGuess, CleanUpTiming = CleanUpTiming::Immediate);
 // By size. Yields how much it changed.
-unsigned inlineCalls(const Program&, FunctionID, Function&);
+unsigned inlineCalls(const Program&, FunctionID, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 void internNamesForGeneratorLoopFusion(Program&);
 unsigned fuseGeneratorLoops(const Program&, Function&);
 void prepareForInlining(Program&);
 // A cast whose operand is of the type goes. An object that is made, stored to and then cast to a specialization of its layout before
 // anyone has seen it is made with that. Yields how much it changed.
-unsigned simplifyCasts(const Program&, Function&);
+unsigned simplifyCasts(const Program&, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 unsigned countInIntegers(const Program&, Function&);
 // A catch block that only closes the iterator of an array and rethrows is removed. Yields how many were.
 unsigned removeRedundantCatchBlocks(const Program&, Function&);
 // A call of a built-in method that the table binds to a function of the prelude becomes a direct call of it, behind a check that the
 // receiver has its original structure. Yields how much it changed.
-unsigned resolvePreludeCalls(const Program&, Function&);
+unsigned resolvePreludeCalls(const Program&, Function&, CleanUpTiming = CleanUpTiming::Immediate);
+enum class ReceiversThatMayYetBeProven : bool { Wait, AreTaken };
+unsigned callGuardedPreludeEntries(const Program&, FunctionID, Function&, ReceiversThatMayYetBeProven);
 // A call of a built-in method on a receiver of unknown class gets a fast path for the class it is speculated to be of. Yields how much it changed.
 unsigned speculateOnReceivers(const Program&, FunctionID, Function&);
 unsigned eliminateGuardsOnUnescapedReceivers(const Program&, Function&);
 void eliminateGuardsOnFreshResults(Program&);
+void eliminateGuardsOnUnescapedModuleVariables(Program&);
 // What comes down to one entry of the table of built-ins says so from here on.
 void resolveBuiltins(const Program&, Function&);
 void sinkEmptyArrayLiterals(Function&);
@@ -247,14 +261,15 @@ private:
 };
 // Whether an object of a member of the view that has no own property of the name may inherit one, whether or not its layout has a field of
 // the name. Then a read, `in` and [[Set]] ask the prototype chain where the field is absent.
-bool mayInherit(const Program&, LayoutID view, StringID name);
+bool mayInherit(const Program&, LayoutID view, StringID name, bool isForStore = false);
+bool hasMethodField(const Program&, LayoutID member, StringID name);
 bool storeMayAskPrototypeChain(const Program&, const Function&, const Block&, size_t index, LayoutID view, StringID name);
 bool mayGiveUp(const Program&, LayoutID view);
 bool storeMayMakeObjectGiveUp(const Program&, const Function&, const Block&, size_t index, LayoutID view);
 bool onlyExtraPropertiesSupply(const Program&, LayoutID view, StringID name);
 // The part of that which holds of every such object: the prototype that its layout says may supply the name. For the rest, a member with
 // Layout::mayHaveOtherPrototype, the object says whether to ask: orderWordHasExtraProperties, see Typed::Object::noteWhetherToAsk().
-bool inheritsByItsLayout(const Program&, LayoutID view, StringID name);
+bool inheritsByItsLayout(const Program&, LayoutID view, StringID name, bool isForStore = false);
 // Nothing can be added to it.
 bool isOnObjectPrototype(const Program&, StringID name);
 // Of an object that the function makes, as long as nobody else has seen it: it has the prototype it was born with.
@@ -269,6 +284,8 @@ bool isBornUnderAnyPrototype(const Program&, const Function&, ValueID object);
 // any code. `ofUnmarkedObject`: of an object without orderWordHasExtraProperties, which has the prototype that its layout says.
 bool onlyFieldsSupply(const Program&, LayoutID view, StringID name, bool ofUnmarkedObject = false);
 bool onlyFieldsSupplyToMembers(const Program&, LayoutID view, StringID name);
+void indexViewsOfLayouts(Program&);
+bool membersHoldOnlyDeclaredType(const Program&, LayoutID view, uint32_t field);
 // Whether a store by the name to a member of the view that has no such field may be a shape transition to a specialization that has one,
 // instead of making an extra property: see State::specializeToStore(). An upper bound: the run time has further conditions.
 bool storeMayTransition(const Program&, LayoutID view, StringID name);
@@ -332,7 +349,7 @@ struct UserInBlock {
 };
 using UsersInBlocks = Vector<UserInBlock, 4>;
 void collectPropertiesGivenTo(const Program&, const Function&, ValueID object, unsigned depth, Vector<StringID, 16>& names, unsigned& numberOfKeys, const UsersInBlocks* users = nullptr, bool goesByTheChain = false);
-bool collectPropertiesGivenToThis(const Program&, FunctionID, Vector<StringID, 16>& names, unsigned& numberOfKeys);
+bool collectPropertiesGivenToThis(const Program&, FunctionID, Vector<StringID, 16>& names, unsigned& numberOfKeys, bool followsCallsOnThis = true);
 // What carrying out a Cast may change, from the effect summaries on. A test changes nothing, and where it fails and that is the end
 // nothing is changed either. As and Coerce go on: a plain object is copied (RuntimeState), and where Coerce converts an object to a
 // primitive its methods run (Heap). No cast walks a container.
@@ -417,7 +434,7 @@ struct SplitFunction {
     Vector<Function> continuations;
 };
 // False: it stays whole.
-bool splitFunction(const Program&, FunctionID, const Function&, const BitVector& blocksThatEmitCalls, SplitFunction&);
+bool splitFunction(const Program&, FunctionID, const Function&, const BitVector& blocksThatEmitCalls, const BitVector& blocksThatAreNotRun, SplitFunction&);
 Vector<size_t, 6> fieldsMadeWithAllocation(const Program&, const Function&, const Block&, size_t allocation, bool isCreateThis, bool hasNullPrototype);
 Vector<unsigned> immediateDominatorsOf(const Function&);
 bool isBornByItsRow(const Program&, const Function&, const Block&, size_t allocation);

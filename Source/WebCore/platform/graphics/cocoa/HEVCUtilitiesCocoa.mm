@@ -130,7 +130,7 @@ std::optional<PlatformMediaCapabilitiesInfo> validateHEVCParameters(const HEVCPa
     return info;
 }
 
-static CMVideoCodecType NODELETE codecType(DoViParameters::Codec codec)
+static CMVideoCodecType LEGACY_NODELETE codecType(DoViParameters::Codec codec)
 {
     switch (codec) {
     case DoViParameters::Codec::AVC1:
@@ -253,7 +253,7 @@ RefPtr<VideoInfo> createVideoInfoFromHEVCAnnexBStream(std::span<const uint8_t> d
     if (!description)
         return nullptr;
 
-    return createVideoInfoFromFormatDescription(description);
+    return createVideoInfoFromFormatDescription(description, findHEVCAnnexBMaxNumReorderPics(data, naluIndices));
 }
 
 Vector<uint8_t> convertHEVCAnnexBToLengthPrefixed(std::span<const uint8_t> data, const Vector<NaluIndex>& naluIndices)
@@ -294,7 +294,7 @@ RefPtr<VideoInfo> createVideoInfoFromHVCC(const HVCCParameterSets& parameterSets
     if (!description)
         return nullptr;
 
-    return createVideoInfoFromFormatDescription(description);
+    return createVideoInfoFromFormatDescription(description, findHVCCMaxNumReorderPics(parameterSets));
 }
 
 }

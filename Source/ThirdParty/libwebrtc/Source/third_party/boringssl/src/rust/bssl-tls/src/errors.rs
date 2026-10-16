@@ -43,7 +43,6 @@ use crate::config::ConfigurationError;
 #[derive(Debug)]
 pub enum Error {
     /// Error reported by the BoringSSL library
-    #[allow(private_interfaces)]
     Library(u32, Option<LibCode>, Option<i32>),
     /// Configuration errors
     Configuration(ConfigurationError),
@@ -189,6 +188,7 @@ impl Display for Error {
 bssl_enum! {
     /// SSL reason codes.
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub enum TlsErrorReason: i32 {
         /// `SSL_R_APP_DATA_IN_HANDSHAKE`
         AppDataInHandshake = bssl_sys::SSL_R_APP_DATA_IN_HANDSHAKE as i32,

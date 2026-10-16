@@ -804,6 +804,18 @@ op :get_by_id_direct,
         offset: unsigned,
     }
 
+op :in_by_id,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
+    },
+    metadata: {
+        structureID: StructureID,
+        offset: unsigned,
+        kind: unsigned,
+    }
+
 # Alignment: 1
 op :jneq_ptr,
     args: {
@@ -872,13 +884,6 @@ op :to_object,
         operand: VirtualRegister,
         message: unsigned,
         valueProfile: unsigned,
-    }
-
-op :in_by_id,
-    args: {
-        dst: VirtualRegister,
-        base: VirtualRegister,
-        property: unsigned,
     }
 
 op :has_private_name,
@@ -1467,6 +1472,37 @@ begin_section :NativeHelpers,
     emit_in_asm_file: true,
     macro_name_component: :BYTECODE_HELPER
 
+op :llint_leave_predecoded_instructions
+op :llint_predecoded_mov_constant
+op :llint_predecoded_get_closure_var
+op :llint_predecoded_get_closure_var_checked
+op :llint_predecoded_jstricteq_immediate
+op :llint_predecoded_jnstricteq_immediate
+op :llint_predecoded_stricteq_immediate
+op :llint_predecoded_nstricteq_immediate
+op :llint_predecoded_jstricteq_int32
+op :llint_predecoded_jnstricteq_int32
+op :llint_predecoded_stricteq_int32
+op :llint_predecoded_nstricteq_int32
+op :llint_predecoded_get_by_id_inline
+op :llint_predecoded_get_by_id_out_of_line
+op :llint_predecoded_get_by_id_unset
+op :llint_predecoded_get_by_id_custom_accessor
+op :llint_predecoded_get_by_id_cell32
+op :llint_predecoded_get_by_id_int32_or_elsewhere
+op :llint_predecoded_get_by_id_js_value
+op :llint_predecoded_get_by_id_double
+op :llint_predecoded_get_by_id_boolean
+op :llint_predecoded_get_by_id_int32
+op :llint_predecoded_get_by_id_uint8
+op :llint_predecoded_get_by_id_int8
+op :llint_predecoded_get_by_id_uint16
+op :llint_predecoded_get_by_id_int16
+op :llint_predecoded_get_length
+op :llint_predecoded_put_by_id_replace_inline
+op :llint_predecoded_put_by_id_replace_out_of_line
+op :llint_predecoded_put_by_id_transition_inline
+op :llint_predecoded_put_by_id_transition_out_of_line
 op :llint_program_prologue
 op :llint_eval_prologue
 op :llint_module_program_prologue

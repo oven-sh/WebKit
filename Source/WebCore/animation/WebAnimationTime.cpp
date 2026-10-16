@@ -266,7 +266,7 @@ WebAnimationTime::operator CSSNumberish() const
 void WebAnimationTime::dump(TextStream& ts) const
 {
     if (m_type == Type::Time) {
-        ts << Seconds { m_value } * 1000;
+        ts << Seconds { m_value };
         return;
     }
     ASSERT(m_type == Type::Percentage);

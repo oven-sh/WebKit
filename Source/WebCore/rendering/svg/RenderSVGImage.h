@@ -39,13 +39,12 @@ public:
     RenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGImage();
 
-    SVGImageElement& NODELETE imageElement() const;
+    SVGImageElement& LEGACY_NODELETE imageElement() const;
 
     RenderImageResource& imageResource() { return m_imageResource; }
     const RenderImageResource& imageResource() const { return m_imageResource; }
 
     bool updateImageViewport();
-    IntSize imageContainerSize() const;
 
     bool isObjectBoundingBoxValid() const { return !m_objectBoundingBox.isEmpty(); }
 
@@ -88,6 +87,8 @@ private:
     FloatRect m_objectBoundingBox;
     const UniqueRef<RenderImageResource> m_imageResource;
     RefPtr<ImageBuffer> m_bufferedForeground;
+    FloatSize m_bufferedForegroundSize;
+    IntSize m_bufferedForegroundScaledSize;
 };
 
 } // namespace WebCore

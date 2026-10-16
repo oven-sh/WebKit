@@ -42,7 +42,9 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMWindow.h"
 #include "JSDocument.h"
+#include "JSElement.h"
 #include "JSExecState.h"
+#include "JSShadowRoot.h"
 #include "LoadableModuleScript.h"
 #include "LocalFrameInlines.h"
 #include "LocalFrameLoaderClient.h"
@@ -349,7 +351,7 @@ void ScriptController::initScriptForWindowProxy(JSWindowProxy& windowProxy)
     }
 
     if (RefPtr page = m_frame->page()) {
-        windowProxy.attachDebugger(m_frame->debugger());
+        windowProxy.attachDebugger(protect(m_frame)->debugger());
         windowProxy.window()->setProfileGroup(page->group().identifier());
     }
 
@@ -507,7 +509,7 @@ bool ScriptController::canAccessFromCurrentOrigin(Frame* frame, Document& access
 
     // If the current lexicalGlobalObject is null we should use the accessing document for the security check.
     if (!lexicalGlobalObject) {
-        return frame && frame->frameDocumentSecurityOrigin() && protect(accessingDocument.securityOrigin())->isSameOriginDomain(*protect(frame->frameDocumentSecurityOrigin()));
+        return frame && frame->frameDocumentSecurityOrigin() && isPlatformObjectSameOrigin(protect(accessingDocument.securityOrigin()), accessingDocument.agentClusterIdentifier(), *protect(frame->frameDocumentSecurityOrigin()), frame->frameAgentClusterIdentifier());
     }
 
     return BindingSecurity::shouldAllowAccessToFrame(lexicalGlobalObject, frame);
@@ -521,6 +523,24 @@ void ScriptController::updateDocument()
         downcast<JSDOMWindow>(jsWindowProxy->window())->updateDocument();
         if (document)
             document->addMicrotaskGlobalObject(jsWindowProxy->window());
+    }
+}
+
+void ScriptController::reevaluateQuirkDependentProperties()
+{
+    // FIXME: This list has to be kept in sync by hand with the interfaces marked
+    // [QuirksCanChangeAtRuntime], because the bindings generator has no cross-IDL aggregation point to
+    // emit it from. Adding the attribute to an interface that is not listed here silently does nothing.
+    // Isolated worlds get their own prototypes, so every window proxy has to be visited, not just the
+    // normal world's.
+    for (auto& jsWindowProxy : protect(windowProxy())->jsWindowProxiesAsVector()) {
+        auto* window = jsWindowProxy->window();
+        if (!window)
+            continue;
+        JSLockHolder lock(jsWindowProxy->world().vm());
+        JSElement::reevaluateQuirkDependentPrototypeProperties(*window);
+        JSDocument::reevaluateQuirkDependentPrototypeProperties(*window);
+        JSShadowRoot::reevaluateQuirkDependentPrototypeProperties(*window);
     }
 }
 
@@ -564,7 +584,7 @@ void ScriptController::collectIsolatedContexts(Vector<std::pair<JSC::JSGlobalObj
 {
     for (auto& jsWindowProxy : protect(windowProxy())->jsWindowProxiesAsVector()) {
         auto* lexicalGlobalObject = jsWindowProxy->window();
-        RefPtr origin = protect(downcast<LocalDOMWindow>(jsWindowProxy->wrapped()))->document()->securityOrigin();
+        RefPtr origin = protect(protect(downcast<LocalDOMWindow>(jsWindowProxy->wrapped()))->document())->securityOrigin();
         result.append(std::make_pair(lexicalGlobalObject, WTF::move(origin)));
     }
 }
@@ -631,12 +651,12 @@ void ScriptController::clearScriptObjects()
     }
 }
 
-JSC::JSValue ScriptController::executeScriptIgnoringException(const String& script, JSC::SourceTaintedOrigin taintedness, bool forceUserGesture)
+JSC::JSValue ScriptController::executeScriptIgnoringException(const String& script, JSC::SourceTaintedness taintedness, bool forceUserGesture)
 {
     return executeScriptInWorldIgnoringException(mainThreadNormalWorldSingleton(), script, taintedness, forceUserGesture);
 }
 
-JSC::JSValue ScriptController::executeScriptInWorldIgnoringException(DOMWrapperWorld& world, const String& script, JSC::SourceTaintedOrigin taintedness, bool forceUserGesture)
+JSC::JSValue ScriptController::executeScriptInWorldIgnoringException(DOMWrapperWorld& world, const String& script, JSC::SourceTaintedness taintedness, bool forceUserGesture)
 {
     auto result = executeScriptInWorld(world, { script, taintedness, URL { }, false, std::nullopt, forceUserGesture, RemoveTransientActivation::Yes });
     return result ? result.value() : JSC::JSValue { };
@@ -654,16 +674,7 @@ ValueOrException ScriptController::executeScriptInWorld(DOMWrapperWorld& world, 
     m_frame->loader().client().notifyPageOfAppBoundBehavior();
 #endif
 
-    UserGestureIndicator gestureIndicator(parameters.forceUserGesture == ForceUserGesture::Yes ? std::optional<IsProcessingUserGesture>(IsProcessingUserGesture::Yes) : std::nullopt, m_frame->document(), UserGestureType::ActivationTriggering, UserGestureIndicator::ProcessInteractionStyle::Never);
-
-    if (parameters.forceUserGesture == ForceUserGesture::Yes && UserGestureIndicator::currentUserGesture() && parameters.removeTransientActivation == RemoveTransientActivation::Yes) {
-        UserGestureIndicator::currentUserGesture()->addDestructionObserver([](UserGestureToken& token) {
-            token.forEachImpactedDocument([](Document& document) {
-                if (RefPtr window = document.window())
-                    window->consumeTransientActivation();
-            });
-        });
-    }
+    UserGestureIndicator gestureIndicator(parameters.forceUserGesture == ForceUserGesture::Yes ? std::optional<IsProcessingUserGesture>(IsProcessingUserGesture::Yes) : std::nullopt, m_frame->document(), UserGestureType::ActivationTriggering, UserGestureIndicator::ProcessInteractionStyle::Never, parameters.removeTransientActivation);
 
     if (!canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript, &world) || isPaused())
         return makeUnexpected(ExceptionDetails { "Cannot execute JavaScript in this document"_s });
@@ -875,7 +886,7 @@ void ScriptController::executeJavaScriptURL(const URL& url, const NavigationActi
     RefPtr ownerDocument = m_frame->document();
 
     RefPtr requesterSecurityOrigin = action.requester() ? action.requester()->securityOrigin.ptr() : nullptr;
-    if (requesterSecurityOrigin && !requesterSecurityOrigin->isSameOriginDomain(protect(ownerDocument->securityOrigin())))
+    if (requesterSecurityOrigin && !isPlatformObjectSameOrigin(*requesterSecurityOrigin, action.requester()->agentClusterIdentifier, protect(ownerDocument->securityOrigin()), ownerDocument->agentClusterIdentifier()))
         return;
 
     if (!frame->page())

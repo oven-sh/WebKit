@@ -3,9 +3,14 @@
 #include "CompilationResult.h"
 #include "JITCompilationEffort.h"
 #include "JSExportMacros.h"
+#include <span>
 #include <wtf/Vector.h>
 
 namespace JSC {
+
+namespace AOT {
+class RegExpsFoundAhead;
+}
 
 class CodeBlock;
 class VM;
@@ -16,6 +21,7 @@ struct CompilerHooks {
     void* compileRegExp { nullptr };
     void* newBBQPlan { nullptr };
     Vector<uint8_t> (*compileImage)(void* implOfBytecodeLinkEncoder) { nullptr };
+    AOT::RegExpsFoundAhead* (*newRegExpsFoundAhead)(std::span<const uint8_t> typedProgramAsWritten) { nullptr };
 
     bool areInstalled() const { return !!enqueueBaselinePlan; }
 };

@@ -21,7 +21,6 @@
 #include "api/rtp_sender_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/units/data_rate.h"
-#include "api/video/video_bitrate_allocation.h"
 #include "api/video/video_frame.h"
 #include "api/video/video_frame_type.h"
 #include "api/video/video_layers_allocation.h"
@@ -55,9 +54,6 @@ class VideoStreamEncoderInterface {
         VideoEncoderConfig::ContentType content_type,
         int min_transmit_bitrate_bps) = 0;
 
-    virtual void OnBitrateAllocationUpdated(
-        const VideoBitrateAllocation& allocation) = 0;
-
     virtual void OnVideoLayersAllocationUpdated(
         VideoLayersAllocation allocation) = 0;
   };
@@ -70,7 +66,6 @@ class VideoStreamEncoderInterface {
   // is moved to Call this method could be deleted altogether in favor of
   // Call-level APIs only.
   virtual void AddAdaptationResource(scoped_refptr<Resource> resource) = 0;
-  virtual std::vector<scoped_refptr<Resource>> GetAdaptationResources() = 0;
 
   // Sets the source that will provide video frames to the VideoStreamEncoder's
   // OnFrame method. `degradation_preference` control whether or not resolution

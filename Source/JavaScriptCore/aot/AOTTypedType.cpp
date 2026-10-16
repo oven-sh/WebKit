@@ -91,6 +91,20 @@ Type Type::withoutPrimitives(uint16_t removed) const
     return type;
 }
 
+Type Type::withLiteralStringWidened() const
+{
+    Type type = *this;
+    if (type.primitives & Primitive::LiteralString)
+        type.primitives = (type.primitives & ~Primitive::LiteralString) | Primitive::String;
+    return type;
+}
+
+void Type::normalizeLiteralString()
+{
+    if (primitives & Primitive::LiteralString && (hasObjects() || primitives & ~(Primitive::LiteralString | Primitive::UndefinedOrNull | Primitive::Absent)))
+        primitives = (primitives & ~Primitive::LiteralString) | Primitive::String;
+}
+
 bool Type::admitsForeignObjects(const Program& program) const
 {
     for (LayoutID view : views) {
@@ -122,7 +136,10 @@ bool Type::admitsOnlyOtherLayouts(const Program& program) const
 
 bool Type::isWithin(const Type& other, const Program& program, bool foreignObjectsPass) const
 {
-    if (primitives & ~other.primitives)
+    uint16_t lacked = primitives & ~other.primitives;
+    if (other.primitives & Primitive::String)
+        lacked &= ~Primitive::LiteralString;
+    if (lacked)
         return false;
     if (primitives & Primitive::Int && !integers.isWithin(other.integers))
         return false;
@@ -182,6 +199,10 @@ Rep repOf(const Type& type)
 {
     if (type.isNever())
         return Rep::JSValue;
+    if (type.hasLiteralString()) {
+        RELEASE_ASSERT(type.hasOnlyPrimitives(Primitive::LiteralString | Primitive::UndefinedOrNull | Primitive::Absent));
+        return Rep::LiteralString;
+    }
     if (type.isBoolean())
         return Rep::Int32;
     if (type.isInteger())
@@ -229,6 +250,8 @@ Store storeOf(const Type& type)
         return Store::Cell;
     case Rep::JSValue:
         return Store::JSValue;
+    case Rep::LiteralString:
+        return Store::LiteralString;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -252,6 +275,8 @@ ASCIILiteral nameOf(Rep rep)
         return "ref"_s;
     case Rep::JSValue:
         return "val"_s;
+    case Rep::LiteralString:
+        return "lit"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -295,6 +320,10 @@ ASCIILiteral nameOf(Store store)
         return "ref32?"_s;
     case Store::OptionalBoolean:
         return "bool?"_s;
+    case Store::LiteralString:
+        return "lit"_s;
+    case Store::LiteralString32:
+        return "lit32"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -316,6 +345,7 @@ unsigned sizeOf(Store store)
     case Store::Int32OrElsewhere:
     case Store::Cell32:
     case Store::OptionalCell32:
+    case Store::LiteralString32:
         return 4;
     case Store::Int64:
     case Store::Double:
@@ -323,6 +353,7 @@ unsigned sizeOf(Store store)
     case Store::JSValue:
     case Store::OptionalInt64:
     case Store::OptionalDouble:
+    case Store::LiteralString:
         return 8;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -357,6 +388,9 @@ Rep repOf(Store store)
         return Rep::OptionalInt64;
     case Store::OptionalDouble:
         return Rep::OptionalDouble;
+    case Store::LiteralString:
+    case Store::LiteralString32:
+        return Rep::LiteralString;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

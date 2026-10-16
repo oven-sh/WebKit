@@ -21,7 +21,6 @@
 #include "config.h"
 #include "WebHitTestResultData.h"
 
-#include "ShareableBitmapUtilities.h"
 #include "WebFrame.h"
 #include <WebCore/DocumentView.h>
 #include <WebCore/ElementInlines.h>
@@ -130,7 +129,7 @@ WebHitTestResultData::WebHitTestResultData(const HitTestResult& hitTestResult, c
 
     if (RefPtr target = hitTestResult.innerNonSharedNode()) {
         if (CheckedPtr renderer = dynamicDowncast<RenderImage>(target->renderer())) {
-            imageBitmap = createShareableBitmap(*renderer);
+            imageBitmap = renderer->createShareableBitmap();
             if (RefPtr cachedImage = renderer->cachedImage()) {
                 if (RefPtr image = cachedImage->image())
                     sourceImageMIMEType = image->mimeType();

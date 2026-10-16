@@ -31,10 +31,6 @@ namespace WebCore {
 
 class FloatingObject;
 class FloatingObjects;
-class LegacyInlineBox;
-class LegacyLineLayout;
-class LegacyRootInlineBox;
-class LineBreaker;
 class RenderMultiColumnFlow;
 enum FloatingObjectType : uint8_t;
 struct FloatingObjectHashFunctions;
@@ -132,6 +128,8 @@ public:
         
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;
 
+    bool establishesLineClampContainer() const;
+
 protected:
     void willBeDestroyed() override;
 
@@ -158,8 +156,6 @@ protected:
     // RenderBlockFlows override these methods, since they are the only class that supports margin collapsing.
     LayoutUnit collapsedMarginBefore() const final { return maxPositiveMarginBefore() - maxNegativeMarginBefore(); }
     LayoutUnit collapsedMarginAfter() const final { return maxPositiveMarginAfter() - maxNegativeMarginAfter(); }
-
-    void dirtyLineFromChangedChild() final;
 
     void paintColumnRules(PaintInfo&, const LayoutPoint&) override;
 
@@ -282,22 +278,22 @@ public:
     bool childrenPreventSelfCollapsing() const final;
 
     bool shouldBreakAtLineToAvoidWidow() const { return hasRareBlockFlowData() && rareBlockFlowData()->m_lineBreakToAvoidWidow >= 0; }
-    void NODELETE clearShouldBreakAtLineToAvoidWidow() const;
+    void LEGACY_NODELETE clearShouldBreakAtLineToAvoidWidow() const;
     int lineBreakToAvoidWidow() const { return hasRareBlockFlowData() ? rareBlockFlowData()->m_lineBreakToAvoidWidow : -1; }
     void setBreakAtLineToAvoidWidow(int);
-    void NODELETE clearDidBreakAtLineToAvoidWidow();
-    void NODELETE setDidBreakAtLineToAvoidWidow();
+    void LEGACY_NODELETE clearDidBreakAtLineToAvoidWidow();
+    void LEGACY_NODELETE setDidBreakAtLineToAvoidWidow();
     bool didBreakAtLineToAvoidWidow() const { return hasRareBlockFlowData() && rareBlockFlowData()->m_didBreakAtLineToAvoidWidow; }
 
     RenderMultiColumnFlow* multiColumnFlow() const { return hasRareBlockFlowData() ? multiColumnFlowSlowCase() : nullptr; }
-    RenderMultiColumnFlow* NODELETE multiColumnFlowSlowCase() const;
+    RenderMultiColumnFlow* LEGACY_NODELETE multiColumnFlowSlowCase() const;
     void setMultiColumnFlow(RenderMultiColumnFlow&);
-    void NODELETE clearMultiColumnFlow();
+    void LEGACY_NODELETE clearMultiColumnFlow();
     bool willCreateColumns() const;
     virtual bool requiresFragmentedFlow() const;
 
     bool containsFloats() const override;
-    bool NODELETE containsFloat(const RenderBox&) const;
+    bool LEGACY_NODELETE containsFloat(const RenderBox&) const;
     bool subtreeContainsFloats() const;
     bool subtreeContainsFloat(const RenderBox&) const;
 
@@ -329,9 +325,7 @@ public:
     inline void setLogicalWidthForFloat(FloatingObject&, LayoutUnit logicalWidth); // Defined in RenderBlockFlowInlines.h
     inline void setLogicalMarginsForFloat(FloatingObject&, LayoutUnit logicalLeftMargin, LayoutUnit logicalBeforeMargin); // Defined in RenderBlockFlowInlines.h
 
-    LayoutPoint NODELETE flipFloatForWritingModeForChild(const FloatingObject&, const LayoutPoint&) const;
-
-    inline LegacyRootInlineBox* legacyRootBox() const; // Defined in RenderBlockFlowInlines.h
+    LayoutPoint LEGACY_NODELETE flipFloatForWritingModeForChild(const FloatingObject&, const LayoutPoint&) const;
 
     void setChildrenInline(bool) final;
 
@@ -345,9 +339,9 @@ public:
         ContentChange       // existing renderer gets changed (text content only atm)
     };
     void invalidateLineLayout(InvalidationReason);
-    void NODELETE computeAndSetLineLayoutPath();
+    void LEGACY_NODELETE computeAndSetLineLayoutPath();
 
-    enum LineLayoutPath { UndeterminedPath = 0, InlinePath, SvgTextPath };
+    enum LineLayoutPath { UndeterminedPath = 0, InlinePath };
     LineLayoutPath lineLayoutPath() const { return static_cast<LineLayoutPath>(renderBlockFlowLineLayoutPath()); }
     void setLineLayoutPath(LineLayoutPath path) { setRenderBlockFlowLineLayoutPath(path); }
 
@@ -355,14 +349,12 @@ public:
 
     bool containsNonZeroBidiLevel() const;
 
-    inline const LegacyLineLayout* svgTextLayout() const; // Defined in RenderBlockFlowInlines.h
-    inline LegacyLineLayout* svgTextLayout(); // Defined in RenderBlockFlowInlines.h
-    inline const LayoutIntegration::LineLayout* inlineLayout() const; // Defined in RenderBlockFlowInlines.h
-    inline LayoutIntegration::LineLayout* inlineLayout(); // Defined in RenderBlockFlowInlines.h
+    const LayoutIntegration::LineLayout* inlineLayout() const { return m_lineLayout.get(); }
+    LayoutIntegration::LineLayout* inlineLayout() { return m_lineLayout.get(); }
 
 #if ENABLE(TREE_DEBUGGING)
     void outputFloatingObjects(WTF::TextStream&, int depth) const;
-    void outputLineTreeAndMark(WTF::TextStream&, const LegacyInlineBox* markedBox, int depth) const;
+    void outputLineTree(WTF::TextStream&, int depth) const;
 #endif
 
     // Returns the logicalOffset at the top of the next page. If the offset passed in is already at the top of the current page,
@@ -375,7 +367,7 @@ public:
     LayoutUnit pageLogicalTopForOffset(LayoutUnit offset) const;
     LayoutUnit pageLogicalHeightForOffset(LayoutUnit offset) const;
     LayoutUnit pageRemainingLogicalHeightForOffset(LayoutUnit offset, PageBoundaryRule = IncludePageBoundary) const;
-    LayoutUnit NODELETE logicalHeightForChildForFragmentation(const RenderBox& child) const;
+    LayoutUnit LEGACY_NODELETE logicalHeightForChildForFragmentation(const RenderBox& child) const;
     bool hasNextPage(LayoutUnit logicalOffset, PageBoundaryRule = ExcludePageBoundary) const;
 
     void updateColumnProgressionFromStyle(const Style::ComputedStyle&);
@@ -441,10 +433,10 @@ protected:
 
     void createFloatingObjects();
 
-    void NODELETE setComputedColumnCountAndWidth(int, LayoutUnit);
+    void LEGACY_NODELETE setComputedColumnCountAndWidth(int, LayoutUnit);
 
     LayoutUnit computedColumnWidth() const;
-    unsigned NODELETE computedColumnCount() const;
+    unsigned LEGACY_NODELETE computedColumnCount() const;
     
     LayoutOptionalOutsets allowedLayoutOverflow() const override;
 
@@ -453,6 +445,8 @@ protected:
     // Called to lay out the legend for a fieldset or the ruby text of a ruby run. Also used by multi-column layout to handle
     // the flow thread child.
     void layoutExcludedChildren(RelayoutChildren) override;
+
+    LayoutIntegration::LineLayout& ensureInlineLayout();
 
 private:
     bool isChildEligibleForMarginTrim(Style::MarginTrimSide, const RenderBox&) const;
@@ -489,7 +483,7 @@ private:
     LayoutUnit nextFloatLogicalBottomBelowForBlock(LayoutUnit) const;
     
     LayoutUnit addOverhangingFloats(RenderBlockFlow& child, bool makeChildPaintOtherFloats);
-    bool NODELETE hasOverhangingFloat(RenderBox&);
+    bool LEGACY_NODELETE hasOverhangingFloat(RenderBox&);
     void addIntrudingFloats(RenderBlockFlow* prev, RenderBlockFlow* container, LayoutUnit xoffset, LayoutUnit yoffset);
     inline bool hasOverhangingFloats() const;
     LayoutUnit computedClearDeltaForChild(RenderBox& child, LayoutUnit yPos);
@@ -506,9 +500,6 @@ private:
     
     PositionWithAffinity positionForPointWithInlineChildren(const LayoutPoint& pointInLogicalContents, HitTestSource) override;
 
-    inline bool hasSvgTextLayout() const; // Defined in RenderBlockFlowInlines.h
-
-    inline bool hasInlineLayout() const; // Defined in RenderBlockFlowInlines.h
     void layoutInlineContent(RelayoutChildren, LayoutUnit previousHeight, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom);
     struct InlineContentStatus {
         bool hasSimpleOutOfFlowContentOnly { false };
@@ -570,11 +561,7 @@ private:
     // m_inlineContentCache must be declared before m_lineLayout.
     // m_lineLayout's destructor runs first which requires the cache to still exist.
     std::unique_ptr<Layout::InlineContentCache> m_inlineContentCache;
-    Variant<
-        std::monostate,
-        std::unique_ptr<LayoutIntegration::LineLayout>,
-        std::unique_ptr<LegacyLineLayout>
-    > m_lineLayout;
+    std::unique_ptr<LayoutIntegration::LineLayout> m_lineLayout;
 };
 
 } // namespace WebCore

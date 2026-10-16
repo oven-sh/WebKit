@@ -108,7 +108,6 @@ class StopIfNecessaryTimer;
 class StructureAlignedMemoryAllocator;
 class SweepingScope;
 class VM;
-class VerifierSlotVisitor;
 class WeakGCHashTable;
 struct CurrentThreadState;
 
@@ -419,7 +418,6 @@ public:
     JS_EXPORT_PRIVATE void addFinalizer(JSCell*, LambdaFinalizer);
 
     void notifyIsSafeToCollect();
-    bool isSafeToCollect() const { return m_isSafeToCollect; }
     
     bool isShuttingDown() const { return m_isShuttingDown; }
 
@@ -459,7 +457,9 @@ public:
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
     void completeAllJITPlans();
-    
+
+    void reportBytesMarked(size_t bytes) { m_bytesMarkedThisCycle.exchangeAdd(bytes, std::memory_order_relaxed); }
+
     // Note that:
     // 1. Use this API to report non-GC memory referenced by GC objects. Be sure to
     // call both of these functions: Calling only one may trigger catastropic
@@ -608,6 +608,9 @@ public:
     
     unsigned barrierThreshold() const { return m_barrierThreshold; }
     const unsigned* addressOfBarrierThreshold() const LIFETIME_BOUND { return &m_barrierThreshold; }
+    MarkStackArray& mutatorMarkStack() LIFETIME_BOUND { return *m_mutatorMarkStack; }
+    static constexpr ptrdiff_t offsetOfMutatorMarkStack() { return OBJECT_OFFSETOF(Heap, m_mutatorMarkStack); }
+    static constexpr ptrdiff_t offsetOfBarriersExecuted() { return OBJECT_OFFSETOF(Heap, m_barriersExecuted); }
 
     // If true, the GC believes that the mutator is currently messing with the heap. We call this
     // "having heap access". The GC may block if the mutator is in this state. If false, the GC may
@@ -688,10 +691,6 @@ public:
 
     UncheckedKeyHashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
 
-    bool isMarkingForGCVerifier() const { return m_isMarkingForGCVerifier; }
-
-    void setKeepVerifierSlotVisitor();
-    void clearVerifierSlotVisitor();
 
     void appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(const JSString* owner, String&& string)
     {
@@ -711,8 +710,6 @@ public:
     bool markWasmCalleeIfPending(Wasm::Callee*);
 #endif
 
-    // This is a debug function for checking who marked the target cell.
-    void dumpVerifierMarkerData(HeapCell*);
 
 private:
     friend class AllocatingScope;
@@ -735,12 +732,9 @@ private:
     friend class MarkedBlock;
     friend class RunningScope;
     friend class SlotVisitor;
-    friend class SpaceTimeMutatorScheduler;
-    friend class StochasticSpaceTimeMutatorScheduler;
     friend class SweepingScope;
     friend class IncrementalSweeper;
     friend class VM;
-    friend class VerifierSlotVisitor;
     friend class WeakBlock;
     friend class WeakSet;
 
@@ -764,6 +758,8 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    bool isCollectingYoungWhileNothingIsYoung() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
+    bool canSkipMarking() const;
 #if USE(BUN_JSC_ADDITIONS)
     // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
     // clock for every block it visits.
@@ -803,8 +799,8 @@ private:
     
     void setMutatorWaiting();
     void clearMutatorWaiting();
-    void notifyThreadStopping(const AbstractLocker&);
     
+    void waitForMembershipChange(uint64_t ticket);
     void waitForCollection(GCRequest::Ticket);
     void waitForAllCollections();
     
@@ -819,10 +815,10 @@ private:
 #endif
     void visitCompilerWorklistWeakReferences();
     void removeDeadCompilerWorklistEntries();
-    void rememberExecutingAndCompilingCodeBlocks(SlotVisitor&);
-    void recordBytesVisited(size_t bytesVisited);
-    void endMarking(size_t bytesVisited);
-    void verifyMarking();
+    void rememberExecutingAndCompilingCodeBlocks();
+    void updateOldGenerationCellBytes(size_t bytesMarked);
+    void endMarking();
+    void verifyHeapAfterMarking();
     void pruneDeadReferences();
     void prepareForAllocation();
 
@@ -831,7 +827,7 @@ private:
     void reconcileWeakGCHashTables();
     void sweepArrayBuffers();
     void snapshotUnswept();
-    void deleteSourceProviderCaches();
+    void pruneUnusedSourceProviderCaches();
     void harvestWeakReferences();
 
     template<typename CellType, typename CellSet>
@@ -851,6 +847,7 @@ private:
     void gatherExtraHeapData(HeapProfiler&);
     void removeDeadHeapSnapshotNodes(HeapProfiler&);
     void runCollectionEpilogue();
+    void sweepAndClearCachesInEpilogue();
     void sweepEagerlyInEpilogue();
     
     void addDetachedWeakBlock(WeakBlock*);
@@ -871,7 +868,7 @@ private:
     
     void setMutatorShouldBeFenced(bool value);
     
-    void addCoreConstraints();
+    Vector<std::unique_ptr<MarkingConstraint>> createCoreConstraints();
 
     enum class MemoryThresholdCallType {
         Cached,
@@ -895,14 +892,17 @@ private:
 
     bool shouldSweepSynchronously();
 
-    void verifyGC();
-    void verifierMark();
 
     Lock m_lock;
     const HeapType m_heapType;
     MutatorState m_mutatorState { MutatorState::Running };
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
+
+    // Sizes count the bytes of cells plus the extra memory they keep alive.
+    // A size "after" a collection is measured when it ends. A size "before" a collection is estimated
+    // when it starts: the size after the previous collection plus the bytes allocated since.
+    // "This cycle" means since the last collection ended.
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
 #if USE(BUN_JSC_ADDITIONS)
     std::atomic<ApproximateTime> m_lastActiveCollectionTime { ApproximateTime() };
@@ -920,21 +920,28 @@ private:
     size_t m_sizeBeforeLastEdenCollect { 0 };
 
     size_t m_oversizedBytesAllocatedThisCycle { 0 };
-    size_t m_lastOversidedAllocationThisCycle { 0 };
+    size_t m_lastOversizedAllocationThisCycle { 0 };
 
     size_t m_nonOversizedBytesAllocatedThisCycle { 0 };
     size_t m_bytesAbandonedSinceLastFullCollect { 0 };
     size_t m_maxEdenSize;
     size_t m_maxEdenSizeWhenCritical;
     size_t m_maxHeapSize;
-    size_t m_totalBytesVisitedAfterLastFullCollect { 0 };
-    size_t m_totalBytesVisited { 0 };
-    size_t m_totalBytesVisitedThisCycle { 0 };
+
+    // The old generation's cells, in bytes: those the last Full collection marked, plus those each later
+    // Eden collection marked. Old cells that die stay counted until the next Full collection.
+    size_t m_oldGenerationCellBytes { 0 };
+    size_t m_oldGenerationCellBytesAtStartOfLastFullCollect { 0 };
+    // Bytes the visitors have marked this cycle, gathered for the End step.
+    Atomic<size_t> m_bytesMarkedThisCycle { 0 };
+
     double m_incrementBalance { 0 };
     
     bool m_shouldDoOpportunisticFullCollection { false };
     bool m_isInOpportunisticTask { false };
     bool m_shouldDoFullCollection { false };
+    bool m_hasAllocatedSinceLastCollection { true };
+    bool m_didSkipMarkingInLastCollection { false };
     Markable<CollectionScope> m_collectionScope;
     Markable<CollectionScope> m_lastCollectionScope;
 #if USE(BUN_JSC_ADDITIONS)
@@ -953,10 +960,12 @@ private:
 
     std::unique_ptr<MachineThreads> m_machineThreads;
     
-    const std::unique_ptr<Collector> m_collector;
+    // The Collector this heap owns, which collects only this heap. Null with useGlobalGC.
+    const std::unique_ptr<Collector> m_localCollector;
+    // The Collector that collects this heap: m_localCollector, or the global Collector.
+    Collector* const m_collector;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
-    std::unique_ptr<VerifierSlotVisitor> m_verifierSlotVisitor;
     
     StrongSet m_strongSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
@@ -967,8 +976,6 @@ private:
     bool m_isSafeToCollect { false };
     bool m_isShuttingDown { false };
     bool m_mutatorShouldBeFenced { false };
-    bool m_isMarkingForGCVerifier { false };
-    bool m_keepVerifierSlotVisitor { false };
     Lock m_wasmCalleesPendingDestructionLock;
 
     unsigned m_barrierThreshold { blackThreshold };
@@ -1052,7 +1059,6 @@ private:
     bool m_didDeferGCWork { false };
 
     uint64_t m_mutatorExecutionVersion { 0 };
-    uint64_t m_gcVersion { 0 };
 
     MonotonicTime m_lastGCEndTime;
     MonotonicTime m_currentGCStartTime;
@@ -1349,6 +1355,7 @@ private:
     IsoSubspace unlinkedFunctionExecutableSpace;
 
 
+    friend class JSC::LLIntOffsetsExtractor;
     friend class JSC::VM;
 };
 

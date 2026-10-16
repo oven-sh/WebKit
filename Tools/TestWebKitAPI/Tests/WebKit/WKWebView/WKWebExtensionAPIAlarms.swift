@@ -240,6 +240,37 @@ struct WKWebExtensionAPIAlarmsTests {
     }
 
     @Test
+    func repeatingScheduledTimeWithUnloadedBackground() async throws {
+        let manager = try loadWebExtension(
+            manifest: alarmsManifest,
+            resources: [
+                "background.js": """
+                browser.alarms.onAlarm.addListener(async (alarmInfo) => {
+                  const alarm = await browser.alarms.get(alarmInfo.name)
+
+                  browser.test.assertTrue(alarmInfo.scheduledTime < alarm.scheduledTime, 'The event should have the time the alarm was scheduled to fire, not its next scheduled time.')
+
+                  browser.test.notifyPass()
+                })
+
+                if (!(await browser.alarms.get('repeat'))) {
+                  await browser.alarms.create('repeat', { delayInMinutes: (1000 / 1000 / 60), periodInMinutes: 1 })
+
+                  browser.test.sendMessage('Alarm Created')
+                }
+                """
+            ]
+        )
+
+        try await manager.waitForTestMessage("Alarm Created")
+
+        let context = try #require(manager.context)
+        context._unloadBackgroundContentForTesting()
+
+        try await manager.run()
+    }
+
+    @Test
     func clearSingleAlarm() async throws {
         try await loadAndRun(
             backgroundScript: """
@@ -299,13 +330,10 @@ struct WKWebExtensionAPIAlarmsTests {
 
                 browser.alarms.onAlarm.addListener(listener)
 
-                browser.test.assertFalse(await browser.alarms.clearAll(), 'Should return false when there are no alarms.')
-
                 browser.alarms.create('one', { delayInMinutes: 0.01 })
                 browser.alarms.create('two', { delayInMinutes: 0.1 })
 
-                browser.test.assertTrue(await browser.alarms.clearAll(), 'Should return true when alarms were cleared.')
-                browser.test.assertFalse(await browser.alarms.clearAll(), 'Should return false once all alarms are gone.')
+                browser.test.assertTrue(await browser.alarms.clearAll() === undefined)
 
                 setTimeout(() => {
                   browser.test.notifyPass()
@@ -339,6 +367,25 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertEq(result[0].name, 'two')
 
                 browser.test.notifyPass()
+                """
+        )
+    }
+
+    @Test
+    func singleShotRemovedAfterFiring() async throws {
+        try await loadAndRun(
+            backgroundScript: """
+                browser.alarms.onAlarm.addListener(async (alarmInfo) => {
+                  browser.test.assertEq(alarmInfo.name, 'single')
+
+                  browser.test.assertEq(await browser.alarms.get('single'), undefined, 'Should not return an alarm that already fired.')
+                  browser.test.assertEq((await browser.alarms.getAll()).length, 0, 'Should not include an alarm that already fired.')
+                  browser.test.assertFalse(await browser.alarms.clear('single'), 'Should return false for an alarm that already fired.')
+
+                  browser.test.notifyPass()
+                })
+
+                browser.alarms.create('single', { delayInMinutes: (100 / 1000 / 60) })
                 """
         )
     }

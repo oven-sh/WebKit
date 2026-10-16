@@ -564,6 +564,7 @@ WEBDRIVER_BIDI_PROTOCOL_INPUT_FILES = \
     $(WebKit2)/UIProcess/Automation/protocol/BidiBrowser.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiBrowsingContext.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiDigitalCredentials.json \
+    $(WebKit2)/UIProcess/Automation/protocol/BidiInput.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiLog.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiPermissions.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiScript.json \
@@ -1017,6 +1018,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 #
 
 WEBCORE_SERIALIZATION_DESCRIPTION_FILES = \
+	CSSValueKeywords.serialization.in \
 	HTTPHeaderNames.serialization.in \
 	ActivityState.serialization.in \
 	DocumentSyncData.serialization.in \
@@ -1165,4 +1167,13 @@ $(WEBKIT_ADDITIONS_SWIFT_FILES): %.swift : %.swift.in
 	cp -f $< $@
 
 all : $(WEBKIT_ADDITIONS_SWIFT_FILES)
+
+# WebKitAdditions may predate DigitalCredentialsExtras.swift.in. Its call sites are behind
+# HAVE(DIGITAL_CREDENTIALS_OPENID4VP), which the same WebKitAdditions defines, so an empty file stands in.
+DIGITAL_CREDENTIALS_EXTRAS = $(call find-webkitadditions-file,DigitalCredentialsExtras.swift.in)
+
+DigitalCredentialsExtras.swift : $(DIGITAL_CREDENTIALS_EXTRAS)
+	$(if $(DIGITAL_CREDENTIALS_EXTRAS),cp -f $< $@,: > $@)
+
+all : DigitalCredentialsExtras.swift
 endif

@@ -26,6 +26,7 @@
 #include "ArrayPrototypeInlines.h"
 #include "GCDeferralContextInlines.h"
 #include "ImmutableIntrinsics.h"
+#include "IndexingTypeInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
@@ -359,7 +360,7 @@ bool JSArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     return JSObject::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
-static int NODELETE compareKeysForQSort(const void* a, const void* b)
+static int LEGACY_NODELETE compareKeysForQSort(const void* a, const void* b)
 {
     unsigned da = *static_cast<const unsigned*>(a);
     unsigned db = *static_cast<const unsigned*>(b);
@@ -1089,7 +1090,7 @@ bool JSArray::fastSplice(JSGlobalObject* globalObject, uint64_t length, uint64_t
         return false;
     // (indexingType() does not say copy-on-write, which an array with immutable properties is. False: the caller's generic
     // path, whose puts and deletes are refused.)
-    if (structure()->hasImmutableProperties()) [[unlikely]]
+    if (structure()->hasImmutableProperties() || hasFrozenElementsInPlace()) [[unlikely]]
         return false;
     if (length != butterfly()->publicLength())
         return false;
@@ -1284,7 +1285,7 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
 bool JSArray::tryPutIndexInPlace(VM& vm, unsigned index, JSValue value)
 {
     IndexingType indexingType = this->indexingType();
-    if (!hasUndecided(indexingType) && !hasInt32(indexingType) && !hasDouble(indexingType) && !hasContiguous(indexingType))
+    if ((!hasUndecided(indexingType) && !hasInt32(indexingType) && !hasDouble(indexingType) && !hasContiguous(indexingType)) || !isStructureExtensible())
         return false;
     if (index > MAX_STORAGE_VECTOR_INDEX || !ensureLength(vm, index + 1))
         return false;
@@ -1303,7 +1304,7 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
         return false;
 
     // (ensureLength() below converts copy-on-write storage. False: the caller's generic path, whose puts are refused.)
-    if (isCopyOnWrite(indexingMode()) && structure()->hasImmutableProperties()) [[unlikely]]
+    if (isCopyOnWrite(indexingMode()) && !isStructureExtensible()) [[unlikely]]
         return false;
 
     IndexingType type = indexingType();
@@ -1409,6 +1410,10 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     case CopyOnWriteArrayWithContiguous:
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
+        if (hasFrozenElementsInPlace()) [[unlikely]] {
+            moveFrozenElementsToSparseMap(vm);
+            RELEASE_AND_RETURN(scope, setLength(globalObject, newLength, throwException));
+        }
         if (newLength == butterfly->publicLength())
             return true;
         convertFromCopyOnWrite(vm);
@@ -2283,6 +2288,11 @@ bool JSArray::isIteratorProtocolFastAndNonObservable()
     // This is the fast case. Many arrays will be an original array.
     if (globalObject->isOriginalArrayStructure(structure))
         return true;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.useImmutableIntrinsics && structure->typeInfo().type() == ArrayType && getPrototypeDirect() == globalObject->arrayPrototype())
+        return true;
+#endif
 
     if (structure->mayInterceptIndexedAccesses())
         return false;

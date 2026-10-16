@@ -111,6 +111,8 @@ struct Request {
     bool includeTextInAutoFilledControls { false };
     bool includeOffscreenPasswordFields { false };
     bool includeTagName { false };
+    bool includeSameOriginSubframes { true };
+    bool includeClippedContent { true };
 #if ENABLE(DATA_DETECTION)
     OptionSet<DataDetectorType> dataDetectorTypes;
 #endif
@@ -156,6 +158,13 @@ struct IFrameData {
     String shortenedOrigin;
     bool isSameOriginAsParent { false };
     FrameIdentifier identifier;
+};
+
+enum class MediaType : bool { Video, Audio };
+
+struct MediaItemData {
+    MediaType type { MediaType::Video };
+    bool hasControls { false };
 };
 
 struct ContentEditableData {
@@ -211,7 +220,7 @@ enum class ContainerType : uint8_t {
     Generic,
 };
 
-using ItemData = Variant<ContainerType, TextItemData, ScrollableItemData, ImageItemData, SelectData, ContentEditableData, TextFormControlData, FormData, LinkItemData, IFrameData>;
+using ItemData = Variant<ContainerType, TextItemData, ScrollableItemData, ImageItemData, SelectData, ContentEditableData, TextFormControlData, FormData, LinkItemData, IFrameData, MediaItemData>;
 
 struct Item {
     ItemData data;

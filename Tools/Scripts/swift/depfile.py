@@ -40,3 +40,23 @@ def parse_text(text):
 
 def parse(path):
     return parse_text(Path(path).read_text(errors="replace"))
+
+
+def dependency_set(path):
+    """The distinct dependencies of one depfile, as a set.
+
+    Same result as set(parse(path)), but splits with str.split() when the file
+    has no escaped spaces, which is ~10x faster on swiftc's multi-megabyte
+    single-line depfiles.
+    """
+    text = Path(path).read_text(errors="replace")
+    if "\\ " in text:
+        return set(parse_text(text))
+    deps = set()
+    for rule in text.replace("\\\n", " ").splitlines():
+        tokens = rule.split()
+        for index, token in enumerate(tokens):
+            if token.endswith(":"):
+                deps.update(tokens[index + 1:])
+                break
+    return deps

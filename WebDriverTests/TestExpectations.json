@@ -822,10 +822,7 @@
                 "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/184967"}}
             },
             "test_touch_pointer_in_shadow_tree[inner-open]": {
-                "expected": {
-                    "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/184967"},
-                    "wpe": {"status": ["FAIL"], "bug": "webkit.org/b/322100"}
-                }
+                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/184967"}}
             },
             "test_touch_pointer_in_shadow_tree[outer-open]": {
                 "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/184967"}}
@@ -964,7 +961,7 @@
                 "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/224736"}}
             },
             "test_sequence_of_keydown_printable_keys_sends_events": {
-                "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/320476"}}
+                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/224736"}}
             },
             "test_sequence_of_keydown_printable_characters_sends_events": {
                 "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/224736"}}
@@ -1011,9 +1008,6 @@
 
     "imported/w3c/webdriver/tests/classic/release_actions/sequence.py": {
         "subtests": {
-            "test_release_char_sequence_sends_keyup_events_in_reverse": {
-                "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/320476"}}
-            },
             "test_release_mouse_sequence_resets_dblclick_state": {
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/184967"}}
             },
@@ -2234,6 +2228,14 @@
             },
             "test_get_current_url_nested_browsing_context": {
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/180405"}}
+            }
+        }
+    },
+
+    "imported/w3c/webdriver/tests/classic/get_active_element/get.py": {
+        "subtests": {
+            "test_no_such_element": {
+                "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/327139"}}
             }
         }
     },

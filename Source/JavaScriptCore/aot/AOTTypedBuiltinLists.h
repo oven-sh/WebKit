@@ -14,6 +14,7 @@
     v(Host) \
     v(IntlTemporal) \
     v(Iterator) \
+    v(JSON) \
     v(Language) \
     v(MapSet) \
     v(MathNumber) \
@@ -112,6 +113,9 @@
     v(NewSyntaxError, ErrorJSONGlobal, false) \
     v(NewTypeError, ErrorJSONGlobal, false) \
     v(NewURIError, ErrorJSONGlobal, false) \
+    v(JSONStringify, JSON, false) \
+    v(AppendJSON, JSON, false) \
+    v(ResponseJSON, JSON, false) \
     v(This, Language, false) \
     v(HasOriginalStructure, Language, false) \
     v(ArrayHasIndex, Language, false) \
@@ -196,6 +200,7 @@
     v(IsAsyncIteratorDriven, Promise, false) \
     v(GetAsyncIteratorNext, Promise, false) \
     v(AsyncIteratorNext, Promise, false) \
+    v(ClearAsyncIteratorResult, Promise, false) \
     v(GetIteratorNext, Promise, false) \
     v(GeneratorResume, Promise, false) \
     v(GeneratorIsDone, Promise, false) \
@@ -285,6 +290,14 @@
     v(operationAOTTypedIsGeneratorSuspendedAtStart) \
     v(operationAOTTypedNewError) \
     v(operationAOTTypedPrepareBoundFunctionAllocation) \
+    v(operationAOTTypedJSONReserve) \
+    v(operationAOTTypedJSONAppendString) \
+    v(operationAOTTypedJSONAppendInteger) \
+    v(operationAOTTypedJSONAppendNumber) \
+    v(operationAOTTypedJSONAppendValue) \
+    v(operationAOTTypedJSONAppendElementsFrom) \
+    v(operationAOTTypedJSONFinish) \
+    v(operationAOTTypedJSONPrepare) \
     v(operationAOTTypedForInKeys) \
     v(operationAOTTypedHasEnumerableProperty) \
     v(operationAOTTypedGetSuperConstructor) \
@@ -433,6 +446,7 @@
     v(RejectPromise) \
     v(NewGenerator) \
     v(NewAsyncGenerator) \
+    v(StartAsyncGenerator) \
     v(GetAsyncIterator) \
     v(CreateArguments) \
     v(GetFromArguments) \
@@ -515,76 +529,77 @@
     v(shadowRealmPrototypeCrossRealmThrowCode, 20) \
     v(arrayConstructorDefaultAsyncFromAsyncArrayLikeCode, 21) \
     v(arrayConstructorDefaultAsyncFromAsyncIteratorCode, 22) \
-    v(asyncDisposableStackPrototypeDeferMethodCode, 23) \
-    v(disposableStackPrototypeDeferMethodCode, 24) \
-    v(reflectObjectDeletePropertyCode, 25) \
-    v(disposableStackPrototypeDisposeCode, 26) \
-    v(jsIteratorPrototypeDisposeCode, 27) \
-    v(asyncDisposableStackPrototypeDisposeAsyncCode, 28) \
-    v(jsIteratorPrototypeDropCode, 29) \
-    v(shadowRealmPrototypeEvaluateCode, 30) \
-    v(arrayPrototypeEveryCode, 31) \
-    v(jsIteratorPrototypeEveryCode, 32) \
-    v(arrayPrototypeFilterCode, 33) \
-    v(jsIteratorPrototypeFilterCode, 34) \
-    v(arrayPrototypeFindCode, 35) \
-    v(jsIteratorPrototypeFindCode, 36) \
-    v(arrayPrototypeFindIndexCode, 37) \
-    v(arrayPrototypeFindLastCode, 38) \
-    v(arrayPrototypeFindLastIndexCode, 39) \
-    v(arrayPrototypeFlatIntoArrayCode, 40) \
-    v(arrayPrototypeFlatIntoArrayWithCallbackCode, 41) \
-    v(arrayPrototypeFlatMapCode, 42) \
-    v(jsIteratorPrototypeFlatMapCode, 43) \
-    v(arrayPrototypeForEachCode, 44) \
-    v(mapPrototypeForEachCode, 45) \
-    v(setPrototypeForEachCode, 46) \
-    v(arrayConstructorFromCode, 47) \
-    v(jsIteratorConstructorFromCode, 48) \
-    v(typedArrayConstructorFromCode, 49) \
-    v(arrayConstructorFromAsyncCode, 50) \
-    v(objectConstructorFromEntriesCode, 51) \
-    v(reflectObjectGetCode, 53) \
-    v(disposableStackPrototypeGetAsyncDisposeMethodCode, 54) \
-    v(disposableStackPrototypeGetDisposeMethodCode, 55) \
-    v(jsIteratorConstructorGetIteratorFlattenableCode, 56) \
-    v(jsIteratorConstructorGetIteratorSyncCode, 57) \
-    v(jsIteratorConstructorGetOptionsObjectCode, 58) \
-    v(mapConstructorGroupByCode, 59) \
-    v(objectConstructorGroupByCode, 60) \
-    v(reflectObjectHasCode, 61) \
-    v(shadowRealmPrototypeImportValueCode, 62) \
-    v(jsIteratorConstructorIteratorCloseAllNormalCode, 63) \
-    v(jsIteratorConstructorIteratorZipCode, 64) \
-    v(arrayPrototypeMapCode, 65) \
-    v(jsIteratorPrototypeMapCode, 66) \
-    v(asyncDisposableStackPrototypeMoveCode, 67) \
-    v(disposableStackPrototypeMoveCode, 68) \
-    v(arrayIteratorPrototypeNextCode, 69) \
-    v(generatorPrototypeNextCode, 70) \
-    v(jsIteratorHelperPrototypeNextCode, 71) \
-    v(wrapForValidIteratorPrototypeNextCode, 72) \
-    v(iteratorHelpersPerformIterationCode, 73) \
-    v(arrayPrototypeReduceCode, 82) \
-    v(jsIteratorPrototypeReduceCode, 83) \
-    v(arrayPrototypeReduceRightCode, 84) \
-    v(jsIteratorConstructorRemoveFirstFromListCode, 85) \
-    v(generatorPrototypeReturnCode, 86) \
-    v(jsIteratorHelperPrototypeReturnCode, 87) \
-    v(wrapForValidIteratorPrototypeReturnCode, 88) \
-    v(arrayPrototypeSomeCode, 89) \
-    v(jsIteratorPrototypeSomeCode, 90) \
-    v(jsIteratorPrototypeTakeCode, 91) \
-    v(generatorPrototypeThrowCode, 92) \
-    v(typedArrayPrototypeToLocaleStringCode, 93) \
-    v(promiseConstructorTryCode, 94) \
-    v(asyncDisposableStackPrototypeUseCode, 95) \
-    v(disposableStackPrototypeUseCode, 96) \
-    v(jsIteratorPrototypeWindowsCode, 97) \
-    v(shadowRealmPrototypeWrapRemoteValueCode, 98) \
-    v(iteratorHelpersWrappedIteratorCode, 99) \
-    v(jsIteratorConstructorZipCode, 100) \
-    v(jsIteratorConstructorZipKeyedCode, 101)
+    v(arrayConstructorDefaultAsyncFromAsyncIteratorWithNextCode, 23) \
+    v(asyncDisposableStackPrototypeDeferMethodCode, 24) \
+    v(disposableStackPrototypeDeferMethodCode, 25) \
+    v(reflectObjectDeletePropertyCode, 26) \
+    v(disposableStackPrototypeDisposeCode, 27) \
+    v(jsIteratorPrototypeDisposeCode, 28) \
+    v(asyncDisposableStackPrototypeDisposeAsyncCode, 29) \
+    v(jsIteratorPrototypeDropCode, 30) \
+    v(shadowRealmPrototypeEvaluateCode, 31) \
+    v(arrayPrototypeEveryCode, 32) \
+    v(jsIteratorPrototypeEveryCode, 33) \
+    v(arrayPrototypeFilterCode, 34) \
+    v(jsIteratorPrototypeFilterCode, 35) \
+    v(arrayPrototypeFindCode, 36) \
+    v(jsIteratorPrototypeFindCode, 37) \
+    v(arrayPrototypeFindIndexCode, 38) \
+    v(arrayPrototypeFindLastCode, 39) \
+    v(arrayPrototypeFindLastIndexCode, 40) \
+    v(arrayPrototypeFlatIntoArrayCode, 41) \
+    v(arrayPrototypeFlatIntoArrayWithCallbackCode, 42) \
+    v(arrayPrototypeFlatMapCode, 43) \
+    v(jsIteratorPrototypeFlatMapCode, 44) \
+    v(arrayPrototypeForEachCode, 45) \
+    v(mapPrototypeForEachCode, 46) \
+    v(setPrototypeForEachCode, 47) \
+    v(arrayConstructorFromCode, 48) \
+    v(jsIteratorConstructorFromCode, 49) \
+    v(typedArrayConstructorFromCode, 50) \
+    v(arrayConstructorFromAsyncCode, 51) \
+    v(objectConstructorFromEntriesCode, 52) \
+    v(reflectObjectGetCode, 54) \
+    v(disposableStackPrototypeGetAsyncDisposeMethodCode, 55) \
+    v(disposableStackPrototypeGetDisposeMethodCode, 56) \
+    v(jsIteratorConstructorGetIteratorFlattenableCode, 57) \
+    v(jsIteratorConstructorGetIteratorSyncCode, 58) \
+    v(jsIteratorConstructorGetOptionsObjectCode, 59) \
+    v(mapConstructorGroupByCode, 60) \
+    v(objectConstructorGroupByCode, 61) \
+    v(reflectObjectHasCode, 62) \
+    v(shadowRealmPrototypeImportValueCode, 63) \
+    v(jsIteratorConstructorIteratorCloseAllNormalCode, 64) \
+    v(jsIteratorConstructorIteratorZipCode, 65) \
+    v(arrayPrototypeMapCode, 66) \
+    v(jsIteratorPrototypeMapCode, 67) \
+    v(asyncDisposableStackPrototypeMoveCode, 68) \
+    v(disposableStackPrototypeMoveCode, 69) \
+    v(arrayIteratorPrototypeNextCode, 70) \
+    v(generatorPrototypeNextCode, 71) \
+    v(jsIteratorHelperPrototypeNextCode, 72) \
+    v(wrapForValidIteratorPrototypeNextCode, 73) \
+    v(iteratorHelpersPerformIterationCode, 74) \
+    v(arrayPrototypeReduceCode, 83) \
+    v(jsIteratorPrototypeReduceCode, 84) \
+    v(arrayPrototypeReduceRightCode, 85) \
+    v(jsIteratorConstructorRemoveFirstFromListCode, 86) \
+    v(generatorPrototypeReturnCode, 87) \
+    v(jsIteratorHelperPrototypeReturnCode, 88) \
+    v(wrapForValidIteratorPrototypeReturnCode, 89) \
+    v(arrayPrototypeSomeCode, 90) \
+    v(jsIteratorPrototypeSomeCode, 91) \
+    v(jsIteratorPrototypeTakeCode, 92) \
+    v(generatorPrototypeThrowCode, 93) \
+    v(typedArrayPrototypeToLocaleStringCode, 94) \
+    v(promiseConstructorTryCode, 95) \
+    v(asyncDisposableStackPrototypeUseCode, 96) \
+    v(disposableStackPrototypeUseCode, 97) \
+    v(jsIteratorPrototypeWindowsCode, 98) \
+    v(shadowRealmPrototypeWrapRemoteValueCode, 99) \
+    v(iteratorHelpersWrappedIteratorCode, 100) \
+    v(jsIteratorConstructorZipCode, 101) \
+    v(jsIteratorConstructorZipKeyedCode, 102)
 
 #define FOR_EACH_AOT_TYPED_ORIGINAL_STRUCTURE(v) \
     v(0, arrayBufferStructure(ArrayBufferSharingMode::Default)) \
@@ -624,56 +639,56 @@
     v(34, typedArrayStructure(TypeBigUint64, true))
 
 #define FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR(v) \
-    v(readInt8, 464, false, 1, Signed, true) \
-    v(readUInt8, 469, false, 1, Unsigned, true) \
-    v(readUint8, 474, false, 1, Unsigned, true) \
-    v(readInt16LE, 461, false, 2, Signed, true) \
-    v(readInt16BE, 460, false, 2, Signed, false) \
-    v(readUInt16LE, 466, false, 2, Unsigned, true) \
-    v(readUInt16BE, 465, false, 2, Unsigned, false) \
-    v(readUint16LE, 471, false, 2, Unsigned, true) \
-    v(readUint16BE, 470, false, 2, Unsigned, false) \
-    v(readInt32LE, 463, false, 4, Signed, true) \
-    v(readInt32BE, 462, false, 4, Signed, false) \
-    v(readUInt32LE, 468, false, 4, Unsigned, true) \
-    v(readUInt32BE, 467, false, 4, Unsigned, false) \
-    v(readUint32LE, 473, false, 4, Unsigned, true) \
-    v(readUint32BE, 472, false, 4, Unsigned, false) \
-    v(readFloatLE, 459, false, 4, Float, true) \
-    v(readFloatBE, 458, false, 4, Float, false) \
-    v(readDoubleLE, 457, false, 8, Float, true) \
-    v(readDoubleBE, 456, false, 8, Float, false) \
-    v(readBigInt64LE, 451, false, 8, Signed, true) \
-    v(readBigInt64BE, 450, false, 8, Signed, false) \
-    v(readBigUInt64LE, 453, false, 8, Unsigned, true) \
-    v(readBigUInt64BE, 452, false, 8, Unsigned, false) \
-    v(readBigUint64LE, 455, false, 8, Unsigned, true) \
-    v(readBigUint64BE, 454, false, 8, Unsigned, false) \
-    v(writeInt8, 623, true, 1, Signed, true) \
-    v(writeUInt8, 628, true, 1, Unsigned, true) \
-    v(writeUint8, 633, true, 1, Unsigned, true) \
-    v(writeInt16LE, 620, true, 2, Signed, true) \
-    v(writeInt16BE, 619, true, 2, Signed, false) \
-    v(writeUInt16LE, 625, true, 2, Unsigned, true) \
-    v(writeUInt16BE, 624, true, 2, Unsigned, false) \
-    v(writeUint16LE, 630, true, 2, Unsigned, true) \
-    v(writeUint16BE, 629, true, 2, Unsigned, false) \
-    v(writeInt32LE, 622, true, 4, Signed, true) \
-    v(writeInt32BE, 621, true, 4, Signed, false) \
-    v(writeUInt32LE, 627, true, 4, Unsigned, true) \
-    v(writeUInt32BE, 626, true, 4, Unsigned, false) \
-    v(writeUint32LE, 632, true, 4, Unsigned, true) \
-    v(writeUint32BE, 631, true, 4, Unsigned, false) \
-    v(writeFloatLE, 618, true, 4, Float, true) \
-    v(writeFloatBE, 617, true, 4, Float, false) \
-    v(writeDoubleLE, 616, true, 8, Float, true) \
-    v(writeDoubleBE, 615, true, 8, Float, false) \
-    v(writeBigInt64LE, 610, true, 8, Signed, true) \
-    v(writeBigInt64BE, 609, true, 8, Signed, false) \
-    v(writeBigUInt64LE, 612, true, 8, Unsigned, true) \
-    v(writeBigUInt64BE, 611, true, 8, Unsigned, false) \
-    v(writeBigUint64LE, 614, true, 8, Unsigned, true) \
-    v(writeBigUint64BE, 613, true, 8, Unsigned, false)
+    v(readInt8, 469, false, 1, Signed, true) \
+    v(readUInt8, 474, false, 1, Unsigned, true) \
+    v(readUint8, 479, false, 1, Unsigned, true) \
+    v(readInt16LE, 466, false, 2, Signed, true) \
+    v(readInt16BE, 465, false, 2, Signed, false) \
+    v(readUInt16LE, 471, false, 2, Unsigned, true) \
+    v(readUInt16BE, 470, false, 2, Unsigned, false) \
+    v(readUint16LE, 476, false, 2, Unsigned, true) \
+    v(readUint16BE, 475, false, 2, Unsigned, false) \
+    v(readInt32LE, 468, false, 4, Signed, true) \
+    v(readInt32BE, 467, false, 4, Signed, false) \
+    v(readUInt32LE, 473, false, 4, Unsigned, true) \
+    v(readUInt32BE, 472, false, 4, Unsigned, false) \
+    v(readUint32LE, 478, false, 4, Unsigned, true) \
+    v(readUint32BE, 477, false, 4, Unsigned, false) \
+    v(readFloatLE, 464, false, 4, Float, true) \
+    v(readFloatBE, 463, false, 4, Float, false) \
+    v(readDoubleLE, 462, false, 8, Float, true) \
+    v(readDoubleBE, 461, false, 8, Float, false) \
+    v(readBigInt64LE, 456, false, 8, Signed, true) \
+    v(readBigInt64BE, 455, false, 8, Signed, false) \
+    v(readBigUInt64LE, 458, false, 8, Unsigned, true) \
+    v(readBigUInt64BE, 457, false, 8, Unsigned, false) \
+    v(readBigUint64LE, 460, false, 8, Unsigned, true) \
+    v(readBigUint64BE, 459, false, 8, Unsigned, false) \
+    v(writeInt8, 628, true, 1, Signed, true) \
+    v(writeUInt8, 633, true, 1, Unsigned, true) \
+    v(writeUint8, 638, true, 1, Unsigned, true) \
+    v(writeInt16LE, 625, true, 2, Signed, true) \
+    v(writeInt16BE, 624, true, 2, Signed, false) \
+    v(writeUInt16LE, 630, true, 2, Unsigned, true) \
+    v(writeUInt16BE, 629, true, 2, Unsigned, false) \
+    v(writeUint16LE, 635, true, 2, Unsigned, true) \
+    v(writeUint16BE, 634, true, 2, Unsigned, false) \
+    v(writeInt32LE, 627, true, 4, Signed, true) \
+    v(writeInt32BE, 626, true, 4, Signed, false) \
+    v(writeUInt32LE, 632, true, 4, Unsigned, true) \
+    v(writeUInt32BE, 631, true, 4, Unsigned, false) \
+    v(writeUint32LE, 637, true, 4, Unsigned, true) \
+    v(writeUint32BE, 636, true, 4, Unsigned, false) \
+    v(writeFloatLE, 623, true, 4, Float, true) \
+    v(writeFloatBE, 622, true, 4, Float, false) \
+    v(writeDoubleLE, 621, true, 8, Float, true) \
+    v(writeDoubleBE, 620, true, 8, Float, false) \
+    v(writeBigInt64LE, 615, true, 8, Signed, true) \
+    v(writeBigInt64BE, 614, true, 8, Signed, false) \
+    v(writeBigUInt64LE, 617, true, 8, Unsigned, true) \
+    v(writeBigUInt64BE, 616, true, 8, Unsigned, false) \
+    v(writeBigUint64LE, 619, true, 8, Unsigned, true) \
+    v(writeBigUint64BE, 618, true, 8, Unsigned, false)
 
 #define FOR_EACH_AOT_TYPED_JS_TYPE_NAME(v) \
     v(ArrayType) \
@@ -759,18 +774,18 @@
     v(0, (JSWrapForValidIterator::Field::IteratedIterator)) \
     v(1, (JSWrapForValidIterator::Field::IteratedNextMethod))
 
-#define AOT_TYPED_NUMBER_OF_BUILTINS 877
-#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 637
+#define AOT_TYPED_NUMBER_OF_BUILTINS 881
+#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 642
 #define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES 37
 #define AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES 35
-#define AOT_TYPED_BUILTINS_HASH 0x5fa9b40cu
+#define AOT_TYPED_BUILTINS_HASH 0x890597d8u
 
-#define AOT_TYPED_BUILTIN_NAME_TypedArray 210
-#define AOT_TYPED_BUILTIN_NAME_prototype 444
-#define AOT_TYPED_BUILTIN_NAME_call 254
-#define AOT_TYPED_BUILTIN_NAME_apply 234
-#define AOT_TYPED_BUILTIN_NAME_hasOwn 377
-#define AOT_TYPED_BUILTIN_NAME_hasOwnProperty 378
+#define AOT_TYPED_BUILTIN_NAME_TypedArray 214
+#define AOT_TYPED_BUILTIN_NAME_prototype 449
+#define AOT_TYPED_BUILTIN_NAME_call 258
+#define AOT_TYPED_BUILTIN_NAME_apply 238
+#define AOT_TYPED_BUILTIN_NAME_hasOwn 381
+#define AOT_TYPED_BUILTIN_NAME_hasOwnProperty 382
 #define AOT_TYPED_ENGINE_CLASS_Array 0
 #define AOT_TYPED_ENGINE_CLASS_Promise 10
 #define AOT_TYPED_ENGINE_CLASS_String 35
@@ -780,5 +795,5 @@
 #define AOT_TYPED_ENGINE_CLASS_BigInt 34
 #define AOT_TYPED_ENGINE_CLASS_Function 25
 #define AOT_TYPED_ENGINE_CLASS_Object 24
-#define AOT_TYPED_BUILTIN_HasOriginalStructure 416
-#define AOT_TYPED_BUILTIN_Call 419
+#define AOT_TYPED_BUILTIN_HasOriginalStructure 419
+#define AOT_TYPED_BUILTIN_Call 422

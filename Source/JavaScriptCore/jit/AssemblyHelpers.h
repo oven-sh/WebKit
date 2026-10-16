@@ -86,7 +86,7 @@ public:
     }
 
 #if ENABLE(WEBASSEMBLY)
-    void NODELETE prepareWasmCallOperation(GPRReg instanceGPR);
+    void LEGACY_NODELETE prepareWasmCallOperation(GPRReg instanceGPR);
 #endif
 
     void checkStackPointerAlignment()

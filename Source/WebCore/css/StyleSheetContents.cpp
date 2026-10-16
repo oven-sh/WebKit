@@ -161,14 +161,14 @@ void StyleSheetContents::parserAppendRule(Ref<StyleRuleBase>&& rule)
 {
     ASSERT(!rule->isCharsetRule());
 
-    if (auto* layerRule = dynamicDowncast<StyleRuleLayer>(rule.get()); layerRule && m_importRules.isEmpty() && m_childRules.isEmpty() && m_namespaceRules.isEmpty()) {
+    if (RefPtr layerRule = dynamicDowncast<StyleRuleLayer>(rule); layerRule && m_importRules.isEmpty() && m_childRules.isEmpty() && m_namespaceRules.isEmpty()) {
         if (layerRule->isStatement()) {
             m_layerRulesBeforeImportRules.append(*layerRule);
             return;
         }
     }
 
-    if (auto* importRule = dynamicDowncast<StyleRuleImport>(rule.get())) {
+    if (RefPtr importRule = dynamicDowncast<StyleRuleImport>(rule)) {
         // Parser enforces that @import rules come before anything else except @charset.
         ASSERT(m_childRules.isEmpty());
         m_importRules.append(*importRule);
@@ -177,7 +177,7 @@ void StyleSheetContents::parserAppendRule(Ref<StyleRuleBase>&& rule)
         return;
     }
 
-    if (auto* namespaceRule = dynamicDowncast<StyleRuleNamespace>(rule.get())) {
+    if (RefPtr namespaceRule = dynamicDowncast<StyleRuleNamespace>(rule)) {
         // Parser enforces that @namespace rules come before all rules other than
         // import/charset rules
         ASSERT(m_childRules.isEmpty());
@@ -193,7 +193,7 @@ void StyleSheetContents::parserAppendRule(Ref<StyleRuleBase>&& rule)
             return;
     }
 
-    if (auto* styleRule = dynamicDowncast<StyleRule>(rule.get()); styleRule && styleRule->selectorList().componentCount() > Style::RuleData::maximumSelectorComponentCount) {
+    if (RefPtr styleRule = dynamicDowncast<StyleRule>(rule); styleRule && styleRule->selectorList().componentCount() > Style::RuleData::maximumSelectorComponentCount) {
         // If we're adding a rule with a huge number of selectors, split it up into multiple rules
         m_childRules.appendVector(styleRule->splitIntoMultipleRulesWithMaximumSelectorComponentCount(Style::RuleData::maximumSelectorComponentCount));
         return;
@@ -283,7 +283,7 @@ bool StyleSheetContents::wrapperInsertRule(Ref<StyleRuleBase>&& rule, unsigned i
 
     unsigned childVectorIndex = index;
     if (childVectorIndex < m_layerRulesBeforeImportRules.size() || (childVectorIndex == m_layerRulesBeforeImportRules.size() && is<StyleRuleLayer>(rule))) {
-        auto* layerRule = dynamicDowncast<StyleRuleLayer>(rule.get());
+        RefPtr layerRule = dynamicDowncast<StyleRuleLayer>(rule);
         if (!layerRule)
             return false;
         if (layerRule->isStatement()) {
@@ -297,7 +297,7 @@ bool StyleSheetContents::wrapperInsertRule(Ref<StyleRuleBase>&& rule, unsigned i
 
     if (childVectorIndex < m_importRules.size() || (childVectorIndex == m_importRules.size() && rule->isImportRule())) {
         // Inserting non-import rule before @import is not allowed.
-        auto* importRule = dynamicDowncast<StyleRuleImport>(rule.get());
+        RefPtr importRule = dynamicDowncast<StyleRuleImport>(rule);
         if (!importRule)
             return false;
         m_importRules.insert(childVectorIndex, *importRule);
@@ -314,7 +314,7 @@ bool StyleSheetContents::wrapperInsertRule(Ref<StyleRuleBase>&& rule, unsigned i
     if (childVectorIndex < m_namespaceRules.size() || (childVectorIndex == m_namespaceRules.size() && rule->isNamespaceRule())) {
         // Inserting non-namespace rules other than import and layer statement rules before @namespace is
         // not allowed.
-        auto* namespaceRule = dynamicDowncast<StyleRuleNamespace>(rule.get());
+        RefPtr namespaceRule = dynamicDowncast<StyleRuleNamespace>(rule);
         if (!namespaceRule)
             return false;
         // Inserting @namespace rule when rules other than import/namespace/charset

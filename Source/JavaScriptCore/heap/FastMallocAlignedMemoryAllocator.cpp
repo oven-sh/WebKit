@@ -52,10 +52,10 @@ namespace JSC {
 
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
 
-static void* tryAllocateBlockMemory()
+static void* tryAllocateBlockMemory(MarkedBlockCage* cage)
 {
-    if (MarkedBlockCage::isEnabled()) {
-        void* block = MarkedBlockCage::tryAllocateBlock();
+    if (cage) {
+        void* block = cage->tryAllocateBlock();
         if (block || MarkedBlockCage::isRequired())
             return block;
         MarkedBlockCage::didAllocateBlockOutside();
@@ -107,20 +107,7 @@ namespace {
 // Lets a test drive the exhaustion path without running the machine out of memory.
 std::atomic<bool> s_allocationFailsForTesting { false };
 
-void* tryAllocateBlock()
-{
-    if (s_allocationFailsForTesting.load(std::memory_order_relaxed)) [[unlikely]]
-        return nullptr;
-    return tryAllocateBlockMemory();
-}
-
-void freeBlock(void* block)
-{
-    if (MarkedBlockCage::contains(block))
-        MarkedBlockCage::freeBlock(block);
-    else
-        fastFree(block);
-}
+} // anonymous namespace
 
 // The first store into a freshly allocated MarkedBlock takes a write fault, and a heap that is
 // ramping up pays that fault thousands of times on the mutator thread. WarmUpBlockProvider keeps a
@@ -132,14 +119,27 @@ void freeBlock(void* block)
 // Warming a page is not free even when it is handed back promptly, so the supply is given up once an
 // interval passes with no demand at all.
 class WarmUpBlockProvider {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WarmUpBlockProvider);
 public:
-    enum class Phase : uint8_t { Stopped, Armed, StandingDown };
+    enum class Phase : uint8_t { Stopped, Armed, StandingDown, Ended };
 
-    WarmUpBlockProvider()
-        : m_lock(Box<Lock>::create())
+    explicit WarmUpBlockProvider(MarkedBlockCage* cage = nullptr)
+        : m_cage(cage)
+        , m_lock(Box<Lock>::create())
         , m_condition(AutomaticThreadCondition::create())
         , m_thread(adoptRef(*new WarmUpThread(Locker { *m_lock }, *this)))
     {
+    }
+
+    ~WarmUpBlockProvider()
+    {
+        {
+            Locker locker { *m_lock };
+            m_phase = Phase::Ended;
+            if (!m_thread->tryStop(locker))
+                m_condition->notifyAll(locker);
+        }
+        m_thread->join();
     }
 
     static WarmUpBlockProvider& singleton()
@@ -191,13 +191,18 @@ private:
     protected:
         void threadDidStart() final
         {
+            if (m_provider.m_cage)
+                m_provider.m_cage->makeCurrent();
             Locker locker { *m_provider.m_lock };
-            m_provider.m_phase = Phase::Armed;
+            if (m_provider.m_phase != Phase::Ended)
+                m_provider.m_phase = Phase::Armed;
         }
 
         PollResult poll(const AbstractLocker&) final
         {
             assertIsHeld(*m_provider.m_lock);
+            if (m_provider.m_phase == Phase::Ended)
+                return PollResult::Stop;
             if (m_provider.m_phase != Phase::Armed)
                 return PollResult::Wait;
             // Topping the supply back up while demand is still arriving keeps it near its full depth
@@ -216,7 +221,7 @@ private:
         bool shouldSleep(const AbstractLocker&) final
         {
             assertIsHeld(*m_provider.m_lock);
-            if (!std::exchange(m_provider.m_demandSinceIdleCheck, false))
+            if (!std::exchange(m_provider.m_demandSinceIdleCheck, false) || m_provider.m_phase == Phase::Ended)
                 return true;
             m_provider.m_phase = Phase::Armed;
             return false;
@@ -226,10 +231,12 @@ private:
         {
             assertIsHeld(*m_provider.m_lock);
             // Freeing does not reach back into this lock, so it is safe to do with it held.
-            m_provider.m_phase = Phase::Stopped;
+            if (m_provider.m_phase != Phase::Ended)
+                m_provider.m_phase = Phase::Stopped;
             for (void* block : std::exchange(m_provider.m_blocks, { }))
-                freeBlock(block);
-            MarkedBlockCage::decommitFreeBlocks();
+                m_provider.freeBlock(block);
+            if (m_provider.m_cage)
+                MarkedBlockCage::decommitFreeBlocks();
         }
 
     private:
@@ -239,6 +246,21 @@ private:
     size_t targetDepth() WTF_REQUIRES_LOCK(*m_lock) { return m_phase == Phase::Armed ? Options::warmUpMarkedBlockCount() : 0; }
 
     bool isRunningLow() WTF_REQUIRES_LOCK(*m_lock) { return m_blocks.size() * 4 < targetDepth(); }
+
+    void* tryAllocateBlock()
+    {
+        if (s_allocationFailsForTesting.load(std::memory_order_relaxed)) [[unlikely]]
+            return nullptr;
+        return m_cage ? m_cage->tryAllocateBlock() : tryAllocateBlockMemory(nullptr);
+    }
+
+    void freeBlock(void* block)
+    {
+        if (m_cage)
+            m_cage->freeBlock(block);
+        else
+            fastFree(block);
+    }
 
     static void makeResident(void* block)
     {
@@ -279,6 +301,7 @@ private:
             m_phase = Phase::StandingDown;
     }
 
+    MarkedBlockCage* const m_cage;
     const Box<Lock> m_lock;
     const Ref<AutomaticThreadCondition> m_condition;
     const Ref<WarmUpThread> m_thread;
@@ -288,7 +311,17 @@ private:
     bool m_demandSinceIdleCheck WTF_GUARDED_BY_LOCK(*m_lock) { false };
 };
 
-} // anonymous namespace
+WarmUpBlockProvider* FastMallocAlignedMemoryAllocator::warmUpBlockProviderIfStarted()
+{
+    if (!MarkedBlockCage::isEnabled())
+        return isPastWarmUpStartThreshold() ? &WarmUpBlockProvider::singleton() : nullptr;
+    if (!m_warmUpBlockProvider) {
+        if (++m_numberOfBlockRequests < Options::warmUpMarkedBlockStartAfterBlocks() || !m_markedBlockCage.isReserved())
+            return nullptr;
+        m_warmUpBlockProvider = makeUnique<WarmUpBlockProvider>(&m_markedBlockCage);
+    }
+    return m_warmUpBlockProvider.get();
+}
 
 #endif // USE(LIBPAS)
 
@@ -347,21 +380,23 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 
     // MarkedBlock::tryCreate is the only caller today and always asks for a block-shaped region.
     // The guard keeps a future caller of some other size from being handed a block.
-    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
+    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled()) {
 #if USE(LIBPAS)
-        if (!MarkedBlockCage::isEnabled()) {
+        if (!MarkedBlockCage::isEnabled() && isPastWarmUpStartThreshold()) {
             configureWarmUpSupply();
             return bmalloc_prefault_supply_try_allocate();
         }
 #else
-        if (void* block = WarmUpBlockProvider::singleton().tryTake())
-            return block;
+        if (WarmUpBlockProvider* provider = warmUpBlockProviderIfStarted()) {
+            if (void* block = provider->tryTake())
+                return block;
+        }
 #endif
     }
 
     if (MarkedBlockCage::isEnabled()) {
         RELEASE_ASSERT(alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize);
-        return tryAllocateBlockMemory();
+        return tryAllocateBlockMemory(&m_markedBlockCage);
     }
 
     return tryFastCompactAlignedMalloc(alignment, size);
@@ -373,8 +408,8 @@ void FastMallocAlignedMemoryAllocator::freeAlignedMemory(void* basePtr)
 #if ENABLE(MALLOC_HEAP_BREAKDOWN)
     return m_heap.free(basePtr);
 #else
-    if (MarkedBlockCage::contains(basePtr)) {
-        MarkedBlockCage::freeBlock(basePtr);
+    if (m_markedBlockCage.owns(basePtr)) {
+        m_markedBlockCage.freeBlock(basePtr);
         return;
     }
     fastFree(basePtr);

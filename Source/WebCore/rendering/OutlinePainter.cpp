@@ -55,6 +55,10 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
+
 namespace WebCore {
 
 OutlinePainter::OutlinePainter(const PaintInfo& paintInfo)
@@ -65,6 +69,16 @@ OutlinePainter::OutlinePainter(const PaintInfo& paintInfo)
 static float deviceScaleFactor(const RenderElement& renderer)
 {
     return protect(renderer.document())->deviceScaleFactor();
+}
+
+static Color outlineColor(const RenderElement& renderer, const Style::ComputedStyle& style)
+{
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    return AXCustomColorModeController::adjustedOutlineColor(renderer, style);
+#else
+    UNUSED_PARAM(renderer);
+    return style.visitedDependentOutlineColorApplyingColorFilter();
+#endif
 }
 
 void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRect& paintRect) const
@@ -111,7 +125,7 @@ void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRec
 
     auto bleedAvoidance = BleedAvoidance::ShrinkBackground;
     auto appliedClipAlready = false;
-    auto edges = borderEdgesForOutline(styleToUse, *borderStyle, deviceScaleFactor(renderer));
+    auto edges = borderEdgesForOutline(styleToUse, outlineColor(renderer, styleToUse), *borderStyle, deviceScaleFactor(renderer));
     auto haveAllSolidEdges = BorderPainter::decorationHasAllSolidEdges(edges);
 
     BorderPainter { renderer, m_paintInfo }.paintSides(outlineShape, {
@@ -226,7 +240,7 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderBoxModelObject& rende
     }
 
     auto& graphicsContext = m_paintInfo.context();
-    auto outlineColor = styleToUse->visitedDependentOutlineColorApplyingColorFilter();
+    auto outlineColor = WebCore::outlineColor(renderer, styleToUse);
     auto useTransparencyLayer = !outlineColor.isOpaque();
     if (useTransparencyLayer) {
         graphicsContext.beginTransparencyLayer(outlineColor.alphaAsFloat());
@@ -242,7 +256,7 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderBoxModelObject& rende
         graphicsContext.endTransparencyLayer();
 }
 
-static bool NODELETE usePlatformFocusRingColorForOutlineStyleAuto()
+static bool LEGACY_NODELETE usePlatformFocusRingColorForOutlineStyleAuto()
 {
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     return true;
@@ -251,7 +265,7 @@ static bool NODELETE usePlatformFocusRingColorForOutlineStyleAuto()
 #endif
 }
 
-static bool NODELETE useShrinkWrappedFocusRingForOutlineStyleAuto()
+static bool LEGACY_NODELETE useShrinkWrappedFocusRingForOutlineStyleAuto()
 {
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     return true;
@@ -286,7 +300,7 @@ void OutlinePainter::paintFocusRing(const RenderElement& renderer, const Vector<
         rect.inflate(outlineOffset);
         pixelSnappedFocusRingRects.append(snapRectToDevicePixels(rect, deviceScaleFactor));
     }
-    auto styleOptions = renderer.styleColorOptions();
+    auto styleOptions = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
     styleOptions.add(StyleColorOptions::UseSystemAppearance);
     auto focusRingColor = usePlatformFocusRingColorForOutlineStyleAuto() ? RenderTheme::singleton().focusRingColor(styleOptions) : style->visitedDependentOutlineColorApplyingColorFilter();
 
@@ -510,7 +524,7 @@ static std::pair<FloatPoint, FloatPoint> startAndEndPointsForCorner(const FloatP
 
 enum class PainterCornerType : uint8_t { TopLeft, TopRight, BottomRight, BottomLeft, Other };
 
-static PainterCornerType NODELETE cornerType(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge)
+static PainterCornerType LEGACY_NODELETE cornerType(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge)
 {
     auto fromEdgeVector = *fromEdge.second - *fromEdge.first;
     auto toEdgeVector = *toEdge.second - *toEdge.first;
@@ -526,7 +540,7 @@ static PainterCornerType NODELETE cornerType(const FloatPointGraph::Edge& fromEd
     return PainterCornerType::Other;
 }
 
-static PainterCornerType NODELETE cornerTypeForMultiline(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const Vector<FloatPoint>& corners)
+static PainterCornerType LEGACY_NODELETE cornerTypeForMultiline(const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const Vector<FloatPoint>& corners)
 {
     auto corner = cornerType(fromEdge, toEdge);
     if (corner == PainterCornerType::TopLeft && corners.at(0) == *fromEdge.second)
@@ -540,7 +554,7 @@ static PainterCornerType NODELETE cornerTypeForMultiline(const FloatPointGraph::
     return PainterCornerType::Other;
 }
 
-static std::pair<FloatPoint, FloatPoint> NODELETE controlPointsForBezierCurve(PainterCornerType cornerType, const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const FloatSize& radius)
+static std::pair<FloatPoint, FloatPoint> LEGACY_NODELETE controlPointsForBezierCurve(PainterCornerType cornerType, const FloatPointGraph::Edge& fromEdge, const FloatPointGraph::Edge& toEdge, const FloatSize& radius)
 {
     FloatPoint cp1;
     FloatPoint cp2;
@@ -596,7 +610,7 @@ static CornerRadii adjustedRadiiForHuggingCurve(const CornerRadii& inputRadii, f
     };
 }
 
-static std::optional<FloatRect> NODELETE rectFromPolygon(const FloatPointGraph::Polygon& poly)
+static std::optional<FloatRect> LEGACY_NODELETE rectFromPolygon(const FloatPointGraph::Polygon& poly)
 {
     if (poly.size() != 4)
         return std::optional<FloatRect>();

@@ -22,9 +22,9 @@ public:
 
     WrapperBase* wrapper(CSSPropertyID id)
     {
-        if (id >= cssPropertyIDEnumValueCount)
+        if (std::to_underlying(id) >= cssPropertyIDEnumValueCount)
             return nullptr;
-        return m_wrappers[id];
+        return m_wrappers[std::to_underlying(id)];
     }
 
 private:

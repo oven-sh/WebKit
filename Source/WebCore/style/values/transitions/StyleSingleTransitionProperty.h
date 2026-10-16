@@ -88,7 +88,7 @@ private:
     {
         if (isCustomPropertyName(customIdent.value))
             return Kind { CustomProperty { .value = WTF::move(customIdent) } };
-        if (auto propertyID = cssPropertyID(customIdent.value))
+        if (auto propertyID = cssPropertyID(customIdent.value); propertyID != CSSPropertyID::Invalid)
             return Kind { SingleProperty { .value = WTF::move(customIdent), .propertyID = propertyID } };
         return Kind { UnknownProperty { .value = WTF::move(customIdent) } };
     }

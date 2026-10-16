@@ -9,12 +9,14 @@
 
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
+#include "CPU.h"
 #include "CodeSpecializationKind.h"
 #include "YarrFlags.h"
 #include "YarrJIT.h"
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
 #include <wtf/PageBlock.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -29,10 +31,10 @@ namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
-static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
+static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
-static constexpr unsigned numberOfAdapters = 8;
+static constexpr unsigned numberOfAdapters = 9;
 static constexpr unsigned numberOfStubsThatFindTargets = 3;
 static constexpr unsigned maxReturnsIntoFramesOfHostFunctions = numberOfStubsThatFindTargets + 1;
 
@@ -102,6 +104,7 @@ struct ImageRegExp {
     uint8_t keepsMoreOfPattern;
     uint8_t hasNoCode : 1;
     uint8_t textIsInPieces : 1;
+    uint8_t textIsDigest : 1;
     uint8_t sourceIsPattern;
 
     static constexpr unsigned maxLengthWithCode = 65536;
@@ -162,6 +165,8 @@ public:
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
     void setTypedData(Vector<uint8_t>&& data) { m_typedData = WTF::move(data); }
+    class RegExpsCompiledAhead;
+    void takeRegExpsCompiledAhead(RegExpsCompiledAhead&);
     void requestRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>, bool isFoundByEvaluator = false);
     bool compileOneRequestedRegExp();
     void didRequestAllRegExps();
@@ -177,9 +182,48 @@ private:
         CompiledCode code;
         String nameForMap;
     };
+    class Functions {
+        WTF_MAKE_NONCOPYABLE(Functions);
+    public:
+        Functions() = default;
+        Functions(Functions&& other) { swap(other); }
+        Functions& operator=(Functions&& other)
+        {
+            Functions(WTF::move(other)).swap(*this);
+            return *this;
+        }
+        ~Functions() { clear(); }
+        size_t size() const { return m_size; }
+        bool isEmpty() const { return !m_size; }
+        Function& operator[](size_t index)
+        {
+            RELEASE_ASSERT(index < m_size);
+            return m_first[index];
+        }
+        const Function& operator[](size_t index) const
+        {
+            RELEASE_ASSERT(index < m_size);
+            return m_first[index];
+        }
+        Function* begin() { return m_first; }
+        Function* end() { return m_first + m_size; }
+        const Function* begin() const { return m_first; }
+        const Function* end() const { return m_first + m_size; }
+        std::span<const Function> span() const { return { m_first, m_size }; }
+        void append(Function&&);
+        void growOnPool(size_t newSize);
+        void clear();
+
+    private:
+        void swap(Functions&);
+        void reserveCapacity(size_t);
+        Function* m_first { nullptr };
+        size_t m_size { 0 };
+        size_t m_capacity { 0 };
+    };
     Lock m_lock;
     String m_whyFailed;
-    Vector<Function> m_functions;
+    Functions m_functions;
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
     Vector<FunctionReportableSites> reportableSites();
@@ -201,6 +245,13 @@ private:
         OptionSet<Yarr::Flags> flags;
         bool isFoundByEvaluator { false };
     };
+    struct RegExpOutcome {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RegExpOutcome);
+        std::optional<RegExpCode> code;
+        bool isLeftToInterpreter { false };
+    };
+    using RegExpOutcomes = UncheckedKeyHashMap<String, std::unique_ptr<RegExpOutcome>>;
+    static String flagsAndPattern(OptionSet<Yarr::Flags>, const String& pattern);
     static std::optional<RegExpCode> compileRegExp(VM&, const RegExpRequest&, bool& isLeftToInterpreter);
     bool takeAndCompileOneRegExp();
     void compileRegExpsThatAreLeft();
@@ -209,6 +260,7 @@ private:
     uint32_t m_numberOfProgramConstants { 0 };
     Vector<uint8_t> m_typedData;
     Vector<RegExpCode> m_regExps;
+    RegExpOutcomes m_regExpsCompiledAhead;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
     UncheckedKeyHashSet<String> m_requestedRegExps;
     Vector<RegExpRequest> m_regExpRequests;
@@ -219,6 +271,40 @@ private:
     VM* m_vmOfRegExps { nullptr };
     Seconds m_timeInRegExpCompiler;
     UncheckedKeyHashSet<const Thread*> m_threadsThatCompiledRegExps;
+};
+
+using RegExpSourcesAndFlags = Vector<std::pair<String, OptionSet<Yarr::Flags>>>;
+
+class ImageBuilder::RegExpsCompiledAhead {
+    WTF_MAKE_NONCOPYABLE(RegExpsCompiledAhead);
+public:
+    RegExpsCompiledAhead() = default;
+    void compile(VM&, const RegExpSourcesAndFlags&);
+
+private:
+    friend class ImageBuilder;
+    Lock m_lock;
+    bool m_isTaken { false };
+    RegExpOutcomes m_outcomes;
+};
+
+class RegExpsFoundAhead {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RegExpsFoundAhead);
+    WTF_MAKE_NONCOPYABLE(RegExpsFoundAhead);
+public:
+    explicit RegExpsFoundAhead(std::span<const uint8_t> typedProgramAsWritten);
+    ~RegExpsFoundAhead();
+    bool isEvaluated();
+    const RegExpSourcesAndFlags& waitForEvaluatedTexts();
+    ImageBuilder::RegExpsCompiledAhead& compiledAhead() { return m_compiledAhead; }
+
+private:
+    ImageBuilder::RegExpsCompiledAhead m_compiledAhead;
+    Lock m_lock;
+    Condition m_didEvaluate;
+    bool m_isEvaluated { false };
+    RegExpSourcesAndFlags m_evaluatedTexts;
+    RefPtr<Thread> m_thread;
 };
 
 class Image {
@@ -267,8 +353,9 @@ public:
         bool sourceIsPattern;
         StringView text;
         const ImageRegExp* recordOfTextInPieces;
+        bool wasFoundByDigest { false };
     };
-    JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>);
+    JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>, bool wasFoundBefore = false);
     JS_EXPORT_PRIVATE static CodeForRegExp codeOfRegExp(const ImageRegExp&);
     JS_EXPORT_PRIVATE static const ImageRegExp* findRegExpWithTextInPieces(std::span<const StringView> leaves, unsigned length, OptionSet<Yarr::Flags>);
     JS_EXPORT_PRIVATE static String textOfRegExp(const ImageRegExp&);
@@ -312,6 +399,8 @@ public:
         bool startsCold;
         bool hasSiteConstants;
         bool hasInlineFrames;
+        bool saysWhatItAnswers;
+        bool saysWhatItYields;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;

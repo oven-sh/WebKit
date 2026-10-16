@@ -38,6 +38,7 @@
 #include <wtf/Lock.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/NativePromise.h>
 #include <wtf/Ref.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/ThreadSafeWeakPtr.h>
@@ -74,15 +75,15 @@ public:
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
     using Preferences = VideoRendererPreferences;
-    bool NODELETE prefersDecompressionSession() const;
-    void NODELETE setPreferences(Preferences);
+    bool LEGACY_NODELETE prefersDecompressionSession() const;
+    void LEGACY_NODELETE setPreferences(Preferences);
     bool isUsingDecompressionSession() const { return m_isUsingDecompressionSession; }
 
     void setTimebase(RetainPtr<CMTimebaseRef>&&);
     RetainPtr<CMTimebaseRef> timebase() const;
 
     bool isReadyForMoreMediaData() const;
-    void requestMediaDataWhenReady(Function<void()>&&);
+    Ref<GenericPromise> requestMediaDataWhenReady();
     void enqueueSample(const MediaSample&, std::optional<MediaTime> minimumUpcomingTime);
     void stopRequestingMediaData();
 
@@ -100,9 +101,9 @@ public:
 
     void expectMinimumUpcomingSampleBufferPresentationTime(const MediaTime&);
 
-    WebSampleBufferVideoRendering *NODELETE renderer() const;
+    WebSampleBufferVideoRendering *LEGACY_NODELETE renderer() const;
 
-    template <typename T> T* NODELETE as() const;
+    template <typename T> T* LEGACY_NODELETE as() const;
     template <> AVSampleBufferVideoRenderer* as() const;
     template <> AVSampleBufferDisplayLayer* as() const
     {
@@ -116,7 +117,7 @@ public:
     };
     DisplayedPixelBufferEntry copyDisplayedPixelBuffer();
 
-    unsigned NODELETE totalDisplayedFrames() const;
+    unsigned LEGACY_NODELETE totalDisplayedFrames() const;
     std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() const;
 
     void setResourceOwner(const ProcessIdentity&);
@@ -139,6 +140,7 @@ private:
 #endif
 
     void resetReadyForMoreMediaData();
+    void resolveRequestMediaDataIfNeeded();
     void initializeDecompressionSession();
     void decodeNextSampleIfNeeded();
     using FlushId = int;
@@ -150,7 +152,7 @@ private:
         Displayed
     };
     DecodedFrameResult maybeQueueFrameForDisplay(const MediaTime&, const MediaSample&, FlushId);
-    void NODELETE flushCompressedSampleQueue();
+    void LEGACY_NODELETE flushCompressedSampleQueue();
     void flushDecodedSampleQueue();
     void cancelTimer();
     void purgeDecodedSampleQueue(FlushId);
@@ -165,8 +167,8 @@ private:
     RetainPtr<CVPixelBufferRef> imageForSample(CMSampleBufferRef) const;
 
     void assignResourceOwner(const MediaSample&);
-    bool NODELETE areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
-    size_t NODELETE compressedSamplesCount() const;
+    bool LEGACY_NODELETE areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
+    size_t LEGACY_NODELETE compressedSamplesCount() const;
     void maybeBecomeReadyForMoreMediaData();
     bool shouldDecodeSample(const MediaSample&);
 
@@ -179,9 +181,9 @@ private:
     void ensureOnDispatcherSync(NOESCAPE Function<void()>&&) const;
     dispatch_queue_t dispatchQueue() const;
     RefPtr<WebCoreDecompressionSession> decompressionSession() const;
-    bool NODELETE useDecompressionSessionForProtectedFallback() const;
-    bool NODELETE useDecompressionSessionForProtectedContent() const;
-    bool NODELETE useStereoDecoding() const;
+    bool LEGACY_NODELETE useDecompressionSessionForProtectedFallback() const;
+    bool LEGACY_NODELETE useDecompressionSessionForProtectedContent() const;
+    bool LEGACY_NODELETE useStereoDecoding() const;
 
     // WebAVSampleBufferListenerClient
     void videoRendererDidReceiveError(WebSampleBufferVideoRendering *, NSError *) final;
@@ -225,7 +227,7 @@ private:
     bool m_notifiedFirstFrameAvailable WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { false };
     bool m_waitingForMoreMediaData WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { false };
     std::atomic<bool> m_waitingForMoreMediaDataPending { false };
-    Function<void()> m_readyForMoreMediaDataFunction WTF_GUARDED_BY_CAPABILITY(mainThread);
+    std::optional<GenericPromise::AutoRejectProducer> m_requestMediaDataProducer WTF_GUARDED_BY_CAPABILITY(mainThread);
     Preferences m_preferences;
     std::optional<uint32_t> m_currentCodec;
     std::atomic<bool> m_gotDecodingError { false };

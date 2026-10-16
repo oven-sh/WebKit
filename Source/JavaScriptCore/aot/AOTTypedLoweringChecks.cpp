@@ -46,6 +46,31 @@ Word32 Lowering::typeOfCell(CellPointer cell)
     return loadByte(cell, m_heaps.JSCell_typeInfoType, IsFixed | safeIfReaches(cell, sizeof(JSCell)));
 }
 
+bool Lowering::mayHaveCalledSince(LBasicBlock block, unsigned index, unsigned numberOfBlocks)
+{
+    auto mayCall = [](B3::Value* value) {
+        if (value->opcode() == B3::CCall)
+            return true;
+        if (value->opcode() != B3::Patchpoint)
+            return false;
+        auto& effects = value->as<PatchpointValue>()->effects;
+        return effects.terminal || effects.exitsSideways || effects.controlDependent || effects.writesLocalState || effects.readsLocalState || effects.writesPinned || effects.readsPinned || effects.fence || effects.writes || effects.reads;
+    };
+    for (unsigned i = index; i < block->size(); ++i) {
+        if (mayCall(block->at(i)))
+            return true;
+    }
+    for (unsigned i = numberOfBlocks; i < m_proc.size(); ++i) {
+        if (!m_proc[i] || (m_proc[i]->size() && m_proc[i]->last()->opcode() == B3::Oops))
+            continue;
+        for (B3::Value* value : *m_proc[i]) {
+            if (mayCall(value))
+                return true;
+        }
+    }
+    return false;
+}
+
 Word32 Lowering::shapeWordOf(CellPointer cell)
 {
     static_assert(offsetOfShapeWord + sizeof(uint32_t) <= MarkedBlock::atomSize);
@@ -90,11 +115,115 @@ uint64_t Lowering::bitsOf(const ShapeTest& test) const
     return bits;
 }
 
+const Vector<uint32_t>& Lowering::shapesOfObjectsOf(const Type& type)
+{
+    bool admitsOtherCells = type.anyObject || type.anyFunction || !type.engineClasses.isEmpty() || type.primitives & cellPrimitives;
+    if (!admitsOtherCells && type.views.size() > 1 && type.views == m_viewsOfShapesOfKnownType)
+        return m_shapesOfKnownType;
+    m_shapesOfKnownType.shrink(0);
+    m_viewsOfShapesOfKnownType.shrink(0);
+    if (admitsOtherCells)
+        return m_shapesOfKnownType;
+    if (type.views.size() == 1)
+        return m_program.at(type.views[0]).shapesOfMembers;
+    for (LayoutID view : type.views) {
+        auto& shapes = m_program.at(view).shapesOfMembers;
+        if (shapes.isEmpty()) {
+            m_shapesOfKnownType.shrink(0);
+            return m_shapesOfKnownType;
+        }
+        m_shapesOfKnownType.appendVector(shapes);
+    }
+    std::ranges::sort(m_shapesOfKnownType);
+    m_shapesOfKnownType.shrink(std::ranges::unique(m_shapesOfKnownType).begin() - m_shapesOfKnownType.begin());
+    m_viewsOfShapesOfKnownType = type.views;
+    return m_shapesOfKnownType;
+}
+
+std::optional<Word32> Lowering::answerAmongShapesOfKnownType(Word32 shapeWord, std::span<const MergedShapeTest> tests)
+{
+    if (!m_knownTypeOfCell || m_isValidatingFact)
+        return std::nullopt;
+    auto cell = m_cellsOfShapeWords.find(shapeWord.value());
+    if (cell == m_cellsOfShapeWords.end() || cell->value != m_cellOfKnownType)
+        return std::nullopt;
+    auto& shapes = shapesOfObjectsOf(*m_knownTypeOfCell);
+    auto passes = [&](uint32_t shape) -> bool {
+        for (auto& [test, bits] : tests) {
+            uint32_t place = test.last() - shape;
+            if (bits ? place < test.count && (*bits >> place & 1) : m_program.passes(test, shape))
+                return true;
+        }
+        return false;
+    };
+    uint32_t minShape = UINT32_MAX;
+    uint32_t maxShape = 0;
+    for (auto& merged : tests) {
+        if (merged.test.passesNothing())
+            continue;
+        minShape = std::min(minShape, merged.test.first);
+        maxShape = std::max(maxShape, merged.test.last());
+    }
+    size_t first = notFound;
+    size_t last = 0;
+    size_t count = 0;
+    size_t end = std::ranges::upper_bound(shapes, maxShape) - shapes.begin();
+    for (size_t i = std::ranges::lower_bound(shapes, minShape) - shapes.begin(); i < end; ++i) {
+        if (!passes(shapes[i]))
+            continue;
+        if (first == notFound)
+            first = i;
+        last = i;
+        ++count;
+    }
+    if (!count || count != last - first + 1)
+        return std::nullopt;
+    if (count == shapes.size())
+        return boolean(true);
+    bool isOneRange = tests.size() == 1 && tests[0].test.isRange() && !tests[0].bits;
+    if (isOneRange && (tests[0].test.count == 1 || tests[0].test.blockByte || tests[0].test.first == 1))
+        return std::nullopt;
+    if (!first)
+        return aboveOrEqual(shapeWord, word32(0u - shapes[last]));
+    if (last + 1 == shapes.size())
+        return belowOrEqual(shapeWord, word32(0u - shapes[first]));
+    if (count == 1)
+        return equal(shapeWord, word32(0u - shapes[first]));
+    if (isOneRange)
+        return std::nullopt;
+    return below(add(shapeWord, word32(shapes[last])), word32(shapes[last] - shapes[first] + 1));
+}
+
+std::optional<Word32> Lowering::passesAmongShapesOfKnownType(Word32 shapeWord, std::span<const MergedShapeTest> tests)
+{
+    auto answer = answerAmongShapesOfKnownType(shapeWord, tests);
+    if (!answer || !Options::validateAOTTypedFacts()) [[likely]]
+        return answer;
+    CellPointer cell(m_cellOfKnownType);
+    SetForScope knownTypeOfCell(m_knownTypeOfCell, nullptr);
+    Word32 asAsked;
+    for (auto& test : tests)
+        asAsked = logicalOr(asAsked, passes(shapeWord, test));
+    LBasicBlock agrees = m_out.newBlock();
+    LBasicBlock differs = newColdBlock();
+    m_out.branch(equal(*answer, asAsked).value(), usually(agrees), rarely(differs));
+    m_out.appendTo(differs);
+    {
+        SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+        AOT_TYPED_OPERATION(FactDoesNotHold, box(cell), word32(m_id.index()), word32(m_currentBlock->values.isEmpty() ? 0 : m_currentBlock->values[std::min<size_t>(m_currentIndexInBlock, m_currentBlock->values.size() - 1)].index()));
+    }
+    m_out.jump(agrees);
+    m_out.appendTo(agrees);
+    return answer;
+}
+
 Word32 Lowering::passes(Word32 shapeWord, const MergedShapeTest& merged, LBasicBlock otherwise)
 {
     auto& test = merged.test;
     if (test.passesNothing())
         return boolean(false);
+    if (auto answer = passesAmongShapesOfKnownType(shapeWord, std::span { &merged, 1 }))
+        return *answer;
     if (test.isRange() && !merged.bits && test.count == 1)
         return equal(shapeWord, word32(0u - test.last()));
     if (test.isRange() && !merged.bits && test.blockByte) {
@@ -210,6 +339,8 @@ Word32 Lowering::passesOneOf(Word32 shapeWord, const Vector<ShapeTest, 4>& tests
     auto all = merged(tests);
     if (all.size() == 1)
         return passes(shapeWord, all[0], otherwise);
+    if (auto answer = passesAmongShapesOfKnownType(shapeWord, all.span()))
+        return *answer;
     Word32 result;
     for (auto& test : all)
         result = logicalOr(result, passes(shapeWord, test));
@@ -250,6 +381,10 @@ void Lowering::branchOnPassingOneOf(Word32 shapeWord, const Vector<ShapeTest, 4>
     auto all = merged(tests);
     if (all.isEmpty()) {
         m_out.jump(failing.target());
+        return;
+    }
+    if (auto answer = all.size() > 1 ? passesAmongShapesOfKnownType(shapeWord, all.span()) : std::nullopt) {
+        m_out.branch(answer->value(), passing, failing);
         return;
     }
     for (size_t i = 0; i < all.size(); ++i) {
@@ -474,6 +609,8 @@ void Lowering::findClosureTestsCarriedOutByBranches()
             isRelational = false;
         if (isRelational || condition.opcode == Opcode::IsClosureOf || isAwaitMayContinue(condition) || isGuardOfReceiver(condition) || isTestOfForInStamp(condition))
             m_isCarriedOutByBranch.set(block.terminator.value.index());
+        if (condition.opcode == Opcode::ToBoolean && successorsOf(block.terminator).size() == 2 && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts())
+            m_isTruthinessOnlyBranchedOn.set(block.terminator.value.index());
     }
 }
 
@@ -614,6 +751,8 @@ Word32 Lowering::cellFits(CellPointer cell, const Type& from, const Type& to, LB
     }
     if (!to.views.isEmpty() && (from.anyObject || !from.views.isEmpty())) {
         // Where nothing else will do, what the first half of a test turns away is done with.
+        SetForScope cellOfKnownType(m_cellOfKnownType, cell.value());
+        SetForScope knownTypeOfCell(m_knownTypeOfCell, &from);
         result = logicalOr(result, passesOneOf(shapeWordOf(cell), to.views, result || mayBeChangedArray ? nullptr : otherwise));
     }
     if (!mayBeChangedArray)
@@ -771,6 +910,35 @@ Operand Lowering::fitBoxedOrElse(Boxed value, const Type& from, const Type& to, 
     if (rep == Rep::Int64 || rep == Rep::OptionalInt64)
         return fitBoxedToIntegerOrElse(value, from, to, otherwise);
 
+    if (rep == Rep::OptionalDouble && from.primitives & Primitive::Number && to.primitives & Primitive::Double && from.primitives & to.primitives & Primitive::UndefinedOrNull) {
+        LBasicBlock isNumberCase = m_out.newBlock();
+        LBasicBlock isNoNumberCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 3> results;
+        m_out.branch(isNumber(value).value(), unsure(isNumberCase), unsure(isNoNumberCase));
+        m_out.appendTo(isNumberCase);
+        results.append(m_out.anchor(convert(value, to.withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent), rep).value));
+        m_out.jump(continuation);
+        m_out.appendTo(isNoNumberCase);
+        for (uint16_t primitive : { Primitive::Undefined, Primitive::Null }) {
+            if (!(from.primitives & to.primitives & primitive))
+                continue;
+            Boxed constant = boxedConstant(primitive == Primitive::Undefined ? jsUndefined() : jsNull());
+            LBasicBlock isIt = m_out.newBlock();
+            LBasicBlock isNot = m_out.newBlock();
+            m_out.branch(equal(value, constant).value(), unsure(isIt), unsure(isNot));
+            m_out.appendTo(isIt);
+            results.append(m_out.anchor(convert(constant, Type::ofPrimitives(primitive), rep).value));
+            m_out.jump(continuation);
+            m_out.appendTo(isNot);
+        }
+        m_out.jump(otherwise);
+        m_out.appendTo(continuation);
+        LValue joined = m_out.phi(b3TypeOf(rep), results);
+        m_boxedBeforeUnboxing.add(joined, value.value());
+        return Operand(rep, joined);
+    }
+
     if (!from.hasCells() || !to.hasCells()) {
         orElse(nonCellFits(value, from, to), otherwise);
         return convert(value, to, rep);
@@ -836,11 +1004,36 @@ static bool mayHaveValuesInCommon(const Type& a, const Type& b)
     return a.hasObjects() && b.hasObjects();
 }
 
+Operand Lowering::fitLiteralStringOrElse(Operand operand, const Type& from, const Type& to, LBasicBlock otherwise)
+{
+    if (!from.hasLiteralString()) {
+        Type asString = to.withLiteralStringWidened();
+        return literalStringOf(fitOrElse(operand, from, asString, otherwise), asString);
+    }
+    if (!to.hasLiteralString()) {
+        Type asString = from.withLiteralStringWidened();
+        return fitOrElse(convert(operand, from, repOf(asString)), asString, to, otherwise);
+    }
+    LValue word = rawWordOf(operand.as<LiteralStringWord>());
+    uint16_t gone = from.primitives & ~to.primitives;
+    if (!(to.primitives & (Primitive::UndefinedOrNull | Primitive::Absent)))
+        orElse(Word32(m_out.above(word, m_out.constInt64(undefinedCell32))), otherwise);
+    else {
+        for (auto [primitive, bits] : { std::pair { Primitive::Undefined, undefinedCell32 }, std::pair { Primitive::Null, nullCell32 }, std::pair { Primitive::Absent, absentCell32 } }) {
+            if (gone & primitive)
+                orElse(Word32(m_out.notEqual(word, m_out.constInt64(bits))), otherwise);
+        }
+    }
+    return operand;
+}
+
 Operand Lowering::fitOrElse(Operand operand, const Type& from, const Type& to, LBasicBlock otherwise)
 {
     Rep rep = repOf(to);
     if (from.isWithin(to, m_program, !m_foreignObjectsDoNotFit))
         return convert(operand, from, rep);
+    if (from.hasLiteralString() || to.hasLiteralString())
+        return fitLiteralStringOrElse(convert(operand, from, repOf(from)), from, to, otherwise);
     // Nothing of the one type is of the other. What follows is not reached.
     auto never = [&] {
         m_out.jump(otherwise);
@@ -882,6 +1075,7 @@ Operand Lowering::fitOrElse(Operand operand, const Type& from, const Type& to, L
     case Rep::OptionalInt64:
     case Rep::OptionalDouble:
         break;
+    case Rep::LiteralString:
     case Rep::Void:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -891,7 +1085,9 @@ Operand Lowering::fitOrElse(Operand operand, const Type& from, const Type& to, L
     Operand number(isInteger ? Rep::Int64 : Rep::Double, operand.value);
     Type numbers = from.withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent);
     if (!(from.primitives & to.primitives & Primitive::UndefinedOrNull)) {
-        orElse(logicalNot(isMarker(operand)), otherwise);
+        bool isTurnedAwayWithFractions = !isInteger && !numbers.isWithin(to, m_program);
+        if (!isTurnedAwayWithFractions)
+            orElse(logicalNot(isMarker(operand)), otherwise);
         return fitOrElse(number, numbers, to, otherwise);
     }
     LBasicBlock numberCase = m_out.newBlock();
@@ -951,6 +1147,8 @@ Operand Lowering::thrown(Operand operand, const Type& type)
     // The run time takes 32 bits for a boolean.
     if (operand.rep == Rep::Int32 && !(type.primitives & Primitive::Boolean))
         return convert(operand, type, Rep::Int64);
+    if (operand.rep == Rep::LiteralString)
+        return convert(operand, type, Rep::JSValue);
     return operand;
 }
 
@@ -1045,8 +1243,11 @@ std::optional<ArgumentMoves> Lowering::testsOfThunkThatHoldsTo(const Type& type)
     else if (type.hasObjects()) {
         if (type.anyFunction)
             kinds |= FitsByKind::Function;
-        for (uint16_t index : type.engineClasses)
+        for (uint16_t index : type.engineClasses) {
             addType(m_builtins.classes()[index].type);
+            if (m_builtins.classes()[index].type == ArrayType)
+                kinds |= FitsByKind::ChangedArray;
+        }
         Vector<ShapeTest, 4> tests;
         for (LayoutID view : type.views)
             tests.append(m_program.at(view).test);
@@ -1115,7 +1316,7 @@ Boxed Lowering::holdByThunk(Boxed given, TypeID type, ArgumentMoves&& moves)
 
 bool Lowering::mayCastInRegister(const Type& from, const Type& to) const
 {
-    return m_currentBlock && !m_function.isBodyOfSeveralSites && !m_holdsWhatExtraPropertyYields && !m_watchingHandler && !handlerEnteredByBranch()
+    return m_currentBlock && !m_function.isBodyOfSeveralSites && !m_holdsWhatExtraPropertyYields && !handlerEnteredByBranch()
         && !m_environmentAwaitingBarrier && !m_isFillingArrayAtBirth && m_fieldsAwaitingFirstStore.isEmpty()
         && from.isAnything() && !(from.primitives & Primitive::Absent) && holdsCells(repOf(to)) && to.hasCells()
         && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &to
@@ -1221,6 +1422,7 @@ Boxed Lowering::castInRegister(Boxed given, Entry operation, bool operationYield
             jit.jump().linkTo(done, &jit);
         });
     });
+    unwindToLandingPad(patchpoint, site, RegistersAtLandingPad::AreAsAtSite);
     return Boxed(patchpoint);
 }
 
@@ -1412,7 +1614,7 @@ Boxed Lowering::assertionFailed(Operand operand, const Type& from, TypeID wanted
 void Lowering::auditResult(Operand operand, const Value& value)
 {
     auto& type = m_program.at(value.type);
-    auto& asserted = m_program.at(value.assertedType);
+    auto& asserted = m_program.at(value.assertedType());
     if (type.isWithin(asserted, m_program))
         return;
     LBasicBlock mismatch = newColdBlock();
@@ -1420,7 +1622,7 @@ void Lowering::auditResult(Operand operand, const Value& value)
     fitOrElse(operand, type, asserted, mismatch);
     m_out.jump(continuation);
     m_out.appendTo(mismatch);
-    assertionFailed(operand, type, value.assertedType, assertionIsOnResult | static_cast<uint32_t>(value.opcode));
+    assertionFailed(operand, type, value.assertedType(), assertionIsOnResult | static_cast<uint32_t>(value.opcode));
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
@@ -1482,6 +1684,7 @@ void Lowering::validateFact(Operand operand, ValueID id, const Type& type)
     Type held;
     switch (operand.rep) {
     case Rep::Void:
+    case Rep::LiteralString:
         return;
     case Rep::Int32:
         held = Type::ofPrimitives(Primitive::Boolean);
@@ -2734,6 +2937,8 @@ Operand Lowering::lowerCoercion(ValueID result, const Value& cast)
             LBasicBlock isNoSource = mayCopy ? m_out.newBlock() : asItIs;
             // Where an object has its shape word, a bigint has a hash.
             LBasicBlock isSource = type.primitives & Primitive::BigInt ? newColdBlock() : slowPath;
+            SetForScope cellOfKnownType(m_cellOfKnownType, cell.value());
+            SetForScope knownTypeOfCell(m_knownTypeOfCell, &from);
             branchOnPassingOneOf(shapeWordOf(cell), sources, rarely(isSource), usually(isNoSource));
             if (isSource != slowPath) {
                 m_out.appendTo(isSource);
@@ -2793,12 +2998,12 @@ Operand Lowering::lowerAuditedCast(ValueID result, const Value& cast)
     Operand operand = get(cast.child(0));
     auto& from = typeOf(cast.child(0));
     CastReason reason = cast.castReason();
-    TypeID wanted = reason == CastReason::Coerce ? cast.coercedType() : cast.assertedType ? cast.assertedType : cast.type;
+    TypeID wanted = reason == CastReason::Coerce ? cast.coercedType() : cast.assertedType() ? cast.assertedType() : cast.type;
     // These look into an object that is of the type only because the type admits whatever comes.
     bool looksIntoObjects = reason == CastReason::As || reason == CastReason::Coerce;
     // `x as string`: an object, `undefined` and `null` stay what they are: the type of the result has them. As in lowerCoercion().
     bool goesByResult = reason == CastReason::Coerce && !m_program.at(wanted).hasObjects();
-    auto& passing = m_program.at(goesByResult ? (cast.assertedType ? cast.assertedType : cast.type) : wanted);
+    auto& passing = m_program.at(goesByResult ? (cast.assertedType() ? cast.assertedType() : cast.type) : wanted);
     if (from.isWithin(passing, m_program, !looksIntoObjects))
         return convert(operand, from, cast.rep);
 
@@ -3446,7 +3651,7 @@ std::optional<Operand> Lowering::castByBody(const Value& cast, Operand operand, 
     if (!body)
         return std::nullopt;
     auto& callee = m_program.at(body);
-    if (callee.writes > m_function.writes || (callee.writesShapeWords && !m_function.writesShapeWords))
+    if (callee.writes > m_function.writes || (callee.writesShapeWords && !m_function.writesShapeWords) || (callee.convertsArrayStorage && !m_function.convertsArrayStorage))
         return std::nullopt;
     return callCompiled(body, { Argument { operand, &from } }, to);
 }
@@ -3542,6 +3747,8 @@ Word32 Lowering::lowerIsUndefinedOrNull(ValueID id)
     Operand operand = get(id);
     if (operand.rep == Rep::OptionalInt64 || operand.rep == Rep::OptionalDouble)
         return isMarker(operand);
+    if (operand.rep == Rep::LiteralString)
+        return type.mayBeUndefinedOrNull() ? Word32(m_out.belowOrEqual(rawWordOf(operand.as<LiteralStringWord>()), m_out.constInt64(undefinedCell32))) : boolean(false);
     if (operand.rep != Rep::JSValue)
         return boolean(false);
     Boxed value = operand.as<Boxed>();
@@ -3634,7 +3841,7 @@ void Lowering::findLeavesFetchedLate()
 {
     auto isLeaf = [&](ValueID id) {
         Opcode opcode = m_function.at(id).opcode;
-        return opcode == Opcode::String || opcode == Opcode::BuiltinFunction;
+        return (opcode == Opcode::String && m_function.at(id).rep != Rep::LiteralString) || opcode == Opcode::BuiltinFunction;
     };
     BitVector hasOtherUse;
     for (auto& block : m_function.blocks) {
@@ -3659,7 +3866,7 @@ void Lowering::findLeavesFetchedLate()
             }
             unsigned timesLate = 0;
             user.forEachChild([&](ValueID child) {
-                if (!isLeaf(child) || user.opcode == Opcode::StrictEq)
+                if (!isLeaf(child) || user.opcode == Opcode::StrictEq || (user.opcode == Opcode::Eq && numberOfTextThatIsNoNumber(child)))
                     return;
                 // In one position only.
                 if (child != late || timesLate++)
@@ -3819,6 +4026,9 @@ Word32 Lowering::lowerToBoolean(ValueID id)
         if (toBooleanTakesStub(type))
             break;
         return isTruthy(operand.as<Boxed>(), type);
+    case Rep::LiteralString:
+        static_assert(absentCell32 < emptyLiteralStringWord && nullCell32 < emptyLiteralStringWord && undefinedCell32 < emptyLiteralStringWord);
+        return Word32(m_out.above(rawWordOf(operand.as<LiteralStringWord>()), m_out.constInt64(emptyLiteralStringWord)));
     case Rep::Void:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -3885,6 +4095,41 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
 {
     LayoutID ofClass = m_program.at(m_function.at(value.child(1)).function()).constructedClass;
     ShapeTest instances = m_program.at(ofClass).instances;
+    if (auto& type = typeOf(value.child(0)); m_isInLoop && m_out.m_block->frequency() >= 1 && holdsCells(get(value.child(0)).rep)) {
+        LBasicBlock isOne = m_out.newBlock();
+        LBasicBlock isNone = m_out.newBlock();
+        LBasicBlock generally = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        orElse(isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedAlteredClassObjects()), ofClass.index())))), generally);
+        Operand given = get(value.child(0));
+        CellPointer cell;
+        if (given.rep == Rep::Cell && !type.mayBeUndefinedOrNull())
+            cell = given.as<CellPointer>();
+        else {
+            Boxed boxed = in<Boxed>(value.child(0));
+            orElse(isCell(boxed), isNone);
+            cell = asCell(boxed);
+        }
+        Word32 shapeWord = shapeWordOf(cell);
+        LBasicBlock hasOtherShape = m_out.newBlock();
+        m_out.branch(passes(shapeWord, instances).value(), unsure(isOne), unsure(hasOtherShape));
+        m_out.appendTo(hasOtherShape);
+        if (!type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.admitsForeignObjects(m_program))
+            m_out.jump(isNone);
+        else
+            m_out.branch(passes(shapeWord, ShapeTest { 1, m_program.numberOfShapes }).value(), usually(isNone), rarely(generally));
+        m_out.appendTo(isOne);
+        ValueFromBlock yes = m_out.anchor(boolean(true).value());
+        m_out.jump(continuation);
+        m_out.appendTo(isNone);
+        ValueFromBlock no = m_out.anchor(boolean(false).value());
+        m_out.jump(continuation);
+        m_out.appendTo(generally);
+        ValueFromBlock found = m_out.anchor(m_out.castToInt32(AOT_TYPED_OPERATION(InstanceOfClass, in<Boxed>(value.child(0)), word32(ofClass.index())).value()));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return Word32(m_out.phi(Int32, yes, no, found));
+    }
     LValue operand = in<Boxed>(value.child(0)).value();
     m_context.emitsCalls = true;
     PatchpointValue* patchpoint = m_out.patchpoint(Int32);
@@ -3913,6 +4158,99 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
     });
     unwindToLandingPad(patchpoint, site);
     return Word32(patchpoint);
+}
+
+Word32 Lowering::lowerGenericInstanceOf(Boxed value, Boxed constructor)
+{
+    if (m_context.sites.size() < std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots)) {
+        m_context.sites.append(Site { });
+        Pointer slot = slotAddress(m_context.sites.size() - 1, m_out.m_block->frequency() >= 1 ? SlotAddressIsFor::UsualPath : SlotAddressIsFor::ColdBlock);
+        return Word32(callICStub(Stub::InstanceOfCached, Int32, { { value.value(), firstStubOperandGPR }, { constructor.value(), GPRInfo::argumentGPR1 }, { slot.value(), GPRInfo::argumentGPR2 } }));
+    }
+    return AOT_TYPED_OPERATION(InstanceOf, value, constructor);
+}
+
+static bool hasTwoLevelPrototypeChain(const EngineClass& engineClass)
+{
+    switch (engineClass.type) {
+    case ArrayType:
+    case JSMapType:
+    case JSSetType:
+    case JSWeakMapType:
+    case JSWeakSetType:
+    case JSDateType:
+    case RegExpObjectType:
+    case JSPromiseType:
+        return engineClass.canCheckOriginalStructure();
+    default:
+        return false;
+    }
+}
+
+const EngineClass* Lowering::engineClassTestedByInstanceOf(const Value& value)
+{
+    if (value.opcode != Opcode::InstanceOf || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return nullptr;
+    auto& named = m_function.at(originOf(value.child(1)));
+    if (named.opcode != Opcode::GetGlobal)
+        return nullptr;
+    BuiltinName name = m_program.builtinName(named.string());
+    if (!m_builtins.isGlobal(name) || m_builtins.isReplaceable(name) || m_program.isExtended(name))
+        return nullptr;
+    auto* engineClass = m_builtins.classNamed(name);
+    return engineClass && engineClass->name == name && hasTwoLevelPrototypeChain(*engineClass) && holdsCells(m_function.at(value.child(0)).rep) ? engineClass : nullptr;
+}
+
+bool Lowering::isUsedOnlyByInlineInstanceOf(ValueID id)
+{
+    auto users = usersOf(id);
+    if (users.empty() || users.size() != numberOfUsesOf(id) || isUsedByTerminator(id))
+        return false;
+    return std::ranges::all_of(users, [&](ValueID user) {
+        auto& use = m_function.at(user);
+        return use.child(1) == id && use.child(0) != id && engineClassTestedByInstanceOf(use);
+    });
+}
+
+Word32 Lowering::lowerInstanceOfEngineClass(const Value& value, const EngineClass& asked)
+{
+    auto& type = typeOf(value.child(0));
+    Operand operand = get(value.child(0));
+    LBasicBlock isOne = m_out.newBlock();
+    LBasicBlock isNone = m_out.newBlock();
+    LBasicBlock generally = newUnlikelyBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    CellPointer cell;
+    if (operand.rep == Rep::Cell && !type.mayBeUndefinedOrNull())
+        cell = operand.as<CellPointer>();
+    else {
+        Boxed boxed = in<Boxed>(value.child(0));
+        orElse(isCell(boxed), isNone);
+        cell = asCell(boxed);
+    }
+    LBasicBlock isAnother = m_out.newBlock();
+    m_out.branch(hasOriginalStructure(cell, asked).value(), unsure(isOne), unsure(isAnother));
+    m_out.appendTo(isAnother);
+    for (uint16_t index : type.engineClasses) {
+        auto& other = m_builtins.classes()[index];
+        if (other.index == asked.index || !hasTwoLevelPrototypeChain(other))
+            continue;
+        LBasicBlock next = m_out.newBlock();
+        m_out.branch(hasOriginalStructure(cell, other).value(), unsure(isNone), unsure(next));
+        m_out.appendTo(next);
+    }
+    m_out.jump(generally);
+    m_out.appendTo(isOne);
+    ValueFromBlock yes = m_out.anchor(boolean(true).value());
+    m_out.jump(continuation);
+    m_out.appendTo(isNone);
+    ValueFromBlock no = m_out.anchor(boolean(false).value());
+    m_out.jump(continuation);
+    m_out.appendTo(generally);
+    ValueFromBlock found = m_out.anchor(lowerGenericInstanceOf(in<Boxed>(value.child(0)), box(builtinCell(m_builtins.cellOf(asked.name)))).value());
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return Word32(m_out.phi(Int32, yes, no, found));
 }
 
 Word32 Lowering::lowerIsInstanceOfClass(const Value& value)

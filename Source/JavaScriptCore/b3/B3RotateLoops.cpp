@@ -135,9 +135,9 @@ private:
                 for (unsigned i = 0; i < 2; ++i) {
                     const FrequentedBlock& staying = block->successor(i);
                     const FrequentedBlock& other = block->successor(1 - i);
-                    if (!loops.belongsTo(staying.block(), loop) || isRare(staying, loop.header()))
+                    if (!loops.belongsTo(staying.block(), loop) || isRare(staying, block))
                         continue;
-                    bool otherIsRare = isRare(other, loop.header());
+                    bool otherIsRare = isRare(other, block);
                     bool otherLeaves = !loops.belongsTo(other.block(), loop);
                     if (otherLeaves && otherIsRare) {
                         next = staying.block();

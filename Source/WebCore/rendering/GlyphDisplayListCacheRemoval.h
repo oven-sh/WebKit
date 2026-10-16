@@ -27,13 +27,10 @@
 
 namespace WebCore {
 
-class LegacyInlineTextBox;
-
 namespace InlineDisplay {
 struct Box;
 }
 
-void removeBoxFromGlyphDisplayListCache(const LegacyInlineTextBox&);
 void removeBoxFromGlyphDisplayListCache(const InlineDisplay::Box&);
 
 } // namespace WebCore

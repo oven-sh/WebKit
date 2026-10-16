@@ -37,18 +37,18 @@
 
 namespace JSC {
 
-CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int argumentCount)
+CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int argumentCount)
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
 #if ENABLE(AOT)
     // function may be an AOT::Typed::SlimClosure, which is not a JSFunction.
-    , m_entryScope(m_vm, function->type() == JSFunctionType ? function->scope()->realm() : function->realm())
-    , m_functionExecutable(function->type() != JSFunctionType || function->isHostFunction() ? nullptr : function->jsExecutable())
-    , m_scope(function->type() == JSFunctionType ? function->scope() : nullptr)
+    , m_entryScope(m_vm, function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope()->realm() : function->realm())
+    , m_functionExecutable(function->type() != JSFunctionType || uncheckedDowncast<JSFunction>(function)->isHostFunction() ? nullptr : uncheckedDowncast<JSFunction>(function)->jsExecutable())
+    , m_scope(function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope() : nullptr)
 #else
-    , m_entryScope(m_vm, function->scope()->realm())
-    , m_functionExecutable(function->jsExecutable())
-    , m_scope(function->scope())
+    , m_entryScope(m_vm, uncheckedDowncast<JSFunction>(function)->scope()->realm())
+    , m_functionExecutable(uncheckedDowncast<JSFunction>(function)->jsExecutable())
+    , m_scope(uncheckedDowncast<JSFunction>(function)->scope())
 #endif
 {
     VM& vm = m_vm;
@@ -58,7 +58,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         m_valid = !scope.exception();
     });
 #endif
-    ASSERT(isSlimClosureType(function->type()) || !m_functionExecutable == function->isHostFunctionNonInline());
+    ASSERT(isSlimClosureType(function->type()) || !m_functionExecutable == uncheckedDowncast<JSFunction>(function)->isHostFunctionNonInline());
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return;
@@ -85,7 +85,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
     }
 #endif
 
-    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
+    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, uncheckedDowncast<JSFunction>(function));
     if (scope.exception()) [[unlikely]]
         return;
     m_numParameters = newCodeBlock->numParameters();

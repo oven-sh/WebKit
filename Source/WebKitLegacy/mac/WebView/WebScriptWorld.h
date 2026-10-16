@@ -25,12 +25,8 @@
 #import <JavaScriptCore/JSBase.h>
 
 @class JSContext;
-@class WebScriptWorldPrivate;
 
-@interface WebScriptWorld : NSObject {
-@private
-    WebScriptWorldPrivate *_private;
-}
+@interface WebScriptWorld : NSObject
 
 + (WebScriptWorld *)standardWorld;
 + (WebScriptWorld *)world;

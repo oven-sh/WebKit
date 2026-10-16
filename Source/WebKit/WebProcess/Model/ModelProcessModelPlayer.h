@@ -91,6 +91,9 @@ private:
 #if ENABLE(SPATIAL_PORTAL)
     void didUpdatePortalTransform(const WebCore::TransformationMatrix&);
 #endif
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    void didUpdateVolumetricHitSphere(const WebCore::FloatPoint3D& center, float radius);
+#endif
     void didUpdateAnimationPlaybackState(WebCore::NodeIdentifier, bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp);
     void didFinishEnvironmentMapLoading(bool succeeded);
 

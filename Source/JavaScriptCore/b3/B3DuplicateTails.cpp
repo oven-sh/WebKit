@@ -38,6 +38,7 @@
 #include "B3Procedure.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
+#include "B3VariableValue.h"
 #include "GPRInfo.h"
 #include "JSCJSValue.h"
 #include <wtf/IndexMap.h>
@@ -435,11 +436,13 @@ private:
         return true;
     }
 
-    void addUpsilonsOf(BasicBlock* block)
+    void addUpsilonsAndSetsOf(BasicBlock* block)
     {
         for (Value* value : *block) {
             if (auto* upsilon = value->as<UpsilonValue>())
                 m_upsilonsOnPath.append(upsilon);
+            else if (value->opcode() == Set)
+                m_setsOnPath.append(value->as<VariableValue>());
         }
     }
 
@@ -450,7 +453,7 @@ private:
                 m_valuesOfPhisOnEdge.append({ upsilon->phi(), upsilon->child(0) });
         }
         m_path.append(block);
-        addUpsilonsOf(block);
+        addUpsilonsAndSetsOf(block);
     }
 
     template<typename Functor>
@@ -458,8 +461,9 @@ private:
     {
         m_path.shrink(0);
         m_upsilonsOnPath.shrink(0);
+        m_setsOnPath.shrink(0);
         m_valuesOfPhisOnEdge.shrink(0);
-        addUpsilonsOf(predecessor);
+        addUpsilonsAndSetsOf(predecessor);
         Path path;
         unsigned costOfPath = 0;
         unsigned indexOfFact = m_indexOfFactIn[predecessor];
@@ -475,6 +479,7 @@ private:
                 });
                 unsigned sizeOfPath = m_path.size();
                 unsigned numberOfUpsilons = m_upsilonsOnPath.size();
+                unsigned numberOfSets = m_setsOnPath.size();
                 unsigned numberOfPhis = m_valuesOfPhisOnEdge.size();
                 for (unsigned arm = 0; arm < 2; ++arm) {
                     m_facts.append(Fact { strippedTest, !arm != testIsNegated, indexOfFact });
@@ -485,6 +490,7 @@ private:
                     steps.shrink(numberOfSteps);
                     m_path.shrink(sizeOfPath);
                     m_upsilonsOnPath.shrink(numberOfUpsilons);
+                    m_setsOnPath.shrink(numberOfSets);
                     m_valuesOfPhisOnEdge.shrink(numberOfPhis);
                 }
                 if (!path.stepsBehindUndecidedTest[0].isEmpty() || !path.stepsBehindUndecidedTest[1].isEmpty()) {
@@ -535,9 +541,39 @@ private:
         return nullptr;
     }
 
+    Value* valueSetOnPath(VariableValue* get)
+    {
+        Value* valueSetInSameBlock = nullptr;
+        for (Value* value : *get->owner) {
+            if (value == get)
+                break;
+            if (value->opcode() == Set && value->as<VariableValue>()->variable() == get->variable())
+                valueSetInSameBlock = value->child(0);
+        }
+        if (valueSetInSameBlock)
+            return valueSetInSameBlock;
+        size_t position = m_path.find(get->owner);
+        for (unsigned i = m_setsOnPath.size(); i--;) {
+            VariableValue* set = m_setsOnPath[i];
+            if (set->variable() != get->variable())
+                continue;
+            size_t positionOfSet = m_path.find(set->owner);
+            if (positionOfSet == notFound || positionOfSet < position)
+                return set->child(0);
+        }
+        return nullptr;
+    }
+
     Value* onEdge(Value* value)
     {
-        while (value && value->opcode() == Phi && m_path.contains(value->owner)) {
+        while (value && (value->opcode() == Phi || value->opcode() == Get) && m_path.contains(value->owner)) {
+            if (value->opcode() == Get) {
+                Value* valueSet = valueSetOnPath(value->as<VariableValue>());
+                if (!valueSet)
+                    break;
+                value = valueSet;
+                continue;
+            }
             Value* phi = std::exchange(value, nullptr);
             for (unsigned i = m_valuesOfPhisOnEdge.size(); i--;) {
                 if (m_valuesOfPhisOnEdge[i].first == phi) {
@@ -631,6 +667,23 @@ private:
         return childrenAreSameOnEdge(seenFromEdge, other, depth);
     }
 
+    bool isBoxedInt32OnEdge(Value* value)
+    {
+        value = onEdge(value);
+        if (!value || value->opcode() != Add)
+            return false;
+        for (unsigned i = 0; i < 2; ++i) {
+            if (value->child(i)->opcode() == ZExt32 && isNumberTagOnEdge(value->child(1 - i)))
+                return true;
+        }
+        return false;
+    }
+
+    bool isNumberTagOnEdge(Value* value)
+    {
+        return constantOnEdge(value, 0) == static_cast<int64_t>(JSValue::NumberTag);
+    }
+
     std::optional<int64_t> constantOnEdge(Value* value, unsigned depth)
     {
         value = onEdge(value);
@@ -668,6 +721,10 @@ private:
         }
         if (value->numChildren() != 2)
             return std::nullopt;
+        if ((value->opcode() == AboveEqual || value->opcode() == Below) && isNumberTagOnEdge(value->child(1)) && isBoxedInt32OnEdge(value->child(0)))
+            return value->opcode() == AboveEqual;
+        if ((value->opcode() == BelowEqual || value->opcode() == Above) && isNumberTagOnEdge(value->child(0)) && isBoxedInt32OnEdge(value->child(1)))
+            return value->opcode() == BelowEqual;
         std::optional<int64_t> left = constantOnEdge(value->child(0), depth - 1);
         if (!left)
             return std::nullopt;
@@ -809,6 +866,7 @@ private:
 
     Vector<BasicBlock*, maxBlocksOnPath> m_path;
     Vector<UpsilonValue*, 16> m_upsilonsOnPath;
+    Vector<VariableValue*, 8> m_setsOnPath;
     Vector<Value*, 8> m_test;
     Vector<std::pair<Value*, Value*>, 8> m_valuesOfPhisOnEdge;
     IndexMap<BasicBlock*, uint8_t> m_costOfCopyOnPath;

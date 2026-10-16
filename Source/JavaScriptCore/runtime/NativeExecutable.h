@@ -47,7 +47,7 @@ public:
         return &vm.nativeExecutableSpace();
     }
 
-    CodeBlockHash NODELETE hashFor(CodeSpecializationKind) const;
+    CodeBlockHash LEGACY_NODELETE hashFor(CodeSpecializationKind) const;
 
     TaggedNativeFunction function() const { return m_function; }
     void setCallEntrypoint(CodePtr<JSEntryPtrTag> code) { m_jitCodeForCallWithArityCheck = code; }

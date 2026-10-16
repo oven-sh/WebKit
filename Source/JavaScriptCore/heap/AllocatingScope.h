@@ -42,6 +42,7 @@ public:
     {
         RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Allocating);
         m_heap.m_mutatorState = MutatorState::Running;
+        m_heap.m_hasAllocatedSinceLastCollection = true;
     }
 
 private:

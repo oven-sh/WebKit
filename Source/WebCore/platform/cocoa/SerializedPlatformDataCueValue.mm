@@ -42,13 +42,14 @@ SerializedPlatformDataCueValue::SerializedPlatformDataCueValue(AVMetadataItem *i
     auto dictionary = adoptNS([[NSMutableDictionary alloc] init]);
     NSDictionary *extras = [item extraAttributes];
 
-    for (id key in [extras keyEnumerator]) {
-        if (![key isKindOfClass:[NSString class]])
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id key in [extras keyEnumerator]) {
+        RetainPtr keyString = dynamic_objc_cast<NSString>(key);
+        if (!keyString)
             continue;
         NSString *value = [extras objectForKey:key];
         if (![value isKindOfClass:NSString.class])
             continue;
-        RetainPtr<NSString> keyString = key;
 
         if ([key isEqualToString:@"MIMEtype"])
             keyString = @"type";

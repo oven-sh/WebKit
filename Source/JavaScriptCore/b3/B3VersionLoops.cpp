@@ -119,8 +119,8 @@ private:
     {
         if (block->numSuccessors() != 2 || (block->last()->opcode() != Branch && block->last()->opcode() != Patchpoint))
             return nullptr;
-        bool firstIsUnlikely = isRare(block->successor(0), loop.header());
-        bool secondIsUnlikely = isRare(block->successor(1), loop.header());
+        bool firstIsUnlikely = isRare(block->successor(0), block);
+        bool secondIsUnlikely = isRare(block->successor(1), block);
         if (!firstIsUnlikely && !secondIsUnlikely) {
             firstIsUnlikely = !loops.belongsTo(block->successorBlock(0), loop);
             secondIsUnlikely = !loops.belongsTo(block->successorBlock(1), loop);
@@ -141,7 +141,7 @@ private:
             return;
         unsigned numberOfLikelySuccessors = 0;
         for (const FrequentedBlock& successor : block->successors()) {
-            if (isRare(successor, loop.header()) || !loops.belongsTo(successor.block(), loop))
+            if (isRare(successor, block) || !loops.belongsTo(successor.block(), loop))
                 continue;
             if (successor.block() == loop.header())
                 return;
@@ -232,7 +232,7 @@ private:
         bool hasBackEdge = false;
         for (unsigned i = 0; i < version.hotBlocks.size(); ++i) {
             for (const FrequentedBlock& successor : version.hotBlocks[i]->successors()) {
-                if (isRare(successor, loop.header()) || !loops.belongsTo(successor.block(), loop))
+                if (isRare(successor, version.hotBlocks[i]) || !loops.belongsTo(successor.block(), loop))
                     continue;
                 if (version.hotBlocks[i] == unswitchedBlock && successor.block() != takenSuccessor)
                     continue;
@@ -318,7 +318,7 @@ private:
         }
         if (!version.hidesRanges)
             version.phisNarrowedOnEntry.clear();
-        if (numberOfClonedValues > (version.hidesRanges ? maxNumberOfClonedValuesWhereRangesAreHidden : maxNumberOfClonedValues))
+        if (numberOfClonedValues > maxNumberOfClonedValuesWhereRangesAreHidden)
             return std::nullopt;
         version.numberOfClonedValues = numberOfClonedValues;
 
@@ -501,13 +501,15 @@ private:
                 everyGuardSoFarIsHoisted = false;
                 if (!testAtTheTop && block != unswitchedBlock && block->last()->opcode() == Branch) {
                     const FrequentedBlock& other = block->successor(block->successorBlock(0) == likelySuccessor ? 1 : 0);
-                    if (!loops.belongsTo(other.block(), loop) && !isRare(other, loop.header()))
+                    if (!loops.belongsTo(other.block(), loop) && !isRare(other, block))
                         testAtTheTop = block;
                 }
             }
             block = likelySuccessor;
         }
         if ((!version.hidesRanges && numberOfHoistedValues < minNumberOfHoistedValues) || (unswitchedBlock && !version.hoistedValueSet.contains(unswitchedBlock->last())))
+            return std::nullopt;
+        if (!version.hidesRanges && numberOfClonedValues - numberOfHoistedValues > maxNumberOfClonedValues)
             return std::nullopt;
         if (numberOfClonedValues <= maxNumberOfClonedValues && numberOfHoistedValues >= minNumberOfHoistedValues)
             version.phisNarrowedOnEntry.clear();

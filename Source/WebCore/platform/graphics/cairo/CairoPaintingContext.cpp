@@ -30,7 +30,6 @@
 #include "CairoPaintingContext.h"
 
 #if USE(CAIRO)
-#include "CairoOperationRecorder.h"
 #include "CoordinatedTileBuffer.h"
 #include "GraphicsContext.h"
 #include "GraphicsContextCairo.h"
@@ -46,11 +45,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PaintingContext);
 std::unique_ptr<PaintingContext> PaintingContext::createForPainting(WebCore::CoordinatedTileBuffer& buffer)
 {
     return std::unique_ptr<PaintingContext>(new PaintingContext(buffer));
-}
-
-std::unique_ptr<PaintingContext> PaintingContext::createForRecording(PaintingOperations& paintingOperations)
-{
-    return std::unique_ptr<PaintingContext>(new PaintingContext(paintingOperations));
 }
 
 PaintingContext::PaintingContext(WebCore::CoordinatedTileBuffer& baseBuffer)
@@ -83,11 +77,6 @@ PaintingContext::PaintingContext(WebCore::CoordinatedTileBuffer& baseBuffer)
     m_graphicsContext = makeUnique<WebCore::GraphicsContextCairo>(m_surface.get());
 }
 
-PaintingContext::PaintingContext(PaintingOperations& paintingOperations)
-    : m_graphicsContext(makeUnique<OperationRecorder>(paintingOperations))
-{
-}
-
 PaintingContext::~PaintingContext()
 {
     if (!m_surface)
@@ -103,14 +92,6 @@ PaintingContext::~PaintingContext()
     // be the case if the s_bufferKey user data destroy callback has been invoked upon the
     // cairo_surface_t destruction.
     ASSERT(m_deletionComplete);
-}
-
-void PaintingContext::replay(const PaintingOperations& paintingOperations)
-{
-    ASSERT(m_surface);
-    auto& context = *m_graphicsContext->platformContext();
-    for (auto& operation : paintingOperations)
-        operation->execute(context);
 }
 
 } // namespace Cairo

@@ -226,6 +226,7 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::Double:
     case Opcode::String:
     case Opcode::BigInt:
+    case Opcode::ConstantSymbol:
     case Opcode::FunctionReference:
     case Opcode::PutModuleVariable:
     case Opcode::GetStaticField:
@@ -426,6 +427,28 @@ private:
         return m_builtins.classNamed(globalDefinedBy(value.child(0)));
     }
 
+    const EngineClass* classOfEmptyLiteralReadOnce(ValueID id) const
+    {
+        ValueID origin = m_program.originOf(m_function, id);
+        auto& value = m_function.at(origin);
+        if (m_uses[origin.index()] != 1 || !value.arguments.isEmpty())
+            return nullptr;
+        if (value.opcode == Opcode::NewObject)
+            return &m_builtins.objectClass();
+        return value.opcode == Opcode::NewArray ? &m_builtins.arrayClass() : nullptr;
+    }
+
+    const EngineClass* classWhoseMethodsAreFoundOn(ValueID id) const
+    {
+        const EngineClass* holder = classWhosePrototypeIsDefinedBy(id);
+        return holder ? holder : classOfEmptyLiteralReadOnce(id);
+    }
+
+    bool isHasOwnPropertyReadOffObject(BuiltinName holder, BuiltinName name) const
+    {
+        return holder == m_builtins.objectClass().name && m_builtins.hasOwnProperty(name);
+    }
+
     // A function of the table, going by how the value is defined. What it finds under `call` cannot change.
     bool isFunctionOfTable(ValueID id) const
     {
@@ -435,8 +458,8 @@ private:
         if (value.opcode != Opcode::GetById)
             return false;
         if (BuiltinName holder = globalDefinedBy(value.child(0)))
-            return !!m_builtins.findStatic(BuiltinKind::StaticFunction, holder, nameOf(value));
-        const EngineClass* holder = classWhosePrototypeIsDefinedBy(value.child(0));
+            return m_builtins.findStatic(BuiltinKind::StaticFunction, holder, nameOf(value)) || isHasOwnPropertyReadOffObject(holder, nameOf(value));
+        const EngineClass* holder = classWhoseMethodsAreFoundOn(value.child(0));
         return holder && m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(value));
     }
 
@@ -599,6 +622,8 @@ private:
         // Not where other code may be carried out in its place: a method of an object may be another's, and a getter of a prototype is shadowed by a property of the object's own, as `length` of a typed
         // array and `size` of a Map are: there the general arm yields whatever it yields.
         TypeID yielded = m_program.integersYieldedByBuiltins[entry.index()];
+        if (!yielded && builtin.result.kinds == BuiltinResult::Boolean && !builtin.result.arguments)
+            yielded = m_program.types.boolean;
         if (!yielded || !m_program.at(yielded).isWithin(m_program.at(value.type), m_program) || m_program.at(value.type).isWithin(m_program.at(yielded), m_program))
             return;
         if (builtin.takesReceiver() && typeOf(receiver).hasObjects() && (builtin.kind != BuiltinKind::Getter || hasGenericFallback(m_program, m_function, value)))
@@ -688,7 +713,9 @@ private:
         auto& method = definitionOf(function);
         if (method.opcode != Opcode::GetById)
             return false;
-        const EngineClass* holder = classWhosePrototypeIsDefinedBy(method.child(0));
+        const EngineClass* holder = classWhoseMethodsAreFoundOn(method.child(0));
+        if (isHasOwnPropertyReadOffObject(globalDefinedBy(method.child(0)), nameOf(method)))
+            holder = &m_builtins.objectClass();
         if (BuiltinID found = m_builtins.hasOwnProperty(nameOf(method)); found && holder && m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(method)) == found) {
             BuiltinID entry = applicableEntry(m_builtins.hasOwn(), typesOf(value.arguments.span()).span());
             if (!isResolvable(entry))
@@ -745,11 +772,12 @@ private:
                     value.opcode = Opcode::Call;
                     value.children = { value.child(0), value.arguments[0], ValueID() };
                     value.immediates[0] = Format::none;
+                    value.setCallSignature(Format::none);
                     value.arguments.removeAt(0);
                 }
                 return;
             }
-            resolveForReceiver(value, BuiltinKind::Method, value.child(0), nameOf(value), Arguments(value.arguments));
+            resolveForReceiver(value, BuiltinKind::Method, value.child(0), nameOf(value), Arguments(value.arguments), typeOf(value.child(0)).hasObjects() ? value.child(1) : ValueID());
             return;
         case Opcode::Call:
             if (resolveCallOfRead(value))
@@ -773,7 +801,7 @@ private:
             // Asked for by name it is about the class its operand is of by type. Of none by now, or of one that cannot be asked: then it does not hold.
             if (entry == m_builtins.hasOriginalStructureOperation()) {
                 auto* engineClass = typeOf(value.arguments[0]).onlyEngineClass();
-                if (TypeID prediction = m_function.at(value.arguments[0]).prediction; !engineClass && prediction)
+                if (TypeID prediction = m_function.at(value.arguments[0]).prediction(); !engineClass && prediction)
                     engineClass = m_program.at(prediction).onlyEngineClass();
                 become(value, entry, engineClass && engineClass->canCheckOriginalStructure() ? engineClass : nullptr, { }, Arguments(value.arguments));
                 return;
@@ -796,10 +824,10 @@ private:
                 if (value.opcode != Opcode::GetById)
                     continue;
                 BuiltinID entry;
-                if (const EngineClass* holder = classWhosePrototypeIsDefinedBy(value.child(0)))
+                if (const EngineClass* holder = classWhoseMethodsAreFoundOn(value.child(0)))
                     entry = m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(value));
                 else if (BuiltinName holder = globalDefinedBy(value.child(0)))
-                    entry = m_builtins.findStatic(BuiltinKind::StaticFunction, holder, nameOf(value));
+                    entry = isHasOwnPropertyReadOffObject(holder, nameOf(value)) ? m_builtins.hasOwnProperty(nameOf(value)) : m_builtins.findStatic(BuiltinKind::StaticFunction, holder, nameOf(value));
                 if (!entry || !m_builtins.hasCell(entry) || !Type::function().isWithin(typeOf(id), m_program))
                     continue;
                 value.opcode = Opcode::BuiltinFunction;
@@ -823,8 +851,8 @@ private:
             if (name == m_builtins.callName() && isFunctionOfTable(value.child(0)))
                 return true;
             if (BuiltinName holder = globalDefinedBy(value.child(0)))
-                return (name == m_builtins.prototypeName() && m_builtins.classNamed(holder)) || m_builtins.findStatic(BuiltinKind::StaticFunction, holder, name);
-            if (const EngineClass* holder = classWhosePrototypeIsDefinedBy(value.child(0)))
+                return (name == m_builtins.prototypeName() && m_builtins.classNamed(holder)) || m_builtins.findStatic(BuiltinKind::StaticFunction, holder, name) || isHasOwnPropertyReadOffObject(holder, name);
+            if (const EngineClass* holder = classWhoseMethodsAreFoundOn(value.child(0)))
                 return !!m_builtins.findForInstance(BuiltinKind::Method, *holder, name);
             auto& receiver = typeOf(value.child(0));
             const EngineClass* engineClass = classOf(receiver);

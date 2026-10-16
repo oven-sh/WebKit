@@ -467,7 +467,7 @@ static void setUpResourceLoadClient(WKWebProcessPlugInBrowserContextController *
     return _editingDelegate.getAutoreleased();
 }
 
-static inline WKEditorInsertAction NODELETE toWK(WebCore::EditorInsertAction action)
+static inline WKEditorInsertAction LEGACY_NODELETE toWK(WebCore::EditorInsertAction action)
 {
     switch (action) {
     case WebCore::EditorInsertAction::Typed:
@@ -550,7 +550,8 @@ static inline WKEditorInsertAction NODELETE toWK(WebCore::EditorInsertAction act
 
             RetainPtr controller = m_controller.get();
             RetainPtr dataByType = [controller->_editingDelegate.get() _webProcessPlugInBrowserContextController:controller.get() pasteboardDataForRange:protect(wrapper(WebKit::createHandle(range).get())).get()];
-            for (NSString *type in dataByType.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *type in dataByType.get()) {
                 pasteboardTypes.append(type);
                 pasteboardData.append(WebCore::SharedBuffer::create(dataByType.get()[type]));
             };

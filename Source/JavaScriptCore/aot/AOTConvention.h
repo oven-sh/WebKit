@@ -132,7 +132,9 @@ struct EntryWord {
 // What a closure of the typed compiler has of its function (Typed::Closure::m_entry). It does not depend on where the image is loaded, so
 // it is a constant of the build: ProgramData::closureWords() has it by function, read-only.
 //   0 to 31   where the code is that takes its arguments as the engine passes them: in units of offsetUnit bytes from the start of the image's code
-//   32 to 55  the number of the function, by which the image has its name, its `length`, what it is declared as, how many captures
+//   32 to 53  the number of the function, by which the image has its name, its `length`, what it is declared as, how many captures
+//   54        saysWhatItYieldsBit
+//   55        saysWhatItAnswersBit
 //   56        isDerivedConstructorBit
 //   57 to 63  as in EntryWord. On top: a call tells by one comparison that the closure takes the arguments it has, in registers, and may be called
 struct ClosureWord {
@@ -144,10 +146,12 @@ struct ClosureWord {
     static constexpr unsigned offsetUnit = 1;
 #endif
     static constexpr unsigned functionShift = numberOfOffsetBits;
-    static constexpr unsigned numberOfFunctionBits = 24;
+    static constexpr unsigned numberOfFunctionBits = 22;
+    static constexpr unsigned saysWhatItYieldsBit = functionShift + numberOfFunctionBits;
+    static constexpr unsigned saysWhatItAnswersBit = saysWhatItYieldsBit + 1;
     // [[Construct]] makes nothing: it calls it with `undefined` for `this` and new.target ahead of the arguments, and yields what it returns:
     // a class that extends something, which makes the object.
-    static constexpr unsigned isDerivedConstructorBit = functionShift + numberOfFunctionBits;
+    static constexpr unsigned isDerivedConstructorBit = saysWhatItAnswersBit + 1;
     // [[Construct]] makes an ordinary object that inherits from its `prototype`, calls it with `this` and the arguments as they are, and
     // yields what it returns if that is an object, else the object. Below the number of parameters: a call does not look at it.
     static constexpr unsigned constructsOrdinaryObjectBit = isDerivedConstructorBit + 1;
@@ -184,7 +188,7 @@ struct ClosureWord {
 //   32 to 55  the number of the allocation
 //   56 to 63  only for the operation behind the stub: how many captures
 struct ClosureRequest {
-    static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits;
+    static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits + 2;
     static constexpr unsigned allocationShift = 32;
     static constexpr unsigned countShift = 56;
     static constexpr unsigned variableIsCell32Bit = 61;

@@ -57,9 +57,11 @@
 #include "HTMLIFrameElement.h"
 #include "HTMLImageElement.h"
 #include "HTMLInputElement.h"
+#include "HTMLMediaElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
 #include "HTMLSelectElement.h"
+#include "HTMLVideoElement.h"
 #include "HandleUserInputEventResult.h"
 #include "HighlightRegistry.h"
 #include "HitTestResult.h"
@@ -77,6 +79,7 @@
 #include "RenderBox.h"
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderIFrame.h"
 #include "RenderLayer.h"
 #include "RenderLayerModelObject.h"
@@ -162,7 +165,7 @@ static constexpr OptionSet behaviorsForTextExtraction {
     TextIteratorBehavior::TraversesFlatTree
 };
 
-static bool NODELETE hasEnclosingAutoFilledInput(Node& node)
+static bool LEGACY_NODELETE hasEnclosingAutoFilledInput(Node& node)
 {
     auto* input = dynamicDowncast<HTMLInputElement>(node.shadowHost());
     if (!input)
@@ -223,7 +226,7 @@ static inline TextNodesAndText collectText(const SimpleRange& range, IncludeText
     return nodesAndText;
 }
 
-static String NODELETE stringOnlyIfHumanReadable(const String& string)
+static String LEGACY_NODELETE stringOnlyIfHumanReadable(const String& string)
 {
     if (StringEntropyHelpers::isProbablyHumanReadable(string))
         return string;
@@ -274,7 +277,7 @@ static void addBoxShadowIfNeeded(Node& node, const String& colorAsString)
         return;
 
     auto styleValue = makeString("0 0 20px "_s, colorAsString, ", inset 0 0 8px "_s, colorAsString);
-    element->setInlineStyleProperty(CSSPropertyBoxShadow, styleValue, IsImportant::Yes);
+    element->setInlineStyleProperty(CSSPropertyID::BoxShadow, styleValue, IsImportant::Yes);
 
     auto relatedElementAttributes = std::array {
         HTMLNames::aria_labeledbyAttr.get(),
@@ -284,7 +287,7 @@ static void addBoxShadowIfNeeded(Node& node, const String& colorAsString)
 
     for (auto& attributeName : relatedElementAttributes) {
         if (RefPtr otherElement = dynamicDowncast<HTMLElement>(element->elementForAttributeInternal(attributeName).get()))
-            otherElement->setInlineStyleProperty(CSSPropertyBoxShadow, styleValue, IsImportant::Yes);
+            otherElement->setInlineStyleProperty(CSSPropertyID::BoxShadow, styleValue, IsImportant::Yes);
     }
 }
 
@@ -316,7 +319,7 @@ struct TraversalContext {
     bool includeAccessibilityAttributes { false };
     unsigned visibleTextLength { 0 };
 
-    inline bool NODELETE shouldIncludeNodeWithRect(const FloatRect& rect) const
+    inline bool LEGACY_NODELETE shouldIncludeNodeWithRect(const FloatRect& rect) const
     {
         return !rectInRootView || rectInRootView->intersects(rect);
     }
@@ -518,7 +521,7 @@ static inline std::optional<FloatRect> visibleAssociatedLabelBounds(HTMLElement&
         if (!renderer)
             continue;
 
-        if (renderer->style().usedVisibility() == Visibility::Hidden)
+        if (renderer->usedStyle().visibility() == UsedVisibility::Hidden)
             continue;
 
         if (renderer->style().opacity() < minOpacityToConsiderVisible)
@@ -537,7 +540,7 @@ static bool hasVisuallyDistinctStyling(const Style::ComputedStyle&);
 static inline bool paintsVisibleContent(const RenderObject& renderer)
 {
     CheckedRef style = renderer.style();
-    if (style->usedVisibility() != Visibility::Visible)
+    if (renderer.usedStyle().visibility() != UsedVisibility::Visible)
         return false;
 
     if (style->opacity() < minOpacityToConsiderVisible)
@@ -547,6 +550,30 @@ static inline bool paintsVisibleContent(const RenderObject& renderer)
         return text->hasRenderedText();
 
     return renderer.isRenderReplaced() || hasVisuallyDistinctStyling(protect(style));
+}
+
+template<typename RectOrSize>
+static inline bool isNearlyEmpty(const RectOrSize& rectOrSize)
+{
+    return rectOrSize.width() <= 1 || rectOrSize.height() <= 1;
+}
+
+static inline bool isClippedOutOfView(const RenderObject& renderer)
+{
+    CheckedPtr box = dynamicDowncast<RenderBox>(renderer);
+    if (!box)
+        return false;
+
+    if (box->hasClip() && isNearlyEmpty(box->clipRect({ })))
+        return true;
+
+    return box->hasNonVisibleOverflow() && isNearlyEmpty(box->borderBoxSize());
+}
+
+static inline bool isClippedOutByAncestors(const Node& node, const FloatRect& bounds)
+{
+    CheckedPtr renderer = node.renderer();
+    return renderer && !bounds.isEmpty() && renderer->absoluteClippedOverflowRectForTextRepresentation().isEmpty();
 }
 
 static inline RefPtr<Node> visualProxyForTransparentControl(const HTMLInputElement& input)
@@ -678,7 +705,7 @@ enum class SkipExtraction : bool {
     SelfAndSubtree
 };
 
-static bool NODELETE shouldTreatAsPasswordField(const Element* element)
+static bool LEGACY_NODELETE shouldTreatAsPasswordField(const Element* element)
 {
     auto* input = dynamicDowncast<HTMLInputElement>(element);
     return input && input->hasEverBeenPasswordField();
@@ -702,7 +729,7 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
     if (renderer->isRenderOrLegacyRenderSVGHiddenContainer())
         return { SkipExtraction::SelfAndSubtree };
 
-    if (context.skipNearlyTransparentContent && renderer->style().opacity() < minOpacityToConsiderVisible) {
+    if ((context.skipNearlyTransparentContent && renderer->style().opacity() < minOpacityToConsiderVisible) || (!context.originalRequest.includeClippedContent && isClippedOutOfView(*renderer))) {
         RefPtr input = dynamicDowncast<HTMLInputElement>(node);
         if (!input)
             return { SkipExtraction::SelfAndSubtree };
@@ -717,7 +744,7 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
         }
     }
 
-    if (renderer->style().usedVisibility() == Visibility::Hidden)
+    if (renderer->usedStyle().visibility() == UsedVisibility::Hidden)
         return { SkipExtraction::Self };
 
     if (RefPtr textNode = dynamicDowncast<Text>(node)) {
@@ -934,6 +961,13 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
     if (is<HTMLCanvasElement>(element))
         return { ItemData { ContainerType::Canvas } };
 
+    if (RefPtr media = dynamicDowncast<HTMLMediaElement>(element)) {
+        return { MediaItemData {
+            .type = is<HTMLVideoElement>(*media) ? MediaType::Video : MediaType::Audio,
+            .hasControls = media->controls(),
+        } };
+    }
+
     if (CheckedPtr box = dynamicDowncast<RenderBox>(node.renderer()); box && box->canBeScrolledAndHasScrollableArea()) {
         if (CheckedPtr layer = box->layer()) {
             if (CheckedPtr scrollableArea = layer->scrollableArea()) {
@@ -1056,7 +1090,7 @@ static bool areSameOrigin(Document& document, Document& other)
 
 static bool hasVisuallyDistinctStyling(const Style::ComputedStyle& style)
 {
-    bool hasEnclosingBorder = style.border().hasVisibleBorder() && style.usedBorderTopWidth() && style.usedBorderRightWidth() && style.usedBorderBottomWidth() && style.usedBorderLeftWidth();
+    bool hasEnclosingBorder = style.border().hasVisibleBorder() && Style::effectiveBorderWidths(style).top() && Style::effectiveBorderWidths(style).right() && Style::effectiveBorderWidths(style).bottom() && Style::effectiveBorderWidths(style).left();
     return style.hasBackground() || style.hasOutline() || !style.boxShadow().isNone() || style.hasExplicitlySetBorderRadius() || hasEnclosingBorder;
 }
 
@@ -1421,6 +1455,10 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
                         bounds = *labelBounds;
                 }
             }
+
+            if (!context.originalRequest.includeClippedContent && isClippedOutByAncestors(node, bounds))
+                return;
+
             if (!context.inAdditionalContainerToCollectCount && !context.shouldIncludeNodeWithRect(bounds)) {
                 if (context.hasOverflowItemsStack.isEmpty()) {
                     ASSERT_NOT_REACHED();
@@ -1460,7 +1498,7 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
 
     bool onlyCollectTextAndLinks = linkURL || editable;
     if (onlyCollectTextAndLinks) {
-        if (auto bounds = rootViewBounds(node); context.shouldIncludeNodeWithRect(bounds)) {
+        if (auto bounds = rootViewBounds(node); context.shouldIncludeNodeWithRect(bounds) && (context.originalRequest.includeClippedContent || !isClippedOutByAncestors(node, bounds))) {
             item = {
                 TextItemData { { }, { }, emptyString(), { } },
                 WTF::move(bounds),
@@ -1500,7 +1538,7 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
         for (Ref child : composedTreeChildren<0>(*container))
             extractRecursive(child.get(), item ? *item : parentItem, context);
 
-        if (RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(node); iframe && item) {
+        if (RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(node); iframe && item && context.originalRequest.includeSameOriginSubframes) {
             if (RefPtr frame = dynamicDowncast<LocalFrame>(iframe->contentFrame())) {
                 if (RefPtr document = frame->document(); document && areSameOrigin(*document, protect(node.document()))) {
                     auto [rootItem, textLength] = extractItem([&] {
@@ -1872,7 +1910,7 @@ struct TokenAndBlockOffset {
     int offset { 0 };
 };
 
-static IntSize NODELETE reducePrecision(FloatSize size)
+static IntSize LEGACY_NODELETE reducePrecision(FloatSize size)
 {
     static constexpr auto resolution = 10;
     return {
@@ -1938,7 +1976,7 @@ static void extractRenderedTokens(Vector<TokenAndBlockOffset>& tokensAndOffsets,
     appendReplacedContentOrBackgroundImage(*renderer);
 
     for (CheckedRef descendant : descendantsOfType<RenderObject>(*renderer)) {
-        if (descendant->style().usedVisibility() == Visibility::Hidden)
+        if (descendant->usedStyle().visibility() == UsedVisibility::Hidden)
             continue;
 
         if (descendant->style().opacity() < minOpacityToConsiderVisible)
@@ -2382,7 +2420,7 @@ static std::expected<ResolvedMouseTarget, String> resolveMouseTarget(Node& targe
         if (!renderer)
             return makeUnexpected("Target is not rendered (possibly display: none) or uid may be stale"_s);
 
-        if (renderer->style().usedVisibility() != Visibility::Visible)
+        if (renderer->usedStyle().visibility() != UsedVisibility::Visible)
             return makeUnexpected("Target is hidden via CSS visibility"_s);
     }
 
@@ -2514,7 +2552,7 @@ static SelectOptionResult selectOptionByValue(NodeIdentifier identifier, const S
     return { };
 }
 
-static Element* NODELETE bodyOrDocumentElement(const LocalFrame& frame)
+static Element* LEGACY_NODELETE bodyOrDocumentElement(const LocalFrame& frame)
 {
     if (auto* document = frame.document()) {
         if (auto* body = document->body())
@@ -2526,7 +2564,7 @@ static Element* NODELETE bodyOrDocumentElement(const LocalFrame& frame)
     return nullptr;
 }
 
-static RefPtr<Node> NODELETE resolveNodeWithBodyOrDocumentElementAsFallback(const LocalFrame& frame, std::optional<NodeIdentifier> identifier)
+static RefPtr<Node> LEGACY_NODELETE resolveNodeWithBodyOrDocumentElementAsFallback(const LocalFrame& frame, std::optional<NodeIdentifier> identifier)
 {
     if (identifier)
         return Node::fromIdentifier(WTF::move(*identifier));

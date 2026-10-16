@@ -378,6 +378,7 @@ private:
         OP_CDQ                          = 0x99,
         OP_MOV_EAXOv                    = 0xA1,
         OP_MOV_OvEAX                    = 0xA3,
+        OP_MOVS_YvXv                    = 0xA5,
         OP_TEST_ALIb                    = 0xA8,
         OP_TEST_EAXIv                   = 0xA9,
         OP_MOV_EAXIv                    = 0xB8,
@@ -2133,6 +2134,11 @@ public:
         m_formatter.oneByteOp(OP_CMP_EvGv, src, base, offset);
     }
 
+    void cmpl_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
+    {
+        m_formatter.oneByteOp(OP_CMP_EvGv, src, base, index, scale, offset);
+    }
+
     void cmpl_mr(int offset, RegisterID base, RegisterID src)
     {
         m_formatter.oneByteOp(OP_CMP_GvEv, src, base, offset);
@@ -2495,6 +2501,12 @@ public:
     void cqo()
     {
         m_formatter.oneByteOp64(OP_CDQ);
+    }
+
+    void rep_movsq()
+    {
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.oneByteOp64(OP_MOVS_YvXv);
     }
 
     void fstps(int offset, RegisterID base)

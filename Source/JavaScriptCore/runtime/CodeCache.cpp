@@ -323,6 +323,8 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
 
     // We initially start with hasCapturedVariables = false.
     functionExecutable->recordParse(program->features(), metadata->lexicallyScopedFeatures(), /* hasCapturedVariables */ false);
+    if ((Options::useBytecodeOptimizer() || !Options::useJIT()) && !(lexicallyScopedFeatures & TaintedByWithScopeLexicallyScopedFeature))
+        functionExecutable->setParentDeclaredNames(DeclaredNamesLink::createForGlobalScope());
 
     if (Options::useCodeCache())
         m_sourceCode.addCache(key, SourceCodeValue(vm, functionExecutable, m_sourceCode.age()));

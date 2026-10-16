@@ -138,21 +138,21 @@ void PushManager::subscribe(ScriptExecutionContext& context, std::optional<PushS
             RELEASE_ASSERT(client);
             RELEASE_ASSERT(context->isDocument());
 
-            auto& document = downcast<Document>(context.get());
-            if (!document.isSameOriginAsTopDocument()) {
+            Ref document = downcast<Document>(context);
+            if (!document->isSameOriginAsTopDocument()) {
                 promise.reject(Exception { ExceptionCode::NotAllowedError, "Cannot request permission from cross-origin iframe"_s });
                 return;
             }
 
-            RefPtr window = document.frame() ? document.frame()->window() : nullptr;
-            if (!window || (!window->consumeTransientActivation() && !document.quirks().shouldAllowNotificationPermissionWithoutUserGesture())) {
+            RefPtr window = document->frame() ? document->frame()->window() : nullptr;
+            if (!window || (!window->consumeTransientActivation() && !document->quirks().shouldAllowNotificationPermissionWithoutUserGesture())) {
 #if !RELEASE_LOG_DISABLED
                 Seconds lastActivationDuration = window ? MonotonicTime::now() - window->lastActivationTimestamp() : Seconds::infinity();
                 RELEASE_LOG_ERROR(Push, "Failing PushManager.subscribe call due to failed transient activation check; last activated %.2f sec ago", lastActivationDuration.value());
 #endif
 
                 auto errorMessage = "Push notification prompting can only be done from a user gesture."_s;
-                document.addConsoleMessage(MessageSource::Security, MessageLevel::Error, errorMessage);
+                document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, errorMessage);
                 promise.reject(Exception { ExceptionCode::NotAllowedError, errorMessage });
                 return;
             }

@@ -28,6 +28,7 @@
 
 #include "InlineFormattingContext.h"
 #include "FontCascadeInlines.h"
+#include "InlineLine.h"
 #include "InlineLineBox.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutBoxInlines.h"
@@ -103,7 +104,6 @@ bool InlineQuirks::inlineBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox)
         // We do not create markers for list items when the list-style-type is none, while other browsers do.
         // The side effect of having no marker is that in quirks mode we have to specifically check for list-item
         // and make sure it is treated as if it had content and stretched the line.
-        // see LegacyInlineFlowBox c'tor.
         return inlineLevelBox.layoutBox().style().originalDisplay().isListItemType();
     }
     // Non-root inline boxes (e.g. <span>).
@@ -221,7 +221,7 @@ std::optional<InlineLayoutUnit> InlineQuirks::adjustmentForLineGridLineSnap(cons
     return gridLineHeight - remainder;
 }
 
-bool InlineQuirks::shouldCollapseLineBoxHeight(const Line::RunList& lineContent, size_t numberOfOutsideListMarkers) const
+bool InlineQuirks::shouldCollapseLineBoxHeight(const LineRunList& lineContent, size_t numberOfOutsideListMarkers) const
 {
     // This quirk is needed as we put the marker in seemingly random places in the list item's subtree.
     // (instead of having a well defined place and layout behavior).

@@ -118,6 +118,7 @@ $has Member = PrivateName
 $keys Member = PrivateName
 $kResistStopPropagation Member = PrivateName
 $napiDlopenHandle Member = PrivateName
+$onEndCallbacks Member = PrivateName
 $pull Member = PrivateName
 $reject Member = PrivateName
 $require Member = PrivateName
@@ -133,7 +134,7 @@ $write Member = PrivateName
 
 # What Manifest::macro_for_call() expands, the manifest's defines, the directives of a builtin function.
 $assert Call = Macro
-$bindgenFn Call = Macro
+$bindgen Call = Macro
 $bundleError Call = Macro
 $constructor Value = Directive
 $cpp Call = Macro

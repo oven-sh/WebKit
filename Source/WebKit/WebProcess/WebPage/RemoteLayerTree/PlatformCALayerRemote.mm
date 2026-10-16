@@ -43,6 +43,7 @@
 #import <WebCore/PlatformCAFilters.h>
 #import <WebCore/PlatformCALayerCocoa.h>
 #import <WebCore/TiledBacking.h>
+#import <wtf/Borrow.h>
 #import <wtf/PointerComparison.h>
 
 #if ENABLE(THREADED_ANIMATIONS)
@@ -443,7 +444,7 @@ void PlatformCALayerRemote::setSublayers(const PlatformCALayerList& list)
     removeAllSublayers();
     m_children = list;
 
-    for (const auto& layer : list) {
+    for (const auto& layer : borrow(list)) {
         layer->removeFromSuperlayer();
         downcast<PlatformCALayerRemote>(*layer).m_superlayer = *this;
     }
@@ -453,7 +454,7 @@ void PlatformCALayerRemote::setSublayers(const PlatformCALayerList& list)
 
 void PlatformCALayerRemote::removeAllSublayers()
 {
-    PlatformCALayerList layersToRemove = m_children;
+    const PlatformCALayerList layersToRemove = m_children;
     for (const auto& layer : layersToRemove)
         layer->removeFromSuperlayer();
     ASSERT(m_children.isEmpty());
@@ -501,7 +502,7 @@ void PlatformCALayerRemote::adoptSublayers(PlatformCALayer& source)
     PlatformCALayerList layersToMove = downcast<PlatformCALayerRemote>(source).m_children;
 
     if (const PlatformCALayerList* customLayers = source.customSublayers()) {
-        for (const auto& layer : *customLayers) {
+        for (const auto& layer : borrow(*customLayers)) {
             size_t layerIndex = layersToMove.find(layer);
             if (layerIndex != notFound)
                 layersToMove.removeAt(layerIndex);
@@ -520,7 +521,7 @@ void PlatformCALayerRemote::addAnimationForKey(const String& key, PlatformCAAnim
         // process yet, we update the key properties before it happens. Otherwise, we just append it
         // to the list of animations to be added: PlatformCAAnimationRemote::updateLayerAnimations
         // will actually take care of replacing the existing animation.
-        for (auto& keyAnimationPair : m_properties.animationChanges.addedAnimations) {
+        for (auto& keyAnimationPair : borrow(m_properties.animationChanges.addedAnimations)) {
             if (keyAnimationPair.first == key) {
                 keyAnimationPair.second = downcast<PlatformCAAnimationRemote>(animation).properties();
                 appendToAddedAnimations = false;
@@ -553,7 +554,7 @@ RefPtr<PlatformCAAnimation> PlatformCALayerRemote::animationForKey(const String&
     return m_animations.get(key);
 }
 
-static inline bool NODELETE isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
+static inline bool LEGACY_NODELETE isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
 {
     auto newLayerID = layer ? std::optional { layer->layerID() } : std::nullopt;
     return layerID == newLayerID;
@@ -843,6 +844,7 @@ CFTypeRef PlatformCALayerRemote::contents() const
 
 void PlatformCALayerRemote::setContents(CFTypeRef value)
 {
+    m_properties.displayOnlyImage = { };
     if (CheckedPtr store = m_properties.backingStoreOrProperties.store.get(); store && !value)
         store->clearBackingStore();
 }
@@ -855,8 +857,18 @@ void PlatformCALayerRemote::setDelegatedContents(const PlatformCALayerDelegatedC
 void PlatformCALayerRemote::setRemoteDelegatedContents(const PlatformCALayerRemoteDelegatedContents& contents)
 {
     ASSERT(m_acceleratesDrawing);
+    m_properties.displayOnlyImage = { };
     ensureBackingStore();
     protect(m_properties.backingStoreOrProperties.store)->setDelegatedContents(contents);
+}
+
+void PlatformCALayerRemote::setDisplayOnlyImage(RemoteSnapshotIdentifier image)
+{
+    if (m_properties.displayOnlyImage == image)
+        return;
+
+    m_properties.displayOnlyImage = image;
+    m_properties.notePropertiesChanged(LayerChange::DisplayOnlyImageChanged);
 }
 
 void PlatformCALayerRemote::setContentsRect(const FloatRect& value)

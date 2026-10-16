@@ -169,6 +169,7 @@
 #include <JavaScriptCore/CPU.h>
 #include <JavaScriptCore/Forward.h>
 #include <JavaScriptCore/JSCConfig.h>
+#include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/OptionsList.h>
 #include <JavaScriptCore/SourceID.h>
 #include <JavaScriptCore/Weak.h>
@@ -382,6 +383,7 @@
 #include <JavaScriptCore/JSGlobalObjectFunctions.h>
 #include <JavaScriptCore/JSHeapFinalizerPrivate.h>
 #include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSONCache.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSRunLoopTimer.h>
@@ -422,7 +424,7 @@
 #include <JavaScriptCore/SlotVisitor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SmallStrings.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/SparseArrayValueMap.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackManager.h>
@@ -497,7 +499,6 @@
 #include <wtf/LazyRef.h>
 #include <wtf/LazyUniqueRef.h>
 #include <wtf/MallocPtr.h>
-#include <wtf/MetaAllocatorHandle.h>
 #include <wtf/NakedPtr.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PackedRefPtr.h>

@@ -520,7 +520,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         LBasicBlock isDeleted = m_out.newBlock();
         LBasicBlock isAlive = m_out.newBlock();
         LBasicBlock isBehind = m_out.newBlock();
-        LBasicBlock isNotCompact = m_out.newBlock();
+        LBasicBlock isNotCompact = newUnlikelyBlock();
         LBasicBlock isUnchangedStorage = m_out.newBlock();
         LBasicBlock storageLoop = m_out.newBlock();
         LBasicBlock isUsedInStorage = m_out.newBlock();
@@ -594,7 +594,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         CellPointer owner = collection();
         LValue number = in<Integer>(arguments[1]).value();
         LBasicBlock isCompact = m_out.newBlock();
-        LBasicBlock otherwise = m_out.newBlock();
+        LBasicBlock otherwise = newUnlikelyBlock();
         Join join(m_out, Rep::JSValue, Int64);
         LValue table = compactTableOf(owner);
         m_out.branch(m_out.notNull(table), unsure(isCompact), unsure(otherwise));
@@ -605,7 +605,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
             join.add(Boxed(decoded(m_out.zeroExtPtr(m_out.load32(at(keys, number, 2))), table)));
         else {
             LBasicBlock isNarrow = m_out.newBlock();
-            LBasicBlock isWide = m_out.newBlock();
+            LBasicBlock isWide = newUnlikelyBlock();
             LValue values = m_out.add(keys, m_out.shl(m_out.zeroExtPtr(m_out.load32(fieldOf(table, CompactTable::offsetOfCapacity()))), m_out.constInt32(2)));
             LValue width = m_out.load8ZeroExt32(fieldOf(table, CompactTable::offsetOfValueWidth()));
             m_out.branch(m_out.equal(width, m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow))), unsure(isNarrow), unsure(isWide));
@@ -647,7 +647,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         LValue storage = m_out.loadPtr(owner.value(), isMap ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
         LValue compactTable = m_out.loadPtr(owner.value(), isMap ? m_heaps.JSMap_compactTable : m_heaps.JSSet_compactTable);
         LBasicBlock hasTable = m_out.newBlock();
-        LBasicBlock hasNone = m_out.newBlock();
+        LBasicBlock hasNone = newUnlikelyBlock();
         LBasicBlock isCompact = m_out.newBlock();
         LBasicBlock isReset = m_out.newBlock();
         LBasicBlock generally = m_out.newBlock();

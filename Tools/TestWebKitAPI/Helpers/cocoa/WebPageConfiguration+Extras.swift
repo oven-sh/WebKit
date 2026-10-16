@@ -26,6 +26,8 @@
 @_spi(Testing) public import WebKit
 public import WebKit_Private.WKWebProcessPlugIn
 private import WebKit_Private.WKProcessPoolPrivate
+private import WebKit_Private.WKWebsiteDataStorePrivate
+private import WebKit_Private._WKWebsiteDataStoreConfiguration
 private import TestWebKitAPILibrary.InjectedBundle.cocoa.WebProcessPlugIn.WebProcessPlugInWithInternals
 
 extension WebPage.Configuration {
@@ -58,6 +60,23 @@ extension WebPage.Configuration {
     /// - Returns: A correctly-configured WebPage.Configuration.
     public static func withInternals(configureJSCForTesting: Bool = true) -> WebPage.Configuration {
         .init(testPlugInClass: WebProcessPlugInWithInternals.self, configureJSCForTesting: configureJSCForTesting)
+    }
+}
+
+extension WebPage.Configuration {
+    /// Creates a configuration whose website data store sends HTTPS loads through a server's proxy.
+    ///
+    /// See ``WebKit/WKWebViewConfiguration/init(httpsProxyFor:)`` for how the server handles those loads. Use the
+    /// configuration with a navigation decider that trusts the server's certificate, such as
+    /// ``NavigationDeciderAllowingAnyTLSCertificate``.
+    ///
+    /// - Parameter server: The configuration of the server.
+    public init(httpsProxyFor server: HTTPServer.Configuration) {
+        self.init()
+
+        let storeConfiguration = _WKWebsiteDataStoreConfiguration(nonPersistentConfiguration: ())
+        storeConfiguration.httpsProxy = server.httpsProxy
+        websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
     }
 }
 

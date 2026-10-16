@@ -64,7 +64,7 @@ struct SameSizeAsRuleData {
 
 static_assert(sizeof(RuleData) == sizeof(SameSizeAsRuleData), "RuleData should stay small");
 
-static inline MatchBasedOnRuleHash NODELETE computeMatchBasedOnRuleHash(const CSSSelector& selector)
+static inline MatchBasedOnRuleHash LEGACY_NODELETE computeMatchBasedOnRuleHash(const CSSSelector& selector)
 {
     if (selector.precedingInComplexSelector())
         return MatchBasedOnRuleHash::None;
@@ -161,19 +161,19 @@ static PseudoElementBoxGeneration computePseudoElementBoxGeneration(const CSSSel
     for (auto property : properties) {
         auto& value = *property.value();
         switch (property.id()) {
-        case CSSPropertyContent: {
+        case CSSPropertyID::Content: {
             auto* contentValue = dynamicDowncast<CSSContentValue>(value);
             if (!contentValue || !(contentValue->content().isNone() || contentValue->content().isNormal()))
                 return PseudoElementBoxGeneration::Normal;
             break;
         }
-        case CSSPropertyAnimationName:
-            if (!isKeywordOrKeywordList(value, CSSValueNone))
+        case CSSPropertyID::AnimationName:
+            if (!isKeywordOrKeywordList(value, CSSValueID::None))
                 return PseudoElementBoxGeneration::Normal;
             break;
-        case CSSPropertyTransitionBehavior:
+        case CSSPropertyID::TransitionBehavior:
             // Only allow-discrete transitions can change 'content' or 'display'.
-            if (!isKeywordOrKeywordList(value, CSSValueNormal))
+            if (!isKeywordOrKeywordList(value, CSSValueID::Normal))
                 return PseudoElementBoxGeneration::Normal;
             break;
         default:

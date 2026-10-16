@@ -10,6 +10,7 @@
 
 #include "AOTConvention.h"
 #include "AOTTypedThreads.h"
+#include "FPRInfo.h"
 #include <wtf/BitVector.h>
 #include <wtf/Scope.h>
 
@@ -75,8 +76,8 @@ const Function* rampBehind(const Program& program, const Function& callee)
 TypeID typeOfPromiseOf(const Program& program, const Function& callee)
 {
     auto* ramp = rampBehind(program, callee);
-    auto newPromise = program.find("NewPromise"_s.span8());
-    if (!ramp || !newPromise || !program.find("RejectPromise"_s.span8()))
+    auto newPromise = program.find(asBytes("NewPromise"_s.span8()));
+    if (!ramp || !newPromise || !program.find(asBytes("RejectPromise"_s.span8())))
         return { };
     for (auto& value : ramp->values) {
         if (value.opcode == Opcode::Operation && value.string() == *newPromise)
@@ -91,23 +92,23 @@ public:
         : m_program(program)
         , m_function(function)
         , m_mayGuess(mayGuess)
-        , m_constructWith(program.find("ConstructWith"_s.span8()).value_or(StringID()))
-        , m_superGet(program.find("SuperGet"_s.span8()).value_or(StringID()))
-        , m_superSet(program.find("SuperSet"_s.span8()).value_or(StringID()))
+        , m_constructWith(program.find(asBytes("ConstructWith"_s.span8())).value_or(StringID()))
+        , m_superGet(program.find(asBytes("SuperGet"_s.span8())).value_or(StringID()))
+        , m_superSet(program.find(asBytes("SuperSet"_s.span8())).value_or(StringID()))
         , m_apply([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("Apply"_s.span8()));
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("Apply"_s.span8())));
             return found;
         }())
         , m_isObject([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("IsObject"_s.span8()));
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("IsObject"_s.span8())));
             return found;
         }())
         , m_callNoInline([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallNoInline"_s.span8()));
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("CallNoInline"_s.span8())));
             return found;
         }())
         , m_defineField([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("DefineField"_s.span8()));
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("DefineField"_s.span8())));
             return found;
         }())
     {
@@ -124,7 +125,7 @@ public:
 
     void expandDisposableStacks()
     {
-        StringID newDisposableStack = m_program.find("NewDisposableStack"_s.span8()).value_or(StringID());
+        StringID newDisposableStack = m_program.find(asBytes("NewDisposableStack"_s.span8())).value_or(StringID());
         bool didLookUp = false;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             for (unsigned i = 0; i < m_function.blocks[b].values.size(); ++i) {
@@ -133,15 +134,15 @@ public:
                     continue;
                 if (!std::exchange(didLookUp, true)) {
                     auto& builtins = Builtins::singleton();
-                    m_addDisposableResource = m_program.find("AddDisposableResource"_s.span8()).value_or(StringID());
-                    m_disposeResources = m_program.find("DisposeResources"_s.span8()).value_or(StringID());
-                    m_usingTakesObjects = m_program.find("The value of a using declaration must be an object, null or undefined"_s.span8()).value_or(StringID());
-                    m_usingTakesDisposables = m_program.find("The value of a using declaration has no callable dispose method"_s.span8()).value_or(StringID());
-                    m_isCallable = builtins.find(BuiltinKind::Operation, { }, builtins.nameOf("IsCallable"_s.span8()));
-                    m_symbol = m_program.find("Symbol"_s.span8()).value_or(StringID());
-                    m_dispose = m_program.find("dispose"_s.span8()).value_or(StringID());
-                    m_typeError = m_program.find("TypeError"_s.span8()).value_or(StringID());
-                    m_suppressedError = m_program.find("SuppressedError"_s.span8()).value_or(StringID());
+                    m_addDisposableResource = m_program.find(asBytes("AddDisposableResource"_s.span8())).value_or(StringID());
+                    m_disposeResources = m_program.find(asBytes("DisposeResources"_s.span8())).value_or(StringID());
+                    m_usingTakesObjects = m_program.find(asBytes("The value of a using declaration must be an object, null or undefined"_s.span8())).value_or(StringID());
+                    m_usingTakesDisposables = m_program.find(asBytes("The value of a using declaration has no callable dispose method"_s.span8())).value_or(StringID());
+                    m_isCallable = builtins.find(BuiltinKind::Operation, { }, builtins.nameOf(asBytes("IsCallable"_s.span8())));
+                    m_symbol = m_program.find(asBytes("Symbol"_s.span8())).value_or(StringID());
+                    m_dispose = m_program.find(asBytes("dispose"_s.span8())).value_or(StringID());
+                    m_typeError = m_program.find(asBytes("TypeError"_s.span8())).value_or(StringID());
+                    m_suppressedError = m_program.find(asBytes("SuppressedError"_s.span8())).value_or(StringID());
                     countUsesAndFindUnreachedBlocks();
                 }
                 if (!m_addDisposableResource || !m_disposeResources || !m_usingTakesObjects || !m_usingTakesDisposables || !m_isObject || !m_isCallable || !m_symbol || !m_dispose || !m_typeError || !m_suppressedError)
@@ -151,7 +152,7 @@ public:
         }
     }
 
-    unsigned run()
+    unsigned run(CleanUpTiming timing)
     {
         noteRefutedCallees();
         unsigned resolved = 0;
@@ -164,7 +165,7 @@ public:
                 }
             }
         }
-        if (resolved)
+        if (resolved && timing == CleanUpTiming::Immediate)
             cleanUp(m_program, m_function);
         return resolved;
     }
@@ -219,17 +220,17 @@ private:
     {
         switch (m_function.at(m_function.at(block).values[index]).opcode) {
         case Opcode::CallMethod:
-            return resolveByShape(block, index, MethodKind::Method) || resolveOnClassObject(block, index) || resolveCallOrApply(block, index) || resolveBind(block, index) || resolveCallOfField(block, index);
+            return resolveByShape(block, index, MethodKind::Method) || resolveOnClassObject(block, index) || resolveCallOfExpectedBuiltin(block, index) || resolveCallOrApply(block, index) || resolveBind(block, index) || resolveCallOfField(block, index);
         case Opcode::GetById:
             return resolveByShape(block, index, MethodKind::Getter) || resolveOnClassObject(block, index);
         case Opcode::PutById:
             return resolveByShape(block, index, MethodKind::Setter) || resolveOnClassObject(block, index);
         case Opcode::Call:
-            return resolveCallOfExpectedMethod(block, index) || resolveCall(block, index) || resolveCallOfMethodRead(block, index) || resolveCallOrApply(block, index);
+            return resolveCallOfExpectedMethod(block, index) || resolveCall(block, index) || resolveCallOfExpectedBuiltin(block, index) || resolveCallOfMethodRead(block, index) || resolveCallOrApply(block, index);
         case Opcode::Operation:
             return resolveConstruct(block, index) || resolveSuper(block, index) || resolveCallNoInline(block, index);
         case Opcode::Construct:
-            return resolveConstructOfFunction(block, index);
+            return resolveConstructOfFunction(block, index) || resolveCallOfExpectedBuiltin(block, index);
         case Opcode::ConstructSuper:
             return resolveConstructSuper(block, index);
         case Opcode::CallBuiltin:
@@ -981,10 +982,10 @@ private:
         moveTo(refused);
         ValueID error = append(make(Opcode::CatchValue, m_program.types.anything));
         Value newPromise = make(Opcode::Operation, promiseType);
-        newPromise.immediates[0] = m_program.find("NewPromise"_s.span8())->index();
+        newPromise.immediates[0] = m_program.find(asBytes("NewPromise"_s.span8()))->index();
         ValueID promise = append(WTF::move(newPromise));
         Value reject = make(Opcode::Operation, m_program.types.undefined);
-        reject.immediates[0] = m_program.find("RejectPromise"_s.span8())->index();
+        reject.immediates[0] = m_program.find(asBytes("RejectPromise"_s.span8()))->index();
         reject.arguments = { promise, error };
         append(WTF::move(reject));
         finishWithCast(held(promise, type, CastReason::Claim));
@@ -1017,6 +1018,8 @@ private:
         for (LayoutID member : m_program.at(view).members) {
             auto& layout = m_program.at(member);
             FunctionID callee;
+            if (hasMethodField(m_program, member, name))
+                return std::nullopt;
             // A property of its own comes before what its class has.
             if (layout.kind == LayoutKind::Instance && !layout.fieldNamed(name)) {
                 callee = findMethod(m_program, member, name, kind);
@@ -1098,7 +1101,7 @@ private:
     {
         if (!m_mayGuess || !typeOf(object).anyObject)
             return { };
-        TypeID prediction = m_function.at(object).prediction ? m_function.at(object).prediction : m_function.at(originOf(object)).prediction;
+        TypeID prediction = m_function.at(object).prediction() ? m_function.at(object).prediction() : m_function.at(originOf(object)).prediction();
         if (!prediction)
             return { };
         LayoutID view = m_program.at(prediction).onlyView();
@@ -1152,7 +1155,7 @@ private:
         ValueID receiver = appendThrowing(WTF::move(cast));
         dispatch(*cases, view, receiver, original.arguments.span(), original, Yields::Result);
         moveTo(otherwise);
-        m_function.at(read).predictedClosure = { };
+        m_function.at(read).setPredictedClosure({ });
         place(read);
         m_lastMayThrow = m_isWatched;
         finish(appendThrowing(WTF::move(original)));
@@ -1280,6 +1283,7 @@ private:
         Value call = make(Opcode::Call, original.type);
         call.children = { callee, receiver };
         call.immediates = { original.immediates[0], m_inliningDepth };
+        call.setCallSignature(original.callSignature());
         call.arguments = original.arguments;
         finish(appendThrowing(WTF::move(call)));
     }
@@ -1342,7 +1346,7 @@ private:
                 return member;
             // Every function has these of its own, whatever it inherits.
             auto text = m_program.string(name);
-            if (isStatic && (equalSpans(text, "length"_s.span8()) || equalSpans(text, "name"_s.span8()) || equalSpans(text, "prototype"_s.span8())))
+            if (isStatic && (equalSpans(text, asBytes("length"_s.span8())) || equalSpans(text, asBytes("name"_s.span8())) || equalSpans(text, asBytes("prototype"_s.span8()))))
                 return std::nullopt;
         }
         return std::nullopt;
@@ -1563,18 +1567,18 @@ private:
         case Opcode::GetById:
             if (auto access = fieldOf(m_program, typeOf(definition.child(0)), definition.string()))
                 predicted = m_program.at(access->layout).fields[access->field].onlyFunction;
-            else if (definition.predictedByKey)
-                predicted = m_program.functionByKey(definition.predictedByKey, definition.string());
+            else if (definition.predictedByKey())
+                predicted = m_program.functionByKey(definition.predictedByKey(), definition.string());
             break;
         case Opcode::GetByVal:
-            if (ValueID key = m_program.constantOf(m_function, definition.child(1)); definition.predictedByKey && key && m_function.at(key).opcode == Opcode::String)
-                predicted = m_program.functionByKey(definition.predictedByKey, m_function.at(key).string());
+            if (ValueID key = m_program.constantOf(m_function, definition.child(1)); definition.predictedByKey() && key && m_function.at(key).opcode == Opcode::String)
+                predicted = m_program.functionByKey(definition.predictedByKey(), m_function.at(key).string());
             break;
         default:
             break;
         }
         // What is expected of the value itself comes from closer by than what is expected of the place.
-        if (FunctionID ofValue = m_function.at(operand).predictedClosure ? m_function.at(operand).predictedClosure : definition.predictedClosure)
+        if (FunctionID ofValue = m_function.at(operand).predictedClosure() ? m_function.at(operand).predictedClosure() : definition.predictedClosure())
             predicted = ofValue;
         // Only a function with a generic entrypoint is ever made a value of.
         if (!predicted || !m_program.genericEntrypoints.contains(predicted.index()))
@@ -1769,7 +1773,7 @@ private:
     // `f.bind(t, a)`: the function that `f` is, or is expected to be, a closure of, where a closure can stand for what `bind` yields. See createBoundFunctions().
     std::optional<KnownCallee> calleeBoundBy(const Value& bind) const
     {
-        static const BuiltinName name = Builtins::singleton().nameOf("bind"_s.span8());
+        static const BuiltinName name = Builtins::singleton().nameOf(asBytes("bind"_s.span8()));
         if (bind.opcode != Opcode::CallMethod || m_program.builtinName(bind.string()) != name || numberOfArgumentsBoundBy(bind) > Program::maxBoundArguments)
             return std::nullopt;
         auto known = knownCallee(bind.child(0));
@@ -1849,6 +1853,140 @@ private:
                 return true;
         }
         return false;
+    }
+
+    TypeID typeYieldedBy(BuiltinID first) const
+    {
+        auto& builtins = Builtins::singleton();
+        uint16_t kinds = 0;
+        uint16_t engineClass = 0;
+        for (BuiltinID entry = first; entry; entry = builtins.next(entry)) {
+            auto& result = builtins.at(entry).result;
+            if (result.isAnything() || result.arguments || (kinds & BuiltinResult::Instance && result.engineClass != engineClass))
+                return { };
+            kinds |= result.kinds;
+            engineClass = result.engineClass;
+        }
+        if (kinds == BuiltinResult::Boolean)
+            return m_program.types.boolean;
+        if (kinds && !(kinds & ~(BuiltinResult::Integer | BuiltinResult::Number)))
+            return m_program.types.number;
+        if (kinds == BuiltinResult::String)
+            return m_program.types.string;
+        if (kinds == BuiltinResult::Instance)
+            return m_program.engineClassTypes[engineClass];
+        return { };
+    }
+
+    struct ExpectedBuiltinCallee {
+        BuiltinPath path;
+        BuiltinName global;
+        BuiltinID entry;
+        BuiltinID called;
+    };
+
+    std::optional<ExpectedBuiltinCallee> builtinCalleeAt(const Value& site, const BuiltinPath& path) const
+    {
+        if (!path.global || (path.isOnPrototype && !path.member))
+            return std::nullopt;
+        auto& builtins = Builtins::singleton();
+        BuiltinName global = m_program.builtinName(path.global);
+        BuiltinID entry;
+        if (path.member) {
+            BuiltinName member = m_program.builtinName(path.member);
+            entry = path.isOnPrototype ? builtins.findForInstance(BuiltinKind::Method, *builtins.classNamed(global), member) : builtins.findStatic(BuiltinKind::StaticFunction, global, member);
+        }
+        BuiltinID called = entry;
+        switch (site.opcode) {
+        case Opcode::CallMethod: {
+            BuiltinName name = m_program.builtinName(site.string());
+            if (!entry)
+                called = builtins.findStatic(BuiltinKind::StaticFunction, global, name);
+            else if (!builtins.callOrApply(name))
+                return std::nullopt;
+            break;
+        }
+        case Opcode::Call:
+            if (!entry)
+                called = builtins.find(BuiltinKind::Function, { }, global);
+            break;
+        case Opcode::Construct:
+            called = entry ? BuiltinID() : builtins.findConstructor(global);
+            break;
+        default:
+            return std::nullopt;
+        }
+        if (!called)
+            return std::nullopt;
+        return ExpectedBuiltinCallee { path, global, entry, called };
+    }
+
+    bool isCalledAsOnItsHolder(const Value& site, const ExpectedBuiltinCallee& callee) const
+    {
+        if (site.opcode != Opcode::Call || !callee.entry || callee.path.isOnPrototype || (site.child(1) && !typeOf(site.child(1)).isUndefinedOrNull()))
+            return false;
+        auto& builtins = Builtins::singleton();
+        return builtins.classNamed(callee.global) != &builtins.promiseClass() && callee.global != BuiltinName(AOT_TYPED_BUILTIN_NAME_TypedArray);
+    }
+
+    bool resolveCallOfExpectedBuiltin(BlockID block, unsigned index)
+    {
+        ValueID id = m_function.at(block).values[index];
+        Value original = m_function.at(id);
+        ValueID operand = original.child(0);
+        if (isReadFromGlobal(operand))
+            return false;
+        ExpectedBuiltins expected = m_program.expectedBuiltins(m_function, operand);
+        std::optional<StringID> prototype = m_program.find(asBytes("prototype"_s.span8()));
+        Vector<ExpectedBuiltinCallee, 2> callees;
+        for (auto* path : { &expected.first, &expected.second }) {
+            if (path->isOnPrototype && !prototype)
+                continue;
+            if (auto callee = builtinCalleeAt(original, *path))
+                callees.append(*callee);
+        }
+        if (callees.isEmpty() || hasGuard(operand))
+            return false;
+
+        open(block, index);
+        if (auto& joined = m_function.at(id); !joined.prediction() && !joined.predictedClosure()) {
+            joined.setPrediction(typeYieldedBy(callees[0].called));
+            if (callees.size() > 1 && typeYieldedBy(callees[1].called) != joined.prediction())
+                joined.setPrediction({ });
+        }
+        auto appendRead = [&](ValueID object, StringID name) {
+            Value read = make(Opcode::GetById, m_program.types.anything);
+            read.children[0] = object;
+            read.immediates[0] = name.index();
+            return appendThrowing(WTF::move(read));
+        };
+        for (auto& callee : callees) {
+            Value guard = make(Opcode::IsBuiltinFunction, m_program.types.boolean);
+            guard.children[0] = operand;
+            if (callee.entry)
+                guard.immediates[0] = callee.entry.index();
+            else
+                guard.immediates[1] = callee.global.index();
+            BlockID otherwise = branch(append(WTF::move(guard)));
+
+            ValueID builtin = appendGlobal(callee.path.global);
+            Value direct = original;
+            if (isCalledAsOnItsHolder(original, callee)) {
+                direct.opcode = Opcode::CallMethod;
+                direct.children = { builtin, ValueID(), ValueID() };
+                direct.immediates[0] = callee.path.member.index();
+            } else {
+                if (callee.path.isOnPrototype)
+                    builtin = appendRead(builtin, *prototype);
+                if (callee.path.member)
+                    builtin = appendRead(builtin, callee.path.member);
+                direct.children[0] = builtin;
+            }
+            finish(appendThrowing(WTF::move(direct)));
+            moveTo(otherwise);
+        }
+        finish(appendThrowing(WTF::move(original)));
+        return true;
     }
 
     // `f.call(..)`, `f.apply(..)`: as a call by name, or as a read of the method and a call of what was read with `f` for `this`.
@@ -2317,9 +2455,9 @@ private:
 
 } // anonymous namespace
 
-unsigned resolveCalls(const Program& program, Function& function, bool mayGuess)
+unsigned resolveCalls(const Program& program, Function& function, bool mayGuess, CleanUpTiming timing)
 {
-    return CallResolution(program, function, mayGuess).run();
+    return CallResolution(program, function, mayGuess).run(timing);
 }
 
 // The way in for callers that do not know the function: it takes the function value, `this` and the arguments as the engine passes
@@ -2390,7 +2528,7 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id, F
         if (!asserted && (!type || program.isHeldAlready(program.typeOf(entry, value), program.at(type), reason)))
             return value;
         Value cast = make(Opcode::Cast, type ? type : types.anything);
-        cast.assertedType = asserted;
+        cast.setAssertedType(asserted);
         cast.children[0] = value;
         cast.immediates[1] = static_cast<uint32_t>(reason);
         bool isOpenByNature = type && program.at(type).admitsForeignObjects(program) && !program.isOpenedForLog(program.at(type));
@@ -2481,9 +2619,880 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id, F
     return entry;
 }
 
+namespace {
+
+struct SignatureOfValueEntry {
+    Vector<TypeID, 4> parameters;
+    TypeID result;
+};
+
+static bool isPlainFunctionWithKnownCallers(const Program& program, FunctionID id)
+{
+    auto& function = program.at(id);
+    if (function.kind != FunctionKind::Plain && function.kind != FunctionKind::Arrow)
+        return false;
+    if (function.blocks.isEmpty() || function.isGenericEntrypoint() || function.isBodyOfSeveralSites || !function.resultTypes.isEmpty())
+        return false;
+    if (function.has(Format::FunctionHasRestParameter) || function.has(Format::FunctionHasNewTarget) || function.has(FunctionUsesArgumentBuffer) || function.has(FunctionHasUnknownCallers) || function.has(FunctionIsHalfOfHiddenCoroutine) || function.has(FunctionLogsMisfits) || function.has(FunctionIsEnteredByValue))
+        return false;
+    if (function.takesItsClosure || function.rampForClosures || function.isRampForClosures || function.writtenEntry || function.secondBody || function.resumeFunction || function.startFunction || function.worker || function.declaredAs & (functionIsAsync | functionIsGenerator))
+        return false;
+    return !program.isResumeFunction(function) && !program.isEntry(id);
+}
+
+static bool mayHaveValueEntry(const Program& program, FunctionID id)
+{
+    auto& function = program.at(id);
+    if (!isPlainFunctionWithKnownCallers(program, id) || function.has(Format::FunctionIsBuiltin) || function.assertedThisType || !program.genericEntrypoints.contains(id.index()) || !program.makesSlimClosures(function))
+        return false;
+    unsigned numberOfGPRs = 0;
+    unsigned numberOfFPRs = 0;
+    auto count = [&](TypeID type) {
+        Rep rep = repOf(program.at(type ? type : program.types.anything));
+        ++(rep == Rep::Double || rep == Rep::OptionalDouble ? numberOfFPRs : numberOfGPRs);
+    };
+    for (TypeID type : function.captureTypes)
+        count(type);
+    if (function.has(Format::FunctionHasThis))
+        count(function.thisType);
+    for (TypeID type : function.parameterTypes)
+        count(type);
+    if (numberOfGPRs > numberOfDirectArgumentGPRs || numberOfFPRs > FPRInfo::numberOfArgumentRegisters)
+        return false;
+    for (unsigned i = 0; i < function.parameterTypes.size(); ++i) {
+        if (function.assertedTypeOfParameter(i))
+            return false;
+    }
+    return std::ranges::none_of(function.values, [&](const Value& value) {
+        if (value.opcode == Opcode::GetMyArgumentByVal)
+            return value.readsArgumentsObject();
+        return (value.opcode == Opcode::Operation || value.opcode == Opcode::CallBuiltin) && languageOperationOf(program, value) == LanguageOperation::CreateArguments;
+    });
+}
+
+static Value makeValueOfEntry(const Program& program, Opcode opcode, TypeID type, uint32_t position)
+{
+    Value value;
+    value.opcode = opcode;
+    value.position = position;
+    value.type = type;
+    value.rep = repOf(program.at(type));
+    return value;
+}
+
+static ValueID addEntryParameter(const Program& program, Function& function, TypeID type)
+{
+    ValueID result(function.values.size());
+    Value value = makeValueOfEntry(program, Opcode::Parameter, type, function.position);
+    value.immediates = { 0, static_cast<uint32_t>(function.blocks[0].parameters.size()) };
+    function.values.append(WTF::move(value));
+    function.blocks[0].parameters.append(result);
+    return result;
+}
+
+static Function createValueEntry(const Program& program, FunctionID id, const SignatureOfValueEntry& signature)
+{
+    auto& callee = program.at(id);
+    Function entry;
+    entry.name = callee.name;
+    entry.kind = FunctionKind::Plain;
+    entry.module = callee.module;
+    entry.position = callee.position;
+    entry.length = callee.length;
+    entry.flags = Format::FunctionIsTyped | Format::FunctionIsHiddenInStackTraces;
+    entry.isValueEntry = true;
+    entry.functionOfValueEntry = id;
+    entry.resultType = signature.result ? signature.result : program.types.undefined;
+    entry.returnsBoxedValue = repOf(program.at(entry.resultType)) == Rep::Int32;
+    entry.blocks.append(Block { });
+    auto append = [&](Value&& value) {
+        ValueID result(entry.values.size());
+        entry.values.append(WTF::move(value));
+        entry.blocks[0].values.append(result);
+        return result;
+    };
+    ValueID closure = addEntryParameter(program, entry, program.at(program.closureLayout).type);
+    ValueID thisValue = addEntryParameter(program, entry, program.types.anything);
+    Vector<ValueID, 8> given;
+    for (TypeID type : signature.parameters)
+        given.append(addEntryParameter(program, entry, type));
+    auto undefinedValue = [&] {
+        return append(makeValueOfEntry(program, Opcode::Undefined, program.types.undefined, callee.position));
+    };
+    auto held = [&](ValueID passed, TypeID type, CastReason reason) {
+        if (!type || program.isHeldAlready(program.typeOf(entry, passed), program.at(type), reason))
+            return passed;
+        Value cast = makeValueOfEntry(program, Opcode::Cast, type, callee.position);
+        cast.children[0] = passed;
+        cast.immediates[1] = static_cast<uint32_t>(reason);
+        return append(WTF::move(cast));
+    };
+    Arguments all;
+    for (unsigned i = 0; i < callee.captureTypes.size(); ++i) {
+        Value capture = makeValueOfEntry(program, Opcode::GetCapture, callee.captureTypes[i], callee.position);
+        capture.children[0] = closure;
+        capture.immediates = { id.index(), i };
+        all.append(append(WTF::move(capture)));
+    }
+    if (callee.has(Format::FunctionHasThis))
+        all.append(held(thisValue, callee.thisType, CastReason::Store));
+    for (unsigned i = 0; i < callee.parameterTypes.size(); ++i)
+        all.append(held(i < given.size() ? given[i] : undefinedValue(), callee.parameterTypes[i], callee.reasonToHoldParameter(i)));
+    Value call = makeValueOfEntry(program, Opcode::CallDirect, callee.resultType ? callee.resultType : program.types.anything, callee.position);
+    call.immediates[0] = id.index();
+    call.arguments = WTF::move(all);
+    entry.blocks[0].terminator.kind = TerminatorKind::Return;
+    entry.blocks[0].terminator.value = append(WTF::move(call));
+    return entry;
+}
+
+static bool mayHaveTwin(const Program& program, FunctionID id, const SignatureOfValueEntry& signature)
+{
+    static constexpr unsigned mostValuesOfTwin = 256;
+    auto& callee = program.at(id);
+    Rep rep = repOf(program.at(signature.result));
+    if ((rep != Rep::Double && rep != Rep::OptionalDouble && rep != Rep::Int64 && rep != Rep::OptionalInt64) || !callee.resultType || repOf(program.at(callee.resultType)) != rep)
+        return false;
+    if (callee.values.size() > mostValuesOfTwin || callee.has(Format::FunctionHasThis) || callee.parameterTypes.size() < signature.parameters.size() || callee.blocks[0].parameters.size() != callee.captureTypes.size() + callee.parameterTypes.size())
+        return false;
+    if (std::ranges::any_of(callee.parameterTypes, [](TypeID type) { return !type; }))
+        return false;
+    return std::ranges::none_of(callee.values, [&](const Value& value) {
+        return value.isInTailPosition || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce || value.opcode == Opcode::FunctionReference || (value.opcode == Opcode::CallDirect && value.function() == id);
+    });
+}
+
+static Function createTwin(const Program& program, FunctionID id, const SignatureOfValueEntry& signature)
+{
+    Function twin = program.at(id);
+    twin.isValueEntry = true;
+    twin.isTwinOfItsFunction = true;
+    twin.functionOfValueEntry = id;
+    twin.takesCapturesFromClosure = !twin.captureTypes.isEmpty();
+    auto& first = twin.blocks[0];
+    unsigned numberOfCaptures = twin.captureTypes.size();
+    unsigned numberAtHead = 0;
+    while (twin.parameterTypes.size() > signature.parameters.size()) {
+        ValueID parameter = first.parameters.takeLast();
+        twin.parameterTypes.removeLast();
+        twin.at(parameter) = makeValueOfEntry(program, Opcode::Undefined, program.types.undefined, twin.position);
+        first.values.insert(numberAtHead++, parameter);
+    }
+    for (unsigned i = 0; i < signature.parameters.size(); ++i) {
+        TypeID own = twin.parameterTypes[i];
+        TypeID passed = signature.parameters[i];
+        CastReason reason = twin.reasonToHoldParameter(i);
+        if (repOf(program.at(own)) == repOf(program.at(passed)) && program.isHeldAlready(program.at(passed), program.at(own), reason))
+            continue;
+        ValueID parameter = first.parameters[numberOfCaptures + i];
+        ValueID held(twin.values.size());
+        auto takeHeld = [&](ValueID& child) {
+            if (child == parameter)
+                child = held;
+        };
+        for (auto& value : twin.values)
+            value.forEachChild(takeHeld);
+        for (auto& block : twin.blocks)
+            block.terminator.forEachChild(takeHeld);
+        Value cast = makeValueOfEntry(program, Opcode::Cast, own, twin.position);
+        cast.children[0] = parameter;
+        cast.immediates[1] = static_cast<uint32_t>(reason);
+        twin.values.append(WTF::move(cast));
+        twin.blocks[0].values.insert(numberAtHead++, held);
+        twin.at(parameter).type = passed;
+        twin.at(parameter).rep = repOf(program.at(passed));
+        twin.parameterTypes[i] = passed;
+    }
+    return twin;
+}
+
+static Function createAdapterOfSignature(const Program& program, const Function& like, const SignatureOfValueEntry& signature)
+{
+    Function adapter;
+    adapter.name = program.emptyString;
+    adapter.kind = FunctionKind::Plain;
+    adapter.module = like.module;
+    adapter.position = like.position;
+    adapter.flags = Format::FunctionIsTyped | Format::FunctionIsHiddenInStackTraces;
+    adapter.isValueEntry = true;
+    adapter.resultType = signature.result;
+    adapter.returnsBoxedValue = repOf(program.at(signature.result)) == Rep::Int32;
+    adapter.blocks.append(Block { });
+    auto append = [&](Value&& value) {
+        ValueID result(adapter.values.size());
+        adapter.values.append(WTF::move(value));
+        adapter.blocks[0].values.append(result);
+        return result;
+    };
+    ValueID callee = addEntryParameter(program, adapter, program.types.anything);
+    ValueID thisValue = addEntryParameter(program, adapter, program.types.anything);
+    Arguments given;
+    for (TypeID type : signature.parameters)
+        given.append(addEntryParameter(program, adapter, type));
+    Value call = makeValueOfEntry(program, Opcode::Call, signature.result, like.position);
+    call.children[0] = callee;
+    call.children[1] = thisValue;
+    call.arguments = WTF::move(given);
+    adapter.blocks[0].terminator.kind = TerminatorKind::Return;
+    adapter.blocks[0].terminator.value = append(WTF::move(call));
+    return adapter;
+}
+
+static uint32_t hashOfShape(std::span<const TypeID> parameters, TypeID result)
+{
+    Hasher hasher;
+    add(hasher, static_cast<unsigned>(parameters.size()), result);
+    for (TypeID type : parameters)
+        add(hasher, type);
+    return hasher.hash() >> 1;
+}
+
+static bool hasNoBody(const Function& function)
+{
+    return function.blocks.isEmpty() || (function.blocks[0].values.isEmpty() && function.blocks[0].terminator.kind == TerminatorKind::Unreachable);
+}
+
+static bool mayGoBySignature(const Program& program, const Value& call)
+{
+    if (!call.hasCallSignature())
+        return false;
+    auto& declared = program.callSignatures[call.callSignature()];
+    unsigned numberOfArguments = call.arguments.size();
+    if (declared.hasRestParameter || numberOfArguments < declared.leastNumberOfArguments || numberOfArguments > declared.parameters.size())
+        return false;
+    unsigned numberOfGPRs = 0;
+    unsigned numberOfFPRs = 0;
+    for (unsigned k = 0; k < numberOfArguments; ++k) {
+        if (!declared.parameters[k])
+            return false;
+        Rep rep = repOf(program.at(declared.parameters[k]));
+        ++(rep == Rep::Double || rep == Rep::OptionalDouble ? numberOfFPRs : numberOfGPRs);
+    }
+    return numberOfGPRs <= numberOfArgumentGPRs && numberOfFPRs <= FPRInfo::numberOfArgumentRegisters;
+}
+
+static bool isDearToBox(const Type& type)
+{
+    Rep rep = repOf(type);
+    return rep == Rep::Double || rep == Rep::OptionalDouble || rep == Rep::Int64 || rep == Rep::OptionalInt64;
+}
+
+static bool isPassedRaw(const Program& program, TypeID type) { return isDearToBox(program.at(type)); }
+
+static Vector<TypeID, 4> parametersOfShape(const Program& program, const Value& call)
+{
+    Vector<TypeID, 4> parameters;
+    parameters.append(program.callSignatures[call.callSignature()].parameters.span().first(call.arguments.size()));
+    for (TypeID& type : parameters) {
+        if (auto widened = program.numbersOrUndefined.find(type.index()); widened != program.numbersOrUndefined.end())
+            type = widened->value;
+    }
+    return parameters;
+}
+
+static constexpr uint32_t bytesSparedAtCallByResult = 40;
+static constexpr uint32_t bytesOfAdapterOfResult = 190;
+static constexpr uint32_t leastCallsWorthAnAdapter = bytesOfAdapterOfResult / bytesSparedAtCallByResult + 1;
+static constexpr unsigned maxResultsAskedFor = 64;
+
+static Vector<uint32_t> numbersOfUsesIn(const Function& function)
+{
+    Vector<uint32_t> result(FillWith { }, function.values.size(), 0u);
+    auto count = [&](ValueID child) {
+        if (child)
+            ++result[child.index()];
+    };
+    for (auto& block : function.blocks) {
+        count(block.terminator.value);
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                count(argument);
+        }
+        for (ValueID id : block.values)
+            function.at(id).forEachChild(count);
+    }
+    return result;
+}
+
+static ValueID castBehindCall(const Function& function, const Block& block, unsigned index, const Vector<uint32_t>& numbersOfUses)
+{
+    ValueID id = block.values[index];
+    if (function.at(id).isInTailPosition || index + 1 >= block.values.size() || numbersOfUses[id.index()] != 1)
+        return { };
+    auto& cast = function.at(block.values[index + 1]);
+    if (cast.opcode != Opcode::Cast || cast.child(0) != id || cast.immediates[0] != Format::none || cast.assertedType() || cast.parameterCheckCallee())
+        return { };
+    if (cast.immediates[1] != static_cast<uint32_t>(CastReason::As) && cast.immediates[1] != static_cast<uint32_t>(CastReason::Store))
+        return { };
+    return block.values[index + 1];
+}
+
+static FunctionID adapterOfResultOfCall(const Program& program, const Function& function, const Value& call, ValueID cast)
+{
+    static_assert(numberOfArgumentGPRs < 256);
+    TypeID result = cast ? function.at(cast).type : call.type;
+    if (call.opcode != Opcode::Call || function.isValueEntry || !function.has(Format::FunctionIsTyped) || !result || call.arguments.size() > numberOfArgumentGPRs)
+        return { };
+    auto& type = program.at(result);
+    if (type.isAnything() || type.isNever() || type.hasOnlyPrimitives(Primitive::Undefined) || isDearToBox(type))
+        return { };
+    return program.adaptersOfResults.get(Program::keyOfAdapterOfResult(result, cast ? function.at(cast).immediates[1] : Format::none, call.arguments.size()));
+}
+
+} // namespace
+
+FunctionID Program::adapterOfCall(const Value& call) const
+{
+    if (shapesOfValueCalls.isEmpty() || call.opcode != Opcode::Call || !mayGoBySignature(*this, call))
+        return { };
+    auto parameters = parametersOfShape(*this, call);
+    if (auto found = shapesOfValueCallsByHash.find(hashOfShape(parameters.span(), call.type)); found != shapesOfValueCallsByHash.end()) {
+        for (uint32_t shape : found->value) {
+            if (shapesOfValueCalls[shape].result == call.type && std::ranges::equal(shapesOfValueCalls[shape].parameters, parameters))
+                return shapesOfValueCalls[shape].adapter;
+        }
+    }
+    return { };
+}
+
+void createAdaptersOfResults(Program& program)
+{
+    if (program.mayRunInSeveralInstances || program.logsTypeErrors || Options::auditAOTTypedAssertions())
+        return;
+    auto& asRead = std::as_const(program);
+    unsigned count = asRead.functions.size();
+    struct Result {
+        TypeID type;
+        uint32_t castOfResult { Format::none };
+        uint32_t like { 0 };
+        uint32_t numberOfCalls { 0 };
+    };
+    struct Asked {
+        TypeID type;
+        uint32_t castOfResult;
+        uint32_t numberOfArguments;
+        uint32_t like;
+        uint32_t numberOfCalls;
+    };
+    Vector<Asked> allAsked;
+    UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> indexOfAsked;
+    struct AskedAtCall {
+        TypeID type;
+        uint32_t castOfResult;
+        uint32_t numberOfArguments;
+    };
+    Vector<Vector<AskedAtCall>> askedIn(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = asRead.functions[i];
+        if (function.blocks.isEmpty() || function.isValueEntry || !function.has(Format::FunctionIsTyped) || std::ranges::none_of(function.values, [](auto& value) { return value.opcode == Opcode::Call; }))
+            return;
+        Vector<uint32_t> numbersOfUses = numbersOfUsesIn(function);
+        for (auto& block : function.blocks) {
+            for (unsigned indexInBlock = 0; indexInBlock < block.values.size(); ++indexInBlock) {
+                auto& call = function.at(block.values[indexInBlock]);
+                if (call.opcode != Opcode::Call || call.arguments.size() > numberOfArgumentGPRs || asRead.adapterOfCall(call))
+                    continue;
+                ValueID cast = castBehindCall(function, block, indexInBlock, numbersOfUses);
+                TypeID type = cast ? function.at(cast).type : call.type;
+                uint32_t castOfResult = cast ? function.at(cast).immediates[1] : Format::none;
+                if (!type || asRead.at(type).isAnything() || asRead.at(type).isNever() || asRead.at(type).hasOnlyPrimitives(Primitive::Undefined) || isDearToBox(asRead.at(type)))
+                    continue;
+                askedIn[i].append(AskedAtCall { type, castOfResult, static_cast<uint32_t>(call.arguments.size()) });
+            }
+        }
+    });
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto [type, castOfResult, numberOfArguments] : askedIn[i]) {
+            auto added = indexOfAsked.add(Program::keyOfAdapterOfResult(type, castOfResult, numberOfArguments), static_cast<uint32_t>(allAsked.size()));
+            if (added.isNewEntry)
+                allAsked.append(Asked { type, castOfResult, numberOfArguments, i, 0 });
+            ++allAsked[added.iterator->value].numberOfCalls;
+        }
+    }
+    Vector<Result> results;
+    UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> indexOfResult;
+    Vector<std::pair<uint32_t, uint32_t>> adaptersToMake;
+    for (auto& asked : allAsked) {
+        if (asked.numberOfCalls < leastCallsWorthAnAdapter)
+            continue;
+        auto added = indexOfResult.add(Program::keyOfAdapterOfResult(asked.type, asked.castOfResult, 0), static_cast<uint32_t>(results.size()));
+        if (added.isNewEntry)
+            results.append(Result { asked.type, asked.castOfResult, asked.like, 0 });
+        results[added.iterator->value].numberOfCalls += asked.numberOfCalls;
+        adaptersToMake.append({ added.iterator->value, asked.numberOfArguments });
+    }
+    if (results.isEmpty())
+        return;
+
+    Vector<std::pair<FunctionID, FunctionID>> candidates;
+    Vector<TypeID> typesYielded;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> indexOfTypeYielded;
+    for (auto& [index, general] : asRead.genericEntrypoints) {
+        FunctionID id(index);
+        auto& function = asRead.at(id);
+        if (!isPlainFunctionWithKnownCallers(asRead, id) || function.has(Format::FunctionIsBuiltin) || !function.has(Format::FunctionIsTyped) || !function.resultType || !asRead.makesSlimClosures(function) || asRead.at(general).valueEntry)
+            continue;
+        candidates.append({ id, general });
+    }
+    std::ranges::sort(candidates, { }, [](auto& candidate) {
+        return candidate.first.index();
+    });
+    for (auto [id, general] : candidates) {
+        if (indexOfTypeYielded.add(asRead.at(id).resultType.index(), static_cast<uint32_t>(typesYielded.size())).isNewEntry)
+            typesYielded.append(asRead.at(id).resultType);
+    }
+    Vector<uint32_t> mostAskedFirst(results.size(), [](size_t index) {
+        return static_cast<uint32_t>(index);
+    });
+    std::ranges::sort(mostAskedFirst, [&](uint32_t a, uint32_t b) {
+        return results[a].numberOfCalls != results[b].numberOfCalls ? results[a].numberOfCalls > results[b].numberOfCalls : a < b;
+    });
+    mostAskedFirst.shrink(std::min<size_t>(mostAskedFirst.size(), maxResultsAskedFor));
+    Vector<uint64_t> resultsHolding(FillWith { }, typesYielded.size(), static_cast<uint64_t>(0));
+    forEachIndexInParallel(typesYielded.size(), [&](unsigned k) {
+        auto& yielded = asRead.at(typesYielded[k]);
+        if (yielded.isNever())
+            return;
+        for (unsigned bit = 0; bit < mostAskedFirst.size(); ++bit) {
+            auto& result = results[mostAskedFirst[bit]];
+            if (result.castOfResult == Format::none ? yielded.isWithin(asRead.at(result.type), asRead) : asRead.isHeldAlready(yielded, asRead.at(result.type), static_cast<CastReason>(result.castOfResult)))
+                resultsHolding[k] |= 1ULL << bit;
+        }
+    });
+    uint64_t resultsHoldingSomething = 0;
+    uint64_t numberOfFunctions = 0;
+    for (auto [id, general] : candidates) {
+        uint64_t holding = resultsHolding[indexOfTypeYielded.get(asRead.at(id).resultType.index())];
+        if (!holding)
+            continue;
+        program.functions[general.index()].resultsHoldingWhatIsYielded = holding;
+        program.functions[general.index()].typeYieldedWhenResultsWereCompared = asRead.at(id).resultType;
+        resultsHoldingSomething |= holding;
+        ++numberOfFunctions;
+    }
+    Vector<uint32_t> bitOfResult(FillWith { }, results.size(), static_cast<uint32_t>(Format::none));
+    for (unsigned bit = 0; bit < mostAskedFirst.size(); ++bit) {
+        if (resultsHoldingSomething >> bit & 1)
+            bitOfResult[mostAskedFirst[bit]] = bit;
+    }
+    Vector<Function> made;
+    for (auto [result, numberOfArguments] : adaptersToMake) {
+        if (bitOfResult[result] == Format::none)
+            continue;
+        auto& like = asRead.functions[results[result].like];
+        uint32_t castOfResult = results[result].castOfResult;
+        SignatureOfValueEntry signature;
+        signature.parameters.fill(asRead.types.anything, numberOfArguments);
+        signature.result = castOfResult == Format::none ? results[result].type : asRead.types.anything;
+        program.adaptersOfResults.set(Program::keyOfAdapterOfResult(results[result].type, castOfResult, numberOfArguments), FunctionID(count + made.size()));
+        made.append(createAdapterOfSignature(asRead, like, signature));
+        auto& adapter = made.last();
+        if (castOfResult != Format::none) {
+            Value cast = makeValueOfEntry(asRead, Opcode::Cast, results[result].type, like.position);
+            cast.children[0] = adapter.blocks[0].terminator.value;
+            cast.immediates[1] = castOfResult;
+            adapter.blocks[0].terminator.value = ValueID(adapter.values.size());
+            adapter.blocks[0].values.append(adapter.blocks[0].terminator.value);
+            adapter.values.append(WTF::move(cast));
+            adapter.resultType = results[result].type;
+        }
+        adapter.returnsBoxedValue = true;
+        adapter.resultOfAdapter = bitOfResult[result];
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: calls of values by result: ", results.size(), " result types are asked for by ", leastCallsWorthAnAdapter, " calls or more as they were read; the ", mostAskedFirst.size(), " most asked are looked at: ", made.size(), " adapters; ", numberOfFunctions, " functions of ", candidates.size(), ", which yield ", typesYielded.size(), " types, yield what is within one of them");
+    program.functions.appendVector(WTF::move(made));
+}
+
+void forgetResultsThatCallersCheck(Program& program)
+{
+    auto& asRead = std::as_const(program);
+    for (auto& [index, general] : asRead.genericEntrypoints) {
+        if (asRead.at(general).resultsHoldingWhatIsYielded && (asRead.functions[index].resultType != asRead.at(general).typeYieldedWhenResultsWereCompared || asRead.functions[index].isCalledFromDroppableFrame))
+            program.functions[general.index()].resultsHoldingWhatIsYielded = 0;
+    }
+}
+
+void createValueEntrypoints(Program& program)
+{
+    if (program.mayRunInSeveralInstances || program.logsTypeErrors || Options::auditAOTTypedAssertions() || program.callSignatures.isEmpty())
+        return;
+    auto& asRead = std::as_const(program);
+    unsigned count = asRead.functions.size();
+    struct Shape {
+        SignatureOfValueEntry signature;
+        uint32_t like { 0 };
+        uint32_t numberOfSites { 0 };
+        FunctionID adapter;
+    };
+    Vector<Shape> shapes;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> shapesByHash;
+    Vector<TypeID> typesOrUndefined;
+    auto orUndefined = [&](TypeID id) {
+        if (typesOrUndefined.size() <= id.index())
+            typesOrUndefined.grow(id.index() + 1);
+        if (!typesOrUndefined[id.index()]) {
+            Type type = asRead.at(id);
+            type.primitives |= Primitive::Undefined;
+            typesOrUndefined[id.index()] = program.types.intern(type);
+        }
+        return typesOrUndefined[id.index()];
+    };
+    for (auto& signature : asRead.callSignatures) {
+        for (TypeID type : signature.parameters) {
+            if (type && asRead.at(type).isNumber())
+                program.numbersOrUndefined.add(type.index(), orUndefined(type));
+        }
+    }
+    struct Site {
+        Vector<TypeID, 4> parameters;
+        TypeID result;
+    };
+    Vector<Vector<Site>> sitesIn(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = asRead.functions[i];
+        if (function.blocks.isEmpty() || !function.has(Format::FunctionIsTyped))
+            return;
+        for (auto& call : function.values) {
+            if (!mayGoBySignature(asRead, call))
+                continue;
+            auto parameters = parametersOfShape(asRead, call);
+            if (!isPassedRaw(asRead, call.type) && std::ranges::none_of(parameters, [&](TypeID type) { return isPassedRaw(asRead, type); }))
+                continue;
+            if (asRead.at(call.type).hasCells() || std::ranges::any_of(parameters, [&](TypeID type) { return asRead.at(type).hasCells(); }))
+                continue;
+            sitesIn[i].append(Site { WTF::move(parameters), call.type });
+        }
+    });
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto& [parameters, result] : sitesIn[i]) {
+            auto& alike = shapesByHash.add(hashOfShape(parameters.span(), result), Vector<uint32_t, 1>()).iterator->value;
+            uint32_t shape = std::numeric_limits<uint32_t>::max();
+            for (uint32_t known : alike) {
+                if (shapes[known].signature.result == result && std::ranges::equal(shapes[known].signature.parameters, parameters))
+                    shape = known;
+            }
+            if (shape == std::numeric_limits<uint32_t>::max()) {
+                shape = shapes.size();
+                alike.append(shape);
+                SignatureOfValueEntry signature;
+                signature.parameters.appendVector(parameters);
+                signature.result = result;
+                shapes.append(Shape { WTF::move(signature), i, 0, { } });
+            }
+            ++shapes[shape].numberOfSites;
+        }
+    }
+    if (shapes.isEmpty())
+        return;
+
+    struct Answer {
+        FunctionID function;
+        uint32_t shape { Format::none };
+        unsigned numberGiven { 0 };
+    };
+    Vector<FunctionID> enteredByValue;
+    for (auto& [index, general] : asRead.genericEntrypoints)
+        enteredByValue.append(FunctionID(index));
+    std::ranges::sort(enteredByValue, { }, [](FunctionID id) {
+        return id.index();
+    });
+    Vector<uint8_t> mayHaveEntry(FillWith { }, enteredByValue.size(), static_cast<uint8_t>(0));
+    forEachIndexInParallel(enteredByValue.size(), [&](unsigned k) {
+        mayHaveEntry[k] = mayHaveValueEntry(asRead, enteredByValue[k]);
+    });
+    Vector<FunctionID> candidates;
+    for (unsigned k = 0; k < enteredByValue.size(); ++k) {
+        if (mayHaveEntry[k])
+            candidates.append(enteredByValue[k]);
+    }
+    Vector<Vector<TypeID, 4>> whatParametersMayBeGiven(candidates.size());
+    for (unsigned k = 0; k < candidates.size(); ++k) {
+        for (TypeID type : asRead.at(candidates[k]).parameterTypes)
+            whatParametersMayBeGiven[k].append(!type ? asRead.types.anything : asRead.at(type).isNumber() ? orUndefined(type) : type);
+    }
+    Vector<uint32_t> shapesByNumberOfSites(shapes.size(), [](size_t index) {
+        return static_cast<uint32_t>(index);
+    });
+    std::ranges::sort(shapesByNumberOfSites, [&](uint32_t a, uint32_t b) {
+        return shapes[a].numberOfSites != shapes[b].numberOfSites ? shapes[a].numberOfSites > shapes[b].numberOfSites : a < b;
+    });
+    Vector<Answer> answersOfCandidates(candidates.size());
+    forEachIndexInParallel(candidates.size(), [&](unsigned k) {
+        auto& function = asRead.at(candidates[k]);
+        auto& own = whatParametersMayBeGiven[k];
+        unsigned leastGiven = own.size();
+        while (leastGiven && asRead.at(asRead.types.undefined).isWithin(asRead.at(function.parameterTypes[leastGiven - 1] ? function.parameterTypes[leastGiven - 1] : asRead.types.anything), asRead))
+            --leastGiven;
+        auto& yielded = asRead.at(function.resultType ? function.resultType : asRead.types.anything);
+        auto& answer = answersOfCandidates[k];
+        answer.function = candidates[k];
+        for (unsigned round = 0; round < 2 * shapesByNumberOfSites.size(); ++round) {
+            uint32_t shape = shapesByNumberOfSites[round % shapesByNumberOfSites.size()];
+            auto& signature = shapes[shape].signature;
+            unsigned given = std::min<unsigned>(signature.parameters.size(), own.size());
+            if (given < leastGiven || !yielded.isWithin(asRead.at(signature.result), asRead))
+                continue;
+            if (round < shapesByNumberOfSites.size() && repOf(asRead.at(signature.result)) != repOf(yielded))
+                continue;
+            bool fits = true;
+            for (unsigned i = 0; i < given && fits; ++i)
+                fits = !asRead.at(own[i]).hasCells() && (signature.parameters[i] == own[i] || asRead.at(signature.parameters[i]).isWithin(asRead.at(own[i]), asRead));
+            if (!fits)
+                continue;
+            bool crosses = isPassedRaw(asRead, signature.result) && isDearToBox(yielded);
+            for (unsigned i = 0; i < given && !crosses; ++i)
+                crosses = isPassedRaw(asRead, signature.parameters[i]);
+            if (!crosses)
+                continue;
+            answer.shape = shape;
+            answer.numberGiven = given;
+            break;
+        }
+    });
+    Vector<Answer> answers;
+    for (auto& answer : answersOfCandidates) {
+        if (answer.shape != Format::none)
+            answers.append(answer);
+    }
+    if (answers.isEmpty())
+        return;
+    BitVector answersSomeShape(count);
+    for (auto& answer : answers)
+        answersSomeShape.set(answer.function.index());
+    Vector<uint8_t> isHandedToTheProgram(FillWith { }, count, static_cast<uint8_t>(0));
+    for (auto& layout : asRead.layouts) {
+        for (auto* methods : { &layout.methods, &layout.staticMethods }) {
+            for (auto& method : *methods) {
+                if (method.function)
+                    isHandedToTheProgram[method.function.index()] = 1;
+            }
+        }
+    }
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = asRead.functions[i];
+        Vector<ValueID, 8> closures;
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = function.at(id);
+                if ((value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce) && answersSomeShape.get(value.function().index()))
+                    closures.append(id);
+            }
+        }
+        if (closures.isEmpty())
+            return;
+        auto isHanded = [&](ValueID used) {
+            if (closures.contains(used))
+                WTF::atomicStore(&isHandedToTheProgram[function.at(used).function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        };
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = function.at(id);
+                if (value.opcode == Opcode::Call) {
+                    if (function.at(value.child(0)).opcode == Opcode::GetGlobal)
+                        continue;
+                    if (value.child(1))
+                        isHanded(value.child(1));
+                    for (ValueID argument : value.arguments)
+                        isHanded(argument);
+                    continue;
+                }
+                if (value.opcode == Opcode::CallMethod) {
+                    auto& receiver = asRead.typeOf(function, value.child(0));
+                    if (!receiver.anyObject && !receiver.anyFunction && receiver.views.isEmpty())
+                        continue;
+                }
+                value.forEachChild(isHanded);
+            }
+            if (block.terminator.value)
+                isHanded(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    isHanded(argument);
+            }
+        }
+    });
+    answers.removeAllMatching([&](auto& answer) {
+        return !isHandedToTheProgram[answer.function.index()];
+    });
+    if (answers.isEmpty())
+        return;
+
+    Vector<Function> made;
+    for (auto& answer : answers) {
+        if (shapes[answer.shape].adapter)
+            continue;
+        shapes[answer.shape].adapter = FunctionID(count + made.size());
+        made.append(createAdapterOfSignature(asRead, asRead.functions[shapes[answer.shape].like], shapes[answer.shape].signature));
+    }
+    size_t numberOfAdapters = made.size();
+    program.firstAdapterOfSignature = FunctionID(count);
+    made.grow(numberOfAdapters + answers.size());
+    forEachIndexInParallel(answers.size(), [&](unsigned k) {
+        auto& answer = answers[k];
+        auto& shape = shapes[answer.shape];
+        SignatureOfValueEntry signature;
+        signature.parameters.append(shape.signature.parameters.span().first(answer.numberGiven));
+        signature.result = shape.signature.result;
+        auto& entry = made[numberOfAdapters + k];
+        entry = mayHaveTwin(asRead, answer.function, signature) ? createTwin(asRead, answer.function, signature) : createValueEntry(asRead, answer.function, signature);
+        entry.adapterOfValueEntry = shape.adapter;
+    });
+    for (unsigned k = 0; k < answers.size(); ++k)
+        program.functions[asRead.genericEntrypoints.get(answers[k].function.index()).index()].valueEntry = FunctionID(count + numberOfAdapters + k);
+    for (auto& shape : shapes) {
+        if (!shape.adapter)
+            continue;
+        program.shapesOfValueCallsByHash.add(hashOfShape(shape.signature.parameters.span(), shape.signature.result), Vector<uint32_t, 1>()).iterator->value.append(program.shapesOfValueCalls.size());
+        program.shapesOfValueCalls.append({ shape.signature.parameters, shape.signature.result, shape.adapter });
+    }
+    program.functions.appendVector(WTF::move(made));
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: calls of values by signature: ", shapes.size(), " signatures through which a double crosses at the calls as they were read; ", answers.size(), " functions of ", candidates.size(), " answer ", numberOfAdapters, " of them");
+}
+
+void callValuesBySignature(Program& program)
+{
+    if (program.shapesOfValueCalls.isEmpty() && program.adaptersOfResults.isEmpty())
+        return;
+    auto& asRead = std::as_const(program);
+    uint64_t numberOfSites = 0;
+    uint64_t numberLeft = 0;
+    uint64_t numberCheapToBox = 0;
+    struct CallByResult {
+        uint32_t function;
+        ValueID call;
+        ValueID cast;
+        FunctionID adapter;
+    };
+    Vector<CallByResult> callsByResult;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberOfCallsOfAdapter;
+    enum class Verdict : uint8_t { IsLeft, GoesByResult, IsCheapToBox, GoesBySignature };
+    struct Judged {
+        ValueID call;
+        ValueID cast;
+        FunctionID adapter;
+        Verdict verdict;
+    };
+    Vector<Vector<Judged>> judgedIn(asRead.functions.size());
+    forEachIndexInParallel(asRead.functions.size(), [&](unsigned i) {
+        auto& function = asRead.functions[i];
+        if (function.blocks.isEmpty() || function.isValueEntry || std::ranges::none_of(function.values, [](auto& value) { return value.opcode == Opcode::Call; }))
+            return;
+        Vector<uint32_t> numbersOfUses;
+        if (!asRead.adaptersOfResults.isEmpty())
+            numbersOfUses = numbersOfUsesIn(function);
+        for (auto& block : function.blocks) {
+            for (unsigned indexInBlock = 0; indexInBlock < block.values.size(); ++indexInBlock) {
+                ValueID id = block.values[indexInBlock];
+                auto& call = function.at(id);
+                if (call.opcode != Opcode::Call)
+                    continue;
+                FunctionID adapter = asRead.adapterOfCall(call);
+                ValueID cast;
+                if (!adapter && !asRead.adaptersOfResults.isEmpty()) {
+                    cast = castBehindCall(function, block, indexInBlock, numbersOfUses);
+                    adapter = adapterOfResultOfCall(asRead, function, call, cast);
+                }
+                if (!adapter || hasNoBody(asRead.at(adapter)))
+                    continue;
+                ValueID origin = call.child(0);
+                while (function.at(origin).opcode == Opcode::Cast)
+                    origin = function.at(origin).child(0);
+                bool goes = !call.assertedType() && call.methodAskedByStub == MethodAskedByStub::None && !function.at(call.child(0)).predictedClosure() && !function.at(origin).predictedClosure();
+                if (LayoutID view = call.child(1) ? asRead.typeOf(function, call.child(1)).onlyView() : LayoutID(); view && asRead.at(view).mayBeInFrame)
+                    goes = false;
+                auto& parameters = asRead.at(adapter).blocks[0].parameters;
+                for (unsigned k = 0; k < call.arguments.size() && goes; ++k) {
+                    auto& given = asRead.typeOf(function, call.arguments[k]);
+                    LayoutID view = given.onlyView();
+                    goes = given.isWithin(asRead.typeOf(asRead.at(adapter), parameters[k + 2]), asRead) && !(view && asRead.at(view).mayBeInFrame);
+                }
+                if (!goes) {
+                    judgedIn[i].append(Judged { id, cast, adapter, Verdict::IsLeft });
+                    continue;
+                }
+                if (asRead.at(adapter).resultOfAdapter != Format::none) {
+                    judgedIn[i].append(Judged { id, cast, adapter, Verdict::GoesByResult });
+                    continue;
+                }
+                bool passesWhatIsDearToBox = isPassedRaw(asRead, call.type);
+                for (unsigned k = 0; k < call.arguments.size() && !passesWhatIsDearToBox; ++k)
+                    passesWhatIsDearToBox = isDearToBox(asRead.typeOf(function, call.arguments[k]));
+                judgedIn[i].append(Judged { id, cast, adapter, passesWhatIsDearToBox ? Verdict::GoesBySignature : Verdict::IsCheapToBox });
+            }
+        }
+    });
+    for (unsigned i = 0; i < asRead.functions.size(); ++i) {
+        for (auto [id, cast, adapter, verdict] : judgedIn[i]) {
+            switch (verdict) {
+            case Verdict::IsLeft:
+                ++numberLeft;
+                break;
+            case Verdict::GoesByResult:
+                callsByResult.append({ i, id, cast, adapter });
+                ++numberOfCallsOfAdapter.add(adapter.index(), 0).iterator->value;
+                break;
+            case Verdict::IsCheapToBox:
+                ++numberCheapToBox;
+                break;
+            case Verdict::GoesBySignature: {
+                auto& changed = program.functions[i].at(id);
+                changed.goesBySignature = true;
+                changed.immediates[1] = adapter.index();
+                program.adaptersCalledBySignature.set(adapter.index());
+                ++numberOfSites;
+                break;
+            }
+            }
+        }
+    }
+    uint64_t numberOfSitesByResult = 0;
+    uint64_t numberOfCastsSpared = 0;
+    uint64_t numberOfAdaptersOfResults = 0;
+    uint64_t resultsWorthIt = 0;
+    int64_t bytesSparedByUpperHalf = 0;
+    for (auto& [adapter, numberOfCalls] : numberOfCallsOfAdapter) {
+        if (numberOfCalls < leastCallsWorthAnAdapter)
+            continue;
+        uint32_t result = asRead.functions[adapter].resultOfAdapter;
+        resultsWorthIt |= 1ULL << result;
+        if (result >= 32)
+            bytesSparedByUpperHalf += static_cast<int64_t>(numberOfCalls) * bytesSparedAtCallByResult - bytesOfAdapterOfResult;
+    }
+    int64_t numberOfEntriesThatSaySomething = 0;
+    for (auto& [index, general] : asRead.genericEntrypoints)
+        numberOfEntriesThatSaySomething += !!(asRead.at(general).resultsHoldingWhatIsYielded & resultsWorthIt);
+    program.sizeOfResultsHoldingWhatIsYielded = sizeof(uint64_t);
+    if (bytesSparedByUpperHalf <= numberOfEntriesThatSaySomething * static_cast<int64_t>(sizeof(uint32_t))) {
+        program.sizeOfResultsHoldingWhatIsYielded = sizeof(uint32_t);
+        resultsWorthIt &= std::numeric_limits<uint32_t>::max();
+    }
+    for (auto& [function, id, cast, adapter] : callsByResult) {
+        if (numberOfCallsOfAdapter.get(adapter.index()) < leastCallsWorthAnAdapter || !(resultsWorthIt >> asRead.at(adapter).resultOfAdapter & 1))
+            continue;
+        auto& changed = program.functions[function].at(id);
+        changed.goesBySignature = true;
+        changed.immediates[1] = adapter.index();
+        if (cast) {
+            changed.type = asRead.functions[function].at(cast).type;
+            changed.rep = repOf(asRead.at(changed.type));
+            program.functions[function].at(cast).setCastReason(CastReason::Upcast);
+            ++numberOfCastsSpared;
+        }
+        ++numberOfSitesByResult;
+        if (program.adaptersCalledBySignature.get(adapter.index()))
+            continue;
+        program.adaptersCalledBySignature.set(adapter.index());
+        ++numberOfAdaptersOfResults;
+        program.resultsThatCallsGoBy |= 1ULL << asRead.at(adapter).resultOfAdapter;
+    }
+    program.callsBySignatureAreChosen = true;
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: calls of values by signature: ", numberOfSites, " calls go so; ", numberLeft, " could, and an argument is not proven or a function is expected; ", numberCheapToBox, " pass nothing that is dear to box");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: calls of values by result: ", numberOfSitesByResult, " calls of ", callsByResult.size(), " go so, ", numberOfCastsSpared, " of them with the cast behind them, by ", numberOfAdaptersOfResults, " adapters, for ", std::popcount(program.resultsThatCallsGoBy), " result types; an adapter with fewer than ", leastCallsWorthAnAdapter, " calls is not worth its bytes; ", program.sizeOfResultsHoldingWhatIsYielded, " bytes lie ahead of a general entry that says something");
+}
+
 void findDeclaredParents(Program& program)
 {
-    auto makeClass = program.find("MakeClass"_s.span8());
+    auto makeClass = program.find(asBytes("MakeClass"_s.span8()));
     if (!makeClass)
         return;
     Vector<Vector<std::pair<LayoutID, FunctionID>>> found(program.functions.size());
@@ -2689,7 +3698,7 @@ static Function createBoundFunction(const Program& program, FunctionID id, unsig
 
 void expandDisposableStacks(Program& program)
 {
-    if (!program.find("NewDisposableStack"_s.span8()))
+    if (!program.find(asBytes("NewDisposableStack"_s.span8())))
         return;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         CallResolution(program, program.functions[i]).expandDisposableStacks();
@@ -2713,7 +3722,7 @@ void createBoundFunctions(Program& program)
             continue;
         FunctionID function(static_cast<uint32_t>(key >> 2));
         Vector<uint8_t> name;
-        name.append("bound "_s.span8());
+        name.append(asBytes("bound "_s.span8()));
         name.append(program.strings[std::as_const(program).at(function).name.index()]);
         StringID nameOfBound = program.intern(name.span());
         FunctionID bound(program.functions.size());

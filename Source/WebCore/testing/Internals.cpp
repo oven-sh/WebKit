@@ -170,6 +170,7 @@
 #include "MediaResourceLoader.h"
 #include "MediaSession.h"
 #include "MediaSessionActionDetails.h"
+#include "MediaSessionArtworkSizing.h"
 #include "MediaStrategy.h"
 #include "MediaStreamTrack.h"
 #include "MediaUsageInfo.h"
@@ -220,6 +221,7 @@
 #include "RenderTreeAsText.h"
 #include "RenderView.h"
 #include "RenderedDocumentMarker.h"
+#include "RequestedGPU.h"
 #include "ResolvedStyle.h"
 #include "ResourceLoadObserver.h"
 #include "SMILTimeContainer.h"
@@ -245,6 +247,7 @@
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "ShouldPartitionCookie.h"
+#include "SimulatedWebGLContextEvent.h"
 #include "SocketProvider.h"
 #include "SourceBuffer.h"
 #include "SpeechSynthesisUtterance.h"
@@ -298,6 +301,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/HexNumber.h>
@@ -427,7 +431,7 @@
 #include "SystemBattery.h"
 #include "VP9UtilitiesCocoa.h"
 #include <pal/spi/cf/CoreTextSPI.h>
-#include <wtf/spi/darwin/SandboxSPI.h>
+#include <wtf/darwin/DarwinExtras.h>
 #endif
 
 #if PLATFORM(WPE)
@@ -609,7 +613,7 @@ static bool markerTypesFrom(const String& markerType, OptionSet<DocumentMarkerTy
     return true;
 }
 
-static RefPtr<PrintContext>& NODELETE printContextForTesting()
+static RefPtr<PrintContext>& LEGACY_NODELETE printContextForTesting()
 {
     static NeverDestroyed<RefPtr<PrintContext>> context;
     return context;
@@ -642,6 +646,7 @@ void Internals::resetToConsistentState(Page& page)
     page.setResourceCachingDisabledByWebInspector(false);
     page.setConsoleMessageListenerForTesting(nullptr);
     page.setQuirksSubframeURLForTesting({ });
+    page.setQuirksTopDocumentHostForTesting({ });
 
     RefPtr localMainFrame = page.localMainFrame();
     if (!localMainFrame)
@@ -1074,7 +1079,7 @@ bool Internals::isStyleSheetLoadingSubresources(HTMLLinkElement& link)
     return link.sheet() && protect(link.sheet()->contents())->isLoadingSubresources();
 }
 
-static ResourceRequestCachePolicy NODELETE toResourceRequestCachePolicy(Internals::CachePolicy policy)
+static ResourceRequestCachePolicy LEGACY_NODELETE toResourceRequestCachePolicy(Internals::CachePolicy policy)
 {
     switch (policy) {
     case Internals::CachePolicy::UseProtocolCachePolicy:
@@ -1104,7 +1109,7 @@ ExceptionOr<void> Internals::setCanShowModalDialogOverride(bool allow)
     return { };
 }
 
-static ResourceLoadPriority NODELETE toResourceLoadPriority(Internals::ResourceLoadPriority priority)
+static ResourceLoadPriority LEGACY_NODELETE toResourceLoadPriority(Internals::ResourceLoadPriority priority)
 {
     switch (priority) {
     case Internals::ResourceLoadPriority::ResourceLoadPriorityVeryLow:
@@ -1141,7 +1146,7 @@ void Internals::setImmediateRendererDestructionEnabled(bool enabled)
     document->view()->layoutContext().setImmediateRendererDestructionEnabledForTesting(enabled);
 }
 
-static Internals::ResourceLoadPriority NODELETE toInternalsResourceLoadPriority(ResourceLoadPriority priority)
+static Internals::ResourceLoadPriority LEGACY_NODELETE toInternalsResourceLoadPriority(ResourceLoadPriority priority)
 {
     switch (priority) {
     case ResourceLoadPriority::VeryLow:
@@ -1685,6 +1690,11 @@ String Internals::computedAppleColorFilter(Element& element)
     return Style::Extractor::appleColorFilterSerializationForTesting(element);
 }
 
+String Internals::usedBackgroundColor(Element& element)
+{
+    return serializationForCSS(protect(element.computedStyle())->usedBackgroundColorResolvingCurrentColor());
+}
+
 Node& Internals::ensureUserAgentShadowRoot(Element& host)
 {
     return host.ensureUserAgentShadowRoot();
@@ -2226,6 +2236,12 @@ Ref<DOMRect> Internals::boundingBoxInRootViewCoordinates(Element& element)
     return DOMRect::create(element.boundingBoxInRootViewCoordinates());
 }
 
+Ref<DOMRect> Internals::boundingBoxInMainFrameViewCoordinates(Element& element)
+{
+    protect(element.document())->updateLayout(LayoutOptions::IgnorePendingStylesheets);
+    return DOMRect::create(element.boundingBoxInMainFrameViewCoordinates());
+}
+
 ExceptionOr<unsigned> Internals::inspectorGridOverlayCount()
 {
     RefPtr document = contextDocument();
@@ -2619,6 +2635,22 @@ ExceptionOr<String> Internals::documentBackgroundColor()
     return serializationForCSS(protect(document->view())->documentBackgroundColor());
 }
 
+ExceptionOr<String> Internals::textScaleMetaMode() const
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    switch (document->textScaleMeta()) {
+    case TextScaleMeta::Legacy:
+        return "legacy"_str;
+    case TextScaleMeta::Scale:
+        return "scale"_str;
+    }
+    ASSERT_NOT_REACHED();
+    return "legacy"_str;
+}
+
 ExceptionOr<String> Internals::paintedCaretColor()
 {
     RefPtr document = contextDocument();
@@ -2724,6 +2756,11 @@ bool Internals::elementShouldAutoComplete(HTMLInputElement& element)
     return element.shouldAutocomplete();
 }
 
+void Internals::setValueForUser(HTMLInputElement& element, const String& value)
+{
+    element.setValueForUser(value);
+}
+
 void Internals::setAutofilled(HTMLInputElement& element, bool enabled)
 {
     element.setAutofilled(enabled);
@@ -2739,7 +2776,7 @@ void Internals::setAutofilledAndObscured(HTMLInputElement& element, bool enabled
     element.setAutofilledAndObscured(enabled);
 }
 
-static AutoFillButtonType NODELETE toAutofillButtonType(Internals::AutoFillButtonType type)
+static AutoFillButtonType LEGACY_NODELETE toAutofillButtonType(Internals::AutoFillButtonType type)
 {
     switch (type) {
     case Internals::AutoFillButtonType::None:
@@ -2759,7 +2796,7 @@ static AutoFillButtonType NODELETE toAutofillButtonType(Internals::AutoFillButto
     return AutoFillButtonType::None;
 }
 
-static Internals::AutoFillButtonType NODELETE toInternalsAutofillButtonType(AutoFillButtonType type)
+static Internals::AutoFillButtonType LEGACY_NODELETE toInternalsAutofillButtonType(AutoFillButtonType type)
 {
     switch (type) {
     case AutoFillButtonType::None:
@@ -3135,7 +3172,7 @@ public:
     {
     }
 
-    IterationStatus NODELETE operator()(StackVisitor& visitor) const
+    IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
     {
         ++m_iterations;
         if (m_iterations < 2)
@@ -3145,7 +3182,7 @@ public:
         return IterationStatus::Done;
     }
 
-    CodeBlock* NODELETE codeBlock() const { return m_codeBlock; }
+    CodeBlock* LEGACY_NODELETE codeBlock() const { return m_codeBlock; }
 
 private:
     mutable int m_iterations;
@@ -3719,7 +3756,7 @@ ExceptionOr<bool> Internals::isPageBoxVisible(int pageNumber)
     return document->isPageBoxVisible(pageNumber);
 }
 
-static OptionSet<LayerTreeAsTextOptions> NODELETE toLayerTreeAsTextOptions(unsigned short flags)
+static OptionSet<LayerTreeAsTextOptions> LEGACY_NODELETE toLayerTreeAsTextOptions(unsigned short flags)
 {
     OptionSet<LayerTreeAsTextOptions> layerTreeFlags;
     if (flags & Internals::LAYER_TREE_INCLUDES_VISIBLE_RECTS)
@@ -3867,7 +3904,7 @@ ExceptionOr<unsigned> Internals::scrollableAreaWidth(Node& node)
     return scrollableArea->contentsSize().width();
 }
 
-static OptionSet<PlatformLayerTreeAsTextFlags> NODELETE toPlatformLayerTreeFlags(unsigned short flags)
+static OptionSet<PlatformLayerTreeAsTextFlags> LEGACY_NODELETE toPlatformLayerTreeFlags(unsigned short flags)
 {
     OptionSet<PlatformLayerTreeAsTextFlags> platformLayerTreeFlags = { };
     if (flags & Internals::PLATFORM_LAYER_TREE_DEBUG)
@@ -4146,7 +4183,7 @@ ExceptionOr<void> Internals::setElementTracksDisplayListReplay(Element& element,
     return { };
 }
 
-static OptionSet<DisplayList::AsTextFlag> NODELETE toDisplayListFlags(unsigned short flags)
+static OptionSet<DisplayList::AsTextFlag> LEGACY_NODELETE toDisplayListFlags(unsigned short flags)
 {
     OptionSet<DisplayList::AsTextFlag> displayListFlags;
     if (flags & Internals::DISPLAY_LIST_INCLUDE_PLATFORM_OPERATIONS)
@@ -6436,6 +6473,26 @@ String Internals::documentIPAddressSpace() const
     return "unknown"_s;
 }
 
+void Internals::setDocumentIPAddressSpace(const String& addressSpace)
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return;
+
+    if (addressSpace == "public"_s)
+        document->setIPAddressSpace(IPAddressSpace::Public);
+    else if (addressSpace == "local"_s)
+        document->setIPAddressSpace(IPAddressSpace::Local);
+    else if (addressSpace == "loopback"_s)
+        document->setIPAddressSpace(IPAddressSpace::Loopback);
+}
+
+void Internals::setLoadSourceOriginOverride(const String& origin)
+{
+    if (RefPtr document = contextDocument())
+        document->setLoadSourceOriginOverrideForTesting(SecurityOrigin::createFromString(origin));
+}
+
 void Internals::queueMicroTask(int testNumber)
 {
     RefPtr document = contextDocument();
@@ -6680,6 +6737,15 @@ void Internals::setTrackingPreventionEnabled(bool enable)
     DeprecatedGlobalSettings::setTrackingPreventionEnabled(enable);
 }
 
+bool Internals::isPrevalentDomainScriptOnStack() const
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return false;
+    Ref vm = document->vm();
+    return JSC::isPrevalentDomainTaintedCodeOnStack(vm, vm->topCallFrame);
+}
+
 String Internals::composedTreeAsText(Node& node)
 {
     if (!is<ContainerNode>(node))
@@ -6892,15 +6958,6 @@ bool Internals::pageHasPointerLock() const
 }
 #endif
 
-void Internals::markContextAsInsecure()
-{
-    RefPtr document = contextDocument();
-    if (!document)
-        return;
-
-    document->securityOrigin().setIsPotentiallyTrustworthy(false);
-}
-
 void Internals::postTask(Ref<VoidCallback>&& callback)
 {
     RefPtr document = contextDocument();
@@ -7038,7 +7095,7 @@ void Internals::simulateEventForWebGLContext(SimulatedWebGLContextEvent event, W
     context.simulateEventForTesting(contextEvent);
 }
 
-Internals::RequestedGPU Internals::requestedGPU(WebGLRenderingContextBase& context)
+RequestedGPU Internals::requestedGPU(WebGLRenderingContextBase& context)
 {
     switch (context.creationAttributes().powerPreference) {
     case WebGLPowerPreference::Default:
@@ -7594,7 +7651,7 @@ Internals::ImageOverlayDataDetector::~ImageOverlayDataDetector() = default;
 #if ENABLE(IMAGE_ANALYSIS)
 
 template<typename T>
-static FloatQuad NODELETE getQuad(const T& overlayTextOrLine)
+static FloatQuad LEGACY_NODELETE getQuad(const T& overlayTextOrLine)
 {
     return {
         FloatPoint(overlayTextOrLine.topLeft->x(), overlayTextOrLine.topLeft->y()),
@@ -8107,7 +8164,7 @@ bool Internals::hasSandboxMachLookupAccessToGlobalName(const String& process, co
     else
         RELEASE_ASSERT_NOT_REACHED();
 
-    return !sandbox_check(pid, "mach-lookup", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_GLOBAL_NAME | SANDBOX_CHECK_NO_REPORT), service.utf8().legacyCStringPointer());
+    return !sandboxCheck(pid, "mach-lookup", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_GLOBAL_NAME | SANDBOX_CHECK_NO_REPORT), service.utf8());
 #else
     UNUSED_PARAM(process);
     UNUSED_PARAM(service);
@@ -8124,7 +8181,7 @@ bool Internals::hasSandboxMachLookupAccessToXPCServiceName(const String& process
     else
         RELEASE_ASSERT_NOT_REACHED();
 
-    return !sandbox_check(pid, "mach-lookup", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_XPC_SERVICE_NAME | SANDBOX_CHECK_NO_REPORT), service.utf8().legacyCStringPointer());
+    return !sandboxCheck(pid, "mach-lookup", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_XPC_SERVICE_NAME | SANDBOX_CHECK_NO_REPORT), service.utf8());
 #else
     UNUSED_PARAM(process);
     UNUSED_PARAM(service);
@@ -8453,7 +8510,7 @@ void Internals::loadArtworkImage(String&& url, ArtworkImagePromise&& promise)
             return;
 
         auto promise = std::exchange(protectedThis->m_artworkImagePromise, { });
-        RefPtr nativeImage = image ? image->nativeImage(ConcreteObjectSize::fixed(image->size())) : nullptr;
+        RefPtr nativeImage = image ? image->nativeImage(MediaSessionArtworkSizing { }.resolve(image->naturalDimensions())) : nullptr;
         if (!nativeImage) {
             promise->reject(Exception { ExceptionCode::InvalidAccessError, "No image retrieved."_s });
             return;
@@ -8522,7 +8579,7 @@ constexpr ASCIILiteral string(std::partial_ordering ordering)
     return "unordered"_s;
 }
 
-constexpr TreeType NODELETE convertType(Internals::TreeType type)
+constexpr TreeType LEGACY_NODELETE convertType(Internals::TreeType type)
 {
     switch (type) {
     case Internals::Tree:
@@ -8599,7 +8656,8 @@ String Internals::dumpStyleResolvers()
 
     for (Ref shadowRoot : document->inDocumentShadowRoots()) {
         auto name = shadowRoot->mode() == ShadowRootMode::UserAgent ? "shadow root resolver (user agent)"_s : "shadow root resolver (author)"_s;
-        dumpResolver(name, protect(protect(const_cast<ShadowRoot&>(shadowRoot.get()).styleScope())->resolver()));
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST dumpResolver(name, protect(protect(const_cast<ShadowRoot&>(shadowRoot.get()).styleScope())->resolver()));
     }
 
     return result.toString();
@@ -8965,6 +9023,17 @@ void Internals::setSubframeURLForQuirks(const String& urlString)
     page->setQuirksSubframeURLForTesting(URL { urlString });
 }
 
+void Internals::setTopDocumentHostForQuirks(const String& host)
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->page())
+        return;
+
+    Ref page = *protect(document->page());
+    page->settings().setNeedsSiteSpecificQuirks(true);
+    page->setQuirksTopDocumentHostForTesting(String { host });
+}
+
 Vector<String> Internals::activeQuirks() const
 {
     RefPtr document = contextDocument();
@@ -8981,15 +9050,19 @@ ExceptionOr<Vector<Internals::FrameDamage>> Internals::getFrameDamageHistory() c
     if (!document || !document->page())
         return Exception { ExceptionCode::NotSupportedError };
 
+    // Damage is tracked in device pixels, but testing expectations are written in CSS pixels, so convert
+    // back using the page's device scale factor to keep results independent of the host display's scale.
+    float deviceScaleFactor = document->page()->deviceScaleFactor();
+
     Vector<Internals::FrameDamage> damageDetails;
     unsigned sequenceId = 0;
     document->page()->chrome().client().foreachRegionInDamageHistoryForTesting([&](const auto& region) {
         const auto& regionBounds = region.bounds();
         damageDetails.append(FrameDamage {
             .sequenceId = sequenceId++,
-            .bounds = DOMRectReadOnly::create(regionBounds.x(), regionBounds.y(), regionBounds.width(), regionBounds.height()),
-            .rects = region.rects().map([](const IntRect& rect) -> Ref<DOMRectReadOnly> {
-                return DOMRectReadOnly::create(rect.x(), rect.y(), rect.width(), rect.height());
+            .bounds = DOMRectReadOnly::create(regionBounds.x() / deviceScaleFactor, regionBounds.y() / deviceScaleFactor, regionBounds.width() / deviceScaleFactor, regionBounds.height() / deviceScaleFactor),
+            .rects = region.rects().map([deviceScaleFactor](const IntRect& rect) -> Ref<DOMRectReadOnly> {
+                return DOMRectReadOnly::create(rect.x() / deviceScaleFactor, rect.y() / deviceScaleFactor, rect.width() / deviceScaleFactor, rect.height() / deviceScaleFactor);
             }),
         });
     });
@@ -9201,10 +9274,8 @@ String Internals::volumetricScenePresentationMode(Element& element)
 }
 #endif
 
-// FIXME: Implement this method for iOS.
 ExceptionOr<void> Internals::copyImageAtLocation(int x, int y)
 {
-#if !PLATFORM(IOS_FAMILY)
     RefPtr document = contextDocument();
     if (!document || !document->frame())
         return Exception { ExceptionCode::InvalidAccessError };
@@ -9219,9 +9290,6 @@ ExceptionOr<void> Internals::copyImageAtLocation(int x, int y)
 
     auto hitTestResult = localFrame->eventHandler().hitTestResultAtPoint(IntPoint(x, y), hitType);
     protect(localFrame->editor())->copyImage(hitTestResult);
-#endif
-    UNUSED_PARAM(x);
-    UNUSED_PARAM(y);
     return { };
 }
 

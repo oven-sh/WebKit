@@ -31,6 +31,7 @@
 #import "ExtractedNodeInfo.h"
 #import <wtf/RetainPtr.h>
 #import <wtf/Vector.h>
+#import <wtf/spi/cocoa/NSObjCRuntimeSPI.h>
 
 @class _WKTextExtractionResult;
 
@@ -72,7 +73,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 #if !__has_feature(modules) || WK_SUPPORTS_SWIFT_OBJCXX_INTEROP
 - (instancetype)initWithWebView:(nullable WKWebView *)webView origin:(nullable WKSecurityOrigin *)origin textContent:(NSString *)textContent filteredOutAnyText:(BOOL)filteredOutAnyText shortenedURLs:(NSDictionary<NSString *, NSURL *> *)shortenedURLs textToContainerMap:(HashMap<String, Vector<WebKit::ExtractedNodeInfo>>&&)textToContainerMap;
-- (std::expected<std::optional<WebKit::ExtractedNodeInfo>, String>)resolveContainerForSearchText:(NSString *)searchText;
+// FIXME(rdar://189512757): NS_DIRECT avoids emitting an ObjC type encoding for std::expected, which crashes clang. Remove when resolved.
+- (std::expected<std::optional<WebKit::ExtractedNodeInfo>, String>)resolveContainerForSearchText:(NSString *)searchText NS_DIRECT;
 #endif
 
 @end
@@ -100,6 +102,8 @@ typedef NS_ENUM(NSInteger, WKTextExtractionContainer) {
     WKTextExtractionContainerNav,
     WKTextExtractionContainerButton,
     WKTextExtractionContainerCanvas,
+    WKTextExtractionContainerVideo,
+    WKTextExtractionContainerAudio,
     WKTextExtractionContainerSubscript,
     WKTextExtractionContainerSuperscript,
     WKTextExtractionContainerStrikethrough,

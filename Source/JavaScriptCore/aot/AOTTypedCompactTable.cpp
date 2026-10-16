@@ -95,7 +95,7 @@ CompactTable* CompactTable::create(VM& vm, Structure* structure, Width key, Widt
     size_t keys = table->offsetOfKeys();
     memsetSpan(std::span { table->at<uint8_t>(offsetOfIndex()), keys - offsetOfIndex() }, table->hasTags() ? 0 : 0xff);
     zeroSpan(std::span { table->at<uint8_t>(keys), size - keys });
-    vm.mutatorFence();
+    table->finishCreation(vm);
     return table;
 }
 
@@ -365,6 +365,7 @@ CompactTable* CompactTable::copy(VM& vm) const
     copy->m_valueWidth = m_valueWidth;
     memcpy(copy->at<uint8_t>(offsetOfIndex()), at<uint8_t>(offsetOfIndex()), used - offsetOfIndex());
     zeroSpan(std::span { copy->at<uint8_t>(used), size - used });
+    copy->finishCreation(vm);
     WTF::storeStoreFence();
     copy->m_used = m_used;
     copy->m_alive = m_alive;
@@ -469,7 +470,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
             uint64_t* valuesOfLarger = to;
             copyWords(to, from + count / 2, count * static_cast<size_t>(valueWidth) / sizeof(uint64_t));
             fillWords(to, 0, larger->at<uint64_t>(size) - to);
-            vm.mutatorFence();
+            larger->finishCreation(vm);
             keysOfLarger[count] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(string) >> MarkedBlockCage::shift);
             if (valueWidth == Width::Wide)
                 valuesOfLarger[count] = JSValue::encode(value);

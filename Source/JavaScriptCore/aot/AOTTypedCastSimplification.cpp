@@ -25,7 +25,7 @@ public:
     {
     }
 
-    unsigned run()
+    unsigned run(CleanUpTiming timing)
     {
         unsigned changed = narrowBlockParameters();
         // An allocation that is made with another layout leaves behind the cast that asked for it.
@@ -38,7 +38,7 @@ public:
                 break;
             changed += changedNow;
         }
-        if (changed)
+        if (changed && timing == CleanUpTiming::Immediate)
             cleanUp(m_program, m_function);
         updateAllocations();
         return changed;
@@ -83,6 +83,8 @@ private:
     // cast may go by the type of its operand, which is within that of the cast.
     bool mayTakeOperand(ValueID cast, const Type& operand, const Type& target) const
     {
+        if (operand.hasLiteralString() != target.hasLiteralString())
+            return false;
         LayoutID own = operand.onlyView();
         LayoutID view = target.onlyView();
         if (own == view)
@@ -96,7 +98,7 @@ private:
         if (!own)
             return false;
         for (auto& field : m_program.at(view).fields) {
-            if (!(field.flags & fieldIsNeverStored) && !finds(own, field))
+            if (!(field.flags & (fieldIsNeverStored | fieldIsPlaceholder)) && !finds(own, field))
                 return false;
         }
         return true;
@@ -114,14 +116,14 @@ private:
         if (!onlyTests(cast) || m_function.at(operand).opcode != Opcode::NewObjectWithShape)
             return false;
         LayoutID view = m_program.at(cast.type).onlyView();
-        return view && isMember(m_function.at(operand).layout(), view);
+        return view && isMember(m_function.at(operand).layout(), view) && !m_program.at(m_function.at(operand).layout()).admitsUncheckedObjects();
     }
 
     bool predictionSaysMoreThanType(const Value& cast, ValueID operand) const
     {
         if (!cast.hasPredictionUnlike(m_function.at(operand)))
             return false;
-        return cast.predictedClosure || cast.predictedByKey || !typeOf(operand).isWithin(m_program.at(cast.prediction), m_program);
+        return cast.predictedClosure() || cast.predictedByKey() || !typeOf(operand).isWithin(m_program.at(cast.prediction()), m_program);
     }
 
     // A cast whose operand is of the type tests nothing. Its users take the operand, or, where they would see less by the type of
@@ -964,9 +966,9 @@ private:
 
 } // anonymous namespace
 
-unsigned simplifyCasts(const Program& program, Function& function)
+unsigned simplifyCasts(const Program& program, Function& function, CleanUpTiming timing)
 {
-    return CastSimplification(program, function).run();
+    return CastSimplification(program, function).run(timing);
 }
 
 unsigned countInIntegers(const Program& program, Function& function)

@@ -70,10 +70,8 @@ bool HTMLBodyElement::hasPresentationalHintsForAttribute(const QualifiedName& na
     case AttributeNames::backgroundAttr:
     case AttributeNames::marginwidthAttr:
     case AttributeNames::leftmarginAttr:
-    case AttributeNames::rightmarginAttr:
     case AttributeNames::marginheightAttr:
     case AttributeNames::topmarginAttr:
-    case AttributeNames::bottommarginAttr:
     case AttributeNames::bgcolorAttr:
     case AttributeNames::textAttr:
         return true;
@@ -89,30 +87,24 @@ void HTMLBodyElement::collectPresentationalHintsForAttribute(const QualifiedName
     case AttributeNames::backgroundAttr: {
         auto url = value.string().trim(isASCIIWhitespace);
         if (!url.isEmpty())
-            style.setProperty(CSSProperty(CSSPropertyBackgroundImage, CSSImageValue::create(protect(document())->encodingParseURL(url), localName())));
+            style.setProperty(CSSProperty(CSSPropertyID::BackgroundImage, CSSImageValue::create(protect(document())->encodingParseURL(url), localName())));
         break;
     }
     case AttributeNames::marginwidthAttr:
     case AttributeNames::leftmarginAttr:
-        addHTMLPixelLengthToStyle(style, CSSPropertyMarginRight, value);
-        addHTMLPixelLengthToStyle(style, CSSPropertyMarginLeft, value);
-        break;
-    case AttributeNames::rightmarginAttr:
-        addHTMLPixelLengthToStyle(style, CSSPropertyMarginRight, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginRight, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginLeft, value);
         break;
     case AttributeNames::marginheightAttr:
     case AttributeNames::topmarginAttr:
-        addHTMLPixelLengthToStyle(style, CSSPropertyMarginBottom, value);
-        addHTMLPixelLengthToStyle(style, CSSPropertyMarginTop, value);
-        break;
-    case AttributeNames::bottommarginAttr:
-        addHTMLPixelLengthToStyle(style, CSSPropertyMarginBottom, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginBottom, value);
+        addHTMLPixelLengthToStyle(style, CSSPropertyID::MarginTop, value);
         break;
     case AttributeNames::bgcolorAttr:
-        addHTMLColorToStyle(style, CSSPropertyBackgroundColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::BackgroundColor, value);
         break;
     case AttributeNames::textAttr:
-        addHTMLColorToStyle(style, CSSPropertyColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::Color, value);
         break;
     default:
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);

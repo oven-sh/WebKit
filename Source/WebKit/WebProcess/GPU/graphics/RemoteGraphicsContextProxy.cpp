@@ -375,13 +375,16 @@ void RemoteGraphicsContextProxy::drawSystemImage(SystemImage& systemImage, const
     appendStateChangeItemIfNecessary();
 #if USE(SYSTEM_PREVIEW)
     if (RefPtr badgeSystemImage = dynamicDowncast<ARKitBadgeSystemImage>(systemImage)) {
-        if (RefPtr image = badgeSystemImage->image()) {
-            auto nativeImage = image->nativeImage(ConcreteObjectSize::fixed(image->size()));
-            if (!nativeImage)
-                return;
+        std::optional<RenderingResourceIdentifier> renderingResourceIdentifier;
+
+        if (RefPtr nativeImage = badgeSystemImage->nativeImage()) {
             if (!recordResourceUse(*nativeImage))
                 return;
+            renderingResourceIdentifier = nativeImage->renderingResourceIdentifier();
         }
+
+        send(Messages::RemoteGraphicsContext::DrawBadgeSystemImage(renderingResourceIdentifier, destinationRect));
+        return;
     }
 #endif
     send(Messages::RemoteGraphicsContext::DrawSystemImage(systemImage, destinationRect));

@@ -3282,7 +3282,7 @@ ProcessID WKPageGetProcessIdentifier(WKPageRef page)
 ProcessID WKPageGetGPUProcessIdentifier(WKPageRef page)
 {
 #if ENABLE(GPU_PROCESS)
-    RefPtr gpuProcess = protect(toImpl(page)->configuration().processPool())->gpuProcess();
+    RefPtr gpuProcess = protect(protect(toImpl(page)->configuration())->processPool())->gpuProcess();
     if (!gpuProcess)
         return 0;
     return gpuProcess->processID();

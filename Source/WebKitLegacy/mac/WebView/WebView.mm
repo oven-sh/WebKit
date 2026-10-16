@@ -618,7 +618,7 @@ static Class s_pdfViewClass;
 @end
 
 #if ENABLE(DRAG_SUPPORT)
-static OptionSet<WebCore::DragDestinationAction> NODELETE coreDragDestinationActionMask(WebDragDestinationAction actionMask)
+static OptionSet<WebCore::DragDestinationAction> LEGACY_NODELETE coreDragDestinationActionMask(WebDragDestinationAction actionMask)
 {
     OptionSet<WebCore::DragDestinationAction> result;
     if (actionMask & WebDragDestinationActionDHTML)
@@ -639,7 +639,7 @@ typedef NS_OPTIONS(NSUInteger, _UIDragOperation) {
 };
 #endif
 
-OptionSet<WebCore::DragOperation> NODELETE coreDragOperationMask(CocoaDragOperation operation)
+OptionSet<WebCore::DragOperation> LEGACY_NODELETE coreDragOperationMask(CocoaDragOperation operation)
 {
     OptionSet<WebCore::DragOperation> result;
 
@@ -667,7 +667,7 @@ OptionSet<WebCore::DragOperation> NODELETE coreDragOperationMask(CocoaDragOperat
 }
 
 #if USE(APPKIT)
-static NSDragOperation NODELETE kit(std::optional<WebCore::DragOperation> dragOperation)
+static NSDragOperation LEGACY_NODELETE kit(std::optional<WebCore::DragOperation> dragOperation)
 {
     if (!dragOperation)
         return NSDragOperationNone;
@@ -716,7 +716,7 @@ static _UIDragOperation kit(std::optional<WebCore::DragOperation> dragOperation)
 }
 #endif // USE(APPKIT)
 
-WebDragSourceAction NODELETE kit(std::optional<WebCore::DragSourceAction> action)
+WebDragSourceAction LEGACY_NODELETE kit(std::optional<WebCore::DragSourceAction> action)
 {
     if (!action)
         return WebDragSourceActionNone;
@@ -747,7 +747,7 @@ WebDragSourceAction NODELETE kit(std::optional<WebCore::DragSourceAction> action
 }
 #endif // ENABLE(DRAG_SUPPORT)
 
-WebCore::FindOptions NODELETE coreOptions(WebFindOptions options)
+WebCore::FindOptions LEGACY_NODELETE coreOptions(WebFindOptions options)
 {
     WebCore::FindOptions findOptions;
     if (options & WebFindOptionsCaseInsensitive)
@@ -765,7 +765,7 @@ WebCore::FindOptions NODELETE coreOptions(WebFindOptions options)
     return findOptions;
 }
 
-OptionSet<WebCore::LayoutMilestone> NODELETE coreLayoutMilestones(WebLayoutMilestones milestones)
+OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE coreLayoutMilestones(WebLayoutMilestones milestones)
 {
     OptionSet<WebCore::LayoutMilestone> layoutMilestone;
     if (milestones & WebDidFirstLayout)
@@ -777,14 +777,14 @@ OptionSet<WebCore::LayoutMilestone> NODELETE coreLayoutMilestones(WebLayoutMiles
     return layoutMilestone;
 }
 
-WebLayoutMilestones NODELETE kitLayoutMilestones(OptionSet<WebCore::LayoutMilestone> milestones)
+WebLayoutMilestones LEGACY_NODELETE kitLayoutMilestones(OptionSet<WebCore::LayoutMilestone> milestones)
 {
     return (milestones & WebCore::LayoutMilestone::DidFirstLayout ? WebDidFirstLayout : 0)
         | (milestones & WebCore::LayoutMilestone::DidFirstVisuallyNonEmptyLayout ? WebDidFirstVisuallyNonEmptyLayout : 0)
         | (milestones & WebCore::LayoutMilestone::DidHitRelevantRepaintedObjectsAreaThreshold ? WebDidHitRelevantRepaintedObjectsAreaThreshold : 0);
 }
 
-static WebPageVisibilityState NODELETE kit(WebCore::VisibilityState visibilityState)
+static WebPageVisibilityState LEGACY_NODELETE kit(WebCore::VisibilityState visibilityState)
 {
     switch (visibilityState) {
     case WebCore::VisibilityState::Visible:
@@ -797,7 +797,7 @@ static WebPageVisibilityState NODELETE kit(WebCore::VisibilityState visibilitySt
     return WebPageVisibilityStateVisible;
 }
 
-static WebCore::StorageBlockingPolicy NODELETE core(WebStorageBlockingPolicy storageBlockingPolicy)
+static WebCore::StorageBlockingPolicy LEGACY_NODELETE core(WebStorageBlockingPolicy storageBlockingPolicy)
 {
     switch (storageBlockingPolicy) {
     case WebAllowAllStorage:
@@ -989,7 +989,7 @@ enum { WebViewVersion = 4 };
 
 #define timedLayoutSize 4096
 
-static RetainPtr<NSMutableSet>& NODELETE schemesWithRepresentationsSet()
+static RetainPtr<NSMutableSet>& LEGACY_NODELETE schemesWithRepresentationsSet()
 {
     static NeverDestroyed<RetainPtr<NSMutableSet>> schemesWithRepresentationsSet;
     return schemesWithRepresentationsSet;
@@ -1330,7 +1330,7 @@ static CFSetCallBacks NonRetainingSetCallbacks = {
     CFHash
 };
 
-static RetainPtr<CFMutableSetRef>& NODELETE allWebViewsSet()
+static RetainPtr<CFMutableSetRef>& LEGACY_NODELETE allWebViewsSet()
 {
     static NeverDestroyed<RetainPtr<CFMutableSetRef>> allWebViewsSet;
     return allWebViewsSet;
@@ -1534,7 +1534,6 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     auto storageProvider = PageStorageSessionProvider::create();
     WebCore::PageConfiguration pageConfiguration(
         WebCore::PageIdentifier::generate(),
-        std::nullopt,
         [[self preferences] privateBrowsingEnabled] ? PAL::SessionID::legacyPrivateSessionID() : PAL::SessionID::defaultSessionID(),
         makeUniqueRef<WebEditorClient>(self),
         LegacySocketProvider::create(),
@@ -1723,7 +1722,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     }
 #endif
 
-    _private = [[WebViewPrivate alloc] init];
+    _private = adoptNS([[WebViewPrivate alloc] init]);
     [self _commonInitializationWithFrameName:frameName groupName:groupName];
     [self setMaintainsBackForwardList: YES];
     return self;
@@ -1781,7 +1780,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     if (!self)
         return nil;
 
-    _private = [[WebViewPrivate alloc] init];
+    _private = adoptNS([[WebViewPrivate alloc] init]);
 
     if (!preferences)
         preferences = [WebPreferences standardPreferences];
@@ -1803,7 +1802,6 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     auto storageProvider = PageStorageSessionProvider::create();
     WebCore::PageConfiguration pageConfiguration(
         WebCore::PageIdentifier::generate(),
-        std::nullopt,
         [[self preferences] privateBrowsingEnabled] ? PAL::SessionID::legacyPrivateSessionID() : PAL::SessionID::defaultSessionID(),
         makeUniqueRef<WebEditorClient>(self),
         LegacySocketProvider::create(),
@@ -5415,7 +5413,7 @@ static bool needsWebViewInitThreadWorkaround()
         BOOL allowsUndo = YES;
 
         result = [super initWithCoder:decoder];
-        result->_private = [[WebViewPrivate alloc] init];
+        result->_private = adoptNS([[WebViewPrivate alloc] init]);
 
         // We don't want any of the archived subviews. The subviews will always
         // be created in _commonInitializationFrameName:groupName:.
@@ -5530,7 +5528,6 @@ static bool needsWebViewInitThreadWorkaround()
             SUPPRESS_UNRETAINED_ARG [_private->frameLoadDelegate release];
 #endif
 
-        SUPPRESS_UNRETAINED_ARG [_private release];
         // [super dealloc] can end up dispatching against _private (3466082)
         _private = nil;
     }
@@ -6888,7 +6885,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return nil;
 }
 
-constexpr WebCore::TextCheckingType NODELETE coreTextCheckingType(NSTextCheckingType type)
+constexpr WebCore::TextCheckingType LEGACY_NODELETE coreTextCheckingType(NSTextCheckingType type)
 {
     switch (type) {
     case NSTextCheckingTypeCorrection:
@@ -9416,7 +9413,7 @@ FORWARD(toggleUnderline)
     return self._isRichlyEditable ? _private->_richTextTouchBar.get() : _private->_plainTextTouchBar.get();
 }
 
-static NSTextAlignment NODELETE nsTextAlignmentFromRenderStyle(const WebCore::Style::ComputedStyle* style)
+static NSTextAlignment LEGACY_NODELETE nsTextAlignmentFromRenderStyle(const WebCore::Style::ComputedStyle* style)
 {
     NSTextAlignment textAlignment;
     switch (style->textAlignOutOfLine()) {
@@ -9536,7 +9533,7 @@ static NSTextAlignment NODELETE nsTextAlignmentFromRenderStyle(const WebCore::St
 
                 RefPtr<EditingStyle> typingStyle = coreFrame->selection().typingStyle();
                 if (typingStyle && typingStyle->style()) {
-                    String value = protect(typingStyle->style())->getPropertyValue(CSSPropertyWebkitTextDecorationsInEffect);
+                    String value = protect(typingStyle->style())->getPropertyValue(CSSPropertyID::WebkitTextDecorationsInEffect);
                     [_private->_textTouchBarItemController setTextIsUnderlined:value.contains("underline"_s)];
                 } else
                     [_private->_textTouchBarItemController setTextIsUnderlined:style->textDecorationLineInEffectOutOfLine().hasUnderline()];

@@ -186,15 +186,16 @@ void PageDOMDebuggerAgent::willInsertDOMNode(Node& parent)
     RefPtr<JSC::Breakpoint> closestBreakpoint;
     RefPtr<Node> closestBreakpointOwner;
 
-    for (auto [breakpointOwner, breakpoint] : m_domSubtreeModifiedBreakpoints) {
-        auto distance = calculateDistance(parent, Ref { *breakpointOwner });
+    for (auto& entry : m_domSubtreeModifiedBreakpoints) {
+        Ref breakpointOwner = *entry.key;
+        auto distance = calculateDistance(parent, breakpointOwner);
         if (!distance)
             continue;
 
         if (!closestDistance || distance < closestDistance) {
             closestDistance = distance;
-            closestBreakpoint = breakpoint.copyRef();
-            closestBreakpointOwner = breakpointOwner;
+            closestBreakpoint = entry.value.copyRef();
+            closestBreakpointOwner = WTF::move(breakpointOwner);
         }
     }
 
@@ -227,30 +228,32 @@ void PageDOMDebuggerAgent::willRemoveDOMNode(Node& node)
     std::optional<Inspector::Protocol::DOMDebugger::DOMBreakpointType> closestBreakpointType;
     CheckedPtr<Node> closestBreakpointOwner = nullptr;
 
-    for (auto [breakpointOwner, breakpoint] : m_domNodeRemovedBreakpoints) {
-        auto distance = calculateDistance(*breakpointOwner, node);
+    for (auto& entry : m_domNodeRemovedBreakpoints) {
+        Ref breakpointOwner = *entry.key;
+        auto distance = calculateDistance(breakpointOwner, node);
         if (!distance)
             continue;
 
         if (!closestDistance || distance < closestDistance) {
             closestDistance = distance;
-            closestBreakpoint = breakpoint.copyRef();
+            closestBreakpoint = entry.value.copyRef();
             closestBreakpointType = Inspector::Protocol::DOMDebugger::DOMBreakpointType::NodeRemoved;
-            closestBreakpointOwner = breakpointOwner;
+            closestBreakpointOwner = breakpointOwner.ptr();
         }
     }
 
     if (!closestBreakpoint) {
-        for (auto [breakpointOwner, breakpoint] : m_domSubtreeModifiedBreakpoints) {
-            auto distance = calculateDistance(node, *breakpointOwner);
+        for (auto& entry : m_domSubtreeModifiedBreakpoints) {
+            Ref breakpointOwner = *entry.key;
+            auto distance = calculateDistance(node, breakpointOwner);
             if (!distance)
                 continue;
 
             if (!closestDistance || distance < closestDistance) {
                 closestDistance = distance;
-                closestBreakpoint = breakpoint.copyRef();
+                closestBreakpoint = entry.value.copyRef();
                 closestBreakpointType = Inspector::Protocol::DOMDebugger::DOMBreakpointType::SubtreeModified;
-                closestBreakpointOwner = breakpointOwner;
+                closestBreakpointOwner = breakpointOwner.ptr();
             }
         }
     }

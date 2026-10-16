@@ -54,6 +54,8 @@ struct OpcodeConfig {
     JSC::Opcode opcodeMap[numOpcodeIDs];
     JSC::Opcode opcodeMapWide16[numOpcodeIDs];
     JSC::Opcode opcodeMapWide32[numOpcodeIDs];
+    JSC::Opcode opcodeMapPredecoded[NUMBER_OF_BYTECODE_IDS];
+    JSC::Opcode opcodeMapPredecodedRegisters[NUMBER_OF_BYTECODE_IDS];
 
     void* ipint_dispatch_base;
     void* ipint_gc_dispatch_base;
@@ -61,6 +63,23 @@ struct OpcodeConfig {
     void* ipint_simd_dispatch_base;
     void* ipint_atomic_dispatch_base;
 };
+
+struct PredecodedInstructionsHeader {
+    static PredecodedInstructionsHeader* of(void* instructions) { return static_cast<PredecodedInstructionsHeader*>(instructions) - 1; }
+    static void destroy(void* instructions) { WTF::fastFree(of(instructions)->offsets); }
+
+    const unsigned* barrierThreshold;
+    intptr_t stackPointerOffset;
+    const void* constants;
+    const void* bytecode;
+    uint32_t* offsets;
+};
+
+void copyInlineCacheIntoPredecodedInstruction(CodeBlock*, const JSInstruction*);
+void copyInlineCachesIntoPredecodedInstructions(CodeBlock*);
+
+static constexpr unsigned offsetOfBytecodeOffsetInPredecodedInstruction = sizeof(JSC::Opcode);
+static constexpr unsigned offsetOfOperandsInPredecodedInstruction = offsetOfBytecodeOffsetInPredecodedInstruction + sizeof(uint32_t);
 
 constexpr size_t OpcodeConfigSizeToProtect = std::max(CeilingOnPageSize, 16 * KB);
 

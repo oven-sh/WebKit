@@ -81,6 +81,8 @@ video[controls]::-webkit-media-text-track-container.visible-controls-bar {
 
 ::-webkit-media-text-track-display-backdrop {
     display: inline-block;
+    width: stretch;
+    height: stretch;
 }
 
 ::-webkit-media-text-track-region {

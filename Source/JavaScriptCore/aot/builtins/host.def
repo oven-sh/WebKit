@@ -2,7 +2,9 @@
 
 replaceable console
 replaceable Buffer
+replaceable Response
 predicted Buffer.byteLength
+predicted Response.json
 
 static console.log (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
 static console.info (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
@@ -29,3 +31,5 @@ static console.timeLog (toString?, any/GD...) -> undefined ; MayThrow ReadsArgum
 
 static Buffer.byteLength (toString, toString?) -> int[0,6442450941] ; MayThrow ; Inline(StringUTF8ByteLength)
 static Buffer.byteLength (any, any/-?, any/-...) -> number ; CallsUserCode ; Inline(StringUTF8ByteLength)
+
+static Response.json (any, any?, any/-...) -> anything ; CallsUserCode ; Inline(ResponseJSON)

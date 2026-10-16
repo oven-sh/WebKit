@@ -49,6 +49,8 @@ https://www.cbssports.com/
     (none)
 https://www.cnn.com/
     (none)
+https://configurator.audi.com/
+    ShouldRenderModelElementFallbackContentQuirk
 https://www.digitaltrends.com/
     (none)
 https://discord.com/
@@ -124,6 +126,7 @@ https://docs.google.com/
     InputMethodMustUseCompositionEvents
     InputMethodUsesCorrectKeyEventOrder
     IsTouchBarUpdateSuppressedForHiddenContentEditableQuirk
+    NeedsGoogleDocsNavigationWidgetScrollQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://translate.google.com/
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
@@ -177,6 +180,7 @@ https://www.hulu.com/
     NeedsVideoShouldMaintainAspectRatioQuirk
 https://www.icloud.com/
     MayNeedToIgnoreContentObservation
+    ShouldTreatLongClickAsSecondaryClickQuirk
 https://www.iheart.com/
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://www.imdb.com/
@@ -301,6 +305,7 @@ https://www.thesaurus.com/
     NeedsAnchorToBeMouseFocusableQuirk
 https://www.tiktok.com/
     NeedsChromeCompatibilityUserAgentQuirk
+    NeedsTikTokCaptchaSliderTouchActionQuirk
     NeedsTikTokCommentsOverflowingContentQuirk
     NeedsTikTokVideoOverflowingContentQuirk
     NeedsUserAgentStringOverrideQuirk

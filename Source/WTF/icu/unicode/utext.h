@@ -19,6 +19,9 @@
 #ifndef __UTEXT_H__
 #define __UTEXT_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C API: Abstract Unicode Text API

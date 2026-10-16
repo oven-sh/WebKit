@@ -28,11 +28,14 @@
 #if ENABLE(IMAGE_ANALYSIS)
 
 #import "Helpers/cocoa/CGImagePixelReader.h"
+#import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/cocoa/ImageAnalysisTestingUtilities.h"
 #import "InstanceMethodSwizzler.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
 #import "Helpers/cocoa/PasteboardUtilities.h"
+#import "Helpers/cocoa/SiteIsolationTestUtilities.h"
+#import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "TestInputDelegate.h"
 #import "Helpers/ios/TestUIMenuBuilder.h"
 #import "Helpers/cocoa/TestWKWebView.h"
@@ -47,6 +50,10 @@
 #import <WebKit/_WKFeature.h>
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
 #import <pal/spi/cocoa/VisionKitCoreSPI.h>
+
+#if PLATFORM(MAC)
+#import <pal/mac/DataDetectorsSoftLink.h>
+#endif
 
 static unsigned gImageAnalysisDidProcessRequestCount = 0;
 
@@ -200,6 +207,31 @@ TEST(ImageAnalysisTests, AvoidRedundantTextRecognitionRequests)
 
     // FIXME: If we cache visual look up results as well in the future, we can bring this down to 0 (that is, no new requests).
     EXPECT_LT([webView simulateImageAnalysisGesture:CGPointMake(150, 250)], 2U);
+}
+
+TEST(ImageAnalysisTests, TextRecognitionInCrossOriginIframe)
+{
+    auto requestSwizzler = imageAnalysisMakeRequestSwizzler(processRequestWithResults);
+
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0'><iframe style='display: block; margin: 100px; width: 200px; height: 200px; border: none;' src='https://webkit.org/iframe'></iframe></body>"_s } },
+        { "/iframe"_s, { "<body style='margin: 0'><img style='display: block; width: 200px; height: 200px;' src='large-red-square.png'></body>"_s } },
+        { "/large-red-square.png"_s, { [NSData dataWithContentsOfURL:[NSBundle.test_resourcesBundle URLForResource:@"large-red-square" withExtension:@"png"]] } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    [configuration setWebsiteDataStore:[server.httpsProxyConfiguration() websiteDataStore]];
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 400, 400));
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    [webView simulateImageAnalysisGesture:CGPointMake(200, 200)];
+
+    RetainPtr childFrame = [webView firstChildFrame];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView stringByEvaluatingJavaScript:@"internals.shadowRoot(document.images[0])?.getElementById('image-overlay')?.textContent ?? ''" inFrame:childFrame.get()] isEqualToString:@"Foo bar"];
+    }));
 }
 
 #endif // PLATFORM(IOS_FAMILY)
@@ -484,6 +516,28 @@ TEST(ImageAnalysisTests, AllowRemoveBackgroundOnce)
     EXPECT_NULL([menuBuilder actionWithTitle:WebCore::contextMenuItemTitleRemoveBackground().createNSString().get()]);
 }
 
+TEST(ImageAnalysisTests, PerformRemoveBackgroundInCrossOriginIframe)
+{
+    RemoveBackgroundSwizzler swizzler { iconImage().autorelease(), CGRectMake(10, 10, 215, 174) };
+
+    HTTPServer server({
+        { "/mainframe"_s, { mainFrameTextWithCrossOriginIframe } },
+        { "/iframe"_s, { "<body contenteditable><img src='large-red-square.png'></body>"_s } },
+        { "/large-red-square.png"_s, { [NSData dataWithContentsOfURL:[NSBundle.test_resourcesBundle URLForResource:@"large-red-square" withExtension:@"png"]] } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    setFeatureEnabled(configuration.get(), @"RemoveBackgroundEnabled", true);
+    auto [webView, navigationDelegate, childFrame] = webViewWithFocusedCrossOriginIframe(server, configuration.get());
+    setSelectionInFrame(webView.get(), childFrame.get(), @"getSelection().selectAllChildren(document.body)", _WKSelectionAttributeIsRange);
+    [webView waitForNextPresentationUpdate];
+
+    invokeRemoveBackgroundAction(webView.get());
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView objectByEvaluatingJavaScript:@"document.images[0].getBoundingClientRect().width" inFrame:childFrame.get()] intValue] == 215;
+    }));
+}
+
 #endif // PLATFORM(IOS_FAMILY)
 
 #if !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
@@ -537,6 +591,77 @@ TEST(ImageAnalysisTests, CopyImageOverlayTextWithoutAttributedString)
 }
 
 #endif // !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
+
+#if PLATFORM(MAC) && ENABLE(DATA_DETECTION) && ENABLE(REVEAL)
+
+static CGPoint dataDetectorHighlightButtonLocation(CGRect highlightRect, CGRect visibleRect)
+{
+    // Mirrors the highlight that ImageOverlayController creates, so we can click its button.
+    RetainPtr highlight = adoptCF(PAL::softLink_DataDetectors_DDHighlightCreateWithRectsInVisibleRectWithStyleScaleAndDirection(nullptr, &highlightRect, 1, visibleRect, static_cast<DDHighlightStyle>(DDHighlightStyleBubbleStandard) | static_cast<DDHighlightStyle>(DDHighlightStyleStandardIconArrow), YES, NSWritingDirectionNatural, NO, YES, 0));
+    auto bounds = CGRectIntegral(PAL::softLink_DataDetectors_DDHighlightGetBoundingRect(highlight.get()));
+    auto buttonRect = CGRectNull;
+    for (auto y = CGRectGetMinY(bounds); y < CGRectGetMaxY(bounds); ++y) {
+        for (auto x = CGRectGetMinX(bounds); x < CGRectGetMaxX(bounds); ++x) {
+            Boolean isOverButton = NO;
+            if (PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(highlight.get(), CGPointMake(x, y), &isOverButton) && isOverButton)
+                buttonRect = CGRectUnion(buttonRect, CGRectMake(x, y, 1, 1));
+        }
+    }
+    EXPECT_FALSE(CGRectIsNull(buttonRect));
+    return CGPointMake(std::floor(CGRectGetMidX(buttonRect)), std::floor(CGRectGetMidY(buttonRect)));
+}
+
+TEST(ImageAnalysisTests, DataDetectorMenuLocationInSubframe)
+{
+    __block bool didShowMenu = false;
+    __block CGRect elementBounds = CGRectNull;
+    __block CGPoint menuLocation = CGPointZero;
+    InstanceMethodSwizzler showContextMenuSwizzler {
+        NSClassFromString(@"WKRevealItemPresenter"),
+        NSSelectorFromString(@"showContextMenu"),
+        imp_implementationWithBlock(^(NSObject *presenter) {
+            elementBounds = [(NSValue *)[presenter valueForKey:@"frameInView"] rectValue];
+            menuLocation = [(NSValue *)[presenter valueForKey:@"menuLocationInView"] pointValue];
+            didShowMenu = true;
+        })
+    };
+
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    [webView synchronouslyLoadHTMLString:@"<body style='margin: 0'><iframe style='position: absolute; left: 100px; top: 150px; width: 500px; height: 300px; border: none;' srcdoc=\"<body style='margin: 0'><img style='display: block; width: 400px; height: 100px;' src='400x400-green.png'></body>\"></iframe></body>"];
+    [webView objectByEvaluatingJavaScript:@"(() => {"
+        @"    const quad = { topLeft: new DOMPointReadOnly(0, 0.5), topRight: new DOMPointReadOnly(0.5, 0.5), bottomRight: new DOMPointReadOnly(0.5, 1), bottomLeft: new DOMPointReadOnly(0, 1) };"
+        @"    const image = document.querySelector('iframe').contentDocument.querySelector('img');"
+        @"    internals.installImageOverlay(image, [{ ...quad, children: [{ text: 'webkit.org', ...quad }] }], [], [quad]);"
+        @"    return true;"
+        @"})()"];
+    [webView waitForNextPresentationUpdate];
+
+    auto moveMouse = [&](CGPoint pointInView) {
+        [webView mouseMoveToPoint:[webView convertPoint:pointInView toView:nil] withFlags:0];
+        [webView waitForPendingMouseEvents];
+    };
+
+    // The data detector is at (0, 50, 200, 50) in the iframe, whose content box is at (100, 150).
+    auto expectedElementBounds = CGRectMake(100, 200, 200, 50);
+    moveMouse(CGPointMake(199, 224));
+    moveMouse(CGPointMake(200, 225));
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView objectByEvaluatingJavaScript:@"internals.hasActiveDataDetectorHighlight"] boolValue];
+    }));
+
+    auto buttonLocation = dataDetectorHighlightButtonLocation(expectedElementBounds, [webView bounds]);
+    moveMouse(buttonLocation);
+    [webView sendClickAtPoint:[webView convertPoint:buttonLocation toView:nil]];
+    EXPECT_TRUE(Util::runFor(&didShowMenu, 5_s));
+
+    EXPECT_NEAR(elementBounds.origin.x, expectedElementBounds.origin.x, 1);
+    EXPECT_NEAR(elementBounds.origin.y, expectedElementBounds.origin.y, 1);
+    EXPECT_NEAR(menuLocation.x, buttonLocation.x, 1);
+    EXPECT_NEAR(menuLocation.y, buttonLocation.y, 1);
+}
+
+#endif // PLATFORM(MAC) && ENABLE(DATA_DETECTION) && ENABLE(REVEAL)
 
 #if ENABLE(SERVICE_CONTROLS)
 

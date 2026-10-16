@@ -138,7 +138,7 @@ static inline Vector<int32_t> computedVisualOrder(const Line::RunList& lineRuns,
     return visualOrderList;
 }
 
-static bool NODELETE hasTrailingSoftWrapOpportunity(size_t softWrapOpportunityIndex, size_t layoutRangeEnd, std::span<const InlineItem> inlineItemList)
+static bool LEGACY_NODELETE hasTrailingSoftWrapOpportunity(size_t softWrapOpportunityIndex, size_t layoutRangeEnd, std::span<const InlineItem> inlineItemList)
 {
     if (!softWrapOpportunityIndex || softWrapOpportunityIndex == layoutRangeEnd) {
         // This candidate inline content ends because the entire content ends and not because there's a soft wrap opportunity.
@@ -210,31 +210,31 @@ struct LineCandidate {
     void reset();
 
     struct InlineContent {
-        const InlineContentBreaker::ContinuousContent& NODELETE continuousContent() const { return m_continuousContent; }
-        InlineContentBreaker::ContinuousContent& NODELETE continuousContent() { return m_continuousContent; }
-        const InlineItem* NODELETE trailingLineBreak() const { return m_trailingLineBreak; }
-        const InlineItem* NODELETE trailingWordBreakOpportunity() const { return m_trailingWordBreakOpportunity; }
+        const InlineContentBreaker::ContinuousContent& LEGACY_NODELETE continuousContent() const { return m_continuousContent; }
+        InlineContentBreaker::ContinuousContent& LEGACY_NODELETE continuousContent() { return m_continuousContent; }
+        const InlineItem* LEGACY_NODELETE trailingLineBreak() const { return m_trailingLineBreak; }
+        const InlineItem* LEGACY_NODELETE trailingWordBreakOpportunity() const { return m_trailingWordBreakOpportunity; }
 
         void appendInlineItem(const InlineItem&, const Style::ComputedStyle&, InlineLayoutUnit logicalWidth, InlineLayoutUnit textSpacingAdjustment = 0);
         void reset();
-        bool NODELETE isEmpty() const { return m_continuousContent.runs().isEmpty() && !trailingWordBreakOpportunity() && !trailingLineBreak(); }
+        bool LEGACY_NODELETE isEmpty() const { return m_continuousContent.runs().isEmpty() && !trailingWordBreakOpportunity() && !trailingLineBreak(); }
 
-        void NODELETE setHasTrailingSoftWrapOpportunity(bool hasTrailingSoftWrapOpportunity) { m_hasTrailingSoftWrapOpportunity = hasTrailingSoftWrapOpportunity; }
-        bool NODELETE hasTrailingSoftWrapOpportunity() const { return m_hasTrailingSoftWrapOpportunity; }
+        void LEGACY_NODELETE setHasTrailingSoftWrapOpportunity(bool hasTrailingSoftWrapOpportunity) { m_hasTrailingSoftWrapOpportunity = hasTrailingSoftWrapOpportunity; }
+        bool LEGACY_NODELETE hasTrailingSoftWrapOpportunity() const { return m_hasTrailingSoftWrapOpportunity; }
 
-        void NODELETE setTrailingSoftHyphenWidth(InlineLayoutUnit hyphenWidth) { m_continuousContent.setTrailingSoftHyphenWidth(hyphenWidth); }
+        void LEGACY_NODELETE setTrailingSoftHyphenWidth(InlineLayoutUnit hyphenWidth) { m_continuousContent.setTrailingSoftHyphenWidth(hyphenWidth); }
 
-        void NODELETE setHangingContentWidth(InlineLayoutUnit logicalWidth) { m_continuousContent.setHangingContentWidth(logicalWidth); }
+        void LEGACY_NODELETE setHangingContentWidth(InlineLayoutUnit logicalWidth) { m_continuousContent.setHangingContentWidth(logicalWidth); }
 
-        void NODELETE setHasTrailingClonedDecoration(bool hasClonedDecoration) { m_hasTrailingClonedDecoration = hasClonedDecoration; }
-        bool NODELETE hasTrailingClonedDecoration() const { return m_hasTrailingClonedDecoration; }
+        void LEGACY_NODELETE setHasTrailingClonedDecoration(bool hasClonedDecoration) { m_hasTrailingClonedDecoration = hasClonedDecoration; }
+        bool LEGACY_NODELETE hasTrailingClonedDecoration() const { return m_hasTrailingClonedDecoration; }
 
-        void NODELETE setMinimumRequiredWidth(InlineLayoutUnit minimumRequiredWidth) { m_continuousContent.setMinimumRequiredWidth(minimumRequiredWidth); }
+        void LEGACY_NODELETE setMinimumRequiredWidth(InlineLayoutUnit minimumRequiredWidth) { m_continuousContent.setMinimumRequiredWidth(minimumRequiredWidth); }
 
-        std::optional<size_t> NODELETE firstTextRunIndex() const { return m_firstTextRunIndex; }
-        std::optional<size_t> NODELETE lastTextRunIndex() const { return m_lastTextRunIndex; }
+        std::optional<size_t> LEGACY_NODELETE firstTextRunIndex() const { return m_firstTextRunIndex; }
+        std::optional<size_t> LEGACY_NODELETE lastTextRunIndex() const { return m_lastTextRunIndex; }
 
-        bool NODELETE isShapingCandidateByContent() const { return m_hasTextContentSpanningBoxes; }
+        bool LEGACY_NODELETE isShapingCandidateByContent() const { return m_hasTextContentSpanningBoxes; }
 
     private:
         InlineContentBreaker::ContinuousContent m_continuousContent;
@@ -762,7 +762,7 @@ InlineLayoutUnit LineBuilder::leadingPunctuationWidthForLineCandidate(const Line
         ASSERT_NOT_REACHED();
         return { };
     }
-    auto& style = isFirstFormattedLineCandidate() ? inlineTextItem->firstLineStyle() : inlineTextItem->style();
+    CheckedRef style = isFirstFormattedLineCandidate() ? inlineTextItem->firstLineStyle() : inlineTextItem->style();
     if (!TextUtil::hasHangablePunctuationStart(*inlineTextItem, style))
         return { };
 
@@ -1209,7 +1209,7 @@ void LineBuilder::candidateContentForLine(LineCandidate& lineCandidate, std::pai
     applyShapingIfNeeded(lineCandidate);
 }
 
-static inline InlineLayoutUnit NODELETE availableWidth(const Line& line, InlineLayoutUnit lineWidth, std::optional<IntrinsicWidthMode> intrinsicWidthMode)
+static inline InlineLayoutUnit LEGACY_NODELETE availableWidth(const Line& line, InlineLayoutUnit lineWidth, std::optional<IntrinsicWidthMode> intrinsicWidthMode)
 {
 #if USE_FLOAT_AS_INLINE_LAYOUT_UNIT
     // 1. Intrinsic width contribution computation sums up floats while line breaker subtracts them.
@@ -1287,7 +1287,7 @@ std::optional<LineBuilder::InitialLetterOffsets> LineBuilder::adjustLineRectForI
 
     // Here we try to set the vertical start position for the float in flush with the adjoining text content's cap height.
     // It's a super premature as at this point we don't normally deal with vertical geometry -other than the incoming vertical constraint.
-    auto initialLetterCapHeightOffset = formattingContext().quirks().initialLetterAlignmentOffset(floatBox, rootStyle());
+    auto initialLetterCapHeightOffset = formattingContext().quirks().initialLetterAlignmentOffset(floatBox, protect(rootStyle()));
     // While initial-letter based floats do not set their clear property, intrusive floats from sibling IFCs are supposed to be cleared.
     auto intrusiveBottom = blockLayoutState().intrusiveInitialLetterLogicalBottom();
     if (!initialLetterCapHeightOffset && !intrusiveBottom)
@@ -1309,14 +1309,14 @@ std::optional<LineBuilder::InitialLetterOffsets> LineBuilder::adjustLineRectForI
     if (drop < letterHeight) {
         // Sunken/raised initial letter pushes contents of the first line down.
         auto numberOfSunkenLines = letterHeight - drop;
-        auto verticalGapForInlineContent = numberOfSunkenLines * rootStyle().usedLineHeight();
+        auto verticalGapForInlineContent = numberOfSunkenLines * protect(rootStyle())->usedLineHeight();
         clearGapBeforeFirstLine += verticalGapForInlineContent;
         // And we pull the initial letter up.
         initialLetterCapHeightOffset = -verticalGapForInlineContent + initialLetterCapHeightOffset.value_or(0_lu);
     } else if (drop > letterHeight) {
         // Initial letter is sunken below the first line.
         auto numberOfLinesAboveInitialLetter = drop - letterHeight;
-        sunkenBelowFirstLineOffset = numberOfLinesAboveInitialLetter * rootStyle().usedLineHeight();
+        sunkenBelowFirstLineOffset = numberOfLinesAboveInitialLetter * protect(rootStyle())->usedLineHeight();
     }
 
     m_lineLogicalRect.moveVertically(clearGapBeforeFirstLine);
@@ -1534,7 +1534,7 @@ LineBuilder::Result LineBuilder::handleInlineContent(const InlineItemRange& layo
     return result;
 }
 
-static inline InlineLayoutUnit NODELETE lineBreakingResultContentWidth(const InlineContentBreaker::ContinuousContent::RunList& runs, const InlineContentBreaker::Result::PartialTrailingContent& trailingContent)
+static inline InlineLayoutUnit LEGACY_NODELETE lineBreakingResultContentWidth(const InlineContentBreaker::ContinuousContent::RunList& runs, const InlineContentBreaker::Result::PartialTrailingContent& trailingContent)
 {
     if (trailingContent.trailingRunIndex >= runs.size()) {
         ASSERT_NOT_REACHED();
@@ -1777,34 +1777,36 @@ void LineBuilder::commitCandidateContent(LineCandidate& lineCandidate, std::opti
     }
 }
 
-static const InlineItem& NODELETE wrapOpportunityToRevertTo(const WrapOpportunityList& wrapOpportunityList)
+static const Box& LEGACY_NODELETE enclosingBoxForWrapOpportunity(const InlineItem& wrapOpportunity)
+{
+    // Inline boxes set the wrapping rules for their content and not for themselves, so the box that encloses a wrap
+    // opportunity is the inline box its trailing content belongs to.
+    auto& layoutBox = wrapOpportunity.layoutBox();
+    return layoutBox.isInlineBox() ? layoutBox : layoutBox.parent();
+}
+
+static const InlineItem& LEGACY_NODELETE wrapOpportunityToRevertTo(const WrapOpportunityList& wrapOpportunityList)
 {
     ASSERT(!wrapOpportunityList.isEmpty());
-    auto enclosingBoxForWrapOpportunity = [](auto& wrapOpportunity) -> const Box& {
-        // Inline boxes set the wrapping rules for their content and not for themselves, so the box that encloses a wrap
-        // opportunity is the inline box its trailing content belongs to.
-        auto& layoutBox = wrapOpportunity.layoutBox();
-        return layoutBox.isInlineBox() ? layoutBox : layoutBox.parent();
-    };
 
     // https://drafts.csswg.org/css-text-4/#wrap-inside
     // Prefer the last wrap opportunity that is outside any wrap-inside: avoid box.
-    for (auto* wrapOpportunity : wrapOpportunityList | std::views::reverse) {
-        if (!enclosingBoxForWrapOpportunity(*wrapOpportunity).style().effectiveWrapInsideAvoid())
-            return *wrapOpportunity;
+    for (size_t index = wrapOpportunityList.size(); index--;) {
+        if (!enclosingBoxForWrapOpportunity(*wrapOpportunityList[index]).style().effectiveWrapInsideAvoid())
+            return *wrapOpportunityList[index];
     }
     // Every opportunity is inside an avoid box, so we must break within one. "A break in an outer box must be used
     // before a break within an inner box", so revert to the last opportunity sitting directly in an outermost avoid box
     // - one whose enclosing box is not itself inside another avoid box.
-    for (auto* wrapOpportunity : wrapOpportunityList | std::views::reverse) {
-        if (!enclosingBoxForWrapOpportunity(*wrapOpportunity).parent().style().effectiveWrapInsideAvoid())
-            return *wrapOpportunity;
+    for (size_t index = wrapOpportunityList.size(); index--;) {
+        if (!enclosingBoxForWrapOpportunity(*wrapOpportunityList[index]).parent().style().effectiveWrapInsideAvoid())
+            return *wrapOpportunityList[index];
     }
     // The outermost avoid box is the only content on the line; break inside it as a last resort.
     return *wrapOpportunityList.last();
 }
 
-static size_t NODELETE inlineItemIndex(const InlineItem& inlineItem, const InlineItemRange& layoutRange, std::span<const InlineItem> inlineItemList, const std::optional<InlineTextItem>& partialLeadingTextItem)
+static size_t LEGACY_NODELETE inlineItemIndex(const InlineItem& inlineItem, const InlineItemRange& layoutRange, std::span<const InlineItem> inlineItemList, const std::optional<InlineTextItem>& partialLeadingTextItem)
 {
     // The partial leading text item is not part of the inline item list, but it is where the range starts.
     if (partialLeadingTextItem && &*partialLeadingTextItem == &inlineItem)
@@ -1862,7 +1864,11 @@ LineBuilder::Result LineBuilder::processLineBreakingResult(LineCandidate& lineCa
 
             // The block ellipsis displaces content back to the last soft wrap opportunity on the line. With none (an empty line, or
             // e.g. text-wrap-mode: nowrap, where <wbr> is not one), that is the start of the line and all of the line's content moves.
-            if (m_wrapOpportunityList.isEmpty()) {
+            // A line that floats leave no room for the block ellipsis on is "too small to contain any content": it is no line box,
+            // and its content wraps below the floats as usual.
+            // https://drafts.csswg.org/css2/#floats
+            auto canHoldBlockEllipsis = !isLineConstrainedByFloat() || m_lineClamp.blockEllipsis->logicalWidth <= m_lineLogicalRect.width();
+            if (m_wrapOpportunityList.isEmpty() && canHoldBlockEllipsis) {
                 // "If this results in the entire contents of the line box being displaced, the line box is considered to contain a strut"
                 // https://drafts.csswg.org/css-overflow-4/#block-ellipsis
                 // Everything placed on the line so far (content, inline box starts, floats, out-of-flow boxes) moves to the next line together with the content.

@@ -54,54 +54,73 @@ void MegamorphicCache::notePrototypesOf(StructureID structureID)
     }
 }
 
-void MegamorphicCache::takeOutDead(Heap& heap)
+void MegamorphicCache::takeOutDead(Heap& heap, CollectionScope scope)
 {
     auto isDead = [&](StructureID structureID) {
         return structureID && !heap.isMarked(structureID.decode());
     };
-    auto takeOutLoads = [&](auto& entries) {
-        for (auto& entry : entries) {
+    auto forEachEntryToLookAt = [&](auto& entries, auto& written, const auto& lookAt) {
+        if (scope == CollectionScope::Eden && !Options::validateAOTTypedFacts()) {
+            written.forEachSetBit([&](size_t index) {
+                lookAt(entries[index], true);
+            });
+        } else {
+            for (size_t index = 0; index < entries.size(); ++index)
+                lookAt(entries[index], scope == CollectionScope::Full || written.get(index));
+        }
+        written.clearAll();
+    };
+    auto takeOutLoads = [&](auto& entries, auto& written) {
+        forEachEntryToLookAt(entries, written, [&](auto& entry, bool mayNameDeadCells) {
             if (entry.m_epoch == invalidEpoch)
-                continue;
+                return;
             JSCell* holder = entry.m_holder;
             bool isOwn = holder == JSCell::seenMultipleCalleeObjects();
-            if (!isLiveLoad(entry) || isDead(entry.m_structureID) || (holder && !isOwn && !heap.isMarked(holder))) {
+            bool namesDeadCells = isDead(entry.m_structureID) || (holder && !isOwn && !heap.isMarked(holder));
+            RELEASE_ASSERT_WITH_MESSAGE(mayNameDeadCells || !namesDeadCells, "AOT: an entry of the megamorphic cache that has not been written since the last collection names a cell that a collection of the young has found dead");
+            if (!mayNameDeadCells)
+                return;
+            if (!isLiveLoad(entry) || namesDeadCells) {
                 entry.m_uid = nullptr;
                 entry.m_epoch = invalidEpoch;
-                continue;
+                return;
             }
             if (Options::validateAOTTypedFacts() && isOwn) [[unlikely]]
                 RELEASE_ASSERT_WITH_MESSAGE(entry.m_structureID.decode()->getConcurrently(entry.m_uid.get()) == static_cast<PropertyOffset>(entry.m_offset), "AOT: the megamorphic cache says where every object of a Structure has a property itself, and the Structure says otherwise");
-        }
+        });
     };
-    takeOutLoads(m_loadCachePrimaryEntries);
-    takeOutLoads(m_loadCacheSecondaryEntries);
-    takeOutLoads(m_getterCachePrimaryEntries);
-    takeOutLoads(m_getterCacheSecondaryEntries);
-    auto takeOutStores = [&](auto& entries) {
-        for (auto& entry : entries) {
+    takeOutLoads(m_loadCachePrimaryEntries, m_writtenLoadCachePrimaryEntries);
+    takeOutLoads(m_loadCacheSecondaryEntries, m_writtenLoadCacheSecondaryEntries);
+    takeOutLoads(m_getterCachePrimaryEntries, m_writtenGetterCachePrimaryEntries);
+    takeOutLoads(m_getterCacheSecondaryEntries, m_writtenGetterCacheSecondaryEntries);
+    auto takeOutStores = [&](auto& entries, auto& written) {
+        forEachEntryToLookAt(entries, written, [&](auto& entry, bool mayNameDeadCells) {
             if (entry.m_epoch == invalidEpoch)
-                continue;
-            if (entry.m_epoch != m_epoch || isDead(entry.m_oldStructureID) || isDead(entry.m_newStructureID)) {
+                return;
+            bool namesDeadCells = isDead(entry.m_oldStructureID) || isDead(entry.m_newStructureID);
+            RELEASE_ASSERT_WITH_MESSAGE(mayNameDeadCells || !namesDeadCells, "AOT: an entry of the megamorphic cache that has not been written since the last collection names a cell that a collection of the young has found dead");
+            if (mayNameDeadCells && (entry.m_epoch != m_epoch || namesDeadCells)) {
                 entry.m_uid = nullptr;
                 entry.m_epoch = invalidEpoch;
             }
-        }
+        });
     };
-    takeOutStores(m_storeCachePrimaryEntries);
-    takeOutStores(m_storeCacheSecondaryEntries);
-    auto takeOutAnswers = [&](auto& entries) {
-        for (auto& entry : entries) {
+    takeOutStores(m_storeCachePrimaryEntries, m_writtenStoreCachePrimaryEntries);
+    takeOutStores(m_storeCacheSecondaryEntries, m_writtenStoreCacheSecondaryEntries);
+    auto takeOutAnswers = [&](auto& entries, auto& written) {
+        forEachEntryToLookAt(entries, written, [&](auto& entry, bool mayNameDeadCells) {
             if (entry.m_epoch == invalidEpoch)
-                continue;
-            if (entry.m_epoch != m_epoch || isDead(entry.m_structureID)) {
+                return;
+            bool namesDeadCells = isDead(entry.m_structureID);
+            RELEASE_ASSERT_WITH_MESSAGE(mayNameDeadCells || !namesDeadCells, "AOT: an entry of the megamorphic cache that has not been written since the last collection names a cell that a collection of the young has found dead");
+            if (mayNameDeadCells && (entry.m_epoch != m_epoch || namesDeadCells)) {
                 entry.m_uid = nullptr;
                 entry.m_epoch = invalidEpoch;
             }
-        }
+        });
     };
-    takeOutAnswers(m_hasCachePrimaryEntries);
-    takeOutAnswers(m_hasCacheSecondaryEntries);
+    takeOutAnswers(m_hasCachePrimaryEntries, m_writtenHasCachePrimaryEntries);
+    takeOutAnswers(m_hasCacheSecondaryEntries, m_writtenHasCacheSecondaryEntries);
 }
 
 void MegamorphicCache::age(CollectionScope collectionScope)

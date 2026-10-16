@@ -130,9 +130,9 @@ StringImpl::~StringImpl()
     if (isAtom()) {
         ASSERT(!isSymbol());
         if (length())
-            AtomStringImpl::remove(static_cast<AtomStringImpl*>(this));
+            AtomStringImpl::remove(uncheckedDowncast<AtomStringImpl>(this));
     } else if (isSymbol()) {
-        auto& symbol = static_cast<SymbolImpl&>(*this);
+        auto& symbol = uncheckedDowncast<SymbolImpl>(*this);
         if (CheckedPtr symbolRegistry = symbol.symbolRegistry())
             SUPPRESS_UNCOUNTED_ARG symbolRegistry->remove(*symbol.asRegisteredSymbolImpl());
     }
@@ -146,7 +146,7 @@ StringImpl::~StringImpl()
         StringImplMalloc::free(const_cast<Latin1Character*>(m_data8));
         break;
     case BufferExternal: {
-        auto* external = static_cast<ExternalStringImpl*>(this);
+        auto* external = uncheckedDowncast<ExternalStringImpl>(this);
         external->freeExternalBuffer(const_cast<Latin1Character*>(m_data8), sizeInBytes());
         external->m_free.~ExternalStringImplFreeFunction();
         break;
@@ -356,7 +356,7 @@ Ref<StringImpl> StringImpl::substring(unsigned start, unsigned length)
     return create(span16().subspan(start, length));
 }
 
-char32_t NODELETE StringImpl::codePointAt(unsigned i)
+char32_t LEGACY_NODELETE StringImpl::codePointAt(unsigned i)
 {
     if (is8Bit())
         return span8()[i];
@@ -614,7 +614,7 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocale16Bit(std::span<const
     return newImpl;
 }
 
-static inline bool NODELETE needsTurkishCasingRules(const AtomString& locale)
+static inline bool LEGACY_NODELETE needsTurkishCasingRules(const AtomString& locale)
 {
     // Either "tr" or "az" locale, with ASCII case insensitive comparison and allowing for an ignored subtag.
     char16_t first = locale[0];
@@ -624,14 +624,14 @@ static inline bool NODELETE needsTurkishCasingRules(const AtomString& locale)
         && (locale.length() == 2 || locale[2] == '-');
 }
 
-static inline bool NODELETE needsGreekUppercasingRules(const AtomString& locale)
+static inline bool LEGACY_NODELETE needsGreekUppercasingRules(const AtomString& locale)
 {
     // The "el" locale, with ASCII case insensitive comparison and allowing for an ignored subtag.
     return isASCIIAlphaCaselessEqual(locale[0], 'e') && isASCIIAlphaCaselessEqual(locale[1], 'l')
         && (locale.length() == 2 || locale[2] == '-');
 }
 
-static inline bool NODELETE needsLithuanianCasingRules(const AtomString& locale)
+static inline bool LEGACY_NODELETE needsLithuanianCasingRules(const AtomString& locale)
 {
     // The "lt" locale, with ASCII case insensitive comparison and allowing for an ignored subtag.
     return isASCIIAlphaCaselessEqual(locale[0], 'l') && isASCIIAlphaCaselessEqual(locale[1], 't')
@@ -1140,7 +1140,7 @@ bool StringImpl::startsWithIgnoringASCIICase(StringView prefix) const
     return prefix && ::WTF::startsWithIgnoringASCIICase(*this, prefix);
 }
 
-bool NODELETE StringImpl::startsWith(char16_t character) const
+bool LEGACY_NODELETE StringImpl::startsWith(char16_t character) const
 {
     return m_length && (*this)[0] == character;
 }
@@ -1165,7 +1165,7 @@ bool StringImpl::endsWithIgnoringASCIICase(StringView suffix) const
     return suffix && ::WTF::endsWithIgnoringASCIICase(*this, suffix);
 }
 
-bool NODELETE StringImpl::endsWith(char16_t character) const
+bool LEGACY_NODELETE StringImpl::endsWith(char16_t character) const
 {
     return m_length && (*this)[m_length - 1] == character;
 }
@@ -1510,7 +1510,7 @@ bool equal(const StringImpl* a, const StringImpl* b)
     return equalCommon(a, b);
 }
 
-template<typename CharacterType> inline bool NODELETE equalInternal(const StringImpl* a, std::span<const CharacterType> b)
+template<typename CharacterType> inline bool LEGACY_NODELETE equalInternal(const StringImpl* a, std::span<const CharacterType> b)
 {
     if (!a)
         return !b.data();
@@ -1559,7 +1559,7 @@ bool equalIgnoringASCIICase(const StringImpl* a, const StringImpl* b)
     return a == b || (a && b && equalIgnoringASCIICase(*a, *b));
 }
 
-bool NODELETE equalIgnoringASCIICaseNonNull(const StringImpl* a, const StringImpl* b)
+bool LEGACY_NODELETE equalIgnoringASCIICaseNonNull(const StringImpl* a, const StringImpl* b)
 {
     ASSERT(a);
     ASSERT(b);
@@ -1593,7 +1593,7 @@ Ref<StringImpl> StringImpl::adopt(StringBuffer<char16_t>&& buffer)
     return adoptRef(*new StringImpl(buffer.release()));
 }
 
-size_t NODELETE StringImpl::sizeInBytes() const
+size_t LEGACY_NODELETE StringImpl::sizeInBytes() const
 {
     // FIXME: support substrings
     size_t size = length();

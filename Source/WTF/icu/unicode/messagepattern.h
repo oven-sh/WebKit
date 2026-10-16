@@ -17,6 +17,9 @@
 #ifndef __MESSAGEPATTERN_H__
 #define __MESSAGEPATTERN_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: MessagePattern class: Parses and represents ICU MessageFormat patterns.

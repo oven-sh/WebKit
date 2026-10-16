@@ -62,7 +62,7 @@ public:
     };
     static bool isFunctionOfIntrinsic(const Entry& entry) { return entry.type == JSFunctionType || (entry.type == InternalFunctionType && entry.holder != globalObject); }
 
-    JS_EXPORT_PRIVATE static const ImmutableIntrinsics* NODELETE shared();
+    JS_EXPORT_PRIVATE static const ImmutableIntrinsics* LEGACY_NODELETE shared();
 
     unsigned count() const { return m_entries.size(); }
     const Entry& at(unsigned number) const { return m_entries[number]; }

@@ -736,7 +736,7 @@ public:
     {
     }
 
-    void NODELETE operator()(CodeBlock* codeBlock) const
+    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_debugger == codeBlock->globalObject()->debugger())
             codeBlock->clearDebuggerRequests();
@@ -852,7 +852,7 @@ public:
     {
     }
 
-    void NODELETE operator()(CodeBlock* codeBlock) const
+    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_globalObject == codeBlock->globalObject())
             codeBlock->clearDebuggerRequests();
@@ -1230,7 +1230,7 @@ public:
         ASSERT(callFrame->isEmptyTopLevelCallFrameForDebugger());
     }
 
-    CallFrame* NODELETE asCallFrame() { return CallFrame::create(m_values); }
+    CallFrame* LEGACY_NODELETE asCallFrame() { return CallFrame::create(m_values); }
 
 private:
     Register m_values[CallFrame::headerSizeInRegisters + /* thisValue */ 1] { };
@@ -1238,7 +1238,7 @@ private:
 
 void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
 {
-    if (m_isPaused)
+    if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
     if (JSObject* object = dynamicDowncast<JSObject>(exception)) {

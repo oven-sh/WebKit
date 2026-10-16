@@ -91,6 +91,8 @@ enum class Store : uint8_t {
     OptionalCell32,
     // A byte, the low one of the JSValue: 0: absent, 2: null, 6: false, 7: true, 10: undefined.
     OptionalBoolean,
+    LiteralString,
+    LiteralString32,
 };
 
 enum class LayoutKind : uint8_t {
@@ -129,6 +131,22 @@ static constexpr bool cell32IsPointer = false;
 static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
+
+static constexpr uint32_t emptyLiteralStringWord = 14;
+static constexpr unsigned literalStringShift = 2;
+static constexpr uint32_t maxLiteralStrings = 1 << 18;
+static constexpr uint32_t literalStringWord(uint32_t number) { return emptyLiteralStringWord + (number << literalStringShift); }
+static constexpr uint32_t literalStringIndex(uint32_t word) { return (word - emptyLiteralStringWord) >> literalStringShift; }
+static constexpr uint32_t minCell32 = MarkedBlockCage::minIndex;
+static_assert(literalStringWord(maxLiteralStrings) <= minCell32);
+inline bool isLiteralStringWord(uint64_t word) { return word - emptyLiteralStringWord < minCell32 - emptyLiteralStringWord; }
+static constexpr unsigned literalStringCacheIndexBits = 8;
+static constexpr unsigned literalStringCacheIndexShift = 5;
+static constexpr unsigned literalStringCacheWordBits = 20;
+static_assert(literalStringWord(maxLiteralStrings) >> 1 < 1u << literalStringCacheWordBits);
+static_assert(maxLiteralStrings < 1u << 19);
+static constexpr uint64_t literalStringCacheIndex(uintptr_t impl) { return impl >> literalStringCacheIndexShift & ((1 << literalStringCacheIndexBits) - 1); }
+static constexpr uint64_t literalStringCacheEntry(uintptr_t impl, uint32_t wordOrZero) { return static_cast<uint64_t>(impl >> 3) << literalStringCacheWordBits | wordOrZero >> 1; }
 
 inline bool isAbsentAsZero(Store store) { return store != Store::OptionalInt64 && store != Store::OptionalDouble && store != Store::Int32OrElsewhere; }
 
@@ -184,6 +202,7 @@ static constexpr uint32_t orderWordIsNotExtensible = 1u << 31;
 inline bool isPrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfe; }
 // `@name` of JavaScriptCore's and Bun's builtin code, spelled `\xFDname` by the front end: what BuiltinNames::lookUpPrivateName() finds.
 inline bool isEnginePrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfd; }
+inline bool isConstantSymbol(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfc; }
 
 static constexpr uint32_t nameMayBeOfOwnField = 1u << 31;
 static constexpr uint32_t fieldIsOptional = 1;
@@ -206,6 +225,7 @@ static constexpr uint32_t fieldIsNeverSeenAbsentAsWritten = 262144;
 // Instance::typedAlteredLiterals[flags >> guardOfPinnedFieldShift] is clear. Whoever stores anything else, or takes the property away, sets the byte first. See Placement::pinLiterals().
 static constexpr uint32_t fieldIsPinned = 131072;
 static constexpr uint32_t fieldMayExistWithoutStorage = 1048576;
+static constexpr uint32_t fieldIsPlaceholder = 2097152;
 static constexpr uint32_t nameOfFieldCreatedWithoutStorage = 1u << 31;
 static constexpr uint32_t guardOfPinnedFieldShift = 24;
 static constexpr uint32_t numberOfGuardsOfPinnedFields = 256;
@@ -327,6 +347,19 @@ struct LiteralData {
     double number() const { return std::bit_cast<double>(static_cast<uint64_t>(high) << 32 | low); }
 };
 static_assert(sizeof(LiteralData) == 8);
+
+struct HashedText {
+    using Digest = std::array<uint8_t, 16>;
+    uint32_t string;
+    uint32_t length;
+    uint32_t hash;
+    Digest digest;
+    static HashedText create(uint32_t string, std::span<const char16_t>);
+    JS_EXPORT_PRIVATE static Digest digestOf(std::span<const char16_t>);
+    JS_EXPORT_PRIVATE static Digest digestOfNarrowestForm(StringView);
+    bool matches(StringView) const;
+};
+static_assert(sizeof(HashedText) == 28);
 
 struct FieldTypes {
     // The offsets of RuntimeTypes in Data. What the slot holds, which is the widest of the types of the fields that share it: no more than
@@ -579,6 +612,7 @@ struct Data {
     uint32_t allocationsOffset;
     // By TypeID::index(), which is how compiled code names a type: the offset of its RuntimeType.
     uint32_t typesOffset;
+    uint32_t numberOfTypes;
     // By LayoutData::index: the offset of the LayoutData of a class (an Instance layout), with its methods: that of its first shape, or
     // one with shape 0 if nothing allocates it, since its prototype is on the chain of its subclasses all the same. 0 for all else.
     uint32_t numberOfLayoutIndices;
@@ -599,6 +633,8 @@ struct Data {
     static constexpr uint32_t nameIsOnObjectPrototype = 1u << 31;
     // By EngineClass::index, in bytes: whether the front end has seen a class of the program extend the class.
     uint32_t extendedClassesOffset;
+    uint32_t numberOfBuiltinCellsFilledFromStart;
+    uint32_t builtinCellsFilledFromStartOffset;
     // The bits of the tests that are no range, in 32-bit words: bit n is bit n % 32 of word n / 32.
     uint32_t shapeSetsOffset;
     uint32_t sizeOfStatics;
@@ -649,6 +685,8 @@ struct Data {
     static constexpr uint32_t generatorTakesItsClosure = 1u << 31;
     uint32_t numberOfGeneratorFunctions;
     uint32_t generatorFunctionsOffset;
+    uint32_t numberOfAsyncGeneratorBodies;
+    uint32_t asyncGeneratorBodiesOffset;
     uint32_t numberOfSloppyPlainFunctions;
     uint32_t sloppyPlainFunctionsOffset;
     // Pairs of the generic entrypoint of a plain function that declares `this` to be of a layout, and the number of the allocation that
@@ -662,6 +700,8 @@ struct Data {
     uint32_t numberOfFunctionsThatKeepFieldNamesOffTheirPrototypes;
     uint32_t functionsThatKeepFieldNamesOffTheirPrototypesOffset;
     static constexpr uint32_t propertyCountIsOfWholeChain = 1u << 31;
+    static constexpr unsigned propertyCountBits = 12;
+    static constexpr uint32_t propertyCountMask = (1u << propertyCountBits) - 1;
     uint32_t numberOfPropertyCountsOfThis;
     uint32_t propertyCountsOfThisOffset;
     // Strings, ascending: the names of the fields of all object layouts, allocated or not, but for those the program is seen to define
@@ -704,6 +744,15 @@ struct Data {
     uint32_t numberOfStringsOfIdentifiers;
     uint32_t stringsOfIdentifiersOffset;
     uint32_t hashesOfIdentifiersOffset;
+    uint32_t numberOfLiteralStrings;
+    uint32_t literalStringsOffset;
+    uint32_t literalStringTableOffset;
+    uint32_t literalStringTableMask;
+    uint32_t maxLiteralStringLength;
+    static constexpr unsigned literalStringTableIndexBits = 19;
+    static constexpr uint32_t literalStringTableEntry(uint32_t index, uint32_t hash) { return (index + 1) | hash >> 11 << literalStringTableIndexBits; }
+    uint32_t numberOfHashedTexts;
+    uint32_t hashedTextsOffset;
     static constexpr uint32_t stringHashMask = (1u << 24) - 1;
     static constexpr uint32_t stringIsASCII = 1u << 24;
     static constexpr uint32_t stringIsPrivateName = 1u << 25;
@@ -748,12 +797,19 @@ struct Data {
         return { at<uint8_t>(offset), size };
     }
     bool hasOnlyDecodedForm(uint32_t index) const { return !offsetAndSizeOfString(index)[0]; }
+    const HashedText* hashedText(uint32_t index) const
+    {
+        std::span hashedTexts { at<HashedText>(hashedTextsOffset), numberOfHashedTexts };
+        auto found = std::ranges::lower_bound(hashedTexts, index, { }, &HashedText::string);
+        return found == hashedTexts.end() || found->string != index ? nullptr : &*found;
+    }
     uint32_t sizeOfString(uint32_t index) const { return offsetAndSizeOfString(index)[1]; }
     JS_EXPORT_PRIVATE std::span<const uint8_t> encodedFormOfDecodedString(uint32_t index) const;
     bool isAtomString(uint32_t index) const { return at<uint32_t>(atomStringsOffset)[index / 32] >> index % 32 & 1; }
     uint32_t stringFacts(uint32_t index) const { return at<uint32_t>(stringFactsOffset)[index]; }
     uint32_t stringOfIdentifierPlusOne(uint32_t identifier) const { return identifier < numberOfStringsOfIdentifiers ? at<uint32_t>(stringsOfIdentifiersOffset)[identifier] : 0; }
     uint32_t hashOfIdentifier(uint32_t identifier) const { return at<uint32_t>(hashesOfIdentifiersOffset)[identifier]; }
+    uint32_t stringIDOfLiteralString(uint32_t number) const { return at<uint32_t>(literalStringsOffset)[number] - 1; }
 };
 
 // An environment has no shape word. The low 16 bits of its shape are in the two bytes of its header that say nothing about a cell that is no object, JSCell::m_indexingTypeAndMisc and

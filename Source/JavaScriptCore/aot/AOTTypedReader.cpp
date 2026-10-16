@@ -27,11 +27,11 @@ public:
             return "the program is shorter than its header"_s;
         m_header = reinterpret_cast<const Format::Header*>(m_buffer.data());
         if (m_header->magic != Format::magic)
-            return "this is not a program of the front end"_s;
+            return "this is not a program written by the front end"_s;
         if (m_header->version != Format::version || m_header->opcodeNamesHash != Format::opcodeNamesHash || m_header->builtinsHash != builtinsHash)
-            return "the front end and the engine are of different versions"_s;
+            return "the front end and the engine have different versions"_s;
         if (m_header->sizeInBytes != m_buffer.size())
-            return "the program is not as long as it says"_s;
+            return "the program's length does not match its header"_s;
         for (unsigned i = 0; i < std::size(Format::recordSizes); ++i) {
             if (m_header->recordSizes[i] != Format::recordSizes[i])
                 return "the front end and the engine lay out a record differently"_s;
@@ -50,17 +50,22 @@ public:
         m_values = section<Format::Value>(m_header->values);
         m_targets = section<Format::Target>(m_header->targets);
         if (m_failed)
-            return "a section lies outside the program"_s;
+            return "a section extends outside the program"_s;
 
         for (auto& string : section<Format::String>(m_header->strings)) {
             if (static_cast<uint64_t>(string.offset) + string.length > bytes.size())
-                return "a string lies outside the program"_s;
+                return "a string extends outside the program"_s;
             m_program.strings.append(bytes.subspan(string.offset, string.length));
-            m_program.mayRunInSeveralInstances |= equalSpans(m_program.strings.last(), "ModuleGraph"_s.span8());
+            m_program.mayRunInSeveralInstances |= equalSpans(m_program.strings.last(), asBytes("ModuleGraph"_s.span8()));
             m_program.noteString(StringID(m_program.strings.size() - 1));
         }
-        for (auto& declared : section<Format::DeclaredType>(m_header->declaredTypes))
+        for (auto& declared : section<Format::DeclaredType>(m_header->declaredTypes)) {
+            m_callSignatureRead = Format::none;
             m_types.append(m_program.types.intern(read(declared)));
+            m_callSignatures.append(m_callSignatureRead);
+        }
+        for (TypeID type : m_types)
+            m_predictedTypes.append(m_program.at(type).hasLiteralString() ? m_program.types.intern(m_program.at(type).withLiteralStringWidened()) : type);
         auto& types = m_program.types;
         types.never = types.intern(Type::never());
         types.undefined = types.intern(Type::ofPrimitives(Primitive::Undefined));
@@ -90,7 +95,7 @@ public:
                     layout.environment = LayoutID(shape.environment);
                 layout.isAllocated = shape.flags & Format::ShapeIsAllocated;
                 if (shape.declaredPath != Format::none && shape.declaredPath >= m_program.strings.size())
-                    return "the path a shape is declared at is no string of the program"_s;
+                    return "the declaration path of a shape is not a string of the program"_s;
                 layout.declaredPath = StringID(shape.declaredPath);
                 layout.declaredLine = shape.declaredLine;
                 layout.mayBeFrozen = shape.flags & Format::ShapeMayBeFrozen;
@@ -104,7 +109,7 @@ public:
                 layout.admitsForeignObjects = shape.flags & Format::ShapeAdmitsForeignObjects;
                 layout.isOpenedForLog = shape.flags & Format::ShapeIsOpenedForLog;
                 if (layout.isOpenedForLog && (!layout.admitsForeignObjects || !m_program.logsTypeErrors))
-                    return "a shape is opened for the log, and admits no foreign objects or the program keeps no log"_s;
+                    return "a shape is opened for logging, but it admits no foreign objects or the program does not log"_s;
             layout.admitsOnlyOtherLayouts = shape.flags & Format::ShapeAdmitsOnlyOtherLayouts;
             if (layout.admitsOnlyOtherLayouts && !layout.admitsForeignObjects)
                 return "a shape admits only other layouts, and admits no foreign objects"_s;
@@ -121,6 +126,8 @@ public:
                     field.name = StringID(from.name);
                     field.type = typeReliedOn(from.declaredType);
                     field.flags = (from.flags & (fieldIsOptional | fieldIsImmutable)) | (from.flags & Format::FieldIsMethod ? fieldIsMethod : 0) | (from.flags & Format::FieldIsAnnotated ? fieldIsAnnotated : 0);
+                    if (layout.kind == LayoutKind::Instance && from.flags & Format::FieldIsMethod)
+                        m_program.methodFieldNames.set(from.name);
                     if (layout.kind == LayoutKind::Environment && from.flags & Format::FieldIsNeverSeenUninitialized)
                         field.flags |= fieldIsNeverSeenUninitialized | (from.flags & Format::FieldIsStoredOnce ? fieldIsStoredOnce : 0);
                     if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsNeverStored)
@@ -135,12 +142,12 @@ public:
                         field.flags |= fieldDoesNotAdmitUndefined;
                     if (from.flags & Format::FieldIsAbsentAtBirth) {
                         if (layout.kind != LayoutKind::Instance || !(from.flags & Format::FieldIsOptional))
-                            return "a field that is absent at birth is not an optional field of a class"_s;
+                            return "a field that is absent at allocation is not an optional field of a class"_s;
                         field.flags |= fieldIsAbsentAtBirth;
                     }
                     if (from.flags & Format::FieldIsNeverSeenAbsent) {
                         if (!isObjectLayout(layout.kind) || from.flags & (Format::FieldIsOptional | Format::FieldIsNeverStored))
-                            return "a field that is never seen absent is not a required field of an object"_s;
+                            return "a field that is never observed absent is not a required field of an object"_s;
                         // All stores go by name through the run time then, which counts a field among the keys when it finds it absent.
                         if (!Options::auditAOTTypedAssertions())
                             field.flags |= fieldIsNeverSeenAbsent | fieldIsNeverSeenAbsentAsWritten;
@@ -150,7 +157,7 @@ public:
                         field.flags &= ~fieldIsImmutable;
                     auto literals = slice(m_words, from.literals);
                     if (literals.size() % 3)
-                        return "the literals of a field are not whole"_s;
+                        return "the literals of a field are truncated"_s;
                     for (size_t i = 0; i < literals.size(); i += 3) {
                         bool isNumber = literals[i] == static_cast<uint32_t>(Format::LiteralKind::Number);
                         if (!isNumber && (literals[i] != static_cast<uint32_t>(Format::LiteralKind::String) || literals[i + 1] >= m_program.strings.size()))
@@ -158,10 +165,10 @@ public:
                         field.literals.append(isNumber ? Literal { StringID(), std::bit_cast<double>(static_cast<uint64_t>(literals[i + 2]) << 32 | literals[i + 1]) } : Literal { StringID(literals[i + 1]), 0 });
                     }
                     if (from.typeText != Format::none && from.typeText >= m_program.strings.size())
-                        return "the type text of a field is no string of the program"_s;
+                        return "the type text of a field is not a string of the program"_s;
                     field.typeText = StringID(from.typeText);
                     if (from.onlyFunction != Format::none && from.onlyFunction >= numberOfFunctions)
-                        return "the only function of a field is no function of the program"_s;
+                        return "the only function of a field is not a function of the program"_s;
                     field.onlyFunction = FunctionID(from.onlyFunction);
                     field.onlyFunctionIsFact = field.onlyFunction && layout.kind == LayoutKind::Environment && from.onlyFunctionFlags & Format::OnlyFunctionIsFact;
                     field.onlyFunctionOrNil = field.onlyFunction && layout.kind == LayoutKind::Environment && from.onlyFunctionFlags & Format::OnlyFunctionOrNil;
@@ -193,7 +200,7 @@ public:
         for (auto& keys : keysThatAreSymbolsOfShapes)
             m_keysThatAreSymbols.appendVector(keys);
         for (auto& layout : m_program.layouts)
-            layout.mayGiveUp = layout.kind == LayoutKind::Record && layout.isAllocated && layout.admitsForeignObjects && !layout.checksForeignObjects() && !Options::auditAOTTypedAssertions();
+            layout.mayGiveUp = isObjectLayout(layout.kind) && layout.isAllocated && layout.admitsForeignObjects && !layout.checksForeignObjects() && !Options::auditAOTTypedAssertions();
         for (auto& view : m_program.layouts) {
             if (view.admitsForeignObjects)
                 continue;
@@ -234,9 +241,9 @@ public:
             variable.isNeverSeenUninitialized = variable.isStoredOnce || from.initialization == Format::Initialization::NeverSeen;
             variable.startsZero = from.initialization == Format::Initialization::Zero;
             if (from.initialization > Format::Initialization::Zero)
-                return "a variable starts out in a way that is not known"_s;
+                return "a variable has an unknown initial state"_s;
             if (from.onlyFunction != Format::none && from.onlyFunction >= numberOfFunctions)
-                return "the only function of a variable is no function of the program"_s;
+                return "the only function of a variable is not a function of the program"_s;
             variable.onlyFunction = FunctionID(from.onlyFunction);
             variable.onlyFunctionIsFact = variable.onlyFunction && from.onlyFunctionFlags & Format::OnlyFunctionIsFact;
             variable.onlyFunctionOrNil = variable.onlyFunction && from.onlyFunctionFlags & Format::OnlyFunctionOrNil;
@@ -265,7 +272,7 @@ public:
                 module.path = StringID(from.path);
                 module.initializer = FunctionID(from.initializer);
                 if (from.displayPath != Format::none && from.displayPath >= m_program.strings.size())
-                    return "the display path of a module is no string of the program"_s;
+                    return "the display path of a module is not a string of the program"_s;
                 module.displayPath = StringID(from.displayPath);
                 module.lineTableSize = from.lineTable.count;
                 if (!readLineTable(slice(bytes, from.lineTable), module))
@@ -281,6 +288,19 @@ public:
         }
         auto functions = section<Format::Function>(m_header->functions);
         m_program.functions.reserveInitialCapacity(2 * functions.size());
+#if !ASAN_ENABLED
+        {
+            constexpr size_t sizeOfPage = 4 * KB;
+            constexpr size_t bytesInChunk = MB;
+            auto* room = reinterpret_cast<volatile uint8_t*>(m_program.functions.begin());
+            size_t size = functions.size() * sizeof(Function);
+            forEachIndexInParallel(static_cast<unsigned>((size + bytesInChunk - 1) / bytesInChunk), [&](unsigned chunk) {
+                size_t end = std::min(size, (static_cast<size_t>(chunk) + 1) * bytesInChunk);
+                for (size_t at = static_cast<size_t>(chunk) * bytesInChunk; at < end; at += sizeOfPage)
+                    room[at] = 0;
+            });
+        }
+#endif
         m_program.functions.grow(functions.size());
         Vector<Vector<std::pair<LayoutID, uint32_t>>> closuresMadeOnce(functions.size());
         forEachIndexInParallel(functions.size(), [&](unsigned i) {
@@ -301,13 +321,13 @@ public:
         }
         for (uint32_t index : slice(m_words, m_header->entries)) {
             if (index >= m_program.functions.size())
-                return "an entry is no function of the program"_s;
+                return "an entry point is not a function of the program"_s;
             if (m_program.isEntry(FunctionID(index)))
-                return "an entry is listed twice"_s;
+                return "an entry point is listed twice"_s;
             m_program.entries.append(FunctionID(index));
         }
         if (m_program.entries.isEmpty())
-            return "the program has no entry"_s;
+            return "the program has no entry point"_s;
         for (uint32_t string : slice(m_words, m_header->extendedGlobals)) {
             BuiltinName name = string < m_program.strings.size() ? m_program.builtinName(StringID(string)) : BuiltinName();
             if (Builtins::singleton().mayBeExtended(name))
@@ -315,28 +335,28 @@ public:
         }
         for (uint32_t string : slice(m_words, m_header->prototypePropertyNames)) {
             if (string >= m_program.strings.size())
-                return "a name defined on a prototype is no string of the program"_s;
+                return "a name defined on a prototype is not a string of the program"_s;
             m_program.prototypePropertyNames.set(string);
         }
         auto regExpLiterals = slice(m_words, m_header->regExpLiterals);
         if (regExpLiterals.size() % 2)
-            return "the list of regular expression literals is not one of pairs"_s;
+            return "the list of regular expression literals does not consist of pairs"_s;
         for (size_t i = 0; i < regExpLiterals.size(); i += 2) {
             if (regExpLiterals[i] >= m_program.strings.size() || regExpLiterals[i + 1] >= m_program.strings.size())
-                return "a regular expression literal is no pair of strings of the program"_s;
+                return "a regular expression literal is not a pair of strings of the program"_s;
             m_program.regExpLiterals.append({ StringID(regExpLiterals[i]), StringID(regExpLiterals[i + 1]) });
         }
         m_program.sites = Vector<uint32_t>(slice(m_words, m_header->sites));
         auto builtinModules = slice(m_words, m_header->builtinModules);
         if (builtinModules.size() % 2)
-            return "the list of builtin modules is not one of pairs"_s;
+            return "the list of builtin modules does not consist of pairs"_s;
         for (size_t i = 0; i < builtinModules.size(); i += 2) {
             uint32_t id = builtinModules[i];
             uint32_t index = builtinModules[i + 1];
             if (i && id <= builtinModules[i - 2])
-                return "the builtin modules are not in the order of their numbers"_s;
+                return "the builtin modules are not sorted by number"_s;
             if (index >= m_program.functions.size())
-                return "a builtin module is no function of the program"_s;
+                return "a builtin module is not a function of the program"_s;
             auto& function = m_program.functions[index];
             if (function.kind != FunctionKind::Plain || function.declaredAs & (functionIsAsync | functionIsGenerator) || !function.parameterTypes.isEmpty() || !function.captureTypes.isEmpty())
                 return "a builtin module is not a plain function without parameters and captures"_s;
@@ -346,17 +366,17 @@ public:
         }
         auto builtinFunctions = slice(m_words, m_header->builtinFunctions);
         if (builtinFunctions.size() % 3)
-            return "the list of builtin functions is not one of triples"_s;
+            return "the list of builtin functions does not consist of triples"_s;
         for (size_t i = 0; i < builtinFunctions.size(); i += 3) {
             uint32_t id = builtinFunctions[i];
             uint32_t index = builtinFunctions[i + 1];
             uint32_t visibility = builtinFunctions[i + 2];
             if (i && id <= builtinFunctions[i - 3])
-                return "the builtin functions are not in the order of their numbers"_s;
+                return "the builtin functions are not sorted by number"_s;
             if (index >= m_program.functions.size() || !std::as_const(m_program).functions[index].captureTypes.isEmpty())
-                return "a builtin function is no function of the program that captures nothing"_s;
+                return "a builtin function is not a function of the program without captures"_s;
             if (visibility > static_cast<uint32_t>(ImplementationVisibility::PrivateRecursive))
-                return "a builtin function has no such visibility"_s;
+                return "a builtin function has an unknown visibility"_s;
             m_program.functions[index].flags |= Format::FunctionIsUsedAsValue;
             m_program.builtinFunctions.append({ id, FunctionID(index), visibility });
         }
@@ -366,19 +386,19 @@ public:
         }
         auto functionsByKey = slice(m_words, m_header->functionsByKey);
         if (functionsByKey.size() % 3)
-            return "the list of functions by key is not one of triples"_s;
+            return "the list of functions by key does not consist of triples"_s;
         for (size_t i = 0; i < functionsByKey.size(); i += 3) {
             uint32_t property = functionsByKey[i];
             uint32_t key = functionsByKey[i + 1];
             uint32_t index = functionsByKey[i + 2];
             if (i && std::pair(property, key) <= std::pair(functionsByKey[i - 3], functionsByKey[i - 2]))
-                return "the functions by key are not in the order of property and key"_s;
+                return "the functions by key are not sorted by property and key"_s;
             if (property >= m_program.strings.size() || key >= m_program.strings.size() || index >= m_program.functions.size())
-                return "a function by key names no string or no function of the program"_s;
+                return "a function by key does not name a string and a function of the program"_s;
             m_program.functionsByKey.append({ StringID(property), StringID(key), FunctionID(index) });
         }
         if (m_failed)
-            return "a list lies outside its section"_s;
+            return "a list extends outside its section"_s;
         return checkClasses();
     }
 
@@ -392,50 +412,50 @@ private:
         for (unsigned i = 0; i < layouts.size(); ++i) {
             auto& layout = layouts[i];
             if (layout.reuseVariable && (layout.reuseVariable.index() >= m_program.variables.size() || layout.fields.size() < 2))
-                return "an environment that may be reused has no variable to be kept in"_s;
+                return "an environment that may be reused has no variable to be cached in"_s;
             if (layout.kind != LayoutKind::Instance) {
                 if (layout.constructor || layout.environment || !layout.staticMethods.isEmpty() || !layout.staticFields.isEmpty())
-                    return "a shape that is no class has what only a class has"_s;
+                    return "a shape that is not a class has members that only a class can have"_s;
                 // Of the type of an object literal: the accessors it declares. See Layout::methods.
                 for (auto& method : layout.methods) {
                     if (layout.kind != LayoutKind::Record || method.kind == MethodKind::Method || !method.name || method.name.index() >= m_program.strings.size() || method.function.index() >= functions.size())
-                        return "a shape that is no class has methods"_s;
+                        return "a shape that is not a class has methods"_s;
                 }
                 continue;
             }
             // Only types name the class: its declaration is no part of the program, so there is no class object and there are no objects.
             if (!layout.constructor) {
                 if (layout.isAllocated || layout.environment || !layout.methods.isEmpty() || !layout.staticMethods.isEmpty() || !layout.staticFields.isEmpty())
-                    return "a class without a constructor has objects or members"_s;
+                    return "a class without a constructor has instances or members"_s;
                 continue;
             }
             if (layout.constructor.index() >= functions.size() || functions[layout.constructor.index()].kind != FunctionKind::Constructor)
-                return "what a class has for its constructor is none"_s;
+                return "the constructor of a class is not a constructor"_s;
             auto& constructor = functions[layout.constructor.index()];
             if (constructor.constructedClass)
                 return "two classes have the same constructor"_s;
             constructor.constructedClass = LayoutID(i);
             if (!constructor.has(Format::FunctionHasThis) || (constructor.has(Format::FunctionHasNewTarget) && constructor.parameterTypes.isEmpty()))
-                return "a constructor does not take what it is handed"_s;
+                return "a constructor does not accept the arguments it is passed"_s;
             if (layout.hasForeignRoot && !constructor.has(Format::FunctionHasNewTarget))
-                return "the constructor of a class with a foreign root does not take new.target"_s;
+                return "the constructor of a class with a foreign root does not accept new.target"_s;
             if (!layout.isLaidOut && (!layout.fields.isEmpty() || layout.isAllocated || !layout.members.isEmpty() || !layout.specializations.isEmpty()))
-                return "a class that is not laid out has fields or objects"_s;
+                return "a class without a layout has fields or instances"_s;
             if (layout.isLaidOut && layout.hasForeignRoot)
-                return "a class with a foreign root is laid out"_s;
+                return "a class with a foreign root has a layout"_s;
             if (layout.base) {
                 if (layout.base.index() >= i || layouts[layout.base.index()].kind != LayoutKind::Instance)
-                    return "a class extends what is no class before it"_s;
+                    return "a class extends something that is not an earlier class"_s;
                 auto& base = layouts[layout.base.index()];
                 if (!layout.isLaidOut || !base.isLaidOut || !base.constructor)
-                    return "a class that is not laid out extends or is extended by a class of the program"_s;
+                    return "a class without a layout extends or is extended by a class of the program"_s;
                 if (layout.isEvaluatedOnce && !base.isEvaluatedOnce)
                     return "a class that is evaluated once extends one that is not"_s;
             }
             uint32_t numberOfVariables = m_program.variables.size();
             if (layout.environment) {
                 if (layout.isEvaluatedOnce || layout.environment.index() >= layouts.size() || layouts[layout.environment.index()].kind != LayoutKind::Environment)
-                    return "a class closes over what is no environment"_s;
+                    return "a class closes over something that is not an environment"_s;
                 numberOfVariables = layouts[layout.environment.index()].fields.size();
             } else if (!layout.isEvaluatedOnce)
                 return "a class that is not evaluated once has no environment"_s;
@@ -450,11 +470,11 @@ private:
                     if (method.function.index() >= functions.size() || (method.name ? method.name.index() >= m_program.strings.size() : method.key >= numberOfVariables))
                         return "a method has no function or no name"_s;
                     if (capturesSomethingElse(functions[method.function.index()]))
-                        return "a method captures something else than the environment of its class"_s;
+                        return "a method captures something other than the environment of its class"_s;
                 }
             }
             if (capturesSomethingElse(constructor))
-                return "a constructor captures something else than the environment of its class"_s;
+                return "a constructor captures something other than the environment of its class"_s;
             for (auto& field : layout.staticFields) {
                 if (field.name.index() >= m_program.strings.size())
                     return "a static field has no name"_s;
@@ -464,12 +484,12 @@ private:
             auto& layout = m_program.at(id);
             TypeID type = layout.environment ? m_program.at(layout.environment).fields[key].type : m_program.variables[key].type;
             if (!type || !m_program.at(type).hasOnlyPrimitives(Primitive::Symbol))
-                return "the variable of a computed name that is said to be a symbol holds more than symbols"_s;
+                return "the variable of a computed name that is declared to be a symbol holds other values too"_s;
         }
         for (unsigned i = 0; i < m_program.types.size(); ++i) {
             for (LayoutID view : m_program.at(TypeID(i)).views) {
                 if (view.index() >= layouts.size() || (m_program.at(view).kind == LayoutKind::Instance && !m_program.at(view).isLaidOut))
-                    return "a type names a class that is not laid out"_s;
+                    return "a type names a class without a layout"_s;
             }
         }
         return { };
@@ -498,7 +518,9 @@ private:
     template<typename Container>
     void readValues(Format::Span span, Container& result)
     {
-        for (uint32_t word : slice(m_words, span))
+        auto words = slice(m_words, span);
+        result.reserveInitialCapacity(words.size());
+        for (uint32_t word : words)
             result.append(ValueID(word));
     }
 
@@ -616,6 +638,7 @@ private:
         type.anyFunction |= other.anyFunction || type.anyObject;
         type.views.appendVector(other.views);
         type.engineClasses.appendVector(other.engineClasses);
+        type.normalizeLiteralString();
         if (type.anyObject) {
             type.views.clear();
             type.engineClasses.clear();
@@ -626,6 +649,40 @@ private:
         std::ranges::sort(type.engineClasses);
         type.engineClasses.shrink(std::unique(type.engineClasses.begin(), type.engineClasses.end()) - type.engineClasses.begin());
         return m_program.types.intern(type);
+    }
+
+    bool readCallSignature(const Format::ObjectPart& part)
+    {
+        if (part.shapeOrName >= m_program.strings.size())
+            return false;
+        auto text = m_program.string(StringID(part.shapeOrName));
+        auto prefix = asBytes("(signature "_s.span8());
+        if (text.size() < prefix.size() + 4 || !equalSpans(text.first(prefix.size()), prefix))
+            return false;
+        CallSignature signature;
+        size_t at = prefix.size();
+        for (; at < text.size() && isASCIIDigit(text[at]); ++at)
+            signature.leastNumberOfArguments = signature.leastNumberOfArguments * 10 + (text[at] - '0');
+        signature.hasRestParameter = at + 1 < text.size() && text[at + 1] == '1';
+        auto arguments = slice(m_words, part.typeArguments);
+        if (arguments.empty()) {
+            m_failed = true;
+            return true;
+        }
+        signature.result = typeAt(arguments[0]);
+        for (uint32_t argument : arguments.subspan(1))
+            signature.parameters.append(typeAt(argument));
+        auto& alike = m_callSignaturesByHash.add(computeHash(signature.result, signature.parameters, signature.leastNumberOfArguments, signature.hasRestParameter) >> 1, Vector<uint32_t, 1>()).iterator->value;
+        for (uint32_t known : alike) {
+            if (m_program.callSignatures[known] == signature) {
+                m_callSignatureRead = known;
+                return true;
+            }
+        }
+        m_callSignatureRead = safeCast<uint32_t>(m_program.callSignatures.size());
+        alike.append(m_callSignatureRead);
+        m_program.callSignatures.append(WTF::move(signature));
+        return true;
     }
 
     Type read(const Format::DeclaredType& declared)
@@ -639,6 +696,7 @@ private:
             { Format::PrimitiveString, Primitive::String },
             { Format::PrimitiveSymbol, Primitive::Symbol },
             { Format::PrimitiveBigInt, Primitive::BigInt },
+            { Format::PrimitiveLiteralString, Primitive::LiteralString },
         };
         uint16_t bits = 0;
         for (auto [from, to] : primitives) {
@@ -675,6 +733,10 @@ private:
                 break;
             }
             case Format::ObjectPartKind::GlobalClass: {
+                if (readCallSignature(part)) {
+                    type.anyFunction = true;
+                    break;
+                }
                 BuiltinName name = part.shapeOrName < m_program.strings.size() ? m_program.builtinName(StringID(part.shapeOrName)) : BuiltinName();
                 switch (builtins.interfaceNamed(name)) {
                 case GlobalInterface::Class:
@@ -735,8 +797,8 @@ private:
     void prepareForAudit(Value& value, const Format::Value& from, const Function& function)
     {
         // A call that goes by what is expected goes past the general entry, which has the tests for the parameters.
-        value.predictedClosure = { };
-        value.predictedByKey = { };
+        value.setPredictedClosure({ });
+        value.setPredictedByKey({ });
         switch (value.opcode) {
         // Whatever the checker has made of the program, these are what they are said to be.
         case Opcode::Undefined:
@@ -755,13 +817,13 @@ private:
         case Opcode::GetModuleVariable: {
             auto variables = section<Format::Variable>(m_header->variables);
             if (from.immediates[0] < variables.size() && readIsTested(from.type, variables[from.immediates[0]].declaredType))
-                value.assertedType = assertedTypeAt(from.type);
+                value.setAssertedType(assertedTypeAt(from.type));
             return;
         }
         case Opcode::CallDirect: {
             auto functions = section<Format::Function>(m_header->functions);
             if (from.immediates[0] < functions.size() && readIsTested(from.type, functions[from.immediates[0]].resultType))
-                value.assertedType = assertedTypeAt(from.type);
+                value.setAssertedType(assertedTypeAt(from.type));
             return;
         }
         case Opcode::GetField:
@@ -775,7 +837,7 @@ private:
             auto& field = fields[from.immediates[1]];
             if (shapes[from.immediates[0]].kind == Format::ShapeKind::Environment) {
                 if (value.opcode == Opcode::GetField && readIsTested(from.type, field.declaredType))
-                    value.assertedType = assertedTypeAt(from.type);
+                    value.setAssertedType(assertedTypeAt(from.type));
                 return;
             }
             // These go by where the field is, untested. That will do for an object this function has made. Of any other it is asked by the name.
@@ -784,7 +846,7 @@ private:
             value.opcode = value.opcode == Opcode::GetField ? Opcode::GetById : Opcode::PutById;
             value.immediates = { field.name, Format::none };
             if (value.opcode == Opcode::GetById)
-                value.assertedType = assertedTypeAt(from.type);
+                value.setAssertedType(assertedTypeAt(from.type));
             return;
         }
         // Nothing but the operation vouches for what it yields: it holds that to the type of the value.
@@ -800,13 +862,13 @@ private:
         case Opcode::Await:
         case Opcode::GetExternalModule:
         case Opcode::Yield:
-            value.assertedType = assertedTypeAt(from.type);
+            value.setAssertedType(assertedTypeAt(from.type));
             return;
         case Opcode::Cast:
             if (value.notesMisfitAtCaller() && (!m_program.logsTypeErrors || value.castReason() != CastReason::Claim))
                 m_failed = true;
             if (value.castReason() != CastReason::Upcast)
-                value.assertedType = assertedTypeAt(from.type);
+                value.setAssertedType(assertedTypeAt(from.type));
             return;
         default:
             return;
@@ -898,6 +960,17 @@ private:
                 m_failed = true;
                 break;
             }
+            if ((value.opcode == Opcode::Call || value.opcode == Opcode::CallMethod) && value.immediates[1] != Format::none) {
+                if (uint32_t written = value.immediates[1]; written != Format::CallIsInTailPosition) {
+                    uint32_t type = (written - 2) >> 1;
+                    if (written < 2 || type >= m_callSignatures.size() || m_callSignatures[type] == Format::none) {
+                        m_failed = true;
+                        break;
+                    }
+                    value.setCallSignature(m_callSignatures[type]);
+                    value.immediates[1] = (written - 2) & 1 ? Format::CallIsInTailPosition : Format::none;
+                }
+            }
             if (value.opcode == Opcode::Call || value.opcode == Opcode::CallMethod || value.opcode == Opcode::CallDirect || value.opcode == Opcode::Operation) {
                 if (value.immediates[1] != Format::none && value.immediates[1] != Format::CallIsInTailPosition) {
                     m_failed = true;
@@ -925,19 +998,19 @@ private:
                 break;
             }
             if (from.prediction != Format::none && from.prediction & Format::PredictionIsClosure) {
-                value.predictedClosure = FunctionID(from.prediction & ~Format::PredictionIsClosure);
-                if (value.predictedClosure.index() >= m_header->functions.count) {
+                value.setPredictedClosure(FunctionID(from.prediction & ~Format::PredictionIsClosure));
+                if (value.predictedClosure().index() >= m_header->functions.count) {
                     m_failed = true;
                     break;
                 }
             } else if (from.prediction != Format::none && from.prediction & Format::PredictionIsByKey) {
-                value.predictedByKey = StringID(from.prediction & ~Format::PredictionIsByKey);
-                if (value.opcode != Opcode::GetByVal || value.predictedByKey.index() >= m_program.strings.size()) {
+                value.setPredictedByKey(StringID(from.prediction & ~Format::PredictionIsByKey));
+                if (value.opcode != Opcode::GetByVal || value.predictedByKey().index() >= m_program.strings.size()) {
                     m_failed = true;
                     break;
                 }
-            } else
-                value.prediction = typeAt(from.prediction);
+            } else if (typeAt(from.prediction))
+                value.setPrediction(m_predictedTypes[from.prediction]);
             // The type a cast holds its operand to is the type of the cast, but for a coercion.
             if (value.opcode == Opcode::Cast) {
                 if (uint32_t freshness = from.immediates[1] >> Format::freshnessShift & 3; (from.immediates[1] & 0xff) > static_cast<uint32_t>(CastReason::Coerce)
@@ -987,6 +1060,10 @@ private:
     std::span<const Format::ObjectPart> m_objectParts;
     // By the number the front end knows a type by.
     Vector<TypeID> m_types;
+    Vector<TypeID> m_predictedTypes;
+    Vector<uint32_t> m_callSignatures;
+    uint32_t m_callSignatureRead { Format::none };
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_callSignaturesByHash;
     std::span<const Format::Field> m_fields;
     std::span<const Format::Method> m_methods;
     std::span<const Format::Block> m_blocks;

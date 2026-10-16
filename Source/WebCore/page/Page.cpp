@@ -157,6 +157,8 @@
 #include "PointerCaptureController.h"
 #include "PointerLockController.h"
 #include "ProgressTracker.h"
+#include "ProofOfPossessionCoordinator.h"
+#include "ProofOfPossessionCoordinatorClient.h"
 #include "Quirks.h"
 #include "RTCController.h"
 #include "Range.h"
@@ -213,6 +215,8 @@
 #include "UserScript.h"
 #include "UserStyleSheet.h"
 #include "ValidationMessageClient.h"
+#include "Viewport.h"
+#include "ViewportSegments.h"
 #include "VisibilityState.h"
 #include "VisitedLinkState.h"
 #include "VisitedLinkStore.h"
@@ -288,7 +292,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Page);
 
-static HashSet<WeakRef<Page>>& NODELETE allPages()
+static HashSet<WeakRef<Page>>& LEGACY_NODELETE allPages()
 {
     static NeverDestroyed<HashSet<WeakRef<Page>>> set;
     return set;
@@ -301,7 +305,7 @@ static inline bool isUtilityPageChromeClient(ChromeClient& chromeClient)
     return chromeClient.isEmptyChromeClient() || chromeClient.isSVGImageChromeClient();
 }
 
-unsigned NODELETE Page::nonUtilityPageCount()
+unsigned LEGACY_NODELETE Page::nonUtilityPageCount()
 {
     return gNonUtilityPageCount;
 }
@@ -400,7 +404,6 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Page::Internals);
 Page::Page(PageConfiguration&& pageConfiguration)
     : m_internals(makeUniqueRef<Internals>())
     , m_identifier(pageConfiguration.identifier)
-    , m_browsingContextGroupIdentifier(pageConfiguration.browsingContextGroupIdentifier)
     , m_chrome(makeUniqueRef<Chrome>(*this, WTF::move(pageConfiguration.chromeClient)))
     , m_dragCaretController(makeUniqueRef<DragCaretController>())
 #if ENABLE(DRAG_SUPPORT)
@@ -455,7 +458,10 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #endif
     , m_isUtilityPage(isUtilityPageChromeClient(chrome().client()))
     , m_performanceMonitor(isUtilityPage() ? nullptr : makeUniqueWithoutRefCountedCheck<PerformanceMonitor>(*this))
-    , m_lowPowerModeNotifier(makeUniqueRef<LowPowerModeNotifier>([this](bool isLowPowerModeEnabled) { handleLowPowerModeChange(isLowPowerModeEnabled); }))
+    , m_lowPowerModeNotifier(makeUniqueRef<LowPowerModeNotifier>([weakThis = WeakPtr { *this }](bool isLowPowerModeEnabled) {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->handleLowPowerModeChange(isLowPowerModeEnabled);
+    }))
     , m_thermalMitigationNotifier(ThermalMitigationNotifier::create([weakThis = WeakPtr { *this }](bool thermalMitigationEnabled) {
         if (RefPtr protectedThis = weakThis)
             protectedThis->handleThermalMitigationChange(thermalMitigationEnabled);
@@ -472,6 +478,9 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #if ENABLE(WEB_AUTHN)
     , m_authenticatorCoordinator(makeUniqueRefWithoutRefCountedCheck<AuthenticatorCoordinator>(*this, WTF::move(pageConfiguration.authenticatorCoordinatorClient)))
     , m_credentialRequestCoordinator(CredentialRequestCoordinator::create(WTF::move(pageConfiguration.credentialRequestCoordinatorClient), *this))
+#endif
+#if ENABLE(PROOF_OF_POSSESSION)
+    , m_proofOfPossessionCoordinator(makeUniqueRefWithoutRefCountedCheck<ProofOfPossessionCoordinator>(*this, WTF::move(pageConfiguration.proofOfPossessionCoordinatorClient)))
 #endif
 #if ENABLE(APPLICATION_MANIFEST)
     , m_applicationManifest(pageConfiguration.applicationManifest)
@@ -818,7 +827,7 @@ void Page::setConsoleMessageListenerForTesting(RefPtr<StringCallback>&& listener
     m_consoleMessageListenerForTesting = listener;
 }
 
-RefPtr<StringCallback> NODELETE Page::consoleMessageListenerForTesting() const
+RefPtr<StringCallback> LEGACY_NODELETE Page::consoleMessageListenerForTesting() const
 {
     return m_consoleMessageListenerForTesting;
 }
@@ -878,6 +887,7 @@ void Page::setMainFrame(Ref<Frame>&& frame)
     if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_mainFrame.get())) {
         if (RefPtr document = localFrame->document())
             m_topDocumentSyncData = document->syncData();
+        pageOverlayController().mainFrameDidBecomeLocal();
     }
 
     // Notify the web page that the frame changed, so that we can re-intitialize the remote token.
@@ -890,12 +900,15 @@ void Page::setMainFrameURLAndOrigin(const URL& url, RefPtr<SecurityOrigin>&& ori
     // directly hosting the local main frame.
     RefPtr localFrame = dynamicDowncast<LocalFrame>(m_mainFrame.get());
     if (!localFrame) {
+        bool urlChanged = m_topDocumentSyncData->documentURL != url;
         m_topDocumentSyncData->documentURL = url;
 
         if (!origin)
             origin = SecurityOrigin::create(url);
         m_topDocumentSyncData->documentSecurityOrigin = WTF::move(origin);
 
+        if (urlChanged)
+            topDocumentURLDidChange();
         return;
     }
 
@@ -969,6 +982,21 @@ bool Page::userDidInteractWithPage() const
     return m_topDocumentSyncData->userDidInteractWithPage;
 }
 
+void Page::setTopDocumentHasHadUserInteraction(bool hasHadUserInteraction)
+{
+    if (m_topDocumentSyncData->hasHadUserInteraction == hasHadUserInteraction)
+        return;
+
+    m_topDocumentSyncData->hasHadUserInteraction = hasHadUserInteraction;
+    if (settings().siteIsolationEnabled())
+        documentSyncClient().broadcastHasHadUserInteractionToOtherProcesses(hasHadUserInteraction);
+}
+
+bool Page::topDocumentHasHadUserInteraction() const
+{
+    return m_topDocumentSyncData->hasHadUserInteraction;
+}
+
 void Page::setAutofocusProcessed()
 {
     if (m_topDocumentSyncData->isAutofocusProcessed)
@@ -1009,12 +1037,16 @@ void Page::updateTopDocumentSyncData(const DocumentSyncSerializationData& data)
     switch (static_cast<DocumentSyncDataType>(data.value.index())) {
     case DocumentSyncDataType::DocumentClasses:
     case DocumentSyncDataType::DocumentSecurityOrigin:
-    case DocumentSyncDataType::DocumentURL:
+    case DocumentSyncDataType::HasHadUserInteraction:
     case DocumentSyncDataType::HasInjectedUserScript:
     case DocumentSyncDataType::IsAutofocusProcessed:
     case DocumentSyncDataType::IsClosing:
     case DocumentSyncDataType::UserDidInteractWithPage:
         protect(m_topDocumentSyncData)->update(data);
+        break;
+    case DocumentSyncDataType::DocumentURL:
+        protect(m_topDocumentSyncData)->update(data);
+        topDocumentURLDidChange();
         break;
 #if ENABLE(DOM_AUDIO_SESSION)
     case DocumentSyncDataType::AudioSessionType:
@@ -1040,6 +1072,7 @@ void Page::updateTopDocumentSyncData(const DocumentSyncSerializationData& data)
 
 void Page::updateTopDocumentSyncData(Ref<DocumentSyncData>&& data)
 {
+    bool documentURLChanged = m_topDocumentSyncData->documentURL != data->documentURL;
     m_topDocumentSyncData = WTF::move(data);
 
 #if ENABLE(DOM_AUDIO_SESSION)
@@ -1047,6 +1080,9 @@ void Page::updateTopDocumentSyncData(Ref<DocumentSyncData>&& data)
     // the override the type implies, as the per-field path does for later changes.
     DOMAudioSession::applyTypeToAudioSessionCategoryOverride(m_topDocumentSyncData->audioSessionType);
 #endif
+
+    if (documentURLChanged)
+        topDocumentURLDidChange();
 }
 
 void Page::setMainFrameURLFragment(String&& fragment)
@@ -1086,7 +1122,7 @@ bool Page::openedByDOM() const
     return m_openedByDOM;
 }
 
-void NODELETE Page::setOpenedByDOM()
+void LEGACY_NODELETE Page::setOpenedByDOM()
 {
     m_openedByDOM = true;
 }
@@ -1234,7 +1270,7 @@ void Page::setCanStartMedia(bool canStartMedia)
     }
 }
 
-static Frame* NODELETE incrementFrame(Frame* current, bool forward, CanWrap canWrap, DidWrap* didWrap = nullptr)
+static Frame* LEGACY_NODELETE incrementFrame(Frame* current, bool forward, CanWrap canWrap, DidWrap* didWrap = nullptr)
 {
     return forward
         ? current->tree().traverseNext(canWrap, didWrap)
@@ -1312,6 +1348,27 @@ auto Page::findTextMatches(const String& target, FindOptions options, unsigned l
             frameWithSelection = localFrame;
         frame = incrementFrame(frame.get(), true, CanWrap::No);
     } while (frame);
+
+    if (frameWithSelection) {
+        auto selectedRange = *frameWithSelection->selection().selection().firstRange();
+
+        bool backwards = options.contains(FindOption::Backwards);
+        int32_t indexForSelectionInFrame = backwards ? -1 : 0;
+
+        int32_t indexInFrame = 0;
+        for (auto& range : result.ranges) {
+            if (range.start.document().frame() != frameWithSelection.get())
+                continue;
+
+            bool isBeforeSelection = backwards ? is_gt(treeOrder<ComposedTree>(selectedRange.start, range.end)) : !is_lt(treeOrder<ComposedTree>(selectedRange.end, range.start));
+            if (!isBeforeSelection)
+                break;
+
+            indexForSelectionInFrame = backwards ? indexInFrame : indexInFrame + 1;
+            ++indexInFrame;
+        }
+        result.selectionInFrame = FindSelectionInFrame { frameWithSelection->frameID(), indexForSelectionInFrame };
+    }
 
     if (result.ranges.isEmpty())
         return result;
@@ -1695,12 +1752,12 @@ void Page::clearUndoRedoOperations()
     m_editorClient->clearUndoRedoOperations();
 }
 
-bool NODELETE Page::inLowQualityImageInterpolationMode() const
+bool LEGACY_NODELETE Page::inLowQualityImageInterpolationMode() const
 {
     return m_inLowQualityInterpolationMode;
 }
 
-void NODELETE Page::setInLowQualityImageInterpolationMode(bool mode)
+void LEGACY_NODELETE Page::setInLowQualityImageInterpolationMode(bool mode)
 {
     m_inLowQualityInterpolationMode = mode;
 }
@@ -1922,7 +1979,8 @@ void Page::updateScreenSupportedContentsFormats()
 
 void Page::windowScreenDidChange(PlatformDisplayID displayID, std::optional<FramesPerSecond> nominalFramesPerSecond)
 {
-    if (displayID == m_displayID && nominalFramesPerSecond == m_displayNominalFramesPerSecond)
+    bool displayChanged = displayID != m_displayID;
+    if (!displayChanged && nominalFramesPerSecond == m_displayNominalFramesPerSecond)
         return;
 
     m_displayID = displayID;
@@ -1952,7 +2010,8 @@ void Page::windowScreenDidChange(PlatformDisplayID displayID, std::optional<Fram
         scheduler->windowScreenDidChange(displayID);
     chrome().client().renderingUpdateFramesPerSecondChanged();
 
-    setNeedsRecalcStyleInAllFrames();
+    if (displayChanged)
+        setNeedsRecalcStyleInAllFrames();
 }
 
 void Page::setInitialScaleIgnoringContentSize(float scale)
@@ -2311,13 +2370,13 @@ void Page::triggerRenderingUpdateForTesting()
     chrome().client().triggerRenderingUpdate();
 }
 
-void NODELETE Page::startTrackingRenderingUpdates()
+void LEGACY_NODELETE Page::startTrackingRenderingUpdates()
 {
     m_isTrackingRenderingUpdates = true;
     m_renderingUpdateCount = 0;
 }
 
-unsigned NODELETE Page::renderingUpdateCount() const
+unsigned LEGACY_NODELETE Page::renderingUpdateCount() const
 {
     return m_renderingUpdateCount;
 }
@@ -2401,6 +2460,9 @@ void Page::syncLocalFrameInfoToRemote()
             }();
 #endif
 
+            RefPtr owner = child->ownerElement();
+            bool ownerIsFullyClipped = owner && isFrameOwnerFullyClipped(*owner, findIteratorOptions());
+
             childrenFrameLayoutInfo.add(child->frameID(), RemoteFrameLayoutInfo::create(
                 visibleRectInParent,
                 onScreenRectInChildView,
@@ -2408,6 +2470,7 @@ void Page::syncLocalFrameInfoToRemote()
                 exposedContentRectInChildView,
 #endif
                 !!child->ownerRenderer(),
+                ownerIsFullyClipped,
                 frameView->childFrameOwnerToRootContentTransform(*child),
                 WTF::move(absoluteToChildFrameOwnerLocalTransform),
                 frame.frameScaleFactorForChild(*child),
@@ -2765,6 +2828,7 @@ void Page::finalizeRenderingUpdateForRootFrame(LocalFrame& rootFrame, OptionSet<
     LOG(EventLoop, "Page %p finalizeRenderingUpdate()", this);
 
     ASSERT(rootFrame.isRootFrame());
+    ASSERT_WITH_MESSAGE(rootFrame.isMainFrame() || !rootFrame.document() || rootFrame.document()->backForwardCacheState() == Document::NotInBackForwardCache, "A cached local root must not stay in Page::rootFrames()");
     RefPtr view = rootFrame.view();
     if (!view)
         return;
@@ -3714,7 +3778,7 @@ void Page::stopKeyboardScrollAnimation()
     }
 }
 
-bool NODELETE Page::isVisibleAndActive() const
+bool LEGACY_NODELETE Page::isVisibleAndActive() const
 {
     return m_activityState.contains(ActivityState::IsVisible) && m_activityState.contains(ActivityState::WindowIsActive);
 }
@@ -3814,7 +3878,7 @@ void Page::setIsPrerender()
     updateDOMTimerAlignmentInterval();
 }
 
-VisibilityState NODELETE Page::visibilityState() const
+VisibilityState LEGACY_NODELETE Page::visibilityState() const
 {
     if (isVisible())
         return VisibilityState::Visible;
@@ -3882,13 +3946,13 @@ OptionSet<AdvancedPrivacyProtections> Page::advancedPrivacyProtections() const
     return protect(mainFrame())->advancedPrivacyProtections();
 }
 
-void NODELETE Page::addLayoutMilestones(OptionSet<LayoutMilestone> milestones)
+void LEGACY_NODELETE Page::addLayoutMilestones(OptionSet<LayoutMilestone> milestones)
 {
     // In the future, we may want a function that replaces m_layoutMilestones instead of just adding to it.
     m_requestedLayoutMilestones.add(milestones);
 }
 
-void NODELETE Page::removeLayoutMilestones(OptionSet<LayoutMilestone> milestones)
+void LEGACY_NODELETE Page::removeLayoutMilestones(OptionSet<LayoutMilestone> milestones)
 {
     m_requestedLayoutMilestones.remove(milestones);
 }
@@ -3945,12 +4009,12 @@ void Page::invalidateColorsSampledFromPaintedContent()
 #endif
 
 #if HAVE(APP_ACCENT_COLORS) && PLATFORM(MAC)
-void NODELETE Page::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
+void LEGACY_NODELETE Page::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
 {
     m_appUsesCustomAccentColor = appUsesCustomAccentColor;
 }
 
-bool NODELETE Page::appUsesCustomAccentColor() const
+bool LEGACY_NODELETE Page::appUsesCustomAccentColor() const
 {
     return m_appUsesCustomAccentColor;
 }
@@ -4117,7 +4181,7 @@ void Page::resumeActiveDOMObjectsAndAnimations()
     resumeAnimatingImages();
 }
 
-bool NODELETE Page::hasSeenAnyPlugin() const
+bool LEGACY_NODELETE Page::hasSeenAnyPlugin() const
 {
     return !m_seenPlugins.isEmpty();
 }
@@ -4317,7 +4381,7 @@ std::optional<uint64_t> Page::noiseInjectionHashSaltForDomain(const RegistrableD
     }).iterator->value;
 }
 
-PAL::SessionID NODELETE Page::sessionID() const
+PAL::SessionID LEGACY_NODELETE Page::sessionID() const
 {
     return m_sessionID;
 }
@@ -4431,7 +4495,7 @@ void Page::playbackTargetPickerWasDismissed(PlaybackTargetClientContextIdentifie
 
 #endif
 
-RefPtr<WheelEventTestMonitor> NODELETE Page::wheelEventTestMonitor() const
+RefPtr<WheelEventTestMonitor> LEGACY_NODELETE Page::wheelEventTestMonitor() const
 {
     return m_wheelEventTestMonitor;
 }
@@ -4444,7 +4508,7 @@ void Page::clearWheelEventTestMonitor()
     m_wheelEventTestMonitor = nullptr;
 }
 
-bool NODELETE Page::isMonitoringWheelEvents() const
+bool LEGACY_NODELETE Page::isMonitoringWheelEvents() const
 {
     return !!m_wheelEventTestMonitor;
 }
@@ -4585,6 +4649,25 @@ void Page::setUnobscuredSafeAreaInsets(const FloatBoxExtent& insets)
 
     forEachDocument([&] (Document& document) {
         document.styleScope().environmentVariables().didChangeSafeAreaInsets();
+    });
+}
+
+void Page::setViewportSegments(const ViewportSegments& segments)
+{
+    if (m_viewportSegments == segments)
+        return;
+
+    m_viewportSegments = segments;
+
+    forEachDocument([&](Document& document) {
+        document.styleScope().environmentVariables().didChangeViewportSegments();
+        document.styleScope().didChangeStyleSheetEnvironment();
+        document.styleScope().evaluateMediaQueriesForAppearanceChange();
+        document.updateElementsAffectedByMediaQueries();
+        document.scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
+
+        if (RefPtr window = document.window())
+            protect(window->viewport())->invalidateSegments();
     });
 }
 
@@ -4971,7 +5054,7 @@ void Page::applicationWillResignActive()
 #endif
 }
 
-void NODELETE Page::applicationDidEnterBackground()
+void LEGACY_NODELETE Page::applicationDidEnterBackground()
 {
 #if ENABLE(WEBXR)
     if (auto session = this->activeImmersiveXRSession())
@@ -4979,7 +5062,7 @@ void NODELETE Page::applicationDidEnterBackground()
 #endif
 }
 
-void NODELETE Page::applicationWillEnterForeground()
+void LEGACY_NODELETE Page::applicationWillEnterForeground()
 {
 #if ENABLE(WEBXR)
     if (auto session = this->activeImmersiveXRSession())
@@ -5099,7 +5182,7 @@ void Page::setMediaSessionCoordinator(Ref<MediaSessionCoordinatorPrivate>&& medi
     RefPtr localMainFrame = this->localMainFrame();
     RefPtr window = localMainFrame ? localMainFrame->window() : nullptr;
     if (RefPtr navigator = window ? window->optionalNavigator() : nullptr)
-        NavigatorMediaSession::mediaSession(*navigator).coordinator().setMediaSessionCoordinatorPrivate(*m_mediaSessionCoordinator);
+        protect(NavigatorMediaSession::mediaSession(*navigator).coordinator())->setMediaSessionCoordinatorPrivate(*m_mediaSessionCoordinator);
 }
 
 void Page::invalidateMediaSessionCoordinator()
@@ -5114,7 +5197,7 @@ void Page::invalidateMediaSessionCoordinator()
     if (!navigator)
         return;
 
-    NavigatorMediaSession::mediaSession(*navigator).coordinator().close();
+    protect(NavigatorMediaSession::mediaSession(*navigator).coordinator())->close();
 }
 #endif
 
@@ -5416,7 +5499,7 @@ void Page::updateElementsWithTextRecognitionResults()
     }
 }
 
-bool NODELETE Page::hasCachedTextRecognitionResult(const HTMLElement& element) const
+bool LEGACY_NODELETE Page::hasCachedTextRecognitionResult(const HTMLElement& element) const
 {
     return m_textRecognitionResults.contains(element);
 }
@@ -5784,7 +5867,7 @@ void Page::updateFixedContainerEdges(BoxSideSet sides)
             if (!renderer)
                 continue;
 
-            if (renderer->style().usedVisibility() != Visibility::Visible
+            if (renderer->usedStyle().visibility() != UsedVisibility::Visible
                 && (side != BoxSide::Top || !lastElement->hasTagName(HTMLNames::headerTag))
                 && (side != BoxSide::Bottom || !lastElement->hasTagName(HTMLNames::footerTag)))
                 continue;
@@ -5811,7 +5894,7 @@ Element* Page::lastFixedContainer(BoxSide side) const
     return m_fixedContainerEdgesAndElements.second.at(side).get();
 }
 
-void NODELETE Page::setPortsForUpgradingInsecureSchemeForTesting(uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort)
+void LEGACY_NODELETE Page::setPortsForUpgradingInsecureSchemeForTesting(uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort)
 {
     m_portsForUpgradingInsecureSchemeForTesting = { upgradeFromInsecurePort, upgradeToSecurePort };
 }
@@ -5834,6 +5917,27 @@ void Page::setQuirksSubframeURLForTesting(URL&& url)
 
         document.quirks().determineRelevantQuirks();
         document.scheduleFullStyleRebuild();
+    });
+}
+
+void Page::setQuirksTopDocumentHostForTesting(String&& host)
+{
+    if (m_quirksTopDocumentHostForTesting == host)
+        return;
+
+    m_quirksTopDocumentHostForTesting = WTF::move(host);
+
+    forEachDocument([](Document& document) {
+        document.quirks().determineRelevantQuirks();
+        document.scheduleFullStyleRebuild();
+    });
+}
+
+void Page::topDocumentURLDidChange()
+{
+    forEachDocument([](Document& document) {
+        if (!document.isTopDocument())
+            document.urlsAffectingQuirksDidChange();
     });
 }
 
@@ -6092,13 +6196,13 @@ void Page::setLastAuthentication(LoginStatus::AuthenticationType authType)
 }
 
 #if ENABLE(FULLSCREEN_API)
-bool NODELETE Page::isDocumentFullscreenEnabled() const
+bool LEGACY_NODELETE Page::isDocumentFullscreenEnabled() const
 {
     return m_settings->fullScreenEnabled() || m_settings->videoFullscreenRequiresElementFullscreen();
 }
 #endif
 
-void NODELETE Page::startDeferringResizeEvents()
+void LEGACY_NODELETE Page::startDeferringResizeEvents()
 {
     m_shouldDeferResizeEvents = true;
 }
@@ -6111,7 +6215,7 @@ void Page::flushDeferredResizeEvents()
     });
 }
 
-void NODELETE Page::startDeferringScrollEvents()
+void LEGACY_NODELETE Page::startDeferringScrollEvents()
 {
     m_shouldDeferScrollEvents = true;
 }
@@ -6124,7 +6228,7 @@ void Page::flushDeferredScrollEvents()
     });
 }
 
-void NODELETE Page::startDeferringIntersectionObservations()
+void LEGACY_NODELETE Page::startDeferringIntersectionObservations()
 {
     m_shouldDeferIntersectionObservations = true;
 }
@@ -6218,7 +6322,7 @@ void Page::applyWindowFeatures(const WindowFeatures& features)
 #endif
 }
 
-bool NODELETE Page::isAlwaysOnLoggingAllowed() const
+bool LEGACY_NODELETE Page::isAlwaysOnLoggingAllowed() const
 {
     return m_sessionID.isAlwaysOnLoggingAllowed() || settings().allowPrivacySensitiveOperationsInNonPersistentDataStores();
 }
@@ -6239,7 +6343,7 @@ const std::optional<audit_token_t>& Page::presentingApplicationAuditToken() cons
     return m_presentingApplicationAuditToken;
 }
 
-void NODELETE Page::setPresentingApplicationAuditToken(std::optional<audit_token_t> presentingApplicationAuditToken)
+void LEGACY_NODELETE Page::setPresentingApplicationAuditToken(std::optional<audit_token_t> presentingApplicationAuditToken)
 {
     m_presentingApplicationAuditToken = WTF::move(presentingApplicationAuditToken);
 }
@@ -6261,7 +6365,7 @@ bool Page::requiresUserGestureForVideoPlayback() const
     return m_settings->requiresUserGestureForVideoPlayback();
 }
 
-static RefPtr<PlatformMediaSessionManager>& NODELETE mediaSessionManagerSingleton()
+static RefPtr<PlatformMediaSessionManager>& LEGACY_NODELETE mediaSessionManagerSingleton()
 {
     static NeverDestroyed<RefPtr<PlatformMediaSessionManager>> manager;
     return manager.get();

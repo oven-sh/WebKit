@@ -31,7 +31,6 @@
 #include "CSSValue.h"
 
 #include "CSSAppleColorFilterValue.h"
-#include "CSSAttrValue.h"
 #include "CSSBackgroundRepeatValue.h"
 #include "CSSBasicShapeValue.h"
 #include "CSSBorderImageOutsetValue.h"
@@ -133,8 +132,6 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESC
     switch (m_classType) {
     case AppleColorFilter:
         return std::invoke(visitor, uncheckedDowncast<CSSAppleColorFilterValue>(*this));
-    case Attr:
-        return std::invoke(visitor, uncheckedDowncast<CSSAttrValue>(*this));
     case BackgroundRepeat:
         return std::invoke(visitor, uncheckedDowncast<CSSBackgroundRepeatValue>(*this));
     case BasicShape:
@@ -361,7 +358,7 @@ bool CSSValue::equals(const CSSValue& other) const
     }
     if (auto* thisList = dynamicDowncast<CSSValueList>(*this))
         return thisList->containsSingleEqualItem(other);
-    if (auto* otherList = dynamicDowncast<CSSValueList>(other))
+    if (RefPtr otherList = dynamicDowncast<CSSValueList>(other))
         return otherList->containsSingleEqualItem(*this);
     return false;
 }

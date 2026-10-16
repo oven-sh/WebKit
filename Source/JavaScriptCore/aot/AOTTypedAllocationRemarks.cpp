@@ -350,7 +350,7 @@ void convertAllocationAssertions(Program& program, Vector<String>& findings)
 {
     if (!Options::useDollarVM())
         return;
-    auto name = program.find("assertNotAllocated"_s.span8());
+    auto name = program.find(asBytes("assertNotAllocated"_s.span8()));
     if (!name)
         return;
     BitVector isAssertion(program.functions.size());
@@ -376,8 +376,8 @@ void convertAllocationAssertions(Program& program, Vector<String>& findings)
             value.children = { value.arguments[0], ValueID(), ValueID() };
             value.arguments.clear();
             value.immediates = { Format::none, Format::none };
-            value.prediction = { };
-            value.predictedClosure = { };
+            value.setPrediction({ });
+            value.setPredictedClosure({ });
         }
     }
 }

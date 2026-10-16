@@ -300,10 +300,9 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
             // Native function on a prototype, likely "Foo.prototype.method".
             let prototypeName = this._prototypeName || this._sanitizedPrototypeString(this._propertyPath.object);
             if (prototypeName) {
-                if (WI.NativePrototypeFunctionParameters[prototypeName]) {
-                    let params = WI.NativePrototypeFunctionParameters[prototypeName][this._property.name];
-                    return params ? "(" + params + ")" : "()";
-                }
+                let params = WI.NativePrototypeFunctionParameters[prototypeName]?.[this._property.name];
+                if (params)
+                    return "(" + params + ")";
             }
 
             var parentDescription = this._propertyPath.object.description;
@@ -312,21 +311,17 @@ WI.ObjectTreePropertyTreeElement = class ObjectTreePropertyTreeElement extends W
             if (isFunctionStringNativeCode(parentDescription)) {
                 var match = parentDescription.match(/^function\s+([^)]+?)\(/);
                 if (match) {
-                    var name = match[1];
-                    if (WI.NativeConstructorFunctionParameters[name]) {
-                        var params = WI.NativeConstructorFunctionParameters[name][this._property.name];
-                        return params ? "(" + params + ")" : "()";
-                    }
+                    let params = WI.NativeConstructorFunctionParameters[match[1]]?.[this._property.name];
+                    if (params)
+                        return "(" + params + ")";
                 }
             }
 
             // Native DOM constructor or on native objects that are not functions.
-            if (parentDescription.endsWith("Constructor") || ["Atomics", "Console", "Intl", "JSON", "Math", "Reflect", "WebAssembly"].includes(parentDescription)) {
-                var name = parentDescription;
-                if (WI.NativeConstructorFunctionParameters[name]) {
-                    var params = WI.NativeConstructorFunctionParameters[name][this._property.name];
-                    return params ? "(" + params + ")" : "()";
-                }
+            if (parentDescription.endsWith("Constructor") || ["Atomics", "Console", "CSS", "Intl", "JSON", "Math", "Reflect", "WebAssembly"].includes(parentDescription)) {
+                let params = WI.NativeConstructorFunctionParameters[parentDescription]?.[this._property.name];
+                if (params)
+                    return "(" + params + ")";
             }
         }
 

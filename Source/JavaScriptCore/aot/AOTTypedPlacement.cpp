@@ -507,6 +507,11 @@ bool exists(const Field& field)
     return !(field.flags & fieldIsNeverStored);
 }
 
+StringID nameThatSharesSlot(const Field& field)
+{
+    return field.placeholderFor ? field.placeholderFor : field.name;
+}
+
 // The order of an allocation, and how many of it are born, counting what exists.
 std::pair<Vector<uint16_t>, uint16_t> orderOfWhatExists(const Layout& layout, const Allocation& allocation)
 {
@@ -634,9 +639,11 @@ public:
         runStep("sizeAllocations"_s, &Placement::sizeAllocations);
         runStep("collectOrders"_s, &Placement::collectOrders);
         runStep("numberShapes"_s, &Placement::numberShapes);
+        runStep("listShapesOfMembers"_s, &Placement::listShapesOfMembers);
         runStep("placeVariables"_s, &Placement::placeVariables);
         runStep("placeArraySites"_s, &Placement::placeArraySites);
         runStep("placeRegExpLiterals"_s, &Placement::placeRegExpLiterals);
+        runStep("findFieldsWithSlotInEveryMember"_s, &Placement::findFieldsWithSlotInEveryMember);
         runStep("checkPlacement"_s, &Placement::checkPlacement);
         m_program.sizeOfStaticsAsPlaced = m_program.sizeOfStatics;
         m_program.types.freeze();
@@ -839,7 +846,7 @@ private:
             if (!isObjectLayout(layout.kind))
                 continue;
             for (auto& field : layout.fields)
-                firstFieldNamed[field.name.index() + 1] += exists(field);
+                firstFieldNamed[nameThatSharesSlot(field).index() + 1] += exists(field);
         }
         m_firstField.append(next);
         // A view with a slot for what a member has no bytes for would read what is not there.
@@ -862,7 +869,7 @@ private:
                 continue;
             for (unsigned k = 0; k < layouts[i].fields.size(); ++k) {
                 if (exists(layouts[i].fields[k]))
-                    m_fieldsByName[firstFieldNamed[layouts[i].fields[k].name.index()]++] = NamedField { i, m_firstField[i] + k };
+                    m_fieldsByName[firstFieldNamed[nameThatSharesSlot(layouts[i].fields[k]).index()]++] = NamedField { i, m_firstField[i] + k };
             }
         }
     }
@@ -1003,7 +1010,10 @@ private:
 
     void findInitialStores()
     {
+        static constexpr OpcodeSet storesByName { Opcode::PutById };
         for (unsigned i = 0; i < m_program.functions.size(); ++i) {
+            if (!m_program.functions.mayHold(i, storesByName))
+                continue;
             auto& function = std::as_const(m_program).functions[i];
             auto stores = initialStoresOf(function);
             if (stores.empty())
@@ -1259,7 +1269,7 @@ private:
                             accessed.append(field);
                         };
                         isAccessedThrough(m_program.typeOf(function, value.child(0)));
-                        if (TypeID prediction = function.at(value.child(0)).prediction)
+                        if (TypeID prediction = function.at(value.child(0)).prediction())
                             isAccessedThrough(m_program.at(prediction));
                         break;
                     }
@@ -1335,6 +1345,8 @@ private:
                 Fingerprint membersWithIt;
                 if (m_isAccessed.quickGet(fields[place].field)) {
                     forEachMemberWithField(table, fields, layouts[fields[place].layout], [&](uint32_t other) {
+                        if (fieldAt(fields[other]).placeholderFor)
+                            return;
                         if (representativeOf(other) == representativeOf(place))
                             membersWithIt.add(m_hashOfLayout[fields[other].layout]);
                         else
@@ -1440,7 +1452,7 @@ private:
                     continue;
                 uint32_t next = m_setsOfMembers[m_lackedFields[lacked].membersWithIt].firstMember;
                 forEachMemberWithField(table, fields, layouts[field.layout], [&](uint32_t place) {
-                    if (fieldAt(fields[place]).slot == fieldAt(field).slot)
+                    if (!fieldAt(fields[place]).placeholderFor && fieldAt(fields[place]).slot == fieldAt(field).slot)
                         m_listedMembers[next++] = fields[place].layout;
                 });
                 auto& listed = m_setsOfMembers[m_lackedFields[lacked].membersWithIt];
@@ -1487,13 +1499,15 @@ private:
             return Vector<uint32_t>(FillWith { }, m_program.strings.size(), none);
         }, [&](Vector<uint32_t>& fieldNamed, unsigned index) {
             auto& layout = layouts[specialized[index]];
-            size_t numberOfFields = std::ranges::count_if(layout.fields, exists);
+            size_t numberOfFields = std::ranges::count_if(layout.fields, [](auto& field) {
+                return exists(field) && !field.placeholderFor;
+            });
             withFieldsByName(fieldNamed, specialized[index], [&] {
                 layout.specializations.removeAllMatching([&](LayoutID id) {
                     unsigned numberOfSharedFields = 0;
                     for (auto& field : m_program.at(id).fields) {
                         uint32_t found = fieldNamed[field.name.index()];
-                        if (found == none)
+                        if (found == none || field.placeholderFor)
                             continue;
                         ++numberOfSharedFields;
                     }
@@ -1796,8 +1810,8 @@ private:
             for (ValueID argument : value.arguments)
                 note(m_program.typeOf(function, argument));
             note(m_program.at(value.type));
-            if (value.prediction)
-                note(m_program.at(value.prediction));
+            if (value.prediction())
+                note(m_program.at(value.prediction()));
         };
         struct Found {
             Vector<std::pair<SlotID, TypeID>> storedThroughViews;
@@ -2017,6 +2031,7 @@ private:
 
     void normalize(Type& type)
     {
+        type.normalizeLiteralString();
         if (type.anyObject) {
             type.anyFunction = true;
             type.views.clear();
@@ -2070,7 +2085,7 @@ private:
     // MarkedSpace::largeCutoff is allocated by itself. So is a bigint, and whatever is no cell of the program may be.
     bool isCompressible(const Type& type) const
     {
-        if (!type.hasCells() || type.anyObject || type.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent | Primitive::String | Primitive::Symbol))
+        if (!type.hasCells() || type.anyObject || type.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent | Primitive::String | Primitive::Symbol | Primitive::LiteralString))
             return false;
         return std::ranges::all_of(type.views, [&](LayoutID view) {
             return !m_program.at(view).admitsForeignObjects && !m_hasLargeMember.quickGet(view.index());
@@ -2133,6 +2148,8 @@ private:
                 return Store::Cell32;
             if (store == Store::JSValue)
                 return Store::OptionalCell32;
+            if (store == Store::LiteralString)
+                return Store::LiteralString32;
         }
         return store;
     }
@@ -2140,7 +2157,7 @@ private:
     Store storeOutOfLineFor(uint32_t slot, const Type& type) const
     {
         Store store = storeFor(type, false, m_keepsWideReferences.quickGet(slot));
-        return isAbsentAsZero(store) && repOf(store) == Rep::JSValue ? store : Store::JSValue;
+        return isAbsentAsZero(store) && (repOf(store) == Rep::JSValue || store == Store::LiteralString32) ? store : Store::JSValue;
     }
 
     void typeSlots()
@@ -2169,7 +2186,7 @@ private:
                 m_isExpectedInt32.quickClear(i);
             slot.store = storeFor(m_program.at(slot.type), m_isExpectedInt32.quickGet(i), m_keepsWideReferences.quickGet(i));
             numberThatHoldReferences += holdsCells(slot.store);
-            numberOfNarrowReferences += slot.store == Store::Cell32 || slot.store == Store::OptionalCell32;
+            numberOfNarrowReferences += slot.store == Store::Cell32 || slot.store == Store::OptionalCell32 || slot.store == Store::LiteralString32;
         }
         RELEASE_ASSERT(next == m_otherTypes.size());
         report(numberOfNarrowReferences, " of ", numberThatHoldReferences, " slots that hold references take 32 bits");
@@ -3315,6 +3332,20 @@ private:
     };
 
     // A test is one comparison if its shapes are consecutive numbers. Tests get that in the order of their weight, unless those before rule it out.
+    void listShapesOfMembers()
+    {
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            auto& view = m_program.layouts[index];
+            if (!isObjectLayout(view.kind) || view.admitsForeignObjects || mayGiveUp(m_program, LayoutID(index)))
+                continue;
+            for (LayoutID member : view.members) {
+                if (uint32_t shape = m_program.at(member).shape)
+                    view.shapesOfMembers.append(shape);
+            }
+            std::ranges::sort(view.shapesOfMembers);
+        }
+    }
+
     void numberShapes()
     {
         auto& layouts = m_program.layouts;
@@ -3820,6 +3851,7 @@ private:
                 return 5 + sizeof(uint64_t) / sizeOf(variable.store);
             switch (variable.store) {
             case Store::JSValue:
+            case Store::LiteralString:
                 return variable.startsUndefined ? 0 : 5;
             case Store::OptionalInt64:
                 return variable.startsUndefined ? 1 : 3;
@@ -3990,7 +4022,7 @@ private:
                 if (value.opcode == Opcode::GetById) {
                     if (auto& base = function.at(value.child(0)); base.opcode == Opcode::GetGlobal && m_program.isNameOfGlobalThis(base.string()))
                         freeNamesOfFunctions[i].append({ static_cast<uint8_t>(2), value.string().index() });
-                    else if (base.opcode == Opcode::GetGlobal && m_program.isNameOfHostObject(base.string()) && !m_program.isNameOfAccessorOfHostObject(value.string()))
+                    else if (base.opcode == Opcode::GetGlobal && (function.readsMemberOfHostObject || m_program.isFunctionOfHostObject(base.string(), value.string())))
                         membersOfGlobalsOfFunctions[i].append(static_cast<uint64_t>(base.string().index()) << 32 | value.string().index());
                     continue;
                 }
@@ -4421,6 +4453,24 @@ private:
         report(numberOfPinnedFields, " fields are pinned to the one string they list; ", numberOfViewFields, " fields of views are pinned in every member, and ", numberOfViewFieldsBehindStrangers, " more of views that admit foreign objects, which go without");
     }
 
+    void findFieldsWithSlotInEveryMember()
+    {
+        auto& layouts = m_program.layouts;
+        forEachName([&](FieldsOfOneName& table, std::span<const NamedField> fields) {
+            for (auto& named : fields) {
+                auto& field = fieldAt(named);
+                auto& view = layouts[named.layout];
+                if (!m_isAccessed.quickGet(named.field) || !field.isLackedBySomeMember || field.isElsewhereInSomeMember || field.isOutOfLine || view.admitsForeignObjects)
+                    continue;
+                uint32_t numberOfMembersWithSlot = 0;
+                forEachMemberWithField(table, fields, view, [&](uint32_t place) {
+                    numberOfMembersWithSlot += fieldAt(fields[place]).slot == field.slot;
+                });
+                field.hasSlotInEveryMember = numberOfMembersWithSlot == view.members.size();
+            }
+        });
+    }
+
     void checkPlacement()
     {
         checkAllocations();
@@ -4448,6 +4498,8 @@ private:
                 uint32_t numberOfMembersWithIt = 0;
                 forEachMemberWithField(table, fields, layouts[named.layout], [&](uint32_t place) {
                     auto& own = fieldAt(fields[place]);
+                    if (own.placeholderFor)
+                        return;
                     if (own.slot != field.slot) {
                         RELEASE_ASSERT(std::ranges::binary_search(layouts[named.layout].membersByFit, LayoutID(fields[place].layout)) && !m_isStoredThrough.quickGet(named.field));
                         RELEASE_ASSERT(field.isLackedBySomeMember && !m_program.passes(field.membersWithIt, layouts[fields[place].layout].shape));
@@ -4675,10 +4727,17 @@ public:
             mayBeLeftOut.set(pattern.index());
             mayBeLeftOut.set(flags.index());
         }
+        BitVector isListedByFields(strings.size());
         for (auto& layout : m_program.layouts) {
             for (auto& field : layout.fields) {
                 if (field.typeText && !keepsTypeText(field))
                     mayBeLeftOut.set(field.typeText.index());
+                for (auto& literal : field.literals) {
+                    if (!literal.string)
+                        continue;
+                    mayBeLeftOut.set(literal.string.index());
+                    isListedByFields.set(literal.string.index());
+                }
             }
         }
         Vector<uint32_t> isNamedOtherwise(FillWith { }, (strings.size() + 31) / 32, 0);
@@ -4687,11 +4746,12 @@ public:
                 WTF::atomicExchangeOr(&isNamedOtherwise[id.index() / 32], 1u << id.index() % 32, std::memory_order_relaxed);
         };
         auto noteNamedBy = [&](const Value& value) {
-            noteNamed(value.predictedByKey);
+            noteNamed(value.predictedByKey());
             switch (value.opcode) {
             case Opcode::GetExternalModule:
             case Opcode::String:
             case Opcode::BigInt:
+            case Opcode::ConstantSymbol:
             case Opcode::GetGlobal:
             case Opcode::GetGlobalForTypeOf:
             case Opcode::PutGlobal:
@@ -4701,6 +4761,7 @@ public:
             case Opcode::DeleteById:
             case Opcode::CallMethod:
             case Opcode::Operation:
+            case Opcode::Call:
                 noteNamed(value.string());
                 break;
             case Opcode::Cast:
@@ -4730,11 +4791,11 @@ public:
                 noteNamed(field.name);
                 if (keepsTypeText(field))
                     noteNamed(field.typeText);
-                for (auto& literal : field.literals)
-                    noteNamed(literal.string);
             }
-            for (auto& method : layout.methods)
-                noteNamed(method.name);
+            for (auto* methods : { &layout.methods, &layout.staticMethods }) {
+                for (auto& method : *methods)
+                    noteNamed(method.name);
+            }
             for (auto& field : layout.staticFields)
                 noteNamed(field.name);
         }
@@ -4776,7 +4837,25 @@ public:
             if (!hasOnlyDecodedForm(index))
                 byLastCharacters.append(index);
         }
-        std::ranges::sort(byLastCharacters, [&](uint32_t a, uint32_t b) {
+        auto sortByEightBytesThenBy = [](Vector<uint32_t>& list, const auto& eightBytesOf, const auto& isAhead) {
+            Vector<std::pair<uint64_t, uint32_t>> withBytes(list.size(), [&](size_t i) {
+                return std::pair { eightBytesOf(list[i]), list[i] };
+            });
+            std::ranges::sort(withBytes, [&](auto& a, auto& b) {
+                return a.first != b.first ? a.first < b.first : isAhead(a.second, b.second);
+            });
+            for (size_t i = 0; i < list.size(); ++i)
+                list[i] = withBytes[i].second;
+        };
+        auto eightBytesFrom = [](auto at, auto end) {
+            uint64_t result = 0;
+            for (unsigned shift = 64; shift && at != end; ++at)
+                result |= static_cast<uint64_t>(*at) << (shift -= 8);
+            return result;
+        };
+        sortByEightBytesThenBy(byLastCharacters, [&](uint32_t index) {
+            return eightBytesFrom(strings[index].rbegin(), strings[index].rend());
+        }, [&](uint32_t a, uint32_t b) {
             auto [endOfA, endOfB] = std::mismatch(strings[a].rbegin(), strings[a].rend(), strings[b].rbegin(), strings[b].rend());
             if (endOfA == strings[a].rend() || endOfB == strings[b].rend())
                 return strings[a].size() != strings[b].size() ? strings[a].size() < strings[b].size() : a < b;
@@ -4809,12 +4888,42 @@ public:
                 if (holders[index] == index && strings[index].size() >= sizeOfHead)
                     inOrder.append(index);
             }
-            std::ranges::sort(inOrder, [&](uint32_t a, uint32_t b) {
+            sortByEightBytesThenBy(inOrder, [&](uint32_t index) {
+                return eightBytesFrom(strings[index].begin(), strings[index].end());
+            }, [&](uint32_t a, uint32_t b) {
                 return std::ranges::lexicographical_compare(strings[a], strings[b]);
+            });
+            struct TextInOrder {
+                const uint8_t* characters;
+                uint32_t size;
+                uint32_t index;
+                uint64_t behindHead;
+            };
+            auto eightBytesBehindHead = [](std::span<const uint8_t> text) {
+                if (text.size() >= sizeOfHead + sizeof(uint64_t)) {
+                    uint64_t bytes;
+                    memcpy(&bytes, text.data() + sizeOfHead, sizeof(bytes));
+                    static_assert(std::endian::native == std::endian::little);
+                    return std::byteswap(bytes);
+                }
+                uint64_t result = 0;
+                size_t end = std::min(text.size(), sizeOfHead + sizeof(uint64_t));
+                for (size_t at = sizeOfHead; at < end; ++at)
+                    result |= static_cast<uint64_t>(text[at]) << (8 * (sizeOfHead + sizeof(uint64_t) - 1 - at));
+                return result;
+            };
+            Vector<TextInOrder> textsInOrder(inOrder.size(), [&](size_t place) {
+                auto text = strings[inOrder[place]];
+                return TextInOrder { text.data(), safeCast<uint32_t>(text.size()), inOrder[place], eightBytesBehindHead(text) };
             });
             Vector<uint32_t> longestHeads(FillWith { }, inOrder.size(), none);
             Vector<uint32_t> open;
             UncheckedKeyHashMap<uint64_t, std::pair<uint32_t, uint32_t>> rangesOfHeads;
+            constexpr unsigned bitsOfSlotOfHead = 22;
+            BitVector mayBeHead(1 << bitsOfSlotOfHead);
+            auto slotOfHead = [](uint64_t head) {
+                return static_cast<size_t>(head * 0x9e3779b97f4a7c15ULL >> (64 - bitsOfSlotOfHead));
+            };
             for (uint32_t place = 0; place < inOrder.size(); ++place) {
                 auto text = strings[inOrder[place]];
                 while (!open.isEmpty() && !beginsWith(text, strings[inOrder[open.last()]]))
@@ -4823,20 +4932,38 @@ public:
                     longestHeads[place] = open.last();
                 open.append(place);
                 rangesOfHeads.add(headAt(text, 0), std::pair { place, place }).iterator->value.second = place + 1;
+                mayBeHead.quickSet(slotOfHead(headAt(text, 0)));
             }
-            Vector<uint32_t> fromLongest = inOrder;
-            std::ranges::sort(fromLongest, [&](uint32_t a, uint32_t b) {
-                return strings[a].size() != strings[b].size() ? strings[a].size() > strings[b].size() : a < b;
+            Vector<uint64_t> lengthsAndNumbers(inOrder.size(), [&](size_t place) {
+                return static_cast<uint64_t>(std::numeric_limits<uint32_t>::max() - safeCast<uint32_t>(strings[inOrder[place]].size())) << 32 | inOrder[place];
+            });
+            std::ranges::sort(lengthsAndNumbers);
+            Vector<uint32_t> fromLongest(lengthsAndNumbers.size(), [&](size_t place) {
+                return static_cast<uint32_t>(lengthsAndNumbers[place]);
             });
             uint64_t placesSearched = 0;
             uint64_t stepsOnChains = 0;
             uint64_t numberHeld = 0;
             uint64_t bytesHeld = 0;
             uint64_t charactersCompared = 0;
-            auto comesAheadOf = [&](std::span<const uint8_t> a, std::span<const uint8_t> b) {
-                auto [endOfA, endOfB] = std::ranges::mismatch(a, b);
-                charactersCompared += endOfA - a.begin();
-                return endOfB != b.end() && (endOfA == a.end() || *endOfA < *endOfB);
+            auto comesAheadOf = [&](std::span<const uint8_t> a, uint64_t behindHeadOfA, const TextInOrder& b) {
+                constexpr size_t sizeOfRecorded = sizeOfHead + sizeof(uint64_t);
+                size_t sizeOfShorter = std::min<size_t>(a.size(), b.size);
+                uint64_t difference = behindHeadOfA ^ b.behindHead;
+                size_t same = sizeOfHead + (difference ? std::countl_zero(difference) / 8 : sizeof(uint64_t));
+                if (same < std::min(sizeOfShorter, sizeOfRecorded)) {
+                    charactersCompared += same;
+                    return behindHeadOfA < b.behindHead;
+                }
+                if (sizeOfShorter <= sizeOfRecorded) {
+                    charactersCompared += sizeOfShorter;
+                    return b.size > sizeOfShorter;
+                }
+                auto restOfA = a.subspan(sizeOfRecorded);
+                std::span restOfB { b.characters + sizeOfRecorded, b.size - sizeOfRecorded };
+                auto [endOfA, endOfB] = std::ranges::mismatch(restOfA, restOfB);
+                charactersCompared += sizeOfRecorded + (endOfA - restOfA.begin());
+                return endOfB != restOfB.end() && (endOfA == restOfA.end() || *endOfA < *endOfB);
             };
             for (uint32_t whole : fromLongest) {
                 if (holders[whole] != whole)
@@ -4844,24 +4971,28 @@ public:
                 auto text = strings[whole];
                 uint64_t mostCharactersCompared = charactersCompared + 1024 * static_cast<uint64_t>(text.size());
                 for (size_t at = 0; at + sizeOfHead <= text.size() && charactersCompared <= mostCharactersCompared; ++at) {
-                    auto found = rangesOfHeads.find(headAt(text, at));
+                    uint64_t head = headAt(text, at);
+                    if (!mayBeHead.quickGet(slotOfHead(head)))
+                        continue;
+                    auto found = rangesOfHeads.find(head);
                     if (found == rangesOfHeads.end())
                         continue;
                     ++placesSearched;
                     auto rest = text.subspan(at);
+                    uint64_t behindHeadOfRest = eightBytesBehindHead(rest);
                     auto [first, behindLast] = found->value;
                     uint32_t low = first;
                     for (uint32_t high = behindLast; low < high;) {
                         uint32_t middle = low + (high - low) / 2;
-                        if (comesAheadOf(rest, strings[inOrder[middle]]))
+                        if (comesAheadOf(rest, behindHeadOfRest, textsInOrder[middle]))
                             high = middle;
                         else
                             low = middle + 1;
                     }
                     for (uint32_t place = low == first ? none : low - 1; place != none; place = longestHeads[place]) {
                         ++stepsOnChains;
-                        uint32_t part = inOrder[place];
-                        auto inner = strings[part];
+                        uint32_t part = textsInOrder[place].index;
+                        std::span inner { textsInOrder[place].characters, textsInOrder[place].size };
                         if (inner.size() >= text.size())
                             continue;
                         charactersCompared += inner.size();
@@ -4888,12 +5019,23 @@ public:
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT: texts inside longer texts: ", numberHeld, " of ", inOrder.size(), " texts, ", bytesHeld, " bytes; ", placesSearched, " places searched, ", stepsOnChains, " steps on chains, ", (MonotonicTime::now() - startOfSearch).milliseconds(), " ms");
         }
         Vector<uint32_t> ends(FillWith { }, strings.size(), 0);
+        uint64_t numberOfTextsLaid = 0;
+        uint64_t numberOfSeamsBetweenLetters = 0;
+        uint64_t numberOfSeparators = 0;
         auto layText = [&](uint32_t index) {
             if (index >= strings.size() || hasOnlyDecodedForm(index))
                 return;
             uint32_t holder = holders[index];
             if (ends[holder] || hasOnlyDecodedForm(holder))
                 return;
+            if (!strings[holder].empty()) {
+                ++numberOfTextsLaid;
+                numberOfSeamsBetweenLetters += isASCIIAlpha(m_result.last()) && isASCIIAlpha(strings[holder].front());
+                if (isASCIIPrintable(m_result.last()) && isASCIIPrintable(strings[holder].front())) {
+                    ++numberOfSeparators;
+                    m_result.append(0);
+                }
+            }
             m_result.append(strings[holder]);
             ends[holder] = safeCast<uint32_t>(m_result.size());
         };
@@ -4943,6 +5085,7 @@ public:
         });
         for (uint32_t index = 0; index < strings.size(); ++index)
             layText(index);
+        dataLogLnIf(Options::verboseAOTCompilation(), "AOT: texts laid: ", numberOfTextsLaid, "; a zero byte stands ahead of ", numberOfSeparators, ", where printable characters meet; letters meet at ", numberOfSeamsBetweenLetters);
         Vector<uint32_t> listedStrings;
         for (uint32_t index = 0; index < strings.size(); ++index) {
             RELEASE_ASSERT(hasOnlyDecodedForm(index) || ends[holders[index]] > gaps[index] + strings[index].size());
@@ -4964,7 +5107,8 @@ public:
             uint32_t facts = isPrivateName(string) ? Data::stringIsPrivateName : isEnginePrivateName(string) ? Data::stringIsEnginePrivateName : 0;
             uint32_t identifier = stringFacts.size() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[stringFacts.size()] : 0;
             RELEASE_ASSERT(identifier <= Data::stringHashMask);
-            if (charactersAreAllASCII(characters))
+            bool isHashed = isListedByFields.get(stringFacts.size()) && isLeftOut(stringFacts.size());
+            if (charactersAreAllASCII(characters) && !isHashed)
                 facts |= Data::stringIsASCII | (identifier ? 0 : StringHasher::computeHashAndMaskTop8Bits(characters));
             if (identifier)
                 facts |= Data::stringHasIdentifierNumber | identifier;
@@ -5005,11 +5149,22 @@ public:
                     return static_cast<uint8_t>(units[i]);
                 });
                 decodedStrings.appendList({ index, append(narrow), static_cast<uint32_t>(units.size()) });
-            } else
+                m_result.append(0);
+            } else {
                 decodedStrings.appendList({ index, append(units), static_cast<uint32_t>(units.size()) | Data::isDecodedTo16Bits });
+                m_result.appendList({ 0, 0 });
+            }
         }
         header.numberOfDecodedStrings = decodedStrings.size() / 3;
         header.decodedStringsOffset = append(decodedStrings);
+        Vector<HashedText> hashedTexts;
+        for (size_t index : isListedByFields) {
+            if (isLeftOut(index))
+                hashedTexts.append(HashedText::create(index, decodeTextOfProgram(strings[index]).span()));
+        }
+        header.numberOfHashedTexts = hashedTexts.size();
+        header.hashedTextsOffset = append(hashedTexts);
+        dataLogLnIf(Options::verboseAOTCompilation(), "AOT: texts that only the types of fields list: ", hashedTexts.size(), " of ", isListedByFields.bitCount(), " are kept as hashes");
         Vector<uint32_t> atomStrings(FillWith { }, (m_program.strings.size() + 31) / 32, 0);
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
             auto& function = m_program.functions[i];
@@ -5056,6 +5211,7 @@ public:
         size_t sizeBeforeTypes = m_result.size();
         appendTypes();
         header.typesOffset = append(m_offsetOfType);
+        header.numberOfTypes = m_offsetOfType.size();
         size_t sizeBeforeLayouts = m_result.size();
 
         Vector<uint32_t> shapes(FillWith { }, m_program.numberOfShapes + 1, 0);
@@ -5234,6 +5390,11 @@ public:
         for (auto& engineClass : Builtins::singleton().classes())
             extendedClasses.append(m_program.isExtended(engineClass.name));
         header.extendedClassesOffset = append(extendedClasses);
+        Vector<uint32_t> builtinCellsFilledFromStart;
+        for (size_t cell : m_program.builtinCellsComparedWith)
+            builtinCellsFilledFromStart.append(static_cast<uint32_t>(cell));
+        header.numberOfBuiltinCellsFilledFromStart = builtinCellsFilledFromStart.size();
+        header.builtinCellsFilledFromStartOffset = append(builtinCellsFilledFromStart);
 
         BitVector usesFieldTemplate;
         for (size_t i = 0; i < m_program.allocations.size(); ++i) {
@@ -5287,6 +5448,7 @@ public:
             int64_t bits = 0;
             switch (repOf(variable.store)) {
             case Rep::JSValue:
+            case Rep::LiteralString:
                 bits = variable.startsUndefined ? JSValue::encode(jsUndefined()) : 0;
                 break;
             case Rep::OptionalInt64:
@@ -5486,6 +5648,13 @@ public:
         }
         header.numberOfGeneratorFunctions = generatorFunctions.size();
         header.generatorFunctionsOffset = append(generatorAndResumeFunctions);
+        Vector<uint32_t> asyncGeneratorBodies;
+        for (unsigned i = 0; i < m_program.functions.size(); ++i) {
+            if (m_program.functions[i].capturesExceptions)
+                asyncGeneratorBodies.append(i);
+        }
+        header.numberOfAsyncGeneratorBodies = asyncGeneratorBodies.size();
+        header.asyncGeneratorBodiesOffset = append(asyncGeneratorBodies);
         Vector<uint32_t> sloppyPlainFunctions;
         for (unsigned i = 0; i < m_program.functions.size(); ++i) {
             auto& function = m_program.functions[i];
@@ -5554,7 +5723,7 @@ public:
                 for (ValueID id : block.values) {
                     auto& value = maker.at(id);
                     if (value.opcode == Opcode::Construct || value.opcode == Opcode::CreateThis) {
-                        if (FunctionID expected = maker.at(value.child(0)).predictedClosure)
+                        if (FunctionID expected = maker.at(value.child(0)).predictedClosure())
                             made.add(id.index(), expected.index());
                         continue;
                     }
@@ -5577,12 +5746,20 @@ public:
             Vector<StringID, 16> names;
             unsigned numberOfKeys = 0;
             bool isOfWholeChain = collectPropertiesGivenToThis(m_program, FunctionID(index), names, numberOfKeys);
+            Vector<StringID, 16> namesGivenByItself;
+            unsigned numberOfKeysGivenByItself = 0;
+            collectPropertiesGivenToThis(m_program, FunctionID(index), namesGivenByItself, numberOfKeysGivenByItself, false);
             for (StringID name : namesGivenByMakers[index]) {
                 if (!names.contains(name))
                     names.append(name);
+                if (!namesGivenByItself.contains(name))
+                    namesGivenByItself.append(name);
             }
+            auto boundedCount = [](size_t number) {
+                return static_cast<uint32_t>(std::min<size_t>(number, Data::propertyCountMask));
+            };
             if (names.size() + numberOfKeys)
-                countsOfThis[i] = (names.size() + numberOfKeys) | (isOfWholeChain ? Data::propertyCountIsOfWholeChain : 0);
+                countsOfThis[i] = boundedCount(names.size() + numberOfKeys) | boundedCount(namesGivenByItself.size() + numberOfKeysGivenByItself) << Data::propertyCountBits | (isOfWholeChain ? Data::propertyCountIsOfWholeChain : 0);
         });
         for (unsigned i = 0; i < countsOfThis.size(); ++i) {
             if (countsOfThis[i])
@@ -5634,6 +5811,34 @@ public:
         header.sitesOffset = append(m_program.sites);
         header.countsAllocations = Options::countAOTTypedAllocations();
         header.usesWideReferences = Options::useAOTWideReferences();
+        header.numberOfLiteralStrings = m_program.literalStrings.size();
+        header.literalStringsOffset = append(Vector<uint32_t>(m_program.literalStrings.size(), [&](size_t number) {
+            return m_program.literalStrings[number].index() + 1;
+        }));
+        {
+            uint32_t mask = WTF::roundUpToPowerOfTwo(std::max<uint32_t>(m_program.literalStrings.size(), 4) * 2) - 1;
+            Vector<uint32_t> table(FillWith { }, mask + 1, 0);
+            uint32_t maxLength = 0;
+            for (uint32_t index = 0; index < m_program.literalStrings.size(); ++index) {
+                auto bytes = m_program.string(m_program.literalStrings[index]);
+                uint32_t hash;
+                if (charactersAreAllASCII(byteCast<Latin1Character>(bytes))) {
+                    hash = StringHasher::computeHashAndMaskTop8Bits<Latin1Character>(byteCast<Latin1Character>(bytes));
+                    maxLength = std::max<uint32_t>(maxLength, bytes.size());
+                } else {
+                    Vector<char16_t> units = decodeTextOfProgram(bytes);
+                    hash = StringHasher::computeHashAndMaskTop8Bits<char16_t>(units.span());
+                    maxLength = std::max<uint32_t>(maxLength, units.size());
+                }
+                uint32_t place = hash & mask;
+                while (table[place])
+                    place = (place + 1) & mask;
+                table[place] = Data::literalStringTableEntry(index, hash);
+            }
+            header.literalStringTableOffset = append(table);
+            header.literalStringTableMask = mask;
+            header.maxLiteralStringLength = maxLength;
+        }
         {
             Vector<uint32_t> owner(m_program.functions.size(), [](size_t index) {
                 return static_cast<uint32_t>(index);
@@ -5751,7 +5956,7 @@ public:
             };
             auto isAskedOfTheFunction = [&](auto& method) {
                 auto name = m_program.string(StringID(method.name));
-                return !(method.flags & methodHasComputedName) && (equalSpans(name, "name"_s.span8()) || equalSpans(name, "length"_s.span8()));
+                return !(method.flags & methodHasComputedName) && (equalSpans(name, asBytes("name"_s.span8())) || equalSpans(name, asBytes("length"_s.span8())));
             };
             for (uint32_t index = 0; index < data.numberOfLayoutIndices; ++index) {
                 LayoutData* ofClass = classWithIndex(index);
@@ -5964,7 +6169,7 @@ private:
             uint32_t offset = allocateWords(sizeof(RuntimeType) + type.views.size() * sizeof(int32_t) + type.engineClasses.size() * sizeof(uint32_t) + rest.sizeInBytes());
             typesWithHash.append({ said, offset });
             auto& runtimeType = at<RuntimeType>(offset);
-            runtimeType.primitives = type.primitives;
+            runtimeType.primitives = type.withLiteralStringWidened().primitives;
             runtimeType.bits = (type.anyObject ? RuntimeType::allowsAnyObjectBit : 0) | (type.anyFunction ? RuntimeType::allowsAnyFunctionBit : 0) | (!type.admitsForeignObjects(m_program) ? 0 : m_program.isOpenedForLog(type) ? RuntimeType::isOpenedForLogBit : type.admitsUncheckedObjects(m_program) ? RuntimeType::admitsForeignObjectsBit : 0)
                 | (type.admitsOnlyOtherLayouts(m_program) ? RuntimeType::admitsOnlyOtherLayoutsBit : 0)
                 | (type.elements ? RuntimeType::hasElementsBit : 0) | (hasOneInteger ? RuntimeType::hasOneIntegerBit : hasNoInteger ? 0 : RuntimeType::hasIntegersBit);
@@ -6179,7 +6384,7 @@ private:
         Vector<uint32_t> narrowSlots;
         for (auto& field : layout.fields) {
             if (exists(field) && holdsCells(field.store) && !field.isOutOfLine)
-                (sizeOf(field.store) == 4 ? narrowSlots : field.store == Store::JSValue ? boxedSlots : cellSlots).append(field.offset);
+                (sizeOf(field.store) == 4 ? narrowSlots : field.store == Store::JSValue || field.store == Store::LiteralString ? boxedSlots : cellSlots).append(field.offset);
         }
         std::ranges::sort(boxedSlots);
         std::ranges::sort(cellSlots);
@@ -6348,6 +6553,9 @@ static void findRecordsStoredToOnlyAtBirth(Program& program)
 {
     Vector<uint8_t> isStoredTo(FillWith { }, program.layouts.size(), 0);
     forEachIndexInParallel(program.functions.size(), [&](unsigned number) {
+        static constexpr OpcodeSet stores { Opcode::PutById, Opcode::PutField, Opcode::PutByVal };
+        if (!program.functions.mayHold(number, stores))
+            return;
         UnchangingFunctionScope unchangingFunctionScope;
         auto& function = std::as_const(program).functions[number];
         for (auto& block : function.blocks) {
@@ -6398,8 +6606,13 @@ static void findTypesNamedAtRunTime(Program& program)
             note(field.type);
     };
     note(program.types.anything);
-    for (auto& function : std::as_const(program).functions) {
-        for (auto& value : function.values) {
+    Vector<uint8_t> isNamedByValue(FillWith { }, program.types.size(), static_cast<uint8_t>(0));
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto mark = [&](TypeID type) {
+            if (type && !WTF::atomicLoad(&isNamedByValue[type.index()], std::memory_order_relaxed))
+                WTF::atomicStore(&isNamedByValue[type.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        };
+        for (auto& value : std::as_const(program).functions[i].values) {
             switch (value.opcode) {
             case Opcode::Integer:
             case Opcode::Double:
@@ -6407,16 +6620,21 @@ static void findTypesNamedAtRunTime(Program& program)
             case Opcode::String:
             case Opcode::Undefined:
             case Opcode::Null:
+            case Opcode::NewObjectWithShape:
                 break;
             case Opcode::Cast:
                 if (value.castReason() == CastReason::Coerce)
-                    note(value.coercedType());
+                    mark(value.coercedType());
                 [[fallthrough]];
             default:
-                note(value.type);
+                mark(value.type);
                 break;
             }
         }
+    });
+    for (uint32_t type = 0; type < isNamedByValue.size(); ++type) {
+        if (isNamedByValue[type])
+            note(TypeID(type));
     }
     for (auto& layout : program.layouts) {
         if (layout.shape || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Environment)
@@ -6445,7 +6663,7 @@ void place(Program& program)
 
 uint8_t kindByteOf(const Program& program, const Function& function)
 {
-    return (function.isBodyOfSeveralSites ? functionKindOfBodiesOfSeveralSites : function.has(Format::FunctionIsCodeOfModule) ? static_cast<uint8_t>(FunctionKind::Module) : function.flags & Format::FunctionNameIsGiven && !function.suspensionPositions.isEmpty() ? functionKindOfResumeFunctionsNamedByOthers : static_cast<uint8_t>(function.kind)) | function.declaredAs | (program.isHiddenInStackTraces(function) ? functionIsHiddenInStackTraces : 0) | (function.kind == FunctionKind::Module && function.has(Format::FunctionNameIsGiven) ? moduleIsCommonJS : 0);
+    return (function.isBodyOfSeveralSites || function.isGuardedPreludeEntry ? functionKindOfBodiesOfSeveralSites : function.has(Format::FunctionIsCodeOfModule) ? static_cast<uint8_t>(FunctionKind::Module) : function.flags & Format::FunctionNameIsGiven && !function.suspensionPositions.isEmpty() ? functionKindOfResumeFunctionsNamedByOthers : static_cast<uint8_t>(function.kind)) | function.declaredAs | (program.isHiddenInStackTraces(function) ? functionIsHiddenInStackTraces : 0) | (function.kind == FunctionKind::Module && function.has(Format::FunctionNameIsGiven) ? moduleIsCommonJS : 0);
 }
 
 Vector<uint8_t> encodeData(const Program& program)

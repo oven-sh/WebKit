@@ -20,12 +20,13 @@ namespace {
 // leaves them becomes a jump to a function of its own, which is handed what is live. Nothing runs twice, and control never comes back.
 class FunctionSplitting {
 public:
-    FunctionSplitting(const Program& program, FunctionID id, const Function& function, const BitVector& blocksThatEmitCalls)
+    FunctionSplitting(const Program& program, FunctionID id, const Function& function, const BitVector& blocksThatEmitCalls, const BitVector& blocksThatAreNotRun)
         : m_program(program)
         , m_id(id)
         , m_function(function)
         , m_numberOfBlocks(function.blocks.size())
         , m_needsFrame(blocksThatEmitCalls)
+        , m_isNotRun(blocksThatAreNotRun)
     {
     }
 
@@ -51,10 +52,22 @@ public:
             }
         }
         std::ranges::sort(cuts);
+        Vector<BitVector> reachedFrom(cuts.size());
+        Vector<BitVector> cutsJumpedTo(cuts.size());
+        if (cuts.size() <= Value::maxContinuations && !keepsSomethingInItsFrame()) {
+            for (unsigned i = 0; i < cuts.size(); ++i)
+                reachedFrom[i] = reachableFrom(cuts[i], { });
+            for (unsigned i = 0; i < cuts.size(); ++i) {
+                for (unsigned k = 0; k < cuts.size(); ++k) {
+                    if (i != k && m_isNotRun.get(cuts[k]) && reachedFrom[i].get(cuts[k]) && !reachedFrom[k].get(cuts[i]))
+                        cutsJumpedTo[i].set(cuts[k]);
+                }
+            }
+        }
         size_t sizeOfCopies = 0;
         size_t mostCopied = 3 * sizeOf(isReachable) / 2;
         for (unsigned i = 0; i < cuts.size() && sizeOfCopies <= mostCopied; ++i)
-            sizeOfCopies += sizeOf(reachableFrom(cuts[i], { }));
+            sizeOfCopies += sizeOf(reachableFrom(cuts[i], cutsJumpedTo[i]));
         // Too much: one continuation, from where all ways to a call go through.
         if (sizeOfCopies > mostCopied || cuts.size() > Value::maxContinuations) {
             unsigned cut = nearestCommonDominator(isReachable);
@@ -63,6 +76,8 @@ public:
             if (!cut)
                 return false;
             cuts = { cut };
+            reachedFrom = { reachableFrom(cut, { }) };
+            cutsJumpedTo = { BitVector() };
         }
         BitVector isCut(m_numberOfBlocks);
         for (unsigned cut : cuts)
@@ -74,15 +89,20 @@ public:
         if (!returns)
             return false;
 
-        Vector<Arguments> liveInto;
-        for (unsigned cut : cuts) {
-            Arguments live;
-            result.continuations.append(makeContinuation(cut, live));
-            if (!fitsInRegisters(result.continuations.last())) {
+        Vector<unsigned> order;
+        for (unsigned i = 0; i < cuts.size(); ++i)
+            order.append(i);
+        std::ranges::sort(order, [&](unsigned a, unsigned b) {
+            return reachedFrom[a].bitCount() < reachedFrom[b].bitCount();
+        });
+        Vector<Arguments> liveInto(cuts.size());
+        result.continuations.grow(cuts.size());
+        for (unsigned which : order) {
+            result.continuations[which] = makeContinuation(cuts, which, cutsJumpedTo[which], liveInto);
+            if (!fitsInRegisters(result.continuations[which])) {
                 result.continuations.clear();
                 return false;
             }
-            liveInto.append(WTF::move(live));
         }
         result.entry = makeEntry(staysBehind, cuts, liveInto);
         return true;
@@ -107,6 +127,13 @@ private:
             }
         }
         return true;
+    }
+
+    bool keepsSomethingInItsFrame() const
+    {
+        return !m_function.environmentsInFrame.isEmpty() || !m_function.mayPointIntoFrame.isEmpty() || m_function.copiesFirstArgumentOutOfFrame || m_function.values.containsIf([](auto& value) {
+            return value.isClosureInFrame();
+        });
     }
 
     // Without entering a block of `barrier`.
@@ -308,8 +335,10 @@ private:
     }
 
     // Values and blocks keep their numbers. `live`: what it takes, before what the block itself takes.
-    Function makeContinuation(unsigned cut, Arguments& live) const
+    Function makeContinuation(const Vector<unsigned>& cuts, unsigned which, const BitVector& cutsJumpedTo, Vector<Arguments>& liveInto) const
     {
+        unsigned cut = cuts[which];
+        Arguments& live = liveInto[which];
         Function result;
         result.name = m_function.name;
         result.module = m_function.module;
@@ -321,13 +350,17 @@ private:
         result.writesShapeWords = m_function.writesShapeWords;
         result.writesIfItReturns = m_function.writesIfItReturns;
         result.writesShapeWordsIfItReturns = m_function.writesShapeWordsIfItReturns;
+        result.convertsArrayStorage = m_function.convertsArrayStorage;
+        result.convertsArrayStorageIfItReturns = m_function.convertsArrayStorageIfItReturns;
         result.inlineFrames = m_function.inlineFrames;
         result.values = m_function.values;
         result.environmentsInFrame = m_function.environmentsInFrame;
         result.mayPointIntoFrame = m_function.mayPointIntoFrame;
+        result.copiesFirstArgumentOutOfFrame = m_function.copiesFirstArgumentOutOfFrame;
+        result.numberOfCapturesOfCopiedArgument = m_function.numberOfCapturesOfCopiedArgument;
         result.blocks.grow(m_numberOfBlocks);
 
-        BitVector blocks = reachableFrom(cut, { });
+        BitVector blocks = reachableFrom(cut, cutsJumpedTo);
         BitVector isDefined(m_function.values.size());
         for (unsigned block : blocks) {
             result.blocks[block] = m_function.blocks[block];
@@ -335,6 +368,16 @@ private:
                 isDefined.set(parameter.index());
             for (ValueID value : m_function.blocks[block].values)
                 isDefined.set(value.index());
+        }
+        for (unsigned block : BitVector(blocks)) {
+            for (unsigned i = 0; i < result.blocks[block].terminator.targets.size(); ++i) {
+                if (!cutsJumpedTo.get(result.blocks[block].terminator.targets[i].block.index()))
+                    continue;
+                jumpToContinuation(result, block, i, cuts, liveInto);
+                blocks.set(result.blocks.size() - 1);
+                for (ValueID value : result.blocks.last().values)
+                    isDefined.set(value.index());
+            }
         }
         BitVector isUsed(m_function.values.size());
         auto use = [&](ValueID& value) {
@@ -398,54 +441,58 @@ private:
     Function makeEntry(const BitVector& staysBehind, const Vector<unsigned>& cuts, const Vector<Arguments>& liveInto) const
     {
         Function result = m_function;
-        TypeID resultType = m_function.resultType ? m_function.resultType : m_program.types.anything;
         for (unsigned block = 0; block < m_numberOfBlocks; ++block) {
             if (!staysBehind.get(block)) {
                 result.blocks[block] = Block { };
                 continue;
             }
             for (unsigned i = 0; i < result.blocks[block].terminator.targets.size(); ++i) {
-                size_t which = cuts.find(result.blocks[block].terminator.targets[i].block.index());
-                if (which == notFound)
-                    continue;
-                Value jump;
-                jump.opcode = Opcode::CallDirect;
-                jump.type = resultType;
-                jump.rep = repOf(m_program.at(resultType));
-                jump.position = m_function.position;
-                jump.immediates = { m_id.index(), Value::jumpsToContinuation + static_cast<uint32_t>(which) };
-                jump.arguments = liveInto[which];
-                Block leaving;
-                // As the parameter of the block is kept: see Lowering::edgeTo().
-                auto& parameters = m_function.blocks[cuts[which]].parameters;
-                Arguments passed = result.blocks[block].terminator.targets[i].arguments;
-                for (unsigned k = 0; k < passed.size(); ++k) {
-                    auto& parameter = m_function.at(parameters[k]);
-                    if (result.at(passed[k]).type != parameter.type) {
-                        Value upcast;
-                        upcast.opcode = Opcode::Cast;
-                        upcast.type = parameter.type;
-                        upcast.rep = parameter.rep;
-                        upcast.position = m_function.position;
-                        upcast.takePredictionOf(parameter);
-                        upcast.children[0] = passed[k];
-                        upcast.immediates[1] = static_cast<uint32_t>(CastReason::Upcast);
-                        result.values.append(WTF::move(upcast));
-                        passed[k] = ValueID(result.values.size() - 1);
-                        leaving.values.append(passed[k]);
-                    }
-                    jump.arguments.append(passed[k]);
-                }
-                result.values.append(WTF::move(jump));
-                ValueID id(result.values.size() - 1);
-                leaving.values.append(id);
-                leaving.terminator.kind = TerminatorKind::Return;
-                leaving.terminator.value = id;
-                result.blocks.append(WTF::move(leaving));
-                result.blocks[block].terminator.targets[i] = Target { BlockID(result.blocks.size() - 1), { } };
+                if (cuts.contains(result.blocks[block].terminator.targets[i].block.index()))
+                    jumpToContinuation(result, block, i, cuts, liveInto);
             }
         }
         return result;
+    }
+
+    void jumpToContinuation(Function& result, unsigned block, unsigned target, const Vector<unsigned>& cuts, const Vector<Arguments>& liveInto) const
+    {
+        size_t which = cuts.find(result.blocks[block].terminator.targets[target].block.index());
+        TypeID resultType = m_function.resultType ? m_function.resultType : m_program.types.anything;
+        Value jump;
+        jump.opcode = Opcode::CallDirect;
+        jump.type = resultType;
+        jump.rep = repOf(m_program.at(resultType));
+        jump.position = m_function.position;
+        jump.immediates = { m_id.index(), Value::jumpsToContinuation + static_cast<uint32_t>(which) };
+        jump.arguments = liveInto[which];
+        Block leaving;
+        // As the parameter of the block is kept: see Lowering::edgeTo().
+        auto& parameters = m_function.blocks[cuts[which]].parameters;
+        Arguments passed = result.blocks[block].terminator.targets[target].arguments;
+        for (unsigned k = 0; k < passed.size(); ++k) {
+            auto& parameter = m_function.at(parameters[k]);
+            if (result.at(passed[k]).type != parameter.type) {
+                Value upcast;
+                upcast.opcode = Opcode::Cast;
+                upcast.type = parameter.type;
+                upcast.rep = parameter.rep;
+                upcast.position = m_function.position;
+                upcast.takePredictionOf(parameter);
+                upcast.children[0] = passed[k];
+                upcast.immediates[1] = static_cast<uint32_t>(CastReason::Upcast);
+                result.values.append(WTF::move(upcast));
+                passed[k] = ValueID(result.values.size() - 1);
+                leaving.values.append(passed[k]);
+            }
+            jump.arguments.append(passed[k]);
+        }
+        result.values.append(WTF::move(jump));
+        ValueID id(result.values.size() - 1);
+        leaving.values.append(id);
+        leaving.terminator.kind = TerminatorKind::Return;
+        leaving.terminator.value = id;
+        result.blocks.append(WTF::move(leaving));
+        result.blocks[block].terminator.targets[target] = Target { BlockID(result.blocks.size() - 1), { } };
     }
 
     const Program& m_program;
@@ -453,6 +500,7 @@ private:
     const Function& m_function;
     unsigned m_numberOfBlocks;
     BitVector m_needsFrame;
+    const BitVector& m_isNotRun;
     Vector<unsigned> m_component;
     BitVector m_isInCycle;
     Vector<unsigned> m_dominator;
@@ -460,9 +508,9 @@ private:
 
 } // anonymous namespace
 
-bool splitFunction(const Program& program, FunctionID id, const Function& function, const BitVector& blocksThatEmitCalls, SplitFunction& result)
+bool splitFunction(const Program& program, FunctionID id, const Function& function, const BitVector& blocksThatEmitCalls, const BitVector& blocksThatAreNotRun, SplitFunction& result)
 {
-    return FunctionSplitting(program, id, function, blocksThatEmitCalls).run(result);
+    return FunctionSplitting(program, id, function, blocksThatEmitCalls, blocksThatAreNotRun).run(result);
 }
 
 } } } // namespace JSC::AOT::Typed

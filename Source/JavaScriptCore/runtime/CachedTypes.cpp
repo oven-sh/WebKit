@@ -265,7 +265,7 @@ static std::span<const Latin1Character> inlineStringCharacters(std::span<const u
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
     unsigned length = (slot[0] >> 2) & 3;
-    return slot.subspan(1).first(length);
+    return byteCast<Latin1Character>(slot.subspan(1).first(length));
 }
 
 // $ 0-9 A-Z _ a-z, in that order; 0xff for every other character.
@@ -385,7 +385,7 @@ String EncoderStringTable::stringForSlot(uint32_t slot) const
     case VariableLengthObjectBase::inlineStringTag: {
         unsigned length = (slot >> 2) & 3;
         auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
-        return length ? String(std::span<const Latin1Character> { bytes.subspan(1).first(length) }) : String();
+        return length ? String(byteCast<Latin1Character>(bytes.subspan(1).first(length))) : String();
     }
     case VariableLengthObjectBase::externalStringTag:
         return (slot >> 2) < m_strings.size() ? String { m_strings[slot >> 2].ptr() } : String();
@@ -717,7 +717,7 @@ std::optional<uint32_t> DecoderStringTable::hashForSlot(uint32_t slot) const
         if (!length)
             return std::nullopt;
         auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
-        return StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+        return StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes.subspan(1).first(length)));
     }
     case VariableLengthObjectBase::externalStringTag:
         if (slot >> 2 >= m_count)
@@ -741,7 +741,7 @@ bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) con
         if (!length || string.length() != length)
             return false;
         auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
-        return equal(&string, std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+        return equal(&string, byteCast<Latin1Character>(bytes.subspan(1).first(length)));
     }
     case VariableLengthObjectBase::externalStringTag: {
         uint32_t ordinal = slot >> 2;
@@ -876,8 +876,8 @@ public:
         friend class Encoder;
 
     public:
-        uint8_t* NODELETE buffer() const { return m_buffer; }
-        ptrdiff_t NODELETE offset() const { return m_offset; }
+        uint8_t* LEGACY_NODELETE buffer() const { return m_buffer; }
+        ptrdiff_t LEGACY_NODELETE offset() const { return m_offset; }
 
     private:
         Allocation(uint8_t* buffer, ptrdiff_t offset)
@@ -905,7 +905,7 @@ public:
         allocateNewPage();
     }
 
-    EncoderStringTable* NODELETE externalStrings() { return m_externalStrings; }
+    EncoderStringTable* LEGACY_NODELETE externalStrings() { return m_externalStrings; }
 
     // Every function nested in a class with private names carries a copy of the class's private-name environment; the
     // encoded entries are written once per distinct environment and shared.
@@ -1380,14 +1380,14 @@ private:
         }
 
         // FIXME: Port call sites for span() / mutableSpan() and remove.
-        const uint8_t* NODELETE buffer() const { return m_buffer.span().data(); }
-        uint8_t* NODELETE buffer() { return m_buffer.mutableSpan().data(); }
+        const uint8_t* LEGACY_NODELETE buffer() const { return m_buffer.span().data(); }
+        uint8_t* LEGACY_NODELETE buffer() { return m_buffer.mutableSpan().data(); }
         size_t size() const { return static_cast<size_t>(m_offset); }
 
         std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
         std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
 
-        bool NODELETE getOffset(const void* address, ptrdiff_t& result) const
+        bool LEGACY_NODELETE getOffset(const void* address, ptrdiff_t& result) const
         {
             auto* addr = static_cast<const uint8_t*>(address);
             auto* bufferStart = buffer();
@@ -1398,7 +1398,7 @@ private:
             return false;
         }
 
-        void NODELETE alignEnd()
+        void LEGACY_NODELETE alignEnd()
         {
             ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
@@ -1662,7 +1662,7 @@ public:
     {
     }
 
-    bool NODELETE isEmpty() const
+    bool LEGACY_NODELETE isEmpty() const
     {
         return m_offset == s_invalidOffset;
     }
@@ -1684,16 +1684,16 @@ public:
         m_offset = std::bit_cast<Offset>(*packed);
         return true;
     }
-    bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
+    bool LEGACY_NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
     // The slot as a plain value, for owners whose kind byte says it holds one rather than an offset.
-    uint32_t NODELETE rawSlot() const { return std::bit_cast<uint32_t>(m_offset); }
+    uint32_t LEGACY_NODELETE rawSlot() const { return std::bit_cast<uint32_t>(m_offset); }
     void setRawSlot(uint32_t value) { m_offset = std::bit_cast<Offset>(value); }
     Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
     String inlinePlainString() const { return Decoder::stringForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
 
     // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
-    bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
-    uint32_t NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
+    bool LEGACY_NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
+    uint32_t LEGACY_NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
     bool tryEncodeExternalString(Encoder& encoder, const StringImpl& string)
     {
         if (!encoder.externalStrings() || string.isSymbol() || !string.length())
@@ -1706,14 +1706,14 @@ public:
     }
 
 protected:
-    const uint8_t* NODELETE buffer() const
+    const uint8_t* LEGACY_NODELETE buffer() const
     {
         ASSERT(!isEmpty());
         return std::bit_cast<const uint8_t*>(this) + m_offset;
     }
 
     template<typename T>
-    const T* NODELETE buffer() const
+    const T* LEGACY_NODELETE buffer() const
     {
         ASSERT(!(std::bit_cast<uintptr_t>(buffer()) % alignof(T)));
         return std::bit_cast<const T*>(buffer());
@@ -1926,10 +1926,10 @@ public:
         return decode(decoder, unusedIsNewAllocation, std::forward<Args>(args)...);
     }
 
-    const T* NODELETE operator->() const { return get(); }
+    const T* LEGACY_NODELETE operator->() const { return get(); }
 
 private:
-    const T* NODELETE get() const
+    const T* LEGACY_NODELETE get() const
     {
         RELEASE_ASSERT(!this->isEmpty());
         return this->template buffer<T>();
@@ -2021,7 +2021,7 @@ class CachedWriteBarrier : public CachedObject<WriteBarrier<Source>> {
     friend struct CachedWriteBarrierOffsets;
 
 public:
-    bool NODELETE isEmpty() const { return m_ptr.isEmpty(); }
+    bool LEGACY_NODELETE isEmpty() const { return m_ptr.isEmpty(); }
     const CachedPtr<T, Source>& ptr() const { return m_ptr; }
 
     void encode(Encoder& encoder, const WriteBarrier<Source> src)
@@ -2442,8 +2442,8 @@ public:
     }
 
     static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
-    std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
-    std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
+    std::span<const Latin1Character> LEGACY_NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
+    std::span<const char16_t> LEGACY_NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
     // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
@@ -3608,14 +3608,14 @@ public:
         m_sourceURLDirective.encode(encoder, sourceProvider.sourceURLDirective());
         m_sourceMappingURLDirective.encode(encoder, sourceProvider.sourceMappingURLDirective());
         m_startPosition.encode(encoder, sourceProvider.startPosition());
-        m_sourceTaintedOrigin = sourceProvider.sourceTaintedOrigin();
+        m_sourceTaintedOrigin = sourceProvider.sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy);
     }
 
     void decode(Decoder& decoder, SourceProvider& sourceProvider) const
     {
         sourceProvider.setSourceURLDirective(m_sourceURLDirective.decode(decoder));
         sourceProvider.setSourceMappingURLDirective(m_sourceMappingURLDirective.decode(decoder));
-        sourceProvider.setSourceTaintedOrigin(m_sourceTaintedOrigin);
+        sourceProvider.setSourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy, m_sourceTaintedOrigin);
     }
 
 protected:
@@ -4496,7 +4496,7 @@ enum class CachedCodeBlockTag {
     CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
-static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
+static CachedCodeBlockTag LEGACY_NODELETE tagFromSourceCodeType(SourceCodeType type)
 {
     switch (type) {
     case SourceCodeType::ProgramType:
@@ -5529,7 +5529,7 @@ protected:
         UNUSED_PARAM(encoder);
     }
 
-    CachedCodeBlockTag NODELETE tag() const { return m_tag; }
+    CachedCodeBlockTag LEGACY_NODELETE tag() const { return m_tag; }
 
     bool isUpToDate(Decoder& decoder) const
     {
@@ -5835,6 +5835,7 @@ struct BytecodeLinkEncoder::Impl {
 
 #if ENABLE(AOT)
     std::unique_ptr<AOT::Typed::Program> typedProgram;
+    std::unique_ptr<AOT::RegExpsFoundAhead> regExpsFoundAhead;
     // By entry of the typed program.
     Vector<uint32_t, 1> typedModules;
 #endif
@@ -6042,6 +6043,8 @@ struct BytecodeLinkEncoder::Impl {
         };
         AOT::ImageBuilder builder;
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
+        if (regExpsFoundAhead)
+            builder.takeRegExpsCompiledAhead(regExpsFoundAhead->compiledAhead());
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
         auto typedEntryOf = [&](size_t index) -> AOT::Typed::FunctionID {
             if (!typedProgram)
@@ -6082,36 +6085,47 @@ struct BytecodeLinkEncoder::Impl {
         };
         AOT::IdentifierIndices identifierIndices;
         Vector<std::pair<AOT::Typed::StringID, Identifier>> typedIdentifiers;
+        Vector<std::array<uint32_t, 4>> usesByAccessOfTypedIdentifiers;
         {
             for (auto& job : jobs) {
                 for (auto& identifier : job.codeBlock->identifiers())
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
             }
             if (typedProgram) {
-                for (auto [name, uses] : typedProgram->genericAccessIdentifiersAndNumberOfUses()) {
-                    Identifier identifier = Identifier::fromString(vm, String::fromUTF8(typedProgram->string(name)));
+                typedProgram->findNamesThatMayBeAccessors();
+                for (auto& [name, uses, usesByAccess] : typedProgram->genericAccessIdentifiersAndNumberOfUses()) {
+                    auto bytesOfName = typedProgram->string(name);
+                    Identifier identifier = AOT::Typed::isConstantSymbol(bytesOfName) ? Identifier::fromUid(SymbolImpl::create(*String(byteCast<Latin1Character>(bytesOfName)).impl()).get()) : Identifier::fromString(vm, String::fromUTF8(bytesOfName));
                     identifierIndices.add(identifier.impl(), 0).iterator->value += uses;
                     typedIdentifiers.append({ name, WTF::move(identifier) });
+                    usesByAccessOfTypedIdentifiers.append(usesByAccess);
                 }
             }
             Vector<std::pair<UniquedStringImpl*, uint32_t>> inOrder;
             for (auto& entry : identifierIndices)
                 inOrder.append({ entry.key, entry.value });
-            std::ranges::sort(inOrder, [](auto& a, auto& b) {
+            AOT::Typed::sortOnPool(inOrder.mutableSpan(), [](auto& a, auto& b) {
                 if (a.second != b.second)
                     return a.second > b.second;
                 if (auto order = codePointCompare(StringView { *a.first }, StringView { *b.first }); order != std::weak_ordering::equivalent)
                     return order == std::weak_ordering::less;
                 return a.first->isSymbol() < b.first->isSymbol();
             });
-            constexpr uint32_t usesThatPayForStubOfOneName = 48;
-            constexpr unsigned numberOfNamesWithStubWhateverTheirUses = 256;
-            unsigned numberOfNamesUsedOften = 0;
-            for (uint32_t number = 0; number < inOrder.size(); ++number) {
+            for (uint32_t number = 0; number < inOrder.size(); ++number)
                 identifierIndices.set(inOrder[number].first, number + 1);
-                numberOfNamesUsedOften += inOrder[number].second >= usesThatPayForStubOfOneName;
+            AOT::forgetNamesWithStubOfTheirOwn();
+            using AccessByName = AOT::Typed::Program::AccessByName;
+            static_assert(static_cast<unsigned>(AccessByName::Read) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Reads) && static_cast<unsigned>(AccessByName::Store) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Stores));
+            static_assert(static_cast<unsigned>(AccessByName::Definition) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Definitions) && static_cast<unsigned>(AccessByName::Call) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Calls));
+            for (unsigned i = 0; i < typedIdentifiers.size(); ++i) {
+                constexpr uint32_t usesThatPayForStubsOfOneName = 512;
+                uint32_t number = identifierIndices.get(typedIdentifiers[i].second.impl());
+                for (unsigned access = 0; access < usesByAccessOfTypedIdentifiers[i].size(); ++access) {
+                    if (usesByAccessOfTypedIdentifiers[i][access] >= usesThatPayForStubsOfOneName)
+                        AOT::setHasStubOfItsOwn(static_cast<AOT::StubOfOneNameIsFor>(access), number);
+                }
             }
-            AOT::setNumberOfNamesUsedOftenEnoughForStubOfTheirOwn(std::max(numberOfNamesUsedOften, numberOfNamesWithStubWhateverTheirUses));
+            AOT::setTypedStringsWithWord(typedProgram ? typedProgram->keysOfStringsAskedForMost(AOT::Instance::numberOfTypedStringsWithWord) : Vector<uint32_t>());
             AOT::setProgramIdentifierIndices(&identifierIndices);
             builder.setProgramIdentifierIndices(&identifierIndices, inOrder.size() + 1);
             if (typedProgram) {
@@ -6217,7 +6231,7 @@ struct BytecodeLinkEncoder::Impl {
             Vector<uint64_t> sizesAndNumbers(numberOfTypedFunctions, [&](size_t index) {
                 return static_cast<uint64_t>(UINT32_MAX - typedProgram->functions[index].values.size()) << 32 | index;
             });
-            std::ranges::sort(sizesAndNumbers);
+            AOT::Typed::sortOnPool(sizesAndNumbers.mutableSpan(), std::less<uint64_t> { });
             Vector<uint32_t> largestFirst;
             largestFirst.reserveInitialCapacity(numberOfTypedFunctions);
             for (uint64_t sizeAndNumber : sizesAndNumbers) {
@@ -6313,6 +6327,18 @@ struct BytecodeLinkEncoder::Impl {
                 });
                 endStep("starting the threads"_s);
                 AOT::Typed::addRegExpLiterals(vm, *typedProgram, builder);
+                if (!regExpsFoundAhead)
+                    regExpsFoundAhead = makeUnique<AOT::RegExpsFoundAhead>(typedProgram->buffer);
+                auto addEvaluatedRegExps = [&] {
+                    for (auto& [source, flags] : regExpsFoundAhead->waitForEvaluatedTexts())
+                        builder.requestRegExp(vm, source, flags, true);
+                    builder.didRequestAllRegExps();
+                };
+                RefPtr<Thread> waitsForEvaluator;
+                if (regExpsFoundAhead->isEvaluated())
+                    addEvaluatedRegExps();
+                else
+                    waitsForEvaluator = Thread::create("AOT compiler"_s, [&addEvaluatedRegExps] { addEvaluatedRegExps(); });
                 endStep("addRegExpLiterals"_s);
                 endPhase("regular expressions of the typed program"_s);
                 compileTypedFunctions();
@@ -6322,6 +6348,9 @@ struct BytecodeLinkEncoder::Impl {
                 builder.setTypedData(WTF::move(typedData));
                 for (auto& thread : threads)
                     thread->waitForCompletion();
+                if (waitsForEvaluator)
+                    waitsForEvaluator->waitForCompletion();
+                AOT::Typed::destroyBeside(WTF::move(regExpsFoundAhead));
             }
             endStep("waiting for the other threads"_s);
             RELEASE_ASSERT(typedProgram->sizeOfStatics == typedProgram->sizeOfStaticsAsPlaced);
@@ -6366,13 +6395,19 @@ struct BytecodeLinkEncoder::Impl {
             };
             Vector<PlaceInOrder> placesInOrder;
             placesInOrder.reserveInitialCapacity(numberOfTypedFunctions);
-            for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
+            constexpr uint32_t isNotCompiled = std::numeric_limits<uint32_t>::max();
+            Vector<uint32_t> numbersAdded(numberOfTypedFunctions);
+            AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
                 auto& result = typedResults[function];
+                numbersAdded[function] = !result ? 0 : !result->isCompiled ? isNotCompiled : safeCast<uint32_t>(result->code.continuations.size() + 1);
+            });
+            for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
                 placesInBuilder[function] = numberToAdd;
-                if (!result)
+                if (!numbersAdded[function])
                     continue;
                 AOT::Typed::FunctionID id(function);
-                if (!result->isCompiled) {
+                if (numbersAdded[function] == isNotCompiled) {
+                    auto& result = typedResults[function];
                     // All of them are reported, so that one build shows everything that is missing.
                     auto& declined = typedProgram->at(id);
                     LineColumn position = typedProgram->lineColumnFor(declined.module, declined.position);
@@ -6383,7 +6418,7 @@ struct BytecodeLinkEncoder::Impl {
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
-                for (unsigned index = 0; index < result->code.continuations.size(); ++index) {
+                for (unsigned index = 0; index + 1 < numbersAdded[function]; ++index) {
                     auto key = AOT::Typed::keyOfContinuation(id, index);
                     RELEASE_ASSERT(!key.module);
                     placesInOrder.append({ isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
@@ -6394,7 +6429,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             if (numberOfDeclinedFunctions)
                 return { };
-            std::ranges::sort(placesInOrder, [](const PlaceInOrder& a, const PlaceInOrder& b) {
+            AOT::Typed::sortOnPool(placesInOrder.mutableSpan(), [](const PlaceInOrder& a, const PlaceInOrder& b) {
                 return std::tie(a.rank, a.start, a.kind) < std::tie(b.rank, b.start, b.kind);
             });
             Vector<uint32_t> whereItWillStand(numberToAdd);
@@ -6414,9 +6449,6 @@ struct BytecodeLinkEncoder::Impl {
                 builder.set(firstPlaceInBuilder + whereItWillStand[place], AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
             });
             endPhase("adding the functions to the image"_s);
-            AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
-                typedProgram->functions[function] = AOT::Typed::Function();
-            });
             AOT::Typed::destroyBeside(WTF::move(typedProgram));
             endPhase("freeing the typed functions"_s);
         }
@@ -6527,6 +6559,7 @@ struct BytecodeLinkEncoder::PreparedTypedProgram {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PreparedTypedProgram);
 #if ENABLE(AOT)
     std::unique_ptr<AOT::Typed::Program> program;
+    std::unique_ptr<AOT::RegExpsFoundAhead> regExpsFoundAhead;
 #endif
     Vector<String> failures;
     bool isPlaced { false };
@@ -6549,6 +6582,8 @@ auto BytecodeLinkEncoder::readTypedProgram(std::span<const uint8_t> bytes) -> Pr
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: reading the program took ", static_cast<unsigned>((MonotonicTime::now() - start).milliseconds()), " ms");
     if (!prepared->program)
         prepared->failures.append(makeString("internal error: the typed program cannot be read: "_s, whyFailed));
+    else if (g_compilerHooks.newRegExpsFoundAhead)
+        prepared->regExpsFoundAhead = std::unique_ptr<AOT::RegExpsFoundAhead>(g_compilerHooks.newRegExpsFoundAhead(bytes));
 #else
     UNUSED_PARAM(bytes);
 #endif
@@ -6578,6 +6613,7 @@ bool BytecodeLinkEncoder::setTypedProgram(PreparedTypedProgram* adopted, std::sp
         return false;
     }
     m_impl->typedProgram = WTF::move(prepared->program);
+    m_impl->regExpsFoundAhead = WTF::move(prepared->regExpsFoundAhead);
     return true;
 #else
     UNUSED_PARAM(modules);
@@ -6614,7 +6650,11 @@ void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, s
         prepared.program = nullptr;
         return;
     }
+    Ref readerOfNamesAndStrings = Thread::create("AOT names"_s, [&] {
+        prepared.program->readNamesAndStringsOffValues();
+    });
     AOT::Typed::place(*prepared.program);
+    readerOfNamesAndStrings->waitForCompletion();
     prepared.isPlaced = true;
 #else
     UNUSED_PARAM(prepared);
@@ -6626,6 +6666,7 @@ void installImageCompiler()
 {
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
+    g_compilerHooks.newRegExpsFoundAhead = [](std::span<const uint8_t> typedProgramAsWritten) { return new AOT::RegExpsFoundAhead(typedProgramAsWritten); };
 #endif
 }
 

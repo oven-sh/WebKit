@@ -42,10 +42,14 @@ public:
         if (!pruneBlockLocalCandidates())
             return false;
         computeLiveness();
-        do {
+        for (;;) {
             analyze();
             countMaterializations();
-        } while (abandonUnprofitableCandidates());
+            if (!abandonUnprofitableCandidates())
+                break;
+            if (hasNothingLeftToTry())
+                return false;
+        }
         if (m_policy == AllocationSinkingPolicy::AllowMaterialization && duplicateTailForMerge())
             return true;
         if (!std::ranges::any_of(m_candidates, [](const Candidate& object) { return !object.isAbandoned; }))
@@ -719,6 +723,13 @@ private:
         }
     }
 
+    bool hasNothingLeftToTry() const
+    {
+        return std::ranges::all_of(m_candidates, [&](const Candidate& object) {
+            return object.isAbandoned && (m_policy == AllocationSinkingPolicy::EliminateOnly || !object.isMaterializedForMerge || object.mergeBlock == UINT_MAX);
+        });
+    }
+
     bool abandonUnprofitableCandidates()
     {
         if (std::exchange(m_didDisallowMaybeMaterialized, false))
@@ -1262,11 +1273,13 @@ private:
     {
         m_currentBlock = b;
         restoreState(m_head[b]);
-        ValuesOfBlock values = m_function.blocks[b].values;
+        ValuesOfBlock valuesBeforeRewriting;
         if (m_mode == Mode::Rewrite) {
+            valuesBeforeRewriting = m_function.blocks[b].values;
             m_newValues.clear();
             loadHeadParameters(b);
         }
+        auto& values = m_mode == Mode::Rewrite ? valuesBeforeRewriting : m_function.blocks[b].values;
         bool lastValueIsUnchanged = true;
         for (ValueID id : values)
             lastValueIsUnchanged = execute(id);
@@ -1326,7 +1339,7 @@ private:
         return result;
     }
 
-    const Vector<ValueID>& parametersOf(unsigned b) const { return m_function.blocks[b].parameters; }
+    const CompactList<ValueID>& parametersOf(unsigned b) const { return m_function.blocks[b].parameters; }
     static ASCIILiteral edgeMaterializationReason(const EdgeMaterialization& one) { return one.isForParameter ? "a block parameter"_s : "a merge"_s; }
     void didMaterializeOnEdge(const EdgeMaterialization& one, unsigned to)
     {

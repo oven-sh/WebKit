@@ -177,7 +177,6 @@ imported/w3c/web-platform-tests/fetch/metadata/generated/css-font-face.sub.tenta
 imported/w3c/web-platform-tests/fetch/metadata/generated/element-a.https.sub.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/metadata/generated/element-area.https.sub.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/metadata/generated/window-location.https.sub.html [ Failure ]
-imported/w3c/web-platform-tests/mimesniff/media/media-sniff.window.html [ Failure ]
 imported/w3c/web-platform-tests/xhr/xmlhttprequest-timeout-worker-overridesexpires.html [ Skip ]
 
 # Ping attribute
@@ -411,7 +410,6 @@ http/tests/security/local-video-src-from-remote.html [ Failure ]
 http/tests/security/module-no-mime-type.html [ Failure ]
 http/tests/security/video-cross-origin-accessfailure.html [ Failure ]
 http/tests/security/xss-DENIED-xsl-external-entity-redirect.xml [ Failure ]
-http/tests/security/xss-DENIED-xsl-external-entity.xml [ Failure ]
 
 Bug(WPE) fast/dom/Geolocation/page-reload-cancel-permission-requests.html [ Skip ]
 Bug(WPE) fast/dom/Geolocation/requestQueuingForHiddenPage.html [ Skip ]
@@ -588,17 +586,14 @@ Bug(WPE) security/contentSecurityPolicy/video-with-blob-url-allowed-by-media-src
 # WPT: css
 # ========
 
-imported/w3c/web-platform-tests/css/css-color/system-color-consistency.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-color/system-color-support.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-color/t32-opacity-offscreen-multiple-boxes-1-c.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht [ ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/css/css-multicol/multicol-fill-balance-021.html [ Failure ]
 
 webkit.org/b/186262 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-break-all-007.html [ ImageOnlyFailure ]
 webkit.org/b/186262 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-normal-lo-000.html [ ImageOnlyFailure ]
 
-webkit.org/b/180645 imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/valueMode.html [ Failure ]
 
 webkit.org/b/127676 imported/w3c/web-platform-tests/xhr/send-redirect-bogus.sub.htm [ Skip ]
 webkit.org/b/127676 imported/w3c/web-platform-tests/xhr/send-redirect-to-cors.htm [ Skip ]
@@ -812,31 +807,11 @@ webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-masking/clip-path/cl
 
 compositing/geometry/composited-in-columns.html [ Failure ]
 compositing/layer-creation/overlap-animation-container.html [ Failure ]
-compositing/rtl/rtl-overflow-scrolling.html [ Failure ]
-compositing/tile-coverage-subpixel-empty-rect.html [ Failure ]
-compositing/tiling/tiled-layers-limit-contents-scale.html [ Failure ]
 webkit.org/b/309572 compositing/video/video-object-fit.html [ Failure Timeout ]
 webkit.org/b/309572 compositing/video/video-object-view-box-dynamic-change.html [ Failure ]
 webkit.org/b/309572 compositing/video/video-object-view-box-no-poster.html [ Failure ]
 webkit.org/b/309572 compositing/video/video-object-view-box-object-position-no-poster.html [ Failure ]
 webkit.org/b/309572 compositing/video/video-object-view-box-writing-mode-no-poster.html [ Failure ]
-compositing/visible-rect/2d-transformed.html [ Failure ]
-compositing/visible-rect/3d-transform-style.html [ Failure ]
-compositing/visible-rect/3d-transformed.html [ Failure ]
-compositing/visible-rect/animated-from-none.html [ Failure ]
-compositing/visible-rect/animated.html [ Failure ]
-compositing/visible-rect/backing-change-height-from-zero.html [ Failure ]
-compositing/visible-rect/clipped-by-viewport.html [ Failure ]
-compositing/visible-rect/clipped-visible-rect.html [ Failure ]
-compositing/visible-rect/coverage-clipped.html [ Failure ]
-compositing/visible-rect/coverage-scrolling.html [ Failure ]
-compositing/visible-rect/flipped-preserve-3d.html [ Failure ]
-compositing/visible-rect/iframe-and-layers.html [ Failure ]
-compositing/visible-rect/iframe-no-layers.html [ Failure ]
-compositing/visible-rect/iframe-with-layers-outside-viewport.html [ Failure ]
-compositing/visible-rect/mask-layer-coverage.html [ Failure ]
-compositing/visible-rect/nested-transform.html [ Failure ]
-compositing/visible-rect/scrolled.html [ Failure ]
 
 media/media-source/media-detachablemse-append.html [ Timeout Pass ]
 
@@ -931,6 +906,8 @@ webkit.org/b/287572 [ Release ] imported/w3c/web-platform-tests/webvtt/rendering
 webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_timestamp_past.html [ ImageOnlyFailure ]
 webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_with_class.html [ ImageOnlyFailure ]
 webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_with_class_object_specific_selector.html [ ImageOnlyFailure ]
+webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/lang_object/lang_attribute.html [ ImageOnlyFailure ]
+webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/lang_object/lang_color.html [ ImageOnlyFailure ]
 webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/not_allowed_properties.html [ ImageOnlyFailure ]
 webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/not_root_selector.html [ ImageOnlyFailure ]
 webkit.org/b/287572 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/type_selector_root.html [ ImageOnlyFailure ]
@@ -984,8 +961,6 @@ imported/w3c/web-platform-tests/digital-credentials/ [ Skip ]
 
 media/adopt-node-after-showing-picker-crash.html [ Skip ]
 
-imported/w3c/web-platform-tests/css/css-view-transitions/start-skip-start.html [ Failure ]
-imported/w3c/web-platform-tests/css/css-view-transitions/start-view-transtion-skips-active.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/table-caption.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/window-resize-aborts-transition.html [ Failure  Pass ]
 webkit.org/b/298727 css3/text-decoration/text-decoration-line-grammar-error-1.html [ Skip ]
@@ -1021,7 +996,6 @@ http/tests/media/hls/hls-audio-description-track-kind.html [ Skip ]
 webkit.org/b/306384 fast/lists/overlapping-nested-list-markers.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/input/keyboard-snap-interruption.html [ Failure ]
 
-imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-margin-focus.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-snap-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/snap-after-initial-layout/initial-snap-matches-scroll.html [ Failure ]
 
@@ -1159,10 +1133,6 @@ webkit.org/b/311654 imported/w3c/web-platform-tests/event-timing/gap-keydown-key
 webkit.org/b/252878 [ arm64 ] fast/frames/lots-of-objects.html [ Pass Timeout ]
 webkit.org/b/317021 [ arm64 ] fast/parser/elementstack-nesting-depth.html [ Pass Timeout ]
 
-webkit.org/b/316547 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/back-forward-cache/pushstate.https.html [ Failure ]
-webkit.org/b/316547 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/back-forward-cache/service-worker-clients-matchall.https.html [ Failure ]
-webkit.org/b/316547 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/back-forward-cache/service-worker-controlled-after-restore.https.html [ Failure ]
-webkit.org/b/316547 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/back-forward-cache/storage-events.html [ Failure ]
 
 webkit.org/b/315455 fast/dom/Range/detach-range-during-deletecontents.html [ Timeout ]
 webkit.org/b/315455 webgl/1.0.x/conformance/extensions/ext-sRGB.html [ Failure ]
@@ -1182,12 +1152,9 @@ webkit.org/b/318034 [ x86_64 ] fast/canvas/image-potential-subsample.html [ Fail
 webkit.org/b/318345 [ x86_64 ] media/track/video-track-configuration-mp4-default-colorspace.html [ Failure Pass ]
 
 webkit.org/b/318349 [ arm64 ] imported/w3c/web-platform-tests/largest-contentful-paint/image-TAO.sub.html [ Failure Pass ]
-webkit.org/b/318350 [ arm64 ] http/tests/websocket/tests/hybi/inspector/handshake-error.html [ Failure Pass ]
 
 webkit.org/b/318889 [ arm64 ] fast/block/out-of-flow-becomes-in-flow-with-auto-width.html [ Pass Timeout ]
 webkit.org/b/318891 [ arm64 ] imported/w3c/web-platform-tests/webrtc/RTCDataChannel-send-close-string-negotiated.window.html [ Pass Failure ]
-
-webkit.org/b/318638 [ Release ] http/tests/misc/iframe-shadow-realm.html [ Crash Pass ]
 
 webkit.org/b/318757 webgl/1.0.x/conformance/textures/misc/video-rotation.html [ Failure Timeout ]
 webkit.org/b/251107 [ arm64 ] webgl/1.0.x/conformance/textures/misc/texture-corner-case-videos.html [ Failure Pass ]
@@ -1302,8 +1269,12 @@ webkit.org/b/324979 imported/w3c/web-platform-tests/web-locks/mode-shared.https.
 webkit.org/b/324374 webgl/1.0.x/conformance/textures/misc/texture-size-limit.html [ Failure ]
 webkit.org/b/324374 webgl/2.0.y/conformance/textures/misc/texture-size-limit.html [ Failure ]
 
-webkit.org/b/325930 [ x86_64 Release ] imported/w3c/web-platform-tests/IndexedDB/transaction-inflight-worker-terminate.window.html [ Crash Pass ]
-
 webkit.org/b/325931 [ Release ] media/media-source/media-source-hidden-play-before-data.html [ Pass Timeout ]
 
 webkit.org/b/325939 [ arm64 ] platform/glib/damage/animations-blur.html [ Failure Pass ]
+
+webkit.org/b/326557 [ arm64 ] fast/canvas/webgl/index-validation-with-subsequent-draws.html [ Crash Pass ]
+webkit.org/b/326562 [ x86_64 ] css3/viewport-percentage-lengths/css3-viewport-percentage-lengths-vh-absolute.html [ Pass Timeout ]
+webkit.org/b/326564 [ arm64 ] fast/backgrounds/size/backgroundSize-in-background-shorthand.html [ Pass Timeout ]
+webkit.org/b/326565 [ arm64 ] fast/pdf-plugin-destruction-dispatches-print-event-crash.html [ Pass Timeout ]
+webkit.org/b/326566 [ arm64 ] fast/backgrounds/angled-background-repeating-gradient-rendering-vertical.html [ Pass Timeout ]

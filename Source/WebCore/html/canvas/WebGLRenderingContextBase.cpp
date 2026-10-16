@@ -207,7 +207,7 @@ static IntRect texImageSourceSize(NativeImage& source)
 
 // Return true if a character belongs to the ASCII subset as defined in
 // GLSL ES 1.0 spec section 3.1.
-static bool NODELETE validateCharacter(unsigned char c)
+static bool LEGACY_NODELETE validateCharacter(unsigned char c)
 {
     // Printing characters are valid except " $ ` @ \ ' DEL.
     if (c >= 32 && c <= 126
@@ -375,7 +375,7 @@ static constexpr ASCIILiteral errorCodeToString(GCGLErrorCode error)
     return "INVALID_OPERATION"_s;
 }
 
-static constexpr GCGLenum NODELETE errorCodeToGLenum(GCGLErrorCode error)
+static constexpr GCGLenum LEGACY_NODELETE errorCodeToGLenum(GCGLErrorCode error)
 {
     switch (error) {
     case GCGLErrorCode::InvalidEnum:
@@ -395,7 +395,7 @@ static constexpr GCGLenum NODELETE errorCodeToGLenum(GCGLErrorCode error)
     return GraphicsContextGL::INVALID_OPERATION;
 }
 
-static constexpr GCGLErrorCode NODELETE glEnumToErrorCode(GCGLenum error)
+static constexpr GCGLErrorCode LEGACY_NODELETE glEnumToErrorCode(GCGLenum error)
 {
     switch (error) {
     case GraphicsContextGL::INVALID_ENUM:
@@ -425,7 +425,7 @@ static String toNonNullString(const UTF8CString& text)
     return text;
 }
 
-static GraphicsContextGL::SurfaceBuffer NODELETE toGCGLSurfaceBuffer(CanvasRenderingContext::SurfaceBuffer buffer)
+static GraphicsContextGL::SurfaceBuffer LEGACY_NODELETE toGCGLSurfaceBuffer(CanvasRenderingContext::SurfaceBuffer buffer)
 {
     return buffer == CanvasRenderingContext::SurfaceBuffer::DrawingBuffer ? GraphicsContextGL::SurfaceBuffer::DrawingBuffer : GraphicsContextGL::SurfaceBuffer::DisplayBuffer;
 }
@@ -458,7 +458,7 @@ std::unique_ptr<WebGLRenderingContextBase> WebGLRenderingContextBase::create(Can
         return nullptr;
 
     GraphicsClient* graphicsClient = scriptExecutionContext->graphicsClient();
-    auto* canvasElement = dynamicDowncast<HTMLCanvasElement>(canvas);
+    RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(canvas);
 
 #if ENABLE(WEBXR)
     if (attributes.xrCompatible)
@@ -509,7 +509,7 @@ WebGLCanvas WebGLRenderingContextBase::canvas()
     if (RefPtr offscreenCanvas = dynamicDowncast<OffscreenCanvas>(base))
         return offscreenCanvas.releaseNonNull();
 #endif
-    return downcast<HTMLCanvasElement>(base);
+    return downcast<HTMLCanvasElement>(WTF::move(base));
 }
 
 #if ENABLE(OFFSCREEN_CANVAS)
@@ -540,7 +540,8 @@ bool WebGLRenderingContextBase::initializeNewContext(Ref<GraphicsContextGL> cont
         initializeContextState();
         initializeDefaultObjects();
     }
-    bool reshaped = m_defaultFramebuffer->reshape(clampedCanvasSize());
+    m_defaultFramebuffer->setSize(clampedCanvasSize());
+    bool reshaped = m_defaultFramebuffer->ensureSize();
     // Next calls will receive the context lost callback.
     m_context->setClient(this);
     return reshaped && !m_context->isContextLost();
@@ -717,6 +718,10 @@ void WebGLRenderingContextBase::destroyGraphicsContextGL()
 
 void WebGLRenderingContextBase::willUpdateDrawingBufferContents(WebGLRenderingContextBase::CallerType caller)
 {
+    // Drawing to a framebuffer object does not call `clearIfComposited()`, so mark the context as
+    // active here.
+    updateActiveOrdinal();
+
     // Draw and clear ops with rasterizer discard enabled do not change the canvas.
     if (caller == CallerTypeDrawOrClear && m_rasterizerDiscardEnabled)
         return;
@@ -731,6 +736,17 @@ void WebGLRenderingContextBase::willUpdateDrawingBufferContents(WebGLRenderingCo
         updateMemoryCost();
     }
     willUpdateCanvasContents();
+}
+
+bool WebGLRenderingContextBase::ensureDefaultFramebufferSize()
+{
+    if (isContextLost())
+        return false;
+    if (!m_defaultFramebuffer->ensureSize()) {
+        forceContextLost();
+        return false;
+    }
+    return true;
 }
 
 bool WebGLRenderingContextBase::clearIfComposited(WebGLRenderingContextBase::CallerType caller, GCGLbitfield mask)
@@ -842,7 +858,7 @@ RefPtr<NativeImage> WebGLRenderingContextBase::surfaceBufferToNativeImage(Surfac
     auto& readBuffer = readSurfaceBuffer(sourceBuffer);
     if (readBuffer.image)
         return readBuffer.image;
-    if (!isContextLost()) {
+    if (ensureDefaultFramebufferSize()) {
         if (sourceBuffer == SurfaceBuffer::DrawingBuffer) {
             clearIfComposited(CallerTypeOther);
             m_defaultFramebuffer->resolveColorIntoResult();
@@ -888,12 +904,12 @@ RefPtr<ImageBuffer> WebGLRenderingContextBase::surfaceBufferToImageBuffer(Surfac
 
 RefPtr<ByteArrayPixelBuffer> WebGLRenderingContextBase::drawingBufferToPixelBuffer()
 {
-    if (isContextLost())
-        return nullptr;
     if (m_attributes.premultipliedAlpha)
         return nullptr;
     auto size = clampedCanvasSize();
     if (size.isEmpty())
+        return nullptr;
+    if (!ensureDefaultFramebufferSize())
         return nullptr;
     PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, ColorSpace::SRGB() };
     auto pixelBuffer = ByteArrayPixelBuffer::tryCreate(format, size);
@@ -941,7 +957,7 @@ RefPtr<ByteArrayPixelBuffer> WebGLRenderingContextBase::drawingBufferToPixelBuff
 #if ENABLE(MEDIA_STREAM) || ENABLE(WEB_CODECS)
 RefPtr<VideoFrame> WebGLRenderingContextBase::surfaceBufferToVideoFrame(SurfaceBuffer buffer)
 {
-    if (isContextLost())
+    if (!ensureDefaultFramebufferSize())
         return nullptr;
     if (buffer == SurfaceBuffer::DrawingBuffer) {
         clearIfComposited(CallerTypeOther);
@@ -953,7 +969,7 @@ RefPtr<VideoFrame> WebGLRenderingContextBase::surfaceBufferToVideoFrame(SurfaceB
 
 RefPtr<ImageBuffer> WebGLRenderingContextBase::transferToImageBuffer()
 {
-    if (isContextLost())
+    if (!ensureDefaultFramebufferSize())
         return nullptr;
     RefPtr scriptExecutionContext = this->scriptExecutionContext();
     if (!scriptExecutionContext)
@@ -992,10 +1008,15 @@ void WebGLRenderingContextBase::didUpdateCanvasSizeProperties(bool)
     m_readDrawingBuffer.clear();
     m_readDisplayBuffer.clear();
 
-    if (!m_defaultFramebuffer->reshape(newSize)) {
-        forceContextLost();
+    // The storage is reallocated when it is next used, unless the new size shrinks it.
+    m_defaultFramebuffer->setSize(newSize);
+    if (m_defaultFramebuffer->pendingSizeShrinksStorage() && !ensureDefaultFramebufferSize())
         return;
-    }
+    // The display buffer must be replaced with the cleared drawing buffer of the new size. The
+    // reallocation does not necessarily replace it, for example when the canvas is resized and
+    // resized back to the size of the storage without using the default framebuffer.
+    m_compositingResultsNeedUpdating = true;
+    willUpdateCanvasContents();
     updateMemoryCost();
 }
 
@@ -1348,9 +1369,13 @@ void WebGLRenderingContextBase::clear(GCGLbitfield mask)
     if (isContextLost())
         return;
     willUpdateDrawingBufferContents();
-    bool cleared = clearIfComposited(CallerTypeDrawOrClear, mask);
-    if (!cleared)
-        protect(graphicsContextGL())->clear(mask);
+    if (!m_framebufferBinding) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        if (clearIfComposited(CallerTypeDrawOrClear, mask))
+            return;
+    }
+    protect(graphicsContextGL())->clear(mask);
 }
 
 void WebGLRenderingContextBase::clearColor(GCGLfloat r, GCGLfloat g, GCGLfloat b, GCGLfloat a)
@@ -1459,7 +1484,11 @@ void WebGLRenderingContextBase::copyTexSubImage2D(GCGLenum target, GCGLint level
         return;
     if (!validateDefaultFramebufferRead("copyTexSubImage2D"_s))
         return;
-    clearIfComposited(CallerTypeOther);
+    if (isDefaultFramebufferBoundForRead()) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeOther);
+    }
     auto restoreReadBinding = prepareDefaultFramebufferForReadIfBound(IntRect { x, y, width, height });
     protect(graphicsContextGL())->copyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height);
 }
@@ -1725,7 +1754,11 @@ void WebGLRenderingContextBase::drawArrays(GCGLenum mode, GCGLint first, GCGLsiz
         return;
 
     willUpdateDrawingBufferContents();
-    clearIfComposited(CallerTypeDrawOrClear);
+    if (!m_framebufferBinding) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeDrawOrClear);
+    }
 
     {
         ScopedInspectorShaderProgramHighlight scopedHighlight { *this };
@@ -1744,7 +1777,11 @@ void WebGLRenderingContextBase::drawElements(GCGLenum mode, GCGLsizei count, GCG
         return;
 
     willUpdateDrawingBufferContents();
-    clearIfComposited(CallerTypeDrawOrClear);
+    if (!m_framebufferBinding) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeDrawOrClear);
+    }
 
     {
         ScopedInspectorShaderProgramHighlight scopedHighlight { *this };
@@ -3115,12 +3152,12 @@ void WebGLRenderingContextBase::readPixels(GCGLint x, GCGLint y, GCGLsizei width
         synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "readPixels"_s, "no pixels"_s);
         return;
     }
-    ArrayBufferView& pixels = *maybePixels;
+    Ref pixels = *maybePixels;
 
     // ANGLE will validate the readback from the framebuffer according
     // to WebGL's restrictions. At this level, just validate the type
     // of the readback against the typed array's type.
-    if (!validateTypeAndArrayBufferType("readPixels"_s, ArrayBufferViewFunctionType::ReadPixels, type, &pixels))
+    if (!validateTypeAndArrayBufferType("readPixels"_s, ArrayBufferViewFunctionType::ReadPixels, type, pixels.ptr()))
         return;
 
     if (!validateImageFormatAndType("readPixels"_s, format, type))
@@ -3135,15 +3172,19 @@ void WebGLRenderingContextBase::readPixels(GCGLint x, GCGLint y, GCGLsizei width
         synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "readPixels"_s, "invalid dimensions"_s);
         return;
     }
-    if (pixels.byteLength() < packSizes->initialSkipBytes + packSizes->imageBytes) {
+    if (pixels->byteLength() < packSizes->initialSkipBytes + packSizes->imageBytes) {
         synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "readPixels"_s, "size too large"_s);
         return;
     }
     if (!validateDefaultFramebufferRead("readPixels"_s))
         return;
-    clearIfComposited(CallerTypeOther);
+    if (isDefaultFramebufferBoundForRead()) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeOther);
+    }
     auto restoreReadBinding = prepareDefaultFramebufferForReadIfBound(rect);
-    auto data = pixels.mutableSpan().subspan(packSizes->initialSkipBytes, packSizes->imageBytes);
+    auto data = pixels->mutableSpan().subspan(packSizes->initialSkipBytes, packSizes->imageBytes);
     const bool packReverseRowOrder = false;
     protect(graphicsContextGL())->readPixels(rect, format, type, data, m_packParameters.alignment, m_packParameters.rowLength, packReverseRowOrder);
 }
@@ -3303,7 +3344,7 @@ IntRect WebGLRenderingContextBase::getImageDataSize(ImageData* pixels)
 }
 
 #if ENABLE(WEB_CODECS)
-static bool NODELETE isVideoFrameFormatEligibleToCopy(WebCodecsVideoFrame& frame)
+static bool LEGACY_NODELETE isVideoFrameFormatEligibleToCopy(WebCodecsVideoFrame& frame)
 {
 #if PLATFORM(COCOA)
     // FIXME: We should be able to remove the YUV restriction, see https://bugs.webkit.org/show_bug.cgi?id=251234.
@@ -4324,7 +4365,11 @@ void WebGLRenderingContextBase::copyTexImage2D(GCGLenum target, GCGLint level, G
         return;
     if (!validateDefaultFramebufferRead("copyTexImage2D"_s))
         return;
-    clearIfComposited(CallerTypeOther);
+    if (isDefaultFramebufferBoundForRead()) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeOther);
+    }
     auto restoreReadBinding = prepareDefaultFramebufferForReadIfBound(IntRect { x, y, width, height });
     protect(graphicsContextGL())->copyTexImage2D(target, level, internalFormat, x, y, width, height, border);
 }
@@ -5646,7 +5691,11 @@ void WebGLRenderingContextBase::drawArraysInstanced(GCGLenum mode, GCGLint first
         return;
 
     willUpdateDrawingBufferContents();
-    clearIfComposited(CallerTypeDrawOrClear);
+    if (!m_framebufferBinding) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeDrawOrClear);
+    }
 
     {
         ScopedInspectorShaderProgramHighlight scopedHighlight { *this };
@@ -5666,7 +5715,11 @@ void WebGLRenderingContextBase::drawElementsInstanced(GCGLenum mode, GCGLsizei c
         return;
 
     willUpdateDrawingBufferContents();
-    clearIfComposited(CallerTypeDrawOrClear);
+    if (!m_framebufferBinding) {
+        if (!ensureDefaultFramebufferSize())
+            return;
+        clearIfComposited(CallerTypeDrawOrClear);
+    }
 
     {
         ScopedInspectorShaderProgramHighlight scopedHighlight { *this };
@@ -5890,8 +5943,10 @@ void WebGLRenderingContextBase::prepareForDisplay()
     if (!m_context || !m_compositingResultsNeedUpdating)
         return;
 
-    clearIfComposited(CallerTypeOther);
-    m_defaultFramebuffer->resolveColorIntoResult();
+    if (ensureDefaultFramebufferSize()) {
+        clearIfComposited(CallerTypeOther);
+        m_defaultFramebuffer->resolveColorIntoResult();
+    }
     protect(graphicsContextGL())->prepareForDisplay();
     m_defaultFramebuffer->markAllUnpreservedBuffersDirty();
 

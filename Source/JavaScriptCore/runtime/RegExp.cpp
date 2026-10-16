@@ -173,11 +173,22 @@ static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
 static_assert(maxLazilyConstructedParenthesesDepth == AOT::ImageRegExp::maxParenthesesDepthWithoutPattern);
 #endif
 
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+static ALWAYS_INLINE void countDigest(VM& vm, const std::optional<AOT::Image::CodeForRegExp>& code)
+{
+    if (Options::useAOTOperationCounters() && vm.m_aotRuntimeTable && code && code->wasFoundByDigest) [[unlikely]]
+        vm.m_aotRuntimeTable->countOperation("Image::codeForRegExp digest");
+}
+#endif
+
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     auto code = vm.useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt;
+    countDigest(vm, code);
+    if (code && code->hasCode)
+        m_workInInterpreter = codeWasFoundInImage;
     m_sourceIsPattern = code && code->sourceIsPattern;
     if (code && !code->keepsMoreOfPattern) {
         if (code->recordOfTextInPieces) {
@@ -321,10 +332,12 @@ RegExp* RegExp::createWithoutCaching(VM& vm, const String& patternString, Option
 RegExp* RegExp::tryCreateFromImage(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
 {
     auto code = AOT::Image::codeForRegExp(patternString, flags);
+    countDigest(vm, code);
     if (!code || code->keepsMoreOfPattern || !code->hasCode)
         return nullptr;
     RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
     regExp->Base::finishCreation(vm);
+    regExp->m_workInInterpreter = codeWasFoundInImage;
     regExp->m_specificPattern = code->specificPattern;
     regExp->m_numSubpatterns = code->numSubpatterns;
     regExp->m_sourceIsPattern = code->sourceIsPattern;
@@ -371,8 +384,17 @@ static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yar
     return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);
 }
 
+void RegExp::crashIfLiteralOfCompiledProgramIsInterpreted() const
+{
+    if (!Options::crashIfInterpreterIsUsed() || !m_isLiteralOfCompiledProgram || hasValidAtom()) [[likely]]
+        return;
+    dataLogLn("crashIfInterpreterIsUsed: regular expression /", pattern(), "/", StringView { Yarr::flagsString(m_flags).span() });
+    CRASH();
+}
+
 void RegExp::byteCodeCompileIfNecessary(VM* vm)
 {
+    crashIfLiteralOfCompiledProgramIsInterpreted();
     Locker locker { cellLock() };
 
     if (m_regExpBytecode)
@@ -413,7 +435,8 @@ void RegExp::makePatternOfPieces() const
 
 bool RegExp::takeCodeFromImage(VM& vm)
 {
-    auto code = hasTextInPieces() && m_rareData && m_rareData->m_recordOfTextInPieces ? std::optional { AOT::Image::codeOfRegExp(*m_rareData->m_recordOfTextInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags);
+    auto code = hasTextInPieces() && m_rareData && m_rareData->m_recordOfTextInPieces ? std::optional { AOT::Image::codeOfRegExp(*m_rareData->m_recordOfTextInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags, m_workInInterpreter == codeWasFoundInImage);
+    countDigest(vm, code);
     if (!code || code->keepsMoreOfPattern || !code->hasCode)
         return false;
     if (!hasCode())
@@ -454,12 +477,13 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt; code && code->hasCode) {
+    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_workInInterpreter == codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;
         return;
     }
+    crashIfLiteralOfCompiledProgramIsInterpreted();
     if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
         AOT::noteGuest(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
         AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
@@ -531,7 +555,7 @@ bool RegExp::matchConcurrently(
 {
     Locker locker { cellLock() };
 
-    if (!hasCodeFor(s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16))
+    if (!hasValidAtom() && !hasCodeFor(s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16))
         return false;
 
     position = matchInline<Yarr::MatchFrom::CompilerThread>(nullptr, vm, s, startOffset, ovector);
@@ -576,12 +600,13 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt; code && code->hasCode) {
+    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_workInInterpreter == codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;
         return;
     }
+    crashIfLiteralOfCompiledProgramIsInterpreted();
     if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
         AOT::noteGuest(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
         AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
@@ -652,7 +677,7 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
 {
     Locker locker { cellLock() };
 
-    if (!hasMatchOnlyCodeFor(s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16))
+    if (!hasValidAtom() && !hasMatchOnlyCodeFor(s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16))
         return false;
 
     result = matchInline<Yarr::MatchFrom::CompilerThread>(nullptr, vm, s, startOffset);

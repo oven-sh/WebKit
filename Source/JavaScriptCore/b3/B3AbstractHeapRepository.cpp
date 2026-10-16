@@ -74,6 +74,7 @@
 #include "WasmTable.h"
 #include "WasmTypeDefinition.h"
 #include "WebAssemblyModuleRecord.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC::B3 {
 
@@ -344,8 +345,10 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
         entry.value->as<PatchpointValue>()->effects.reads = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForPatchpointWrite)
         entry.value->as<PatchpointValue>()->effects.writes = rangeFor(entry.heap);
-    for (auto& [first, entry] : m_heapsForPatchpointWrite)
-        entry.value->as<PatchpointValue>()->effects.writes = HeapRange(first->range().begin(), entry.heap->range().end());
+    for (auto& [first, entry] : m_heapsForPatchpointWrite) {
+        if (auto* patchpoint = entry.value->as<PatchpointValue>())
+            patchpoint->effects.writes = HeapRange(first->range().begin(), entry.heap->range().end());
+    }
     for (HeapForValue entry : m_heapForFenceRead)
         entry.value->as<FenceValue>()->read = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForFenceWrite)

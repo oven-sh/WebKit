@@ -40,7 +40,7 @@ public:
     RenderVideo(HTMLVideoElement&, Style::ComputedStyle&&);
     virtual ~RenderVideo();
 
-    WEBCORE_EXPORT HTMLVideoElement& NODELETE videoElement() const;
+    WEBCORE_EXPORT HTMLVideoElement& LEGACY_NODELETE videoElement() const;
 
     IntRect videoBox() const;
     WEBCORE_EXPORT IntRect videoBoxInMainFrameView() const;
@@ -54,7 +54,7 @@ public:
     // bypass is active.
     bool isBypassingObjectViewBoxForPictureInPicture() const;
 
-    static IntSize NODELETE defaultSize();
+    static IntSize LEGACY_NODELETE defaultSize();
 
     bool supportsAcceleratedRendering() const;
     void acceleratedRenderingStateChanged();
@@ -65,6 +65,9 @@ public:
     bool failedToLoadPosterImage() const;
 
     void updateFromElement() final;
+
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const final;
+
     bool hasVideoMetadata() const;
     bool hasPosterFrameSize() const;
     bool hasDefaultObjectSize() const;
@@ -80,6 +83,7 @@ private:
 
     std::optional<LayoutRect> objectFitContentsRectForFullscreenCompositing(const LayoutRect&) const;
     LayoutSize posterAwareIntrinsicSize() const;
+    NaturalDimensions zoomedNaturalDimensions() const final;
 
     void imageChanged(WrappedImagePtr, const IntRect*) final;
 

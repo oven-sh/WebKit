@@ -31,6 +31,7 @@ static constexpr uint16_t Symbol = 1 << 7;
 static constexpr uint16_t BigInt = 1 << 8;
 // A field or an element that is not there. Never the value of an expression.
 static constexpr uint16_t Absent = 1 << 9;
+static constexpr uint16_t LiteralString = 1 << 10;
 
 static constexpr uint16_t Boolean = False | True;
 static constexpr uint16_t Number = Int | Double;
@@ -98,12 +99,13 @@ struct Type {
     bool isNever() const { return !primitives && !hasObjects(); }
     bool isAnything() const { return (primitives & Primitive::All) == Primitive::All && anyObject && anyFunction; }
     bool hasObjects() const { return anyObject || anyFunction || !views.isEmpty() || !engineClasses.isEmpty(); }
-    bool hasCells() const { return hasObjects() || primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt); }
+    bool hasCells() const { return hasObjects() || primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::LiteralString); }
     bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !hasObjects(); }
     bool isNumber() const { return !isNever() && hasOnlyPrimitives(Primitive::Number); }
     bool isInteger() const { return !isNever() && hasOnlyPrimitives(Primitive::Int); }
     bool isBoolean() const { return !isNever() && hasOnlyPrimitives(Primitive::Boolean); }
     bool isString() const { return !isNever() && hasOnlyPrimitives(Primitive::String); }
+    bool hasLiteralString() const { return primitives & Primitive::LiteralString; }
     bool isObject() const { return hasObjects() && !primitives; }
     bool isUndefinedOrNull() const { return !isNever() && hasOnlyPrimitives(Primitive::UndefinedOrNull); }
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
@@ -113,6 +115,8 @@ struct Type {
     // Likewise the one class of the engine.
     const EngineClass* onlyEngineClass() const;
     Type withoutPrimitives(uint16_t) const;
+    Type withLiteralStringWidened() const;
+    void normalizeLiteralString();
     // Whether one of the views does: then any object is of the type. See Layout::admitsForeignObjects.
     bool admitsForeignObjects(const Program&) const;
     bool admitsUncheckedObjects(const Program&) const;
@@ -173,6 +177,7 @@ enum class Rep : uint8_t {
     OptionalDouble,
     Cell,
     JSValue,
+    LiteralString,
 };
 
 // How a value of the type sits in a register.
@@ -183,8 +188,8 @@ ASCIILiteral nameOf(Rep);
 ASCIILiteral nameOf(Store);
 unsigned sizeOf(Store);
 Rep repOf(Store);
-inline bool holdsCells(Rep rep) { return rep == Rep::Cell || rep == Rep::JSValue; }
-inline bool holdsCells(Store store) { return store == Store::Cell || store == Store::JSValue || store == Store::Cell32 || store == Store::OptionalCell32; }
+inline bool holdsCells(Rep rep) { return rep == Rep::Cell || rep == Rep::JSValue || rep == Rep::LiteralString; }
+inline bool holdsCells(Store store) { return store == Store::Cell || store == Store::JSValue || store == Store::Cell32 || store == Store::OptionalCell32 || store == Store::LiteralString || store == Store::LiteralString32; }
 
 } } } // namespace JSC::AOT::Typed
 

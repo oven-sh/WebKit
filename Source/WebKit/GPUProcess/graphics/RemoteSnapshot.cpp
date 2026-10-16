@@ -29,8 +29,13 @@
 #include "RemoteSnapshot.h"
 
 #include "WebImage.h"
+#include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#if HAVE(IOSURFACE)
+#include "ImageBufferShareableMappedIOSurfaceBackend.h"
+#endif
 
 namespace WebKit {
 using namespace WebCore;
@@ -54,16 +59,13 @@ RemoteSnapshot::RemoteSnapshot(std::optional<FrameIdentifier> rootFrameIdentifie
 
 RemoteSnapshot::~RemoteSnapshot() = default;
 
-bool RemoteSnapshot::addFrameReference(FrameIdentifier frameIdentifier)
+void RemoteSnapshot::addFrameReference(FrameIdentifier frameIdentifier)
 {
     Locker locker(m_lock);
-    auto result = m_frames.add(frameIdentifier, Frame { });
-    if (result.isNewEntry) {
+    // A frame painted more than once is referenced more than once, and is still only recorded once.
+    // It is ok for setFrame or abandonFrame to win the race.
+    if (m_frames.add(frameIdentifier, Frame { }).isNewEntry)
         m_unresolvedFrames++;
-        return true;
-    }
-    // It is ok to setFrame or abandonFrame to win the race. It is not ok to have two addFrameReferences.
-    return result.iterator->value.isResolved();
 }
 
 void RemoteSnapshot::resolveFrameWithLockHeld(Frame& frame)
@@ -74,7 +76,7 @@ void RemoteSnapshot::resolveFrameWithLockHeld(Frame& frame)
     dispatchCompletionHandlersIfComplete();
 }
 
-bool RemoteSnapshot::setFrame(FrameIdentifier frameIdentifier, Ref<const DisplayList::DisplayList>&& displayList, SerialFunctionDispatcher& releaseDispatcher)
+void RemoteSnapshot::setFrame(FrameIdentifier frameIdentifier, Ref<const DisplayList::DisplayList>&& displayList, SerialFunctionDispatcher& releaseDispatcher)
 {
     Locker locker(m_lock);
     auto result = m_frames.add(frameIdentifier, Frame { });
@@ -82,17 +84,17 @@ bool RemoteSnapshot::setFrame(FrameIdentifier frameIdentifier, Ref<const Display
     if (result.isNewEntry) {
         // Came in before it was referenced, so it was never counted as unresolved.
         frame.displayList = DisplayListAndReleaseDispatcher { WTF::move(displayList), releaseDispatcher };
-        return true;
+        return;
     }
     // Abandoned because the process recording it went away after recording it. Either outcome is fine.
     if (frame.isAbandoned)
-        return true;
-    // It is ok to addFrameReference to win the race. It's not ok to have two setFrames.
+        return;
+    // It is ok to addFrameReference to win the race. A frame is only asked to record once, so another
+    // recording is dropped rather than replacing the first.
     if (frame.displayList)
-        return false;
+        return;
     frame.displayList = DisplayListAndReleaseDispatcher { WTF::move(displayList), releaseDispatcher };
     resolveFrameWithLockHeld(frame);
-    return true;
 }
 
 void RemoteSnapshot::abandonFrame(FrameIdentifier frameIdentifier)
@@ -206,7 +208,7 @@ void RemoteSnapshot::dispatchCompletionHandlersIfComplete()
     // Frames are resolved on the rendering backends' work queues. Dispatching even from the main thread keeps
     // the handlers in the order they were added.
     RunLoop::mainSingleton().dispatch([completionHandlers = std::exchange(m_completionHandlers, { }), success = !hasFailedWithLockHeld()] mutable {
-        for (auto& completionHandler : completionHandlers)
+        for (auto& completionHandler : borrow(completionHandlers))
             completionHandler(success);
     });
 }
@@ -274,6 +276,31 @@ std::optional<ShareableBitmap::Handle> RemoteSnapshot::drawToBitmap(const FloatS
 
     return image->createHandle(SharedMemory::Protection::ReadOnly);
 }
+
+#if HAVE(IOSURFACE)
+
+std::optional<ImageBufferBackendHandle> RemoteSnapshot::drawToIOSurface(const FloatSize& size, float scale, const ColorSpace& colorSpace, FrameIdentifier rootFrameIdentifier, const ProcessIdentity& resourceOwner)
+{
+    ASSERT(isComplete());
+    ImageBufferCreationContext creationContext;
+    creationContext.resourceOwner = resourceOwner;
+    RefPtr buffer = ImageBuffer::create<ImageBufferShareableMappedIOSurfaceBackend>(size, scale, colorSpace, ImageBufferFormat { PixelFormat::BGRA8 }, RenderingPurpose::Snapshot, creationContext);
+    if (!buffer)
+        return std::nullopt;
+
+    if (!applyFrame(rootFrameIdentifier, buffer->context()))
+        return std::nullopt;
+
+    buffer->flushDrawingContext();
+
+    auto* surface = buffer->surface();
+    if (!surface)
+        return std::nullopt;
+
+    return ImageBufferBackendHandle { surface->createSendRight() };
+}
+
+#endif
 
 }
 

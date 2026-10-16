@@ -224,7 +224,7 @@
 #include <JavaScriptCore/SlotVisitor.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/SourceProvider.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/SparseArrayValueMap.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>

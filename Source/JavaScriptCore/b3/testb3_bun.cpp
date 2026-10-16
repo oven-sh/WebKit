@@ -663,6 +663,134 @@ static void checkLoopThatCountsDown(int64_t startLessLimit, B3::Opcode relation,
     }
 }
 
+static void checkNeighbourInLoop(bool countsUp, int64_t start, int64_t bound, int64_t added, bool isFolded)
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    Value* limit = graph.make(root, ZExt32, graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]));
+    Value* boundValue = countsUp ? limit : graph.int64(root, bound);
+    Value* addedValue = graph.int64(root, added);
+    graph.set(root, index, countsUp ? graph.int64(root, start) : graph.make(root, Add, limit, graph.int64(root, start)));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, header);
+    graph.branch(header, graph.make(header, countsUp ? LessThan : GreaterEqual, graph.get(header, index), boundValue), body, exit);
+    graph.ret(exit, graph.get(exit, sum));
+    BasicBlock* block = body;
+    addIfComparisonHolds(graph, block, sum, graph.make(block, Below, graph.make(block, Add, graph.get(block, index), addedValue), limit), 1, 1000);
+    addIfComparisonHolds(graph, block, sum, graph.make(block, BelowEqual, limit, graph.make(block, Add, graph.get(block, index), addedValue)), 2000, 10);
+    graph.increase(block, index, countsUp ? 1 : -1);
+    graph.jump(block, header);
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+    CHECK(rotateLoops(proc));
+    fixSSA(proc);
+    validate(proc);
+
+    CHECK_EQ(foldComparisonsWithBounds(proc), isFolded);
+    validate(proc);
+    CHECK_EQ(numberOfValuesInLoops(proc, Below), isFolded ? 0u : 1u);
+    CHECK_EQ(numberOfValuesInLoops(proc, BelowEqual), isFolded ? 0u : 1u);
+    auto code = compileProc(proc);
+    for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2), static_cast<int64_t>(3), static_cast<int64_t>(9), static_cast<int64_t>(100) }) {
+        int64_t expected = 0;
+        for (int64_t i = countsUp ? start : given + start; countsUp ? i < given : i >= bound; i += countsUp ? 1 : -1) {
+            expected += holds(Below, i + added, given) ? 1 : 1000;
+            expected += holds(BelowEqual, given, i + added) ? 2000 : 10;
+        }
+        CHECK_EQ(invoke<int64_t>(*code, given), expected);
+    }
+}
+
+static void checkNeighbourInLoopThatLoadsItsLimit(int64_t start, int64_t added, bool isFolded)
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* inside = proc.addBlock();
+    BasicBlock* outside = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    Value* pointer = cCallArgumentValues<int64_t*>(proc, root)[0];
+    Value* addedValue = graph.int64(root, added);
+    graph.set(root, index, graph.int64(root, start));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, header);
+    Value* limit = graph.make(header, ZExt32, graph.load(header, Int32, pointer, 0, firstHeap));
+    graph.branch(header, graph.make(header, LessThan, graph.get(header, index), limit), body, exit);
+    graph.ret(exit, graph.get(exit, sum));
+    graph.increase(body, sum, 7);
+    graph.branch(body, graph.make(body, Below, graph.make(body, Add, graph.get(body, index), addedValue), limit), FrequentedBlock(inside), rarely(outside));
+    graph.ret(outside, graph.int64(outside, -1));
+    graph.store(inside, graph.get(inside, sum), pointer, 8, firstHeap);
+    graph.increase(inside, index, 1);
+    graph.jump(inside, header);
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+    CHECK(rotateLoops(proc));
+    fixSSA(proc);
+    validate(proc);
+
+    CHECK_EQ(foldComparisonsWithBounds(proc), isFolded);
+    validate(proc);
+    CHECK_EQ(numberOfValuesInLoops(proc, Below), isFolded ? 0u : 1u);
+    auto code = compileProc(proc);
+    for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2), static_cast<int64_t>(3), static_cast<int64_t>(9), static_cast<int64_t>(100) }) {
+        int64_t memory[2] = { given, 0 };
+        int64_t expected = 0;
+        for (int64_t i = start; i < given; ++i) {
+            expected += 7;
+            if (!holds(Below, i + added, given)) {
+                expected = -1;
+                break;
+            }
+        }
+        CHECK_EQ(invoke<int64_t>(*code, memory), expected);
+    }
+}
+
+static void testFoldComparisonsOfNeighbourWithLimitLoadedAtLoopTest()
+{
+    checkNeighbourInLoopThatLoadsItsLimit(1, -1, true);
+    checkNeighbourInLoopThatLoadsItsLimit(2, -2, true);
+    checkNeighbourInLoopThatLoadsItsLimit(2, -1, true);
+    checkNeighbourInLoopThatLoadsItsLimit(0, -1, false);
+    checkNeighbourInLoopThatLoadsItsLimit(0, 1, false);
+    checkNeighbourInLoopThatLoadsItsLimit(1, -2, false);
+}
+
+static void testFoldComparisonsOfNeighbourOfLoopVariableWithLimit()
+{
+    checkNeighbourInLoop(true, 1, 0, -1, true);
+    checkNeighbourInLoop(true, 2, 0, -1, true);
+    checkNeighbourInLoop(true, 2, 0, -2, true);
+    checkNeighbourInLoop(true, 0, 0, 0, true);
+    checkNeighbourInLoop(false, -2, 0, 1, true);
+    checkNeighbourInLoop(false, -1, 1, -1, true);
+    checkNeighbourInLoop(false, -3, 0, 2, true);
+}
+
+static void testFoldComparisonsKeepsNeighbourThatMayBeOutside()
+{
+    checkNeighbourInLoop(true, 0, 0, -1, false);
+    checkNeighbourInLoop(true, 1, 0, -2, false);
+    checkNeighbourInLoop(true, 0, 0, 1, false);
+    checkNeighbourInLoop(true, -1, 0, 0, false);
+    checkNeighbourInLoop(false, -1, 0, 1, false);
+    checkNeighbourInLoop(false, -1, 0, -1, false);
+    checkNeighbourInLoop(false, -2, 0, 2, false);
+}
+
 static void testFoldComparisonsWithWhatLoopThatCountsDownStartsBelow()
 {
     checkLoopThatCountsDown(-1, GreaterEqual, 0, -1, true, true);
@@ -998,6 +1126,39 @@ static void testVersionLoopsSkipsLargeLoop()
     }
 }
 
+static void testVersionLoopsKeepsDeepArmOfChainInFastVersion()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* rare = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* loaded = graph.load(loop.body, Int64, loop.pointer, 0, firstHeap);
+    graph.branch(loop.body, graph.make(loop.body, Equal, loaded, loop.extra), FrequentedBlock(hot), rarely(rare));
+    graph.increase(rare, loop.sum, 1000);
+    graph.jump(rare, hot);
+    graph.increase(hot, loop.sum, loaded);
+    BasicBlock* test = hot;
+    double frequency = 1;
+    for (unsigned arm = 0; arm < 6; ++arm) {
+        frequency /= 2;
+        BasicBlock* armBlock = proc.addBlock(frequency);
+        BasicBlock* next = arm < 5 ? proc.addBlock(frequency) : join;
+        graph.branch(test, graph.make(test, Equal, graph.make(test, BitAnd, graph.get(test, loop.index), graph.int64(test, 7)), graph.int64(test, arm)), armBlock, next);
+        graph.store(armBlock, graph.get(armBlock, loop.index), loop.pointer, 8, secondHeap);
+        graph.jump(armBlock, join);
+        test = next;
+    }
+    loop.endBody(join);
+    loop.rotate();
+
+    CHECK(rotateAndVersionLoops(proc));
+    checkNumberOfValuesInEachLoop(proc, Store, { 6, 6 });
+    checkNumberOfValuesInEachLoop(proc, Load, { 0, 1 });
+    checkLoopWithInvariantGuard(proc);
+}
+
 static void testVersionLoopsSkipsLoopWithNothingToHoist()
 {
     Procedure proc;
@@ -1186,6 +1347,38 @@ static void testStripMineLoopsPollsOncePerStrip()
     CHECK_EQ(run(*code, 3 * maxIterationsPerStrip + 100), sumOfIntegersBelow(3 * maxIterationsPerStrip + 100));
     CHECK_EQ(state.numberOfPolls, 3);
     CHECK_EQ(state.numberOfStops, 1);
+}
+
+static void checkEndOfFirstStrip(B3::Opcode relation, bool boundIsZeroExtended, int64_t start, unsigned numberOfSelects)
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    Value* argument = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* bound = boundIsZeroExtended ? graph.make(root, ZExt32, graph.make(root, Trunc, argument)) : argument;
+    CountedLoop loop;
+    loop.relation = relation;
+    loop.step = 1;
+    graph.ret(root, appendEndOfStrip(proc, root, loop, graph.int64(root, start), bound, true));
+    CHECK_EQ(numberOfValues(proc, Select), numberOfSelects);
+    auto code = compileProc(proc);
+    for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(5), maxIterationsPerStrip - 1, maxIterationsPerStrip, maxIterationsPerStrip + 1, 20 * maxIterationsPerStrip }) {
+        int64_t end = invoke<int64_t>(*code, given);
+        if (holds(relation, start, given))
+            CHECK_EQ(end, std::min(given, start + maxIterationsPerStrip));
+        else
+            CHECK(!holds(relation, start + 1, end));
+    }
+}
+
+static void testEndOfFirstStripFromZeroToZeroExtendedBound()
+{
+    checkEndOfFirstStrip(LessThan, true, 0, 1);
+    checkEndOfFirstStrip(Below, true, 0, 1);
+    checkEndOfFirstStrip(LessThan, true, -3, 1);
+    checkEndOfFirstStrip(LessThan, true, 1, 2);
+    checkEndOfFirstStrip(Below, true, 1, 2);
+    checkEndOfFirstStrip(LessThan, false, 0, 2);
 }
 
 static void testStripMineLoopsAllRelationsAndSteps()
@@ -2605,6 +2798,172 @@ static void testPurePatchpointsAreValueNumbered()
     CHECK_EQ(numberOfPatchpointsOfChildrenLeft(0, 0, true), 2u);
 }
 
+static void testConversionToDoubleTakesWordThatWasSignExtended()
+{
+    for (B3::Opcode extension : { SExt32, ZExt32 }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        graph.ret(root, graph.make(root, IToD, graph.make(root, extension, cCallArgumentValues<int32_t>(proc, root)[0])));
+        reduceStrengthOnce(proc, true);
+        for (Value* value : proc.values()) {
+            if (value->opcode() == IToD)
+                CHECK(value->child(0)->type() == (extension == SExt32 ? Int32 : Int64));
+        }
+        auto code = compileProc(proc);
+        for (int32_t word : { 0, 1, -1, 1 << 30, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() })
+            CHECK_EQ(invoke<double>(*code, word), extension == SExt32 ? static_cast<double>(word) : static_cast<double>(static_cast<uint32_t>(word)));
+    }
+}
+
+static void testBitwiseOperationsOnSignExtendedWordsAreNarrowed()
+{
+    constexpr int32_t words[] = { 0, 1, -1, 255, 256, -256, 1 << 30, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() };
+    auto expected = [](B3::Opcode opcode, int64_t a, int64_t b) {
+        return opcode == BitAnd ? a & b : opcode == BitOr ? a | b : a ^ b;
+    };
+    for (B3::Opcode opcode : { BitAnd, BitOr, BitXor }) {
+        {
+            Procedure proc;
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int32_t, int32_t>(proc, root);
+            graph.ret(root, graph.make(root, opcode, graph.make(root, SExt32, arguments[0]), graph.make(root, SExt32, arguments[1])));
+            reduceStrengthOnce(proc, true);
+            for (Value* value : proc.values()) {
+                if (value->opcode() == opcode)
+                    CHECK(value->type() == Int32);
+            }
+            auto code = compileProc(proc);
+            for (int32_t a : words) {
+                for (int32_t b : words)
+                    CHECK_EQ(invoke<int64_t>(*code, a, b), expected(opcode, a, b));
+            }
+        }
+        for (int64_t constant : { static_cast<int64_t>(255), static_cast<int64_t>(-256), static_cast<int64_t>(std::numeric_limits<int32_t>::min()), static_cast<int64_t>(0xfffffff0ll), static_cast<int64_t>(1) << 40 }) {
+            Procedure proc;
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            graph.ret(root, graph.make(root, opcode, graph.make(root, SExt32, cCallArgumentValues<int32_t>(proc, root)[0]), graph.int64(root, constant)));
+            reduceStrengthOnce(proc, true);
+            bool fitsWord = constant == static_cast<int32_t>(constant);
+            for (Value* value : proc.values()) {
+                if (value->opcode() == opcode)
+                    CHECK(value->type() == (fitsWord ? Int32 : Int64));
+            }
+            auto code = compileProc(proc);
+            for (int32_t a : words)
+                CHECK_EQ(invoke<int64_t>(*code, a), expected(opcode, a, constant));
+        }
+    }
+}
+
+static void testEqualityOfExtendedWordsIsNarrowed()
+{
+    constexpr int32_t words[] = { 0, 1, -1, 255, -256, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() };
+    for (B3::Opcode extension : { SExt32, ZExt32 }) {
+        auto extended = [&](int32_t word) {
+            return extension == SExt32 ? static_cast<int64_t>(word) : static_cast<int64_t>(static_cast<uint32_t>(word));
+        };
+        for (B3::Opcode opcode : { Equal, NotEqual }) {
+            {
+                Procedure proc;
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                auto arguments = cCallArgumentValues<int32_t, int32_t>(proc, root);
+                graph.ret(root, graph.make(root, opcode, graph.make(root, extension, arguments[0]), graph.make(root, extension, arguments[1])));
+                reduceStrengthOnce(proc, true);
+                for (Value* value : proc.values()) {
+                    if (value->opcode() == opcode)
+                        CHECK(value->child(0)->type() == Int32);
+                }
+                auto code = compileProc(proc);
+                for (int32_t a : words) {
+                    for (int32_t b : words)
+                        CHECK_EQ(invoke<int32_t>(*code, a, b), static_cast<int32_t>((a == b) == (opcode == Equal)));
+                }
+            }
+            for (int64_t constant : { static_cast<int64_t>(0), static_cast<int64_t>(255), static_cast<int64_t>(-1), static_cast<int64_t>(0xffffffffll), static_cast<int64_t>(std::numeric_limits<int32_t>::min()), static_cast<int64_t>(1) << 40 }) {
+                Procedure proc;
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                graph.ret(root, graph.make(root, opcode, graph.make(root, extension, cCallArgumentValues<int32_t>(proc, root)[0]), graph.int64(root, constant)));
+                reduceStrengthOnce(proc, true);
+                for (Value* value : proc.values()) {
+                    if (value->opcode() == opcode)
+                        CHECK(value->child(0)->type() == Int32);
+                }
+                auto code = compileProc(proc);
+                for (int32_t a : words)
+                    CHECK_EQ(invoke<int32_t>(*code, a), static_cast<int32_t>((extended(a) == constant) == (opcode == Equal)));
+            }
+        }
+    }
+}
+
+static void testShiftsAndSwitchesOfExtendedWordsAreNarrowed()
+{
+    constexpr int32_t words[] = { 0, 1, -1, 255, -256, 65537, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() };
+    for (B3::Opcode extension : { SExt32, ZExt32 }) {
+        auto extended = [&](int32_t word) {
+            return extension == SExt32 ? static_cast<int64_t>(word) : static_cast<int64_t>(static_cast<uint32_t>(word));
+        };
+        for (B3::Opcode opcode : { SShr, ZShr }) {
+            for (int32_t amount : { 0, 1, 31, 32, 40 }) {
+                Procedure proc;
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                graph.ret(root, graph.make(root, opcode, graph.make(root, extension, cCallArgumentValues<int32_t>(proc, root)[0]), graph.int32(root, amount)));
+                reduceStrengthOnce(proc, true);
+                auto code = compileProc(proc);
+                for (int32_t a : words)
+                    CHECK_EQ(invoke<int64_t>(*code, a), opcode == SShr ? extended(a) >> amount : static_cast<int64_t>(static_cast<uint64_t>(extended(a)) >> amount));
+            }
+        }
+        for (B3::Opcode opcode : { BitAnd, BitOr, BitXor }) {
+            for (int64_t constant : { static_cast<int64_t>(255), static_cast<int64_t>(0xfffffff0ll), static_cast<int64_t>(-256), static_cast<int64_t>(1) << 40 }) {
+                Procedure proc;
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                graph.ret(root, graph.make(root, opcode, graph.make(root, extension, cCallArgumentValues<int32_t>(proc, root)[0]), graph.int64(root, constant)));
+                reduceStrengthOnce(proc, true);
+                auto code = compileProc(proc);
+                for (int32_t a : words)
+                    CHECK_EQ(invoke<int64_t>(*code, a), opcode == BitAnd ? extended(a) & constant : opcode == BitOr ? extended(a) | constant : extended(a) ^ constant);
+            }
+        }
+    }
+    for (bool hasWideCase : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* otherwise = proc.addBlock();
+        Vector<int64_t> cases { 0, 7, -1, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() };
+        if (hasWideCase)
+            cases.append(static_cast<int64_t>(1) << 32 | 7);
+        SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), graph.make(root, SExt32, cCallArgumentValues<int32_t>(proc, root)[0]));
+        switchValue->setFallThrough(FrequentedBlock(otherwise));
+        for (unsigned i = 0; i < cases.size(); ++i) {
+            BasicBlock* target = proc.addBlock();
+            switchValue->appendCase(SwitchCase(cases[i], FrequentedBlock(target)));
+            graph.ret(target, graph.int32(target, i + 1));
+        }
+        graph.ret(otherwise, graph.int32(otherwise, 0));
+        proc.resetReachability();
+        reduceStrengthOnce(proc, true);
+        CHECK(switchValue->child(0)->type() == (hasWideCase ? Int64 : Int32));
+        auto code = compileProc(proc);
+        for (int32_t a : { 0, 7, -1, 8, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(), 255 }) {
+            int32_t expected = 0;
+            for (unsigned i = 0; i < cases.size(); ++i) {
+                if (cases[i] == a)
+                    expected = i + 1;
+            }
+            CHECK_EQ(invoke<int32_t>(*code, a), expected);
+        }
+    }
+}
+
 static void testReduceStrengthMergesBlockChain()
 {
     for (bool isPositionIndependent : { true, false }) {
@@ -2948,6 +3307,89 @@ static void testDuplicateTailsFollowsTestsThroughPhisOnThePath()
     CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
     CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), 20);
     CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 10);
+}
+
+static void testDuplicateTailsThreadsJumpOnVariableSetOnPath()
+{
+    for (bool onlyDecidedTests : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        TailWithTwoPredecessors blocks(graph);
+        BasicBlock* secondTest = proc.addBlock();
+        Variable* flag = proc.addVariable(Int64);
+        graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+        graph.set(blocks.left, flag, graph.int64(blocks.left, 1));
+        graph.set(blocks.right, flag, blocks.second);
+        graph.store(blocks.tail, blocks.second, blocks.pointer, 8, firstHeap);
+        graph.branch(blocks.tail, graph.get(blocks.tail, flag), secondTest, blocks.notTaken);
+        graph.branch(secondTest, graph.make(secondTest, BitAnd, graph.get(secondTest, flag), graph.int64(secondTest, 2)), blocks.notTaken, blocks.taken);
+        blocks.duplicate(graph, onlyDecidedTests);
+
+        CHECK(blocks.left->last()->opcode() == Jump);
+        CHECK(blocks.left->successorBlock(0) == blocks.taken);
+        auto code = compileProc(proc);
+        int64_t memory[2] = { 0, 0 };
+        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 10);
+        CHECK_EQ(memory[1], 7);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 3, memory), 20);
+    }
+}
+
+static void testDuplicateTailsReadsVariableAsLastSetAheadOfGet()
+{
+    for (bool setsAheadOfGet : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        TailWithTwoPredecessors blocks(graph);
+        BasicBlock* secondTest = proc.addBlock();
+        BasicBlock* stillSet = proc.addBlock();
+        Variable* flag = proc.addVariable(Int64);
+        graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+        graph.set(blocks.left, flag, graph.int64(blocks.left, 1));
+        graph.set(blocks.right, flag, blocks.second);
+        Value* read = setsAheadOfGet ? nullptr : graph.get(blocks.tail, flag);
+        graph.set(blocks.tail, flag, graph.int64(blocks.tail, 0));
+        if (setsAheadOfGet)
+            read = graph.get(blocks.tail, flag);
+        graph.branch(blocks.tail, read, secondTest, blocks.notTaken);
+        graph.branch(secondTest, graph.get(secondTest, flag), stillSet, blocks.taken);
+        graph.ret(stillSet, graph.int64(stillSet, 30));
+        blocks.duplicate(graph);
+
+        CHECK(blocks.left->last()->opcode() == Jump);
+        CHECK(blocks.left->successorBlock(0) == (setsAheadOfGet ? blocks.notTaken : blocks.taken));
+        auto code = compileProc(proc);
+        int64_t memory[1];
+        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), setsAheadOfGet ? 20 : 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 7, memory), setsAheadOfGet ? 20 : 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+    }
+}
+
+static void testDuplicateTailsKeepsTestOfVariableNotSetOnPath()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    Variable* flag = proc.addVariable(Int64);
+    Variable* other = proc.addVariable(Int64);
+    graph.set(blocks.root, flag, blocks.second);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.set(blocks.left, other, graph.int64(blocks.left, 1));
+    graph.set(blocks.right, other, graph.int64(blocks.right, 0));
+    graph.branch(blocks.tail, graph.get(blocks.tail, flag), blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph, true);
+
+    CHECK(blocks.left->successorBlock(0) == blocks.tail);
+    CHECK(blocks.right->successorBlock(0) == blocks.tail);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
 }
 
 static void testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps()
@@ -6407,6 +6849,9 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testFoldComparisonsWithBoundsKeepsUnrelatedComparisons());
     RUN(testFoldComparisonsWithBoundsRequiresRelationOnEntry());
     RUN(testFoldComparisonsWithWhatLoopThatCountsDownStartsBelow());
+    RUN(testFoldComparisonsOfNeighbourOfLoopVariableWithLimit());
+    RUN(testFoldComparisonsOfNeighbourWithLimitLoadedAtLoopTest());
+    RUN(testFoldComparisonsKeepsNeighbourThatMayBeOutside());
     RUN(testFoldComparisonsKeepsWhatLoopThatCountsDownMayNotBeBelow());
     RUN(testAnalyzeCountedLoop());
     RUN(testEliminateRedundantPhiCycles());
@@ -6417,6 +6862,7 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testVersionLoopsKeepsLoadClobberedByLoop());
     RUN(testVersionLoopsSkipsLoopWithCall());
     RUN(testVersionLoopsSkipsLargeLoop());
+    RUN(testVersionLoopsKeepsDeepArmOfChainInFastVersion());
     RUN(testVersionLoopsSkipsLoopWithNothingToHoist());
     RUN(testVersionLoopsOnlyInnermostLoops());
     RUN(testVersionLoopsRareEdgeContinuesInOriginalLoop());
@@ -6424,6 +6870,7 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testVersionLoopsKeepsVariantBranch());
     RUN(testVersionLoopsStripMinesPollInFastVersion());
     RUN(testStripMineLoopsPollsOncePerStrip());
+    RUN(testEndOfFirstStripFromZeroToZeroExtendedBound());
     RUN(testStripMineLoopsAllRelationsAndSteps());
     RUN(testStripMineLoopsRequiresPollGenerator());
     RUN(testStripMineLoopsSkipsLoopWithTwoPolls());
@@ -6474,6 +6921,10 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testSeparateIntegerPathsInsideLoop());
     RUN(testComparisonsOfConvertedIntegersWithUnorderedResults());
     RUN(testPurePatchpointsAreValueNumbered());
+    RUN(testConversionToDoubleTakesWordThatWasSignExtended());
+    RUN(testBitwiseOperationsOnSignExtendedWordsAreNarrowed());
+    RUN(testEqualityOfExtendedWordsIsNarrowed());
+    RUN(testShiftsAndSwitchesOfExtendedWordsAreNarrowed());
     RUN(testReduceStrengthMergesBlockChain());
     RUN(testReduceStrengthEliminatesSingleValuePhi());
     RUN(testMemoryNumberingWhenEdgeIntoJoinIsRemoved());
@@ -6484,6 +6935,9 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testDuplicateTailsThreadsJumpDecidedByDominatingBranch());
     RUN(testDuplicateTailsFollowsTestsOfOneValue());
     RUN(testDuplicateTailsFollowsTestsThroughPhisOnThePath());
+    RUN(testDuplicateTailsThreadsJumpOnVariableSetOnPath());
+    RUN(testDuplicateTailsReadsVariableAsLastSetAheadOfGet());
+    RUN(testDuplicateTailsKeepsTestOfVariableNotSetOnPath());
     RUN(testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps());
     RUN(testDuplicateTailsFollowsPhiHandedOnByBlockThatJumps());
     RUN(testDuplicateTailsStopsFollowingAtUndecidedTest());

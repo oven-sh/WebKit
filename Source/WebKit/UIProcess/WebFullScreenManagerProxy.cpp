@@ -201,7 +201,7 @@ void WebFullScreenManagerProxy::detachFromClient()
     m_client = nullptr;
 }
 
-// FIXME: This should be detected as NODELETE (rdar://182377452).
+// FIXME: This should be detected as LEGACY_NODELETE (rdar://182377452).
 SUPPRESS_NODELETE void WebFullScreenManagerProxy::attachToNewClient(WebFullScreenManagerProxyClient& client)
 {
     m_client = &client;
@@ -436,8 +436,8 @@ std::optional<std::pair<IntRect, IntRect>> WebFullScreenManagerProxy::convertFro
     if (!client)
         return std::nullopt;
     return { {
-        IntRect(client->convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen(*page, IntRect(rectsInMainFrameCoordinates.first))),
-        IntRect(page->syncRootViewToScreen(IntRect(rectsInMainFrameCoordinates.second)))
+        client->convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen(*page, rectsInMainFrameCoordinates.first),
+        page->syncRootViewToScreen(rectsInMainFrameCoordinates.second)
     } };
 }
 

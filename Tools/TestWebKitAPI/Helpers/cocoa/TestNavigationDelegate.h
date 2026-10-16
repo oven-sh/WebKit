@@ -43,6 +43,7 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, copy, nullable) void (^didCommitNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
 @property (nonatomic, copy, nullable) void (^didCommitLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
 @property (nonatomic, copy, nullable) void (^didFinishNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^didFailNavigation)(WKWebView *, WKNavigation * _Null_unspecified, NSError *);
 @property (nonatomic, copy, nullable) void (^didFinishLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
 @property (nonatomic, copy, nullable) void (^didSameDocumentNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
 @property (nonatomic, copy, nullable) void (^renderingProgressDidChange)(WKWebView *, _WKRenderingProgressEvents);

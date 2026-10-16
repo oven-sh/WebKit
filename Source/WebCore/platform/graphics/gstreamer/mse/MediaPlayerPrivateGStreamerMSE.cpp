@@ -462,12 +462,9 @@ void MediaPlayerPrivateGStreamerMSE::didEnd()
 
 const PlatformTimeRanges& MediaPlayerPrivateGStreamerMSE::buffered() const
 {
-    if (!m_source)
-        return PlatformTimeRanges::emptyRanges();
-
-    // When a MediaSource object is in use, the HTMLMediaElement retrieves the buffered ranges
-    // directly from it rather than from the MediaPlayer / MediaPlayerPrivate.
-    ASSERT_NOT_REACHED();
+    // While a MediaSource is attached, the HTMLMediaElement retrieves the buffered ranges directly
+    // from it rather than from the MediaPlayer. This can still be reached after the MediaSource has
+    // been detached (for example after a fatal media error) and before the player is destroyed.
     return PlatformTimeRanges::emptyRanges();
 }
 

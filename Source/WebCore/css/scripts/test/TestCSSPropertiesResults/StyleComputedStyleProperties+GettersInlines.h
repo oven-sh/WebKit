@@ -18,7 +18,7 @@ inline const Style::Color& ComputedStyleProperties::testColor() const
 
 inline decltype(auto) ComputedStyleProperties::testColorResolver() const
 {
-    return ColorPropertyResolver<ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColor>>> { *this };
+    return ColorPropertyResolver<ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColor>>> { *this };
 }
 
 inline const Style::Color& ComputedStyleProperties::testColorAllowsTypesAbsolute() const
@@ -28,7 +28,7 @@ inline const Style::Color& ComputedStyleProperties::testColorAllowsTypesAbsolute
 
 inline decltype(auto) ComputedStyleProperties::testColorAllowsTypesAbsoluteResolver() const
 {
-    return ColorPropertyResolver<ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColorAllowsTypesAbsolute>>> { *this };
+    return ColorPropertyResolver<ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColorAllowsTypesAbsolute>>> { *this };
 }
 
 inline const Style::Color& ComputedStyleProperties::testColorPropertyWithVisitedLinkSupport() const
@@ -43,7 +43,7 @@ inline const Style::Color& ComputedStyleProperties::visitedLinkTestColorProperty
 
 inline decltype(auto) ComputedStyleProperties::testColorPropertyWithVisitedLinkSupportResolver() const
 {
-    return ColorPropertyResolver<ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColorPropertyWithVisitedLinkSupport>>> { *this };
+    return ColorPropertyResolver<ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColorPropertyWithVisitedLinkSupport>>> { *this };
 }
 
 inline Style::TestEnumeration ComputedStyleProperties::testRenderStyleGetterNodeleteFalse() const
@@ -151,22 +151,22 @@ inline Style::Number<> ComputedStyleProperties::logicalTestLogicalPropertyGroupP
     return logicalTestLogicalPropertyGroupPhysicalVertical(writingMode());
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColor>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColor>>::color(const ComputedStyleProperties& style)
 {
     return style.testColor();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColorAllowsTypesAbsolute>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColorAllowsTypesAbsolute>>::color(const ComputedStyleProperties& style)
 {
     return style.testColorAllowsTypesAbsolute();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColorPropertyWithVisitedLinkSupport>>::color(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColorPropertyWithVisitedLinkSupport>>::color(const ComputedStyleProperties& style)
 {
     return style.testColorPropertyWithVisitedLinkSupport();
 }
 
-inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyTestColorPropertyWithVisitedLinkSupport>>::visitedLinkColor(const ComputedStyleProperties& style)
+inline const Color& ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::TestColorPropertyWithVisitedLinkSupport>>::visitedLinkColor(const ComputedStyleProperties& style)
 {
     return style.visitedLinkTestColorPropertyWithVisitedLinkSupport();
 }

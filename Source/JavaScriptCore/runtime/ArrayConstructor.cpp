@@ -33,6 +33,7 @@
 #include "BuiltinNames.h"
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSCInlines.h"
 #include "JSMapIterator.h"
 #include "JSSet.h"
@@ -41,6 +42,7 @@
 #include "MapIteratorPrototypeInlines.h"
 #include "ProxyObject.h"
 #include "SetIteratorPrototypeInlines.h"
+#include "StringObject.h"
 #include <wtf/text/MakeString.h>
 
 #include "VMInlines.h"
@@ -264,17 +266,17 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorOf, (JSGlobalObject* globalObject, Call
     return JSValue::encode(result);
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ScopedArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(ScopedArguments* arguments)
 {
     return arguments->internalLength();
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(DirectArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(DirectArguments* arguments)
 {
     return arguments->internalLength();
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ClonedArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(ClonedArguments* arguments)
 {
     ASSERT(arguments->isIteratorProtocolFastAndNonObservable());
     JSValue lengthValue = arguments->getDirect(clonedArgumentsLengthPropertyOffset);
@@ -799,6 +801,22 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
+#if ENABLE(AOT)
+    if (!result && vm.useImmutableIntrinsics && items && items.isCell()) {
+        JSValue iterable = items;
+        if (auto* wrapper = dynamicDowncast<StringObject>(items); wrapper && wrapper->structure() == globalObject->stringObjectStructure())
+            iterable = wrapper->internalValue();
+        JSType type = iterable.asCell()->type();
+        if (type == StringType || type == JSMapType || type == JSMapIteratorType || type == JSSetIteratorType) {
+            JSArray* made = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, { });
+            bool isAppended = AOT::Typed::CollectionIteration::tryAppendTo(globalObject, made, iterable);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (isAppended)
+                result = made;
+        }
+    }
+#endif
     if (result)
         return JSValue::encode(result);
     return JSValue::encode(jsUndefined());

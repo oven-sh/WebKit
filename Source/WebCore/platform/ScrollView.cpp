@@ -239,12 +239,12 @@ FloatRect ScrollView::exposedContentRect() const
     if (!parent)
         return m_delegatedScrollingGeometry ? m_delegatedScrollingGeometry->exposedContentRect : FloatRect();
 
-    IntRect parentViewExtentContentRect = enclosingIntRect(parent->exposedContentRect());
+    IntRect parentExposedRect = enclosingIntRect(parent->exposedContentRect());
     bool parentIsTopFrameViewInProcess = !parent->parent();
-    IntRect parentViewExtentRootViewRect = parentIsTopFrameViewInProcess ? parentViewExtentContentRect : parent->contentsToRootView(parentViewExtentContentRect);
-    IntRect selfExtentContentRect = rootViewToContents(parentViewExtentRootViewRect);
-    selfExtentContentRect.intersect(boundsRect());
-    return selfExtentContentRect;
+    auto parentExposedRootViewRect = parentIsTopFrameViewInProcess ? inRootViewSpace(parentExposedRect) : parent->contentsToRootView(inContentsSpace(parentExposedRect));
+    auto selfExposedContentsRect = rootViewToContents(parentExposedRootViewRect);
+    selfExposedContentsRect.intersect(viewToContents(inViewSpace(boundsRect())));
+    return selfExposedContentsRect.raw();
 }
 
 void ScrollView::setExposedContentRect(const FloatRect& rect)

@@ -59,7 +59,8 @@ public:
         if (!m_buffer)
             return nullptr;
 
-        return m_buffer->span().data();
+        // m_buffer keeps the returned data alive.
+        SUPPRESS_UNCOUNTED_ARG return m_buffer->span().data();
     }
 
     void lockUnderlyingBufferImpl() final

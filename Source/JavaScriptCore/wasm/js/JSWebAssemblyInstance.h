@@ -190,7 +190,8 @@ public:
     static constexpr ptrdiff_t offsetOfSoftStackLimit() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit(); }
 
     Wasm::Module& module() const { return m_module.get(); }
-    SourceTaintedOrigin taintedness() const { return m_sourceProvider->sourceTaintedOrigin(); }
+    SourceProvider* sourceProvider() const { return m_sourceProvider.get(); }
+    SourceTaintedness taintedness() const { return m_sourceProvider->taintedness(); }
     URL sourceURL() const { return m_sourceProvider->sourceOrigin().url(); }
     Wasm::CalleeGroup* calleeGroup() const { return module().calleeGroupFor(memory0Mode()); }
     Wasm::Table* table(unsigned);

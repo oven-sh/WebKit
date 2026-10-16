@@ -451,7 +451,7 @@ public:
         for (auto& sites : m_reportableSites) {
             RELEASE_ASSERT(sites.typedIdentifierIndices.size() == sites.typedIdentifierNames.size());
             for (unsigned i = 0; i < sites.typedIdentifierIndices.size(); ++i) {
-                if (isNoted.set(sites.typedIdentifierIndices[i]))
+                if (isNoted.set(sites.typedIdentifierIndices[i]) || sites.typedIdentifierNames[i].isNull())
                     continue;
                 AtomString name(sites.typedIdentifierNames[i]);
                 m_typedIdentifiers.append(name);
@@ -464,38 +464,26 @@ public:
     }
 
     struct TypedInfoMadeAhead {
-        uint64_t hashOfPositions { 0 };
+        uint64_t hash { 0 };
         uint64_t closureWord { 0 };
-        uint32_t typedFunction { 0 };
-        uint32_t stateNumber { 0 };
-        Vector<UnlinkedHandlerInfo> handlers;
+        Vector<uint8_t> handlersAndPositions;
     };
 
-    void makeTypedInfoAhead(const ImageView::Function& function, const Vector<uint8_t>& positions, TypedInfoMadeAhead& ahead) const
+    void makeTypedInfoAhead(const ImageView::Function& function, const Vector<uint8_t>& positions, TypedInfoMadeAhead& ahead)
     {
         auto& sites = m_reportableSites[function.index];
-        ahead.hashOfPositions = hashForAppendOnce(positions.span());
-        ahead.typedFunction = sites.typedFunction;
-        ahead.stateNumber = sites.stateNumber;
-        ahead.handlers = typedExceptionHandlers(function.index);
-    }
-
-    void fillTypedInfo(const ImageView::Function& function, const Vector<uint8_t>& positions, const TypedInfoMadeAhead& ahead)
-    {
         FunctionInfo& info = m_infos[function.index];
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
         RELEASE_ASSERT(info.sites && function.numSlots <= FunctionInfo::maxEncodedSlots);
         info.hasInlineFrames = function.hasInlineFrames;
-        m_indexAndFlags[function.index] = FunctionInfo::encodeTypedFunction(ahead.typedFunction);
+        m_indexAndFlags[function.index] = FunctionInfo::encodeTypedFunction(sites.typedFunction);
         info.isTyped = true;
-        info.stateNumber = ahead.stateNumber;
+        info.stateNumber = sites.stateNumber;
         RELEASE_ASSERT(info.stateNumber || !function.numSlots);
-        auto& handlers = ahead.handlers;
+        auto handlers = typedExceptionHandlers(function.index);
         if (handlers.isEmpty()) {
             info.hasNoHandlers = true;
-            uint32_t offset = appendOnce(positions.span(), 1, ahead.hashOfPositions);
-            RELEASE_ASSERT(!(offset >> 31));
-            m_functionMetadataOffsets[function.index] = offset << 1 | FunctionMetadata::isPositionsOfTypedFunction;
+            ahead.hash = hashForAppendOnce(positions.span());
             return;
         }
         uint32_t greatest = 0;
@@ -526,11 +514,21 @@ public:
                     rowOfHandlers[startOfBits + i / 8] |= 1 << i % 8;
             }
         }
-        Vector<uint8_t> handlersAndPositions;
-        appendVarint(handlersAndPositions, rowOfHandlers.size());
-        handlersAndPositions.appendVector(rowOfHandlers);
-        handlersAndPositions.appendVector(positions);
-        uint32_t offset = appendOnce(handlersAndPositions.span(), 1);
+        appendVarint(ahead.handlersAndPositions, rowOfHandlers.size());
+        ahead.handlersAndPositions.appendVector(rowOfHandlers);
+        ahead.handlersAndPositions.appendVector(positions);
+        ahead.hash = hashForAppendOnce(ahead.handlersAndPositions.span());
+    }
+
+    void fillTypedInfo(const ImageView::Function& function, const Vector<uint8_t>& positions, const TypedInfoMadeAhead& ahead)
+    {
+        if (ahead.handlersAndPositions.isEmpty()) {
+            uint32_t offset = appendOnce(positions.span(), 1, ahead.hash);
+            RELEASE_ASSERT(!(offset >> 31));
+            m_functionMetadataOffsets[function.index] = offset << 1 | FunctionMetadata::isPositionsOfTypedFunction;
+            return;
+        }
+        uint32_t offset = appendOnce(ahead.handlersAndPositions.span(), 1, ahead.hash);
         RELEASE_ASSERT(!(offset >> 30));
         m_functionMetadataOffsets[function.index] = offset << 2 | FunctionMetadata::isHandlersAndPositionsOfTypedFunction;
     }
@@ -846,16 +844,90 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     Typed::forEachIndexInParallel(keys.size(), [&](unsigned i) {
         auto& key = keys[i];
         if (key.record & ImageKey::isEntryInsideFunction) {
-            madeAhead[i].closureWord = closureWordOfTypedFunction(codeImage, key.start, EntryWord::encode(static_cast<uint64_t>(key.record & ~ImageKey::isEntryInsideFunction), Convention { key.module >> 8 ? Signature::List : Signature::Registers, static_cast<uint8_t>(key.module), true }));
+            madeAhead[i].closureWord = closureWordOfTypedFunction(codeImage, key.start, EntryWord::encode(static_cast<uint64_t>(key.record & ~ImageKey::isEntryInsideFunction), Convention { key.module >> 8 & 1 ? Signature::List : Signature::Registers, static_cast<uint8_t>(key.module), true })) | static_cast<uint64_t>(key.module >> 9 & 1) << ClosureWord::saysWhatItYieldsBit;
             return;
         }
         if (auto& function = typedFunctions[i]) {
             builder.makeTypedInfoAhead(*function, typedPositions[i], madeAhead[i]);
             if (key.kind == ImageKey::typedFunction)
-                madeAhead[i].closureWord = closureWordOfTypedFunction(codeImage, key.start, function->entry);
+                madeAhead[i].closureWord = closureWordOfTypedFunction(codeImage, key.start, function->entry) | static_cast<uint64_t>(function->saysWhatItAnswers) << ClosureWord::saysWhatItAnswersBit | static_cast<uint64_t>(function->saysWhatItYields) << ClosureWord::saysWhatItYieldsBit;
         }
     });
     endStep("the typed infos made ahead"_s);
+    Vector<uint8_t> parameterChecks;
+    uint32_t numberOfParameterChecks = 0;
+    Vector<uint32_t> placesOfSourceNames;
+    Vector<uint8_t> textOfSourceNames;
+    Ref besideTypedInfos = Thread::create("AOT image"_s, [&] {
+        {
+            using Definition = std::array<uint32_t, 4>;
+            Vector<std::tuple<uint32_t, uint32_t, Definition>> rows;
+            Vector<Definition> definitions;
+            for (size_t i = 0; i < keys.size(); ++i) {
+                if (!typedFunctions[i] || keys[i].record & ImageKey::isEntryInsideFunction)
+                    continue;
+                for (auto& check : builder.reportableSitesOf(typedFunctions[i]->index).parameterCheckSites) {
+                    definitions.append({ check.typedFunction, numbersOfSources[i][check.definition.source], check.definition.line, check.definition.column });
+                    rows.append({ typedFunctions[i]->index, check.site, definitions.last() });
+                }
+            }
+            std::ranges::sort(rows);
+            rows.shrink(std::ranges::unique(rows).begin() - rows.begin());
+            std::ranges::sort(definitions);
+            definitions.shrink(std::ranges::unique(definitions).begin() - definitions.begin());
+            numberOfParameterChecks = rows.size();
+            auto appendNumber = [&](size_t number) {
+                for (;; number >>= 7) {
+                    parameterChecks.append(static_cast<uint8_t>(number < 0x80 ? number : number | 0x80));
+                    if (number < 0x80)
+                        break;
+                }
+            };
+            appendNumber(definitions.size());
+            for (auto& definition : definitions) {
+                for (uint32_t word : definition)
+                    appendNumber(word);
+            }
+            uint32_t previousFunction = 0;
+            uint32_t previousSite = 0;
+            for (auto& [function, site, definition] : rows) {
+                if (function != previousFunction)
+                    previousSite = 0;
+                appendNumber(function - previousFunction);
+                appendNumber(site - previousSite);
+                appendNumber(std::ranges::lower_bound(definitions, definition) - definitions.begin());
+                previousFunction = function;
+                previousSite = site;
+            }
+        }
+        {
+            Vector<uint32_t> sorted(builder.m_sourceNames.size(), [](size_t index) {
+                return static_cast<uint32_t>(index);
+            });
+            std::ranges::sort(sorted, [&](uint32_t a, uint32_t b) {
+                return std::ranges::lexicographical_compare(builder.m_sourceNames[a].span(), builder.m_sourceNames[b].span());
+            });
+            placesOfSourceNames.fill(0, sorted.size());
+            size_t placeOfBytesOfFirst = 0;
+            size_t rankOfFirst = 0;
+            for (size_t rank = 0; rank < sorted.size(); ++rank) {
+                placesOfSourceNames[sorted[rank]] = textOfSourceNames.size();
+                auto name = builder.m_sourceNames[sorted[rank]].span();
+                RELEASE_ASSERT(name.size() < 0x8000);
+                size_t shared = 0;
+                if (rank && rank - rankOfFirst < sourceNamesBetweenWholeOnes && textOfSourceNames.size() - placeOfBytesOfFirst < 60000) {
+                    auto first = builder.m_sourceNames[sorted[rankOfFirst]].span();
+                    shared = std::ranges::mismatch(name, first).in1 - name.begin();
+                } else {
+                    rankOfFirst = rank;
+                    placeOfBytesOfFirst = textOfSourceNames.size() + sizeof(HeadOfSourceName);
+                }
+                HeadOfSourceName head { static_cast<uint16_t>(shared ? textOfSourceNames.size() - placeOfBytesOfFirst : 0), static_cast<uint16_t>(shared), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
+                textOfSourceNames.append(asBytes(singleElementSpan(head)));
+                textOfSourceNames.append(name.subspan(shared));
+            }
+        }
+    });
     for (size_t i = 0; i < keys.size(); ++i) {
         auto& key = keys[i];
         if (key.record & ImageKey::isEntryInsideFunction) {
@@ -874,49 +946,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             typedEntries[key.start] = madeAhead[i].closureWord;
         }
     }
-    Vector<uint8_t> parameterChecks;
-    uint32_t numberOfParameterChecks = 0;
-    {
-        using Definition = std::array<uint32_t, 4>;
-        Vector<std::tuple<uint32_t, uint32_t, Definition>> rows;
-        Vector<Definition> definitions;
-        for (size_t i = 0; i < keys.size(); ++i) {
-            if (!typedFunctions[i] || keys[i].record & ImageKey::isEntryInsideFunction)
-                continue;
-            for (auto& check : builder.reportableSitesOf(typedFunctions[i]->index).parameterCheckSites) {
-                definitions.append({ check.typedFunction, numbersOfSources[i][check.definition.source], check.definition.line, check.definition.column });
-                rows.append({ typedFunctions[i]->index, check.site, definitions.last() });
-            }
-        }
-        std::ranges::sort(rows);
-        rows.shrink(std::ranges::unique(rows).begin() - rows.begin());
-        std::ranges::sort(definitions);
-        definitions.shrink(std::ranges::unique(definitions).begin() - definitions.begin());
-        numberOfParameterChecks = rows.size();
-        auto appendNumber = [&](size_t number) {
-            for (;; number >>= 7) {
-                parameterChecks.append(static_cast<uint8_t>(number < 0x80 ? number : number | 0x80));
-                if (number < 0x80)
-                    break;
-            }
-        };
-        appendNumber(definitions.size());
-        for (auto& definition : definitions) {
-            for (uint32_t word : definition)
-                appendNumber(word);
-        }
-        uint32_t previousFunction = 0;
-        uint32_t previousSite = 0;
-        for (auto& [function, site, definition] : rows) {
-            if (function != previousFunction)
-                previousSite = 0;
-            appendNumber(function - previousFunction);
-            appendNumber(site - previousSite);
-            appendNumber(std::ranges::lower_bound(definitions, definition) - definitions.begin());
-            previousFunction = function;
-            previousSite = site;
-        }
-    }
+    besideTypedInfos->waitForCompletion();
     endStep("the typed infos and entries"_s);
     while (builder.m_out.size() % sizeof(uint64_t))
         builder.m_out.append(0);
@@ -956,37 +986,9 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     header.numberOfIdentifiers = builder.m_identifiers.size();
     header.numberOfConstants = builder.m_constants.size();
     header.numberOfTopLevelCodes = builder.m_topLevelCodes.size();
-    {
-        Vector<uint32_t> sorted(builder.m_sourceNames.size(), [](size_t index) {
-            return static_cast<uint32_t>(index);
-        });
-        std::ranges::sort(sorted, [&](uint32_t a, uint32_t b) {
-            return std::ranges::lexicographical_compare(builder.m_sourceNames[a].span(), builder.m_sourceNames[b].span());
-        });
-        Vector<uint32_t> places(FillWith { }, sorted.size(), 0);
-        Vector<uint8_t> text;
-        size_t placeOfBytesOfFirst = 0;
-        size_t rankOfFirst = 0;
-        for (size_t rank = 0; rank < sorted.size(); ++rank) {
-            places[sorted[rank]] = text.size();
-            auto name = builder.m_sourceNames[sorted[rank]].span();
-            RELEASE_ASSERT(name.size() < 0x8000);
-            size_t shared = 0;
-            if (rank && rank - rankOfFirst < sourceNamesBetweenWholeOnes && text.size() - placeOfBytesOfFirst < 60000) {
-                auto first = builder.m_sourceNames[sorted[rankOfFirst]].span();
-                shared = std::ranges::mismatch(name, first).in1 - name.begin();
-            } else {
-                rankOfFirst = rank;
-                placeOfBytesOfFirst = text.size() + sizeof(HeadOfSourceName);
-            }
-            HeadOfSourceName head { static_cast<uint16_t>(shared ? text.size() - placeOfBytesOfFirst : 0), static_cast<uint16_t>(shared), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
-            text.append(asBytes(singleElementSpan(head)));
-            text.append(name.subspan(shared));
-        }
-        header.sourceNamesOffset = builder.append(places);
-        builder.m_out.appendVector(text);
-        header.numberOfSources = builder.m_sourceNames.size();
-    }
+    header.sourceNamesOffset = builder.append(placesOfSourceNames);
+    builder.m_out.appendVector(textOfSourceNames);
+    header.numberOfSources = builder.m_sourceNames.size();
     endStep("infos and metadata"_s);
     if (image->keysAreOmitted()) {
         auto isLookedUp = [&](const ImageKey& key) {
@@ -1317,7 +1319,7 @@ const Identifier& VMProgram::keepIdentifier(uint32_t index, Identifier&& identif
         return m_impl->identifiersKeptElsewhere.last();
     }
     uint16_t place = ++m_numberOfIdentifiersInPlaces;
-    m_identifiers[place] = identifier.releaseImpl().leakRef();
+    m_identifiers[place] = &Ref { *identifier.impl() }.leakRef();
     WTF::storeStoreFence();
     m_identifierPlaces[index] = place;
     return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);

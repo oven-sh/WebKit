@@ -226,6 +226,110 @@ Word32 Lowering::indexingModeOf(CellPointer array, unsigned mask)
     return bitAnd(loadByte(array, m_heaps.JSCell_indexingTypeAndMisc, safeIfReaches(array, sizeof(JSCell))), word32(mask));
 }
 
+void Lowering::findNumberArraysUsedInLoops()
+{
+    if (m_loops.isEmpty() || (!m_function.convertsArrayStorage && m_function.writes != Writes::Heap))
+        return;
+    auto isReadAsDouble = [&](const Type& type) {
+        return isNumericOperand(type) && (repOf(type) == Rep::Double || repOf(type) == Rep::OptionalDouble);
+    };
+    auto isStoredAsDouble = [&](const Type& type) {
+        return type.primitives & Primitive::Number && isNumericOperand(type) && !(type.isInteger() && type.integers.isWithin(Range::int32()));
+    };
+    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+        if (m_innermostLoop[b] == noLoop)
+            continue;
+        auto& values = m_function.blocks[b].values;
+        SetForScope currentBlock(m_currentBlock, &m_function.blocks[b]);
+        for (size_t indexInBlock = 0; indexInBlock < values.size(); ++indexInBlock) {
+            ValueID id = values[indexInBlock];
+            auto& value = m_function.at(id);
+            SetForScope currentIndexInBlock(m_currentIndexInBlock, indexInBlock);
+            switch (value.opcode) {
+            case Opcode::GetByVal:
+            case Opcode::IteratorValue:
+                if (!isReadAsDouble(m_program.at(value.type)) && !(value.opcode == Opcode::GetByVal && repOf(m_program.at(value.type)) == Rep::JSValue && isReadAsDouble(expectedTypeOf(id)) && isOnlyComparedWithNumbers(id)))
+                    continue;
+                break;
+            case Opcode::PutByVal:
+                if (!isStoredAsDouble(typeOf(value.child(2))))
+                    continue;
+                break;
+            default:
+                continue;
+            }
+            ValueID array = value.child(0);
+            if (value.opcode == Opcode::IteratorValue) {
+                if (keyedAccessOf(m_program, m_function, value) != KeyedAccess::Array)
+                    continue;
+            } else if (auto* engineClass = typeOf(array).onlyEngineClass(); !engineClass || engineClass->type != ArrayType || !isNumericOperand(typeOf(value.child(1))))
+                continue;
+            for (unsigned i = 0; i < m_loops.size(); ++i) {
+                auto& loop = m_loops[i];
+                if (!loop.blocks.get(b) || !loop.header.index() || !isLoopInvariant(loop, array))
+                    continue;
+                if (m_numberArraysConvertedInFrontOfLoops.isEmpty())
+                    m_numberArraysConvertedInFrontOfLoops.grow(m_loops.size());
+                if (!m_numberArraysConvertedInFrontOfLoops[i].contains(array))
+                    m_numberArraysConvertedInFrontOfLoops[i].append(array);
+                break;
+            }
+        }
+    }
+}
+
+void Lowering::convertNumberArraysInFrontOfLoopsEnteredBy(const Terminator& terminator, bool isAtHeadOfBlock)
+{
+    if (m_numberArraysConvertedInFrontOfLoops.isEmpty())
+        return;
+    for (auto& target : successorsOf(terminator)) {
+        for (unsigned i = 0; i < m_loops.size(); ++i) {
+            if (m_loops[i].header != target.block || m_loops[i].blocks.get(m_currentBlockID.index()))
+                continue;
+            for (ValueID array : m_numberArraysConvertedInFrontOfLoops[i]) {
+                bool isThereAtHeadOfBlock = m_definingBlock[array.index()] != m_currentBlockID || m_currentBlock->parameters.contains(array);
+                if (isThereAtHeadOfBlock == isAtHeadOfBlock)
+                    convertInt32sToDoubles(array);
+            }
+        }
+    }
+}
+
+bool Lowering::isConvertedInFrontOfLoop(ValueID array) const
+{
+    if (m_numberArraysConvertedInFrontOfLoops.isEmpty())
+        return false;
+    for (unsigned i = 0; i < m_loops.size(); ++i) {
+        if (m_loops[i].blocks.get(m_currentBlockID.index()) && m_numberArraysConvertedInFrontOfLoops[i].contains(array))
+            return true;
+    }
+    return false;
+}
+
+void Lowering::convertInt32sToDoubles(ValueID array)
+{
+    Operand held = get(array);
+    if (held.rep != Rep::Cell && held.rep != Rep::JSValue)
+        return;
+    auto& type = typeOf(array);
+    LBasicBlock keepsInt32s = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    if (held.rep != Rep::Cell && type.mayBeUndefinedOrNull()) {
+        LBasicBlock isArray = m_out.newBlock();
+        m_out.branch(isCell(held.as<Boxed>(), type).value(), usually(isArray), rarely(continuation));
+        m_out.appendTo(isArray);
+    }
+    CellPointer cell = held.rep == Rep::Cell ? held.as<CellPointer>() : asCell(held.as<Boxed>());
+    static_assert(UndecidedShape + 2 == Int32Shape && !(UndecidedShape & 1));
+    m_out.branch(belowOrEqual(binary<Word32>(&Output::sub, indexingModeOf(cell, IndexingShapeMask), word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)).value(), rarely(keepsInt32s), usually(continuation));
+    m_out.appendTo(keepsInt32s);
+    OperationEffects effects { Writes::Nothing, false };
+    effects.convertsArrayStorage = true;
+    callEntry(Entry::operationAOTTypedArrayTryMakeWritableDouble, Int64, false, effects, { cell.value() });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
 // Whether the key of an access, going by its type and by what is expected of it, may be what indexOrElse() takes.
 bool Lowering::mayBeIndex(ValueID key) const
 {
@@ -338,6 +442,34 @@ Number Lowering::arrayElementAsNumberOrNaN(CellPointer array, Integer index)
     return Number(m_out.phi(Double, numbers));
 }
 
+static bool convertsArgumentsToNumbers(InlineBuiltin which)
+{
+    switch (which) {
+    case InlineBuiltin::MathAbs:
+    case InlineBuiltin::MathFloor:
+    case InlineBuiltin::MathCeil:
+    case InlineBuiltin::MathTrunc:
+    case InlineBuiltin::MathRound:
+    case InlineBuiltin::MathFround:
+    case InlineBuiltin::MathF16Round:
+    case InlineBuiltin::MathSqrt:
+    case InlineBuiltin::MathClz32:
+    case InlineBuiltin::MathSign:
+    case InlineBuiltin::MathFunction:
+    case InlineBuiltin::MathImul:
+    case InlineBuiltin::MathATan2:
+    case InlineBuiltin::MathHypot:
+    case InlineBuiltin::MathMin:
+    case InlineBuiltin::MathMax:
+    case InlineBuiltin::MathPow:
+    case InlineBuiltin::IsNaN:
+    case InlineBuiltin::IsFinite:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool Lowering::isOperandOfArithmeticAlone(ValueID element)
 {
     unsigned found = 0;
@@ -350,6 +482,18 @@ bool Lowering::isOperandOfArithmeticAlone(ValueID element)
         });
         if (!uses)
             continue;
+        if (user.opcode == Opcode::CallBuiltin) {
+            auto& implementation = m_builtins.at(user.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Inline || !convertsArgumentsToNumbers(implementation.inlined))
+                return false;
+            Vector<Type, 4> arguments;
+            for (ValueID argument : user.arguments)
+                arguments.append(typeOf(argument));
+            if (writesOfInlineBuiltin(implementation.inlined, arguments.span()) != Writes::Pure)
+                return false;
+            found += uses;
+            continue;
+        }
         switch (user.opcode) {
         case Opcode::Add:
         case Opcode::Sub:
@@ -366,6 +510,7 @@ bool Lowering::isOperandOfArithmeticAlone(ValueID element)
         case Opcode::Negate:
         case Opcode::BitNot:
         case Opcode::ToNumber:
+        case Opcode::ToNumeric:
         case Opcode::Less:
         case Opcode::LessEq:
         case Opcode::Greater:
@@ -383,6 +528,8 @@ bool Lowering::isOperandOfArithmeticAlone(ValueID element)
 
 Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& type, LBasicBlock otherwise, bool expectsNumbers)
 {
+    bool mayKeepInt32s = !std::exchange(m_arrayIsConvertedInFrontOfLoop, false);
+    bool isBornKeepingDoubles = std::exchange(m_arrayIsBornKeepingDoubles, false);
     bool leavesNumbersToLoadElement = std::exchange(m_leavesNumbersToLoadElement, false) && expectsNumbers && type.primitives & Primitive::Number && !type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) && get(key).rep == Rep::Int64;
     bool yieldsAnyValue = !otherwise && !m_watchingHandler && !leavesNumbersToLoadElement && (get(key).rep == Rep::Int64 || get(key).rep == Rep::Double) && m_program.at(m_program.types.anything).isWithin(type, m_program) && !Options::auditAOTTypedAssertions();
     bool looksForNumbers = expectsNumbers && type.primitives & Primitive::Number && !leavesNumbersToLoadElement && !yieldsAnyValue;
@@ -405,10 +552,21 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
         join.add(elementOfDoubles(asDouble, type));
         if (m_isInLoop) {
             m_out.appendTo(notDoubles);
-            orElse(equal(Word32(m_out.opaque(shape.value())), word32(Int32Shape)), elsewhere);
-            Boxed asInt32(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
-            orElse(isNotEmpty(asInt32), elsewhere);
-            join.add(elementOfDoubles(convertToNumber(signExtended(low32(asInt32))), type));
+            Word32 shapeAskedAnew(m_out.opaque(shape.value()));
+            if (mayKeepInt32s) {
+                LBasicBlock keepsInt32s = m_out.newBlock();
+                LBasicBlock keepsNoInt32s = m_out.newBlock();
+                m_out.branch(equal(shapeAskedAnew, word32(Int32Shape)).value(), unsure(keepsInt32s), unsure(keepsNoInt32s));
+                m_out.appendTo(keepsInt32s);
+                Boxed asInt32(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
+                orElse(isNotEmpty(asInt32), elsewhere);
+                join.add(elementOfDoubles(convertToNumber(signExtended(low32(asInt32))), type));
+                m_out.appendTo(keepsNoInt32s);
+            }
+            orElse(equal(shapeAskedAnew, word32(ContiguousShape)), elsewhere);
+            Boxed asValue(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
+            orElse(isNumber(asValue), elsewhere);
+            join.add(elementOfDoubles(select(isInt32(asValue), convertToNumber(signExtended(low32(asValue))), unboxedDouble(asValue)), type));
         }
         m_out.appendTo(elsewhere);
         join.add(Operand(Rep::OptionalDouble, callAllocationStub(Stub::LoadElementAsDoubleOrNil, { { array.value(), GPRInfo::argumentGPR1 }, { index.value(), GPRInfo::argumentGPR2 }, { m_out.constInt64(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type.index()), GPRInfo::argumentGPR3 } }, effectsOfOperation<operationAOTTypedArrayGetAtIndex>(), true, true, true)));
@@ -474,6 +632,15 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
     };
     if (looksForNumbersLast)
         whenKeptAs(keptAsValues, readValue);
+    if (isBornKeepingDoubles && yieldsAnyValue && m_isInLoop) {
+        whenKeptAs(asksWholeByte ? ArrayWithDouble : DoubleShape, [&] {
+            Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), index.value())));
+            orElse(equal(asDouble, asDouble), absent);
+            join.add(elementOfDoubles(asDouble, type));
+        });
+        if (mayKeepInt32s)
+            whenKeptAs(asksWholeByte ? ArrayWithInt32 : Int32Shape, readValue);
+    }
     // Kept as numbers, they are only looked at where a number will do and one is expected. All else is left to the operation.
     // Where values are what is expected, and outside loops, numbers are left to the stub that reads any array at an index: the arms are five times the code of the read.
     bool leavesNumbersToStub = looksForNumbers && looksForNumbersLast && !otherwise && !m_isInLoop;
@@ -673,6 +840,8 @@ void Lowering::putArrayElement(CellPointer array, ValueID key, ValueID stored, L
             AOT_TYPED_OPERATION(ArrayPutAtNumber, array, in<Boxed>(stored), in<Number>(key));
         else if (get(key).rep == Rep::Int64 && get(stored).rep == Rep::Double && !m_watchingHandler && !handlerEnteredByBranch())
             callAllocationStub(Stub::StoreElementOfDouble, { { array.value(), GPRInfo::argumentGPR1 }, { index.value(), GPRInfo::argumentGPR2 } }, effectsOfOperation<operationAOTTypedStoreElement>(), true, true, false, in<Number>(stored).value());
+        else if (get(key).rep == Rep::Int64 && isNumericOperand(typeOf(stored)) && !(typeOf(stored).isInteger() && typeOf(stored).integers.isWithin(Range::int32())))
+            AOT_TYPED_OPERATION(ArrayPutNumberAtIndex, array, in<Boxed>(stored), index);
         else if (get(key).rep == Rep::Int64)
             AOT_TYPED_OPERATION(ArrayPutAtIndex, array, in<Boxed>(stored), index);
         else
@@ -785,7 +954,7 @@ Operand Lowering::pushArrayElement(CellPointer array, ValueID receiver, ValueID 
     } else {
         bool expectsDoubles = atBirth == ArrayWithDouble || (atBirth == ArrayWithInt32 && !isInt32);
         LBasicBlock asExpected = m_out.newBlock();
-        LBasicBlock otherwise = m_out.newBlock();
+        LBasicBlock otherwise = newUnlikelyBlock();
         m_out.branch(keeps(expectsDoubles).value(), unsure(asExpected), unsure(otherwise));
         m_out.appendTo(asExpected);
         store(expectsDoubles);
@@ -1311,6 +1480,8 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
             m_elementsReadAsNumbers.set(result.index(), arrayElementAsNumberOrNaN(nonNil(object, { }), in<Integer>(key)).value());
             return placeholder(repOf(type));
         }
+        m_arrayIsConvertedInFrontOfLoop = isConvertedInFrontOfLoop(object);
+        m_arrayIsBornKeepingDoubles = indexingTypeAtBirth(typeOf(object)) == ArrayWithDouble;
         return getArrayElement(nonNil(object, { }), key, type, nullptr, isExpectedToBeNumber(result));
     case KeyedAccess::TypedArray:
         return getTypedArrayElement(typedArrayReceiver(object), key, typeOf(object).onlyEngineClass()->typedArrayType, type);
@@ -1859,7 +2030,7 @@ CellPointer Lowering::nextOfIteratedString(const IterationOfString& iteration, V
     LBasicBlock continuation = m_out.newBlock();
     m_out.branch(hasBits(characters.flags, StringImpl::flagIs8Bit()).value(), unsure(narrow), unsure(wide));
 
-    static_assert(maxSingleCharacterString == std::numeric_limits<Latin1Character>::max());
+    static_assert(maxSingleCharacterString == 0xff);
     m_out.appendTo(narrow);
     LValue unit = marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), offsetBy(characters.data, position, 0).value())), IsFixed);
     ensureStillAliveHere(receiver.string);
@@ -2300,8 +2471,11 @@ Operand Lowering::lowerIteratorValue(ValueID result, const Value& value)
         LValue words = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), taken->slot);
         return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, words, m_function.at(value.child(1)).integer() * sizeof(EncodedJSValue)))), type);
     }
-    if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array)
+    if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array) {
+        m_arrayIsConvertedInFrontOfLoop = isConvertedInFrontOfLoop(iterator);
+        m_arrayIsBornKeepingDoubles = indexingTypeAtBirth(typeOf(m_function.at(iterator).child(0))) == ArrayWithDouble;
         return getArrayElement(asCell(in<Boxed>(iterator)), value.child(1), type, nullptr, isExpectedToBeNumber(result));
+    }
     if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::TypedArray)
         return getTypedArrayElement(typedArrayReceiver(asCell(in<Boxed>(iterator))), value.child(1), typeOf(m_function.at(iterator).child(0)).onlyEngineClass()->typedArrayType, type);
     auto* iteration = iterationOfString(iterator);
@@ -2340,7 +2514,10 @@ Operand Lowering::valueOfArrayOrRecord(ValueID result, const Value& value)
         // Every record has the value of the step there: see operationAOTTypedIterHas.
         if (auto record = recordInFrameOf(iterator))
             return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, record->value(), 2 * sizeof(EncodedJSValue)))), type);
-        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(iterator)).value(), JSCellButterfly::offsetOfData() + 2 * sizeof(EncodedJSValue)))), type);
+        auto place = m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(iterator)).value(), JSCellButterfly::offsetOfData() + 2 * sizeof(EncodedJSValue));
+        Boxed held(m_out.load64(place));
+        m_out.store64(m_out.constInt64(JSValue::encode(jsUndefined())), place);
+        return ensure(held, type);
     });
 }
 

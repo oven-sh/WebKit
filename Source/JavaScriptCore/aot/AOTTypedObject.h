@@ -18,6 +18,7 @@
 #include "MarkedBlockCage.h"
 #include "NativeExecutable.h"
 #include "Strong.h"
+#include "ThrowScope.h"
 #include "Weak.h"
 #include "WeakGCHashTable.h"
 #include "WeakGCMap.h"
@@ -82,6 +83,8 @@ public:
     // `{ ...record }` where the copy is an ordinary object: born with the Structure that `{}` gets to by the names in their order. Null, and nothing has happened that anybody can see: it has extra properties, or
     // State::planOfPlainCopy() has no Structure.
     JSObject* tryCopyAsPlainObject(JSGlobalObject*) const;
+    Structure* structureOfPlainCopy(JSGlobalObject*) const;
+    JSFinalObject* tryCopyAsPlainObjectWithRoom(JSGlobalObject*, Structure* beginsAsPlainCopy) const;
     // The same with keys left out: `const { a, ...rest } = record`. Null also where a key is no atom string.
     JSObject* tryCopyAsPlainObject(JSGlobalObject*, std::span<const EncodedJSValue> excluded) const;
     // CopyDataProperties with excluded keys onto a new object, which is of the layout `to`. Null, and nothing has happened that anybody can see: this is no record, it has extra
@@ -314,6 +317,7 @@ struct DecidingField {
     const FieldData* field { nullptr };
     // What those layouts list for it: a string by its text, with its number; a number as a value.
     UncheckedKeyHashMap<String, uint32_t> strings;
+    Vector<const HashedText*> hashedStrings;
     UncheckedKeyHashSet<EncodedJSValue> numbers;
 };
 
@@ -722,11 +726,14 @@ struct FunctionTables {
 
     // Which executable the closures of a function have: by what [[Call]] and [[Construct]] run, and by ImplementationVisibility (Private,
     // PrivateRecursive). `kindAndDeclaration`: the byte at Data::functionKindsOffset. No class is hidden with what it calls.
+    static constexpr unsigned executableOfBoundClosures = 5;
     static constexpr unsigned kindOfExecutable(uint8_t kindAndDeclaration, bool isHiddenWithWhatItCalls)
     {
         auto kind = static_cast<Format::FunctionKind>(kindAndDeclaration & functionKindMask);
         if (kind == Format::FunctionKind::Constructor)
             return 4;
+        if (kind == Format::FunctionKind::Bound)
+            return executableOfBoundClosures;
         bool constructs = kind == Format::FunctionKind::Plain && !(kindAndDeclaration & (functionIsAsync | functionIsGenerator));
         return constructs * 2 + isHiddenWithWhatItCalls;
     }
@@ -737,7 +744,7 @@ struct FunctionTables {
     Vector<uint32_t, 4> functionsHiddenWithWhatTheyCall;
     // Instance::typedFunctions and Instance::typedExecutables.
     const uint64_t* words;
-    static constexpr unsigned numberOfExecutables = 5;
+    static constexpr unsigned numberOfExecutables = 6;
     std::array<Strong<JSCell>, numberOfExecutables> executables;
     // Made before their realm had an Instance: see State::adoptClosuresOfRealm().
     Vector<Weak<JSCell>> closuresWithoutInstance;
@@ -837,6 +844,7 @@ public:
 
     static bool hasMember(JSObject*, PropertyName);
     static bool willBeImmutable(JSObject*);
+    uint32_t classIndex() const { return static_cast<uint32_t>(m_classIndex); }
     std::optional<bool> tryGetDeclaredMember(VM&, PropertyName, PropertySlot&);
 
 private:
@@ -850,7 +858,7 @@ private:
 
     // Where a JSFinalObject has its properties.
     uint64_t m_classIndex;
-    uint64_t m_numberOfDeclaredMemberLookups { 0 };
+    uint64_t m_declaredMemberLookups { 0 };
 };
 
 // The namespace object of a compiled ES module: what JSModuleNamespaceObject is for a module of the engine's own loader. An export is whatever `read` yields for its number, each time it is
@@ -868,11 +876,12 @@ public:
     // Not extensible, and the prototype is null.
     static Structure* createStructure(VM&, JSGlobalObject*, bool hasPrototypeOfHost);
     // The names: strings that are atoms, in the order of their numbers, which is that of their code units.
-    static ModuleNamespace* create(VM&, Structure*, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar);
+    static ModuleNamespace* create(VM&, Structure*, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar, bool isDeferred);
     static constexpr ptrdiff_t offsetOfRead() { return OBJECT_OFFSETOF(ModuleNamespace, m_read); }
     static constexpr unsigned noExport = UINT_MAX;
     unsigned numberOf(UniquedStringImpl*) const;
     bool isBroughtByStar(UniquedStringImpl*) const;
+    bool isReadByNumberAtOnce() const { return !m_isDeferred && !m_mayNeedEvaluation; }
     void detach(JSGlobalObject*);
 
     DECLARE_INFO;
@@ -888,14 +897,19 @@ public:
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
 
 private:
-    ModuleNamespace(VM& vm, Structure* structure, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar)
+    ModuleNamespace(VM& vm, Structure* structure, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar, bool isDeferred)
         : Base(vm, structure)
         , m_read(read, WriteBarrierEarlyInit)
         , m_names(names, WriteBarrierEarlyInit)
         , m_star(star, WriteBarrierEarlyInit)
         , m_namesOfStar(namesOfStar, WriteBarrierEarlyInit)
+        , m_isDeferred(isDeferred)
+        , m_mayNeedEvaluation(isDeferred)
     {
     }
+
+    bool isSymbolLikeKey(UniquedStringImpl*) const;
+    bool evaluateIfNeeded(JSGlobalObject*);
 
     // Neither an export nor absent: Symbol.toStringTag, and `__esModule` once the module has been required, unless it exports that itself.
     JSValue fixedProperty(VM&, PropertyName) const;
@@ -905,6 +919,8 @@ private:
     WriteBarrier<JSObject> m_star;
     WriteBarrier<JSCellButterfly> m_namesOfStar;
     bool m_saysItIsAModule { false };
+    bool m_isDeferred;
+    bool m_mayNeedEvaluation;
 };
 
 // The object a compiled generator function returns. The state of the generator is in the coroutine frame, which is the scope of the
@@ -971,17 +987,20 @@ public:
         return static_cast<uint32_t>(-offsetFromFramePointer / static_cast<intptr_t>(sizeof(uint64_t)));
     }
     static constexpr unsigned bitsOfRow = 18;
-    static constexpr uint32_t functionHasSavedRegister = 1u << bitsOfRow;
-    static constexpr unsigned shiftOfPlaceOfPromise = bitsOfRow + 1;
-    static std::optional<uint32_t> wordOfSite(uint32_t row, uint32_t placeOfPromise, bool hasSavedRegister)
+    static constexpr uint32_t functionHasSavedRegisterKept = 1u << bitsOfRow;
+    static constexpr uint32_t functionHasSavedRegisterLost = 2u << bitsOfRow;
+    static constexpr unsigned bitsOfSavedRegisters = 2;
+    static constexpr unsigned shiftOfPlaceOfPromise = bitsOfRow + bitsOfSavedRegisters;
+    static std::optional<uint64_t> wordOfSite(uint32_t row, uint32_t placeOfPromise, uint32_t savedRegistersOrPairs)
     {
-        if (row >> bitsOfRow || placeOfPromise >> (32 - shiftOfPlaceOfPromise))
+        if (row >> bitsOfRow || savedRegistersOrPairs >> bitsOfSavedRegisters)
             return std::nullopt;
-        return row | (hasSavedRegister ? functionHasSavedRegister : 0) | placeOfPromise << shiftOfPlaceOfPromise;
+        return row | savedRegistersOrPairs << bitsOfRow | static_cast<uint64_t>(placeOfPromise) << shiftOfPlaceOfPromise;
     }
 
     static SavedFrame* save(VM&, Instance&, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* extra);
     static SavedFrame* ofFrame(const Instance&, const uint64_t* frame);
+    static bool isEnteredByJobLoop(const Instance&, const uint64_t* frame);
     void willBeLaidOnStack()
     {
         willWrite();
@@ -992,6 +1011,7 @@ public:
     const void* resumeAddress() const { return m_resumeAddress; }
 
     static constexpr int32_t nothingIsLeftBehindIt = 128;
+    static constexpr uint32_t leastWordsMovedAsString = 32;
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }
     static constexpr ptrdiff_t offsetOfVersion() { return OBJECT_OFFSETOF(SavedFrame, m_version); }
     static constexpr ptrdiff_t offsetOfRowPlusOne() { return OBJECT_OFFSETOF(SavedFrame, m_rowPlusOne); }
@@ -1044,7 +1064,12 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     JSPromise* enqueue(JSGlobalObject*, Generator::ResumeMode, JSValue);
-    JSValue enqueueDriver(JSGlobalObject*, JSValue);
+    JSValue enqueueDriver(JSGlobalObject*, JSValue, bool driverCanContinueImmediately);
+    JSValue finishStepForDriver(JSGlobalObject*, JSValue result);
+    void startEagerly(JSGlobalObject*);
+    void didThrow(VM&, JSValue);
+    static AsyncGenerator* forBodyFrame(const Instance&, const uint64_t* frame);
+    static bool bodyCapturesExceptions(uint32_t resumeFunction);
     bool iteratesAsMade(JSGlobalObject*);
     bool isAwaitingDriver() const { return m_target.pointer() == this && !is(isDrainingAheadOfDriverFlag); }
     void setDriver(VM&, JSObject* driver, JSValue asyncContext);
@@ -1070,6 +1095,8 @@ private:
     static constexpr uint16_t isDrainingAheadOfDriverFlag = 64;
     static constexpr uint16_t isEnteredByJobLoopFlag = 128;
     static constexpr uint16_t isYieldingInPlaceFlag = 256;
+    static constexpr uint16_t hasThrownFlag = 512;
+    static constexpr uint16_t canBeEnteredByStubFlag = 1024;
     bool is(uint16_t flag) const { return m_target.type() & flag; }
     void set(uint16_t flag, bool value) { m_target.setType(value ? m_target.type() | flag : m_target.type() & ~flag); }
 
@@ -1084,9 +1111,12 @@ private:
     void append(VM&, Generator::ResumeMode, JSValue, JSObject* target);
     JSObject* takeFrontRequest(VM&);
     void drain(JSGlobalObject*);
+    JSValue enter(VM&, int32_t mode, JSValue);
+    JSValue valueForDriverToAwait(JSGlobalObject*);
     void run(JSGlobalObject*, int32_t mode, JSValue, DriverToResume* = nullptr);
     void finishRun(JSGlobalObject*, JSValue result, DriverToResume*);
     void settleFrontRequest(JSGlobalObject*, JSValue, bool isDone, bool isRejected, DriverToResume* = nullptr);
+    JSPromise* immediateStep(JSGlobalObject*, JSValue);
 
     Closure* m_resumeClosure;
     int32_t* m_state;
@@ -1096,6 +1126,55 @@ private:
     WriteBarrier<JSSlimPromiseReaction> m_lastRequest;
     WriteBarrier<JSObject> m_cachedDriverResult;
     WriteBarrier<JSObject> m_cachedDriverResultTarget;
+    WriteBarrier<JSPromise> m_immediateStep;
+
+public:
+    static constexpr unsigned shiftOfFlagsInTarget = CompactPointerTuple<JSObject*, uint16_t>::maxNumberOfBitsInPointer;
+    static constexpr uint64_t isEnteredByJobLoopInTarget = static_cast<uint64_t>(isEnteredByJobLoopFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t isYieldingInPlaceInTarget = static_cast<uint64_t>(isYieldingInPlaceFlag) << shiftOfFlagsInTarget;
+    static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(AsyncGenerator, m_target); }
+    static constexpr ptrdiff_t offsetOfYieldedInPlace() { return OBJECT_OFFSETOF(AsyncGenerator, m_yieldedInPlace); }
+    static constexpr uint64_t pointerInTarget = CompactPointerTuple<JSObject*, uint16_t>::pointerMask;
+    static constexpr uint64_t isBusyInTarget = static_cast<uint64_t>(isBusyFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t isSuspendingAtAwaitInTarget = static_cast<uint64_t>(isSuspendingAtAwaitFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t hasThrownInTarget = static_cast<uint64_t>(hasThrownFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t canBeEnteredByStubInTarget = static_cast<uint64_t>(canBeEnteredByStubFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t clearedOnDriverEntry = static_cast<uint64_t>(modeMask | isSuspendingAtAwaitFlag | isEnteredByJobLoopFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t setOnDriverEntry = static_cast<uint64_t>(isDrainingAheadOfDriverFlag | isBusyFlag) << shiftOfFlagsInTarget;
+    static constexpr unsigned shiftFromResumeModeToTarget = shiftOfFlagsInTarget + 5;
+    static_assert(static_cast<uint64_t>(CoroutineFrame::isEnteredByJobLoop) << shiftFromResumeModeToTarget == isEnteredByJobLoopInTarget);
+    static constexpr uint64_t clearedOnSuspend = static_cast<uint64_t>(isDrainingAheadOfDriverFlag | isEnteredByJobLoopFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t clearedOnYieldInPlace = pointerInTarget | static_cast<uint64_t>(isDrainingAheadOfDriverFlag | isEnteredByJobLoopFlag | isBusyFlag | isYieldingInPlaceFlag) << shiftOfFlagsInTarget;
+    static constexpr int32_t generatorSlotInStubFrame = -1;
+    static constexpr int32_t modeSlotInStubFrame = -2;
+    static constexpr unsigned maxBodyFrameSizeForStubEntry = 64 * KB;
+#if CPU(ARM64)
+    static constexpr uint32_t markerAfterBodyCall = 0xaa0e03ee;
+#else
+    static constexpr uint32_t markerAfterBodyCall = 0x24441f0f;
+#endif
+    static bool wasEnteredByStub(const uint64_t* frame);
+#if CPU(ARM64)
+    static constexpr uint32_t markerAfterBodyCallInJobLoop = 0xaa0d03ed;
+#else
+    static constexpr uint32_t markerAfterBodyCallInJobLoop = 0x25441f0f;
+#endif
+    static bool wasEnteredByJobLoopAdapter(const uint64_t* frame);
+    static constexpr uint64_t requiresCallerOfJobLoop = static_cast<uint64_t>(isAwaitingYieldOperandFlag | isAwaitingReturnFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t isAwaitingYieldOperandInTarget = static_cast<uint64_t>(isAwaitingYieldOperandFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t isAwaitingReturnInTarget = static_cast<uint64_t>(isAwaitingReturnFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t setOnSuspendAtYield = static_cast<uint64_t>(isSuspendingAtAwaitFlag | isAwaitingYieldOperandFlag) << shiftOfFlagsInTarget;
+    static constexpr uint64_t clearedOnSettledYield = pointerInTarget | static_cast<uint64_t>(isAwaitingYieldOperandFlag | isBusyFlag) << shiftOfFlagsInTarget;
+    static constexpr ptrdiff_t offsetOfCachedDriverResult() { return OBJECT_OFFSETOF(AsyncGenerator, m_cachedDriverResult); }
+    static constexpr ptrdiff_t offsetOfCachedDriverResultTarget() { return OBJECT_OFFSETOF(AsyncGenerator, m_cachedDriverResultTarget); }
+    static constexpr size_t stackSpaceForJobLoop = maxBodyFrameSizeForStubEntry + 4 * KB;
+    void finishAfterJobLoop(JSGlobalObject*, JSValue result);
+    static constexpr uint64_t isDrainingAheadOfDriverInTarget = static_cast<uint64_t>(isDrainingAheadOfDriverFlag) << shiftOfFlagsInTarget;
+    static constexpr ptrdiff_t offsetOfValue() { return OBJECT_OFFSETOF(AsyncGenerator, m_value); }
+    static constexpr ptrdiff_t offsetOfResumeClosure() { return OBJECT_OFFSETOF(AsyncGenerator, m_resumeClosure); }
+    static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(AsyncGenerator, m_state); }
+    static constexpr ptrdiff_t offsetOfLastRequest() { return OBJECT_OFFSETOF(AsyncGenerator, m_lastRequest); }
+    static constexpr ptrdiff_t offsetOfImmediateStep() { return OBJECT_OFFSETOF(AsyncGenerator, m_immediateStep); }
 };
 
 // The generators of the program inherit from %GeneratorPrototype% and %AsyncGeneratorPrototype% of the realm, as those of the engine do.
@@ -1150,6 +1229,8 @@ struct State {
     bool trustGlobalProperty(VM&, JSGlobalObject*, uint32_t cacheNumber, UniquedStringImpl*, JSValue);
     bool trustMemberOfGlobal(VM&, JSGlobalObject*, uint32_t cacheNumber, UniquedStringImpl* global, JSObject* holder, UniquedStringImpl* name);
     JSString* string(VM&, uint32_t);
+    JSString* stringForLiteralStringWord(uint64_t);
+    uint64_t literalStringWordFor(JSString*);
     JSString* makeAndKeepStringConstant(VM&, uint32_t);
     JSString* makeStringConstant(VM&, uint32_t);
     const LayoutData& layoutOfShape(uint32_t shape) const { return *data.at<LayoutData>(data.at<uint32_t>(data.layoutsOffset)[shape]); }
@@ -1190,6 +1271,7 @@ struct State {
     CustomGetterSetter* lazyClosureCell(VM&, uint32_t function);
     JSObject* createClosureOver(VM&, uint32_t function, JSValue captured);
     JSObject* reifyLazyClosure(VM&, JSObject* holder, PropertyName);
+    JSObject* reifyLazyClosureIfAny(VM&, JSObject* holder, UniquedStringImpl* name, PropertyOffset&, bool& isMadeByStubs);
     void reifyLazyClosures(VM&, JSObject* holder);
     uint32_t functionOfLazyClosure(JSCell* cell) const { return m_functionsOfLazyClosures.get(cell); }
     bool closuresHaveCaptures(uint32_t function) const;
@@ -1206,6 +1288,7 @@ struct State {
     bool takesItsClosure(uint32_t generatorFunction) const;
     // The class whose constructor has that generic entrypoint. Null: there is none.
     const LayoutData* classConstructedBy(uint32_t function) const;
+    mutable std::array<std::atomic<uint64_t>, 64> classesAskedForLately { };
     // Gives the closure of the constructor what makes it the class object, and makes the prototype object. `base`: what stands after
     // `extends`, where that is not known from the class alone. Throws only for a class with a foreign root.
     // Where the members of the prototype wait for whoever looks (makesMembersWhenLookedAt()) a class is made in two halves.
@@ -1251,7 +1334,7 @@ struct State {
     // given for the function of a new.target stands, for createThis() too. Null: ask createThis().
     Structure* structureForThis(JSGlobalObject*, Closure* constructor, JSObject* newTarget, unsigned inlineCapacity);
     Structure* structureForThisWithSlimClosure(JSGlobalObject*, JSObject* constructor, JSObject* newTarget, unsigned inlineCapacity);
-    unsigned inlineCapacityForThis(uint32_t constructor, uint32_t newTarget, unsigned seen) const;
+    unsigned inlineCapacityForThis(VM&, uint32_t constructor, uint32_t newTarget, unsigned seen, JSObject* prototype) const;
     // Of a plain function, by its generic entrypoint: what makes an object of the layout it declares `this` to be of. Null: it declares none.
     const AllocationData* allocationOfThis(uint32_t function) const;
     // Data::refusedFreshObjectsOffset.
@@ -1265,6 +1348,7 @@ struct State {
     bool isReservedFieldName(VM&, UniquedStringImpl*, uint32_t function);
     Structure* prototypeObjectStructure(VM&);
     Structure* moduleNamespaceStructure(VM&, bool hasPrototypeOfHost);
+    Structure* structureForNewModuleNamespace(VM&, bool hasPrototypeOfHost);
     static constexpr ptrdiff_t offsetOfModuleNamespaceStructure() { return OBJECT_OFFSETOF(State, m_moduleNamespaceStructure); }
     // What adding properties of these names, in this order, makes of an array of the Structure: see operationAOTTypedTryAddNamedProperties.
     struct NamedPropertiesTransition {
@@ -1312,6 +1396,25 @@ struct State {
     std::optional<JSObject*> declaredMethod(VM&, const LayoutData&, UniquedStringImpl*);
     GetterSetter* declaredAccessor(VM&, const LayoutData&, UniquedStringImpl*);
     bool didGetDeclaredMember { false };
+    struct DeclaredMemberPlace {
+        JSObject* holder;
+        PropertyOffset offset;
+        bool isAccessor;
+    };
+    struct FoundThroughUnmadePrototypes {
+        std::optional<DeclaredMemberPlace> member;
+        JSObject* firstObjectAbove;
+    };
+    std::optional<FoundThroughUnmadePrototypes> findThroughUnmadePrototypes(VM& vm, JSObject* base, UniquedStringImpl* name, uint32_t identifier, bool baseIsKnownToLackIt) { return findThroughUnmadePrototypesByString(vm, base, name, data.stringOfIdentifierPlusOne(identifier), baseIsKnownToLackIt); }
+    std::optional<FoundThroughUnmadePrototypes> findThroughUnmadePrototypesByString(VM&, JSObject* base, UniquedStringImpl*, uint32_t stringPlusOne, bool baseIsKnownToLackIt = false);
+    DeclaredMemberPlace declaredMemberPlace(VM&, std::optional<uint32_t> method, const MethodData* getter, const MethodData* setter);
+    struct DeclaredMemberEntries {
+        UniquedStringImpl* uid;
+        uint32_t nameInTable;
+        Vector<Structure*, 8> owners;
+    };
+    Vector<DeclaredMemberEntries> collectDeclaredMemberEntries(VM&, const LayoutData&, MarkedArgumentBuffer& liveOwners);
+    void repointDeclaredMemberEntries(VM&, JSObject* prototype, const Vector<DeclaredMemberEntries>&);
     // Whether its class, or one that class extends, declares anything that the prototype object has.
     bool hasPrototypeMembers(const LayoutData&) const;
     bool mayBeAbsent(const FieldData& field) const;
@@ -1348,6 +1451,7 @@ struct State {
         static constexpr uint8_t takesUndefined = 16;
         static constexpr uint8_t takesNull = 32;
         static constexpr uint8_t takesDouble = 64;
+        static constexpr uint8_t takesForeignObject = 128;
         static uint8_t kindOf(JSValue value) { return value.isInt32() ? takesInt32 : value.isString() ? takesString : value.isTrue() ? takesTrue : value.isFalse() ? takesFalse : value.isUndefined() ? takesUndefined : value.isNull() ? takesNull : value.isDouble() ? takesDouble : 0; }
         static constexpr unsigned maxNumberByDiscriminant = 256;
         static constexpr unsigned maxNumberOfDiscriminants = 4;
@@ -1357,6 +1461,7 @@ struct State {
         bool hasRivals { false };
         uint32_t orderAndCount { 0 };
         Vector<Field, 8> fields;
+        Vector<std::pair<PropertyOffset, UniquedStringImpl*>, 2> extraProperties;
         static constexpr size_t maxSizeMadeOverWhereItIs = 256;
         Vector<uint8_t> bodyBeforeStores;
         PropertyOffset discriminant { invalidOffset };
@@ -1394,6 +1499,8 @@ struct State {
     uint32_t m_epochOfQuickConversions { 1 };
     const PlanOfCoercion* planOfCoercion(Structure*, const RuntimeType&) const;
     const PlanOfCoercion* planOfCoercion(JSObject*, const RuntimeType&) const;
+    const PlanOfCoercion* planFirstOfItsShape(VM&, JSObject*, const RuntimeType&);
+    void finishPlanOfCoercion(PlanOfCoercion&, const LayoutData&, uint32_t orderAndCount);
     void addPlanOfCoercion(JSObject*, Structure*, const RuntimeType&, std::unique_ptr<PlanOfCoercion>&&, const PlanOfCoercion::Discriminants&);
     bool takesMorePlansOfCoercions() const { return m_plansOfCoercions.size() < maxNumberOfPlansOfCoercions; }
     void forgetPlansOfCoercionsOfDeadStructures(VM&, bool newOnly);
@@ -1553,6 +1660,12 @@ struct State {
     std::optional<ListedSite> listedSite(const String& file, LineColumn, const Violation&, ASCIILiteral kind) const;
     static ASCIILiteral wordForKind(JSValue, const RuntimeType* heldTo = nullptr);
     bool reportOrThrow(JSGlobalObject*, const Violation&, const String& message, InAudit, ASCIILiteral departure = { });
+    ALWAYS_INLINE bool reportOrThrow(ThrowScope& scope, JSGlobalObject* globalObject, const Violation& violation, const String& message, InAudit inAudit, ASCIILiteral departure = { })
+    {
+        bool goesOn = reportOrThrow(globalObject, violation, message, inAudit, departure);
+        EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !goesOn);
+        return goesOn;
+    }
     ASCIILiteral noteOnIgnoredRules() const { return m_hasIgnoredRule ? " (after a rule was ignored)"_s : ""_s; }
     // Counters, only in an image compiled for the audit or with Options::countAOTTypedAllocations(); elsewhere these do nothing. Printed
     // when the process exits or the State goes away, one `AOT count:` line per record. A new object is counted once its order word says
@@ -1597,6 +1710,11 @@ struct State {
     // is of the type. If the type is written down, what `as` makes of it. Empty: nothing, and the string may say why, or it has thrown.
     JSValue holdToTypeOf(JSGlobalObject*, const FieldData&, JSValue, String& failure);
     bool storesMakeOverPlainData { true };
+    AsyncGenerator* asyncGeneratorEntered { nullptr };
+    AsyncGenerator* asyncGeneratorToFinishAfterJobLoop { nullptr };
+    EncodedJSValue resultOfAsyncGeneratorToFinishAfterJobLoop { 0 };
+    JSPromise* immediateStepOfAsyncGenerators { nullptr };
+    bool stubCanEnterAsyncGenerator(Closure* resumeClosure);
     // Whether it is one of the strings, or of the numbers, that are all the type of the field allows. See FieldData::literalsOffset.
     bool isAmongLiterals(const FieldData&, JSValue) const;
     bool isAmongLiterals(std::span<const LiteralData>, JSValue) const;
@@ -1780,6 +1898,9 @@ struct State {
     uint32_t* structures { nullptr };
     // By LayoutData::index. Compiled code does not read it, and few of the numbers are ever asked for.
     UncheckedKeyHashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> prototypesOfClasses;
+    static constexpr unsigned declaredMembersPerHolder = 62;
+    Vector<JSObject*> declaredMemberHolders;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> declaredMemberPlaces;
     // By what they inherit from.
     UncheckedKeyHashMap<JSObject*, Structure*> structuresOfClassPrototypes;
     // By what is extended: the class object of a class of the program, or something foreign. What extends nothing has the realm's.
@@ -1835,6 +1956,20 @@ struct State {
         static_assert(hasOneBitSet(places));
         return WTF::intHash(key) % places;
     }
+    template<unsigned maxPlaces> struct PlacesInUse {
+        static_assert(maxPlaces >= 64);
+        unsigned placeOf(uint64_t key) const { return State::placeOf<maxPlaces>(key) & mask; }
+        size_t count() const { return static_cast<size_t>(mask) + 1; }
+        void didReplaceEntry()
+        {
+            if (++numberOfEntriesReplaced <= mask || count() == maxPlaces)
+                return;
+            mask = mask * 2 + 1;
+            numberOfEntriesReplaced = 0;
+        }
+        unsigned mask { 63 };
+        unsigned numberOfEntriesReplaced { 0 };
+    };
     // For Coercion::mayConvertProperties(): the address of a type that has been asked about, with the answer in its lowest bit. Another type may take the place.
     static constexpr unsigned numberOfTypesAskedAboutProperties = 256;
     uintptr_t& typeAskedAboutProperties(const RuntimeType& type) const { return m_typesAskedAboutProperties[placeOf<numberOfTypesAskedAboutProperties>(std::bit_cast<uintptr_t>(&type))]; }
@@ -1854,6 +1989,7 @@ private:
         // By the hash of a sequence of fields, an order that starts with it. See orderStartingWith().
         Map byPrefix;
         bool hasPrefixesOfExpectedOrders { false };
+        std::optional<uint32_t> orderWordAtBirthOfInstance;
         // By order, count and the field that is created next.
         Map transitions;
         // See orderWithExtraKeyPlaced().
@@ -1964,6 +2100,7 @@ private:
     std::array<GeneratorStructureOfClosure, 16> m_generatorStructuresOfClosures { };
     HeapVersion m_versionOfGeneratorStructures { 0 };
     JSFunction* m_liveBindingGetter { nullptr };
+    uint64_t m_answersForAsyncGenerators[16] { UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX };
     CustomGetterSetter* m_liveBindingAccessor { nullptr };
     Strong<Structure> m_evalScopeStructure;
     // By the number of a string: where in m_names. Few of the strings of a program are ever asked for as names. What name() hands out stays where it is.
@@ -2035,6 +2172,7 @@ private:
     // What transitionPlan() answered last. All it has ever answered is in the table behind.
     static constexpr unsigned numberOfCachedTransitions = 4096;
     CachedTransition* m_cachedTransitions { nullptr };
+    PlacesInUse<numberOfCachedTransitions> m_placesOfCachedTransitions;
     struct TransitionMadeBefore {
         Structure* structure;
         const RuntimeType* type;
@@ -2043,10 +2181,11 @@ private:
     };
     static constexpr unsigned numberOfTransitionsMadeBefore = 1024;
     TransitionMadeBefore* m_transitionsMadeBefore { nullptr };
+    PlacesInUse<numberOfTransitionsMadeBefore> m_placesOfTransitionsMadeBefore;
     CastTransition* m_castTransitions { nullptr };
     UncheckedKeyHashMap<const TransitionPlan*, std::unique_ptr<Vector<StoreTransition::Cleared, 4>>> m_clearedSlotsOfPlans;
     void noteCastTransition(Structure* before, uint32_t typeAndReason, uint64_t wordsBefore, Object*, const TransitionPlan&);
-    TransitionMadeBefore& transitionMadeBefore(Structure* structure, const RuntimeType& type, Format::CastReason reason) { return m_transitionsMadeBefore[placeOf<numberOfTransitionsMadeBefore>(std::bit_cast<uintptr_t>(structure) ^ std::rotl(static_cast<uint64_t>(std::bit_cast<uintptr_t>(&type)), 23) ^ static_cast<uint64_t>(reason) << 57)]; }
+    TransitionMadeBefore& transitionMadeBefore(Structure* structure, const RuntimeType& type, Format::CastReason reason) { return m_transitionsMadeBefore[m_placesOfTransitionsMadeBefore.placeOf(std::bit_cast<uintptr_t>(structure) ^ std::rotl(static_cast<uint64_t>(std::bit_cast<uintptr_t>(&type)), 23) ^ static_cast<uint64_t>(reason) << 57)]; }
     bool m_lastPlanWentByStructureAlone { false };
     UncheckedKeyHashMap<std::tuple<Structure*, const RuntimeType*, EncodedJSValue, unsigned>, OutcomeOfCast> m_plansOfCasts;
     // For specializeToStore(), of such an object, by its Structure, the name and its discriminant: what it can become so that it has a field
@@ -2080,6 +2219,7 @@ private:
     };
     static constexpr unsigned numberOfCachedStores = 1024;
     CachedStore* m_cachedStores { nullptr };
+    PlacesInUse<numberOfCachedStores> m_placesOfCachedStores;
     // The object, which is not compiled, enters a place of the type, which admits such objects, as it is, whatever the place, and nothing is made of what it holds: it is no plain data, or
     // Coercion::mayConvertProperties() has said no for the type.
     bool entersAsItIs(JSObject*, const RuntimeType&) const;
@@ -2093,10 +2233,11 @@ private:
     PropertiesWithViews* m_propertiesWithViews { nullptr };
     HeapVersion m_versionOfPropertiesWithViews { 0 };
     unsigned m_nextPlaceTakenFromPropertiesWithViews { 0 };
-    CachedStore& cachedStore(Structure* structure, UniquedStringImpl* name, EncodedJSValue discriminant) { return m_cachedStores[placeOf<numberOfCachedStores>(std::bit_cast<uintptr_t>(structure) ^ std::rotl(static_cast<uint64_t>(std::bit_cast<uintptr_t>(name)), 23) ^ static_cast<uint64_t>(discriminant) * 31)]; }
+    CachedStore& cachedStore(Structure* structure, UniquedStringImpl* name, EncodedJSValue discriminant) { return m_cachedStores[m_placesOfCachedStores.placeOf(std::bit_cast<uintptr_t>(structure) ^ std::rotl(static_cast<uint64_t>(std::bit_cast<uintptr_t>(name)), 23) ^ static_cast<uint64_t>(discriminant) * 31)]; }
     UncheckedKeyHashSet<Structure*> m_structuresOfPlans;
     UncheckedKeyHashMap<uint32_t, OrderTable*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_orderTables;
     Vector<std::unique_ptr<OrderTable>> m_createdOrderTables;
+    std::array<std::pair<uint32_t, OrderTable*>, 16> m_orderTablesAskedForLately { };
     // By shape and cell size. See Instance::TypedAllocation::fieldTemplate.
     const void* fieldTemplate(const LayoutData&, uint32_t cellSize);
     UncheckedKeyHashMap<std::pair<uint32_t, uint32_t>, MallocSpan<uint8_t>> m_fieldTemplates;
@@ -2110,6 +2251,7 @@ private:
     void keepString(uint32_t, JSCell*);
     template<typename Visitor> void visitStrings(Visitor&);
     uint32_t m_numberOfStringsMade { 0 };
+    std::array<RefPtr<StringImpl>, 1 << literalStringCacheIndexBits> m_literalStringCacheKeys;
     void createStatics();
     void destroyStatics();
     void fillStatics(uint32_t firstWord, uint32_t endWord);

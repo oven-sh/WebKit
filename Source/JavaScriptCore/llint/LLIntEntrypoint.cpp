@@ -261,7 +261,7 @@ void setEntrypoint(CodeBlock* codeBlock)
     if (Options::crashIfInterpreterIsUsed()) [[unlikely]] {
         auto* executable = codeBlock->ownerExecutable();
         const String& url = executable->sourceURL();
-        bool isTextCompiledAtRunTime = codeBlock->codeType() == EvalCode || url.isEmpty() || url.startsWith("evalmachine."_s) || url.startsWith("data:"_s) || url.startsWith("blob:"_s);
+        bool isTextCompiledAtRunTime = codeBlock->codeType() == EvalCode || url.isEmpty() || url.startsWith("evalmachine."_s) || url.startsWith("data:"_s) || url.startsWith("blob:"_s) || url == "[Command Line]"_s;
         bool isDebuggerOfInspectedProcess = url == "internal:debugger"_s && getenv("BUN_INSPECT");
         if (!isTextCompiledAtRunTime && !isDebuggerOfInspectedProcess) {
             dataLogLn("crashIfInterpreterIsUsed: ", codeBlock->codeType(), " ", codeBlock->inferredName(), " at ", url, ":", executable->firstLine());

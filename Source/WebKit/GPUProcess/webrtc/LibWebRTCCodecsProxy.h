@@ -73,7 +73,7 @@ public:
     void deref() const final { IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any>::deref(); }
 
     void stopListeningForIPC(Ref<LibWebRTCCodecsProxy>&& refFromConnection);
-    bool NODELETE allowsExitUnderMemoryPressure() const;
+    bool LEGACY_NODELETE allowsExitUnderMemoryPressure() const;
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
     void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess);
 private:
@@ -89,9 +89,9 @@ private:
     void createDecoder(VideoDecoderIdentifier, WebCore::VideoCodecType, const String& codecString, bool useRemoteFrames, bool enableAdditionalLogging, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, CompletionHandler<void(bool)>&&);
     void releaseDecoder(VideoDecoderIdentifier);
     void flushDecoder(VideoDecoderIdentifier, CompletionHandler<void()>&&);
-    void setDecoderFormatDescription(VideoDecoderIdentifier, std::span<const uint8_t>, uint16_t width, uint16_t height);
+    void setDecoderFormatDescription(VideoDecoderIdentifier, std::span<const uint8_t>, RefPtr<WebCore::VideoInfo>&&, uint16_t width, uint16_t height);
     void setDecoderColorSpaceOverride(VideoDecoderIdentifier, std::optional<WebCore::PlatformVideoColorSpace>&&);
-    void decodeFrame(VideoDecoderIdentifier, int64_t timeStamp, std::span<const uint8_t>, CompletionHandler<void(bool)>&&);
+    void decodeFrame(VideoDecoderIdentifier, int64_t timeStamp, std::span<const uint8_t>, RefPtr<WebCore::VideoInfo>&&, CompletionHandler<void(bool)>&&);
     void setFrameSize(VideoDecoderIdentifier, uint16_t width, uint16_t height);
 
     void createEncoder(VideoEncoderIdentifier, WebCore::VideoCodecType, const String& codecString, const Vector<std::pair<String, String>>&, bool useLowLatency, bool useAnnexB, WebCore::VideoEncoderScalabilityMode, CompletionHandler<void(bool)>&&);
@@ -124,7 +124,7 @@ private:
         bool useLowLatency { false };
         bool isInvalid { false };
     };
-    Encoder* NODELETE findEncoder(VideoEncoderIdentifier) WTF_REQUIRES_CAPABILITY(workQueue());
+    Encoder* LEGACY_NODELETE findEncoder(VideoEncoderIdentifier) WTF_REQUIRES_CAPABILITY(workQueue());
 
     const Ref<IPC::Connection> m_connection;
     const Ref<WorkQueue> m_queue;

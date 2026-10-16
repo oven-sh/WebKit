@@ -752,6 +752,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
         JSString* name = originalName(realm());
+        scope.assertNoException();
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         if (structure()->hasImmutablePropertiesWithFixedAttributes())
             initialAttributes |= PropertyAttribute::DontDelete;

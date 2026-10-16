@@ -15,7 +15,9 @@
 #include <openssl/bytestring.h>
 
 #include <assert.h>
+#include <inttypes.h>
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <algorithm>
@@ -374,6 +376,13 @@ static int add_base128_integer(CBB *cbb, uint64_t v) {
   return 1;
 }
 
+int bssl::cbb_add_decimal_ascii(CBB *out, uint64_t v) {
+  char buf[DECIMAL_SIZE(uint64_t) + 1];
+  snprintf(buf, sizeof(buf), "%" PRIu64, v);
+  return CBB_add_bytes(out, reinterpret_cast<const uint8_t *>(buf),
+                       strlen(buf));
+}
+
 int CBB_add_asn1(CBB *cbb, CBB *out_contents, CBS_ASN1_TAG tag) {
   if (!CBB_flush(cbb)) {
     return 0;
@@ -672,6 +681,26 @@ int CBB_add_asn1_relative_oid_from_text(CBB *cbb, const char *text,
   while (CBS_len(&cbs) > 0) {
     uint64_t a;
     if (!parse_dotted_decimal(&cbs, &a) || !add_base128_integer(cbb, a)) {
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+int CBB_add_asn1_relative_oid_from_der_to_text(CBB *cbb, const uint8_t *data,
+                                               size_t data_len) {
+  CBS der;
+  CBS_init(&der, data, data_len);
+  // Relative OIDs must have at least one component.
+  uint64_t v;
+  if (!CBS_get_asn1_oid_component(&der, &v) || !cbb_add_decimal_ascii(cbb, v)) {
+    return 0;
+  }
+
+  while (CBS_len(&der) != 0) {
+    if (!CBS_get_asn1_oid_component(&der, &v) || !CBB_add_u8(cbb, '.') ||
+        !cbb_add_decimal_ascii(cbb, v)) {
       return 0;
     }
   }

@@ -44,7 +44,7 @@ public:
 
 private:
     JSValue throwStackOverflowError();
-    JSValue NODELETE emptyString();
+    JSValue LEGACY_NODELETE emptyString();
     JSValue performCheck();
 
     JSGlobalObject* m_globalObject;

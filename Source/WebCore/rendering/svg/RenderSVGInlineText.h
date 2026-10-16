@@ -29,8 +29,6 @@
 
 namespace WebCore {
 
-class SVGInlineTextBox;
-
 class RenderSVGInlineText final : public RenderText {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGInlineText);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGInlineText);
@@ -57,15 +55,7 @@ public:
     // Preserves floating point precision for the use in DRT. It knows how to round and does a better job than enclosingIntRect.
     FloatRect floatLinesBoundingBox() const;
 
-    void removeTextBox(LegacyInlineTextBox& box) { m_legacyLineBoxes.remove(box); }
-    LegacyInlineTextBox* createInlineTextBox() LIFETIME_BOUND { return m_legacyLineBoxes.createAndAppendLineBox(*this); }
-    void deleteLegacyLineBoxes();
-    LegacyInlineTextBox* firstLegacyTextBox() const LIFETIME_BOUND { return m_legacyLineBoxes.first(); }
-    void removeAndDestroyLegacyTextBoxes();
-    std::unique_ptr<LegacyInlineTextBox> createTextBox();
-
 private:
-    void willBeDestroyed() final;
     ASCIILiteral renderName() const override { return "RenderSVGInlineText"_s; }
 
     String originalText() const override;
@@ -81,7 +71,6 @@ private:
     float m_scalingFactor;
     FontCascade m_scaledFont;
     SVGTextLayoutAttributes m_layoutAttributes;
-    RenderTextLineBoxes m_legacyLineBoxes;
 };
 
 } // namespace WebCore

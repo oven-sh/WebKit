@@ -41,6 +41,7 @@ struct Reference {
     uint32_t offset;
     uint64_t identity;
     uint8_t size { 0 };
+    bool usesRegistersOnly { false };
 };
 
 struct Body {
@@ -71,6 +72,7 @@ struct Unit {
     uint8_t condition { 0 };
     bool hasScratchAsOperand { false };
     bool hasScratchInAddress { false };
+    bool usesRegistersOnly { false };
     int32_t target { -1 };
     int32_t reference { -1 };
     uint32_t word { 0 };
@@ -755,6 +757,7 @@ public:
                 unit.kind = Kind::Reference;
                 unit.reference = nextReference++;
                 identity = body.references[unit.reference].identity;
+                unit.usesRegistersOnly = body.references[unit.reference].usesRegistersOnly;
             } else if (decoded.isRelativeToNextInstruction || decoded.kind == Kind::Reference) {
 #if CPU(ARM64)
                 uint32_t nextInstruction = 0;
@@ -1036,8 +1039,10 @@ public:
             case Kind::Reference:
                 if (bytes[0] == 0xe8) {
                     fact.reads = allRegisters;
-                    fact.outputSlotsRead = allSlots;
-                    fact.frameSlotsRead = allSlots;
+                    if (!unit.usesRegistersOnly) {
+                        fact.outputSlotsRead = allSlots;
+                        fact.frameSlotsRead = allSlots;
+                    }
                     continue;
                 }
                 break;

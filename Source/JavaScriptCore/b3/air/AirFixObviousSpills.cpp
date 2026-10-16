@@ -69,6 +69,7 @@ public:
 
     RegisterSet takeNamedOrClobberedRegisters()
     {
+        m_clobberedRegisters.exclude(m_code.calleeSavesLostAtSuspensions());
         for (uint64_t regs = m_namedRegs; regs; regs &= regs - 1)
             m_clobberedRegisters.add(Reg::fromIndex(std::countr_zero(regs)), IgnoreVectors);
         return WTF::move(m_clobberedRegisters);
@@ -558,7 +559,7 @@ private:
             });
     }
     
-    static bool NODELETE isSpillSlot(const Arg& arg)
+    static bool LEGACY_NODELETE isSpillSlot(const Arg& arg)
     {
         return arg.isStack() && arg.stackSlot()->isSpill();
     }
@@ -597,9 +598,9 @@ private:
             return slot && reg;
         }
         
-        friend bool NODELETE operator==(const RegSlot&, const RegSlot&) = default;
+        friend bool LEGACY_NODELETE operator==(const RegSlot&, const RegSlot&) = default;
 
-        bool NODELETE operator<(const RegSlot& other) const
+        bool LEGACY_NODELETE operator<(const RegSlot& other) const
         {
             // We ignore `mode` on purpose, see merge() for how we deal with it.
             return slot < other.slot || (slot == other.slot && reg < other.reg);
@@ -642,9 +643,9 @@ private:
             return slot;
         }
 
-        friend bool NODELETE operator==(const SlotConst&, const SlotConst&) = default;
+        friend bool LEGACY_NODELETE operator==(const SlotConst&, const SlotConst&) = default;
 
-        bool NODELETE operator<(const SlotConst& other) const
+        bool LEGACY_NODELETE operator<(const SlotConst& other) const
         {
             return slot < other.slot || (slot == other.slot && constant < other.constant);
         }
@@ -686,9 +687,9 @@ private:
 
         static uint64_t bitFor(Reg reg) { return static_cast<uint64_t>(1) << reg.index(); }
 
-        bool NODELETE isEmpty() const { return !constRegs && slotConst.isEmpty() && regSlot.isEmpty(); }
+        bool LEGACY_NODELETE isEmpty() const { return !constRegs && slotConst.isEmpty() && regSlot.isEmpty(); }
 
-        bool NODELETE hasNoSlotAlias() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
+        bool LEGACY_NODELETE hasNoSlotAlias() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
 
         void addAlias(const RegConst& newAlias)
         {
@@ -726,14 +727,14 @@ private:
             return slotConst.contains(alias);
         }
 
-        std::optional<int64_t> NODELETE constantForReg(Reg reg) const
+        std::optional<int64_t> LEGACY_NODELETE constantForReg(Reg reg) const
         {
             if (!(constRegs & bitFor(reg)))
                 return std::nullopt;
             return constants[reg.index()];
         }
 
-        const RegSlot* NODELETE getRegSlot(StackSlot* slot) const
+        const RegSlot* LEGACY_NODELETE getRegSlot(StackSlot* slot) const
         {
             for (const RegSlot& alias : regSlot) {
                 if (alias.slot == slot)
@@ -742,7 +743,7 @@ private:
             return nullptr;
         }
 
-        const SlotConst* NODELETE getSlotConst(StackSlot* slot) const
+        const SlotConst* LEGACY_NODELETE getSlotConst(StackSlot* slot) const
         {
             for (const SlotConst& alias : slotConst) {
                 if (alias.slot == slot)
@@ -751,7 +752,7 @@ private:
             return nullptr;
         }
 
-        std::optional<int64_t> NODELETE constantFor(const Arg& arg)
+        std::optional<int64_t> LEGACY_NODELETE constantFor(const Arg& arg)
         {
             if (arg.isReg())
                 return constantForReg(arg.reg());

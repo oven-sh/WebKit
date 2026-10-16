@@ -125,6 +125,7 @@
 #include "RenderAttachment.h"
 #include "RenderBlock.h"
 #include "RenderBox.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
 #include "RenderInline.h"
@@ -190,20 +191,20 @@ static bool isSecureFieldOrContainedBySecureField(AccessibilityObject& object)
 
 #endif // PLATFORM(COCOA)
 
-static bool NODELETE rendererNeedsDeferredUpdate(const RenderObject& renderer)
+static bool LEGACY_NODELETE rendererNeedsDeferredUpdate(const RenderObject& renderer)
 {
     AX_ASSERT(!renderer.beingDestroyed());
     auto& document = renderer.document();
     return renderer.needsLayout() || document.needsStyleRecalc() || document.inRenderTreeUpdate() || (document.view() && document.view()->layoutContext().isInRenderTreeLayout());
 }
 
-static bool NODELETE nodeRendererIsValid(Node& node)
+static bool LEGACY_NODELETE nodeRendererIsValid(Node& node)
 {
     auto* renderer = node.renderer();
     return renderer && !renderer->beingDestroyed();
 }
 
-static bool NODELETE nodeAndRendererAreValid(Node* node)
+static bool LEGACY_NODELETE nodeAndRendererAreValid(Node* node)
 {
     return node ? nodeRendererIsValid(*node) : false;
 }
@@ -613,7 +614,7 @@ static bool isNodeAccessible(const Node* node)
         return false;
 
     CheckedPtr renderLayer = renderer->enclosingLayer();
-    if (isVisibilityHidden(style) && renderLayer && !renderLayer->hasVisibleContent())
+    if (isVisibilityHidden(*renderer) && renderLayer && !renderLayer->hasVisibleContent())
         return false;
 
     // Check whether this object or any of its ancestors has opacity 0.
@@ -759,7 +760,7 @@ Node* AXObjectCache::modalNode()
         // understandable mistake. Only do this if literally nothing on the page is
         // accessible (!m_unignoredContentObjectCount).
         if (!m_unignoredContentObjectCount) {
-            for (auto& modal : m_modalElements) {
+            for (RefPtr modal : m_modalElements) {
                 if (!modal || !isModalElement(*modal))
                     continue;
 
@@ -991,54 +992,101 @@ RefPtr<Page> AXObjectCache::page() const
     return m_document ? m_document->page() : nullptr;
 }
 
-Ref<AccessibilityRenderObject> AXObjectCache::createObjectFromRenderer(RenderObject& renderer)
+enum class RenderObjectClass : uint8_t {
+    Generic,
+    SVG,
+#if ENABLE(MATHML)
+    MathML,
+#endif
+    MenuList,
+    ListBoxOption,
+    ProgressIndicator,
+    Slider,
+};
+
+static RenderObjectClass renderObjectClass(RenderObject& renderer)
 {
     RefPtr node = renderer.node();
-    if (RefPtr element = dynamicDowncast<Element>(node)) {
-        // Lists shouldn't fallthrough to table components, so explicitly create a render object.
-        if (AXListHelpers::isAccessibilityList(*element))
-            return AccessibilityRenderObject::create(AXID::generate(), renderer, *this);
-    }
+    // Lists shouldn't fallthrough to table components, so explicitly create a render object.
+    if (RefPtr element = dynamicDowncast<Element>(node); element && AXListHelpers::isAccessibilityList(*element))
+        return RenderObjectClass::Generic;
 
-    if (renderer.isRenderOrLegacyRenderSVGRoot())
-        return AccessibilitySVGObject::create(AXID::generate(), renderer, *this, /* isSVGRoot */ true);
+    if (renderer.isRenderOrLegacyRenderSVGRoot() || is<SVGElement>(node) || is<RenderSVGInlineText>(renderer))
+        return RenderObjectClass::SVG;
 
-    if (is<SVGElement>(node) || is<RenderSVGInlineText>(renderer))
-        return AccessibilitySVGObject::create(AXID::generate(), renderer, *this);
-
-    if (CheckedPtr renderImage = toSimpleImage(renderer))
-        return AccessibilityRenderObject::create(AXID::generate(), *renderImage, *this);
+    if (toSimpleImage(renderer))
+        return RenderObjectClass::Generic;
 
 #if ENABLE(MATHML)
     // The mfenced element creates anonymous RenderMathMLOperators which should be treated
     // as MathML elements and assigned the MathElementRole so that platform logic regarding
     // inclusion and role mapping is not bypassed.
-    bool isAnonymousOperator = renderer.isAnonymous() && is<RenderMathMLOperator>(renderer);
-    if (isAnonymousOperator || is<MathMLElement>(node))
-        return AccessibilityMathMLElement::create(AXID::generate(), renderer, *this, isAnonymousOperator);
+    if ((renderer.isAnonymous() && is<RenderMathMLOperator>(renderer)) || is<MathMLElement>(node))
+        return RenderObjectClass::MathML;
 #endif
 
-    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(node); select && select->usesMenuList() && !select->usesBaseAppearancePicker())
-        return AccessibilityMenuList::create(AXID::generate(), renderer, *this);
+    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(node); select && select->isDropdownBox() && !select->usesBaseAppearancePicker())
+        return RenderObjectClass::MenuList;
 
     RefPtr optionElement = dynamicDowncast<HTMLOptionElement>(node);
     RefPtr optGroupElement = dynamicDowncast<HTMLOptGroupElement>(node);
     if (optionElement || optGroupElement) {
         RefPtr select = optionElement ? optionElement->ownerSelectElement() : optGroupElement->ownerSelectElement();
-        if (select && !select->usesMenuList())
-            return AccessibilityListBoxOption::create(AXID::generate(), downcast<HTMLElement>(*node), *this);
+        if (select && !select->isDropdownBox())
+            return RenderObjectClass::ListBoxOption;
     }
 
-    // Progress indicator.
-    if (is<RenderProgress>(renderer) || is<RenderMeter>(renderer)
-        || is<HTMLProgressElement>(node) || is<HTMLMeterElement>(node))
-        return AccessibilityProgressIndicator::create(AXID::generate(), renderer, *this);
+    if (is<RenderProgress>(renderer) || is<RenderMeter>(renderer) || is<HTMLProgressElement>(node) || is<HTMLMeterElement>(node))
+        return RenderObjectClass::ProgressIndicator;
 
-    // input type=range
     if (is<RenderSlider>(renderer))
-        return AccessibilitySlider::create(AXID::generate(), renderer, *this);
+        return RenderObjectClass::Slider;
 
-    return AccessibilityRenderObject::create(AXID::generate(), renderer, *this);
+    return RenderObjectClass::Generic;
+}
+
+static RenderObjectClass renderObjectClass(const AccessibilityRenderObject& object)
+{
+    if (object.isAccessibilitySVGObjectInstance())
+        return RenderObjectClass::SVG;
+#if ENABLE(MATHML)
+    if (is<AccessibilityMathMLElement>(object))
+        return RenderObjectClass::MathML;
+#endif
+    if (is<AccessibilityMenuList>(object))
+        return RenderObjectClass::MenuList;
+    if (object.isAccessibilityListBoxOptionInstance())
+        return RenderObjectClass::ListBoxOption;
+    if (object.isAccessibilityProgressIndicatorInstance())
+        return RenderObjectClass::ProgressIndicator;
+    if (object.isAccessibilitySliderInstance())
+        return RenderObjectClass::Slider;
+    return RenderObjectClass::Generic;
+}
+
+Ref<AccessibilityRenderObject> AXObjectCache::createObjectFromRenderer(RenderObject& renderer)
+{
+    switch (renderObjectClass(renderer)) {
+    case RenderObjectClass::Generic:
+        if (CheckedPtr renderImage = toSimpleImage(renderer))
+            return AccessibilityRenderObject::create(AXID::generate(), *renderImage, *this);
+        return AccessibilityRenderObject::create(AXID::generate(), renderer, *this);
+    case RenderObjectClass::SVG:
+        return AccessibilitySVGObject::create(AXID::generate(), renderer, *this, renderer.isRenderOrLegacyRenderSVGRoot());
+#if ENABLE(MATHML)
+    case RenderObjectClass::MathML:
+        return AccessibilityMathMLElement::create(AXID::generate(), renderer, *this, renderer.isAnonymous() && is<RenderMathMLOperator>(renderer));
+#endif
+    case RenderObjectClass::MenuList:
+        return AccessibilityMenuList::create(AXID::generate(), renderer, *this);
+    case RenderObjectClass::ListBoxOption:
+        return AccessibilityListBoxOption::create(AXID::generate(), protect(downcast<HTMLElement>(*renderer.node())), *this);
+    case RenderObjectClass::ProgressIndicator:
+        return AccessibilityProgressIndicator::create(AXID::generate(), renderer, *this);
+    case RenderObjectClass::Slider:
+        return AccessibilitySlider::create(AXID::generate(), renderer, *this);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Ref<AccessibilityNodeObject> AXObjectCache::createFromNode(Node& node)
@@ -1174,7 +1222,7 @@ AccessibilityObject* AXObjectCache::getOrCreateSlow(Node& node, IsPartOfRelation
         if (!select)
             return nullptr;
         RefPtr<AccessibilityObject> object;
-        if (select->usesMenuList() && !select->usesBaseAppearancePicker()) {
+        if (select->isDropdownBox() && !select->usesBaseAppearancePicker()) {
             if (!optionElement || !select->renderer())
                 return nullptr;
             object = AccessibilityMenuListOption::create(AXID::generate(), *optionElement, *this);
@@ -1388,8 +1436,10 @@ void AXObjectCache::setFrameGeometry(LocalFrame& frame, const AXFrameGeometry& g
 
     // Reset to zero to avoid leaving a stale value in the case of a null frame.view().
     m_frameViewOriginScrollPosition = { };
-    if (CheckedPtr view = frame.view())
-        m_frameViewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
+    if (CheckedPtr view = frame.view()) {
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST m_frameViewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
+    }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
@@ -1526,7 +1576,7 @@ void AXObjectCache::remove(Node& node)
     }
 
     // We cannot use RefPtr here as node's m_deletionHasBegun is true.
-    if (auto* nodeElement = dynamicDowncast<Element>(node)) {
+    if (CheckedPtr nodeElement = dynamicDowncast<Element>(node)) {
         m_deferredTextFormControlValue.remove(*nodeElement);
         m_deferredAttributeChange.removeAllMatching([&node] (const auto& entry) {
             return entry.element == &node;
@@ -1547,7 +1597,7 @@ void AXObjectCache::remove(Node& node)
 void AXObjectCache::remove(Widget& view)
 {
     remove(m_widgetIdMapping.takeOptional(view));
-    if (auto* scrollView = dynamicDowncast<ScrollView>(view))
+    if (RefPtr scrollView = dynamicDowncast<ScrollView>(view))
         m_deferredScrollbarUpdateChangeList.remove(*scrollView);
 }
 
@@ -1795,14 +1845,14 @@ void AXObjectCache::handleChildrenChanged(AccessibilityObject& object)
 
         AX_ASSERT(children.size() == 1);
         handleChildrenChanged(downcast<AccessibilityObject>(children[0].get()));
-    } else if (auto* menuListPopup = dynamicDowncast<AccessibilityMenuListPopup>(object)) {
+    } else if (RefPtr menuListPopup = dynamicDowncast<AccessibilityMenuListPopup>(object)) {
         menuListPopup->handleChildrenChanged();
         return;
-    } else if (auto* nodeObject = dynamicDowncast<AccessibilityNodeObject>(object); nodeObject && nodeObject->isTable())
+    } else if (RefPtr nodeObject = dynamicDowncast<AccessibilityNodeObject>(object); nodeObject && nodeObject->isTable())
         deferRecomputeTableCellSlots(*nodeObject);
     else if (auto* parentTable = dynamicDowncast<AccessibilityNodeObject>(object.parentTableIfExposedTableRow()))
         deferRecomputeTableCellSlots(*parentTable);
-    else if (auto* scrollView = dynamicDowncast<AccessibilityScrollView>(object)) {
+    else if (RefPtr scrollView = dynamicDowncast<AccessibilityScrollView>(object)) {
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
         if (scrollView->role() == AccessibilityRole::FrameHost) {
             // For FrameHost scroll views, propagate childrenChanged to the parent
@@ -1832,6 +1882,14 @@ void AXObjectCache::handleChildrenChanged(AccessibilityObject& object)
     object.setNeedsToUpdateSubtree();
 
     object.recomputeIsIgnored();
+
+    // The select popover is only exposed as a base appearance picker, which depends on the box type.
+    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(object.node())) {
+        if (RefPtr popover = select->pickerPopoverElement()) {
+            if (RefPtr axPopover = get(*popover))
+                axPopover->recomputeIsIgnored();
+        }
+    }
 
     if (auto* optionElement = dynamicDowncast<HTMLOptionElement>(object.node()); optionElement && optionElement->isRenderedWithBaseAppearance()) {
         // When a base-appearance select option's children change, its text descendants may need to
@@ -2096,10 +2154,13 @@ void AXObjectCache::childrenChanged(AccessibilityObject* object)
     m_deferredChildrenChangedList.add(*object);
 
     // Adding or removing rows from a table can cause it to change from layout table to AX data table and vice versa, so queue up recomputation of that for the parent table.
-    if (RefPtr tableElement = dynamicDowncast<HTMLTableElement>(object->element()))
-        deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableElement.get()));
-    else if (RefPtr tableSectionElement = dynamicDowncast<HTMLTableSectionElement>(object->element()))
-        deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableSectionElement->findParentTable().get()));
+    if (RefPtr tableElement = dynamicDowncast<HTMLTableElement>(object->element())) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableElement.get()));
+    } else if (RefPtr tableSectionElement = dynamicDowncast<HTMLTableSectionElement>(object->element())) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableSectionElement->findParentTable().get()));
+    }
 
     if (!m_performCacheUpdateTimer.isActive())
         m_performCacheUpdateTimer.startOneShot(0_s);
@@ -2786,7 +2847,7 @@ void AXObjectCache::onFrameSelectionFocusedOrActiveStateChanged(Document& docume
 
 void AXObjectCache::onInertOrVisibilityChange(RenderElement& renderer)
 {
-    if (renderer.style().effectiveInert() || renderer.style().usedVisibility() != Visibility::Visible) {
+    if (renderer.style().effectiveInert() || renderer.usedStyle().visibility() != UsedVisibility::Visible) {
         // An element becoming inert can cause all page content to become ignored,
         // which may require overriding aria-hidden on a blocked modal to prevent
         // an empty page. Arm the check for the next modalNode() query.
@@ -2971,9 +3032,11 @@ void AXObjectCache::onSelectedOptionChanged(Element& element)
 {
     if (hasCellARIARole(element))
         postNotification(&element, AXNotification::SelectedCellsChanged);
-    else if (is<HTMLOptionElement>(element))
+    else if (RefPtr option = dynamicDowncast<HTMLOptionElement>(element)) {
         postNotification(&element, AXNotification::SelectedStateChanged);
-    else if (RefPtr axObject = getOrCreate(element)) {
+        if (RefPtr select = option->ownerSelectElement(); select && !select->isDropdownBox())
+            deferSelectedChildrenChanged(*select);
+    } else if (RefPtr axObject = getOrCreate(element)) {
         if (RefPtr ancestor = Accessibility::findAncestor<AccessibilityObject>(*axObject, false, [] (const auto& object) {
             return object.canHaveSelectedChildren();
         })) {
@@ -3074,7 +3137,7 @@ void AXObjectCache::handleRemoteFrameGainedFocus(RemoteFrame& remoteFrame, Eleme
     recomputeIsIgnored(oldFocusedElement);
 }
 
-static bool NODELETE isContentVisibilityHidden(const Style::ComputedStyle& style)
+static bool LEGACY_NODELETE isContentVisibilityHidden(const Style::ComputedStyle& style)
 {
     return style.usedContentVisibility() == ContentVisibility::Hidden;
 }
@@ -3107,6 +3170,12 @@ void AXObjectCache::onStyleChange(Element& element, OptionSet<Style::Change> cha
         // We only need to do this when the given element doesn't have a renderer, as if it did, we would
         // get a children-changed event through the render tree.
         childrenChanged(object.get());
+    }
+
+    if (oldStyle->content().altText() != newStyle->content().altText()) {
+        m_deferredTextChangedList.add(element);
+        if (!m_performCacheUpdateTimer.isActive())
+            m_performCacheUpdateTimer.startOneShot(0_s);
     }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -3306,7 +3375,7 @@ static bool messageIsEmpty(Element* message)
             continue;
 
         CheckedPtr renderer = text->renderer();
-        if (renderer && !isVisibilityHidden(renderer->style()) && !text->data().containsOnly<isASCIIWhitespace>())
+        if (renderer && !isVisibilityHidden(*renderer) && !text->data().containsOnly<isASCIIWhitespace>())
             return false;
     }
     return true;
@@ -4251,11 +4320,53 @@ void AXObjectCache::handleActiveDescendantChange(Element& element, const AtomStr
         postPlatformNotification(*target, AXNotification::SelectedCellsChanged);
 }
 
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+// A hosted document's web area is ignored when its frame owner element is presentational (see
+// webAreaIsPresentational()), and the frame root's ignored state follows its web area's. Both live in
+// the hosted frame's own cache, so a role change on the owner must recompute them there.
+static void recomputeIsIgnoredForHostedFrameRoot(HTMLFrameOwnerElement& owner)
+{
+    RefPtr childLocalFrame = dynamicDowncast<LocalFrame>(owner.contentFrame());
+    RefPtr childDocument = childLocalFrame ? childLocalFrame->document() : nullptr;
+    CheckedPtr childCache = childDocument ? childDocument->existingAXObjectCache() : nullptr;
+    if (!childCache)
+        return;
+
+    RefPtr root = childCache->get(protect(childLocalFrame->view()).get());
+    if (!root)
+        return;
+
+    if (RefPtr webArea = root->webAreaObject())
+        webArea->recomputeIsIgnored();
+    root->recomputeIsIgnored();
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    // The roots of frames nested in the hosted document cache their cross-frame parent in the isolated tree,
+    // which may have been resolved through the hosted frame's root while it was ignored, so refresh them.
+    for (RefPtr frame = childLocalFrame->tree().traverseNext(childLocalFrame.get()); frame; frame = frame->tree().traverseNext(childLocalFrame.get())) {
+        RefPtr nestedLocalFrame = dynamicDowncast<LocalFrame>(frame);
+        RefPtr nestedDocument = nestedLocalFrame ? nestedLocalFrame->document() : nullptr;
+        CheckedPtr nestedCache = nestedDocument ? nestedDocument->existingAXObjectCache() : nullptr;
+        RefPtr nestedRoot = nestedCache ? nestedCache->get(protect(nestedLocalFrame->view()).get()) : nullptr;
+        if (!nestedRoot)
+            continue;
+        if (RefPtr tree = AXIsolatedTree::treeForFrameID(nestedCache->frameID()))
+            tree->queueNodeUpdate(nestedRoot->objectID(), { AXProperty::CrossFrameParentAXID });
+    }
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+}
+#endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+
 void AXObjectCache::handleRoleChanged(Element& element, const AtomString& oldValue, const AtomString& newValue)
 {
     AXTRACE("AXObjectCache::handleRoleChanged"_s);
     AXLOG(makeString("oldValue "_s, oldValue, " new value "_s, newValue));
     AX_ASSERT(oldValue != newValue);
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(element))
+        recomputeIsIgnoredForHostedFrameRoot(*frameOwner);
+#endif
 
     RefPtr object = get(element);
     if (!object)
@@ -4415,8 +4526,10 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
             // If we're re-computing the exposed state of the table, we only need to do work for non-ARIA tables, allowing us to
             // do a cheap dynamicDowncast check for an HTMLTablePartElement rather than calling AccessibilityNodeObject::parentTable().
             // (ARIA tables are inherently always exposed).
-            if (auto* tablePartElement = dynamicDowncast<HTMLTablePartElement>(element))
-                deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tablePartElement->findParentTable().get()));
+            if (auto* tablePartElement = dynamicDowncast<HTMLTablePartElement>(element)) {
+                // FIXME: Remove suppression once rdar://189998365 is fixed.
+                SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tablePartElement->findParentTable().get()));
+            }
         } else if (RefPtr object = getOrCreate(element); object && object->isTableCell()) {
             if (RefPtr parentTable = dynamicDowncast<AccessibilityNodeObject>(object->parentTable())) {
                 if (properties.contains(TableProperty::Exposed) && !parentTable->isAriaTable())
@@ -4467,9 +4580,16 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
                     postNotification(newControl.get(), AXNotification::TextChanged);
             }
         }
-    } else if (attrName == requiredAttr)
+    } else if (attrName == requiredAttr) {
         postNotification(element, AXNotification::RequiredStatusChanged);
-    else if (attrName == tabindexAttr) {
+        // A radio button is required when any button in its group is, so the others can change with it.
+        if (RefPtr input = dynamicDowncast<HTMLInputElement>(element); input && input->isRadioButton()) {
+            for (Ref radio : input->radioButtonGroup()) {
+                if (radio.ptr() != input.get())
+                    postNotification(radio.ptr(), AXNotification::RequiredStatusChanged);
+            }
+        }
+    } else if (attrName == tabindexAttr) {
         if (oldValue.isEmpty() || newValue.isEmpty()) {
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
             // When ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE), we don't need to do issue any children-changed events,
@@ -4753,7 +4873,7 @@ void AXObjectCache::updateCachedTextOfAssociatedObjects(AccessibilityObject& obj
 #endif
 }
 
-static bool NODELETE hasAnyARIALabelling(Element& element)
+static bool LEGACY_NODELETE hasAnyARIALabelling(Element& element)
 {
     return element.hasAttributeWithoutSynchronization(aria_labelAttr)
         || element.hasAttributeWithoutSynchronization(aria_labelledbyAttr)
@@ -5514,7 +5634,8 @@ std::optional<TextMarkerData> AXObjectCache::textMarkerDataForVisiblePosition(co
         }
         AX_ASSERT(domOffset >= differenceBetweenDomAndRenderedOffsets);
         unsigned renderedOffset = domOffset - differenceBetweenDomAndRenderedOffsets;
-        return createFromRendererAndOffset(const_cast<RenderText&>(*renderText), renderedOffset);
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return createFromRendererAndOffset(const_cast<RenderText&>(*renderText), renderedOffset);
     }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
@@ -5679,7 +5800,7 @@ char32_t AXObjectCache::characterBefore(const CharacterOffset& characterOffset)
     return characterForCharacterOffset(characterOffset);
 }
 
-static bool NODELETE characterOffsetNodeIsBR(const CharacterOffset& characterOffset)
+static bool LEGACY_NODELETE characterOffsetNodeIsBR(const CharacterOffset& characterOffset)
 {
     if (characterOffset.isNull())
         return false;
@@ -5696,8 +5817,9 @@ static Node* parentEditingBoundary(Node* node)
     if (!documentElement)
         return nullptr;
 
+    bool nodeHasEditableStyle = node->hasEditableStyle();
     RefPtr boundary = node;
-    while (boundary != documentElement && boundary->nonShadowBoundaryParentNode() && node->hasEditableStyle() == protect(boundary->parentNode())->hasEditableStyle())
+    while (boundary != documentElement && boundary->nonShadowBoundaryParentNode() && nodeHasEditableStyle == protect(boundary->parentNode())->hasEditableStyle())
         boundary = boundary->nonShadowBoundaryParentNode();
 
     return boundary.unsafeGet();
@@ -5954,10 +6076,12 @@ LayoutRect AXObjectCache::localCaretRectForCharacterOffset(RenderObject*& render
         return IntRect();
 
     auto boxAndOffset = makeContainerOffsetPosition(range->start).inlineBoxAndOffset(Affinity::Downstream);
-    if (boxAndOffset.box)
-        renderer = const_cast<RenderObject*>(&boxAndOffset.box->renderer());
+    if (boxAndOffset.box) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST renderer = const_cast<RenderObject*>(&boxAndOffset.box->renderer());
+    }
 
-    if (auto* renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer); renderLineBreak && InlineIterator::boxFor(*renderLineBreak) != boxAndOffset.box)
+    if (CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer); renderLineBreak && InlineIterator::boxFor(*renderLineBreak) != boxAndOffset.box)
         return IntRect();
 
     return computeLocalCaretRect(*renderer, boxAndOffset);
@@ -6224,11 +6348,38 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
     };
 
     AXLOGDeferredCollection("RendererChangedList"_s, m_deferredRendererChangedList);
+    Vector<Ref<Element>> elementsNeedingNewObjects;
     for (Ref object : m_deferredRendererChangedList) {
+        // An object keeps its class when the renderer of its element changes, for instance when a select
+        // switches appearance, so replace it when the new renderer calls for another class.
+        RefPtr renderObject = dynamicDowncast<AccessibilityRenderObject>(object);
+        RefPtr element = dynamicDowncast<Element>(object->node());
+        CheckedPtr renderer = object->renderer();
+        if (renderObject && element && renderer && renderObjectClass(*renderer) != renderObjectClass(*renderObject)) {
+            elementsNeedingNewObjects.append(element.releaseNonNull());
+            continue;
+        }
         object->updateRole();
         object->recomputeIsIgnored();
     }
     m_deferredRendererChangedList.clear();
+
+    for (Ref element : elementsNeedingNewObjects) {
+        RefPtr object = get(element);
+        RefPtr parent = object ? object->parentObject() : nullptr;
+        // The objects of the options and optgroups of a select depend on how the select renders.
+        if (RefPtr select = dynamicDowncast<HTMLSelectElement>(element)) {
+            for (auto& item : select->listItems()) {
+                if (RefPtr listItem = item.get(); listItem && (is<HTMLOptionElement>(*listItem) || is<HTMLOptGroupElement>(*listItem)))
+                    remove(*listItem);
+            }
+        }
+        remove(element);
+        childrenChanged(parent.get());
+        // Move assistive technology to the new object if the old one had focus.
+        if (protect(element->document())->focusedElement() == element.ptr() && !m_deferredFocusedNodeChange)
+            m_deferredFocusedNodeChange = { nullptr, element.ptr() };
+    }
 
     AXLOGDeferredCollection("RecomputeActiveSummaryList"_s, m_deferredRecomputeActiveSummaryList);
     for (Ref object : m_deferredRecomputeActiveSummaryList) {
@@ -6314,7 +6465,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
 
     AXLOGDeferredCollection("RecomputeIsIgnoredList"_s, m_deferredRecomputeIsIgnoredList);
     m_deferredRecomputeIsIgnoredList.forEach([this] (auto& element) {
-        if (auto* renderer = element.renderer())
+        if (CheckedPtr renderer = element.renderer())
             recomputeIsIgnored(*renderer);
     });
     m_deferredRecomputeIsIgnoredList.clear();
@@ -6714,7 +6865,7 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
             tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::IdentifierAttribute });
             break;
         case AXNotification::RadioGroupMembershipChanged:
-            tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::RadioButtonGroupMembers });
+            tree->queueNodeUpdate(notification.first->objectID(), { { AXProperty::RadioButtonGroupMembers, AXProperty::IsRequired } });
             break;
         case AXNotification::ReadOnlyStatusChanged:
             tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::CanSetValueAttribute });
@@ -6877,7 +7028,8 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
                         [&](const Style::BasicShapePath& clipPath) {
                             auto borderRect = renderBox->borderBoxRect();
                             borderRect.inflate(shapePathInflationPx);
-                            auto referenceBox = FloatRect(WTF::move(borderRect));
+                            // FIXME: Remove suppression once rdar://189998444 is fixed.
+                            SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(WTF::move(borderRect));
                             auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
                             path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
                             m_geometryManager->cachePathForID(*axID, WTF::makeUnique<Path>(WTF::move(path)));
@@ -6887,7 +7039,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
                 } else if (renderBox->style().border().hasBorderRadius()) {
                     auto borderRect = renderBox->borderBoxRect();
                     borderRect.inflate(shapePathInflationPx);
-                    auto borderShape = BorderShape::shapeForBorderRect(protect(renderBox->style()), WTF::move(borderRect));
+                    auto borderShape = BorderShape::shapeForBorderRect(renderBox->usedStyle(), WTF::move(borderRect));
                     auto path = borderShape.pathForOuterShape(renderer.document().deviceScaleFactor());
                     // borderBoxRect() is in local coordinates starting at (0, 0). Use the paint
                     // rect's origin to position the path, since it's already gone through
@@ -7027,18 +7179,14 @@ void AXObjectCache::deferTextChangedIfNeeded(Node* node)
     handleTextChanged(protect(getOrCreate(*node)));
 }
 
-void AXObjectCache::deferSelectedChildrenChangedIfNeeded(Element& selectElement)
+void AXObjectCache::deferSelectedChildrenChanged(Element& selectElement)
 {
     if (!nodeRendererIsValid(selectElement))
         return;
 
-    if (rendererNeedsDeferredUpdate(*selectElement.renderer())) {
-        m_deferredSelectedChildredChangedList.add(selectElement);
-        if (!m_performCacheUpdateTimer.isActive())
-            m_performCacheUpdateTimer.startOneShot(0_s);
-        return;
-    }
-    selectedChildrenChanged(&selectElement);
+    m_deferredSelectedChildredChangedList.add(selectElement);
+    if (!m_performCacheUpdateTimer.isActive())
+        m_performCacheUpdateTimer.startOneShot(0_s);
 }
 
 void AXObjectCache::deferTextReplacementNotificationForTextControl(HTMLTextFormControlElement& formControlElement, const String& previousValue)
@@ -7054,13 +7202,23 @@ bool isNodeFocused(Node& node)
     return is<Element>(node) && uncheckedDowncast<Element>(node).focused();
 }
 
+bool isVisibilityHidden(const RenderObject& renderer)
+{
+    return renderer.usedStyle().visibility() != UsedVisibility::Visible || isContentVisibilityHidden(renderer.style());
+}
+
 bool isVisibilityHidden(const Style::ComputedStyle& style)
 {
-    return style.usedVisibility() != Visibility::Visible || isContentVisibilityHidden(style);
+    return style.visibility() != Visibility::Visible || style.isForceHidden() || isContentVisibilityHidden(style);
 }
 
 // DOM component of hidden definition.
 // https://www.w3.org/TR/wai-aria/#dfn-hidden
+bool isRenderHidden(const RenderObject& renderer)
+{
+    return renderer.style().display() == Style::DisplayType::None || isVisibilityHidden(renderer);
+}
+
 bool isRenderHidden(const Style::ComputedStyle& style)
 {
     return style.display() == Style::DisplayType::None || isVisibilityHidden(style);
@@ -7126,7 +7284,7 @@ AXTreeData AXObjectCache::treeData(std::optional<OptionSet<AXStreamOptions>> add
             data.warnings.append("Couldn't verify the frame-loader client had an isolated tree because the cache has no m_document."_s);
         else if (!document->frame())
             data.warnings.append("Couldn't verify the frame-loader client had an isolated tree because the cache's document had no frame."_s);
-        else if (!document->frame()->loader().client().isolatedTree())
+        else if (!protect(document->frame()->loader().client())->isolatedTree())
             data.warnings.append("The frame-loader client (typically the webpage object) had no isolated tree set!"_s);
 
         stream << "\nAXIsolatedTree:\n";
@@ -7297,14 +7455,14 @@ AXRelation AXObjectCache::attributeToRelationType(const QualifiedName& attribute
     return AXRelation::None;
 }
 
-static bool NODELETE validRelation(void* origin, void* target, AXRelation relation)
+static bool LEGACY_NODELETE validRelation(void* origin, void* target, AXRelation relation)
 {
     if (!origin || !target || relation == AXRelation::None)
         return false;
     return origin != target || relation == AXRelation::LabeledBy;
 }
 
-static bool NODELETE validRelation(Element& origin, Element& target, AXRelation relation)
+static bool LEGACY_NODELETE validRelation(Element& origin, Element& target, AXRelation relation)
 {
     if (relation == AXRelation::None)
         return false;
@@ -7330,7 +7488,7 @@ bool AXObjectCache::addRelation(Element& origin, Element& target, AXRelation rel
     return addRelation(RefPtr { getOrCreate(origin, IsPartOfRelation::Yes) }.get(), RefPtr { getOrCreate(target, IsPartOfRelation::Yes) }.get(), relation);
 }
 
-static bool NODELETE canHaveRelations(Element& element)
+static bool LEGACY_NODELETE canHaveRelations(Element& element)
 {
     auto elementName = element.elementName();
     return !(elementName == ElementName::HTML_meta || elementName == ElementName::HTML_head || elementName == ElementName::HTML_script || elementName == ElementName::HTML_html || elementName == ElementName::HTML_style);
@@ -7542,7 +7700,7 @@ void AXObjectCache::updateRelationsIfNeeded()
 
     if (!m_doneInitialRelationsBuild) {
         if (m_document)
-            updateRelationsForTree(m_document->rootNode());
+            updateRelationsForTree(protect(m_document->rootNode()));
         m_doneInitialRelationsBuild = true;
         addDetectedFormErrorRelations();
         return;
@@ -7568,7 +7726,7 @@ void AXObjectCache::updateRelationsForTree(ContainerNode& rootNode)
 
         if (RefPtr shadowRoot = element->shadowRoot(); shadowRoot && shadowRoot->mode() != ShadowRootMode::UserAgent)
             updateRelationsForTree(*shadowRoot);
-        if (auto* frameOwnerElement = dynamicDowncast<HTMLFrameOwnerElement>(element.get())) {
+        if (RefPtr frameOwnerElement = dynamicDowncast<HTMLFrameOwnerElement>(element)) {
             if (RefPtr document = frameOwnerElement->contentDocument())
                 updateRelationsForTree(*document);
         }

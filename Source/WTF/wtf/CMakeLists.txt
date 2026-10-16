@@ -756,6 +756,7 @@ elseif (APPLE)
         cocoa/TypeCastsCocoa.h
         cocoa/VectorCocoa.h
 
+        darwin/DarwinExtras.h
         darwin/DispatchExtras.h
         darwin/DispatchOSObject.h
         darwin/LibraryPathDiagnostics.h

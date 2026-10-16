@@ -293,6 +293,11 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
+#if ENABLE(AOT)
+        } else if (std::optional<bool> isFound = object->type() == ObjectType ? object->getOwnPropertySlotOfCompiledObject(propertyName, slot) : std::nullopt) {
+            if (*isFound)
+                return true;
+#endif
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
@@ -1750,9 +1755,12 @@ ALWAYS_INLINE bool JSObject::putDirectIndex(JSGlobalObject* globalObject, uint64
 
 inline void JSObject::ensureWritable(VM& vm)
 {
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
-    else if (hasTypedContiguous(indexingMode())) [[unlikely]]
+    if (isCopyOnWrite(indexingMode())) {
+        if (hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        else
+            convertFromCopyOnWrite(vm);
+    } else if (hasTypedContiguous(indexingMode())) [[unlikely]]
         convertTypedContiguousToContiguous(vm);
 }
 
@@ -1761,7 +1769,10 @@ inline bool JSObject::tryMakeWritable(VM& vm)
     if (isCopyOnWrite(indexingMode())) {
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return false;
-        convertFromCopyOnWrite(vm);
+        if (hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        else
+            convertFromCopyOnWrite(vm);
     } else if (hasTypedContiguous(indexingMode())) [[unlikely]]
         convertTypedContiguousToContiguous(vm);
     return true;

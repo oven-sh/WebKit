@@ -445,7 +445,7 @@ std::optional<Writes> writesOfInlineRegExp(InlineBuiltin which, std::span<const 
 // `lastIndex` is an own property of every RegExp object, of a subclass too, that cannot be deleted or made an accessor. It is kept in a word of the cell, where no slot of a site reaches it.
 bool Lowering::isNamedLastIndex(StringID name) const
 {
-    return equalSpans(m_program.string(name), "lastIndex"_s.span8());
+    return equalSpans(m_program.string(name), asBytes("lastIndex"_s.span8()));
 }
 
 CellPointer Lowering::regExpObjectOrElse(Boxed value, LBasicBlock otherwise)

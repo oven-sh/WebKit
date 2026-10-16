@@ -34,6 +34,7 @@
 #include "NetworkBroadcastChannelRegistry.h"
 #include "NetworkConnectionToWebProcess.h"
 #include "NetworkDataTask.h"
+#include "NetworkLoad.h"
 #include "NetworkLoadScheduler.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
@@ -47,6 +48,7 @@
 #include "PrivateClickMeasurementManagerProxy.h"
 #include "RemoteWorkerType.h"
 #include "ServiceWorkerFetchTask.h"
+#include "WebErrors.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcessProxy.h"
@@ -59,9 +61,12 @@
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/LocalNetworkAccess.h>
 #include <WebCore/PermissionState.h>
+#include <WebCore/ResourceError.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SWServer.h>
+#include <WebCore/SharedBuffer.h>
 #include <numeric>
+#include <wtf/Borrow.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -90,8 +95,78 @@ using namespace WebCore;
 
 constexpr Seconds cachedNetworkResourceLoaderLifetime { 30_s };
 
+class ImageDecoderLoad final : public RefCounted<ImageDecoderLoad>, public NetworkLoadClient {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ImageDecoderLoad);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ImageDecoderLoad);
+public:
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    static void create(NetworkSession& session, ResourceRequest&& request, WebPageProxyIdentifier pageID, size_t maximumBytesFromNetwork, CompletionHandler<void(std::expected<Ref<FragmentedSharedBuffer>, ResourceError>&&)>&& completionHandler)
+    {
+        Ref load = adoptRef(*new ImageDecoderLoad(session, WTF::move(request), pageID, maximumBytesFromNetwork, WTF::move(completionHandler)));
+
+        // Keep the load alive until it completes.
+        load->m_selfReference = &load.get();
+        load->start();
+    }
+
+private:
+    ImageDecoderLoad(NetworkSession& session, ResourceRequest&& request, WebPageProxyIdentifier pageID, size_t maximumBytesFromNetwork, CompletionHandler<void(std::expected<Ref<FragmentedSharedBuffer>, ResourceError>&&)>&& completionHandler)
+        : m_url(request.url())
+        , m_maximumBytesFromNetwork(maximumBytesFromNetwork)
+        , m_completionHandler(WTF::move(completionHandler))
+    {
+        NetworkLoadParameters parameters;
+        parameters.request = WTF::move(request);
+        parameters.webPageProxyID = pageID;
+        m_load = NetworkLoad::create(*this, WTF::move(parameters), session);
+    }
+
+    void start() { protect(m_load)->start(); }
+
+    bool isSynchronous() const final { return false; }
+    bool isAllowedToAskUserForCredentials() const final { return true; }
+    void didSendData(uint64_t, uint64_t) final { }
+    void willSendRedirectedRequest(ResourceRequest&&, ResourceRequest&& request, ResourceResponse&&, CompletionHandler<void(ResourceRequest&&)>&& completionHandler) final { completionHandler(WTF::move(request)); }
+    void didReceiveResponse(ResourceResponse&&, PrivateRelayed, ResponseCompletionHandler&& completionHandler) final { completionHandler(PolicyAction::Use); }
+    void didReceiveBuffer(const FragmentedSharedBuffer& buffer) final
+    {
+        if (m_buffer.size() > m_maximumBytesFromNetwork || buffer.size() > m_maximumBytesFromNetwork - m_buffer.size()) {
+            Ref protectedThis { *this };
+            protect(m_load)->cancel();
+            complete(makeUnexpected(imageDataExceedsMaximumSizeError(m_url)));
+            return;
+        }
+        m_buffer.append(buffer);
+    }
+    void didFinishLoading(const NetworkLoadMetrics&) final { complete(m_buffer.takeBuffer()); }
+    void didFailLoading(const ResourceError& error) final { complete(makeUnexpected(error)); }
+
+    void complete(std::expected<Ref<FragmentedSharedBuffer>, ResourceError>&& result)
+    {
+        if (!m_completionHandler)
+            return;
+        auto completionHandler = WTF::move(m_completionHandler);
+        completionHandler(WTF::move(result));
+        m_selfReference = nullptr;
+    }
+
+    RefPtr<ImageDecoderLoad> m_selfReference;
+    const URL m_url;
+    const size_t m_maximumBytesFromNetwork;
+    RefPtr<NetworkLoad> m_load;
+    CompletionHandler<void(std::expected<Ref<FragmentedSharedBuffer>, ResourceError>&&)> m_completionHandler;
+    SharedBufferBuilder m_buffer;
+};
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkSession);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkSession::CachedNetworkResourceLoader);
+
+void NetworkSession::loadImageForDecoding(ResourceRequest&& request, WebPageProxyIdentifier pageID, size_t maximumBytesFromNetwork, CompletionHandler<void(std::expected<Ref<FragmentedSharedBuffer>, ResourceError>&&)>&& completionHandler)
+{
+    ImageDecoderLoad::create(*this, WTF::move(request), pageID, maximumBytesFromNetwork, WTF::move(completionHandler));
+}
 
 std::unique_ptr<NetworkSession> NetworkSession::create(NetworkProcess& networkProcess, const NetworkSessionCreationParameters& parameters)
 {
@@ -308,7 +383,7 @@ WebCore::IPAddressSpace NetworkSession::classifyConnectionAddressSpace(const std
 
     // Checked first, so a test can describe a space a loopback-only server could not otherwise produce.
     if (auto port = url.port()) {
-        for (auto& candidate : m_ipAddressSpaceOverridesForTesting) {
+        for (auto& candidate : borrow(m_ipAddressSpaceOverridesForTesting)) {
             if (candidate.port == *port && candidate.address == *resolvedIPAddress)
                 return candidate.space;
         }
@@ -411,10 +486,16 @@ IsKnownCrossSiteTracker NetworkSession::isResourceFromKnownCrossSiteTracker(cons
     return isRequestToKnownCrossSiteTracker(request);
 }
 
+bool NetworkSession::isPrevalentDomain(const URL& url) const
+{
+    CheckedPtr storageSession = networkStorageSession();
+    return storageSession && storageSession->shouldBlockThirdPartyCookies(RegistrableDomain { url });
+}
+
 void NetworkSession::deleteAndRestrictWebsiteDataForRegistrableDomains(OptionSet<WebsiteDataType> dataTypes, RegistrableDomainsToDeleteOrRestrictWebsiteDataFor&& domains, CompletionHandler<void(HashSet<RegistrableDomain>&&)>&& completionHandler)
 {
     if (CheckedPtr storageSession = networkStorageSession()) {
-        for (auto& domain : domains.domainsToEnforceSameSiteStrictFor)
+        for (auto& domain : borrow(domains.domainsToEnforceSameSiteStrictFor))
             storageSession->setAllCookiesToSameSiteStrict(domain, [] { });
     }
     domains.domainsToEnforceSameSiteStrictFor.clear();
@@ -777,7 +858,7 @@ void NetworkSession::setParkedLoaderDestinationAndResolvePendingClaims(NetworkRe
     Ref parkedLoader = entry->value;
     parkedLoader->setDestinationWebProcess(destinationWebProcess);
 
-    auto pendingClaims = parkedLoader->takePendingClaims();
+    const auto pendingClaims = parkedLoader->takePendingClaims();
     if (pendingClaims.isEmpty())
         return;
 
@@ -916,7 +997,7 @@ ServiceWorkerFetchTask* NetworkSession::navigationPreloaderTaskFromFetchIdentifi
 
 WebSWOriginStore* NetworkSession::swOriginStore() const
 {
-    return m_swServer ? &static_cast<WebSWOriginStore&>(m_swServer->originStore()) : nullptr;
+    return m_swServer ? &downcast<WebSWOriginStore>(m_swServer->originStore()) : nullptr;
 }
 
 void NetworkSession::registerSWServerConnection(WebSWServerConnection& connection)
@@ -969,7 +1050,7 @@ void NetworkSession::setEmulatedConditions(std::optional<uint64_t> bandwidthByte
 }
 #endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
-static double NODELETE connectionTimesMovingAverage(const Deque<Seconds, 25>& connectionTimes)
+static double LEGACY_NODELETE connectionTimesMovingAverage(const Deque<Seconds, 25>& connectionTimes)
 {
     constexpr double alphaSmoothing { 0.75 };
     // EWMA:

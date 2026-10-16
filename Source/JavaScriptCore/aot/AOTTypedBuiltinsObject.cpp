@@ -10,6 +10,7 @@
 
 #include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"
+#include "AOTOperationsObjects.h"
 #include "AOTRuntime.h"
 #include "AOTTypedObject.h"
 #include "B3StackmapGenerationParams.h"
@@ -93,12 +94,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedOwnPropertyKeys, JSCell*, (Instance* i
     case OwnKeys::ObjectGetOwnPropertyNames:
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Include));
     case OwnKeys::ObjectGetOwnPropertySymbols:
+        if (const Typed::LayoutData* layout = object->structure()->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && !uncheckedDowncast<Typed::Object>(object)->extraProperties())
+            OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Symbols, DontEnumPropertiesMode::Include));
     case OwnKeys::ReflectOwnKeys:
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
+
+static JSArray* tryListValuesOfCompiledObject(JSGlobalObject*, VM&, JSObject*);
 
 // As objectConstructorValues().
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectValues, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
@@ -110,6 +115,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectValues, JSCell*, (Instance* inst
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         OPERATION_RETURN(scope, list.asCell());
     }
+    if (value.isObject() && asObject(value)->structure()->compiledLayout() && !globalObject->isHavingABadTime()) {
+        if (JSArray* list = tryListValuesOfCompiledObject(globalObject, vm, asObject(value)))
+            OPERATION_RETURN(scope, list);
+    }
     JSValue values = objectValues(vm, globalObject, value);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, values.asCell());
@@ -119,10 +128,11 @@ struct KeysAndFieldsOfCompiledObject {
     Typed::Object* object { nullptr };
     JSCellButterfly* names { nullptr };
     std::span<const Typed::State::FieldAsProperty> fields;
-    JSValue valueAt(unsigned index) const
+    ALWAYS_INLINE JSValue valueAt(unsigned index) const
     {
-        JSValue value = object->readInline(*fields[index].field);
-        return value ? value : object->read(*fields[index].field);
+        const Typed::FieldData& field = *fields.data()[index].field;
+        JSValue value = object->readInline(field);
+        return value ? value : object->read(field);
     }
 };
 
@@ -138,12 +148,62 @@ static std::optional<KeysAndFieldsOfCompiledObject> keysAndFieldsOfCompiledObjec
     auto fields = object->state().propertiesInOrder(vm, object->layout(), object->orderWord() & Typed::orderAndCountMask);
     if (!fields || fields->size() != names->length())
         return std::nullopt;
-    KeysAndFieldsOfCompiledObject result { object, names, *fields };
-    for (unsigned i = 0; i < names->length(); ++i) {
-        if (!result.valueAt(i))
-            return std::nullopt;
+    return KeysAndFieldsOfCompiledObject { object, names, *fields };
+}
+
+static NEVER_INLINE JSArray* tryListValuesOfCompiledObject(JSGlobalObject* globalObject, VM& vm, JSObject* target)
+{
+    auto compiled = keysAndFieldsOfCompiledObject(vm, target);
+    if (!compiled)
+        return nullptr;
+    Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    if (!hasContiguous(arrayStructure->indexingType()))
+        return nullptr;
+    unsigned count = compiled->names->length();
+    JSArray* list = JSArray::tryCreate(vm, arrayStructure, count);
+    if (!list)
+        return nullptr;
+    auto elements = list->butterfly()->contiguous();
+    for (unsigned i = 0; i < count; ++i) {
+        JSValue value = compiled->valueAt(i);
+        if (!value)
+            return nullptr;
+        elements.atUnsafe(i).setWithoutWriteBarrier(value);
     }
-    return result;
+    ensureStillAliveHere(target);
+    return list;
+}
+
+static NEVER_INLINE JSArray* tryMakeEntriesOfCompiledObject(JSGlobalObject* globalObject, VM& vm, JSObject* target)
+{
+    auto compiled = keysAndFieldsOfCompiledObject(vm, target);
+    if (!compiled)
+        return nullptr;
+    Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    if (!hasContiguous(arrayStructure->indexingType()) || arrayStructure->outOfLineCapacity())
+        return nullptr;
+    unsigned count = compiled->names->length();
+    JSArray* entries = JSArray::tryCreate(vm, arrayStructure, count);
+    if (!entries)
+        return nullptr;
+    constexpr unsigned vectorLength = vectorLengthOfArrayLiteral(2);
+    for (unsigned i = 0; i < count; ++i) {
+        void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
+        JSValue value = compiled->valueAt(i);
+        if (!storage || !value)
+            return nullptr;
+        Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
+        butterfly->setVectorLength(vectorLength);
+        butterfly->setPublicLength(2);
+        butterfly->contiguous().atUnsafe(0).setWithoutWriteBarrier(compiled->names->get(i));
+        butterfly->contiguous().atUnsafe(1).setWithoutWriteBarrier(value);
+        for (unsigned k = 2; k < vectorLength; ++k)
+            butterfly->contiguous().atUnsafe(k).clear();
+        entries->butterfly()->contiguous().at(entries, i).set(vm, entries, JSArray::createWithButterfly(vm, nullptr, arrayStructure, butterfly));
+    }
+    ensureStillAliveHere(compiled->names);
+    ensureStillAliveHere(target);
+    return entries;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedObjectEntries, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
@@ -154,33 +214,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedObjectEntries, JSCell*, (Inst
         return nullptr;
     JSObject* target = asObject(value);
     Structure* structure = target->structure();
-    auto compiled = keysAndFieldsOfCompiledObject(vm, target);
-    if (compiled) {
-        Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-        if (!hasContiguous(arrayStructure->indexingType()) || arrayStructure->outOfLineCapacity())
-            return nullptr;
-        unsigned count = compiled->names->length();
-        JSArray* entries = JSArray::tryCreate(vm, arrayStructure, count);
-        if (!entries)
-            return nullptr;
-        constexpr unsigned vectorLength = vectorLengthOfArrayLiteral(2);
-        for (unsigned i = 0; i < count; ++i) {
-            void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
-            if (!storage)
-                return nullptr;
-            Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
-            butterfly->setVectorLength(vectorLength);
-            butterfly->setPublicLength(2);
-            butterfly->contiguous().atUnsafe(0).setWithoutWriteBarrier(compiled->names->get(i));
-            butterfly->contiguous().atUnsafe(1).setWithoutWriteBarrier(compiled->valueAt(i));
-            for (unsigned k = 2; k < vectorLength; ++k)
-                butterfly->contiguous().atUnsafe(k).clear();
-            entries->butterfly()->contiguous().at(entries, i).set(vm, entries, JSArray::createWithButterfly(vm, nullptr, arrayStructure, butterfly));
-        }
-        ensureStillAliveHere(compiled->names);
-        ensureStillAliveHere(target);
-        return entries;
-    }
+    if (structure->compiledLayout())
+        return tryMakeEntriesOfCompiledObject(globalObject, vm, target);
     if (!target->staticPropertiesReified() || target->canHaveExistingOwnIndexedProperties() || target->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon())
         return nullptr;
     JSCellButterfly* names = structure->cachedPropertyNames(CachedPropertyNamesKind::EnumerableStrings);
@@ -227,29 +262,39 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedObjectEntries, JSCell*, (Inst
     return entries;
 }
 
+static NEVER_INLINE JSArray* tryListEntriesOfCompiledObject(JSGlobalObject* globalObject, VM& vm, JSObject* target)
+{
+    auto compiled = keysAndFieldsOfCompiledObject(vm, target);
+    if (!compiled)
+        return nullptr;
+    Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    if (!hasContiguous(arrayStructure->indexingType()))
+        return nullptr;
+    unsigned count = compiled->names->length();
+    JSArray* list = JSArray::tryCreate(vm, arrayStructure, 2 * count);
+    if (!list)
+        return nullptr;
+    auto elements = list->butterfly()->contiguous();
+    for (unsigned i = 0; i < count; ++i) {
+        JSValue value = compiled->valueAt(i);
+        if (!value)
+            return nullptr;
+        elements.atUnsafe(2 * i).setWithoutWriteBarrier(compiled->names->get(i));
+        elements.atUnsafe(2 * i + 1).setWithoutWriteBarrier(value);
+    }
+    ensureStillAliveHere(compiled->names);
+    ensureStillAliveHere(target);
+    return list;
+}
+
 static JSArray* tryListEntriesOfOrdinaryObject(JSGlobalObject* globalObject, VM& vm, JSValue value)
 {
     if (!value.isObject() || globalObject->isHavingABadTime())
         return nullptr;
     JSObject* target = asObject(value);
     Structure* structure = target->structure();
-    if (auto compiled = keysAndFieldsOfCompiledObject(vm, target)) {
-        Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-        if (!hasContiguous(arrayStructure->indexingType()))
-            return nullptr;
-        unsigned count = compiled->names->length();
-        JSArray* list = JSArray::tryCreate(vm, arrayStructure, 2 * count);
-        if (!list)
-            return nullptr;
-        auto elements = list->butterfly()->contiguous();
-        for (unsigned i = 0; i < count; ++i) {
-            elements.atUnsafe(2 * i).setWithoutWriteBarrier(compiled->names->get(i));
-            elements.atUnsafe(2 * i + 1).setWithoutWriteBarrier(compiled->valueAt(i));
-        }
-        ensureStillAliveHere(compiled->names);
-        ensureStillAliveHere(target);
-        return list;
-    }
+    if (structure->compiledLayout())
+        return tryListEntriesOfCompiledObject(globalObject, vm, target);
     if (!target->staticPropertiesReified() || target->canHaveExistingOwnIndexedProperties() || target->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon())
         return nullptr;
     JSCellButterfly* names = structure->cachedPropertyNames(CachedPropertyNamesKind::EnumerableStrings);
@@ -436,7 +481,7 @@ static bool mayHaveIndexThatAStoreDoesNotDefine(JSObject* target)
 }
 
 // As operationObjectAssignUntyped().
-static void assignFrom(JSGlobalObject* globalObject, JSObject* target, JSValue sourceValue)
+static void assignFrom(Instance* instance, JSGlobalObject* globalObject, JSObject* target, JSValue sourceValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -445,6 +490,8 @@ static void assignFrom(JSGlobalObject* globalObject, JSObject* target, JSValue s
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexThatAStoreDoesNotDefine(targetObject))) {
+        if (Structure* structure = targetObject->structure(); source->type() == FinalObjectType && !structure->mayBePrototype() && !structure->isWatchingReplacement() && tryCopyDataProperties(instance, vm, targetObject, source, nullptr, "operationAOTTypedObjectAssignFrom"))
+            return;
         if (!source->staticPropertiesReified()) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
@@ -463,7 +510,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectAssignFrom, void, (Instance* ins
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     scope.release();
-    assignFrom(globalObject, asObject(target), JSValue::decode(source));
+    assignFrom(instance, globalObject, asObject(target), JSValue::decode(source));
     OPERATION_RETURN(scope);
 }
 
@@ -484,7 +531,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectAssignToNew, JSCell*, (Instance*
         }
     }
     JSFinalObject* target = constructEmptyObject(globalObject);
-    assignFrom(globalObject, target, sourceValue);
+    assignFrom(instance, globalObject, target, sourceValue);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, target);
 }
@@ -522,10 +569,12 @@ static std::optional<bool> notePlaceInCompiledObject(Instance* instance, JSObjec
     switch (field->store()) {
     case Store::JSValue:
     case Store::Cell:
+    case Store::LiteralString:
         width = 8;
         break;
     case Store::Cell32:
     case Store::OptionalCell32:
+    case Store::LiteralString32:
         static_assert(!Typed::absentCell32);
         width = 4;
         break;
@@ -695,8 +744,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnPropertyOfName, size_t, (Instanc
     const Identifier& identifier = instance->typed->name(vm, name);
     if (const Typed::LayoutData* layout = object->structure()->compiledLayout(); layout && Typed::isObjectLayout(layout->kind)) {
         auto* compiled = uncheckedDowncast<Typed::Object>(object);
-        if (const Typed::FieldData* field = compiled->fieldNamed(compiled->state(), identifier))
+        if (const Typed::FieldData* field = compiled->fieldNamed(compiled->state(), identifier)) {
+            if (!compiled->state().mayBeAbsent(*field)) {
+                instance->noteOwnPropertyAnswer(object->structureID().bits(), name, true);
+                OPERATION_RETURN(scope, true);
+            }
             OPERATION_RETURN(scope, !!compiled->read(*field));
+        }
         if (Typed::Object::absenceIsByStructure(object->structure(), identifier.impl())) {
             instance->noteOwnPropertyAnswer(object->structureID().bits(), name, false);
             OPERATION_RETURN(scope, false);
@@ -812,7 +866,7 @@ CellPointer Lowering::newCopyOnWriteArray(LValue list, LBasicBlock slowPath)
 {
     static_assert(sizeof(JSArray) <= MarkedSpace::preciseCutoff && !(sizeof(JSArray) % MarkedSpace::sizeStep));
     // Zero once arrays are no longer allocated with this structure.
-    LValue header = changing64(Instance::offsetOfNewCopyOnWriteArrayHeaders() + 2 * sizeof(uint64_t));
+    LValue header = changing64(Instance::offsetOfNewCopyOnWriteArrayHeader(CopyOnWriteArrayWithContiguous));
     orElse(m_out.notZero64(header), slowPath);
     CellPointer array = allocateCell(fixedPointer(Instance::offsetOfArrayAllocator()), sizeof(JSArray), slowPath);
     storeHeader(array.value(), header);
@@ -866,16 +920,24 @@ CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument
     LBasicBlock haveList = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 2> lists;
+    Vector<ValueFromBlock, 3> results;
     CellPointer object = objectOrElse(argument, slowPath);
+    bool listsSymbols = keys == OwnKeys::ObjectGetOwnPropertySymbols;
 
     // Ends the block.
     auto findListOfLayout = [&] {
+        if (listsSymbols) {
+            orElse(lacksBits(orderWordOf(object), orderWordHasExtraProperties), slowPath);
+            results.append(m_out.anchor(newArrayOf(std::span<const Boxed> { }).value()));
+            m_out.jump(continuation);
+            return;
+        }
         lists.append(m_out.anchor(keyListOfLayoutOrElse(object, slowPath)));
         m_out.jump(haveList);
     };
     // Without extra properties its keys are strings and its properties enumerable: one list for all but the symbols.
-    bool mayBeOfProgram = keys != OwnKeys::ObjectGetOwnPropertySymbols && (type.anyObject || !type.views.isEmpty());
-    if (mayBeOfProgram && hasOnlyObjectsOfProgram(type))
+    bool mayBeOfProgram = type.anyObject || !type.views.isEmpty();
+    if (mayBeOfProgram && !listsSymbols && hasOnlyObjectsOfProgram(type))
         findListOfLayout();
     else {
         LBasicBlock isNotKept = mayBeOfProgram ? newUnlikelyBlock() : slowPath;
@@ -894,15 +956,15 @@ CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument
     }
 
     m_out.appendTo(haveList);
-    ValueFromBlock fast = m_out.anchor(newCopyOnWriteArray(m_out.phi(pointerType(), lists), slowPath).value());
+    results.append(m_out.anchor(newCopyOnWriteArray(m_out.phi(pointerType(), lists), slowPath).value()));
     m_out.jump(continuation);
 
     m_out.appendTo(slowPath);
-    ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(OwnPropertyKeys, in<Boxed>(argument), word32(static_cast<int32_t>(keys))).value());
+    results.append(m_out.anchor(AOT_TYPED_OPERATION(OwnPropertyKeys, in<Boxed>(argument), word32(static_cast<int32_t>(keys))).value()));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    return CellPointer(m_out.phi(pointerType(), fast, slow));
+    return CellPointer(m_out.phi(pointerType(), results));
 }
 
 // What operationAOTTypedForInKeys() yields for an object whose Structure keeps an enumerator that watchpoints vouch for, as FTL::LowerDFGToB3::compileGetPropertyEnumerator() finds it, if that lists
@@ -916,35 +978,39 @@ CellPointer Lowering::listKeysForIn(Boxed value, const Type& type)
     // No Structure of anything but an object keeps one.
     orElse(isCell(value, type), slowPath);
     CellPointer object = asCell(value);
-    auto enumeratorKeptFor = [&](CellPointer cell) {
-        orElse(belowOrEqual(indexingModeOf(cell, IndexingTypeMask), word32(ArrayWithUndecided)), slowPath);
+    auto enumeratorKeptFor = [&](CellPointer cell, LBasicBlock otherwise) {
+        orElse(belowOrEqual(indexingModeOf(cell, IndexingTypeMask), word32(ArrayWithUndecided)), otherwise);
         LValue previousOrRareData = m_out.loadPtr(structureOf(cell.value()), m_heaps.Structure_previousOrRareData);
-        orElse(m_out.notNull(previousOrRareData), slowPath);
-        orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), slowPath);
+        orElse(m_out.notNull(previousOrRareData), otherwise);
+        orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), otherwise);
         LValue enumerator = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedPropertyNameEnumeratorAndFlag);
-        orElse(m_out.notNull(enumerator), slowPath);
-        orElse(m_out.testIsZeroPtr(enumerator, m_out.constIntPtr(StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag)), slowPath);
+        orElse(m_out.notNull(enumerator), otherwise);
+        orElse(m_out.testIsZeroPtr(enumerator, m_out.constIntPtr(StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag)), otherwise);
         return std::pair { previousOrRareData, enumerator };
     };
-    bool isOfProgram = hasOnlyObjectsOfProgram(type);
-    if (!type.views.isEmpty()) {
-        LBasicBlock isNotOfProgram = isOfProgram ? nullptr : m_out.newBlock();
-        if (!isOfProgram)
+    auto listKeysOfLayout = [&](LBasicBlock isNotOfProgram) {
+        if (isNotOfProgram)
             orElse(passes(shapeWordOf(object), ShapeTest { 1, static_cast<uint32_t>(m_program.layouts.size()) }), isNotOfProgram);
         LValue list = keyListOfLayoutOrElse(object, slowPath);
         Boxed prototype(m_out.load64(structureOf(object.value()), m_heaps.Structure_prototype));
         orElse(m_out.notZero64(prototype.value()), slowPath);
         orElse(isCell(prototype), slowPath);
-        LValue inherited = enumeratorKeptFor(CellPointer(prototype.value())).second;
+        LValue inherited = enumeratorKeptFor(CellPointer(prototype.value()), slowPath).second;
         orElse(m_out.isZero32(m_out.load32(inherited, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex)), slowPath);
         orElse(m_out.isZero32(m_out.load32(inherited, m_heaps.JSPropertyNameEnumerator_indexLength)), slowPath);
         results.append(m_out.anchor(newCopyOnWriteArray(list, slowPath).value()));
         m_out.jump(continuation);
+    };
+    bool isOfProgram = hasOnlyObjectsOfProgram(type);
+    if (!type.views.isEmpty()) {
+        LBasicBlock isNotOfProgram = isOfProgram ? nullptr : m_out.newBlock();
+        listKeysOfLayout(isNotOfProgram);
         if (!isOfProgram)
             m_out.appendTo(isNotOfProgram);
     }
     if (!isOfProgram) {
-        auto [previousOrRareData, enumerator] = enumeratorKeptFor(object);
+        LBasicBlock keepsNone = type.views.isEmpty() && type.anyObject ? newUnlikelyBlock() : slowPath;
+        auto [previousOrRareData, enumerator] = enumeratorKeptFor(object, keepsNone);
         LValue numberOfNames = m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex);
         orElse(m_out.isZero32(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength)), slowPath);
         LBasicBlock listsNothing = m_out.newBlock();
@@ -954,11 +1020,15 @@ CellPointer Lowering::listKeysForIn(Boxed value, const Type& type)
         results.append(m_out.anchor(fixedPointer(Instance::offsetOfEmptyKeyList())));
         m_out.jump(continuation);
         m_out.appendTo(listsNames);
-        orElse(m_out.equal(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex), numberOfNames), slowPath);
         LValue list = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedEnumerableStrings);
         orElse(m_out.above(list, m_out.constIntPtr(std::bit_cast<uintptr_t>(StructureRareData::cachedPropertyNamesSentinel()))), slowPath);
+        orElse(m_out.equal(m_out.load32(m_out.add(list, m_out.constIntPtr(JSCellButterfly::offsetOfData())), m_heaps.Butterfly_publicLength), numberOfNames), slowPath);
         results.append(m_out.anchor(newCopyOnWriteArray(list, slowPath).value()));
         m_out.jump(continuation);
+        if (keepsNone != slowPath) {
+            m_out.appendTo(keepsNone);
+            listKeysOfLayout(slowPath);
+        }
     }
 
     m_out.appendTo(slowPath);
@@ -1027,11 +1097,38 @@ Word32 Lowering::lowerHasOwnProperty(ValueID object, ValueID key)
         Word32 structureID = loadField<Word32>(cell, m_heaps.JSCell_structureID);
         Word32 index = bitAnd(bitXor(shiftRightUnsigned(structureID, word32(4)), word32(Instance::saltOfOwnPropertyAnswer(name.index()))), word32(Instance::numberOfOwnPropertyAnswers - 1));
         Pointer answers(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfOwnPropertyAnswers())));
+        Integer pair = bitOr(zeroExtended(structureID), integer(static_cast<int64_t>(name.index()) << 32));
         // A collection takes out those of dead Structures.
-        Integer answer(m_out.load64(TypedPointer(m_heaps.AOTTyped_collectorState, offsetBy(answers, zeroExtended(index), 3).value())));
-        Integer difference = bitXor(answer, bitOr(zeroExtended(structureID), integer(static_cast<int64_t>(name.index()) << 32)));
-        orElse(isZero(Integer(m_out.shl(difference.value(), m_out.constInt32(1)))), slowPath);
-        return isNotZero(difference);
+        auto differenceAt = [&](Word32 place) {
+            return bitXor(Integer(m_out.load64(TypedPointer(m_heaps.AOTTyped_collectorState, offsetBy(answers, zeroExtended(place), 3).value()))), pair);
+        };
+        auto isOfPair = [&](Integer difference) {
+            return isZero(Integer(m_out.shl(difference.value(), m_out.constInt32(1))));
+        };
+        LBasicBlock asksBeside = newUnlikelyBlock();
+        LBasicBlock isNotBeside = newUnlikelyBlock();
+        LBasicBlock isFound = m_out.newBlock();
+        Vector<ValueFromBlock, 2> found;
+        Integer difference = differenceAt(index);
+        ValueFromBlock firstStep = m_out.anchor(m_out.constInt32(1));
+        orElse(isOfPair(difference), asksBeside);
+        found.append(m_out.anchor(isNotZero(difference).value()));
+        m_out.jump(isFound);
+
+        m_out.appendTo(asksBeside);
+        LValue step = m_out.phi(Int32, firstStep);
+        Integer differenceBeside = differenceAt(bitXor(index, Word32(step)));
+        orElse(isOfPair(differenceBeside), isNotBeside);
+        found.append(m_out.anchor(isNotZero(differenceBeside).value()));
+        m_out.jump(isFound);
+
+        m_out.appendTo(isNotBeside);
+        LValue nextStep = m_out.add(step, m_out.constInt32(1));
+        m_out.addIncomingToPhi(step, m_out.anchor(nextStep));
+        m_out.branch(m_out.below(nextStep, m_out.constInt32(Instance::numberOfPlacesOfOwnPropertyAnswer)), unsure(asksBeside), unsure(slowPath));
+
+        m_out.appendTo(isFound);
+        return Word32(m_out.phi(Int32, found));
     };
 
     LayoutID view = receiver.onlyView();
@@ -1073,7 +1170,7 @@ Word32 Lowering::placeOfOwnPropertyOrElse(CellPointer object, ValueID key, LBasi
 {
     using Place = Instance::OwnPropertyPlace;
     static_assert(sizeof(Place) == 16 && !OBJECT_OFFSETOF(Place, uid) && OBJECT_OFFSETOF(Place, structureID) == 8 && OBJECT_OFFSETOF(Place, place) == 12);
-    static_assert(Instance::ownPropertyPlaceIndex(0x1230, 0x7f40) == (((0x1230u ^ 0x7f40u) >> 4) & (Instance::numberOfOwnPropertyPlaces - 1)));
+    static_assert(Instance::ownPropertyPlaceIndex(0x1230, 0x7f40) == (((0x7f40u + 0x1230u + (0x1230u << 2)) >> 4) & (Instance::numberOfOwnPropertyPlaces - 1)));
     CellPointer string = fitOrElse(get(key), typeOf(key), m_program.at(m_program.types.string), otherwise).as<CellPointer>();
     Pointer impl = loadField<Pointer>(string, m_heaps.JSString_value);
     orElse(lacksBits(impl, JSString::isRopeInPointer), otherwise);
@@ -1081,13 +1178,32 @@ Word32 Lowering::placeOfOwnPropertyOrElse(CellPointer object, ValueID key, LBasi
     Integer structureID = zeroExtended(loadField<Word32>(object, m_heaps.JSCell_structureID));
     Integer uid(impl.value());
     // The index times the size of an entry.
-    Integer offset = bitAnd(bitXor(structureID, uid), integer((Instance::numberOfOwnPropertyPlaces - 1) << 4));
-    Pointer entry(m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfOwnPropertyPlaces())), offset.value()));
+    Integer offset = bitAnd(add(uid, add(structureID, Integer(m_out.shl(structureID.value(), m_out.constInt32(2))))), integer((Instance::numberOfOwnPropertyPlaces - 1) << 4));
+    LValue table = m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfOwnPropertyPlaces()));
+    LBasicBlock asksBeside = newUnlikelyBlock();
+    LBasicBlock isNotBeside = newUnlikelyBlock();
+    LBasicBlock isFound = m_out.newBlock();
+    Vector<ValueFromBlock, 2> words;
     // A collection takes out those of dead Structures.
-    orElse(equal(Integer(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, entry.value(), OBJECT_OFFSETOF(Place, uid)))), uid), otherwise);
-    Integer found(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, entry.value(), OBJECT_OFFSETOF(Place, structureID))));
-    orElse(equal(low32(found), low32(structureID)), otherwise);
-    return low32(Integer(m_out.lShr(found.value(), m_out.constInt32(32))));
+    auto ask = [&](Integer offsetOfEntry, LBasicBlock isNotThere) {
+        LValue entry = m_out.add(table, offsetOfEntry.value());
+        orElse(equal(Integer(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(Place, uid)))), uid), isNotThere);
+        Integer found(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(Place, structureID))));
+        orElse(equal(low32(found), low32(structureID)), isNotThere);
+        words.append(m_out.anchor(found.value()));
+        m_out.jump(isFound);
+    };
+    ValueFromBlock firstStep = m_out.anchor(m_out.constInt64(sizeof(Place)));
+    ask(offset, asksBeside);
+    m_out.appendTo(asksBeside);
+    LValue step = m_out.phi(Int64, firstStep);
+    ask(bitXor(offset, Integer(step)), isNotBeside);
+    m_out.appendTo(isNotBeside);
+    LValue nextStep = m_out.add(step, m_out.constInt64(sizeof(Place)));
+    m_out.addIncomingToPhi(step, m_out.anchor(nextStep));
+    m_out.branch(m_out.below(nextStep, m_out.constInt64(Instance::numberOfPlacesOfOwnPropertyPlace * sizeof(Place))), unsure(asksBeside), unsure(otherwise));
+    m_out.appendTo(isFound);
+    return low32(Integer(m_out.lShr(m_out.phi(Int64, words), m_out.constInt32(32))));
 }
 
 Word32 Lowering::hasOwnPropertyAt(CellPointer object, Word32 place)
@@ -1261,7 +1377,7 @@ Vector<Lowering::KeyOrder, 2> Lowering::keyOrdersExpectedOf(ValueID id) const
             if (isPrivateName(name))
                 continue;
             // An index comes before every name, and `__proto__` is not stored like any other.
-            areTooMany |= name.empty() || isASCIIDigit(name.front()) || equalSpans(name, "__proto__"_s.span8());
+            areTooMany |= name.empty() || isASCIIDigit(name.front()) || equalSpans(name, asBytes("__proto__"_s.span8()));
             keys.fields.append(index);
         }
         areTooMany |= result.size() == maxOrders || keys.fields.size() > maxFields;

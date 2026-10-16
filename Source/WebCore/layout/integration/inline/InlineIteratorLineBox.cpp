@@ -29,18 +29,13 @@
 
 #include "InlineIteratorBoxInlines.h"
 #include "LayoutIntegrationLineLayout.h"
-#include "RenderBlockFlow.h"
+#include "RenderBlockFlowInlines.h"
 #include "RenderObjectDocument.h"
 #include "RenderView.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace InlineIterator {
-
-LineBoxIterator::LineBoxIterator(LineBox::PathVariant&& pathVariant)
-    : m_lineBox(WTF::move(pathVariant))
-{
-}
 
 LineBoxIterator::LineBoxIterator(const LineBox& lineBox)
     : m_lineBox(lineBox)
@@ -49,24 +44,27 @@ LineBoxIterator::LineBoxIterator(const LineBox& lineBox)
 
 bool LineBoxIterator::atEnd() const
 {
-    return WTF::switchOn(m_lineBox.m_pathVariant, [](auto& path) {
-        return path.atEnd();
-    });
+    return m_lineBox.atEnd();
 }
 
 LineBoxIterator& LineBoxIterator::traverseNext()
 {
-    WTF::switchOn(m_lineBox.m_pathVariant, [](auto& path) {
-        return path.traverseNext();
-    });
+    ASSERT(!atEnd());
+
+    ++m_lineBox.m_lineIndex;
     return *this;
 }
 
 LineBoxIterator& LineBoxIterator::traversePrevious()
 {
-    WTF::switchOn(m_lineBox.m_pathVariant, [](auto& path) {
-        return path.traversePrevious();
-    });
+    ASSERT(!atEnd());
+
+    if (!m_lineBox.m_lineIndex) {
+        m_lineBox.setAtEnd();
+        return *this;
+    }
+
+    --m_lineBox.m_lineIndex;
     return *this;
 }
 
@@ -77,28 +75,26 @@ LineBoxIterator::operator bool() const
 
 bool LineBoxIterator::operator==(const LineBoxIterator& other) const
 {
-    return m_lineBox.m_pathVariant == other.m_lineBox.m_pathVariant;
+    return m_lineBox.m_inlineContent == other.m_lineBox.m_inlineContent && m_lineBox.m_lineIndex == other.m_lineBox.m_lineIndex;
 }
 
 LineBoxIterator firstLineBoxFor(const RenderBlockFlow& flow)
 {
     if (CheckedPtr lineLayout = flow.inlineLayout())
         return lineLayout->firstLineBox();
-
-    return { LineBoxIteratorLegacyPath { flow.legacyRootBox() } };
+    return { };
 }
 
 LineBoxIterator lastLineBoxFor(const RenderBlockFlow& flow)
 {
     if (CheckedPtr lineLayout = flow.inlineLayout())
         return lineLayout->lastLineBox();
-
-    return { LineBoxIteratorLegacyPath { flow.legacyRootBox() } };
+    return { };
 }
 
 LineBoxIterator lineBoxFor(const LayoutIntegration::InlineContent& inlineContent, size_t lineIndex)
 {
-    return { LineBoxIteratorModernPath { inlineContent, lineIndex } };
+    return { LineBox { inlineContent, lineIndex } };
 }
 
 LineBoxIterator LineBox::next() const
@@ -113,22 +109,29 @@ LineBoxIterator LineBox::previous() const
 
 LeafBoxIterator LineBox::lineLeftmostLeafBox() const
 {
-    return WTF::switchOn(m_pathVariant, [](auto& path) -> LeafBoxIterator {
-        return { path.firstLeafBox() };
-    });
+    if (!line().boxCount())
+        return { };
+    auto box = boxFor(*m_inlineContent, line().firstBoxIndex());
+    if (box->isInlineBox())
+        box.traverseLineRightwardOnLine();
+    return box;
 }
 
 LeafBoxIterator LineBox::lineRightmostLeafBox() const
 {
-    return WTF::switchOn(m_pathVariant, [](auto& path) -> LeafBoxIterator {
-        return { path.lastLeafBox() };
-    });
+    auto boxCount = line().boxCount();
+    if (!boxCount)
+        return { };
+    auto box = boxFor(*m_inlineContent, line().firstBoxIndex() + boxCount - 1);
+    if (box->isInlineBox())
+        box.traverseLineLeftwardOnLine();
+    return box;
 }
 
 LeafBoxIterator closestBoxForHorizontalPosition(const LineBox& lineBox, float horizontalPosition, bool editableOnly)
 {
     auto isEditable = [&](auto box) {
-        return box && box->renderer().node() && box->renderer().node()->hasEditableStyle();
+        return box && box->renderer().node() && protect(box->renderer().node())->hasEditableStyle();
     };
 
     auto firstBox = lineBox.logicalLeftmostLeafBox();
@@ -176,7 +179,7 @@ RenderObject::HighlightState LineBox::ellipsisSelectionState() const
     if (!selectionRange.truncation)
         return RenderObject::HighlightState::None;
 
-    auto [selectionStart, selectionEnd] = formattingContextRoot().view().selection().rangeForTextBox(text->renderer(), selectionRange);
+    auto [selectionStart, selectionEnd] = formattingContextRoot().view().selection().rangeForTextBox(protect(text->renderer()), selectionRange);
     return selectionStart <= *selectionRange.truncation && selectionEnd >= *selectionRange.truncation ? RenderObject::HighlightState::Inside : RenderObject::HighlightState::None;
 }
 

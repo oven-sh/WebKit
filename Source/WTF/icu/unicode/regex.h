@@ -18,6 +18,9 @@
 #ifndef REGEX_H
 #define REGEX_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 //#define REGEX_DEBUG
 
 /**

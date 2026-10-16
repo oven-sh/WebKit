@@ -74,6 +74,7 @@ public:
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     static RegExp* tryCreateFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     static RegExp* createWithTextInPieces(VM&, const AOT::ImageRegExp&, OptionSet<Yarr::Flags>);
+    void setIsLiteralOfCompiledProgram() { m_isLiteralOfCompiledProgram = true; }
 #endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
@@ -88,6 +89,9 @@ public:
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(RegExp, m_state); }
     static constexpr uint8_t stateWithJITCode() { return JITCode; }
     static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
+    static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
+    static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }
+    static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
 #if ENABLE(YARR_JIT)
     static constexpr ptrdiff_t offsetOfRegExpJITCode() { return OBJECT_OFFSETOF(RegExp, m_regExpJITCode); }
 #endif
@@ -256,6 +260,7 @@ private:
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     bool takeCodeFromImage(VM&);
+    void crashIfLiteralOfCompiledProgramIsInterpreted() const;
 #endif
 
     enum RegExpState : uint8_t {
@@ -275,6 +280,7 @@ private:
 
     static constexpr unsigned maxPatternLengthForJITAfterInterpreter = 65536;
     static constexpr uint16_t jitWasConsidered = std::numeric_limits<uint16_t>::max();
+    static constexpr uint16_t codeWasFoundInImage = jitWasConsidered - 1;
     uint16_t workBeforeJIT() const { return 256 + std::min(m_patternString.length(), maxPatternLengthForJITAfterInterpreter) / 64; }
     bool startsInterpreted(std::optional<StringView> subject) const;
     void noteWorkInInterpreter(unsigned subjectLength);
@@ -318,8 +324,9 @@ private:
     String m_atom;
     RegExpState m_state { NotCompiled };
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    Yarr::SpecificPattern m_specificPattern : 7 { Yarr::SpecificPattern::None };
+    Yarr::SpecificPattern m_specificPattern : 6 { Yarr::SpecificPattern::None };
     bool m_sourceIsPattern : 1 { false };
+    bool m_isLiteralOfCompiledProgram : 1 { false };
 #else
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
 #endif

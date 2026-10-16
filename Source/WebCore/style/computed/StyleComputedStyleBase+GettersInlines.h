@@ -341,7 +341,7 @@ inline const CustomPropertyData& ComputedStyleBase::nonInheritedCustomProperties
 
 inline bool ComputedStyleBase::useSVGZoomRulesForLength() const
 {
-    return m_nonInheritedData->rareData->useSVGZoomRulesForLength;
+    return m_nonInheritedFlags.useSVGZoomRulesForLength;
 }
 
 inline float ComputedStyleBase::usedZoom() const

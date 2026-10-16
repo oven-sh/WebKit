@@ -86,7 +86,6 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForJSDedicatedWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSSharedWorkerGlobalScope;
-    JSC::IsoHeapCellType m_heapCellTypeForJSShadowRealmGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSServiceWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkletGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSPaintWorkletGlobalScope;
@@ -230,7 +229,7 @@ private:
 
 // Returns the first non-native source URL from the exception's stack frames without applying
 // URL masking, unlike StackFrame::sourceURL(VM&) which goes through overrideSourceURL.
-String unmaskedSourceURLFromException(const JSC::Exception&, JSC::VM&);
+String unmaskedSourceURLFromException(JSC::Exception&, JSC::VM&);
 
 } // namespace WebCore
 

@@ -53,7 +53,7 @@ bool DOMCSSNamespace::supports(Document& document, const String& property, const
 
     auto propertyNameWithoutWhitespace = property;
     CSSPropertyID propertyID = cssPropertyID(propertyNameWithoutWhitespace);
-    if (propertyID == CSSPropertyInvalid && isCustomPropertyName(propertyNameWithoutWhitespace)) {
+    if (propertyID == CSSPropertyID::Invalid && isCustomPropertyName(propertyNameWithoutWhitespace)) {
         auto dummyStyle = MutableStyleProperties::create();
         return CSSParser::parseCustomPropertyValue(dummyStyle, AtomString { propertyNameWithoutWhitespace }, value, IsImportant::No, parserContext) != CSSParser::ParseResult::Error;
     }
@@ -64,7 +64,7 @@ bool DOMCSSNamespace::supports(Document& document, const String& property, const
     if (CSSProperty::isDescriptorOnly(propertyID))
         return false;
 
-    if (propertyID == CSSPropertyInvalid)
+    if (propertyID == CSSPropertyID::Invalid)
         return false;
 
     if (value.isEmpty())

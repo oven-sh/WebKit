@@ -315,7 +315,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIntersection, (JSGlobalObject* globalObject
         CallData hasCallData = JSC::getCallDataInline(has);
         std::optional<CachedCall> cachedHasCall;
         if (hasCallData.type == CallData::Type::JS) [[likely]] {
-            cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+            cachedHasCall.emplace(globalObject, asObject(has), 1);
             RETURN_IF_EXCEPTION(scope, { });
         }
 
@@ -541,7 +541,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
         CallData hasCallData = JSC::getCallDataInline(has);
         std::optional<CachedCall> cachedHasCall;
         if (hasCallData.type == CallData::Type::JS) [[likely]] {
-            cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+            cachedHasCall.emplace(globalObject, asObject(has), 1);
             RETURN_IF_EXCEPTION(scope, { });
         }
 
@@ -584,7 +584,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
 
     std::optional<CachedCall> cachedNextCall;
     if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -707,7 +707,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncSymmetricDifference, (JSGlobalObject* globa
 
     std::optional<CachedCall> cachedNextCall;
     if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -793,7 +793,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSubsetOf, (JSGlobalObject* globalObject, 
 
     std::optional<CachedCall> cachedHasCall;
     if (hasCallData.type == CallData::Type::JS) [[likely]] {
-        cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+        cachedHasCall.emplace(globalObject, asObject(has), 1);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -905,7 +905,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSupersetOf, (JSGlobalObject* globalObject
 
     std::optional<CachedCall> cachedNextCall;
     if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -1021,7 +1021,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
         CallData hasCallData = JSC::getCallDataInline(has);
         std::optional<CachedCall> cachedHasCall;
         if (hasCallData.type == CallData::Type::JS) [[likely]] {
-            cachedHasCall.emplace(globalObject, uncheckedDowncast<JSFunction>(has), 1);
+            cachedHasCall.emplace(globalObject, asObject(has), 1);
             RETURN_IF_EXCEPTION(scope, { });
         }
 
@@ -1066,7 +1066,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
 
     std::optional<CachedCall> cachedNextCall;
     if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
         RETURN_IF_EXCEPTION(scope, { });
     }
 

@@ -593,7 +593,7 @@ static bool hasSameObservableSource(const SourceCode& a, const SourceCode& b)
     SourceProvider* providerA = a.provider();
     SourceProvider* providerB = b.provider();
     return providerA->sourceOrigin() == providerB->sourceOrigin()
-        && providerA->sourceTaintedOrigin() == providerB->sourceTaintedOrigin()
+        && providerA->taintedness() == providerB->taintedness()
         && providerA->sourceURL() == providerB->sourceURL()
         && a.firstLine() == b.firstLine() && a.startColumn() == b.startColumn()
         && providerA->hash() == providerB->hash() && a.view() == b.view();

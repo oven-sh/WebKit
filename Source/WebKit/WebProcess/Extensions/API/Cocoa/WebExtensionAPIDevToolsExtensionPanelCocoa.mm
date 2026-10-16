@@ -70,7 +70,7 @@ void WebExtensionContextProxy::dispatchDevToolsExtensionPanelShownEvent(Inspecto
         return;
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        RefPtr extensionPanel = namespaceObject.devtools().panels().extensionPanel(identifier);
+        RefPtr extensionPanel = protect(protect(namespaceObject.devtools())->panels())->extensionPanel(identifier);
         if (!extensionPanel)
             return;
 
@@ -89,7 +89,7 @@ void WebExtensionContextProxy::dispatchDevToolsExtensionPanelHiddenEvent(Inspect
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/ExtensionPanel
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        RefPtr extensionPanel = namespaceObject.devtools().panels().extensionPanel(identifier);
+        RefPtr extensionPanel = protect(protect(namespaceObject.devtools())->panels())->extensionPanel(identifier);
         if (!extensionPanel)
             return;
 

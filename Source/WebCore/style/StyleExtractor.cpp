@@ -71,7 +71,7 @@ enum class ForcedLayout : uint8_t { No, Yes, ParentDocument };
 using PhysicalDirection = BoxSide;
 using FlowRelativeDirection = LogicalBoxSide;
 
-static Element* NODELETE styleElementForNode(Node* node)
+static Element* LEGACY_NODELETE styleElementForNode(Node* node)
 {
     if (!node)
         return nullptr;
@@ -114,7 +114,7 @@ RefPtr<CSSValue> Extractor::getFontSizeCSSValuePreferringKeyword() const
     if (!style)
         return nullptr;
 
-    if (auto sizeIdentifier = style->fontDescription().keywordSizeAsIdentifier())
+    if (auto sizeIdentifier = style->fontDescription().keywordSizeAsIdentifier(); sizeIdentifier != CSSValueID::Invalid)
         return CSSKeywordValue::create(sizeIdentifier);
 
     return CSSPrimitiveValue::create(unapplyingZoom<float>(style->fontDescription().usedSize(), *style), CSSUnitType::Px);
@@ -228,9 +228,9 @@ const Style::ComputedStyle* Extractor::computeStyleForCustomProperty(std::unique
     if (!element)
         return nullptr;
 
-    updateStyleIfNeededForProperty(*element, m_pseudoElementIdentifier, CSSPropertyCustom);
+    updateStyleIfNeededForProperty(*element, m_pseudoElementIdentifier, CSSPropertyID::Custom);
 
-    auto* style = computeRenderStyleForProperty(*element, m_pseudoElementIdentifier, CSSPropertyCustom, ownedStyle);
+    auto* style = computeRenderStyleForProperty(*element, m_pseudoElementIdentifier, CSSPropertyID::Custom, ownedStyle);
     if (!style)
         return nullptr;
 
@@ -239,7 +239,7 @@ const Style::ComputedStyle* Extractor::computeStyleForCustomProperty(std::unique
     if (document->hasStyleWithViewportUnits()) {
         if (RefPtr owner = document->ownerElement()) {
             protect(owner->document())->updateLayout();
-            style = computeRenderStyleForProperty(*element, m_pseudoElementIdentifier, CSSPropertyCustom, ownedStyle);
+            style = computeRenderStyleForProperty(*element, m_pseudoElementIdentifier, CSSPropertyID::Custom, ownedStyle);
         }
     }
 
@@ -305,16 +305,16 @@ static bool isLayoutDependent(CSSPropertyID propertyID, const Style::ComputedSty
     auto mapLogicalToPhysicalPaddingProperty = [&](auto direction, auto& renderer) -> CSSPropertyID {
         switch (mapSideLogicalToPhysical(formattingContextRootStyle(renderer).writingMode(), direction)) {
         case PhysicalDirection::Top:
-            return CSSPropertyPaddingTop;
+            return CSSPropertyID::PaddingTop;
         case PhysicalDirection::Right:
-            return CSSPropertyPaddingRight;
+            return CSSPropertyID::PaddingRight;
         case PhysicalDirection::Bottom:
-            return CSSPropertyPaddingBottom;
+            return CSSPropertyID::PaddingBottom;
         case PhysicalDirection::Left:
-            return CSSPropertyPaddingLeft;
+            return CSSPropertyID::PaddingLeft;
         default:
             ASSERT_NOT_REACHED();
-            return CSSPropertyInvalid;
+            return CSSPropertyID::Invalid;
         }
     };
 
@@ -323,20 +323,20 @@ static bool isLayoutDependent(CSSPropertyID propertyID, const Style::ComputedSty
     };
 
     switch (propertyID) {
-    case CSSPropertyTop:
-    case CSSPropertyBottom:
-    case CSSPropertyLeft:
-    case CSSPropertyRight:
-    case CSSPropertyInsetBlockStart:
-    case CSSPropertyInsetBlockEnd:
-    case CSSPropertyInsetInlineStart:
-    case CSSPropertyInsetInlineEnd:
+    case CSSPropertyID::Top:
+    case CSSPropertyID::Bottom:
+    case CSSPropertyID::Left:
+    case CSSPropertyID::Right:
+    case CSSPropertyID::InsetBlockStart:
+    case CSSPropertyID::InsetBlockEnd:
+    case CSSPropertyID::InsetInlineStart:
+    case CSSPropertyID::InsetInlineEnd:
         return renderer && style && renderer->isRenderBox();
-    case CSSPropertyWidth:
-    case CSSPropertyHeight:
-    case CSSPropertyInlineSize:
-    case CSSPropertyBlockSize:
-    case CSSPropertySize:
+    case CSSPropertyID::Width:
+    case CSSPropertyID::Height:
+    case CSSPropertyID::InlineSize:
+    case CSSPropertyID::BlockSize:
+    case CSSPropertyID::Size:
         if (!renderer)
             return false;
         if (renderer->isSVGRenderer()) {
@@ -347,59 +347,59 @@ static bool isLayoutDependent(CSSPropertyID propertyID, const Style::ComputedSty
                 || renderer->isRenderOrLegacyRenderSVGRect();
         }
         return !isNonReplacedInline(*renderer);
-    case CSSPropertyMargin:
-    case CSSPropertyMarginBlock:
-    case CSSPropertyMarginBlockStart:
-    case CSSPropertyMarginBlockEnd:
-    case CSSPropertyMarginInline:
-    case CSSPropertyMarginInlineStart:
-    case CSSPropertyMarginInlineEnd:
-    case CSSPropertyMarginTop:
-    case CSSPropertyMarginRight:
-    case CSSPropertyMarginBottom:
-    case CSSPropertyMarginLeft:
+    case CSSPropertyID::Margin:
+    case CSSPropertyID::MarginBlock:
+    case CSSPropertyID::MarginBlockStart:
+    case CSSPropertyID::MarginBlockEnd:
+    case CSSPropertyID::MarginInline:
+    case CSSPropertyID::MarginInlineStart:
+    case CSSPropertyID::MarginInlineEnd:
+    case CSSPropertyID::MarginTop:
+    case CSSPropertyID::MarginRight:
+    case CSSPropertyID::MarginBottom:
+    case CSSPropertyID::MarginLeft:
         return renderer && renderer->isRenderBox();
-    case CSSPropertyPerspectiveOrigin:
-    case CSSPropertyTransformOrigin:
-    case CSSPropertyTransform:
-    case CSSPropertyFilter: // Why are filters layout-dependent?
-    case CSSPropertyBackdropFilter: // Why are backdrop-filters layout-dependent?
-    case CSSPropertyWebkitBackdropFilter: // Why are backdrop-filters layout-dependent?
+    case CSSPropertyID::PerspectiveOrigin:
+    case CSSPropertyID::TransformOrigin:
+    case CSSPropertyID::Transform:
+    case CSSPropertyID::Filter: // Why are filters layout-dependent?
+    case CSSPropertyID::BackdropFilter: // Why are backdrop-filters layout-dependent?
+    case CSSPropertyID::WebkitBackdropFilter: // Why are backdrop-filters layout-dependent?
         return true;
-    case CSSPropertyPadding:
-        return isLayoutDependent(CSSPropertyPaddingBlock, style, renderer) || isLayoutDependent(CSSPropertyPaddingInline, style, renderer);
-    case CSSPropertyPaddingBlock:
-        return isLayoutDependent(CSSPropertyPaddingBlockStart, style, renderer) || isLayoutDependent(CSSPropertyPaddingBlockEnd, style, renderer);
-    case CSSPropertyPaddingInline:
-        return isLayoutDependent(CSSPropertyPaddingInlineStart, style, renderer) || isLayoutDependent(CSSPropertyPaddingInlineEnd, style, renderer);
-    case CSSPropertyPaddingBlockStart:
+    case CSSPropertyID::Padding:
+        return isLayoutDependent(CSSPropertyID::PaddingBlock, style, renderer) || isLayoutDependent(CSSPropertyID::PaddingInline, style, renderer);
+    case CSSPropertyID::PaddingBlock:
+        return isLayoutDependent(CSSPropertyID::PaddingBlockStart, style, renderer) || isLayoutDependent(CSSPropertyID::PaddingBlockEnd, style, renderer);
+    case CSSPropertyID::PaddingInline:
+        return isLayoutDependent(CSSPropertyID::PaddingInlineStart, style, renderer) || isLayoutDependent(CSSPropertyID::PaddingInlineEnd, style, renderer);
+    case CSSPropertyID::PaddingBlockStart:
         if (auto* renderBox = dynamicDowncast<RenderBox>(renderer))
             return isLayoutDependent(mapLogicalToPhysicalPaddingProperty(FlowRelativeDirection::BlockStart, *renderBox), style, renderBox);
         return false;
-    case CSSPropertyPaddingBlockEnd:
+    case CSSPropertyID::PaddingBlockEnd:
         if (auto* renderBox = dynamicDowncast<RenderBox>(renderer))
             return isLayoutDependent(mapLogicalToPhysicalPaddingProperty(FlowRelativeDirection::BlockEnd, *renderBox), style, renderBox);
         return false;
-    case CSSPropertyPaddingInlineStart:
+    case CSSPropertyID::PaddingInlineStart:
         if (auto* renderBox = dynamicDowncast<RenderBox>(renderer))
             return isLayoutDependent(mapLogicalToPhysicalPaddingProperty(FlowRelativeDirection::InlineStart, *renderBox), style, renderBox);
         return false;
-    case CSSPropertyPaddingInlineEnd:
+    case CSSPropertyID::PaddingInlineEnd:
         if (auto* renderBox = dynamicDowncast<RenderBox>(renderer))
             return isLayoutDependent(mapLogicalToPhysicalPaddingProperty(FlowRelativeDirection::InlineEnd, *renderBox), style, renderBox);
         return false;
-    case CSSPropertyPaddingTop:
+    case CSSPropertyID::PaddingTop:
         return paddingIsLayoutDependent.template operator()<&Style::ComputedStyle::paddingTop>(style, renderer);
-    case CSSPropertyPaddingRight:
+    case CSSPropertyID::PaddingRight:
         return paddingIsLayoutDependent.template operator()<&Style::ComputedStyle::paddingRight>(style, renderer);
-    case CSSPropertyPaddingBottom:
+    case CSSPropertyID::PaddingBottom:
         return paddingIsLayoutDependent.template operator()<&Style::ComputedStyle::paddingBottom>(style, renderer);
-    case CSSPropertyPaddingLeft:
+    case CSSPropertyID::PaddingLeft:
         return paddingIsLayoutDependent.template operator()<&Style::ComputedStyle::paddingLeft>(style, renderer);
-    case CSSPropertyGridTemplateColumns:
-    case CSSPropertyGridTemplateRows:
-    case CSSPropertyGridTemplate:
-    case CSSPropertyGrid:
+    case CSSPropertyID::GridTemplateColumns:
+    case CSSPropertyID::GridTemplateRows:
+    case CSSPropertyID::GridTemplate:
+    case CSSPropertyID::Grid:
         return renderer && renderer->isRenderGrid();
     default:
         return false;
@@ -425,7 +425,7 @@ const Style::ComputedStyle* Extractor::computeStyle(CSSPropertyID propertyID, Up
 
         updateStyleIfNeededForProperty(*element, m_pseudoElementIdentifier, propertyID);
         auto renderer = computeRenderer();
-        if (propertyID == CSSPropertyDisplay && !renderer) {
+        if (propertyID == CSSPropertyID::Display && !renderer) {
             RefPtr svgElement = dynamicDowncast<SVGElement>(*element);
             if (svgElement && !svgElement->isValid())
                 return nullptr;
@@ -501,11 +501,11 @@ WTF::String Extractor::propertyValueSerialization(CSSPropertyID propertyID, cons
 
     auto canUseShorthandSerializerForPropertyValue = [&]() {
         switch (propertyID) {
-        case CSSPropertyGap:
-        case CSSPropertyGridArea:
-        case CSSPropertyGridColumn:
-        case CSSPropertyGridRow:
-        case CSSPropertyGridTemplate:
+        case CSSPropertyID::Gap:
+        case CSSPropertyID::GridArea:
+        case CSSPropertyID::GridColumn:
+        case CSSPropertyID::GridRow:
+        case CSSPropertyID::GridTemplate:
             return true;
         default:
             return false;
@@ -580,11 +580,11 @@ bool Extractor::propertyMatches(CSSPropertyID propertyID, const CSSValue* value)
 {
     if (!m_element)
         return false;
-    if (propertyID == CSSPropertyFontSize) {
+    if (propertyID == CSSPropertyID::FontSize) {
         if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(*value)) {
             protect(m_element->document())->updateLayoutIgnorePendingStylesheets();
             if (auto* style = m_element->computedStyle(m_pseudoElementIdentifier)) {
-                if (CSSValueID sizeIdentifier = style->fontDescription().keywordSizeAsIdentifier()) {
+                if (auto sizeIdentifier = style->fontDescription().keywordSizeAsIdentifier(); sizeIdentifier != CSSValueID::Invalid) {
                     if (keywordValue->valueID() == sizeIdentifier)
                         return true;
                 }
@@ -617,7 +617,7 @@ Ref<MutableStyleProperties> Extractor::copyProperties() const
 
 WTF::String Extractor::appleColorFilterSerializationForTesting(Element& element)
 {
-    updateStyleIfNeededForProperty(element, std::nullopt, CSSPropertyAppleColorFilter);
+    updateStyleIfNeededForProperty(element, std::nullopt, CSSPropertyID::AppleColorFilter);
 
     if (CheckedPtr style = element.computedStyle())
         return serializationForCSS(CSS::defaultSerializationContext(), *style, style->appleColorFilter());

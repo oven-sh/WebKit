@@ -64,6 +64,8 @@ bool isUsedOnlyAsCallee(const Program& program, const Function& function, const 
         return program.typeOf(function, is(user.child(0)) ? user.child(1) : user.child(0)).isUndefinedOrNull();
     case Opcode::Call:
         return !(user.child(1) && is(user.child(1))) && !isAmong(user.arguments.span());
+    case Opcode::CallMethod:
+        return function.copiesFirstArgumentOutOfFrame && !program.typeOf(function, user.child(0)).onlyView() && user.arguments.size() <= numberOfArgumentGPRs && !is(user.child(0)) && !isAmong(user.arguments.span().subspan(1));
     case Opcode::CallBuiltin: {
         auto& implementation = Builtins::singleton().at(user.builtin()).implementation;
         if (implementation.kind != BuiltinImplementation::Inline || (user.child(0) && is(user.child(0))))
@@ -610,7 +612,7 @@ void findOperandsOnlyCalled(Program& program)
         auto& function = program.functions.withSameValues(i);
         function.capturesOnlyCalled.clearAll();
         function.parametersOnlyCalled.clearAll();
-        if (!program.hasCode(FunctionID(i)) || function.blocks.isEmpty() || getsAtArgumentsPastItsOperands(program, function))
+        if (!program.hasCode(FunctionID(i)) || function.blocks.isEmpty())
             return;
         auto& entryParameters = function.blocks[0].parameters;
         unsigned first = function.captureTypes.size() + function.has(Format::FunctionHasThis);
@@ -632,9 +634,14 @@ void findOperandsOnlyCalled(Program& program)
             if (mayBeSaidOf(first + k))
                 function.parametersOnlyCalled.set(k);
         }
-        numbersSaid[i] = numberSaid;
         if (!numberSaid)
             return;
+        if (getsAtArgumentsPastItsOperands(program, function)) {
+            function.capturesOnlyCalled.clearAll();
+            function.parametersOnlyCalled.clearAll();
+            return;
+        }
+        numbersSaid[i] = numberSaid;
         for (auto& value : function.values) {
             if (value.opcode == Opcode::CallDirect)
                 callees[i].append(value.function().index());
@@ -766,12 +773,27 @@ void findClosuresInFrames(Program& program)
     if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions())
         return;
     Vector<uint8_t> mayLieInFrames(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    static constexpr OpcodeSet closures { Opcode::NewClosure, Opcode::NewClosureOnce };
+    Vector<uint8_t> closuresAreMadeOf(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        mayLieInFrames[i] = canStackAllocateClosuresOf(program, std::as_const(program).functions[i]);
+        if (!program.hasCode(FunctionID(i)))
+            return;
+        auto& function = std::as_const(program).functions[i];
+        std::as_const(program).functions.forEachValueInOrder(i, closures, [&](ValueID id) {
+            WTF::atomicStore(&closuresAreMadeOf[function.at(id).function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
+    });
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        if (closuresAreMadeOf[i])
+            mayLieInFrames[i] = canStackAllocateClosuresOf(program, std::as_const(program).functions[i]);
     });
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
             return;
+        if (!program.functions.mayHold(i, closures)) {
+            program.functions.withSameValues(i).mayPointIntoFrame.clearAll();
+            return;
+        }
         auto& function = program.functions[i];
         function.mayPointIntoFrame.clearAll();
         BitVector isCandidate(function.values.size());
@@ -898,7 +920,7 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
     auto scan = [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
             return;
-        auto& function = program.functions[i];
+        auto& function = program.functions.withSameValues(i);
         auto& births = birthsByFunction[i];
         function.environmentsInFrame.clearAll();
         BitVector isCapturedByHeapClosure;
@@ -1034,7 +1056,7 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
     });
     Vector<Vector<String>> findingsIn(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
+        auto& function = program.functions.withSameValues(i);
         if (!materializedIn[i].isEmpty())
             verify(program, FunctionID(i), function, findingsIn[i]);
         if (function.environmentsInFrame.isEmpty())
@@ -1351,7 +1373,7 @@ void reuseEnvironments(Program& program)
     }
 
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
+        auto& function = holdsCandidates[i] ? program.functions[i] : program.functions.withSameValues(i);
         for (auto& allocation : function.allocations) {
             auto& layout = program.at(allocation.layout);
             if (!layout.reuseVariable || isReused[allocation.layout.index()])

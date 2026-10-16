@@ -26,7 +26,6 @@
 #include "config.h"
 #include "GraphicsContext.h"
 
-#include "BidiResolver.h"
 #include "BitmapImage.h"
 #include "DisplayList.h"
 #include "Filter.h"
@@ -38,9 +37,11 @@
 #include "IntRect.h"
 #include "LayoutRoundedRect.h"
 #include "SystemImage.h"
-#include "TextRunIterator.h"
+#include "TextRun.h"
 #include "VideoFrame.h"
+#include <unicode/ubidi.h>
 #include <wtf/MathExtras.h>
+#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
@@ -190,35 +191,57 @@ void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& 
     font.drawEmphasisMarks(*this, run, mark, point, from, to);
 }
 
-void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
+// Splits the run at its bidi level boundaries and returns the pieces in visual (left to right) order, each in its resolved direction.
+static Vector<TextRun> visuallyOrderedSubruns(const TextRun& run)
 {
-    BidiResolver<TextRunIterator, SimpleBidiCharacterRun> bidiResolver;
-    bidiResolver.setStatus(BidiStatus(run.direction(), run.directionalOverride()));
-    bidiResolver.setPositionIgnoringNestedIsolates(TextRunIterator(&run, 0));
+    if (!run.length())
+        return { };
 
-    // FIXME: This ownership should be reversed. We should pass BidiRunList
-    // to BidiResolver in createBidiRunsForLine.
-    auto& bidiRuns = bidiResolver.runs();
-    bidiResolver.createBidiRunsForLine(TextRunIterator(&run, run.length()));
+    // An override forces every character into the run's direction, and Latin-1 text has no right-to-left
+    // characters (nor the bidi control characters), so neither case has anything to reorder.
+    if (run.directionalOverride() || (run.is8Bit() && run.ltr()))
+        return { run };
 
-    if (!bidiRuns.runCount())
-        return;
+    UBiDi* ubidi = ubidi_open();
+    auto closeUBiDiOnExit = makeScopeExit([&] {
+        ubidi_close(ubidi);
+    });
 
-    FloatPoint currPoint = point;
-    auto* bidiRun = bidiRuns.firstRun();
-    while (bidiRun) {
-        TextRun subrun = run.subRun(bidiRun->start(), bidiRun->stop() - bidiRun->start());
-        bool isRTL = bidiRun->level() % 2;
-        subrun.setDirection(isRTL ? TextDirection::RTL : TextDirection::LTR);
-        subrun.setDirectionalOverride(bidiRun->dirOverride(false));
-
-        auto advance = font.drawText(*this, subrun, currPoint, 0, std::nullopt, customFontNotReadyAction);
-        currPoint.move(advance);
-
-        bidiRun = bidiRun->next();
+    auto characters = run.text().upconvertedCharacters();
+    UErrorCode error = U_ZERO_ERROR;
+    ubidi_setPara(ubidi, characters, run.length(), run.ltr() ? UBIDI_LTR : UBIDI_RTL, nullptr, &error);
+    if (U_FAILURE(error)) {
+        ASSERT_NOT_REACHED();
+        return { };
     }
 
-    bidiRuns.clear();
+    auto runCount = ubidi_countRuns(ubidi, &error);
+    if (U_FAILURE(error)) {
+        ASSERT_NOT_REACHED();
+        return { };
+    }
+
+    Vector<TextRun> subruns;
+    subruns.reserveInitialCapacity(runCount);
+    for (int32_t visualIndex = 0; visualIndex < runCount; ++visualIndex) {
+        int32_t start = 0;
+        int32_t length = 0;
+        auto direction = ubidi_getVisualRun(ubidi, visualIndex, &start, &length);
+
+        auto subrun = run.subRun(start, length);
+        subrun.setDirection(direction == UBIDI_RTL ? TextDirection::RTL : TextDirection::LTR);
+        subruns.append(WTF::move(subrun));
+    }
+    return subruns;
+}
+
+void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
+{
+    auto currentPoint = point;
+    for (CheckedRef subrun : visuallyOrderedSubruns(run)) {
+        auto advance = font.drawText(*this, subrun, currentPoint, 0, std::nullopt, customFontNotReadyAction);
+        currentPoint.move(advance);
+    }
 }
 
 static IntSize scaledImageBufferSize(const FloatSize& size, const FloatSize& scale)

@@ -49,6 +49,10 @@ inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
+        if (hasFrozenElementsInPlace()) [[unlikely]] {
+            moveFrozenElementsToSparseMap(vm);
+            oldStructure = structure();
+        }
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::becomePrototypeTransition(vm, oldStructure, &deferred));
     }

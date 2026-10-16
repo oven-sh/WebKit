@@ -225,7 +225,7 @@ public:
     static bool putInlineForJSObject(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
-    static bool NODELETE mightBeSpecialProperty(VM&, JSType, UniquedStringImpl*);
+    static bool LEGACY_NODELETE mightBeSpecialProperty(VM&, JSType, UniquedStringImpl*);
     JS_EXPORT_PRIVATE NEVER_INLINE static bool definePropertyOnReceiver(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     // putByIndex assumes that the receiver is this JSCell object.
     JS_EXPORT_PRIVATE static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
@@ -350,6 +350,9 @@ public:
     void putDirectNonIndexAccessorWithoutTransition(VM&, PropertyName, GetterSetter*, unsigned attributes);
     bool putDirectAccessor(JSGlobalObject*, PropertyName, GetterSetter*, unsigned attributes);
     JS_EXPORT_PRIVATE bool putDirectCustomAccessor(VM&, PropertyName, JSValue, unsigned attributes);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE bool replaceOwnPropertyWithCustomValue(VM&, PropertyName, JSValue, unsigned attributes);
+#endif
     void putDirectCustomGetterSetterWithoutTransition(VM&, PropertyName, JSValue, unsigned attributes);
 
     bool putGetter(JSGlobalObject*, PropertyName, JSValue, unsigned attributes);
@@ -379,7 +382,7 @@ public:
     static constexpr unsigned maximumPrototypeChainDepth = 40000;
     JS_EXPORT_PRIVATE void getPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-    JS_EXPORT_PRIVATE static void NODELETE getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE void getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE void getOwnNonIndexPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     void getNonReifiedStaticPropertyNames(VM&, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -548,15 +551,15 @@ public:
     JS_EXPORT_PRIVATE bool hasImmutableProperties() const;
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
-    JS_EXPORT_PRIVATE static bool NODELETE isExtensible(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE isExtensible(JSObject*, JSGlobalObject*);
     bool isSealed(VM& vm) { return structure()->isSealed(vm); }
     bool isFrozen(VM& vm) { return structure()->isFrozen(vm); }
 
-    JS_EXPORT_PRIVATE bool NODELETE anyObjectInChainMayInterceptIndexedAccesses() const;
-    bool NODELETE needsSlowPutIndexing() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE anyObjectInChainMayInterceptIndexedAccesses() const;
+    bool LEGACY_NODELETE needsSlowPutIndexing() const;
 
 private:
-    TransitionKind NODELETE suggestedArrayStorageTransition() const;
+    TransitionKind LEGACY_NODELETE suggestedArrayStorageTransition() const;
 public:
     // You should only call isStructureExtensible() when:
     // - Performing this check in a way that isn't described in the specification 
@@ -610,6 +613,7 @@ public:
     // of an immutable shape: nothing, and the error.
     JS_EXPORT_PRIVATE JSValue getDirectOfCompiledObject(VM&, PropertyName, unsigned* attributes) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
+    JS_EXPORT_PRIVATE std::optional<bool> getOwnPropertySlotOfCompiledObject(PropertyName, PropertySlot&);
     JS_EXPORT_PRIVATE bool reifyIfSlimClosure(VM&);
     JS_EXPORT_PRIVATE void noteRefusalByLock(VM&, UniquedStringImpl* name = nullptr, ASCIILiteral kind = { }, bool isAnswered = false);
     JS_EXPORT_PRIVATE bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl* name, bool isAnswered, bool isDelete = false);
@@ -698,6 +702,9 @@ public:
     // As ensureWritable(), for a caller that can do without. False: the elements are in copy-on-write storage to keep them from
     // changing (JSObject::makePropertiesImmutable()), and stay there.
     [[nodiscard]] bool tryMakeWritable(VM&); // Defined in JSObjectInlines.h
+    bool hasFrozenElementsInPlace() const { return isCopyOnWrite(indexingMode()) && !structure()->isStructureExtensible() && !structure()->hasImmutableProperties(); }
+    JS_EXPORT_PRIVATE void moveFrozenElementsToSparseMap(VM&);
+    JS_EXPORT_PRIVATE bool tryFreezeArrayInPlace(VM&);
 
     static constexpr size_t offsetOfInlineStorage();
 
@@ -796,6 +803,7 @@ protected:
     void convertInt32ForValue(VM&, JSValue);
     void convertDoubleForValue(VM&, JSValue);
     void convertFromCopyOnWrite(VM&);
+    void copyElementsOutOfCopyOnWriteStorage(VM&);
 
     static Butterfly* createArrayStorageButterfly(VM&, JSObject* intendedOwner, Structure*, unsigned length, unsigned vectorLength, Butterfly* oldButterfly = nullptr);
     static Butterfly* tryCreateArrayStorageButterfly(VM&, JSObject* intendedOwner, Structure*, unsigned length, unsigned vectorLength, Butterfly* oldButterfly = nullptr);
@@ -832,7 +840,7 @@ protected:
     bool putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow, ArrayStorage*);
 
     bool increaseVectorLength(VM&, unsigned newLength);
-    void NODELETE deallocateSparseIndexMap();
+    void LEGACY_NODELETE deallocateSparseIndexMap();
     bool defineOwnIndexedProperty(JSGlobalObject*, unsigned, const PropertyDescriptor&, bool throwException);
     SparseArrayValueMap* allocateSparseIndexMap(VM&);
         
@@ -849,7 +857,7 @@ protected:
     void reallocateAndShrinkButterfly(VM&, unsigned length);
     
     template<IndexingType indexingShape>
-    unsigned NODELETE countElements(Butterfly*);
+    unsigned LEGACY_NODELETE countElements(Butterfly*);
         
     // This is relevant to undecided, int32, double, and contiguous.
     unsigned countElements();

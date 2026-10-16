@@ -62,6 +62,7 @@
 #include <WebCore/ServiceWorkerUpdateViaCache.h>
 #include <algorithm>
 #include <cstdint>
+#include <wtf/Borrow.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
@@ -253,7 +254,7 @@ RefPtr<ServiceWorkerFetchTask> WebSWServerConnection::createFetchTask(NetworkRes
 
     std::optional<ServiceWorkerRegistrationIdentifier> serviceWorkerRegistrationIdentifier;
     if (auto resultingClientIdentifier = loader.parameters().options.resultingClientIdentifier) {
-        auto topOrigin = loader.parameters().topOriginForServiceWorkers(request.url());
+        auto topOrigin = loader.parameters().topOriginForServiceWorkers(request);
         RefPtr registration = server->doRegistrationMatchingSync(topOrigin, request.url());
         if (!registration)
             return nullptr;
@@ -419,7 +420,7 @@ void WebSWServerConnection::postMessageToServiceWorker(ServiceWorkerIdentifier d
         if (!networkProcess)
             return;
         CheckedRef registry = networkProcess->messagePortChannelRegistry();
-        for (auto& transferredPort : message.transferredPorts)
+        for (auto& transferredPort : borrow(message.transferredPorts))
             registry->recordPendingTransferDestination(transferredPort.first, contextConnection->webProcessIdentifier());
 
         if (!blobURLsInFlight) {
@@ -510,7 +511,7 @@ void WebSWServerConnection::postMessageToServiceWorkerClient(ScriptExecutionCont
         if (!networkProcess)
             return;
         CheckedRef registry = networkProcess->messagePortChannelRegistry();
-        for (auto& transferredPort : message.transferredPorts)
+        for (auto& transferredPort : borrow(message.transferredPorts))
             registry->recordPendingTransferDestination(transferredPort.first, destinationContextIdentifier.processIdentifier());
         if (!blobURLsInFlight) {
             protectedThis->send(Messages::WebSWClientConnection::PostMessageToServiceWorkerClient { destinationContextIdentifier, message, sourceServiceWorkerData, sourceOrigin }, 0);

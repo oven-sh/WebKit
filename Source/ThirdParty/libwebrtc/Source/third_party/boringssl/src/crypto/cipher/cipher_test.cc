@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include <openssl/sha.h>
 #include <openssl/span.h>
 
+#include "../fipsmodule/cipher/internal.h"
 #include "../internal.h"
 #include "../test/file_test.h"
 #include "../test/test_util.h"
@@ -317,6 +319,13 @@ static void TestCipherAPI(const EVP_CIPHER *cipher, Operation op, bool padding,
         break;
       }
     }
+    if (is_custom_cipher) {
+      // AEAD and custom cipher implementations do not queue an OpenSSL error
+      // code upon tag verfification failure.
+      EXPECT_EQ(0u, ERR_peek_error());
+    } else {
+      EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_CIPHER, std::nullopt}}));
+    }
   } else {
     ASSERT_TRUE(MaybeCopyCipherContext(copy, &ctx));
     size_t max = EVP_CIPHER_CTX_max_final(ctx.get());
@@ -564,6 +573,8 @@ static void TestSizedAPIRangeChecks(const EVP_CIPHER *cipher, Operation op,
         EXPECT_FALSE(EVP_CipherUpdate_ex(thisctx.get(), buf.data(), &len,
                                          buf.size(), in1.data(), in1.size()));
         EXPECT_EQ(len, size_t{0});
+        EXPECT_TRUE(
+            ErrorsAreAndClear({{ERR_LIB_CIPHER, CIPHER_R_BUFFER_TOO_SMALL}}));
         continue;
       } else {
         std::vector<uint8_t> buf(update1_size);
@@ -577,6 +588,8 @@ static void TestSizedAPIRangeChecks(const EVP_CIPHER *cipher, Operation op,
         EXPECT_FALSE(EVP_CipherUpdate_ex(thisctx.get(), buf.data(), &len,
                                          buf.size(), in2.data(), in2.size()));
         EXPECT_EQ(len, size_t{0});
+        EXPECT_TRUE(
+            ErrorsAreAndClear({{ERR_LIB_CIPHER, CIPHER_R_BUFFER_TOO_SMALL}}));
         continue;
       } else {
         std::vector<uint8_t> buf(update2_size);
@@ -591,6 +604,8 @@ static void TestSizedAPIRangeChecks(const EVP_CIPHER *cipher, Operation op,
         EXPECT_FALSE(
             EVP_CipherFinal_ex2(thisctx.get(), buf.data(), &len, buf.size()));
         EXPECT_EQ(len, size_t{0});
+        EXPECT_TRUE(
+            ErrorsAreAndClear({{ERR_LIB_CIPHER, CIPHER_R_BUFFER_TOO_SMALL}}));
         continue;
       } else {
         std::vector<uint8_t> buf(final_size);
@@ -1413,6 +1428,187 @@ TEST(CipherTest, Uninitialized) {
     EVP_CIPHER_CTX ctx;
     EVP_CipherInit(&ctx, EVP_aes_128_gcm(), nullptr, nullptr, -1);
     EVP_CIPHER_CTX_cleanup(&ctx);
+  }
+}
+
+TEST(CipherTest, RetryAfterError) {
+  const uint8_t kKey[16] = {1, 2,  3,  4,  5,  6,  7,  8,
+                            9, 10, 11, 12, 13, 14, 15, 16};
+  const uint8_t kIV[16] = {0};
+
+  // Compute a sample plaintext/ciphertext pair.
+  uint8_t plaintext[40];
+  for (size_t i = 0; i < sizeof(plaintext); i++) {
+    plaintext[i] = static_cast<uint8_t>(i);
+  }
+  uint8_t ciphertext[48];
+  {
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_EncryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    size_t len1;
+    ASSERT_TRUE(EVP_EncryptUpdate_ex(ctx.get(), ciphertext, &len1,
+                                     sizeof(ciphertext), plaintext,
+                                     sizeof(plaintext)));
+    size_t len2;
+    ASSERT_TRUE(EVP_EncryptFinal_ex2(ctx.get(), ciphertext + len1, &len2,
+                                     sizeof(ciphertext) - len1));
+    ASSERT_EQ(sizeof(ciphertext), len1 + len2);
+  }
+
+  // EncryptUpdate output buffer size error does not poison the context.
+  {
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_EncryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    // Call EVP_EncryptUpdate_ex with too small of a buffer.
+    uint8_t out[sizeof(ciphertext)];
+    size_t out_len;
+    EXPECT_FALSE(EVP_EncryptUpdate_ex(ctx.get(), out, &out_len, 0, plaintext,
+                                      sizeof(plaintext)));
+    ASSERT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    EXPECT_FALSE(EVP_EncryptUpdate_ex(ctx.get(), out, &out_len,
+                                      31 /* one byte too short */, plaintext,
+                                      sizeof(plaintext)));
+    ASSERT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    // A subsequent call with sufficient output buffer succeeds.
+    ASSERT_TRUE(EVP_EncryptUpdate_ex(ctx.get(), out, &out_len, sizeof(out),
+                                     plaintext, sizeof(plaintext)));
+    EXPECT_EQ(Bytes(out, out_len), Bytes(ciphertext, out_len));
+  }
+
+  // Same as above, but with some buffered plaintext.
+  {
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_EncryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    // Call EVP_EncryptUpdate_ex with too small of a buffer.
+    uint8_t out[sizeof(ciphertext)];
+    size_t out_len;
+    ASSERT_TRUE(
+        EVP_EncryptUpdate_ex(ctx.get(), out, &out_len, 0, plaintext, 5));
+    EXPECT_EQ(out_len, 0u);
+    auto rest = Span(plaintext).subspan(5);
+    EXPECT_FALSE(EVP_EncryptUpdate_ex(ctx.get(), out, &out_len, 0, rest.data(),
+                                      rest.size()));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    EXPECT_FALSE(EVP_EncryptUpdate_ex(ctx.get(), out, &out_len,
+                                      31 /* one byte too short */, rest.data(),
+                                      rest.size()));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    // A subsequent call with sufficient output buffer succeeds.
+    ASSERT_TRUE(EVP_EncryptUpdate_ex(ctx.get(), out, &out_len, sizeof(out),
+                                     rest.data(), rest.size()));
+    EXPECT_EQ(Bytes(out, out_len), Bytes(ciphertext, out_len));
+  }
+
+  // EncryptFinal output buffer size error does not poison the context.
+  {
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_EncryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    uint8_t out[sizeof(ciphertext)];
+    size_t len1, len2;
+    ASSERT_TRUE(EVP_EncryptUpdate_ex(ctx.get(), out, &len1, sizeof(out),
+                                     plaintext, sizeof(plaintext)));
+    // Call EVP_EncryptFinal_ex2 with too small of a buffer.
+    EXPECT_FALSE(EVP_EncryptFinal_ex2(ctx.get(), out + len1, &len2, 0));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    EXPECT_FALSE(EVP_EncryptFinal_ex2(ctx.get(), out + len1, &len2,
+                                      sizeof(out) - len1 - 1));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    // A subsequent call with sufficient output buffer succeeds.
+    ASSERT_TRUE(
+        EVP_EncryptFinal_ex2(ctx.get(), out + len1, &len2, sizeof(out) - len1));
+    EXPECT_EQ(Bytes(out + len1, len2), Bytes(Span(ciphertext).subspan(len1)));
+  }
+
+  // DecryptUpdate output buffer size error does not poison the context.
+  {
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_DecryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    uint8_t out[sizeof(plaintext)];
+    size_t out_len;
+    // Call EVP_DecryptUpdate_ex with too small of a buffer.
+    EXPECT_FALSE(EVP_DecryptUpdate_ex(ctx.get(), out, &out_len, 0, ciphertext,
+                                      sizeof(ciphertext)));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    EXPECT_FALSE(EVP_DecryptUpdate_ex(ctx.get(), out, &out_len,
+                                      31 /* one byte too short */, ciphertext,
+                                      sizeof(ciphertext)));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    // A subsequent call with sufficient output buffer succeeds.
+    ASSERT_TRUE(EVP_DecryptUpdate_ex(ctx.get(), out, &out_len, sizeof(out),
+                                     ciphertext, sizeof(ciphertext)));
+    EXPECT_EQ(Bytes(out, out_len), Bytes(plaintext, out_len));
+  }
+
+  // DecryptFinal output buffer size error does not poison the context.
+  {
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_DecryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    uint8_t out[sizeof(plaintext)];
+    size_t len1, len2;
+    ASSERT_TRUE(EVP_DecryptUpdate_ex(ctx.get(), out, &len1, sizeof(out),
+                                     ciphertext, sizeof(ciphertext)));
+    // Calling EVP_DecryptFinal_ex2 with too small of a buffer.
+    EXPECT_FALSE(EVP_DecryptFinal_ex2(ctx.get(), out + len1, &len2, 0));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    EXPECT_FALSE(EVP_DecryptFinal_ex2(ctx.get(), out + len1, &len2,
+                                      sizeof(out) - len1 - 1));
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER,
+                            CIPHER_R_BUFFER_TOO_SMALL));
+    // A subsequent call with sufficient output buffer succeeds.
+    ASSERT_TRUE(
+        EVP_DecryptFinal_ex2(ctx.get(), out + len1, &len2, sizeof(out) - len1));
+    EXPECT_EQ(Bytes(out + len1, len2), Bytes(Span(plaintext).subspan(len1)));
+  }
+
+  // DecryptFinal padding failure does not poison the context.
+  //
+  // google/play-licensing, sadly, relies on it by only ever calling `doFinal`
+  // on a cipher object. (Which is known broken as the CBC IV will be wrong for
+  // next call, but as next call's padding will pass if the input string has
+  // correct padding, the IV for the call after will be correct again,
+  // therefore reading bad data once in their `unobfuscate` method will "fix
+  // itself" two calls later). See b/504728350.
+  {
+    uint8_t bad_ciphertext[16] = {0};
+    uint8_t out[16];
+    int len;
+
+    bssl::UniquePtr<EVP_CIPHER_CTX> ctx(EVP_CIPHER_CTX_new());
+    ASSERT_TRUE(ctx);
+    ASSERT_TRUE(
+        EVP_DecryptInit_ex(ctx.get(), EVP_aes_128_cbc(), nullptr, kKey, kIV));
+    ASSERT_TRUE(EVP_DecryptUpdate(ctx.get(), out, &len, bad_ciphertext,
+                                  sizeof(bad_ciphertext)));
+    // EVP_DecryptFinal_ex fails due to bad padding.
+    EXPECT_FALSE(EVP_DecryptFinal_ex(ctx.get(), out, &len));
+    EXPECT_TRUE(
+        ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER, CIPHER_R_BAD_DECRYPT));
+
+    // Subsequent calls continue to return CIPHER_R_BAD_DECRYPT.
+    EXPECT_FALSE(EVP_DecryptFinal_ex(ctx.get(), out, &len));
+    EXPECT_TRUE(
+        ErrorEquals(ERR_get_error(), ERR_LIB_CIPHER, CIPHER_R_BAD_DECRYPT));
   }
 }
 

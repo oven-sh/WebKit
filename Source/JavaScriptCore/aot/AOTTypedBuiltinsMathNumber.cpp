@@ -103,15 +103,16 @@ std::optional<Writes> writesOfInlineMathNumber(InlineBuiltin which, std::span<co
     case InlineBuiltin::MathClz32:
     case InlineBuiltin::MathSign:
     case InlineBuiltin::MathFunction:
-        return writesIf(arguments.size() == 1 && areNumbers(arguments), Writes::Pure);
+        return writesIf(arguments.size() == 1 && isNumericOperand(arguments[0]), Writes::Pure);
     case InlineBuiltin::NumberToString:
         return writesIf(arguments.empty() || (arguments[0].isInteger() && arguments[0].integers.isWithin(Range::int32())), Writes::RuntimeState);
     case InlineBuiltin::MathPow:
+        return writesIf(arguments.size() == 2 && isNumericOperand(arguments[0]) && arguments[1].isNumber(), Writes::Pure);
     case InlineBuiltin::MathImul:
     case InlineBuiltin::MathATan2:
-        return writesIf(arguments.size() == 2 && areNumbers(arguments), Writes::Pure);
+        return writesIf(arguments.size() == 2 && std::ranges::all_of(arguments, isNumericOperand), Writes::Pure);
     case InlineBuiltin::MathHypot:
-        return writesIf(arguments.size() <= 3 && areNumbers(arguments), Writes::Pure);
+        return writesIf(arguments.size() <= 3 && std::ranges::all_of(arguments, isNumericOperand), Writes::Pure);
     case InlineBuiltin::MathMin:
     case InlineBuiltin::MathMax:
         return writesIf(std::ranges::all_of(arguments, isNumericOperand), Writes::Pure);
@@ -134,11 +135,11 @@ std::optional<Writes> writesOfInlineMathNumber(InlineBuiltin which, std::span<co
         case Rep::Double:
             return Writes::Pure;
         case Rep::OptionalInt64:
-            return writesIf(!converts, Writes::Pure);
+            return writesIf(!converts || isNumericOperand(arguments[0]), Writes::Pure);
         // What stands for `undefined` and `null` among doubles is not a number, so it is not finite either. Only to the
         // question whether something is the number that is not one does it give the wrong answer.
         case Rep::OptionalDouble:
-            return writesIf(!converts && !asksForNaN, Writes::Pure);
+            return writesIf(!converts || isNumericOperand(arguments[0]), Writes::Pure);
         case Rep::JSValue:
             return writesIf(!converts, Writes::Pure);
         default:
@@ -680,7 +681,7 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         [[fallthrough]];
     case InlineBuiltin::MathFround:
     case InlineBuiltin::MathSqrt: {
-        Number x = in<Number>(arguments[0]);
+        Number x = asNumericOperand(arguments[0]);
         switch (which) {
         case InlineBuiltin::MathAbs:
             return yieldNumber(abs(x), type);
@@ -709,11 +710,11 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
             Integer isPositive(m_out.lShr(neg(x).value(), m_out.constInt32(63)));
             return ensure(bitOr(isNegative, isPositive), Type::integer({ -1, 1 }), type);
         }
-        Number x = in<Number>(arguments[0]);
+        Number x = asNumericOperand(arguments[0]);
         return yieldNumber(select(greaterThan(x, number(0)), number(1), select(lessThan(x, number(0)), number(-1), x)), type);
     }
     case InlineBuiltin::MathFunction: {
-        Number x = in<Number>(arguments[0]);
+        Number x = asNumericOperand(arguments[0]);
 #define AOT_TYPED_CALL_MATH_FUNCTION(capitalizedName, lowerName) \
         if (builtin.name == ASCIILiteral::fromLiteralUnsafe(#lowerName)) \
             return yieldNumber(AOT_TYPED_OPERATION(Math ## capitalizedName, x), type);
@@ -722,20 +723,20 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         RELEASE_ASSERT_NOT_REACHED();
     }
     case InlineBuiltin::MathATan2:
-        return yieldNumber(AOT_TYPED_OPERATION(MathATan2, in<Number>(arguments[0]), in<Number>(arguments[1])), type);
+        return yieldNumber(AOT_TYPED_OPERATION(MathATan2, asNumericOperand(arguments[0]), asNumericOperand(arguments[1])), type);
     case InlineBuiltin::MathHypot:
         switch (arguments.size()) {
         case 0:
             return yieldNumber(number(0), type);
         case 1:
-            return yieldNumber(abs(in<Number>(arguments[0])), type);
+            return yieldNumber(abs(asNumericOperand(arguments[0])), type);
         case 2:
-            return yieldNumber(AOT_TYPED_OPERATION(MathHypot, in<Number>(arguments[0]), in<Number>(arguments[1])), type);
+            return yieldNumber(AOT_TYPED_OPERATION(MathHypot, asNumericOperand(arguments[0]), asNumericOperand(arguments[1])), type);
         default:
-            return yieldNumber(AOT_TYPED_OPERATION(MathHypot3, in<Number>(arguments[0]), in<Number>(arguments[1]), in<Number>(arguments[2])), type);
+            return yieldNumber(AOT_TYPED_OPERATION(MathHypot3, asNumericOperand(arguments[0]), asNumericOperand(arguments[1]), asNumericOperand(arguments[2])), type);
         }
     case InlineBuiltin::MathF16Round:
-        return yieldNumber(AOT_TYPED_OPERATION(MathF16Round, in<Number>(arguments[0])), type);
+        return yieldNumber(AOT_TYPED_OPERATION(MathF16Round, asNumericOperand(arguments[0])), type);
     // WeakRandom::get().
     case InlineBuiltin::MathRandom: {
         LValue globalObject = fixedPointer(Instance::offsetOfGlobalObject());
@@ -780,7 +781,7 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         return yield(either<CellPointer>(below(binary<Word32>(&Output::sub, radix, word32(2)), word32(35)), withRadix, generally));
     }
     case InlineBuiltin::MathPow: {
-        Number base = in<Number>(arguments[0]);
+        Number base = asNumericOperand(arguments[0]);
         if (auto power = powerWithConstantExponent(base, arguments[1]))
             return yieldNumber(*power, type);
         if (auto power = powerWithConstantBase(arguments[0], arguments[1]))
@@ -825,6 +826,14 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         if (!converts && !(typeOf(arguments[0]).primitives & Primitive::Number))
             return yieldBoolean(boolean(false), type);
         Operand operand = get(arguments[0]);
+        if (converts && (operand.rep == Rep::OptionalInt64 || operand.rep == Rep::OptionalDouble)) {
+            Number x = asNumericOperand(arguments[0]);
+            return yieldBoolean(asksForNaN ? notEqualOrUnordered(x, x) : isFinite(x), type);
+        }
+        if (which == InlineBuiltin::NumberIsNaN && operand.rep == Rep::OptionalDouble) {
+            Number x = assumedNumber(operand.as<OptionalNumber>());
+            return yieldBoolean(logicalAnd(notEqualOrUnordered(x, x), logicalNot(isMarker(operand))), type);
+        }
         if (operand.rep == Rep::Int64) {
             if (which == InlineBuiltin::NumberIsSafeInteger)
                 return yieldBoolean(isWithin(operand.as<Integer>(), safeIntegers), type);

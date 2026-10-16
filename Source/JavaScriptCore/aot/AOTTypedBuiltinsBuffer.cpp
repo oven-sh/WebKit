@@ -308,7 +308,7 @@ Operand Lowering::loadBytes(Pointer address, TypedArrayType elements, const Byte
             element = zeroExtended(Word32(bits));
             break;
         case TypeFloat32:
-            element = Number(m_out.floatToDouble(m_out.bitCast(bits, Float)));
+            element = Number(m_out.floatToDouble(m_out.m_block->appendNew<B3::Value>(m_proc, B3::BitwiseCast, m_out.origin(), bits)));
             break;
         case TypeFloat64:
             element = Number(m_out.bitCast(bits, Double));
@@ -337,7 +337,7 @@ void Lowering::storeBytes(Pointer address, TypedArrayType elements, Operand stor
     }
     LValue bits = stored.value;
     if (elements == TypeFloat32)
-        bits = m_out.bitCast(m_out.doubleToFloat(bits), Int32);
+        bits = m_out.m_block->appendNew<B3::Value>(m_proc, B3::BitwiseCast, m_out.origin(), m_out.doubleToFloat(bits));
     else if (elements == TypeFloat64)
         bits = m_out.bitCast(bits, Int64);
     bits = inByteOrder(bits, size, order);

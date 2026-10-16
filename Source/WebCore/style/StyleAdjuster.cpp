@@ -102,6 +102,7 @@
 namespace WebCore {
 namespace Style {
 static inline void adjustForManipulationSurfaceQuirk(ComputedStyle&) { }
+static inline void adjustForBoxAnnotationQuirk(ComputedStyle&) { }
 } // namespace Style
 } // namespace WebCore
 #endif
@@ -185,7 +186,7 @@ static bool shouldInheritTextDecorationsInEffect(const Style::ComputedStyle& sty
     return true;
 }
 
-static bool NODELETE isScrollableOverflow(Overflow overflow)
+static bool LEGACY_NODELETE isScrollableOverflow(Overflow overflow)
 {
     return overflow == Overflow::Scroll || overflow == Overflow::Auto;
 }
@@ -332,12 +333,12 @@ OptionSet<EventListenerRegionType> Adjuster::computeEventListenerRegionTypes(con
     return types;
 }
 
-static bool NODELETE isOverflowClipOrVisible(Overflow overflow)
+static bool LEGACY_NODELETE isOverflowClipOrVisible(Overflow overflow)
 {
     return overflow == Overflow::Clip || overflow == Overflow::Visible;
 }
 
-static bool NODELETE shouldInlinifyForRuby(const Style::ComputedStyle& style, const Style::ComputedStyle& parentBoxStyle)
+static bool LEGACY_NODELETE shouldInlinifyForRuby(const Style::ComputedStyle& style, const Style::ComputedStyle& parentBoxStyle)
 {
     auto parentDisplay = parentBoxStyle.display();
     auto hasRubyParent = parentDisplay == DisplayType::InlineRuby
@@ -348,7 +349,7 @@ static bool NODELETE shouldInlinifyForRuby(const Style::ComputedStyle& style, co
     return hasRubyParent && !style.hasOutOfFlowPosition() && style.floating() == Float::None;
 }
 
-static bool NODELETE hasUnsupportedRubyDisplay(Display display, const Element* element, const Document& document)
+static bool LEGACY_NODELETE hasUnsupportedRubyDisplay(Display display, const Element* element, const Document& document)
 {
     if (document.settings().cssRubyDisplayTypesInAuthorStylesEnabled())
         return false;
@@ -370,7 +371,7 @@ static bool NODELETE hasUnsupportedRubyDisplay(Display display, const Element* e
 }
 
 // https://drafts.csswg.org/css-ruby-1/#bidi
-static UnicodeBidi NODELETE forceBidiIsolationForRuby(UnicodeBidi unicodeBidi)
+static UnicodeBidi LEGACY_NODELETE forceBidiIsolationForRuby(UnicodeBidi unicodeBidi)
 {
     switch (unicodeBidi) {
     case UnicodeBidi::Normal:
@@ -490,7 +491,7 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
             style.setDisplayMaintainingOriginalDisplay(DisplayType::InlineFlowRoot);
 
         // FIXME: according to the specification this should apply as well to -webkit-line-clamp.
-        if (!style.hasLegacyLineClamp() && style.overflowContinue() != OverflowContinue::Auto && style.boxOrient() == BoxOrient::Vertical) {
+        if (!style.hasLegacyLineClamp() && style.overflowContinue() != OverflowContinue::Normal && style.boxOrient() == BoxOrient::Vertical) {
             if (style.display() == DisplayType::BlockDeprecatedFlex)
                 style.setDisplayMaintainingOriginalDisplay(DisplayType::BlockFlowRoot);
             else if (style.display() == DisplayType::InlineDeprecatedFlex)
@@ -604,6 +605,7 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
     // object wedged in between them. Auto z-index also becomes 0 for objects that specify transforms/masks/reflections.
     if (hasAutoSpecifiedZIndex) {
         if ((m_element && m_document->documentElement() == m_element.get())
+            || (m_element && m_element->isCanvasDrawable())
             || hasTransformRelatedProperty(style, m_element.get(), m_parentStyle)
             || shouldTreatAutoZIndexAsZero(style)
             || isInTopLayerOrBackdrop(style, m_element.get()))
@@ -901,7 +903,7 @@ void Adjuster::adjustUsedUserSelect(Style::ComputedStyle& style) const
     style.setUsedUserSelect(value);
 }
 
-static bool NODELETE hasEffectiveDisplayNoneForDisplayContents(const Element& element)
+static bool LEGACY_NODELETE hasEffectiveDisplayNoneForDisplayContents(const Element& element)
 {
     using namespace ElementNames;
 
@@ -1100,6 +1102,12 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
             style.setOverflowY(Overflow::Auto);
     }
 
+    if (documentQuirks.needsGoogleDocsNavigationWidgetScrollQuirk()) {
+        static MainThreadNeverDestroyed<const AtomString> className("navigation-widget-content"_s);
+        if (style.visibility() == Visibility::Hidden && m_parentStyle.visibility() == Visibility::Visible && m_element->hasClassName(className))
+            style.setVisibility(Visibility::Visible);
+    }
+
     if (documentQuirks.needsWebExScrollabilityQuirk()) {
         // Ignore overflow: hidden on the body and #wrapper so the page remains
         // scrollable, and drop the width constraints on #wrapper so the desktop
@@ -1137,6 +1145,10 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
     // google.com/maps/embed rdar://184166392
     if (documentQuirks.needsGoogleMapsEmbedManipulationSurfaceQuirk())
         adjustForManipulationSurfaceQuirk(style);
+
+    // box.com rdar://187475153
+    if (documentQuirks.needsBoxAnnotationQuirk(protect(*m_element)))
+        adjustForBoxAnnotationQuirk(style);
 
 #if PLATFORM(IOS_FAMILY)
     if (documentQuirks.needsGoogleMapsScrollingQuirk()) {
@@ -1180,6 +1192,10 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
             style.setFlexShrink({ 2 });
         }
     }
+
+    // tiktok.com rdar://problem/183445905
+    if (documentQuirks.needsTikTokCaptchaSliderTouchActionQuirk(protect(*m_element)))
+        style.setUsedTouchAction(CSS::Keyword::None { });
 
 #if ENABLE(VIDEO)
     if (documentQuirks.needsFullscreenDisplayNoneQuirk()) {
@@ -1368,7 +1384,7 @@ std::unique_ptr<Style::ComputedStyle> Adjuster::restoreUsedDocumentElementStyleT
     return adjusted;
 }
 
-static bool NODELETE hasTextChild(const Element& element)
+static bool LEGACY_NODELETE hasTextChild(const Element& element)
 {
     for (auto* child = element.firstChild(); child; child = child->nextSibling()) {
         if (is<Text>(child))

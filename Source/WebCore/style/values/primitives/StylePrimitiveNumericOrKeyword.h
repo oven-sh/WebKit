@@ -240,7 +240,7 @@ public:
         if constexpr (hasCalcSize) {
             if (opaqueType == indexForCalcSize) {
                 SUPPRESS_FORWARD_DECL_ARG auto basisKeyword = calcSizeBasisKeyword(m_value.calcSizeValue());
-                if (basisKeyword != CSSValueInvalid)
+                if (basisKeyword != CSSValueID::Invalid)
                     return visitCalcSizeBasisKeyword(basisKeyword, visitor);
             }
         }
@@ -339,7 +339,7 @@ public:
 
 protected:
     // For predicates that must not construct a CalcSize, since its Ref would run a destructor in
-    // callers annotated NODELETE.
+    // callers annotated LEGACY_NODELETE.
     ALWAYS_INLINE CalcSizeValue& calcSizeValue() const requires (hasCalcSize) { return m_value.calcSizeValue(); }
 
 private:
@@ -415,7 +415,7 @@ private:
         if constexpr (hasCalcSize) {
             if (opaqueType == indexForCalcSize) {
                 SUPPRESS_FORWARD_DECL_ARG auto basisKeyword = calcSizeBasisKeyword(m_value.calcSizeValue());
-                return basisKeyword != CSSValueInvalid ? PrimitiveDataEvaluationKind::Flag : PrimitiveDataEvaluationKind::CalcSize;
+                return basisKeyword != CSSValueID::Invalid ? PrimitiveDataEvaluationKind::Flag : PrimitiveDataEvaluationKind::CalcSize;
             }
         }
 

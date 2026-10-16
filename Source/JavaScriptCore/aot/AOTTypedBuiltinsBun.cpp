@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
 #include "AOTTypedObject.h"
@@ -83,14 +84,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByValDirect, void, (Instance* insta
         object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexShouldThrow);
         OPERATION_RETURN(scope);
     }
+    bool isNameAlready = key.isSymbol() || (key.isString() && asString(key)->tryGetValueImpl() && asString(key)->tryGetValueImpl()->isAtom());
     auto property = key.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (std::optional<uint32_t> index = parseIndex(property)) {
         object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexShouldThrow);
         OPERATION_RETURN(scope);
     }
+    Structure* before = object->structure();
     PutPropertySlot slot(object, true);
     CommonSlowPaths::putDirectWithReify(vm, globalObject, object, property, value, slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (isNameAlready)
+        cacheKeyedDefinition(instance, vm, before, object->structure(), key.asCell(), property.impl());
     OPERATION_RETURN(scope);
 }
 
@@ -248,7 +254,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
             return yieldValue(stored, type);
         }
         auto generally = [&]() -> Operand {
-            AOT_TYPED_OPERATION(PutByValDirect, asCell(in<Boxed>(object)), in<Boxed>(key), in<Boxed>(stored));
+            callICStub(Stub::PutByValDirectCached, Void, { { in<Boxed>(object).value(), firstStubOperandGPR }, { in<Boxed>(key).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
             return { };
         };
         if (!mayBeIndex(key)) {

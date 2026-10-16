@@ -416,7 +416,7 @@ static inline JSValue jsTestDefaultToJSON_thirdUnJSONableAttributeGetter(JSGloba
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<TestException>>(lexicalGlobalObject, *thisObject.realm(), throwScope, impl.thirdUnJSONableAttribute())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<TestException>>(lexicalGlobalObject, *thisObject.realm(), throwScope, [&] -> decltype(auto) { return impl.thirdUnJSONableAttribute(); })));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestDefaultToJSON_thirdUnJSONableAttribute, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -548,7 +548,7 @@ static inline JSValue jsTestDefaultToJSON_seventhDirectlyToJSONableAttributeGett
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<TestDefaultToJSONInheritFinal>>(lexicalGlobalObject, *thisObject.realm(), throwScope, impl.seventhDirectlyToJSONableAttribute())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<TestDefaultToJSONInheritFinal>>(lexicalGlobalObject, *thisObject.realm(), throwScope, [&] -> decltype(auto) { return impl.seventhDirectlyToJSONableAttribute(); })));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestDefaultToJSON_seventhDirectlyToJSONableAttribute, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -581,7 +581,7 @@ static inline JSValue jsTestDefaultToJSON_eighthIndirectlyAttributeGetter(JSGlob
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<TestDefaultToJSONIndirectInheritance>>(lexicalGlobalObject, *thisObject.realm(), throwScope, impl.eighthIndirectlyAttribute())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<TestDefaultToJSONIndirectInheritance>>(lexicalGlobalObject, *thisObject.realm(), throwScope, [&] -> decltype(auto) { return impl.eighthIndirectlyAttribute(); })));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestDefaultToJSON_eighthIndirectlyAttribute, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -614,7 +614,7 @@ static inline JSValue jsTestDefaultToJSON_ninthOptionalDirectlyToJSONableAttribu
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLInterface<TestDefaultToJSONInheritFinal>>>(lexicalGlobalObject, *thisObject.realm(), throwScope, impl.ninthOptionalDirectlyToJSONableAttribute())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLInterface<TestDefaultToJSONInheritFinal>>>(lexicalGlobalObject, *thisObject.realm(), throwScope, [&] -> decltype(auto) { return impl.ninthOptionalDirectlyToJSONableAttribute(); })));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestDefaultToJSON_ninthOptionalDirectlyToJSONableAttribute, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -812,13 +812,13 @@ static inline EncodedJSValue jsTestDefaultToJSONPrototypeFunction_toJSONBody(JSG
     auto sixthTypedefAttributeValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.sixthTypedefAttribute());
     RETURN_IF_EXCEPTION(throwScope, { });
     result->putDirect(vm, Identifier::fromString(vm, "sixthTypedefAttribute"_s), sixthTypedefAttributeValue);
-    auto seventhDirectlyToJSONableAttributeValue = toJS<IDLInterface<TestDefaultToJSONInheritFinal>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.seventhDirectlyToJSONableAttribute());
+    auto seventhDirectlyToJSONableAttributeValue = toJS<IDLInterface<TestDefaultToJSONInheritFinal>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.seventhDirectlyToJSONableAttribute(); });
     RETURN_IF_EXCEPTION(throwScope, { });
     result->putDirect(vm, Identifier::fromString(vm, "seventhDirectlyToJSONableAttribute"_s), seventhDirectlyToJSONableAttributeValue);
-    auto eighthIndirectlyAttributeValue = toJS<IDLInterface<TestDefaultToJSONIndirectInheritance>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.eighthIndirectlyAttribute());
+    auto eighthIndirectlyAttributeValue = toJS<IDLInterface<TestDefaultToJSONIndirectInheritance>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.eighthIndirectlyAttribute(); });
     RETURN_IF_EXCEPTION(throwScope, { });
     result->putDirect(vm, Identifier::fromString(vm, "eighthIndirectlyAttribute"_s), eighthIndirectlyAttributeValue);
-    auto ninthOptionalDirectlyToJSONableAttributeValue = toJS<IDLNullable<IDLInterface<TestDefaultToJSONInheritFinal>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.ninthOptionalDirectlyToJSONableAttribute());
+    auto ninthOptionalDirectlyToJSONableAttributeValue = toJS<IDLNullable<IDLInterface<TestDefaultToJSONInheritFinal>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.ninthOptionalDirectlyToJSONableAttribute(); });
     RETURN_IF_EXCEPTION(throwScope, { });
     result->putDirect(vm, Identifier::fromString(vm, "ninthOptionalDirectlyToJSONableAttribute"_s), ninthOptionalDirectlyToJSONableAttributeValue);
     auto tenthFrozenArrayAttributeValue = toJS<IDLFrozenArray<IDLBoolean>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.tenthFrozenArrayAttribute());

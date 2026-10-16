@@ -222,7 +222,7 @@ class Terminal(object):
         black, red, green, yellow, blue, magenta, cyan, white = colors
 
         backgroundColors = [value(40), value(41), value(42), value(43), value(44), value(45), value(46), value(47)]
-        blackBackground, redBackground, greenBackground, yellowBackground, blueBackground, magentaBackground, cyanBackground, whiteBackground = colors
+        blackBackground, redBackground, greenBackground, yellowBackground, blueBackground, magentaBackground, cyanBackground, whiteBackground = backgroundColors
 
     class Style(object):
         top = {}

@@ -73,7 +73,7 @@ public:
     ValueOrReference<HashSet<AnimatableCSSProperty>> overriddenAnimatedProperties() const { return m_cascade.overriddenAnimatedProperties(); }
 
 private:
-    void applyProperties(int firstProperty, int lastProperty);
+    void applyProperties(CSSPropertyID firstProperty, CSSPropertyID lastProperty);
     void applyLogicalGroupProperties();
     void applyCustomProperties();
     void applyCustomPropertyImpl(const AtomString&, const PropertyCascade::Property&);
@@ -81,7 +81,7 @@ private:
 
     enum CustomPropertyCycleTracking { Enabled = 0, Disabled };
     template<CustomPropertyCycleTracking trackCycles>
-    void applyPropertiesImpl(int firstProperty, int lastProperty);
+    void applyPropertiesImpl(CSSPropertyID firstProperty, CSSPropertyID lastProperty);
     void applyCascadeProperty(const PropertyCascade::Property&);
     bool applyRollbackCascadeProperty(const PropertyCascade&, CSSPropertyID, SelectorChecker::LinkMatchMask);
     bool applyRollbackCascadeCustomProperty(const PropertyCascade&, const AtomString&);

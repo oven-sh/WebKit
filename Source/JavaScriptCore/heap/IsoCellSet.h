@@ -76,7 +76,7 @@ private:
     void didResizeBits(unsigned newSize);
     void didRemoveBlock(unsigned blockIndex);
     void sweepToFreeList(MarkedBlock::Handle*);
-    void clearLowerTierPreciseCell(unsigned);
+    void clearLowerTierPreciseCell(unsigned index) { m_lowerTierPreciseBits.concurrentTestAndClear(index); }
     
     WTF::BitSet<MarkedBlock::maxNumberOfLowerTierPreciseCells> m_lowerTierPreciseBits;
 

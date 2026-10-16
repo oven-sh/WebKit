@@ -28,6 +28,7 @@
 
 #if ENABLE(DFG_JIT)
 
+#include <wtf/BitVector.h>
 #include <wtf/IndexMap.h>
 #include "DFGGraph.h"
 #include "DFGPhase.h"
@@ -37,7 +38,7 @@
 namespace JSC { namespace DFG {
 
 // This phase is run at the end of BytecodeParsing, so the graph isn't in a fully formed state.
-// For example, we can't access the predecessor list of any basic blocks yet.
+// Reachability and predecessor lists have been computed, but unreachable blocks may still be present.
 //
 // Note that, so far, this phase should only be used in the byte code parsing phase
 // or after the fix up phases. We don't want to validate graph since
@@ -52,19 +53,26 @@ public:
 
     bool run()
     {
+        BitVector needsPropagation(m_graph.numBlocks());
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+            if (!block->isReachable)
+                continue;
             m_flagsAtHead[block] = Operands<NodeFlags>(OperandsLike, m_graph.block(0)->variablesAtHead);
             m_flagsAtHead[block].fill(0);
+            needsPropagation.quickSet(block->index());
         }
 
+        // A block's propagation depends only on the flags at the heads of its successors, so it has
+        // to be revisited only when one of those changes.
         bool changed;
         do {
             changed = false;
 
             for (BlockIndex blockIndex = m_graph.numBlocks(); blockIndex--;) {
-                BasicBlock* block = m_graph.block(blockIndex);
-                if (!block)
+                if (!needsPropagation.quickClear(blockIndex))
                     continue;
+                BasicBlock* block = m_graph.block(blockIndex);
+                ASSERT(block);
 
                 {
                     unsigned numSuccessors = block->numSuccessors();
@@ -91,6 +99,8 @@ public:
 
                 if (m_flagsAtHead[block] != m_currentFlags) {
                     m_flagsAtHead[block] = m_currentFlags;
+                    for (BasicBlock* predecessor : block->predecessors)
+                        needsPropagation.quickSet(predecessor->index());
                     changed = true;
                 }
             }
@@ -162,7 +172,7 @@ private:
         if (!immediateValue.isNumber())
             return false;
         double immediate = immediateValue.asNumber();
-        return immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
+        return isInteger(immediate) && immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
     }
     
     template<int power>
@@ -209,12 +219,13 @@ private:
                 return true;
             
             Node* shiftAmount = node->child2().node();
-            if (!node->isNumberConstant())
+            if (!shiftAmount->isNumberConstant())
                 return false;
             JSValue immediateValue = shiftAmount->asJSValue();
             if (!immediateValue.isInt32())
                 return false;
-            return immediateValue.asInt32() > 32 - power;
+            // Shifting right by k = (count & 31) leaves |result| < 2^(32 - k), for both >> and >>>.
+            return (immediateValue.asInt32() & 31) > 31 - power;
         }
             
         default:
@@ -228,12 +239,12 @@ private:
         return isWithinPowerOfTwo<power>(edge.node());
     }
 
-    static bool NODELETE mergeFlags(NodeFlags& flagsRef, NodeFlags newFlags)
+    static bool LEGACY_NODELETE mergeFlags(NodeFlags& flagsRef, NodeFlags newFlags)
     {
         return checkAndSet(flagsRef, flagsRef | newFlags);
     }
 
-    bool NODELETE mergeDefaultFlags(Node* node)
+    bool LEGACY_NODELETE mergeDefaultFlags(Node* node)
     {
         bool changed = false;
         if (node->flags() & NodeHasVarArgs) {
@@ -551,17 +562,20 @@ private:
         }
 
         case LogicalNot: {
+            // The result is a boolean, so how it is used says nothing about how the operand is
+            // observed. The operand is compared against zero, so truncation is observable but -0 is not.
+            NodeFlags childFlags = NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNaNOrInfinity | NodeBytecodeUsesAsOther;
             switch (node->child1()->op()) {
             case ValueMod:
             case ArithMod:
-                // We can clear this flag since Mod and Div never produces Infinity. It is only NaN.
-                flags &= ~NodeBytecodeNeedsNaNOrInfinity;
+                // Mod never produces Infinity. This lets Mod return 0 instead of NaN for a zero
+                // divisor, which is fine here because NaN and 0 are both falsy.
+                childFlags &= ~NodeBytecodeNeedsNaNOrInfinity;
                 break;
             default:
                 break;
             }
-            flags &= ~NodeBytecodeNeedsNegZero;
-            node->child1()->mergeFlags(flags);
+            node->child1()->mergeFlags(childFlags);
             break;
         }
 

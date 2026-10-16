@@ -41,7 +41,7 @@ Ref<InvalidImage> InvalidImage::create()
 InvalidImage::~InvalidImage() = default;
 
 InvalidImage::InvalidImage()
-    : GeneratedImage(Image::Type::InvalidImage, true)
+    : GeneratedImage(Image::Type::InvalidImage)
 {
 }
 

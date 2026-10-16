@@ -796,7 +796,7 @@ private:
         }
     }
 
-    static bool NODELETE goesInTable(const Value* value)
+    static bool LEGACY_NODELETE goesInTable(const Value* value)
     {
         switch (value->opcode()) {
         case ConstDouble: {

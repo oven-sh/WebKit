@@ -34,6 +34,9 @@
 #ifndef UTYPES_H
 #define UTYPES_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 
 #include "unicode/umachine.h"
 #include "unicode/uversion.h"

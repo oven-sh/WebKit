@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StructureAlignedMemoryAllocator.h"
 
+#include "AddressSpaceBudget.h"
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include "Options.h"
@@ -110,6 +111,8 @@ public:
         RELEASE_ASSERT(hasOneBitSet(preferredStructureHeapSize));
 
         uintptr_t mappedHeapSize = preferredStructureHeapSize;
+        while (mappedHeapSize > addressSpaceToReserve() / partOfAddressSpaceForStructures && mappedHeapSize > MB)
+            mappedHeapSize /= 2;
         for (unsigned i = 0; i < 8; ++i) {
             // We need to align the address range to mappedHeapSize to ensure that the range does not span
             // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all

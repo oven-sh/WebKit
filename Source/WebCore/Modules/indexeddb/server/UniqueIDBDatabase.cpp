@@ -102,7 +102,7 @@ static inline uint64_t estimateSize(const IDBObjectStoreInfo& info, const IndexI
     return size;
 }
 
-static inline uint64_t NODELETE estimateSize(const IDBValue& value)
+static inline uint64_t LEGACY_NODELETE estimateSize(const IDBValue& value)
 {
     uint64_t size = 4;
     size += value.data().size();
@@ -284,10 +284,9 @@ void UniqueIDBDatabase::performCurrentOpenOperationAfterSpaceCheck(bool isGrante
     Ref connection = UniqueIDBDatabaseConnection::create(*this, *currentOpenDBRequest);
 
     if (requestedVersion == m_databaseInfo->version()) {
-        auto* rawConnection = &connection.get();
-        addOpenDatabaseConnection(WTF::move(connection));
+        addOpenDatabaseConnection(connection.copyRef());
 
-        auto result = IDBResultData::openDatabaseSuccess(currentOpenDBRequest->requestData().requestIdentifier(), *rawConnection);
+        auto result = IDBResultData::openDatabaseSuccess(currentOpenDBRequest->requestData().requestIdentifier(), connection);
         currentOpenDBRequest->didOpenDatabase(result);
         m_currentOpenDBRequest = nullptr;
         return;
@@ -609,7 +608,7 @@ void UniqueIDBDatabase::createObjectStore(UniqueIDBDatabaseTransaction& transact
             CheckedPtr checkedThis = weakThis.get();
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
-            checkedThis->createObjectStore(*weakTransaction, info, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->createObjectStore(protect(*weakTransaction), info, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -644,7 +643,7 @@ void UniqueIDBDatabase::deleteObjectStore(UniqueIDBDatabaseTransaction& transact
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->deleteObjectStore(*weakTransaction, objectStoreName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->deleteObjectStore(protect(*weakTransaction), objectStoreName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -682,7 +681,7 @@ void UniqueIDBDatabase::renameObjectStore(UniqueIDBDatabaseTransaction& transact
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->renameObjectStore(*weakTransaction, objectStoreIdentifier, newName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->renameObjectStore(protect(*weakTransaction), objectStoreIdentifier, newName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -723,7 +722,7 @@ void UniqueIDBDatabase::clearObjectStore(UniqueIDBDatabaseTransaction& transacti
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->clearObjectStore(*weakTransaction, objectStoreIdentifier, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->clearObjectStore(protect(*weakTransaction), objectStoreIdentifier, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -842,7 +841,7 @@ void UniqueIDBDatabase::deleteIndex(UniqueIDBDatabaseTransaction& transaction, I
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->deleteIndex(*weakTransaction, objectStoreIdentifier, indexName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->deleteIndex(protect(*weakTransaction), objectStoreIdentifier, indexName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -887,7 +886,7 @@ void UniqueIDBDatabase::renameIndex(UniqueIDBDatabaseTransaction& transaction, I
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->renameIndex(*weakTransaction, objectStoreIdentifier, indexIdentifier, newName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->renameIndex(protect(*weakTransaction), objectStoreIdentifier, indexIdentifier, newName, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -1222,7 +1221,7 @@ void UniqueIDBDatabase::commitTransaction(UniqueIDBDatabaseTransaction& transact
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->commitTransaction(*weakTransaction, handledRequestResultsCount, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->commitTransaction(protect(*weakTransaction), handledRequestResultsCount, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -1278,7 +1277,7 @@ void UniqueIDBDatabase::abortTransaction(UniqueIDBDatabaseTransaction& transacti
             if (!checkedThis || !weakTransaction)
                 return callback(IDBError { ExceptionCode::InvalidStateError, "Database or transaction is closed"_s });
 
-            checkedThis->abortTransaction(*weakTransaction, WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
+            checkedThis->abortTransaction(protect(*weakTransaction), WTF::move(callback), granted ? SpaceCheckResult::Pass : SpaceCheckResult::Fail);
         });
         return;
     }
@@ -1437,7 +1436,7 @@ void UniqueIDBDatabase::activateTransactionInBackingStore(UniqueIDBDatabaseTrans
     transaction.didActivateInBackingStore(error);
 }
 
-template<typename T> bool NODELETE scopesOverlap(const T& aScopes, const Vector<IDBObjectStoreIdentifier>& bScopes)
+template<typename T> bool LEGACY_NODELETE scopesOverlap(const T& aScopes, const Vector<IDBObjectStoreIdentifier>& bScopes)
 {
     for (auto scope : bScopes) {
         if (aScopes.contains(scope))

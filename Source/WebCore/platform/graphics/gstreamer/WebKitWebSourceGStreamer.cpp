@@ -621,7 +621,7 @@ static void webKitWebSrcMakeRequest(WebKitWebSrc* src, DataMutexLocker<WebKitWeb
     ASSERT(!priv->originalURI.isNull());
     ASSERT(members->requestedPosition != members->stopPosition);
 
-    GST_DEBUG_OBJECT(src, "Posting task to request R%u %s requestedPosition=%" G_GUINT64_FORMAT " stopPosition=%" G_GUINT64_FORMAT, members->requestNumber, priv->originalURI.legacyCStringPointer(), members->requestedPosition, members->stopPosition);
+    GST_DEBUG_OBJECT(src, "Posting task to request R%u %s requestedPosition=%" G_GUINT64_FORMAT " stopPosition=%" G_GUINT64_FORMAT, members->requestNumber, priv->originalURI, members->requestedPosition, members->stopPosition);
     URL url { String(priv->originalURI.span()) };
 
     ResourceRequest request(WTF::move(url));
@@ -871,7 +871,7 @@ static gboolean webKitWebSrcUnLockStop(GstBaseSrc* baseSrc)
 
 static bool urlHasSupportedProtocol(const URL& url)
 {
-    return url.isValid() && (url.protocolIsInHTTPFamily() || url.protocolIsBlob());
+    return url.isValid() && url.protocolIsInHTTPFamilyOrBlob();
 }
 
 // uri handler interface

@@ -477,9 +477,9 @@ vk::ImageAccess GetImageWriteAccessAndSubresource(const gl::ImageUnit &imageUnit
 
     *layerStartOut = gl::OwnerLayer(0);
     *layerCountOut = image.getLayerCount();
-    if (imageUnit.layered)
+    if (!imageUnit.layered)
     {
-        *layerStartOut = *layerStartOut + imageUnit.layered;
+        *layerStartOut = *layerStartOut + imageUnit.layer;
         *layerCountOut = 1;
     }
 
@@ -3320,7 +3320,7 @@ angle::Result ContextVk::handleDirtyGraphicsDynamicBlendConstants(
     DirtyBits dirtyBitMask)
 {
     const gl::ColorF &color = mState.getBlendColor();
-    mRenderPassCommandBuffer->setBlendConstants(color.data());
+    mRenderPassCommandBuffer->setBlendConstants(color);
     return angle::Result::Continue;
 }
 
@@ -8677,8 +8677,8 @@ angle::Result ContextVk::onResourceAccess(const vk::CommandResources &resources)
                                   writeImage.layerStart, writeImage.layerCount,
                                   mOutsideRenderPassCommands);
         mOutsideRenderPassCommands->retainImage(mRenderer, image);
-        image->onWrite(writeImage.levelStart, writeImage.levelCount, writeImage.layerStart,
-                       writeImage.layerCount, writeImage.image.aspectFlags);
+        image->onWrite(image->toVkLevel(writeImage.levelStart), writeImage.levelCount,
+                       writeImage.layerStart, writeImage.layerCount, writeImage.image.aspectFlags);
     }
 
     for (const vk::CommandResourceBuffer &readBuffer : resources.getReadBuffers())
@@ -9228,10 +9228,9 @@ angle::Result ContextVk::finalizeImageWithTileMemory()
         params.level                           = vk::LevelIndex(0);
         params.layer                           = vk::LayerIndex(0);
         params.clearValue                      = {};
-        params.clearArea                       = gl::Box(0, 0, 0, 0, 0, 1);
+        params.clearArea = gl::Rectangle(0, 0, mImageWithTileMemory->getExtents().width,
+                                         mImageWithTileMemory->getExtents().height);
         params.aspectFlags                     = mImageWithTileMemory->getAspectFlags();
-        params.clearArea.width                 = mImageWithTileMemory->getExtents().width;
-        params.clearArea.height                = mImageWithTileMemory->getExtents().height;
         ANGLE_TRY(mUtils.clearTextureNoFlush(this, mImageWithTileMemory, params));
 
         // Since this may called from submitCommands, use no submit version to avoid

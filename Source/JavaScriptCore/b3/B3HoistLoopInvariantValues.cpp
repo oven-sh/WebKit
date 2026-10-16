@@ -176,7 +176,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     uint64_t common = ~0ull;
                     bool goesOn = false;
                     for (FrequentedBlock successor : loop.at(i)->successors()) {
-                        if (isRare(successor, loop.header()))
+                        if (isRare(successor, loop.at(i)))
                             continue;
                         goesOn = true;
                         if (successor.block() == loop.header() || !loops.belongsTo(successor.block(), loop))
@@ -198,7 +198,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
                 BasicBlock* next = nullptr;
                 unsigned numberOfLikelySuccessors = 0;
                 for (FrequentedBlock successor : block->successors()) {
-                    if (isRare(successor, loop.header()))
+                    if (isRare(successor, block))
                         continue;
                     ++numberOfLikelySuccessors;
                     next = successor.block();

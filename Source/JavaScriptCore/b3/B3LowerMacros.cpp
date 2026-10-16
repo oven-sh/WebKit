@@ -1339,6 +1339,37 @@ private:
     }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned boundaryOfWindowsNearest(unsigned medianIndex, const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end)
+    {
+        if (!m_proc.positionIndependent())
+            return medianIndex;
+        Vector<BasicBlock*, 3> targets;
+        for (unsigned i = start; i < end; ++i) {
+            BasicBlock* target = cases[i].target().block();
+            if (target == fallThrough.block() || targets.contains(target))
+                continue;
+            if (targets.size() == 3)
+                return medianIndex;
+            targets.append(target);
+        }
+        unsigned nearest = medianIndex;
+        unsigned leastDistance = end - start;
+        for (unsigned first = start; first < end;) {
+            unsigned next = first;
+            while (next < end && static_cast<uint64_t>(cases[next].caseValue()) - static_cast<uint64_t>(cases[first].caseValue()) < 64)
+                ++next;
+            unsigned distance = next < medianIndex ? medianIndex - next : next - medianIndex;
+            if (next < end && distance < leastDistance) {
+                nearest = next;
+                leastDistance = distance;
+            }
+            first = next;
+        }
+        return nearest;
+    }
+#endif
+
     void recursivelyBuildSwitch(
         const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart,
         unsigned end, BasicBlock* before)
@@ -1477,6 +1508,9 @@ private:
         }
 
         unsigned medianIndex = std::midpoint(start, end);
+#if USE(BUN_JSC_ADDITIONS)
+        medianIndex = boundaryOfWindowsNearest(medianIndex, cases, fallThrough, start, end);
+#endif
 
         BasicBlock* left = m_blockInsertionSet.insertAfter(m_block);
         BasicBlock* right = m_blockInsertionSet.insertAfter(m_block);

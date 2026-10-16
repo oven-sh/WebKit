@@ -71,6 +71,20 @@ void BufferAccessorWatchpoint::handleFire(VM&, const FireDetail&)
     m_instance->bufferAccessors[m_row] = nullptr;
 }
 
+void AsyncLocalStorageWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Instance& instance)
+{
+    RELEASE_ASSERT(!m_instance);
+    m_instance = &instance;
+    initialize(condition);
+    install(vm);
+}
+
+void AsyncLocalStorageWatchpoint::handleFire(VM&, const FireDetail&)
+{
+    m_instance->asyncLocalStorageStructureIDs[0] = 0;
+    m_instance->asyncLocalStorageStructureIDs[1] = 0;
+}
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalPropertyWatchpoint);
 
 void GlobalPropertyWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Typed::GlobalPropertyCache& cache, std::unique_ptr<GlobalPropertyWatchpoint>* sibling)

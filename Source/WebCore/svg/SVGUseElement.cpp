@@ -37,6 +37,7 @@
 #include "LegacyRenderSVGResource.h"
 #include "LegacyRenderSVGTransformableContainer.h"
 #include "NodeName.h"
+#include "RenderElementInlines.h"
 #include "RenderSVGTransformableContainer.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
@@ -220,7 +221,7 @@ void SVGUseElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGraphicsElement::svgAttributeChanged(attrName);
 }
 
-static inline bool NODELETE isDisallowedElement(const SVGElement& element)
+static inline bool LEGACY_NODELETE isDisallowedElement(const SVGElement& element)
 {
     using namespace ElementNames;
 
@@ -257,7 +258,7 @@ static inline bool NODELETE isDisallowedElement(const SVGElement& element)
     return true;
 }
 
-static inline bool NODELETE isDisallowedElement(const Element& element)
+static inline bool LEGACY_NODELETE isDisallowedElement(const Element& element)
 {
     auto* svgElement = dynamicDowncast<SVGElement>(element);
     return !svgElement || isDisallowedElement(*svgElement);
@@ -332,7 +333,7 @@ RenderPtr<RenderElement> SVGUseElement::createElementRenderer(Style::ComputedSty
     return createRenderer<LegacyRenderSVGTransformableContainer>(*this, WTF::move(style));
 }
 
-static bool NODELETE isDirectReference(const SVGElement& element)
+static bool LEGACY_NODELETE isDirectReference(const SVGElement& element)
 {
     using namespace SVGNames;
     return element.hasTagName(circleTag)
@@ -356,7 +357,7 @@ RefPtr<SVGGraphicsElement> SVGUseElement::visibleTargetGraphicsElement() const
         return nullptr;
 
     CheckedRef style = renderer->style();
-    if (style->display() == Style::DisplayType::None || style->usedVisibility() != Visibility::Visible)
+    if (style->display() == Style::DisplayType::None || renderer->usedStyle().visibility() != UsedVisibility::Visible)
         return nullptr;
 
     // Spec: "If a <use> element is a child of a clipPath element, it must directly

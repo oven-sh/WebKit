@@ -63,7 +63,7 @@ alignas(CeilingOnPageSize) uint8_t LLINT_OPCODE_CONFIG_SECTION os_script_config_
 static_assert(sizeof(OpcodeConfig) <= OpcodeConfigSizeToProtect);
 
 #if !ENABLE(C_LOOP)
-extern "C" void SYSV_ABI llint_entry(void*, void*, void*);
+extern "C" void SYSV_ABI llint_entry(void*, void*, void*, void*);
 
 #endif // !ENABLE(C_LOOP)
 
@@ -164,7 +164,7 @@ void initialize()
 #endif
 
     // Step 1: fill in opcodeMaps.
-    llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32, g_opcodeConfig.opcodeMapPredecoded);
 
 #if ENABLE(WEBASSEMBLY)
     if (Options::useWasm())

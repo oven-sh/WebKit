@@ -73,7 +73,7 @@ void CommandEncoder::generateInvalidEncoderStateError()
     GENERATE_INVALID_ENCODER_STATE_ERROR();
 }
 
-static MTLLoadAction NODELETE loadAction(WGPULoadOp loadOp, bool readOnly = false)
+static MTLLoadAction LEGACY_NODELETE loadAction(WGPULoadOp loadOp, bool readOnly = false)
 {
     switch (loadOp) {
     case WGPULoadOp_Load:
@@ -88,7 +88,7 @@ static MTLLoadAction NODELETE loadAction(WGPULoadOp loadOp, bool readOnly = fals
     }
 }
 
-static MTLStoreAction NODELETE storeAction(WGPUStoreOp storeOp, bool hasResolveTarget = false)
+static MTLStoreAction LEGACY_NODELETE storeAction(WGPUStoreOp storeOp, bool hasResolveTarget = false)
 {
     switch (storeOp) {
     case WGPUStoreOp_Store:
@@ -103,7 +103,7 @@ static MTLStoreAction NODELETE storeAction(WGPUStoreOp storeOp, bool hasResolveT
     }
 }
 
-Ref<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDescriptor& descriptor)
+Ref<CommandEncoder> Device::createCommandEncoder(const WebGPU::CommandEncoderDescriptor& descriptor)
 {
     if (!isValid())
         return CommandEncoder::createInvalid(*this);
@@ -116,7 +116,7 @@ Ref<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDescrip
     if (!commandBuffer)
         return CommandEncoder::createInvalid(*this);
 
-    commandBuffer.label = fromAPI(descriptor.label).createNSString().get();
+    commandBuffer.label = descriptor.label.createNSString().get();
 
     auto commandEncoder = CommandEncoder::create(commandBuffer, *this, m_commandEncoderId++);
     m_commandEncoderMap.set(commandEncoder->uniqueId(), commandEncoder.ptr());
@@ -180,11 +180,99 @@ void CommandEncoder::retainTimestampsForOneUpdateLoop()
 CommandEncoder::~CommandEncoder()
 {
     finalizeBlitCommandEncoder();
+    releasePriorCommandBuffers();
     m_device->getQueue()->removeMTLCommandBuffer(m_commandBuffer);
     retainTimestampsForOneUpdateLoop();
     m_commandBuffer = nil; // Do not remove, this is needed to workaround rdar://143905417
     clearTracking();
     m_device->removeCommandEncoder(m_uniqueId);
+}
+
+void CommandEncoder::releasePriorCommandBuffers()
+{
+    auto priorCommandBuffers = std::exchange(m_priorCommandBuffers, { });
+    Ref queue = m_device->getQueue();
+    for (auto& commandBuffer : priorCommandBuffers)
+        queue->removeMTLCommandBuffer(commandBuffer.get());
+}
+
+void CommandEncoder::rotateCommandBufferIfNeeded()
+{
+    constexpr uint32_t maxRenderCommandEncodersPerCommandBuffer = 4096;
+    if (m_renderCommandEncoderCount < maxRenderCommandEncodersPerCommandBuffer)
+        return;
+
+    // The blit encoder belongs to the buffer being retired, so it has to be ended before the swap:
+    // afterwards finalizeBlitCommandEncoder() would look it up against the new buffer and find
+    // nothing, leaving the retired buffer with an open encoder.
+    finalizeBlitCommandEncoder();
+
+    if (!m_commandBuffer || m_existingCommandEncoder || m_commandBuffer.status >= MTLCommandBufferStatusEnqueued)
+        return;
+
+    id<MTLCommandBuffer> nextCommandBuffer = m_device->getQueue()->commandBufferWithDescriptor([MTLCommandBufferDescriptor new]);
+    if (!nextCommandBuffer)
+        return;
+
+    nextCommandBuffer.label = m_commandBuffer.label;
+    m_priorCommandBuffers.append(m_commandBuffer);
+    m_commandBuffer = nextCommandBuffer;
+    m_renderCommandEncoderCount = 0;
+}
+
+id<MTLRenderCommandEncoder> CommandEncoder::makeRenderCommandEncoder(MTLRenderPassDescriptor* descriptor)
+{
+    ASSERT(!m_existingCommandEncoder);
+    id<MTLRenderCommandEncoder> renderCommandEncoder = [m_commandBuffer renderCommandEncoderWithDescriptor:descriptor];
+    if (!renderCommandEncoder)
+        return nil;
+
+    setExistingEncoder(renderCommandEncoder);
+    didCreateRenderCommandEncoder();
+    return renderCommandEncoder;
+}
+
+bool CommandEncoder::canDeferRenderCommandEncoder(MTLRenderPassDescriptor* descriptor) const
+{
+    if (m_device->enableEncoderTimestamps())
+        return false;
+
+    if (descriptor.visibilityResultBuffer || descriptor.rasterizationRateMap)
+        return false;
+
+    for (NSUInteger i = 0; i < 8; ++i) {
+        // MTLRenderPassColorAttachmentDescriptorArray is bounds-checked internally.
+        MTLRenderPassColorAttachmentDescriptor *attachment = descriptor.colorAttachments[i];
+        if (!attachment.texture)
+            continue;
+        if (attachment.loadAction != MTLLoadActionLoad || attachment.storeAction != MTLStoreActionStore || attachment.resolveTexture)
+            return false;
+    }
+
+    if (descriptor.depthAttachment.texture && (descriptor.depthAttachment.loadAction != MTLLoadActionLoad || descriptor.depthAttachment.storeAction != MTLStoreActionStore))
+        return false;
+
+    if (descriptor.stencilAttachment.texture && (descriptor.stencilAttachment.loadAction != MTLLoadActionLoad || descriptor.stencilAttachment.storeAction != MTLStoreActionStore))
+        return false;
+
+    return true;
+}
+
+void CommandEncoder::encodeDeferredRenderPassTimestamps(MTLRenderPassDescriptor* descriptor)
+{
+    id<MTLCounterSampleBuffer> sampleBuffer = descriptor.sampleBufferAttachments[0].sampleBuffer;
+    if (!sampleBuffer || !m_commandBuffer || m_existingCommandEncoder || m_commandBuffer.status >= MTLCommandBufferStatusEnqueued)
+        return;
+
+    MTLComputePassDescriptor* computePassDescriptor = [MTLComputePassDescriptor new];
+    computePassDescriptor.dispatchType = MTLDispatchTypeSerial;
+    computePassDescriptor.sampleBufferAttachments[0].sampleBuffer = sampleBuffer;
+    computePassDescriptor.sampleBufferAttachments[0].startOfEncoderSampleIndex = descriptor.sampleBufferAttachments[0].startOfVertexSampleIndex;
+    computePassDescriptor.sampleBufferAttachments[0].endOfEncoderSampleIndex = descriptor.sampleBufferAttachments[0].endOfFragmentSampleIndex;
+
+    id<MTLComputeCommandEncoder> computeCommandEncoder = [m_commandBuffer computeCommandEncoderWithDescriptor:computePassDescriptor];
+    setExistingEncoder(computeCommandEncoder);
+    endEncoding(computeCommandEncoder);
 }
 
 id<MTLBlitCommandEncoder> CommandEncoder::ensureBlitCommandEncoder()
@@ -221,14 +309,14 @@ void CommandEncoder::finalizeBlitCommandEncoder()
     setExistingEncoder(nil);
 }
 
-static auto NODELETE timestampWriteIndex(auto writeIndex)
+static uint32_t LEGACY_NODELETE timestampWriteIndex(std::optional<uint32_t> writeIndex)
 {
-    return writeIndex == WGPU_QUERY_SET_INDEX_UNDEFINED ? 0 : writeIndex;
+    return writeIndex.value_or(0);
 }
 
-static NSUInteger NODELETE timestampWriteIndex(NSUInteger writeIndex, NSUInteger defaultValue, uint32_t offset)
+static NSUInteger LEGACY_NODELETE timestampWriteIndex(std::optional<uint32_t> writeIndex, NSUInteger defaultValue, uint32_t offset)
 {
-    return writeIndex == WGPU_QUERY_SET_INDEX_UNDEFINED ? defaultValue : (writeIndex + offset);
+    return writeIndex ? (static_cast<NSUInteger>(*writeIndex) + offset) : defaultValue;
 }
 
 static NSString* errorValidatingTimestampWrites(const auto& timestampWrites, const CommandEncoder& commandEncoder)
@@ -238,7 +326,7 @@ static NSString* errorValidatingTimestampWrites(const auto& timestampWrites, con
             return @"device does not have timestamp query feature";
 
         const auto& timestampWrite = *timestampWrites;
-        Ref querySet = fromAPI(timestampWrite.querySet);
+        Ref querySet = metal(timestampWrite.querySet);
         if (querySet->type() != WGPUQueryType_Timestamp)
             return [NSString stringWithFormat:@"query type is not timestamp but %d", querySet->type()];
 
@@ -249,18 +337,18 @@ static NSString* errorValidatingTimestampWrites(const auto& timestampWrites, con
         auto beginningOfPassWriteIndex = timestampWriteIndex(timestampWrite.beginningOfPassWriteIndex);
         auto endOfPassWriteIndex = timestampWriteIndex(timestampWrite.endOfPassWriteIndex);
         if (beginningOfPassWriteIndex >= querySetCount || endOfPassWriteIndex >= querySetCount || timestampWrite.beginningOfPassWriteIndex == timestampWrite.endOfPassWriteIndex)
-            return [NSString stringWithFormat:@"writeIndices mismatch: beginningOfPassWriteIndex(%u) >= querySetCount(%u) || endOfPassWriteIndex(%u) >= querySetCount(%u) || timestampWrite.beginningOfPassWriteIndex(%u) == timestampWrite.endOfPassWriteIndex(%u)", beginningOfPassWriteIndex, querySetCount, endOfPassWriteIndex, querySetCount, timestampWrite.beginningOfPassWriteIndex, timestampWrite.endOfPassWriteIndex];
+            return [NSString stringWithFormat:@"writeIndices mismatch: beginningOfPassWriteIndex(%u) >= querySetCount(%u) || endOfPassWriteIndex(%u) >= querySetCount(%u) || timestampWrite.beginningOfPassWriteIndex(%u) == timestampWrite.endOfPassWriteIndex(%u)", beginningOfPassWriteIndex, querySetCount, endOfPassWriteIndex, querySetCount, timestampWrite.beginningOfPassWriteIndex.value_or(WGPU_QUERY_SET_INDEX_UNDEFINED), timestampWrite.endOfPassWriteIndex.value_or(WGPU_QUERY_SET_INDEX_UNDEFINED)];
     }
 
     return nil;
 }
 
-NSString* CommandEncoder::errorValidatingComputePassDescriptor(const WGPUComputePassDescriptor& descriptor) const
+NSString* CommandEncoder::errorValidatingComputePassDescriptor(const WebGPU::ComputePassDescriptor& descriptor) const
 {
     return errorValidatingTimestampWrites(descriptor.timestampWrites, *this);
 }
 
-Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDescriptor& descriptor)
+Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WebGPU::ComputePassDescriptor& descriptor)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled())
@@ -289,14 +377,14 @@ Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDe
     MTLComputePassDescriptor* computePassDescriptor = [MTLComputePassDescriptor new];
     computePassDescriptor.dispatchType = MTLDispatchTypeSerial;
     QuerySet::CounterSampleBuffer counterSampleBuffer;
-    if (auto* wgpuTimestampWrites = descriptor.timestampWrites) {
-        Ref timestampWrites = fromAPI(wgpuTimestampWrites->querySet);
+    if (auto& apiTimestampWrites = descriptor.timestampWrites) {
+        Ref timestampWrites = metal(apiTimestampWrites->querySet);
         counterSampleBuffer = timestampWrites->counterSampleBufferWithOffset();
         timestampWrites->setCommandEncoder(*this);
     }
 
     if (m_device->enableEncoderTimestamps() || counterSampleBuffer.buffer) {
-        auto* timestampWrites = descriptor.timestampWrites;
+        auto& timestampWrites = descriptor.timestampWrites;
         computePassDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer.buffer ?: m_device->timestampsBuffer(m_commandBuffer, 2);
         computePassDescriptor.sampleBufferAttachments[0].startOfEncoderSampleIndex = timestampWrites ? timestampWriteIndex(timestampWrites->beginningOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset) : 0;
         computePassDescriptor.sampleBufferAttachments[0].endOfEncoderSampleIndex = timestampWrites ? timestampWriteIndex(timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset) : 1;
@@ -319,6 +407,8 @@ void CommandEncoder::setExistingEncoder(id<MTLCommandEncoder> encoder)
 
 void CommandEncoder::discardCommandBuffer()
 {
+    releasePriorCommandBuffers();
+
     if (!m_commandBuffer || m_commandBuffer.status >= MTLCommandBufferStatusCommitted) {
         retainTimestampsForOneUpdateLoop();
         m_commandBuffer = nil;
@@ -352,10 +442,10 @@ void CommandEncoder::endEncoding(id<MTLCommandEncoder> encoder)
         discardCommandBuffer();
 }
 
-NSString* CommandEncoder::errorValidatingRenderPassDescriptor(const WGPURenderPassDescriptor& descriptor) const
+NSString* CommandEncoder::errorValidatingRenderPassDescriptor(const WebGPU::RenderPassDescriptor& descriptor) const
 {
-    if (auto* wgpuOcclusionQuery = descriptor.occlusionQuerySet) {
-        Ref occlusionQuery = fromAPI(wgpuOcclusionQuery);
+    if (auto& apiOcclusionQuery = descriptor.occlusionQuerySet) {
+        Ref occlusionQuery = metal(*apiOcclusionQuery);
         if (!isValidToUseWith(occlusionQuery, *this))
             return @"occlusion query does not match the device";
         if (occlusionQuery->type() != WGPUQueryType_Occlusion)
@@ -514,6 +604,7 @@ void CommandEncoder::runClearEncoder(NSMutableDictionary<NSNumber*, TextureAndCl
         }
         clearRenderCommandEncoder = [m_commandBuffer renderCommandEncoderWithDescriptor:clearDescriptor];
         setExistingEncoder(clearRenderCommandEncoder);
+        didCreateRenderCommandEncoder();
     }
 
     auto [pso, depthStencil] = createSimplePso(attachmentsToClear, depthStencilAttachmentToClear, depthAttachmentToClear, stencilAttachmentToClear, device);
@@ -531,14 +622,14 @@ static bool isMultisampleTexture(id<MTLTexture> texture)
     return texture.textureType == MTLTextureType2DMultisample || texture.textureType == MTLTextureType2DMultisampleArray;
 }
 
-Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescriptor& descriptor)
+Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WebGPU::RenderPassDescriptor& descriptor)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled())
         return commandEncoderBeginRenderPass(this, descriptor);
 #endif
 
-    auto maxDrawCount = descriptor.maxDrawCount;
+    auto maxDrawCount = descriptor.maxDrawCount.value_or(std::numeric_limits<uint64_t>::max());
 
     if (!prepareTheEncoderState()) {
         GENERATE_INVALID_ENCODER_STATE_ERROR();
@@ -554,10 +645,14 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     if (m_commandBuffer.status >= MTLCommandBufferStatusEnqueued)
         return RenderPassEncoder::createInvalid(*this, m_device, @"command buffer has already been committed");
 
+    // Before anything in this pass is attached to m_commandBuffer, including the timestamps buffer
+    // tracked below.
+    rotateCommandBufferIfNeeded();
+
     MTLRenderPassDescriptor* mtlDescriptor = [MTLRenderPassDescriptor new];
     QuerySet::CounterSampleBuffer counterSampleBuffer;
-    if (auto* wgpuTimestampWrites = descriptor.timestampWrites) {
-        Ref timestampWrites = fromAPI(wgpuTimestampWrites->querySet);
+    if (auto& apiTimestampWrites = descriptor.timestampWrites) {
+        Ref timestampWrites = metal(apiTimestampWrites->querySet);
         timestampWrites->setCommandEncoder(*this);
         counterSampleBuffer = timestampWrites->counterSampleBufferWithOffset();
     }
@@ -579,7 +674,7 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
         }
     }
 
-    if (descriptor.colorAttachmentCount > 8)
+    if (descriptor.colorAttachments.size() > 8)
         return RenderPassEncoder::createInvalid(*this, m_device, @"color attachment count is > 8");
 
     finalizeBlitCommandEncoder();
@@ -591,9 +686,11 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     using SliceSet = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     HashMap<void*, SliceSet> depthSlices;
     NSUInteger compositorTextureSlice = 0;
-    for (auto [ i, attachment ] : indexedRange(colorAttachmentsSpan(descriptor))) {
-        if (!attachment.view && !attachment.texture)
+    for (size_t i = 0; i < descriptor.colorAttachments.size(); ++i) {
+        auto optionalAttachment = resolvedColorAttachment(descriptor, i);
+        if (!optionalAttachment)
             continue;
+        auto& attachment = *optionalAttachment;
 
         // MTLRenderPassColorAttachmentDescriptorArray is bounds-checked internally.
         const auto& mtlAttachment = mtlDescriptor.colorAttachments[i];
@@ -603,7 +700,7 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
             attachment.clearValue.b,
             attachment.clearValue.a);
 
-        auto texture = attachment.view ? TextureOrTextureView(fromAPI(attachment.view)) : TextureOrTextureView(fromAPI(attachment.texture));
+        auto texture = attachment.view;
 
         if (!isValidToUseWith(texture, *this))
             return RenderPassEncoder::createInvalid(*this, m_device, @"device mismatch");
@@ -620,7 +717,7 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
 
         bool textureIsDestroyed = texture.isDestroyed();
         if (!textureIsDestroyed) {
-            if (!(texture.usage() & WGPUTextureUsage_RenderAttachment) || !Texture::isColorRenderableFormat(textureFormat, m_device))
+            if (!texture.usage().contains(WebGPU::TextureUsage::RenderAttachment) || !Texture::isColorRenderableFormat(textureFormat, m_device))
                 return RenderPassEncoder::createInvalid(*this, m_device, @"color attachment is not renderable");
 
             if (!isRenderableTextureView(texture, attachment.loadOp, attachment.storeOp))
@@ -641,10 +738,10 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
         mtlAttachment.level = 0;
         mtlAttachment.slice = 0;
         uint64_t depthSliceOrArrayLayer = 0;
-        if (attachment.depthSlice != WGPU_DEPTH_SLICE_UNDEFINED) {
+        if (attachment.depthSlice) {
             if (!texture.is3DTexture())
                 return RenderPassEncoder::createInvalid(*this, m_device, @"depthSlice specified on 2D texture");
-            depthSliceOrArrayLayer = textureIsDestroyed ? 0 : attachment.depthSlice;
+            depthSliceOrArrayLayer = textureIsDestroyed ? 0 : *attachment.depthSlice;
             if (depthSliceOrArrayLayer >= texture.depthOrArrayLayers())
                 return RenderPassEncoder::createInvalid(*this, m_device, @"depthSlice is greater than texture's depth or array layers");
 
@@ -667,7 +764,7 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
         mtlAttachment.depthPlane = texture.is3DTexture() ? depthSliceOrArrayLayer : 0;
         mtlAttachment.slice = 0;
         mtlAttachment.loadAction = loadAction(attachment.loadOp);
-        mtlAttachment.storeAction = storeAction(attachment.storeOp, !!attachment.resolveTarget || !!attachment.resolveTexture);
+        mtlAttachment.storeAction = storeAction(attachment.storeOp, !!attachment.resolveTarget);
 
         zeroColorTargets = false;
         id<MTLTexture> textureToClear = nil;
@@ -675,8 +772,8 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
             textureToClear = mtlAttachment.texture;
 
         auto compositorTexture = texture;
-        if (attachment.resolveTarget || attachment.resolveTexture) {
-            auto resolveTarget = attachment.resolveTarget ? TextureOrTextureView(fromAPI(attachment.resolveTarget)) : TextureOrTextureView(fromAPI(attachment.resolveTexture));
+        if (attachment.resolveTarget) {
+            auto resolveTarget = *attachment.resolveTarget;
             compositorTexture = resolveTarget;
 
             if (!isValidToUseWith(resolveTarget, *this))
@@ -703,10 +800,8 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
             TextureAndClearColor *textureWithResolve = [[TextureAndClearColor alloc] initWithTexture:textureToClear];
             [attachmentsToClear setObject:textureWithResolve forKey:@(i)];
             texture.setPreviouslyCleared();
-            if (attachment.resolveTarget)
-                protect(fromAPI(attachment.resolveTarget))->setPreviouslyCleared();
-            if (attachment.resolveTexture)
-                protect(fromAPI(attachment.resolveTexture))->setPreviouslyCleared();
+            if (auto resolveTarget = attachment.resolveTarget)
+                resolveTarget->setPreviouslyCleared();
         }
     }
 
@@ -715,8 +810,10 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     id<MTLTexture> depthStencilAttachmentToClear = nil;
     bool depthAttachmentToClear = false;
     bool hasDepthComponent = false;
-    if (const auto* attachment = descriptor.depthStencilAttachment) {
-        auto textureView = attachment->view ? TextureOrTextureView(fromAPI(attachment->view)) : TextureOrTextureView(fromAPI(attachment->texture));
+    auto resolvedDepthStencil = resolvedDepthStencilAttachment(descriptor);
+    auto* depthStencilAttachment = resolvedDepthStencil ? &*resolvedDepthStencil : nullptr;
+    if (const auto* attachment = depthStencilAttachment) {
+        auto textureView = attachment->view;
         if (!isValidToUseWith(textureView, *this))
             return RenderPassEncoder::createInvalid(*this, m_device, @"depth stencil texture device mismatch");
         id<MTLTexture> metalDepthStencilTexture = textureView.texture();
@@ -781,10 +878,10 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     }
 
     bool stencilAttachmentToClear = false;
-    if (const auto* attachment = descriptor.depthStencilAttachment) {
+    if (const auto* attachment = depthStencilAttachment) {
         const auto& mtlAttachment = mtlDescriptor.stencilAttachment;
         stencilReadOnly = attachment->stencilReadOnly;
-        auto textureView = attachment->view ? TextureOrTextureView(fromAPI(attachment->view)) : TextureOrTextureView(fromAPI(attachment->texture));
+        auto textureView = attachment->view;
         if (hasStencilComponent)
             mtlAttachment.texture = textureView.texture();
         mtlAttachment.clearStencil = attachment->stencilClearValue;
@@ -813,8 +910,8 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
 
     size_t visibilityResultBufferSize = 0;
     id<MTLBuffer> visibilityResultBuffer = nil;
-    if (auto* wgpuOcclusionQuery = descriptor.occlusionQuerySet) {
-        Ref occlusionQuery = fromAPI(wgpuOcclusionQuery);
+    if (auto& apiOcclusionQuery = descriptor.occlusionQuerySet) {
+        Ref occlusionQuery = metal(*apiOcclusionQuery);
         occlusionQuery->setCommandEncoder(*this);
         if (occlusionQuery->type() != WGPUQueryType_Occlusion)
             return RenderPassEncoder::createInvalid(*this, m_device, @"querySet for occlusion query was not of type occlusion");
@@ -824,8 +921,8 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     }
 
     if (attachmentsToClear.count || depthStencilAttachmentToClear) {
-        if (const auto* attachment = descriptor.depthStencilAttachment; depthStencilAttachmentToClear) {
-            auto textureView = attachment->view ? TextureOrTextureView(fromAPI(attachment->view)) : TextureOrTextureView(fromAPI(attachment->texture));
+        if (const auto* attachment = depthStencilAttachment; depthStencilAttachmentToClear) {
+            auto textureView = attachment->view;
             textureView.setPreviouslyCleared();
         }
 
@@ -835,9 +932,18 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     if (!m_device->isValid())
         return RenderPassEncoder::createInvalid(*this, m_device, @"GPUDevice was invalid, this will be an error submitting the command buffer");
 
-    auto mtlRenderCommandEncoder = [m_commandBuffer renderCommandEncoderWithDescriptor:mtlDescriptor];
-    ASSERT(!m_existingCommandEncoder);
-    setExistingEncoder(mtlRenderCommandEncoder);
+    return createRenderPassEncoder(descriptor, visibilityResultBufferSize, depthReadOnly, stencilReadOnly, visibilityResultBuffer, maxDrawCount, mtlDescriptor);
+}
+
+Ref<RenderPassEncoder> CommandEncoder::createRenderPassEncoder(const WebGPU::RenderPassDescriptor& descriptor, NSUInteger visibilityResultBufferSize, bool depthReadOnly, bool stencilReadOnly, id<MTLBuffer> visibilityResultBuffer, uint64_t maxDrawCount, MTLRenderPassDescriptor* mtlDescriptor)
+{
+    if (canDeferRenderCommandEncoder(mtlDescriptor)) {
+        Ref renderPassEncoder = RenderPassEncoder::create(nil, descriptor, visibilityResultBufferSize, depthReadOnly, stencilReadOnly, *this, visibilityResultBuffer, maxDrawCount, m_device, mtlDescriptor);
+        renderPassEncoder->deferRenderCommandEncoder(mtlDescriptor);
+        return renderPassEncoder;
+    }
+
+    auto mtlRenderCommandEncoder = makeRenderCommandEncoder(mtlDescriptor);
     return RenderPassEncoder::create(mtlRenderCommandEncoder, descriptor, visibilityResultBufferSize, depthReadOnly, stencilReadOnly, *this, visibilityResultBuffer, maxDrawCount, m_device, mtlDescriptor);
 }
 
@@ -855,10 +961,10 @@ NSString* CommandEncoder::errorValidatingCopyBufferToBuffer(const Buffer& source
     if (!destination.isDestroyed() && !isValidToUseWith(destination, *this))
         return ERROR_STRING(@"destination buffer is not valid");
 
-    if (!(source.usage() & WGPUBufferUsage_CopySrc))
+    if (!source.usage().contains(WebGPU::BufferUsage::CopySource))
         return ERROR_STRING(@"source usage does not have COPY_SRC");
 
-    if (!(destination.usage() & WGPUBufferUsage_CopyDst))
+    if (!destination.usage().contains(WebGPU::BufferUsage::CopyDestination))
         return ERROR_STRING(@"destination usage does not have COPY_DST");
 
     if (destination.state() == Buffer::State::MappingPending || source.state() == Buffer::State::MappingPending)
@@ -942,20 +1048,20 @@ void CommandEncoder::copyBufferToBuffer(const Buffer& source, uint64_t sourceOff
     [m_blitCommandEncoder copyFromBuffer:source.buffer() sourceOffset:static_cast<NSUInteger>(sourceOffset) toBuffer:destination.buffer() destinationOffset:static_cast<NSUInteger>(destinationOffset) size:static_cast<NSUInteger>(size)];
 }
 
-NSString* CommandEncoder::errorValidatingImageCopyBuffer(const WGPUTexelCopyBufferInfo& imageCopyBuffer) const
+NSString* CommandEncoder::errorValidatingImageCopyBuffer(const WebGPU::TexelCopyBufferInfo& imageCopyBuffer) const
 {
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-validating-gpuimagecopybuffer
-    Ref buffer = fromAPI(imageCopyBuffer.buffer);
+    Ref buffer = metal(imageCopyBuffer.buffer);
     if (!isValidToUseWith(buffer, *this))
         return @"buffer is not valid";
 
-    if (imageCopyBuffer.layout.bytesPerRow != WGPU_COPY_STRIDE_UNDEFINED && (imageCopyBuffer.layout.bytesPerRow % 256))
+    if (auto bytesPerRow = imageCopyBuffer.layout.bytesPerRow; bytesPerRow && (*bytesPerRow % 256))
         return @"imageCopyBuffer.layout.bytesPerRow is not a multiple of 256";
 
     return nil;
 }
 
-static bool NODELETE refersToAllAspects(WGPUTextureFormat format, WGPUTextureAspect aspect)
+static bool LEGACY_NODELETE refersToAllAspects(WGPUTextureFormat format, WGPUTextureAspect aspect)
 {
     switch (aspect) {
     case WGPUTextureAspect_All:
@@ -970,16 +1076,16 @@ static bool NODELETE refersToAllAspects(WGPUTextureFormat format, WGPUTextureAsp
     }
 }
 
-NSString* CommandEncoder::errorValidatingCopyBufferToTexture(const WGPUTexelCopyBufferInfo& source, const WGPUTexelCopyTextureInfo& destination, const WGPUExtent3D& copySize) const
+NSString* CommandEncoder::errorValidatingCopyBufferToTexture(const WebGPU::TexelCopyBufferInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize) const
 {
 #define ERROR_STRING(x) [NSString stringWithFormat:@"GPUCommandEncoder.copyBufferToTexture: %@", x]
-    Ref destinationTexture = fromAPI(destination.texture);
-    Ref sourceBuffer = fromAPI(source.buffer);
+    Ref destinationTexture = metal(destination.texture);
+    Ref sourceBuffer = metal(source.buffer);
 
     if (NSString* error = errorValidatingImageCopyBuffer(source))
         return ERROR_STRING(error);
 
-    if (!(sourceBuffer->usage() & WGPUBufferUsage_CopySrc))
+    if (!sourceBuffer->usage().contains(WebGPU::BufferUsage::CopySource))
         return ERROR_STRING(@"source usage does not contain CopySrc");
 
     if (!isValidToUseWith(destinationTexture, *this))
@@ -988,7 +1094,7 @@ NSString* CommandEncoder::errorValidatingCopyBufferToTexture(const WGPUTexelCopy
     if (NSString* error = Texture::errorValidatingImageCopyTexture(destination, copySize))
         return ERROR_STRING(error);
 
-    if (!(destinationTexture->usage() & WGPUTextureUsage_CopyDst))
+    if (!destinationTexture->usage().contains(WebGPU::TextureUsage::CopyDestination))
         return ERROR_STRING(@"destination usage does not contain CopyDst");
 
     if (destinationTexture->sampleCount() != 1)
@@ -997,13 +1103,13 @@ NSString* CommandEncoder::errorValidatingCopyBufferToTexture(const WGPUTexelCopy
     WGPUTextureFormat aspectSpecificFormat = destinationTexture->format();
 
     if (Texture::isDepthOrStencilFormat(destinationTexture->format())) {
-        if (!Texture::refersToSingleAspect(destinationTexture->format(), destination.aspect))
+        if (!Texture::refersToSingleAspect(destinationTexture->format(), toAPI(destination.aspect)))
             return ERROR_STRING(@"destination aspect refers to more than one asepct");
 
-        if (!Texture::isValidDepthStencilCopyDestination(destinationTexture->format(), destination.aspect))
+        if (!Texture::isValidDepthStencilCopyDestination(destinationTexture->format(), toAPI(destination.aspect)))
             return ERROR_STRING(@"destination is not valid depthStencilCopyDestination");
 
-        aspectSpecificFormat = Texture::aspectSpecificFormat(destinationTexture->format(), destination.aspect);
+        aspectSpecificFormat = Texture::aspectSpecificFormat(destinationTexture->format(), toAPI(destination.aspect));
     }
 
     if (NSString* error = Texture::errorValidatingTextureCopyRange(destination, copySize))
@@ -1020,13 +1126,13 @@ NSString* CommandEncoder::errorValidatingCopyBufferToTexture(const WGPUTexelCopy
             return ERROR_STRING(@"source.layout.offset is not a multiple of four for depth stencil format");
     }
 
-    if (NSString* errorString = Texture::errorValidatingLinearTextureData(source.layout, fromAPI(source.buffer).initialSize(), aspectSpecificFormat, copySize))
+    if (NSString* errorString = Texture::errorValidatingLinearTextureData(source.layout, metal(source.buffer).initialSize(), aspectSpecificFormat, copySize))
         return ERROR_STRING(errorString);
 #undef ERROR_STRING
     return nil;
 }
 
-void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, const WGPUTexelCopyTextureInfo& destination, const WGPUExtent3D& copySize)
+void CommandEncoder::copyBufferToTexture(const WebGPU::TexelCopyBufferInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled()) {
@@ -1042,13 +1148,13 @@ void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, 
         return;
     }
 
-    Ref destinationTexture = fromAPI(destination.texture);
+    Ref destinationTexture = metal(destination.texture);
     if (NSString* error = errorValidatingCopyBufferToTexture(source, destination, copySize)) {
         makeInvalid(error);
         return;
     }
 
-    Ref apiBuffer = fromAPI(source.buffer);
+    Ref apiBuffer = metal(source.buffer);
     apiBuffer->setCommandEncoder(*this);
     destinationTexture->setCommandEncoder(*this);
 
@@ -1060,13 +1166,13 @@ void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, 
 
     ensureBlitCommandEncoder();
 
-    NSUInteger sourceBytesPerRow = source.layout.bytesPerRow;
+    NSUInteger sourceBytesPerRow = source.layout.bytesPerRow.value_or(WGPU_COPY_STRIDE_UNDEFINED);
     id<MTLBuffer> sourceBuffer = apiBuffer->buffer();
     RELEASE_ASSERT(sourceBuffer);
     if (sourceBytesPerRow == WGPU_COPY_STRIDE_UNDEFINED)
         sourceBytesPerRow = sourceBuffer.length;
 
-    auto aspectSpecificFormat = Texture::aspectSpecificFormat(destinationTexture->format(), destination.aspect);
+    auto aspectSpecificFormat = Texture::aspectSpecificFormat(destinationTexture->format(), toAPI(destination.aspect));
     auto blockSize = Texture::texelBlockSize(aspectSpecificFormat);
     switch (destinationTexture->dimension()) {
     case WGPUTextureDimension_1D: {
@@ -1084,7 +1190,7 @@ void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, 
 
 
     MTLBlitOption options = MTLBlitOptionNone;
-    switch (destination.aspect) {
+    switch (toAPI(destination.aspect)) {
     case WGPUTextureAspect_All:
         options = MTLBlitOptionNone;
         break;
@@ -1099,12 +1205,12 @@ void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, 
         return;
     }
 
-    auto logicalSize = protect(fromAPI(destination.texture))->logicalMiplevelSpecificTextureExtent(destination.mipLevel);
+    auto logicalSize = protect(metal(destination.texture))->logicalMiplevelSpecificTextureExtent(destination.mipLevel);
     auto widthForMetal = logicalSize.width < destination.origin.x ? 0 : std::min(copySize.width, logicalSize.width - destination.origin.x);
     auto heightForMetal = logicalSize.height < destination.origin.y ? 0 : std::min(copySize.height, logicalSize.height - destination.origin.y);
     auto depthForMetal = logicalSize.depthOrArrayLayers < destination.origin.z ? 0 : std::min(copySize.depthOrArrayLayers, logicalSize.depthOrArrayLayers - destination.origin.z);
 
-    auto rowsPerImage = source.layout.rowsPerImage;
+    auto rowsPerImage = source.layout.rowsPerImage.value_or(WGPU_COPY_STRIDE_UNDEFINED);
     if (rowsPerImage == WGPU_COPY_STRIDE_UNDEFINED)
         rowsPerImage = heightForMetal ?: 1;
 
@@ -1150,18 +1256,14 @@ void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, 
                 auto tripleSum = checkedSum<uint64_t>(zTimesSourceBytesPerImage.value(), blockRowTimesSourceBytesPerRow.value(), source.layout.offset);
                 if (tripleSum.hasOverflowed())
                     return;
-                WGPUTexelCopyBufferInfo newSource {
-                    .layout = WGPUTexelCopyBufferLayout {
-                        .offset = tripleSum.value(),
-                        .bytesPerRow = WGPU_COPY_STRIDE_UNDEFINED,
-                        .rowsPerImage = WGPU_COPY_STRIDE_UNDEFINED,
-                    },
+                WebGPU::TexelCopyBufferInfo newSource {
+                    .layout = { .offset = tripleSum.value(), .bytesPerRow = std::nullopt, .rowsPerImage = std::nullopt },
                     .buffer = source.buffer
                 };
                 auto destinationOriginPlusY = checkedSum<uint32_t>(destination.origin.y, y);
                 if (destinationOriginPlusY.hasOverflowed())
                     return;
-                WGPUTexelCopyTextureInfo newDestination {
+                WebGPU::TexelCopyTextureInfo newDestination {
                     .texture = destination.texture,
                     .mipLevel = destination.mipLevel,
                     .origin = { .x = destination.origin.x, .y = destinationOriginPlusY.value(), .z = destinationOriginPlusZ.value() },
@@ -1285,10 +1387,10 @@ void CommandEncoder::copyBufferToTexture(const WGPUTexelCopyBufferInfo& source, 
     }
 }
 
-NSString* CommandEncoder::errorValidatingCopyTextureToBuffer(const WGPUTexelCopyTextureInfo& source, const WGPUTexelCopyBufferInfo& destination, const WGPUExtent3D& copySize) const
+NSString* CommandEncoder::errorValidatingCopyTextureToBuffer(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyBufferInfo& destination, const WebGPU::Extent3D& copySize) const
 {
 #define ERROR_STRING(x) [NSString stringWithFormat:@"GPUCommandEncoder.copyTextureToBuffer: %@", x]
-    Ref sourceTexture = fromAPI(source.texture);
+    Ref sourceTexture = metal(source.texture);
 
     if (!isValidToUseWith(sourceTexture, *this))
         return ERROR_STRING(@"source texture is not valid to use with this GPUCommandEncoder");
@@ -1296,7 +1398,7 @@ NSString* CommandEncoder::errorValidatingCopyTextureToBuffer(const WGPUTexelCopy
     if (NSString* error = Texture::errorValidatingImageCopyTexture(source, copySize))
         return ERROR_STRING(error);
 
-    if (!(sourceTexture->usage() & WGPUTextureUsage_CopySrc))
+    if (!sourceTexture->usage().contains(WebGPU::TextureUsage::CopySource))
         return ERROR_STRING(@"sourceTexture usage does not contain CopySrc");
 
     if (sourceTexture->sampleCount() != 1)
@@ -1305,19 +1407,19 @@ NSString* CommandEncoder::errorValidatingCopyTextureToBuffer(const WGPUTexelCopy
     WGPUTextureFormat aspectSpecificFormat = sourceTexture->format();
 
     if (Texture::isDepthOrStencilFormat(sourceTexture->format())) {
-        if (!Texture::refersToSingleAspect(sourceTexture->format(), source.aspect))
+        if (!Texture::refersToSingleAspect(sourceTexture->format(), toAPI(source.aspect)))
             return ERROR_STRING(@"copying to depth stencil texture with more than one aspect");
 
-        if (!Texture::isValidDepthStencilCopySource(sourceTexture->format(), source.aspect))
+        if (!Texture::isValidDepthStencilCopySource(sourceTexture->format(), toAPI(source.aspect)))
             return ERROR_STRING(@"copying to depth stencil texture, validDepthStencilCopySource fails");
 
-        aspectSpecificFormat = Texture::aspectSpecificFormat(sourceTexture->format(), source.aspect);
+        aspectSpecificFormat = Texture::aspectSpecificFormat(sourceTexture->format(), toAPI(source.aspect));
     }
 
     if (NSString* error = errorValidatingImageCopyBuffer(destination))
         return ERROR_STRING(error);
 
-    if (!(fromAPI(destination.buffer).usage() & WGPUBufferUsage_CopyDst))
+    if (!metal(destination.buffer).usage().contains(WebGPU::BufferUsage::CopyDestination))
         return ERROR_STRING(@"destination buffer usage does not contain CopyDst");
 
     if (NSString* error = Texture::errorValidatingTextureCopyRange(source, copySize))
@@ -1334,13 +1436,13 @@ NSString* CommandEncoder::errorValidatingCopyTextureToBuffer(const WGPUTexelCopy
             return ERROR_STRING(@"destination.layout.offset is not a multiple of 4");
     }
 
-    if (NSString* errorString = Texture::errorValidatingLinearTextureData(destination.layout, fromAPI(destination.buffer).initialSize(), aspectSpecificFormat, copySize))
+    if (NSString* errorString = Texture::errorValidatingLinearTextureData(destination.layout, metal(destination.buffer).initialSize(), aspectSpecificFormat, copySize))
         return ERROR_STRING(errorString);
 #undef ERROR_STRING
     return nil;
 }
 
-void CommandEncoder::clearTextureIfNeeded(const WGPUTexelCopyTextureInfo& destination, NSUInteger slice)
+void CommandEncoder::clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo& destination, NSUInteger slice)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled()) {
@@ -1353,9 +1455,9 @@ void CommandEncoder::clearTextureIfNeeded(const WGPUTexelCopyTextureInfo& destin
 }
 
 
-void CommandEncoder::clearTextureIfNeeded(const WGPUTexelCopyTextureInfo& destination, NSUInteger slice, const Device& device, id<MTLBlitCommandEncoder> blitCommandEncoder)
+void CommandEncoder::clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo& destination, NSUInteger slice, const Device& device, id<MTLBlitCommandEncoder> blitCommandEncoder)
 {
-    Ref texture = fromAPI(destination.texture);
+    Ref texture = metal(destination.texture);
     NSUInteger mipLevel = destination.mipLevel;
     CommandEncoder::clearTextureIfNeeded(texture, mipLevel, slice, device, blitCommandEncoder);
 }
@@ -1369,7 +1471,7 @@ void CommandEncoder::clearTextureIfNeeded(Texture& texture, NSUInteger mipLevel,
     // A transient texture is memoryless, so it cannot be the destination of a blit. Its contents
     // never exist outside of the render pass which produces them, and every render pass using it
     // has to clear it, so there is nothing to lazily initialize here.
-    if (texture.usage() & WGPUTextureUsage_Transient)
+    if (texture.usage().contains(WebGPU::TextureUsage::Transient))
         return;
 
     texture.setPreviouslyCleared(mipLevel, slice);
@@ -1492,6 +1594,7 @@ void CommandEncoder::makeInvalid(NSString* errorString)
     endEncoding(m_existingCommandEncoder);
     m_blitCommandEncoder = nil;
     m_existingCommandEncoder = nil;
+    releasePriorCommandBuffers();
     m_device->getQueue()->removeMTLCommandBuffer(m_commandBuffer);
 
     m_commandBuffer = nil;
@@ -1563,7 +1666,7 @@ void CommandEncoder::makeSubmitInvalid(NSString* errorString)
         commandBuffer->makeInvalid(errorString ?: m_lastErrorString);
 }
 
-static bool NODELETE hasValidDimensions(WGPUTextureDimension dimension, NSUInteger width, NSUInteger height, NSUInteger depth)
+static bool LEGACY_NODELETE hasValidDimensions(WGPUTextureDimension dimension, NSUInteger width, NSUInteger height, NSUInteger depth)
 {
     switch (dimension) {
     case WGPUTextureDimension_1D:
@@ -1577,7 +1680,7 @@ static bool NODELETE hasValidDimensions(WGPUTextureDimension dimension, NSUInteg
     }
 }
 
-void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source, const WGPUTexelCopyBufferInfo& destination, const WGPUExtent3D& copySize)
+void CommandEncoder::copyTextureToBuffer(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyBufferInfo& destination, const WebGPU::Extent3D& copySize)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled()) {
@@ -1593,13 +1696,13 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
         return;
     }
 
-    Ref sourceTexture = fromAPI(source.texture);
+    Ref sourceTexture = metal(source.texture);
     if (NSString* error = errorValidatingCopyTextureToBuffer(source, destination, copySize)) {
         makeInvalid(error);
         return;
     }
 
-    Ref apiDestinationBuffer = fromAPI(destination.buffer);
+    Ref apiDestinationBuffer = metal(destination.buffer);
     sourceTexture->setCommandEncoder(*this);
     apiDestinationBuffer->setCommandEncoder(*this);
     apiDestinationBuffer->indirectBufferInvalidated(*this);
@@ -1607,7 +1710,7 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
         return;
 
     MTLBlitOption options = MTLBlitOptionNone;
-    switch (source.aspect) {
+    switch (toAPI(source.aspect)) {
     case WGPUTextureAspect_All:
         options = MTLBlitOptionNone;
         break;
@@ -1628,12 +1731,12 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
     auto depthForMetal = logicalSize.depthOrArrayLayers < source.origin.z ? 0 : std::min(copySize.depthOrArrayLayers, logicalSize.depthOrArrayLayers - source.origin.z);
 
     auto destinationBuffer = apiDestinationBuffer->buffer();
-    NSUInteger destinationBytesPerRow = destination.layout.bytesPerRow;
+    NSUInteger destinationBytesPerRow = destination.layout.bytesPerRow.value_or(WGPU_COPY_STRIDE_UNDEFINED);
     if (destinationBytesPerRow == WGPU_COPY_STRIDE_UNDEFINED)
         destinationBytesPerRow = destinationBuffer.length;
 
     auto sourceTextureFormat = sourceTexture->format();
-    auto aspectSpecificFormat = Texture::aspectSpecificFormat(sourceTextureFormat, source.aspect);
+    auto aspectSpecificFormat = Texture::aspectSpecificFormat(sourceTextureFormat, toAPI(source.aspect));
     auto blockSize = Texture::texelBlockSize(aspectSpecificFormat);
     auto textureDimension = sourceTexture->dimension();
     switch (textureDimension) {
@@ -1657,7 +1760,7 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
     if (textureDimension == WGPUTextureDimension_3D && copySize.depthOrArrayLayers <= 1 && copySize.height <= blockHeight)
         destinationBytesPerRow = 0;
 
-    auto rowsPerImage = destination.layout.rowsPerImage;
+    auto rowsPerImage = destination.layout.rowsPerImage.value_or(WGPU_COPY_STRIDE_UNDEFINED);
     if (rowsPerImage == WGPU_COPY_STRIDE_UNDEFINED)
         rowsPerImage = heightForMetal ?: 1;
     auto checkedDestinationBytesPerImage = checkedProduct<NSUInteger>(rowsPerImage, destinationBytesPerRow);
@@ -1677,7 +1780,7 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
                 auto blockRowTimesDestinationBytesPerRow = checkedProduct<uint32_t>(y / blockHeight, destinationBytesPerRow);
                 if (yPlusOriginY.hasOverflowed() || blockRowTimesDestinationBytesPerRow.hasOverflowed())
                     return;
-                WGPUTexelCopyTextureInfo newSource {
+                WebGPU::TexelCopyTextureInfo newSource {
                     .texture = source.texture,
                     .mipLevel = source.mipLevel,
                     .origin = { .x = source.origin.x, .y = yPlusOriginY, .z = zPlusOriginZ },
@@ -1686,12 +1789,8 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
                 auto tripleSum = checkedSum<uint64_t>(zTimesDestinationBytesPerImage.value(), blockRowTimesDestinationBytesPerRow.value(), destination.layout.offset);
                 if (tripleSum.hasOverflowed())
                     return;
-                WGPUTexelCopyBufferInfo newDestination {
-                    .layout = WGPUTexelCopyBufferLayout {
-                        .offset = tripleSum.value(),
-                        .bytesPerRow = WGPU_COPY_STRIDE_UNDEFINED,
-                        .rowsPerImage = WGPU_COPY_STRIDE_UNDEFINED,
-                    },
+                WebGPU::TexelCopyBufferInfo newDestination {
+                    .layout = { .offset = tripleSum.value(), .bytesPerRow = std::nullopt, .rowsPerImage = std::nullopt },
                     .buffer = destination.buffer
                 };
                 copyTextureToBuffer(newSource, newDestination, {
@@ -1815,7 +1914,7 @@ void CommandEncoder::copyTextureToBuffer(const WGPUTexelCopyTextureInfo& source,
     }
 }
 
-static bool NODELETE areCopyCompatible(WGPUTextureFormat format1, WGPUTextureFormat format2)
+static bool LEGACY_NODELETE areCopyCompatible(WGPUTextureFormat format1, WGPUTextureFormat format2)
 {
     // https://gpuweb.github.io/gpuweb/#copy-compatible
 
@@ -1825,27 +1924,27 @@ static bool NODELETE areCopyCompatible(WGPUTextureFormat format1, WGPUTextureFor
     return Texture::removeSRGBSuffix(format1) == Texture::removeSRGBSuffix(format2);
 }
 
-NSString* CommandEncoder::errorValidatingCopyTextureToTexture(const WGPUTexelCopyTextureInfo& source, const WGPUTexelCopyTextureInfo& destination, const WGPUExtent3D& copySize) const
+NSString* CommandEncoder::errorValidatingCopyTextureToTexture(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize) const
 {
 #define ERROR_STRING(x) [NSString stringWithFormat:@"GPUCommandEncoder.copyTextureToTexture: %@", x]
-    Ref sourceTexture = fromAPI(source.texture);
+    Ref sourceTexture = metal(source.texture);
     if (!isValidToUseWith(sourceTexture, *this))
         return ERROR_STRING(@"source texture is not valid to use with this GPUCommandEncoder");
 
-    Ref destinationTexture = fromAPI(destination.texture);
+    Ref destinationTexture = metal(destination.texture);
     if (!isValidToUseWith(destinationTexture, *this))
         return ERROR_STRING(@"desintation texture is not valid to use with this GPUCommandEncoder");
 
     if (NSString* error = Texture::errorValidatingImageCopyTexture(source, copySize))
         return ERROR_STRING(error);
 
-    if (!(sourceTexture->usage() & WGPUTextureUsage_CopySrc))
+    if (!sourceTexture->usage().contains(WebGPU::TextureUsage::CopySource))
         return ERROR_STRING(@"source texture usage does not contain CopySrc");
 
     if (NSString* error = Texture::errorValidatingImageCopyTexture(destination, copySize))
         return ERROR_STRING(error);
 
-    if (!(destinationTexture->usage() & WGPUTextureUsage_CopyDst))
+    if (!destinationTexture->usage().contains(WebGPU::TextureUsage::CopyDestination))
         return ERROR_STRING(@"destination texture usage does not contain CopyDst");
 
     if (sourceTexture->sampleCount() != destinationTexture->sampleCount())
@@ -1858,14 +1957,14 @@ NSString* CommandEncoder::errorValidatingCopyTextureToTexture(const WGPUTexelCop
     bool dstIsDepthOrStencil = Texture::isDepthOrStencilFormat(destinationTexture->format());
 
     if (srcIsDepthOrStencil) {
-        if (!refersToAllAspects(sourceTexture->format(), source.aspect)
-            || !refersToAllAspects(destinationTexture->format(), destination.aspect))
+        if (!refersToAllAspects(sourceTexture->format(), toAPI(source.aspect))
+            || !refersToAllAspects(destinationTexture->format(), toAPI(destination.aspect)))
             return ERROR_STRING(@"source or destination do not refer to a single copy aspect");
     } else {
-        if (source.aspect != WGPUTextureAspect_All)
+        if (source.aspect != WebGPU::TextureAspect::All)
             return ERROR_STRING(@"source aspect is not All");
         if (!dstIsDepthOrStencil) {
-            if (destination.aspect != WGPUTextureAspect_All)
+            if (destination.aspect != WebGPU::TextureAspect::All)
                 return ERROR_STRING(@"destination aspect is not All");
         }
     }
@@ -1880,7 +1979,7 @@ NSString* CommandEncoder::errorValidatingCopyTextureToTexture(const WGPUTexelCop
     if (source.texture == destination.texture) {
         // Mip levels are never ranges.
         if (source.mipLevel == destination.mipLevel) {
-            switch (fromAPI(source.texture).dimension()) {
+            switch (metal(source.texture).dimension()) {
             case WGPUTextureDimension_1D:
                 return ERROR_STRING(@"can't copy 1D texture to itself");
             case WGPUTextureDimension_2D: {
@@ -1903,7 +2002,7 @@ NSString* CommandEncoder::errorValidatingCopyTextureToTexture(const WGPUTexelCop
     return nil;
 }
 
-void CommandEncoder::copyTextureToTexture(const WGPUTexelCopyTextureInfo& source, const WGPUTexelCopyTextureInfo& destination, const WGPUExtent3D& copySize)
+void CommandEncoder::copyTextureToTexture(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled()) {
@@ -1924,8 +2023,8 @@ void CommandEncoder::copyTextureToTexture(const WGPUTexelCopyTextureInfo& source
         return;
     }
 
-    Ref sourceTexture = fromAPI(source.texture);
-    Ref destinationTexture = fromAPI(destination.texture);
+    Ref sourceTexture = metal(source.texture);
+    Ref destinationTexture = metal(destination.texture);
     sourceTexture->setCommandEncoder(*this);
     destinationTexture->setCommandEncoder(*this);
 
@@ -1955,7 +2054,7 @@ void CommandEncoder::copyTextureToTexture(const WGPUTexelCopyTextureInfo& source
     }
 
     id<MTLTexture> mtlDestinationTexture = destinationTexture->texture();
-    id<MTLTexture> mtlSourceTexture = fromAPI(source.texture).texture();
+    id<MTLTexture> mtlSourceTexture = metal(source.texture).texture();
 
     // FIXME(PERFORMANCE): Is it actually faster to use the -[MTLBlitCommandEncoder copyFromTexture:...toTexture:...levelCount:]
     // variant, where possible, rather than calling the other variant in a loop?
@@ -2067,7 +2166,7 @@ bool CommandEncoder::validateClearBuffer(const Buffer& buffer, uint64_t offset, 
     if (!isValidToUseWith(buffer, *this))
         return false;
 
-    if (!(buffer.usage() & WGPUBufferUsage_CopyDst))
+    if (!buffer.usage().contains(WebGPU::BufferUsage::CopyDestination))
         return false;
 
     if (size % 4)
@@ -2083,12 +2182,14 @@ bool CommandEncoder::validateClearBuffer(const Buffer& buffer, uint64_t offset, 
     return true;
 }
 
-void CommandEncoder::clearBuffer(Buffer& buffer, uint64_t offset, uint64_t size)
+void CommandEncoder::clearBuffer(Buffer& buffer, uint64_t offset, std::optional<uint64_t> optionalSize)
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-clearbuffer
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled()) {
-        commandEncoderClearBuffer(this, &buffer, offset, size);
+        // The Swift implementation takes UINT64_MAX for the rest of the buffer after the offset.
+        uint64_t swiftSize = optionalSize.value_or(std::numeric_limits<uint64_t>::max());
+        commandEncoderClearBuffer(this, &buffer, offset, swiftSize);
         return;
     }
 #endif
@@ -2098,7 +2199,10 @@ void CommandEncoder::clearBuffer(Buffer& buffer, uint64_t offset, uint64_t size)
         return;
     }
 
-    if (size == WGPU_WHOLE_SIZE) {
+    uint64_t size;
+    if (optionalSize)
+        size = *optionalSize;
+    else {
         auto localSize = checkedDifference<uint64_t>(buffer.initialSize(), offset);
         if (localSize.hasOverflowed()) {
             protect(m_device)->generateAValidationError("CommandEncoder::clearBuffer(): offset > buffer.size"_s);
@@ -2144,7 +2248,7 @@ NSString* CommandEncoder::validateFinishError() const
     return nil;
 }
 
-Ref<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& descriptor)
+Ref<CommandBuffer> CommandEncoder::finish(const WebGPU::CommandBufferDescriptor& descriptor)
 {
 #if ENABLE(WEBGPU_SWIFT)
     if (isWebGPUSwiftEnabled())
@@ -2178,6 +2282,8 @@ Ref<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& des
     m_existingCommandEncoder = nil;
 
     commandBuffer.label = descriptor.label.createNSString().get();
+    for (auto& priorCommandBuffer : m_priorCommandBuffers)
+        [priorCommandBuffer.get() setLabel:commandBuffer.label];
 
 #if CPU(X86_64) && (PLATFORM(MAC) || PLATFORM(MACCATALYST))
     ALLOW_DEPRECATED_DECLARATIONS_BEGIN
@@ -2193,6 +2299,9 @@ Ref<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& des
 #endif
 
     auto result = CommandBuffer::create(commandBuffer, m_device, m_sharedEvent, m_sharedEventSignalValue, WTF::move(m_onCommitHandlers), *this);
+    // The buffers this encoder filled up and rolled over from have to be committed before the one
+    // above, so they travel with it.
+    result->setPriorCommandBuffers(std::exchange(m_priorCommandBuffers, { }));
     m_sharedEvent = nil;
     m_cachedCommandBuffer = result.ptr();
     result->setBufferMapCount(m_bufferMapCount);
@@ -2261,13 +2370,13 @@ void CommandEncoder::pushDebugGroup(String&& groupLabel)
     [m_commandBuffer pushDebugGroup:groupLabel.createNSString().get()];
 }
 
-static bool NODELETE validateResolveQuerySet(const QuerySet& querySet, uint32_t firstQuery, uint32_t queryCount, const Buffer& destination, uint64_t destinationOffset)
+static bool LEGACY_NODELETE validateResolveQuerySet(const QuerySet& querySet, uint32_t firstQuery, uint32_t queryCount, const Buffer& destination, uint64_t destinationOffset)
 {
     if (!querySet.isDestroyed() && !querySet.isValid())
         return false;
     if (!destination.isDestroyed() && !destination.isValid())
         return false;
-    if (!(destination.usage() & WGPUBufferUsage_QueryResolve))
+    if (!destination.usage().contains(WebGPU::BufferUsage::QueryResolve))
         return false;
 
     if (firstQuery >= querySet.count())
@@ -2471,7 +2580,7 @@ void CommandEncoder::rebindSamplersPreCommit(const BindGroup& group)
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuCommandEncoderAddRef(WGPUCommandEncoder commandEncoder)
+void LEGACY_NODELETE wgpuCommandEncoderAddRef(WGPUCommandEncoder commandEncoder)
 {
     WebGPU::Metal::fromAPI(commandEncoder).ref();
 }
@@ -2483,12 +2592,21 @@ void wgpuCommandEncoderRelease(WGPUCommandEncoder commandEncoder)
 
 WGPUComputePassEncoder wgpuCommandEncoderBeginComputePass(WGPUCommandEncoder commandEncoder, const WGPUComputePassDescriptor* descriptor)
 {
-    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(commandEncoder))->beginComputePass(*descriptor));
+    Ref protectedCommandEncoder = WebGPU::Metal::fromAPI(commandEncoder);
+    auto apiDescriptor = WebGPU::Metal::fromAPI(*descriptor);
+    if (!apiDescriptor)
+        return WebGPU::Metal::releaseToAPI(WebGPU::Metal::ComputePassEncoder::createInvalid(protectedCommandEncoder, protectedCommandEncoder->device(), @"GPUComputePassDescriptor has timestamp writes without a query set"));
+    return WebGPU::Metal::releaseToAPI(protectedCommandEncoder->beginComputePass(*apiDescriptor));
 }
 
 WGPURenderPassEncoder wgpuCommandEncoderBeginRenderPass(WGPUCommandEncoder commandEncoder, const WGPURenderPassDescriptor* descriptor)
 {
-    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(commandEncoder))->beginRenderPass(*descriptor));
+    Ref protectedCommandEncoder = WebGPU::Metal::fromAPI(commandEncoder);
+    WebGPU::Metal::RenderPassDescriptorStorage storage;
+    auto apiDescriptor = WebGPU::Metal::fromAPI(*descriptor, storage);
+    if (!apiDescriptor)
+        return WebGPU::Metal::releaseToAPI(WebGPU::Metal::RenderPassEncoder::createInvalid(protectedCommandEncoder, protectedCommandEncoder->device(), @"GPURenderPassDescriptor has an invalid enum value, a depth stencil attachment without a view or timestamp writes without a query set"));
+    return WebGPU::Metal::releaseToAPI(protectedCommandEncoder->beginRenderPass(*apiDescriptor));
 }
 
 void wgpuCommandEncoderCopyBufferToBuffer(WGPUCommandEncoder commandEncoder, WGPUBuffer source, uint64_t sourceOffset, WGPUBuffer destination, uint64_t destinationOffset, uint64_t size)
@@ -2496,29 +2614,48 @@ void wgpuCommandEncoderCopyBufferToBuffer(WGPUCommandEncoder commandEncoder, WGP
     protect(WebGPU::Metal::fromAPI(commandEncoder))->copyBufferToBuffer(protect(WebGPU::Metal::fromAPI(source)), sourceOffset, protect(WebGPU::Metal::fromAPI(destination)), destinationOffset, size);
 }
 
+// A copy whose source or destination does not convert invalidates the encoder, as a failed copy
+// validation does.
+static constexpr auto invalidTexelCopyMessage = @"GPUCommandEncoder copy has a null buffer or texture or an invalid aspect";
+
 void wgpuCommandEncoderCopyBufferToTexture(WGPUCommandEncoder commandEncoder, const WGPUTexelCopyBufferInfo* source, const WGPUTexelCopyTextureInfo* destination, const WGPUExtent3D* copySize)
 {
-    protect(WebGPU::Metal::fromAPI(commandEncoder))->copyBufferToTexture(*source, *destination, *copySize);
+    Ref protectedCommandEncoder = WebGPU::Metal::fromAPI(commandEncoder);
+    auto apiSource = WebGPU::Metal::fromAPI(*source);
+    auto apiDestination = WebGPU::Metal::fromAPI(*destination);
+    if (!apiSource || !apiDestination)
+        return protectedCommandEncoder->makeInvalid(invalidTexelCopyMessage);
+    protectedCommandEncoder->copyBufferToTexture(*apiSource, *apiDestination, WebGPU::Metal::fromAPI(*copySize));
 }
 
 void wgpuCommandEncoderCopyTextureToBuffer(WGPUCommandEncoder commandEncoder, const WGPUTexelCopyTextureInfo* source, const WGPUTexelCopyBufferInfo* destination, const WGPUExtent3D* copySize)
 {
-    protect(WebGPU::Metal::fromAPI(commandEncoder))->copyTextureToBuffer(*source, *destination, *copySize);
+    Ref protectedCommandEncoder = WebGPU::Metal::fromAPI(commandEncoder);
+    auto apiSource = WebGPU::Metal::fromAPI(*source);
+    auto apiDestination = WebGPU::Metal::fromAPI(*destination);
+    if (!apiSource || !apiDestination)
+        return protectedCommandEncoder->makeInvalid(invalidTexelCopyMessage);
+    protectedCommandEncoder->copyTextureToBuffer(*apiSource, *apiDestination, WebGPU::Metal::fromAPI(*copySize));
 }
 
 void wgpuCommandEncoderCopyTextureToTexture(WGPUCommandEncoder commandEncoder, const WGPUTexelCopyTextureInfo* source, const WGPUTexelCopyTextureInfo* destination, const WGPUExtent3D* copySize)
 {
-    protect(WebGPU::Metal::fromAPI(commandEncoder))->copyTextureToTexture(*source, *destination, *copySize);
+    Ref protectedCommandEncoder = WebGPU::Metal::fromAPI(commandEncoder);
+    auto apiSource = WebGPU::Metal::fromAPI(*source);
+    auto apiDestination = WebGPU::Metal::fromAPI(*destination);
+    if (!apiSource || !apiDestination)
+        return protectedCommandEncoder->makeInvalid(invalidTexelCopyMessage);
+    protectedCommandEncoder->copyTextureToTexture(*apiSource, *apiDestination, WebGPU::Metal::fromAPI(*copySize));
 }
 
 void wgpuCommandEncoderClearBuffer(WGPUCommandEncoder commandEncoder, WGPUBuffer buffer, uint64_t offset, uint64_t size)
 {
-    protect(WebGPU::Metal::fromAPI(commandEncoder))->clearBuffer(protect(WebGPU::Metal::fromAPI(buffer)), offset, size);
+    protect(WebGPU::Metal::fromAPI(commandEncoder))->clearBuffer(protect(WebGPU::Metal::fromAPI(buffer)), offset, size == WGPU_WHOLE_SIZE ? std::nullopt : std::optional { size });
 }
 
 WGPUCommandBuffer wgpuCommandEncoderFinish(WGPUCommandEncoder commandEncoder, const WGPUCommandBufferDescriptor* descriptor)
 {
-    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(commandEncoder))->finish(*descriptor));
+    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(commandEncoder))->finish({ .label = descriptor->label }));
 }
 
 void wgpuCommandEncoderInsertDebugMarker(WGPUCommandEncoder commandEncoder, WGPUStringView markerLabel)

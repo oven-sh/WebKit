@@ -44,7 +44,7 @@
 
 @implementation WKNavigationAction
 
-static WKNavigationType NODELETE toWKNavigationType(WebCore::NavigationType navigationType)
+static WKNavigationType LEGACY_NODELETE toWKNavigationType(WebCore::NavigationType navigationType)
 {
     switch (navigationType) {
     case WebCore::NavigationType::LinkClicked:
@@ -261,6 +261,15 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     protect(page->websiteDataStore())->storePrivateClickMeasurement(*privateClickMeasurement);
 }
 
+- (WKHitTestResult *)hitTestResult
+{
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    return self._hitTestResult;
+#else
+    return nil;
+#endif
+}
+
 - (_WKHitTestResult *)_hitTestResult
 {
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
@@ -274,7 +283,7 @@ static WKSyntheticClickType toWKSyntheticClickType(WebKit::WebMouseEventSyntheti
     if (!page)
         return nil;
 
-    auto apiHitTestResult = API::HitTestResult::create(webHitTestResultData.value(), page.get());
+    auto apiHitTestResult = API::HitTestResult::create(webHitTestResultData.value(), page.get(), RefPtr { _navigationAction->hitTestJSHandle() });
     return retainPtr(wrapper(apiHitTestResult)).autorelease();
 #else
     return nil;

@@ -368,6 +368,9 @@ class HardenedContextTest : public ANGLETest<>
 class HardenedContextTestES31 : public HardenedContextTest
 {};
 
+class HardenedContextBlendTest : public HardenedContextTest
+{};
+
 // Context creation would fail if EGL_ANGLE_create_context_webgl_compatibility was not available so
 // the GL extension should always be present
 TEST_P(WebGLCompatibilityTest, ExtensionStringExposed)
@@ -8234,6 +8237,81 @@ TEST_P(WebGL2CompatibilityTest, UnpackStateValidation)
     test(GL_TEXTURE_3D, 1, 4, 1, 4, GL_INVALID_OPERATION);  // 1 + 4 > 4
 }
 
+// Tests that hardened-context unpack state validation and PBO validation are enforced on ES2
+// contexts when GL_EXT_unpack_subimage and GL_NV_pixel_buffer_object are enabled.
+TEST_P(WebGL1CompatibilityTest, UnpackStateAndPBOValidation)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_EXT_unpack_subimage"));
+
+    constexpr size_t kPixelCount = 8 * 8;
+    std::vector<GLColor> data(kPixelCount);
+
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    ASSERT_GL_NO_ERROR();
+
+    auto testClientMemory = [&](GLint skipPixels, GLint rowLength, GLenum expectedError) {
+        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, rowLength);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, skipPixels);
+
+        // When no PBO is bound and pixels is nullptr, glTexImage2D must succeed regardless of
+        // unpack parameters.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        EXPECT_GL_NO_ERROR();
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+        EXPECT_GL_ERROR(expectedError);
+
+        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+        EXPECT_GL_NO_ERROR();
+
+        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, rowLength);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, skipPixels);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+        EXPECT_GL_ERROR(expectedError);
+    };
+
+    testClientMemory(0, 0, GL_NO_ERROR);
+    testClientMemory(0, 4, GL_NO_ERROR);           // 0 + 4 <= 4
+    testClientMemory(1, 5, GL_NO_ERROR);           // 1 + 4 <= 5
+    testClientMemory(0, 3, GL_INVALID_OPERATION);  // 0 + 4 > 3
+    testClientMemory(1, 0, GL_INVALID_OPERATION);  // 1 + 4 > 4
+    testClientMemory(1, 4, GL_INVALID_OPERATION);  // 1 + 4 > 4
+
+    if (EnsureGLExtensionEnabled("GL_NV_pixel_buffer_object"))
+    {
+        GLBuffer pbo;
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+        glBufferData(GL_PIXEL_UNPACK_BUFFER, kPixelCount * sizeof(GLColor), data.data(),
+                     GL_STATIC_DRAW);
+        ASSERT_GL_NO_ERROR();
+
+        // With a bound PBO, glTexImage2D(..., nullptr) must also reject overlapping unpack rows.
+        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 1);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS_EXT, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+        // Valid row length with PBO succeeds.
+        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        EXPECT_GL_NO_ERROR();
+
+        // Unaligned PBO offset for GL_UNSIGNED_SHORT_5_6_5 (2 bytes per datum) must fail.
+        glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 4, 4, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5,
+                     reinterpret_cast<const void *>(1));
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    }
+}
+
 // Tests that using cube map arrays is not supported in WebGL.
 TEST_P(WebGL2CompatibilityTest, CubeMapArrayNotSupported)
 {
@@ -9272,6 +9350,107 @@ TEST_P(HardenedContextTestRestrictBaseLevel, Tex3D)
     }
 }
 
+// Test alpha blend where both the framebuffer and shader miss the alpha channel.  The spec says
+// that:
+//
+// > If a color buffer has no A value, then A_d is taken to be 1.
+//
+// But it says nothing about what happens if the shader does not write to alpha and A_s.
+TEST_P(HardenedContextBlendTest, AlphaBlendNoAlphaChannelInSrcAndDst)
+{
+    GLTexture color;
+    glBindTexture(GL_TEXTURE_2D, color);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, 1, 1);
+    constexpr uint8_t kInitialValue = 0x10;
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RED, GL_UNSIGNED_BYTE, &kInitialValue);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
+    ANGLE_SKIP_TEST_IF(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE);
+
+    constexpr char kFS[] = R"(#version 300 es
+out mediump float color;
+void main() {
+    color = 0.2;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    // A_d is implicitly one.  But A_s is undefined.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_DST_ALPHA);
+    glBlendEquation(GL_FUNC_ADD);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.0f);
+    // Normally, the result cannot be known given A_s is undefined, but in hardened contexts it's
+    // set to 0.
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(0x10, 0, 0, 255), 1);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Similar test as AlphaBlendNoAlphaChannelInSrcAndDst, but with a vec2
+TEST_P(HardenedContextBlendTest, AlphaBlendNoAlphaChannelInSrcAndDst2)
+{
+    GLTexture color;
+    glBindTexture(GL_TEXTURE_2D, color);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RG8, 1, 1);
+    constexpr std::array<uint8_t, 2> kInitialValue = {0x10, 0x30};
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RG, GL_UNSIGNED_BYTE, kInitialValue.data());
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
+    ANGLE_SKIP_TEST_IF(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE);
+
+    constexpr char kFS[] = R"(#version 300 es
+out mediump vec2 color;
+void main() {
+    color = vec2(0.2, 0.4);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    // A_d is implicitly one.  But A_s is undefined.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_DST_ALPHA);
+    glBlendEquation(GL_FUNC_ADD);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.0f);
+    // Normally, the result cannot be known given A_s is undefined, but in hardened contexts it's
+    // set to 0.
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(0x10, 0x30, 0, 255), 1);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Similar test as AlphaBlendNoAlphaChannelInSrcAndDst, but with an array
+TEST_P(HardenedContextBlendTest, AlphaBlendNoAlphaChannelInSrcAndDstArray)
+{
+    GLTexture color;
+    glBindTexture(GL_TEXTURE_2D, color);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, 1, 1);
+    constexpr uint8_t kInitialValue = 0x10;
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RED, GL_UNSIGNED_BYTE, &kInitialValue);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
+    ANGLE_SKIP_TEST_IF(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE);
+
+    constexpr char kFS[] = R"(#version 300 es
+out mediump float color[1];
+void main() {
+    color[0] = 0.2;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    // A_d is implicitly one.  But A_s is undefined.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_DST_ALPHA);
+    glBlendEquation(GL_FUNC_ADD);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.0f);
+    // Normally, the result cannot be known given A_s is undefined, but in hardened contexts it's
+    // set to 0.
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(0x10, 0, 0, 255), 1);
+    ASSERT_GL_NO_ERROR();
+}
+
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(WebGLCompatibilityTest);
 
 ANGLE_INSTANTIATE_TEST_ES2(WebGL1CompatibilityTest);
@@ -9281,6 +9460,9 @@ ANGLE_INSTANTIATE_TEST_ES3(WebGL2CompatibilityTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HardenedContextTest);
 ANGLE_INSTANTIATE_TEST_ES3(HardenedContextTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HardenedContextBlendTest);
+ANGLE_INSTANTIATE_TEST_ES3(HardenedContextBlendTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HardenedContextTestRestrictBaseLevel);
 ANGLE_INSTANTIATE_TEST(

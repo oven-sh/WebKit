@@ -34,7 +34,7 @@ std::optional<LanguageOperation> languageOperationOf(const Program& program, con
 
 using SetOfNames = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-static void collectPropertiesGivenToObject(const Program& program, const Function& function, ValueID object, unsigned depth, Vector<StringID, 16>& names, SetOfNames& setOfNames, unsigned& numberOfKeys, const UsersInBlocks* users, bool goesByTheChain)
+static void collectPropertiesGivenToObject(const Program& program, const Function& function, ValueID object, unsigned depth, Vector<StringID, 16>& names, SetOfNames& setOfNames, unsigned& numberOfKeys, const UsersInBlocks* users, bool goesByTheChain, bool followsCallsOnObject = true)
 {
     Vector<ValueID, 4> objects { object };
     auto isObject = [&](ValueID id) {
@@ -57,7 +57,7 @@ static void collectPropertiesGivenToObject(const Program& program, const Functio
         }
     }
     auto isExpectedToBeSymbol = [&](ValueID id) {
-        TypeID prediction = function.at(id).prediction;
+        TypeID prediction = function.at(id).prediction();
         auto& type = prediction ? program.at(prediction) : program.typeOf(function, id);
         return type.primitives & Primitive::Symbol && type.hasOnlyPrimitives(Primitive::Symbol | Primitive::UndefinedOrNull);
     };
@@ -70,17 +70,28 @@ static void collectPropertiesGivenToObject(const Program& program, const Functio
             numberOfKeys += isExpectedToBeSymbol(user.child(1));
         else if (user.opcode == Opcode::CallBuiltin && languageOperationOf(program, user) == LanguageOperation::DefineField && isObject(user.arguments[0]) && function.at(user.arguments[1]).opcode == Opcode::String)
             name = function.at(user.arguments[1]).string();
-        else if (user.opcode == Opcode::CallDirect && depth) {
+        else if (user.opcode == Opcode::CallBuiltin && languageOperationOf(program, user) == LanguageOperation::PrivateFieldAdd && isObject(user.arguments[0]))
+            ++numberOfKeys;
+        else if (user.opcode == Opcode::CallBuiltin && languageOperationOf(program, user) == LanguageOperation::PrivateMethodsAdd && isObject(user.arguments[0])) {
+            Vector<StringID, 4> privateMethods;
+            if (function.constructedClass) {
+                for (auto& method : program.at(function.constructedClass).methods) {
+                    if (method.name && isPrivateName(program.string(method.name)) && !privateMethods.contains(method.name))
+                        privateMethods.append(method.name);
+                }
+            }
+            numberOfKeys += std::max<size_t>(privateMethods.size(), 1);
+        } else if (user.opcode == Opcode::CallDirect && depth) {
             // Handed on, for `this` or as an argument: the arguments stand in the order of the parameters.
             auto& callee = program.at(user.function());
             if (callee.blocks.isEmpty())
                 return;
             auto& parameters = callee.blocks[0].parameters;
-            for (unsigned i = callee.captureTypes.size(); i < std::min<size_t>(user.arguments.size(), parameters.size()); ++i) {
+            for (unsigned i = callee.captureTypes.size() + (!followsCallsOnObject && callee.has(Format::FunctionHasThis)); i < std::min<size_t>(user.arguments.size(), parameters.size()); ++i) {
                 if (isObject(user.arguments[i]))
-                    collectPropertiesGivenToObject(program, callee, parameters[i], depth - 1, names, setOfNames, numberOfKeys, nullptr, goesByTheChain);
+                    collectPropertiesGivenToObject(program, callee, parameters[i], depth - 1, names, setOfNames, numberOfKeys, nullptr, goesByTheChain, followsCallsOnObject);
             }
-        } else if (goesByTheChain) {
+        } else if (goesByTheChain && followsCallsOnObject) {
             ValueID calleeOfLink;
             bool isLink = false;
             if (user.opcode == Opcode::Call || user.opcode == Opcode::CallForwardVarargs) {
@@ -92,7 +103,7 @@ static void collectPropertiesGivenToObject(const Program& program, const Functio
             }
             if (!isLink)
                 return;
-            FunctionID expected = depth && calleeOfLink ? function.at(calleeOfLink).predictedClosure : FunctionID();
+            FunctionID expected = depth && calleeOfLink ? function.at(calleeOfLink).predictedClosure() : FunctionID();
             bool isFollowed = expected && !program.at(expected).blocks.isEmpty() && program.at(expected).blocks[0].parameters.size() > program.at(expected).captureTypes.size();
             if (!isFollowed)
                 return;
@@ -132,7 +143,7 @@ void collectPropertiesGivenTo(const Program& program, const Function& function, 
     collectPropertiesGivenToObject(program, function, object, depth, names, setOfNames, numberOfKeys, users, goesByTheChain);
 }
 
-bool collectPropertiesGivenToThis(const Program& program, FunctionID id, Vector<StringID, 16>& names, unsigned& numberOfKeys)
+bool collectPropertiesGivenToThis(const Program& program, FunctionID id, Vector<StringID, 16>& names, unsigned& numberOfKeys, bool followsCallsOnThis)
 {
     static constexpr unsigned maxLevels = 16;
     for (unsigned level = 0; level < maxLevels; ++level) {
@@ -166,10 +177,14 @@ bool collectPropertiesGivenToThis(const Program& program, FunctionID id, Vector<
                 }
             }
         }
-        for (ValueID object : objects)
-            collectPropertiesGivenTo(program, function, object, 3, names, numberOfKeys, nullptr, true);
+        for (ValueID object : objects) {
+            SetOfNames setOfNames;
+            collectPropertiesGivenToObject(program, function, object, 3, names, setOfNames, numberOfKeys, nullptr, true, followsCallsOnThis);
+        }
         if (!callsSuper)
             return true;
+        if (!followsCallsOnThis)
+            return false;
         if (!function.constructedClass)
             return false;
         auto& ofClass = program.at(function.constructedClass);
@@ -202,11 +217,11 @@ public:
     ArrayEscapeAnalysis(const Program& program, Function& function)
         : m_program(program)
         , m_function(function)
-        , m_length(program.find("length"_s.span8()).value_or(StringID()))
-        , m_slice(program.find("slice"_s.span8()).value_or(StringID()))
-        , m_from(program.find("from"_s.span8()))
+        , m_length(program.find(asBytes("length"_s.span8())).value_or(StringID()))
+        , m_slice(program.find(asBytes("slice"_s.span8())).value_or(StringID()))
+        , m_from(program.find(asBytes("from"_s.span8())))
         , m_getFromArguments([] {
-            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("GetFromArguments"_s.span8()));
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("GetFromArguments"_s.span8())));
             return found;
         }())
     {
@@ -222,6 +237,8 @@ public:
         for (unsigned i = 0; i < m_allocations.size(); ++i) {
             m_current = i + 1;
             changed |= tryReplace(m_allocations[i]);
+            if (m_didCutBlocks)
+                break;
         }
         return changed;
     }
@@ -399,6 +416,30 @@ private:
             && isAlias(user.arguments[2]) && !isAlias(user.arguments[0]) && !isAlias(user.arguments[1]);
     }
 
+    bool isParentReadJustAhead(BlockID block, ValueID superConstruct, const Allocation& literal, ValueID spread) const
+    {
+        static const BuiltinID getSuperConstructor = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("GetSuperConstructor"_s.span8())));
+        auto& construct = m_function.at(superConstruct);
+        auto& parent = m_function.at(construct.arguments[3]);
+        BuiltinID entry;
+        if (parent.opcode == Opcode::Operation)
+            entry = Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(parent.string()));
+        else if (parent.opcode == Opcode::CallBuiltin)
+            entry = parent.builtin();
+        if (!entry || entry != getSuperConstructor || parent.arguments.size() != 1 || parent.arguments[0] != construct.arguments[0])
+            return false;
+        auto& values = m_function.at(block).values;
+        size_t from = values.find(construct.arguments[3]);
+        size_t to = values.find(superConstruct);
+        if (from == notFound || to == notFound || from > to)
+            return false;
+        for (size_t i = from + 1; i < to; ++i) {
+            if (values[i] != spread && !isAlias(values[i]) && !literal.aliases.containsIf([&](auto& alias) { return alias.user == values[i]; }))
+                return false;
+        }
+        return true;
+    }
+
     bool isSpreadOfList(const Value& user) const
     {
         return languageOperationOf(m_program, user) == LanguageOperation::AppendSpread && user.arguments.size() == 2 && isAlias(user.arguments[1]) && !isAlias(user.arguments[0]);
@@ -473,7 +514,7 @@ private:
             return nullptr;
         if (user.opcode == Opcode::CallBuiltin) {
             auto& builtin = builtins.at(user.builtin());
-            bool isArrayFrom = builtin.kind == BuiltinKind::StaticFunction && builtin.holderName == builtins.arrayClass().name && builtin.nameName == builtins.nameOf("from"_s.span8());
+            bool isArrayFrom = builtin.kind == BuiltinKind::StaticFunction && builtin.holderName == builtins.arrayClass().name && builtin.nameName == builtins.nameOf(asBytes("from"_s.span8()));
             return isArrayFrom ? &user.arguments[0] : nullptr;
         }
         if (!m_from)
@@ -516,6 +557,8 @@ private:
         auto operation = languageOperationOf(m_program, user);
         if (operation == LanguageOperation::CreateArguments)
             return user.arguments.size() == 1;
+        if (operation == LanguageOperation::CreateMappedArguments)
+            return user.arguments.size() == 3 && !isAlias(user.arguments[1]) && !isAlias(user.arguments[2]);
         return isSpreadOfList(user);
     }
 
@@ -530,8 +573,8 @@ private:
         user.immediates = { numberOfArgumentsToSkip, Format::none };
         if (isLength) {
             user.opcode = Opcode::GetRestLength;
-            user.prediction = { };
-            user.predictedClosure = { };
+            user.setPrediction({ });
+            user.setPredictedClosure({ });
             if (m_program.at(m_program.types.int32).isWithin(m_program.at(user.type), m_program)) {
                 user.type = m_program.types.int32;
                 user.rep = repOf(m_program.at(user.type));
@@ -578,6 +621,68 @@ private:
         if (*index >= elements->size())
             return type.primitives & Primitive::Undefined;
         return typeOf(elements->at(*index)).isWithin(type, m_program) || (!Options::auditAOTTypedAssertions() && writesOfElementRead(m_program, type) == Writes::Nothing);
+    }
+
+    bool isReadAtAnyIndex(const Value& user, const Arguments& elements) const
+    {
+        static constexpr unsigned maxElementsToChooseAmong = 4;
+        if (user.opcode != Opcode::GetByVal || !isAlias(user.child(0)) || isAlias(user.child(1)) || elements.size() > maxElementsToChooseAmong)
+            return false;
+        auto& type = m_program.at(user.type);
+        if (!typeOf(user.child(1)).isInteger() || !(type.primitives & Primitive::Undefined))
+            return false;
+        return std::ranges::all_of(elements, [&](ValueID element) {
+            return typeOf(element).isWithin(type, m_program);
+        });
+    }
+
+    void chooseByIndex(const Use& read, const Arguments& elements)
+    {
+        BlockID block = read.block;
+        while (!m_function.at(block).values.contains(read.user)) {
+            size_t next = m_cuts.findIf([&](auto& cut) {
+                return cut.first == block;
+            });
+            RELEASE_ASSERT(next != notFound);
+            block = m_cuts[next].second;
+        }
+        stopWatching(block, read.user);
+        Value none;
+        none.opcode = Opcode::Undefined;
+        none.type = m_program.types.undefined;
+        none.rep = repOf(m_program.at(none.type));
+        none.position = m_function.at(read.user).position;
+        none.inlineFrame = m_function.at(read.user).inlineFrame;
+        m_function.values.append(WTF::move(none));
+        ValueID nothing(m_function.values.size() - 1);
+        m_function.blocks.append(Block { });
+        BlockID after(m_function.blocks.size() - 1);
+        for (auto& cut : m_cuts) {
+            if (cut.first == block)
+                cut.first = after;
+        }
+        m_cuts.append({ block, after });
+        auto& from = m_function.at(block);
+        auto& to = m_function.at(after);
+        size_t place = from.values.find(read.user);
+        to.values.append(from.values.subspan(place + 1));
+        from.values.shrink(place);
+        from.values.append(nothing);
+        to.terminator = std::exchange(from.terminator, Terminator { });
+        to.parameters.append(read.user);
+        auto& user = m_function.at(read.user);
+        from.terminator.kind = TerminatorKind::Switch;
+        from.terminator.value = user.child(1);
+        for (unsigned i = 0; i < elements.size(); ++i) {
+            from.terminator.cases.append(i);
+            from.terminator.targets.append(Target { after, Arguments { elements[i] } });
+        }
+        from.terminator.targets.append(Target { after, Arguments { nothing } });
+        user.opcode = Opcode::Parameter;
+        user.children = { };
+        user.arguments.clear();
+        user.immediates = { after.index(), 0 };
+        m_didCutBlocks = true;
     }
 
     bool isLastUse(const Use& escape, BlockID allocatedIn) const
@@ -836,6 +941,50 @@ private:
         if (allocation.aliases.containsIf(isStale) || allocation.uses.containsIf(isStale))
             return false;
 
+        if (allocation.kind == Kind::Rest && allocation.uses.size() == 1) {
+            auto& use = allocation.uses[0];
+            auto& spread = m_function.at(use.user);
+            auto* target = targetOfSpread(spread);
+            bool isListOfSuperConstructAlone = target && m_function.at(target->aliases[0].user).arguments.isEmpty() && typeOf(spread.arguments[1]).isWithin(m_program.at(spread.type), m_program);
+            ValueID givenParent;
+            for (unsigned b = 0; isListOfSuperConstructAlone && b < m_function.blocks.size(); ++b) {
+                for (ValueID id : m_function.blocks[b].values) {
+                    auto& value = std::as_const(m_function).at(id);
+                    bool isUser = false;
+                    value.forEachChild([&](ValueID child) {
+                        isUser |= child == use.user;
+                    });
+                    if (!isUser)
+                        continue;
+                    isListOfSuperConstructAlone &= languageOperationOf(m_program, value) == LanguageOperation::SuperConstruct && (value.arguments.size() == 3 || value.arguments.size() == 4) && value.arguments[2] == use.user && value.arguments[0] != use.user && value.arguments[1] != use.user;
+                    if (isListOfSuperConstructAlone && value.arguments.size() == 4) {
+                        isListOfSuperConstructAlone = !givenParent && isParentReadJustAhead(BlockID(b), id, *target, use.user);
+                        givenParent = id;
+                    }
+                }
+                m_function.blocks[b].terminator.forEachChild([&](ValueID& child) {
+                    isListOfSuperConstructAlone &= child != use.user;
+                });
+            }
+            if (isListOfSuperConstructAlone) {
+                for (auto& alias : target->aliases) {
+                    m_function.at(alias.block).values.removeFirst(alias.user);
+                    m_isStale.set(alias.user.index());
+                }
+                for (auto& alias : allocation.aliases)
+                    m_isStale.set(alias.user.index());
+                m_isStale.set(use.user.index());
+                stopWatching(use.block, use.user);
+                spread.opcode = Opcode::Cast;
+                spread.children = { spread.arguments[1], ValueID(), ValueID() };
+                spread.arguments.clear();
+                spread.immediates = { Format::none, static_cast<uint32_t>(CastReason::Upcast) };
+                if (givenParent)
+                    m_function.at(givenParent).arguments.shrink(3);
+                return true;
+            }
+        }
+
         BlockID block = allocation.aliases[0].block;
         Arguments operands = m_function.at(allocation.aliases[0].user).arguments;
         const Arguments* elements = allocation.kind == Kind::ArrayLiteral ? &operands : nullptr;
@@ -843,6 +992,7 @@ private:
         ValueID list = allocation.kind == Kind::ArgumentsObject ? operands[0] : ValueID();
         uint32_t numberOfArgumentsToSkip = m_function.at(allocation.aliases[0].user).numberOfArgumentsToSkip();
         m_reads.clear();
+        m_readsAtAnyIndex.clear();
         m_borrows.clear();
         m_escapes.clear();
         Vector<DecidedBranch, 4> decided;
@@ -862,8 +1012,14 @@ private:
                 m_escapes.append(use);
             else if (allocation.kind == Kind::Rest)
                 (isReadOfRest(user) ? m_reads : onlyBorrows(user) ? m_borrows : m_escapes).append(use);
+            else if (isReplaceableRead(user, elements))
+                m_reads.append(use);
             else
-                (isReplaceableRead(user, elements) ? m_reads : m_escapes).append(use);
+                (elements && isReadAtAnyIndex(user, *elements) ? m_readsAtAnyIndex : m_escapes).append(use);
+        }
+        if (!m_escapes.isEmpty() || !m_borrows.isEmpty()) {
+            m_escapes.appendVector(m_readsAtAnyIndex);
+            m_readsAtAnyIndex.clear();
         }
         // The arguments are passed on from where they are.
         auto isForwarded = [&](const Use& borrow) {
@@ -916,6 +1072,8 @@ private:
             terminator.value = { };
             terminator.targets = { WTF::move(target) };
         }
+        for (auto& read : m_readsAtAnyIndex)
+            chooseByIndex(read, *elements);
         return true;
     }
 
@@ -936,8 +1094,11 @@ private:
     unsigned m_current { 0 };
     std::optional<int64_t> m_lengthOfCurrent;
     Vector<Use, 4> m_reads;
+    Vector<Use, 4> m_readsAtAnyIndex;
     Vector<Use, 4> m_borrows;
     Vector<Use, 4> m_escapes;
+    Vector<std::pair<BlockID, BlockID>, 4> m_cuts;
+    bool m_didCutBlocks { false };
 };
 
 std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
@@ -1936,6 +2097,11 @@ public:
             removeTrivialParameters();
     }
 
+    bool runAskingForTruthOnTheWaysIn()
+    {
+        return askForTruthOnTheWaysIn();
+    }
+
     void run(bool onlyIfAnythingFolds = false)
     {
         if (m_function.blocks.isEmpty())
@@ -1966,6 +2132,7 @@ public:
                 dropUnreachedBlocks();
                 changed = removeTrivialParameters(UnreachedBlocks::AreDropped);
                 changed |= propagateBranchConditions();
+                changed |= has(Opcode::ToBoolean) && askForTruthOnTheWaysIn();
                 changed |= threadBranchesOnParameters();
                 changed |= threadWaysThatDecideTheTest();
                 changed |= mergeChains();
@@ -2014,7 +2181,7 @@ private:
             StringID name = m_function.at(key).string();
             auto text = m_program.string(name);
             // An index is an element, and a typed array has its own answer to whatever reads like a number.
-            if (text.empty() || isASCIIDigit(text[0]) || text[0] == '-' || equalSpans(text, "Infinity"_s.span8()) || equalSpans(text, "NaN"_s.span8()) || isPrivateName(text))
+            if (text.empty() || isASCIIDigit(text[0]) || text[0] == '-' || equalSpans(text, asBytes("Infinity"_s.span8())) || equalSpans(text, asBytes("NaN"_s.span8())) || isPrivateName(text))
                 continue;
             ValueID stored = value.opcode == Opcode::PutByVal ? value.child(2) : ValueID();
             if (stored) {
@@ -3101,6 +3268,10 @@ private:
                 continue;
             Arguments elements = list.arguments;
             value.opcode = Opcode::ConstructSuper;
+            if (m_program.at(value.type).isAnything()) {
+                value.type = m_program.types.object;
+                value.rep = repOf(m_program.at(value.type));
+            }
             m_hasFolded = true;
             value.children = { value.arguments[0], value.arguments[1], value.arguments.size() == 4 ? value.arguments[3] : ValueID() };
             value.immediates = { Format::none, Format::none };
@@ -3112,7 +3283,7 @@ private:
     // between the last two but the edge to a handler.
     void foldSpreadCalls()
     {
-        static const BuiltinID callWithSpread = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallWithSpread"_s.span8()));
+        static const BuiltinID callWithSpread = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf(asBytes("CallWithSpread"_s.span8())));
         Vector<unsigned> uses;
         Vector<unsigned> waysIn;
         Vector<BlockID> comesFrom;
@@ -3455,6 +3626,19 @@ private:
                 id = m_function.at(id).child(0);
             return isAllocation(m_function.at(id)) || !(m_program.typeOf(m_function, id).primitives & primitives);
         };
+        auto asksWhetherArrayHoldsDoubles = [](const Value& value) {
+            auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+            return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::IsDoubleArray && value.arguments.size() == 1;
+        };
+        auto mayHoldNumbers = [&](ValueID array) {
+            for (;; array = m_function.at(array).child(0)) {
+                TypeID elements = m_program.typeOf(m_function, array).elements;
+                if (elements && !(m_program.at(elements).primitives & Primitive::Number))
+                    return false;
+                if (m_function.at(array).opcode != Opcode::Cast)
+                    return true;
+            }
+        };
         static constexpr OpcodeSet opcodesThatMayFold { Opcode::Operation, Opcode::CallBuiltin, Opcode::StrictEq, Opcode::Eq, Opcode::LogicalNot, Opcode::ToBoolean, Opcode::IsUndefinedOrNull, Opcode::HasShapeOf, Opcode::TypeOfIs, Opcode::IsClosureOf };
         for (auto& block : m_function.blocks) {
             for (ValueID id : block.values) {
@@ -3522,12 +3706,17 @@ private:
                             result = true;
                     }
                     break;
+                case Opcode::CallBuiltin:
+                    if (asksWhetherArrayHoldsDoubles(value) && !mayHoldNumbers(value.arguments[0]))
+                        result = false;
+                    break;
                 default:
                     break;
                 }
                 if (!result)
                     continue;
                 value.opcode = Opcode::Boolean;
+                value.arguments.clear();
                 value.children = { };
                 value.immediates = { *result, Format::none };
             }
@@ -3696,6 +3885,85 @@ private:
                 target.block = BlockID(keptFor[target.block.index()]);
         }
         return true;
+    }
+
+    bool askForTruthOnTheWaysIn()
+    {
+        auto parameterAsked = [&](const Block& join) -> size_t {
+            if (join.terminator.kind != TerminatorKind::Branch || join.values.size() != 1 || join.terminator.value != join.values[0])
+                return notFound;
+            auto& test = m_function.at(join.values[0]);
+            return test.opcode == Opcode::ToBoolean ? join.parameters.find(test.child(0)) : notFound;
+        };
+        auto isBoolean = [&](ValueID id) {
+            return m_program.at(m_function.at(id).type).isBoolean();
+        };
+        unsigned numberOfBlocks = m_function.blocks.size();
+        BitVector asksParameter(numberOfBlocks);
+        for (unsigned j = 1; j < numberOfBlocks; ++j) {
+            if (parameterAsked(m_function.blocks[j]) != notFound)
+                asksParameter.set(j);
+        }
+        if (asksParameter.isEmpty())
+            return false;
+        BitVector isBroughtBoolean(numberOfBlocks);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            auto& terminator = m_function.blocks[b].terminator;
+            for (auto& target : terminator.targets) {
+                unsigned j = target.block.index();
+                if (!asksParameter.get(j))
+                    continue;
+                if (terminator.kind != TerminatorKind::Jump || b == j)
+                    asksParameter.clear(j);
+                else if (isBoolean(target.arguments[parameterAsked(m_function.blocks[j])]))
+                    isBroughtBoolean.set(j);
+            }
+        }
+        asksParameter.filter(isBroughtBoolean);
+        if (asksParameter.isEmpty())
+            return false;
+        Vector<unsigned> numberOfUses;
+        numberOfUses.fill(0, m_function.values.size());
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                std::as_const(m_function.at(id)).forEachChild([&](ValueID child) {
+                    ++numberOfUses[child.index()];
+                });
+            }
+            block.terminator.forEachChild([&](ValueID& child) {
+                ++numberOfUses[child.index()];
+            });
+        }
+        bool changed = false;
+        for (size_t j : asksParameter) {
+            size_t index = parameterAsked(m_function.blocks[j]);
+            ValueID parameter = m_function.blocks[j].parameters[index];
+            ValueID test = m_function.blocks[j].values[0];
+            if (numberOfUses[parameter.index()] != 1 || numberOfUses[test.index()] != 1)
+                continue;
+            for (unsigned b = 0; b < numberOfBlocks; ++b) {
+                if (m_function.blocks[b].terminator.kind != TerminatorKind::Jump || m_function.blocks[b].terminator.targets[0].block.index() != j)
+                    continue;
+                ValueID brought = m_function.blocks[b].terminator.targets[0].arguments[index];
+                if (isBoolean(brought))
+                    continue;
+                Value asked = m_function.at(test);
+                asked.children[0] = brought;
+                ValueID answer(m_function.values.size());
+                m_function.values.append(WTF::move(asked));
+                m_function.blocks[b].values.append(answer);
+                m_function.blocks[b].terminator.targets[0].arguments[index] = answer;
+            }
+            auto& joined = m_function.at(parameter);
+            joined.type = m_function.at(test).type;
+            joined.rep = m_function.at(test).rep;
+            joined.setPrediction({ });
+            joined.setPredictedClosure({ });
+            m_function.blocks[j].values.clear();
+            m_function.blocks[j].terminator.value = parameter;
+            changed = true;
+        }
+        return changed;
     }
 
     bool threadBranchesOnParameters()
@@ -4371,6 +4639,7 @@ private:
         case Opcode::Double:
         case Opcode::String:
         case Opcode::BigInt:
+        case Opcode::ConstantSymbol:
         case Opcode::FunctionReference:
         case Opcode::NewClosure:
         // That the variable is filled is nothing anyone can tell.
@@ -4448,7 +4717,7 @@ private:
                 break;
             // Nothing can be added to Object.prototype, and it has one setter.
             case Opcode::NewObject:
-                if (value.opcode != Opcode::PutById || equalSpans(m_program.string(value.string()), "__proto__"_s.span8()))
+                if (value.opcode != Opcode::PutById || equalSpans(m_program.string(value.string()), asBytes("__proto__"_s.span8())))
                     return std::nullopt;
                 break;
             default:
@@ -4551,6 +4820,54 @@ private:
         return any;
     }
 
+    bool removeUnusedParameters(Vector<unsigned>& uses)
+    {
+        BitVector isRemoved;
+        for (unsigned b = 1; b < m_function.blocks.size(); ++b) {
+            for (ValueID parameter : m_function.blocks[b].parameters) {
+                if (!uses[parameter.index()])
+                    isRemoved.set(parameter.index());
+            }
+        }
+        if (isRemoved.isEmpty())
+            return false;
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = m_function.at(target.block).parameters;
+                Arguments kept;
+                for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                    if (isRemoved.get(parameters[i].index()))
+                        --uses[target.arguments[i].index()];
+                    else
+                        kept.append(target.arguments[i]);
+                }
+                if (kept.size() != target.arguments.size())
+                    target.arguments = WTF::move(kept);
+            }
+        }
+        for (unsigned b = 1; b < m_function.blocks.size(); ++b) {
+            auto& block = m_function.blocks[b];
+            unsigned before = block.parameters.size();
+            block.parameters.removeAllMatching([&](ValueID parameter) {
+                return isRemoved.get(parameter.index());
+            });
+            if (block.parameters.size() == before)
+                continue;
+            for (unsigned i = 0; i < block.parameters.size(); ++i)
+                m_function.at(block.parameters[i]).immediates = { b, i };
+        }
+        for (size_t parameter : isRemoved) {
+            auto& value = m_function.values[parameter];
+            value.opcode = Opcode::Undefined;
+            value.type = m_program.types.undefined;
+            value.rep = repOf(m_program.at(value.type));
+            value.setPrediction({ });
+            value.setPredictedClosure({ });
+            value.immediates = { Format::none, Format::none };
+        }
+        return true;
+    }
+
     bool removeUnusedValues()
     {
         bool any = m_makesObjects && removeObjectsOnlyStoredTo();
@@ -4568,6 +4885,8 @@ private:
                 use(value);
             });
         }
+        if (!m_program.hasAllocationAssertions) [[likely]]
+            any |= removeUnusedParameters(uses);
         for (auto& block : m_function.blocks) {
             // The last value of a block that a handler watches is what may throw.
             unsigned end = block.values.size();
@@ -4614,6 +4933,11 @@ bool eliminateRedundantReads(const Program& program, Function& function)
 void removeTrivialParameters(const Program& program, Function& function)
 {
     Cleanup(program, function).runTrivialParameterRemoval();
+}
+
+bool askForTruthOnTheWaysIn(const Program& program, Function& function)
+{
+    return Cleanup(program, function).runAskingForTruthOnTheWaysIn();
 }
 
 void moveBirthsIntoArms(const Program& program, Function& function)
@@ -4714,6 +5038,7 @@ bool mayThrow(const Program& program, const Function& function, const Value& val
     case Opcode::Double:
     case Opcode::String:
     case Opcode::BigInt:
+    case Opcode::ConstantSymbol:
     case Opcode::FunctionReference:
     case Opcode::NewClosure:
     case Opcode::NewClosureOnce:
@@ -4754,7 +5079,7 @@ bool mayThrow(const Program& program, const Function& function, const Value& val
     // A variable holds nothing before its declaration has run, and to read it then throws. What it holds is held to the type of the read.
     case Opcode::GetModuleVariable: {
         auto& variable = program.variables[value.variable().index()];
-        return variable.mayBeSeenUninitialized() || !program.at(variable.type ? variable.type : program.types.anything).isWithin(program.at(value.type), program);
+        return (variable.mayBeSeenUninitialized() && !value.findsVariableInitialized()) || !program.at(variable.type ? variable.type : program.types.anything).isWithin(program.at(value.type), program);
     }
     // What the table knows is there, and reading it runs no code.
     case Opcode::GetGlobal:
@@ -5836,16 +6161,16 @@ private:
             }
         }
 
-        TypeID typeExpectedOfPair = m_function.at(pair).prediction;
+        TypeID typeExpectedOfPair = m_function.at(pair).prediction();
         Value key = m_function.at(pair);
         key.type = m_program.types.anything;
         key.rep = repOf(m_program.at(key.type));
-        key.assertedType = TypeID();
-        key.prediction = m_program.types.string;
-        key.predictedClosure = FunctionID();
-        key.predictedByKey = StringID();
+        key.setAssertedType(TypeID());
+        key.setPrediction(m_program.types.string);
+        key.setPredictedClosure(FunctionID());
+        key.setPredictedByKey(StringID());
         Value held = key;
-        held.prediction = TypeID();
+        held.setPrediction(TypeID());
         Value one = m_function.at(m_function.at(next).child(1));
         Value two = one;
         two.setBits(2);
@@ -5887,7 +6212,7 @@ private:
         if (list.type == m_program.types.anything && typeExpectedOfPair && typeExpectedOfPair != m_program.types.anything && isAnythingOrArray(typeExpectedOfPair)) {
             list.type = typeExpectedOfPair;
             list.rep = repOf(m_program.at(list.type));
-            list.prediction = TypeID();
+            list.setPrediction(TypeID());
         }
         return true;
     }

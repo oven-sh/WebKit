@@ -98,6 +98,8 @@ struct BuiltinCode;
                 ("JavaScriptCore", "builtins/BuiltinUtils.h"),
             ),
 
+            (["WebCore"], ("JavaScriptCore", "runtime/FunctionExecutable.h")),
+
             (["WebCore"],
                 ("JavaScriptCore", "runtime/Identifier.h"),
             ),

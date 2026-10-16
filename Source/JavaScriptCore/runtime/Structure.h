@@ -71,6 +71,7 @@ JS_EXPORT_PRIVATE bool becomesOrdinaryObject(const ClassInfo* from, const ClassI
 }
 #endif
 
+class CompiledLayoutVisitor;
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
 class LLIntOffsetsExtractor;
@@ -221,6 +222,7 @@ class Structure : public JSCell {
     static constexpr uint16_t shortInvalidOffset = std::numeric_limits<uint16_t>::max() - 1;
     static constexpr uint16_t useRareDataFlag = std::numeric_limits<uint16_t>::max();
 public:
+    friend class CompiledLayoutVisitor;
     friend class StructureTransitionTable;
 
     typedef JSCell Base;
@@ -258,7 +260,7 @@ protected:
 private:
     inline void finishCreation(VM&, CreatingEarlyCellTag); // Defined in StructureInlines.h
 
-    void NODELETE validateFlags();
+    void LEGACY_NODELETE validateFlags();
 
 public:
     StructureID id() const { return StructureID::encode(this); }
@@ -339,7 +341,7 @@ public:
     JS_EXPORT_PRIVATE static Structure* createOfRow(VM&, Structure* empty, std::span<UniquedStringImpl* const>, uint16_t numberOfRowPlusOne);
     JS_EXPORT_PRIVATE Vector<UniquedStringImpl*, 16> namesIfNumbered() const;
     JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
-    static constexpr unsigned numberOfSlotsWithPropertyNameIDs = 20;
+    static constexpr unsigned numberOfSlotsWithPropertyNameIDs = 4;
     static bool hasAOTFields() { return Options::useAOT(); }
     struct AOTFields {
 #if ENABLE(AOT)
@@ -691,10 +693,10 @@ public:
     void setContainsReadOnlyProperties() { setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true); }
     
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*, StructureChain*);
-    JSPropertyNameEnumerator* NODELETE cachedPropertyNameEnumerator() const;
-    uintptr_t NODELETE cachedPropertyNameEnumeratorAndFlag() const;
-    bool NODELETE canCachePropertyNameEnumerator(VM&) const;
-    bool NODELETE canAccessPropertiesQuicklyForEnumeration() const;
+    JSPropertyNameEnumerator* LEGACY_NODELETE cachedPropertyNameEnumerator() const;
+    uintptr_t LEGACY_NODELETE cachedPropertyNameEnumeratorAndFlag() const;
+    bool LEGACY_NODELETE canCachePropertyNameEnumerator(VM&) const;
+    bool LEGACY_NODELETE canAccessPropertiesQuicklyForEnumeration() const;
 
     inline JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     inline JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
@@ -851,7 +853,7 @@ public:
         
     inline void addTransitionWatchpoint(Watchpoint* watchpoint) const; // Defined in StructureInlinesLight.h
     
-    void NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
+    void LEGACY_NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
     void fireStructureTransitionWatchpoint(DeferredStructureTransitionWatchpointFire*) const;
 
     InlineWatchpointSet& transitionWatchpointSet() const
@@ -1010,7 +1012,7 @@ private:
     friend class LLIntOffsetsExtractor;
 
     JS_EXPORT_PRIVATE Structure(VM&, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*, IndexingType, unsigned inlineCapacity);
-    Structure(VM&, CreatingEarlyCellTag);
+    JS_EXPORT_PRIVATE Structure(VM&, CreatingEarlyCellTag);
 
     static Structure* create(VM&, Structure*, DeferredStructureTransitionWatchpointFire*);
 
@@ -1112,7 +1114,7 @@ private:
 
     inline void clearCachedPrototypeChain(); // Defined in StructureInlines.h
 
-    bool NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
+    bool LEGACY_NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
 
     // These need to be properly aligned at the beginning of the 'Structure'
     // part of the object.

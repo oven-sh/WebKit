@@ -52,13 +52,8 @@
 
 @end
 
-@implementation WebTextIterator
-
-- (void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
-    [super dealloc];
+@implementation WebTextIterator {
+    RetainPtr<WebTextIteratorPrivate> _private;
 }
 
 - (id)initWithRange:(DOMRange *)range
@@ -67,7 +62,7 @@
     if (!self)
         return self;
     
-    _private = [[WebTextIteratorPrivate alloc] init];
+    _private = adoptNS([[WebTextIteratorPrivate alloc] init]);
     if (!range)
         return self;
 

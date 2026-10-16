@@ -42,7 +42,7 @@ struct PropertyParserState;
 class CSSParserTokenRange;
 struct CSSParserContext;
 
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 namespace CSSCalc {
 
@@ -70,7 +70,7 @@ std::optional<Tree> parseAndSimplify(CSSParserTokenRange&, CSS::PropertyParserSt
 std::optional<Tree> parseAndSimplifyCalcSum(CSSParserTokenRange&, CSS::PropertyParserState&, const ParserOptions&, const SimplificationOptions&);
 
 // Returns whether the provided `CSSValueID` is one of the functions that should be parsed as a `calc()`.
-bool NODELETE isCalcFunction(CSSValueID function);
+bool LEGACY_NODELETE isCalcFunction(CSSValueID function);
 
 } // namespace CSSCalc
 } // namespace WebCore

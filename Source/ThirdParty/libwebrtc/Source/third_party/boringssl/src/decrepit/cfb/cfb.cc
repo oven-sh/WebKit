@@ -38,16 +38,11 @@ static int aes_cfb_init_key(EVP_CIPHER_CTX *ctx, const uint8_t *key,
 
 static int aes_cfb128_cipher_update(EVP_CIPHER_CTX *ctx, uint8_t *out,
                                     const uint8_t *in, size_t len) {
-  if (!out || !in) {
-    return 0;
-  }
-
   EVP_CFB_CTX *cfb_ctx = reinterpret_cast<EVP_CFB_CTX *>(ctx->cipher_data);
   int num = ctx->num;
   AES_cfb128_encrypt(in, out, len, &cfb_ctx->ks, ctx->iv, &num,
                      ctx->encrypt ? AES_ENCRYPT : AES_DECRYPT);
   ctx->num = num;
-
   return 1;
 }
 

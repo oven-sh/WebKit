@@ -13,6 +13,7 @@
 #include "AsyncContextSwapScope.h"
 #include "AsyncGeneratorPrototype.h"
 #include "B3StackmapGenerationParams.h"
+#include "IteratorOperations.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSCInlines.h"
 #include "JSPromise.h"
@@ -181,9 +182,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedAsyncIteratorNext, EncodedJSValue, (In
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue iterator = JSValue::decode(encodedIterator);
     JSValue sent = JSValue::decode(encodedSent);
-    if (iterator.asCell()->type() != JSAsyncFromSyncIteratorType)
-        OPERATION_RETURN(scope, JSValue::encode(uncheckedDowncast<Typed::AsyncGenerator>(iterator)->enqueueDriver(globalObject, sent ? sent : jsUndefined())));
+    if (iterator.asCell()->type() != JSAsyncFromSyncIteratorType) {
+        bool driverCanContinueImmediately = !instance->awaitMustSuspend && instance->microtaskQueue->isEmpty() && Typed::SavedFrame::isEnteredByJobLoop(*instance, std::bit_cast<const uint64_t*>(callFrame->callerFrame()));
+        OPERATION_RETURN(scope, JSValue::encode(uncheckedDowncast<Typed::AsyncGenerator>(iterator)->enqueueDriver(globalObject, sent ? sent : jsUndefined(), driverCanContinueImmediately)));
+    }
     auto* wrapper = uncheckedDowncast<JSAsyncFromSyncIterator>(iterator);
+    if (!instance->awaitMustSuspend && instance->microtaskQueue->isEmpty() && Typed::SavedFrame::isEnteredByJobLoop(*instance, std::bit_cast<const uint64_t*>(callFrame->callerFrame()))) {
+        JSPromise*& immediateStep = instance->typed->immediateStepOfAsyncGenerators;
+        if (!immediateStep) [[unlikely]] {
+            immediateStep = JSPromise::create(vm, globalObject->promiseStructure());
+            immediateStep->fulfill(vm, createIteratorResultObject(globalObject, jsUndefined(), false));
+        }
+        OPERATION_RETURN(scope, JSValue::encode(asyncFromSyncIteratorNext(globalObject, wrapper, sent, immediateStep)));
+    }
     if (!sent || wrapper->iterationMode() != IterationMode::Generic)
         OPERATION_RETURN(scope, encodedIterator);
     OPERATION_RETURN(scope, JSValue::encode(asyncFromSyncIteratorNext(globalObject, wrapper, sent)));
@@ -215,6 +226,7 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
     case InlineBuiltin::GetIteratorNext:
     case InlineBuiltin::GeneratorResume:
     case InlineBuiltin::AsyncGeneratorYield:
+    case InlineBuiltin::ClearAsyncIteratorResult:
         return Writes::Heap;
     case InlineBuiltin::IsAsyncIteratorDriven:
     case InlineBuiltin::GeneratorIsDone:
@@ -226,7 +238,7 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
 
 bool Lowering::lacksThenUnlessMarked(const Type& type) const
 {
-    auto then = m_program.find("then"_s.span8());
+    auto then = m_program.find(asBytes("then"_s.span8()));
     return then && !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.views.isEmpty() && std::ranges::all_of(type.views, [&](LayoutID view) {
         return isObjectLayout(m_program.at(view).kind) && onlyExtraPropertiesSupply(m_program, view, *then);
     });
@@ -404,6 +416,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
         for (GPRReg reg : stubTemporaryGPRs)
             patchpoint->clobberLate(RegisterSet { reg });
+        patchpoint->clobberLate(m_proc.code().calleeSavesLostAtSuspensions());
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         CallSite site { nextSite() };
         patchpoint->setGenerator([context = &m_context, site, numberKept = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
@@ -442,10 +455,31 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
                 context->plans.appendVector(places);
             }
             RegisterAtOffsetList saves = params.code().calleeSaveRegisterAtOffsetList();
-            RELEASE_ASSERT(!saves.registerCount() || (isX86_64() && saves.registerCount() == 1 && saves.at(0).reg().isGPR() && saves.at(0).reg().gpr() == SavedFrame::registerKept && saves.at(0).offset() == -static_cast<ptrdiff_t>(sizeof(CPURegister))));
-            auto word = SavedFrame::wordOfSite(row, placeOfPromise, saves.registerCount());
+#if CPU(ARM64)
+            RELEASE_ASSERT(!(saves.registerCount() % 2) && saves.registerCount() <= 6);
+            for (size_t i = 0; i < saves.registerCount(); ++i) {
+                size_t fromLast = saves.registerCount() - i;
+                RELEASE_ASSERT(saves.at(i).reg().isGPR() && static_cast<size_t>(saves.at(i).reg().gpr()) + fromLast == static_cast<size_t>(ARM64Registers::x24) + 1 && saves.at(i).offset() == -static_cast<ptrdiff_t>(fromLast * sizeof(CPURegister)));
+            }
+            auto word = SavedFrame::wordOfSite(row, placeOfPromise, saves.registerCount() / 2);
+#else
+            uint32_t savedRegisters = 0;
+            RELEASE_ASSERT(isX86_64() || !saves.registerCount());
+#if CPU(X86_64)
+            for (size_t i = 0; i < saves.registerCount(); ++i) {
+                RELEASE_ASSERT(saves.at(i).reg().isGPR() && saves.at(i).offset() == -static_cast<ptrdiff_t>((saves.registerCount() - i) * sizeof(CPURegister)));
+                GPRReg reg = saves.at(i).reg().gpr();
+                RELEASE_ASSERT(reg == SavedFrame::registerKept || reg == X86Registers::r15);
+                savedRegisters |= reg == SavedFrame::registerKept ? 1 : 2;
+            }
+#endif
+            auto word = SavedFrame::wordOfSite(row, placeOfPromise, savedRegisters);
+#endif
             RELEASE_ASSERT(word);
-            jit.move(CCallHelpers::TrustedImm32(*word), stubImmediateGPR);
+            if (*word >> 32)
+                jit.move(CCallHelpers::TrustedImm64(*word), stubImmediateGPR);
+            else
+                jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), stubImmediateGPR);
             context->stubCalls.call(jit, Stub::AwaitBySavingFrame, site);
         });
         unwindToLandingPad(patchpoint, site);
@@ -475,7 +509,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     if (which == InlineBuiltin::AsyncGeneratorYield) {
-        AOT_TYPED_OPERATION_WITH_EFFECTS(AsyncGeneratorYield, effectsOfBuiltinCall(value), in<CellPointer>(value.arguments[0]), in<Boxed>(value.arguments[1]));
+        callICStub(Stub::AsyncGeneratorYield, Void, { { in<CellPointer>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     if (which == InlineBuiltin::GetIteratorNext)
@@ -487,7 +521,23 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     if (which == InlineBuiltin::GetAsyncIteratorNext)
         return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetAsyncIteratorNext, effectsOfBuiltinCall(value), in<Boxed>(value.arguments[0])), type);
     if (which == InlineBuiltin::AsyncIteratorNext)
-        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(AsyncIteratorNext, effectsOfBuiltinCall(value), in<Boxed>(value.arguments[0]), value.arguments.size() > 1 ? in<Boxed>(value.arguments[1]) : Boxed(m_out.int64Zero)), type);
+        return ensure(Boxed(callICStub(Stub::AsyncIteratorNext, Int64, { { in<Boxed>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { value.arguments.size() > 1 ? in<Boxed>(value.arguments[1]).value() : m_out.int64Zero, GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value))), type);
+    if (which == InlineBuiltin::ClearAsyncIteratorResult) {
+        Boxed next = in<Boxed>(value.arguments[0]);
+        Boxed iteratorResult = in<Boxed>(value.arguments[1]);
+        LBasicBlock isCellCase = m_out.newBlock();
+        LBasicBlock isDriven = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isCell(next).value(), unsure(isCellCase), unsure(continuation));
+        m_out.appendTo(isCellCase);
+        m_out.branch(equal(typeOfCell(asCell(next)), word32(SentinelType)).value(), unsure(isDriven), unsure(continuation));
+        m_out.appendTo(isDriven);
+        didEmitWrite(Writes::Heap);
+        m_out.store64(m_out.constInt64(JSValue::encode(jsUndefined())), m_out.address(m_heaps.properties.atAnyNumber(), asCell(iteratorResult).value(), JSObject::offsetOfInlineStorage() + iteratorResultObjectValuePropertyOffset * sizeof(EncodedJSValue)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    }
     if (which == InlineBuiltin::IsAsyncIteratorDriven) {
         Boxed next = in<Boxed>(value.arguments[0]);
         LBasicBlock isCellCase = m_out.newBlock();

@@ -9,8 +9,9 @@
 // Requires js-test.js and webgl-test-utils.js.
 
 // The errors that the GPU process reports are printed asynchronously, which would make the output
-// depend on timing. The tests check the errors with getError().
-if (self.internals)
+// depend on timing. The tests check the errors with getError(). Workers do not have internals.settings,
+// so the page disables the errors before starting the worker.
+if (self.internals && internals.settings)
     internals.settings.setWebGLErrorsToConsoleEnabled(false);
 
 var wtu = WebGLTestUtils;

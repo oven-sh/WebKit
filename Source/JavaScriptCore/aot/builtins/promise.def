@@ -12,6 +12,7 @@ inline PromiseCatch
 inline IsAsyncIteratorDriven
 inline GetAsyncIteratorNext
 inline AsyncIteratorNext
+inline ClearAsyncIteratorResult
 inline GetIteratorNext
 inline GeneratorResume
 inline GeneratorIsDone
@@ -41,6 +42,7 @@ operation GeneratorResume (any, any, any) -> anything ; CallsUserCode ; Inline(G
 operation GeneratorIsDone (any/-) -> boolean ; ReadsRuntimeState ; Inline(GeneratorIsDone)
 operation IsAsyncIteratorDriven (any/-) -> boolean ; Pure ; Inline(IsAsyncIteratorDriven)
 operation AsyncIteratorNext (any, any?) -> anything ; CallsUserCode ; Inline(AsyncIteratorNext)
+operation ClearAsyncIteratorResult (any/-, any/W) -> undefined ; WritesArguments ; Inline(ClearAsyncIteratorResult)
 
 static Array.fromAsync (any/KGP?, any/KC?, any/KA?, any/-...) -> new Promise/N ; CallsUserCode ; Call
 

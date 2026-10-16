@@ -150,7 +150,7 @@ public: \
     FOR_EACH_JSC_OPTION(DECLARE_OPTION_ACCESSORS)
 #undef DECLARE_OPTION_ACCESSORS
 
-    static bool NODELETE isAvailable(ID, Availability);
+    static bool LEGACY_NODELETE isAvailable(ID, Availability);
     JS_EXPORT_PRIVATE static SandboxPolicy machExceptionHandlerSandboxPolicy;
 
 private:
@@ -174,7 +174,7 @@ private:
 
     static void setAllJITCodeValidations(bool);
 
-    static bool NODELETE defaultTCSMValue();
+    static bool LEGACY_NODELETE defaultTCSMValue();
     static unsigned computeNumberOfGCMarkers(unsigned maxNumberOfGCMarkers);
     static unsigned computeNumberOfWorkerThreads(int maxNumberOfWorkerThreads, int minimum = 1);
     static int32_t computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelta, int32_t multiCorePriorityDelta);

@@ -31,6 +31,7 @@
 #import "LegacyWebPageInspectorController.h"
 #import "WebDelegateImplementationCaching.h"
 #import "WebUIDelegate.h"
+#import "WebView.h"
 #if HAVE(TOUCH_BAR)
 #import <pal/spi/cocoa/AVKitSPI.h>
 #endif
@@ -110,7 +111,7 @@ class WebSelectionServiceController;
 #endif
 
 @interface WebWindowVisibilityObserver : NSObject {
-    WebView *_view;
+    __weak WebView *_view;
 }
 
 - (instancetype)initWithView:(WebView *)view;
@@ -191,9 +192,6 @@ class WebSelectionServiceController;
     BOOL userAgentOverridden;
     
     RetainPtr<WebPreferences> preferences;
-#if PLATFORM(IOS_FAMILY)
-    NSURL *userStyleSheetLocation;
-#endif
 
     RetainPtr<NSWindow> hostWindow;
 
@@ -277,7 +275,7 @@ class WebSelectionServiceController;
     std::unique_ptr<WebViewRenderingUpdateScheduler> renderingUpdateScheduler;
 
 #if !PLATFORM(IOS_FAMILY)
-    NSPasteboard *insertionPasteboard;
+    __weak NSPasteboard *insertionPasteboard;
     RetainPtr<NSImage> _mainFrameIcon;
 #endif
 
@@ -332,5 +330,11 @@ class WebSelectionServiceController;
 
     RefPtr<LegacyWebPageInspectorController> inspectorController;
     RefPtr<LegacyWebPageDebuggable> inspectorDebuggable;
+}
+@end
+
+@interface WebView () {
+@package
+    RetainPtr<WebViewPrivate> _private;
 }
 @end

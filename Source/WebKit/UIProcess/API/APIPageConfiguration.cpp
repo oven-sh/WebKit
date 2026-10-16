@@ -363,6 +363,11 @@ bool PageConfiguration::isEnhancedSecurityEnabled() const
     return false;
 }
 
+bool PageConfiguration::isEnhancedSecurityEnabledByDefault(bool isLockdownModeActive) const
+{
+    return !isLockdownModeActive && protect(preferences())->enhancedSecurityEnabledByDefault();
+}
+
 void PageConfiguration::setAllowPostingLegacySynchronousMessages(bool allow)
 {
     m_data.allowPostingLegacySynchronousMessages = allow;

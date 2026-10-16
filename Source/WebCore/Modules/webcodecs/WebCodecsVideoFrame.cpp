@@ -51,6 +51,7 @@
 #include "PixelBuffer.h"
 #include "SVGImageElement.h"
 #include "SecurityOrigin.h"
+#include "Settings.h"
 #include "VideoColorSpace.h"
 #include "VideoFrameImageSizing.h"
 #include "WebCodecsBufferTransfer.h"
@@ -69,12 +70,12 @@
 
 namespace WebCore {
 
-static MediaTime NODELETE timestampToMediaTime(int64_t timestamp)
+static MediaTime LEGACY_NODELETE timestampToMediaTime(int64_t timestamp)
 {
     return MediaTime::createWithDouble(Seconds::fromMicroseconds(timestamp).value());
 }
 
-static int64_t NODELETE mediaTimeToTimestamp(MediaTime mediaTime)
+static int64_t LEGACY_NODELETE mediaTimeToTimestamp(MediaTime mediaTime)
 {
     return Seconds(mediaTime.toDouble()).microseconds();
 }
@@ -155,7 +156,7 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::createFromImageElemen
     //    resource.
     // 6. Let defaultDisplayWidth and defaultDisplayHeight be the natural width and natural
     //    height of image.
-    auto defaultDisplaySize = VideoFrameImageSizing { image.sourceImageDevicePixelRatio() }.resolve(naturalDimensions).size();
+    auto defaultDisplaySize = VideoFrameImageSizing { image.currentPixelDensity() }.resolve(naturalDimensions).size();
 
     // 7. Run the Initialize Frame With Resource algorithm with init, frame, resource,
     //    codedWidth, codedHeight, baseRotation, baseFlip, defaultDisplayWidth, and
@@ -284,6 +285,9 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
     ASSERT(init.format);
     auto pixelFormat = init.format.value_or(VideoPixelFormat::I420);
 
+    if (isHighBitDepthVideoPixelFormat(pixelFormat) && !context.settingsValues().webCodecsHighBitDepthEnabled)
+        return Exception { ExceptionCode::TypeError, "VideoPixelFormat is not valid"_s };
+
     WebCodecsTransferList transferList { WTF::move(init.transfer) };
     if (auto result = transferList.validate(); result.hasException())
         return result.releaseException();
@@ -374,15 +378,21 @@ Ref<WebCodecsVideoFrame> WebCodecsVideoFrame::create(ScriptExecutionContext& con
     return result;
 }
 
-static VideoPixelFormat NODELETE computeVideoPixelFormat(VideoPixelFormat baseFormat, bool shouldDiscardAlpha)
+static VideoPixelFormat LEGACY_NODELETE computeVideoPixelFormat(VideoPixelFormat baseFormat, bool shouldDiscardAlpha)
 {
     if (!shouldDiscardAlpha)
         return baseFormat;
     switch (baseFormat) {
     case VideoPixelFormat::I420:
+    case VideoPixelFormat::I420P10:
+    case VideoPixelFormat::I420P12:
     case VideoPixelFormat::I422:
+    case VideoPixelFormat::I422P10:
+    case VideoPixelFormat::I422P12:
     case VideoPixelFormat::NV12:
     case VideoPixelFormat::I444:
+    case VideoPixelFormat::I444P10:
+    case VideoPixelFormat::I444P12:
     case VideoPixelFormat::RGBX:
     case VideoPixelFormat::BGRX:
         return baseFormat;

@@ -44,22 +44,26 @@ namespace Style {
 Color toStyleColor(const CSS::KeywordColor& unresolved, ColorResolutionState& state)
 {
     switch (unresolved.valueID) {
-    case CSSValueInternalDocumentTextColor:
+    case CSSValueID::InternalDocumentTextColor:
         return { state.document->textColor() };
-    case CSSValueWebkitLink:
-        return { state.forVisitedLink == ForVisitedLink::Yes ? state.document->visitedLinkColor(state.style) : state.document->linkColor(state.style) };
-    case CSSValueWebkitActivelink:
-        return { state.document->activeLinkColor(state.style) };
-    case CSSValueWebkitFocusRingColor:
-        return { RenderTheme::singleton().focusRingColor(state.document->styleColorOptions(state.style.ptr())) };
-    case CSSValueCurrentcolor:
+    case CSSValueID::WebkitLink:
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { state.forVisitedLink == ForVisitedLink::Yes ? state.document->visitedLinkColor(state.style, StyleColorOptionsPurpose::Rendering) : state.document->linkColor(state.style, StyleColorOptionsPurpose::Rendering) };
+    case CSSValueID::WebkitActivelink:
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { state.document->activeLinkColor(state.style, StyleColorOptionsPurpose::Rendering) };
+    case CSSValueID::WebkitFocusRingColor:
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { RenderTheme::singleton().focusRingColor(state.document->styleColorOptions(state.style.ptr(), StyleColorOptionsPurpose::Rendering)) };
+    case CSSValueID::Currentcolor:
         return { CurrentColor() };
-    case CSSValueAccentcolor:
+    case CSSValueID::Accentcolor:
         return { CurrentAccentColor() };
-    case CSSValueAccentcolortext:
+    case CSSValueID::Accentcolortext:
         return { ContrastColor { CurrentAccentColor() } };
     default:
-        return { CSS::colorFromKeyword(unresolved.valueID, state.document->styleColorOptions(state.style.ptr())) };
+        // FIXME: resolve differently based on purpose (Style vs Rendering)
+        return { CSS::colorFromKeyword(unresolved.valueID, state.document->styleColorOptions(state.style.ptr(), StyleColorOptionsPurpose::Rendering)) };
     }
 }
 

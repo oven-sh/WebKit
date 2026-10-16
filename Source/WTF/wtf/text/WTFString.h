@@ -54,7 +54,7 @@ WTF_EXPORT_PRIVATE float charactersToFloat(std::span<const char16_t>, bool* ok =
 WTF_EXPORT_PRIVATE float charactersToFloat(std::span<const Latin1Character>, size_t& parsedLength);
 WTF_EXPORT_PRIVATE float charactersToFloat(std::span<const char16_t>, size_t& parsedLength);
 
-template<bool isSpecialCharacter(char16_t), typename CharacterType, std::size_t Extent> bool NODELETE containsOnly(std::span<const CharacterType, Extent>);
+template<bool isSpecialCharacter(char16_t), typename CharacterType, std::size_t Extent> bool LEGACY_NODELETE containsOnly(std::span<const CharacterType, Extent>);
 
 inline const String& nullString();
 
@@ -114,7 +114,7 @@ public:
 
     static String adopt(StringBuffer<Latin1Character>&& buffer) { return StringImpl::adopt(WTF::move(buffer)); }
     static String adopt(StringBuffer<char16_t>&& buffer) { return StringImpl::adopt(WTF::move(buffer)); }
-    template<typename CharacterType, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+    template<IsStringStorageCharacter CharacterType, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
     static String adopt(Vector<CharacterType, inlineCapacity, OverflowHandler, minCapacity, Malloc>&& vector) { return StringImpl::adopt(WTF::move(vector)); }
 
     bool isNull() const { return !m_impl; }
@@ -128,7 +128,7 @@ public:
     std::span<const char16_t> span16() const LIFETIME_BOUND { return m_impl ? m_impl->span16() : std::span<const char16_t>(); }
 
     // Return span8() or span16() depending on CharacterType.
-    template<typename CharacterType> std::span<const CharacterType> span() const LIFETIME_BOUND;
+    template<IsStringStorageCharacter CharacterType> std::span<const CharacterType> span() const LIFETIME_BOUND;
 
     bool is8Bit() const { return !m_impl || m_impl->is8Bit(); }
 
@@ -147,8 +147,8 @@ public:
     char16_t codeUnitAt(unsigned index) const;
     char16_t operator[](unsigned index) const { return codeUnitAt(index); }
 
-    WTF_EXPORT_PRIVATE static String NODELETE number(int);
-    WTF_EXPORT_PRIVATE static String NODELETE number(unsigned);
+    WTF_EXPORT_PRIVATE static String LEGACY_NODELETE number(int);
+    WTF_EXPORT_PRIVATE static String LEGACY_NODELETE number(unsigned);
     WTF_EXPORT_PRIVATE static String number(long);
     WTF_EXPORT_PRIVATE static String number(unsigned long);
     WTF_EXPORT_PRIVATE static String number(long long);
@@ -167,10 +167,10 @@ public:
     size_t find(Latin1Character character, unsigned start = 0) const { return m_impl ? m_impl->find(character, start) : notFound; }
     size_t find(char character, unsigned start = 0) const { return m_impl ? m_impl->find(character, start) : notFound; }
 
-    size_t NODELETE find(StringView) const;
-    size_t NODELETE find(StringView, unsigned start) const;
-    size_t NODELETE findIgnoringASCIICase(StringView) const;
-    size_t NODELETE findIgnoringASCIICase(StringView, unsigned start) const;
+    size_t LEGACY_NODELETE find(StringView) const;
+    size_t LEGACY_NODELETE find(StringView, unsigned start) const;
+    size_t LEGACY_NODELETE findIgnoringASCIICase(StringView) const;
+    size_t LEGACY_NODELETE findIgnoringASCIICase(StringView, unsigned start) const;
 
     template<typename CodeUnitMatchFunction>
         requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
@@ -185,27 +185,27 @@ public:
     WTF_EXPORT_PRIVATE std::expected<Vector<char16_t>, UTF8ConversionError> charactersWithNullTermination() const;
     WTF_EXPORT_PRIVATE std::expected<Vector<char16_t>, UTF8ConversionError> charactersWithoutNullTermination() const;
 
-    WTF_EXPORT_PRIVATE char32_t NODELETE codePointAt(unsigned) const;
+    WTF_EXPORT_PRIVATE char32_t LEGACY_NODELETE codePointAt(unsigned) const;
 
     bool contains(char16_t character) const { return find(character) != notFound; }
     bool contains(ASCIILiteral literal) const { return find(literal) != notFound; }
-    bool NODELETE contains(StringView) const;
+    bool LEGACY_NODELETE contains(StringView) const;
     template<typename CodeUnitMatchFunction>
         requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
     bool contains(CodeUnitMatchFunction matchFunction) const { return find(matchFunction, 0) != notFound; }
-    bool NODELETE containsIgnoringASCIICase(StringView) const;
-    bool NODELETE containsIgnoringASCIICase(StringView, unsigned start) const;
+    bool LEGACY_NODELETE containsIgnoringASCIICase(StringView) const;
+    bool LEGACY_NODELETE containsIgnoringASCIICase(StringView, unsigned start) const;
 
-    bool NODELETE startsWith(StringView) const;
-    bool NODELETE startsWithIgnoringASCIICase(StringView) const;
+    bool LEGACY_NODELETE startsWith(StringView) const;
+    bool LEGACY_NODELETE startsWithIgnoringASCIICase(StringView) const;
     bool startsWith(char16_t character) const { return m_impl && m_impl->startsWith(character); }
-    bool NODELETE hasInfixStartingAt(StringView prefix, unsigned start) const;
+    bool LEGACY_NODELETE hasInfixStartingAt(StringView prefix, unsigned start) const;
 
-    bool NODELETE endsWith(StringView) const;
-    bool NODELETE endsWithIgnoringASCIICase(StringView) const;
+    bool LEGACY_NODELETE endsWith(StringView) const;
+    bool LEGACY_NODELETE endsWithIgnoringASCIICase(StringView) const;
     bool endsWith(char16_t character) const { return m_impl && m_impl->endsWith(character); }
     bool endsWith(char character) const { return endsWith(static_cast<char16_t>(character)); }
-    bool NODELETE hasInfixEndingAt(StringView suffix, unsigned end) const;
+    bool LEGACY_NODELETE hasInfixEndingAt(StringView suffix, unsigned end) const;
 
     [[nodiscard]] String substring(unsigned position, unsigned length = MaxLength) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String substringSharingImpl(unsigned position, unsigned length = MaxLength) const;
@@ -267,7 +267,7 @@ public:
     [[nodiscard]] WTF_EXPORT_PRIVATE String isolatedCopy() const &;
     [[nodiscard]] WTF_EXPORT_PRIVATE String isolatedCopy() &&;
 
-    WTF_EXPORT_PRIVATE bool NODELETE isSafeToSendToAnotherThread() const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE isSafeToSendToAnotherThread() const;
 
     // Prevent Strings from being implicitly convertable to bool as it will be ambiguous on any platform that
     // allows implicit conversion to another pointer type (e.g., Mac allows implicit conversion to NSString *).
@@ -308,17 +308,20 @@ public:
     // FIXME: Deprecated: Use constructor that takes span<const char8_t>.
     WTF_EXPORT_PRIVATE static String fromUTF8(std::span<const char8_t>);
     static String fromUTF8(std::span<const Latin1Character> characters) { return byteCast<char8_t>(characters); }
+    static String fromUTF8(std::span<const uint8_t> characters) { return byteCast<char8_t>(characters); }
     static String fromUTF8(std::span<const char> characters) { return byteCast<char8_t>(characters); }
     static String fromUTF8(const char* string) { return byteCast<char8_t>(unsafeSpan(string)); }
 
     // Convert each invalid UTF-8 sequence into a replacement character.
     WTF_EXPORT_PRIVATE static String fromUTF8ReplacingInvalidSequences(std::span<const char8_t>);
     static String fromUTF8ReplacingInvalidSequences(std::span<const Latin1Character> characters) { return fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(characters)); }
+    static String fromUTF8ReplacingInvalidSequences(std::span<const uint8_t> characters) { return fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(characters)); }
 
     // Tries to convert the passed in string to UTF-8, but will fall back to Latin-1 if the string is not valid UTF-8.
     // FIXME: Deprecated: Use fromUTF8ReplacingInvalidSequences.
     WTF_EXPORT_PRIVATE static String fromUTF8WithLatin1Fallback(std::span<const char8_t>);
     static String fromUTF8WithLatin1Fallback(std::span<const Latin1Character> characters) { return fromUTF8WithLatin1Fallback(byteCast<char8_t>(characters)); }
+    static String fromUTF8WithLatin1Fallback(std::span<const uint8_t> characters) { return fromUTF8WithLatin1Fallback(byteCast<char8_t>(characters)); }
     static String fromUTF8WithLatin1Fallback(std::span<const char> characters) { return fromUTF8WithLatin1Fallback(byteCast<char8_t>(characters)); }
 
     WTF_EXPORT_PRIVATE static String fromCodePoint(char32_t codePoint);
@@ -366,8 +369,8 @@ inline bool operator==(const String& a, const String& b) { return equal(a.impl()
 inline bool operator==(const String& a, ASCIILiteral b) { return equal(a.impl(), b); }
 template<size_t inlineCapacity> inline bool operator==(const String& a, const Vector<char, inlineCapacity>& b) { return b == a; }
 
-bool NODELETE equalIgnoringASCIICase(const String&, const String&);
-bool NODELETE equalIgnoringASCIICase(const String&, ASCIILiteral);
+bool LEGACY_NODELETE equalIgnoringASCIICase(const String&, const String&);
+bool LEGACY_NODELETE equalIgnoringASCIICase(const String&, ASCIILiteral);
 
 bool equalLettersIgnoringASCIICase(const String&, ASCIILiteral);
 bool startsWithLettersIgnoringASCIICase(const String&, ASCIILiteral);
@@ -525,14 +528,14 @@ inline char16_t String::codeUnitAt(unsigned index) const
 
 [[nodiscard]] inline String makeStringByReplacingAll(const String& string, char16_t target, char16_t replacement)
 {
-    if (auto impl = string.impl())
+    if (RefPtr impl = string.impl())
         return String { impl->replace(target, replacement) };
     return string;
 }
 
 [[nodiscard]] ALWAYS_INLINE String makeStringByReplacingAll(const String& string, char16_t target, ASCIILiteral literal)
 {
-    if (auto impl = string.impl())
+    if (RefPtr impl = string.impl())
         return String { impl->replace(target, literal.span8()) };
     return string;
 }
@@ -609,12 +612,12 @@ inline bool equalLettersIgnoringASCIICase(const String& string, ASCIILiteral lit
     return equalLettersIgnoringASCIICase(string.impl(), literal);
 }
 
-inline bool NODELETE equalIgnoringASCIICase(const String& a, const String& b)
+inline bool LEGACY_NODELETE equalIgnoringASCIICase(const String& a, const String& b)
 {
     return equalIgnoringASCIICase(a.impl(), b.impl());
 }
 
-inline bool NODELETE equalIgnoringASCIICase(const String& a, ASCIILiteral b)
+inline bool LEGACY_NODELETE equalIgnoringASCIICase(const String& a, ASCIILiteral b)
 {
     return equalIgnoringASCIICase(a.impl(), b);
 }

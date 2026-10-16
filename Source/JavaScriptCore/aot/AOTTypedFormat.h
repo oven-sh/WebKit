@@ -41,6 +41,7 @@ enum Primitive : uint32_t {
     PrimitiveString = 1 << 5,
     PrimitiveSymbol = 1 << 6,
     PrimitiveBigInt = 1 << 7,
+    PrimitiveLiteralString = 1 << 8,
 };
 
 enum DeclaredTypeFlag : uint32_t {

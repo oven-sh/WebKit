@@ -128,10 +128,12 @@ public:
     String loaderId(DocumentLoader*);
     RefPtr<LocalFrame> assertFrame(Inspector::Protocol::ErrorString&, const Inspector::Protocol::Network::FrameId&);
 
+    static void evaluateBootstrapScript(LocalFrame&, const String& source);
+
 private:
     double timestamp();
 
-    InspectorOverlay& NODELETE overlay() const;
+    InspectorOverlay& LEGACY_NODELETE overlay() const;
 
     void overridePrefersReducedMotion(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&&);
     void overridePrefersContrast(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&&);

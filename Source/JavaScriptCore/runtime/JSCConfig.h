@@ -46,14 +46,14 @@ using JITWriteSeparateHeapsFunction = void (*)(off_t, const void*, size_t);
     WTF_FUNCPTR_PTRAUTH_STR("JSCConfig." #method) method
 
 struct Config {
-    static Config& NODELETE singleton();
+    static Config& LEGACY_NODELETE singleton();
 
     static void disableFreezingForTesting() { g_wtfConfig.disableFreezingForTesting(); }
-    JS_EXPORT_PRIVATE static void NODELETE enableRestrictedOptions();
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE enableRestrictedOptions();
     // Skip the JSC_<option> environment variable pass in Options::initialize(). For
     // embedders that expose their own configuration surface; must be called before
     // JSC::initialize().
-    JS_EXPORT_PRIVATE static void NODELETE disableEnvironmentOptions();
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE disableEnvironmentOptions();
     static void finalize() { WTF::Config::finalize(); }
 
     static void configureForTesting()
@@ -99,7 +99,6 @@ struct Config {
     uintptr_t startOfStructureHeap;
     uintptr_t structureIDBase;
     uintptr_t sizeOfStructureHeap;
-    uintptr_t startOfMarkedBlockCage;
     uintptr_t sizeOfMarkedBlockCage;
     void* defaultCallThunk;
     void* arityFixupThunk;

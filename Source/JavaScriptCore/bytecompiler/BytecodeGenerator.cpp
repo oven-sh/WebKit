@@ -553,11 +553,14 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
         if (!shouldCaptureSomeOfTheThings)
             return false;
         if (m_needsArguments && uid == propertyNames().arguments.impl()) {
-            // Actually, we only need to capture the arguments object when we "need full activation"
-            // because of name scopes. But historically we did it this way, so for now we just preserve
-            // the old behavior.
-            // FIXME: https://bugs.webkit.org/show_bug.cgi?id=143072
-            return true;
+            // An async function with no await is inlined. Any other generator or async wrapper
+            // has a separate body that resolves this frame's arguments.
+            bool separateBodyResolvesArguments = isGeneratorOrAsyncFunctionWrapperParseMode(parseMode)
+                && !(isAsyncFunctionWrapperParseMode(parseMode) && functionNode->isAsyncFunctionWithoutAwait());
+            return separateBodyResolvesArguments
+                || (functionNode->features() & WithFeature)
+                || (functionNode->usesArrowFunction() && isArgumentsUsedInInnerArrowFunction())
+                || functionNode->captures(uid);
         }
         return functionNode->captures(uid);
     };
@@ -2674,9 +2677,9 @@ void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvir
     ASSERT(loopScope);
 
     struct SymbolTableNoLocks {
-        auto NODELETE begin() const { return symbolTable->begin(NoLockingNecessary); }
-        auto NODELETE end() const { return symbolTable->end(NoLockingNecessary); }
-        size_t NODELETE size() const { return symbolTable->scopeSize(); }
+        auto LEGACY_NODELETE begin() const { return symbolTable->begin(NoLockingNecessary); }
+        auto LEGACY_NODELETE end() const { return symbolTable->end(NoLockingNecessary); }
+        size_t LEGACY_NODELETE size() const { return symbolTable->scopeSize(); }
         SymbolTable* symbolTable;
     } symbolTableWithoutLocks { symbolTable };
 
@@ -2848,6 +2851,18 @@ std::optional<Variable> BytecodeGenerator::tryResolveVariable(ExpressionNode* ex
 
 // Indicates the least upper bound of resolve type based on local scope. The bytecode linker
 // will start with this ResolveType and compute the least upper bound including intercepting scopes.
+JSValue BytecodeGenerator::immutableGlobalNamedBy(const Variable& variable)
+{
+    if (variable.isResolved() || !m_parentDeclaredNames || shouldEmitTypeProfilerHooks())
+        return { };
+    auto& names = *m_vm.propertyNames;
+    const Identifier& name = variable.ident();
+    JSValue value = name == names.undefinedKeyword ? jsUndefined() : name == names.NaN ? jsNaN() : name == names.Infinity ? jsNumber(std::numeric_limits<double>::infinity()) : JSValue();
+    if (!value || resolveType() != GlobalProperty || !m_parentDeclaredNames->resolvesToGlobalScope(name.impl()))
+        return { };
+    return value;
+}
+
 ResolveType BytecodeGenerator::resolveType()
 {
     for (unsigned i = m_lexicalScopeStack.size(); i--; ) {

@@ -107,6 +107,13 @@ public:
         return std::bit_cast<Metadata*>(ptr);
     }
 
+    unsigned offsetOf(OpcodeID opcodeID, unsigned metadataID)
+    {
+        ASSERT(opcodeID < NUMBER_OF_BYTECODE_WITH_METADATA);
+        uintptr_t first = roundUpToMultipleOf(metadataAlignment(opcodeID), std::bit_cast<uintptr_t>(getWithoutAligning(opcodeID)));
+        return first - std::bit_cast<uintptr_t>(this) + metadataID * metadataSize(opcodeID);
+    }
+
     template<typename Op, typename Functor>
     ALWAYS_INLINE void forEach(NOESCAPE const Functor& func)
     {

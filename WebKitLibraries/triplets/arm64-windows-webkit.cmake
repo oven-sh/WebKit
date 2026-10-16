@@ -2,14 +2,14 @@ set(VCPKG_TARGET_ARCHITECTURE arm64)
 set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE dynamic)
 
+# WebKit links the release CRT in every configuration (OptionsMSVC.cmake).
+set(VCPKG_BUILD_TYPE release)
+
 if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
     # Chainload vcpkg's windows toolchain so the platform is recognized as
     # "windows" (VCPKG_CMAKE_SYSTEM_NAME stays empty) while bypassing the
     # Visual Studio Developer Prompt check that fails on non-Windows hosts.
     set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/../toolchains/windows-cross.cmake)
-
-    # Only build release configuration for cross-compilation.
-    set(VCPKG_BUILD_TYPE release)
 
     set(ENV{CC} clang-cl-20)
     set(ENV{CXX} clang-cl-20)

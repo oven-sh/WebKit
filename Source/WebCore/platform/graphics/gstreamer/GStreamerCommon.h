@@ -37,6 +37,7 @@
 #include <wtf/text/UTF8CStringView.h>
 
 // Same as gstinfo.h, but with the arguments converted by WTF_LOG_PRINTF_ARGS() so that call sites can pass a CString directly.
+// The identifier of GST_CAT_LEVEL_LOG_ID() is converted with logPrintfType() for the same reason.
 #ifndef GST_DISABLE_GST_DEBUG
 #undef GST_CAT_LEVEL_LOG
 #define GST_CAT_LEVEL_LOG(cat, level, object, format, ...) G_STMT_START { \
@@ -48,10 +49,23 @@
 #undef GST_CAT_LEVEL_LOG_ID
 #define GST_CAT_LEVEL_LOG_ID(cat, level, id, format, ...) G_STMT_START { \
     if (G_UNLIKELY(((level) <= GST_LEVEL_MAX) && ((level) <= _gst_debug_min))) \
-        gst_debug_log_id((cat), (level), __FILE__, GST_FUNCTION, __LINE__, (id), format WTF_LOG_PRINTF_ARGS(__VA_ARGS__)); \
+        gst_debug_log_id((cat), (level), __FILE__, GST_FUNCTION, __LINE__, WTF::logPrintfType(id), format WTF_LOG_PRINTF_ARGS(__VA_ARGS__)); \
 } G_STMT_END
 #endif
+
+// For call sites that log on behalf of another location, so cannot use the GST_* macros above. The file,
+// function and identifier are converted with logPrintfType(), so either a typed string or __FILE__ works.
+#define SAFE_GST_DEBUG_LOG(cat, level, file, function, line, object, format, ...) \
+    gst_debug_log((cat), (level), WTF::logPrintfType(file), WTF::logPrintfType(function), (line), (GObject*)(object), format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__)))
+
+#if GST_CHECK_VERSION(1, 22, 0)
+#define SAFE_GST_DEBUG_LOG_ID_LITERAL(cat, level, file, function, line, id, message) \
+    gst_debug_log_id_literal((cat), (level), WTF::logPrintfType(file), WTF::logPrintfType(function), (line), WTF::logPrintfType(id), WTF::logPrintfType(message))
 #endif
+#endif
+
+#define SAFE_GST_PRINTERRLN(format, ...) \
+    gst_printerrln(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__)))
 
 typedef struct _GstGLMemory GstGLMemory;
 
@@ -500,20 +514,6 @@ bool enableMSEAdditionalPipelineDumps();
 #define GST_BUFFER_DTS_OR_PTS(buffer) (GST_BUFFER_DTS_IS_VALID(buffer) ? GST_BUFFER_DTS(buffer) : GST_BUFFER_PTS(buffer))
 #endif
 
-// In GStreamer 1.20 gst_audio_format_fill_silence() will be deprecated in favor of
-// gst_audio_format_info_fill_silence().
-#if GST_CHECK_VERSION(1, 20, 0)
-#define webkitGstAudioFormatFillSilence gst_audio_format_info_fill_silence
-#else
-#define webkitGstAudioFormatFillSilence gst_audio_format_fill_silence
-#endif
-
-// In GStreamer 1.20 gst_element_get_request_pad() was renamed to gst_element_request_pad_simple(),
-// so create an alias for older versions.
-#if !GST_CHECK_VERSION(1, 20, 0)
-#define gst_element_request_pad_simple gst_element_get_request_pad
-#endif
-
 // We can't pass macros as template parameters, so we need to wrap them in inline functions.
 inline void gstObjectLock(void* object) { GST_OBJECT_LOCK(object); }
 inline void gstObjectUnlock(void* object) { GST_OBJECT_UNLOCK(object); }
@@ -596,10 +596,6 @@ private:
     GstIterator* m_iter;
     bool m_started { false };
 };
-
-#if !GST_CHECK_VERSION(1, 20, 0)
-GstBuffer* gst_buffer_new_memdup(gconstpointer data, gsize size);
-#endif
 
 #if !GST_CHECK_VERSION(1, 28, 0)
 void gst_pad_probe_info_set_buffer(GstPadProbeInfo*, GstBuffer*);

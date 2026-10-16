@@ -2687,9 +2687,7 @@ TEST(DragAndDropTests, AddLinkFromSameSiteIframeToDragSession)
 TEST(DragAndDropTests, AddLinkFromCrossOriginIframeToDragSession)
 {
     RetainPtr<NSArray> hrefs = hrefsDroppedAfterAddingLinkFromIframeToDragSession("https://webkit.org/inner"_s);
-    EXPECT_EQ(2UL, [hrefs count]);
-    EXPECT_WK_STREQ("https://first.example/", [hrefs objectAtIndex:0]);
-    EXPECT_WK_STREQ("https://second.example/", [hrefs objectAtIndex:1]);
+    EXPECT_EQ(0UL, [hrefs count]);
 }
 
 } // namespace TestWebKitAPI

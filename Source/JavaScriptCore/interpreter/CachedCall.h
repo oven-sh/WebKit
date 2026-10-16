@@ -44,7 +44,7 @@ class CachedCall : public CallLinkInfoBase {
     WTF_MAKE_NONCOPYABLE(CachedCall);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSFunction*, int argumentCount);
+    JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSObject*, int argumentCount);
 
     ~CachedCall()
     {
@@ -78,7 +78,6 @@ public:
             remove();
 
         if (newCodeBlock && m_protoCallFrame.codeBlock() == oldCodeBlock) {
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
             m_addressForCall = newCodeBlock->jitCode()->addressForCall();
             m_protoCallFrame.setCodeBlock(newCodeBlock);
             newCodeBlock->linkIncomingCall(nullptr, this);

@@ -28,6 +28,7 @@
 #include <array>
 #include <wtf/HashFunctions.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -124,6 +125,23 @@ public:
             m_smallIntCache[i].jsString = nullptr;
     }
 
+    void didFinishCollection()
+    {
+        m_placesWrittenSinceLastCollection.shrink(0);
+        m_hasWrittenTooManyPlaces = false;
+    }
+
+    template<typename Visitor>
+    void visitPlacesWrittenSinceLastCollection(Visitor& visitor)
+    {
+        if (m_hasWrittenTooManyPlaces) {
+            visitAggregate(visitor);
+            return;
+        }
+        for (JSString** place : m_placesWrittenSinceLastCollection)
+            visitor.appendUnbarriered(*place);
+    }
+
     template<typename Visitor>
     void visitAggregate(Visitor& visitor)
     {
@@ -163,10 +181,22 @@ private:
 
     JS_EXPORT_PRIVATE void initializeDoubleCache();
 
+    JSString* put(JSString*& place, JSString* cell)
+    {
+        place = cell;
+        if (m_placesWrittenSinceLastCollection.size() < 2 * cacheSize + doubleCacheSize)
+            m_placesWrittenSinceLastCollection.append(&place);
+        else
+            m_hasWrittenTooManyPlaces = true;
+        return cell;
+    }
+
     std::array<StringWithJSString, cacheSize> m_smallIntCache { };
     std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };
     std::array<CacheEntry<unsigned>, cacheSize> m_unsignedCache { };
     std::unique_ptr<DoubleCache> m_doubleCache;
+    Vector<JSString**> m_placesWrittenSinceLastCollection;
+    bool m_hasWrittenTooManyPlaces { false };
 };
 
 } // namespace JSC

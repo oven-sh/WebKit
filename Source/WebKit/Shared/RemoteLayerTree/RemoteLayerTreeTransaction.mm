@@ -249,6 +249,9 @@ static void dumpChangedLayers(TextStream& ts, const LayerPropertiesMap& changedL
 
         if (layerProperties.changedProperties & LayerChange::ShadowPathChanged)
             ts.dumpProperty("shadowPath"_s, layerProperties.shadowPath.isEmpty() ? "empty" : "set");
+
+        if (auto displayOnlyImage = layerProperties.displayOnlyImage)
+            ts.dumpProperty("displayOnlyImage"_s, *displayOnlyImage);
     }
 }
 

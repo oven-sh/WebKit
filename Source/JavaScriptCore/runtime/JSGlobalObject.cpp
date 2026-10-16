@@ -965,8 +965,6 @@ JSC_DEFINE_HOST_FUNCTION(performPromiseThen, (JSGlobalObject* globalObject, Call
     return encodedJSUndefined();
 }
 
-JS_GLOBAL_OBJECT_ADDITIONS_2;
-
 JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectMethodTable* globalObjectMethodTable)
     : Base(vm, structure, nullptr)
     , m_vm(&vm)
@@ -1238,8 +1236,6 @@ void JSGlobalObject::init(VM& vm)
     m_functionPrototype->structure()->setPrototypeWithoutTransition(vm, m_objectPrototype.get());
     m_objectStructureForObjectConstructor.set(vm, this, m_structureCache.emptyObjectStructureForPrototype(this, m_objectPrototype.get(), JSFinalObject::defaultInlineCapacity));
     m_objectProtoValueOfFunction.set(vm, this, uncheckedDowncast<JSFunction>(objectPrototype()->getDirect(vm, vm.propertyNames->valueOf)));
-
-    JS_GLOBAL_OBJECT_ADDITIONS_3;
 
     m_arraySpeciesGetterSetter.set(vm, this, GetterSetter::create(vm, this, JSFunction::create(vm, this, 0, "get [Symbol.species]"_s, globalFuncSpeciesGetter, ImplementationVisibility::Public, SpeciesGetterIntrinsic), nullptr));
     m_typedArraySpeciesGetterSetter.set(vm, this, GetterSetter::create(vm, this, JSFunction::create(vm, this, 0, "get [Symbol.species]"_s, globalFuncSpeciesGetter, ImplementationVisibility::Public, SpeciesGetterIntrinsic), nullptr));
@@ -2647,7 +2643,7 @@ void JSGlobalObject::notifyArrayBufferDetachingSlow()
     m_arrayBufferDetachWatchpointSet->fireAll(vm(), "ArrayBuffer detached");
 }
 
-static inline JSObject* NODELETE lastInPrototypeChain(JSObject* object)
+static inline JSObject* LEGACY_NODELETE lastInPrototypeChain(JSObject* object)
 {
     JSObject* o = object;
     while (o->getPrototypeDirect().isObject())
@@ -2732,7 +2728,7 @@ public:
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, JSGlobalObject*);
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, UncheckedKeyHashSet<JSGlobalObject*>&);
 
-    bool NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
+    bool LEGACY_NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
     IterationStatus operator()(HeapCell*, HeapCell::Kind) const;
 
 private:
@@ -2758,12 +2754,12 @@ ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::MultipleGlobals>::ObjectsWith
 {
 }
 
-inline bool NODELETE hasBrokenIndexing(IndexingType type)
+inline bool LEGACY_NODELETE hasBrokenIndexing(IndexingType type)
 {
     return type && !hasSlowPutArrayStorage(type);
 }
 
-inline bool NODELETE hasBrokenIndexing(JSObject* object)
+inline bool LEGACY_NODELETE hasBrokenIndexing(JSObject* object)
 {
     IndexingType type = object->indexingType();
     return hasBrokenIndexing(type);
@@ -3114,7 +3110,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_globalCallee);
     visitor.append(thisObject->m_evalCallee);
     visitor.append(thisObject->m_zombieFrameCallee);
-    JS_GLOBAL_OBJECT_ADDITIONS_4;
     thisObject->m_evalErrorStructure.visit(visitor);
     thisObject->m_rangeErrorStructure.visit(visitor);
     thisObject->m_referenceErrorStructure.visit(visitor);
@@ -3138,6 +3133,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_defaultDateFormat.visit(visitor);
     thisObject->m_defaultTimeFormat.visit(visitor);
     thisObject->m_defaultNumberFormat.visit(visitor);
+    visitor.append(thisObject->m_cachedToLocaleStringNumberFormat);
     thisObject->m_collatorStructure.visit(visitor);
     thisObject->m_displayNamesStructure.visit(visitor);
     thisObject->m_durationFormatStructure.visit(visitor);
@@ -3368,7 +3364,7 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     String localeString = locale->value(this);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (m_cachedLocaleCompareCollator && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
+    if (m_cachedLocaleCompareCollator && !vm.intlCache().hasLanguageChange() && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
         return m_cachedLocaleCompareCollator.get();
 
     IntlCollator* collator = IntlCollator::create(vm, collatorStructure());
@@ -3379,6 +3375,27 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     m_cachedLocaleCompareCollatorLanguagesEpoch = vm.intlCache().languagesEpoch();
     m_cachedLocaleCompareCollator.set(vm, this, collator);
     return collator;
+}
+
+IntlNumberFormat* JSGlobalObject::cachedToLocaleStringNumberFormat(JSString* locale)
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String localeString = locale->value(this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (m_cachedToLocaleStringNumberFormat && !vm.intlCache().hasLanguageChange() && m_cachedToLocaleStringNumberFormatLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedToLocaleStringNumberFormatLocale == localeString)
+        return m_cachedToLocaleStringNumberFormat.get();
+
+    IntlNumberFormat* numberFormat = IntlNumberFormat::create(vm, numberFormatStructure());
+    numberFormat->initializeNumberFormat(this, locale, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    m_cachedToLocaleStringNumberFormatLocale = WTF::move(localeString);
+    m_cachedToLocaleStringNumberFormatLanguagesEpoch = vm.intlCache().languagesEpoch();
+    m_cachedToLocaleStringNumberFormat.set(vm, this, numberFormat);
+    return numberFormat;
 }
 
 // JSGlobalObject::exposeDollarVM is defined in tools/JSDollarVM.cpp so that
@@ -3914,7 +3931,7 @@ void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpoint()
         installObjectAdaptiveStructureWatchpoint(condition, m_propertyDescriptorFastPathWatchpointSet);
 }
 
-void NODELETE slowValidateCell(JSGlobalObject* globalObject)
+void LEGACY_NODELETE slowValidateCell(JSGlobalObject* globalObject)
 {
     RELEASE_ASSERT(globalObject->isGlobalObject());
     ASSERT_GC_OBJECT_INHERITS(globalObject, JSGlobalObject::info());
@@ -4196,7 +4213,7 @@ void JSGlobalObject::clearWeakTickets()
     vm().deferredWorkTimer->cancelPendingWorkSafe(this);
 }
 
-FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin& sourceOrigin, SourceTaintedOrigin sourceTaintedOrigin, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures lexicallyScopedFeatures, FunctionConstructionMode functionConstructionMode)
+FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin& sourceOrigin, SourceTaintedness sourceTaintedOrigin, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures lexicallyScopedFeatures, FunctionConstructionMode functionConstructionMode)
 {
     if (!defaultCodeGenerationMode().isEmpty())
         return nullptr;
@@ -4234,7 +4251,7 @@ FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionCon
     if (storedProvider->sourceURL() != sourceURL)
         return nullptr;
 
-    if (storedProvider->sourceTaintedOrigin() != sourceTaintedOrigin)
+    if (storedProvider->taintedness() != sourceTaintedOrigin)
         return nullptr;
 
     return executable;

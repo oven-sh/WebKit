@@ -113,10 +113,10 @@ void PDFPluginAnnotation::updateGeometry()
     auto annotationRect = m_plugin->pluginBoundsForAnnotation(m_annotation.get());
 
     Ref styledElement = downcast<StyledElement>(*element());
-    styledElement->setInlineStyleProperty(CSSPropertyWidth, annotationRect.size.width, CSSUnitType::Px);
-    styledElement->setInlineStyleProperty(CSSPropertyHeight, annotationRect.size.height, CSSUnitType::Px);
-    styledElement->setInlineStyleProperty(CSSPropertyLeft, annotationRect.origin.x, CSSUnitType::Px);
-    styledElement->setInlineStyleProperty(CSSPropertyTop, annotationRect.origin.y, CSSUnitType::Px);
+    styledElement->setInlineStyleProperty(CSSPropertyID::Width, annotationRect.size.width, CSSUnitType::Px);
+    styledElement->setInlineStyleProperty(CSSPropertyID::Height, annotationRect.size.height, CSSUnitType::Px);
+    styledElement->setInlineStyleProperty(CSSPropertyID::Left, annotationRect.origin.x, CSSUnitType::Px);
+    styledElement->setInlineStyleProperty(CSSPropertyID::Top, annotationRect.origin.y, CSSUnitType::Px);
 }
 
 bool PDFPluginAnnotation::handleEvent(Event& event)

@@ -67,7 +67,7 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
-    DECLARE_INFO;
+    DECLARE_EXPORT_INFO;
 
     static constexpr ptrdiff_t offsetOfObjectAllocationProfile() { return OBJECT_OFFSETOF(FunctionRareData, m_objectAllocationProfile); }
     static constexpr ptrdiff_t offsetOfAllocationProfileWatchpointSet() { return OBJECT_OFFSETOF(FunctionRareData, m_allocationProfileWatchpointSet); }

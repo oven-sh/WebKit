@@ -169,6 +169,46 @@ CCallHelpers::Jump branchIfReturnAddressIsNotInCollapsibleFrame(CCallHelpers& ji
     return jit.branch64(CCallHelpers::NotEqual, CCallHelpers::Address(returnAddress), CCallHelpers::TrustedImm64(static_cast<int64_t>(collapsibleFrameReturnCode)));
 }
 
+void emitDroppableFrameExit(CCallHelpers& jit, const ScopedLambda<void()>& emitFrameTeardown)
+{
+    auto& buffer = jit.m_assembler.buffer();
+    size_t returnAddress = buffer.codeSize();
+#if CPU(ARM64)
+    CCallHelpers::Jump resume = jit.jump();
+    RELEASE_ASSERT(buffer.codeSize() - returnAddress == droppableFrameSignatureOffset);
+    jit.m_assembler.mov<64>(ARM64Registers::lr, ARM64Registers::lr);
+    RELEASE_ASSERT(buffer.codeSize() - returnAddress == droppableFrameExitOffset);
+    jit.m_assembler.mov<64>(ARM64Registers::x17, ARM64Registers::lr);
+    emitFrameTeardown();
+    jit.m_assembler.br(ARM64Registers::x17);
+    resume.link(&jit);
+#else
+    buffer.putByte(static_cast<int8_t>(0xeb));
+    buffer.putByte(0);
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        buffer.putByte(static_cast<int8_t>(droppableFrameSignature >> shift));
+    RELEASE_ASSERT(buffer.codeSize() - returnAddress == droppableFrameExitOffset);
+    jit.pop(X86Registers::r11);
+    emitFrameTeardown();
+    jit.m_assembler.jmp_r(X86Registers::r11);
+    size_t distance = buffer.codeSize() - returnAddress - droppableFrameSignatureOffset;
+    RELEASE_ASSERT(distance <= std::numeric_limits<int8_t>::max());
+    static_cast<int8_t*>(buffer.data())[returnAddress + 1] = static_cast<int8_t>(distance);
+#endif
+}
+
+void dropDroppableCallerFrame(CCallHelpers& jit)
+{
+#if CPU(ARM64)
+    jit.m_assembler.add<64>(ARM64Registers::x16, ARM64Registers::lr, UInt12(droppableFrameExitOffset));
+    jit.m_assembler.blr(ARM64Registers::x16);
+#else
+    jit.pop(X86Registers::r11);
+    jit.add64(CCallHelpers::TrustedImm32(droppableFrameExitOffset), X86Registers::r11);
+    jit.m_assembler.call(X86Registers::r11);
+#endif
+}
+
 void dropCollapsibleCallerFrames(CCallHelpers& jit, GPRReg scratch)
 {
     CCallHelpers::Label again = jit.label();
@@ -283,9 +323,24 @@ void dropPaddingAtEnd(CompiledFunctionInfo& info, const void* start, B3::Air::Co
     if (lastBlock->size() >= 2 && lastBlock->last().kind.opcode == B3::Air::Oops && lastBlock->at(lastBlock->size() - 2).kind.opcode == B3::Air::Patch)
         dropBreakpointAtEnd();
 #else
-    UNUSED_PARAM(info);
-    UNUSED_PARAM(start);
     UNUSED_PARAM(code);
+    constexpr uint8_t breakpoint = 0xcc;
+    auto* bytes = static_cast<const uint8_t*>(start);
+    for (unsigned filling = 0; filling < sizeof(uint32_t) && filling < info.codeSize; ++filling) {
+        std::array<uint8_t, sizeof(uint32_t)> nops;
+        X86Assembler::fillNops(nops.data(), filling);
+        if (bytes[info.codeSize - filling - 1] != breakpoint || memcmp(bytes + info.codeSize - filling, nops.data(), filling))
+            continue;
+        info.codeSize -= filling;
+        break;
+    }
+    unsigned minimumSize = 1;
+    for (auto& call : info.stubCalls) {
+        if (!call.isTailCall && call.stub != Stub::PollAtPrologue)
+            minimumSize = std::max<unsigned>(minimumSize, call.offset + sizeOfNearCall + 1);
+    }
+    if (info.codeSize > minimumSize && bytes[info.codeSize - 1] == breakpoint)
+        --info.codeSize;
 #endif
 }
 

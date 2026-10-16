@@ -957,7 +957,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectSymbol, EncodedJSValue, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto propertyName = asSymbol(symbol)->privateName();
-    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName)));
+    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName.data)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValCellStringStrict, void, (JSGlobalObject* globalObject, JSCell* cell, JSCell* string, EncodedJSValue encodedValue))
@@ -990,7 +990,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValCellSymbolStrict, void, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto propertyName = asSymbol(symbol)->privateName();
-    putByValCellInternal<true, false>(globalObject, vm, cell, propertyName, JSValue::decode(encodedValue));
+    putByValCellInternal<true, false>(globalObject, vm, cell, propertyName.data, JSValue::decode(encodedValue));
     OPERATION_RETURN(scope);
 }
 
@@ -1002,7 +1002,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValCellSymbolSloppy, void, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto propertyName = asSymbol(symbol)->privateName();
-    putByValCellInternal<false, false>(globalObject, vm, cell, propertyName, JSValue::decode(encodedValue));
+    putByValCellInternal<false, false>(globalObject, vm, cell, propertyName.data, JSValue::decode(encodedValue));
     OPERATION_RETURN(scope);
 }
 
@@ -1150,7 +1150,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValDirectCellSymbolStrict, void, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto propertyName = asSymbol(symbol)->privateName();
-    putByValCellInternal<true, true>(globalObject, vm, cell, propertyName, JSValue::decode(encodedValue));
+    putByValCellInternal<true, true>(globalObject, vm, cell, propertyName.data, JSValue::decode(encodedValue));
     OPERATION_RETURN(scope);
 }
 
@@ -1162,7 +1162,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValDirectCellSymbolSloppy, void, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto propertyName = asSymbol(symbol)->privateName();
-    putByValCellInternal<false, true>(globalObject, vm, cell, propertyName, JSValue::decode(encodedValue));
+    putByValCellInternal<false, true>(globalObject, vm, cell, propertyName.data, JSValue::decode(encodedValue));
     OPERATION_RETURN(scope);
 }
 
@@ -2983,6 +2983,12 @@ JSC_DEFINE_JIT_OPERATION(operationNewTypedArrayBufferWithSize, JSObject*, (JSGlo
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (length < 0) [[unlikely]] {
+        throwRangeError(structure->realm(), scope, "length cannot be negative"_s);
+        OPERATION_RETURN(scope, nullptr);
+    }
+
     OPERATION_RETURN(scope, constructArrayBufferWithSize(structure, length));
 }
 
@@ -4551,7 +4557,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceRegExpEmptyStr, JSCell*,
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto source = thisValue->value(globalObject);
+    auto source = thisValue->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     RegExp* regExp = searchValue->regExp();
     if (regExp->global()) {
@@ -4590,7 +4596,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceAllRegExpEmptyStr, JSCel
     // ES5.1 15.5.4.10 step 8.a.
     searchValue->setLastIndex(globalObject, 0);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    auto source = thisValue->value(globalObject);
+    auto source = thisValue->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, removeAllUsingRegExpSearch(vm, globalObject, thisValue, source, regExp));
 }
@@ -5223,22 +5229,6 @@ JSC_DEFINE_JIT_OPERATION(operationIsFinite, UCPUStrictInt32, (JSGlobalObject* gl
     OPERATION_RETURN(scope, toUCPUStrictInt32(std::isfinite(argument.toNumber(globalObject))));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNumberIsFinite, UCPUStrictInt32, (EncodedJSValue value))
-{
-    JSValue argument = JSValue::decode(value);
-    if (!argument.isNumber())
-        return toUCPUStrictInt32(0);
-    return toUCPUStrictInt32(!!std::isfinite(argument.asNumber()));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNumberIsNaN, UCPUStrictInt32, (EncodedJSValue value))
-{
-    JSValue argument = JSValue::decode(value);
-    if (!argument.isNumber())
-        return toUCPUStrictInt32(0);
-    return toUCPUStrictInt32(!!std::isnan(argument.asNumber()));
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNumberIsSafeInteger, UCPUStrictInt32, (EncodedJSValue value))
 {
     JSValue argument = JSValue::decode(value);
@@ -5247,6 +5237,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNumberIsSafeInteger, UCPUStrictInt32,
     if (!argument.isDouble())
         return toUCPUStrictInt32(0);
     return toUCPUStrictInt32(!!isSafeInteger(argument.asDouble()));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNumberIsSafeIntegerDouble, UCPUStrictInt32, (double value))
+{
+    return toUCPUStrictInt32(!!isSafeInteger(value));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationIsNaN, UCPUStrictInt32, (JSGlobalObject* globalObject, EncodedJSValue value))

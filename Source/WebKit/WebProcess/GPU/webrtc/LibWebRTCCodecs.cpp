@@ -36,8 +36,13 @@
 #include "RemoteVideoFrameObjectHeapProxy.h"
 #include "RemoteVideoFrameProxy.h"
 #include "WebProcess.h"
+#include <WebCore/AV1Utilities.h>
+#include <WebCore/AnnexBUtilities.h>
+#include <WebCore/CMUtilities.h>
 #include <WebCore/CVUtilities.h>
 #include <WebCore/GPUVideoEncoder.h>
+#include <WebCore/H264UtilitiesCocoa.h>
+#include <WebCore/HEVCUtilitiesCocoa.h>
 #include <WebCore/LibWebRTCDav1dDecoder.h>
 #include <WebCore/LibWebRTCMacros.h>
 #include <WebCore/LibWebRTCVideoFrameUtilities.h>
@@ -48,6 +53,7 @@
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/VP9UtilitiesCocoa.h>
 #include <WebCore/VideoFrameCV.h>
+#include <wtf/Borrow.h>
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -68,11 +74,12 @@ static webrtc::WebKitVideoDecoder createVideoDecoder(const webrtc::SdpVideoForma
     Ref codecs = WebProcess::singleton().libWebRTCCodecs();
     auto codecString = String::fromUTF8(format.name);
 
+    static constexpr bool isAnnexB = true;
     if (equalIgnoringASCIICase(codecString, "H264"_s))
-        return { codecs->createDecoder(WebCore::VideoCodecType::H264), false };
+        return { codecs->createDecoder(WebCore::VideoCodecType::H264, isAnnexB), false };
 
     if (equalIgnoringASCIICase(codecString, "H265"_s))
-        return { codecs->createDecoder(WebCore::VideoCodecType::H265), false };
+        return { codecs->createDecoder(WebCore::VideoCodecType::H265, isAnnexB), false };
 
 #if ENABLE(VP9)
     if (equalIgnoringASCIICase(codecString, "VP9"_s) && codecs->isSupportingVP9HardwareDecoder())
@@ -185,7 +192,7 @@ static int32_t initializeVideoEncoder(webrtc::WebKitVideoEncoder encoder, const 
     return protect(WebProcess::singleton().libWebRTCCodecs())->initializeEncoder(*static_cast<LibWebRTCCodecs::Encoder*>(encoder), codec.width, codec.height, codec.startBitrate, codec.maxBitrate, codec.minBitrate, codec.maxFramerate);
 }
 
-static inline VideoFrame::Rotation NODELETE toVideoRotation(webrtc::VideoRotation rotation)
+static inline VideoFrame::Rotation LEGACY_NODELETE toVideoRotation(webrtc::VideoRotation rotation)
 {
     switch (rotation) {
     case webrtc::kVideoRotation_0:
@@ -331,23 +338,20 @@ void LibWebRTCCodecs::setWebRTCMediaPipelineAdditionalLoggingEnabled(bool enable
 }
 
 // May be called on any thread.
-LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoder(WebCore::VideoCodecType type)
+LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoder(WebCore::VideoCodecType type, bool isAnnexB)
 {
-    return createDecoderInternal(type, { }, std::nullopt, [](auto*) { });
+    return createDecoderInternal(type, { }, isAnnexB, std::nullopt, [](auto*) { });
 }
 
-void LibWebRTCCodecs::createDecoderAndWaitUntilReady(WebCore::VideoCodecType type, const String& codec, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&& callback)
+void LibWebRTCCodecs::createDecoderAndWaitUntilReady(WebCore::VideoCodecType type, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&& callback)
 {
-    createDecoderInternal(type, codec, WTF::move(colorSpaceOverride), WTF::move(callback));
+    createDecoderInternal(type, codec, isAnnexB, WTF::move(colorSpaceOverride), WTF::move(callback));
 }
 
-LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoderInternal(WebCore::VideoCodecType type, const String& codec, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&& callback)
+LibWebRTCCodecs::Decoder* LibWebRTCCodecs::createDecoderInternal(WebCore::VideoCodecType type, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&& callback)
 {
-    auto decoder = makeUnique<Decoder>(VideoDecoderIdentifier::generate());
+    auto decoder = makeUnique<Decoder>(VideoDecoderIdentifier::generate(), type, codec, isAnnexB, WTF::move(colorSpaceOverride));
     auto* result = decoder.get();
-    decoder->type = type;
-    decoder->codec = codec.isolatedCopy();
-    decoder->colorSpaceOverride = WTF::move(colorSpaceOverride);
 
     ensureGPUProcessConnectionAndDispatchToThread([this, protectedThis = Ref { *this }, decoder = WTF::move(decoder), callback = WTF::move(callback)]() mutable {
         assertIsCurrent(workQueue());
@@ -409,6 +413,48 @@ Ref<GenericPromise> LibWebRTCCodecs::flushDecoder(Decoder& decoder)
     });
 }
 
+static RefPtr<WebCore::VideoInfo> videoInfoFromFormatDescription(WebCore::VideoCodecType type, std::span<const uint8_t> data, uint16_t width, uint16_t height)
+{
+    if (data.empty())
+        return nullptr;
+
+    if (type == WebCore::VideoCodecType::H264) {
+        RefPtr<WebCore::VideoInfo> videoInfo = WebCore::createVideoInfoFromAVCC(data);
+        if (!videoInfo) {
+            videoInfo = WebCore::VideoInfo::create({
+                {
+                    .codecName = kCMVideoCodecType_H264
+                }, {
+                    .size = { static_cast<float>(width), static_cast<float>(height) },
+                    .displaySize = { static_cast<float>(width), static_cast<float>(height) },
+                    .extensionAtoms = { FillWith { }, 1, { WebCore::computeBoxType(kCMVideoCodecType_H264), WebCore::SharedBuffer::create(data) } },
+                    .reorderQueueMaxSize = WebCore::findAVCCMaxNumReorderFrames(data),
+                }
+            });
+        }
+        return videoInfo;
+    }
+
+    ASSERT(type == WebCore::VideoCodecType::H265);
+    auto parameterSets = WebCore::parseHVCCParameterSets(data);
+    RefPtr<WebCore::VideoInfo> videoInfo;
+    if (parameterSets)
+        videoInfo = WebCore::createVideoInfoFromHVCC(*parameterSets);
+    if (!videoInfo) {
+        videoInfo = WebCore::VideoInfo::create({
+            {
+                .codecName = kCMVideoCodecType_HEVC
+            }, {
+                .size = { static_cast<float>(width), static_cast<float>(height) },
+                .displaySize = { static_cast<float>(width), static_cast<float>(height) },
+                .extensionAtoms = { FillWith { }, 1, { WebCore::computeBoxType(kCMVideoCodecType_HEVC), WebCore::SharedBuffer::create(data) } },
+                .reorderQueueMaxSize = parameterSets ? WebCore::findHVCCMaxNumReorderPics(*parameterSets) : std::nullopt,
+            }
+        });
+    }
+    return videoInfo;
+}
+
 void LibWebRTCCodecs::setDecoderFormatDescription(Decoder& decoder, std::span<const uint8_t> data, uint16_t width, uint16_t height)
 {
     Locker locker { m_connectionLock };
@@ -416,7 +462,29 @@ void LibWebRTCCodecs::setDecoderFormatDescription(Decoder& decoder, std::span<co
     if (!decoder.connection)
         return;
 
-    Ref { *decoder.connection }->send(Messages::LibWebRTCCodecsProxy::SetDecoderFormatDescription { decoder.identifier, data, width, height }, 0);
+    RefPtr<WebCore::VideoInfo> videoInfo;
+    if (WebProcess::singleton().sharedPreferencesForWebProcessValue().webRTCWebCoreVideoCodecsEnabled)
+        videoInfo = videoInfoFromFormatDescription(decoder.type, data, width, height);
+
+    Ref { *decoder.connection }->send(Messages::LibWebRTCCodecsProxy::SetDecoderFormatDescription { decoder.identifier, data, videoInfo, width, height }, 0);
+}
+
+static RefPtr<WebCore::VideoInfo> videoInfoFromAnnexBFrame(WebCore::VideoCodecType type, std::span<const uint8_t> data, const Vector<WebCore::NaluIndex>& naluIndices)
+{
+    if (type == WebCore::VideoCodecType::H264)
+        return WebCore::createVideoInfoFromAVCAnnexBStream(data, naluIndices);
+
+    ASSERT(type == WebCore::VideoCodecType::H265);
+    return WebCore::createVideoInfoFromHEVCAnnexBStream(data, naluIndices);
+}
+
+static Vector<uint8_t> convertAnnexBFrameToLengthPrefixed(WebCore::VideoCodecType type, std::span<const uint8_t> data, const Vector<WebCore::NaluIndex>& naluIndices)
+{
+    if (type == WebCore::VideoCodecType::H264)
+        return WebCore::convertAVCAnnexBToLengthPrefixed(data, naluIndices);
+
+    ASSERT(type == WebCore::VideoCodecType::H265);
+    return WebCore::convertHEVCAnnexBToLengthPrefixed(data, naluIndices);
 }
 
 Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::sendFrameToDecode(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height)
@@ -424,7 +492,29 @@ Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::sendFrameToDecode(Decoder& d
     if (decoder.type == WebCore::VideoCodecType::VP9 && (width || height))
         Ref { *decoder.connection }->send(Messages::LibWebRTCCodecsProxy::SetFrameSize { decoder.identifier, width, height }, 0);
 
-    return Ref { *decoder.connection }->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::DecodeFrame { decoder.identifier, timeStamp, data }, 0)->whenSettled(workQueue(), [] (auto&& result) mutable {
+    RefPtr<WebCore::VideoInfo> videoInfo;
+    Vector<uint8_t> convertedData;
+
+    switch (decoder.type) {
+    case WebCore::VideoCodecType::H264:
+    case WebCore::VideoCodecType::H265:
+        if (decoder.isAnnexB && WebProcess::singleton().sharedPreferencesForWebProcessValue().webRTCWebCoreVideoCodecsEnabled) {
+            auto naluIndices = WebCore::findNaluIndices(data);
+            // FIXME: Skip rebuilding the VideoInfo when the parameter sets are unchanged from the previous frame.
+            videoInfo = videoInfoFromAnnexBFrame(decoder.type, data, naluIndices);
+            convertedData = convertAnnexBFrameToLengthPrefixed(decoder.type, data, naluIndices);
+            data = convertedData.span();
+        }
+        break;
+    case WebCore::VideoCodecType::VP9:
+        videoInfo = WebCore::createVideoInfoFromVP9Stream(data, width, height);
+        break;
+    case WebCore::VideoCodecType::AV1:
+        videoInfo = WebCore::createVideoInfoFromAV1Stream(data, std::nullopt);
+        break;
+    }
+
+    return Ref { *decoder.connection }->sendWithPromisedReply(Messages::LibWebRTCCodecsProxy::DecodeFrame { decoder.identifier, timeStamp, data, videoInfo }, 0)->whenSettled(workQueue(), [] (auto&& result) mutable {
         if (!result)
             return FramePromise::createAndReject("Decoding task did not complete"_s);
 
@@ -575,7 +665,7 @@ void LibWebRTCCodecs::completedDecodingCV(VideoDecoderIdentifier decoderIdentifi
     webrtc::videoDecoderTaskComplete(decoder->decodedImageCallback, timeStamp, pixelBuffer.get());
 }
 
-static inline webrtc::VideoCodecType NODELETE toWebRTCCodecType(WebCore::VideoCodecType type)
+static inline webrtc::VideoCodecType LEGACY_NODELETE toWebRTCCodecType(WebCore::VideoCodecType type)
 {
     switch (type) {
     case WebCore::VideoCodecType::H264:
@@ -1008,7 +1098,7 @@ void LibWebRTCCodecs::setEncoderConnection(Encoder& encoder, Ref<IPC::Connection
     if (auto& data = encoderInitializationData(encoder))
         protect(encoder.connection)->send(Messages::LibWebRTCCodecsProxy::InitializeEncoder { encoder.identifier, data->width, data->height, data->startBitRate, data->maxBitRate, data->minBitRate, data->maxFrameRate }, 0);
 
-    auto frames = std::exchange(encoder.pendingFrames, { });
+    const Vector frames = std::exchange(encoder.pendingFrames, { });
     for (auto& frame : frames)
         encodeFrameInternalWithLock(encoder, *frame.videoFrame, frame.shouldEncodeAsKeyFrame, toVideoRotation(frame.videoFrame->rotation()), MediaTime::createWithDouble(Seconds::fromMicroseconds(frame.videoFrame->timestamp_us()).value()), frame.videoFrame->rtp_timestamp(), { });
 }
@@ -1032,7 +1122,7 @@ void LibWebRTCCodecs::setDecoderConnection(Decoder& decoder, RefPtr<IPC::Connect
 {
     decoder.connection = WTF::move(connection);
     auto frames = std::exchange(decoder.pendingFrames, { });
-    for (auto& frame : frames)
+    for (auto& frame : borrow(frames))
         sendFrameToDecode(decoder, frame.timeStamp, protect(frame.data)->span(), frame.width, frame.height)->chainTo(WTF::move(frame.producer));
 }
 

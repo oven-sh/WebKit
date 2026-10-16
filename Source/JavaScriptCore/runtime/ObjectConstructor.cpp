@@ -128,8 +128,9 @@ static ALWAYS_INLINE JSObject* constructObjectWithNewTarget(JSGlobalObject* glob
     // 1. If NewTarget is neither undefined nor the active function, then
     if (newTarget && newTarget != objectConstructor) {
         // a. Return ? OrdinaryCreateFromConstructor(NewTarget, "%ObjectPrototype%").
-        JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSGlobalObject* functionGlobalObject = tryGetFunctionRealm(asObject(newTarget));
+        if (!functionGlobalObject)
+            functionGlobalObject = globalObject;
         Structure* baseStructure = functionGlobalObject->objectStructureForObjectConstructor();
         Structure* objectStructure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), baseStructure);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -278,6 +279,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorKeys, (JSGlobalObject* globalObject, C
 void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ENABLE(AOT)
+    if (target->type() == ObjectType && AOT::Typed::tryAssignPrimitivesToFieldsOfCompiledObject(vm, target, source))
+        return;
+#endif
 
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.
     // For example, [[Get]] of source object could configure setter to target object. So disable the fast path.
@@ -1254,6 +1260,11 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
         return object;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.useImmutableIntrinsics && object->type() == ArrayType && object->tryFreezeArrayInPlace(vm))
+        return object;
+#endif
+
     bool success = setIntegrityLevel<IntegrityLevel::Frozen>(globalObject, vm, object);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!success) [[unlikely]] {
@@ -1305,6 +1316,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsSealed, (JSGlobalObject* globalObjec
     // Quick check for final objects.
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
         return JSValue::encode(jsBoolean(object->isSealed(vm)));
+#if ENABLE(AOT)
+    if (auto* typedObject = dynamicDowncast<AOT::Typed::Object>(object); typedObject && (!typedObject->isNotExtensible() || (typedObject->isSealed() && !typedObject->hasExtraProperties())))
+        return JSValue::encode(jsBoolean(typedObject->isNotExtensible()));
+#endif
 
     // 2. Return ? TestIntegrityLevel(O, "sealed").
     return JSValue::encode(jsBoolean(testIntegrityLevel<IntegrityLevel::Sealed>(globalObject, vm, object)));
@@ -1323,6 +1338,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsFrozen, (JSGlobalObject* globalObjec
     // Quick check for final objects.
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
         return JSValue::encode(jsBoolean(object->isFrozen(vm)));
+#if ENABLE(AOT)
+    if (auto* typedObject = dynamicDowncast<AOT::Typed::Object>(object); typedObject && (!typedObject->isNotExtensible() || (typedObject->isFrozen() && !typedObject->hasExtraProperties())))
+        return JSValue::encode(jsBoolean(typedObject->isNotExtensible()));
+#endif
 
     // 2. Return ? TestIntegrityLevel(O, "frozen").
     return JSValue::encode(jsBoolean(testIntegrityLevel<IntegrityLevel::Frozen>(globalObject, vm, object)));
@@ -1346,7 +1365,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIs, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(jsBoolean(sameValue(globalObject, callFrame->argument(0), callFrame->argument(1))));
 }
 
-static CachedPropertyNamesKind NODELETE inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+static CachedPropertyNamesKind LEGACY_NODELETE inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
 {
     switch (propertyNameMode) {
     case PropertyNameMode::Strings:

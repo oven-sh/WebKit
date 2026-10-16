@@ -30,7 +30,9 @@
 #import <WebCore/SecurityOriginData.h>
 
 
-@implementation WebDatabaseQuotaManager
+@implementation WebDatabaseQuotaManager {
+    __weak WebSecurityOrigin *_origin;
+}
 
 - (id)initWithOrigin:(WebSecurityOrigin *)origin
 {

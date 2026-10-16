@@ -27,6 +27,7 @@
 
 #include "RenderLayoutState.h"
 #include <wtf/CheckedRef.h>
+#include <wtf/Variant.h>
 
 namespace WebCore {
 
@@ -38,9 +39,28 @@ public:
     ~LineClampUpdater();
 
     bool isLineClampRoot() const { return m_isLineClampRoot; }
-    std::optional<size_t> maximumLinesForAutoClampPoint() const;
+    bool isAutoLineClampRoot() const;
+    // The clamp point is either after this many lines, or between this block and its next sibling (with no line box right before it).
+    using AutoClampPoint = Variant<size_t, CheckedRef<const RenderBox>>;
+    // The possible auto clamp points in render tree order (none when the content fits).
+    Vector<AutoClampPoint> autoClampPoints() const;
+    void setAutoClampPoint(const AutoClampPoint&);
+    bool fitsAutoClampBlockSizeLimit() const;
+    bool hasConstrainedTextWrapContent() const;
+    void setIsStableTextWrap(bool);
     void setMaximumLines(size_t);
+    void setClampAfterBox(const RenderBox&);
     void resetLineClamp();
+
+    // Whether content laid out now comes after the clamp point (the line-clamp budget is used up).
+    static bool isAfterClampPoint(const RenderObject&);
+    static bool isInsideLineClampContainer(const RenderObject&);
+    // Whether the continue value of the block container hides the content after the clamp point.
+    static bool shouldDiscardOverflow(const RenderBlock&);
+    // Floats of a line-clamp container are clipped to its block-end content edge (and nowhere else). The clip rect is in the renderer's coordinates.
+    static std::optional<LayoutRect> blockEndClipRect(const RenderBox& floatBox, const RenderElement&);
+    static void setIsForcedHidden(RenderElement&, bool);
+    static void skipLayoutForForcedHidden(RenderBox&);
 
 private:
     const CheckedRef<const RenderBlock> m_blockContainer;

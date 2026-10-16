@@ -163,19 +163,42 @@ static bool driveSyncIterator(JSGlobalObject* globalObject, VM& vm, JSAsyncFromS
 }
 
 // https://tc39.es/ecma262/#sec-%asyncfromsynciteratorprototype%.next
-JSValue asyncFromSyncIteratorNext(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSValue argument)
+JSValue asyncFromSyncIteratorNext(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSValue argument, JSPromise* immediateStep)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
     JSValue value = jsUndefined();
     bool done = driveSyncIterator(globalObject, vm, iterator, argument, value);
 
-    if (scope.exception()) [[unlikely]]
+    if (scope.exception()) [[unlikely]] {
+        JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         RELEASE_AND_RETURN(scope, promise->rejectWithCaughtException(vm, scope));
+    }
 
+    if (immediateStep) {
+        bool isSettled = !value.isObject();
+        if (!isSettled) {
+            if (value.asCell()->structureID() == globalObject->promiseStructure()->id())
+                isSettled = uncheckedDowncast<JSPromise>(value)->status() == JSPromise::Status::Fulfilled;
+            else
+                isSettled = !value.inherits<JSPromise>() && isDefinitelyNonThenable(asObject(value), globalObject);
+        }
+        if (isSettled && iterator->realm() == globalObject && globalObject->promiseThenWatchpointSet().isStillValid() && globalObject->microtaskQueue().isEmpty() && globalObject->canFastQueueMicrotask() && !vm.hostObservesMicrotaskBoundaries()) {
+            if (value.isObject() && value.asCell()->structureID() == globalObject->promiseStructure()->id()) {
+                auto* fulfilled = uncheckedDowncast<JSPromise>(value);
+                fulfilled->markAsHandled();
+                value = fulfilled->result();
+            }
+            JSObject* result = asObject(immediateStep->result());
+            result->putDirectOffset(vm, iteratorResultObjectValuePropertyOffset, value);
+            result->putDirectOffset(vm, iteratorResultObjectDonePropertyOffset, jsBoolean(done));
+            return immediateStep;
+        }
+    }
+
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ true, value, done);
     return promise;
 }
@@ -215,6 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFromSyncIteratorPrototypeFuncReturn, (JSGlobalObje
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
+    scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ false, value, done);
     return JSValue::encode(promise);
 }
@@ -265,6 +289,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFromSyncIteratorPrototypeFuncThrow, (JSGlobalObjec
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
+    scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ true, value, done);
     return JSValue::encode(promise);
 }

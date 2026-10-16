@@ -426,6 +426,10 @@ macro dispatchIndirect(offsetReg)
     dispatch(offsetReg)
 end
 
+macro dispatchToBytecodeOffset(offsetReg)
+    dispatchIndirect(offsetReg)
+end
+
 macro genericDispatchOpJS(dispatch, size, opcodeName)
     macro dispatchNarrow()
         dispatch((constexpr %opcodeName%_length) * 1 + OpcodeIDNarrowSize)
@@ -496,6 +500,18 @@ macro wide32(narrowFn, wide16Fn, wide32Fn, k)
     k(wide32Fn)
 end
 
+macro predecoded(narrowFn, wide16Fn, wide32Fn, k)
+    k(wide32Fn)
+end
+
+const PredecodedBytecodeOffset = constexpr LLInt::offsetOfBytecodeOffsetInPredecodedInstruction
+const PredecodedOperands = constexpr LLInt::offsetOfOperandsInPredecodedInstruction
+const PredecodedBarrierThreshold = LLInt::PredecodedInstructionsHeader::barrierThreshold - sizeof LLInt::PredecodedInstructionsHeader
+const PredecodedStackPointerOffset = LLInt::PredecodedInstructionsHeader::stackPointerOffset - sizeof LLInt::PredecodedInstructionsHeader
+const PredecodedConstants = LLInt::PredecodedInstructionsHeader::constants - sizeof LLInt::PredecodedInstructionsHeader
+const PredecodedBytecode = LLInt::PredecodedInstructionsHeader::bytecode - sizeof LLInt::PredecodedInstructionsHeader
+const PredecodedOffsets = LLInt::PredecodedInstructionsHeader::offsets - sizeof LLInt::PredecodedInstructionsHeader
+
 macro metadata(size, opcode, dst, scratch)
     loadh (constexpr %opcode%::opcodeID * 2 + MetadataOffsetTable16Offset)[metadataTable], dst # offset = metadataTable<uint16_t*>[opcodeID]
     btinz dst, .setUpOffset
@@ -553,7 +569,7 @@ macro op(l, fn)
 end
 
 macro llintOp(opcodeName, opcodeStruct, fn)
-    commonOp(llint_%opcodeName%, traceExecution, macro(size)
+    macro implementation(size)
         macro getImpl(fieldName, dst)
             get(size, opcodeStruct, fieldName, dst)
         end
@@ -563,7 +579,23 @@ macro llintOp(opcodeName, opcodeStruct, fn)
         end
 
         fn(size, getImpl, dispatchImpl)
-    end)
+    end
+
+    commonOp(llint_%opcodeName%, traceExecution, implementation)
+
+    if not C_LOOP
+    _llint_predecoded_%opcodeName%:
+        withPredecodedInstructions(macro ()
+            implementation(predecoded)
+        end)
+
+    _llint_predecoded_registers_%opcodeName%:
+        withPredecodedInstructions(macro ()
+            withRegisterOperands(macro ()
+                implementation(predecoded)
+            end)
+        end)
+    end
 end
 
 macro llintOpWithReturn(opcodeName, opcodeStruct, fn)
@@ -1132,6 +1164,21 @@ if ARM64E
     global _llint_function_for_construct_arity_checkTagGateAfter
 end
 
+macro defineTrampolineLabel(opcodeName, size)
+    macro labelNarrow()
+        _js_trampoline_%opcodeName%:
+    end
+
+    macro labelWide16()
+        _js_trampoline_%opcodeName%_wide16:
+    end
+
+    macro labelWide32()
+        _js_trampoline_%opcodeName%_wide32:
+    end
+    size(labelNarrow, labelWide16, labelWide32, macro (gen) gen() end)
+end
+
 macro callTargetFunction(opcodeName, size, opcodeStruct, dispatchAfterCall, valueProfileName, dstVirtualRegister, dispatch, callee, callPtrTag)
     if C_LOOP
         cloopCallJSFunction callee
@@ -1170,18 +1217,7 @@ macro callTargetFunction(opcodeName, size, opcodeStruct, dispatchAfterCall, valu
         # The js_trampoline_* opcodes in BytecodeList.rb need a label on every
         # backend to fill the opcode map, but only ARM64E dispatches through
         # them, so reaching one here is a bug.
-        macro labelNarrow()
-            _js_trampoline_%opcodeName%:
-        end
-
-        macro labelWide16()
-            _js_trampoline_%opcodeName%_wide16:
-        end
-
-        macro labelWide32()
-            _js_trampoline_%opcodeName%_wide32:
-        end
-        size(labelNarrow, labelWide16, labelWide32, macro (gen) gen() end)
+        defineTrampolineLabel(opcodeName, size)
         crash()
     end
 end
@@ -1301,7 +1337,7 @@ macro getterSetterOSRExitReturnPoint(opName, size)
     defineReturnLabel(opName, size)
 
     restoreStackPointerAfterCall()
-    loadi CallSiteIndex[cfr], PC
+    loadPC()
 end
 
 macro arrayProfile(offset, cell, metadata, scratch)
@@ -1414,6 +1450,12 @@ macro getByValTypedArray(base, index, finishIntGetByVal, finishDoubleGetByVal, s
 end
 
 macro skipIfIsRememberedOrInEden(cell, slowPath)
+    if not C_LOOP
+        loadp CodeBlock[cfr], t7
+        loadp CodeBlock::m_vm[t7], t7
+        loadi VM::heap + Heap::m_barrierThreshold[t7], t7
+        bba JSCell::m_cellState[cell], t7, .done
+    end
     memfence
     bba JSCell::m_cellState[cell], BlackThreshold, .done
     slowPath()
@@ -2027,6 +2069,34 @@ if not C_LOOP
             # stp, not stnp: for regions this small the non-temporal hint measures slower.
             emit "stp xzr, xzr, [x1], #16" # address is a1, thus x1
             bpa a0, address, .zeroFillLoop
+        elsif X86_64
+            move a0, a3
+            subp address, a3
+            bpb a3, 1024, .zeroFillShort
+            move a0, scratch
+            urshiftp 3, a3
+            move address, a0
+            move 0, r0
+            emit "rep stosq"
+            move scratch, a0
+            jmp .zeroFillDone
+        .zeroFillShort:
+            move 0, scratch
+            bpb a3, 64, .zeroFillLoop
+            emit "pxor %xmm0, %xmm0"
+        .zeroFillBlockLoop:
+            emit "movups %xmm0, (%rsi)"
+            emit "movups %xmm0, 16(%rsi)"
+            emit "movups %xmm0, 32(%rsi)"
+            emit "movups %xmm0, 48(%rsi)"
+            addp 64, address
+            subp 64, a3
+            bpaeq a3, 64, .zeroFillBlockLoop
+            bpbeq a0, address, .zeroFillDone
+        .zeroFillLoop:
+            storep scratch, [address]
+            addp PtrSize, address
+            bpa a0, address, .zeroFillLoop
         else
             move 0, scratch
         .zeroFillLoop:
@@ -2160,6 +2230,14 @@ else
              setEntryAddressCommon(kind, index, label, a2)
         end
 
+        macro setEntryAddressPredecoded(index, label)
+             setEntryAddressCommon(kind, index, label, t5)
+        end
+
+        macro setEntryAddressPredecodedRegisters(index, label)
+             setEntryAddressCommon(kind, index + constexpr NUMBER_OF_BYTECODE_IDS, label, t5)
+        end
+
         fn()
     end
 
@@ -2169,6 +2247,7 @@ macro entry(kind, initialize)
     _%kind%_entry:
         functionPrologue()
 
+        move a3, t5
         initPCRelative(kind, t3)
 
         # Include generated bytecode initialization file.
@@ -2207,6 +2286,26 @@ end
 noWide(llint_op_wide16)
 noWide(llint_op_wide32)
 noWide(llint_op_enter)
+
+if not C_LOOP
+    _llint_predecoded_op_wide16:
+    _llint_predecoded_op_wide32:
+    _llint_predecoded_op_enter:
+    _llint_predecoded_op_catch:
+    _llint_predecoded_op_call_direct_eval:
+    _llint_predecoded_registers_op_wide16:
+    _llint_predecoded_registers_op_wide32:
+    _llint_predecoded_registers_op_enter:
+    _llint_predecoded_registers_op_catch:
+    _llint_predecoded_registers_op_call_direct_eval:
+        crash()
+
+    op(llint_leave_predecoded_instructions, macro ()
+        loadi PredecodedBytecodeOffset[PB, PC, 1], PC
+        loadp PredecodedBytecode[PB], PB
+        nextInstruction()
+    end)
+end
 
 op(llint_program_prologue, macro ()
     prologue(_llint_entry_osr, _llint_trace_prologue)
@@ -2309,7 +2408,9 @@ slowPathOp(spread)
 slowPathOp(strcat)
 slowPathOp(throw_static_error)
 slowPathOp(typeof)
-slowPathOp(typeof_is_object)
+if C_LOOP
+    slowPathOp(typeof_is_object)
+end
 slowPathOp(unreachable)
 slowPathOp(new_promise)
 slowPathOp(new_generator)
@@ -2330,7 +2431,9 @@ llintSlowPathOp(create_lexical_environment)
 llintSlowPathOp(create_direct_arguments)
 llintSlowPathOp(create_scoped_arguments)
 llintSlowPathOp(create_cloned_arguments)
-llintSlowPathOp(new_array)
+if C_LOOP
+    llintSlowPathOp(new_array)
+end
 llintSlowPathOp(new_array_with_size)
 llintSlowPathOp(new_async_func)
 llintSlowPathOp(new_async_func_exp)
@@ -2340,7 +2443,9 @@ llintSlowPathOp(new_func)
 llintSlowPathOp(new_func_exp)
 llintSlowPathOp(new_generator_func)
 llintSlowPathOp(new_generator_func_exp)
-llintSlowPathOp(new_object)
+if C_LOOP
+    llintSlowPathOp(new_object)
+end
 llintSlowPathOp(new_reg_exp)
 llintSlowPathOp(put_getter_by_id)
 llintSlowPathOp(put_getter_by_val)

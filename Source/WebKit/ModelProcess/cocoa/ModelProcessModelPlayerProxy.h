@@ -69,6 +69,7 @@ public:
 }
 #endif
 #include <WebCore/Color.h>
+#include <WebCore/FloatPoint3D.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/LayoutSize.h>
@@ -368,6 +369,7 @@ private:
 
 #if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
     WebCore::FloatSize m_volumeSizeInMeters;
+    std::optional<std::pair<WebCore::FloatPoint3D, float>> m_lastSentVolumetricHitSphere;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)

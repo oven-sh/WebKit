@@ -53,7 +53,6 @@
 @class WebHistoryItem;
 @class WebPreferences;
 @class WebScriptObject;
-@class WebViewPrivate;
 
 @protocol WebDownloadDelegate;
 @protocol WebEditingDelegate;
@@ -131,10 +130,6 @@ WEBKIT_CLASS_DEPRECATED_MAC(10_3, 10_14, "No longer supported; please adopt WKWe
 #else
 @interface WebView : NSView
 #endif
-{
-@private
-    WebViewPrivate *_private;
-}
 
 /*!
     @method canShowMIMEType:

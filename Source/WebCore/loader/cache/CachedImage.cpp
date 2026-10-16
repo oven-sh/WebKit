@@ -123,7 +123,7 @@ void CachedImage::didAddClient(CachedResourceClient& client)
     }
 
     ASSERT(client.resourceClientType() == CachedImageClient::expectedType());
-    if (m_image && !protect(m_image)->isNull())
+    if (m_image && protect(m_image)->hasSomethingToDraw())
         downcast<CachedImageClient>(client).imageChanged(this);
 
     if (RefPtr image = m_image)
@@ -241,52 +241,6 @@ Image* CachedImage::image() const
     return &Image::nullImage();
 }
 
-FloatSize CachedImage::imageSize(ImageOrientation orientation, float multiplier, SizeType sizeType, float density) const
-{
-    RefPtr image = m_image;
-    if (!image)
-        return { };
-
-    if (RefPtr svgImage = dynamicDowncast<SVGImage>(*image)) {
-        FloatSize size;
-        if (sizeType == UsedSize)
-            size = svgImage->size();
-        else
-            size = svgImage->resolvedIntrinsicSize(density);
-        if (multiplier != 1.0f)
-            size.scale(multiplier);
-        return size;
-    }
-
-    auto imageSize = image->size(orientation);
-
-    float scaleFactor = multiplier * density;
-    float widthScale = image->hasRelativeWidth() ? 1.0f : scaleFactor;
-    float heightScale = image->hasRelativeHeight() ? 1.0f : scaleFactor;
-    if (widthScale != 1.0f || heightScale != 1.0f)
-        imageSize.scale(widthScale, heightScale);
-    return imageSize;
-}
-
-LayoutSize CachedImage::clampedImageSize(ImageOrientation orientation, float multiplier, SizeType sizeType, float density) const
-{
-    return clampForZoom(imageSize(orientation, multiplier, sizeType, density), multiplier);
-}
-
-LayoutSize CachedImage::clampForZoom(FloatSize size, float multiplier)
-{
-    LayoutSize imageSize { size };
-    if (imageSize.isEmpty() || multiplier == 1.0f)
-        return imageSize;
-
-    // Don't let images that have a width/height >= 1 shrink below 1 when zoomed.
-    LayoutSize minimumSize(imageSize.width() > 0 ? 1 : 0, imageSize.height() > 0 ? 1 : 0);
-    imageSize.clampToMinimumSize(minimumSize);
-
-    ASSERT(multiplier != 1.0f || (imageSize.width().fraction() == 0.0f && imageSize.height().fraction() == 0.0f));
-    return imageSize;
-}
-
 NaturalDimensions CachedImage::naturalDimensions(ImageOrientation orientation) const
 {
     if (RefPtr image = m_image)
@@ -311,7 +265,7 @@ void CachedImage::checkShouldPaintBrokenImage()
     if (!m_loader || m_loader->reachedTerminalState() || !m_loader->frameLoader())
         return;
 
-    m_shouldPaintBrokenImage = m_loader->frameLoader()->client().shouldPaintBrokenImage(url());
+    m_shouldPaintBrokenImage = protect(m_loader->frameLoader()->client())->shouldPaintBrokenImage(url());
 }
 
 void CachedImage::clear()
@@ -450,7 +404,7 @@ void CachedImage::updateBufferInternal(const FragmentedSharedBuffer& data)
     if (encodedDataStatus > EncodedDataStatus::Error && encodedDataStatus < EncodedDataStatus::SizeAvailable)
         return;
 
-    if (encodedDataStatus == EncodedDataStatus::Error || protect(m_image)->isNull()) {
+    if (encodedDataStatus == EncodedDataStatus::Error || !protect(m_image)->hasSomethingToDraw()) {
         // Image decoding failed. Either we need more image data or the image data is malformed.
         error(errorOccurred() ? status() : DecodeError);
         if (inCache())
@@ -520,7 +474,7 @@ void CachedImage::finishLoading(const FragmentedSharedBuffer* data, const Networ
 
     EncodedDataStatus encodedDataStatus = updateImageData(true);
 
-    if (encodedDataStatus == EncodedDataStatus::Error || protect(m_image)->isNull()) {
+    if (encodedDataStatus == EncodedDataStatus::Error || !protect(m_image)->hasSomethingToDraw()) {
         // Image decoding failed; the image data is malformed.
         error(errorOccurred() ? status() : DecodeError);
         if (inCache())

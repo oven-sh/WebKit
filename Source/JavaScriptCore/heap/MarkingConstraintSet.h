@@ -44,15 +44,10 @@ public:
     
     void didStartMarking();
     
-    void add(
-        ASCIICString abbreviatedName,
-        ASCIICString name,
-        MarkingConstraintExecutorPair&&,
-        ConstraintVolatility,
-        ConstraintConcurrency,
-        ConstraintParallelism);
-    
-    void add(std::unique_ptr<MarkingConstraint>);
+    void add(Heap&, std::unique_ptr<MarkingConstraint>);
+
+    // Removes every constraint the heap added.
+    void remove(Heap&);
 
     // The following functions are only used by the real GC via the MarkingConstraintSolver.
     // Hence, we only need the SlotVisitor version.
@@ -61,7 +56,7 @@ public:
     // not the wavefront is advancing.
     bool isWavefrontAdvancing(SlotVisitor&);
     bool isWavefrontRetreating(SlotVisitor& visitor) { return !isWavefrontAdvancing(visitor); }
-    
+
     // Returns true if this executed all constraints and none of them produced new work. This
     // assumes that you've alraedy visited roots and drained from there.
     bool executeConvergence(SlotVisitor&);
@@ -76,12 +71,19 @@ private:
     friend class MarkingConstraintSolver;
 
     bool executeConvergenceImpl(SlotVisitor&);
+
+    struct Execution {
+        uint64_t mutatorExecutionVersion { 0 };
+        size_t visitCountAtStartOfRound { 0 };
+        bool hasHappened { false };
+    };
     
     BitVector m_unexecutedRoots;
     BitVector m_unexecutedOutgrowths;
     Vector<std::unique_ptr<MarkingConstraint>> m_set;
     Vector<MarkingConstraint*> m_ordered;
     Vector<MarkingConstraint*> m_outgrowths;
+    Vector<Execution> m_lastExecutions;
     unsigned m_iteration { 1 };
 };
 

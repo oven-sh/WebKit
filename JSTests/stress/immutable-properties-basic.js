@@ -25,8 +25,9 @@ function snapshot(object) {
 }
 
 let symbol = Symbol("s");
+let setterCalls = 0;
 function make() {
-    return { a: 1, b: "two", [symbol]: 3, get g() { return 4; }, set g(v) { throw new Error("setter must not run"); } };
+    return { a: 1, b: "two", [symbol]: 3, get g() { return 4; }, set g(v) { setterCalls++; } };
 }
 
 // It returns the object, is reported by hasImmutableProperties(), and is idempotent.
@@ -54,20 +55,22 @@ function make() {
     shouldBe(Object.isFrozen(object), false);
 }
 
-// [[Set]] with the object as receiver.
+// [[Set]] with the object as receiver. An assignment that resolves to an accessor is left to the accessor: it changes no property.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
-    (function () { object.a = 9; object.fresh = 9; object[symbol] = 9; object[0] = 9; object.g = 9; })(); // sloppy: ignored
+    (function () { object.a = 9; object.fresh = 9; object[symbol] = 9; object[0] = 9; })(); // sloppy: ignored
     shouldBe(snapshot(object), before);
     shouldThrow(() => { "use strict"; object.a = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object.fresh = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object[symbol] = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object[0] = 9; }, TypeError);
-    shouldThrow(() => { "use strict"; object.g = 9; }, TypeError); // the setter does not run
+    object.g = 9;
+    (() => { "use strict"; object.g = 9; })();
+    shouldBe(Reflect.set(object, "g", 9), true);
+    shouldBe(setterCalls, 3);
     shouldBe(Reflect.set(object, "a", 9), false);
     shouldBe(Reflect.set(object, "fresh", 9), false);
-    shouldBe(Reflect.set(object, "g", 9), false);
     shouldBe(snapshot(object), before);
     shouldBe(object.a, 1);
     shouldBe(object.g, 4);

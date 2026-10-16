@@ -188,13 +188,23 @@ JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
 JS_EXPORT_PRIVATE void reifyClassPrototypeIfNeeded(JSObject*);
 JS_EXPORT_PRIVATE bool forEachOwnPropertyOfCompiledObject(JSObject*, const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&);
 std::optional<bool> hasOwnPropertyOfCompiledObject(JSObject*, UniquedStringImpl*);
+JSValue tryGetOwnDataOfCompiledObject(VM&, JSCell*, UniquedStringImpl*);
+std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfFieldForInterpreter(JSCell*, UniquedStringImpl*);
+bool isFieldThatReadsAsUndefinedWhereAbsent(JSGlobalObject*, JSCell*, UniquedStringImpl*);
+bool isNameThatReadsAsUndefinedByStructure(JSGlobalObject*, JSCell*, UniquedStringImpl*);
+bool tryStorePrimitiveIntoFieldOfCompiledObject(VM&, JSCell*, UniquedStringImpl*, JSValue);
+bool tryAssignPrimitivesToFieldsOfCompiledObject(VM&, JSObject* target, JSObject* source);
 // After `prototype` has been stored to a function with putDirect(), which goes past the function's own methods. Any cell will do.
 JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
 // For the host, right after it has made a global object that the built-ins table calls replaceable, before anything else sees it.
 JS_EXPORT_PRIVATE void didCreateReplaceableGlobal(JSGlobalObject*, ASCIILiteral name, JSObject*);
 
 } // namespace Typed
+
+void destroyJSONBuffers(Instance&);
+String takePreparedJSON(Instance&, JSValue);
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
+JS_EXPORT_PRIVATE void noteAsyncLocalStorage(JSGlobalObject*, JSObject* storage, JSObject* frame, JSCell* getStore);
 
 struct FrameInTrace {
     uint32_t function;

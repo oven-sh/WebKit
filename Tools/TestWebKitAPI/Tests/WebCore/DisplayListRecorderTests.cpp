@@ -690,14 +690,14 @@ TYPED_TEST_P(DisplayListRecorderResultStateTest, StateThroughDisplayListIsPreser
 {
     auto refTarget = createReferenceTarget();
     auto& ref = refTarget->context();
-    WebCore::DisplayList::RecorderImpl tested { { 0, 0, testContextWidth, testContextHeight } };
+    Ref tested = WebCore::DisplayList::RecorderImpl::create({ 0, 0, testContextWidth, testContextHeight });
     EXPECT_TRUE(checkEqualState(ref, tested));
 
     forBoth(ref, tested, this->operation());
 
     EXPECT_TRUE(checkEqualState(ref, tested));
 
-    Ref displayList = tested.takeDisplayList();
+    Ref displayList = tested->takeDisplayList();
 
     auto description = displayList->asText({ WebCore::DisplayList::AsTextFlag::IncludePlatformOperations }).trim(deprecatedIsSpaceOrNewline);
     auto expectedDescription = this->operationDescription().trim(deprecatedIsSpaceOrNewline);

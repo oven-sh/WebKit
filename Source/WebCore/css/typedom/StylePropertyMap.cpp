@@ -115,7 +115,7 @@ ExceptionOr<void> StylePropertyMap::set(Document& document, const AtomString& pr
     }
 
     auto propertyID = cssPropertyID(property);
-    if (propertyID == CSSPropertyInvalid || !isExposed(propertyID, document.settings()))
+    if (propertyID == CSSPropertyID::Invalid || !isExposed(propertyID, document.settings()))
         return Exception { ExceptionCode::TypeError, makeString("Invalid property "_s, property) };
 
     if (!CSSProperty::isListValuedProperty(propertyID) && values.size() > 1)
@@ -182,7 +182,7 @@ ExceptionOr<void> StylePropertyMap::append(Document& document, const AtomString&
         return Exception { ExceptionCode::TypeError, "Cannot append to custom properties"_s };
 
     auto propertyID = cssPropertyID(property);
-    if (propertyID == CSSPropertyInvalid || !isExposed(propertyID, document.settings()))
+    if (propertyID == CSSPropertyID::Invalid || !isExposed(propertyID, document.settings()))
         return Exception { ExceptionCode::TypeError, makeString("Invalid property "_s, property) };
 
     if (!CSSProperty::isListValuedProperty(propertyID))

@@ -70,6 +70,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(EnterResume) \
     v(EnterSavedFrame) \
     v(LaySavedFrameOnStack) \
+    v(EnterAsyncGenerator) \
     v(CallValue) \
     v(CallValueWithoutThis) \
     v(CallValueNamed) \
@@ -182,11 +183,17 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafInitializeTypedClosure3) \
     v(InitializeTypedClosure4) \
     v(LeafInitializeTypedClosure4) \
+    v(CopySlimClosure0) \
+    v(CopySlimClosure1) \
+    v(CopySlimClosure2) \
+    v(CopySlimClosure3) \
+    v(CopySlimClosure4) \
     v(MaterializeEnvironment) \
     v(LeafMaterializeEnvironment) \
     v(TypedString) \
     v(LeafTypedString) \
     v(CallModuleFunction) \
+    v(TypedStringFillingWord) \
     v(TypedStringMadeOnce) \
     v(LeafTypedStringMadeOnce) \
     v(TypedStringInBlock1) \
@@ -221,6 +228,10 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafValueIsText) \
     v(StringIsText) \
     v(LeafStringIsText) \
+    v(LiteralStringToString) \
+    v(LeafLiteralStringToString) \
+    v(ToLiteralString) \
+    v(LeafToLiteralString) \
     v(ValueIsTextOfLength1) \
     v(LeafValueIsTextOfLength1) \
     v(StringIsTextOfLength1) \
@@ -259,10 +270,13 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(RegExpExecThatAsksBodyFirst) \
     v(RegExpTestThatAsksBodyFirst) \
     v(RegExpTestBoxedThatAsksBodyFirst) \
+    v(StringMatchRegExpThatAsksBodyFirst) \
     v(StringToLowerCase) \
     v(StringToUpperCase) \
     v(UncheckedStringToLowerCase) \
     v(UncheckedStringToUpperCase) \
+    v(StringToNumber8) \
+    v(ParseInt8) \
     v(NewTypedArray) \
     v(UncheckedNewTypedArray) \
     v(HoldToType) \
@@ -305,6 +319,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafAwaitMayContinue) \
     v(AwaitBySavingFrame) \
     v(ResolvePromiseBehindAwait) \
+    v(AsyncIteratorNext) \
+    v(AwaitInAsyncGenerator) \
+    v(AsyncGeneratorYield) \
     v(ArrayLiteral0) \
     v(LeafArrayLiteral0) \
     v(ArrayLiteral1) \
@@ -359,6 +376,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafLoadElement) \
     v(LoadElementAsDoubleOrNil) \
     v(LeafLoadElementAsDoubleOrNil) \
+    v(ToNumberAsDouble) \
+    v(LeafToNumberAsDouble) \
     v(ArrayElementAs) \
     v(LeafArrayElementAs) \
     v(ArrayElement) \
@@ -371,6 +390,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafCreateArguments) \
     v(WriteBarrier) \
     v(ToBoolean) \
+    v(ValueIsTruthy) \
     v(CharactersOfSubstring) \
     v(CharactersOfRope) \
     v(LeafCharactersOfRope) \
@@ -378,6 +398,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafCodeUnitOfRope) \
     v(StrictEqual) \
     v(LooseEqual) \
+    v(LooseEqualToText) \
     v(Add) \
     v(Mod) \
     v(Sub) \
@@ -432,11 +453,49 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByIdAsStringOrUndefined) \
     v(GetByIdAsStringOrNull) \
     v(GetByIdAsStringOrNil) \
+    v(GetByIdAsArray) \
+    v(GetByIdAsArrayOrUndefined) \
+    v(GetByIdAsArrayOrNull) \
+    v(GetByIdAsArrayOrNil) \
+    v(GetByNameAsDouble) \
+    v(GetByNameAsDoubleKeepingTwo) \
+    v(GetByNameAsDoubleOrUndefined) \
+    v(GetByNameAsDoubleOrUndefinedKeepingTwo) \
+    v(GetByNameAsDoubleOrNull) \
+    v(GetByNameAsDoubleOrNullKeepingTwo) \
+    v(GetByNameAsDoubleOrNil) \
+    v(GetByNameAsDoubleOrNilKeepingTwo) \
+    v(GetByNameAsBoolean) \
+    v(GetByNameAsBooleanKeepingTwo) \
+    v(GetByNameAsBooleanOrUndefined) \
+    v(GetByNameAsBooleanOrUndefinedKeepingTwo) \
+    v(GetByNameAsBooleanOrNull) \
+    v(GetByNameAsBooleanOrNullKeepingTwo) \
+    v(GetByNameAsBooleanOrNil) \
+    v(GetByNameAsBooleanOrNilKeepingTwo) \
+    v(GetByNameAsString) \
+    v(GetByNameAsStringKeepingTwo) \
+    v(GetByNameAsStringOrUndefined) \
+    v(GetByNameAsStringOrUndefinedKeepingTwo) \
+    v(GetByNameAsStringOrNull) \
+    v(GetByNameAsStringOrNullKeepingTwo) \
+    v(GetByNameAsStringOrNil) \
+    v(GetByNameAsStringOrNilKeepingTwo) \
+    v(GetByNameAsArray) \
+    v(GetByNameAsArrayKeepingTwo) \
+    v(GetByNameAsArrayOrUndefined) \
+    v(GetByNameAsArrayOrUndefinedKeepingTwo) \
+    v(GetByNameAsArrayOrNull) \
+    v(GetByNameAsArrayOrNullKeepingTwo) \
+    v(GetByNameAsArrayOrNil) \
+    v(GetByNameAsArrayOrNilKeepingTwo) \
     v(GetByNameGenerally) \
     v(GetThroughSlotByName) \
     v(GetThroughAccessorByName) \
     v(GetThroughOwnAccessorByName) \
     v(GetThroughExtraAccessorByName) \
+    v(GetThroughKnownCustomGetterByName) \
+    v(GetExportOfNamespaceByName) \
     v(ReadAbsentByName) \
     v(ReadOutOfLineByName) \
     v(ReadInheritedInObjectByName) \
@@ -444,24 +503,43 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ReadFieldCell32ByName) \
     v(ReadFieldInt32ByName) \
     v(ReadFieldBoxedByName) \
+    v(ReadFieldDoubleByName) \
+    v(ReadFieldBooleanByName) \
+    v(ReadFieldOptionalBooleanByName) \
     v(ReadOwnAccessorByName) \
     v(ReadAccessorByName) \
     v(ReadExtraAccessorByName) \
+    v(ReadKnownCustomGetterByName) \
+    v(ReadLazyClosureByName) \
+    v(ReadExportOfNamespaceByName) \
     v(ReadThroughSlotsByName) \
     v(ReadFieldCell32ByNameKeepingTwo) \
     v(ReadFieldInt32ByNameKeepingTwo) \
     v(ReadFieldBoxedByNameKeepingTwo) \
+    v(ReadFieldDoubleByNameKeepingTwo) \
+    v(ReadFieldBooleanByNameKeepingTwo) \
+    v(ReadFieldOptionalBooleanByNameKeepingTwo) \
     v(ReadOwnAccessorByNameKeepingTwo) \
     v(ReadAccessorByNameKeepingTwo) \
     v(ReadExtraAccessorByNameKeepingTwo) \
+    v(ReadKnownCustomGetterByNameKeepingTwo) \
+    v(ReadLazyClosureByNameKeepingTwo) \
+    v(ReadExportOfNamespaceByNameKeepingTwo) \
     v(ReadThroughSlotsByNameKeepingTwo) \
     v(ReadFieldCell32ByNameWithinFrame) \
     v(ReadFieldInt32ByNameWithinFrame) \
     v(ReadFieldBoxedByNameWithinFrame) \
+    v(ReadFieldDoubleByNameWithinFrame) \
+    v(ReadFieldBooleanByNameWithinFrame) \
+    v(ReadFieldOptionalBooleanByNameWithinFrame) \
     v(ReadOwnAccessorByNameWithinFrame) \
     v(ReadAccessorByNameWithinFrame) \
     v(ReadExtraAccessorByNameWithinFrame) \
+    v(ReadKnownCustomGetterByNameWithinFrame) \
+    v(ReadLazyClosureByNameWithinFrame) \
+    v(ReadExportOfNamespaceByNameWithinFrame) \
     v(ReadThroughSlotsByNameWithinFrame) \
+    v(GetByNameWithinFrameBehindFirstLook) \
     v(GetByName) \
     v(GetByNameKeepingTwo) \
     v(GetByNameWithinFrame) \
@@ -469,27 +547,38 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByNameBelowNumberOfColumnsKeepingTwo) \
     v(GetLengthByName) \
     v(GetLengthByNameKeepingTwo) \
+    v(GetParentDataByName) \
     v(AddInObjectByName) \
     v(AddOutOfLineByName) \
     v(ReplaceOutOfLineByName) \
     v(PutByNameGenerally) \
     v(PutThroughSlotByName) \
+    v(PutThroughAccessorByName) \
     v(PutByNameWithNewStorage) \
     v(PutByNameAddsStorage) \
     v(PutByNameAddsStorageKeepingTwo) \
     v(PutByNameThroughSlots) \
     v(PutByNameThroughSlotsKeepingTwo) \
+    v(PutByNameThroughAccessor) \
+    v(PutByNameThroughAccessorKeepingTwo) \
+    v(PutByNameSetsArrayLength) \
+    v(PutByNameSetsArrayLengthKeepingTwo) \
     v(PutByName) \
     v(PutByNameKeepingTwo) \
     v(PutByNameBelowNumberOfColumns) \
     v(PutByNameBelowNumberOfColumnsKeepingTwo) \
     v(PutByNameSloppyGenerally) \
     v(PutThroughSlotByNameSloppy) \
+    v(PutThroughAccessorByNameSloppy) \
     v(PutByNameSloppyWithNewStorage) \
     v(PutByNameSloppyAddsStorage) \
     v(PutByNameSloppyAddsStorageKeepingTwo) \
     v(PutByNameSloppyThroughSlots) \
     v(PutByNameSloppyThroughSlotsKeepingTwo) \
+    v(PutByNameSloppyThroughAccessor) \
+    v(PutByNameSloppyThroughAccessorKeepingTwo) \
+    v(PutByNameSloppySetsArrayLength) \
+    v(PutByNameSloppySetsArrayLengthKeepingTwo) \
     v(PutByNameSloppy) \
     v(PutByNameSloppyKeepingTwo) \
     v(PutByNameSloppyBelowNumberOfColumns) \
@@ -506,7 +595,10 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(DefineByNameBelowNumberOfColumns) \
     v(DefineByNameBelowNumberOfColumnsKeepingTwo) \
     v(TryGetByNameAndRow) \
+    v(GetByNameUncached) \
     v(TryPutByNameAndRow) \
+    v(PutByNameUncached) \
+    v(PutByNameUncachedSloppy) \
     v(DefineOwnProperty) \
     v(GetByValCached) \
     v(GetByValCachedOfCells) \
@@ -514,8 +606,13 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PutByValCachedSloppy) \
     v(PrivateGet) \
     v(PrivateSet) \
+    v(PrivateGetAtSite) \
+    v(PrivateSetAtSite) \
     v(PrivateHas) \
     v(PrivateFieldAdd) \
+    v(DefineByKeyCached) \
+    v(PutByValDirectCached) \
+    v(PrivateMethodsAdd) \
     v(InByValCached) \
     v(DeleteByValCached) \
     v(DeleteByValCachedSloppy) \
@@ -572,6 +669,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(RegExpExecOrCallValue) \
     v(RegExpTestOrCallMethod) \
     v(RegExpTestOrCallValue) \
+    v(StringMatchOrCallMethod) \
+    v(StringMatchOrCallValue) \
     v(TakeElements) \
     v(SuspendAtFirstAwait) \
     v(AppendSpread) \
@@ -693,9 +792,17 @@ struct StubCall {
     uint32_t body { 0 };
     uint8_t firstOmittedGPR { 0 };
     uint8_t endOfOmittedGPRs { 0 };
+
+    static constexpr uint8_t firstOmittedGPRToEnterCodeAheadWithThis = 0xfd;
+    static constexpr uint8_t firstOmittedGPRToEnterCodeAhead = 0xfe;
+    static constexpr uint8_t endOfOmittedGPRsToEnterCodeAhead = 0xff;
+    bool entersCodeAheadWithThis() const { return firstOmittedGPR == firstOmittedGPRToEnterCodeAheadWithThis && endOfOmittedGPRs == endOfOmittedGPRsToEnterCodeAhead; }
+    bool entersCodeAhead() const { return (firstOmittedGPR == firstOmittedGPRToEnterCodeAhead && endOfOmittedGPRs == endOfOmittedGPRsToEnterCodeAhead) || entersCodeAheadWithThis(); }
 };
 
 std::optional<unsigned> thunkFor(Stub, uint32_t t9Value);
+void setTypedStringsWithWord(Vector<uint32_t>&& keysInOrder);
+std::optional<unsigned> placeOfTypedStringWithWord(uint32_t key);
 
 enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant, FitsByKind, FitsByShape };
 namespace FitsByKind {
@@ -721,6 +828,8 @@ struct ArgumentThunks {
     Vector<StubCall> jumps;
 };
 ArgumentThunks generateArgumentThunks(const Vector<const ArgumentMoves*>&);
+Vector<uint8_t> generateCodeAheadOfAdapterOfSignature(uint32_t indexOfSignature, size_t& sizeAheadOfDoorWithThis);
+Vector<uint8_t> generateCodeAheadOfAdapterOfResult(uint32_t result, uint32_t sizeOfResults, unsigned numberOfArguments, size_t& sizeAheadOfDoorWithThis);
 void jumpUnlessHeldCellFits(CCallHelpers&, GPRReg value, GPRReg scratch, const ArgumentMoves& tests, CCallHelpers::JumpList& doesNotFit);
 bool testsOfHeldCellTakeScratch(const ArgumentMoves& tests);
 GPRReg wordOfCastInRegisterGPR();
@@ -772,7 +881,10 @@ bool preservesOperandRegister(Stub);
 std::optional<RegisterSet> registersChangedBy(Stub);
 Stub formOfStubThatKeeps(Stub, const RegisterSet& live);
 Stub formOfStubForName(Stub, uint32_t name);
-void setNumberOfNamesUsedOftenEnoughForStubOfTheirOwn(unsigned);
+enum class StubOfOneNameIsFor : uint8_t { Reads, Stores, Definitions, Calls };
+void forgetNamesWithStubOfTheirOwn();
+void setHasStubOfItsOwn(StubOfOneNameIsFor, uint32_t numberOfIdentifier);
+bool callOfMethodHasStubOfItsName(unsigned count, uint32_t name);
 void dumpRegistersChangedByStubs(PrintStream&);
 
 struct StubBlob {
@@ -783,7 +895,8 @@ struct StubBlob {
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
 };
-std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& thunksThatAreCalled);
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& thunksThatAreCalled, const BitVector& stubsThatAreCalled);
+constexpr bool isMadeOnlyIfCalled(Stub stub) { return stub >= Stub::GetByIdAsDouble && stub <= Stub::GetByNameAsArrayOrNilKeepingTwo; }
 bool thunkIsMadeOnlyIfCalled(unsigned thunk);
 
 struct IndexReference {
@@ -847,6 +960,7 @@ class StubCalls {
 public:
     void call(CCallHelpers&, Stub, CallSite);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite);
+    void callMethodByStubOfItsName(CCallHelpers&, unsigned count, uint32_t name, CallSite);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite, const ArgumentMoves&);
     void call(CCallHelpers&, Stub, CallSite, const ArgumentMoves&);
     void tailCall(CCallHelpers&, Stub);

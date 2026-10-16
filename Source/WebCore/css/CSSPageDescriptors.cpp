@@ -50,67 +50,67 @@ StyleRuleType CSSPageDescriptors::ruleType() const
 // 'margin'
 String CSSPageDescriptors::margin() const
 {
-    return getPropertyValueInternal(CSSPropertyMargin);
+    return getPropertyValueInternal(CSSPropertyID::Margin);
 }
 
 ExceptionOr<void> CSSPageDescriptors::setMargin(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMargin, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Margin, value, IsImportant::No);
 }
 
 // 'margin-top'
 String CSSPageDescriptors::marginTop() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginTop);
+    return getPropertyValueInternal(CSSPropertyID::MarginTop);
 }
 
 ExceptionOr<void> CSSPageDescriptors::setMarginTop(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginTop, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginTop, value, IsImportant::No);
 }
 
 // 'margin-right'
 String CSSPageDescriptors::marginRight() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginRight);
+    return getPropertyValueInternal(CSSPropertyID::MarginRight);
 }
 
 ExceptionOr<void> CSSPageDescriptors::setMarginRight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginRight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginRight, value, IsImportant::No);
 }
 
 // 'margin-bottom'
 String CSSPageDescriptors::marginBottom() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginBottom);
+    return getPropertyValueInternal(CSSPropertyID::MarginBottom);
 }
 
 ExceptionOr<void> CSSPageDescriptors::setMarginBottom(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginBottom, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginBottom, value, IsImportant::No);
 }
 
 // 'margin-left'
 String CSSPageDescriptors::marginLeft() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginLeft);
+    return getPropertyValueInternal(CSSPropertyID::MarginLeft);
 }
 
 ExceptionOr<void> CSSPageDescriptors::setMarginLeft(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginLeft, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginLeft, value, IsImportant::No);
 }
 
 // @page 'size'
 String CSSPageDescriptors::size() const
 {
-    return getPropertyValueInternal(CSSPropertyPageSize);
+    return getPropertyValueInternal(CSSPropertyID::PageSize);
 }
 
 ExceptionOr<void> CSSPageDescriptors::setSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyPageSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::PageSize, value, IsImportant::No);
 }
 
 } // namespace WebCore

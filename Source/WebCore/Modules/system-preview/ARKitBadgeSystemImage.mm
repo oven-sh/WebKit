@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -77,21 +77,19 @@ static RetainPtr<CGPDFPageRef> systemPreviewLogo()
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ARKitBadgeSystemImage);
 
-Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::createWithoutImage()
+Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::create(Image& image)
 {
-    return adoptRef(*new ARKitBadgeSystemImage(std::nullopt, { }));
+    return create(image.nativeImage(ConcreteObjectSize::fixed(image.size())));
 }
 
-std::optional<RenderingResourceIdentifier> ARKitBadgeSystemImage::imageIdentifier() const
+Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::createWithoutImage()
 {
-    if (RefPtr image = m_image) {
-        if (RefPtr nativeImage = image->nativeImage(ConcreteObjectSize::fixed(image->size())))
-            return nativeImage->renderingResourceIdentifier();
-        return std::nullopt;
-    }
-    if (m_renderingResourceIdentifier)
-        return *m_renderingResourceIdentifier;
-    return std::nullopt;
+    return adoptRef(*new ARKitBadgeSystemImage(nullptr));
+}
+
+Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::create(RefPtr<NativeImage>&& nativeImage)
+{
+    return adoptRef(*new ARKitBadgeSystemImage(WTF::move(nativeImage)));
 }
 
 void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRect& rect) const
@@ -111,10 +109,6 @@ void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRe
     CGRect absoluteBadgeRect = CGRectMake(rect.x() + rect.width() - badgeDimension - badgeOffset, rect.y() + badgeOffset, badgeDimension, badgeDimension);
     CGRect insetBadgeRect = CGRectMake(rect.width() - badgeDimension - badgeOffset, badgeOffset, badgeDimension, badgeDimension);
     CGRect badgeRect = CGRectMake(0, 0, badgeDimension, badgeDimension);
-
-    RefPtr image = m_image;
-    RefPtr nativeImage = image ? image->nativeImage(ConcreteObjectSize::fixed(image->size())) : nullptr;
-    bool hasBackdropImage = !!nativeImage;
 
     // Create a circle to be used for the clipping path in the badge, as well as the drop shadow.
     RetainPtr<CGPathRef> circle = adoptCF(CGPathCreateWithRoundedRect(absoluteBadgeRect, badgeDimension / 2, badgeDimension / 2, nullptr));
@@ -160,12 +154,13 @@ void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRe
     CGContextRestoreGState(ctx);
 
     RetainPtr<CGImageRef> cgImage;
-    if (hasBackdropImage) {
+    if (RefPtr nativeImage = m_nativeImage) {
         RetainPtr inputImage = [CIImage imageWithCGImage:nativeImage->platformImage().get()];
+        FloatSize imageSize = nativeImage->size();
 
         // Draw the blurred backdrop. Scale from intrinsic size to render size.
         CGAffineTransform transform = CGAffineTransformIdentity;
-        transform = CGAffineTransformScale(transform, rect.width() / m_imageSize.width(), rect.height() / m_imageSize.height());
+        transform = CGAffineTransformScale(transform, rect.width() / imageSize.width(), rect.height() / imageSize.height());
         RetainPtr scaledImage = [inputImage imageByApplyingTransform:transform];
 
         // CoreImage coordinates are y-up, so we need to flip the badge rectangle within the image frame.

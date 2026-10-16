@@ -147,7 +147,7 @@ EVERYTHING = (1 << len(USES)) - 1
 entries, classes, structures, replaceable, predicted, twins, errors = [], [], [], [], [], [], []
 families, inline_builtins, runtime_operations, intrinsics, hardened = [], {}, [], [], set()
 omitted, written = [], []
-FAMILY_NAMES = {'regexp': 'RegExp', 'typedarray': 'TypedArray', 'error-json-global': 'ErrorJSONGlobal'}
+FAMILY_NAMES = {'regexp': 'RegExp', 'typedarray': 'TypedArray', 'error-json-global': 'ErrorJSONGlobal', 'json': 'JSON'}
 WRITES = ['Pure', 'Nothing', 'RuntimeState', 'TypedArrayProperties', 'Fields', 'Heap']
 
 

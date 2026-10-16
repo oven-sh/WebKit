@@ -9,6 +9,7 @@
 
 #include "AOTRuntime.h"
 #include "AOTStubs.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC {
 
@@ -37,6 +38,17 @@ void popCalleeSaves(CCallHelpers&, const RegisterAtOffsetList&);
 void emitCollapsibleFrameReturn(CCallHelpers&);
 void dropCollapsibleCallerFrames(CCallHelpers&, GPRReg scratch);
 CCallHelpers::Jump branchIfReturnAddressIsNotInCollapsibleFrame(CCallHelpers&, GPRReg returnAddress);
+#if CPU(ARM64)
+static constexpr uint64_t droppableFrameSignature = 0xaa1e03f1aa1e03feull;
+static constexpr unsigned droppableFrameSignatureOffset = 4;
+static constexpr unsigned droppableFrameExitOffset = 8;
+#else
+static constexpr uint64_t droppableFrameSignature = 0x504f524424841f0full;
+static constexpr unsigned droppableFrameSignatureOffset = 2;
+static constexpr unsigned droppableFrameExitOffset = 10;
+#endif
+void emitDroppableFrameExit(CCallHelpers&, const ScopedLambda<void()>& emitFrameTeardown);
+void dropDroppableCallerFrame(CCallHelpers&);
 void dropPaddingAtEnd(CompiledFunctionInfo&, const void* start, B3::Air::Code&);
 
 struct Node;

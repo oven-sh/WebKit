@@ -12,7 +12,7 @@ PASS Dictionary with 1025 character dictionary ID is not registered
 PASS Dictionary registration with unknown extra options succeeds
 PASS Dictionary with malformed structured header is not registered
 PASS Dictionary with max-age=0 is not registered
-FAIL Stale dictionary within its stale-while-revalidate window is used assert_equals: expected ":U5abz16WDg7b8KS93msLPpOB4Vbef1uRzoORYkJw9BY=:" but got "\"available-dictionary\" header is not available"
+PASS Stale dictionary within its stale-while-revalidate window is used
 PASS Dictionary past its stale-while-revalidate window is not used
 PASS Fresh dictionary with must-revalidate is used
 PASS Stale dictionary with must-revalidate is not used

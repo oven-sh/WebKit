@@ -50,7 +50,7 @@ WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Code);
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Dominators);
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(NaturalLoops);
 
-static void defaultPrologueGenerator(CCallHelpers& jit, Code& code)
+static void defaultPrologueGenerator(CCallHelpers& jit, Code& code, GenerationContext&)
 {
     jit.emitFunctionPrologue();
 
@@ -110,9 +110,9 @@ Code::Code(Procedure& proc)
 
 Code::~Code() = default;
 
-void Code::emitDefaultPrologue(CCallHelpers& jit)
+void Code::emitDefaultPrologue(CCallHelpers& jit, GenerationContext& context)
 {
-    defaultPrologueGenerator(jit, *this);
+    defaultPrologueGenerator(jit, *this, context);
 }
 
 void Code::emitEpilogue(CCallHelpers& jit)
@@ -142,6 +142,20 @@ void Code::setRegsInPriorityOrder(Bank bank, const Vector<Reg>& regs)
                 m_mutableRegs.add(reg, IgnoreVectors);
         });
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Code::setCalleeSavesLostAtSuspensions(const RegisterSet& registers)
+{
+    m_calleeSavesLostAtSuspensions = registers;
+    Vector<Reg> order;
+    Vector<Reg> lost;
+    for (Reg reg : regsInPriorityOrder(GP))
+        (registers.contains(reg, IgnoreVectors) ? lost : order).append(reg);
+    std::ranges::sort(lost, std::ranges::greater { }, &Reg::index);
+    order.appendVector(lost);
+    setRegsInPriorityOrder(GP, order);
+}
+#endif
 
 void Code::pinRegister(Reg reg)
 {

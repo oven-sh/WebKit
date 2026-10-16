@@ -132,7 +132,7 @@ void JSTestReportExtraMemoryCost::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    vm.heap.reportExtraMemoryAllocated(this, wrapped().memoryCost());
+    vm.heap.reportExtraMemoryAllocated(this, protect(wrapped())->memoryCost());
 }
 
 JSTestReportExtraMemoryCost* JSTestReportExtraMemoryCost::create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TestReportExtraMemoryCost>&& impl)
@@ -197,7 +197,8 @@ void JSTestReportExtraMemoryCost::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSTestReportExtraMemoryCost>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCost());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCost());
 }
 
 DEFINE_VISIT_CHILDREN(JSTestReportExtraMemoryCost);
@@ -205,7 +206,8 @@ DEFINE_VISIT_CHILDREN(JSTestReportExtraMemoryCost);
 size_t JSTestReportExtraMemoryCost::estimatedSize(JSCell* cell, VM& vm)
 {
     auto* thisObject = uncheckedDowncast<JSTestReportExtraMemoryCost>(cell);
-    return Base::estimatedSize(thisObject, vm) + thisObject->wrapped().memoryCost();
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG return Base::estimatedSize(thisObject, vm) + thisObject->wrapped().memoryCost();
 }
 
 void JSTestReportExtraMemoryCost::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

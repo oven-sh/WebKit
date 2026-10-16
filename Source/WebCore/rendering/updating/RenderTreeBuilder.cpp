@@ -115,10 +115,10 @@ static void invalidateLineLayout(RenderObject& renderer, IsRemoval isRemoval)
     if (isRemoval == IsRemoval::Yes && !renderer.everHadLayout()
         && !isWithinNeverLaidOutRenderMarqueeSubtree(renderer)) {
         // Certain mutations can make renderer to be removed before running layout. In such cases we don't have to try to
-        // run invalidation only remove it from layout tree.
+        // run invalidation only remove it from layout tree, unless the line layout asks for full invalidation.
         // One exception is for RenderMarquee, which may have run preferred width computation without performing layout.
-        if (auto* inlineLayout = container->inlineLayout())
-            inlineLayout->removedFromTree(*renderer.parent(), renderer);
+        if (auto* inlineLayout = container->inlineLayout(); inlineLayout && !inlineLayout->removedFromTree(*renderer.parent(), renderer))
+            container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::InsertionOrRemoval);
         return;
     }
 
@@ -1047,11 +1047,6 @@ static void resetRendererStateOnDetach(RenderElement& parent, RenderObject& chil
 
     if (willBeDestroyed == RenderTreeBuilder::WillBeDestroyed::No)
         child.setNeedsLayoutAndInvalidateContentLogicalWidths();
-
-    // If we have a line box wrapper, delete it.
-    if (CheckedPtr textRenderer = dynamicDowncast<RenderSVGInlineText>(child))
-        textRenderer->removeAndDestroyLegacyTextBoxes();
-
 }
 
 RenderPtr<RenderObject> RenderTreeBuilder::detachFromRenderElement(RenderElement& parent, RenderObject& child, WillBeDestroyed willBeDestroyed)
@@ -1118,7 +1113,7 @@ void RenderTreeBuilder::reportVisuallyNonEmptyContent(const RenderElement& paren
     if (auto* textRenderer = dynamicDowncast<RenderText>(child)) {
         auto& style = parent.style();
         // FIXME: Find out how to increment the visually non empty character count when the font becomes available.
-        if (style.usedVisibility() == Visibility::Visible && !style.fontCascade().isLoadingCustomFonts())
+        if (parent.usedStyle().visibility() == UsedVisibility::Visible && !style.fontCascade().isLoadingCustomFonts())
             m_view.frameView().incrementVisuallyNonEmptyCharacterCount(textRenderer->text());
         return;
     }

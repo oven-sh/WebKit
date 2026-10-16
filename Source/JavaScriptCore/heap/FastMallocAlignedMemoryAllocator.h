@@ -26,12 +26,15 @@
 #pragma once
 
 #include "AlignedMemoryAllocator.h"
+#include "MarkedBlockCage.h"
 
 #if ENABLE(MALLOC_HEAP_BREAKDOWN)
 #include <wtf/DebugHeap.h>
 #endif
 
 namespace JSC {
+
+class WarmUpBlockProvider;
 
 class FastMallocAlignedMemoryAllocator final : public AlignedMemoryAllocator {
 public:
@@ -47,8 +50,19 @@ public:
     void freeMemory(void*) final;
     void* tryReallocateMemory(void*, size_t) final;
 
-#if ENABLE(MALLOC_HEAP_BREAKDOWN)
+    MarkedBlockCage& markedBlockCage() { return m_markedBlockCage; }
+
 private:
+#if !USE(LIBPAS) && !ENABLE(MALLOC_HEAP_BREAKDOWN)
+    WarmUpBlockProvider* warmUpBlockProviderIfStarted();
+#endif
+
+    MarkedBlockCage m_markedBlockCage;
+#if !USE(LIBPAS) && !ENABLE(MALLOC_HEAP_BREAKDOWN)
+    std::unique_ptr<WarmUpBlockProvider> m_warmUpBlockProvider;
+    unsigned m_numberOfBlockRequests { 0 };
+#endif
+#if ENABLE(MALLOC_HEAP_BREAKDOWN)
     WTF::DebugHeap m_heap;
 #endif
 };

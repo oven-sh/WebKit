@@ -277,6 +277,7 @@ WI.QuickConsole = class QuickConsole extends WI.View
         let automaticContext = this._resolveDesiredActiveExecutionContext();
         let automaticContextDisplayName = activeCallFrame ? this._displayNameForCallFrame(activeCallFrame, maxLength) : this._displayNameForExecutionContext(automaticContext, maxLength);
         contextMenu.appendCheckboxItem(WI.UIString("Auto \u2014 %s").format(automaticContextDisplayName), () => {
+            this._restoreSelectedExecutionContextForFrame = null;
             this._automaticallyPickExecutionContext = true;
             this._setActiveExecutionContext(automaticContext);
         }, this._automaticallyPickExecutionContext);
@@ -291,6 +292,7 @@ WI.QuickConsole = class QuickConsole extends WI.View
 
             // Mimic macOS `-[NSMenuItem setIndentationLevel]`.
             contextMenu.appendCheckboxItem("   ".repeat(indent + additionalIndent) + this._displayNameForExecutionContext(context, maxLength), () => {
+                this._restoreSelectedExecutionContextForFrame = null;
                 this._automaticallyPickExecutionContext = false;
                 this._setActiveExecutionContext(context);
             }, activeExecutionContext === context && (!activeCallFrame || !WI.runtimeManager.useActiveCallFrame));
@@ -456,7 +458,7 @@ WI.QuickConsole = class QuickConsole extends WI.View
 
         // If this frame is navigating and it is selected in the UI we want to reselect its new item after navigation,
         // however when `_automaticallyPickExecutionContext` is true, we should keep the execution context set to `Auto`.
-        if (committingProvisionalLoad && !this._restoreSelectedExecutionContextForFrame && !this._automaticallyPickExecutionContext) {
+        if (!this._restoreSelectedExecutionContextForFrame && !this._automaticallyPickExecutionContext && (committingProvisionalLoad || WI.networkManager.frameForIdentifier(event.target.id) === event.target)) {
             this._restoreSelectedExecutionContextForFrame = event.target;
 
             // As a fail safe, if the frame never gets an execution context, clear the restore value.

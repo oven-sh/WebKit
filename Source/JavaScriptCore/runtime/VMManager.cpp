@@ -199,7 +199,7 @@ void VMManager::decrementActiveVMs(VM& vm) WTF_REQUIRES_LOCK(m_worldLock)
         if (m_worldMode != Mode::RunAll && !m_numberOfActiveVMs)
             return true;
         if (m_worldMode == Mode::RunOne) {
-            RELEASE_ASSERT(m_servingVM == &vm && m_servingVM == m_targetVM);
+            RELEASE_ASSERT(m_servingVM == &vm);
             return true;
         }
         return false;
@@ -538,7 +538,8 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
             if (m_currentStopReason == StopReason::None) {
                 if (m_useRunOneMode) {
                     m_worldMode = Mode::RunOne;
-                    RELEASE_ASSERT(m_servingVM == &vm && m_servingVM == m_targetVM);
+                    // In proxy mode the serving VM differs from the blocked m_targetVM.
+                    RELEASE_ASSERT(m_servingVM == &vm);
                 } else if (m_worldMode != Mode::RunAll)
                     resumeTheWorld(); // Sets m_worldMode = Mode::RunAll.
                 break; // Exit this loop.
@@ -579,7 +580,7 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
             auto requestBits = static_cast<StopRequestBits>(m_currentStopReason);
             m_pendingStopRequestBits.exchangeAnd(~requestBits);
             if (m_currentStopReason == StopReason::WasmDebugger)
-                m_needsWasmDebuggerOnResume.store(true);
+                m_wasmDebuggerResumePending.store(true);
             m_currentStopReason = StopReason::None;
 
             // No new callback target being specified means that we should not change m_useRunOneMode.
@@ -600,7 +601,7 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
         }
     }
 
-    unsigned numberOfStoppedVMs = UINT_MAX;
+    bool shouldDeliverResume = false;
 
     {
         Locker lock { m_worldLock };
@@ -608,13 +609,18 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
         // If we get here, we're either transitioning to RunOne or Running mode.
         RELEASE_ASSERT(!m_servingVM || m_servingVM == &vm);
 
-        numberOfStoppedVMs = --m_numberOfStoppedVMs;
-
+        --m_numberOfStoppedVMs;
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
+        if (Options::enableWasmDebugger()) [[unlikely]] {
+            bool isRunOne = m_worldMode == Mode::RunOne;
+            bool isLastStoppedVM = !m_numberOfStoppedVMs && m_worldMode == Mode::RunAll;
+            shouldDeliverResume = (isRunOne || isLastStoppedVM) && m_wasmDebuggerResumePending.exchange(false);
+        }
+#endif
         notifyDebuggerOfVMResuming(vm);
     }
 
-    // Call post-resume callback once when last VM exits and all VMs are running.
-    if (!numberOfStoppedVMs && m_needsWasmDebuggerOnResume.exchange(false))
+    if (shouldDeliverResume)
         g_jscConfig.wasmDebuggerOnResume();
 }
 

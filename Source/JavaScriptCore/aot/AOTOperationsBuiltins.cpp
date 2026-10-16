@@ -205,25 +205,33 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGenera
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(table->has(globalObject, JSValue::decode(key)))));
 }
 
+static ALWAYS_INLINE void mapSetGenerally(JSGlobalObject* globalObject, VM& vm, JSMap* table, JSValue key, JSValue value)
+{
+    if (auto found = findSubstring(globalObject, table, key); found && JSMap::Helper::isValidTableIndex(*found)) {
+        JSMap::Helper::setKeyOrValueData(vm, table->storageRef(), *found + 1, value);
+        return;
+    }
+    table->set(globalObject, key, value);
+}
+
+static ALWAYS_INLINE void setAddGenerally(JSGlobalObject* globalObject, JSSet* table, JSValue key)
+{
+    if (auto found = findSubstring(globalObject, table, key); found && JSSet::Helper::isValidTableIndex(*found))
+        return;
+    table->add(globalObject, key);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTMapSetGeneric, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSMap* table = uncheckedDowncast<JSMap>(map);
-    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)); found && JSMap::Helper::isValidTableIndex(*found)) {
-        JSMap::Helper::setKeyOrValueData(vm, table->storageRef(), *found + 1, JSValue::decode(value));
-        OPERATION_RETURN(scope, JSValue::encode(map));
-    }
-    table->set(globalObject, JSValue::decode(key), JSValue::decode(value));
+    mapSetGenerally(globalObject, vm, uncheckedDowncast<JSMap>(map), JSValue::decode(key), JSValue::decode(value));
     OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetAddGeneric, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSSet* table = uncheckedDowncast<JSSet>(set);
-    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)); found && JSSet::Helper::isValidTableIndex(*found))
-        OPERATION_RETURN(scope, JSValue::encode(set));
-    table->add(globalObject, JSValue::decode(key));
+    setAddGenerally(globalObject, uncheckedDowncast<JSSet>(set), JSValue::decode(key));
     OPERATION_RETURN(scope, JSValue::encode(set));
 }
 
@@ -237,7 +245,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapSetWithStringKey, EncodedJSValue, (Insta
         if (isAdded)
             OPERATION_RETURN(scope, JSValue::encode(map));
     }
-    OPERATION_RETURN(scope, operationAOTMapSetGeneric(instance, map, key, value));
+    mapSetGenerally(globalObject, vm, table, JSValue::decode(key), JSValue::decode(value));
+    OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetAddWithStringKey, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
@@ -250,7 +259,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetAddWithStringKey, EncodedJSValue, (Insta
         if (isAdded)
             OPERATION_RETURN(scope, JSValue::encode(set));
     }
-    OPERATION_RETURN(scope, operationAOTSetAddGeneric(instance, set, key));
+    setAddGenerally(globalObject, table, JSValue::decode(key));
+    OPERATION_RETURN(scope, JSValue::encode(set));
 }
 
 } } // namespace JSC::AOT

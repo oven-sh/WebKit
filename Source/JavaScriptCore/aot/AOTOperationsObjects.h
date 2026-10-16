@@ -26,6 +26,7 @@ struct Slot;
 #define FOR_EACH_AOT_OBJECT_OPERATION(v) \
     v(operationAOTNewObjectLiteral) \
     v(operationAOTNewObjectOfRow) \
+    v(operationAOTNewObjectOfFilledRow) \
     v(operationAOTNewArray) \
     v(operationAOTInstanceofAndCache) \
     v(operationAOTDefaultHasInstance) \
@@ -55,7 +56,8 @@ enum class FunctionKind : uint32_t {
 
 bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, uint32_t indexOfPlace));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfFilledRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));
 JSCell* spread(JSGlobalObject*, JSValue iterable);
 

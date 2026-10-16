@@ -106,14 +106,14 @@ public:
     size_t codedWidth() const { return m_data.codedWidth; }
     size_t codedHeight() const { return m_data.codedHeight; }
 
-    DOMRectReadOnly* NODELETE codedRect() const;
-    DOMRectReadOnly* NODELETE visibleRect() const;
+    DOMRectReadOnly* codedRect() const;
+    DOMRectReadOnly* visibleRect() const;
 
     size_t displayWidth() const { return m_data.displayWidth; }
     size_t displayHeight() const { return m_data.displayHeight; }
     std::optional<uint64_t> duration() const { return m_data.duration; }
     int64_t timestamp() const { return m_data.timestamp; }
-    VideoColorSpace& NODELETE colorSpace() const;
+    VideoColorSpace& colorSpace() const;
 
     struct CopyToOptions {
         std::optional<DOMRectInit> rect;
@@ -129,8 +129,8 @@ public:
     bool isDetached() const { return m_isDetached; }
     RefPtr<VideoFrame> internalFrame() const { return m_data.internalFrame; }
 
-    void NODELETE setDisplaySize(size_t, size_t);
-    void NODELETE setVisibleRect(const DOMRectInit&);
+    void LEGACY_NODELETE setDisplaySize(size_t, size_t);
+    void LEGACY_NODELETE setVisibleRect(const DOMRectInit&);
     bool shoudlDiscardAlpha() const { return m_data.format && (*m_data.format == VideoPixelFormat::RGBX || *m_data.format == VideoPixelFormat::BGRX); }
 
     const WebCodecsVideoFrameData& data() const LIFETIME_BOUND { return m_data; }

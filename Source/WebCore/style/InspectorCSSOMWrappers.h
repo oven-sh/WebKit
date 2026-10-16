@@ -29,11 +29,13 @@
 
 namespace WebCore {
 
+class CSSKeyframesRule;
 class CSSNestedDeclarations;
 class CSSStyleRule;
 class CSSStyleSheet;
 class ExtensionStyleSheets;
 class StyleRule;
+class StyleRuleKeyframes;
 class StyleSheetContents;
 
 namespace Style {
@@ -44,8 +46,9 @@ class InspectorCSSOMWrappers {
 public:
     // WARNING. This will construct CSSOM wrappers for all style rules and cache them in a map for significant memory cost.
     // It is here to support inspector. Don't use for any regular engine functions.
-    CSSStyleRule* getWrapperForRuleInSheets(const StyleRule*);
+    CSSStyleRule* getWrapperForStyleRuleInSheets(const StyleRule*);
     CSSNestedDeclarations* getWrapperForNestedDeclarationsRuleInSheets(const StyleRule*);
+    CSSKeyframesRule* getWrapperForKeyframesRuleInSheets(const StyleRuleKeyframes*);
     void collectFromStyleSheetIfNeeded(CSSStyleSheet&);
     void collectDocumentWrappers(ExtensionStyleSheets&);
     void collectScopeWrappers(Scope&);
@@ -60,6 +63,7 @@ private:
 
     HashMap<const StyleRule*, Ref<CSSStyleRule>> m_styleRuleToCSSOMWrapperMap;
     HashMap<const StyleRule*, Ref<CSSNestedDeclarations>> m_nestedDeclarationsRuleToCSSOMWrapperMap;
+    HashMap<const StyleRuleKeyframes*, Ref<CSSKeyframesRule>> m_keyframesRuleToCSSOMWrapperMap;
     HashSet<Ref<CSSStyleSheet>> m_styleSheetCSSOMWrapperSet;
 };
 

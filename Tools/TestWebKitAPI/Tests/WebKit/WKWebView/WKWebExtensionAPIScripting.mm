@@ -291,6 +291,49 @@ TEST(WKWebExtensionAPIScripting, ExecuteScriptJSONTypes)
     [manager run];
 }
 
+TEST(WKWebExtensionAPIScripting, ExecuteScriptResultDoesNotAliasEmptyContainers)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webNavigation.onCompleted.addListener(async (details) => {",
+        @"  function returnEmptyContainers() {",
+        @"    return { firstArray: [], secondArray: [], firstObject: {}, secondObject: {}, nested: { array: [], object: {} }, list: [[], []] }",
+        @"  }",
+
+        @"  const results = await browser.scripting.executeScript({ target: { tabId: details.tabId }, func: returnEmptyContainers })",
+        @"  const result = results?.[0]?.result",
+
+        @"  const containers = [result.firstArray, result.secondArray, result.firstObject, result.secondObject, result.nested.array, result.nested.object, result.list[0], result.list[1]]",
+        @"  for (let i = 0; i < containers.length; ++i) {",
+        @"    for (let j = i + 1; j < containers.length; ++j)",
+        @"      browser.test.assertFalse(containers[i] === containers[j], `Result containers ${i} and ${j} should be distinct`)",
+        @"  }",
+
+        @"  result.firstArray.push(1)",
+        @"  browser.test.assertEq(result.secondArray.length, 0, 'Mutating one empty array should not change the other')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')",
+    ]);
+
+    auto manager = Util::loadExtension(scriptingManifest, @{ @"background.js": backgroundScript });
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebNavigation];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
 TEST(WKWebExtensionAPIScripting, ExecuteScriptWithFrameIds)
 {
     TestWebKitAPI::HTTPServer server({

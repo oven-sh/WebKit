@@ -60,7 +60,6 @@ struct DeprecatedCSSOMPrimitiveValueData {
         CSS::Color,
         CSS::ContentCounterFunction,
         CSS::ContentCountersFunction,
-        CSS::ContentLegacyAttrFunction,
         CSS::ClipRect
     > value;
 

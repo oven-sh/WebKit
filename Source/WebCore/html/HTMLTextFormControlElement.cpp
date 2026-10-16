@@ -28,6 +28,7 @@
 
 #include "AXObjectCache.h"
 #include "CaretRectComputation.h"
+#include "Chrome.h"
 #include "ChromeClient.h"
 #include "CommonAtomStrings.h"
 #include "ContainerNodeInlines.h"
@@ -690,6 +691,13 @@ void HTMLTextFormControlElement::readOnlyStateChanged()
 {
     HTMLFormControlElement::readOnlyStateChanged();
     updateInnerTextElementEditability();
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    if (Ref document = this->document(); this == document->focusedElement()) {
+        if (RefPtr page = document->page())
+            page->chrome().client().focusedElementDidChangeReadOnly(*this);
+    }
+#endif
 }
 
 bool HTMLTextFormControlElement::isInnerTextElementEditable() const
@@ -783,9 +791,9 @@ static Position positionForIndex(TextControlInnerTextElement* innerText, unsigne
                 return positionBeforeNode(*node);
             remainingCharactersToMoveForward--;
             lastBrOrText = node;
-        } else if (auto* text = dynamicDowncast<Text>(*node)) {
+        } else if (RefPtr text = dynamicDowncast<Text>(*node)) {
             if (remainingCharactersToMoveForward < text->length())
-                return Position(text, remainingCharactersToMoveForward);
+                return Position(WTF::move(text), remainingCharactersToMoveForward);
             remainingCharactersToMoveForward -= text->length();
             lastBrOrText = node;
         }
@@ -879,7 +887,7 @@ String HTMLTextFormControlElement::valueWithHardLineBreaks() const
     for (RefPtr<Node> node = innerText->firstChild(); node; node = NodeTraversal::next(*node, innerText.get())) {
         if (is<HTMLBRElement>(*node))
             result.append(newlineCharacter);
-        else if (auto* textNode = dynamicDowncast<Text>(*node)) {
+        else if (RefPtr textNode = dynamicDowncast<Text>(*node)) {
             String data = textNode->data();
             unsigned length = data.length();
             unsigned position = 0;
@@ -956,14 +964,14 @@ void HTMLTextFormControlElement::adjustInnerTextStyle(const Style::ComputedStyle
 
     if (auto innerText = innerTextElement()) {
         if (RefPtr properties = innerText->presentationalHintStyle()) {
-            if (auto value = properties->propertyAsValueID(CSSPropertyWebkitUserModify))
+            if (auto value = properties->propertyAsValueID(CSSPropertyID::WebkitUserModify))
                 textBlockStyle.setUserModify(fromCSSValueID<UserModify>(*value));
         }
     }
 
     // The used value of user-select needs adjusting here because the adjuster won't run
     // on this style later (because it was not produced by the cascade).
-    Style::Adjuster adjuster(document(), parentStyle, nullptr, nullptr);
+    Style::Adjuster adjuster(protect(document()), parentStyle, nullptr, nullptr);
     adjuster.adjustUsedUserSelect(textBlockStyle);
 
     if (parentStyle.fieldSizing() == FieldSizing::Content)

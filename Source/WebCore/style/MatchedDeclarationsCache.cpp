@@ -82,8 +82,8 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const Style::
     // style, which is not part of the cache key.
     if (pseudoElementType && isHighlightPseudoElement(*pseudoElementType))
         return false;
-    // content:attr() value depends on the element it is being applied to.
-    if (style.hasAttrContent() || (pseudoElementType && parentStyle.hasAttrContent()))
+    // attr() value depends on the element it is being applied to.
+    if (style.hasAttrContent())
         return false;
     if (style.zoom() != Style::ComputedStyle::initialZoom())
         return false;

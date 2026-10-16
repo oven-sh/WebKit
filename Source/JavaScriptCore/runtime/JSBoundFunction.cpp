@@ -189,7 +189,7 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
 #if USE(BUN_JSC_ADDITIONS)
 JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, JSObject* targetFunction, JSValue boundThis, ArgList args, double length, JSString* nameMayBeNull, const SourceCode& source)
 {
-    return create(vm, globalObject, targetFunction, boundThis, args, length, nameMayBeNull, source.provider()->sourceTaintedOrigin());
+    return create(vm, globalObject, targetFunction, boundThis, args, length, nameMayBeNull, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
 }
 
 JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, JSObject* targetFunction, JSValue boundThis, ArgList args, double length, JSString* nameMayBeNull, SourceTaintedOrigin taintedness)
@@ -197,7 +197,7 @@ JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, J
 #else
 JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, JSObject* targetFunction, JSValue boundThis, ArgList args, double length, JSString* nameMayBeNull, const SourceCode& source)
 {
-    SourceTaintedOrigin taintedness = source.provider()->sourceTaintedOrigin();
+    SourceTaintedOrigin taintedness = source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy);
 #endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -235,8 +235,8 @@ JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, J
 
 JSBoundFunction* JSBoundFunction::createRaw(VM& vm, JSGlobalObject* globalObject, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode& source)
 {
-    NativeExecutable* executable = vm.getBoundFunction(/* isJSFunction */ true, source.provider()->sourceTaintedOrigin());
-    JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, globalObject->boundFunctionStructure(), targetFunction, boundThis, boundArgsLength, arg0, arg1, arg2, nullptr, PNaN, source.provider()->sourceTaintedOrigin());
+    NativeExecutable* executable = vm.getBoundFunction(/* isJSFunction */ true, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
+    JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, globalObject->boundFunctionStructure(), targetFunction, boundThis, boundArgsLength, arg0, arg1, arg2, nullptr, PNaN, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
     function->finishCreation(vm);
     return function;
 }

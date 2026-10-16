@@ -481,7 +481,7 @@ class Tracker(GenericTracker):
 
             components = self.projects.get(project, {}).get('components', {}).keys()
             if not component and len(components) == 1:
-                component = components[0]
+                component = list(components)[0]
             if not component or component == '*':
                 component = ''
             if component and component not in components:
@@ -815,7 +815,7 @@ class Tracker(GenericTracker):
     ):
         if not reason:
             raise ValueError('Reason must be provided for a clone')
-        if (not self.client or not self.library) and member:
+        if not self.client or not self.library:
             sys.stderr.write('radarclient inaccessible on this machine\n')
             return None
 

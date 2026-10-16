@@ -431,7 +431,7 @@ static bool isInt32Type(const Type& type)
 // predictionOf() has nothing to say of one. It decides how the array keeps its elements from its birth, and nothing else.
 Type Lowering::arrayTypeAtBirth(ValueID id) const
 {
-    if (TypeID prediction = m_function.at(id).prediction; prediction && m_program.at(prediction).elements)
+    if (TypeID prediction = m_function.at(id).prediction(); prediction && m_program.at(prediction).elements)
         return m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull);
     return typeOf(id);
 }
@@ -983,7 +983,7 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
         orElse(m_out.notZero64(shared), slowPath);
         // Zero once arrays are no longer allocated with their original structures.
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-        LValue header = changing64(Instance::offsetOfNewCopyOnWriteArrayHeaders() + ((indexingType & IndexingShapeMask) - Int32Shape) / 2 * sizeof(uint64_t));
+        LValue header = changing64(Instance::offsetOfNewCopyOnWriteArrayHeader(indexingType));
         orElse(m_out.notZero64(header), slowPath);
         LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfArrayAllocator()), sizeof(JSArray), slowPath);
         applyEffects(array->as<PatchpointValue>(), { Writes::RuntimeState, false });

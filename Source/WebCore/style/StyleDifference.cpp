@@ -34,11 +34,16 @@
 namespace WebCore {
 namespace Style {
 
+static Visibility visibilityIncludingForceHidden(const ComputedStyle& style)
+{
+    return style.isForceHidden() ? Visibility::Hidden : style.visibility();
+}
+
 class DifferenceFunctions final {
 public:
     // MARK: DifferenceResult::Layout
 
-    static bool NODELETE positionChangeIsMovementOnly(const InsetBox& a, const InsetBox& b, const PreferredSize& width)
+    static bool LEGACY_NODELETE positionChangeIsMovementOnly(const InsetBox& a, const InsetBox& b, const PreferredSize& width)
     {
         // If any unit types are different, then we can't guarantee
         // that this was just a movement.
@@ -437,10 +442,10 @@ public:
                     return true;
 
                 // If our border widths change, then we need to layout. Other changes to borders only necessitate a repaint.
-                if (a.usedBorderLeftWidth() != b.usedBorderLeftWidth()
-                    || a.usedBorderTopWidth() != b.usedBorderTopWidth()
-                    || a.usedBorderBottomWidth() != b.usedBorderBottomWidth()
-                    || a.usedBorderRightWidth() != b.usedBorderRightWidth())
+                if (Style::effectiveBorderWidths(a).left() != Style::effectiveBorderWidths(b).left()
+                    || Style::effectiveBorderWidths(a).top() != Style::effectiveBorderWidths(b).top()
+                    || Style::effectiveBorderWidths(a).bottom() != Style::effectiveBorderWidths(b).bottom()
+                    || Style::effectiveBorderWidths(a).right() != Style::effectiveBorderWidths(b).right())
                     return true;
 
                 if (a.position() != PositionType::Static) {
@@ -535,7 +540,7 @@ public:
             || a.nonInheritedFlags().overflowY != b.nonInheritedFlags().overflowY)
             return true;
 
-        if ((a.usedVisibility() == Visibility::Collapse) != (b.usedVisibility() == Visibility::Collapse))
+        if ((visibilityIncludingForceHidden(a) == Visibility::Collapse) != (visibilityIncludingForceHidden(b) == Visibility::Collapse))
             return true;
 
         bool aHasFirstLineStyle = a.hasPseudoStyle(PseudoElementType::FirstLine);
@@ -659,31 +664,38 @@ public:
 
     // MARK: DifferenceResult::Repaint
 
-    static bool NODELETE requiresPainting(const Style::ComputedStyle& style)
+    static bool LEGACY_NODELETE requiresPainting(const Style::ComputedStyle& style)
     {
-        if (style.usedVisibility() == Visibility::Hidden)
+        if (visibilityIncludingForceHidden(style) == Visibility::Hidden)
             return false;
         if (style.opacity().isTransparent())
             return false;
         return true;
     }
 
-    static bool isEquivalentForPainting(const BackgroundData& a, const BackgroundData& b, bool currentColorDiffers)
+    static bool backgroundIsEquivalentForPainting(const Style::ComputedStyle& a, const Style::ComputedStyle& b, bool currentColorDiffers)
     {
+        SUPPRESS_UNCOUNTED_LOCAL auto& backgroundA = *a.nonInheritedData().backgroundData;
+        SUPPRESS_UNCOUNTED_LOCAL const auto& backgroundB = *b.nonInheritedData().backgroundData;
+
+        Color usedBackgroundColorA = a.usedBackgroundColor();
+        Color usedBackgroundColorB = b.usedBackgroundColor();
+
         if (&a == &b) {
             ASSERT(currentColorDiffers);
-            return !a.containsCurrentColor();
+            return !usedBackgroundColorA.containsCurrentColor();
         }
 
-        if (a.background != b.background || a.backgroundColor != b.backgroundColor)
+        if (backgroundA.background != backgroundB.background || usedBackgroundColorA != usedBackgroundColorB)
             return false;
-        if (currentColorDiffers && a.backgroundColor.containsCurrentColor())
+        if (currentColorDiffers && (backgroundA.backgroundContainsCurrentColor() || usedBackgroundColorA.containsCurrentColor()))
             return false;
-        if (!a.outline.isVisible() && !b.outline.isVisible())
+
+        if (!backgroundA.outline.isVisible() && !backgroundB.outline.isVisible())
             return true;
-        if (currentColorDiffers && a.outline.outlineColor.containsCurrentColor())
+        if (currentColorDiffers && backgroundA.outline.outlineColor.containsCurrentColor())
             return false;
-        return a.outline == b.outline;
+        return backgroundA.outline == backgroundB.outline;
     }
 
     static bool isEquivalentForPainting(const BorderData& a, const BorderData& b, bool currentColorDiffers)
@@ -832,7 +844,7 @@ public:
 
                         if (valueA != valueB && (!valueA || !valueB || *valueA != *valueB))
                             return true;
-                    } else if (auto propertyID = cssPropertyID(name)) {
+                    } else if (auto propertyID = cssPropertyID(name); propertyID != CSSPropertyID::Invalid) {
                         auto valueA = extractor.propertyValueInStyle(a, propertyID, pool);
                         auto valueB = extractor.propertyValueInStyle(b, propertyID, pool);
 
@@ -858,7 +870,7 @@ public:
         if (!requiresPainting(a) && !requiresPainting(b))
             return false;
 
-        if (a.usedVisibility() != b.usedVisibility()
+        if (visibilityIncludingForceHidden(a) != visibilityIncludingForceHidden(b)
             || a.inheritedFlags().printColorAdjust != b.inheritedFlags().printColorAdjust
             || a.inheritedFlags().insideLink != b.inheritedFlags().insideLink)
             return true;
@@ -866,7 +878,7 @@ public:
 
         if (currentColorDiffers || &a.nonInheritedData() != &b.nonInheritedData()) {
             if (currentColorDiffers || a.nonInheritedData().backgroundData.ptr() != b.nonInheritedData().backgroundData.ptr()) {
-                SUPPRESS_UNCOUNTED_ARG if (!isEquivalentForPainting(*a.nonInheritedData().backgroundData, *b.nonInheritedData().backgroundData, currentColorDiffers))
+                SUPPRESS_UNCOUNTED_ARG if (!backgroundIsEquivalentForPainting(a, b, currentColorDiffers))
                     return true;
             }
 

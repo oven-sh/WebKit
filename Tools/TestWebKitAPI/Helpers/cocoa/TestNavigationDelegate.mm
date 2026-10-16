@@ -100,6 +100,12 @@
         didFinishNavigation(webView, navigation);
 }
 
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error
+{
+    if (auto didFailNavigation = makeBlockPtr(_didFailNavigation))
+        didFailNavigation(webView, navigation, error);
+}
+
 - (void)_webView:(WKWebView *)webView didFinishLoadWithRequest:(NSURLRequest *)request inFrame:(WKFrameInfo *)frame
 {
     if (_didFinishLoadWithRequestInFrame)

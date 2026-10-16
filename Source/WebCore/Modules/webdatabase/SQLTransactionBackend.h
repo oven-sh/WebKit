@@ -60,7 +60,7 @@ private:
     void doCleanup();
 
     // State Machine functions:
-    StateFunction NODELETE stateFunctionFor(SQLTransactionState) override;
+    StateFunction LEGACY_NODELETE stateFunctionFor(SQLTransactionState) override;
     void computeNextStateAndCleanupIfNeeded();
 
     // State functions:
@@ -70,7 +70,7 @@ private:
     void cleanupAndTerminate();
     void cleanupAfterTransactionErrorCallback();
 
-    NO_RETURN_DUE_TO_ASSERT void NODELETE unreachableState();
+    NO_RETURN_DUE_TO_ASSERT void LEGACY_NODELETE unreachableState();
 
     Ref<SQLTransaction> frontend() { return m_frontend.get().releaseNonNull(); }
 
@@ -78,3 +78,8 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SQLTransactionBackend)
+    // SQLTransactionBackend derives from SQLTransactionStateMachine<SQLTransactionBackend> (CRTP).
+    static bool isType(const WebCore::SQLTransactionStateMachine<WebCore::SQLTransactionBackend>&) { return true; }
+SPECIALIZE_TYPE_TRAITS_END()

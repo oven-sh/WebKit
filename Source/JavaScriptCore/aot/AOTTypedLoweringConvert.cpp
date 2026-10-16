@@ -77,6 +77,7 @@ static std::array<int64_t, 3> markersIn(Rep rep)
     case Rep::OptionalDouble:
         return { static_cast<int64_t>(undefinedDouble), static_cast<int64_t>(nullDouble), static_cast<int64_t>(absentDouble) };
     case Rep::JSValue:
+    case Rep::LiteralString:
         return { JSValue::encode(jsUndefined()), JSValue::encode(jsNull()), JSValue::encode(JSValue()) };
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -250,11 +251,63 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
     return result ? *result : fromBits(integer(0), to);
 }
 
+LiteralStringWord Lowering::literalStringConstant(StringID string)
+{
+    if (auto number = m_program.literalStringIndex(string))
+        return LiteralStringWord(m_out.constInt64(literalStringWord(*number)));
+    return LiteralStringWord(stringConstant(string).value());
+}
+
+Boxed Lowering::boxLiteralString(LiteralStringWord word)
+{
+    if (word.value()->hasInt64()) {
+        uint64_t bits = word.value()->asInt64();
+        if (isLiteralStringWord(bits))
+            return box(stringConstant(m_program.literalStrings[literalStringIndex(static_cast<uint32_t>(bits))]));
+        return Boxed(word.value());
+    }
+    if (auto found = m_unboxedLiteralStrings.find(word.value()); found != m_unboxedLiteralStrings.end())
+        return Boxed(found->value);
+    Boxed boxed(callAllocationStub(Stub::LiteralStringToString, { { word.value(), stubTemporaryGPRs[2] } }, { Writes::Pure, false }, false));
+    m_boxedLiteralStrings.add(boxed.value(), word.value());
+    return boxed;
+}
+
+LiteralStringWord Lowering::literalStringOf(Operand operand, const Type& type)
+{
+    RELEASE_ASSERT(operand.rep == Rep::Cell || operand.rep == Rep::JSValue);
+    if (auto found = m_boxedLiteralStrings.find(operand.value); found != m_boxedLiteralStrings.end())
+        return LiteralStringWord(found->value);
+    if (!(type.primitives & (Primitive::String | Primitive::LiteralString)))
+        return LiteralStringWord(operand.value);
+    Boxed boxed = operand.rep == Rep::Cell ? box(operand.as<CellPointer>()) : remade(operand.as<Boxed>());
+    LiteralStringWord word(callAllocationStub(Stub::ToLiteralString, { { boxed.value(), stubTemporaryGPRs[2] } }, { Writes::Pure, false }, false));
+    m_unboxedLiteralStrings.add(word.value(), boxed.value());
+    return word;
+}
+
+Operand Lowering::convertLiteralString(Operand operand, const Type& type, Rep to)
+{
+    if (to == Rep::LiteralString) {
+        if (operand.rep != Rep::Cell && operand.rep != Rep::JSValue)
+            return failWith("a conversion of what is no string to a string"_s);
+        return literalStringOf(operand, type);
+    }
+    Boxed boxed = boxLiteralString(operand.as<LiteralStringWord>());
+    if (to == Rep::JSValue)
+        return boxed;
+    if (to == Rep::Cell)
+        return asCell(boxed);
+    return failWith("a conversion of a string to what is none"_s);
+}
+
 // The operand is of the type, in a representation that has room for every value of the type, as has the one asked for. So nothing is tested.
 Operand Lowering::convert(Operand operand, const Type& type, Rep to)
 {
     Rep from = operand.rep;
     RELEASE_ASSERT(from != Rep::Void && to != Rep::Void);
+    if (from != to && (from == Rep::LiteralString || to == Rep::LiteralString))
+        return convertLiteralString(operand, type, to);
     if (from == to)
         return operand;
     if (to == Rep::JSValue) {
@@ -295,7 +348,15 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
             Word32 low = low32(value);
             if (type.primitives & Primitive::Int && type.integers.isWithin(Range::int32()))
                 return boxInt32(low);
-            return select(equal(signExtended(low), value), boxInt32(low), box(toNumber(value)));
+            bool isNeverNegative = type.primitives & Primitive::Int && type.integers.least >= 0;
+            Word32 isInt32 = isNeverNegative ? belowOrEqual(value, integer(INT32_MAX)) : equal(signExtended(low), value);
+            if (m_isInLoop)
+                return select(isInt32, boxInt32(low), box(toNumber(value)));
+            return either<Boxed>(isInt32, [&] {
+                return boxInt32(low);
+            }, [&] {
+                return box(toNumber(value));
+            });
         }
         break;
     }

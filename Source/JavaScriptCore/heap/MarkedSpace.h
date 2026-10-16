@@ -68,8 +68,12 @@ public:
     // We have an extra size class for size zero.
     static constexpr size_t numSizeClasses = largeCutoff / sizeStep + 1;
     
-    static constexpr HeapVersion nullVersion = 0; // The version of freshly allocated blocks.
-    static constexpr HeapVersion initialVersion = 2; // The version that the heap starts out with. Set to make sure that nextVersion(nullVersion) != initialVersion.
+    // Versions identify which collection a block's bits belong to. A heap's versions are
+    // never nullVersion or nextVersion(nullVersion): they start at initialVersion and
+    // wrap back to it. So a block at nullVersion (new, or reset at a wrap) can never look
+    // current, or look one version behind, by accident.
+    static constexpr HeapVersion nullVersion = 0;
+    static constexpr HeapVersion initialVersion = 2;
     
     static HeapVersion nextVersion(HeapVersion version)
     {
@@ -79,7 +83,7 @@ public:
         return version;
     }
     
-    static size_t sizeClassToIndex(size_t size)
+    static constexpr size_t sizeClassToIndex(size_t size)
     {
         return (size + sizeStep - 1) / sizeStep;
     }
@@ -134,7 +138,7 @@ public:
 
     void didAddBlock(MarkedBlock::Handle*);
     void didConsumeFreeList(MarkedBlock::Handle*);
-    void NODELETE didAllocateInBlock(MarkedBlock::Handle*);
+    void LEGACY_NODELETE didAllocateInBlock(MarkedBlock::Handle*);
 
     // FIXME: rdar://139998916
     MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
@@ -148,7 +152,7 @@ public:
     void assertNoUnswept();
     size_t objectCount();
     size_t size();
-    size_t NODELETE capacity();
+    size_t LEGACY_NODELETE capacity();
 
     HeapVersion markingVersion() const { return m_markingVersion; }
     HeapVersion newlyAllocatedVersion() const { return m_newlyAllocatedVersion; }
@@ -198,7 +202,7 @@ private:
 
     template<typename Functor> inline void forEachDirectory(NOESCAPE const Functor&);
     
-    void NODELETE addActiveWeakSet(WeakSet*);
+    void LEGACY_NODELETE addActiveWeakSet(WeakSet*);
 
     Vector<Subspace*> m_subspaces;
 

@@ -62,34 +62,6 @@ WebCore::FloatRect TargetedElementInfo::boundsInWebView() const
     return pageClient->rootViewToWebView(boundsInRootView());
 }
 
-void TargetedElementInfo::childFrames(CompletionHandler<void(Vector<Ref<FrameTreeNode>>&&)>&& completion) const
-{
-    RefPtr page = m_page.get();
-    if (!page)
-        return completion({ });
-
-    auto aggregateData = Box<Vector<FrameTreeNodeData>>::create();
-    auto aggregator = CallbackAggregator::create([page, aggregateData, completion = WTF::move(completion)]() mutable {
-        completion(WTF::map(WTF::move(*aggregateData), [&](auto&& data) {
-            return FrameTreeNode::create(WTF::move(data), *page);
-        }));
-    });
-
-    for (auto identifier : m_info.childFrameIdentifiers) {
-        RefPtr frame = WebFrameProxy::webFrame(identifier);
-        if (!frame)
-            continue;
-
-        if (frame->page() != page)
-            continue;
-
-        frame->getFrameTree([aggregator, aggregateData](auto&& data) {
-            if (data)
-                aggregateData->append(WTF::move(*data));
-        });
-    }
-}
-
 void TargetedElementInfo::takeSnapshot(CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&& completion)
 {
     RefPtr page = m_page.get();

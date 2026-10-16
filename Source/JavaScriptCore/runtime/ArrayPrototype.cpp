@@ -237,7 +237,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     return fastArrayJoin(globalObject, thisObject, separator, length, sawHoles, genericCase);
 }
 
-inline bool NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
+inline bool LEGACY_NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
 {
     JSGlobalObject* globalObject = thisObject->realmMayBeNull();
     if (!globalObject)
@@ -1006,7 +1006,7 @@ static ALWAYS_INLINE std::span<EncodedJSValue> sortStableSort(JSGlobalObject* gl
     ASSERT(callData.type != CallData::Type::None);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(comparator), 2);
+        CachedCall cachedCall(globalObject, comparator, 2);
         RETURN_IF_EXCEPTION(scope, compacted);
         RELEASE_AND_RETURN(scope, (arrayStableSort<MergeStrategy::Galloping>(vm, compacted, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);

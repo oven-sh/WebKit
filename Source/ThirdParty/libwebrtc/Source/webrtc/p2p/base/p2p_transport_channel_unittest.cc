@@ -104,7 +104,6 @@ namespace {
 using ::testing::_;
 using ::testing::Assign;
 using ::testing::Contains;
-using ::testing::DoAll;
 using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::MockFunction;
@@ -250,7 +249,10 @@ class ResolverFactoryFixture : public MockAsyncDnsResolverFactory {
 
   void SetAddressToReturn(SocketAddress address_to_return) {
     EXPECT_CALL(mock_async_dns_resolver_result_, GetResolvedAddress(_, _))
-        .WillOnce(DoAll(SetArgPointee<1>(address_to_return), Return(true)));
+        .WillOnce([address_to_return](int /*family*/, SocketAddress* addr) {
+          *addr = address_to_return;
+          return true;
+        });
   }
   void DelayResolution() {
     // This function must be called before Create().
@@ -4738,6 +4740,47 @@ TEST_F(P2PTransportChannelPingTest, TestAddRemoteCandidateWithAddressReuse) {
   EXPECT_GT(conn2->LastPingReceived(), Timestamp::Zero());
 }
 
+// A remote candidate that reuses the address of the current selected
+// connection but belongs to a newer generation (ICE restart) must not
+// replace it. The selected connection is kept so that it can keep sending
+// data during the restart; the newer-generation candidate only takes over
+// once a connection for it is created elsewhere (e.g. on a new generation
+// port) and becomes writable.
+TEST_F(P2PTransportChannelPingTest,
+       TestSameAddressCandidateDoesNotReplaceSelectedConnection) {
+  FakePortAllocator pa(env_, ss());
+  P2PTransportChannel ch(env_, "same address reuse selected", 1, &pa);
+  PrepareChannel(&ch);
+  ch.SetIceRole(ICEROLE_CONTROLLED);
+  ch.MaybeStartGathering();
+  const std::string host_address = "1.1.1.1";
+  const int port_num = 1;
+
+  // kIceUfrag[1] is the current generation ufrag.
+  Candidate candidate = CreateUdpCandidate(
+      IceCandidateType::kHost, host_address, port_num, 1, kIceUfrag[1]);
+  ch.AddRemoteCandidate(candidate);
+  Connection* conn1 = WaitForConnectionTo(&ch, host_address, port_num);
+  ASSERT_THAT(conn1, NotNull());
+  EXPECT_EQ(conn1->remote_candidate().generation(), 0u);
+
+  // Make conn1 writable so that it becomes the selected connection.
+  conn1->ReceivedPingResponse(kLowRtt, "id");
+  EXPECT_THAT(
+      ShortWait().Until([&] { return ch.selected_connection(); }, Eq(conn1)),
+      IsRtcOk());
+
+  // A candidate with a newer generation ufrag reuses the same address.
+  candidate.set_username(kIceUfrag[2]);
+  ch.AddRemoteCandidate(candidate);
+
+  // The selected connection must survive: no replacement and no switch.
+  ASSERT_EQ(conn1, GetConnectionTo(&ch, host_address, port_num));
+  EXPECT_TRUE(conn1->selected());
+  EXPECT_TRUE(conn1->writable());
+  EXPECT_EQ(conn1, ch.selected_connection());
+}
+
 // When the current selected connection is strong, lower-priority connections
 // will be pruned. Otherwise, lower-priority connections are kept.
 TEST_F(P2PTransportChannelPingTest, TestDontPruneWhenWeak) {
@@ -5936,7 +5979,6 @@ TEST_F(P2PTransportChannelTest,
   // ignoring the completion callback.
   auto mock_mdns_responder = std::make_unique<MockMdnsResponder>();
   EXPECT_CALL(*mock_mdns_responder, CreateNameForAddress(_, _))
-      .Times(1)
       .WillOnce(Return());
   GetEndpoint(0)->network_manager().set_mdns_responder(
       std::move(mock_mdns_responder));

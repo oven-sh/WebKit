@@ -147,7 +147,10 @@ public:
         }
         numbers.frameLayout = LayoutID(program.layouts.size());
         numbers.frameType = types.intern(Type::view(numbers.frameLayout));
-        numbers.resumeModeType = types.intern(Type::integer({ resumeModeNormal, isGenerator ? resumeModeReturn : resumeModeThrow | CoroutineFrame::isEnteredByJobLoop }));
+        int64_t maxResumeMode = isGenerator ? resumeModeReturn : resumeModeThrow;
+        if (std::as_const(program).at(ramp).has(Format::FunctionIsAsync))
+            maxResumeMode |= CoroutineFrame::isEnteredByJobLoop;
+        numbers.resumeModeType = types.intern(Type::integer({ resumeModeNormal, maxResumeMode }));
         numbers.driverType = isGenerator ? types.object : types.intern(Type::engineClass(Builtins::singleton().promiseClass()));
         program.layouts.append(Layout { });
         return numbers;
@@ -169,6 +172,185 @@ public:
                     value.immediates[0] = names[value.immediates[0] - firstProvisionalName].index();
             }
         }
+    }
+
+    static void removeUnusedParameters(const Program& program, Function& function)
+    {
+        Vector<unsigned> uses;
+        for (;;) {
+            uses.fill(0, function.values.size());
+            auto use = [&](ValueID id) {
+                ++uses[id.index()];
+            };
+            for (auto& block : function.blocks) {
+                for (ValueID id : block.values)
+                    std::as_const(function.at(id)).forEachChild(use);
+                if (block.terminator.value)
+                    use(block.terminator.value);
+                for (auto& target : block.terminator.targets) {
+                    auto& parameters = function.at(target.block).parameters;
+                    for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                        if (target.arguments[i] != parameters[i])
+                            use(target.arguments[i]);
+                    }
+                }
+            }
+            BitVector isRemoved;
+            for (unsigned b = 1; b < function.blocks.size(); ++b) {
+                for (ValueID parameter : function.blocks[b].parameters) {
+                    if (!uses[parameter.index()])
+                        isRemoved.set(parameter.index());
+                }
+            }
+            if (isRemoved.isEmpty())
+                return;
+            for (auto& block : function.blocks) {
+                for (auto& target : block.terminator.targets) {
+                    auto& parameters = function.at(target.block).parameters;
+                    Arguments kept;
+                    for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                        if (!isRemoved.get(parameters[i].index()))
+                            kept.append(target.arguments[i]);
+                    }
+                    if (kept.size() != target.arguments.size())
+                        target.arguments = WTF::move(kept);
+                }
+            }
+            for (unsigned b = 1; b < function.blocks.size(); ++b) {
+                auto& block = function.blocks[b];
+                if (!block.parameters.removeAllMatching([&](ValueID parameter) { return isRemoved.get(parameter.index()); }))
+                    continue;
+                for (unsigned i = 0; i < block.parameters.size(); ++i)
+                    function.at(block.parameters[i]).immediates = { b, i };
+            }
+            for (size_t parameter : isRemoved) {
+                Value nothing;
+                nothing.position = function.values[parameter].position;
+                nothing.inlineFrame = function.values[parameter].inlineFrame;
+                nothing.type = program.types.undefined;
+                nothing.rep = repOf(program.at(nothing.type));
+                function.values[parameter] = WTF::move(nothing);
+            }
+        }
+    }
+
+    static void recordCellsLiveAcrossAwaits(const Program& program, Function& function)
+    {
+        std::optional<StringID> name = program.find(asBytes("AwaitBySavingFrame"_s.span8()));
+        auto savesFrame = [&](const Value& value) {
+            if (value.opcode == Opcode::Operation)
+                return name && value.string() == *name;
+            if (value.opcode != Opcode::CallBuiltin)
+                return false;
+            auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+            return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::AwaitBySavingFrame;
+        };
+        struct Site {
+            unsigned block;
+            unsigned index;
+        };
+        Vector<Site, 8> sites;
+        BitVector isAskedAbout(function.blocks.size());
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto& block = function.blocks[b];
+            bool awaits = false;
+            for (unsigned i = 0; i < block.values.size(); ++i) {
+                if (!savesFrame(function.at(block.values[i])))
+                    continue;
+                sites.append({ b, i });
+                awaits = true;
+            }
+            if (!awaits)
+                continue;
+            for (auto& target : block.terminator.targets)
+                isAskedAbout.set(target.block.index());
+        }
+        if (sites.isEmpty())
+            return;
+        if (!program.hasAllocationAssertions)
+            removeUnusedParameters(program, function);
+        auto liveAtHead = liveAtHeadsOf(function, isAskedAbout);
+        BitVector isSeen(function.values.size());
+        for (auto [b, index] : sites) {
+            auto& block = function.blocks[b];
+            ValueID await = block.values[index];
+            Arguments kept = function.at(await).arguments;
+            kept.shrink(2);
+            isSeen.clearAll();
+            isSeen.set(kept[1].index());
+            for (unsigned i = index; i < block.values.size(); ++i)
+                isSeen.set(block.values[i].index());
+            auto keep = [&](ValueID live) {
+                if (!live || isSeen.set(live.index()) || !program.at(function.at(live).type).hasCells() || isMadeAnewWhereverAsked(program, function.at(live)))
+                    return;
+                kept.append(live);
+            };
+            for (unsigned i = index + 1; i < block.values.size(); ++i)
+                std::as_const(function.at(block.values[i])).forEachChild(keep);
+            keep(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    keep(argument);
+                for (uint32_t live : liveAtHead[target.block.index()])
+                    keep(ValueID(live));
+            }
+            function.at(await).arguments = WTF::move(kept);
+        }
+    }
+
+    static BitVector objectsLiveAcrossSuspensions(const Function& function)
+    {
+        struct Site {
+            unsigned block;
+            unsigned index;
+        };
+        Vector<Site, 8> sites;
+        BitVector isAskedAbout(function.blocks.size());
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto& block = function.blocks[b];
+            bool suspends = false;
+            for (unsigned i = 0; i < block.values.size(); ++i) {
+                Opcode opcode = function.at(block.values[i]).opcode;
+                if (opcode != Opcode::Await && opcode != Opcode::Yield)
+                    continue;
+                sites.append({ b, i });
+                suspends = true;
+            }
+            if (!suspends)
+                continue;
+            for (auto& target : block.terminator.targets)
+                isAskedAbout.set(target.block.index());
+        }
+        BitVector isLiveAcross(function.values.size());
+        if (sites.isEmpty())
+            return isLiveAcross;
+        auto liveAtHead = liveAtHeadsOf(function, isAskedAbout);
+        BitVector isMadeBehind(function.values.size());
+        for (auto [b, index] : sites) {
+            auto& block = function.blocks[b];
+            isMadeBehind.clearAll();
+            for (unsigned i = index; i < block.values.size(); ++i)
+                isMadeBehind.set(block.values[i].index());
+            auto note = [&](ValueID live) {
+                if (!live || isMadeBehind.get(live.index()))
+                    return;
+                while (function.at(live).opcode == Opcode::Cast)
+                    live = function.at(live).child(0);
+                Opcode opcode = function.at(live).opcode;
+                if (opcode == Opcode::NewObjectWithShape || opcode == Opcode::NewObject || opcode == Opcode::NewArray)
+                    isLiveAcross.set(live.index());
+            };
+            for (unsigned i = index + 1; i < block.values.size(); ++i)
+                function.at(block.values[i]).forEachChild(note);
+            note(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    note(argument);
+                for (uint32_t live : liveAtHead[target.block.index()])
+                    note(ValueID(live));
+            }
+        }
+        return isLiveAcross;
     }
 
     CoroutineSplitter(Program& program, Numbers& numbers, std::array<unsigned, 2> numberOfRegisters)
@@ -210,6 +392,45 @@ public:
         buildRamp();
     }
 
+    void splitAgain(Function&& body)
+    {
+        m_isGenerator = true;
+        m_isAsync = body.has(Format::FunctionIsAsync);
+        m_startsEagerly = body.has(Format::FunctionStartsEagerly);
+        m_position = body.position;
+        m_frameLayout = m_numbers.frameLayout;
+        m_frameType = m_numbers.frameType;
+        m_resumeModeType = m_numbers.resumeModeType;
+        m_driverType = m_numbers.driverType;
+        m_resultTypeOfResumeFunction = m_program.types.anything;
+        m_resume = m_numbers.resume;
+        auto& fields = m_program.at(m_frameLayout).fields;
+        Vector<TypeID> typesOfArguments;
+        for (unsigned i = 0; i < body.blocks[0].parameters.size(); ++i)
+            typesOfArguments.append(fields[CoroutineFrame::firstArgumentField + i].type);
+        fields.shrink(CoroutineFrame::firstArgumentField);
+        auto& split = m_program.at(m_resume);
+        split.blocks.clear();
+        split.values.clear();
+        split.suspensionPositions.clear();
+        m_body = WTF::move(split);
+        m_body.blocks = WTF::move(body.blocks);
+        m_body.values = WTF::move(body.values);
+        m_body.inlineFrames = WTF::move(body.inlineFrames);
+        m_body.allocations = WTF::move(body.allocations);
+        m_body.allocationNotes = WTF::move(body.allocationNotes);
+        m_body.allocationNoteIndices = WTF::move(body.allocationNoteIndices);
+        m_body.storesWereMovedByCleanUp = body.storesWereMovedByCleanUp;
+        createDispatchBlock();
+        RELEASE_ASSERT(m_argumentTypes == typesOfArguments);
+        replaceResumeModeReads();
+        splitAtSuspensionPoints();
+        rewriteReturns();
+        spillAndReload();
+        finishDispatchBlock();
+        m_program.at(m_resume) = WTF::move(m_body);
+    }
+
 private:
     struct SuspensionPoint {
         BlockID suspendBlock;
@@ -223,6 +444,7 @@ private:
         bool isReachableInResumeFunction { true };
         // What is kept in the frame across it, each with its field.
         Vector<std::pair<ValueID, uint32_t>> spilled { };
+        ValueID registration { };
     };
 
     static constexpr uint32_t firstProvisionalName = 0xc0000000;
@@ -406,6 +628,7 @@ private:
         m_body.parameterTypes.append(m_resumeModeType);
         m_body.parameterTypes.append(m_program.types.anything);
         m_body.resultType = m_resultTypeOfResumeFunction;
+        m_body.capturesExceptions = m_isGenerator && m_isAsync;
         m_body.blocks = std::exchange(ramp.blocks, { });
         m_body.values = std::exchange(ramp.values, { });
         ramp.flags &= ~(Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionStartsEagerly);
@@ -429,8 +652,8 @@ private:
         m_resumeMode = addParameter(m_body, BlockID(0u), m_resumeModeType);
         m_resumeValue = addParameter(m_body, BlockID(0u), m_program.types.anything);
 
-        Vector<ValueID> arguments = std::exchange(m_body.at(m_start).parameters, { });
-        for (ValueID argument : arguments) {
+        m_arguments = Vector<ValueID>(std::exchange(m_body.at(m_start).parameters, { }).span());
+        for (ValueID argument : m_arguments) {
             m_argumentTypes.append(m_body.at(argument).type);
             uint32_t field = addFrameField("argument"_s, m_argumentTypes.last(), fieldIsImmutable);
             Value load = getField(m_frame, field);
@@ -438,7 +661,7 @@ private:
             load.takePredictionOf(m_body.at(argument));
             m_body.at(argument) = WTF::move(load);
         }
-        m_body.at(m_start).values.insertVector(0, arguments);
+        m_body.at(m_start).values.insertVector(0, m_arguments);
     }
 
     static bool isMadeAnewWhereverAsked(const Program& program, const Value& value)
@@ -549,10 +772,9 @@ private:
         }
         function.parameterTypes.append(m_driverType);
         ValueID promise = addParameter(function, entry, m_driverType);
-        for (ValueID argument : Vector<ValueID>(function.at(first).parameters))
+        for (ValueID argument : CompactList<ValueID>(function.at(first).parameters))
             function.at(argument).immediates[0] = first.index();
 
-        Vector<std::pair<BlockID, ValueID>> awaits;
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             size_t index = function.blocks[b].values.findIf([&](ValueID id) {
                 return function.at(id).opcode == Opcode::Await;
@@ -563,14 +785,15 @@ private:
             ValueID suspension = function.at(block).values[index];
             Value original = function.at(suspension);
             m_position = original.position;
-            bool isHeld = original.assertedType || !m_program.at(original.type).isAnything();
+            bool isHeld = original.assertedType() || !m_program.at(original.type).isAnything();
             Value awaited = operation("AwaitBySavingFrame"_s, m_program.types.anything, { original.child(0), promise });
             ValueID comesBack = suspension;
             if (isHeld) {
                 comesBack = addValue(function, WTF::move(awaited));
                 Value held = cast(comesBack, original.type, CastReason::Claim);
+                held.immediates[1] |= Value::castHoldsWhatAwaitYields;
                 held.position = m_position;
-                held.assertedType = original.assertedType;
+                held.setAssertedType(original.assertedType());
                 held.takePredictionOf(original);
                 function.at(suspension) = WTF::move(held);
             } else {
@@ -602,7 +825,6 @@ private:
                 from.terminator.kind = TerminatorKind::Jump;
                 from.terminator.targets.append(Target { behind, { } });
             }
-            awaits.append({ block, comesBack });
         }
 
         m_position = function.position;
@@ -617,36 +839,28 @@ private:
             function.at(block).terminator.value = append(function, block, undefined());
         }
 
-        BitVector isAskedAbout(function.blocks.size());
-        for (auto& [block, comesBack] : awaits) {
-            for (auto& target : function.at(block).terminator.targets)
-                isAskedAbout.set(target.block.index());
-        }
-        auto liveAtHead = liveAtHeadsOf(function, isAskedAbout);
-        BitVector isHanded(function.values.size());
-        for (auto& [block, comesBack] : awaits) {
-            isHanded.clearAll();
-            isHanded.set(promise.index());
-            isHanded.set(comesBack.index());
-            auto hand = [&](ValueID live) {
-                if (isHanded.set(live.index()) || !m_program.at(function.at(live).type).hasCells() || isMadeAnewWhereverAsked(m_program, function.at(live)))
-                    return;
-                function.at(comesBack).arguments.append(live);
-            };
-            for (auto& target : function.at(block).terminator.targets) {
-                for (ValueID argument : target.arguments)
-                    hand(argument);
-                for (uint32_t live : liveAtHead[target.block.index()])
-                    hand(ValueID(live));
-            }
-        }
-
         m_program.at(m_numbers.resume) = WTF::move(function);
         buildRamp();
     }
 
     void replaceResumeModeReads()
     {
+        if (m_isGenerator && m_isAsync) {
+            for (auto& block : m_body.blocks) {
+                for (size_t i = 0; i < block.values.size(); ++i) {
+                    ValueID read = block.values[i];
+                    if (m_body.at(read).opcode != Opcode::GetResumeMode)
+                        continue;
+                    ValueID mask = addValue(m_body, integer(resumeModeThrow | resumeModeReturn, m_resumeModeType));
+                    block.values.insert(i++, mask);
+                    Value withoutFlags = typed(Opcode::BitAnd, m_resumeModeType);
+                    withoutFlags.children[0] = m_resumeMode;
+                    withoutFlags.children[1] = mask;
+                    m_body.at(read) = WTF::move(withoutFlags);
+                }
+            }
+            return;
+        }
         auto replace = [&](ValueID& child) {
             if (m_body.at(child).opcode == Opcode::GetResumeMode)
                 child = m_resumeMode;
@@ -732,7 +946,7 @@ private:
         // The value becomes a parameter of the continuation: what the coroutine is resumed with, or what it goes on with in place. Nothing
         // vouches for either, so it is held to the type of the value.
         Value original = m_body.at(suspension);
-        bool isHeld = original.assertedType || !m_program.at(type).isAnything();
+        bool isHeld = original.assertedType() || !m_program.at(type).isAnything();
         Value parameter = typed(Opcode::Parameter, type);
         parameter.immediates = { continuation.index(), 0 };
         parameter.position = m_position;
@@ -741,7 +955,7 @@ private:
         m_body.at(continuation).parameters.append(suspension);
         BlockID mergeBlock;
         auto goOnWith = [&](BlockID from, ValueID yielded) {
-            if (isHeld && !isYield && !m_isGenerator && from != mergeBlock) {
+            if (isHeld && !isYield && from != mergeBlock) {
                 bool isFirst = !mergeBlock;
                 if (isFirst)
                     mergeBlock = addBlock(m_body);
@@ -756,7 +970,7 @@ private:
                 Value held = cast(yielded, type, CastReason::Claim);
                 if (!isYield)
                     held.immediates[1] |= Value::castHoldsWhatAwaitYields;
-                held.assertedType = original.assertedType;
+                held.setAssertedType(original.assertedType());
                 held.takePredictionOf(original);
                 yielded = append(m_body, from, WTF::move(held));
             }
@@ -788,7 +1002,7 @@ private:
                 m_body.at(throwBlock).terminator.targets.append(*handler);
 
             ValueID throwMode = append(m_body, resumeBlock, integer(resumeModeThrow, m_resumeModeType));
-            if (m_isGenerator) {
+            if (m_isGenerator && !m_isAsync) {
                 Value isThrow = typed(Opcode::StrictEq, m_program.types.boolean);
                 isThrow.children[0] = m_resumeMode;
                 isThrow.children[1] = throwMode;
@@ -805,7 +1019,7 @@ private:
             }
         }
 
-        if (!isYield && !m_isGenerator && !m_awaitsOfFirstActivationAlone.get(suspension.index())) {
+        if (!isYield && !m_awaitsOfFirstActivationAlone.get(suspension.index())) {
             BlockID inPlaceBlock = addBlock(m_body);
             BlockID parkBlock = addBlock(m_body);
             m_inPlaceBlocks.set(inPlaceBlock.index());
@@ -822,7 +1036,7 @@ private:
         if (!isYield || m_yieldsThatAwait.get(suspension.index())) {
             // What goes wrong with what is awaited is not thrown here: the function is resumed with it.
             ValueID closure = append(m_body, suspendBlock, getField(m_frame, m_isGenerator ? CoroutineFrame::promiseField : CoroutineFrame::resumeClosureField));
-            append(m_body, suspendBlock, operation(isYield ? "AsyncGeneratorYield"_s : m_isGenerator ? "Await"_s : "SuspendAsyncFunction"_s, m_program.types.undefined, { closure, operand }));
+            m_suspensionPoints.last().registration = append(m_body, suspendBlock, operation(isYield ? "AsyncGeneratorYield"_s : m_isGenerator ? "Await"_s : "SuspendAsyncFunction"_s, m_program.types.undefined, { closure, operand }));
             returned = append(m_body, suspendBlock, undefined());
         }
         m_body.at(suspendBlock).terminator.kind = TerminatorKind::Return;
@@ -860,7 +1074,7 @@ private:
             }
             Value read = getField(m_frame, CoroutineFrame::promiseField);
             if (isReachedByFirstActivation.get(b))
-                read.prediction = m_driverType;
+                read.setPrediction(m_driverType);
             ValueID promise = append(m_body, block, WTF::move(read));
             append(m_body, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
             m_body.at(block).terminator.value = append(m_body, block, undefined());
@@ -1060,6 +1274,8 @@ private:
         UncheckedKeyHashMap<uint32_t, Vector<Use>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> uses;
         for (auto& entry : definitions)
             uses.add(entry.key, Vector<Use>());
+        for (ValueID argument : m_arguments)
+            uses.add(argument.index(), Vector<Use>());
         auto note = [&](ValueID used, Use use) {
             if (!used)
                 return;
@@ -1083,6 +1299,20 @@ private:
             auto& usesOfVariable = uses.find(entry.key)->value;
             placeReloads(ValueID(entry.key), definingBlock[entry.key], field == spillFields.end() ? std::nullopt : std::optional<uint32_t>(field->value), entry.value, usesOfVariable);
             repairSSA(ValueID(entry.key), definingBlock[entry.key], entry.value, usesOfVariable);
+        }
+        if (m_hasStartFunction || !m_predecessors[m_start.index()].isEmpty())
+            return;
+        for (unsigned i = 0; i < m_arguments.size(); ++i) {
+            if (!m_program.at(m_argumentTypes[i]).hasCells())
+                continue;
+            BitVector hasRead(m_body.blocks.size());
+            for (auto& use : uses.find(m_arguments[i].index())->value) {
+                if (use.block != m_start)
+                    hasRead.set(use.block.index());
+            }
+            ReloadPlan plan;
+            planClears(plan, m_start, hasRead, true);
+            clearField(plan, CoroutineFrame::firstArgumentField + i, m_argumentTypes[i]);
         }
     }
 
@@ -1208,6 +1438,79 @@ private:
         return user.opcode == Opcode::PutField && user.child(0) == m_frame && user.field() == *field;
     }
 
+    void planClears(ReloadPlan& plan, BlockID definingBlock, const BitVector& hasRead, bool holdsFromBirth)
+    {
+        unsigned numberOfBlocks = m_body.blocks.size();
+        Vector<BlockID> worklist;
+        BitVector isLiveAtHead(numberOfBlocks);
+        for (unsigned b : hasRead)
+            worklist.append(BlockID(b));
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            if (block == definingBlock || !block.index() || isLiveAtHead.set(block.index()))
+                continue;
+            worklist.appendVector(m_predecessors[block.index()]);
+            if (BlockID suspendBlock = m_suspendBlockOf[block.index()])
+                worklist.append(suspendBlock);
+        }
+        auto clearWhereDead = [&](BlockID block) {
+            for (unsigned steps = 0; steps < numberOfBlocks; ++steps) {
+                if (isLiveAtHead.get(block.index()) || !m_reachesSuspension.get(block.index()) || (holdsFromBirth && block == definingBlock))
+                    return;
+                auto& terminator = m_body.at(block).terminator;
+                if (terminator.kind != TerminatorKind::Jump || m_resumeBlockOf[block.index()] || block == definingBlock || (!holdsFromBirth && terminator.targets[0].block == definingBlock))
+                    break;
+                block = terminator.targets[0].block;
+            }
+            plan.clearsAtHead.set(block.index());
+        };
+        auto leave = [&](BlockID block) {
+            if (BlockID resumeBlock = m_resumeBlockOf[block.index()]) {
+                if (!isLiveAtHead.get(resumeBlock.index()))
+                    plan.clearsAtTail.set(block.index());
+            }
+            for (auto& target : m_body.at(block).terminator.targets)
+                clearWhereDead(target.block);
+        };
+        BitVector holdsAtHead(numberOfBlocks);
+        auto enter = [&](BlockID block) {
+            if (isLiveAtHead.get(block.index()) && !holdsAtHead.set(block.index()))
+                worklist.append(block);
+        };
+        for (auto& point : m_suspensionPoints) {
+            if (point.isReachable)
+                enter(point.resumeBlock);
+        }
+        if (holdsFromBirth && definingBlock) {
+            leave(definingBlock);
+            for (auto& target : m_body.at(definingBlock).terminator.targets)
+                enter(target.block);
+        }
+        while (!worklist.isEmpty()) {
+            for (auto& target : m_body.at(worklist.takeLast()).terminator.targets)
+                enter(target.block);
+        }
+        for (unsigned b : holdsAtHead)
+            leave(BlockID(b));
+    }
+
+    void clearField(const ReloadPlan& plan, uint32_t field, TypeID type)
+    {
+        auto clearAt = [&](unsigned b, size_t index) {
+            auto& values = m_body.blocks[b].values;
+            ValueID nothing = addValue(m_body, typed(Opcode::Unspecified, type));
+            values.insert(index, nothing);
+            values.insert(index + 1, addValue(m_body, putField(m_frame, field, nothing)));
+        };
+        for (unsigned b : plan.clearsAtHead)
+            clearAt(b, !m_body.blocks[b].values.isEmpty() && m_body.at(m_body.blocks[b].values[0]).opcode == Opcode::CatchValue ? 1 : 0);
+        for (unsigned b : plan.clearsAtTail) {
+            auto& values = m_body.blocks[b].values;
+            ValueID registration = m_registrationOf[b];
+            clearAt(b, registration ? values.find(registration) : values.size());
+        }
+    }
+
     ReloadPlan planReloads(BlockID definingBlock, std::optional<uint32_t> field, const Vector<Use>& uses, bool livesInField, bool holdsCells)
     {
         unsigned numberOfBlocks = m_body.blocks.size();
@@ -1225,6 +1528,7 @@ private:
         }
 
         BitVector hasUse(numberOfBlocks);
+        BitVector hasRead(numberOfBlocks);
         for (unsigned i = 0; i < uses.size(); ++i) {
             auto& use = uses[i];
             if (use.block == definingBlock)
@@ -1235,9 +1539,12 @@ private:
                     continue;
                 }
                 ++plan.numberOfSpillsKept;
-            }
+            } else
+                hasRead.set(use.block.index());
             hasUse.set(use.block.index());
         }
+        if (field && holdsCells)
+            planClears(plan, definingBlock, hasRead, livesInField);
 
         BitVector& isLiveAtHead = plan.isLiveAtHead;
         isLiveAtHead.ensureSize(numberOfBlocks);
@@ -1277,44 +1584,6 @@ private:
             }
             plan.reloadBlocks = WTF::move(isMissingAtHead);
             plan.reloadBlocks.filter(hasUse);
-            if (!definingBlock || !holdsCells)
-                return plan;
-
-            BitVector isFieldLiveAtHead(numberOfBlocks);
-            for (unsigned b : hasUse)
-                worklist.append(BlockID(b));
-            while (!worklist.isEmpty()) {
-                BlockID block = worklist.takeLast();
-                if (block == definingBlock || !block.index() || isFieldLiveAtHead.set(block.index()))
-                    continue;
-                worklist.appendVector(m_predecessors[block.index()]);
-                if (BlockID suspendBlock = m_suspendBlockOf[block.index()])
-                    worklist.append(suspendBlock);
-            }
-            auto clearWhereDead = [&](BlockID block) {
-                for (unsigned steps = 0; steps < numberOfBlocks; ++steps) {
-                    if (block == definingBlock || isFieldLiveAtHead.get(block.index()) || !m_reachesSuspension.get(block.index()))
-                        return;
-                    auto& terminator = m_body.at(block).terminator;
-                    if (terminator.kind != TerminatorKind::Jump || m_resumeBlockOf[block.index()])
-                        break;
-                    block = terminator.targets[0].block;
-                }
-                plan.clearsAtHead.set(block.index());
-            };
-            auto leave = [&](BlockID block) {
-                if (BlockID resumeBlock = m_resumeBlockOf[block.index()]) {
-                    if (!isFieldLiveAtHead.get(resumeBlock.index()))
-                        plan.clearsAtTail.set(block.index());
-                }
-                for (auto& target : m_body.at(block).terminator.targets)
-                    clearWhereDead(target.block);
-            };
-            leave(definingBlock);
-            for (unsigned b : isFieldLiveAtHead) {
-                if (isReachedWithoutSuspension.get(b))
-                    leave(BlockID(b));
-            }
             return plan;
         }
 
@@ -1366,7 +1635,8 @@ private:
             auto& block = m_body.blocks[b];
             if (block.terminator.kind == TerminatorKind::Throw || block.terminator.kind == TerminatorKind::Unreachable || (!block.values.isEmpty() && m_body.at(block.values[0]).opcode == Opcode::CatchValue))
                 isRare.set(b);
-            if (block.terminator.kind == TerminatorKind::Switch && block.terminator.value == m_resumeMode) {
+            bool switchesOnResumeMode = block.terminator.kind == TerminatorKind::Switch && (block.terminator.value == m_resumeMode || (m_body.at(block.terminator.value).opcode == Opcode::BitAnd && m_body.at(block.terminator.value).child(0) == m_resumeMode));
+            if (switchesOnResumeMode) {
                 for (unsigned i = 0; i < block.terminator.cases.size(); ++i)
                     isRare.set(block.terminator.targets[i].block.index());
             }
@@ -1408,6 +1678,9 @@ private:
         m_livesInField.clearAll();
         m_resumeBlockOf = resumeBlocksBySuspendBlock();
         m_suspendBlockOf.fill(BlockID(), m_body.blocks.size());
+        m_registrationOf.fill(ValueID(), m_body.blocks.size());
+        for (auto& point : m_suspensionPoints)
+            m_registrationOf[point.suspendBlock.index()] = point.registration;
         m_reachesSuspension.clearAll();
         Vector<BlockID> reaching;
         for (unsigned b = 0; b < m_resumeBlockOf.size(); ++b) {
@@ -1479,6 +1752,7 @@ private:
             unsigned before = asBefore.numberOfSpillsKept + asBefore.reloadBlocks.bitCount();
             if (before < 3)
                 continue;
+            before += asBefore.clearsAtHead.bitCount() + asBefore.clearsAtTail.bitCount();
             ReloadPlan kept = planReloads(defining, field, usesOfVariable, true, holdsCells);
             unsigned inField = !!defining + kept.reloadBlocks.bitCount() + kept.clearsAtHead.bitCount() + kept.clearsAtTail.bitCount();
             if (holdsCells && defining) {
@@ -1491,7 +1765,9 @@ private:
                 unsigned parks = 0;
                 for (unsigned k : pointsCrossedBy.find(index)->value)
                     parks += !isRare.get(m_suspensionPoints[k].suspendBlock.index());
-                unsigned paid = (isRare.get(defining.index()) ? 0 : instructionsOfStoreAtBirth) + numberNotRare(kept.clearsAtHead) + numberNotRare(kept.clearsAtTail);
+                unsigned clearsEitherWay = numberNotRare(asBefore.clearsAtHead) + numberNotRare(asBefore.clearsAtTail);
+                unsigned clears = numberNotRare(kept.clearsAtHead) + numberNotRare(kept.clearsAtTail);
+                unsigned paid = (isRare.get(defining.index()) ? 0 : instructionsOfStoreAtBirth) + (clears > clearsEitherWay ? clears - clearsEitherWay : 0);
                 if (parks * instructionsSavedAtPark <= paid) {
                     for (unsigned k : pointsCrossedBy.find(index)->value)
                         --crossing[k][bankOf(variable)];
@@ -1540,15 +1816,6 @@ private:
         }
         uses.shrink(kept);
 
-        auto clearAt = [&](unsigned b, size_t index) {
-            auto& values = m_body.blocks[b].values;
-            ValueID nothing = addValue(m_body, typed(Opcode::Unspecified, m_body.at(variable).type));
-            values.insert(index, nothing);
-            values.insert(index + 1, addValue(m_body, putField(m_frame, *field, nothing)));
-        };
-        for (unsigned b : plan.clearsAtHead)
-            clearAt(b, !m_body.blocks[b].values.isEmpty() && m_body.at(m_body.blocks[b].values[0]).opcode == Opcode::CatchValue ? 1 : 0);
-
         for (unsigned b : plan.reloadBlocks) {
             RELEASE_ASSERT(plan.isLiveAtHead.get(b));
             ValueID reload;
@@ -1569,8 +1836,8 @@ private:
             values.insert(index, reload);
             definitions.atTail.add(b, reload);
         }
-        for (unsigned b : plan.clearsAtTail)
-            clearAt(b, m_body.blocks[b].values.size());
+        if (field)
+            clearField(plan, *field, m_body.at(variable).type);
     }
 
     void finishDispatchBlock()
@@ -1614,7 +1881,7 @@ private:
         }
         function.parameterTypes.append(m_driverType);
         ValueID promise = addParameter(function, entry, m_driverType);
-        Vector<ValueID> arguments = function.at(first).parameters;
+        auto arguments = function.at(first).parameters;
         for (ValueID argument : arguments)
             function.at(argument).immediates[0] = first.index();
 
@@ -1761,7 +2028,9 @@ private:
         // Resumption from an await finds the driver here.
         if (m_isAsync)
             append(ramp, entry, putField(frame, CoroutineFrame::promiseField, generator));
-        if (m_startsEagerly) {
+        if (m_startsEagerly && m_isAsync)
+            append(ramp, entry, operation("StartAsyncGenerator"_s, m_program.types.undefined, { generator }));
+        else if (m_startsEagerly) {
             // What it throws, the call throws.
             ValueID mode = append(ramp, entry, integer(resumeModeNormal, m_resumeModeType));
             ValueID resumeValue = append(ramp, entry, undefined());
@@ -1784,6 +2053,7 @@ private:
     TypeID m_resultTypeOfResumeFunction;
     // Of what the entry block of the original takes: the captures, `this`, the parameters.
     Vector<TypeID> m_argumentTypes;
+    Vector<ValueID> m_arguments;
     uint32_t m_position { 0 };
     BlockID m_start;
     ValueID m_frame;
@@ -1802,12 +2072,24 @@ private:
     BitVector m_reachesSuspension;
     Vector<BlockID> m_resumeBlockOf;
     Vector<BlockID> m_suspendBlockOf;
+    Vector<ValueID> m_registrationOf;
     std::array<unsigned, 2> m_numberOfRegisters;
 };
 
 } // anonymous namespace
 
-void splitCoroutines(Program& program)
+void recordCellsLiveAcrossAwaits(const Program& program, Function& function)
+{
+    if (function.savesItsFrame)
+        CoroutineSplitter::recordCellsLiveAcrossAwaits(program, function);
+}
+
+BitVector objectsLiveAcrossSuspensions(const Function& function)
+{
+    return CoroutineSplitter::objectsLiveAcrossSuspensions(function);
+}
+
+Vector<std::pair<FunctionID, Function>> splitCoroutines(Program& program)
 {
     B3::Procedure procedure(/* usesSIMD = */ false);
     pinRegisters(procedure);
@@ -1831,8 +2113,18 @@ void splitCoroutines(Program& program)
         numberOfFunctionsBehind += savesItsFrame ? 1 : numberOfFunctionsMadeOf[i];
     }
     program.functions.grow(numberOfFunctionsBehind);
+    Vector<std::pair<FunctionID, Function>> generators;
+    Vector<unsigned> indexAmongGenerators(coroutines.size(), [&](size_t k) {
+        auto& function = std::as_const(program).at(coroutines[k].ramp);
+        if (!function.has(Format::FunctionIsGenerator) || program.standsForBuiltin(function) || program.isOfFileOfBuiltinFunctions(function))
+            return UINT_MAX;
+        generators.append({ coroutines[k].ramp, Function() });
+        return static_cast<unsigned>(generators.size() - 1);
+    });
     forEachIndexInParallel(coroutines.size(), [&](unsigned k) {
         removeTrivialParameters(program, program.at(coroutines[k].ramp));
+        if (indexAmongGenerators[k] != UINT_MAX)
+            generators[indexAmongGenerators[k]].second = std::as_const(program).at(coroutines[k].ramp);
         CoroutineSplitter(program, coroutines[k], numberOfRegisters).run();
     });
     Vector<Vector<StringID, 16>> names(coroutines.size());
@@ -1840,7 +2132,7 @@ void splitCoroutines(Program& program)
     for (unsigned k = 0; k < coroutines.size(); ++k) {
         for (ASCIILiteral name : coroutines[k].namesByFirstUse) {
             names[k].append(internedLiterals.ensure(name.characters(), [&] {
-                return program.intern(name.span8());
+                return program.intern(asBytes(name.span8()));
             }).iterator->value);
         }
     }
@@ -1857,6 +2149,54 @@ void splitCoroutines(Program& program)
                 continue;
             value.type = made;
             value.rep = repOf(program.at(made));
+        }
+    });
+    return generators;
+}
+
+void splitOptimizedGenerators(Program& program, Vector<std::pair<FunctionID, Function>>&& generators)
+{
+    B3::Procedure procedure(/* usesSIMD = */ false);
+    pinRegisters(procedure);
+    std::array<unsigned, 2> numberOfRegisters { static_cast<unsigned>(procedure.code().regsInPriorityOrder(B3::GP).size()), static_cast<unsigned>(procedure.code().regsInPriorityOrder(B3::FP).size()) };
+    Vector<CoroutineSplitter::Numbers> coroutines(generators.size());
+    forEachIndexInParallel(generators.size(), [&](unsigned k) {
+        auto& numbers = coroutines[k];
+        numbers.ramp = generators[k].first;
+        numbers.resume = std::as_const(program).at(numbers.ramp).resumeFunction;
+        auto& split = std::as_const(program).at(numbers.resume);
+        numbers.frameType = split.captureTypes[0];
+        numbers.frameLayout = program.at(numbers.frameType).onlyView();
+        numbers.resumeModeType = split.parameterTypes[0];
+        numbers.driverType = std::as_const(program).at(numbers.frameLayout).fields[CoroutineFrame::promiseField].type;
+        CoroutineSplitter(program, numbers, numberOfRegisters).splitAgain(WTF::move(generators[k].second));
+    });
+    Vector<Vector<StringID, 16>> names(coroutines.size());
+    UncheckedKeyHashMap<const char*, StringID> internedLiterals;
+    for (unsigned k = 0; k < coroutines.size(); ++k) {
+        for (ASCIILiteral name : coroutines[k].namesByFirstUse) {
+            names[k].append(internedLiterals.ensure(name.characters(), [&] {
+                return program.intern(asBytes(name.span8()));
+            }).iterator->value);
+        }
+    }
+    forEachIndexInParallel(coroutines.size(), [&](unsigned k) {
+        auto& numbers = coroutines[k];
+        CoroutineSplitter::replaceProvisionalNames(program, numbers, names[k].span());
+        auto& layout = program.at(numbers.frameLayout);
+        layout.indexFields();
+        for (FunctionID id : { numbers.ramp, std::as_const(program).at(numbers.ramp).rampForClosures }) {
+            if (!id)
+                continue;
+            auto& function = program.at(id);
+            for (auto& value : function.values) {
+                if (value.opcode != Opcode::NewObjectWithShape || value.layout() != numbers.frameLayout)
+                    continue;
+                Allocation allocation;
+                allocation.layout = numbers.frameLayout;
+                setBornFields(layout, allocation);
+                function.allocations[value.allocation()] = WTF::move(allocation);
+            }
         }
     });
 }

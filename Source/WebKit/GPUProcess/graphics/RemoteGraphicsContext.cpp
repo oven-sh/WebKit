@@ -407,8 +407,8 @@ void RemoteGraphicsContext::drawGlyphs(RenderingResourceIdentifier fontIdentifie
 {
     RefPtr font = resourceCache().cachedFont(fontIdentifier);
     MESSAGE_CHECK(font);
-    Vector<GlyphBufferGlyph, 128> glyphs { glyphsAdvances.span<0>() };
-    Vector<GlyphBufferAdvance, 128> advances { glyphsAdvances.span<1>() };
+    const Vector<GlyphBufferGlyph, 128> glyphs { glyphsAdvances.span<0>() };
+    const Vector<GlyphBufferAdvance, 128> advances { glyphsAdvances.span<1>() };
     context().drawGlyphsImmediate(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
 }
 
@@ -434,17 +434,23 @@ void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIde
     context().drawNativeImage(*image, destRect, srcRect, options);
 }
 
+#if USE(SYSTEM_PREVIEW)
+void RemoteGraphicsContext::drawBadgeSystemImage(std::optional<RenderingResourceIdentifier> imageIdentifier, const FloatRect& destinationRect)
+{
+    RefPtr<NativeImage> nativeImage;
+
+    if (imageIdentifier) {
+        nativeImage = resourceCache().cachedNativeImage(*imageIdentifier);
+        MESSAGE_CHECK(nativeImage);
+    }
+
+    Ref badge = ARKitBadgeSystemImage::create(WTF::move(nativeImage));
+    drawSystemImage(WTF::move(badge), destinationRect);
+}
+#endif
+
 void RemoteGraphicsContext::drawSystemImage(Ref<SystemImage>&& systemImage, const FloatRect& destinationRect)
 {
-#if USE(SYSTEM_PREVIEW)
-    if (auto* badge = dynamicDowncast<ARKitBadgeSystemImage>(systemImage.get())) {
-        if (auto imageIdentifier = badge->imageIdentifier()) {
-            RefPtr nativeImage = resourceCache().cachedNativeImage(*imageIdentifier);
-            MESSAGE_CHECK(nativeImage);
-            badge->setImage(BitmapImage::create(nativeImage.releaseNonNull()));
-        }
-    }
-#endif
     context().drawSystemImage(systemImage, destinationRect);
 }
 

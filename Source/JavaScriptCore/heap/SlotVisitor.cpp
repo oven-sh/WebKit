@@ -29,14 +29,17 @@
 #include "AOTImage.h"
 #include "AOTTypedCompactTable.h"
 #include "AOTTypedData.h"
+#include "AOTTypedObject.h"
 #include "CellContainerInlines.h"
 #include "Collector.h"
 #include "ConservativeRoots.h"
 #include "GCSegmentedArrayInlines.h"
+#include "GetterSetter.h"
 #include "HeapAnalyzer.h"
 #include "HeapCellInlines.h"
 #include "IntegrityInlines.h"
 #include "JSArray.h"
+#include "JSCellButterfly.h"
 #include "JSCellInlines.h"
 #include "JSMap.h"
 #include "JSSet.h"
@@ -102,25 +105,28 @@ SlotVisitor::~SlotVisitor()
     clearMarkStacks();
 }
 
-void SlotVisitor::didStartMarking(CollectionScope scope, HeapVersion markingVersion, HeapAnalyzer* analyzer)
+void SlotVisitor::didStartMarking(CollectionScope scope, HeapVersion markingVersion, bool isAnalyzingHeap)
 {
-    switch (scope) {
-    case CollectionScope::Eden:
-        reset();
-        break;
-    case CollectionScope::Full:
-        m_extraMemorySize = 0;
-        break;
-    }
-    // After the reset above, which clears the analyzer.
-    Base::didStartMarking(scope, analyzer);
+    // The previous collection's End reset this visitor.
+    ASSERT(!m_bytesMarkedHeap);
+    ASSERT(!m_bytesMarkedInHeap);
+    ASSERT(!m_flushedBytesMarked);
+    ASSERT(!m_extraMemoryHeap);
+    ASSERT(!m_extraMemoryInHeap.hasOverflowed() && !m_extraMemoryInHeap);
+    ASSERT(!m_currentCell);
+    Base::didStartMarking(scope, isAnalyzingHeap);
     m_markingVersion = markingVersion;
 }
 
 void SlotVisitor::reset()
 {
     Base::reset();
-    m_bytesVisited = 0;
+    // These counts should have been flushed to each heap by now.
+    RELEASE_ASSERT(!m_bytesMarkedInHeap);
+    RELEASE_ASSERT(!m_extraMemoryInHeap.hasOverflowed() && !m_extraMemoryInHeap);
+    m_bytesMarkedHeap = nullptr;
+    m_flushedBytesMarked = 0;
+    m_extraMemoryHeap = nullptr;
     RELEASE_ASSERT(!m_currentCell);
 }
 
@@ -147,6 +153,7 @@ void SlotVisitor::appendJSCellOrAuxiliary(HeapCell* heapCell)
         return;
     
     ASSERT(!m_isCheckingForDefaultMarkViolation);
+    ASSERT(m_collector.hasHeap(*heapCell->heap()));
     
     auto validateCell = [&] (JSCell* jsCell) {
         StructureID structureID = jsCell->structureID();
@@ -209,7 +216,7 @@ void SlotVisitor::appendJSCellOrAuxiliary(HeapCell* heapCell)
     
         JSCell* jsCell = static_cast<JSCell*>(heapCell);
         validateCell(jsCell);
-        Integrity::auditCell(m_collector.heap().vm(), jsCell);
+        Integrity::auditCell(jsCell->vm(), jsCell);
         
         jsCell->setCellState(CellState::PossiblyGrey);
 
@@ -225,8 +232,12 @@ void SlotVisitor::appendJSCellOrAuxiliary(HeapCell* heapCell)
 
 void SlotVisitor::appendSlow(JSCell* cell, Dependency dependency)
 {
-    if (m_heapAnalyzer) [[unlikely]]
-        m_heapAnalyzer->analyzeEdge(m_currentCell, cell, rootMarkReason());
+    if (m_isAnalyzingHeap) [[unlikely]] {
+        // FIXME: A cross-heap edge appears in neither VM's snapshot: it goes to the target cell's VM's snapshot,
+        // which has no node for the source and drops it.
+        if (HeapAnalyzer* analyzer = cell->vm().activeHeapAnalyzer())
+            analyzer->analyzeEdge(m_currentCell, cell, rootMarkReason());
+    }
 
     appendHiddenSlowImpl(cell, dependency);
 }
@@ -289,7 +300,7 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
     container.noteMarked();
     
     m_visitCount++;
-    m_bytesVisited += container.cellSize();
+    noteBytesMarked(container.vm().heap, container.cellSize());
 
     m_collectorStack.append(cell);
 }
@@ -298,7 +309,7 @@ void SlotVisitor::markAuxiliary(const void* base)
 {
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
     
-    ASSERT(cell->heap() == &m_collector.heap());
+    ASSERT(m_collector.hasHeap(*cell->heap()));
     
     if (Heap::testAndSetMarked(m_markingVersion, cell))
         return;
@@ -316,22 +327,40 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     
     CellContainer container = cell->cellContainer();
     
-    container.assertValidCell(m_collector.heap().vm(), cell);
+    container.assertValidCell(cell->vm(), cell);
     container.noteMarked();
     
     m_visitCount++;
 
     size_t cellSize = container.cellSize();
-    m_bytesVisited += cellSize;
+    noteBytesMarked(container.vm().heap, cellSize);
     m_nonCellVisitCount += cellSize;
+}
+
+ALWAYS_INLINE void SlotVisitor::noteBytesMarked(JSC::Heap& heap, size_t bytes)
+{
+    if (&heap != m_bytesMarkedHeap) [[unlikely]] {
+        flushBytesMarked();
+        m_bytesMarkedHeap = &heap;
+    }
+    m_bytesMarkedInHeap += bytes;
+}
+
+NEVER_INLINE void SlotVisitor::flushBytesMarked()
+{
+    if (!m_bytesMarkedInHeap)
+        return;
+    m_bytesMarkedHeap->reportBytesMarked(m_bytesMarkedInHeap);
+    m_flushedBytesMarked += m_bytesMarkedInHeap;
+    m_bytesMarkedInHeap = 0;
 }
 
 #if ENABLE(AOT)
 bool SlotVisitor::markLeafCell(JSCell* cell)
 {
-    ASSERT(cell->heap() == &m_collector.heap());
+    ASSERT(m_collector.hasHeap(*cell->heap()));
 
-    if (m_heapAnalyzer) [[unlikely]] {
+    if (m_isAnalyzingHeap) [[unlikely]] {
         appendUnbarriered(cell);
         return false;
     }
@@ -345,14 +374,18 @@ bool SlotVisitor::markLeafCell(JSCell* cell)
     container.noteMarked();
 
     m_visitCount++;
-    m_bytesVisited += container.cellSize();
+    noteBytesMarked(container.vm().heap, container.cellSize());
     return true;
 }
 
-void SlotVisitor::reportExtraMemoryVisitedOfLeafCell(size_t size)
+void SlotVisitor::reportExtraMemoryVisitedOfLeafCell(JSC::Heap& heap, size_t size)
 {
+    if (&heap != m_extraMemoryHeap) [[unlikely]] {
+        flushExtraMemoryVisited();
+        m_extraMemoryHeap = &heap;
+    }
     m_nonCellVisitCount += size;
-    m_extraMemorySize += size;
+    m_extraMemoryInHeap += size;
 }
 #endif
 
@@ -433,9 +466,11 @@ ALWAYS_INLINE void SlotVisitor::visitChildrenOfBlackCell(const JSCell* cell)
         break;
     }
 
-    if (m_heapAnalyzer) [[unlikely]] {
-        if (m_isFirstVisit)
-            m_heapAnalyzer->analyzeNode(const_cast<JSCell*>(cell));
+    if (m_isAnalyzingHeap) [[unlikely]] {
+        if (m_isFirstVisit) {
+            if (HeapAnalyzer* analyzer = cell->vm().activeHeapAnalyzer())
+                analyzer->analyzeNode(const_cast<JSCell*>(cell));
+        }
     }
 }
 
@@ -444,8 +479,203 @@ class CompiledLayoutVisitor {
     static NEVER_INLINE void appendOutOfLine(SlotVisitor& visitor, JSCell* cell) { visitor.appendUnbarriered(cell); }
     static NEVER_INLINE void appendHiddenOutOfLine(SlotVisitor& visitor, JSCell* cell) { visitor.appendHiddenUnbarriered(cell); }
     static NEVER_INLINE void visitThroughMethodTable(SlotVisitor& visitor, Structure* structure, const JSCell* cell) { structure->classInfoForCells()->methodTable.visitChildren(const_cast<JSCell*>(cell), visitor); }
-    static NEVER_INLINE void visitOutOfLine(SlotVisitor& visitor, const JSCell* cell) { visitor.visitChildrenOfBlackCell(cell); }
+    static NEVER_INLINE void visitOutOfLine(SlotVisitor& visitor, const JSCell* cell)
+    {
+        switch (cell->type()) {
+        case SlimClosureType:
+        case StructureType:
+        case GetterSetterType:
+        case JSCellButterflyType:
+            return visitBesideLoop(visitor, cell);
+        default:
+            return visitor.visitChildrenOfBlackCell(cell);
+        }
+    }
     static NEVER_INLINE void expand(MarkStackArray& stack) { stack.expand(); }
+
+    // What drain() appends with, for a visit beside the loop. The loop has stored the top of the collector's stack ahead of the call and loads it again behind it.
+    class Appender {
+    public:
+        ALWAYS_INLINE Appender(SlotVisitor& visitor)
+            : m_visitor(visitor)
+            , m_stack(visitor.m_collectorStack)
+            , m_markingVersion(visitor.m_markingVersion)
+            , m_markingStamp(Structure::markingStampFor(visitor.m_markingVersion))
+        {
+            loadTop();
+        }
+
+        ALWAYS_INLINE ~Appender() { storeTop(); }
+
+        uint8_t markingStamp() const { return m_markingStamp; }
+
+        // The cell is in a MarkedBlock.
+        ALWAYS_INLINE void appendCell(JSCell* cell)
+        {
+            using Word = uint64_t;
+            MarkedBlock& block = cell->markedBlock();
+            HeapVersion version = block.markingVersion();
+            uintptr_t dependency = 0;
+#if CPU(ARM64)
+            __asm__ volatile("eor %w[dependency], %w[version], %w[version]" : [dependency] "=r"(dependency), [version] "+r"(version));
+#else
+            WTF::loadLoadFence();
+#endif
+            if (version != m_markingVersion) [[unlikely]] {
+                storeTop();
+                appendOutOfLine(m_visitor, cell);
+                loadTop();
+                return;
+            }
+            uintptr_t atom = std::bit_cast<uintptr_t>(cell) / MarkedBlock::atomSize;
+            auto* word = std::bit_cast<Atomic<Word>*>(std::bit_cast<uintptr_t>(block.marks().storage().data() + atom / 64 % (MarkedBlock::atomsPerBlock / 64)) + dependency);
+            if (word->loadRelaxed() >> (atom % 64) & 1)
+                return;
+            Word mask = static_cast<Word>(1) << (atom % 64);
+            if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
+                return;
+            cell->setCellState(CellState::PossiblyGrey);
+            block.noteMarked();
+            ++m_visitor.m_visitCount;
+            m_visitor.m_bytesMarkedInHeap += block.cellSize();
+            if (m_nextSlot == m_endOfSlots) [[unlikely]] {
+                storeTop();
+                expand(m_stack);
+                loadTop();
+            }
+            *m_nextSlot++ = cell;
+        }
+
+        // A hole reads as no cell at all.
+        ALWAYS_INLINE void appendValue(JSValue value)
+        {
+            if ((std::rotr(static_cast<uint64_t>(JSValue::encode(value)), 3) - 1) >> 45)
+                return;
+            if (value.asCell()->isPreciseAllocation()) [[unlikely]] {
+                storeTop();
+                appendHiddenOutOfLine(m_visitor, value.asCell());
+                loadTop();
+            } else
+                appendCell(value.asCell());
+        }
+
+        // Of a cell whose Structure is not one of objects with extra properties.
+        ALWAYS_INLINE void appendStructure(Structure* structure)
+        {
+            uint8_t& stampAndFlags = structure->markingStampAndFlags();
+            if (stampAndFlags != m_markingStamp) [[unlikely]] {
+                appendCell(structure);
+                stampAndFlags = (stampAndFlags & ~Structure::markingStampMask) | m_markingStamp;
+            }
+        }
+
+    private:
+        ALWAYS_INLINE void storeTop()
+        {
+            m_stack.m_top = m_nextSlot - m_firstSlot;
+#if ASSERT_ENABLED
+            m_stack.m_segments.head()->m_top = m_nextSlot - m_firstSlot;
+#endif
+        }
+
+        ALWAYS_INLINE void loadTop()
+        {
+            m_firstSlot = m_stack.m_segments.head()->data();
+            m_nextSlot = m_firstSlot + m_stack.m_top;
+            m_endOfSlots = m_firstSlot + MarkStackArray::s_segmentCapacity;
+        }
+
+        SlotVisitor& m_visitor;
+        MarkStackArray& m_stack;
+        const JSCell** m_firstSlot;
+        const JSCell** m_nextSlot;
+        const JSCell** m_endOfSlots;
+        const HeapVersion m_markingVersion;
+        const uint8_t m_markingStamp;
+    };
+
+    static NEVER_INLINE void visitBesideLoop(SlotVisitor& visitor, const JSCell* cell)
+    {
+        if (!tryVisitBesideLoop(visitor, cell)) [[unlikely]]
+            visitor.visitChildrenOfBlackCell(cell);
+    }
+
+    // False: nothing has been done: the cell is for SlotVisitor::visitChildrenOfBlackCell().
+    static ALWAYS_INLINE bool tryVisitBesideLoop(SlotVisitor& visitor, const JSCell* cell)
+    {
+        using namespace AOT::Typed;
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(cell);
+        switch (cell->type()) {
+        case SlimClosureType: {
+            static_assert(SlimClosure::offsetOfCaptures() == sizeof(SlimClosure));
+            StructureID structureID = cell->structureID();
+            if (structureID.isNuked())
+                return false;
+            WTF::loadLoadFence();
+            Structure* structure = structureID.decode();
+            if (structure->typeInfo().type() != SlimClosureType)
+                return false;
+            uint64_t word = *reinterpret_cast<const uint64_t*>(bytes + SlimClosure::offsetOfWord());
+            WTF::loadLoadFence();
+            if (cell->structureID() != structureID)
+                return false;
+            Appender appender(visitor);
+            appender.appendStructure(structure);
+            if (!word)
+                return true;
+            AOT::Image* image = AOT::Image::withCode();
+            const Data* data = image->at<Data>(image->header().typedDataOffset);
+            const EncodedJSValue* capture = reinterpret_cast<const EncodedJSValue*>(bytes + SlimClosure::offsetOfCaptures());
+            for (const EncodedJSValue* end = capture + data->at<std::array<uint8_t, 2>>(data->closureCountsOffset)[AOT::ClosureWord::functionOf(word)][0]; capture != end; ++capture)
+                appender.appendValue(JSValue::decode(*capture));
+            return true;
+        }
+        case StructureType: {
+            auto* structure = static_cast<Structure*>(const_cast<JSCell*>(cell));
+            if (structure->variant() != Structure::StructureVariant::Normal || structure->existingAOTFields().aotInstance) [[unlikely]]
+                return false;
+            Appender appender(visitor);
+            appender.appendStructure(cell->structure());
+            ConcurrentJSLocker locker(structure->m_lock);
+            appender.appendValue(std::bit_cast<JSCell*>(structure->m_realm.get()));
+            structure->markingStampAndFlags() = (structure->markingStampAndFlags() & ~Structure::markingStampMask) | appender.markingStamp();
+            if (!structure->isObject())
+                structure->m_cachedPrototypeChain.clear();
+            else {
+                appender.appendValue(structure->m_prototype.get());
+                appender.appendValue(std::bit_cast<JSCell*>(structure->m_cachedPrototypeChain.get()));
+            }
+            appender.appendValue(structure->m_previousOrRareData.get());
+            if (structure->isPinnedPropertyTable() || structure->protectPropertyTableWhileTransitioning())
+                appender.appendValue(std::bit_cast<JSCell*>(structure->m_propertyTableUnsafe.get()));
+            else if (structure->m_propertyTableUnsafe)
+                structure->m_propertyTableUnsafe.clear();
+            if (visitor.collectionScope() != CollectionScope::Full)
+                appender.appendValue(structure->m_transitionTable.trySingleTransition());
+            return true;
+        }
+        case GetterSetterType: {
+            Appender appender(visitor);
+            appender.appendStructure(cell->structure());
+            appender.appendValue(*reinterpret_cast<JSCell* const*>(bytes + GetterSetter::offsetOfGetter()));
+            appender.appendValue(*reinterpret_cast<JSCell* const*>(bytes + GetterSetter::offsetOfSetter()));
+            return true;
+        }
+        case JSCellButterflyType: {
+            Appender appender(visitor);
+            appender.appendStructure(cell->structure());
+            if (!hasContiguous(cell->indexingType()))
+                return true;
+            Butterfly* butterfly = static_cast<const JSCellButterfly*>(cell)->toButterfly();
+            const WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
+            for (unsigned i = 0, length = butterfly->publicLength(); i < length; ++i)
+                appender.appendValue(elements[i].get());
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
 
 public:
     template<bool drainsCollectorStack, bool mutatorIsStopped>
@@ -456,13 +686,14 @@ public:
         const uintptr_t structureBase = structureIDBase();
         const uintptr_t cageBase = MarkedBlockCage::base();
         const HeapVersion markingVersion = visitor.m_markingVersion;
+        visitor.noteBytesMarked(visitor.collector().heap(), 0);
         MarkStackArray& collectorStack = visitor.m_collectorStack;
         const JSCell** firstSlot = collectorStack.m_segments.head()->data();
         const JSCell** nextSlot = firstSlot + collectorStack.m_top;
         const JSCell** endOfSlots = firstSlot + MarkStackArray::s_segmentCapacity;
 #if CPU(X86_64)
         size_t& visitCount = visitor.m_visitCount;
-        size_t& bytesVisited = visitor.m_bytesVisited;
+        size_t& bytesVisited = visitor.m_bytesMarkedInHeap;
         size_t& nonCellVisitCount = visitor.m_nonCellVisitCount;
 #else
         size_t visitCount = 0;
@@ -536,7 +767,7 @@ public:
         };
 
         auto appendNarrowReference = [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
-            if (word > undefinedCell32)
+            if (word >= minCell32)
                 appendCell(std::bit_cast<JSCell*>(cageBase + (static_cast<uintptr_t>(word) << MarkedBlockCage::shift)));
         };
 
@@ -638,8 +869,10 @@ public:
                 return true;
             }
             if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer)) {
-                if (!AOT::Image::isBackedByStaticData(*impl)) [[likely]]
-                    visitor.reportExtraMemoryVisited(impl->costDuringGC());
+                if constexpr (drainsCollectorStack) {
+                    if (!AOT::Image::isBackedByStaticData(*impl)) [[likely]]
+                        visitor.reportExtraMemoryVisitedOfLeafCell(cell->vm().heap, impl->costDuringGC());
+                }
             }
             return true;
         };
@@ -667,7 +900,7 @@ public:
                     appendValue(property->get());
             }
             if (hasInlineProperties) {
-                const WriteBarrierBase<Unknown>* property = object->inlineStorage();
+                const WriteBarrierBase<Unknown>* property = object->inlineStorageUnsafe();
                 for (const WriteBarrierBase<Unknown>* end = property + std::min<unsigned>(maxOffset + 1, structure->inlineCapacity()); property != end; ++property)
                     appendValue(property->get());
             }
@@ -806,7 +1039,7 @@ public:
         storeTop();
 #if !CPU(X86_64)
         visitor.m_visitCount += visitCount;
-        visitor.m_bytesVisited += bytesVisited;
+        visitor.m_bytesMarkedInHeap += bytesVisited;
         visitor.m_nonCellVisitCount += nonCellVisitCount;
 #endif
     }
@@ -821,13 +1054,17 @@ void SlotVisitor::visitAsConstraint(const JSCell* cell)
 
 inline void SlotVisitor::propagateExternalMemoryVisitedIfNecessary()
 {
-    if (m_isFirstVisit) {
-        if (m_extraMemorySize.hasOverflowed())
-            m_collector.heap().reportExtraMemoryVisited(std::numeric_limits<size_t>::max());
-        else if (m_extraMemorySize)
-            m_collector.heap().reportExtraMemoryVisited(m_extraMemorySize);
-        m_extraMemorySize = 0;
-    }
+    if (m_isFirstVisit)
+        flushExtraMemoryVisited();
+}
+
+void SlotVisitor::flushExtraMemoryVisited()
+{
+    if (m_extraMemoryInHeap.hasOverflowed())
+        m_extraMemoryHeap->reportExtraMemoryVisited(std::numeric_limits<size_t>::max());
+    else if (m_extraMemoryInHeap)
+        m_extraMemoryHeap->reportExtraMemoryVisited(m_extraMemoryInHeap);
+    m_extraMemoryInHeap = 0;
 }
 
 void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
@@ -837,6 +1074,10 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
 
     // Avoid locking when a thread reaches a dead end in the object graph.
     if (from.size() < 2)
+        return;
+
+    constexpr size_t fewestCellsWorthAHelper = 512;
+    if (from.size() < fewestCellsWorthAHelper && !collector().hasStartedHelpers())
         return;
 
     // If there's already some shared work queued up, be conservative and assume
@@ -855,6 +1096,7 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
 
 #if USE(BUN_JSC_ADDITIONS)
     if (Options::useAOT()) {
+        collector().startHelpers();
         collector().m_markingConditionVariable.notifyOne();
         return;
     }
@@ -871,44 +1113,14 @@ void SlotVisitor::donateKnownParallel()
         });
 }
 
-void SlotVisitor::updateMutatorIsStopped(const AbstractLocker&)
-{
-    m_mutatorIsStopped = (m_collector.heap().worldIsStopped() & m_canOptimizeForStoppedMutator);
-}
-
-void SlotVisitor::updateMutatorIsStopped()
-{
-    if (mutatorIsStoppedIsUpToDate())
-        return;
-    updateMutatorIsStopped(Locker { m_rightToRun });
-}
-
-bool SlotVisitor::hasAcknowledgedThatTheMutatorIsResumed() const
-{
-    return !m_mutatorIsStopped;
-}
-
-bool SlotVisitor::mutatorIsStoppedIsUpToDate() const
-{
-    return m_mutatorIsStopped == (m_collector.heap().worldIsStopped() & m_canOptimizeForStoppedMutator);
-}
-
-void SlotVisitor::optimizeForStoppedMutator()
-{
-    m_canOptimizeForStoppedMutator = true;
-}
-
 NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
 {
     if (!m_isInParallelMode) {
         dataLog("FATAL: attempting to drain when not in parallel mode.\n");
         RELEASE_ASSERT_NOT_REACHED();
     }
-    
-    Locker locker { m_rightToRun };
-    
+
     while (!hasElapsed(timeout)) {
-        updateMutatorIsStopped(locker);
         IterationStatus status = forEachMarkStack(
             [&] (MarkStackArray& stack) -> IterationStatus {
                 if (stack.isEmpty())
@@ -924,10 +1136,10 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                 // the current cell.
                 unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
 #if ENABLE(AOT)
-                if (Options::useAOT() && !m_heapAnalyzer) {
+                if (Options::useAOT() && !m_isAnalyzingHeap) {
                     if (!m_isFirstVisit)
                         CompiledLayoutVisitor::drain<false, false>(*this, stack, countdown);
-                    else if (m_mutatorIsStopped)
+                    else if (m_mutatorsAreStopped)
                         CompiledLayoutVisitor::drain<true, true>(*this, stack, countdown);
                     else
                         CompiledLayoutVisitor::drain<true, false>(*this, stack, countdown);
@@ -952,8 +1164,7 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
         propagateExternalMemoryVisitedIfNecessary();
         if (status == IterationStatus::Continue)
             break;
-        
-        m_rightToRun.safepoint();
+
         donateKnownParallel();
     }
 }
@@ -983,41 +1194,35 @@ size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
         return bytesVisited() >= bytesRequested;
     };
     
-    {
-        Locker locker { m_rightToRun };
-        
-        while (!isDone()) {
-            updateMutatorIsStopped(locker);
-            IterationStatus status = forEachMarkStack(
-                [&] (MarkStackArray& stack) -> IterationStatus {
-                    if (stack.isEmpty() || isDone())
-                        return IterationStatus::Continue;
+    while (!isDone()) {
+        IterationStatus status = forEachMarkStack(
+            [&](MarkStackArray& stack) -> IterationStatus {
+                if (stack.isEmpty() || isDone())
+                    return IterationStatus::Continue;
 
-                    stack.refill();
-                    
-                    m_isFirstVisit = (&stack == &m_collectorStack);
+                stack.refill();
 
-                    unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
-                    auto popAndPrefetch = [&] ALWAYS_INLINE_LAMBDA -> const JSCell* {
-                        if (!countdown || !stack.canRemoveLast() || isDone())
-                            return nullptr;
-                        --countdown;
-                        return stack.popAndPrefetch();
-                    };
-                    for (const JSCell* next = popAndPrefetch(); next;) {
-                        const JSCell* cell = next;
-                        next = popAndPrefetch();
-                        cellBytesVisited += cell->cellSize();
-                        visitChildren(cell);
-                    }
-                    return IterationStatus::Done;
-                });
-            propagateExternalMemoryVisitedIfNecessary();
-            if (status == IterationStatus::Continue)
-                break;
-            m_rightToRun.safepoint();
-            donateKnownParallel();
-        }
+                m_isFirstVisit = (&stack == &m_collectorStack);
+
+                unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
+                auto popAndPrefetch = [&] ALWAYS_INLINE_LAMBDA -> const JSCell* {
+                    if (!countdown || !stack.canRemoveLast() || isDone())
+                        return nullptr;
+                    --countdown;
+                    return stack.popAndPrefetch();
+                };
+                for (const JSCell* next = popAndPrefetch(); next;) {
+                    const JSCell* cell = next;
+                    next = popAndPrefetch();
+                    cellBytesVisited += cell->cellSize();
+                    visitChildren(cell);
+                }
+                return IterationStatus::Done;
+            });
+        propagateExternalMemoryVisitedIfNecessary();
+        if (status == IterationStatus::Continue)
+            break;
+        donateKnownParallel();
     }
 
     donateAll();
@@ -1213,6 +1418,8 @@ void SlotVisitor::donateAll(const AbstractLocker&)
             return IterationStatus::Continue;
         });
 
+    if (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty())
+        collector().startHelpers();
     collector().m_markingConditionVariable.notifyAll();
 }
 

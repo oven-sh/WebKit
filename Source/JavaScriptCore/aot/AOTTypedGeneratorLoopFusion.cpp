@@ -129,7 +129,7 @@ private:
     {
         if (!ramp.resumeFunction || ramp.startFunction || (ramp.declaredAs & (functionIsAsync | functionIsGenerator)) != functionIsGenerator || ramp.blocks.size() != 1)
             return std::nullopt;
-        auto newGenerator = m_program.find("NewGenerator"_s.span8());
+        auto newGenerator = m_program.find(asBytes("NewGenerator"_s.span8()));
         Frame frame;
         for (ValueID id : ramp.blocks[0].values) {
             auto& value = ramp.at(id);
@@ -373,9 +373,9 @@ private:
 
     std::optional<Steps> stepsOf(ValueID made)
     {
-        auto next = m_program.find("next"_s.span8());
-        auto done = m_program.find("done"_s.span8());
-        auto value = m_program.find("value"_s.span8());
+        auto next = m_program.find(asBytes("next"_s.span8()));
+        auto done = m_program.find(asBytes("done"_s.span8()));
+        auto value = m_program.find(asBytes("value"_s.span8()));
         if (!next || !done || !value)
             return std::nullopt;
         Steps steps;
@@ -570,8 +570,8 @@ private:
 
     bool fuseSpread(ValueID made)
     {
-        auto appendSpread = m_program.find("AppendSpread"_s.span8());
-        auto push = m_program.find("push"_s.span8());
+        auto appendSpread = m_program.find(asBytes("AppendSpread"_s.span8()));
+        auto push = m_program.find(asBytes("push"_s.span8()));
         if (at(made).opcode != Opcode::CallDirect || !appendSpread || !push)
             return false;
         auto& ramp = m_program.at(at(made).function());
@@ -697,8 +697,8 @@ private:
 
 void internNamesForGeneratorLoopFusion(Program& program)
 {
-    if (program.find("AppendSpread"_s.span8()))
-        program.intern("push"_s.span8());
+    if (program.find(asBytes("AppendSpread"_s.span8())))
+        program.intern(asBytes("push"_s.span8()));
 }
 
 unsigned fuseGeneratorLoops(const Program& program, Function& function)

@@ -23,8 +23,10 @@
 #include <ostream>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
+#include "absl/base/config.h"
 #include "absl/hash/hash.h"
 #include "absl/hash/internal/weakly_mixed_integer.h"
 #include "absl/strings/match.h"
@@ -48,7 +50,7 @@ template <typename T>
 class SpyHashStateImpl : public HashStateBase<SpyHashStateImpl<T>> {
  public:
   SpyHashStateImpl() : error_(std::make_shared<std::optional<std::string>>()) {
-    static_assert(std::is_void_v<T>, "");
+    static_assert(std::is_void_v<T>);
   }
 
   // Move-only

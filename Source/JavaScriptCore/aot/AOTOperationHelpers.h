@@ -54,7 +54,7 @@ inline NamedAccess classifyNamedAccess(JSValue base, JSValue key, UniquedStringI
     if (!name) {
         if (key.isSymbol()) {
             keyKind = "key-is-symbol";
-            name = &asSymbol(key)->privateName().uid();
+            name = &asSymbol(key)->uid();
         } else if (key.isString()) {
             const StringImpl* impl = asString(key)->tryGetValueImpl();
             keyKind = !impl ? "key-is-rope" : impl->isAtom() ? "key-is-atom" : "key-is-string-but-no-atom";
@@ -186,6 +186,15 @@ ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const S
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     countMissAt(instance, callFrame, cache); \
     countOperationNamed(instance, __func__); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    UNUSED_VARIABLE(scope)
+
+#define AOT_OPERATION_BEGIN_IN_FRAME(instance, callFrame, name) \
+    JSGlobalObject* globalObject = (instance)->globalObject; \
+    UNUSED_VARIABLE(globalObject); \
+    VM& vm = *(instance)->vm; \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    countOperationNamed(instance, name); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 

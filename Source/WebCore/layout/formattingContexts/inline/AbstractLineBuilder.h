@@ -25,10 +25,11 @@
 
 #pragma once
 
+#include "InlineFormattingContext.h"
+#include "InlineLine.h"
 #include <WebCore/FormattingConstraints.h>
 #include <WebCore/InlineContentBreaker.h>
 #include <WebCore/InlineLayoutState.h>
-#include <WebCore/InlineLine.h>
 #include <WebCore/InlineLineTypes.h>
 #include <WebCore/LineLayoutResult.h>
 
@@ -48,7 +49,7 @@ public:
     virtual LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&, bool isFirstFormattedLineCandidate) = 0;
     virtual ~AbstractLineBuilder() { };
 
-    void NODELETE setIntrinsicWidthMode(IntrinsicWidthMode);
+    void LEGACY_NODELETE setIntrinsicWidthMode(IntrinsicWidthMode);
 
 protected:
     AbstractLineBuilder(InlineFormattingContext&, const ElementBox& rootBox, HorizontalConstraints rootHorizontalConstraints, const InlineItemList&);
@@ -67,8 +68,8 @@ protected:
     InlineFormattingContext& formattingContext() LIFETIME_BOUND { return m_inlineFormattingContext; }
     const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
     const HorizontalConstraints& rootHorizontalConstraints() const LIFETIME_BOUND { return m_rootHorizontalConstraints; }
-    const InlineLayoutState& NODELETE layoutState() const LIFETIME_BOUND;
-    InlineLayoutState& NODELETE layoutState() LIFETIME_BOUND;
+    const InlineLayoutState& LEGACY_NODELETE layoutState() const LIFETIME_BOUND;
+    InlineLayoutState& LEGACY_NODELETE layoutState() LIFETIME_BOUND;
     const BlockLayoutState& blockLayoutState() const LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
     BlockLayoutState& blockLayoutState() LIFETIME_BOUND { return layoutState().parentBlockLayoutState(); }
     const ElementBox& root() const { return m_rootBox; }

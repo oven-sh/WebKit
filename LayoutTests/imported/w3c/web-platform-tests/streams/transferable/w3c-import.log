@@ -15,6 +15,7 @@ None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/streams/transferable/WEB_FEATURES.yml
+/LayoutTests/imported/w3c/web-platform-tests/streams/transferable/audioworklet.https.html
 /LayoutTests/imported/w3c/web-platform-tests/streams/transferable/deserialize-error.window.js
 /LayoutTests/imported/w3c/web-platform-tests/streams/transferable/gc-crash.html
 /LayoutTests/imported/w3c/web-platform-tests/streams/transferable/readable-stream.html

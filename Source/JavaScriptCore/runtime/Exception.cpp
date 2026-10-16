@@ -27,6 +27,7 @@
 #include "Exception.h"
 
 #include "AOTFunction.h"
+#include "ErrorInstance.h"
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
 #include "JSObjectInlines.h"
@@ -77,9 +78,7 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContext);
 #endif
-    std::optional<Locker<JSCellLock>> locker;
-    if (keepsReturnAddresses())
-        locker.emplace(thisObject->cellLock());
+    Locker locker { thisObject->cellLock() };
     for (StackFrame& frame : thisObject->m_stack)
         frame.visitAggregate(visitor);
     size_t size = thisObject->m_stack.sizeInBytes();
@@ -95,9 +94,7 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 size_t Exception::estimatedSize(JSCell* cell, VM& vm)
 {
     Exception* thisObject = uncheckedDowncast<Exception>(cell);
-    std::optional<Locker<JSCellLock>> locker;
-    if (keepsReturnAddresses())
-        locker.emplace(thisObject->cellLock());
+    Locker locker { thisObject->cellLock() };
     size_t size = thisObject->m_stack.sizeInBytes();
 #if ENABLE(AOT)
     if (auto* returnAddresses = thisObject->m_returnAddressesAndFlags.pointer())
@@ -214,6 +211,24 @@ void Exception::materializeStack()
     }
     vm.writeBarrier(this);
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
+}
+
+const Vector<StackFrame>& Exception::stackForReporting(VM& vm)
+{
+    if (stack().isEmpty()) {
+        if (auto* error = dynamicDowncast<ErrorInstance>(value())) {
+            if (auto* stackTrace = error->stackTrace(); stackTrace && !stackTrace->isEmpty()) {
+                Vector<StackFrame> stack = *stackTrace;
+                {
+                    Locker locker { cellLock() };
+                    m_stack = WTF::move(stack);
+                }
+                vm.writeBarrier(this);
+                vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
+            }
+        }
+    }
+    return m_stack;
 }
 
 #if ENABLE(WEBASSEMBLY)

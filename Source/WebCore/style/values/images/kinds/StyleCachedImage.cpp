@@ -25,6 +25,7 @@
 #include "config.h"
 #include "StyleCachedImage.h"
 
+#include "BitmapImage.h"
 #include "CSSImageValue.h"
 #include "CachedImage.h"
 #include "ContainerNodeInlines.h"
@@ -261,18 +262,6 @@ bool CachedImage::errorOccurred() const
     return m_cachedImage->errorOccurred();
 }
 
-FloatSize CachedImage::imageSize(const RenderElement* renderer, float multiplier, WebCore::CachedImage::SizeType sizeType) const
-{
-    if (isRenderSVGResource(renderer))
-        return m_containerSize;
-    if (!m_cachedImage)
-        return { };
-    float density = 1.0f;
-    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer))
-        density = renderImage->imageDevicePixelRatio();
-    return WebCore::CachedImage::clampForZoom(RenderImage::imageSizeAsRendered(*protect(m_cachedImage), renderer, multiplier, sizeType, density), multiplier) / m_scaleFactor;
-}
-
 NaturalDimensions CachedImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext&) const
 {
     if (isRenderSVGResource(&renderer))
@@ -283,12 +272,6 @@ NaturalDimensions CachedImage::naturalDimensions(const RenderElement& renderer, 
         return NaturalDimensions::none();
 
     return cachedImage->naturalDimensions(cachedImage->allowsOrientationOverride() ? renderer.imageOrientation() : WebCore::ImageOrientation { WebCore::ImageOrientation::Orientation::FromImage });
-}
-
-void CachedImage::setContainerSizeForRenderer(const RenderElement&, const FloatSize& containerSize)
-{
-    // Only read back by imageSize() for an SVG paint server.
-    m_containerSize = containerSize;
 }
 
 ImageDrawingExtras CachedImage::drawingExtrasForRenderer(const RenderElement& renderer) const
@@ -378,6 +361,37 @@ ImageDrawResult CachedImage::drawSVGResourceAsPattern(GraphicsContext& context, 
     return result;
 }
 
+static std::optional<FloatSize> fixedContentSize(const WebCore::Image& image, WebCore::ImageOrientation orientation = WebCore::ImageOrientation::Orientation::FromImage)
+{
+    if (image.usesConcreteObjectSizeAsViewport())
+        return std::nullopt;
+
+    auto naturalDimensions = image.naturalDimensions(orientation);
+    if (!naturalDimensions.width || !naturalDimensions.height)
+        return std::nullopt;
+    return FloatSize { *naturalDimensions.width, *naturalDimensions.height };
+}
+
+static ConcreteObjectSize viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
+{
+    auto zoom = renderer.style().usedZoom();
+    return ConcreteObjectSize::fixed(concreteObjectSize.size() * concreteObjectSize.zoom() / zoom, zoom);
+}
+
+ConcreteObjectSize CachedImage::concreteSizeToDrawAt(const WebCore::Image& image, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize) const
+{
+    if (auto size = fixedContentSize(image))
+        return ConcreteObjectSize::fixed(*size);
+    return viewportSize(renderer, concreteObjectSize);
+}
+
+NaturalDimensions CachedImage::tileNaturalDimensions(const WebCore::Image& image) const
+{
+    if (image.usesConcreteObjectSizeAsViewport())
+        return NaturalDimensions::none();
+    return image.naturalDimensions();
+}
+
 ImageDrawResult CachedImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool) const
 {
     if (isPending())
@@ -387,10 +401,12 @@ ImageDrawResult CachedImage::draw(GraphicsContext& context, const RenderElement&
         return drawSVGResource(context, referenced, destination, source, options);
 
     RefPtr image = resolvedImage();
-    if (!image || image->isNull())
+    if (!image || !image->hasSomethingToDraw())
         return ImageDrawResult::DidNothing;
 
-    return drawResolved(context, renderer, *image, concreteObjectSize, destination, source, options);
+    if (auto size = fixedContentSize(*image, options.orientation()))
+        return drawResolved(context, renderer, *image, ConcreteObjectSize::fixed(*size), destination, mapSourceToSize(source, concreteObjectSize, *size), options);
+    return drawResolved(context, renderer, *image, viewportSize(renderer, concreteObjectSize), destination, source, options);
 }
 
 ImageDrawResult CachedImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool) const
@@ -405,7 +421,7 @@ ImageDrawResult CachedImage::drawAsPattern(GraphicsContext& context, const Rende
     if (!image)
         return ImageDrawResult::DidNothing;
 
-    return drawResolvedAsPattern(context, renderer, *image, concreteObjectSize, destination, tile, patternTransform, phase, spacing, options);
+    return drawResolvedAsPattern(context, renderer, *image, concreteSizeToDrawAt(*image, renderer, concreteObjectSize), destination, tile, patternTransform, phase, spacing, options);
 }
 
 ImageDrawResult CachedImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options, bool) const
@@ -425,7 +441,7 @@ ImageDrawResult CachedImage::drawTiled(GraphicsContext& context, const RenderEle
     if (!image)
         return ImageDrawResult::DidNothing;
 
-    return drawResolvedTiled(context, renderer, *image, concreteObjectSize, destination, phase, tileSize, spacing, options);
+    return drawResolvedTiled(context, renderer, *image, tileNaturalDimensions(*image), concreteSizeToDrawAt(*image, renderer, concreteObjectSize), destination, phase, tileSize, spacing, options);
 }
 
 ImageDrawResult CachedImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImagePaintingOptions options) const
@@ -445,7 +461,7 @@ ImageDrawResult CachedImage::drawNinePiece(GraphicsContext& context, const Rende
     if (!image)
         return ImageDrawResult::DidNothing;
 
-    return drawResolvedNinePiece(context, renderer, *image, concreteObjectSize, geometry, options);
+    return drawResolvedNinePiece(context, renderer, *image, concreteSizeToDrawAt(*image, renderer, concreteObjectSize), geometry, options);
 }
 
 bool CachedImage::currentFrameIsComplete(const RenderElement*) const
@@ -470,12 +486,27 @@ bool CachedImage::canDraw(const RenderElement& renderer) const
     if (renderSVGResource(&renderer) || legacyRenderSVGResource(&renderer))
         return true;
     RefPtr image = m_cachedImage ? protect(m_cachedImage)->image() : nullptr;
-    return image && !image->isNull();
+    return image && image->hasSomethingToDraw();
 }
 
 bool CachedImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& size) const
 {
     return !size.isEmpty() && canDraw(renderer);
+}
+
+RefPtr<NativeImage> CachedImage::nativeImage(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, float resolutionScale, ImagePaintingOptions options) const
+{
+    if (!referencedSVGResource(renderer)) {
+        if (RefPtr bitmapImage = dynamicDowncast<BitmapImage>(resolvedImage()))
+            return bitmapImage->nativeImage();
+    }
+    return Image::nativeImage(renderer, concreteObjectSize, resolutionScale, options);
+}
+
+std::optional<IntPoint> CachedImage::hotSpot() const
+{
+    RefPtr image = resolvedImage();
+    return image ? image->hotSpot() : std::nullopt;
 }
 
 bool CachedImage::drawsSVGImage() const
@@ -513,10 +544,10 @@ DecodingMode CachedImage::decodingModeForImageDraw(const RenderBoxModelObject& r
     return renderer.decodingModeForImageDraw(*protect(protect(m_cachedImage)->image()), paintInfo);
 }
 
-InterpolationQuality CachedImage::interpolationQualityForImageDraw(GraphicsContext& context, const RenderElement& renderer, const void* layer, const LayoutSize& size) const
+InterpolationQuality CachedImage::interpolationQualityForImageDraw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const void* layer, const LayoutSize& size) const
 {
     if (!m_cachedImage || renderSVGResource(&renderer) || legacyRenderSVGResource(&renderer))
-        return Image::interpolationQualityForImageDraw(context, renderer, layer, size);
+        return Image::interpolationQualityForImageDraw(context, renderer, concreteObjectSize, layer, size);
     return ImageQualityController::chooseInterpolationQuality(context, renderer, *protect(protect(m_cachedImage)->image()), layer, size);
 }
 

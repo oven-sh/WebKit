@@ -89,15 +89,6 @@ bool AccessibilityMenuListOption::isSelected() const
     return optionElement && optionElement->selected();
 }
 
-void AccessibilityMenuListOption::setSelected(bool selected)
-{
-    if (!canSetSelectedAttribute())
-        return;
-
-    if (RefPtr optionElement = this->optionElement())
-        optionElement->setSelected(selected);
-}
-
 bool AccessibilityMenuListOption::canSetSelectedAttribute() const
 {
     return isEnabled();

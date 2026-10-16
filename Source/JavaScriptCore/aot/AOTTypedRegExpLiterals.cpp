@@ -15,10 +15,12 @@
 #include "DeferGC.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
+#include "JSLock.h"
 #include "JSMap.h"
 #include "JSNativeStdFunction.h"
 #include "JSONObject.h"
 #include "JSSet.h"
+#include "MacroAssembler.h"
 #include "MathCommon.h"
 #include "ObjectConstructor.h"
 #include "RegExpConstructor.h"
@@ -109,10 +111,10 @@ static void appendPossibleFlags(const Program& program, const Function& function
 // yields something unknown, and it stops when it has done enough. It goes by the program alone: the same program, the same image.
 class EvaluatorOfTexts {
 public:
-    EvaluatorOfTexts(VM& vm, const Program& program, ImageBuilder& builder)
+    EvaluatorOfTexts(VM& vm, std::span<const uint8_t> buffer, RegExpSourcesAndFlags& found)
         : m_vm(vm)
-        , m_program(program)
-        , m_builder(builder)
+        , m_buffer(buffer)
+        , m_found(found)
     {
     }
 
@@ -123,11 +125,28 @@ public:
         return String(decodeTextOfProgram(bytes).span());
     }
 
+    void listLiterals()
+    {
+        if (m_buffer.size() < sizeof(Format::Header))
+            return;
+        auto& header = *reinterpret_cast<const Format::Header*>(m_buffer.data());
+        m_words = section<uint32_t>(header.words);
+        m_bytes = section<uint8_t>(header.bytes);
+        m_strings = section<Format::String>(header.strings);
+        auto literals = slice(m_words, header.regExpLiterals);
+        for (size_t i = 0; i + 1 < literals.size(); i += 2) {
+            String source = decode(bytesOf(literals[i]));
+            auto flags = Yarr::parseFlags(StringView { byteCast<Latin1Character>(bytesOf(literals[i + 1])) });
+            if (!source.isNull() && flags)
+                m_found.append({ WTF::move(source), *flags });
+        }
+    }
+
     void run()
     {
-        if (m_program.buffer.size() < sizeof(Format::Header))
+        if (m_buffer.size() < sizeof(Format::Header))
             return;
-        auto& header = *reinterpret_cast<const Format::Header*>(m_program.buffer.data());
+        auto& header = *reinterpret_cast<const Format::Header*>(m_buffer.data());
         m_words = section<uint32_t>(header.words);
         m_bytes = section<uint8_t>(header.bytes);
         m_strings = section<Format::String>(header.strings);
@@ -300,7 +319,7 @@ private:
     template<typename T>
     std::span<const T> section(Format::Section section) const
     {
-        auto buffer = m_program.buffer;
+        auto buffer = m_buffer;
         if (section.offsetInBytes % alignof(T) || static_cast<uint64_t>(section.offsetInBytes) + static_cast<uint64_t>(section.count) * sizeof(T) > buffer.size())
             return { };
         return { reinterpret_cast<const T*>(buffer.data() + section.offsetInBytes), section.count };
@@ -473,10 +492,15 @@ private:
         m_unknown->methodTable()->preventExtensions(m_unknown, m_globalObject);
         m_regExpConstructor = m_globalObject->regExpConstructor();
         auto remove = [&](ASCIILiteral holder, bool fromPrototype, ASCIILiteral name) {
-            JSValue function = attempt([&]() -> JSValue {
+            JSValue function = attempt([&](TopExceptionScope& scope) -> JSValue {
                 JSValue object = m_globalObject->get(m_globalObject, Identifier::fromString(m_vm, holder));
-                if (fromPrototype && object.isObject())
+                if (scope.exception())
+                    return { };
+                if (fromPrototype && object.isObject()) {
                     object = object.get(m_globalObject, m_vm.propertyNames->prototype);
+                    if (scope.exception())
+                        return { };
+                }
                 return object.isObject() ? object.get(m_globalObject, Identifier::fromString(m_vm, name)) : JSValue();
             });
             if (function && function.isObject())
@@ -512,7 +536,11 @@ private:
     JSValue attempt(const Functor& functor)
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
-        JSValue result = functor();
+        JSValue result;
+        if constexpr (std::is_invocable_v<const Functor&, TopExceptionScope&>)
+            result = functor(scope);
+        else
+            result = functor();
         if (scope.exception()) [[unlikely]] {
             scope.clearException();
             return { };
@@ -520,10 +548,15 @@ private:
         return fromStored(result);
     }
 
-    bool hasException()
+    double numberOf(JSValue primitive)
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
-        return !!scope.exception();
+        double number = primitive.toNumber(m_globalObject);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return PNaN;
+        }
+        return number;
     }
 
     JSValue toStored(JSValue value) const { return value ? value : JSValue(m_unknown); }
@@ -1066,7 +1099,7 @@ private:
         ++count;
         if (m_remarks && source.length() > 4096)
             dataLogLn("AOT: evaluator of texts: a RegExp in f", m_functionsEntered.isEmpty() ? 0 : m_functionsEntered.last(), ", come to from f", m_functionsEntered.isEmpty() ? 0 : m_functionsEntered.first(), ": a text of ", source.length(), " characters is known");
-        m_builder.requestRegExp(m_vm, source, flags, true);
+        m_found.append({ source.isolatedCopy(), flags });
     }
 
     JSValue getModuleVariable(uint32_t index)
@@ -1108,9 +1141,9 @@ private:
         if (is("DefineField"_s) || is("PutByValDirect"_s) || is("PrivateFieldAdd"_s) || is("DefineMethod"_s)) {
             if (!isObject(0) || !argument(1) || !isCheapToConvert(argument(1)))
                 return { };
-            return attempt([&]() -> JSValue {
+            return attempt([&](TopExceptionScope& scope) -> JSValue {
                 auto name = argument(1).toPropertyKey(m_globalObject);
-                if (hasException())
+                if (scope.exception())
                     return { };
                 asObject(argument(0))->putDirectMayBeIndex(m_globalObject, name, toStored(argument(2)));
                 return argument(0);
@@ -1125,9 +1158,12 @@ private:
             auto elements = array ? elementsOf(argument(1)) : std::nullopt;
             if (!elements)
                 return { };
-            return attempt([&]() -> JSValue {
-                for (JSValue element : *elements)
+            return attempt([&](TopExceptionScope& scope) -> JSValue {
+                for (JSValue element : *elements) {
                     array->push(m_globalObject, toStored(element));
+                    if (scope.exception())
+                        return { };
+                }
                 return array;
             });
         }
@@ -1149,14 +1185,16 @@ private:
             JSValue copy = call(m_objectAssign, jsUndefined(), std::array { JSValue(constructEmptyObject(m_globalObject)), argument(0) });
             if (!copy || !copy.isObject())
                 return { };
-            return attempt([&]() -> JSValue {
+            return attempt([&](TopExceptionScope& scope) -> JSValue {
                 for (JSValue key : arguments.subspan(1)) {
                     if (!key || !isCheapToConvert(key))
                         return m_unknown;
                     auto name = key.toPropertyKey(m_globalObject);
-                    if (hasException())
+                    if (scope.exception())
                         return { };
                     JSCell::deleteProperty(asObject(copy), m_globalObject, name);
+                    if (scope.exception())
+                        return { };
                 }
                 return copy;
             });
@@ -1166,9 +1204,9 @@ private:
         if (is("HasEnumerableProperty"_s)) {
             if (!isObject(0) || !argument(1) || !isCheapToConvert(argument(1)))
                 return { };
-            return attempt([&]() -> JSValue {
+            return attempt([&](TopExceptionScope& scope) -> JSValue {
                 auto name = argument(1).toPropertyKey(m_globalObject);
-                if (hasException())
+                if (scope.exception())
                     return { };
                 return jsBoolean(asObject(argument(0))->hasProperty(m_globalObject, name));
             });
@@ -1234,12 +1272,12 @@ private:
                 if (!child(0) || !child(1))
                     return { };
                 return forEachChoice(child(0), child(1), [&](JSValue a, JSValue b) -> JSValue {
-                    return isPrimitive(a) && isPrimitive(b) ? jsNumber(result(a.toNumber(m_globalObject), b.toNumber(m_globalObject))) : JSValue();
+                    return isPrimitive(a) && isPrimitive(b) ? jsNumber(result(numberOf(a), numberOf(b))) : JSValue();
                 });
             }
             if (!isPrimitive(child(0)) || !isPrimitive(child(1)))
                 return { };
-            return jsNumber(result(child(0).toNumber(m_globalObject), child(1).toNumber(m_globalObject)));
+            return jsNumber(result(numberOf(child(0)), numberOf(child(1))));
         };
         if (!m_choices.isEmpty()) [[unlikely]] {
             bool hasChoice = false;
@@ -1272,7 +1310,7 @@ private:
         auto computeInt32 = [&](auto&& result) -> JSValue {
             if (!isPrimitive(child(0)) || !isPrimitive(child(1)))
                 return { };
-            return jsNumber(result(JSC::toInt32(child(0).toNumber(m_globalObject)), JSC::toInt32(child(1).toNumber(m_globalObject))));
+            return jsNumber(result(JSC::toInt32(numberOf(child(0))), JSC::toInt32(numberOf(child(1)))));
         };
         auto compare = [&](auto&& holds) -> JSValue {
             if (!child(0) || !child(1) || !isCheapToConvert(child(0)) || !isCheapToConvert(child(1)))
@@ -1284,9 +1322,9 @@ private:
         auto keyed = [&](auto&& functor) -> JSValue {
             if (!child(0) || !child(1) || !isCheapToConvert(child(1)))
                 return { };
-            return attempt([&]() -> JSValue {
+            return attempt([&](TopExceptionScope& scope) -> JSValue {
                 auto name = child(1).toPropertyKey(m_globalObject);
-                if (hasException())
+                if (scope.exception())
                     return { };
                 return functor(name);
             });
@@ -1435,12 +1473,12 @@ private:
         case Format::Opcode::URShift:
             return computeInt32([](int32_t a, int32_t b) { return static_cast<uint32_t>(a) >> (b & 31); });
         case Format::Opcode::Negate:
-            return isPrimitive(child(0)) ? jsNumber(-child(0).toNumber(m_globalObject)) : JSValue();
+            return isPrimitive(child(0)) ? jsNumber(-numberOf(child(0))) : JSValue();
         case Format::Opcode::ToNumber:
         case Format::Opcode::ToNumeric:
-            return isPrimitive(child(0)) ? jsNumber(child(0).toNumber(m_globalObject)) : JSValue();
+            return isPrimitive(child(0)) ? jsNumber(numberOf(child(0))) : JSValue();
         case Format::Opcode::BitNot:
-            return isPrimitive(child(0)) ? jsNumber(~JSC::toInt32(child(0).toNumber(m_globalObject))) : JSValue();
+            return isPrimitive(child(0)) ? jsNumber(~JSC::toInt32(numberOf(child(0)))) : JSValue();
         case Format::Opcode::Less:
             return compare([&](JSValue a, JSValue b) { return jsLess<true>(m_globalObject, a, b); });
         case Format::Opcode::LessEq:
@@ -1501,16 +1539,16 @@ private:
                 }
                 return result;
             }
-            return attempt([&]() -> JSValue {
+            return attempt([&](TopExceptionScope& scope) -> JSValue {
                 JSString* result = jsEmptyString(m_vm);
                 for (JSValue part : parts) {
                     if (!part || !isCheapToConvert(part))
                         return m_unknown;
                     JSString* text = part.toString(m_globalObject);
-                    if (hasException())
+                    if (scope.exception())
                         return { };
                     result = jsString(m_globalObject, result, text);
-                    if (hasException())
+                    if (scope.exception())
                         return { };
                 }
                 return result;
@@ -1861,8 +1899,8 @@ private:
     }
 
     VM& m_vm;
-    const Program& m_program;
-    ImageBuilder& m_builder;
+    std::span<const uint8_t> m_buffer;
+    RegExpSourcesAndFlags& m_found;
     std::span<const uint32_t> m_words;
     std::span<const uint8_t> m_bytes;
     std::span<const Format::String> m_strings;
@@ -1952,10 +1990,58 @@ void addRegExpLiterals(VM& vm, const Program& program, ImageBuilder& builder)
             }
         }
     }
-    EvaluatorOfTexts(vm, program, builder).run();
-    builder.didRequestAllRegExps();
 }
 
 } } } // namespace JSC::AOT::Typed
+
+namespace JSC { namespace AOT {
+
+RegExpsFoundAhead::RegExpsFoundAhead(std::span<const uint8_t> typedProgramAsWritten)
+{
+    constexpr size_t sizeOfStack = 4 * MB;
+    m_thread = Thread::create("AOT regexps"_s, [this, typedProgramAsWritten] {
+        RefPtr<VM> vm = VM::create(HeapType::Small);
+        JSLockHolder destroysVMWhileItIsLocked(*vm);
+        vm->useImmutableIntrinsics = true;
+        MacroAssembler::useOnlyFeaturesOfBuildTarget();
+        RegExpSourcesAndFlags literals;
+        Typed::EvaluatorOfTexts(*vm, typedProgramAsWritten, literals).listLiterals();
+        Ref compilerOfLiterals = Thread::create("AOT regexps"_s, [&] {
+            m_compiledAhead.compile(*vm, literals);
+        }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(sizeOfStack));
+        RegExpSourcesAndFlags found;
+        Typed::EvaluatorOfTexts(*vm, typedProgramAsWritten, found).run();
+        {
+            Locker locker { m_lock };
+            m_evaluatedTexts = WTF::move(found);
+            m_isEvaluated = true;
+            m_didEvaluate.notifyAll();
+        }
+        m_compiledAhead.compile(*vm, m_evaluatedTexts);
+        compilerOfLiterals->waitForCompletion();
+        vm = nullptr;
+    }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(sizeOfStack));
+}
+
+RegExpsFoundAhead::~RegExpsFoundAhead()
+{
+    m_thread->waitForCompletion();
+}
+
+bool RegExpsFoundAhead::isEvaluated()
+{
+    Locker locker { m_lock };
+    return m_isEvaluated;
+}
+
+const RegExpSourcesAndFlags& RegExpsFoundAhead::waitForEvaluatedTexts()
+{
+    Locker locker { m_lock };
+    while (!m_isEvaluated)
+        m_didEvaluate.wait(m_lock);
+    return m_evaluatedTexts;
+}
+
+} } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

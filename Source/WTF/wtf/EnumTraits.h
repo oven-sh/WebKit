@@ -182,7 +182,7 @@ constexpr ASCIILiteral nullTerminatedName()
     if constexpr (nameFunction().empty())
         return { };
     else
-        return ASCIILiteral::fromLiteralUnsafe(nullTerminatedNameStorage<nameFunction>.data());
+        return ASCIILiteral { nullTerminatedNameStorage<nameFunction> };
 }
 
 template<typename E>

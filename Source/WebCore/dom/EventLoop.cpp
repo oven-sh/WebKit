@@ -50,9 +50,9 @@ public:
     enum class Type : bool { OneShot, Repeating };
     static Ref<EventLoopTimer> create(Type type, std::unique_ptr<EventLoopTask>&& task) { return adoptRef(*new EventLoopTimer(type, WTF::move(task))); }
 
-    Type NODELETE type() const { return m_type; }
-    EventLoopTaskGroup* NODELETE group() const { return m_task ? m_task->group() : nullptr; }
-    bool NODELETE isSuspended() const { return m_suspended; }
+    Type LEGACY_NODELETE type() const { return m_type; }
+    EventLoopTaskGroup* LEGACY_NODELETE group() const { return m_task ? m_task->group() : nullptr; }
+    bool LEGACY_NODELETE isSuspended() const { return m_suspended; }
 
     void stop()
     {
@@ -215,7 +215,7 @@ EventLoopTimerHandle EventLoop::scheduleTask(Seconds timeout, TimerAlignment* al
         timer->suspend();
 
     ASSERT(timer->group());
-    timer->group()->didAddTimer(timer);
+    protect(timer->group())->didAddTimer(timer);
 
     EventLoopTimerHandle handle { timer };
     m_scheduledTasks.add(timer);
@@ -241,7 +241,7 @@ EventLoopTimerHandle EventLoop::scheduleRepeatingTask(Seconds nextTimeout, Secon
         timer->suspend();
 
     ASSERT(timer->group());
-    timer->group()->didAddTimer(timer);
+    protect(timer->group())->didAddTimer(timer);
 
     EventLoopTimerHandle handle { timer };
     m_repeatingTasks.add(timer);
@@ -411,7 +411,7 @@ Markable<MonotonicTime> EventLoop::nextTimerFireTime() const
         Markable<MonotonicTime> nextFireTime;
         auto updateResult = [&](auto& tasks) {
             for (auto& timer : tasks) {
-                if (timer.isSuspended())
+                if (timer.isSuspended() || !timer.isActive())
                     continue;
                 if (!nextFireTime || timer.nextFireTime() < *nextFireTime)
                     nextFireTime = timer.nextFireTime();
@@ -466,6 +466,8 @@ void EventLoopTaskGroup::markAsReadyToStop()
 
     for (Ref timer : m_timers)
         timer->stop();
+    if (RefPtr eventLoop = m_eventLoop.get())
+        eventLoop->invalidateNextTimerFireTimeCache();
 
     if (wasSuspended && !isStoppedPermanently()) {
         // We we get marked as ready to stop while suspended (happens when a CachedPage gets destroyed) then the

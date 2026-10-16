@@ -262,7 +262,6 @@ func addTLS13HandshakeTests() {
 					CurveP384,
 					CurveP521,
 					CurveX25519,
-					CurveX25519Kyber768,
 					CurveX25519MLKEM768,
 					CurveMLKEM1024,
 				},
@@ -273,14 +272,12 @@ func addTLS13HandshakeTests() {
 			"-curves", strconv.Itoa(int(CurveP384)),
 			"-curves", strconv.Itoa(int(CurveP521)),
 			"-curves", strconv.Itoa(int(CurveX25519)),
-			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
 			"-curves", strconv.Itoa(int(CurveX25519MLKEM768)),
 			"-curves", strconv.Itoa(int(CurveMLKEM1024)),
 			"-key-shares", strconv.Itoa(int(CurveP256)),
 			"-key-shares", strconv.Itoa(int(CurveP384)),
 			"-key-shares", strconv.Itoa(int(CurveP521)),
 			"-key-shares", strconv.Itoa(int(CurveX25519)),
-			"-key-shares", strconv.Itoa(int(CurveX25519Kyber768)),
 			"-key-shares", strconv.Itoa(int(CurveX25519MLKEM768)),
 			"-key-shares", strconv.Itoa(int(CurveMLKEM1024)),
 		},
@@ -1221,7 +1218,7 @@ func addTLS13HandshakeTests() {
 		config: Config{
 			MaxVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				AlwaysSelectPSKIdentity: ptrTo(uint16(0)),
+				AlwaysSelectPSKIdentity: new(uint16(0)),
 			},
 		},
 		shouldFail:    true,
@@ -1236,7 +1233,7 @@ func addTLS13HandshakeTests() {
 		resumeConfig: &Config{
 			MaxVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				AlwaysSelectPSKIdentity: ptrTo(uint16(1)),
+				AlwaysSelectPSKIdentity: new(uint16(1)),
 			},
 		},
 		resumeSession: true,

@@ -794,6 +794,7 @@ void NetworkResourceLoader::transferToNewWebProcess(NetworkConnectionToWebProces
     m_parameters.webPageID = parameters.webPageID;
     m_parameters.webFrameID = parameters.webFrameID;
     m_parameters.options.clientIdentifier = parameters.options.clientIdentifier;
+    recordLocalNetworkAccessFrame(newConnection, m_response);
 
     if (parameters.options.resultingClientIdentifier && m_parameters.options.resultingClientIdentifier)
         send(Messages::WebResourceLoader::UpdateResultingClientIdentifier { *parameters.options.resultingClientIdentifier, *m_parameters.options.resultingClientIdentifier });
@@ -825,7 +826,7 @@ bool NetworkResourceLoader::shouldInterruptLoadForXFrameOptions(const String& xF
         auto topFrameOrigin = m_parameters.frameAncestorOrigins.last();
         if (!origin->isSameSchemeHostPort(topFrameOrigin))
             return true;
-        for (auto& ancestorOrigin : m_parameters.frameAncestorOrigins) {
+        for (auto& ancestorOrigin : borrow(m_parameters.frameAncestorOrigins)) {
             if (!origin->isSameSchemeHostPort(ancestorOrigin))
                 return true;
         }
@@ -886,7 +887,9 @@ bool NetworkResourceLoader::shouldInterruptNavigationForCrossOriginEmbedderPolic
 
     // https://html.spec.whatwg.org/multipage/origin.html#check-a-navigation-response's-adherence-to-its-embedder-policy
     if (m_parameters.parentCrossOriginEmbedderPolicy.value == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP || m_parameters.parentCrossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP) {
-        auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, nullptr);
+        // A parent can only require CORP in a secure context, so only the response URL matters.
+        auto isSecureContext = WebCore::SecurityOrigin::create(response.url())->isPotentiallyTrustworthy() ? WebCore::IsSecureContext::Yes : WebCore::IsSecureContext::No;
+        auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, isSecureContext, nullptr);
         if (m_parameters.parentCrossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value != WebCore::CrossOriginEmbedderPolicyValue::RequireCORP)
             sendCOEPInheritenceViolation(*this, m_parameters.parentFrameURL.isValid() ? m_parameters.parentFrameURL : aboutBlankURL(), m_parameters.parentCrossOriginEmbedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, "navigation"_s, m_firstResponseURL);
 
@@ -908,7 +911,8 @@ bool NetworkResourceLoader::shouldInterruptWorkerLoadForCrossOriginEmbedderPolic
         return false;
 
     if (m_parameters.crossOriginEmbedderPolicy.value == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP || m_parameters.crossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP) {
-        auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, nullptr);
+        // An owner can only require CORP in a secure context, which its worker inherits.
+        auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, WebCore::IsSecureContext::Yes, nullptr);
         if (m_parameters.crossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value == WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone)
             sendCOEPInheritenceViolation(*this, m_parameters.frameURL.isValid() ? m_parameters.frameURL : aboutBlankURL(), m_parameters.crossOriginEmbedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, "worker initialization"_s, m_firstResponseURL);
 
@@ -957,9 +961,20 @@ std::optional<ResourceError> NetworkResourceLoader::doCrossOriginOpenerHandlingO
     return std::nullopt;
 }
 
+void NetworkResourceLoader::recordLocalNetworkAccessFrame(NetworkConnectionToWebProcess& connection, const ResourceResponse& response)
+{
+    if (!isMainResource() || !connection.localNetworkAccessEnabled() || !(response.url().protocolIsInHTTPFamily() || response.url().protocolIsFile()))
+        return;
+    connection.recordLocalNetworkAccessFrame(m_parameters.webFrameID, { response.ipAddressSpace(), SecurityOriginData::fromURL(response.url()) });
+}
+
 void NetworkResourceLoader::checkLocalNetworkAccess(const ResourceRequest& request, const URL& currentURL, IPAddressSpace connectionAddressSpace, CompletionHandler<void(std::optional<ResourceError>)>&& completionHandler)
 {
-    if (!WebCore::canDetermineConnectionAddressSpace() || !connectionToWebProcess().localNetworkAccessEnabled() || isMainFrameLoad())
+    if (!WebCore::canDetermineConnectionAddressSpace() || !connectionToWebProcess().localNetworkAccessEnabled())
+        return completionHandler(std::nullopt);
+
+    // A web process can label any load as a main frame load, so only trust the label for a load that started at its own validated first party.
+    if (isMainFrameLoad() && RegistrableDomain { originalRequest().url() } == RegistrableDomain { originalRequest().firstPartyForCookies() })
         return completionHandler(std::nullopt);
 
     CheckedPtr networkSession = protect(connectionToWebProcess())->networkSession();
@@ -988,6 +1003,26 @@ void NetworkResourceLoader::checkLocalNetworkAccess(const ResourceRequest& reque
             topOrigin = requester->topOrigin->data();
         }
     }
+
+    Ref connection = connectionToWebProcess();
+    std::optional<FrameIdentifier> clientFrameID;
+    std::optional<FrameIdentifier> clientParentFrameID;
+    if (!isMainResource()) {
+        clientFrameID = m_parameters.webFrameID;
+        clientParentFrameID = m_parameters.parentFrameID;
+    } else if (m_parameters.navigationRequester)
+        clientFrameID = m_parameters.navigationRequester->frameID;
+
+    auto record = clientFrameID ? connection->localNetworkAccessFrameRecord(*clientFrameID, clientParentFrameID) : std::nullopt;
+    bool recordMatchesClient = record && record->origin == sourceOrigin;
+    if (!recordMatchesClient)
+        sourceOrigin = SecurityOriginData::createOpaque();
+    auto recordedAddressSpace = recordMatchesClient && record->addressSpace != IPAddressSpace::Unknown ? record->addressSpace : IPAddressSpace::Public;
+    if (isLessPublicThan(clientAddressSpace, recordedAddressSpace))
+        clientAddressSpace = recordedAddressSpace;
+
+    bool topOriginIsAllowed = !topOrigin.isOpaque() && connection->networkProcess().allowsFirstPartyForCookies(connection->webProcessIdentifier(), RegistrableDomain::uncheckedCreateFromHost(topOrigin.host())) == NetworkProcess::AllowCookieAccess::Allow;
+    clientIsSecureContext = clientIsSecureContext && topOriginIsAllowed && shouldTreatAsPotentiallyTrustworthy(sourceOrigin.toURL());
 
     auto clientOrigin = ClientOrigin { topOrigin, sourceOrigin };
     auto requirement = WebCore::checkLocalNetworkAccess(request, currentURL, connectionAddressSpace, clientAddressSpace,
@@ -1118,7 +1153,7 @@ void NetworkResourceLoader::processUseAsDictionaryHeader(const ResourceResponse&
             auto* matchDest = std::get_if<RFC8941::InnerList>(&value);
             if (!matchDest)
                 return;
-            for (auto& [item, parameters] : *matchDest) {
+            for (auto& [item, parameters] : borrow(*matchDest)) {
                 auto* destinationString = std::get_if<String>(&item);
                 if (!destinationString)
                     return;
@@ -1151,12 +1186,19 @@ void NetworkResourceLoader::processUseAsDictionaryHeader(const ResourceResponse&
 
     // The record keeps the lifetime the response allowed rather than the response, so that a
     // dictionary can be matched without decoding one. https://www.rfc-editor.org/rfc/rfc9842#name-dictionary-freshness-requir
-    auto responseTimestamp = WallTime::now();
-    auto freshnessLifetime = computeFreshnessLifetimeForHTTPFamily(response, responseTimestamp);
-    auto currentAge = computeCurrentAge(response, responseTimestamp);
-    if (freshnessLifetime <= currentAge)
+    if (response.cacheControlContainsNoCache())
         return;
-    info.expirationTime = responseTimestamp + (freshnessLifetime - currentAge);
+    auto responseTimestamp = WallTime::now();
+    auto lifetime = computeFreshnessLifetimeForHTTPFamily(response, responseTimestamp);
+    if (!response.cacheControlContainsMustRevalidate()) {
+        CheckedPtr networkSession = protect(connectionToWebProcess())->networkSession();
+        if (auto staleWhileRevalidate = response.cacheControlStaleWhileRevalidate(); staleWhileRevalidate && networkSession && networkSession->isStaleWhileRevalidateEnabled())
+            lifetime += *staleWhileRevalidate;
+    }
+    auto currentAge = computeCurrentAge(response, responseTimestamp);
+    if (lifetime <= currentAge)
+        return;
+    info.expirationTime = responseTimestamp + (lifetime - currentAge);
 
     m_compressionDictionaryInfoForCache = WTF::move(info);
 }
@@ -1171,7 +1213,7 @@ void NetworkResourceLoader::storeCompressionDictionaryIfNeeded(const ResourceRes
     protect(m_cache)->storeCompressionDictionary(m_networkLoad ? m_networkLoad->currentRequest() : originalRequest(), response, WTF::move(body), WTF::move(*info));
 }
 
-static BrowsingContextGroupSwitchDecision NODELETE toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
+static BrowsingContextGroupSwitchDecision LEGACY_NODELETE toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
 {
     if (!currentCoopEnforcementResult || !currentCoopEnforcementResult->needsBrowsingContextGroupSwitch)
         return BrowsingContextGroupSwitchDecision::StayInGroup;
@@ -1408,6 +1450,8 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
 
 void NetworkResourceLoader::continueDidReceiveResponseAfterLocalNetworkAccessCheck(PrivateRelayed privateRelayed, ResourceLoadInfo&& resourceLoadInfo, ResponseCompletionHandler&& completionHandler)
 {
+    recordLocalNetworkAccessFrame(protect(connectionToWebProcess()), m_response);
+
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(m_response)) {
         LOADER_RELEASE_LOG_ERROR("didReceiveResponse: Interrupting main resource load due to CSP frame-ancestors or X-Frame-Options");
         auto response = sanitizeResponseIfPossible(ResourceResponse { m_response }, ResourceResponse::SanitizationType::CrossOriginSafe);
@@ -1481,6 +1525,7 @@ void NetworkResourceLoader::continueDidReceiveResponseAfterLocalNetworkAccessChe
         // a main resource because the embedding client must decide whether to allow the load.
         bool willWaitForContinueDidReceiveResponse = isMainResource();
         LOADER_RELEASE_LOG("didReceiveResponse: Sending WebResourceLoader::DidReceiveResponse IPC (willWaitForContinueDidReceiveResponse=%d)", willWaitForContinueDidReceiveResponse);
+        setIsFromPrevalentDomainIfNeeded(response);
         sendDidReceiveResponseWithPotentialProcessSwap(response, privateRelayed, willWaitForContinueDidReceiveResponse);
 
         if (shouldSendResourceLoadMessages())
@@ -1992,6 +2037,15 @@ static bool shouldSanitizeResponse(const NetworkProcess& process, std::optional<
     return !process.shouldDisableCORSForRequestTo(*pageIdentifier, url);
 }
 
+void NetworkResourceLoader::setIsFromPrevalentDomainIfNeeded(ResourceResponse& response) const
+{
+    if (m_parameters.options.destination != FetchOptions::Destination::Script)
+        return;
+
+    CheckedPtr session = protect(connectionToWebProcess())->networkSession();
+    response.setIsFromPrevalentDomain(session && session->isPrevalentDomain(response.url()));
+}
+
 ResourceResponse NetworkResourceLoader::sanitizeResponseIfPossible(ResourceResponse&& response, ResourceResponse::SanitizationType type)
 {
     if (shouldSanitizeResponse(Ref { m_connection->networkProcess() }.get(), pageID(), parameters().options, originalRequest().url()))
@@ -2017,7 +2071,7 @@ void NetworkResourceLoader::restartNetworkLoad(WebCore::ResourceRequest&& newReq
         startNetworkLoad(WTF::move(newRequest), FirstLoad::No);
 }
 
-static bool NODELETE shouldTryToMatchRegistrationOnRedirection(const FetchOptions& options, bool isServiceWorkerLoaded)
+static bool LEGACY_NODELETE shouldTryToMatchRegistrationOnRedirection(const FetchOptions& options, bool isServiceWorkerLoaded)
 {
     if (options.mode == FetchOptions::Mode::Navigate)
         return true;
@@ -2044,7 +2098,7 @@ void NetworkResourceLoader::continueWillSendRequest(ResourceRequest&& newRequest
     }
 
     if (shouldTryToMatchRegistrationOnRedirection(parameters().options, !!m_serviceWorkerFetchTask)) {
-        auto topOrigin = parameters().topOriginForServiceWorkers(newRequest.url());
+        auto topOrigin = parameters().topOriginForServiceWorkers(newRequest);
         if (CheckedPtr session = protect(connectionToWebProcess())->networkSession()) {
             if (RefPtr server = session->swServer(); server && !server->isImportCompletedForOrigin(topOrigin)) {
                 server->importRegistrationsForOrigin(topOrigin, [this, protectedThis = Ref { *this }, newRequest = WTF::move(newRequest), isAllowedToAskUserForCredentials, completionHandler = WTF::move(completionHandler)]() mutable {
@@ -2407,6 +2461,7 @@ void NetworkResourceLoader::didRetrieveCacheEntry(std::unique_ptr<NetworkCache::
 void NetworkResourceLoader::continueDidRetrieveCacheEntryAfterLocalNetworkAccessCheck(std::unique_ptr<NetworkCache::Entry> entry)
 {
     auto response = entry->response();
+    recordLocalNetworkAccessFrame(protect(connectionToWebProcess()), response);
 
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(response)) {
         LOADER_RELEASE_LOG_ERROR("didRetrieveCacheEntry: Stopping load due to CSP Frame-Ancestors or X-Frame-Options");
@@ -2439,6 +2494,7 @@ void NetworkResourceLoader::continueDidRetrieveCacheEntryAfterLocalNetworkAccess
 
     bool needsContinueDidReceiveResponseMessage = isMainResource();
     LOADER_RELEASE_LOG("didRetrieveCacheEntry: Sending WebResourceLoader::DidReceiveResponse IPC (needsContinueDidReceiveResponseMessage=%d)", needsContinueDidReceiveResponseMessage);
+    setIsFromPrevalentDomainIfNeeded(response);
     sendDidReceiveResponseWithPotentialProcessSwap(response, entry->privateRelayed(), needsContinueDidReceiveResponseMessage);
 
     if (needsContinueDidReceiveResponseMessage) {
@@ -2564,7 +2620,7 @@ void NetworkResourceLoader::consumeSandboxExtensions()
         }
     }
 
-    for (Ref fileReference : borrow(m_fileReferences).get())
+    for (Ref fileReference : borrow(m_fileReferences))
         fileReference->prepareForFileAccess();
 
     m_didConsumeSandboxExtensions = true;
@@ -2576,7 +2632,7 @@ void NetworkResourceLoader::invalidateSandboxExtensions()
         for (auto extension : std::exchange(m_extensionsToRevoke, { }))
             extension->revoke();
 
-        for (Ref fileReference : borrow(m_fileReferences).get())
+        for (Ref fileReference : borrow(m_fileReferences))
             fileReference->revokeFileAccess();
 
         m_didConsumeSandboxExtensions = false;
@@ -2681,7 +2737,7 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
 
     auto size = cookies.size();
     decltype(size) count = 0;
-    for (const auto& cookie : cookies) {
+    for (const auto& cookie : borrow(cookies)) {
         auto trailingComma = ","_s;
         if (++count == size)
             trailingComma = ""_s;

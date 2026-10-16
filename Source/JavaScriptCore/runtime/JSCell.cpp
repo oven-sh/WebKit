@@ -176,6 +176,10 @@ bool JSCell::isObjectSlow() const
 
 bool JSCell::validateIsNotSweeping() const
 {
+#if ENABLE(AOT) && ASSERT_ENABLED
+    if (Thread::currentSingleton().stack().contains(const_cast<JSCell*>(this)))
+        return true;
+#endif
     ASSERT_IMPLIES(vm().currentThreadIsHoldingAPILock(), vm().heap.mutatorState() != MutatorState::Sweeping);
     return !vm().currentThreadIsHoldingAPILock() || vm().heap.mutatorState() != MutatorState::Sweeping;
 }
@@ -196,7 +200,7 @@ JSObject* JSCell::toObjectSlow(JSGlobalObject* globalObject) const
     return downcast<Symbol>(this)->toObject(globalObject);
 }
 
-void NODELETE slowValidateCell(JSCell* cell)
+void LEGACY_NODELETE slowValidateCell(JSCell* cell)
 {
     ASSERT_GC_OBJECT_LOOKS_VALID(cell);
 }

@@ -27,6 +27,8 @@
 #import "CoreIPCNSURLCredential.h"
 
 #import <pal/spi/cf/CFNetworkSPI.h>
+#import <wtf/Borrow.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @interface NSURLCredential(WKSecureCoding)
 - (NSDictionary *)_webKitPropertyListData;
@@ -34,9 +36,8 @@
 @end
 
 #define SET_MDATA(NAME, CLASS, WRAPPER)     \
-    id NAME = dict[@#NAME];                 \
-    if ([NAME isKindOfClass:CLASS.class]) { \
-        auto var = WRAPPER(NAME);           \
+    if (RetainPtr NAME = dynamic_objc_cast<CLASS>(dict[@#NAME])) { \
+        auto var = WRAPPER(NAME.get());     \
         m_data.NAME = WTF::move(var);         \
     }
 
@@ -75,7 +76,8 @@ CoreIPCNSURLCredential::CoreIPCNSURLCredential(NSURLCredential *credential)
     if ([attributes isKindOfClass:NSDictionary.class]) {
         Vector<CoreIPCNSURLCredentialData::Attributes> vector;
         vector.reserveCapacity(attributes.count);
-        for (id key in attributes) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id key in attributes) {
             if (![key isKindOfClass:NSString.class]) {
                 ASSERT_NOT_REACHED();
                 break;
@@ -86,14 +88,14 @@ CoreIPCNSURLCredential::CoreIPCNSURLCredential(NSURLCredential *credential)
                 break;
             }
             std::optional<Variant<CoreIPCNumber, CoreIPCString, CoreIPCDate>> option;
-            if ([value isKindOfClass:NSString.class])
-                option = CoreIPCString(value);
-            if ([value isKindOfClass:NSNumber.class])
-                option = CoreIPCNumber(value);
-            if ([value isKindOfClass:NSDate.class])
-                option = CoreIPCDate(value);
+            if (RetainPtr string = dynamic_objc_cast<NSString>(value))
+                option = CoreIPCString(string.get());
+            if (RetainPtr number = dynamic_objc_cast<NSNumber>(value))
+                option = CoreIPCNumber(number.get());
+            if (RetainPtr date = dynamic_objc_cast<NSDate>(value))
+                option = CoreIPCDate(date.get());
             if (option) {
-                auto k = CoreIPCString(key);
+                auto k = CoreIPCString(checked_objc_cast<NSString>(key));
                 vector.append(std::make_pair(WTF::move(k), WTF::move(*option)));
             }
         }
@@ -116,7 +118,8 @@ CoreIPCNSURLCredential::CoreIPCNSURLCredential(NSURLCredential *credential)
     if ([flags isKindOfClass:NSDictionary.class]) {
         Vector<WebKit::CoreIPCNSURLCredentialData::Flags> vector;
         vector.reserveCapacity(flags.count);
-        for (NSString *key in flags) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *key in flags) {
             if (![key isKindOfClass:NSString.class]) {
                 ASSERT_NOT_REACHED();
                 break;
@@ -204,7 +207,7 @@ RetainPtr<id> CoreIPCNSURLCredential::toID() const
             [dict setObject:(*m_data.password).toID().get() forKey:@"password"];
         if (m_data.attributes) {
             RetainPtr attributes = adoptNS([[NSMutableDictionary alloc] initWithCapacity:(*m_data.attributes).size()]);
-            for (auto& attributePair : *m_data.attributes) {
+            for (auto& attributePair : borrow(*m_data.attributes)) {
                 RetainPtr<id> value;
                 WTF::switchOn(attributePair.second,
                     [&] (const CoreIPCNumber& n) {
@@ -244,7 +247,7 @@ RetainPtr<id> CoreIPCNSURLCredential::toID() const
             [dict setObject:(*m_data.uuid).toID().get() forKey:@"uuid"];
         if (m_data.flags) {
             auto flags = adoptNS([[NSMutableDictionary alloc] initWithCapacity:(*m_data.flags).size()]);
-            for (auto& flagPair : *m_data.flags)
+            for (auto& flagPair : borrow(*m_data.flags))
                 [flags setObject: flagPair.second.toID().get() forKey:flagPair.first.toID().get()];
             [dict setObject:flags.get() forKey:@"flags"];
         }

@@ -244,7 +244,7 @@ ALWAYS_INLINE void forEachInIterationRecord(JSGlobalObject* globalObject, Iterat
     std::optional<CachedCall> cachedCallHolder;
     CachedCall* cachedCall = nullptr;
     if (callData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        cachedCallHolder.emplace(globalObject, asObject(nextMethod), 0);
         if (scope.exception()) [[unlikely]]
             return;
         cachedCall = &cachedCallHolder.value();
@@ -360,7 +360,7 @@ void forEachInIterable(JSGlobalObject& globalObject, JSObject* iterable, JSValue
     std::optional<CachedCall> cachedCallHolder;
     CachedCall* cachedCall = nullptr;
     if (callData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(&globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        cachedCallHolder.emplace(&globalObject, asObject(nextMethod), 0);
         if (scope.exception()) [[unlikely]]
             return;
         cachedCall = &cachedCallHolder.value();

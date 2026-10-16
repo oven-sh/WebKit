@@ -35,14 +35,14 @@
 
 @interface WebAuthenticationPanel : NSObject
 {
-    IBOutlet NSTextField *mainLabel;
-    IBOutlet NSPanel *panel;
-    IBOutlet NSTextField *password;
-    IBOutlet NSTextField *smallLabel;
-    IBOutlet NSTextField *username;
-    IBOutlet NSImageView *imageView;
-    IBOutlet NSButton *remember;
-    IBOutlet NSTextField *separateRealmLabel;
+    IBOutlet __weak NSTextField *mainLabel;
+    IBOutlet __weak NSPanel *panel;
+    IBOutlet __weak NSTextField *password;
+    IBOutlet __weak NSTextField *smallLabel;
+    IBOutlet __weak NSTextField *username;
+    IBOutlet __weak NSImageView *imageView;
+    IBOutlet __weak NSButton *remember;
+    IBOutlet __weak NSTextField *separateRealmLabel;
     BOOL nibLoaded;
     BOOL usingSheet;
     SEL selector;

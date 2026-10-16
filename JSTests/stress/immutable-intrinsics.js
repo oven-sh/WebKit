@@ -205,8 +205,9 @@ if (typeof $vm !== "undefined" && $vm.indexingMode)
     /(b)/.exec("abc"); check(RegExp.$1, "b", "RegExp.$1"); RegExp.input = "given"; check(RegExp.input, "given", "RegExp.input can be given");
     let o = {}; o.__proto__ = Array.prototype; check(Object.getPrototypeOf(o), Array.prototype, "__proto__ is still a setter");
 }
-// What the language itself says cannot be written to is treated no differently: this is where it departs from the book.
+// What the language itself says cannot be written to refuses an heir's store too, as the book has it.
 {
     let heir = { __proto__: new Set()[Symbol.iterator]() };
-    heir[Symbol.toStringTag] = 25; check(heir[Symbol.toStringTag], 25, "an heir's own Symbol.toStringTag");
+    heir[Symbol.toStringTag] = 25; check(heir[Symbol.toStringTag], "Set Iterator", "an heir's Symbol.toStringTag"); check(Object.hasOwn(heir, Symbol.toStringTag), false, "and it has none of its own");
+    throwsTypeError(() => { "use strict"; heir[Symbol.toStringTag] = 25; }, "an heir's Symbol.toStringTag, strict");
 }

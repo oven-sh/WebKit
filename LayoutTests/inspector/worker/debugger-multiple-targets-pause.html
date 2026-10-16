@@ -52,7 +52,7 @@ function test()
         for (let target of WI.targets) {
             InspectorTest.log(`TARGET: ${target.displayName}`);
             let targetData = WI.debuggerManager.dataForTarget(target);
-            let callFrames = targetData.stackTrace.callFrames;
+            let callFrames = targetData.stackTrace?.callFrames || [];
             for (let i = 0; i < callFrames.length; ++i) {
                 let callFrame = callFrames[i];
                 let active = callFrame === WI.debuggerManager.activeCallFrame;
@@ -207,6 +207,26 @@ function test()
             InspectorTest.expectEqual(targetRemovedEvent.data.target, workerTarget1, "Worker 1 should be removed.");
             InspectorTest.expectNull(WI.debuggerManager.activeCallFrame, "The active call frame should be cleared when its target is removed.");
             InspectorTest.expectTrue(WI.debuggerManager.paused, "The debugger should remain paused while other targets are paused.");
+        }
+    });
+
+    suite.addTestCase({
+        name: "Worker.Debugger.Threads.Paused.Worker2.ResumeActiveThread",
+        description: "Resuming the thread of the active call frame should make a call frame of a still paused thread active.",
+        test(resolve, reject) {
+            let targetData = WI.debuggerManager.dataForTarget(workerTarget2);
+            WI.debuggerManager.activeCallFrame = targetData.stackTrace.callFrames[0];
+            WI.debuggerManager.continueUntilNextRunLoop(workerTarget2);
+            WI.debuggerManager.singleFireEventListener(WI.DebuggerManager.Event.ActiveCallFrameDidChange, (event) => {
+                InspectorTest.expectThat(targetData.pausing, "Worker 2 should be pausing.");
+                InspectorTest.expectThat(WI.debuggerManager.paused, "Debugger should still be paused.");
+
+                let activeCallFrame = WI.debuggerManager.activeCallFrame;
+                InspectorTest.expectThat(activeCallFrame, "Should have an active call frame.");
+                InspectorTest.expectEqual(activeCallFrame?.target, mainTarget, "Active call frame should be in the Page.");
+                dumpCallFrames();
+                resolve();
+            });
         }
     });
 

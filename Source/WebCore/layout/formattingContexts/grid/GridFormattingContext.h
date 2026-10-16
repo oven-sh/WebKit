@@ -43,6 +43,7 @@ class ElementBox;
 class PlacedGridItem;
 class UnplacedGridItem;
 
+struct AutoRepeatConstraint;
 struct GridAreaLines;
 struct GridLayoutConstraints;
 
@@ -64,7 +65,13 @@ struct GridAutoFlowOptions {
 struct GridLayoutResult {
     UsedTrackSizes usedTrackSizes;
     GridItemRects gridItemRects;
-    LayoutUnit blockContentSize;
+    LayoutUnit usedBlockContentSize;
+    // The number of explicit grid tracks that came from an auto-repeat.
+    size_t autoRepeatColumnsCount { 0 };
+    size_t autoRepeatRowsCount { 0 };
+
+    size_t leadingImplicitColumnsCount { 0 };
+    size_t leadingImplicitRowsCount { 0 };
 };
 
 // The number of implicit tracks generated before the start of the explicit grid, per axis, because
@@ -107,7 +114,7 @@ public:
         LayoutUnit maximum;
     };
 
-    IntrinsicWidths computeIntrinsicWidths();
+    IntrinsicWidths computeIntrinsicWidths(const AutoRepeatConstraint& inlineAxisAutoRepeatConstraint, const AutoRepeatConstraint& blockAxisAutoRepeatConstraint);
     IntrinsicWidthSizingPath intrinsicWidthSizingPath() const { return m_intrinsicWidthSizingPath; }
 
     PlacedGridItems constructPlacedGridItems(const GridAreas&) const;

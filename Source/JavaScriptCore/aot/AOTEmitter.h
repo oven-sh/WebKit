@@ -297,6 +297,7 @@ protected:
 
     LValue allocateHeapCell(LValue allocator, LBasicBlock slowPath);
     LValue allocateHeapCell(LValue nonNullAllocator, std::optional<size_t> cellSize, LBasicBlock slowPath);
+    LValue allocateAdjacentHeapCells(LValue allocator, size_t cellSize, unsigned count, LBasicBlock slowPath);
     LValue allocatorForSize(LValue subspace, LValue size, LBasicBlock slowPath);
     LValue allocatorForSize(LValue subspace, size_t);
     void storeHeader(LValue cell, LValue header);

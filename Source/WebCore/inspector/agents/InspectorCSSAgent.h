@@ -50,7 +50,6 @@ class CSSFrontendDispatcher;
 namespace WebCore {
 
 class CSSRule;
-class CSSStyleRule;
 class CSSStyleSheet;
 class Document;
 class Element;
@@ -63,6 +62,7 @@ class StyleRule;
 class WeakPtrImplWithEventTargetData;
 
 namespace Style {
+class ComputedStyle;
 class Resolver;
 }
 
@@ -93,7 +93,7 @@ public:
         const CheckedPtr<ContentSecurityPolicy> m_contentSecurityPolicy;
     };
 
-    static std::optional<Inspector::Protocol::CSS::PseudoId> NODELETE protocolValueForPseudoElementType(PseudoElementType);
+    static std::optional<Inspector::Protocol::CSS::PseudoId> LEGACY_NODELETE protocolValueForPseudoElementType(PseudoElementType);
 
     // InspectorAgentBase
     void didCreateFrontendAndBackend();
@@ -105,7 +105,7 @@ public:
     Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::CSS::CSSComputedStyleProperty>>> getComputedStyleForNode(Inspector::Protocol::DOM::NodeId);
     Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::CSS::Font>> getFontDataForNode(Inspector::Protocol::DOM::NodeId);
     Inspector::Protocol::ErrorStringOr<std::tuple<RefPtr<Inspector::Protocol::CSS::CSSStyle> /* inlineStyle */, RefPtr<Inspector::Protocol::CSS::CSSStyle> /* attributesStyle */>> getInlineStylesForNode(Inspector::Protocol::DOM::NodeId);
-    Inspector::Protocol::ErrorStringOr<std::tuple<RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::RuleMatch>>, RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::PseudoIdMatches>>, RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::InheritedStyleEntry>>>> getMatchedStylesForNode(Inspector::Protocol::DOM::NodeId, std::optional<bool>&& includePseudo, std::optional<bool>&& includeInherited);
+    Inspector::Protocol::ErrorStringOr<std::tuple<RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::RuleMatch>>, RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::PseudoIdMatches>>, RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::InheritedStyleEntry>>, RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::CSSRule>>>> getMatchedStylesForNode(Inspector::Protocol::DOM::NodeId, std::optional<bool>&& includePseudo, std::optional<bool>&& includeInherited, std::optional<bool>&& includeKeyframes);
     Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::CSS::CSSStyleSheetHeader>>> getAllStyleSheets();
     Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::CSS::CSSStyleSheetBody>> getStyleSheet(const Inspector::Protocol::CSS::StyleSheetId&);
     Inspector::Protocol::ErrorStringOr<String> getStyleSheetText(const Inspector::Protocol::CSS::StyleSheetId&);
@@ -153,7 +153,10 @@ public:
         SlotAssigned = 1 << 7,
         SlotFilled = 1 << 8,
     };
-    OptionSet<LayoutFlag> layoutFlagsForNode(Node&);
+    static OptionSet<LayoutFlag> layoutFlagsForNode(Node&);
+    static std::optional<LayoutFlag> layoutFlagContextType(RenderObject*);
+    static bool layoutFlagsContainLayoutContextType(OptionSet<LayoutFlag>);
+    static RefPtr<JSON::ArrayOf<String /* Inspector::Protocol::CSS::LayoutFlag */>> protocolLayoutFlags(OptionSet<LayoutFlag>);
     RefPtr<JSON::ArrayOf<String /* Inspector::Protocol::CSS::LayoutFlag */>> protocolLayoutFlagsForNode(Node&);
 
     void reset();
@@ -177,11 +180,12 @@ private:
     InspectorStyleSheet& bindStyleSheet(CSSStyleSheet*);
     InspectorStyleSheet* assertStyleSheetForId(Inspector::Protocol::ErrorString&, const Inspector::Protocol::CSS::StyleSheetId&);
     InspectorStyleSheet* createInspectorStyleSheetForDocument(Document&);
-    Inspector::Protocol::CSS::StyleSheetOrigin NODELETE detectOrigin(CSSStyleSheet* pageStyleSheet, Document* ownerDocument);
+    Inspector::Protocol::CSS::StyleSheetOrigin LEGACY_NODELETE detectOrigin(CSSStyleSheet* pageStyleSheet, Document* ownerDocument);
 
     RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(const StyleRule*, Style::Resolver&, Element&);
     RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(CSSRule*);
     Ref<JSON::ArrayOf<Inspector::Protocol::CSS::RuleMatch>> buildArrayForMatchedRuleList(const Vector<Ref<const StyleRule>>&, Style::Resolver&, Element&, std::optional<Style::PseudoElementIdentifier>);
+    Ref<JSON::ArrayOf<Inspector::Protocol::CSS::CSSRule>> buildArrayForKeyframes(Element&, const Style::ComputedStyle&);
     RefPtr<Inspector::Protocol::CSS::CSSStyle> buildObjectForAttributesStyle(StyledElement&);
 
     void nodeHasLayoutFlagsChange(Node&);

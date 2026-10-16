@@ -43,6 +43,7 @@ namespace JSC { namespace AOT { namespace Typed {
     v(IsClosureOf) \
     v(IsBuiltinFunction) \
     v(BuiltinFunction) \
+    v(ConstantSymbol) \
     v(Results) \
     v(Unspecified) \
     v(ResultAt) \
@@ -78,25 +79,269 @@ using Format::FunctionKind;
 using Format::MethodKind;
 using Format::TerminatorKind;
 
-using Arguments = Vector<ValueID, 4>;
+// A list in eight bytes: a pointer to its size, its capacity and its elements, null while it is empty. For lists that most of their
+// owners do not have. It has the members of WTF::Vector that are used on it.
+struct CompactListHead {
+    uint32_t size;
+    uint32_t capacity;
+};
+inline constexpr CompactListHead emptyCompactListHead { 0, 0 };
+
+template<typename T>
+class CompactList {
+    static_assert(std::is_trivially_copyable_v<T> && alignof(T) <= 8);
+public:
+    using ValueType = T;
+    using value_type = T;
+    using iterator = T*;
+    using const_iterator = const T*;
+
+    CompactList() = default;
+    CompactList(std::initializer_list<T> list) { append(std::span<const T> { list.begin(), list.size() }); }
+    CompactList(std::span<const T> list) { append(list); }
+    template<size_t inlineCapacity> CompactList(const Vector<T, inlineCapacity>& list) { append(list.span()); }
+    CompactList(const CompactList& other) { append(other.span()); }
+    CompactList(CompactList&& other)
+        : m_storage(std::exchange(other.m_storage, emptyStorage()))
+    {
+    }
+    ~CompactList()
+    {
+        if (m_storage != emptyStorage())
+            fastFree(m_storage);
+    }
+    CompactList& operator=(const CompactList& other)
+    {
+        if (this != &other) {
+            shrink(0);
+            append(other.span());
+        }
+        return *this;
+    }
+    CompactList& operator=(CompactList&& other)
+    {
+        if (this != &other) {
+            if (m_storage != emptyStorage())
+                fastFree(m_storage);
+            m_storage = std::exchange(other.m_storage, emptyStorage());
+        }
+        return *this;
+    }
+
+    size_t size() const { return m_storage->size; }
+    size_t capacity() const { return m_storage->capacity; }
+    bool isEmpty() const { return !size(); }
+
+    T* begin() LIFETIME_BOUND { return m_storage->elements(); }
+    T* end() LIFETIME_BOUND { return begin() + size(); }
+    const T* begin() const LIFETIME_BOUND { return m_storage->elements(); }
+    const T* end() const LIFETIME_BOUND { return begin() + size(); }
+    std::span<const T> span() const LIFETIME_BOUND { return { begin(), size() }; }
+    std::span<T> mutableSpan() LIFETIME_BOUND { return { begin(), size() }; }
+    std::span<const T> subspan(size_t offset, size_t length = std::dynamic_extent) const LIFETIME_BOUND { return span().subspan(offset, length); }
+
+    T& at(size_t index) LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(index < size());
+        return begin()[index];
+    }
+    const T& at(size_t index) const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(index < size());
+        return begin()[index];
+    }
+    T& operator[](size_t index) LIFETIME_BOUND { return at(index); }
+    const T& operator[](size_t index) const LIFETIME_BOUND { return at(index); }
+    T& first() LIFETIME_BOUND { return at(0); }
+    const T& first() const LIFETIME_BOUND { return at(0); }
+    T& last() LIFETIME_BOUND { return at(size() - 1); }
+    const T& last() const LIFETIME_BOUND { return at(size() - 1); }
+
+    void reserveCapacity(size_t wanted)
+    {
+        if (wanted <= capacity())
+            return;
+        RELEASE_ASSERT(wanted <= UINT32_MAX);
+        bool wasEmpty = m_storage == emptyStorage();
+        auto* storage = static_cast<Storage*>(fastRealloc(wasEmpty ? nullptr : m_storage, sizeof(Storage) + wanted * sizeof(T)));
+        if (wasEmpty)
+            storage->size = 0;
+        storage->capacity = wanted;
+        m_storage = storage;
+    }
+    void reserveInitialCapacity(size_t wanted) { reserveCapacity(wanted); }
+    void shrinkToFit()
+    {
+        if (!size()) {
+            clear();
+            return;
+        }
+        if (size() == capacity())
+            return;
+        m_storage = static_cast<Storage*>(fastRealloc(m_storage, sizeof(Storage) + size() * sizeof(T)));
+        m_storage->capacity = m_storage->size;
+    }
+
+    void append(T element)
+    {
+        if (size() == capacity())
+            reserveCapacity(std::max<size_t>(2, capacity() + capacity() / 2 + 1));
+        m_storage->elements()[m_storage->size++] = element;
+    }
+    void append(std::span<const T> list)
+    {
+        if (list.empty())
+            return;
+        size_t before = size();
+        if (list.data() >= begin() && list.data() < end()) {
+            Vector<T, 8> copy(list);
+            append(copy.span());
+            return;
+        }
+        reserveCapacity(before + list.size());
+        memcpy(m_storage->elements() + before, list.data(), list.size_bytes());
+        m_storage->size = before + list.size();
+    }
+    void appendVector(const CompactList& other) { append(other.span()); }
+    template<size_t inlineCapacity> void appendVector(const Vector<T, inlineCapacity>& other) { append(other.span()); }
+    void appendList(std::initializer_list<T> list) { append(std::span<const T> { list.begin(), list.size() }); }
+    template<typename Iterator> void appendRange(Iterator from, Iterator to)
+    {
+        for (; from != to; ++from)
+            append(*from);
+    }
+    void insert(size_t position, T element)
+    {
+        RELEASE_ASSERT(position <= size());
+        append(element);
+        std::rotate(begin() + position, end() - 1, end());
+    }
+    void removeAt(size_t position, size_t length = 1)
+    {
+        RELEASE_ASSERT(position + length <= size());
+        if (!length)
+            return;
+        std::move(begin() + position + length, end(), begin() + position);
+        m_storage->size -= length;
+    }
+    void removeLast() { removeAt(size() - 1); }
+    T takeLast()
+    {
+        T result = last();
+        removeLast();
+        return result;
+    }
+    void shrink(size_t newSize)
+    {
+        RELEASE_ASSERT(newSize <= size());
+        if (newSize != size())
+            m_storage->size = newSize;
+    }
+    void grow(size_t newSize)
+    {
+        RELEASE_ASSERT(newSize >= size());
+        if (newSize == size())
+            return;
+        reserveCapacity(newSize);
+        std::fill(end(), begin() + newSize, T());
+        m_storage->size = newSize;
+    }
+    void resize(size_t newSize)
+    {
+        if (newSize <= size())
+            shrink(newSize);
+        else
+            grow(newSize);
+    }
+    void fill(T element, size_t newSize)
+    {
+        resize(newSize);
+        std::fill(begin(), end(), element);
+    }
+    void clear()
+    {
+        if (m_storage != emptyStorage())
+            fastFree(m_storage);
+        m_storage = emptyStorage();
+    }
+    void reverse() { std::reverse(begin(), end()); }
+
+    size_t find(T element) const
+    {
+        for (size_t index = 0; index < size(); ++index) {
+            if (begin()[index] == element)
+                return index;
+        }
+        return notFound;
+    }
+    bool contains(T element) const { return find(element) != notFound; }
+    size_t findIf(NOESCAPE const Invocable<bool(const T&)> auto& matches) const
+    {
+        for (size_t index = 0; index < size(); ++index) {
+            if (matches(begin()[index]))
+                return index;
+        }
+        return notFound;
+    }
+    bool containsIf(NOESCAPE const Invocable<bool(const T&)> auto& matches) const { return findIf(matches) != notFound; }
+    size_t removeAllMatching(NOESCAPE const Invocable<bool(const T&)> auto& matches)
+    {
+        auto* kept = std::remove_if(begin(), end(), matches);
+        size_t removed = end() - kept;
+        shrink(size() - removed);
+        return removed;
+    }
+    size_t removeAll(T element)
+    {
+        return removeAllMatching([&](const T& other) {
+            return other == element;
+        });
+    }
+    auto map(NOESCAPE const auto& functor) const
+    {
+        Vector<std::decay_t<decltype(functor(T()))>> result;
+        result.reserveInitialCapacity(size());
+        for (T element : *this)
+            result.append(functor(element));
+        return result;
+    }
+
+    friend bool operator==(const CompactList& a, const CompactList& b) { return std::ranges::equal(a.span(), b.span()); }
+
+private:
+    struct Storage : CompactListHead {
+        T* elements() { return reinterpret_cast<T*>(this + 1); }
+    };
+    static Storage* emptyStorage() { return static_cast<Storage*>(const_cast<CompactListHead*>(&emptyCompactListHead)); }
+
+    Storage* m_storage { emptyStorage() };
+};
+
+using Arguments = CompactList<ValueID>;
 
 static constexpr uint32_t closureIsInFrame = 1;
 
 static constexpr uint32_t shapeTestIsExact = 1;
 static constexpr uint32_t shapeTestIsForThisInstance = 2;
 
-enum class MethodAskedByStub : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest };
+enum class MethodAskedByStub : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest, StringMatch };
 
 struct Value {
     Opcode opcode { Opcode::Undefined };
     // repOf(type).
-    Rep rep { Rep::Void };
-    bool isInTailPosition { false };
+    Rep rep : 4 { Rep::Void };
+    bool isInTailPosition : 1 { false };
     bool hasStringKeysByType : 1 { false };
     bool constructs : 1 { false };
+    bool goesBySignature : 1 { false };
     bool receiverHasOriginalStructure : 1 { false };
     bool operandClassIsProven : 1 { false };
     bool mustBeProperTailCall : 1 { false };
+    bool dropsDroppableCallerFrame : 1 { false };
+    bool leavesDroppableFrame : 1 { false };
+    bool receiverIsExpectedOfOneRow : 1 { false };
+    MethodAskedByStub methodAskedByStub : 4 { MethodAskedByStub::None };
+    uint8_t classExpectedOfReceiverPlusOne : 6 { 0 };
     uint32_t position { 0 };
     // What the value is: given by the front end, or by the pass that made the value, which copies a type that is there. Whoever uses the
     // value relies on it. So the operation sees to it: where what it does by itself does not make sure of the type (a property read
@@ -107,36 +352,60 @@ struct Value {
     // JavaScript, whose type is anything. It may be wrong. Nothing relies on it: the verifier does not look at it, no pass derives one
     // from another, and no summary goes by it. Only the lowering of an operation that is carried out the general way reads those of
     // its own operands: it tests for what is expected, does that in place, and does the general thing otherwise. None: nothing is expected.
-    TypeID prediction;
+    TypeID prediction() const { return isExpected(ExpectedType) ? TypeID(expectation & greatestExpected) : TypeID(); }
+    void setPrediction(TypeID type) { expect(ExpectedType, type.index(), !!type); }
     // Likewise: the function that the value is expected to be a closure of.
-    FunctionID predictedClosure;
+    FunctionID predictedClosure() const { return isExpected(ExpectedClosure) ? FunctionID(expectation & greatestExpected) : FunctionID(); }
+    void setPredictedClosure(FunctionID function) { expect(ExpectedClosure, function.index(), !!function); }
     // Likewise, of a GetByVal: see Program::functionByKey().
-    StringID predictedByKey;
+    StringID predictedByKey() const { return isExpected(ExpectedByKey) ? StringID(expectation & greatestExpected) : StringID(); }
+    void setPredictedByKey(StringID name) { expect(ExpectedByKey, name.index(), !!name); }
     // Options::auditAOTTypedAssertions(): the type the front end has given the value, where `type` is anything in its place and the
     // operation is one that would hold what it yields to the type. Nothing relies on it. The lowering tests for it, has a value that fails
     // reported, and lets it go on. Of a Cast: what it holds its operand to. See Reader::typeReliedOn().
-    TypeID assertedType;
+    TypeID assertedType() const { return isExpected(Asserted) ? TypeID(expectation & greatestExpected) : TypeID(); }
+    void setAssertedType(TypeID type) { expect(Asserted, type.index(), !!type); }
+    enum : uint32_t { ExpectedType, ExpectedClosure, ExpectedByKey, Asserted };
+    static constexpr uint32_t greatestExpected = (1u << 30) - 1;
+    uint32_t expectation { UINT32_MAX };
+    bool isExpected(uint32_t kind) const { return expectation != UINT32_MAX && expectation >> 30 == kind; }
+    void expect(uint32_t kind, uint32_t index, bool isSet)
+    {
+        if (!isSet) {
+            if (isExpected(kind))
+                expectation = UINT32_MAX;
+            return;
+        }
+        if (isExpected(Asserted) && kind != Asserted)
+            return;
+        expectation = index < greatestExpected ? kind << 30 | index : UINT32_MAX;
+    }
     // Index into Function::inlineFrames: which inlined call this value was copied in by. 0: it belongs to the function itself.
     // `position` is an offset into the source of that frame's function.
     uint32_t inlineFrame : 8 { 0 };
-    uint32_t parameterCheckCalleePlusOne : 24 { 0 };
-    bool receiverIsExpectedOfOneRow { false };
-    MethodAskedByStub methodAskedByStub { MethodAskedByStub::None };
-    uint16_t classExpectedOfReceiverPlusOne { 0 };
+    uint32_t isSignatureOfCall : 1 { 0 };
+    uint32_t calleeOrSignaturePlusOne : 23 { 0 };
     std::array<ValueID, 3> children;
     std::array<uint32_t, 2> immediates { Format::none, Format::none };
     Arguments arguments;
 
     ValueID child(unsigned index) const { return children[index]; }
+    bool hasCallSignature() const { return (opcode == Opcode::Call || opcode == Opcode::CallMethod) && isSignatureOfCall; }
+    uint32_t callSignature() const { return isSignatureOfCall ? static_cast<uint32_t>(calleeOrSignaturePlusOne) - 1 : Format::none; }
+    void setCallSignature(uint32_t signature)
+    {
+        isSignatureOfCall = signature < (1u << 23) - 1;
+        calleeOrSignaturePlusOne = isSignatureOfCall ? signature + 1 : 0;
+    }
     // Whether something is expected of this value that is not expected of the other: whoever took the other in its place would lose that.
     // A pass that finds the two to be one value leaves this one as an Upcast of the other then, which is no code.
-    bool hasPredictionUnlike(const Value& other) const { return (prediction || predictedClosure || predictedByKey) && (prediction != other.prediction || predictedClosure != other.predictedClosure || predictedByKey != other.predictedByKey); }
+    bool hasPredictionUnlike(const Value& other) const { return expectation != UINT32_MAX && !isExpected(Asserted) && (other.isExpected(Asserted) || expectation != other.expectation); }
     // For a value that a pass makes to stand for the other, or puts in its place under its number.
     void takePredictionOf(const Value& other)
     {
-        prediction = other.prediction;
-        predictedClosure = other.predictedClosure;
-        predictedByKey = other.predictedByKey;
+        if (isExpected(Asserted))
+            return;
+        expectation = other.isExpected(Asserted) ? UINT32_MAX : other.expectation;
     }
     bool boolean() const { return immediates[0]; }
     uint64_t bits() const { return static_cast<uint64_t>(immediates[1]) << 32 | immediates[0]; }
@@ -180,8 +449,12 @@ struct Value {
     bool notesMisfitAtCaller() const { return opcode == Opcode::Cast && immediates[1] & Format::CastNotesMisfitAtCaller; }
     uint32_t argumentOfMisfitAtCaller() const { return (immediates[1] >> Format::argumentOfMisfitAtCallerShift & 0xff) == 0xff ? UINT32_MAX : immediates[1] >> Format::argumentOfMisfitAtCallerShift & 0xff; }
     bool coercesFreshData() const { return freshness() != Format::Freshness::None; }
-    FunctionID parameterCheckCallee() const { return opcode == Opcode::Cast && parameterCheckCalleePlusOne ? FunctionID(static_cast<uint32_t>(parameterCheckCalleePlusOne) - 1) : FunctionID(); }
-    void setParameterCheckCallee(FunctionID function) { parameterCheckCalleePlusOne = function.index() < (1u << 24) - 1 ? function.index() + 1 : 0; }
+    FunctionID parameterCheckCallee() const { return opcode == Opcode::Cast && !isSignatureOfCall && calleeOrSignaturePlusOne ? FunctionID(static_cast<uint32_t>(calleeOrSignaturePlusOne) - 1) : FunctionID(); }
+    void setParameterCheckCallee(FunctionID function)
+    {
+        isSignatureOfCall = false;
+        calleeOrSignaturePlusOne = function.index() < (1u << 23) - 1 ? function.index() + 1 : 0;
+    }
     // Of a Cast for the reason Coerce: the type after `as`. See Format::CastReason.
     TypeID coercedType() const { return TypeID(immediates[0]); }
     // Of a Cast for the reason NonNull: the source text of the operand, or none.
@@ -204,6 +477,7 @@ struct Value {
     // Of IsBuiltinFunction: the entry whose function the operand is compared with. Of BuiltinFunction: the entry whose function it is.
     BuiltinID builtin() const { return BuiltinID(immediates[0]); }
     uint32_t engineClass() const { return immediates[1]; }
+    BuiltinName globalComparedWith() const { return opcode == Opcode::IsBuiltinFunction && immediates[1] != Format::none ? BuiltinName(immediates[1]) : BuiltinName(); }
     // Of CallBuiltin of a method on an object: the GetById that read the method from the receiver before the arguments were evaluated, if
     // there is one. The generic fallback calls what it has read.
     ValueID methodRead() const { return children[1]; }
@@ -278,7 +552,7 @@ struct Terminator {
     TerminatorKind kind { TerminatorKind::Unreachable };
     ValueID value;
     Vector<Target, 2> targets;
-    Vector<int64_t> cases;
+    CompactList<int64_t> cases;
 
     template<typename Functor>
     void forEachChild(const Functor& functor)
@@ -295,7 +569,7 @@ struct Terminator {
 using ValuesOfBlock = Vector<ValueID, 4>;
 
 struct Block {
-    Vector<ValueID> parameters;
+    CompactList<ValueID> parameters;
     ValuesOfBlock values;
     Terminator terminator;
 };
@@ -395,6 +669,43 @@ struct AllocationNote {
     ASCIILiteral why;
 };
 
+struct BuiltinPath {
+    bool isGlobalObject { false };
+    bool isOnPrototype { false };
+    StringID global;
+    StringID member;
+
+    explicit operator bool() const { return isGlobalObject || global; }
+    friend bool operator==(const BuiltinPath&, const BuiltinPath&) = default;
+};
+
+struct ExpectedBuiltins {
+    BuiltinPath first;
+    BuiltinPath second;
+    bool areTooMany { false };
+
+    explicit operator bool() const { return !!first; }
+    friend bool operator==(const ExpectedBuiltins&, const ExpectedBuiltins&) = default;
+    void add(const BuiltinPath& path)
+    {
+        if (!path || areTooMany || path == first || path == second)
+            return;
+        if (!first)
+            first = path;
+        else if (!second)
+            second = path;
+        else
+            *this = { { }, { }, true };
+    }
+    void add(const ExpectedBuiltins& other)
+    {
+        if (other.areTooMany)
+            *this = { { }, { }, true };
+        add(other.first);
+        add(other.second);
+    }
+};
+
 struct Function {
     StringID name;
     ModuleID module;
@@ -419,12 +730,34 @@ struct Function {
     bool isRampForClosures { false };
     bool isUsedAsObject { false };
     bool isBodyOfSeveralSites { false };
+    bool isGuardedPreludeEntry { false };
+    bool copiesFirstArgumentOutOfFrame { false };
+    uint8_t numberOfCapturesOfCopiedArgument { 0 };
+    Vector<FunctionID> guardedPreludeEntriesWantedLater;
     bool storesWereMovedByCleanUp { false };
     bool returnsBoxedValue { false };
+    bool takesCapturesFromClosure { false };
+    bool isValueEntry { false };
+    bool isTwinOfItsFunction { false };
+    FunctionID functionOfValueEntry;
+    FunctionID adapterOfValueEntry;
+    FunctionID valueEntry;
+    uint32_t resultOfAdapter { Format::none };
+    uint64_t resultsHoldingWhatIsYielded { 0 };
+    TypeID typeYieldedWhenResultsWereCompared;
     TypeID resultTypeCheckedByCallers;
     bool resultIsCoercedByCallers { false };
+    bool isCalledInPlace { false };
+    bool isCalledFromDroppableFrame { false };
+    bool hasTailCallSites { false };
+    bool isInCycleOfIndirectTailCalls { false };
     uint16_t reservedStackArgumentCount { 0 };
     bool returnsWholeNumbers { false };
+    bool readsMemberOfHostObject { false };
+    StringID hostObjectReadFromCache;
+    FunctionID generalReaderOfHostObject;
+    bool readsAsyncLocalStorage { false };
+    FunctionID generalReaderOfAsyncLocalStorage;
     // Of a constructor, and of its general entry: the class.
     LayoutID constructedClass;
     // functionIsAsync, functionIsGenerator: what it is declared as, and so what its closures are as objects. Also of its general entry.
@@ -435,6 +768,7 @@ struct Function {
     // Of an async function: the one that runs the body up to the first suspension.
     FunctionID startFunction;
     bool savesItsFrame { false };
+    bool capturesExceptions { false };
     // Of a resume function: where in the source of the function each Await and Yield is. The frame of a coroutine that is suspended at the n-th has the state n + 1.
     Vector<uint32_t> suspensionPositions;
     // From linkAllocations() on, of a plain function that is a value and declares `this` to be of a layout that objects are made of: how
@@ -450,6 +784,7 @@ struct Function {
     // Of such a one: 1, 2: in the place of the object it may yield `undefined`, `null`: the first of what the worker yields says whether there is an object.
     uint8_t nilOfResults { 0 };
     Vector<TypeID> parameterTypes;
+    Vector<ExpectedBuiltins> builtinsExpectedOfEntryParameters;
     // By parameter: its type is written down. What is passed and does not fit is coerced as by `as`. Otherwise it is turned away.
     BitVector annotatedParameters;
     BitVector parametersOnlyCalled;
@@ -471,6 +806,8 @@ struct Function {
     // watches: control does not come back there. Never more than the two above.
     Writes writesIfItReturns { Writes::Heap };
     bool writesShapeWordsIfItReturns { true };
+    bool convertsArrayStorage { true };
+    bool convertsArrayStorageIfItReturns { true };
     // Of a function that starts with Operation "Initialize": how many of its pairs, from the first on, may be stored to a fresh `this`
     // without a test. Every allocated member of the type of `this` has the field, inline, in one slot.
     uint16_t numberOfInitialStores { 0 };
@@ -519,12 +856,13 @@ static constexpr uint32_t fieldKeepsWideReference = 524288;
 // Those of AOTTypedData.h too: each has a bit of its own.
 static_assert((fieldIsOptional + fieldIsOutOfLine + fieldIsImmutable + fieldAllowsUndefined + fieldAllowsNull + fieldIsAnnotated + fieldIsMethod + fieldIsNeverSeenUninitialized
     + fieldIsStoredOnce + fieldIsNeverStored + fieldIsExpectedInt32 + fieldIsSetAtCreation + fieldMayBeSetAtCreation + fieldIsAbsentAtBirth + fieldHoldsClosureMadeOnce + fieldIsNeverSeenAbsent + fieldDoesNotAdmitUndefined
-    + fieldIsPinned + fieldIsNeverSeenAbsentAsWritten + fieldMayExistWithoutStorage)
+    + fieldIsPinned + fieldIsNeverSeenAbsentAsWritten + fieldMayExistWithoutStorage + fieldIsPlaceholder)
     == (fieldIsOptional | fieldIsOutOfLine | fieldIsImmutable | fieldAllowsUndefined | fieldAllowsNull | fieldIsAnnotated | fieldIsMethod | fieldIsNeverSeenUninitialized
     | fieldIsStoredOnce | fieldIsNeverStored | fieldIsExpectedInt32 | fieldIsSetAtCreation | fieldMayBeSetAtCreation | fieldIsAbsentAtBirth | fieldHoldsClosureMadeOnce | fieldIsNeverSeenAbsent | fieldDoesNotAdmitUndefined
-    | fieldIsPinned | fieldIsNeverSeenAbsentAsWritten | fieldMayExistWithoutStorage));
+    | fieldIsPinned | fieldIsNeverSeenAbsentAsWritten | fieldMayExistWithoutStorage | fieldIsPlaceholder));
 static_assert(fieldIsNeverSeenAbsentAsWritten < 1u << guardOfPinnedFieldShift);
 static_assert(fieldMayExistWithoutStorage < 1u << guardOfPinnedFieldShift);
+static_assert(fieldIsPlaceholder < 1u << guardOfPinnedFieldShift);
 
 // Which shapes pass. Program::passes() says it in code.
 //
@@ -608,6 +946,9 @@ struct Field {
     bool onlyFunctionIsFact { false };
     bool onlyFunctionOrNil { false };
     FunctionID otherFunction;
+    ExpectedBuiltins expectedBuiltins;
+    StringID placeholderFor;
+    bool hasSlotInEveryMember { false };
 };
 
 struct Method {
@@ -699,6 +1040,7 @@ struct Layout {
     // says which, from what the checker has found assignable. Not each has a field for every property: see Field::isLackedBySomeMember. Sorted.
     Vector<LayoutID> members;
     Vector<LayoutID> membersByFit;
+    Vector<uint32_t> shapesOfMembers;
     // What `as` may turn an object into, where it is, that was allocated with this layout: layouts that have all its slots. Sorted.
     Vector<LayoutID> specializations;
     // Among Program::allocations: one of a record of the layout with Object.prototype, whatever it is born with. For a copy, which has its keys from what is copied.
@@ -776,6 +1118,7 @@ struct Variable {
     FunctionID onlyFunction;
     bool onlyFunctionIsFact { false };
     bool onlyFunctionOrNil { false };
+    ExpectedBuiltins expectedBuiltins;
     Store store { Store::JSValue };
     uint32_t offset { 0 };
 };
@@ -905,6 +1248,15 @@ private:
     mutable Vector<uint8_t> m_isListed;
 };
 
+struct CallSignature {
+    Vector<TypeID, 4> parameters;
+    TypeID result;
+    unsigned leastNumberOfArguments { 0 };
+    bool hasRestParameter { false };
+
+    friend bool operator==(const CallSignature&, const CallSignature&) = default;
+};
+
 class Program final {
     WTF_MAKE_TZONE_ALLOCATED(Program);
     WTF_MAKE_NONCOPYABLE(Program);
@@ -958,6 +1310,7 @@ public:
     bool isUpcast(LayoutID, LayoutID) const;
     ValueID constantOf(const Function&, ValueID) const;
     ValueID originOf(const Function&, ValueID) const;
+    ExpectedBuiltins expectedBuiltins(const Function&, ValueID) const;
     // Whether a cast for the reason has nothing to do for a value of the one type: it may be left out. `as` and `!` make something of an
     // object that is of a type only because the type admits foreign objects. What they do goes by the value and by the type they cast
     // to, never by how much a pass has found out about the operand. Store and Claim take such an object as it is.
@@ -1005,6 +1358,9 @@ public:
     BitVector extendedGlobals;
     // By the index of the string. See Format::Header.
     BitVector prototypePropertyNames;
+    BitVector methodFieldNames;
+    BitVector namesThatMayBeAccessors;
+    void findNamesThatMayBeAccessors();
     Vector<std::pair<StringID, StringID>> regExpLiterals;
     bool logsTypeErrors { false };
     Vector<uint32_t> sites;
@@ -1088,6 +1444,9 @@ public:
     Vector<Module> modules;
     Functions functions;
     Vector<unsigned> sizesForInlining;
+    Vector<uint32_t> firstViewOfLayout;
+    Vector<LayoutID> viewsOfLayouts;
+    UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> fieldsStoredToThroughLayouts;
     struct FactsForInlining {
         bool isAccessor { false };
         bool returnsMethodTable { false };
@@ -1108,7 +1467,15 @@ public:
     // By string: its number among the identifiers of the whole image, which the caches go by. Zero: it has none.
     Vector<uint32_t> identifierNumbers;
     // The names by which values of unknown layout are accessed.
-    Vector<std::pair<StringID, uint32_t>> genericAccessIdentifiersAndNumberOfUses() const;
+    enum class AccessByName : uint8_t { Read, Store, Definition, Call, Other };
+    struct UsesOfName {
+        StringID name;
+        uint32_t uses { 0 };
+        std::array<uint32_t, 4> usesByAccess { };
+    };
+    Vector<UsesOfName> genericAccessIdentifiersAndNumberOfUses() const;
+    Vector<uint32_t> keysOfStringsAskedForMost(unsigned limit) const;
+    void readNamesAndStringsOffValues();
 
     TypeTable types;
     BitVector typesNamedAtRunTime;
@@ -1124,6 +1491,9 @@ public:
     bool mayMakeSlimClosures(const Function&) const;
     // By PreludeFunction. None: the program has no such function.
     Vector<FunctionID> preludeFunctions;
+    static constexpr unsigned maxArgumentsOfGuardedPreludeEntry = 3;
+    UncheckedKeyHashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> guardedPreludeEntries;
+    static constexpr uint32_t keyOfGuardedPreludeEntry(FunctionID prelude, unsigned numberOfArguments, std::optional<unsigned> numberOfCapturesOfCopiedArgument, bool holdsResultToType) { return ((prelude.index() * (maxArgumentsOfGuardedPreludeEntry + 1) + numberOfArguments) * (ClosureRequest::maxNumberOfCapturesOfSlimClosure + 2) + (numberOfCapturesOfCopiedArgument ? *numberOfCapturesOfCopiedArgument + 1 : 0)) * 2 + holdsResultToType; }
     // By EngineClass::index: an instance, and not `undefined` or `null`. Of the classes a receiver is tested for, and of strings.
     Vector<TypeID> engineClassTypes;
     // By BuiltinID: what the table says the built-in yields, where that is a range of integers, with other primitives beside it or without. Else none.
@@ -1191,16 +1561,21 @@ public:
     // By string, from one, among the same caches. Zero: the name has none.
     Vector<uint32_t> propertyOfGlobalThisCacheNumbers;
     uint32_t propertyOfGlobalThisCacheNumber(StringID name) const { return name.index() < propertyOfGlobalThisCacheNumbers.size() ? propertyOfGlobalThisCacheNumbers[name.index()] : 0; }
-    bool isNameOfHostObject(StringID name) const
+    bool isDataMemberOfHostObject(StringID object, StringID name) const
     {
-        auto bytes = string(name);
-        return equalSpans(bytes, "process"_span8) || equalSpans(bytes, "Bun"_span8);
+        auto isOneOf = [bytes = string(name)](auto... names) { return (equalSpans(bytes, names) || ...); };
+        if (equalSpans(string(object), "process"_span8)) {
+            return isOneOf("env"_span8, "stdout"_span8, "stderr"_span8, "stdin"_span8, "pid"_span8, "version"_span8, "versions"_span8, "execPath"_span8, "argv0"_span8, "platform"_span8, "arch"_span8,
+                "release"_span8, "features"_span8, "config"_span8, "isBun"_span8, "browser"_span8, "send"_span8, "channel"_span8);
+        }
+        if (equalSpans(string(object), "Bun"_span8))
+            return isOneOf("env"_span8, "version"_span8, "revision"_span8, "stdout"_span8, "stderr"_span8, "stdin"_span8, "argv"_span8, "cwd"_span8, "isMainThread"_span8);
+        return false;
     }
-    bool isNameOfAccessorOfHostObject(StringID name) const
+    bool isFunctionOfHostObject(StringID object, StringID name) const
     {
-        auto bytes = string(name);
-        return equalSpans(bytes, "argv"_span8) || equalSpans(bytes, "execArgv"_span8) || equalSpans(bytes, "exitCode"_span8) || equalSpans(bytes, "title"_span8)
-            || equalSpans(bytes, "ppid"_span8) || equalSpans(bytes, "connected"_span8) || equalSpans(bytes, "debugPort"_span8) || equalSpans(bytes, "_eval"_span8) || equalSpans(bytes, "main"_span8);
+        auto isOneOf = [bytes = string(name)](auto... names) { return (equalSpans(bytes, names) || ...); };
+        return equalSpans(string(object), "Buffer"_span8) && isOneOf("byteLength"_span8, "from"_span8, "isBuffer"_span8, "alloc"_span8, "allocUnsafe"_span8, "concat"_span8, "compare"_span8, "isEncoding"_span8);
     }
     UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> memberOfGlobalCacheNumbers;
     uint32_t memberOfGlobalCacheNumber(StringID global, StringID name) const { return memberOfGlobalCacheNumbers.get(static_cast<uint64_t>(global.index()) << 32 | name.index()); }
@@ -1209,6 +1584,18 @@ public:
     uint32_t numberOfStaticFieldPlaces { 0 };
     uint32_t staticFieldPlacesOffset { 0 };
     UncheckedKeyHashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> genericEntrypoints;
+    Vector<CallSignature> callSignatures;
+    struct ShapeOfValueCall {
+        Vector<TypeID, 4> parameters;
+        TypeID result;
+        FunctionID adapter;
+    };
+    Vector<ShapeOfValueCall> shapesOfValueCalls;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> shapesOfValueCallsByHash;
+    FunctionID adapterOfCall(const Value&) const;
+    FunctionID firstAdapterOfSignature;
+    uint32_t indexOfSignatureOf(FunctionID adapter) const { return adapter.index() - firstAdapterOfSignature.index(); }
+    UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbersOrUndefined;
     // By the function and how many arguments are bound: see createBoundFunctions().
     static constexpr unsigned maxBoundArguments = 3;
     UncheckedKeyHashMap<uint64_t, FunctionID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> boundFunctions;
@@ -1252,6 +1639,23 @@ public:
     BitVector generalEntriesWhoseFunctionAsks;
     bool isEnteredWithRoomOnStack(FunctionID id) const { return functionsEnteredWithRoomOnStack.get(id.index()); }
     bool hasCode(FunctionID id) const { return !functionsWithoutCalls.get(id.index()); }
+    BitVector adaptersCalledBySignature;
+    UncheckedKeyHashMap<uint64_t, FunctionID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> adaptersOfResults;
+    static uint64_t keyOfAdapterOfResult(TypeID result, uint32_t castOfResult, size_t numberOfArguments) { return static_cast<uint64_t>(result.index()) << 32 | static_cast<uint64_t>(castOfResult & 0xff) << 8 | numberOfArguments; }
+    uint64_t resultsThatCallsGoBy { 0 };
+    uint32_t sizeOfResultsHoldingWhatIsYielded { 0 };
+    bool callsBySignatureAreChosen { false };
+    bool isAskedForBySomeCall(FunctionID valueEntry) const
+    {
+        if (!callsBySignatureAreChosen)
+            return true;
+        return adaptersCalledBySignature.get(at(valueEntry).adapterOfValueEntry.index());
+    }
+    FunctionID valueEntryWithCodeOf(FunctionID generalEntry) const
+    {
+        FunctionID entry = at(generalEntry).valueEntry;
+        return entry && hasCode(entry) ? entry : FunctionID();
+    }
     struct ModuleEvaluation {
         FunctionID function;
         VariableID isEvaluated;
@@ -1267,6 +1671,13 @@ public:
     std::array<FunctionID, numberOfArgumentGPRs + 1> bodiesOfConstructions;
     FunctionID bodyOfConstruction(const Value& construct) const { return construct.arguments.size() < bodiesOfConstructions.size() ? bodiesOfConstructions[construct.arguments.size()] : FunctionID(); }
     UncheckedKeyHashMap<uint64_t, uint32_t> bodiesOfCasts;
+    Vector<std::pair<LayoutID, FunctionID>> jsonSerializers;
+    FunctionID jsonDispatcher;
+    FunctionID jsonSerializerOf(LayoutID layout) const
+    {
+        auto found = std::ranges::lower_bound(jsonSerializers, layout.index(), { }, [](auto& entry) { return entry.first.index(); });
+        return found == jsonSerializers.end() || found->first != layout ? FunctionID() : found->second;
+    }
     static bool mayHaveBody(const Value& cast) { return cast.opcode == Opcode::Cast && (cast.castReason() == CastReason::As || cast.castReason() == CastReason::Claim) && cast.immediates[0] == Format::none; }
     static uint64_t keyOfBodyOfCast(const Value& cast) { return (static_cast<uint64_t>(cast.type.index()) + 1) << 32 | cast.immediates[1]; }
     FunctionID bodyOfCast(const Value& cast) const
@@ -1281,7 +1692,15 @@ public:
     bool runsOnce(FunctionID id) const { return functionsThatRunOnce.get(id.index()); }
     BitVector functionsReturningMapKeys;
     Vector<uint16_t> classesOfFreshResults;
+    BitVector builtinCellsComparedWith;
     BitVector stringsMadeOnce;
+    Vector<StringID> literalStrings;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> literalStringIndices;
+    std::optional<uint32_t> literalStringIndex(StringID string) const
+    {
+        auto found = literalStringIndices.find(string.index());
+        return found == literalStringIndices.end() ? std::nullopt : std::optional<uint32_t>(found->value);
+    }
     struct RowOfBirth {
         uint32_t firstPlace { 0 };
         Vector<StringID, 8> names;
@@ -1321,6 +1740,12 @@ private:
 
     Vector<Vector<uint8_t>> m_ownStrings;
     UncheckedKeyHashMap<String, uint32_t> m_stringIDs;
+    struct NamesAndStringsInValues {
+        Vector<Vector<StringID>> namesDefinedAsAccessors;
+        Vector<UsesOfName> usesOfNames;
+        Vector<uint32_t> usesOfStringConstants;
+    };
+    std::optional<NamesAndStringsInValues> m_namesAndStringsInValues;
     void noteString(StringID);
 
     Vector<BuiltinName> m_builtinNames;

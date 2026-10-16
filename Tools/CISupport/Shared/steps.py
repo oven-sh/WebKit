@@ -47,6 +47,12 @@ SCAN_BUILD_PATH = '../swift-project/llvm-project/clang/tools/scan-build/bin/scan
 SWIFT_TOOLCHAIN_NAME = 'swift-webkit'
 SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER = 'org.webkit.swift'
 USER_TOOLCHAINS_DIR = '/Users/buildbot/Library/Developer/Toolchains'
+DEFAULT_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+CMAKE_BIN_DIR = '/Applications/CMake.app/Contents/bin/'
+
+
+def cmake_tools_path(builddir):
+    return f'{DEFAULT_PATH}:{CMAKE_BIN_DIR}:{builddir}'
 
 
 def needs_swift_toolchain_setup(step):
@@ -136,7 +142,7 @@ class InstallCMake(shell.ShellCommand):
 
     @defer.inlineCallbacks
     def run(self):
-        self.env['PATH'] = f'/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/'
+        self.env['PATH'] = f'{DEFAULT_PATH}:{CMAKE_BIN_DIR}'
         self.command = ['python3', 'Tools/CISupport/Shared/download-and-install-build-tools', 'cmake']
 
         self.log_observer = logobserver.BufferLogObserver()
@@ -174,7 +180,7 @@ class InstallNinja(shell.ShellCommand, ShellMixin):
 
     @defer.inlineCallbacks
     def run(self):
-        self.env['PATH'] = f"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{self.getProperty('builddir')}"
+        self.env['PATH'] = f"{DEFAULT_PATH}:{self.getProperty('builddir')}"
         self.command = self.shell_command('cd ../; python3 build/Tools/CISupport/Shared/download-and-install-build-tools ninja')
 
         self.log_observer = logobserver.BufferLogObserver()

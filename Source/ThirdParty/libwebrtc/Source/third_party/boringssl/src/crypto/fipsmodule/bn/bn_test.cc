@@ -2732,17 +2732,22 @@ TEST_F(BNTest, WriteIntoNegative) {
 }
 
 TEST_F(BNTest, ModSqrtInvalid) {
+  // The modulus. `BN_mod_sqrt` is only defined for prime moduli, but this one
+  // is 1237 * 3709.
+  UniquePtr<BIGNUM> bn4588033 = ASCIIToBIGNUM("4588033");
+  ASSERT_TRUE(bn4588033);
+
+  // Two numbers that, when trying to take their square root via
+  // Tonelli-Shanks, will lead to an endless loop.
   UniquePtr<BIGNUM> bn2140141 = ASCIIToBIGNUM("2140141");
   ASSERT_TRUE(bn2140141);
   UniquePtr<BIGNUM> bn2140142 = ASCIIToBIGNUM("2140142");
   ASSERT_TRUE(bn2140142);
-  UniquePtr<BIGNUM> bn4588033 = ASCIIToBIGNUM("4588033");
-  ASSERT_TRUE(bn4588033);
 
-  // `BN_mod_sqrt` may fail or return an arbitrary value, so we do not use
-  // `TestModSqrt` or `TestNotModSquare`. We only promise it will not crash or
-  // infinite loop. (For some invalid inputs, it may even be non-deterministic.)
-  // See CVE-2022-0778.
+  // `BN_mod_sqrt` may fail or return an arbitrary value if fed a composite
+  // `p`, so we do not use `TestModSqrt` or `TestNotModSquare`. We only promise
+  // it will not crash or infinite loop. (For some invalid inputs, it may even
+  // be non-deterministic.) See CVE-2022-0778.
   BN_free(BN_mod_sqrt(nullptr, bn2140141.get(), bn4588033.get(), ctx()));
   ERR_clear_error();
   BN_free(BN_mod_sqrt(nullptr, bn2140142.get(), bn4588033.get(), ctx()));

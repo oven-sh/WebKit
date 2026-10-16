@@ -254,22 +254,77 @@ std::optional<bool> outcomeOfComparisonWithBound(const CountedLoop& loop, Opcode
     return std::nullopt;
 }
 
-static std::optional<bool> outcomeOfComparisonWithWhatStartIsBelow(const CountedLoop& loop, Opcode opcode, Value* left, Value* right)
+static std::optional<bool> outcomeOfComparisonWithLimit(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, bool boundIsZeroExtendedWord = false)
 {
+    static constexpr int64_t maxConstant = 1ll << 31;
     if (!invertedRelation(opcode))
         return std::nullopt;
+    auto isSmall = [](Value* value) {
+        return value->hasInt64() && value->asInt64() >= -maxConstant && value->asInt64() <= maxConstant;
+    };
+    auto addedToVariable = [&](Value* value) -> std::optional<int64_t> {
+        if (value == loop.inductionVariable)
+            return 0;
+        if (value->opcode() == Add && value->child(0) == loop.inductionVariable && isSmall(value->child(1)))
+            return value->child(1)->asInt64();
+        return std::nullopt;
+    };
     Value* limit = right;
-    if (right == loop.inductionVariable) {
+    std::optional<int64_t> added = addedToVariable(left);
+    if (!added) {
+        added = addedToVariable(right);
         opcode = flippedRelation(opcode);
         limit = left;
-    } else if (left != loop.inductionVariable)
+    }
+    if (!added || (limit->opcode() != ZExt32 && !(boundIsZeroExtendedWord && limit == loop.bound)) || loop.saturation)
         return std::nullopt;
-    if (loop.increases() || loop.isUnsigned() || loop.saturation || !loop.bound->hasInt64() || loop.bound->asInt64() < (loop.admitsEqual() ? 0 : -1))
-        return std::nullopt;
-    Value* start = loop.start;
-    if (limit->opcode() != ZExt32 || start->opcode() != Add || start->child(0) != limit || !start->child(1)->hasInt64() || start->child(1)->asInt64() >= 0)
+    int64_t least;
+    int64_t mostLessLimit;
+    if (loop.increases()) {
+        if (loop.bound != limit || loop.admitsEqual() || loop.wrapsAroundInt32 || !isSmall(loop.start))
+            return std::nullopt;
+        least = loop.start->asInt64();
+        mostLessLimit = -1;
+    } else {
+        Value* start = loop.start;
+        if (loop.isUnsigned() || !isSmall(loop.bound) || start->opcode() != Add || start->child(0) != limit || !isSmall(start->child(1)))
+            return std::nullopt;
+        least = loop.bound->asInt64() + (loop.admitsEqual() ? 0 : 1);
+        if (loop.wrapsAroundInt32 && least + loop.step < std::numeric_limits<int32_t>::min())
+            return std::nullopt;
+        mostLessLimit = start->child(1)->asInt64();
+    }
+    if (least + *added < 0 || mostLessLimit + *added >= 0)
         return std::nullopt;
     return opcode == LessThan || opcode == LessEqual || opcode == Below || opcode == BelowEqual;
+}
+
+static std::optional<CountedLoop> analyzeLoopWithLimitHandedRound(NaturalLoops& loops, const NaturalLoop& loop, const UpsilonsByPhi& upsilonsByPhi)
+{
+    auto result = analyzeCountedLoop(loops, loop, upsilonsByPhi, [&](Value* value) {
+        return !loops.belongsTo(value->owner, loop) || value->opcode() == ZExt32;
+    });
+    if (!result || !result->increases() || result->bound->opcode() != ZExt32 || !loops.belongsTo(result->bound->owner, loop))
+        return std::nullopt;
+    Value* limit = nullptr;
+    for (Value* value : *result->latch) {
+        auto* upsilon = value->as<UpsilonValue>();
+        if (upsilon && upsilon->child(0) == result->bound && upsilon->phi()->owner == loop.header())
+            limit = upsilon->phi();
+    }
+    if (!limit || lastValueHandedTo(result->latch, limit) != result->bound || lastValueHandedTo(loop.header(), limit))
+        return std::nullopt;
+    auto* upsilons = upsilonsByPhi.find(limit);
+    if (!upsilons || upsilons->size() != 2)
+        return std::nullopt;
+    Value* limitOnEntry = lastValueHandedTo(result->preHeader, limit);
+    if (!limitOnEntry || limitOnEntry->opcode() != ZExt32)
+        return std::nullopt;
+    result->bound = limitOnEntry;
+    if (!relationHoldsOnEntry(*result))
+        return std::nullopt;
+    result->bound = limit;
+    return result;
 }
 
 bool foldComparisonsWithBounds(Procedure& proc)
@@ -287,7 +342,27 @@ bool foldComparisonsWithBounds(Procedure& proc)
         auto countedLoop = analyzeCountedLoop(loops, loop, upsilonsByPhi, [&](Value* value) {
             return !loops.belongsTo(value->owner, loop);
         });
-        if (!countedLoop || !relationHoldsOnEntry(*countedLoop))
+        if (!countedLoop) {
+            auto loopWithLimit = analyzeLoopWithLimitHandedRound(loops, loop, upsilonsByPhi);
+            if (!loopWithLimit)
+                continue;
+            for (unsigned i = loop.size(); i--;) {
+                BasicBlock* block = loop.at(i);
+                for (unsigned index = 0; index < block->size(); ++index) {
+                    Value* value = block->at(index);
+                    if (value->numChildren() != 2)
+                        continue;
+                    auto outcome = outcomeOfComparisonWithLimit(*loopWithLimit, value->opcode(), value->child(0), value->child(1), true);
+                    if (!outcome)
+                        continue;
+                    value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
+                    changed = true;
+                }
+                insertionSet.execute(block);
+            }
+            continue;
+        }
+        if (!relationHoldsOnEntry(*countedLoop))
             continue;
         for (unsigned i = loop.size(); i--;) {
             BasicBlock* block = loop.at(i);
@@ -297,7 +372,7 @@ bool foldComparisonsWithBounds(Procedure& proc)
                     continue;
                 auto outcome = outcomeOfComparisonWithBound(*countedLoop, value->opcode(), value->child(0), value->child(1), countedLoop->bound);
                 if (!outcome)
-                    outcome = outcomeOfComparisonWithWhatStartIsBelow(*countedLoop, value->opcode(), value->child(0), value->child(1));
+                    outcome = outcomeOfComparisonWithLimit(*countedLoop, value->opcode(), value->child(0), value->child(1));
                 if (!outcome)
                     continue;
                 value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
@@ -337,6 +412,8 @@ Value* appendEndOfStrip(Procedure& proc, BasicBlock* block, const CountedLoop& l
         end = append(proc.add<Value>(Select, origin, append(proc.add<Value>(isIncreasing ? LessThan : GreaterThan, origin, end, limit)), end, limit));
     }
     if (!relationMayNotHold)
+        return end;
+    if (isIncreasing && !loop.saturation && bound->opcode() == ZExt32 && from->hasInt64() && (loop.isUnsigned() ? !from->asInt64() : from->asInt64() <= 0))
         return end;
     int64_t noStrip = loop.isUnsigned() ? (isIncreasing ? 0 : -1) : isIncreasing ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
     return append(proc.add<Value>(Select, origin, append(proc.add<Value>(loop.relation, origin, from, bound)), end, constant(noStrip)));

@@ -104,11 +104,9 @@ RefPtr<FileSystemStorageConnection> fileSystemStorageConnectionForContext(Script
 
 ClientOrigin clientOriginForContext(ScriptExecutionContext& context)
 {
-    if (auto* workerScope = dynamicDowncast<WorkerGlobalScope>(context))
-        return workerScope->clientOrigin();
-    if (auto* document = dynamicDowncast<Document>(context))
-        return { document->topOrigin().data(), document->securityOrigin().data() };
-    return { };
+    if (!is<WorkerGlobalScope>(context) && !is<Document>(context))
+        return { };
+    return context.storageClientOrigin();
 }
 
 } // namespace WebCore

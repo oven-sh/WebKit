@@ -381,7 +381,7 @@ private:
         {
         }
 
-        static Override NODELETE constant(BasicBlock* block, int64_t value)
+        static Override LEGACY_NODELETE constant(BasicBlock* block, int64_t value)
         {
             Override result;
             result.block = block;
@@ -392,7 +392,7 @@ private:
             return result;
         }
 
-        static Override NODELETE nonZero(BasicBlock* block)
+        static Override LEGACY_NODELETE nonZero(BasicBlock* block)
         {
             Override result;
             result.block = block;
@@ -400,7 +400,7 @@ private:
             return result;
         }
 
-        bool NODELETE isBetterThan(const Override& override)
+        bool LEGACY_NODELETE isBetterThan(const Override& override)
         {
             if (hasValue && !override.hasValue)
                 return true;

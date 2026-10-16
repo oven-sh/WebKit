@@ -88,16 +88,21 @@ bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObjec
     return true;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* row))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, uint32_t indexOfPlace))
 {
-    AOT_OPERATION_BEGIN_AT(instance, row);
-    if (StructureID structureID = row->structureID) {
-        JSObject* object = constructEmptyObject(vm, structureID.decode());
-        for (unsigned i = 0; i < count; ++i)
-            object->putDirectOffset(vm, i, JSValue::decode(values[i]));
-        OPERATION_RETURN(scope, object);
-    }
-    OPERATION_RETURN(scope, newObjectOfRow(instance, globalObject, vm, row - instance->rows, values, count));
+    AOT_OPERATION_BEGIN(instance);
+    OPERATION_RETURN(scope, newObjectOfRow(instance, globalObject, vm, indexOfPlace - Instance::numberOfPlacesOfNoRow, values, count));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfFilledRow, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* row))
+{
+    AOT_OPERATION_BEGIN(instance);
+    StructureID structureID = row->structureID;
+    RELEASE_ASSERT(structureID);
+    JSObject* object = constructEmptyObject(vm, WTF::opaque(structureID.decode()));
+    for (unsigned i = 0; i < count; ++i)
+        object->putDirectOffset(vm, i, JSValue::decode(values[i]));
+    OPERATION_RETURN(scope, object);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* cache))
@@ -105,7 +110,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* ins
     AOT_OPERATION_BEGIN_AT(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     if (StructureID structureID = cache[0].structureID) {
-        Structure* structure = structureID.decode();
+        Structure* structure = WTF::opaque(structureID.decode());
         JSObject* object = constructEmptyObject(vm, structure);
         for (unsigned i = 0; i < count; ++i)
             object->putDirectOffset(vm, i, JSValue::decode(values[i]));

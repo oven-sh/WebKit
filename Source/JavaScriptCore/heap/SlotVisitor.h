@@ -133,11 +133,13 @@ public:
     bool isMarked(MarkedBlock&, HeapCell*) const final;
     bool isMarked(PreciseAllocation&, HeapCell*) const final;
 
-    void NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, HeapAnalyzer*);
-    void NODELETE reset();
+    void LEGACY_NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, bool isAnalyzingHeap);
+    void LEGACY_NODELETE reset();
     void clearMarkStacks();
 
-    size_t bytesVisited() const { return m_bytesVisited; }
+    size_t bytesMarked() const { return m_flushedBytesMarked + m_bytesMarkedInHeap; }
+    void flushBytesMarked();
+    JS_EXPORT_PRIVATE void flushExtraMemoryVisited();
 
     void donate();
     void drain(MonotonicTime timeout = MonotonicTime::infinity());
@@ -161,7 +163,7 @@ public:
     void markAuxiliary(const void* base) final;
 #if ENABLE(AOT)
     bool markLeafCell(JSCell*);
-    void reportExtraMemoryVisitedOfLeafCell(size_t);
+    void reportExtraMemoryVisitedOfLeafCell(JSC::Heap&, size_t);
 #endif
 
     void reportExtraMemoryVisited(size_t) final;
@@ -173,19 +175,16 @@ public:
 
     HeapVersion markingVersion() const { return m_markingVersion; }
 
-    bool mutatorIsStopped() const final { return m_mutatorIsStopped; }
+    bool mutatorsAreStopped() const final { return m_mutatorsAreStopped; }
+
+    // While set, visits assume the mutators of the heaps being collected are stopped. Change it only between drains.
+    void setMutatorsAreStopped(bool areStopped)
+    {
+        ASSERT(!m_isInParallelMode); // Verify this visitor is not draining.
+        m_mutatorsAreStopped = areStopped;
+    }
     
-    Lock& rightToRun() LIFETIME_BOUND WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
-    
-    void NODELETE updateMutatorIsStopped(const AbstractLocker&);
-    void updateMutatorIsStopped();
-    
-    bool NODELETE hasAcknowledgedThatTheMutatorIsResumed() const;
-    bool NODELETE mutatorIsStoppedIsUpToDate() const;
-    
-    void NODELETE optimizeForStoppedMutator();
-    
-    void didRace(const VisitRaceKey&) final;
+    JS_EXPORT_PRIVATE void didRace(const VisitRaceKey&) final;
     inline void didRace(JSCell* cell, const char* reason); // Defined in SlotVisitorInlines.h
     
     void visitAsConstraint(const JSCell*) final;
@@ -221,32 +220,39 @@ private:
     void visitChildrenOfBlackCell(const JSCell*);
 
     void propagateExternalMemoryVisitedIfNecessary();
+    ALWAYS_INLINE void noteBytesMarked(JSC::Heap&, size_t);
     
     void donateKnownParallel();
     void donateKnownParallel(MarkStackArray& from, MarkStackArray& to);
 
     void donateAll(const AbstractLocker&);
 
-    bool NODELETE hasWork(const AbstractLocker&);
+    bool LEGACY_NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
 
     template<typename Func>
     IterationStatus forEachMarkStack(NOESCAPE const Func&);
 
-    MarkStackArray& NODELETE correspondingGlobalStack(MarkStackArray&);
+    MarkStackArray& LEGACY_NODELETE correspondingGlobalStack(MarkStackArray&);
 
     HeapVersion m_markingVersion;
 
-    size_t m_bytesVisited { 0 };
+    // Bytes of m_bytesMarkedHeap's cells this visitor marked and has not yet added to that heap's count. Marking a
+    // cell of another heap flushes it, which is rare since a heap's cells mostly reference their own heap's cells.
+    size_t m_bytesMarkedInHeap { 0 };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_bytesMarkedHeap { nullptr }; // Heap is not refcounted.
+    size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
+
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
-    CheckedSize m_extraMemorySize { 0 };
+
+    // Bytes of extra memory reported by cells of m_extraMemoryHeap and not yet added to that heap's count.
+    CheckedSize m_extraMemoryInHeap { 0 };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_extraMemoryHeap { nullptr }; // Heap is not refcounted.
 
     JSCell* m_currentCell { nullptr };
     bool m_isFirstVisit { false };
-    bool m_mutatorIsStopped { false };
-    bool m_canOptimizeForStoppedMutator { false };
+    bool m_mutatorsAreStopped { false };
     bool m_isInParallelMode { false };
-    Lock m_rightToRun;
 
 #if ASSERT_ENABLED
     bool m_isCheckingForDefaultMarkViolation { false };

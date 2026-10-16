@@ -36,7 +36,10 @@
 #import <wtf/URL.h>
 
 
-@implementation WebSecurityOrigin
+@implementation WebSecurityOrigin {
+    RefPtr<WebCore::SecurityOrigin> _origin;
+    RetainPtr<WebDatabaseQuotaManager> _databaseQuotaManager;
+}
 
 + (id)webSecurityOriginFromDatabaseIdentifier:(NSString *)databaseIdentifier
 {
@@ -57,40 +60,40 @@
     if (!self)
         return nil;
 
-    _private = reinterpret_cast<WebSecurityOriginPrivate *>(&WebCore::SecurityOrigin::create(URL([url absoluteURL])).leakRef());
+    _origin = WebCore::SecurityOrigin::create(URL([url absoluteURL]));
     return self;
 }
 
 - (NSString *)protocol
 {
-    return protect(reinterpret_cast<WebCore::SecurityOrigin*>(_private))->protocol().createNSString().autorelease();
+    return protect(_origin)->protocol().createNSString().autorelease();
 }
 
 - (NSString *)host
 {
-    return protect(reinterpret_cast<WebCore::SecurityOrigin*>(_private))->host().createNSString().autorelease();
+    return protect(_origin)->host().createNSString().autorelease();
 }
 
 - (NSString *)databaseIdentifier
 {
-    return reinterpret_cast<WebCore::SecurityOrigin*>(_private)->data().databaseIdentifier().createNSString().autorelease();
+    return _origin->data().databaseIdentifier().createNSString().autorelease();
 }
 
 #if PLATFORM(IOS_FAMILY)
 - (NSString *)toString
 {
-    return protect(reinterpret_cast<WebCore::SecurityOrigin*>(_private))->toString().createNSString().autorelease();
+    return protect(_origin)->toString().createNSString().autorelease();
 }
 #endif
 
 - (NSString *)stringValue
 {
-    return protect(reinterpret_cast<WebCore::SecurityOrigin*>(_private))->toString().createNSString().autorelease();
+    return protect(_origin)->toString().createNSString().autorelease();
 }
 
 - (unsigned short)port
 {
-    return protect(reinterpret_cast<WebCore::SecurityOrigin*>(_private))->port().value_or(0);
+    return protect(_origin)->port().value_or(0);
 }
 
 // FIXME: Overriding isEqual: without overriding hash will cause trouble if this ever goes into an NSSet or is the key in an NSDictionary,
@@ -101,16 +104,6 @@
         return NO;
     
     return [self _core]->equal(*[anObject _core]);
-}
-
-- (void)dealloc
-{
-    if (_private)
-        reinterpret_cast<WebCore::SecurityOrigin*>(_private)->deref();
-    if (_databaseQuotaManager)
-        // Retaining the member just to release it would be pointless.
-        SUPPRESS_UNRETAINED_ARG [(NSObject *)_databaseQuotaManager release];
-    [super dealloc];
 }
 
 @end
@@ -124,8 +117,7 @@
     if (!self)
         return nil;
 
-    origin->ref();
-    _private = reinterpret_cast<WebSecurityOriginPrivate *>(origin);
+    _origin = origin;
 
     return self;
 }
@@ -138,7 +130,7 @@
 
 - (WebCore::SecurityOrigin *)_core
 {
-    return reinterpret_cast<WebCore::SecurityOrigin*>(_private);
+    return _origin.get();
 }
 
 @end
@@ -152,7 +144,7 @@
 - (id<WebQuotaManager>)databaseQuotaManager
 {
     if (!_databaseQuotaManager)
-        _databaseQuotaManager = [[WebDatabaseQuotaManager alloc] initWithOrigin:self];
+        _databaseQuotaManager = adoptNS([[WebDatabaseQuotaManager alloc] initWithOrigin:self]);
     return _databaseQuotaManager;
 }
 
@@ -169,17 +161,17 @@
 
 - (unsigned long long)usage
 {
-    return WebCore::DatabaseTracker::singleton().usage(reinterpret_cast<WebCore::SecurityOrigin*>(_private)->data());
+    return WebCore::DatabaseTracker::singleton().usage(_origin->data());
 }
 
 - (unsigned long long)quota
 {
-    return WebCore::DatabaseTracker::singleton().quota(reinterpret_cast<WebCore::SecurityOrigin*>(_private)->data());
+    return WebCore::DatabaseTracker::singleton().quota(_origin->data());
 }
 
 - (void)setQuota:(unsigned long long)quota
 {
-    WebCore::DatabaseTracker::singleton().setQuota(reinterpret_cast<WebCore::SecurityOrigin*>(_private)->data(), quota);
+    WebCore::DatabaseTracker::singleton().setQuota(_origin->data(), quota);
 }
 
 @end

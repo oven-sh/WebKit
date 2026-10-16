@@ -35,14 +35,11 @@ class InlineBoxIterator;
 
 class InlineBox : public Box {
 public:
-    InlineBox(PathVariant&&);
+    InlineBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
     const RenderBoxModelObject& renderer() const { return downcast<RenderBoxModelObject>(Box::renderer()); }
 
     RectEdges<bool> closedEdges() const;
-
-    // FIXME: Remove. For intermediate porting steps only.
-    const LegacyInlineFlowBox* legacyInlineBox() const LIFETIME_BOUND { return downcast<LegacyInlineFlowBox>(Box::legacyInlineBox()); }
 
     InlineBoxIterator nextInlineBoxLineRightward() const;
     InlineBoxIterator nextInlineBoxLineLeftward() const;
@@ -59,7 +56,6 @@ public:
 class InlineBoxIterator : public BoxIterator {
 public:
     InlineBoxIterator() = default;
-    InlineBoxIterator(Box::PathVariant&&);
     InlineBoxIterator(const Box&);
 
     const InlineBox& operator*() const LIFETIME_BOUND { return get(); }
@@ -75,7 +71,6 @@ private:
 InlineBoxIterator lineLeftmostInlineBoxFor(const RenderBoxModelObject&);
 InlineBoxIterator firstRootInlineBoxFor(const RenderBlockFlow&);
 
-InlineBoxIterator inlineBoxFor(const LegacyInlineFlowBox&);
 InlineBoxIterator inlineBoxFor(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&);
 InlineBoxIterator inlineBoxFor(const LayoutIntegration::InlineContent&, size_t boxIndex);
 

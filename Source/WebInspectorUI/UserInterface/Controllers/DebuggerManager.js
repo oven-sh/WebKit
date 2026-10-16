@@ -517,6 +517,37 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         return this.dataForTarget(target).scriptForIdentifier(id);
     }
 
+    // Resolves a script identifier from a stack trace payload, which may name a script that `target`
+    // does not own. Pass `deliveredOnTarget` only when the payload arrived over `target`'s own
+    // connection. Prefer `scriptForIdentifier` wherever the caller knows the target owns the identifier.
+    scriptForStackTraceIdentifier(id, target, {deliveredOnTarget} = {})
+    {
+        let script = this.scriptForIdentifier(id, target);
+        if (script)
+            return script;
+
+        // FIXME: <https://webkit.org/b/325881> Remove once no domain delivers stack traces on the page target.
+        // Under Site Isolation the page target owns no scripts, but its connection only reaches the main
+        // frame's process, so an identifier delivered on it names a script in that process. A payload that is
+        // only resolved against the page target, such as a Network initiator, may come from any process, and
+        // script identifiers collide across processes.
+        if (!deliveredOnTarget || !(target instanceof WI.PageTarget))
+            return null;
+
+        let mainFrame = WI.networkManager.mainFrame;
+        if (!mainFrame)
+            return null;
+
+        // Iterate the map rather than `WI.targets` so that no `WI.DebuggerData` is created as a side
+        // effect for a target that has never reported a script.
+        for (let [otherTarget, targetData] of this._targetDebuggerDataMap) {
+            if (otherTarget instanceof WI.FrameTarget && !otherTarget.isProvisional && otherTarget.executionContext?.frame === mainFrame)
+                return targetData.scriptForIdentifier(id);
+        }
+
+        return null;
+    }
+
     scriptsForURL(url, target)
     {
         if (target instanceof WI.ImportedTarget)
@@ -1689,7 +1720,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
     _handleTimelineCapturingStateChanged(event)
     {
-        switch (event.data.capturingState) {
+        switch (WI.timelineManager.capturingState) {
         case WI.TimelineManager.CapturingState.Starting:
             this._startDisablingBreakpointsTemporarily();
             if (this.paused)
@@ -1815,6 +1846,16 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         this._blackboxedCallFrameGroupsToAutoExpand = [];
 
         this.dataForTarget(target).updateForResume();
+
+        if (activeCallFrameDidChange) {
+            for (let targetData of this._targetDebuggerDataMap.values()) {
+                let callFrame = targetData.paused && targetData.stackTrace.callFrames[0];
+                if (callFrame) {
+                    this._activeCallFrame = callFrame;
+                    break;
+                }
+            }
+        }
 
         if (!this.paused)
             this.dispatchEventToListeners(WI.DebuggerManager.Event.Resumed);

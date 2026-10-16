@@ -190,6 +190,11 @@ void Structure::validateFlags()
     bool overridesGetCallData = methodTable.getCallData != JSCell::getCallData;
     RELEASE_ASSERT(overridesGetCallData == typeInfo().overridesGetCallData());
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (typeInfo().type() == SlimClosureWithPropertiesType)
+        return;
+#endif
+
     bool overridesGetOwnPropertySlot =
         methodTable.getOwnPropertySlot != JSObject::getOwnPropertySlot
         && methodTable.getOwnPropertySlot != JSCell::getOwnPropertySlot;
@@ -311,7 +316,7 @@ const ClassInfo Structure::s_info = { "Structure"_s, nullptr, nullptr, nullptr, 
 #if USE(BUN_JSC_ADDITIONS)
 constinit const Structure::AOTFields Structure::s_emptyAOTFields { };
 #if ENABLE(AOT) && CPU(ADDRESS64)
-static_assert(sizeof(Structure) + sizeof(Structure::AOTFields) == 176);
+static_assert(sizeof(Structure) + sizeof(Structure::AOTFields) == 144);
 #endif
 #endif
 
@@ -1707,7 +1712,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         // NOTE: This can interleave in pin(), in which case it may see a null property table.
         // That's fine, because then the barrier will fire and we will scan this again.
         visitor.append(thisObject->m_propertyTableUnsafe);
-    } else if (visitor.heapAnalyzer())
+    } else if (visitor.isAnalyzingHeap())
         visitor.append(thisObject->m_propertyTableUnsafe);
     else if (thisObject->m_propertyTableUnsafe)
         thisObject->m_propertyTableUnsafe.clear();

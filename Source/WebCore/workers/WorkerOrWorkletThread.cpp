@@ -278,7 +278,7 @@ void WorkerOrWorkletThread::stop(Function<void()>&& stoppedCallback)
 
     // Ensure that tasks are being handled by thread event loop. If script execution weren't forbidden, a while(1) loop in JS could keep the thread alive forever.
     if (globalScope()) {
-        if (auto* script = globalScope()->script())
+        if (CheckedPtr script = globalScope()->script())
             script->scheduleExecutionTermination();
 
         if (is<WorkerMainRunLoop>(m_runLoop.get())) {

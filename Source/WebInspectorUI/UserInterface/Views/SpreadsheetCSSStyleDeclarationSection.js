@@ -465,6 +465,8 @@ WI.SpreadsheetCSSStyleDeclarationSection = class SpreadsheetCSSStyleDeclarationS
             let selectorElement = this._selectorElement.appendChild(document.createElement("span"));
             selectorElement.textContent = selectorText;
             selectorElement.classList.add(WI.SpreadsheetCSSStyleDeclarationSection.MatchedSelectorElementStyleClassName);
+
+            this._selectorElements.push(selectorElement);
         };
 
         if (!this._renderedGroupings.length)
@@ -603,7 +605,7 @@ WI.SpreadsheetCSSStyleDeclarationSection = class SpreadsheetCSSStyleDeclarationS
             });
         }
 
-        if (!this._style.inherited && !this._style.ownerRule?.isImplicitlyNested && InspectorBackend.hasCommand("CSS.addRule")) {
+        if (!this._style.inherited && !this._style.ownerRule?.isImplicitlyNested && !this._style.groupings.some((grouping) => grouping.type === WI.CSSGrouping.Type.KeyframesRule) && InspectorBackend.hasCommand("CSS.addRule")) {
             let generateSelector = () => {
                 if (this._style.type === WI.CSSStyleDeclaration.Type.Attribute)
                     return this._style.node.displayName;
@@ -756,8 +758,8 @@ WI.SpreadsheetCSSStyleDeclarationSection = class SpreadsheetCSSStyleDeclarationS
     {
         let node = this._style.node;
 
-        // Inline styles and nested declarations rules have no selector of their own to match other nodes with.
-        let selectorText = this._style.ownerRule ? this._selectorElement.textContent.trim() : "";
+        // Inline styles, nested declarations rules, and keyframes have no selector of their own to match other nodes with.
+        let selectorText = this._style.ownerRule?.selectors.length ? this._selectorElement.textContent.trim() : "";
         if (!selectorText) {
             node.highlight();
             return;

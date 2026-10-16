@@ -70,7 +70,8 @@ public:
 
     Ref<PresentationContext> createSurface(const WGPUSurfaceDescriptor&);
     void processEvents();
-    void requestAdapter(const WGPURequestAdapterOptions&, CompletionHandler<void(WGPURequestAdapterStatus, Ref<Adapter>&&, String&&)>&& callback);
+    // Completes with nullptr when no adapter is available.
+    void requestAdapter(const WebGPU::RequestAdapterOptions&, CompletionHandler<void(RefPtr<Adapter>&&)>&&);
 
     void setLabel(String&&) final { }
     bool isValid() const final { return m_isValid; }
@@ -81,7 +82,7 @@ public:
     // This can be called on a background thread.
     using WorkItem = Function<void()>;
     void scheduleWork(WorkItem&&);
-    const std::optional<const MachSendRight>& NODELETE webProcessID() const;
+    const std::optional<const MachSendRight>& LEGACY_NODELETE webProcessID() const;
     id<MTLDevice> device() const;
 
 private:

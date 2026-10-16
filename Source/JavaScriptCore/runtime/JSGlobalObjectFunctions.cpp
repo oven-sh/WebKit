@@ -235,7 +235,7 @@ static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF:
 static const int SizeOfInfinity = 8;
 
 template <typename CharType>
-static bool NODELETE isInfinity(std::span<const CharType> data)
+static bool LEGACY_NODELETE isInfinity(std::span<const CharType> data)
 {
     return data.size() >= SizeOfInfinity
         && data[0] == 'I'
@@ -250,7 +250,7 @@ static bool NODELETE isInfinity(std::span<const CharType> data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
+static double LEGACY_NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
 {
     // Binary number.
     skip(data, 2);
@@ -271,7 +271,7 @@ static double NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
+static double LEGACY_NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
 {
     // Octal number.
     skip(data, 2);
@@ -292,7 +292,7 @@ static double NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double NODELETE jsHexIntegerLiteral(std::span<const CharType>& data)
+static double LEGACY_NODELETE jsHexIntegerLiteral(std::span<const CharType>& data)
 {
     // Hex number.
     skip(data, 2);
@@ -506,7 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
 
     if (SourceProfiler::g_profilerHook) [[unlikely]] {
         SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-        SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
+        SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
         auto source = makeSource(programSource, sourceOrigin, sourceTaintedOrigin);
         SourceProfiler::profile(SourceProfiler::Type::Eval, source);
     }
@@ -524,7 +524,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         return JSValue::encode(parsedValue);
 
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
+    SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     EvalExecutable* eval = IndirectEvalExecutable::tryCreate(globalObject, makeSource(programSource, sourceOrigin, sourceTaintedOrigin), lexicallyScopedFeatures, DerivedContextType::None, false, EvalContextType::None);
     EXCEPTION_ASSERT(!!scope.exception() == !eval);
@@ -861,7 +861,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
 #endif
 }
 
-static bool NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
+static bool LEGACY_NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
 {
     if (!structure->canPerformFastPropertyEnumerationCommon())
         return false;

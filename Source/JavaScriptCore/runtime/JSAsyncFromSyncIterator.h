@@ -30,6 +30,8 @@
 
 namespace JSC {
 
+class JSPromise;
+
 class JSAsyncFromSyncIterator final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -99,6 +101,6 @@ void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject*, JSAsyncFromSyncIterat
 #if ENABLE(AOT)
 JSObject* driveAsyncFromSyncIteratorAtOnceOrWithDriver(JSGlobalObject*, JSAsyncFromSyncIterator*, JSObject* driver);
 #endif
-JSValue asyncFromSyncIteratorNext(JSGlobalObject*, JSAsyncFromSyncIterator*, JSValue argument);
+JSValue asyncFromSyncIteratorNext(JSGlobalObject*, JSAsyncFromSyncIterator*, JSValue argument, JSPromise* immediateStep = nullptr);
 
 } // namespace JSC

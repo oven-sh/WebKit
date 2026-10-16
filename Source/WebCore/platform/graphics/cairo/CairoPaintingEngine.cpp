@@ -31,10 +31,7 @@
 
 #if USE(CAIRO)
 #include "CairoPaintingEngineBasic.h"
-#include "CairoPaintingEngineThreaded.h"
-#include <wtf/NumberOfCores.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 namespace Cairo {
@@ -43,25 +40,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PaintingEngine);
 
 std::unique_ptr<PaintingEngine> PaintingEngine::create()
 {
-#if PLATFORM(WPE) || USE(GTK4)
-    unsigned numThreads = std::max(1, std::min(8, WTF::numberOfProcessorCores() / 2));
-#else
-    unsigned numThreads = 0;
-#endif
-    const char* numThreadsEnv = getenv("WEBKIT_CAIRO_PAINTING_THREADS");
-    if (!numThreadsEnv)
-        numThreadsEnv = getenv("WEBKIT_NICOSIA_PAINTING_THREADS");
-    if (numThreadsEnv) {
-        auto newValue = parseInteger<unsigned>(StringView::fromLatin1(numThreadsEnv));
-        if (newValue && *newValue <= 8)
-            numThreads = *newValue;
-        else
-            WTFLogAlways("The number of Cairo painting threads is not between 0 and 8. Using the default value %u\n", numThreads);
-    }
-
-    if (numThreads)
-        return std::unique_ptr<PaintingEngine>(new PaintingEngineThreaded(numThreads));
-
     return std::unique_ptr<PaintingEngine>(new PaintingEngineBasic);
 }
 

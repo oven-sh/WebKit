@@ -47,17 +47,17 @@ public:
     {
     }
 
-    bool NODELETE isEmpty() const
+    bool LEGACY_NODELETE isEmpty() const
     {
         return blocks.isEmpty();
     }
 
-    size_t NODELETE size() const
+    size_t LEGACY_NODELETE size() const
     {
         return blocks.size();
     }
 
-    BasicBlock* NODELETE pop(IndexSet<BasicBlock*>& done)
+    BasicBlock* LEGACY_NODELETE pop(IndexSet<BasicBlock*>& done)
     {
         if (startNewChain) {
             startNewChain = false;
@@ -67,7 +67,7 @@ public:
         return popChain(done);
     }
 
-    void NODELETE markStartNewChain()
+    void LEGACY_NODELETE markStartNewChain()
     {
         startNewChain = true;
     }
@@ -77,7 +77,7 @@ public:
         blocks.append(block);
     }
 
-    BasicBlock* NODELETE popChain(IndexSet<BasicBlock*>& done)
+    BasicBlock* LEGACY_NODELETE popChain(IndexSet<BasicBlock*>& done)
     {
         // Take the last added successor to continue the chain.
         // This transforms a jump into a fallthrough.
@@ -91,7 +91,7 @@ public:
         return nullptr;
     }
 
-    BasicBlock* NODELETE popNewChain(IndexSet<BasicBlock*>& done)
+    BasicBlock* LEGACY_NODELETE popNewChain(IndexSet<BasicBlock*>& done)
     {
         // Take the oldest added successor to start a new chain.
         // We prefer this,
@@ -337,6 +337,16 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     auto isGuard = [](BasicBlock* asked) {
         return asked->numSuccessors() == 2 && asked->successor(0).isRare() != asked->successor(1).isRare();
     };
+    auto hasOneLikelyPredecessor = [](BasicBlock* asked) {
+        unsigned numberOfLikelyPredecessors = 0;
+        for (BasicBlock* predecessor : asked->predecessors()) {
+            bool isLikely = predecessor->frequency() * 64 >= asked->frequency();
+            for (FrequentedBlock& successor : predecessor->successors())
+                isLikely &= successor.block() != asked || !successor.isRare();
+            numberOfLikelyPredecessors += isLikely;
+        }
+        return numberOfLikelyPredecessors == 1;
+    };
     auto hasOnlyRareWaysIn = [&](BasicBlock* asked) {
         for (BasicBlock* predecessor : asked->predecessors()) {
             if (laidInGaps.contains(predecessor))
@@ -398,6 +408,18 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
             && !detectDiamondStructure(block, chainWorklist, done)
             && !detectExclusiveSuccessor(block, chainWorklist, done)) {
 
+#if USE(BUN_JSC_ADDITIONS)
+            BasicBlock* first = block->numSuccessors() == 2 ? block->successor(0).block() : nullptr;
+            BasicBlock* second = block->numSuccessors() == 2 ? block->successor(1).block() : nullptr;
+            if (code.ordersBlocksByEdgeFrequency() && first && first != second && !block->successor(0).isRare() && !block->successor(1).isRare() && !done.contains(first) && !done.contains(second)
+                && hasOneLikelyPredecessor(first) != hasOneLikelyPredecessor(second)) {
+                BasicBlock* exclusive = hasOneLikelyPredecessor(first) ? first : second;
+                BasicBlock* shared = exclusive == first ? second : first;
+                bool sharedEdgeIsLikelier = block->frequency() - exclusive->frequency() > exclusive->frequency() * 1.01;
+                chainWorklist.append(sharedEdgeIsLikelier ? exclusive : shared);
+                chainWorklist.append(sharedEdgeIsLikelier ? shared : exclusive);
+            } else
+#endif
             for (FrequentedBlock& successor : block->successors()) {
                 if (!done.contains(successor.block()))
                     appendSuccessor(successor);

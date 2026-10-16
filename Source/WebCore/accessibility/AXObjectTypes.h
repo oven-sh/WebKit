@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
+#include <WebCore/IntPoint.h>
 #include <WebCore/Node.h>
 #include <optional>
 #include <wtf/ProcessID.h>
@@ -98,5 +100,35 @@ struct InheritedFrameState {
     bool isInert { false };
     bool isRenderHidden { false };
 };
+
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct AXDebugInfo {
+    AccessibilityMode accessibilityMode;
+    String liveTree;
+    String isolatedTree;
+    Vector<String> warnings;
+    uint64_t remoteTokenHash;
+    uint64_t webProcessLocalTokenHash;
+};
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+// Describes a frame's position and scale on screen for accessibility coordinate conversion.
+// Sent from the UIProcess to the WebProcess via IPC whenever the frame scrolls, moves, or resizes.
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct AXFrameGeometry {
+    // The frame's content origin in screen coordinates.
+    //   - Coordinate space: bottom-left on macOS, top-left on other platforms.
+    //   - Points to: the top-left of the frame's document.
+    //   - Units: display pixels.
+    //   - Scroll: document-origin-based, so accounts for the frame's scroll position
+    //     (e.g. scrolling down moves the document origin up on screen).
+    // Element rects in content space compose with this directly to produce screen coordinates.
+    IntPoint screenPosition;
+
+    // Scale accounts for page zoom and device scale factor, among other things.
+    // Applied to the element rect before adding screenPosition.
+    AffineTransform screenTransform;
+};
+#endif
 
 } // namespace WebCore

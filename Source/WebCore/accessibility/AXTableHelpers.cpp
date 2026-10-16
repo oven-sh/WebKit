@@ -236,7 +236,7 @@ bool isDataTableWithTraversal(HTMLTableElement& tableElement, AXObjectCache& cac
         elementsToVisit.pop();
         bool rowIsAllTableHeaderCells = true;
         for (RefPtr currentElement = currentParent ? currentParent->firstElementChild() : nullptr; currentElement; currentElement = currentElement->nextElementSibling()) {
-            if (auto* tableSectionElement = dynamicDowncast<HTMLTableSectionElement>(currentElement.get())) {
+            if (RefPtr tableSectionElement = dynamicDowncast<HTMLTableSectionElement>(currentElement)) {
                 auto elementName = tableSectionElement->elementName();
                 if (elementName == ElementName::HTML_thead) {
                     if (topSectionIndicatesLayoutTable(tableSectionElement))
@@ -247,7 +247,7 @@ bool isDataTableWithTraversal(HTMLTableElement& tableElement, AXObjectCache& cac
                     ASSERT_WITH_MESSAGE(elementName == ElementName::HTML_tfoot, "table section elements should always have either thead, tbody, or tfoot tag");
                     firstFoot = firstFoot ? firstFoot : RefPtr { tableSectionElement };
                 }
-            } else if (auto* tableRow = dynamicDowncast<HTMLTableRowElement>(currentElement.get())) {
+            } else if (RefPtr tableRow = dynamicDowncast<HTMLTableRowElement>(currentElement)) {
                 firstRow = firstRow ? firstRow : RefPtr { tableRow };
 
                 rowCount += 1;
@@ -264,7 +264,7 @@ bool isDataTableWithTraversal(HTMLTableElement& tableElement, AXObjectCache& cac
                         alternatingRowColorCount++;
                     }
                 }
-            } else if (auto* cell = dynamicDowncast<HTMLTableCellElement>(currentElement.get())) {
+            } else if (RefPtr cell = dynamicDowncast<HTMLTableCellElement>(currentElement)) {
                 cellCount++;
 
                 bool isTHCell = cell->elementName() == ElementName::HTML_th;

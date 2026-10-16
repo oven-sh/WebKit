@@ -573,7 +573,7 @@ CellPointer Lowering::stringOfCodeUnit(Word32 unit)
 // The index is inside.
 CellPointer Lowering::singleCharacterStringAt(const Characters& characters, Integer index, Word32* codeUnit)
 {
-    static_assert(maxSingleCharacterString == std::numeric_limits<Latin1Character>::max());
+    static_assert(maxSingleCharacterString == 0xff);
     Vector<ValueFromBlock, 2> codeUnits;
     CellPointer string = either<CellPointer>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
         LValue narrow = marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), offsetBy(characters.data, index, 0).value())), IsFixed);
@@ -870,44 +870,55 @@ BitVector computeMapKeyValues(const Program& program, FunctionID id, const Funct
     BitVector keys;
     auto& builtins = Builtins::singleton();
     bool returnsMapKeys = program.functionsReturningMapKeys.get(id.index());
-    for (auto& block : function.blocks) {
-        for (ValueID id : block.values) {
-            auto& value = function.at(id);
-            if (value.opcode == Opcode::GetByVal || value.opcode == Opcode::PutByVal) {
-                keys.set(value.child(1).index());
-                continue;
-            }
-            if (value.opcode == Opcode::CallDirect && !value.isJumpToContinuation() && program.at(value.function()).isBodyOfSeveralSites) {
-                auto& body = program.at(value.function());
-                BitVector keysOfBody = computeMapKeyValues(program, value.function(), body);
-                auto& parameters = body.blocks[0].parameters;
-                for (unsigned i = 0; i < std::min(parameters.size(), value.arguments.size()); ++i) {
-                    if (keysOfBody.get(parameters[i].index()))
-                        keys.set(value.arguments[i].index());
-                }
-                continue;
-            }
-            if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty())
-                continue;
-            auto& implementation = builtins.at(value.builtin()).implementation;
-            if (implementation.kind != BuiltinImplementation::Inline)
-                continue;
-            switch (implementation.inlined) {
-            case InlineBuiltin::MapGet:
-            case InlineBuiltin::MapSet:
-            case InlineBuiltin::MapHas:
-            case InlineBuiltin::MapDelete:
-            case InlineBuiltin::SetAdd:
-            case InlineBuiltin::SetHas:
-            case InlineBuiltin::SetDelete:
-                keys.set(value.arguments[0].index());
-                break;
-            default:
-                break;
-            }
+    auto lookAt = [&](ValueID id) {
+        auto& value = function.at(id);
+        if (value.opcode == Opcode::GetByVal || value.opcode == Opcode::PutByVal) {
+            keys.set(value.child(1).index());
+            return;
         }
-        if (returnsMapKeys && block.terminator.kind == TerminatorKind::Return && block.terminator.value)
-            keys.set(block.terminator.value.index());
+        if (value.opcode == Opcode::CallDirect && !value.isJumpToContinuation() && program.at(value.function()).isBodyOfSeveralSites) {
+            auto& body = program.at(value.function());
+            BitVector keysOfBody = computeMapKeyValues(program, value.function(), body);
+            auto& parameters = body.blocks[0].parameters;
+            for (unsigned i = 0; i < std::min(parameters.size(), value.arguments.size()); ++i) {
+                if (keysOfBody.get(parameters[i].index()))
+                    keys.set(value.arguments[i].index());
+            }
+            return;
+        }
+        if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty())
+            return;
+        auto& implementation = builtins.at(value.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline)
+            return;
+        switch (implementation.inlined) {
+        case InlineBuiltin::MapGet:
+        case InlineBuiltin::MapSet:
+        case InlineBuiltin::MapHas:
+        case InlineBuiltin::MapDelete:
+        case InlineBuiltin::SetAdd:
+        case InlineBuiltin::SetHas:
+        case InlineBuiltin::SetDelete:
+            keys.set(value.arguments[0].index());
+            break;
+        default:
+            break;
+        }
+    };
+    static constexpr OpcodeSet mayMakeKeys { Opcode::GetByVal, Opcode::PutByVal, Opcode::CallDirect, Opcode::CallBuiltin };
+    if (&function == &program.at(id))
+        program.functions.forEachValueInOrder(id.index(), mayMakeKeys, lookAt);
+    else {
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values)
+                lookAt(id);
+        }
+    }
+    if (returnsMapKeys) {
+        for (auto& block : function.blocks) {
+            if (block.terminator.kind == TerminatorKind::Return && block.terminator.value)
+                keys.set(block.terminator.value.index());
+        }
     }
     for (bool changed = !keys.isEmpty(); changed;) {
         changed = false;
@@ -2252,7 +2263,7 @@ CellPointer Lowering::concatenateInOnePiece(const PartsOfConcatenation& parts)
     if (room < (hasOtherStrings ? 8 : 0))
         return concatenateAsRopes(parts.span());
 
-    LBasicBlock asRopes = hasOtherStrings ? m_out.newBlock() : nullptr;
+    LBasicBlock asRopes = hasOtherStrings ? newUnlikelyBlock() : nullptr;
     Join join(m_out, Rep::Cell, Int64);
     auto require = [&](Word32 condition) {
         LBasicBlock next = m_out.newBlock();
@@ -2693,6 +2704,11 @@ std::optional<Lowering::ComparisonWithText> Lowering::comparisonWithTextBranched
     for (unsigned i = 0; i < 2; ++i) {
         ValueID constant = condition.child(i);
         ValueID subject = condition.child(1 - i);
+        if (m_function.at(subject).rep == Rep::LiteralString) {
+            if (m_function.at(constant).opcode == Opcode::String && m_program.literalStringIndex(m_function.at(constant).string()) && !m_pinnedReads.contains(subject.index()))
+                return ComparisonWithText { subject, constant, { } };
+            continue;
+        }
         auto text = constantASCIIText(constant);
         if (text && text->empty())
             continue;
@@ -2750,8 +2766,11 @@ void Lowering::lowerBranchOnText()
     for (;;) {
         auto comparison = *comparisonWithTextBranchedOn(*block);
         // The first block's own terminator has been seen to: see lowerTerminator().
-        if (block != m_currentBlock)
+        if (block != m_currentBlock) {
             openStringsInFrontOfLoopsEnteredBy(block->terminator);
+            convertNumberArraysInFrontOfLoopsEnteredBy(block->terminator, true);
+            convertNumberArraysInFrontOfLoopsEnteredBy(block->terminator, false);
+        }
         cases.append(Case { comparison.text, comparison.constant, edgeTo(block->terminator.targets[0], true) });
         auto& next = block->terminator.targets[1];
         auto& following = m_function.at(next.block);
@@ -2762,13 +2781,32 @@ void Lowering::lowerBranchOnText()
             break;
         bool onlyCompares = true;
         for (ValueID id : following.values)
-            onlyCompares &= id == following.terminator.value || (m_function.at(id).opcode == Opcode::String && isFetchedWhereNeeded(id));
+            onlyCompares &= id == following.terminator.value || (m_function.at(id).opcode == Opcode::String && (isFetchedWhereNeeded(id) || m_function.at(id).rep == Rep::LiteralString));
         if (!onlyCompares)
             break;
         m_blocksTakenIntoBranchOnText.set(next.block.index());
         block = &following;
     }
     LBasicBlock otherwise = edgeTo(block->terminator.targets[1], true);
+
+    if (m_function.at(subject).rep == Rep::LiteralString) {
+        LValue word = rawWordOf(get(subject).as<LiteralStringWord>());
+        bool goesByNumber = cases.size() >= 128;
+        if (goesByNumber)
+            word = m_out.lShr(m_out.sub(word, m_out.constInt64(emptyLiteralStringWord)), m_out.constInt32(literalStringShift));
+        Vector<FTL::SwitchCase, 8> byWord;
+        UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
+        for (auto& one : cases) {
+            uint32_t number = *m_program.literalStringIndex(m_function.at(one.constant).string());
+            if (seen.add(number).isNewEntry)
+                byWord.append(FTL::SwitchCase(m_out.constInt64(goesByNumber ? number : literalStringWord(number)), one.taken, FTL::Weight()));
+        }
+        if (byWord.size() == 1)
+            m_out.branch(m_out.equal(word, byWord[0].value()), unsure(cases[0].taken), unsure(otherwise));
+        else
+            m_out.switchInstruction(word, byWord, otherwise, FTL::Weight());
+        return;
+    }
 
     std::optional<SetForScope<double>> frequencyWithoutCodeUnit;
     if (auto codeUnit = codeUnitOfString(subject, true)) {
@@ -2822,6 +2860,17 @@ void Lowering::lowerBranchOnText()
         return one.text.empty() ? 1 : one.text.size();
     };
     if (goesGenerallyWhereTextIsCold()) {
+        if (cases.size() == 1 && !cases[0].text.empty() && !openedString(receiver.id)) {
+            LBasicBlock isFlat = m_out.newBlock();
+            LBasicBlock mayBeText = m_out.newBlock();
+            Pointer fiber = fiberOf(receiver);
+            m_out.branch(lacksBits(fiber, JSString::isRopeInPointer).value(), usually(isFlat), rarely(mayBeText));
+            m_out.appendTo(isFlat);
+            m_out.branch(equal(loadField<Word32>(fiber, m_heaps.StringImpl_length), word32(static_cast<uint32_t>(cases[0].text.size()))).value(), unsure(mayBeText), unsure(otherwise));
+            m_out.appendTo(mayBeText);
+            branchOnTextByOneCall(receiver.string.value(), true, cases[0].constant, cases[0].text, cases[0].taken, otherwise);
+            return;
+        }
         Integer lengthOfSubject = stringLength(receiver);
         for (unsigned i = 0; i < cases.size(); ++i) {
             LBasicBlock next = i + 1 < cases.size() ? m_out.newBlock() : otherwise;
@@ -3072,20 +3121,22 @@ Word32 Lowering::areStringsEqual(ValueID a, ValueID b)
 Boxed Lowering::mapKey(ValueID id)
 {
     Operand operand = get(id);
+    if (operand.rep == Rep::OptionalDouble)
+        return select(equal(assumedNumber(operand.as<OptionalNumber>()), number(0)), boxInt32(word32(0)), convertTo<Boxed>(operand, typeOf(id)));
     if (operand.rep != Rep::Double)
         return convertTo<Boxed>(operand, typeOf(id));
     Number key = operand.as<Number>();
     return select(equal(key, number(0)), boxInt32(word32(0)), boxNumber(key));
 }
 
-// Whether two keys of the type, as mapKey() yields them, are one key exactly if they are the same bits. A number that is kept boxed, or
-// with room for `undefined`, may be a double that stands for an int32.
+// Whether two keys of the type, as mapKey() yields them, are one key exactly if they are the same bits. A number that is kept boxed
+// may be a double that stands for an int32.
 static bool isComparedByBits(const Type& key)
 {
     if (key.primitives & (Primitive::String | Primitive::BigInt))
         return false;
     Rep rep = repOf(key);
-    return !(key.primitives & Primitive::Number) || rep == Rep::Int64 || rep == Rep::Double;
+    return !(key.primitives & Primitive::Number) || rep == Rep::Int64 || rep == Rep::Double || rep == Rep::OptionalInt64 || rep == Rep::OptionalDouble;
 }
 
 // Of a key that is compared by its bits: rapidHashMix64().

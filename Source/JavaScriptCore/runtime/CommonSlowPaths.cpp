@@ -85,7 +85,7 @@ namespace JSC {
     } while (false)
 #else
 #define SET_PC_FOR_STUBS() do { \
-        callFrame->setCurrentVPC(pc); \
+        callFrame->setCallSiteIndex(CallSiteIndex(codeBlock->bytecodeIndex(pc))); \
     } while (false)
 #endif
 
@@ -399,7 +399,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_string)
 }
 
 #if ENABLE(JIT)
-static void NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
+static void LEGACY_NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
 {
     profile.observeArg(operand);
     ASSERT(result.isNumber() || result.isBigInt());
@@ -548,6 +548,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_add)
     auto bytecode = pc->as<OpAdd>();
     JSValue v1 = GET_C(bytecode.m_lhs).jsValue();
     JSValue v2 = GET_C(bytecode.m_rhs).jsValue();
+
+    static_assert(!(sizeof(JSRopeString) % MarkedBlock::atomSize));
+    if (!Options::useJIT())
+        RETURN(jsAdd(globalObject, v1, v2));
 
     BinaryArithProfile& arithProfile = *codeBlock->binaryArithProfileForPC(pc);
     arithProfile.observeLHSAndRHS(v1, v2);

@@ -21,6 +21,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-duration.js
 /LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-get-objecturl.js
 /LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-handle-transfer-to-main.js
+/LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-handle-transfer-to-shared-and-service-workers-helper.js
+/LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-handle-transfer-to-shared-and-service-workers.https.html
 /LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-handle-transfer.html
 /LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-handle-transfer.js
 /LayoutTests/imported/w3c/web-platform-tests/media-source/dedicated-worker/mediasource-worker-handle.html

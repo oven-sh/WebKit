@@ -94,7 +94,7 @@ TEST(StrJoin, APIExamples) {
   {
     // Array of ints
     const int a[] = {1, 2, 3, -4};
-    EXPECT_EQ("1-2-3--4", absl::StrJoin(a, a + ABSL_ARRAYSIZE(a), "-"));
+    EXPECT_EQ("1-2-3--4", absl::StrJoin(a, a + std::size(a), "-"));
   }
 
   {
@@ -135,6 +135,16 @@ TEST(StrJoin, APIExamples) {
   //
   // A few examples of edge cases
   //
+
+  {
+    // Test the code path where default-constructed string_views are
+    // used. Hopefully a sanitizer will flag it if nullptr gets passed to
+    // memcpy.
+    std::vector<absl::string_view> v = {absl::string_view(),
+                                        absl::string_view()};
+    EXPECT_EQ(absl::StrJoin(v, absl::string_view()), "");
+    EXPECT_EQ(absl::StrJoin(v, ":"), ":");
+  }
 
   {
     // Empty range yields an empty string.

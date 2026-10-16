@@ -89,6 +89,8 @@ public:
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
 
 private:
+    friend class JSC::LLIntOffsetsExtractor;
+
     LocalAllocator m_localAllocator;
 };
 

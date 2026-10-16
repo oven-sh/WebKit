@@ -31,13 +31,15 @@ bool JSCanvasRenderingContext2DOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC
         *reason = "Canvas is opaque root"_s;
 
     JSCanvasRenderingContext2D* jsCanvasRenderingContext = downcast<JSCanvasRenderingContext2D>(handle.slot()->asCell());
-    return containsWebCoreOpaqueRoot(visitor, jsCanvasRenderingContext->wrapped().canvas());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG return containsWebCoreOpaqueRoot(visitor, jsCanvasRenderingContext->wrapped().canvas());
 }
 
 template<typename Visitor>
 void JSCanvasRenderingContext2D::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    addWebCoreOpaqueRoot(visitor, wrapped().canvas());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, wrapped().canvas());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSCanvasRenderingContext2D);

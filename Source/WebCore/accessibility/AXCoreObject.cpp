@@ -263,7 +263,8 @@ ListBoxInterpretation AXCoreObject::listBoxInterpretation() const
         return ListBoxInterpretation::NotListBox;
 
     Deque<Ref<AXCoreObject>, /* inlineCapacity */ 100> queue;
-    for (Ref child : const_cast<AXCoreObject*>(this)->childrenIncludingIgnored())
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST for (Ref child : const_cast<AXCoreObject*>(this)->childrenIncludingIgnored())
         queue.append(WTF::move(child));
 
     unsigned iterations = 0;
@@ -310,7 +311,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::tabChildren()
 }
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-static bool NODELETE isValidChildForTable(AXCoreObject& object)
+static bool LEGACY_NODELETE isValidChildForTable(AXCoreObject& object)
 {
     auto role = object.role();
     // Tables can only have these roles as exposed-to-AT children.
@@ -492,23 +493,33 @@ std::optional<AXStitchGroup> AXCoreObject::stitchGroupFromGroups(const Vector<AX
     return { };
 }
 
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+// When a cross-frame child (i.e. a local frame's root) is ignored, e.g. via
+// role="presentation", hoist its content rather than returning the ignored root,
+// which would cause parent-child mismatches in the AT-exposed accessibility tree.
+static void appendCrossFrameContent(AXCoreObject::AccessibilityChildrenVector& out, AXCoreObject& crossFrameChild)
+{
+    if (!crossFrameChild.isIgnored()) {
+        out.append(crossFrameChild);
+        return;
+    }
+
+    for (auto& grandchild : crossFrameChild.stitchedUnignoredChildren()) {
+        // The hoisted content can itself contain a cross-frame child, e.g. when the presentational
+        // iframe's document contains another iframe, so resolve it rather than exposing the local frame.
+        if (RefPtr nestedCrossFrameChild = grandchild->crossFrameChildObject())
+            appendCrossFrameContent(out, *nestedCrossFrameChild);
+        else
+            out.append(grandchild);
+    }
+}
+#endif // ENABLE_ACCESSIBILITY_LOCAL_FRAME
+
 AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameUnignoredChildren()
 {
     AXCoreObject::AccessibilityChildrenVector result = stitchedUnignoredChildren();
 
 #if ENABLE_ACCESSIBILITY_LOCAL_FRAME
-    // When a cross-frame child (i.e. a local frame's root) is ignored, e.g. via
-    // role="presentation", hoist its content rather than returning the ignored root,
-    // which would cause parent-child mismatches in the AT-exposed accessibility tree.
-    // crossFrameParentObjectUnignored() is the matching parent-side hoist that keeps the
-    // hoisted content reciprocal.
-    auto appendCrossFrameContent = [](AccessibilityChildrenVector& out, AXCoreObject& crossFrameChild) {
-        if (crossFrameChild.isIgnored()) {
-            for (auto& grandchild : crossFrameChild.stitchedUnignoredChildren())
-                out.append(grandchild);
-        } else
-            out.append(crossFrameChild);
-    };
 
     if (result.isEmpty()) {
         if (RefPtr crossFrameChild = crossFrameChildObject())
@@ -1075,20 +1086,32 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::selectedChildren()
     return { };
 }
 
+// Returns true once the selected option of a single-selection list box is found.
+static bool appendSelectedOptions(AXCoreObject& container, bool isMultiSelectable, AXCoreObject::AccessibilityChildrenVector& result)
+{
+    for (const auto& child : container.unignoredChildren()) {
+        if (child->isGroup()) {
+            if (appendSelectedOptions(child, isMultiSelectable, result))
+                return true;
+            continue;
+        }
+
+        if (!child->isListBoxOption() || !child->isSelected())
+            continue;
+
+        result.append(child);
+        if (!isMultiSelectable)
+            return true;
+    }
+    return false;
+}
+
 AXCoreObject::AccessibilityChildrenVector AXCoreObject::listboxSelectedChildren()
 {
     AX_ASSERT(role() == AccessibilityRole::ListBox);
 
     AccessibilityChildrenVector result;
-    bool isMulti = isMultiSelectable();
-    for (const auto& child : unignoredChildren()) {
-        if (!child->isListBoxOption() || !child->isSelected())
-            continue;
-
-        result.append(child);
-        if (!isMulti)
-            return result;
-    }
+    appendSelectedOptions(*this, isMultiSelectable(), result);
     return result;
 }
 
@@ -1513,7 +1536,8 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::revealableContainers()
 bool AXCoreObject::containsOnlyStaticText() const
 {
     bool hasText = false;
-    RefPtr nonTextDescendant = Accessibility::findUnignoredDescendant(const_cast<AXCoreObject&>(*this), /* includeSelf */ false, [&] (auto& descendant) {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST RefPtr nonTextDescendant = Accessibility::findUnignoredDescendant(const_cast<AXCoreObject&>(*this), /* includeSelf */ false, [&](auto& descendant) {
         if (descendant.isGroup()) {
             // Skip through groups to keep looking for text.
             return false;
@@ -1814,7 +1838,7 @@ String AXCoreObject::languageIncludingAncestors() const
 }
 
 #if PLATFORM(COCOA)
-static bool NODELETE isVisibleText(AccessibilityTextSource textSource)
+static bool LEGACY_NODELETE isVisibleText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Visible:
@@ -1834,7 +1858,7 @@ static bool NODELETE isVisibleText(AccessibilityTextSource textSource)
     }
 }
 
-static bool NODELETE isDescriptiveText(AccessibilityTextSource textSource)
+static bool LEGACY_NODELETE isDescriptiveText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Alternative:
@@ -2328,7 +2352,7 @@ bool performCustomActionPress(AXTreeID treeID, AXID targetID)
 {
     return retrieveValueFromMainThreadWithTimeoutAndDefault([treeID, targetID] () -> bool {
         if (WeakPtr<AXObjectCache> cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID)) {
-            if (RefPtr object = cache->objectForID(targetID))
+            if (RefPtr object = protect(cache)->objectForID(targetID))
                 return object->pressPreservingFocus();
         }
         return false;

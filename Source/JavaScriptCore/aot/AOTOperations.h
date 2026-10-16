@@ -44,6 +44,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance*, Encoded
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreaterEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTCompareEqToText, size_t, (Instance*, EncodedJSValue, uint64_t text));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t identifierIndex, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutById, void, (Instance*, EncodedJSValue base, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t flags));

@@ -503,7 +503,7 @@ ObjectHeap::ExistsAndValid ObjectHeap::objectExistsAndValid(const WebCore::WebGP
         return false;
     },
     [&](auto& object) -> bool {
-        return gpu.isValid(object->backing());
+        return gpu.isValid(protect(object->backing()));
     });
 #else
     UNUSED_PARAM(gpu);

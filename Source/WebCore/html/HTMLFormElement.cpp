@@ -129,7 +129,7 @@ HTMLFormElement::~HTMLFormElement()
         listedElement->formWillBeDestroyed();
     }
     for (auto& imageElement : m_imageElements)
-        imageElement->formWillBeDestroyed();
+        protect(imageElement)->formWillBeDestroyed();
 }
 
 Node::NeedsPostConnectionSteps HTMLFormElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
@@ -608,7 +608,7 @@ void HTMLFormElement::registerFormListedElement(FormListedElement& element)
 {
     m_listedElements.insert(formElementIndex(element), protect(element.asHTMLElement()));
 
-    auto* control = dynamicDowncast<HTMLFormControlElement>(element);
+    RefPtr control = dynamicDowncast<HTMLFormControlElement>(element);
     if (!control || !control->isSuccessfulSubmitButton())
         return;
 
@@ -795,7 +795,7 @@ void HTMLFormElement::resetDefaultButton()
     defaultButton();
     if (m_defaultButton != oldDefault) {
         if (oldDefault)
-            oldDefault->invalidateStyleForSubtree();
+            protect(oldDefault)->invalidateStyleForSubtree();
         if (m_defaultButton)
             protect(m_defaultButton)->invalidateStyleForSubtree();
     }
@@ -957,9 +957,8 @@ Vector<Ref<FormListedElement>> HTMLFormElement::copyListedElementsVector() const
     return WTF::map(m_listedElements, [] (auto& weakElement) {
         RefPtr element { weakElement.get() };
         ASSERT(element);
-        auto* formListedElement = element->asFormListedElement();
-        ASSERT(formListedElement);
-        return Ref<FormListedElement>(*formListedElement);
+        RefPtr formListedElement = element->asFormListedElement();
+        return formListedElement.releaseNonNull();
     });
 }
 
@@ -972,7 +971,8 @@ Vector<Ref<ValidatedFormListedElement>> HTMLFormElement::copyValidatedListedElem
 
 HTMLFormElement* HTMLFormElement::findClosestFormAncestor(const Element& startElement)
 {
-    return const_cast<HTMLFormElement*>(ancestorsOfType<HTMLFormElement>(startElement).first());
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<HTMLFormElement*>(ancestorsOfType<HTMLFormElement>(startElement).first());
 }
 
 const AtomString& HTMLFormElement::autocomplete() const

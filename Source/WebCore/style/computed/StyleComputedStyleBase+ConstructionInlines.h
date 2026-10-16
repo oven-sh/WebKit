@@ -86,6 +86,7 @@ inline ComputedStyleBase::ComputedStyleBase(CreateDefaultStyleTag)
     m_nonInheritedFlags.pseudoElementType = 0;
     m_nonInheritedFlags.pseudoBits = 0;
     m_nonInheritedFlags.pseudoElementBoxGeneration = std::to_underlying(PseudoElementBoxGeneration::Normal);
+    m_nonInheritedFlags.useSVGZoomRulesForLength = false;
 
     static_assert((sizeof(InheritedFlags) <= 8), "InheritedFlags does not grow");
     static_assert((sizeof(NonInheritedFlags) <= 12), "NonInheritedFlags does not grow");

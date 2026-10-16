@@ -45,6 +45,7 @@
 #include "JSGlobalProxy.h"
 #include "Lookup.h"
 #include "MarkedSpace.h"
+#include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include "ProxyObject.h"
@@ -179,7 +180,7 @@ ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyImpl(Visitor& visi
         }
     };
 
-    if (visitor.mutatorIsStopped()) {
+    if (visitor.mutatorsAreStopped()) {
         butterfly = this->butterfly();
         structure = this->structure();
         maxOffset = structure->maxOffset();
@@ -658,7 +659,7 @@ bool JSObject::getOwnPropertySlotByIndex(JSObject* thisObject, JSGlobalObject* g
         
         JSValue value = butterfly->contiguous().at(thisObject, i).get();
         if (value) {
-            slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::None), value);
+            slot.setValue(thisObject, thisObject->hasFrozenElementsInPlace() ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : static_cast<unsigned>(PropertyAttribute::None), value);
             return true;
         }
         
@@ -672,7 +673,7 @@ bool JSObject::getOwnPropertySlotByIndex(JSObject* thisObject, JSGlobalObject* g
         
         double value = butterfly->contiguousDouble().at(thisObject, i);
         if (value == value) {
-            slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::None), JSValue(JSValue::EncodeAsDouble, value));
+            slot.setValue(thisObject, thisObject->hasFrozenElementsInPlace() ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : static_cast<unsigned>(PropertyAttribute::None), JSValue(JSValue::EncodeAsDouble, value));
             return true;
         }
         
@@ -1157,6 +1158,9 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
 
     if (thisObject->structure()->hasImmutableProperties()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue held;
+        if (!shouldThrow && !thisObject->isRefusedByLockAlone(vm, nullptr, held))
+            return false;
         thisObject->noteRefusalByLock(vm);
         return typeError(globalObject, scope, true, thisObject->wordsOfRefusalByLock(vm, nullptr, ReadonlyPropertyWriteError));
     }
@@ -1951,6 +1955,35 @@ void JSObject::convertInt32ForValue(VM& vm, JSValue value)
 
 void JSObject::convertFromCopyOnWrite(VM& vm)
 {
+    RELEASE_ASSERT(!hasFrozenElementsInPlace());
+    copyElementsOutOfCopyOnWriteStorage(vm);
+}
+
+void JSObject::moveFrozenElementsToSparseMap(VM& vm)
+{
+    RELEASE_ASSERT(hasFrozenElementsInPlace());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    copyElementsOutOfCopyOnWriteStorage(vm);
+    switch (indexingType()) {
+    case ALL_INT32_INDEXING_TYPES:
+        convertInt32ToArrayStorage(vm);
+        break;
+    case ALL_DOUBLE_INDEXING_TYPES:
+        convertDoubleToArrayStorage(vm);
+        break;
+    case ALL_CONTIGUOUS_INDEXING_TYPES:
+        convertContiguousToArrayStorage(vm);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    objectConstructorFreeze(realm(), this);
+    scope.releaseAssertNoExceptionExceptTermination();
+    RELEASE_ASSERT(inSparseIndexingMode());
+}
+
+void JSObject::copyElementsOutOfCopyOnWriteStorage(VM& vm)
+{
     ASSERT(isCopyOnWrite(indexingMode()));
     // Every caller that reaches this for an object with immutable properties is about to write its elements in place.
     RELEASE_ASSERT(!structure()->hasImmutableProperties());
@@ -2126,7 +2159,7 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
 
     if (isCopyOnWrite(indexingMode())) {
         // Compiled code asks for this before it stores in place.
-        if (structure()->hasImmutableProperties()) [[unlikely]]
+        if (structure()->hasImmutableProperties() || hasFrozenElementsInPlace()) [[unlikely]]
             return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, Int32Shape) == Int32Shape) {
             ASSERT(hasInt32(indexingMode()));
@@ -2169,7 +2202,7 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
 
     if (isCopyOnWrite(indexingMode())) {
         // Compiled code asks for this before it stores in place.
-        if (structure()->hasImmutableProperties()) [[unlikely]]
+        if (structure()->hasImmutableProperties() || hasFrozenElementsInPlace()) [[unlikely]]
             return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, DoubleShape) == DoubleShape) {
             convertFromCopyOnWrite(vm);
@@ -2214,7 +2247,7 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
 
     if (isCopyOnWrite(indexingMode())) {
         // Compiled code asks for this before it stores in place.
-        if (structure()->hasImmutableProperties()) [[unlikely]]
+        if (structure()->hasImmutableProperties() || hasFrozenElementsInPlace()) [[unlikely]]
             return { };
         if (leastUpperBoundOfIndexingTypes(indexingType() & IndexingShapeMask, ContiguousShape) == ContiguousShape) {
             convertFromCopyOnWrite(vm);
@@ -2264,6 +2297,8 @@ ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
         return nullptr;
 
     ensureWritable(vm);
+    if (hasAnyArrayStorage(indexingType())) [[unlikely]]
+        return butterfly()->arrayStorage();
 
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -2589,6 +2624,22 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
     return result;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool JSObject::replaceOwnPropertyWithCustomValue(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
+{
+    ASSERT(!parseIndex(propertyName));
+    ASSERT(value.isCustomGetterSetter());
+    ASSERT(attributes & PropertyAttribute::CustomValue);
+    ASSERT(isValidOffset(structure()->get(vm, propertyName)));
+
+    PutPropertySlot slot(this);
+    if (!putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull()) [[unlikely]]
+        return false;
+    structure()->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(propertyName == vm.propertyNames->underscoreProto);
+    return true;
+}
+#endif
+
 void JSObject::putDirectCustomGetterSetterWithoutTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
 {
     ASSERT(!parseIndex(propertyName));
@@ -2766,6 +2817,8 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
 
     if (hasTypedContiguous(thisObject->indexingMode())) [[unlikely]]
         thisObject->convertTypedContiguousToContiguous(vm);
+    if (thisObject->hasFrozenElementsInPlace()) [[unlikely]]
+        thisObject->moveFrozenElementsToSparseMap(vm);
     
     switch (thisObject->indexingMode()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -3006,6 +3059,8 @@ bool JSObject::hasInstance(JSGlobalObject* globalObject, JSValue value, JSValue 
 
     TypeInfo info = structure()->typeInfo();
     if (info.implementsDefaultHasInstance()) {
+        if (!value.isObject())
+            return false;
         JSValue prototype = get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, false);
         RELEASE_AND_RETURN(scope, defaultHasInstance(globalObject, value, prototype));
@@ -3405,6 +3460,28 @@ static JSCellButterfly* tryCreateCopyOnWriteButterfly(VM& vm, JSObject* object)
             result->setIndex(vm, i, butterfly->contiguous().at(object, i).get());
     }
     return result;
+}
+
+bool JSObject::tryFreezeArrayInPlace(VM& vm)
+{
+    if (hasFrozenElementsInPlace())
+        return true;
+    JSGlobalObject* globalObject = realm();
+    if (classInfo() != JSArray::info() || !globalObject->isOriginalArrayStructure(structure()) || globalObject->isHavingABadTime() || mayBePrototype())
+        return false;
+    JSCellButterfly* copyOnWriteButterfly = nullptr;
+    if (!isCopyOnWrite(indexingMode())) {
+        copyOnWriteButterfly = tryCreateCopyOnWriteButterfly(vm, this);
+        if (!copyOnWriteButterfly)
+            return false;
+    }
+    StructureID oldStructureID = structureID();
+    Structure* newStructure = Structure::freezeTransition(vm, globalObject->originalArrayStructureForIndexingType(indexingMode() | CopyOnWrite));
+    RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()));
+    if (copyOnWriteButterfly)
+        nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
+    setStructure(vm, newStructure);
+    return true;
 }
 
 bool JSObject::makePropertiesImmutable(VM& vm)
@@ -4282,7 +4359,7 @@ bool JSObject::putDirectNativeFunction(VM& vm, JSGlobalObject* globalObject, con
     ASSERT(name);
 
     JSFunction* function = JSFunction::create(vm, globalObject, functionLength, name, nativeFunction, implementationVisibility, intrinsic);
-    if (isLockedBuiltin() && !isGlobalObject() && type() != GlobalProxyType) [[unlikely]]
+    if (vm.useImmutableIntrinsics && isLockedBuiltin() && !isGlobalObject() && type() != GlobalProxyType) [[unlikely]]
         attributes |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     return putDirect(vm, propertyName, function, attributes);
 }
@@ -4295,7 +4372,7 @@ bool JSObject::putDirectNativeFunction(VM& vm, JSGlobalObject* globalObject, con
     ASSERT(name);
 
     JSFunction* function = JSFunction::create(vm, globalObject, functionLength, name, nativeFunction, implementationVisibility, intrinsic, callHostFunctionAsConstructor, signature);
-    if (isLockedBuiltin() && !isGlobalObject() && type() != GlobalProxyType) [[unlikely]]
+    if (vm.useImmutableIntrinsics && isLockedBuiltin() && !isGlobalObject() && type() != GlobalProxyType) [[unlikely]]
         attributes |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     return putDirect(vm, propertyName, function, attributes);
 }
@@ -4637,7 +4714,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
                 object->noteRefusalByLock(vm, propertyName.uid());
                 JSValue held;
                 bool isNamed = object->isRefusedByLockAlone(vm, propertyName.uid(), held);
-                return typeError(globalObject, scope, true, isNamed ? object->wordsOfRefusalByLock(vm, propertyName.uid(), NonExtensibleObjectPropertyDefineError) : withAOTErrorNote(NonExtensibleObjectPropertyDefineError));
+                return typeError(globalObject, scope, true, isNamed ? object->wordsOfRefusalByLock(vm, propertyName.uid(), NonExtensibleObjectPropertyDefineError) : vm.useImmutableIntrinsics ? withAOTErrorNote(NonExtensibleObjectPropertyDefineError) : String(NonExtensibleObjectPropertyDefineError));
             }
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
@@ -4765,7 +4842,7 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
         if (noteIfRefusedByLockAlone(vm, propertyName.uid(), false, true) || (!isCurrentDefined && isExtensible)) {
             JSValue held;
             bool isNamed = isRefusedByLockAlone(vm, propertyName.uid(), held);
-            return typeError(globalObject, throwScope, true, isNamed ? wordsOfRefusalByLock(vm, propertyName.uid(), ImmutablePropertyDefineError) : withAOTErrorNote(ImmutablePropertyDefineError));
+            return typeError(globalObject, throwScope, true, isNamed ? wordsOfRefusalByLock(vm, propertyName.uid(), ImmutablePropertyDefineError) : vm.useImmutableIntrinsics ? withAOTErrorNote(ImmutablePropertyDefineError) : String(ImmutablePropertyDefineError));
         }
     }
 #endif

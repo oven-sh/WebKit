@@ -30,6 +30,7 @@
 
 #import <CoreGraphics/CoreGraphics.h>
 #import <WebCore/WKUtilities.h>
+#import <wtf/RetainPtr.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,10 +70,10 @@ struct _WKView {
     
     WKViewContext *context;
     
-    __unsafe_unretained WAKWindow *window;
+    RetainPtr<WAKWindow> window;
 
     WKViewRef superview;
-    CFMutableArrayRef subviews;
+    RetainPtr<CFMutableArrayRef> subviews;
 
     CGPoint origin;
     CGRect bounds;

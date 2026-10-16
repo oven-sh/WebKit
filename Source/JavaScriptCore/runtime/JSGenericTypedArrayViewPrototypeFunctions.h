@@ -834,7 +834,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlobalObje
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -894,7 +894,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalObject* 
     RETURN_IF_EXCEPTION(scope, { });
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -990,7 +990,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObjec
     }
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto nativeValue) ALWAYS_INLINE_LAMBDA {
@@ -1072,7 +1072,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject*
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1139,7 +1139,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalOb
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1206,7 +1206,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObj
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1273,7 +1273,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlob
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1340,7 +1340,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1407,7 +1407,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject*
     JSValue thisArg = callFrame->argument(1);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(functorValue), 3);
+        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1480,7 +1480,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObjec
 
     bool initialized = hasInitialValue;
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(callback), 4);
+        CachedCall cachedCall(globalObject, asObject(callback), 4);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1549,7 +1549,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobal
 
     bool initialized = hasInitialValue;
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(callback), 4);
+        CachedCall cachedCall(globalObject, asObject(callback), 4);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -1681,7 +1681,7 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
     auto result = src;
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(comparatorValue), 2);
+        CachedCall cachedCall(globalObject, asObject(comparatorValue), 2);
         RETURN_IF_EXCEPTION(scope, { });
         result = arrayStableSort<MergeStrategy::Simple>(vm, src, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);

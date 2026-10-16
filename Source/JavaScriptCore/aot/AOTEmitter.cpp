@@ -203,6 +203,48 @@ LValue Emitter::allocateHeapCell(LValue allocator, std::optional<size_t> cellSiz
     return allocation;
 }
 
+LValue Emitter::allocateAdjacentHeapCells(LValue allocator, size_t cellSize, unsigned count, LBasicBlock slowPath)
+{
+    orElse(m_out.notNull(allocator), slowPath);
+    LBasicBlock continuation = m_out.newBlock();
+    PatchpointValue* allocation = m_out.patchpoint(pointerType());
+    allocation->effects.terminal = true;
+    allocation->append(ConstrainedValue(allocator, ValueRep::SomeRegister));
+    allocation->numGPScratchRegisters = 1;
+    allocation->resultConstraints = { ValueRep::SomeEarlyRegister };
+    allocation->clobber(RegisterSet::macroClobberedGPRs());
+    m_out.appendSuccessor(usually(continuation));
+    m_out.appendSuccessor(rarely(slowPath));
+    allocation->setGenerator([size = static_cast<int32_t>(cellSize * count)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg result = params[0].gpr();
+        GPRReg allocator = params[1].gpr();
+        GPRReg scratch = params.gpScratch(0);
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        constexpr int32_t intervalStart = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart();
+        constexpr int32_t intervalEnd = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd();
+        CCallHelpers::Jump toSlowPath;
+        if (Options::forceGCSlowPaths())
+            toSlowPath = jit.jump();
+        else {
+            jit.loadPtr(CCallHelpers::Address(allocator, intervalStart), result);
+            jit.addPtr(CCallHelpers::TrustedImm32(size), result, scratch);
+            toSlowPath = jit.branchPtr(CCallHelpers::Above, scratch, CCallHelpers::Address(allocator, intervalEnd));
+            jit.storePtr(scratch, CCallHelpers::Address(allocator, intervalStart));
+        }
+        CCallHelpers::Jump done;
+        if (!Options::forceGCSlowPaths() && !params.fallsThroughToSuccessor(0))
+            done = jit.jump();
+        params.addLatePath([=](CCallHelpers& jit) {
+            toSlowPath.linkTo(*labels[1], &jit);
+            if (done.isSet())
+                done.linkTo(*labels[0], &jit);
+        });
+    });
+    m_out.appendTo(continuation);
+    return allocation;
+}
+
 LValue Emitter::allocatorForSize(LValue subspace, LValue size, LBasicBlock slowPath)
 {
     static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");

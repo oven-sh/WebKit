@@ -62,6 +62,9 @@ JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, StringView);
 JSValue JSONParseWithException(JSGlobalObject*, StringView);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, JSValue space);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, unsigned indent);
+String tryStringifyWithoutSideEffects(JSGlobalObject&, JSValue);
+bool tryStringifyWithoutSideEffects(JSGlobalObject&, JSValue, const ScopedLambda<void(std::span<const Latin1Character>)>&);
+bool tryStringifyElementsWithoutSideEffects(JSGlobalObject&, JSArray&, unsigned first, const ScopedLambda<void(std::span<const Latin1Character>)>&);
 
 #if USE(BUN_JSC_ADDITIONS)
 struct StreamingJSONParseResult {

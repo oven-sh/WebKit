@@ -59,7 +59,7 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
-static bool NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
+static bool LEGACY_NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
 
 static void usage()
 {
@@ -1401,7 +1401,7 @@ void testShuffleShiftMemoryAllRegs64()
     CHECK(memory[1] == 35000000000000ll);
 }
 
-int64_t NODELETE combineHiLo(int64_t high, int64_t low)
+int64_t LEGACY_NODELETE combineHiLo(int64_t high, int64_t low)
 {
     union {
         int64_t value;
@@ -2863,6 +2863,42 @@ void testBlockOrderLaysRareBlocksInGaps()
     }
 }
 
+void testBlockOrderComparesEdges()
+{
+    enum class Case : uint8_t { IsNotRequested, EdgesAreLevel, BodyIsUnlikely };
+    for (Case testCase : { Case::IsNotRequested, Case::EdgesAreLevel, Case::BodyIsUnlikely }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        if (testCase != Case::IsNotRequested)
+            code.setOrdersBlocksByEdgeFrequency();
+        double frequencyOfBody = testCase == Case::BodyIsUnlikely ? 0.2 : 0.5;
+        BasicBlock* root = code.addBlock();
+        BasicBlock* body = code.addBlock(frequencyOfBody);
+        BasicBlock* oneArm = code.addBlock(frequencyOfBody / 2);
+        BasicBlock* otherArm = code.addBlock(frequencyOfBody / 2);
+        BasicBlock* join = code.addBlock();
+        root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+        root->setSuccessors(body, join);
+        body->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
+        body->setSuccessors(oneArm, otherArm);
+        oneArm->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR2));
+        oneArm->append(Jump, nullptr);
+        oneArm->setSuccessors(join);
+        otherArm->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR2));
+        otherArm->append(Jump, nullptr);
+        otherArm->setSuccessors(join);
+        join->append(Move, nullptr, Tmp(GPRInfo::argumentGPR2), Tmp(GPRInfo::returnValueGPR));
+        join->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+        auto compilation = compile(proc);
+        CHECK(invoke<int32_t>(*compilation, 0, 0, 5) == 5);
+        CHECK(invoke<int32_t>(*compilation, 1, 1, 5) == 6);
+        CHECK(invoke<int32_t>(*compilation, 1, 0, 5) == 7);
+        CHECK((body->index() < join->index()) == (testCase == Case::EdgesAreLevel));
+    }
+}
+
 static RegisterSet callClobberedRegisters()
 {
     RegisterSet result = RegisterSet::allGPRs();
@@ -2944,7 +2980,7 @@ void testEpilogueGenerator()
             block->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
         }
         if (hasGenerator) {
-            code.setEpilogueGenerator(createSharedTask<PrologueGeneratorFunction>([](CCallHelpers& jit, Code&) {
+            code.setEpilogueGenerator(createSharedTask<EpilogueGeneratorFunction>([](CCallHelpers& jit, Code&) {
                 jit.add32(CCallHelpers::TrustedImm32(40), GPRInfo::returnValueGPR);
                 jit.emitFunctionEpilogue();
                 jit.ret();
@@ -3967,6 +4003,7 @@ void run(const char* filter)
     RUN(testOopsTraps());
     RUN(testBlockOrderInvertsBranches());
     RUN(testBlockOrderLaysRareBlocksInGaps());
+    RUN(testBlockOrderComparesEdges());
     RUN(testCalleeSaveCost());
     RUN(testUnsavedCalleeSaves());
     RUN(testEpilogueGenerator());

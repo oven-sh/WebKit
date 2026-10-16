@@ -371,7 +371,7 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyInstantiateFunc, (JSGlobalObject* globalObje
         RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromise(globalObject, error)));
     }
 
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
+    auto [taintedness, url] = sourceTaintednessFromStack(vm, callFrame);
     RefPtr<SourceProvider> provider = StringSourceProvider::create("[wasm code]"_s, SourceOrigin(url), String(), taintedness, TextPosition(), SourceProviderSourceType::Program);
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());

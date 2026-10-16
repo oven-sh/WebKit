@@ -120,20 +120,22 @@ private:
     void typeAndPrediction(const Value& value)
     {
         type(value.type);
-        if (value.prediction) {
+        if (value.prediction()) {
             m_out.print(" ~");
-            type(value.prediction);
+            type(value.prediction());
         }
-        if (value.predictedClosure)
-            m_out.print(" ~f", value.predictedClosure.index());
-        if (value.predictedByKey) {
+        if (value.predictedClosure())
+            m_out.print(" ~f", value.predictedClosure().index());
+        if (value.hasCallSignature())
+            m_out.print(" #", value.callSignature());
+        if (value.predictedByKey()) {
             m_out.print(" ~[");
-            quoted(value.predictedByKey);
+            quoted(value.predictedByKey());
             m_out.print("]");
         }
-        if (value.assertedType) {
+        if (value.assertedType()) {
             m_out.print(" asserted ");
-            type(value.assertedType);
+            type(value.assertedType());
         }
         if (value.inlineFrame)
             m_out.print(" frame ", value.inlineFrame);
@@ -141,6 +143,10 @@ private:
             m_out.print(" parameter of f", callee.index());
         if (value.isInTailPosition)
             m_out.print(" tail");
+        if (value.dropsDroppableCallerFrame)
+            m_out.print(" drops");
+        if (value.leavesDroppableFrame)
+            m_out.print(" droppable");
     }
 
     void onlyFunction(FunctionID function, bool isFact)
@@ -280,6 +286,7 @@ private:
         case Opcode::GetExternalModule:
         case Opcode::String:
         case Opcode::BigInt:
+        case Opcode::ConstantSymbol:
         case Opcode::GetGlobal:
         case Opcode::GetGlobalForTypeOf:
         case Opcode::PutGlobal:
@@ -328,6 +335,10 @@ private:
             break;
         case Opcode::IsBuiltinFunction:
         case Opcode::BuiltinFunction: {
+            if (BuiltinName global = value.globalComparedWith()) {
+                m_out.print(" ", builtinNames[global.index()].text);
+                break;
+            }
             auto& builtin = Builtins::singleton().at(value.builtin());
             m_out.print(" ", builtin.holder, ".", builtin.name);
             break;
@@ -604,6 +615,8 @@ void Program::dump(PrintStream& out, const Type& type) const
     }
     if (primitives & Primitive::String)
         out.print(bar, "string");
+    if (primitives & Primitive::LiteralString)
+        out.print(bar, "literal");
     if (primitives & Primitive::Symbol)
         out.print(bar, "symbol");
     if (primitives & Primitive::BigInt)
@@ -685,7 +698,7 @@ void Functions::listForgottenValuesInOrder()
         }
         for (auto& value : function.values) {
             contents.opcodes.add(value.opcode);
-            contents.holdsPredictedClosure |= !!value.predictedClosure;
+            contents.holdsPredictedClosure |= !!value.predictedClosure();
         }
         m_contents[i] = contents;
         m_isListed[i] = 1;

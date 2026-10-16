@@ -151,7 +151,7 @@ ALWAYS_INLINE void setLength(JSGlobalObject* globalObject, VM& vm, JSObject* obj
         }
         JSArray* array = uncheckedDowncast<JSArray>(obj);
         // Only ArrayStorage can hold a read-only length, whose unchanged assignment must still throw.
-        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value)
+        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value && !array->hasFrozenElementsInPlace())
             return;
         scope.release();
         array->setLength(globalObject, static_cast<uint32_t>(value), throwException);

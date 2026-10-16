@@ -59,7 +59,8 @@ typedef (Element or CanvasElementImage) CanvasElementImageSource;
     ConditionalForWorker=OFFSCREEN_CANVAS_IN_WORKERS,
     EnabledForContext,
     ExportMacro=WEBCORE_EXPORT,
-    Exposed=(Window,Worker)
+    Exposed=(Window,Worker),
+    Transferable
 ] interface OffscreenCanvas : EventTarget {
     [CallWith=CurrentScriptExecutionContext] constructor([EnforceRange] unsigned long width, [EnforceRange] unsigned long height);
 

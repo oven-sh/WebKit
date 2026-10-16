@@ -277,12 +277,6 @@ UnlinkedCodeBlock::~UnlinkedCodeBlock()
     }
 }
 
-const JSInstructionStream& UnlinkedCodeBlock::instructions() const
-{
-    ASSERT(m_instructions.get());
-    return *m_instructions;
-}
-
 UnlinkedHandlerInfo* UnlinkedCodeBlock::handlerForBytecodeIndex(BytecodeIndex bytecodeIndex, RequiredHandler requiredHandler)
 {
     return handlerForIndex(bytecodeIndex.offset(), requiredHandler);

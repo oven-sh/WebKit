@@ -45,7 +45,8 @@ template<typename T> struct Converter<IDLEventListener<T>> : DefaultConverter<ID
         }
 
         constexpr bool isAttribute = false;
-        return Result { T::create(*asObject(value), thisObject, isAttribute, currentWorld(lexicalGlobalObject)) };
+        // The global object keeps its world alive.
+        SUPPRESS_UNCOUNTED_ARG return Result { T::create(*asObject(value), thisObject, isAttribute, currentWorld(lexicalGlobalObject)) };
     }
 };
 

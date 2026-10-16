@@ -199,12 +199,12 @@ static void setValueClass(HTMLElement& element, HTMLMeterElement::GaugeRegion ga
 void HTMLMeterElement::didChangeElementValue()
 {
     if (RefPtr valueElement = m_valueElement) {
-        valueElement->setInlineStyleProperty(CSSPropertyInlineSize, valueRatio() * 100, CSSUnitType::Percentage);
+        valueElement->setInlineStyleProperty(CSSPropertyID::InlineSize, valueRatio() * 100, CSSUnitType::Percentage);
         setValueClass(*valueElement, gaugeRegion());
     }
 
     if (RefPtr fillElement = m_fillElement) {
-        fillElement->setInlineStyleProperty(CSSPropertyTransform, makeString("translate(-"_s, (1 - valueRatio()) * 100, "%, 0)"_s));
+        fillElement->setInlineStyleProperty(CSSPropertyID::Transform, makeString("translate(-"_s, (1 - valueRatio()) * 100, "%, 0)"_s));
         fillElement->invalidateStyle();
     }
 }
@@ -230,7 +230,7 @@ void HTMLMeterElement::appendShadowTreeForAutoAppearance(ShadowRoot& root)
     ScriptDisallowedScope::EventAllowedScope innerScope { innerElement };
     innerElement->setIdAttribute("inner"_s);
     innerElement->setUserAgentPart(UserAgentParts::webkitMeterInnerElement());
-    innerElement->setInlineStyleProperty(CSSPropertyDisplay, "-internal-auto-base(inline-block, none)"_s, IsImportant::Yes);
+    innerElement->setInlineStyleProperty(CSSPropertyID::Display, "-internal-auto-base(inline-block, none)"_s, IsImportant::Yes);
     root.appendChild(innerElement);
 
     Ref barElement = HTMLDivElement::create(document);
@@ -252,8 +252,8 @@ void HTMLMeterElement::appendShadowTreeForBaseAppearance(ShadowRoot& root)
     Ref trackElement = HTMLDivElement::create(document);
     ScriptDisallowedScope::EventAllowedScope trackScope { trackElement };
     trackElement->setUserAgentPart(UserAgentParts::sliderTrack());
-    trackElement->setInlineStyleProperty(CSSPropertyAppearance, "inherit"_s);
-    trackElement->setInlineStyleProperty(CSSPropertyDisplay, "-internal-auto-base(none, inline-block)"_s, IsImportant::Yes);
+    trackElement->setInlineStyleProperty(CSSPropertyID::Appearance, "inherit"_s);
+    trackElement->setInlineStyleProperty(CSSPropertyID::Display, "-internal-auto-base(none, inline-block)"_s, IsImportant::Yes);
     ScriptDisallowedScope::EventAllowedScope rootScope { root };
     root.appendChild(trackElement);
 

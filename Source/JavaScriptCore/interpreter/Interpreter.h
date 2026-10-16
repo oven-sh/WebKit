@@ -203,6 +203,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
             size_t numberShown { 0 };
         };
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, const FramesAlreadyInTrace* = nullptr);
+        bool isExceptionCaughtByUserCatchClause();
 
     private:
 #if ENABLE(AOT)

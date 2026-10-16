@@ -39,10 +39,10 @@ class RenderMathMLRow : public RenderMathMLBlock {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLRow);
 public:
     RenderMathMLRow(Type, MathMLRowElement&, Style::ComputedStyle&&);
-    MathMLRowElement& NODELETE element() const;
+    MathMLRowElement& LEGACY_NODELETE element() const;
     virtual ~RenderMathMLRow();
 
-    RenderMathMLOperator* unembellishedOperator() const override;
+    CheckedPtr<RenderMathMLOperator> unembellishedOperator() const override;
 
 protected:
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;

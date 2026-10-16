@@ -1,0 +1,16 @@
+# The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
+
+inline JSONStringify
+inline AppendJSON
+inline ResponseJSON
+
+runtime JSONReserve : RuntimeState void* (uint64_t cursor, uint64_t size) noexcept
+runtime JSONAppendString : RuntimeState void* (uint64_t cursor, JSCell* string) noexcept
+runtime JSONAppendInteger : Nothing void* (uint64_t cursor, uint64_t integer) noexcept leaf
+runtime JSONAppendNumber : Nothing void* (uint64_t cursor, double number) noexcept leaf
+runtime JSONAppendValue : RuntimeState void* (uint64_t cursor, EncodedJSValue value, uint32_t isElement) noexcept
+runtime JSONAppendElementsFrom : RuntimeState void* (uint64_t cursor, JSCell* array, uint64_t index) noexcept
+runtime JSONFinish : RuntimeState JSCell* (uint64_t cursor) noexcept
+runtime JSONPrepare : RuntimeState void (uint64_t cursor, EncodedJSValue value) noexcept
+
+intrinsic AppendJSON (any/-, any/-, any/-) -> number ; Allocates ReadsRuntimeState WritesRuntimeState ; Inline(AppendJSON, None)

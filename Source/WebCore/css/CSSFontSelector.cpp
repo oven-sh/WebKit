@@ -179,19 +179,19 @@ void CSSFontSelector::addFontFaceRule(StyleRuleFontFace& fontFaceRule, bool isIn
     }
 
     Ref style = fontFaceRule.properties();
-    RefPtr fontFamily = style->getPropertyCSSValue(CSSPropertyFontFamily);
-    RefPtr fontStyle = style->getPropertyCSSValue(CSSPropertyFontStyle);
-    RefPtr fontWeight = style->getPropertyCSSValue(CSSPropertyFontWeight);
-    RefPtr fontWidth = style->getPropertyCSSValue(CSSPropertyFontWidth);
-    RefPtr srcList = dynamicDowncast<CSSValueList>(style->getPropertyCSSValue(CSSPropertySrc));
-    RefPtr unicodeRange = style->getPropertyCSSValue(CSSPropertyUnicodeRange);
+    RefPtr fontFamily = style->getPropertyCSSValue(CSSPropertyID::FontFamily);
+    RefPtr fontStyle = style->getPropertyCSSValue(CSSPropertyID::FontStyle);
+    RefPtr fontWeight = style->getPropertyCSSValue(CSSPropertyID::FontWeight);
+    RefPtr fontWidth = style->getPropertyCSSValue(CSSPropertyID::FontWidth);
+    RefPtr srcList = dynamicDowncast<CSSValueList>(style->getPropertyCSSValue(CSSPropertyID::Src));
+    RefPtr unicodeRange = style->getPropertyCSSValue(CSSPropertyID::UnicodeRange);
     RefPtr rangeList = downcast<CSSValueList>(unicodeRange.get());
-    RefPtr featureSettings = style->getPropertyCSSValue(CSSPropertyFontFeatureSettings);
-    RefPtr display = style->getPropertyCSSValue(CSSPropertyFontDisplay);
-    RefPtr ascentOverride = style->getPropertyCSSValue(CSSPropertyAscentOverride);
-    RefPtr descentOverride = style->getPropertyCSSValue(CSSPropertyDescentOverride);
-    RefPtr lineGapOverride = style->getPropertyCSSValue(CSSPropertyLineGapOverride);
-    RefPtr sizeAdjust = style->getPropertyCSSValue(CSSPropertySizeAdjust);
+    RefPtr featureSettings = style->getPropertyCSSValue(CSSPropertyID::FontFeatureSettings);
+    RefPtr display = style->getPropertyCSSValue(CSSPropertyID::FontDisplay);
+    RefPtr ascentOverride = style->getPropertyCSSValue(CSSPropertyID::AscentOverride);
+    RefPtr descentOverride = style->getPropertyCSSValue(CSSPropertyID::DescentOverride);
+    RefPtr lineGapOverride = style->getPropertyCSSValue(CSSPropertyID::LineGapOverride);
+    RefPtr sizeAdjust = style->getPropertyCSSValue(CSSPropertyID::SizeAdjust);
     if (!fontFamily || !srcList || (unicodeRange && !rangeList))
         return;
 

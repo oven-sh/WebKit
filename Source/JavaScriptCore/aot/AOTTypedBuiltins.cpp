@@ -425,7 +425,7 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
     if (!holder)
         return makeUnexpected(holder.error());
     Identifier key = Identifier::fromString(vm, builtin.name);
-    if (spellsSymbol(builtin.name.span8())) {
+    if (spellsSymbol(asBytes(builtin.name.span8()))) {
         auto symbols = findGlobal(globalObject, "Symbol"_s);
         if (!symbols)
             return makeUnexpected(symbols.error());
@@ -547,7 +547,7 @@ JSCell* Builtins::findCell(JSGlobalObject* globalObject, unsigned index) const
         return globalObject->vm().structureStructure.get();
     if (globalObject->vm().useImmutableIntrinsics && !globalObject->hasImmutableIntrinsics()) [[unlikely]] {
         Instance* instance = globalObject->aotInstance();
-        JSCell* captured = instance && instance->typedBuiltins ? instance->typedBuiltins[index] : nullptr;
+        JSCell* captured = instance && instance->fieldsBelow().typedBuiltins ? instance->fieldsBelow().typedBuiltins[index] : nullptr;
         return captured ? captured : globalObject->vm().structureStructure.get();
     }
     DeferTerminationForAWhile deferTermination(globalObject->vm());

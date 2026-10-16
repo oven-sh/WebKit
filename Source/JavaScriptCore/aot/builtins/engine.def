@@ -158,6 +158,7 @@ $createDisposableResource Call = LinkedFunction
 $crossRealmThrow Value = LinkedFunction
 $defaultAsyncFromAsyncArrayLike Value = LinkedFunction
 $defaultAsyncFromAsyncIterator Value = LinkedFunction
+$defaultAsyncFromAsyncIteratorWithNext Value = LinkedFunction
 $flatIntoArray Call = LinkedFunction
 $flatIntoArrayWithCallback Call = LinkedFunction
 $getAsyncDisposeMethod Call = LinkedFunction

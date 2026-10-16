@@ -213,7 +213,7 @@ void AXObjectCache::attachWrapper(AccessibilityObject& object)
     object.setWrapper(wrapper.get());
 }
 
-static void AXPostNotificationWithUserInfo(AccessibilityObjectWrapper *object, NSString *notification, id userInfo, bool skipSystemNotification = false)
+static void AXPostNotificationWithUserInfo(AccessibilityObjectWrapper *object, NSString *notification, NSDictionary *userInfo, bool skipSystemNotification = false)
 {
     if (id associatedPluginParent = [object _associatedPluginParent])
         object = associatedPluginParent;
@@ -252,7 +252,7 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNoti
 
     bool skipSystemNotification = false;
     // Some notifications are unique to Safari and do not have NSAccessibility equivalents.
-    NSString *macNotification;
+    RetainPtr<NSString> macNotification;
     switch (notification) {
     case AXNotification::ActiveDescendantChanged:
         macNotification = NSAccessibilityActiveElementChangedNotification;
@@ -374,7 +374,7 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNoti
     exerciseIsIgnored(object);
 #endif
 
-    AXPostNotificationWithUserInfo(protect(object.wrapper()), macNotification, nil, skipSystemNotification);
+    AXPostNotificationWithUserInfo(protect(object.wrapper()), macNotification.get(), nil, skipSystemNotification);
 }
 
 void AXObjectCache::postPlatformAnnouncementNotification(const String& message)
@@ -798,7 +798,7 @@ void AXObjectCache::platformPerformDeferredCacheUpdate()
     m_deferredUnsortedObjects.clear();
 }
 
-static bool NODELETE isTestAXClientType(AXClientType client)
+static bool LEGACY_NODELETE isTestAXClientType(AXClientType client)
 {
     return client == kAXClientTypeWebKitTesting || client == kAXClientTypeXCTest;
 }

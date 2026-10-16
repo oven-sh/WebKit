@@ -52,10 +52,10 @@ private:
     unsigned length() const final { return m_sheets.size(); }
     void shrinkTo(unsigned) final;
 
-    TreeScope* NODELETE treeScope() const;
+    TreeScope* LEGACY_NODELETE treeScope() const;
 
     void didAddSheet(CSSStyleSheet&);
-    void willRemoveSheet(CSSStyleSheet&);
+    void didRemoveSheet(CSSStyleSheet&);
 
     WeakPtr<ContainerNode, WeakPtrImplWithEventTargetData> m_treeScope;
     Vector<Ref<CSSStyleSheet>> m_sheets;

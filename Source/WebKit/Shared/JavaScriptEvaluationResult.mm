@@ -34,7 +34,7 @@ namespace WebKit {
 
 class JavaScriptEvaluationResult::ObjCExtractor {
 public:
-    Map NODELETE takeMap() { return WTF::move(m_map); }
+    Map LEGACY_NODELETE takeMap() { return WTF::move(m_map); }
     JSObjectID addObjectToMap(id);
     bool failed() const { return m_failed; }
 private:
@@ -147,7 +147,8 @@ auto JavaScriptEvaluationResult::ObjCExtractor::toValue(id object) -> Value
 
     if ([object isKindOfClass:NSArray.class]) {
         Vector<JSObjectID> vector;
-        for (id element : (NSArray *)object)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id element : (NSArray *)object)
             vector.append(addObjectToMap(element));
         return { WTF::move(vector) };
     }

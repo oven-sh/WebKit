@@ -137,42 +137,46 @@ void setBornFields(const Layout& layout, Allocation& allocation)
     allocation.born = static_cast<uint16_t>(allocation.order.size());
 }
 
+void assignAllocations(const Program& program, Function& function)
+{
+    for (auto& block : function.blocks) {
+        for (size_t at = 0; at < block.values.size(); ++at) {
+            ValueID object = block.values[at];
+            if (function.at(object).opcode != Opcode::NewObjectWithShape)
+                continue;
+            Allocation allocation;
+            allocation.layout = function.at(object).layout();
+            auto& layout = program.at(allocation.layout);
+            if (layout.kind == LayoutKind::Record) {
+                BitVector isInOrder;
+                for (size_t next = at + 1; next < block.values.size(); ++next) {
+                    auto field = fieldStoredTo(program, function, object, function.at(block.values[next]), false);
+                    if (!field)
+                        break;
+                    if (!isInOrder.set(*field))
+                        allocation.order.append(static_cast<uint16_t>(*field));
+                }
+                allocation.born = static_cast<uint16_t>(allocation.order.size());
+            } else
+                setBornFields(layout, allocation);
+            // As it is read, the second immediate names the property that holds the child. From here on the child is there if and only
+            // if the allocation has a discriminant.
+            if (function.at(object).child(0)) {
+                auto discriminant = layout.kind == LayoutKind::Record ? layout.fieldNamed(StringID(function.at(object).immediates[1])) : std::nullopt;
+                if (discriminant)
+                    allocation.discriminant = static_cast<uint16_t>(*discriminant);
+                else
+                    function.at(object).children[0] = { };
+            }
+            function.at(object).immediates[1] = function.allocationOf(WTF::move(allocation));
+        }
+    }
+}
+
 void assignAllocations(Program& program)
 {
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
-        for (auto& block : function.blocks) {
-            for (size_t at = 0; at < block.values.size(); ++at) {
-                ValueID object = block.values[at];
-                if (function.at(object).opcode != Opcode::NewObjectWithShape)
-                    continue;
-                Allocation allocation;
-                allocation.layout = function.at(object).layout();
-                auto& layout = program.at(allocation.layout);
-                if (layout.kind == LayoutKind::Record) {
-                    BitVector isInOrder;
-                    for (size_t next = at + 1; next < block.values.size(); ++next) {
-                        auto field = fieldStoredTo(program, function, object, function.at(block.values[next]), false);
-                        if (!field)
-                            break;
-                        if (!isInOrder.set(*field))
-                            allocation.order.append(static_cast<uint16_t>(*field));
-                    }
-                    allocation.born = static_cast<uint16_t>(allocation.order.size());
-                } else
-                    setBornFields(layout, allocation);
-                // As it is read, the second immediate names the property that holds the child. From here on the child is there if and only
-                // if the allocation has a discriminant.
-                if (function.at(object).child(0)) {
-                    auto discriminant = layout.kind == LayoutKind::Record ? layout.fieldNamed(StringID(function.at(object).immediates[1])) : std::nullopt;
-                    if (discriminant)
-                        allocation.discriminant = static_cast<uint16_t>(*discriminant);
-                    else
-                        function.at(object).children[0] = { };
-                }
-                function.at(object).immediates[1] = function.allocationOf(WTF::move(allocation));
-            }
-        }
+        assignAllocations(program, program.functions[i]);
     });
 }
 
@@ -680,14 +684,16 @@ public:
             }
         }
 
-        for (unsigned i = 0; i < numberOfFunctions; ++i) {
+        forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
             FunctionID id(i);
             auto& function = m_program.functions.withSameValues(i);
             function.writes = m_effects[ofAnyCall(id)].writes;
             function.writesShapeWords = m_effects[ofAnyCall(id)].writesShapeWords;
             function.writesIfItReturns = m_effects[ofCallThatReturns(id)].writes;
             function.writesShapeWordsIfItReturns = m_effects[ofCallThatReturns(id)].writesShapeWords;
-        }
+            function.convertsArrayStorage = m_effects[ofAnyCall(id)].convertsArrayStorage;
+            function.convertsArrayStorageIfItReturns = m_effects[ofCallThatReturns(id)].convertsArrayStorage;
+        });
     }
 
     Writes writesOf(const Function& function, const Block& block, size_t index) { return effectsOf(function, block, index).writes; }
@@ -696,14 +702,16 @@ private:
     struct Effects {
         Writes writes { Writes::Nothing };
         bool writesShapeWords { false };
+        bool convertsArrayStorage { false };
 
         // Yields whether that is news.
         bool add(Effects other)
         {
-            if (writes >= other.writes && (writesShapeWords || !other.writesShapeWords))
+            if (writes >= other.writes && (writesShapeWords || !other.writesShapeWords) && (convertsArrayStorage || !other.convertsArrayStorage))
                 return false;
             writes = std::max(writes, other.writes);
             writesShapeWords |= other.writesShapeWords;
+            convertsArrayStorage |= other.convertsArrayStorage;
             return true;
         }
 
@@ -715,7 +723,7 @@ private:
 
     // Of anything but a cast and a call by name. The lowering does not tell what changes the objects of the engine from what runs code
     // that is not known, which may come to a cast.
-    Effects changes(Writes writes) const { return { writes, writes == Writes::Heap && m_program.castsMayRetag }; }
+    Effects changes(Writes writes) const { return { writes, writes == Writes::Heap && m_program.castsMayRetag, writes == Writes::Heap }; }
 
     const Type& typeOf(const Function& function, ValueID id) const { return m_program.typeOf(function, id); }
 
@@ -729,10 +737,11 @@ private:
     // The slow path converts a plain-data element as an `As` cast would, stores it back and rejoins.
     Effects ofElementRead(const Value& value) const
     {
+        bool convertsArrayStorage = isNumericOperand(m_program.at(value.type)) || (value.prediction() && isNumericOperand(m_program.at(value.prediction())));
         if (value.readsElementKnownByTheStores() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions())
-            return { Writes::Nothing, false };
+            return { Writes::Nothing, false, convertsArrayStorage };
         Writes writes = writesOfElementRead(m_program, m_program.at(value.type));
-        return { writes, writes != Writes::Nothing && m_program.castsMayRetag };
+        return { writes, writes != Writes::Nothing && m_program.castsMayRetag, convertsArrayStorage };
     }
 
     // The blocks from which there is a way to a Return, also by way of a handler.
@@ -788,12 +797,25 @@ private:
             return;
         }
         BitVector mayReturn = blocksThatMayReturn(function);
+        std::optional<bool> hasLoopIfKnown;
+        auto hasLoop = [&] {
+            if (!hasLoopIfKnown) {
+                hasLoopIfKnown = false;
+                for (auto& block : function.blocks) {
+                    for (ValueID value : block.values)
+                        *hasLoopIfKnown |= function.at(value).opcode == Opcode::LoopHint;
+                }
+            }
+            return *hasLoopIfKnown;
+        };
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             auto& block = function.blocks[b];
             for (size_t index = 0; index < block.values.size(); ++index) {
                 auto& value = function.at(block.values[index]);
                 if (value.opcode != Opcode::CallDirect) {
                     Effects effects = effectsOf(function, block, index);
+                    if (effects.convertsArrayStorage && effects.writes != Writes::Heap)
+                        effects.convertsArrayStorage = hasLoop();
                     ofAny.add(effects);
                     if (mayReturn.get(b))
                         ofReturning.add(effects);
@@ -877,6 +899,7 @@ private:
             return changes(Writes::Nothing);
         case Opcode::String:
         case Opcode::BigInt:
+        case Opcode::ConstantSymbol:
         case Opcode::FunctionReference:
         // The function is looked up on first use.
         case Opcode::IsBuiltinFunction:

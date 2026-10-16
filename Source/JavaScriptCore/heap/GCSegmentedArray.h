@@ -102,6 +102,12 @@ public:
     iterator begin() const { return GCSegmentedArrayIterator<T>(m_segments.head(), m_top); }
     iterator end() const { return GCSegmentedArrayIterator<T>(); }
 
+    static constexpr ptrdiff_t offsetOfHeadSegment() { return OBJECT_OFFSETOF(GCSegmentedArray, m_segments); }
+    static constexpr ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(GCSegmentedArray, m_top); }
+    static constexpr ptrdiff_t offsetOfDataInSegment() { return sizeof(GCArraySegment<T>); }
+    static constexpr size_t segmentCapacity() { return s_segmentCapacity; }
+    bool headSegmentIsAtItsOffset() const { return *std::bit_cast<GCArraySegment<T>* const*>(std::bit_cast<const char*>(this) + offsetOfHeadSegment()) == m_segments.head(); }
+
 protected:
     template <size_t size> struct CapacityFromSize {
         static constexpr size_t value = (size - sizeof(GCArraySegment<T>)) / sizeof(T);

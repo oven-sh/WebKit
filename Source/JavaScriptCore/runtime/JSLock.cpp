@@ -22,6 +22,7 @@
 #include "config.h"
 #include "JSLock.h"
 
+#include "FastMallocAlignedMemoryAllocator.h"
 #include "HeapInlines.h"
 #include "JSGlobalObject.h"
 #include "MachineStackMarker.h"
@@ -125,6 +126,12 @@ void JSLock::didAcquireLock()
     ASSERT(!m_entryAtomStringTable);
     m_entryAtomStringTable = thread.setCurrentAtomStringTable(m_vm->atomStringTable());
     ASSERT(m_entryAtomStringTable);
+
+    if (MarkedBlockCage::isEnabled()) {
+        m_entryMarkedBlockCage = MarkedBlockCage::current();
+        m_baseOfEntryMarkedBlockCage = MarkedBlockCage::baseOfCurrent();
+        m_vm->heap.fastMallocAllocator->markedBlockCage().makeCurrent();
+    }
 
     m_vm->setLastStackTop(thread);
 
@@ -328,6 +335,11 @@ void JSLock::willReleaseLock()
     if (m_entryAtomStringTable) {
         Thread::currentSingleton().setCurrentAtomStringTable(m_entryAtomStringTable);
         m_entryAtomStringTable = nullptr;
+    }
+
+    if (m_entryMarkedBlockCage) {
+        MarkedBlockCage::setCurrent(m_entryMarkedBlockCage, m_baseOfEntryMarkedBlockCage);
+        m_entryMarkedBlockCage = nullptr;
     }
 }
 

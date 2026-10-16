@@ -59,6 +59,7 @@ operation ResolvePromise (any/w, any/KG) -> undefined ; MayThrow ReadsArguments 
 operation RejectPromise (any/w, any/K) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Operation(RejectPromise)
 operation NewGenerator (any, any?) -> new Generator ; Allocates ; Operation(NewGenerator)
 operation NewAsyncGenerator (any, any?) -> new AsyncGenerator ; Allocates ; Operation(NewAsyncGenerator)
+operation StartAsyncGenerator (any) -> undefined ; CallsUserCode ; Operation(StartAsyncGenerator)
 operation GetAsyncIterator (any) -> anything ; CallsUserCode ; Operation(GetAsyncIterator)
 operation CreateArguments (any) -> new Object ; Allocates ; Operation(CreateArguments)
 operation GetFromArguments (any, any) -> anything ; CallsUserCode ; Operation(GetFromArguments)

@@ -4,6 +4,7 @@
 #include "AOTTypedBuiltinsArrayMembers.h"
 #include "AOTTypedBuiltinsBufferMembers.h"
 #include "AOTTypedBuiltinsFunctionMembers.h"
+#include "AOTTypedBuiltinsJSONMembers.h"
 #include "AOTTypedBuiltinsLanguageMembers.h"
 #include "AOTTypedBuiltinsMathNumberMembers.h"
 #include "AOTTypedBuiltinsObjectMembers.h"

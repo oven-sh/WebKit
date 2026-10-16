@@ -84,6 +84,16 @@ private:
     unsigned m_row { 0 };
 };
 
+class AsyncLocalStorageWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
+public:
+    void watch(VM&, const ObjectPropertyCondition&, Instance&);
+
+private:
+    void handleFire(VM&, const FireDetail&) final;
+
+    Instance* m_instance { nullptr };
+};
+
 class GlobalPropertyWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
     WTF_MAKE_TZONE_ALLOCATED(GlobalPropertyWatchpoint);
 public:

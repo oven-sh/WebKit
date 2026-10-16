@@ -50,7 +50,7 @@ method Error.prototype.toString this/G (any/-...) -> anything ; CallsUserCode ; 
 
 static JSON.parse (toString) -> anything/N ; MayThrow Allocates ; HostCall
 static JSON.parse (any/G?, any/C?, any/-...) -> anything ; CallsUserCode ; HostCall
-static JSON.stringify (any/GAD) -> string | undefined ; MayThrow ReadsArguments ; HostCall
+static JSON.stringify (any/GAD) -> string | undefined ; MayThrow ReadsArguments ; Inline(JSONStringify)
 static JSON.stringify (any/GAD?, any/CG?, any/G?, any/-...) -> string | undefined ; CallsUserCode ; HostCall
 static JSON.rawJSON (toString) -> new Object ; MayThrow Allocates ; HostCall
 static JSON.isRawJSON (any) -> boolean ; Pure ; HostCall

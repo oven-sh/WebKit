@@ -78,8 +78,9 @@ template<typename T> class RefCounted : public RefCountedBase {
 public:
     void deref() const
     {
+        // T derives from RefCounted<T> (CRTP), so this is always a T.
         if (derefBase())
-            delete const_cast<T*>(static_cast<const T*>(this));
+            SUPPRESS_MEMORY_UNSAFE_CAST delete const_cast<T*>(static_cast<const T*>(this));
     }
 
 #if defined(__swift__) && ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)

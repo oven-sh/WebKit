@@ -38,6 +38,14 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedResumeGenerator, Heap, EncodedJSVal
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIsGeneratorSuspendedAtStart, Nothing, size_t, (Instance*, JSCell* generator));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewError, Heap, JSCell*, (Instance*, uint32_t type, EncodedJSValue message, EncodedJSValue options));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPrepareBoundFunctionAllocation, RuntimeState, void, (Instance*));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONReserve, RuntimeState, void*, (Instance*, uint64_t cursor, uint64_t size));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendString, RuntimeState, void*, (Instance*, uint64_t cursor, JSCell* string));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendInteger, Nothing, void*, (uint64_t cursor, uint64_t integer));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendNumber, Nothing, void*, (uint64_t cursor, double number));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendValue, RuntimeState, void*, (Instance*, uint64_t cursor, EncodedJSValue value, uint32_t isElement));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendElementsFrom, RuntimeState, void*, (Instance*, uint64_t cursor, JSCell* array, uint64_t index));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONFinish, RuntimeState, JSCell*, (Instance*, uint64_t cursor));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONPrepare, RuntimeState, void, (Instance*, uint64_t cursor, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedForInKeys, Heap, JSCell*, (Instance*, EncodedJSValue object));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasEnumerableProperty, Heap, size_t, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetSuperConstructor, Nothing, EncodedJSValue, (Instance*, JSCell* classObject));

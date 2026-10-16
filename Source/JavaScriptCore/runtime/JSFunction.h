@@ -85,7 +85,7 @@ public:
         return sizeof(JSFunction);
     }
 
-    static Structure* NODELETE selectStructureForNewFuncExp(JSGlobalObject*, FunctionExecutable*);
+    static Structure* LEGACY_NODELETE selectStructureForNewFuncExp(JSGlobalObject*, FunctionExecutable*);
 
     JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeFunction, ImplementationVisibility, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor, const DOMJIT::Signature* = nullptr);
     
@@ -121,7 +121,7 @@ public:
     inline FunctionExecutable* jsExecutable() const;
     inline Intrinsic intrinsic() const;
 
-    JS_EXPORT_PRIVATE const SourceCode* NODELETE sourceCode() const;
+    JS_EXPORT_PRIVATE const SourceCode* LEGACY_NODELETE sourceCode() const;
 
     DECLARE_EXPORT_INFO;
 
@@ -134,7 +134,7 @@ public:
 
     JS_EXPORT_PRIVATE static CallData getConstructData(JSCell*);
     static CallData getConstructDataInline(JSCell*);
-    JS_EXPORT_PRIVATE static CallData NODELETE getCallData(JSCell*);
+    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
     static CallData getCallDataInline(JSCell*);
 
     static constexpr ptrdiff_t offsetOfExecutableOrRareData()
@@ -163,7 +163,7 @@ public:
     bool isHostOrBuiltinFunction() const;
     bool isHostOrPrivateBuiltinFunction() const;
     bool isBuiltinFunction() const;
-    JS_EXPORT_PRIVATE bool NODELETE isHostFunctionNonInline() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isHostFunctionNonInline() const;
     bool isClassConstructorFunction() const;
     bool isRemoteFunction() const;
 
@@ -221,7 +221,7 @@ private:
         return function;
     }
 
-    FunctionRareData* allocateRareData(VM&);
+    JS_EXPORT_PRIVATE FunctionRareData* allocateRareData(VM&);
     FunctionRareData* allocateAndInitializeRareData(JSGlobalObject*, size_t inlineCapacity);
     FunctionRareData* initializeRareData(JSGlobalObject*, size_t inlineCapacity);
 
@@ -241,7 +241,7 @@ private:
     PropertyStatus reifyLazyBoundNameIfNeeded(VM&, JSGlobalObject*, PropertyName);
 
 #if ASSERT_ENABLED
-    void assertTypeInfoFlagInvariants();
+    JS_EXPORT_PRIVATE void assertTypeInfoFlagInvariants();
 #else
     void assertTypeInfoFlagInvariants() { }
 #endif

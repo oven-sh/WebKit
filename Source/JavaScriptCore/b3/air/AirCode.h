@@ -68,12 +68,15 @@ class CCallSpecial;
 class CFG;
 class Code;
 class Disassembler;
+struct GenerationContext;
 
 typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
 typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 
-typedef void PrologueGeneratorFunction(CCallHelpers&, Code&);
+typedef void PrologueGeneratorFunction(CCallHelpers&, Code&, GenerationContext&);
 typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
+typedef void EpilogueGeneratorFunction(CCallHelpers&, Code&);
+typedef SharedTask<EpilogueGeneratorFunction> EpilogueGenerator;
 
 inline constexpr ASCIILiteral tierName { "Air "_s };
 
@@ -110,7 +113,7 @@ public:
     void setOptLevel(unsigned optLevel) { m_optLevel = optLevel; }
     unsigned optLevel() const { return m_optLevel; }
     
-    bool NODELETE needsUsedRegisters() const;
+    bool LEGACY_NODELETE needsUsedRegisters() const;
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -192,9 +195,9 @@ public:
     unsigned numEntrypoints() const { return m_entrypoints.size(); }
     const Vector<FrequentedBlock>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }
     const FrequentedBlock& entrypoint(unsigned index) const { return m_entrypoints[index]; }
-    bool NODELETE isEntrypoint(BasicBlock*) const;
+    bool LEGACY_NODELETE isEntrypoint(BasicBlock*) const;
     // Note: It is only valid to call this function after LowerEntrySwitch.
-    std::optional<unsigned> NODELETE entrypointIndex(BasicBlock*) const;
+    std::optional<unsigned> LEGACY_NODELETE entrypointIndex(BasicBlock*) const;
 
     // Note: We allow this to be called even before we set m_entrypoints just for convenience to users of this API.
     // However, if you call this before setNumEntrypoints, setNumEntrypoints will overwrite this value.
@@ -206,7 +209,7 @@ public:
     {
         return m_prologueGenerators[entrypointIndex];
     }
-    void setEpilogueGenerator(RefPtr<PrologueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
+    void setEpilogueGenerator(RefPtr<EpilogueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
 
     void setNumEntrypoints(unsigned);
 
@@ -261,7 +264,7 @@ public:
     Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    unsigned NODELETE findFirstBlockIndex(unsigned index) const
+    unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const
     {
         while (index < size() && !at(index))
             index++;
@@ -269,9 +272,9 @@ public:
     }
 
     // Finds the smallest index' such that at(index') != null and index' > index.
-    unsigned NODELETE findNextBlockIndex(unsigned index) const;
+    unsigned LEGACY_NODELETE findNextBlockIndex(unsigned index) const;
 
-    BasicBlock* NODELETE findNextBlock(BasicBlock*) const;
+    BasicBlock* LEGACY_NODELETE findNextBlock(BasicBlock*) const;
 
     class iterator {
     public:
@@ -352,7 +355,7 @@ public:
     bool shouldPreserveB3Origins() const { return m_preserveB3Origins; }
     void forcePreservationOfB3Origins() { m_preserveB3Origins = true; }
 
-    bool NODELETE usesSIMD() const;
+    bool LEGACY_NODELETE usesSIMD() const;
 
     void setDisassembler(std::unique_ptr<Disassembler>&& disassembler)
     {
@@ -366,9 +369,13 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void setUnsavedCalleeSaves(const RegisterSet& registers) { m_unsavedCalleeSaves = registers; }
     const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
+    JS_EXPORT_PRIVATE void setCalleeSavesLostAtSuspensions(const RegisterSet&);
+    const RegisterSet& calleeSavesLostAtSuspensions() const { return m_calleeSavesLostAtSuspensions; }
     void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
     void setLaysRareBlocksInGaps() { m_laysRareBlocksInGaps = true; }
     bool laysRareBlocksInGaps() const { return m_laysRareBlocksInGaps; }
+    void setOrdersBlocksByEdgeFrequency() { m_ordersBlocksByEdgeFrequency = true; }
+    bool ordersBlocksByEdgeFrequency() const { return m_ordersBlocksByEdgeFrequency; }
     void setMayPlaceSpillsAboveFrameRecord() { m_mayPlaceSpillsAboveFrameRecord = true; }
     void tryToPlaceSpillsAboveFrameRecord();
     bool placesSpillsAboveFrameRecord() const { return m_placesSpillsAboveFrameRecord; }
@@ -382,7 +389,7 @@ public:
     bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
 #endif
     
-    void emitDefaultPrologue(CCallHelpers&);
+    void emitDefaultPrologue(CCallHelpers&, GenerationContext&);
     void emitEpilogue(CCallHelpers&);
 
     std::unique_ptr<GenerateAndAllocateRegisters> m_generateAndAllocateRegisters;
@@ -416,8 +423,10 @@ private:
     ScalarRegisterSet m_pinnedRegs;
 #if USE(BUN_JSC_ADDITIONS)
     RegisterSet m_unsavedCalleeSaves;
+    RegisterSet m_calleeSavesLostAtSuspensions;
     bool m_chargesForCalleeSaves { false };
     bool m_laysRareBlocksInGaps { false };
+    bool m_ordersBlocksByEdgeFrequency { false };
     bool m_mayPlaceSpillsAboveFrameRecord { false };
     bool m_placesSpillsAboveFrameRecord { false };
     unsigned m_bytesAboveFrameRecord { 0 };
@@ -444,7 +453,7 @@ private:
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.
     Vector<Ref<PrologueGenerator>, 1> m_prologueGenerators;
-    RefPtr<PrologueGenerator> m_epilogueGenerator;
+    RefPtr<EpilogueGenerator> m_epilogueGenerator;
     RefPtr<WasmBoundsCheckGenerator> m_wasmBoundsCheckGenerator;
     const char* m_lastPhaseName;
     std::unique_ptr<Disassembler> m_disassembler;

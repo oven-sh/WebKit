@@ -31,6 +31,7 @@ struct Slot;
     v(operationAOTTypedSetFree) \
     v(operationAOTTypedSetFreeSloppy) \
     v(operationAOTTypedGetByName) \
+    v(operationAOTTypedGetSuperPropertyByName) \
     v(operationAOTTypedSetByName) \
     v(operationAOTTypedSetByNameSloppy) \
     v(operationAOTTypedGetStaticField) \
@@ -63,6 +64,7 @@ struct Slot;
     v(operationAOTTypedGetAsyncIterator) \
     v(operationAOTTypedNewObjectWithSpreads) \
     v(operationAOTTypedNewPromise) \
+    v(operationAOTTypedFinishStepForDriver) \
     v(operationAOTTypedResolvePromise) \
     v(operationAOTTypedParkAsyncFunction) \
     v(operationAOTTypedSuspendAtFirstAwait) \
@@ -109,10 +111,13 @@ struct Slot;
     v(operationAOTTypedFmod) \
     v(operationAOTTypedPow) \
     v(operationAOTTypedToInt32) \
+    v(operationAOTTypedToLiteralString) \
+    v(operationAOTTypedLiteralStringToString) \
     v(operationAOTTypedIntegerEqualTo) \
     v(operationAOTTypedAllocSlow) \
     v(operationAOTTypedMaterializeEnvironment) \
     v(operationAOTTypedNewClosureSlow) \
+    v(operationAOTTypedCopyClosureOutOfFrame) \
     v(operationAOTTypedCoerce) \
     v(operationAOTTypedCoerceInPlace) \
     v(operationAOTTypedCoerceElement) \
@@ -140,6 +145,7 @@ struct Slot;
     v(operationAOTTypedStringConstant) \
     v(operationAOTTypedStringMadeOnce) \
     v(operationAOTTypedBigIntConstant) \
+    v(operationAOTTypedConstantSymbol) \
     v(operationAOTTypedBarrierSlow) \
     v(operationAOTTypedBarrierSlowKeepingRegisters) \
     v(operationAOTTypedRememberElement) \
@@ -170,26 +176,34 @@ struct Slot;
     v(operationAOTTypedTryMergeRecordsAs) \
     v(operationAOTTypedPrivateGet) \
     v(operationAOTTypedPrivateSet) \
+    v(operationAOTTypedPrivateGetAtSite) \
+    v(operationAOTTypedPrivateSetAtSite) \
     v(operationAOTTypedPrivateHas) \
     v(operationAOTTypedPrivateFieldAdd) \
+    v(operationAOTTypedDefineByKey) \
+    v(operationAOTTypedPrivateMethodsAdd) \
     v(operationAOTTypedNewArray) \
     v(operationAOTTypedTryGetByValWithKeyParts) \
     v(operationAOTTypedTryMapOrSetLookupWithKeyParts) \
     v(operationAOTTypedNewArrayOfNumbers) \
     v(operationAOTTypedArrayPush) \
+    v(operationAOTTypedArrayPushNumber) \
     v(operationAOTTypedArraySearchByCall) \
     v(operationAOTTypedArraySlice) \
     v(operationAOTTypedArrayCopy) \
     v(operationAOTTypedArrayGet) \
     v(operationAOTTypedArrayPut) \
     v(operationAOTTypedStoreElement) \
+    v(operationAOTTypedStoreNumberElement) \
     v(operationAOTTypedArrayGetAtNumber) \
     v(operationAOTTypedArrayGetAtIndex) \
     v(operationAOTTypedArrayGetAtIndexAsNumber) \
     v(operationAOTTypedArrayElementAs) \
     v(operationAOTTypedArrayElementAtNumberAs) \
     v(operationAOTTypedArrayPutAtIndex) \
+    v(operationAOTTypedArrayPutNumberAtIndex) \
     v(operationAOTTypedArrayPutAtNumber) \
+    v(operationAOTTypedArrayTryMakeWritableDouble) \
     v(operationAOTTypedTryAddNamedProperties) \
     v(operationAOTTypedOpenChangedArray) \
     v(operationAOTTypedTypedArrayIteratorOpen) \
@@ -268,6 +282,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLookForMemberOfGlobal, Hea
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetFree, Heap, void, (Instance*, uint32_t, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetFreeSloppy, Heap, void, (Instance*, uint32_t, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByName, Heap, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetSuperPropertyByName, Heap, EncodedJSValue, (Instance*, EncodedJSValue home, EncodedJSValue receiver, uint32_t nameInTable));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByName, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameSloppy, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetStaticField, Heap, EncodedJSValue, (Instance*, uint32_t ofClass, uint32_t field));
@@ -313,6 +328,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetAsyncIterator, Heap, EncodedJSVa
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewObjectWithSpreads, Heap, JSCell*, (Instance*, uint32_t rowOfMembers, uint32_t numberOfSources, const EncodedJSValue* values));
 // The language operations of those names.
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewPromise, RuntimeState, JSCell*, (Instance*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFinishStepForDriver, Heap, EncodedJSValue, (Instance*, JSCell* generator, EncodedJSValue result));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedResolvePromise, Heap, void, (Instance*, JSCell*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedParkAsyncFunction, Heap, void, (Instance*, JSCell*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSuspendAtFirstAwait, Heap, void, (Instance*, JSCell* frame, EncodedJSValue awaited, uint64_t request));
@@ -398,11 +414,14 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToKey, Heap, EncodedJSValue, (Insta
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFmod, Pure, double, (double, double));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPow, Pure, double, (double, double));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedToInt32, Pure, size_t, (double));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedToLiteralString, Pure, EncodedJSValue, (Instance*, EncodedJSValue));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLiteralStringToString, Pure, JSCell*, (Instance*, uint64_t word));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIntegerEqualTo, Pure, int64_t, (EncodedJSValue));
 // Gives the allocation its row of Instance::typedAllocationRows. The cell has its header and both words. Every field that can be absent is, the others are clear.
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedAllocSlow, RuntimeState, JSCell*, (Instance*, uint32_t allocation));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMaterializeEnvironment, RuntimeState, JSCell*, (Instance*, uint32_t allocation, const EncodedJSValue* source));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewClosureSlow, RuntimeState, JSCell*, (Instance*, uint64_t request, uint64_t, uint64_t, uint64_t, uint64_t));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCopyClosureOutOfFrame, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue));
 // A Cast for the reason As, Flow or Coerce, where there may be something to make of the value: State::coerce(). The type is by TypeID. It
 // writes the shape word, the order word and the fields of an object it turns into one of a specialization, and the elements of arrays.
 // Code of the program runs only where Coerce converts an object to a primitive. What a cast may do of all this: writesOfCast().
@@ -449,6 +468,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPutNumberElsewhere, Fields
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringConstant, RuntimeState, JSCell*, (Instance*, uint32_t));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringMadeOnce, RuntimeState, JSCell*, (Instance*, uint32_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedBigIntConstant, RuntimeState, EncodedJSValue, (Instance*, uint32_t));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedConstantSymbol, RuntimeState, JSCell*, (Instance*, uint32_t));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedBarrierSlow, RuntimeState, void, (Instance*, JSCell*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedBarrierSlowKeepingRegisters, RuntimeState, void, (Instance*, JSCell*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLearnRun, RuntimeState, size_t, (Instance*, Slot* header, EncodedJSValue, uint32_t slotsAndStored, uint64_t firstNames, uint64_t nextNames));
@@ -489,8 +509,12 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryMergeRecordsAs, Runtime
 // For the stubs of the same names.
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateGet, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateSet, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue name, EncodedJSValue value));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateGetAtSite, Heap, EncodedJSValue, (Instance*, Slot*, EncodedJSValue object, EncodedJSValue name));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateSetAtSite, Heap, void, (Instance*, Slot*, EncodedJSValue object, EncodedJSValue name, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateHas, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateFieldAdd, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue name, EncodedJSValue value));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineByKey, Heap, void, (Instance*, EncodedJSValue object, EncodedJSValue key, EncodedJSValue value));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPrivateMethodsAdd, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue holder));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisWithFields, RuntimeState, JSCell*, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* values, uint32_t rowOfNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisOfCapacity, RuntimeState, JSCell*, (Instance*, JSCell* constructor, JSCell* newTarget, uint32_t inlineCapacity));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryCreateThisWithStores, RuntimeState, JSCell*, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* valuesThenNames));
@@ -500,7 +524,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGiveThisItsRow, Heap, void, (Instan
 // `names`: the number of each, and in bit 32 whether it was stored and not defined.
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDidStoreToThis, Heap, void, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, JSCell* object, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* names));
 // The stores of a property run, all or none. `count` values, then for each the number of its name, or its key where it has a bit in `keyed`. It runs no code of the program.
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryPutProperties, Heap, size_t, (Instance*, Slot* cache, EncodedJSValue object, uint32_t count, uint64_t keyed, const EncodedJSValue* valuesThenNames));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryPutProperties, Heap, size_t, (Instance*, Slot* cache, EncodedJSValue object, uint64_t countAndRowOfNames, uint64_t keyed, const EncodedJSValue* valuesThenKeys));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArray, RuntimeState, JSCell*, (Instance*, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryGetByValWithKeyParts, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts, Nothing, EncodedJSValue, (Instance*, JSCell*, uint32_t, uint32_t, const EncodedJSValue*));
@@ -512,6 +536,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArrayOfNumbers, RuntimeState, JS
 //
 // `array.push(value)`: yields what the call yields. `expected`: how many more are expected to be pushed, this one among them, or zero.
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPush, Heap, EncodedJSValue, (Instance*, JSCell* array, EncodedJSValue value, uint64_t expectedAndSite));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPushNumber, Heap, EncodedJSValue, (Instance*, JSCell* array, uint64_t bitsOfNumber, uint64_t expectedAndSite));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArraySearchByCall, Heap, EncodedJSValue, (Instance*, JSCell* array, EncodedJSValue searched, EncodedJSValue methodRead, uint32_t isIndexOf));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArraySlice, Heap, EncodedJSValue, (Instance*, JSCell* array, int64_t from, int64_t to));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayCopy, Heap, EncodedJSValue, (Instance*, JSCell* array));
@@ -523,6 +548,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayGet, Nothing, EncodedJSValue, 
 // `array[key] = value` in strict code, with a number for the key.
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPut, Heap, void, (Instance*, JSCell* array, EncodedJSValue key, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStoreElement, Heap, void, (Instance*, JSCell* array, int64_t index, EncodedJSValue value));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStoreNumberElement, Heap, void, (Instance*, JSCell* array, int64_t index, double value));
 // The same with the key as compiled code keeps it.
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayGetAtNumber, Nothing, EncodedJSValue, (Instance*, JSCell* array, double key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayGetAtIndex, Nothing, EncodedJSValue, (Instance*, JSCell* array, uint64_t key));
@@ -530,7 +556,9 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayGetAtIndexAsNumber, Nothing, d
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayElementAs, RuntimeState, EncodedJSValue, (Instance*, JSCell* array, uint64_t key, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayElementAtNumberAs, RuntimeState, EncodedJSValue, (Instance*, JSCell* array, double key, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutAtIndex, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t key));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutNumberAtIndex, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, uint64_t key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPutAtNumber, Heap, void, (Instance*, JSCell* array, EncodedJSValue value, double key));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedArrayTryMakeWritableDouble, Nothing, size_t, (Instance*, JSCell* array));
 // `array.a = x; array.b = y; ..` in strict code, with nothing in between: `count` values, then `count` names, each the index of a string in
 // a word. 1: all are added. 0: nothing is done, and the stores are to be made one by one.
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryAddNamedProperties, Heap, size_t, (Instance*, JSCell* array, uint32_t count, const EncodedJSValue* valuesThenNames));

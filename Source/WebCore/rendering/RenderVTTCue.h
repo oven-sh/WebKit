@@ -52,17 +52,17 @@ private:
     bool isOutside() const;
     bool rectIsWithinContainer(const FloatRect&) const;
     bool isOverlapping() const;
-    RenderVTTCue* overlappingObject() const;
-    RenderVTTCue* overlappingObjectForRect(const FloatRect&) const;
+    CheckedPtr<RenderVTTCue> overlappingObject() const;
+    CheckedPtr<RenderVTTCue> overlappingObjectForRect(const FloatRect&) const;
     bool shouldSwitchDirection(const InlineIterator::InlineBox&, LayoutUnit) const;
 
-    void NODELETE moveBoxesByStep(LayoutUnit);
-    bool NODELETE switchDirection(bool&, LayoutUnit&);
+    void LEGACY_NODELETE moveBoxesByStep(LayoutUnit);
+    bool LEGACY_NODELETE switchDirection(bool&, LayoutUnit&);
     void moveIfNecessaryToKeepWithinContainer();
     bool findNonOverlappingPosition(float& x, float& y) const;
 
     bool initializeLayoutParameters(LayoutUnit&, LayoutUnit&);
-    void NODELETE placeBoxInDefaultPosition(LayoutUnit, bool&);
+    void LEGACY_NODELETE placeBoxInDefaultPosition(LayoutUnit, bool&);
     void repositionCueSnapToLinesSet();
     void repositionCueSnapToLinesNotSet();
     void repositionGenericCue();

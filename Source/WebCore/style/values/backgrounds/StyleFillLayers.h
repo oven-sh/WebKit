@@ -91,7 +91,7 @@ bool hasHDRContent(const CoordinatedValueList<T>& list)
 {
     return std::ranges::any_of(list.usedValues(), [](auto& layer) {
         RefPtr image = layer.image().tryStyleImage();
-        if (auto* cachedImage = image ? image->cachedImage() : nullptr) {
+        if (RefPtr cachedImage = image ? image->cachedImage() : nullptr) {
             if (cachedImage->hasHDRContent())
                 return true;
         }

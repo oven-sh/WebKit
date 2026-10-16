@@ -28,7 +28,6 @@
 #include "api/video/video_content_type.h"
 #include "modules/video_coding/include/video_coding_defines.h"
 #include "modules/video_coding/timing/timing.h"
-#include "rtc_base/experiments/field_trial_parser.h"
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/thread_annotations.h"
 #include "system_wrappers/include/clock.h"
@@ -87,6 +86,7 @@ class VideoStreamBufferController {
   virtual ~VideoStreamBufferController() = default;
 
   void Stop();
+  bool stopped() const;
   void SetProtectionMode(VCMVideoProtection protection_mode);
   void Clear();
   std::optional<int64_t> InsertFrame(std::unique_ptr<EncodedFrame> frame);
@@ -134,13 +134,6 @@ class VideoStreamBufferController {
   // fast-forwarded when the decoder is slow or hangs.
   bool decoder_ready_for_new_frame_ RTC_GUARDED_BY(&worker_sequence_checker_) =
       false;
-
-  // Maximum number of frames in the decode queue to allow pacing. If the
-  // queue grows beyond the max limit, pacing will be disabled and frames will
-  // be pushed to the decoder as soon as possible. This only has an effect
-  // when the low-latency rendering path is active, which is indicated by
-  // the frame's render time == 0.
-  FieldTrialParameter<unsigned> zero_playout_delay_max_decode_queue_size_;
 
   ScopedTaskSafety worker_safety_;
 };

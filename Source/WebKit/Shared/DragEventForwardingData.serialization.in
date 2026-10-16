@@ -23,7 +23,7 @@
 header: "DragEventForwardingData.h"
 
 [RValue] struct WebKit::DragEventForwardingData {
-    WebCore::FrameIdentifier targetFrameID;
+    WebCore::RemoteUserInputEventData remoteUserInputEventData;
     WebKit::SandboxExtensionHandle sandboxExtensionHandle;
     Vector<WebKit::SandboxExtensionHandle> sandboxExtensionsForUpload;
 };

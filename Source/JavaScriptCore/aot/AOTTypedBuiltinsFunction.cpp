@@ -39,7 +39,7 @@ std::optional<Operand> Lowering::lowerInlineFunction(InlineBuiltin, ValueID, con
 
 BuiltinID Lowering::bindIfNamed(StringID name) const
 {
-    static const BuiltinName bind = Builtins::singleton().nameOf("bind"_s.span8());
+    static const BuiltinName bind = Builtins::singleton().nameOf(asBytes("bind"_s.span8()));
     return m_program.builtinName(name) == bind ? m_builtins.find(BuiltinKind::Method, m_builtins.functionClass().name, bind) : BuiltinID();
 }
 

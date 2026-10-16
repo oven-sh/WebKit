@@ -36,6 +36,7 @@
 #include "B3PatchpointValue.h"
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
+#include "BaselineJITCode.h"
 #include "BaselineJITRegisters.h"
 #include "B3ValueInlines.h"
 #include "ButterflyInlines.h"
@@ -235,7 +236,7 @@ public:
             m_proc.setNumEntrypoints(m_graph.m_numberOfEntrypoints);
 
             Ref<B3::Air::PrologueGenerator> catchPrologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>(
-                [](CCallHelpers& jit, B3::Air::Code& code) {
+                [](CCallHelpers& jit, B3::Air::Code& code, B3::Air::GenerationContext&) {
                     AllowMacroScratchRegisterUsage allowScratch(jit);
                     jit.addPtr(CCallHelpers::TrustedImm32(-code.frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
 
@@ -252,7 +253,7 @@ public:
             VM* vm = &this->vm();
 
             Ref<B3::Air::PrologueGenerator> mainPrologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>(
-                [=](CCallHelpers& jit, B3::Air::Code& code) {
+                [=](CCallHelpers& jit, B3::Air::Code& code, B3::Air::GenerationContext&) {
                     jit.emitFunctionPrologue();
 
                     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -421,6 +422,11 @@ public:
         for (DFG::BasicBlock* block : preOrder)
             numberOfCompiledDFGNodes += compileBlock(block);
         m_ftlState.jitCode->setNumberOfCompiledDFGNodes(numberOfCompiledDFGNodes);
+        if (m_graph.m_plan.mode() == JITCompilationMode::FTL) {
+            CodeBlock* baseline = m_graph.m_codeBlock->alternative();
+            if (baseline && baseline->jitType() == JITType::BaselineJIT)
+                SUPPRESS_MEMORY_UNSAFE_CAST static_cast<BaselineJITCode*>(baseline->jitCode().get())->setNumberOfCompiledFTLNodes(numberOfCompiledDFGNodes);
+        }
 
         // Make sure everything is decorated. This does a bunch of deferred decorating. This has
         // to happen last because our abstract heaps are generated lazily. They have to be
@@ -2761,7 +2767,7 @@ private:
 
         m_out.appendTo(isObjectCase, scopeCase);
         ValueFromBlock fastResult = m_out.anchor(value);
-        m_out.branch(isType(value, JSTypeRange { JSType(FirstScopeType), JSType(LastScopeType) }), unsure(scopeCase), unsure(continuation));
+        m_out.branch(isType(value, JSTypeRange { JSType(FirstScopeType), JSType(LastScopeType) }), rarely(scopeCase), usually(continuation));
 
         m_out.appendTo(scopeCase, slowCase);
         ValueFromBlock scopeResult;
@@ -3249,8 +3255,7 @@ private:
                     m_out.notZero32(result), usually(continuation), rarely(slowCase));
 
                 LBasicBlock lastNext = m_out.appendTo(slowCase, continuation);
-                speculate(NegativeZero, noValue(), nullptr, m_out.lessThan(left, m_out.int32Zero));
-                speculate(NegativeZero, noValue(), nullptr, m_out.lessThan(right, m_out.int32Zero));
+                speculate(NegativeZero, noValue(), nullptr, m_out.lessThan(m_out.bitOr(left, right), m_out.int32Zero));
                 m_out.jump(continuation);
                 m_out.appendTo(continuation, lastNext);
             }
@@ -3275,8 +3280,7 @@ private:
                     m_out.notZero64(result), usually(continuation), rarely(slowCase));
 
                 LBasicBlock lastNext = m_out.appendTo(slowCase, continuation);
-                speculate(NegativeZero, noValue(), nullptr, m_out.lessThan(left, m_out.int64Zero));
-                speculate(NegativeZero, noValue(), nullptr, m_out.lessThan(right, m_out.int64Zero));
+                speculate(NegativeZero, noValue(), nullptr, m_out.lessThan(m_out.bitOr(left, right), m_out.int64Zero));
                 m_out.jump(continuation);
                 m_out.appendTo(continuation, lastNext);
             }
@@ -3350,8 +3354,7 @@ private:
 
                 LBasicBlock lastNext = m_out.appendTo(unsafeDenominator, continuation);
                 LValue neg2ToThe31 = m_out.constInt32(-2147483647-1);
-                speculate(Overflow, noValue(), nullptr, m_out.isZero32(denominator));
-                speculate(Overflow, noValue(), nullptr, m_out.equal(numerator, neg2ToThe31));
+                speculate(Overflow, noValue(), nullptr, m_out.bitOr(m_out.isZero32(denominator), m_out.equal(numerator, neg2ToThe31)));
                 m_out.jump(continuation);
 
                 m_out.appendTo(continuation, lastNext);
@@ -3479,8 +3482,7 @@ private:
 
                 LBasicBlock lastNext = m_out.appendTo(unsafeDenominator, continuation);
                 LValue neg2ToThe31 = m_out.constInt32(-2147483647-1);
-                speculate(Overflow, noValue(), nullptr, m_out.isZero32(denominator));
-                speculate(Overflow, noValue(), nullptr, m_out.equal(numerator, neg2ToThe31));
+                speculate(Overflow, noValue(), nullptr, m_out.bitOr(m_out.isZero32(denominator), m_out.equal(numerator, neg2ToThe31)));
                 m_out.jump(continuation);
 
                 m_out.appendTo(continuation, lastNext);
@@ -3657,19 +3659,16 @@ private:
             LBasicBlock doubleExponentPowBlockEntry = m_out.newBlock();
             LBasicBlock nanExceptionBaseIsOne = m_out.newBlock();
             LBasicBlock nanExceptionExponentIsInfinity = m_out.newBlock();
+            LBasicBlock testBaseIsOne = m_out.newBlock();
             LBasicBlock testExponentIsOneHalf = m_out.newBlock();
             LBasicBlock handleBaseZeroExponentIsOneHalf = m_out.newBlock();
             LBasicBlock handleInfinityForExponentIsOneHalf = m_out.newBlock();
             LBasicBlock exponentIsOneHalfNormal = m_out.newBlock();
-            LBasicBlock exponentIsOneHalfInfinity = m_out.newBlock();
             LBasicBlock testExponentIsNegativeOneHalf = m_out.newBlock();
             LBasicBlock testBaseZeroExponentIsNegativeOneHalf = m_out.newBlock();
-            LBasicBlock handleBaseZeroExponentIsNegativeOneHalf = m_out.newBlock();
             LBasicBlock handleInfinityForExponentIsNegativeOneHalf = m_out.newBlock();
             LBasicBlock exponentIsNegativeOneHalfNormal = m_out.newBlock();
-            LBasicBlock exponentIsNegativeOneHalfInfinity = m_out.newBlock();
             LBasicBlock powBlock = m_out.newBlock();
-            LBasicBlock nanExceptionResultIsNaN = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
             LValue integerExponent = m_out.doubleToInt32(exponent);
@@ -3694,7 +3693,8 @@ private:
                 exponentIsNaN = m_out.doubleNotEqualOrUnordered(exponent, exponent);
             else
                 exponentIsNaN = m_out.booleanFalse;
-            m_out.branch(exponentIsNaN, rarely(nanExceptionResultIsNaN), usually(nanExceptionBaseIsOne));
+            ValueFromBlock nanResultExponentIsNaN = m_out.anchor(m_out.constDouble(PNaN));
+            m_out.branch(exponentIsNaN, rarely(continuation), usually(nanExceptionBaseIsOne));
 
             // If abs(x) is 1 and y is +infinity, the result is NaN.
             // If abs(x) is 1 and y is -infinity, the result is NaN.
@@ -3703,13 +3703,19 @@ private:
             m_out.appendTo(nanExceptionBaseIsOne, nanExceptionExponentIsInfinity);
             LValue absoluteBase = m_out.doubleAbs(base);
             LValue absoluteBaseIsOne = m_out.doubleEqual(absoluteBase, m_out.constDouble(1));
-            m_out.branch(absoluteBaseIsOne, rarely(nanExceptionExponentIsInfinity), usually(testExponentIsOneHalf));
+            m_out.branch(absoluteBaseIsOne, unsure(nanExceptionExponentIsInfinity), unsure(testExponentIsOneHalf));
 
             //     Test if abs(y) == Infinity.
-            m_out.appendTo(nanExceptionExponentIsInfinity, testExponentIsOneHalf);
+            m_out.appendTo(nanExceptionExponentIsInfinity, testBaseIsOne);
             LValue absoluteExponent = m_out.doubleAbs(exponent);
             LValue absoluteExponentIsInfinity = m_out.doubleEqual(absoluteExponent, m_out.constDouble(std::numeric_limits<double>::infinity()));
-            m_out.branch(absoluteExponentIsInfinity, rarely(nanExceptionResultIsNaN), usually(testExponentIsOneHalf));
+            ValueFromBlock nanResultExponentIsInfinity = m_out.anchor(m_out.constDouble(PNaN));
+            m_out.branch(absoluteExponentIsInfinity, rarely(continuation), usually(testBaseIsOne));
+
+            //     If x == 1 and y is neither NaN nor infinite, the result is 1.
+            m_out.appendTo(testBaseIsOne, testExponentIsOneHalf);
+            ValueFromBlock baseIsOneResult = m_out.anchor(m_out.constDouble(1));
+            m_out.branch(m_out.doubleEqual(base, m_out.constDouble(1)), unsure(continuation), unsure(testExponentIsOneHalf));
 
             // If y == 0.5 or y == -0.5, handle it through SQRT.
             // We have be carefuly with -0 and -Infinity.
@@ -3725,19 +3731,15 @@ private:
             ValueFromBlock zeroResultExponentIsOneHalf = m_out.anchor(m_out.doubleZero);
             m_out.branch(baseIsZeroExponentIsOneHalf, rarely(continuation), usually(handleInfinityForExponentIsOneHalf));
 
-            //     Test if abs(x) == Infinity.
+            //     Test if abs(x) == Infinity. If so, the result is always infinite.
             m_out.appendTo(handleInfinityForExponentIsOneHalf, exponentIsOneHalfNormal);
             LValue absoluteBaseIsInfinityOneHalf = m_out.doubleEqual(absoluteBase, m_out.constDouble(std::numeric_limits<double>::infinity()));
-            m_out.branch(absoluteBaseIsInfinityOneHalf, rarely(exponentIsOneHalfInfinity), usually(exponentIsOneHalfNormal));
+            ValueFromBlock sqrtInfinityResult = m_out.anchor(m_out.constDouble(std::numeric_limits<double>::infinity()));
+            m_out.branch(absoluteBaseIsInfinityOneHalf, rarely(continuation), usually(exponentIsOneHalfNormal));
 
             //     The exponent is 0.5, the base is finite or NaN, we can use SQRT.
-            m_out.appendTo(exponentIsOneHalfNormal, exponentIsOneHalfInfinity);
+            m_out.appendTo(exponentIsOneHalfNormal, testExponentIsNegativeOneHalf);
             ValueFromBlock sqrtResult = m_out.anchor(m_out.doubleSqrt(base));
-            m_out.jump(continuation);
-
-            //     The exponent is 0.5, the base is infinite, the result is always infinite.
-            m_out.appendTo(exponentIsOneHalfInfinity, testExponentIsNegativeOneHalf);
-            ValueFromBlock sqrtInfinityResult = m_out.anchor(m_out.constDouble(std::numeric_limits<double>::infinity()));
             m_out.jump(continuation);
 
             //     Test if y == -0.5
@@ -3746,40 +3748,29 @@ private:
             m_out.branch(exponentIsNegativeOneHalf, rarely(testBaseZeroExponentIsNegativeOneHalf), usually(powBlock));
 
             //     Handle x == -0.
-            m_out.appendTo(testBaseZeroExponentIsNegativeOneHalf, handleBaseZeroExponentIsNegativeOneHalf);
+            m_out.appendTo(testBaseZeroExponentIsNegativeOneHalf, handleInfinityForExponentIsNegativeOneHalf);
             LValue baseIsZeroExponentIsNegativeOneHalf = m_out.doubleEqual(base, m_out.doubleZero);
-            m_out.branch(baseIsZeroExponentIsNegativeOneHalf, rarely(handleBaseZeroExponentIsNegativeOneHalf), usually(handleInfinityForExponentIsNegativeOneHalf));
-
-            m_out.appendTo(handleBaseZeroExponentIsNegativeOneHalf, handleInfinityForExponentIsNegativeOneHalf);
             ValueFromBlock oneOverSqrtZeroResult = m_out.anchor(m_out.constDouble(std::numeric_limits<double>::infinity()));
-            m_out.jump(continuation);
+            m_out.branch(baseIsZeroExponentIsNegativeOneHalf, rarely(continuation), usually(handleInfinityForExponentIsNegativeOneHalf));
 
-            //     Test if abs(x) == Infinity.
+            //     Test if abs(x) == Infinity. If so, the result is always zero.
             m_out.appendTo(handleInfinityForExponentIsNegativeOneHalf, exponentIsNegativeOneHalfNormal);
             LValue absoluteBaseIsInfinityNegativeOneHalf = m_out.doubleEqual(absoluteBase, m_out.constDouble(std::numeric_limits<double>::infinity()));
-            m_out.branch(absoluteBaseIsInfinityNegativeOneHalf, rarely(exponentIsNegativeOneHalfInfinity), usually(exponentIsNegativeOneHalfNormal));
+            ValueFromBlock oneOverSqrtInfinityResult = m_out.anchor(m_out.doubleZero);
+            m_out.branch(absoluteBaseIsInfinityNegativeOneHalf, rarely(continuation), usually(exponentIsNegativeOneHalfNormal));
 
             //     The exponent is -0.5, the base is finite or NaN, we can use 1/SQRT.
-            m_out.appendTo(exponentIsNegativeOneHalfNormal, exponentIsNegativeOneHalfInfinity);
+            m_out.appendTo(exponentIsNegativeOneHalfNormal, powBlock);
             LValue sqrtBase = m_out.doubleSqrt(base);
             ValueFromBlock oneOverSqrtResult = m_out.anchor(m_out.div(m_out.constDouble(1.), sqrtBase));
             m_out.jump(continuation);
 
-            //     The exponent is -0.5, the base is infinite, the result is always zero.
-            m_out.appendTo(exponentIsNegativeOneHalfInfinity, powBlock);
-            ValueFromBlock oneOverSqrtInfinityResult = m_out.anchor(m_out.doubleZero);
-            m_out.jump(continuation);
-
-            m_out.appendTo(powBlock, nanExceptionResultIsNaN);
+            m_out.appendTo(powBlock, continuation);
             ValueFromBlock powResult = m_out.anchor(m_out.doubleStdPow(base, exponent));
             m_out.jump(continuation);
 
-            m_out.appendTo(nanExceptionResultIsNaN, continuation);
-            ValueFromBlock pureNan = m_out.anchor(m_out.constDouble(PNaN));
-            m_out.jump(continuation);
-
             m_out.appendTo(continuation, lastNext);
-            setDouble(m_out.phi(Double, powDoubleIntResult, zeroResultExponentIsOneHalf, sqrtResult, sqrtInfinityResult, oneOverSqrtZeroResult, oneOverSqrtResult, oneOverSqrtInfinityResult, powResult, pureNan));
+            setDouble(m_out.phi(Double, powDoubleIntResult, nanResultExponentIsNaN, nanResultExponentIsInfinity, baseIsOneResult, zeroResultExponentIsOneHalf, sqrtResult, sqrtInfinityResult, oneOverSqrtZeroResult, oneOverSqrtResult, oneOverSqrtInfinityResult, powResult));
         }
     }
 
@@ -4329,14 +4320,14 @@ private:
             LValue cell = lowCell(m_node->child1());
 
             speculate(
-                BadConstantValue, jsValueValue(cell), m_node->child1().node(),
+                m_node->checkIsConstantExitKind(), jsValueValue(cell), m_node->child1().node(),
                 m_out.notEqual(cell, weakPointer(m_node->cellOperand()->cell())));
         } else {
             LValue value = lowJSValue(m_node->child1());
 
             ASSERT(!m_node->constant()->value().isCell() || !m_node->constant()->value());
             speculate(
-                BadConstantValue, jsValueValue(value), m_node->child1().node(),
+                m_node->checkIsConstantExitKind(), jsValueValue(value), m_node->child1().node(),
                 m_out.notEqual(value, m_out.constInt64(JSValue::encode(m_node->constant()->value()))));
         }
     }
@@ -5661,6 +5652,17 @@ private:
             vmCall(Void, operationDefineDataPropertySymbol, weakPointer(globalObject), base, property, value, attributes);
             break;
         }
+        case Int32Use: {
+            LValue property = boxInt32(lowInt32(propertyEdge));
+            vmCall(Void, operationDefineDataProperty, weakPointer(globalObject), base, property, value, attributes);
+            break;
+        }
+        case NumberUse: {
+            LValue property = lowJSValue(propertyEdge, ManualOperandSpeculation);
+            FTL_TYPE_CHECK(jsValueValue(property), propertyEdge, SpecBytecodeNumber, isNotNumber(property, provenType(propertyEdge)));
+            vmCall(Void, operationDefineDataProperty, weakPointer(globalObject), base, property, value, attributes);
+            break;
+        }
         case UntypedUse: {
             LValue property = lowJSValue(propertyEdge);
             vmCall(Void, operationDefineDataProperty, weakPointer(globalObject), base, property, value, attributes);
@@ -5671,11 +5673,33 @@ private:
         }
     }
 
+    LValue lowEncodedPropertyKey(Edge edge)
+    {
+        switch (edge.useKind()) {
+        case StringUse:
+            return lowString(edge);
+        case SymbolUse:
+            return lowSymbol(edge);
+        case Int32Use:
+            return boxInt32(lowInt32(edge));
+        case NumberUse: {
+            LValue key = lowJSValue(edge, ManualOperandSpeculation);
+            FTL_TYPE_CHECK(jsValueValue(key), edge, SpecBytecodeNumber, isNotNumber(key, provenType(edge)));
+            return key;
+        }
+        case UntypedUse:
+            return lowJSValue(edge);
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            return nullptr;
+        }
+    }
+
     void compileObjectDefineProperty()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LValue target = lowObject(m_node->child1());
-        LValue key = lowJSValue(m_node->child2());
+        LValue key = lowEncodedPropertyKey(m_node->child2());
         LValue descriptor = lowObject(m_node->child3());
         vmCall(Void, operationObjectDefineProperty, weakPointer(globalObject), target, key, descriptor);
     }
@@ -5686,7 +5710,7 @@ private:
         ASSERT(m_node->op() == ObjectDefinePropertyFromFields);
         ASSERT(m_graph.varArgNumChildren(m_node) == 8);
         LValue target = lowObject(m_graph.varArgChild(m_node, 0));
-        LValue key = lowJSValue(m_graph.varArgChild(m_node, 1));
+        LValue key = lowEncodedPropertyKey(m_graph.varArgChild(m_node, 1));
 
         constexpr size_t scratchSize = sizeof(EncodedJSValue) * Node::numberOfDescriptorSlots;
         ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
@@ -5719,6 +5743,17 @@ private:
         case SymbolUse: {
             LValue property = lowSymbol(propertyEdge);
             vmCall(Void, operationDefineAccessorPropertySymbol, weakPointer(globalObject), base, property, getter, setter, attributes);
+            break;
+        }
+        case Int32Use: {
+            LValue property = boxInt32(lowInt32(propertyEdge));
+            vmCall(Void, operationDefineAccessorProperty, weakPointer(globalObject), base, property, getter, setter, attributes);
+            break;
+        }
+        case NumberUse: {
+            LValue property = lowJSValue(propertyEdge, ManualOperandSpeculation);
+            FTL_TYPE_CHECK(jsValueValue(property), propertyEdge, SpecBytecodeNumber, isNotNumber(property, provenType(propertyEdge)));
+            vmCall(Void, operationDefineAccessorProperty, weakPointer(globalObject), base, property, getter, setter, attributes);
             break;
         }
         case UntypedUse: {
@@ -6526,7 +6561,7 @@ IGNORE_CLANG_WARNINGS_END
             }
 
             LBasicBlock inBounds = m_out.newBlock();
-            LBasicBlock boxPath = m_out.newBlock();
+            LBasicBlock boxPath = m_node->hasDoubleResult() ? nullptr : m_out.newBlock();
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
@@ -6535,15 +6570,22 @@ IGNORE_CLANG_WARNINGS_END
                     index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)),
                 rarely(slowCase), usually(inBounds));
 
-            LBasicBlock lastNext = m_out.appendTo(inBounds, boxPath);
+            LBasicBlock lastNext = m_out.appendTo(inBounds, boxPath ? boxPath : slowCase);
             LValue doubleValue = m_out.loadDouble(
                 baseIndexWithProvenValue(heap, storage, index, m_graph.varArgChild(m_node, 1)));
-            m_out.branch(
-                m_out.doubleNotEqualOrUnordered(doubleValue, doubleValue),
-                rarely(slowCase), usually(boxPath));
+            ValueFromBlock fastResult;
+            if (boxPath) {
+                m_out.branch(
+                    m_out.doubleNotEqualOrUnordered(doubleValue, doubleValue),
+                    rarely(slowCase), usually(boxPath));
 
-            m_out.appendTo(boxPath, slowCase);
-            ValueFromBlock fastResult = m_out.anchor(m_node->hasDoubleResult() ? doubleValue : boxDouble(doubleValue));
+                m_out.appendTo(boxPath, slowCase);
+                fastResult = m_out.anchor(boxDouble(doubleValue));
+            } else {
+                // A double result implies out-of-bounds sane chain, where a hole yields PNaN, and a hole
+                // is stored as PNaN, so the loaded value is already the right result.
+                fastResult = m_out.anchor(doubleValue);
+            }
             m_out.jump(continuation);
 
             m_out.appendTo(slowCase, continuation);
@@ -7320,8 +7362,6 @@ IGNORE_CLANG_WARNINGS_END
         } else
             speculate(OutOfBounds, noValue(), nullptr, isOutOfBounds);
 
-        LValue index = m_out.add(indexToCheck, m_out.int32One);
-
         TypedPointer base;
         if (inlineCallFrame) {
             if (inlineCallFrame->argumentCountIncludingThis > 1)
@@ -7331,8 +7371,9 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue result;
         if (base) {
+            // indexToCheck is non-negative here, so its +1 for |this| can go in the offset.
             LValue pointer = m_out.baseIndex(
-                base.value(), m_out.zeroExt(index, pointerType()), ScaleEight);
+                base.value(), m_out.zeroExtPtr(indexToCheck), ScaleEight, sizeof(Register));
             result = m_out.load64(TypedPointer(m_heaps.variables.atAnyIndex(), pointer));
         } else
             result = m_out.constInt64(JSValue::encode(jsUndefined()));
@@ -8104,7 +8145,7 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg propertyCacheGPR = Options::useHandlerICInFTL() ? params.gpScratch(0) : InvalidGPRReg;
                 ASSERT(base != returnGPR);
 
-                if (child1UseKind)
+                if (child1UseKind == UntypedUse)
                     slowCases.append(jit.branchIfNotCell(base));
 
                 constexpr auto* optimizationFunction = [&] () {
@@ -8766,7 +8807,7 @@ IGNORE_CLANG_WARNINGS_END
 
             m_out.appendTo(loopHeader, loopBody);
             LValue index = m_out.phi(pointerType(), initialStartIndex);
-            m_out.branch(m_out.notEqual(index, length), unsure(loopBody), unsure(notFound));
+            m_out.branch(m_out.notEqual(index, length), usually(loopBody), rarely(notFound));
 
             m_out.appendTo(loopBody, loopNext);
             ValueFromBlock foundResult = isArrayIncludes ? m_out.anchor(m_out.constBool(true)) : m_out.anchor(m_out.castToInt32(index));
@@ -8774,13 +8815,13 @@ IGNORE_CLANG_WARNINGS_END
             case Int32Use: {
                 // Empty value is ignored because of JSValue::NumberTag.
                 LValue value = m_out.load64(m_out.baseIndex(m_heaps.indexedInt32Properties, storage, index));
-                m_out.branch(m_out.equal(value, searchElement), unsure(continuation), unsure(loopNext));
+                m_out.branch(m_out.equal(value, searchElement), rarely(continuation), usually(loopNext));
                 break;
             }
             case DoubleRepUse: {
                 // Empty value is ignored because of NaN.
                 LValue value = m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, storage, index));
-                m_out.branch(m_out.doubleEqual(value, searchElement), unsure(continuation), unsure(loopNext));
+                m_out.branch(m_out.doubleEqual(value, searchElement), rarely(continuation), usually(loopNext));
                 break;
             }
             default:
@@ -9161,7 +9202,6 @@ IGNORE_CLANG_WARNINGS_END
             LValue prevLength = m_out.load32(storage, m_heaps.ArrayStorage_publicLength);
 
             Vector<ValueFromBlock, 3> results;
-            results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
             m_out.branch(
                 m_out.isZero32(prevLength), rarely(slowCase), usually(vectorLengthCheckCase));
 
@@ -9864,7 +9904,7 @@ IGNORE_CLANG_WARNINGS_END
             Int64, operationCreateRest, weakPointer(globalObject), argumentStart, m_out.constInt32(numberOfArgumentsToSkip), arrayLength));
     }
 
-    const AbstractHeap& NODELETE abstractHeapForOwnPropertyKeysCache(NodeType type)
+    const AbstractHeap& LEGACY_NODELETE abstractHeapForOwnPropertyKeysCache(NodeType type)
     {
         switch (type) {
         case ObjectKeys:
@@ -10855,11 +10895,16 @@ IGNORE_CLANG_WARNINGS_END
 
             LValue indexingMode = m_out.load8ZeroExt32(argument, m_heaps.JSCell_indexingTypeAndMisc);
             LValue indexingShape = m_out.bitAnd(indexingMode, m_out.constInt32(IndexingShapeMask));
-            LValue isOKIndexingType = m_out.belowOrEqual(
-                m_out.sub(indexingShape, m_out.constInt32(Int32Shape)),
-                m_out.constInt32(ContiguousShape - Int32Shape));
 
-            m_out.branch(isOKIndexingType, unsure(copyOnWriteContiguousCheck), unsure(slowPath));
+            // Every structure in originalArrayShapesForSpread has an Int32, Double, or Contiguous shape.
+            if (fastSpreadWithStructureCheck)
+                m_out.jump(copyOnWriteContiguousCheck);
+            else {
+                LValue isOKIndexingType = m_out.belowOrEqual(
+                    m_out.sub(indexingShape, m_out.constInt32(Int32Shape)),
+                    m_out.constInt32(ContiguousShape - Int32Shape));
+                m_out.branch(isOKIndexingType, unsure(copyOnWriteContiguousCheck), unsure(slowPath));
+            }
             if (fastSpreadProven)
                 lastNext = m_out.appendTo(copyOnWriteContiguousCheck, copyOnWritePropagation);
             else
@@ -12138,6 +12183,9 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock bitsContinuation = m_out.newBlock();
         LBasicBlock bigCharacter = m_out.newBlock();
 
+        // FIXME: Need to cage strings!
+        // https://bugs.webkit.org/show_bug.cgi?id=174924
+        LValue characters = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
         m_out.branch(
             m_out.testIsZero32(
                 m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
@@ -12146,11 +12194,9 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(is8Bit, is16Bit);
 
-        // FIXME: Need to cage strings!
-        // https://bugs.webkit.org/show_bug.cgi?id=174924
         TypedPointer char8BitBaseIndex = m_node->op() == StringAt
-            ? m_out.baseIndex(m_heaps.characters8, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), m_out.zeroExtPtr(index))
-            : baseIndexWithProvenValue(m_heaps.characters8, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), index, m_graph.child(m_node, 1));
+            ? m_out.baseIndex(m_heaps.characters8, characters, m_out.zeroExtPtr(index))
+            : baseIndexWithProvenValue(m_heaps.characters8, characters, index, m_graph.child(m_node, 1));
         LValue char8BitValue = m_out.load8ZeroExt32(char8BitBaseIndex);
         ValueFromBlock char8Bit = m_out.anchor(char8BitValue);
         m_out.jump(bitsContinuation);
@@ -12158,8 +12204,8 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(is16Bit, bigCharacter);
 
         TypedPointer char16BitBaseIndex = m_node->op() == StringAt
-            ? m_out.baseIndex(m_heaps.characters16, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), m_out.zeroExtPtr(index))
-            : baseIndexWithProvenValue(m_heaps.characters16, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), index, m_graph.child(m_node, 1));
+            ? m_out.baseIndex(m_heaps.characters16, characters, m_out.zeroExtPtr(index))
+            : baseIndexWithProvenValue(m_heaps.characters16, characters, index, m_graph.child(m_node, 1));
         LValue char16BitValue = m_out.load16ZeroExt32(char16BitBaseIndex);
         ValueFromBlock char16Bit = m_out.anchor(char16BitValue);
         m_out.branch(
@@ -12305,6 +12351,9 @@ IGNORE_CLANG_WARNINGS_END
         if (!m_node->arrayMode().isInBounds())
             speculate(Uncountable, noValue(), nullptr, m_out.aboveOrEqual(index, length));
 
+        // FIXME: Need to cage strings!
+        // https://bugs.webkit.org/show_bug.cgi?id=174924
+        LValue characters = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
         m_out.branch(
             m_out.testIsZero32(
                 m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
@@ -12312,28 +12361,26 @@ IGNORE_CLANG_WARNINGS_END
             unsure(is16Bit), unsure(is8Bit));
 
         LBasicBlock lastNext = m_out.appendTo(is8Bit, is16Bit);
-        // FIXME: Need to cage strings!
-        // https://bugs.webkit.org/show_bug.cgi?id=174924
         ValueFromBlock char8Bit = m_out.anchor(m_out.load8ZeroExt32(baseIndexWithProvenValue(
-            m_heaps.characters8, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), index, m_node->child2())));
+            m_heaps.characters8, characters, index, m_node->child2())));
         m_out.jump(continuation);
 
         m_out.appendTo(is16Bit, isLeadSurrogate);
         LValue leadCharacter = m_out.load16ZeroExt32(baseIndexWithProvenValue(
-            m_heaps.characters16, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), index, m_node->child2()));
+            m_heaps.characters16, characters, index, m_node->child2()));
         ValueFromBlock char16Bit = m_out.anchor(leadCharacter);
-        LValue nextIndex = m_out.add(index, m_out.int32One);
-        m_out.branch(m_out.aboveOrEqual(nextIndex, length), unsure(continuation), unsure(isLeadSurrogate));
+        m_out.branch(m_out.notEqual(m_out.bitAnd(leadCharacter, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xd800)), unsure(continuation), unsure(isLeadSurrogate));
 
         m_out.appendTo(isLeadSurrogate, mayHaveTrailSurrogate);
-        m_out.branch(m_out.notEqual(m_out.bitAnd(leadCharacter, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xd800)), unsure(continuation), unsure(mayHaveTrailSurrogate));
+        LValue nextIndex = m_out.add(index, m_out.int32One);
+        m_out.branch(m_out.aboveOrEqual(nextIndex, length), unsure(continuation), unsure(mayHaveTrailSurrogate));
 
         m_out.appendTo(mayHaveTrailSurrogate, hasTrailSurrogate);
         JSValue indexValue = provenValue(m_node->child2());
         JSValue nextIndexValue;
         if (indexValue && indexValue.isInt32() && indexValue.asInt32() != INT32_MAX)
             nextIndexValue = jsNumber(indexValue.asInt32() + 1);
-        LValue trailCharacter = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), m_out.zeroExtPtr(nextIndex), nextIndexValue));
+        LValue trailCharacter = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, characters, m_out.zeroExtPtr(nextIndex), nextIndexValue));
         m_out.branch(m_out.notEqual(m_out.bitAnd(trailCharacter, m_out.constInt32(0xfffffc00)), m_out.constInt32(0xdc00)), unsure(continuation), unsure(hasTrailSurrogate));
 
         m_out.appendTo(hasTrailSurrogate, continuation);
@@ -12834,6 +12881,12 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
         bool structuresChecked = m_interpreter.forNode(m_node->child1()).m_structure.isSubsetOf(baseSet);
+
+        bool everyCaseLoadsFromBaseButterfly = data.cases.size() >= 2 && std::ranges::all_of(data.cases, [](const MultiGetByOffsetCase& getCase) {
+            return getCase.method().kind() == GetByOffsetMethod::Load && !isInlineOffset(getCase.method().offset());
+        });
+        LValue baseButterfly = everyCaseLoadsFromBaseButterfly ? m_out.loadPtr(base, m_heaps.JSObject_butterfly) : nullptr;
+
         emitSwitchForMultiByOffset(base, structuresChecked, cases, exit);
 
         LBasicBlock lastNext = m_out.m_nextBlock;
@@ -12866,7 +12919,9 @@ IGNORE_CLANG_WARNINGS_END
                     propertyBase = base;
                 else
                     propertyBase = weakPointer(method.prototype()->value().asCell());
-                if (!isInlineOffset(method.offset()))
+                if (baseButterfly)
+                    propertyBase = baseButterfly;
+                else if (!isInlineOffset(method.offset()))
                     propertyBase = m_out.loadPtr(propertyBase, m_heaps.JSObject_butterfly);
 
                 if (m_node->hasDoubleResult())
@@ -12942,6 +12997,12 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
         bool structuresChecked = m_interpreter.forNode(m_node->child1()).m_structure.isSubsetOf(baseSet);
+
+        bool everyVariantReplacesInBaseButterfly = data.variants.size() >= 2 && std::ranges::all_of(data.variants, [](const PutByVariant& variant) {
+            return variant.kind() == PutByVariant::Replace && !isInlineOffset(variant.offset());
+        });
+        LValue baseButterfly = everyVariantReplacesInBaseButterfly ? m_out.loadPtr(base, m_heaps.JSObject_butterfly) : nullptr;
+
         emitSwitchForMultiByOffset(base, structuresChecked, cases, exit);
 
         LBasicBlock lastNext = m_out.m_nextBlock;
@@ -12953,7 +13014,9 @@ IGNORE_CLANG_WARNINGS_END
 
             LValue storage;
             if (variant.kind() == PutByVariant::Replace) {
-                if (isInlineOffset(variant.offset()))
+                if (baseButterfly)
+                    storage = baseButterfly;
+                else if (isInlineOffset(variant.offset()))
                     storage = base;
                 else
                     storage = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
@@ -13102,6 +13165,38 @@ IGNORE_CLANG_WARNINGS_END
 
         MatchStructureData& data = m_node->matchStructureData();
 
+        RegisteredStructureSet baseSet;
+        Vector<RegisteredStructure, 2> trueStructures;
+        Vector<RegisteredStructure, 2> falseStructures;
+        for (MatchStructureVariant& variant : data.variants) {
+            baseSet.add(variant.structure);
+            (variant.result ? trueStructures : falseStructures).append(variant.structure);
+        }
+        bool structuresChecked = m_interpreter.forNode(m_node->child1()).m_structure.isSubsetOf(baseSet);
+
+        if (structuresChecked && !data.variants.isEmpty()) {
+            if (falseStructures.isEmpty()) {
+                setBoolean(m_out.booleanTrue);
+                return;
+            }
+            if (trueStructures.isEmpty()) {
+                setBoolean(m_out.booleanFalse);
+                return;
+            }
+            bool matchTrueStructures = trueStructures.size() <= falseStructures.size();
+            auto& structuresToMatch = matchTrueStructures ? trueStructures : falseStructures;
+            if (structuresToMatch.size() <= 2) {
+                LValue structureID = m_out.load32(base, m_heaps.JSCell_structureID);
+                LValue matched = nullptr;
+                for (RegisteredStructure structure : structuresToMatch) {
+                    LValue isStructure = m_out.equal(structureID, weakStructureID(structure));
+                    matched = matched ? m_out.bitOr(matched, isStructure) : isStructure;
+                }
+                setBoolean(matchTrueStructures ? matched : m_out.logicalNot(matched));
+                return;
+            }
+        }
+
         LBasicBlock trueBlock = m_out.newBlock();
         LBasicBlock falseBlock = m_out.newBlock();
         LBasicBlock exitBlock = m_out.newBlock();
@@ -13110,14 +13205,11 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(trueBlock);
 
         Vector<SwitchCase, 2> cases;
-        RegisteredStructureSet baseSet;
         for (MatchStructureVariant& variant : data.variants) {
-            baseSet.add(variant.structure);
             cases.append(SwitchCase(
                 weakStructureID(variant.structure),
                 variant.result ? trueBlock : falseBlock, Weight(1)));
         }
-        bool structuresChecked = m_interpreter.forNode(m_node->child1()).m_structure.isSubsetOf(baseSet);
         emitSwitchForMultiByOffset(base, structuresChecked, cases, exitBlock);
 
         m_out.appendTo(trueBlock, falseBlock);
@@ -16290,7 +16382,7 @@ IGNORE_CLANG_WARNINGS_END
         terminate(InadequateCoverage);
     }
 
-    void NODELETE compileCPUIntrinsic()
+    void LEGACY_NODELETE compileCPUIntrinsic()
     {
 #if CPU(X86_64)
         Intrinsic intrinsic = m_node->intrinsic();
@@ -16501,32 +16593,57 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
+    LValue doubleIsNaN(LValue number)
+    {
+        return m_out.doubleNotEqualOrUnordered(number, number);
+    }
+
+    LValue doubleIsFinite(LValue number)
+    {
+        LValue difference = m_out.doubleSub(number, number);
+        return m_out.doubleEqual(difference, difference);
+    }
+
+    LValue doubleIsSafeInteger(LValue number)
+    {
+        LValue isInteger = m_out.doubleEqual(number, m_out.doubleTrunc(number));
+        LValue isInRange = m_out.doubleLessThanOrEqual(m_out.doubleAbs(number), m_out.constDouble(maxSafeInteger()));
+        return m_out.bitAnd(isInteger, isInRange);
+    }
+
+    LValue numberPredicate(Edge edge, bool resultForInt32, NOESCAPE const Invocable<void(LValue)> auto& doublePredicate)
+    {
+        LValue value = lowJSValue(edge);
+
+        LBasicBlock notInt32Case = m_out.newBlock();
+        LBasicBlock doubleCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        Vector<ValueFromBlock, 3> results;
+        results.append(m_out.anchor(m_out.constInt32(resultForInt32)));
+        m_out.branch(isInt32(value, provenType(edge)), unsure(continuation), unsure(notInt32Case));
+
+        LBasicBlock lastNext = m_out.appendTo(notInt32Case, doubleCase);
+        results.append(m_out.anchor(m_out.booleanFalse));
+        m_out.branch(isNotNumber(value, provenType(edge) & ~SpecInt32Only), unsure(continuation), unsure(doubleCase));
+
+        m_out.appendTo(doubleCase, continuation);
+        results.append(m_out.anchor(doublePredicate(unboxDouble(value))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(Int32, results);
+    }
+
     void compileNumberIsNaN()
     {
         switch (m_node->child1().useKind()) {
         case DoubleRepUse: {
-            LValue argument = lowDouble(m_node->child1());
-            setBoolean(m_out.doubleNotEqualOrUnordered(argument, argument));
+            setBoolean(doubleIsNaN(lowDouble(m_node->child1())));
             break;
         }
         case UntypedUse: {
-            LValue argument = lowJSValue(m_node->child1());
-            bool mayBeInt32 = abstractValue(m_node->child1()).m_type & SpecInt32Only;
-            if (mayBeInt32) {
-                LBasicBlock notInt32NumberCase = m_out.newBlock();
-                LBasicBlock continuation = m_out.newBlock();
-
-                ValueFromBlock fastResult = m_out.anchor(m_out.constInt32(0));
-                m_out.branch(isInt32(argument, provenType(m_node->child1())), unsure(continuation), unsure(notInt32NumberCase));
-
-                LBasicBlock lastNext = m_out.appendTo(notInt32NumberCase, continuation);
-                ValueFromBlock slowResult = m_out.anchor(vmCall(Int32, operationNumberIsNaN, argument));
-                m_out.jump(continuation);
-
-                m_out.appendTo(continuation, lastNext);
-                setBoolean(m_out.phi(Int32, fastResult, slowResult));
-            } else
-                setBoolean(vmCall(Int32, operationNumberIsNaN, argument));
+            setBoolean(numberPredicate(m_node->child1(), /* resultForInt32 */ false, [&](LValue number) { return doubleIsNaN(number); }));
             break;
         }
         default:
@@ -16569,29 +16686,11 @@ IGNORE_CLANG_WARNINGS_END
     {
         switch (m_node->child1().useKind()) {
         case DoubleRepUse: {
-            LValue argument = lowDouble(m_node->child1());
-            LValue result = m_out.doubleSub(argument, argument);
-            setBoolean(m_out.doubleEqual(result, result));
+            setBoolean(doubleIsFinite(lowDouble(m_node->child1())));
             break;
         }
         case UntypedUse: {
-            LValue argument = lowJSValue(m_node->child1());
-            bool mayBeInt32 = abstractValue(m_node->child1()).m_type & SpecInt32Only;
-            if (mayBeInt32) {
-                LBasicBlock notInt32NumberCase = m_out.newBlock();
-                LBasicBlock continuation = m_out.newBlock();
-
-                ValueFromBlock fastResult = m_out.anchor(m_out.constInt32(1));
-                m_out.branch(isInt32(argument, provenType(m_node->child1())), unsure(continuation), unsure(notInt32NumberCase));
-
-                LBasicBlock lastNext = m_out.appendTo(notInt32NumberCase, continuation);
-                ValueFromBlock slowResult = m_out.anchor(vmCall(Int32, operationNumberIsFinite, argument));
-                m_out.jump(continuation);
-
-                m_out.appendTo(continuation, lastNext);
-                setBoolean(m_out.phi(Int32, fastResult, slowResult));
-            } else
-                setBoolean(vmCall(Int32, operationNumberIsFinite, argument));
+            setBoolean(numberPredicate(m_node->child1(), /* resultForInt32 */ true, [&](LValue number) { return doubleIsFinite(number); }));
             break;
         }
         default:
@@ -16604,38 +16703,11 @@ IGNORE_CLANG_WARNINGS_END
     {
         switch (m_node->child1().useKind()) {
         case DoubleRepUse: {
-            LValue argument = lowDouble(m_node->child1());
-
-            // check if the value is an integer
-            LValue isInteger = m_out.doubleEqual(argument, m_out.doubleTrunc(argument));
-
-            // check if the value is in the range
-            LValue limit = m_out.constDouble(maxSafeInteger());
-            LValue isInRange = m_out.doubleLessThanOrEqual(m_out.doubleAbs(argument), limit);
-
-            LValue result = m_out.bitAnd(isInteger, isInRange);
-
-            setBoolean(result);
+            setBoolean(doubleIsSafeInteger(lowDouble(m_node->child1())));
             break;
         }
         case UntypedUse: {
-            LValue argument = lowJSValue(m_node->child1());
-            bool mayBeInt32 = abstractValue(m_node->child1()).m_type & SpecInt32Only;
-            if (mayBeInt32) {
-                LBasicBlock notInt32NumberCase = m_out.newBlock();
-                LBasicBlock continuation = m_out.newBlock();
-
-                ValueFromBlock fastResult = m_out.anchor(m_out.constInt32(1));
-                m_out.branch(isInt32(argument, provenType(m_node->child1())), unsure(continuation), unsure(notInt32NumberCase));
-
-                LBasicBlock lastNext = m_out.appendTo(notInt32NumberCase, continuation);
-                ValueFromBlock slowResult = m_out.anchor(vmCall(Int32, operationNumberIsSafeInteger, argument));
-                m_out.jump(continuation);
-
-                m_out.appendTo(continuation, lastNext);
-                setBoolean(m_out.phi(Int32, fastResult, slowResult));
-            } else
-                setBoolean(vmCall(Int32, operationNumberIsSafeInteger, argument));
+            setBoolean(numberPredicate(m_node->child1(), /* resultForInt32 */ true, [&](LValue number) { return doubleIsSafeInteger(number); }));
             break;
         }
         default:
@@ -16903,7 +16975,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue hash = m_out.lShr(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
         ValueFromBlock nonEmptyStringHashResult = m_out.anchor(hash);
         m_out.branch(m_out.equal(hash, m_out.constInt32(0)),
-            unsure(slowCase), unsure(continuation));
+            rarely(slowCase), usually(continuation));
 
         m_out.appendTo(straightHash, slowCase);
         ValueFromBlock fastResult = m_out.anchor(rapidHashMix64(value));
@@ -16983,7 +17055,6 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock notEmptyEntry = m_out.newBlock();
         LBasicBlock notPresentInTable = m_out.newBlock();
         LBasicBlock presentInTable = m_out.newBlock();
-        LBasicBlock notDeletedKey = m_out.newBlock();
         LBasicBlock done = m_out.newBlock();
 
         LValue map;
@@ -17020,16 +17091,13 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(m_out.isZero64(entryKeyIndexValue), unsure(notPresentInTable), unsure(notEmptyEntry));
 
         // Get the entryKey JSValue.
-        m_out.appendTo(notEmptyEntry, notDeletedKey);
+        m_out.appendTo(notEmptyEntry, loopAround);
         LValue entryKeyIndex = m_out.castToInt32(entryKeyIndexValue);
         TypedPointer entryKeySlot = m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.zeroExt(entryKeyIndex, Int64));
         LValue entryKey = m_out.load64(entryKeySlot);
 
-        // Check wether the current entryKey is a deleted one.
-        m_out.branch(m_out.equal(entryKey,  weakPointer(vm().orderedHashTableDeletedValue())), unsure(loopAround), unsure(notDeletedKey));
-
-        // Now the current entryKey is not a deleted value. Then check whether it matches the target key.
-        m_out.appendTo(notDeletedKey, loopAround);
+        // A deleted entry holds a VM-private symbol, which is never a key and is neither a string
+        // nor a BigInt, so every case below already sends it to loopAround.
         switch (m_node->child2().useKind()) {
         case BooleanUse:
 #if USE(BIGINT32)
@@ -17372,13 +17440,12 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock continuation = m_out.newBlock();
 
         // The sentinel is returned as the new storage when the iterator is exhausted; the deleted
-        // value is the marker we skip over while scanning the data table. This node no longer writes
-        // the iterator's fields itself: the commit is done by the PutInternalField nodes the parser
-        // emits after the key/value loads.
+        // value is the marker we skip over while scanning the data table. The iterator's fields are
+        // written by the PutInternalField nodes the parser emits after the key/value loads.
         LValue sentinel = m_out.constIntPtr(std::bit_cast<void*>(vm().orderedHashTableSentinel()));
         LValue deletedValue = m_out.constIntPtr(std::bit_cast<void*>(vm().orderedHashTableDeletedValue()));
 
-        m_out.branch(m_out.isNull(storage), unsure(checkOwnerStorage), unsure(checkSentinel));
+        m_out.branch(m_out.isNull(storage), rarely(checkOwnerStorage), usually(checkSentinel));
 
         LBasicBlock lastNext = m_out.appendTo(checkOwnerStorage, setEmptySentinel);
         LValue ownerStorage = m_out.loadPtr(iteratedObject, isMapIterator ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
@@ -17391,9 +17458,7 @@ IGNORE_CLANG_WARNINGS_END
 
         // Check if storage is sentinel (iterator is already closed)
         m_out.appendTo(checkSentinel, checkObsolete);
-        ValueFromBlock sentinelStorageResult = m_out.anchor(sentinel);
-        ValueFromBlock sentinelEntryResult = m_out.anchor(m_out.int32Zero);
-        m_out.branch(m_out.equal(storage, sentinel), unsure(continuation), unsure(checkObsolete));
+        m_out.branch(m_out.equal(storage, sentinel), rarely(setEmptySentinel), usually(checkObsolete));
 
         // Check if storage is obsolete (first field is a Cell pointer, not an Int32 JSValue)
         m_out.appendTo(checkObsolete, fastPath);
@@ -17424,7 +17489,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue entry = m_out.phi(Int32, initialEntry);
         LValue entryIndex = m_out.phi(pointerType(), initialEntryIndex);
         LValue key = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, entryIndex));
-        m_out.branch(m_out.isZero64(key), unsure(setEmptySentinel), unsure(checkIfDeleted));
+        m_out.branch(m_out.isZero64(key), rarely(setEmptySentinel), usually(checkIfDeleted));
 
         // Check if key is deleted
         m_out.appendTo(checkIfDeleted, foundEntry);
@@ -17432,7 +17497,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue nextEntryIndex = m_out.add(entryIndex, entrySize);
         m_out.addIncomingToPhi(entry, m_out.anchor(nextEntry));
         m_out.addIncomingToPhi(entryIndex, m_out.anchor(nextEntryIndex));
-        m_out.branch(m_out.equal(key, deletedValue), unsure(loop), unsure(foundEntry));
+        m_out.branch(m_out.equal(key, deletedValue), rarely(loop), usually(foundEntry));
 
         // Found a valid entry: storage is unchanged, entry advances to nextEntry.
         m_out.appendTo(foundEntry, slowPath);
@@ -17449,8 +17514,8 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        LValue newStorage = m_out.phi(pointerType(), emptyStorageResult, sentinelStorageResult, foundStorageResult, slowStorageResult);
-        LValue newEntry = m_out.phi(Int32, emptyEntryResult, sentinelEntryResult, foundEntryResult, slowEntryResult);
+        LValue newStorage = m_out.phi(pointerType(), emptyStorageResult, foundStorageResult, slowStorageResult);
+        LValue newEntry = m_out.phi(Int32, emptyEntryResult, foundEntryResult, slowEntryResult);
         setTuple(0, newStorage);
         setTuple(1, newEntry);
     }
@@ -18307,7 +18372,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 LBasicBlock lastNext = m_out.appendTo(int32Case, notInt32NumberCase);
                 LValue int32Value = unboxInt32(argument);
-                ValueFromBlock fastResult = m_out.anchor(boxInt32(m_out.select(m_out.lessThan(int32Value, m_out.int32Zero), m_out.int32Zero, int32Value)));
+                ValueFromBlock fastResult = m_out.anchor(m_out.select(m_out.lessThan(int32Value, m_out.int32Zero), m_out.constInt64(JSValue::encode(jsNumber(0))), argument));
                 m_out.jump(continuation);
 
                 m_out.appendTo(notInt32NumberCase, continuation);
@@ -18844,29 +18909,40 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock notRope = m_out.newBlock();
         LBasicBlock is8BitCheck = m_out.newBlock();
+        LBasicBlock is8Bit = m_out.newBlock();
+        LBasicBlock is16Bit = m_out.newBlock();
         LBasicBlock fastChar = m_out.newBlock();
         LBasicBlock doneBlock = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        // Inline only the resolved 8-bit single-character fast path. 8-bit characters are never
-        // surrogates, so the result is always a cached single-character string with no allocation.
-        // Ropes, 16-bit strings, and surrogate pairs fall back to operationStringIteratorNext.
+        // Inline only characters up to maxSingleCharacterString, which are cached single-character strings.
+        // Ropes and larger characters fall back to operationStringIteratorNext.
         m_out.branch(isRopeString(string, m_node->child1()), rarely(slowPath), usually(notRope));
 
         LBasicBlock lastNext = m_out.appendTo(notRope, is8BitCheck);
         LValue stringImpl = m_out.loadPtr(string, m_heaps.JSString_value);
         LValue length = m_out.load32NonNegative(stringImpl, m_heaps.StringImpl_length);
         // position >= length is an unsigned compare, which also catches position == doneIndex (-1).
-        m_out.branch(m_out.aboveOrEqual(position, length), unsure(doneBlock), unsure(is8BitCheck));
+        m_out.branch(m_out.aboveOrEqual(position, length), rarely(doneBlock), usually(is8BitCheck));
 
-        m_out.appendTo(is8BitCheck, fastChar);
+        m_out.appendTo(is8BitCheck, is8Bit);
+        LValue data = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
         m_out.branch(
             m_out.testIsZero32(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())),
-            rarely(slowPath), usually(fastChar));
+            rarely(is16Bit), usually(is8Bit));
+
+        m_out.appendTo(is8Bit, is16Bit);
+        ValueFromBlock char8Bit = m_out.anchor(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, data, m_out.zeroExtPtr(position))));
+        m_out.jump(fastChar);
+
+        m_out.appendTo(is16Bit, fastChar);
+        LValue char16BitValue = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, data, m_out.zeroExtPtr(position)));
+        ValueFromBlock char16Bit = m_out.anchor(char16BitValue);
+        m_out.branch(m_out.above(char16BitValue, m_out.constInt32(maxSingleCharacterString)), rarely(slowPath), usually(fastChar));
 
         m_out.appendTo(fastChar, doneBlock);
-        LValue character = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, m_out.loadPtr(stringImpl, m_heaps.StringImpl_data), m_out.zeroExtPtr(position)));
+        LValue character = m_out.phi(Int32, char8Bit, char16Bit);
         LValue smallStrings = m_out.constIntPtr(vm().smallStrings.singleCharacterStrings());
         ValueFromBlock fastValue = m_out.anchor(m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, smallStrings, m_out.zeroExtPtr(character))));
         ValueFromBlock fastPosition = m_out.anchor(m_out.add(position, m_out.int32One));
@@ -19028,7 +19104,7 @@ IGNORE_CLANG_WARNINGS_END
             {
                 m_out.appendTo(checkIndex);
                 LValue outOfBounds = m_out.aboveOrEqual(index, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex));
-                m_out.branch(outOfBounds, unsure(outOfBoundsBlock), unsure(loadPropertyNameBlock));
+                m_out.branch(outOfBounds, rarely(outOfBoundsBlock), usually(loadPropertyNameBlock));
             }
 
             {
@@ -21025,9 +21101,7 @@ IGNORE_CLANG_WARNINGS_END
             FTL_TYPE_CHECK(jsValueValue(value), edge, ~SpecCellCheck & ~SpecBigInt, isBigInt32(value));
 #endif
 
-            LValue specialResult = m_out.select(
-                m_out.equal(value, m_out.constInt64(JSValue::encode(jsBoolean(true)))),
-                m_out.int32One, m_out.int32Zero);
+            LValue specialResult = m_out.equal(value, m_out.constInt64(JSValue::encode(jsBoolean(true))));
             results.append(m_out.anchor(specialResult));
             m_out.jump(continuation);
         }
@@ -21133,27 +21207,39 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
+        LBasicBlock oddWord = m_out.newBlock();
+        LBasicBlock pairCheck = m_out.newBlock();
         LBasicBlock initLoop = m_out.newBlock();
         LBasicBlock initDone = m_out.newBlock();
 
-        LBasicBlock lastNext = m_out.insertNewBlocksBefore(initLoop);
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(oddWord);
 
-        ValueFromBlock originalIndex = m_out.anchor(end);
-        ValueFromBlock originalPointer = m_out.anchor(
-            m_out.add(base, m_out.shl(m_out.signExt32ToPtr(begin), m_out.constInt32(3))));
-        m_out.branch(m_out.notEqual(end, begin), unsure(initLoop), unsure(initDone));
+        LValue beginPointer = m_out.add(base, m_out.shl(m_out.signExt32ToPtr(begin), m_out.constInt32(3)));
+        LValue endPointer = m_out.add(base, m_out.shl(m_out.signExt32ToPtr(end), m_out.constInt32(3)));
+        ValueFromBlock pointerWithoutOddWord = m_out.anchor(beginPointer);
+        m_out.branch(m_out.testNonZero32(m_out.sub(end, begin), m_out.int32One), unsure(oddWord), unsure(pairCheck));
+
+        m_out.appendTo(oddWord, pairCheck);
+        m_out.store64(value, TypedPointer(heap, beginPointer));
+        ValueFromBlock pointerAfterOddWord = m_out.anchor(m_out.add(beginPointer, m_out.intPtrEight));
+        m_out.jump(pairCheck);
+
+        // Storing two words per iteration lets the paired store optimization use a single 16-byte store.
+        m_out.appendTo(pairCheck, initLoop);
+        LValue pairBegin = m_out.phi(pointerType(), pointerWithoutOddWord, pointerAfterOddWord);
+        ValueFromBlock originalPointer = m_out.anchor(pairBegin);
+        m_out.branch(m_out.notEqual(pairBegin, endPointer), unsure(initLoop), unsure(initDone));
 
         m_out.appendTo(initLoop, initDone);
-        LValue index = m_out.phi(Int32, originalIndex);
         LValue pointer = m_out.phi(pointerType(), originalPointer);
 
         m_out.store64(value, TypedPointer(heap, pointer));
+        m_out.store64(value, TypedPointer(heap, m_out.add(pointer, m_out.intPtrEight)));
 
-        LValue nextIndex = m_out.sub(index, m_out.int32One);
-        m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
-        m_out.addIncomingToPhi(pointer, m_out.anchor(m_out.add(pointer, m_out.intPtrEight)));
+        LValue nextPointer = m_out.add(pointer, m_out.constIntPtr(2 * sizeof(uint64_t)));
+        m_out.addIncomingToPhi(pointer, m_out.anchor(nextPointer));
         m_out.branch(
-            m_out.notEqual(nextIndex, begin), unsure(initLoop), unsure(initDone));
+            m_out.notEqual(nextPointer, endPointer), unsure(initLoop), unsure(initDone));
 
         m_out.appendTo(initDone, lastNext);
     }
@@ -21755,9 +21841,8 @@ IGNORE_CLANG_WARNINGS_END
         LValue maxSize = m_out.sub(strLength, from);
         LValue span;
         if (length) {
-            // span = max(0, min(length, maxSize))
-            LValue clamped = m_out.select(m_out.lessThan(length, maxSize), length, maxSize);
-            span = m_out.select(m_out.lessThan(clamped, m_out.int32Zero), m_out.int32Zero, clamped);
+            // span = min(length, maxSize). A negative span takes the empty case below, so there is no need to clamp it to 0.
+            span = m_out.select(m_out.lessThan(length, maxSize), length, maxSize);
         } else
             span = maxSize;
 
@@ -22126,7 +22211,7 @@ IGNORE_CLANG_WARNINGS_END
             LValue hasType = isCellWithType(cell, classInfo->inheritsJSTypeRange.value(), speculationFromClassInfoInheritance(classInfo));
             LValue condition = nullptr;
             if (m_node->op() == CheckJSCast)
-                condition = m_out.bitNot(hasType);
+                condition = m_out.logicalNot(hasType);
             else
                 condition = hasType;
             speculate(BadType, jsValueValue(cell), m_node->child1().node(), condition);
@@ -23514,17 +23599,13 @@ IGNORE_CLANG_WARNINGS_END
         speculate(m_node->child1());
         speculate(m_node->child2());
 
-        LBasicBlock leftIsInt = m_out.newBlock();
         LBasicBlock fastPath = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isNotInt32(left, provenType(m_node->child1())), rarely(slowPath), usually(leftIsInt));
+        m_out.branch(areNotBothInt32(left, provenType(m_node->child1()), right, provenType(m_node->child2())), rarely(slowPath), usually(fastPath));
 
-        LBasicBlock lastNext = m_out.appendTo(leftIsInt, fastPath);
-        m_out.branch(isNotInt32(right, provenType(m_node->child2())), rarely(slowPath), usually(fastPath));
-
-        m_out.appendTo(fastPath, slowPath);
+        LBasicBlock lastNext = m_out.appendTo(fastPath, slowPath);
         ValueFromBlock fastResult = m_out.anchor(intFunctor(unboxInt32(left), unboxInt32(right)));
         m_out.jump(continuation);
 
@@ -23548,8 +23629,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock notTriviallyUnequalCase = m_out.newBlock();
         LBasicBlock notEmptyCase = m_out.newBlock();
-        LBasicBlock leftReadyCase = m_out.newBlock();
-        LBasicBlock rightReadyCase = m_out.newBlock();
+        LBasicBlock bothReadyCase = m_out.newBlock();
         LBasicBlock widthMatchedCase = m_out.newBlock();
         LBasicBlock is16BitCase = m_out.newBlock();
         LBasicBlock byteLengthReady = m_out.newBlock();
@@ -23566,20 +23646,19 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        if (leftAtom)
-            m_out.jump(leftReadyCase);
-        else
-            m_out.branch(isRopeString(leftJSString, leftJSStringEdge), rarely(ropeCase), usually(leftReadyCase));
-
-        LBasicBlock lastNext = m_out.appendTo(leftReadyCase, rightReadyCase);
-        if (rightAtom)
-            m_out.jump(rightReadyCase);
-        else
-            m_out.branch(isRopeString(rightJSString, rightJSStringEdge), rarely(ropeCase), usually(rightReadyCase));
-
-        m_out.appendTo(rightReadyCase, notTriviallyUnequalCase);
         LValue left = leftAtom ? nullptr : m_out.loadPtr(leftJSString, m_heaps.JSString_value);
         LValue right = rightAtom ? nullptr : m_out.loadPtr(rightJSString, m_heaps.JSString_value);
+        LValue ropeBits = nullptr;
+        if (left && canBeRope(leftJSStringEdge))
+            ropeBits = left;
+        if (right && canBeRope(rightJSStringEdge))
+            ropeBits = ropeBits ? m_out.bitOr(ropeBits, right) : right;
+        if (ropeBits)
+            m_out.branch(m_out.testNonZeroPtr(ropeBits, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(ropeCase), usually(bothReadyCase));
+        else
+            m_out.jump(bothReadyCase);
+
+        LBasicBlock lastNext = m_out.appendTo(bothReadyCase, notTriviallyUnequalCase);
         LValue leftLength = leftAtom
             ? m_out.constInt32(leftConst.length())
             : m_out.load32(left, m_heaps.StringImpl_length);
@@ -23596,17 +23675,14 @@ IGNORE_CLANG_WARNINGS_END
 
         // Mixed-width pairs bail to the slow path; the runtime helper handles cross-width equality.
         m_out.appendTo(notEmptyCase, widthMatchedCase);
-        LValue leftIs8Bit = leftAtom
+        LValue leftFlags = leftAtom
             ? m_out.constInt32(leftConst.is8Bit() ? StringImpl::flagIs8Bit() : 0)
-            : m_out.bitAnd(
-                m_out.load32(left, m_heaps.StringImpl_hashAndFlags),
-                m_out.constInt32(StringImpl::flagIs8Bit()));
-        LValue rightIs8Bit = rightAtom
+            : m_out.load32(left, m_heaps.StringImpl_hashAndFlags);
+        LValue rightFlags = rightAtom
             ? m_out.constInt32(rightConst.is8Bit() ? StringImpl::flagIs8Bit() : 0)
-            : m_out.bitAnd(
-                m_out.load32(right, m_heaps.StringImpl_hashAndFlags),
-                m_out.constInt32(StringImpl::flagIs8Bit()));
-        m_out.branch(m_out.notEqual(leftIs8Bit, rightIs8Bit), rarely(slowCase), usually(widthMatchedCase));
+            : m_out.load32(right, m_heaps.StringImpl_hashAndFlags);
+        LValue leftIs8Bit = m_out.bitAnd(leftFlags, m_out.constInt32(StringImpl::flagIs8Bit()));
+        m_out.branch(m_out.testNonZero32(m_out.bitXor(leftFlags, rightFlags), m_out.constInt32(StringImpl::flagIs8Bit())), rarely(slowCase), usually(widthMatchedCase));
 
         // 8-bit is the common case: fall through with byteLength == length. 16-bit converts char-count
         // to byte-count via length << 1 so the byte-addressed loops below work unchanged.
@@ -24373,9 +24449,17 @@ IGNORE_CLANG_WARNINGS_END
                     staticVectorLength = vectorLengthConst;
                 }
             }
-        } else {
-            // We don't compute the optimal vector length for new Array(blah) where blah is not
-            // statically known, since the compute effort of doing it here is probably not worth it.
+        }
+
+        bool slowPathCanRecomputeVectorLength = vectorLength == publicLength
+            || (staticVectorLengthFromPublicLength && staticVectorLength && staticVectorLength.value() == staticVectorLengthFromPublicLength.value());
+
+        if (!staticVectorLength) {
+            // Apply the same minimum vector length as Butterfly::optimalContiguousVectorLength so that the
+            // C++ slow path allocates from the same size class and refills this allocator.
+            vectorLength = m_out.select(m_out.isZero32(vectorLength),
+                m_out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY),
+                m_out.select(m_out.below(vectorLength, m_out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN)), m_out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN), vectorLength));
         }
 
         ValueFromBlock noButterfly = m_out.anchor(m_out.intPtrZero);
@@ -24432,8 +24516,7 @@ IGNORE_CLANG_WARNINGS_END
 
         VM& vm = this->vm();
         LValue slowResultValue = nullptr;
-        if (vectorLength == publicLength
-            || (staticVectorLengthFromPublicLength && staticVectorLength && staticVectorLength.value() == staticVectorLengthFromPublicLength.value())) {
+        if (slowPathCanRecomputeVectorLength) {
             slowResultValue = lazySlowPath(
                 [=, &vm] (const Vector<Location>& locations) -> RefPtr<LazySlowPath::Generator> {
                     return createLazyCallGenerator(vm,
@@ -25045,7 +25128,7 @@ IGNORE_CLANG_WARNINGS_END
         {
         }
 
-        bool NODELETE operator<(const CharacterCase& other) const
+        bool LEGACY_NODELETE operator<(const CharacterCase& other) const
         {
             return character < other.character;
         }
@@ -25536,25 +25619,10 @@ IGNORE_CLANG_WARNINGS_END
             }
 #endif
 
-            LBasicBlock atLeastZero = m_out.newBlock();
-            LBasicBlock continuation = m_out.newBlock();
-
-            Vector<ValueFromBlock, 2> intValues;
-            intValues.append(m_out.anchor(m_out.int32Zero));
-            m_out.branch(
+            valueAsInt32 = m_out.select(
                 m_out.lessThan(value, zero),
-                unsure(continuation), unsure(atLeastZero));
-
-            LBasicBlock lastNext = m_out.appendTo(atLeastZero, continuation);
-
-            intValues.append(m_out.anchor(m_out.select(
-                m_out.greaterThan(value, byteMax),
-                m_out.constInt32(255),
-                valueAsInt32)));
-            m_out.jump(continuation);
-
-            m_out.appendTo(continuation, lastNext);
-            valueAsInt32 = m_out.phi(Int32, intValues);
+                m_out.int32Zero,
+                m_out.select(m_out.greaterThan(value, byteMax), m_out.constInt32(255), valueAsInt32));
         }
         return valueAsInt32;
     }
@@ -25871,7 +25939,7 @@ IGNORE_CLANG_WARNINGS_END
         didAlreadyTerminate();
     }
 
-    void NODELETE didAlreadyTerminate()
+    void LEGACY_NODELETE didAlreadyTerminate()
     {
         m_state.setIsValid(false);
     }
@@ -26467,6 +26535,13 @@ IGNORE_CLANG_WARNINGS_END
             return proven;
         return m_out.below(jsValue, m_numberTag);
     }
+    LValue areNotBothInt32(LValue left, SpeculatedType leftType, LValue right, SpeculatedType rightType)
+    {
+        if (isProvenValue(leftType, ~SpecInt32Only) || isProvenValue(rightType, ~SpecInt32Only))
+            return m_out.bitOr(isNotInt32(left, leftType), isNotInt32(right, rightType));
+        // A boxed int32 has every bit of m_numberTag set, so both are int32 iff their AND does.
+        return m_out.below(m_out.bitAnd(left, right), m_numberTag);
+    }
     LValue unboxInt32(LValue jsValue)
     {
         return m_out.castToInt32(jsValue);
@@ -26522,15 +26597,14 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(isNotBigInt32Case, isNotCellCase);
-        // FIXME: we should filter the type passed to isCell to account for the previous test that told us we are definitely not a BigInt32.
-        m_out.branch(isCell(jsValue, type), unsure(isCellCase), unsure(isNotCellCase));
+        m_out.branch(isCell(jsValue, type & ~SpecBigInt32), unsure(isCellCase), unsure(isNotCellCase));
 
         m_out.appendTo(isNotCellCase, isCellCase);
         ValueFromBlock returnTrue = m_out.anchor(m_out.booleanTrue);
         m_out.jump(continuation);
 
         m_out.appendTo(isCellCase, continuation);
-        ValueFromBlock returnIsNotHeapBigInt = m_out.anchor(isNotHeapBigInt(jsValue));
+        ValueFromBlock returnIsNotHeapBigInt = m_out.anchor(isNotHeapBigInt(jsValue, type));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
@@ -26729,12 +26803,14 @@ IGNORE_CLANG_WARNINGS_END
     }
     LValue unboxBoolean(LValue jsValue)
     {
-        // We want to use a cast that guarantees that B3 knows that even the integer
-        // value is just 0 or 1. But for now we do it the direct way.
-        return m_out.notZero64(m_out.bitAnd(jsValue, m_out.constInt64(1)));
+        // An Int32 BitAnd with 1 is something B3 knows to be 0 or 1, which lets it fold later tests of it.
+        return m_out.bitAnd(m_out.castToInt32(jsValue), m_out.int32One);
     }
     LValue boxBoolean(LValue value)
     {
+        static_assert(JSValue::ValueTrue == JSValue::ValueFalse + 1);
+        if (value->returnsBool())
+            return m_out.add(m_out.zeroExt(value, Int64), m_out.constInt64(JSValue::ValueFalse));
         return m_out.select(
             value, m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::ValueFalse));
     }
@@ -26756,7 +26832,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.constInt64(JSValue::ValueNull));
     }
 
-    LValue NODELETE isProvenValue(SpeculatedType provenType, SpeculatedType wantedType)
+    LValue LEGACY_NODELETE isProvenValue(SpeculatedType provenType, SpeculatedType wantedType)
     {
         if (!(provenType & ~wantedType))
             return m_out.booleanTrue;
@@ -27015,7 +27091,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock lastNext = m_out.appendTo(isNotInt32, isCellBlock);
         FTL_TYPE_CHECK(jsValueValue(value), edge, ~SpecFullDouble, isNumber(value));
-        m_out.branch(isCell(value, provenType(edge)), unsure(isCellBlock), unsure(continuation));
+        m_out.branch(isCell(value, provenType(edge) & ~SpecFullNumber), unsure(isCellBlock), unsure(continuation));
 
         m_out.appendTo(isCellBlock, continuation);
 
@@ -27796,8 +27872,8 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock lastNext = m_out.appendTo(intOrNaNCase, continuation);
 
         typeCheck(
-            jsValueValue(value), m_node->child1(), SpecBytecodeRealNumber,
-            isNotInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
+            jsValueValue(value), edge, SpecBytecodeRealNumber,
+            isNotInt32(value, provenType(edge) & ~SpecDoubleReal));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
@@ -28054,7 +28130,7 @@ IGNORE_CLANG_WARNINGS_END
         callPreflight(codeOriginDescriptionOfCallSite());
     }
 
-    CodeOrigin NODELETE codeOriginDescriptionOfCallSite() const
+    CodeOrigin codeOriginDescriptionOfCallSite() const
     {
         CodeOrigin codeOrigin = m_origin.semantic;
         switch (m_node->op()) {
@@ -28569,7 +28645,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         m_doubleValues.set(node, LoweredNodeValue(value, m_highBlock));
     }
-    void NODELETE setTuple(Node* tuple, unsigned index, LValue value)
+    void LEGACY_NODELETE setTuple(Node* tuple, unsigned index, LValue value)
     {
         ASSERT(index < tuple->tupleSize());
         m_tupleValues.at(tuple->tupleOffset() + index) = LoweredNodeValue(value, m_highBlock);
@@ -28607,12 +28683,12 @@ IGNORE_CLANG_WARNINGS_END
     {
         setDouble(m_node, value);
     }
-    void NODELETE setTuple(unsigned index, LValue value)
+    void LEGACY_NODELETE setTuple(unsigned index, LValue value)
     {
         setTuple(m_node, index, value);
     }
 
-    bool NODELETE isValid(const LoweredNodeValue& value)
+    bool LEGACY_NODELETE isValid(const LoweredNodeValue& value)
     {
         if (!value)
             return false;
@@ -28645,9 +28721,10 @@ IGNORE_CLANG_WARNINGS_END
     LValue toIntegerOrInfinity(LValue doubleValue)
     {
         // https://tc39.es/ecma262/#sec-tointegerorinfinity
-        // 1. If value is either of +0, -0, or NaN, return +0
-        // 2. Otherwise, return trunc(value)
-        return m_out.select(m_out.doubleNotEqualAndOrdered(doubleValue, m_out.doubleZero), m_out.doubleTrunc(doubleValue), m_out.doubleZero);
+        // 1. If value is NaN, return +0
+        // 2. Let integer be truncate(value). If integer is -0, return +0. Otherwise, return integer
+        LValue truncated = m_out.doubleTrunc(doubleValue);
+        return m_out.select(m_out.doubleNotEqualAndOrdered(truncated, m_out.doubleZero), truncated, m_out.doubleZero);
     }
 
     void addWeakReference(JSCell* target)
@@ -28838,10 +28915,10 @@ IGNORE_CLANG_WARNINGS_END
         return result;
     }
 
-    AvailabilityMap& NODELETE availabilityMap() { return m_availabilityCalculator.m_availability; }
+    AvailabilityMap& LEGACY_NODELETE availabilityMap() { return m_availabilityCalculator.m_availability; }
 
-    VM& NODELETE vm() { return m_graph.m_vm; }
-    CodeBlock* NODELETE codeBlock() { return m_graph.m_codeBlock; }
+    VM& LEGACY_NODELETE vm() { return m_graph.m_vm; }
+    CodeBlock* LEGACY_NODELETE codeBlock() { return m_graph.m_codeBlock; }
 
     Graph& m_graph;
     State& m_ftlState;
