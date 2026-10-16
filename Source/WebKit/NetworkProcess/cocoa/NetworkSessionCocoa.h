@@ -141,7 +141,7 @@ public:
     bool deviceManagementRestrictionsEnabled() const { return m_deviceManagementRestrictionsEnabled; }
     bool allLoadsBlockedByDeviceManagementRestrictionsForTesting() const { return m_allLoadsBlockedByDeviceManagementRestrictionsForTesting; }
 
-    DMFWebsitePolicyMonitor *NODELETE deviceManagementPolicyMonitor();
+    DMFWebsitePolicyMonitor *LEGACY_NODELETE deviceManagementPolicyMonitor();
 
     CFDictionaryRef proxyConfiguration() const { return m_proxyConfiguration.get(); }
 
@@ -199,7 +199,6 @@ private:
     void addWebSocketTask(WebPageProxyIdentifier, WebSocketTask&) final;
     void removeWebSocketTask(SessionSet&, WebSocketTask&) final;
 
-    void loadImageForDecoding(WebCore::ResourceRequest&&, WebPageProxyIdentifier, size_t, CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&&) final;
     void dataTaskWithRequest(WebPageProxyIdentifier, WebCore::ResourceRequest&&, const std::optional<WebCore::SecurityOriginData>& topOrigin, CompletionHandler<void(DataTaskIdentifier)>&&) final;
     void cancelDataTask(DataTaskIdentifier) final;
     void addWebPageNetworkParameters(WebPageProxyIdentifier, WebPageNetworkParameters&&) final;

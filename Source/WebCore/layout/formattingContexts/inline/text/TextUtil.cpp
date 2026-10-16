@@ -160,9 +160,10 @@ static void fallbackFontsForRunWithIterator(SingleThreadWeakHashSet<const Font>&
                 // "Unsupported Default_ignorable characters must be ignored for text rendering."
                 auto isIgnored = isDefaultIgnorableCodePoint(character);
 
-                if (isNonSpacingMark || glyphData.font->widthForGlyph(glyphData.glyph)) {
+                Ref font = *glyphData.font;
+                if (isNonSpacingMark || font->widthForGlyph(glyphData.glyph)) {
                     if (!isIgnored)
-                        fallbackFonts.add(*glyphData.font);
+                        fallbackFonts.add(font);
                 }
             }
         };
@@ -535,7 +536,7 @@ TextBreakIterator::ContentAnalysis TextUtil::contentAnalysis(WordBreak wordBreak
 // `Bidi_Class` of `ch` isn't `R`, `AL`, nor Bidi controls.
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=%5B%5B%3Abc%3DR%3A%5D%5B%3Abc%3DAL%3A%5D%5D&g=bc
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=[:Bidi_C:]
-static ALWAYS_INLINE bool NODELETE mayBeBidiRTL(char32_t ch)
+static ALWAYS_INLINE bool LEGACY_NODELETE mayBeBidiRTL(char32_t ch)
 {
     if (ch < 0x0590)
         return false;
@@ -675,7 +676,7 @@ InlineLayoutUnit TextUtil::hyphenWidth(const Style::ComputedStyle& style)
     return std::max(0.f, protect(style.fontCascade())->width(StringView { style.hyphenString() }));
 }
 
-static bool NODELETE isASCIIHangableQuote(char32_t character)
+static bool LEGACY_NODELETE isASCIIHangableQuote(char32_t character)
 {
     return character == quotationMark || character == apostrophe;
 }
@@ -736,7 +737,7 @@ float TextUtil::hangablePunctuationEndWidth(const String& text, const Style::Com
         return { };
     if (!isHangableClosePunctuation(text[text.length() - 1]))
         return { };
-    return style.fontCascade().width(text.right(1));
+    return protect(style.fontCascade())->width(text.right(1));
 }
 
 bool TextUtil::hasHangableStopOrCommaEnd(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)

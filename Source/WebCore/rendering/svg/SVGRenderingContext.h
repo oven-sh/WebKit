@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ImageBuffer.h"
+#include "LegacyRenderSVGResourceFilter.h"
 #include "PaintInfo.h"
 
 namespace WebCore {
@@ -34,7 +35,6 @@ class AffineTransform;
 class FloatRect;
 class RenderElement;
 class RenderObject;
-class LegacyRenderSVGResourceFilter;
 
 class SVGRenderingContext {
 public:

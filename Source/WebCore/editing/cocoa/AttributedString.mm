@@ -173,7 +173,7 @@ inline static NSTextAlignment reconstructNSTextAlignment(ParagraphStyleAlignment
     return NSTextAlignmentLeft;
 }
 
-inline static NSTextBlockVerticalAlignment NODELETE reconstructNSTextBlockVerticalAlignment(TextTableBlockVerticalAlignment alignment)
+inline static NSTextBlockVerticalAlignment LEGACY_NODELETE reconstructNSTextBlockVerticalAlignment(TextTableBlockVerticalAlignment alignment)
 {
     switch (alignment) {
     case TextTableBlockVerticalAlignment::Top:
@@ -189,7 +189,7 @@ inline static NSTextBlockVerticalAlignment NODELETE reconstructNSTextBlockVertic
     return NSTextBlockVerticalAlignmentTop;
 }
 
-inline static NSTextTableLayoutAlgorithm NODELETE reconstructNSTextTableLayoutAlgorithm(TextTableLayoutAlgorithm layout)
+inline static NSTextTableLayoutAlgorithm LEGACY_NODELETE reconstructNSTextTableLayoutAlgorithm(TextTableLayoutAlgorithm layout)
 {
     switch (layout) {
     case TextTableLayoutAlgorithm::Automatic:
@@ -201,7 +201,7 @@ inline static NSTextTableLayoutAlgorithm NODELETE reconstructNSTextTableLayoutAl
     return NSTextTableLayoutAlgorithmAutomatic;
 }
 
-inline static NSWritingDirection NODELETE reconstructNSWritingDirection(ParagraphStyleWritingDirection writingDirection)
+inline static NSWritingDirection LEGACY_NODELETE reconstructNSWritingDirection(ParagraphStyleWritingDirection writingDirection)
 {
     switch (writingDirection) {
     case ParagraphStyleWritingDirection::LeftToRight:
@@ -247,7 +247,7 @@ inline static RetainPtr<NSParagraphStyle> reconstructStyle(const ParagraphStyle&
 
             RetainPtr tableBlock = adoptNS([[PlatformNSTextTableBlock alloc] initWithTable:foundTable->value.get() startingRow:item.startingRow rowSpan:item.rowSpan startingColumn:item.startingColumn columnSpan:item.columnSpan]);
             [tableBlock setVerticalAlignment:reconstructNSTextBlockVerticalAlignment(item.verticalAlignment)];
-            configureNSTextBlockFromParagraphStyleCommonTableAttributes(tableBlock.get(), item);
+            configureNSTextBlockFromParagraphStyleCommonTableAttributes(checked_objc_cast<NSTextTableBlock>(tableBlock.get()), item);
             return tableBlock;
         });
     };
@@ -585,7 +585,8 @@ static std::optional<AttributedString::AttributeValue> extractArray(NSArray *arr
     if ([array[0] isKindOfClass:NSString.class]) {
         Vector<String> result;
         result.reserveInitialCapacity(arrayLength);
-        for (id element in array) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id element in array) {
             if (RetainPtr string = dynamic_objc_cast<NSString>(element))
                 result.append(string.get());
             else
@@ -596,7 +597,8 @@ static std::optional<AttributedString::AttributeValue> extractArray(NSArray *arr
     if ([array[0] isKindOfClass:NSNumber.class]) {
         Vector<double> result;
         result.reserveInitialCapacity(arrayLength);
-        for (id element in array) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id element in array) {
             if ([element isKindOfClass:NSNumber.class])
                 result.append([(NSNumber *)element doubleValue]);
             else
@@ -609,7 +611,7 @@ static std::optional<AttributedString::AttributeValue> extractArray(NSArray *arr
     return std::nullopt;
 }
 
-inline static ParagraphStyleAlignment NODELETE extractParagraphStyleAlignment(NSTextAlignment alignment)
+inline static ParagraphStyleAlignment LEGACY_NODELETE extractParagraphStyleAlignment(NSTextAlignment alignment)
 {
     switch (alignment) {
     case NSTextAlignmentLeft:
@@ -627,7 +629,7 @@ inline static ParagraphStyleAlignment NODELETE extractParagraphStyleAlignment(NS
     return ParagraphStyleAlignment::Left;
 }
 
-inline static TextTableBlockVerticalAlignment NODELETE extractTextTableBlockVerticalAlignment(NSTextBlockVerticalAlignment verticalAlignment)
+inline static TextTableBlockVerticalAlignment LEGACY_NODELETE extractTextTableBlockVerticalAlignment(NSTextBlockVerticalAlignment verticalAlignment)
 {
     switch (verticalAlignment) {
     case NSTextBlockVerticalAlignmentTop:
@@ -643,7 +645,7 @@ inline static TextTableBlockVerticalAlignment NODELETE extractTextTableBlockVert
     return TextTableBlockVerticalAlignment::Top;
 }
 
-inline static TextTableLayoutAlgorithm NODELETE extractTextTableLayoutAlgorithm(NSTextTableLayoutAlgorithm layout)
+inline static TextTableLayoutAlgorithm LEGACY_NODELETE extractTextTableLayoutAlgorithm(NSTextTableLayoutAlgorithm layout)
 {
     switch (layout) {
     case NSTextTableLayoutAlgorithmAutomatic:
@@ -655,7 +657,7 @@ inline static TextTableLayoutAlgorithm NODELETE extractTextTableLayoutAlgorithm(
     return TextTableLayoutAlgorithm::Automatic;
 }
 
-inline static ParagraphStyleWritingDirection NODELETE extractParagraphStyleWritingDirection(NSWritingDirection writingDirection)
+inline static ParagraphStyleWritingDirection LEGACY_NODELETE extractParagraphStyleWritingDirection(NSWritingDirection writingDirection)
 {
     switch (writingDirection) {
     case NSWritingDirectionLeftToRight:
@@ -677,7 +679,8 @@ inline static ParagraphStyle extractParagraphStyle(NSParagraphStyle *style, Tabl
     Vector<ParagraphStyleTextList> newTextLists;
     Vector<TextTab> newTextTabs;
 
-    for (NSTextList *list in style.textLists) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSTextList *list in style.textLists) {
         if (![list isKindOfClass:PlatformNSTextList])
             return { };
 
@@ -696,7 +699,8 @@ inline static ParagraphStyle extractParagraphStyle(NSParagraphStyle *style, Tabl
         sentTextListIDs.append(listID);
     }
 
-    for (NSTextTableBlock* item in style.textBlocks) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSTextTableBlock* item in style.textBlocks) {
         if (![item isKindOfClass:PlatformNSTextTableBlock])
             return { };
 
@@ -800,7 +804,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     RetainPtr<NSArray<NSTextTab *>> tabStops = [style tabStops];
     newTextTabs.reserveInitialCapacity([tabStops count]);
-    for (NSTextTab *textTab : tabStops.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSTextTab *textTab : tabStops.get()) {
         newTextTabs.append(TextTab {
             [textTab location],
             extractParagraphStyleAlignment([textTab alignment])

@@ -209,6 +209,7 @@ enum class ArrayProfileFlag : uint32_t {
     MayBeResizableOrGrowableSharedTypedArray = 1 << 5,
     DidPerformFirstRunPruning = 1 << 6,
     MayBeRegExpMatchesArray = 1 << 7,
+    SpeculationFailedOnArrayStorage = 1 << 8,
 };
 
 class ArrayProfile {
@@ -245,11 +246,12 @@ public:
     void observeStructureID(StructureID structureID) { m_lastSeenStructureID = structureID; }
     void observeStructure(Structure* structure) { m_lastSeenStructureID = structure->id(); }
 
-    void NODELETE computeUpdatedPrediction(CodeBlock*);
+    void LEGACY_NODELETE computeUpdatedPrediction(CodeBlock*);
     void computeUpdatedPrediction(CodeBlock*, Structure* lastSeenStructure);
     
     void observeArrayMode(ArrayModes mode) { m_observedArrayModes |= mode; }
-    void NODELETE observeIndexedRead(JSCell*, unsigned index);
+    void removeObservedArrayModes(ArrayModes modes) { m_observedArrayModes &= ~modes; }
+    void LEGACY_NODELETE observeIndexedRead(JSCell*, unsigned index);
 
     ArrayModes observedArrayModes() const { return m_observedArrayModes; }
     bool mayInterceptIndexedAccesses() const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayInterceptIndexedAccesses); }
@@ -260,6 +262,7 @@ public:
     bool usesOriginalArrayStructures() const { return !m_arrayProfileFlags.contains(ArrayProfileFlag::UsesNonOriginalArrayStructures); }
 
     bool mayBeRegExpMatchesArray() const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeRegExpMatchesArray); }
+    bool speculationFailedOnArrayStorage() const { return m_arrayProfileFlags.contains(ArrayProfileFlag::SpeculationFailedOnArrayStorage); }
 
     UTF8CString briefDescription(CodeBlock*);
     UTF8CString briefDescriptionWithoutUpdating();

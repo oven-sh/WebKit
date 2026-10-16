@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/InlineLine.h>
+#include <WebCore/InlineLineRun.h>
 #include <WebCore/InlineLineTypes.h>
 #include <WebCore/LayoutUnits.h>
 #include <WebCore/PlacedFloats.h>
@@ -38,7 +38,7 @@ struct LineLayoutResult {
     using SuspendedFloatList = Vector<const Box*>;
 
     InlineItemRange inlineItemRange;
-    Line::RunList runs;
+    LineRunList runs;
 
     struct FloatContent {
         PlacedFloatList placedFloats;

@@ -186,6 +186,28 @@ private:
     WeakPtr<const WebProcessProxy> m_process;
 };
 
+class ProcessCommittedStorageClientOrigin : public IPC::CanValidateUntrusted<ProcessCommittedStorageClientOrigin> {
+public:
+    explicit ProcessCommittedStorageClientOrigin(const WebProcessProxy& process)
+        : m_process(process)
+    {
+    }
+
+    std::optional<IPC::ValidationFailure> checkUntrusted(const WebCore::ClientOrigin& origin) const
+    {
+        RefPtr process = m_process.get();
+        if (!process)
+            return IPC::ValidationFailure::Ignore;
+
+        if (!process->hasCommittedStorageClientOrigin(origin))
+            return IPC::ValidationFailure::Terminate;
+        return std::nullopt;
+    }
+
+private:
+    WeakPtr<const WebProcessProxy> m_process;
+};
+
 } // namespace WebKit
 
 namespace IPC {
@@ -197,5 +219,6 @@ template<> struct IsValidationProcedureFor<WebKit::ProcessSpeaksForDomain, WebCo
 template<> struct IsValidationProcedureFor<WebKit::ProcessParticipatesInPageWithSite, WebCore::Site> : std::true_type { };
 
 template<> struct IsValidationProcedureFor<WebKit::ProcessCommittedClientOrigin, WebCore::ClientOrigin> : std::true_type { };
+template<> struct IsValidationProcedureFor<WebKit::ProcessCommittedStorageClientOrigin, WebCore::ClientOrigin> : std::true_type { };
 
 } // namespace IPC

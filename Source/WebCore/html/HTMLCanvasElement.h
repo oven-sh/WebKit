@@ -46,6 +46,7 @@
 
 namespace WebCore {
 
+class BitmapImage;
 class BlobCallback;
 class CanvasRenderingContext;
 class CanvasRenderingContext2D;
@@ -82,12 +83,13 @@ public:
 
     const AtomString& canvasContentForBindings() const;
     CanvasContent canvasContent() const;
+    bool hasDrawableContent() const;
 
     void requestPaint();
     void dispatchPaintEvent();
 
-    ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&);
-    std::optional<CanvasElementSnapshot> drawableElementSnapshot(Element&) const;
+    std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(Element&) const;
+    ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&) const;
 
     ExceptionOr<void> updateElementGeometry(const CanvasElementImageSource&, std::optional<UpdateElementGeometryOptions>);
     ExceptionOr<void> clearElementGeometry(const CanvasElementImageSource&);
@@ -139,7 +141,7 @@ public:
 
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
-    Image* copiedImage() const;
+    BitmapImage* copiedImage() const;
     RefPtr<ImageData> getImageData();
 
     SecurityOrigin* securityOrigin() const final;
@@ -152,7 +154,7 @@ public:
     void setIsSnapshotting(bool isSnapshotting) { m_isSnapshotting = isSnapshotting; }
     bool isSnapshotting() const { return m_isSnapshotting; }
 
-    bool NODELETE isControlledByOffscreen() const;
+    bool LEGACY_NODELETE isControlledByOffscreen() const;
 
     void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) final;
     void dispatchEvent(Event&) final;
@@ -193,8 +195,6 @@ private:
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
-    std::optional<FloatRect> computeDirtyRectangleIfNeeded(const std::optional<FloatRect>&) const;
-
     bool m_ignoreDidUpdateSizeProperties { false };
 #if ENABLE(WEBGL)
     bool m_hasRelevantWebGLEventListener { false };
@@ -203,7 +203,7 @@ private:
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
-    mutable RefPtr<Image> m_copiedImage; // For CSSCanvasValue.
+    mutable RefPtr<BitmapImage> m_copiedImage; // For CSSCanvasValue.
 };
 
 WebCoreOpaqueRoot root(HTMLCanvasElement*);

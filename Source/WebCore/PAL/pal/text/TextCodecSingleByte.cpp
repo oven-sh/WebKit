@@ -223,7 +223,7 @@ static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding enco
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const SingleByteDecodeTable& NODELETE tableForDecoding(TextCodecSingleByte::Encoding encoding)
+static const SingleByteDecodeTable& LEGACY_NODELETE tableForDecoding(TextCodecSingleByte::Encoding encoding)
 {
     switch (encoding) {
     case TextCodecSingleByte::Encoding::ISO_8859_3:
@@ -278,7 +278,7 @@ static String decode(const SingleByteDecodeTable& table, std::span<const uint8_t
     result.reserveCapacity(bytes.size());
     auto parseByte = [&] (uint8_t byte) {
         if (isASCII(byte)) {
-            result.append(byte);
+            result.append(byteCast<Latin1Character>(byte));
             return;
         }
         char16_t codePoint = table[byte - 0x80];

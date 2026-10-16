@@ -21,6 +21,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/csp-sandbox.py
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/fully-loaded.js
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/iframe-test.js
+/LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/non-secure-to-secure-context-navigation-popup.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/noopener-helper.js
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/popup-test.js
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/resources/postback.html

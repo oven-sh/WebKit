@@ -619,6 +619,9 @@ ANGLE_EXPORT void GL_APIENTRY GL_GetTranslatedShaderSourceANGLE(GLuint shader,
                                                                 GLsizei *length,
                                                                 GLchar *source);
 
+// GL_ANGLE_trim_memory
+ANGLE_EXPORT void GL_APIENTRY GL_TrimMemoryANGLE(GLenum trimLevel);
+
 // GL_ANGLE_variable_rasterization_rate_metal
 ANGLE_EXPORT void GL_APIENTRY
 GL_BindMetalRasterizationRateMapANGLE(GLuint framebuffer, GLMTLRasterizationRateMapANGLE map);

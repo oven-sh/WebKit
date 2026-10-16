@@ -20,16 +20,27 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import annotations
+
 import importlib
+from typing import TYPE_CHECKING, Any
 
 from webkitcorepy.call_by_need import CallByNeed
 
 # ContextStack is a base class for OutputCapture, OutputDuplicate, and PartialProxy, all
 # of which webkitcorepy/__init__.py loads eagerly, so it's effectively never lazy.
-from webkitcorepy.mocks.context_stack import ContextStack
+from webkitcorepy.mocks.context_stack import ContextStack as ContextStack
+
+if TYPE_CHECKING:
+    from webkitcorepy.mocks.environment import Environment as Environment
+    from webkitcorepy.mocks.file_lock import FileLock as FileLock
+    from webkitcorepy.mocks.requests_ import Requests as Requests, Response as Response
+    from webkitcorepy.mocks.subprocess import ProcessCompletion as ProcessCompletion, Subprocess as Subprocess
+    from webkitcorepy.mocks.terminal import Terminal as Terminal
+    from webkitcorepy.mocks.time_ import Time as Time
 
 
-def _lazy(module_path, attr_name):
+def _lazy(module_path: str, attr_name: str) -> CallByNeed[Any]:
     return CallByNeed(lambda: getattr(importlib.import_module(module_path), attr_name))
 
 
@@ -47,7 +58,7 @@ _LAZY = {
 }
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> Any:
     proxy = _LAZY.get(name)
     if proxy is None:
         raise AttributeError("module 'webkitcorepy.mocks' has no attribute {!r}".format(name))
@@ -59,5 +70,5 @@ def __getattr__(name):
     return value
 
 
-def __dir__():
+def __dir__() -> list[str]:
     return sorted(set(globals()) | set(_LAZY))

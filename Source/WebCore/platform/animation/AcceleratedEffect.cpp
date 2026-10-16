@@ -118,30 +118,30 @@ static OptionSet<AcceleratedEffectProperty> acceleratedPropertyFromCSSProperty(A
     ASSERT(std::holds_alternative<CSSPropertyID>(property));
 
     switch (std::get<CSSPropertyID>(property)) {
-    case CSSPropertyOpacity:
+    case CSSPropertyID::Opacity:
         return AcceleratedEffectProperty::Opacity;
-    case CSSPropertyTransform:
+    case CSSPropertyID::Transform:
         return AcceleratedEffectProperty::Transform;
-    case CSSPropertyTranslate:
+    case CSSPropertyID::Translate:
         return AcceleratedEffectProperty::Translate;
-    case CSSPropertyRotate:
+    case CSSPropertyID::Rotate:
         return AcceleratedEffectProperty::Rotate;
-    case CSSPropertyScale:
+    case CSSPropertyID::Scale:
         return AcceleratedEffectProperty::Scale;
-    case CSSPropertyOffsetPath:
+    case CSSPropertyID::OffsetPath:
         return AcceleratedEffectProperty::OffsetPath;
-    case CSSPropertyOffsetDistance:
+    case CSSPropertyID::OffsetDistance:
         return AcceleratedEffectProperty::OffsetDistance;
-    case CSSPropertyOffsetPosition:
+    case CSSPropertyID::OffsetPosition:
         return AcceleratedEffectProperty::OffsetPosition;
-    case CSSPropertyOffsetAnchor:
+    case CSSPropertyID::OffsetAnchor:
         return AcceleratedEffectProperty::OffsetAnchor;
-    case CSSPropertyOffsetRotate:
+    case CSSPropertyID::OffsetRotate:
         return AcceleratedEffectProperty::OffsetRotate;
-    case CSSPropertyFilter:
+    case CSSPropertyID::Filter:
         return AcceleratedEffectProperty::Filter;
-    case CSSPropertyBackdropFilter:
-    case CSSPropertyWebkitBackdropFilter:
+    case CSSPropertyID::BackdropFilter:
+    case CSSPropertyID::WebkitBackdropFilter:
         return AcceleratedEffectProperty::BackdropFilter;
     default:
         ASSERT_NOT_REACHED();
@@ -149,36 +149,36 @@ static OptionSet<AcceleratedEffectProperty> acceleratedPropertyFromCSSProperty(A
     }
 }
 
-static CSSPropertyID NODELETE cssPropertyFromAcceleratedProperty(AcceleratedEffectProperty property)
+static CSSPropertyID LEGACY_NODELETE cssPropertyFromAcceleratedProperty(AcceleratedEffectProperty property)
 {
     switch (property) {
     case AcceleratedEffectProperty::Opacity:
-        return CSSPropertyOpacity;
+        return CSSPropertyID::Opacity;
     case AcceleratedEffectProperty::Transform:
-        return CSSPropertyTransform;
+        return CSSPropertyID::Transform;
     case AcceleratedEffectProperty::Translate:
-        return CSSPropertyTranslate;
+        return CSSPropertyID::Translate;
     case AcceleratedEffectProperty::Rotate:
-        return CSSPropertyRotate;
+        return CSSPropertyID::Rotate;
     case AcceleratedEffectProperty::Scale:
-        return CSSPropertyScale;
+        return CSSPropertyID::Scale;
     case AcceleratedEffectProperty::OffsetPath:
-        return CSSPropertyOffsetPath;
+        return CSSPropertyID::OffsetPath;
     case AcceleratedEffectProperty::OffsetDistance:
-        return CSSPropertyOffsetDistance;
+        return CSSPropertyID::OffsetDistance;
     case AcceleratedEffectProperty::OffsetPosition:
-        return CSSPropertyOffsetPosition;
+        return CSSPropertyID::OffsetPosition;
     case AcceleratedEffectProperty::OffsetAnchor:
-        return CSSPropertyOffsetAnchor;
+        return CSSPropertyID::OffsetAnchor;
     case AcceleratedEffectProperty::OffsetRotate:
-        return CSSPropertyOffsetRotate;
+        return CSSPropertyID::OffsetRotate;
     case AcceleratedEffectProperty::Filter:
-        return CSSPropertyFilter;
+        return CSSPropertyID::Filter;
     case AcceleratedEffectProperty::BackdropFilter:
-        return CSSPropertyWebkitBackdropFilter;
+        return CSSPropertyID::WebkitBackdropFilter;
     default:
         ASSERT_NOT_REACHED();
-        return CSSPropertyInvalid;
+        return CSSPropertyID::Invalid;
     }
 }
 
@@ -275,7 +275,7 @@ AcceleratedEffect::AcceleratedEffect(const KeyframeEffect& effect, const IntRect
 
         auto values = [&]() -> AcceleratedEffectValues {
             if (CheckedPtr style = srcKeyframe.style())
-                return { *style, borderBoxRect, renderLayerModelObject.get() };
+                return { *style, borderBoxRect, renderLayerModelObject.get(), animatedProperties };
             return { };
         }();
 
@@ -668,6 +668,28 @@ const OptionSet<AcceleratedEffectProperty> AcceleratedEffect::composedProperties
     auto propertiesWithImplicitFromValue = m_animatedProperties ^ propertiesWithExplicitFromValue;
     auto propertiesWithImplicitToValue = m_animatedProperties ^ propertiesWithExplicitToValue;
     return additiveOrAccumulativeProperties | propertiesWithImplicitFromValue | propertiesWithImplicitToValue;
+}
+
+TextStream& operator<<(TextStream& ts, const AcceleratedEffect& effect)
+{
+    ts << indent << "(effect, " << effect.timing() << ", keyframes:";
+    {
+        TextStream::IndentScope indentScope(ts);
+        for (auto& keyframe : effect.keyframes()) {
+            ts << "\n" << indent << "(offset: " << keyframe.offset();
+            if (auto compositeOperation = keyframe.compositeOperation())
+                ts << ", composite: " << *compositeOperation;
+            if (RefPtr timingFunction = keyframe.timingFunction())
+                ts << ", easing: " << *timingFunction;
+
+            auto& values = keyframe.values();
+            for (auto property : keyframe.animatedProperties())
+                ts << ", " << values.dumpProperty(property);
+            ts << ")";
+        }
+    }
+    ts << ")";
+    return ts;
 }
 
 } // namespace WebCore

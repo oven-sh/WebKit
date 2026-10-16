@@ -146,9 +146,9 @@ static bool apply_remote_features(SSLImpl *ssl, CBS *in) {
       return false;
     }
   }
-  STACK_OF(SSL_CIPHER) *configured =
-      ssl->config->cipher_list ? ssl->config->cipher_list->ciphers.get()
-                               : ssl->ctx->cipher_list->ciphers.get();
+  const STACK_OF(SSL_CIPHER) *configured =
+      ssl->config->cipher_list ? ssl->config->cipher_list->ciphers()
+                               : ssl->ctx->cipher_list->ciphers();
   bssl::UniquePtr<STACK_OF(SSL_CIPHER)> unsupported(sk_SSL_CIPHER_new_null());
   if (!unsupported) {
     return false;
@@ -164,7 +164,7 @@ static bool apply_remote_features(SSLImpl *ssl, CBS *in) {
   if (sk_SSL_CIPHER_num(unsupported.get()) && !ssl->config->cipher_list) {
     ssl->config->cipher_list = bssl::MakeUnique<SSLCipherPreferenceList>();
     if (!ssl->config->cipher_list ||
-        !ssl->config->cipher_list->Init(*ssl->ctx->cipher_list)) {
+        !ssl->config->cipher_list->CopyFrom(*ssl->ctx->cipher_list)) {
       return false;
     }
   }
@@ -374,7 +374,7 @@ bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
 
   // TODO(mab): make sure everything is serialized.
   CBB seq, key_share;
-  const SSL_SESSION *session;
+  const SSLSession *session;
   if (type == handback_tls13) {
     session = hs->new_session.get();
   } else {
@@ -515,7 +515,7 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
   int session_reused, channel_id_negotiated, cert_request,
       extended_master_secret, ticket_expected, unused_token_binding,
       next_proto_neg_seen;
-  SSL_SESSION *session = nullptr;
+  SSLSession *session = nullptr;
 
   CBS handback_cbs(handback);
   if (!CBS_get_asn1(&handback_cbs, &seq, CBS_ASN1_SEQUENCE) ||  //

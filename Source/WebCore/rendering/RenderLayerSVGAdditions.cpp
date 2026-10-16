@@ -268,7 +268,21 @@ void RenderLayer::paintForegroundChildrenForSVG(GraphicsContext& context, const 
         return;
     }
 
+    // FIXME: A composited document element RenderSVGRoot still blends the root background.
+    bool blendContents = blendModeAppliesToSVGRootContentsOnly() && paintsWithTransparency(localPaintingInfo.paintBehavior);
+    if (blendContents) {
+        context.save();
+        context.setCompositeOperation(context.compositeOperation(), blendMode());
+        context.beginTransparencyLayer(1);
+        context.setCompositeOperation(context.compositeOperation(), BlendMode::Normal);
+    }
+
     paintChildrenInDOMOrderForSVG(context, localPaintingInfo, paintFlags, layerFragments, paintBehavior, subtreePaintRoot, svgPaintOrderItemRange, svgFilterChildLayerCorrection);
+
+    if (blendContents) {
+        context.endTransparencyLayer();
+        context.restore();
+    }
 }
 
 RenderLayer::HitLayer RenderLayer::hitTestChildrenForSVG(RenderLayer* rootLayer, const HitTestRequest& request, HitTestResult& result, const LayoutRect& hitTestRect, const HitTestLocation& hitTestLocation, const HitTestingTransformState* transformState, double* zOffsetForDescendants)
@@ -760,7 +774,7 @@ std::optional<RenderLayer::SVGRendererTransform> RenderLayer::computeRendererTra
 
     // For the outermost viewport container (anonymous child of RenderSVGRoot), apply the
     // content-box origin offset (border+padding).
-    if (auto* viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererRef.get()); viewportContainer && viewportContainer->isAnonymous()) {
+    if (CheckedPtr viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererRef.get()); viewportContainer && viewportContainer->isAnonymous()) {
         if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(viewportContainer->parent())) {
             auto contentBoxLocation = svgRoot->contentBoxLocation();
             if (!contentBoxLocation.isZero())
@@ -851,9 +865,9 @@ void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& contex
                 // Children recurse from the container's nominal origin (selfPaintOffset plus current) and
                 // add their own currentSVGLayoutLocation. The anonymous outermost viewport starts at (0, 0).
                 LayoutPoint recursionBase;
-                if (auto* viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererToPaint.get()); viewportContainer && viewportContainer->isAnonymous()) {
+                if (CheckedPtr viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererToPaint.get()); viewportContainer && viewportContainer->isAnonymous()) {
                     // Outermost viewport container: coordinate system starts at (0, 0).
-                } else if (auto* svgModel = dynamicDowncast<RenderSVGModelObject>(rendererToPaint.get()))
+                } else if (CheckedPtr svgModel = dynamicDowncast<RenderSVGModelObject>(rendererToPaint.get()))
                     recursionBase = svgModel->nominalSVGLayoutLocation();
                 paintSubtreeWithinTransformScopeForSVG(context, rendererToPaint.get(), recursionBase, transformedPaintingInfo, adjustedPaintFlags, paintBehavior, subtreePaintRoot);
                 if (rendererToPaint->hasOutline())
@@ -878,7 +892,8 @@ void RenderLayer::paintSubtreeWithinTransformScopeForSVG(GraphicsContext& contex
         if (!viewportContainer->hasSelfPaintingLayer() && SVGRenderSupport::isOverflowHidden(*viewportContainer)) {
             clipSaver.save();
             auto clipOffset = viewportContainer->isTransformed() ? LayoutPoint() : paintOffset;
-            context.clip(FloatRect(viewportContainer->overflowClipRect(clipOffset)));
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST context.clip(FloatRect(viewportContainer->overflowClipRect(clipOffset)));
         }
     }
 
@@ -967,8 +982,16 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenInDOMOrderForSVG(RenderLayer* 
     if (allChildren.isEmpty())
         return { };
 
-    CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(renderer());
-    LayoutSize svgOffset = svgModelObject ? toLayoutSize(svgModelObject->nominalSVGLayoutLocation()) : LayoutSize();
+    LayoutSize svgOffset;
+    LayoutSize userSpaceShift;
+    if (CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(renderer())) {
+        svgOffset = toLayoutSize(svgModelObject->nominalSVGLayoutLocation());
+        userSpaceShift = svgOffset - offsetFromAncestor(rootLayer);
+    }
+
+    HitTestLocation userSpaceLocation(hitTestLocation, userSpaceShift);
+    auto userSpaceRect = hitTestRect;
+    userSpaceRect.move(userSpaceShift);
 
     for (int i = allChildren.size() - 1; i >= 0; --i) {
         auto& childToPaint = allChildren[i];
@@ -989,7 +1012,7 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenInDOMOrderForSVG(RenderLayer* 
         CheckedRef childRenderer = *childRendererPtr;
 
         if (childRenderer->isTransformed()) {
-            auto hitLayer = hitTestRendererByInversingTransformForSVG(childRenderer.get(), childToPaint.accumulatedAncestorOffset, request, result, hitTestRect, hitTestLocation);
+            auto hitLayer = hitTestRendererByInversingTransformForSVG(childRenderer.get(), childToPaint.accumulatedAncestorOffset, request, result, userSpaceRect, userSpaceLocation);
             if (hitLayer.layer)
                 return hitLayer;
             continue;
@@ -998,7 +1021,7 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenInDOMOrderForSVG(RenderLayer* 
         LayoutPoint accumulatedOffset(svgOffset);
         accumulatedOffset += childToPaint.accumulatedAncestorOffset;
 
-        if (childRenderer->nodeAtPoint(request, result, hitTestLocation, accumulatedOffset, HitTestAction::Foreground))
+        if (childRenderer->nodeAtPoint(request, result, userSpaceLocation, accumulatedOffset, HitTestAction::Foreground))
             return { this, 0 };
     }
 
@@ -1018,7 +1041,8 @@ RenderLayer::HitLayer RenderLayer::hitTestRendererByInversingTransformForSVG(Ren
         return { };
 
     auto localPoint = inverse->mapPoint(hitTestLocation.point());
-    auto localRect = enclosingLayoutRect(inverse->mapRect(FloatRect(hitTestRect)));
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto localRect = enclosingLayoutRect(inverse->mapRect(FloatRect(hitTestRect)));
 
     HitTestLocation localLocation { LayoutPoint { localPoint } };
 

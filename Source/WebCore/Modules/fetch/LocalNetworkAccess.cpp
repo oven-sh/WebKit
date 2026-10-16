@@ -52,6 +52,9 @@ static ResourceError localNetworkAccessRefusal(const URL& url, ASCIILiteral reas
 
 std::expected<LocalNetworkAccessRequirement, ResourceError> checkLocalNetworkAccess(const ResourceRequest& request, const URL& currentURL, IPAddressSpace connectionAddressSpace, IPAddressSpace clientPolicyContainerAddressSpace, bool clientIsSecureContext, const ClientOrigin& clientOrigin, bool localNetworkAllowedByPermissionsPolicy, bool loopbackNetworkAllowedByPermissionsPolicy)
 {
+    if (!currentURL.protocolIsInHTTPFamily())
+        return LocalNetworkAccessRequirement::None;
+
     if (shouldTreatAsPotentiallyTrustworthy(currentURL) && SecurityOriginData::fromURL(currentURL) == clientOrigin.clientOrigin)
         return LocalNetworkAccessRequirement::None;
 

@@ -57,7 +57,7 @@ void PDFPluginChoiceAnnotation::updateGeometry()
     PDFPluginAnnotation::updateGeometry();
 
     Ref styledElement = downcast<StyledElement>(*element());
-    styledElement->setInlineStyleProperty(CSSPropertyFontSize, protect(annotation()).get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::Px);
+    styledElement->setInlineStyleProperty(CSSPropertyID::FontSize, protect(annotation()).get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::Px);
 }
 
 void PDFPluginChoiceAnnotation::commit()
@@ -75,13 +75,14 @@ Ref<Element> PDFPluginChoiceAnnotation::createAnnotationElement()
     Ref element = downcast<StyledElement>(document->createElement(selectTag, false));
 
     // FIXME: Match font weight and style as well?
-    element->setInlineStyleProperty(CSSPropertyColor, serializationForHTML(colorFromCocoaColor([choiceAnnotation fontColor])));
-    element->setInlineStyleProperty(CSSPropertyFontFamily, [[choiceAnnotation font] familyName]);
+    element->setInlineStyleProperty(CSSPropertyID::Color, serializationForHTML(colorFromCocoaColor([choiceAnnotation fontColor])));
+    element->setInlineStyleProperty(CSSPropertyID::FontFamily, [[choiceAnnotation font] familyName]);
 
     RetainPtr<NSArray> choices = [choiceAnnotation choices];
     RetainPtr<NSString> selectedChoice = [choiceAnnotation widgetStringValue];
 
-    for (NSString *choice in choices.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *choice in choices.get()) {
         auto choiceOption = document->createElement(optionTag, false);
         choiceOption->setAttributeWithoutSynchronization(valueAttr, choice);
         choiceOption->setTextContent(choice);

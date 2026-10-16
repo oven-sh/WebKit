@@ -30,6 +30,11 @@
 
 using namespace WebCore;
 
+@interface WebGeolocation () {
+    RefPtr<Geolocation> _geolocation;
+}
+@end
+
 @implementation WebGeolocation (WebInternal)
 
 - (id)_initWithWebCoreGeolocation:(WebCoreGeolocation *)geolocation
@@ -37,10 +42,8 @@ using namespace WebCore;
     ASSERT(geolocation);
 
     self = [super init];
-    if (self) {
-        geolocation->ref();
-        _private = reinterpret_cast<WebGeolocationPrivate*>(geolocation);
-    }
+    if (self)
+        _geolocation = geolocation;
     return self;
 }
 
@@ -50,14 +53,7 @@ using namespace WebCore;
 
 - (void)setIsAllowed:(BOOL)allowed
 {
-    protect(reinterpret_cast<Geolocation*>(_private))->setIsAllowed(allowed, { });
-}
-
-- (void)dealloc
-{
-    if (_private)
-        reinterpret_cast<Geolocation*>(_private)->deref();
-    [super dealloc];
+    protect(_geolocation)->setIsAllowed(allowed, { });
 }
 
 @end

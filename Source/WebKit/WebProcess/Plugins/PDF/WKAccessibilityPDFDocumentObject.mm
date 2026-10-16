@@ -171,7 +171,8 @@
             }
         }
     }
-    for (id page in [self accessibilityChildren]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id page in [self accessibilityChildren]) {
         id focusedElement = [page accessibilityFocusedUIElement];
         if (focusedElement)
             return focusedElement;
@@ -196,7 +197,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (NSArray *)accessibilityVisibleChildren
 {
     RetainPtr<NSMutableArray> visiblePageElements = adoptNS([[NSMutableArray alloc] init]);
-    for (id page in [self accessibilityChildren]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id page in [self accessibilityChildren]) {
         if ([page accessibilityFocusedUIElement])
             [visiblePageElements addObject:page];
     }
@@ -340,7 +342,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (id)accessibilityHitTest:(NSPoint)point
 {
-    for (id element in [self accessibilityChildren]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id element in [self accessibilityChildren]) {
         if (RetainPtr<id> result = [element accessibilityHitTest:point])
             return result.autorelease();
     }

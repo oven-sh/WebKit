@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ASTDecrementIncrementStatement.h"
 
+#include "Types.h"
+
 #include <wtf/PrintStream.h>
 
 namespace WGSL::AST {

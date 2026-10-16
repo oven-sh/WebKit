@@ -26,144 +26,51 @@
 #pragma once
 
 #include <WebCore/QuirkBehaviorID.h>
-#include <WebCore/URLMatch.h>
-#include <wtf/BitSet.h>
+#include <array>
+#include <span>
+#include <wtf/Assertions.h>
 #include <wtf/OptionSet.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace WebCore {
 
-namespace BuildCondition {
+class URLPatternList {
+public:
+    constexpr URLPatternList() = default;
 
-constexpr bool always = true;
+    constexpr URLPatternList(ASCIILiteral pattern)
+        : m_single(pattern)
+    {
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(!pattern.isNull());
+    }
 
-#if PLATFORM(COCOA)
-constexpr bool cocoa = true;
-#else
-constexpr bool cocoa = false;
-#endif
-#if PLATFORM(MAC)
-constexpr bool mac = true;
-#else
-constexpr bool mac = false;
-#endif
-#if PLATFORM(IOS)
-constexpr bool iOS = true;
-#else
-constexpr bool iOS = false;
-#endif
-#if PLATFORM(IOS_FAMILY)
-constexpr bool iOSFamily = true;
-#else
-constexpr bool iOSFamily = false;
-#endif
-#if ENABLE(IOS_TOUCH_EVENTS)
-constexpr bool iOSTouchEvents = true;
-#else
-constexpr bool iOSTouchEvents = false;
-#endif
-#if PLATFORM(VISION)
-constexpr bool vision = true;
-#else
-constexpr bool vision = false;
-#endif
-#if HAVE(APPKIT_GESTURES_SUPPORT)
-constexpr bool appKitGestures = true;
-#else
-constexpr bool appKitGestures = false;
-#endif
-#if ENABLE(CONTENT_CHANGE_OBSERVER)
-constexpr bool contentChangeObserver = true;
-#else
-constexpr bool contentChangeObserver = false;
-#endif
-#if ENABLE(DESKTOP_CONTENT_MODE_QUIRKS)
-constexpr bool desktopContentModeQuirks = true;
-#else
-constexpr bool desktopContentModeQuirks = false;
-#endif
-#if ENABLE(FLIP_SCREEN_DIMENSIONS_QUIRKS)
-constexpr bool flipScreenDimensionsQuirks = true;
-#else
-constexpr bool flipScreenDimensionsQuirks = false;
-#endif
-#if ENABLE(FULLSCREEN_API)
-constexpr bool fullscreenAPI = true;
-#else
-constexpr bool fullscreenAPI = false;
-#endif
-#if ENABLE(VIDEO_PRESENTATION_MODE)
-constexpr bool videoPresentationMode = true;
-#else
-constexpr bool videoPresentationMode = false;
-#endif
-#if ENABLE(MEDIA_RECORDER)
-constexpr bool mediaRecorder = true;
-#else
-constexpr bool mediaRecorder = false;
-#endif
-#if ENABLE(COCOA_WEBM_PLAYER)
-constexpr bool cocoaWebMPlayer = true;
-#else
-constexpr bool cocoaWebMPlayer = false;
-#endif
-#if ENABLE(MEDIA_SOURCE)
-constexpr bool mediaSource = true;
-#else
-constexpr bool mediaSource = false;
-#endif
-#if ENABLE(MEDIA_STREAM)
-constexpr bool mediaStream = true;
-#else
-constexpr bool mediaStream = false;
-#endif
-#if ENABLE(META_VIEWPORT)
-constexpr bool metaViewport = true;
-#else
-constexpr bool metaViewport = false;
-#endif
-#if HAVE(PIP_SKIP_PREROLL)
-constexpr bool pipSkipPreroll = true;
-#else
-constexpr bool pipSkipPreroll = false;
-#endif
-#if ENABLE(PICTURE_IN_PICTURE_API)
-constexpr bool pictureInPictureAPI = true;
-#else
-constexpr bool pictureInPictureAPI = false;
-#endif
-#if ENABLE(THREADED_ANIMATIONS)
-constexpr bool threadedAnimations = true;
-#else
-constexpr bool threadedAnimations = false;
-#endif
-#if ENABLE(TOUCH_EVENTS)
-constexpr bool touchEvents = true;
-#else
-constexpr bool touchEvents = false;
-#endif
-#if ENABLE(TOUCH_EVENT_REGIONS)
-constexpr bool touchEventRegions = true;
-#else
-constexpr bool touchEventRegions = false;
-#endif
-#if ENABLE(TWO_PHASE_CLICKS)
-constexpr bool twoPhaseClicks = true;
-#else
-constexpr bool twoPhaseClicks = false;
-#endif
-#if ENABLE(WEB_RTC)
-constexpr bool webRTC = true;
-#else
-constexpr bool webRTC = false;
-#endif
+    template<size_t size> constexpr URLPatternList(const std::array<ASCIILiteral, size>& patterns LIFETIME_BOUND)
+        : m_multiple(patterns)
+    {
+        static_assert(size, "A URL pattern list must name at least one pattern.");
+    }
 
-} // namespace BuildCondition
+    constexpr bool isEmpty() const { return m_single.isNull() && m_multiple.empty(); }
+
+    constexpr std::span<const ASCIILiteral> span() const LIFETIME_BOUND
+    {
+        if (!m_multiple.empty())
+            return m_multiple;
+        if (m_single.isNull())
+            return { };
+        return singleElementSpan(m_single);
+    }
+
+private:
+    ASCIILiteral m_single;
+    std::span<const ASCIILiteral> m_multiple;
+};
 
 struct QuirkParameters {
-    ASCIILiteral script = ""_s;
-    ASCIILiteral userAgent = ""_s;
-    ASCIILiteral chromeCompatibilityVersion = ""_s;
+    ASCIILiteral script { };
+    ASCIILiteral userAgent { };
+    ASCIILiteral chromeCompatibilityVersion { };
     std::span<const ASCIILiteral> cookieNames { };
 
     static consteval QuirkParameters fromScript(ASCIILiteral script)
@@ -193,14 +100,6 @@ struct QuirkParameters {
             .cookieNames = cookieNames
         };
     }
-
-    friend bool operator==(const QuirkParameters& a, const QuirkParameters& b)
-    {
-        return a.script == b.script
-            && a.userAgent == b.userAgent
-            && a.chromeCompatibilityVersion == b.chromeCompatibilityVersion
-            && std::ranges::equal(a.cookieNames, b.cookieNames);
-    }
 };
 
 enum class QuirkParametersNeeded : uint8_t {
@@ -222,7 +121,7 @@ struct ElementMatchesSelector {
 };
 
 struct SecondaryURLMatches {
-    URLMatch match;
+    URLPatternList patterns;
 };
 
 struct DocumentHasElementMatching {
@@ -234,9 +133,9 @@ constexpr ElementMatchesSelector elementMatchesSelector(ASCIILiteral selector)
     return ElementMatchesSelector { selector };
 }
 
-constexpr SecondaryURLMatches secondaryURLMatches(URLMatch match)
+constexpr SecondaryURLMatches secondaryURLMatches(URLPatternList patterns)
 {
-    return SecondaryURLMatches { match };
+    return SecondaryURLMatches { patterns };
 }
 
 constexpr DocumentHasElementMatching documentHasElementMatching(ASCIILiteral selector)
@@ -248,10 +147,8 @@ constexpr DocumentHasElementMatching documentHasElementMatching(ASCIILiteral sel
 
 struct QuirkConditions {
     std::optional<ASCIILiteral> elementSelector { std::nullopt };
-    std::optional<URLMatch> secondaryURL { std::nullopt };
+    URLPatternList secondaryURL { };
     std::optional<ASCIILiteral> documentSelector { std::nullopt };
-
-    friend bool operator==(const QuirkConditions&, const QuirkConditions&) = default;
 };
 
 struct QuirkBehavior {
@@ -262,13 +159,6 @@ struct QuirkBehavior {
     OptionSet<QuirkConditionsSupported> quirkConditionsNeeded { };
     QuirkConditions conditions { };
     std::optional<QuirkParameters> parameters { std::nullopt };
-
-    bool secondaryURLConditionMatches(const URLMatchContext& context) const
-    {
-        return !conditions.secondaryURL || conditions.secondaryURL->matches(context);
-    }
-
-    friend bool operator==(const QuirkBehavior&, const QuirkBehavior&) = default;
 
     consteval QuirkBehavior operator()(QuirkParameters params) const
     {
@@ -296,8 +186,8 @@ struct QuirkBehavior {
     consteval void applyCondition(QuirkBehavior& behavior, QuirkBehaviorConditions::SecondaryURLMatches secondaryURLMatches) const
     {
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(behavior.quirkConditionsSupported.contains(QuirkConditionsSupported::SecondaryURL));
-        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(!behavior.conditions.secondaryURL);
-        behavior.conditions.secondaryURL = secondaryURLMatches.match;
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(behavior.conditions.secondaryURL.isEmpty());
+        behavior.conditions.secondaryURL = secondaryURLMatches.patterns;
     }
 
     consteval void applyCondition(QuirkBehavior& behavior, QuirkBehaviorConditions::DocumentHasElementMatching documentHasElementMatching) const

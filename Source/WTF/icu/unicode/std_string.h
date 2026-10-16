@@ -19,6 +19,9 @@
 #ifndef __STD_STRING_H__
 #define __STD_STRING_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: Central ICU header for including the C++ standard &lt;string&gt;

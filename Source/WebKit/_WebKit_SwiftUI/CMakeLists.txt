@@ -125,3 +125,4 @@ add_custom_command(
 add_custom_target(_WebKit_SwiftUI_StageSwiftModule ALL DEPENDS ${_WebKit_SwiftUI_CODE_SIGN_INPUTS})
 
 WEBKIT_FRAMEWORK(_WebKit_SwiftUI)
+WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(_WebKit_SwiftUI)

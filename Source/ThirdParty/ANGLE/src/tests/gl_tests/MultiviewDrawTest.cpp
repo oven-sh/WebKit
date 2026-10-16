@@ -1312,8 +1312,17 @@ void main()
 
     resolveMultisampledFBO();
 
-    const GLubyte expectedGreenChannel[kNumViews][kViewHeight][kViewWidth] = {{{0, 255}, {0, 255}},
-                                                                              {{255, 0}, {255, 0}}};
+    constexpr std::array<std::array<std::array<GLubyte, kViewWidth>, kViewHeight>, kNumViews>
+        expectedGreenChannel = {{
+            {{
+                {0, 255},
+                {0, 255},
+            }},
+            {{
+                {255, 0},
+                {255, 0},
+            }},
+        }};
 
     for (int view = 0; view < kNumViews; ++view)
     {
@@ -1321,9 +1330,9 @@ void main()
         {
             for (int x = 0; x < kViewWidth; ++x)
             {
-                ANGLE_UNSAFE_TODO(EXPECT_EQ(GLColor(0, expectedGreenChannel[view][y][x], 0,
-                                                    expectedGreenChannel[view][y][x]),
-                                            GetViewColor(x, y, view)));
+                EXPECT_EQ(GLColor(0, expectedGreenChannel[view][y][x], 0,
+                                  expectedGreenChannel[view][y][x]),
+                          GetViewColor(x, y, view));
             }
         }
     }
@@ -1531,18 +1540,30 @@ void main()
 
     resolveMultisampledFBO();
 
-    const GLubyte expectedGreenChannel[kNumViews][kViewHeight][kViewWidth] = {
-        {{255, 0, 0, 0}, {255, 0, 0, 0}, {255, 0, 0, 0}, {0, 255, 0, 0}},
-        {{0, 0, 255, 0}, {0, 0, 255, 0}, {0, 0, 255, 0}, {0, 0, 0, 255}}};
+    constexpr std::array<std::array<std::array<GLubyte, kViewWidth>, kViewHeight>, kNumViews>
+        expectedGreenChannel = {{
+            {{
+                {255, 0, 0, 0},
+                {255, 0, 0, 0},
+                {255, 0, 0, 0},
+                {0, 255, 0, 0},
+            }},
+            {{
+                {0, 0, 255, 0},
+                {0, 0, 255, 0},
+                {0, 0, 255, 0},
+                {0, 0, 0, 255},
+            }},
+        }};
     for (int view = 0; view < 2; ++view)
     {
         for (int row = 0; row < 4; ++row)
         {
             for (int col = 0; col < 4; ++col)
             {
-                ANGLE_UNSAFE_TODO(EXPECT_EQ(GLColor(0, expectedGreenChannel[view][row][col], 0,
-                                                    expectedGreenChannel[view][row][col]),
-                                            GetViewColor(col, row, view)));
+                EXPECT_EQ(GLColor(0, expectedGreenChannel[view][row][col], 0,
+                                  expectedGreenChannel[view][row][col]),
+                          GetViewColor(col, row, view));
             }
         }
     }
@@ -1615,6 +1636,76 @@ void main()
 
     glUseProgram(program);
     glDrawArraysInstanced(GL_TRIANGLES, 0, 6, 1);
+    ASSERT_GL_NO_ERROR();
+
+    resolveMultisampledFBO();
+    EXPECT_EQ(GLColor::green, GetViewColor(0, 0, 0));
+    EXPECT_EQ(GLColor::green, GetViewColor(0, 0, 1));
+}
+
+// The test verifies that using a large attribute divisor does not cause an internal integer
+// overflow when drawing with multiview after a prior draw with divisor 0.
+TEST_P(MultiviewRenderTest, LargeAttribDivisorWithPriorDraw)
+{
+    ANGLE_SKIP_TEST_IF(!requestMultiviewExtension(isMultisampled()));
+
+    updateFBOs(1, 1, 2);
+
+    const std::string nonMultiviewVS = R"(#version 300 es
+layout(location = 0) in float val;
+out vec4 color;
+void main() {
+  gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+  gl_PointSize = 1.0;
+  color = (val == 0.0) ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+})";
+
+    const std::string multiviewVS = R"(#version 300 es
+#extension )" + extensionName() +
+                                    R"( : require
+layout(num_views = 2) in;
+layout(location = 0) in float val;
+out vec4 color;
+void main() {
+  gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+  gl_PointSize = 1.0;
+  color = (val == 0.0) ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+precision mediump float;
+in vec4 color;
+out vec4 outColor;
+void main() { outColor = color; })";
+
+    ANGLE_GL_PROGRAM(nonMultiviewProgram, nonMultiviewVS.c_str(), kFS);
+    ANGLE_GL_PROGRAM(multiviewProgram, multiviewVS.c_str(), kFS);
+
+    // Buffer with 2 floats: index 0 is 0.0f (green); index 1 is 1.0f (red).
+    const float kData[2] = {0.0f, 1.0f};
+    GLBuffer buffer;
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(kData), kData, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 1, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glEnableVertexAttribArray(0);
+
+    // Initial draw with single-view program and divisor 0.
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glVertexAttribDivisor(0, 0);
+    glUseProgram(nonMultiviewProgram);
+    glDrawArrays(GL_POINTS, 0, 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Subsequent draw with 2-view multiview program and large divisor.
+    bindMemberDrawFramebuffer();
+    glViewport(0, 0, 1, 1);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glVertexAttribDivisor(0, 0x80000000u);
+    glUseProgram(multiviewProgram);
+    glDrawArraysInstanced(GL_POINTS, 0, 2, 1);
     ASSERT_GL_NO_ERROR();
 
     resolveMultisampledFBO();

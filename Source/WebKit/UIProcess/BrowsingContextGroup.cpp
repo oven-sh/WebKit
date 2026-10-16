@@ -36,9 +36,12 @@
 #include "RemotePageProxy.h"
 #include "WebFrameProxy.h"
 #include "WebPageProxy.h"
+#include "WebPreferences.h"
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
 #include <WebCore/IPAddressSpace.h>
+#include <WebCore/OriginAgentClusterPolicy.h>
+#include <WebCore/ResourceResponse.h>
 #include <WebCore/SecurityOrigin.h>
 
 #define BROWSINGCONTEXTGROUP_RELEASE_LOG(fmt, ...) RELEASE_LOG(SiteIsolation, "%p - BrowsingContextGroup::" fmt, this, ##__VA_ARGS__)
@@ -345,7 +348,7 @@ void BrowsingContextGroup::addPage(WebPageProxy& page)
             return true;
         }
 
-        createRemotePageIfNeeded(process->process(), site);
+        createRemotePageIfNeeded(protect(process->process()), site);
         return false;
     });
 }
@@ -461,10 +464,85 @@ WebCore::OriginKeyed BrowsingContextGroup::resolveAgentClusterKeying(const WebCo
     }).iterator->value;
 }
 
+WebCore::OriginKeyed BrowsingContextGroup::historicalAgentClusterKeying(const WebCore::SecurityOriginData& origin) const
+{
+    return m_historicalAgentClusterKeyMap.getOptional(origin).value_or(WebCore::OriginKeyed::No);
+}
+
+// https://html.spec.whatwg.org/multipage/webappapis.html#obtain-similar-origin-window-agent
+WebCore::AgentClusterIdentifier BrowsingContextGroup::agentClusterIdentifier(const WebCore::SecurityOriginData& origin, WebCore::OriginKeyed originKeyed, const std::optional<WebCore::SecurityOriginData>& crossOriginIsolationKey)
+{
+    // The second element is null for a site-keyed agent cluster and the third without a cross-origin isolation key.
+    std::tuple<WebCore::Site, WebCore::SecurityOriginData, WebCore::SecurityOriginData> key { WebCore::Site(origin), originKeyed == WebCore::OriginKeyed::Yes || crossOriginIsolationKey ? origin : WebCore::SecurityOriginData { }, crossOriginIsolationKey.value_or(WebCore::SecurityOriginData { }) };
+    return m_agentClusterIdentifiers.ensure(WTF::move(key), [] {
+        return WebCore::AgentClusterIdentifier::generate();
+    }).iterator->value;
+}
+
+AgentClusterRequest AgentClusterRequest::forNavigationAction(const URL& url, const URL& topLevelCreationURL, IsSubstituteData isSubstituteData)
+{
+    return { isSubstituteData == IsSubstituteData::Yes ? Source::SubstituteData : Source::NavigationAction, WebCore::SecurityOrigin::create(url)->data(), topLevelCreationURL };
+}
+
+AgentClusterRequest AgentClusterRequest::forNavigationResponse(const WebCore::ResourceResponse& response, const URL& topLevelCreationURL, const WebPreferences& preferences)
+{
+    Ref origin = WebCore::SecurityOrigin::create(response.url());
+    auto isSecureContext = origin->isPotentiallyTrustworthy() && WebCore::SecurityOrigin::create(topLevelCreationURL)->isPotentiallyTrustworthy() ? WebCore::IsSecureContext::Yes : WebCore::IsSecureContext::No;
+    AgentClusterRequest request { Source::NavigationResponse, origin->data(), topLevelCreationURL };
+    // The WebContent process only applies these policies to http(s) and blob: documents.
+    bool hasPolicyHeaders = response.url().protocolIsInHTTPFamilyOrBlob();
+    if (hasPolicyHeaders && preferences.documentIsolationPolicyEnabled() && preferences.siteIsolationEnabled())
+        request.documentIsolationPolicy = WebCore::obtainDocumentIsolationPolicy(response, isSecureContext);
+    if (preferences.originAgentClusterEnabled())
+        request.requestedKeying = hasPolicyHeaders ? WebCore::obtainOriginAgentClusterPolicy(response, isSecureContext, nullptr) : WebCore::OriginKeyed::No;
+    return request;
+}
+
+WebCore::AgentClusterAssignment BrowsingContextGroup::assignAgentCluster(const AgentClusterRequest& request)
+{
+    auto& origin = request.origin;
+    WebCore::AgentClusterAssignment assignment { std::nullopt, WebCore::OriginKeyed::No, request.documentIsolationPolicy };
+    // https://html.spec.whatwg.org/multipage/origin.html#origin-keyed-agent-clusters
+    // A document with a Document-Isolation-Policy is origin-keyed and does not use the historical agent cluster key map.
+    if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicy::None)
+        assignment.isOriginKeyed = WebCore::OriginKeyed::Yes;
+    else {
+        switch (request.source) {
+        case AgentClusterRequest::Source::NavigationAction:
+            assignment.isOriginKeyed = historicalAgentClusterKeying(origin);
+            break;
+        case AgentClusterRequest::Source::SubstituteData:
+            // Substitute data gets no response decision, so its keying is recorded right away.
+            if (!origin.isOpaque())
+                assignment.isOriginKeyed = resolveAgentClusterKeying(origin, WebCore::OriginKeyed::No);
+            break;
+        case AgentClusterRequest::Source::NavigationResponse:
+            if (request.requestedKeying)
+                assignment.isOriginKeyed = resolveAgentClusterKeying(origin, *request.requestedKeying);
+            break;
+        }
+    }
+
+    // FIXME: Assign opaque origins an agent cluster too. Their responses can then no longer skip the policy decision through the injected bundle.
+    // A blob URL created by an opaque origin belongs to its creator's agent cluster, which needs the blob URL entry rather than the URL.
+    if (origin.isOpaque())
+        return assignment;
+
+    // https://wicg.github.io/document-isolation-policy/#coi-agent-cluster-key
+    std::optional<WebCore::SecurityOriginData> crossOriginIsolationKey;
+    if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicy::None)
+        crossOriginIsolationKey = origin;
+    else if (m_crossOriginMode == WebCore::CrossOriginMode::Isolated)
+        crossOriginIsolationKey = WebCore::SecurityOriginData::fromURL(request.topLevelCreationURL);
+    assignment.identifier = agentClusterIdentifier(origin, assignment.isOriginKeyed, crossOriginIsolationKey);
+    return assignment;
+}
+
 void BrowsingContextGroup::clearBrowsingContextGroupForTesting()
 {
     m_identifier = WebCore::BrowsingContextGroupIdentifier::generate();
     m_historicalAgentClusterKeyMap.clear();
+    m_agentClusterIdentifiers.clear();
 }
 
 } // namespace WebKit

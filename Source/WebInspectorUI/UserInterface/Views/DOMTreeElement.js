@@ -1975,12 +1975,10 @@ WI.DOMTreeElement = class DOMTreeElement extends WI.TreeElement
         }
 
         var text = this.title.textContent;
-        var match = searchRegex.exec(text);
         var matchRanges = [];
-        while (match) {
+        WI.SearchUtilities.forEachMatch(searchRegex, text, (match) => {
             matchRanges.push({offset: match.index, length: match[0].length});
-            match = searchRegex.exec(text);
-        }
+        });
 
         // Fall back for XPath, etc. matches.
         if (!matchRanges.length)

@@ -69,6 +69,7 @@ PACKAGES=(
     libsystemd-dev
     libtasn1-6-dev
     libtool
+    libva-dev
     libvulkan-volk-dev
     libwayland-dev
     libwebp-dev

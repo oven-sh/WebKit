@@ -164,7 +164,7 @@ void Frame::detachFromPage()
 {
     if (isRootFrame()) {
         if (RefPtr page = m_page.get()) {
-            // WebPage::suspendWithFrameItem may have already removed this frame from
+            // CachedFrame construtor may have already removed this frame from
             // Page::rootFrames(), so there is no need to remove it again.
             if (page->rootFrames().contains(downcast<LocalFrame>(*this)))
                 page->removeRootFrame(downcast<LocalFrame>(*this));

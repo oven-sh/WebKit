@@ -26,6 +26,7 @@
 #import "config.h"
 #import "CoreIPCDDSecureActionContext.h"
 
+#import <wtf/Borrow.h>
 #import <pal/cocoa/DataDetectorsCoreSoftLink.h>
 #import <pal/mac/DataDetectorsSoftLink.h>
 
@@ -92,7 +93,8 @@ CoreIPCDDSecureActionContext::CoreIPCDDSecureActionContext(DDSecureActionContext
     if (auto *allResults = dynamic_objc_cast<NSArray>([dictionary.get() objectForKey:@"allResults"])) {
         Vector<RetainPtr<DDScannerResult>> result;
         result.reserveInitialCapacity(allResults.count);
-        for (id item in allResults) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id item in allResults) {
             if ([item isKindOfClass:PAL::getDDScannerResultClassSingleton()])
                 result.append((DDScannerResult *)item);
         };
@@ -102,7 +104,8 @@ CoreIPCDDSecureActionContext::CoreIPCDDSecureActionContext(DDSecureActionContext
     if (auto *groupAllResults = dynamic_objc_cast<NSArray>([dictionary.get() objectForKey:@"groupAllResults"])) {
         Vector<RetainPtr<DDScannerResult>> result;
         result.reserveInitialCapacity(groupAllResults.count);
-        for (id item in groupAllResults) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id item in groupAllResults) {
             if ([item isKindOfClass:PAL::getDDScannerResultClassSingleton()])
                 result.append((DDScannerResult *)item);
         };
@@ -169,12 +172,12 @@ RetainPtr<id> CoreIPCDDSecureActionContext::toID() const
         [dict setObject:m_data.matchedString.get() forKey:@"matchedString"];
     if (m_data.allResults) {
         RetainPtr arr = [NSMutableArray arrayWithCapacity:m_data.allResults->size()];
-        for (auto& element : *m_data.allResults)
+        for (auto& element : borrow(*m_data.allResults))
             [arr addObject:element.get()];
         [dict setObject:arr.get() forKey:@"allResults"];
     }
     RetainPtr grpArr = [NSMutableArray arrayWithCapacity:m_data.groupAllResults.size()];
-    for (auto& element : m_data.groupAllResults)
+    for (auto& element : borrow(m_data.groupAllResults))
         [grpArr addObject:element.get()];
     [dict setObject:grpArr.get() forKey:@"groupAllResults"];
     if (m_data.groupCategory)

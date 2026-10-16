@@ -71,9 +71,9 @@ public:
     WebCore::Color visitedLinkColorResolvingCurrentColor(const Style::Color&) const;
     WebCore::Color visitedLinkColorResolvingCurrentColorApplyingColorFilter(const Style::Color&) const;
 
-protected:
-    bool NODELETE visitedDependentShouldReturnUnvisitedLinkColor(OptionSet<PaintBehavior>) const;
+    bool LEGACY_NODELETE visitedDependentShouldReturnUnvisitedLinkColor(OptionSet<PaintBehavior>) const;
 
+protected:
     const CheckedRef<const ComputedStyleProperties> m_style;
 };
 
@@ -106,7 +106,7 @@ public:
 template<typename ColorTraits>
 WebCore::Color ColorPropertyResolver<ColorTraits>::colorResolvingCurrentColor() const
 {
-    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyColor>>>)
+    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Color>>>)
         return m_style->color();
     else if constexpr (ImplementsColorResolvingCurrentColor<ColorTraits>)
         return ColorTraits::colorResolvingCurrentColor(m_style);
@@ -126,7 +126,7 @@ template<typename ColorTraits>
 WebCore::Color ColorPropertyResolver<ColorTraits>::visitedLinkColorResolvingCurrentColor() const
     requires (ImplementsVisitedLinkColor<ColorTraits>)
 {
-    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyColor>>>)
+    if constexpr (std::same_as<ColorTraits, ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::Color>>>)
         return m_style->visitedLinkColor();
     else if constexpr (ImplementsVisitedLinkColorResolvingCurrentColor<ColorTraits>)
         return ColorTraits::visitedLinkColorResolvingCurrentColor(m_style);

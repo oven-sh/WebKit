@@ -43,16 +43,18 @@
 #include "api/payload_type.h"
 #include "api/rtc_error.h"
 #include "api/rtp_headers.h"
+#include "api/rtp_packet_infos.h"
 #include "api/rtp_parameters.h"
 #include "api/rtp_sender_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/sequence_checker.h"
 #include "api/task_queue/pending_task_safety_flag.h"
 #include "api/task_queue/task_queue_base.h"
-#include "api/transport/rtp/rtp_source.h"
+#include "api/units/timestamp.h"
 #include "call/audio_send_stream.h"
 #include "call/audio_state.h"
 #include "call/call.h"
+#include "call/sframe_options.h"
 #include "media/base/audio_source.h"
 #include "media/base/codec.h"
 #include "media/base/media_channel.h"
@@ -108,7 +110,10 @@ class WebRtcVoiceEngine final : public VoiceEngineInterface {
       Call* call,
       const MediaConfig& config,
       const AudioOptions& options,
-      const CryptoOptions& crypto_options) override;
+      const CryptoOptions& crypto_options,
+      absl::AnyInvocable<void(uint32_t ssrc)> on_first_packet,
+      absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp)
+                             const> on_frame_delivered_callback) override;
 
   const std::vector<Codec>& LegacySendCodecs() const override;
   const std::vector<Codec>& LegacyRecvCodecs() const override;
@@ -240,6 +245,8 @@ class WebRtcVoiceSendChannel final : public MediaChannelUtil,
       uint32_t ssrc,
       scoped_refptr<FrameEncryptorInterface> frame_encryptor) override;
 
+  void EnableSframe() override;
+
   bool CanInsertDtmf() override;
   bool InsertDtmf(uint32_t ssrc, int event, int duration) override;
 
@@ -259,6 +266,10 @@ class WebRtcVoiceSendChannel final : public MediaChannelUtil,
 
   bool SenderNackEnabled() const override;
   bool SenderNonSenderRttEnabled() const override;
+  bool SetEncoderFactoryOverride(
+      uint32_t ssrc,
+      absl_nonnull scoped_refptr<AudioEncoderFactory> encoder_factory) override;
+  void ResetEncoderFactoryOverride(uint32_t ssrc) override;
 
  private:
   bool SetOptions(const AudioOptions& options);
@@ -304,6 +315,7 @@ class WebRtcVoiceSendChannel final : public MediaChannelUtil,
   // Per peer connection crypto options that last for the lifetime of the peer
   // connection.
   const CryptoOptions crypto_options_;
+  SframeSendOptions sframe_options_ RTC_GUARDED_BY(worker_thread_);
 
   // Callback invoked whenever the list of SSRCs changes.
   absl::AnyInvocable<void(const std::set<uint32_t>&)>
@@ -317,12 +329,16 @@ class WebRtcVoiceReceiveChannel final
     : public MediaChannelUtil,
       public VoiceMediaReceiveChannelInterface {
  public:
-  WebRtcVoiceReceiveChannel(const Environment& env,
-                            WebRtcVoiceEngine* absl_nonnull engine,
-                            const MediaConfig& config,
-                            const AudioOptions& options,
-                            const CryptoOptions& crypto_options,
-                            Call* absl_nonnull call);
+  WebRtcVoiceReceiveChannel(
+      const Environment& env,
+      WebRtcVoiceEngine* absl_nonnull engine,
+      const MediaConfig& config,
+      const AudioOptions& options,
+      const CryptoOptions& crypto_options,
+      Call* absl_nonnull call,
+      absl::AnyInvocable<void(uint32_t ssrc)> on_first_packet,
+      absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp)
+                             const> on_frame_delivered_callback);
 
   WebRtcVoiceReceiveChannel() = delete;
   WebRtcVoiceReceiveChannel(const WebRtcVoiceReceiveChannel&) = delete;
@@ -372,6 +388,8 @@ class WebRtcVoiceReceiveChannel final
       uint32_t ssrc,
       scoped_refptr<FrameDecryptorInterface> frame_decryptor) override;
 
+  void EnableSframe() override;
+
   bool SetOutputVolume(uint32_t ssrc, double volume) override;
   // Applies the new volume to current and future unsignaled streams.
   bool SetDefaultOutputVolume(double volume) override;
@@ -392,8 +410,6 @@ class WebRtcVoiceReceiveChannel final
   // current. Only one stream at a time will use the sink.
   void SetDefaultRawAudioSink(
       std::unique_ptr<AudioSinkInterface> sink) override;
-
-  std::vector<RtpSource> GetSources(uint32_t ssrc) const override;
 
   void SetDepacketizerToDecoderFrameTransformer(
       uint32_t ssrc,
@@ -469,11 +485,20 @@ class WebRtcVoiceReceiveChannel final
   // Per peer connection crypto options that last for the lifetime of the peer
   // connection.
   const CryptoOptions crypto_options_;
+  SframeReceiveOptions sframe_options_ RTC_GUARDED_BY(worker_thread_);
   // Unsignaled streams have an option to have a frame decryptor set on them.
   scoped_refptr<FrameDecryptorInterface> unsignaled_frame_decryptor_
       RTC_GUARDED_BY(worker_thread_);
   scoped_refptr<FrameTransformerInterface> unsignaled_frame_transformer_
       RTC_GUARDED_BY(worker_thread_);
+
+  // Channel-level callback invoked when a receive stream on this channel
+  // receives its first packet.
+  absl::AnyInvocable<void(uint32_t ssrc)> on_first_packet_
+      RTC_GUARDED_BY(worker_thread_);
+  const absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp)
+                               const>
+      on_frame_delivered_callback_;
 };
 
 }  //  namespace webrtc

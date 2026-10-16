@@ -53,6 +53,7 @@
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <WebCore/FontCustomPlatformData.h>
 #include <WebCore/PixelFormat.h>
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/TextStream.h>
 
@@ -536,8 +537,7 @@ void RemoteRenderingBackendProxy::releaseFont(RenderingResourceIdentifier identi
 
 void RemoteRenderingBackendProxy::cacheFontCustomPlatformData(Ref<const FontCustomPlatformData>&& customPlatformData)
 {
-    Ref<FontCustomPlatformData> data = adoptRef(const_cast<FontCustomPlatformData&>(customPlatformData.leakRef()));
-    send(Messages::RemoteRenderingBackend::CacheFontCustomPlatformData(data->serializedData()));
+    send(Messages::RemoteRenderingBackend::CacheFontCustomPlatformData(customPlatformData->serializedData()));
 }
 
 void RemoteRenderingBackendProxy::releaseFontCustomPlatformData(RenderingResourceIdentifier identifier)
@@ -609,18 +609,20 @@ void RemoteRenderingBackendProxy::endPreparingImageBufferSetsForDisplay()
     bool needsSync = false;
 
     auto inputData = WTF::map(m_bufferSetsToPrepare, [&](auto& perLayerData) {
+        Ref bufferSet = perLayerData.bufferSet;
+
         // If the front buffer might be volatile, then we have to wait for the callback
         // to find out we were able to copy pixels from it or if it had been discarded.
-        if (perLayerData.bufferSet->requestedVolatility().contains(BufferInSetType::Front))
+        if (bufferSet->requestedVolatility().contains(BufferInSetType::Front))
             needsSync = true;
 
         // Using the  will mark buffers as non-volatile and
         // we don't know exactly which. Assume they all are non-volatile.
-        perLayerData.bufferSet->clearVolatility();
-        perLayerData.bufferSet->willPrepareForDisplay();
+        bufferSet->clearVolatility();
+        bufferSet->willPrepareForDisplay();
 
         return ImageBufferSetPrepareBufferForDisplayInputData {
-            perLayerData.bufferSet->identifier(),
+            bufferSet->identifier(),
             perLayerData.dirtyRegion,
             perLayerData.supportsPartialRepaint,
             perLayerData.hasEmptyDirtyRegion,
@@ -633,7 +635,7 @@ void RemoteRenderingBackendProxy::endPreparingImageBufferSetsForDisplay()
     if (needsSync) {
         auto sendResult = sendSync(Messages::RemoteRenderingBackend::PrepareImageBufferSetsForDisplaySync(inputData));
         if (!sendResult.succeeded()) {
-            for (auto& bufferSetToPrepare : m_bufferSetsToPrepare)
+            for (auto& bufferSetToPrepare : borrow(m_bufferSetsToPrepare))
                 Ref { bufferSetToPrepare.bufferSet }->setNeedsDisplay();
         } else {
             auto [result] = sendResult.takeReply();
@@ -659,7 +661,7 @@ void RemoteRenderingBackendProxy::prepareImageBufferSetForDisplay(LayerPrepareBu
 void RemoteRenderingBackendProxy::markSurfacesVolatile(Vector<std::pair<Ref<RemoteImageBufferSetProxy>, OptionSet<BufferInSetType>>>&& bufferSets, CompletionHandler<void(bool)>&& completionHandler, bool forcePurge)
 {
     Vector<std::pair<ImageBufferSetIdentifier, OptionSet<BufferInSetType>>> identifiers;
-    for (auto& pair : bufferSets) {
+    for (auto& pair : borrow(bufferSets)) {
         identifiers.append(std::make_pair(pair.first->identifier(), pair.second));
         pair.first->addRequestedVolatility(pair.second);
     }
@@ -677,7 +679,7 @@ void RemoteRenderingBackendProxy::didMarkLayersAsVolatile(MarkSurfacesAsVolatile
     if (!completionHandler)
         return;
 
-    for (auto& bufferSetIdentifierAndType : markedBufferSets) {
+    for (auto& bufferSetIdentifierAndType : borrow(markedBufferSets)) {
         RefPtr bufferSet = m_imageBufferSets.get(bufferSetIdentifierAndType.first).get();
         if (!bufferSet)
             continue;

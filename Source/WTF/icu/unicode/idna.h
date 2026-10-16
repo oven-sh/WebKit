@@ -17,6 +17,9 @@
 #ifndef __IDNA_H__
 #define __IDNA_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: Internationalizing Domain Names in Applications (IDNA)

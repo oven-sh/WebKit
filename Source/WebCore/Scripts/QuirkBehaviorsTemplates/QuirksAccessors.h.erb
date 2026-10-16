@@ -47,14 +47,14 @@ public:
     <%= behavior.declaration %>
 <%- end -%>
 
-    WEBCORE_EXPORT static bool elementMatchesSelectorCondition(ASCIILiteral selector, const Node*);
-    WEBCORE_EXPORT static RefPtr<Element> firstElementMatchingSelectorCondition(ASCIILiteral selector, Document&);
+    WEBCORE_EXPORT static bool elementMatchesSelectorCondition(const String& selector, const Node*);
+    WEBCORE_EXPORT static RefPtr<Element> firstElementMatchingSelectorCondition(const String& selector, Document&);
 
 protected:
     explicit QuirksAccessors(Document&);
     ~QuirksAccessors();
 
-    bool needsQuirks() const;
+    bool LEGACY_NODELETE needsQuirks() const;
     bool behaviorAppliesToNode(QuirkBehaviorID, const Node*) const;
     bool behaviorAppliesToDocument(QuirkBehaviorID) const;
     RefPtr<Element> elementMatchingDocumentSelectorCondition(QuirkBehaviorID) const;

@@ -447,7 +447,7 @@ angle::Result TextureGL::setImageViaScratchUnpackBuffer(const gl::Context *conte
 
     GLuint scratch = 0;
     functions->genBuffers(1, &scratch);
-    stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, scratch);
+    stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, scratch, context->isHardenedContext());
     // Regardless of whether the user supplied data (pixels != nullptr), the pixel unpack buffer
     // must be allocated with the expected amount of data.
     if (uploadBytes > 0)
@@ -467,6 +467,8 @@ angle::Result TextureGL::setImageViaScratchUnpackBuffer(const gl::Context *conte
 
     if (isCompressed)
     {
+        ANGLE_TRY(resetBaseLevelForASTC(context, internalFormat));
+
         const gl::InternalFormat &originalInternalFormatInfo =
             gl::GetSizedInternalFormatInfo(internalFormat);
         nativegl::CompressedTexImageFormat compressedTexImageFormat =
@@ -501,7 +503,7 @@ angle::Result TextureGL::setImageViaScratchUnpackBuffer(const gl::Context *conte
         setLevelInfo(context, target, level, 1, levelInfo);
     }
 
-    stateManager->deleteBuffer(scratch);
+    stateManager->deleteBuffer(scratch, 0, context->isHardenedContext());
 
     contextGL->markWorkSubmitted();
     return angle::Result::Continue;
@@ -888,11 +890,7 @@ angle::Result TextureGL::setCompressedImage(const gl::Context *context,
     stateManager->bindTexture(getType(), mTextureID);
     ANGLE_TRY(stateManager->setPixelUnpackState(context, unpack));
 
-    const bool isASTC = gl::IsASTC2DFormat(internalFormat) || gl::IsASTC3DFormat(internalFormat);
-    if (features.resetBaseLevelForASTCImage.enabled && isASTC)
-    {
-        ANGLE_TRY(setBaseLevel(context, 0));
-    }
+    ANGLE_TRY(resetBaseLevelForASTC(context, internalFormat));
 
     if (nativegl::UseTexImage2D(getType()))
     {
@@ -947,11 +945,7 @@ angle::Result TextureGL::setCompressedSubImage(const gl::Context *context,
     stateManager->bindTexture(getType(), mTextureID);
     ANGLE_TRY(stateManager->setPixelUnpackState(context, unpack));
 
-    const bool isASTC = gl::IsASTC2DFormat(format) || gl::IsASTC3DFormat(format);
-    if (features.resetBaseLevelForASTCImage.enabled && isASTC)
-    {
-        ANGLE_TRY(setBaseLevel(context, 0));
-    }
+    ANGLE_TRY(resetBaseLevelForASTC(context, format));
 
     if (nativegl::UseTexImage2D(getType()))
     {
@@ -1547,13 +1541,16 @@ angle::Result TextureGL::setStorage(const gl::Context *context,
         else
         {
             // Make sure no pixel unpack buffer is bound
-            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0);
+            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0,
+                                     context->isHardenedContext());
 
             const gl::InternalFormat &internalFormatInfo =
                 gl::GetSizedInternalFormatInfo(internalFormat);
 
             // Internal format must be sized
             ASSERT(internalFormatInfo.sized);
+
+            ANGLE_TRY(resetBaseLevelForASTC(context, internalFormat));
 
             for (size_t level = 0; level < levels; level++)
             {
@@ -1664,10 +1661,13 @@ angle::Result TextureGL::setStorage(const gl::Context *context,
         else
         {
             // Make sure no pixel unpack buffer is bound
-            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0);
+            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0,
+                                     context->isHardenedContext());
 
             // Internal format must be sized
             ASSERT(internalFormatInfo.sized);
+
+            ANGLE_TRY(resetBaseLevelForASTC(context, internalFormat));
 
             for (GLsizei i = 0; i < static_cast<GLsizei>(levels); i++)
             {
@@ -1950,7 +1950,8 @@ angle::Result TextureGL::allocateMipmapLevelsForGeneration(const gl::Context *co
         if (levelDesc.size != levelSize || *levelDesc.format.info != baseLevelInternalFormat)
         {
             // Make sure no pixel unpack buffer is bound
-            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0);
+            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0,
+                                     context->isHardenedContext());
 
             switch (getType())
             {
@@ -2419,6 +2420,18 @@ angle::Result TextureGL::setBaseLevel(const gl::Context *context, GLuint baseLev
     return angle::Result::Continue;
 }
 
+angle::Result TextureGL::resetBaseLevelForASTC(const gl::Context *context, GLenum format)
+{
+    // https://crbug.com/562857750
+    const angle::FeaturesGL &features = GetFeaturesGL(context);
+    if (features.resetBaseLevelForASTCImage.enabled &&
+        (gl::IsASTC2DFormat(format) || gl::IsASTC3DFormat(format)))
+    {
+        ANGLE_TRY(setBaseLevel(context, 0));
+    }
+    return angle::Result::Continue;
+}
+
 angle::Result TextureGL::setMaxLevel(const gl::Context *context, GLuint maxLevel)
 {
     const GLuint maxLevelLimit   = GetMaxMipmapLevel(context->getCaps(), getType());
@@ -2694,6 +2707,12 @@ angle::Result TextureGL::useTempForNonZeroBaseLevelGenmipmap(const gl::Context *
 
     ANGLE_TRY(
         copyLevelsBetweenTextures(context, mTextureID, effectiveBaseLevel, tempTextureID, 0, 1));
+
+    if (features.flushBeforeGenerateMipmap.enabled)
+    {
+        // Force a flush before generating the mipmap, which avoids bad states in the IMG driver.
+        ANGLE_GL_TRY(context, stateManager->forcefullyFlush());
+    }
 
     ANGLE_GL_TRY_ALWAYS_CHECK(context, functions->generateMipmap(GL_TEXTURE_2D));
 
@@ -3021,11 +3040,13 @@ angle::Result TextureGL::initializeContentsImpl(const gl::Context *context,
     ANGLE_TRY(stateManager->setPixelUnpackState(context, unpackState));
 
     GLuint prevUnpackBuffer = stateManager->getBufferID(gl::BufferBinding::PixelUnpack);
-    stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0);
+    stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, 0, context->isHardenedContext());
 
     stateManager->bindTexture(getType(), mTextureID);
     if (internalFormatInfo.compressed)
     {
+        ANGLE_TRY(resetBaseLevelForASTC(context, internalFormatInfo.internalFormat));
+
         nativegl::CompressedTexSubImageFormat nativeSubImageFormat =
             nativegl::GetCompressedSubTexImageFormat(functions, features,
                                                      internalFormatInfo.internalFormat);
@@ -3094,7 +3115,8 @@ angle::Result TextureGL::initializeContentsImpl(const gl::Context *context,
         angle::Span<const uint8_t> uploadSpan;
         if (usePBO)
         {
-            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, pboId);
+            stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, pboId,
+                                     context->isHardenedContext());
         }
         else
         {
@@ -3136,7 +3158,8 @@ angle::Result TextureGL::initializeContentsImpl(const gl::Context *context,
     // glTexImage call, we need to make sure that the texture data to be uploaded later has the
     // expected unpack state.
     ANGLE_TRY(stateManager->setPixelUnpackState(context, context->getState().getUnpackState()));
-    stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, prevUnpackBuffer);
+    stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, prevUnpackBuffer,
+                             context->isHardenedContext());
 
     contextGL->markWorkSubmitted();
     return angle::Result::Continue;

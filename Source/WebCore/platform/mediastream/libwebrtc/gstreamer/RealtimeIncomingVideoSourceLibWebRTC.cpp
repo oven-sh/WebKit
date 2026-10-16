@@ -73,7 +73,7 @@ void RealtimeIncomingVideoSourceLibWebRTC::OnFrame(const webrtc::VideoFrame& fra
         return;
 
 #if GST_CHECK_VERSION(1, 22, 0)
-    GST_TRACE_ID(persistentID().utf8().legacyCStringPointer(), "Handling incoming video frame");
+    GST_TRACE_ID(persistentID().utf8(), "Handling incoming video frame");
 #else
     GST_TRACE("Handling incoming video frame");
 #endif

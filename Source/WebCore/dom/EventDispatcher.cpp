@@ -77,14 +77,17 @@ static void callDefaultEventHandlersInBubblingOrder(Event& event, const EventPat
 
     size_t size = path.size();
     for (size_t i = 1; i < size; ++i) {
-        Ref currentNode { *path.contextAt(i).node() };
+        auto& eventContext = path.contextAt(i);
+        if (eventContext.isWindowContext())
+            continue;
+        Ref currentNode { *eventContext.node() };
         currentNode->defaultEventHandler(event);
         if (event.defaultPrevented() || event.defaultHandled())
             return;
     }
 }
 
-static bool NODELETE isInShadowTree(EventTarget* target)
+static bool LEGACY_NODELETE isInShadowTree(EventTarget* target)
 {
     auto* node = dynamicDowncast<Node>(target);
     return node && node->isInShadowTree();

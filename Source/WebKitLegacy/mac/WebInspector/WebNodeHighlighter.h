@@ -34,7 +34,7 @@
 
 @interface WebNodeHighlighter : NSObject {
 @private
-    WebView *_inspectedWebView;
+    __weak WebView *_inspectedWebView;
     RetainPtr<WebNodeHighlight> _currentHighlight;
 }
 - (id)initWithInspectedWebView:(WebView *)webView;

@@ -105,6 +105,7 @@ void InjectedBundle::initialize(WKBundleRef bundle, WKTypeRef initializationUser
     };
     WKBundleSetClient(m_bundle.get(), &client.base);
     WKBundleSetServiceWorkerProxyCreationCallback(m_bundle.get(), WebCoreTestSupport::setupNewlyCreatedServiceWorker);
+    WebCoreTestSupport::setupWorkerInternals();
     platformInitialize(initializationUserData);
     WebCoreTestSupport::populateJITOperations();
 
@@ -317,6 +318,15 @@ void InjectedBundle::didReceiveMessageToPage(WKBundlePageRef page, WKStringRef m
 
         return;
     }
+
+#if PLATFORM(MAC)
+    if (WKStringIsEqualToUTF8CString(messageName, "AXClientNotification")) {
+        auto messageBodyDictionary = dictionaryValue(messageBody);
+        if (m_accessibilityController)
+            m_accessibilityController->clientNotificationReceived(uint64Value(messageBodyDictionary, "elementToken"), toJS(stringValue(messageBodyDictionary, "notificationName")).get());
+        return;
+    }
+#endif
 
     postPageMessage("Error", "Unknown");
 }

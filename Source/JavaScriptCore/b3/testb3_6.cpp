@@ -1127,7 +1127,7 @@ void testCheckSelectWithUpsilonBeforeCheck()
     CHECK_EQ(invoke<intptr_t>(*code, false), 666);
 }
 
-double NODELETE b3Pow(double x, int y)
+double LEGACY_NODELETE b3Pow(double x, int y)
 {
     if (y < 0 || y > 1000)
         return pow(x, y);
@@ -2806,6 +2806,32 @@ void testPatchpointTerminalReturnValue(bool successIsRare)
     CHECK_EQ(invoke<int>(*code, 42), 73);
     CHECK_EQ(invoke<int>(*code, 43), 666);
     CHECK_EQ(invoke<int>(*code, -1), 666);
+}
+
+void testPrologueGeneratorLatePath()
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Const32Value>(proc, Origin(), 1));
+
+    Ref<Air::PrologueGenerator> defaultPrologue = proc.code().prologueGeneratorForEntrypoint(0);
+    proc.code().setPrologueForEntrypoint(0, createSharedTask<Air::PrologueGeneratorFunction>(
+        [=](CCallHelpers& jit, Air::Code& code, Air::GenerationContext& context) {
+            defaultPrologue->run(jit, code, context);
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            auto slowPath = jit.branch32(CCallHelpers::Equal, GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(42));
+            context.addLatePath(Origin(), [=](CCallHelpers& jit) {
+                slowPath.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(666), GPRInfo::returnValueGPR);
+                // Callee saves were stored but not modified, so there is nothing to restore.
+                jit.emitFunctionEpilogue();
+                jit.ret();
+            });
+        }));
+
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int>(*code, 0), 1);
+    CHECK_EQ(invoke<int>(*code, 42), 666);
 }
 
 void testMemoryFence()

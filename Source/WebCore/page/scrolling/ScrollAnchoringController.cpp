@@ -63,7 +63,7 @@ ScrollAnchoringController::~ScrollAnchoringController()
     invalidate();
 }
 
-static bool NODELETE hasScrolledFromOriginInBlockDirection(ScrollPosition scrollPosition, WritingMode writingMode)
+static bool LEGACY_NODELETE hasScrolledFromOriginInBlockDirection(ScrollPosition scrollPosition, WritingMode writingMode)
 {
     if (writingMode.isVertical())
         return !!scrollPosition.x();
@@ -71,7 +71,7 @@ static bool NODELETE hasScrolledFromOriginInBlockDirection(ScrollPosition scroll
     return !!scrollPosition.y();
 }
 
-static IntSize NODELETE constrainedToBlockDirection(IntSize scrollDelta, WritingMode writingMode)
+static IntSize LEGACY_NODELETE constrainedToBlockDirection(IntSize scrollDelta, WritingMode writingMode)
 {
     if (writingMode.isVertical())
         return { scrollDelta.width(), 0 };
@@ -79,7 +79,7 @@ static IntSize NODELETE constrainedToBlockDirection(IntSize scrollDelta, Writing
     return { 0, scrollDelta.height() };
 }
 
-static FloatPoint NODELETE inlineAndBlockStartCorner(FloatRect box, WritingMode writingMode)
+static FloatPoint LEGACY_NODELETE inlineAndBlockStartCorner(FloatRect box, WritingMode writingMode)
 {
     switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
@@ -144,7 +144,7 @@ void ScrollAnchoringController::updateScrollableAreaRegistration()
 
 LocalFrameView& ScrollAnchoringController::frameView() const
 {
-    if (auto* renderLayerScrollableArea = dynamicDowncast<RenderLayerScrollableArea>(m_owningScrollableArea.get()))
+    if (auto* renderLayerScrollableArea = dynamicDowncast<RenderLayerScrollableArea>(m_owningScrollableArea))
         return renderLayerScrollableArea->layer().renderer().view().frameView();
 
     return downcast<LocalFrameView>(downcast<ScrollView>(m_owningScrollableArea));
@@ -152,10 +152,10 @@ LocalFrameView& ScrollAnchoringController::frameView() const
 
 RenderBox* ScrollAnchoringController::scrollableAreaBox() const
 {
-    if (auto* renderLayerScrollableArea = dynamicDowncast<RenderLayerScrollableArea>(m_owningScrollableArea.get()))
+    if (auto* renderLayerScrollableArea = dynamicDowncast<RenderLayerScrollableArea>(m_owningScrollableArea))
         return renderLayerScrollableArea->layer().renderBox();
 
-    if (auto* frameView = dynamicDowncast<LocalFrameView>(downcast<ScrollView>(m_owningScrollableArea.get())))
+    if (auto* frameView = dynamicDowncast<LocalFrameView>(downcast<ScrollView>(m_owningScrollableArea)))
         return frameView->renderView();
 
     return nullptr;
@@ -234,7 +234,7 @@ auto ScrollAnchoringController::computeScrollerRelativeRects(RenderObject& candi
     LOG_WITH_STREAM(ScrollAnchoring, stream << "computeScrollerRelativeRects - candidate " << candidate << " localAnchoringRect " << localAnchoringRect);
 
     if (scrollerBox->isRenderView()) {
-        RefPtr frameView = dynamicDowncast<LocalFrameView>(downcast<ScrollView>(m_owningScrollableArea.get()));
+        RefPtr frameView = dynamicDowncast<LocalFrameView>(downcast<ScrollView>(m_owningScrollableArea));
         if (!frameView)
             return { };
 
@@ -370,7 +370,7 @@ AnchorSearchStatus ScrollAnchoringController::examinePriorityCandidate(RenderEle
     return examineAnchorCandidate(*ancestor);
 }
 
-static bool NODELETE overflowAnchorProhibitsAnchoring(const RenderElement& object, const RenderBox& scrollingAncestor)
+static bool LEGACY_NODELETE overflowAnchorProhibitsAnchoring(const RenderElement& object, const RenderBox& scrollingAncestor)
 {
     for (auto* renderer = &object; renderer; renderer = renderer->parent()) {
         if (renderer->style().overflowAnchor() == OverflowAnchor::None)

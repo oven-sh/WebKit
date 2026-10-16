@@ -70,6 +70,7 @@ public:
     void relayAccessibilityNotification(String&&, RetainPtr<NSData>&&) const final;
     void relayAriaNotifyNotification(WebCore::AriaNotifyData&&) const final;
     void relayLiveRegionNotification(WebCore::LiveRegionAnnouncementData&&) const final;
+    void didDisplayCaptions(Vector<String>&&) const final;
 #endif
 
 private:
@@ -293,6 +294,9 @@ private:
     RefPtr<WebCore::PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const WebCore::RemotePlaceholderRenderingContextIdentifier&) final;
     void offscreenCanvasPlaceholderLayerChanged(WebCore::PlaceholderRenderingContextIdentifier, std::optional<WebCore::PlatformLayerIdentifier>) final;
 #endif
+#if HAVE(IOSURFACE)
+    RefPtr<NativePromise<Ref<WebCore::NativeImage>, void>> createDisplayOnlyImage(WebCore::FrameIdentifier, const WebCore::FloatSize&, float scale, const WebCore::ColorSpace&, NOESCAPE const Function<void(WebCore::GraphicsContext&)>& paint) final;
+#endif
 #endif
     std::unique_ptr<WebCore::WorkerClient> createWorkerClient(SerialFunctionDispatcher&) final;
 
@@ -368,13 +372,22 @@ private:
     void exitFullScreenForElement(WebCore::Element*, CompletionHandler<void()>&&) final;
 #endif // ENABLE(FULLSCREEN_API)
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
     void elementDidFocus(WebCore::Element&, const WebCore::FocusOptions&) final;
     void elementDidBlur(WebCore::Element&) final;
     void elementDidRefocus(WebCore::Element&, const WebCore::FocusOptions&) final;
     void focusedElementDidChangeInputMode(WebCore::Element&, WebCore::InputMode) final;
-    void focusedSelectElementDidChangeOptions(const WebCore::HTMLSelectElement&) final;
+#endif
 
+#if PLATFORM(IOS_FAMILY)
+    void focusedSelectElementDidChangeOptions(const WebCore::HTMLSelectElement&) final;
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    void focusedElementDidChangeReadOnly(WebCore::Element&) final;
+#endif
+
+#if PLATFORM(COCOA)
     bool hasStablePageScaleFactor() const final;
 
     void makeFirstResponder() final;

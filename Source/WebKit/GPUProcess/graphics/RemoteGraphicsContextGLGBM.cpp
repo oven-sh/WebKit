@@ -29,6 +29,7 @@
 
 #if ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && USE(GBM)
 
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -44,7 +45,9 @@ public:
 private:
     void platformWorkQueueInitialize(WebCore::GraphicsContextGLAttributes&&) final;
     void didRunOutOfMessages() final;
-    void prepareForDisplay(CompletionHandler<void(uint64_t, std::optional<WebCore::DMABufBuffer::Attributes>&&, UnixFileDescriptor&&)>&&) final;
+    void prepareForDisplay(Vector<uint64_t>&&, CompletionHandler<void(uint64_t, std::optional<WebCore::DMABufBuffer::Attributes>&&, UnixFileDescriptor&&, Vector<uint64_t>&&)>&&) final;
+
+    HashSet<Ref<WebCore::DMABufBuffer>> m_inUseBuffers WTF_GUARDED_BY_CAPABILITY(workQueue());
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteGraphicsContextGLGBM);
@@ -66,9 +69,13 @@ void RemoteGraphicsContextGLGBM::platformWorkQueueInitialize(WebCore::GraphicsCo
     m_context = WebCore::GraphicsContextGLGBM::create(WTF::move(attributes));
 }
 
-void RemoteGraphicsContextGLGBM::prepareForDisplay(CompletionHandler<void(uint64_t, std::optional<WebCore::DMABufBuffer::Attributes>&&, UnixFileDescriptor&&)>&& completionHandler)
+void RemoteGraphicsContextGLGBM::prepareForDisplay(Vector<uint64_t>&& inUseBuffers, CompletionHandler<void(uint64_t, std::optional<WebCore::DMABufBuffer::Attributes>&&, UnixFileDescriptor&&, Vector<uint64_t>&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
+
+    m_inUseBuffers.removeIf([&](const auto& buffer) {
+        return !inUseBuffers.contains(buffer->id());
+    });
 
     UnixFileDescriptor fenceFD;
     m_context->prepareForDisplayWithFinishedSignal([this, &fenceFD] {
@@ -78,13 +85,15 @@ void RemoteGraphicsContextGLGBM::prepareForDisplay(CompletionHandler<void(uint64
             m_context->flush();
     });
 
-    auto* buffer = m_context->displayBuffer();
-    if (!buffer) {
-        completionHandler(0, std::nullopt, { });
+    RefPtr dmabuf = m_context->displayBufferDMABuf();
+    if (!dmabuf) {
+        completionHandler(0, std::nullopt, { }, m_context->drawingBufferIDs());
         return;
     }
 
-    completionHandler(buffer->id(), buffer->takeAttributes(), WTF::move(fenceFD));
+    m_inUseBuffers.add(Ref { *dmabuf });
+
+    completionHandler(dmabuf->id(), dmabuf->takeAttributes(), WTF::move(fenceFD), m_context->drawingBufferIDs());
 }
 
 Ref<RemoteGraphicsContextGL> RemoteGraphicsContextGL::create(GPUConnectionToWebProcess& connection, WebCore::GraphicsContextGLAttributes&& attributes, RemoteGraphicsContextGLIdentifier identifier, RemoteRenderingBackend& renderingBackend, Ref<IPC::StreamServerConnection>&& streamConnection)

@@ -61,39 +61,39 @@ void HTMLTablePartElement::collectPresentationalHintsForAttribute(const Qualifie
 {
     switch (name.nodeName()) {
     case AttributeNames::bgcolorAttr:
-        addHTMLColorToStyle(style, CSSPropertyBackgroundColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::BackgroundColor, value);
         break;
     case AttributeNames::backgroundAttr:
         if (!StringView(value).containsOnly<isASCIIWhitespace<char16_t>>())
-            style.setProperty(CSSProperty(CSSPropertyBackgroundImage, CSSImageValue::create(protect(document())->encodingParseURL(value))));
+            style.setProperty(CSSProperty(CSSPropertyID::BackgroundImage, CSSImageValue::create(protect(document())->encodingParseURL(value))));
         break;
     case AttributeNames::valignAttr:
         if (equalLettersIgnoringASCIICase(value, "top"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyVerticalAlign, CSSValueTop);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::VerticalAlign, CSSValueID::Top);
         else if (equalLettersIgnoringASCIICase(value, "middle"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyVerticalAlign, CSSValueMiddle);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::VerticalAlign, CSSValueID::Middle);
         else if (equalLettersIgnoringASCIICase(value, "bottom"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyVerticalAlign, CSSValueBottom);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::VerticalAlign, CSSValueID::Bottom);
         else if (equalLettersIgnoringASCIICase(value, "baseline"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyVerticalAlign, CSSValueBaseline);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::VerticalAlign, CSSValueID::Baseline);
         else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyVerticalAlign, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::VerticalAlign, value);
         break;
     case AttributeNames::alignAttr:
         if (equalLettersIgnoringASCIICase(value, "middle"_s) || equalLettersIgnoringASCIICase(value, "center"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, CSSValueWebkitCenter);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, CSSValueID::WebkitCenter);
         else if (equalLettersIgnoringASCIICase(value, "absmiddle"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, CSSValueCenter);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, CSSValueID::Center);
         else if (equalLettersIgnoringASCIICase(value, "left"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, CSSValueWebkitLeft);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, CSSValueID::WebkitLeft);
         else if (equalLettersIgnoringASCIICase(value, "right"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, CSSValueWebkitRight);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, CSSValueID::WebkitRight);
         else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, value);
         break;
     case AttributeNames::heightAttr:
         if (!value.isEmpty())
-            addHTMLLengthToStyle(style, CSSPropertyHeight, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::Height, value);
         break;
     default:
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);

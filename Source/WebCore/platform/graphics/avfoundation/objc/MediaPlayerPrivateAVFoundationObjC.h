@@ -101,11 +101,11 @@ public:
 #endif
 
     void playerItemStatusDidChange(int);
-    void NODELETE playbackLikelyToKeepUpWillChange();
+    void LEGACY_NODELETE playbackLikelyToKeepUpWillChange();
     void playbackLikelyToKeepUpDidChange(bool);
-    void NODELETE playbackBufferEmptyWillChange();
+    void LEGACY_NODELETE playbackBufferEmptyWillChange();
     void playbackBufferEmptyDidChange(bool);
-    void NODELETE playbackBufferFullWillChange();
+    void LEGACY_NODELETE playbackBufferFullWillChange();
     void playbackBufferFullDidChange(bool);
     void loadedTimeRangesDidChange(RetainPtr<NSArray>&&);
     void seekableTimeRangesDidChange(RetainPtr<NSArray>&&, NSTimeInterval, NSTimeInterval);
@@ -120,8 +120,8 @@ public:
     void metadataDidArrive(const RetainPtr<NSArray>&, const MediaTime&);
     void firstFrameAvailableDidChange(bool);
     void trackEnabledDidChange(bool);
-    void NODELETE canPlayFastReverseDidChange(bool);
-    void NODELETE canPlayFastForwardDidChange(bool);
+    void LEGACY_NODELETE canPlayFastReverseDidChange(bool);
+    void LEGACY_NODELETE canPlayFastForwardDidChange(bool);
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     void playbackTargetIsWirelessDidChange();
@@ -177,7 +177,7 @@ private:
     void setMuted(bool) final;
     void paint(GraphicsContext&, const FloatRect&) final;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) final;
-    PlatformLayer* platformLayer() const final;
+    PlatformLayer* platformLayer() final;
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     RetainPtr<PlatformLayer> createVideoFullscreenLayer() final;
     void setVideoFullscreenLayer(PlatformLayer*, Function<void()>&& completionHandler) final;
@@ -240,6 +240,7 @@ private:
 
     bool hasContextRenderer() const final;
     bool hasLayerRenderer() const final;
+    bool hasVideoInlineLayer() const final;
 
 
     enum class ShouldAnimate : bool { No, Yes };

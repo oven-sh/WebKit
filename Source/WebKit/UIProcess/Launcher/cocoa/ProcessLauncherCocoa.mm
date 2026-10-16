@@ -366,7 +366,7 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
         LOG_WITH_STREAM(Language, stream << "Process Launcher is copying OverrideLanguages into initialization message: " << languagesIterator->value);
         OSObjectPtr languages = adoptOSObject(xpc_array_create(nullptr, 0));
         for (auto language : StringView(languagesIterator->value).split(','))
-            xpc_array_set_string(languages.get(), XPC_ARRAY_APPEND, language.utf8().legacyCStringPointer());
+            xpcArraySetString(languages.get(), XPC_ARRAY_APPEND, language.utf8());
         xpc_dictionary_set_value(bootstrapMessage.get(), "OverrideLanguages", languages.get());
     }
 
@@ -404,9 +404,10 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
 
     xpc_dictionary_set_mach_send(bootstrapMessage.get(), "server-port", listeningPort);
 
-    xpc_dictionary_set_string(bootstrapMessage.get(), "client-identifier", !clientIdentifier.isEmpty() ? clientIdentifier.utf8().legacyCStringPointer() : *_NSGetProgname());
-    xpc_dictionary_set_string(bootstrapMessage.get(), "client-bundle-identifier", applicationBundleIdentifier().utf8().legacyCStringPointer());
-    xpc_dictionary_set_string(bootstrapMessage.get(), "process-identifier", String::number(m_launchOptions.processIdentifier.toUInt64()).utf8().legacyCStringPointer());
+    auto clientIdentifierUTF8 = clientIdentifier.utf8();
+    xpcDictionarySetString(bootstrapMessage.get(), "client-identifier"_s, !clientIdentifier.isEmpty() ? UTF8CStringView { clientIdentifierUTF8 } : UTF8CStringView::unsafeFromUTF8(*_NSGetProgname()));
+    xpcDictionarySetString(bootstrapMessage.get(), "client-bundle-identifier"_s, applicationBundleIdentifier().utf8());
+    xpcDictionarySetString(bootstrapMessage.get(), "process-identifier"_s, String::number(m_launchOptions.processIdentifier.toUInt64()).utf8());
     RetainPtr processName = [&]() -> RetainPtr<NSString> {
 #if PLATFORM(MAC)
         if (RetainPtr<NSString> name = NSRunningApplication.currentApplication.localizedName; name.get().length)
@@ -449,7 +450,7 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
     OSObjectPtr extraInitializationData = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
 
     for (const auto& keyValuePair : m_launchOptions.extraInitializationData)
-        xpc_dictionary_set_string(extraInitializationData.get(), keyValuePair.key.utf8().legacyCStringPointer(), keyValuePair.value.utf8().legacyCStringPointer());
+        xpcDictionarySetString(extraInitializationData.get(), keyValuePair.key.utf8(), keyValuePair.value.utf8());
 
     xpc_dictionary_set_value(bootstrapMessage.get(), "extra-initialization-data", extraInitializationData.get());
 

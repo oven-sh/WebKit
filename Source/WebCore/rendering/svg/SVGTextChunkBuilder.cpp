@@ -23,11 +23,11 @@
 
 #include "AffineTransform.h"
 #include "SVGElement.h"
-#include "SVGInlineTextBox.h"
 #include "SVGLengthContext.h"
 #include "SVGTextContentElement.h"
 #include "SVGTextFragment.h"
 #include <wtf/HashMap.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {
 
@@ -57,47 +57,37 @@ float SVGTextChunkBuilder::totalAnchorShift() const
     return anchorShift;
 }
 
-AffineTransform SVGTextChunkBuilder::transformationForTextBox(InlineIterator::SVGTextBoxIterator textBox) const
+void SVGTextChunkBuilder::buildTextChunks(std::span<const SVGTextChunkBox> boxes, std::span<const unsigned> chunkStarts)
 {
-    auto it = m_textBoxTransformations.find(makeKey(*textBox));
-    return it == m_textBoxTransformations.end() ? AffineTransform() : it->value;
-}
+    for (auto& box : boxes) {
+        auto boxChunkStarts = consumeSpan(chunkStarts, box.chunkStartCount);
+        auto fragments = box.fragments;
+        size_t rangeStart = 0;
 
-void SVGTextChunkBuilder::buildTextChunks(const Vector<InlineIterator::SVGTextBoxIterator>& lineLayoutBoxes, const HashSet<InlineIterator::SVGTextBox::Key>& chunkStarts, SVGTextFragmentMap& fragmentMap)
-{
-    if (lineLayoutBoxes.isEmpty())
-        return;
-
-    unsigned limit = lineLayoutBoxes.size();
-    unsigned first = limit;
-
-    for (unsigned i = 0; i < limit; ++i) {
-        if (!chunkStarts.contains(makeKey(*lineLayoutBoxes[i])))
-            continue;
-
-        if (first == limit)
-            first = i;
-        else {
-            ASSERT_WITH_SECURITY_IMPLICATION(first != i);
-            m_textChunks.append(SVGTextChunk(lineLayoutBoxes, first, i, fragmentMap));
-            first = i;
+        for (auto chunkStart : boxChunkStarts) {
+            ASSERT(chunkStart >= rangeStart && chunkStart < fragments.size());
+            if (!m_textChunks.isEmpty())
+                m_textChunks.last().appendFragments(fragments.subspan(rangeStart, chunkStart - rangeStart));
+            m_textChunks.append(SVGTextChunk(box.text));
+            rangeStart = chunkStart;
         }
-    }
 
-    if (first != limit)
-        m_textChunks.append(SVGTextChunk(lineLayoutBoxes, first, limit, fragmentMap));
+        if (!m_textChunks.isEmpty())
+            m_textChunks.last().appendFragments(fragments.subspan(rangeStart));
+    }
+    ASSERT(chunkStarts.empty());
 }
 
-void SVGTextChunkBuilder::layoutTextChunks(const Vector<InlineIterator::SVGTextBoxIterator>& lineLayoutBoxes, const HashSet<InlineIterator::SVGTextBox::Key>& chunkStarts, SVGTextFragmentMap& fragmentMap)
+void SVGTextChunkBuilder::layoutTextChunks(std::span<const SVGTextChunkBox> boxes, std::span<const unsigned> chunkStarts)
 {
-    buildTextChunks(lineLayoutBoxes, chunkStarts, fragmentMap);
+    buildTextChunks(boxes, chunkStarts);
     if (m_textChunks.isEmpty())
         return;
 
     applyElementLevelTextLength();
 
     for (const auto& chunk : m_textChunks)
-        chunk.layout(m_textBoxTransformations);
+        chunk.layout();
 
     m_textChunks.clear();
 }
@@ -129,14 +119,8 @@ void SVGTextChunkBuilder::applyElementLevelTextLength()
         const SVGTextFragment* groupFirstFragment = nullptr;
         for (auto* chunk : chunks) {
             groupTotalLength += chunk->totalLength();
-            if (groupFirstFragment)
-                continue;
-            for (const auto& boxAndFragments : chunk->m_boxes) {
-                if (!boxAndFragments.fragments.isEmpty()) {
-                    groupFirstFragment = &boxAndFragments.fragments.first();
-                    break;
-                }
-            }
+            if (!groupFirstFragment)
+                groupFirstFragment = chunk->firstFragment();
         }
 
         if (!groupFirstFragment || groupTotalLength <= 0)
@@ -152,8 +136,7 @@ void SVGTextChunkBuilder::applyElementLevelTextLength()
         transform.translate(-groupFirstFragment->x, -groupFirstFragment->y);
 
         for (auto* chunk : chunks) {
-            for (const auto& boxAndFragments : chunk->m_boxes)
-                m_textBoxTransformations.set(makeKey(*boxAndFragments.box), transform);
+            chunk->setLengthAdjustTransform(transform);
             chunk->m_textLengthLayoutMode = SVGTextChunk::TextLengthLayoutMode::ElementGroup;
         }
     }

@@ -26,12 +26,12 @@
 #include "config.h"
 #include "SelectFallbackButtonElement.h"
 
+#include "AXObjectCache.h"
 #include "ContainerNodeInlines.h"
 #include "CSSValueKeywords.h"
 #include "Document.h"
 #include "HTMLOptionElement.h"
 #include "HTMLSelectElement.h"
-#include "LocalizedStrings.h"
 #include "PlatformRenderTheme.h"
 #include "RenderTheme.h"
 #include "ResolvedStyle.h"
@@ -49,16 +49,6 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SelectFallbackButtonElement);
-
-static size_t selectedOptionCount(const HTMLSelectElement& selectElement)
-{
-    size_t count = 0;
-    for (auto& item : selectElement.listItems()) {
-        if (RefPtr option = dynamicDowncast<HTMLOptionElement>(item.get()); option && option->selected())
-            ++count;
-    }
-    return count;
-}
 
 // During style resolution computedStyle() would build on the old styles of the select and its ancestors.
 static std::unique_ptr<Style::ComputedStyle> resolveOptionStyle(HTMLOptionElement& option, const HTMLSelectElement& select, const Style::ComputedStyle& selectStyle)
@@ -104,42 +94,23 @@ void SelectFallbackButtonElement::updateText(HTMLOptionElement* selectedOption, 
     if (optionIndex < 0)
         optionIndex = selectElement->selectedIndex();
 
-    auto applyText = [&](const String& text) {
-        setText(text);
-        invalidateStyle();
-        selectElement->didUpdateActiveOption(optionIndex);
-    };
-
-    if (selectElement->buttonElement()) {
-        applyText(selectElement->buttonLabelText({ }));
-        return;
-    }
-
-    if (selectElement->multiple()) {
-        size_t count = selectedOptionCount(selectElement);
-        if (count != 1) {
-            applyText(htmlSelectMultipleItems(count));
-            return;
-        }
-    }
-
-    RefPtr option = selectedOption;
-    if (!option) {
-        auto& listItems = selectElement->listItems();
-        int i = selectElement->optionToListIndex(optionIndex);
-        if (i >= 0 && static_cast<unsigned>(i) < listItems.size())
-            option = dynamicDowncast<HTMLOptionElement>(*listItems[i]);
-    }
-
-    applyText(option ? option->textIndentedToRespectGroupLabel().trim(deprecatedIsSpaceOrNewline) : emptyString());
+    setText(selectElement->buttonText(HTMLSelectElement::ForAccessibility::No, selectedOption, optionIndex));
+    invalidateStyle();
+    selectElement->didUpdateActiveOption(optionIndex);
 }
 
 void SelectFallbackButtonElement::setText(const String& text)
 {
     String textToUse = text.isEmpty() ? "\n"_s : text;
     Ref textNode = downcast<Text>(*firstChild());
-    if (textNode->data() != textToUse)
-        textNode->setData(textToUse);
+    if (textNode->data() == textToUse)
+        return;
+    textNode->setData(textToUse);
+
+    // The accessibility value of a dropdown box can be the text of its button.
+    Ref selectElement = this->selectElement();
+    if (CheckedPtr cache = protect(document())->existingAXObjectCache(); cache && selectElement->isDropdownBox())
+        cache->deferMenuListValueChange(selectElement.ptr());
 }
 
 std::optional<Style::UnadjustedStyle> SelectFallbackButtonElement::resolveCustomStyle(const Style::ResolutionContext& resolutionContext, const Style::ComputedStyle* hostStyle)

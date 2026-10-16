@@ -48,11 +48,9 @@ class APITestExpectationsChecker(object):
         # warning.filename is absolute (api_test_expectations_files are rooted at the
         # WebKit base); joining an absolute path with cwd yields the absolute path.
         abs_filename = host.filesystem.join(cwd, warning.filename)
-        patched_lines = files.get(abs_filename)
-        if not patched_lines:
-            # None/empty means the whole file is part of the patch (e.g. newly added).
-            return abs_filename in files
-        return warning.line_number in patched_lines
+        if abs_filename not in files:
+            return False
+        return files[abs_filename] is None or warning.line_number in files[abs_filename]
 
     @staticmethod
     def lint_test_expectations(files, configuration, cwd, increment_error_count=lambda: 0, host=None):

@@ -417,7 +417,7 @@ static ASCIILiteral literal(BaseType baseType)
     case BaseType::Length: return "length"_s;
     case BaseType::Angle: return "angle"_s;
     case BaseType::Time: return "time"_s;
-    case BaseType::Frequency: return "trequency"_s;
+    case BaseType::Frequency: return "frequency"_s;
     case BaseType::Resolution: return "resolution"_s;
     case BaseType::Flex: return "flex"_s;
     case BaseType::Percent: return "percent"_s;

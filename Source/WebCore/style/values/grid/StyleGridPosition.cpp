@@ -47,7 +47,7 @@ namespace Style {
 static std::optional<int> maxPositionForTesting;
 static constexpr auto gridMaxPosition = 1000000;
 
-static int NODELETE clampGridIntegerPosition(int integerPosition)
+static int LEGACY_NODELETE clampGridIntegerPosition(int integerPosition)
 {
     return clampTo(integerPosition, GridPosition::min(), GridPosition::max());
 }
@@ -195,7 +195,7 @@ auto CSSValueConversion<GridPosition>::operator()(BuilderState& state, const CSS
 
     if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
         switch (keywordValue->valueID()) {
-        case CSSValueAuto:
+        case CSSValueID::Auto:
             return CSS::Keyword::Auto { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();

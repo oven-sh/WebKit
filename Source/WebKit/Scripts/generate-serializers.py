@@ -991,11 +991,20 @@ def decode_cf_type(type):
     return result
 
 
+_members_are_subclasses_by_name_cache = (None, None)
+
+
 def should_decode_ref(member, serialized_types):
-    for serialized_type in serialized_types:
-        if serialized_type.namespace_and_name() == member.type:
-            return serialized_type.members_are_subclasses
-    return False
+    # This is called for every member of every serialized type, so build the name lookup once per
+    # list of serialized types instead of scanning the whole list each time.
+    global _members_are_subclasses_by_name_cache
+    cached_types, members_are_subclasses_by_name = _members_are_subclasses_by_name_cache
+    if cached_types is not serialized_types:
+        members_are_subclasses_by_name = {}
+        for serialized_type in serialized_types:
+            members_are_subclasses_by_name.setdefault(serialized_type.namespace_and_name(), serialized_type.members_are_subclasses)
+        _members_are_subclasses_by_name_cache = (serialized_types, members_are_subclasses_by_name)
+    return members_are_subclasses_by_name.get(member.type, False)
 
 
 def decode_type(type, serialized_types):
@@ -1983,7 +1992,8 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('    if (![array isKindOfClass:NSArray.class])')
     result.append('        return { };')
     result.append('    Vector<RetainPtr<T>> result;')
-    result.append('    for (id element in array) {')
+    # FIXME: Remove SUPPRESS_UNRETAINED_LOCAL once the static analyzer false positive is fixed (rdar://189710680).
+    result.append('    for (SUPPRESS_UNRETAINED_LOCAL id element in array) {')
     # FIXME: isKindOfClass call can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
     result.append('        SUPPRESS_UNRETAINED_ARG if ([element isKindOfClass:retainPtr(IPC::getClass<T>()).get()])')
     result.append('            result.append((T *)element);')

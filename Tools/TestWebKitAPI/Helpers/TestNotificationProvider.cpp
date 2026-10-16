@@ -35,6 +35,8 @@
 #include <WebKit/WKPage.h>
 #include <WebKit/WKSecurityOriginRef.h>
 #include <WebKit/WKString.h>
+#include <WebKit/WKStringCF.h>
+#include <wtf/RetainPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace TestWebKitAPI {
@@ -138,6 +140,8 @@ void TestNotificationProvider::showWebNotification(WKPageRef page, WKNotificatio
     m_pendingNotifications.append(std::make_pair(notificationManager, identifier));
 
     m_lastNotificationDataStoreIdentifier = adoptWK(WKNotificationCopyDataStoreIdentifier(notification));
+    auto origin = adoptWK(WKSecurityOriginCopyToString(WKNotificationGetSecurityOrigin(notification)));
+    m_lastNotificationOrigin = adoptCF(WKStringCopyCFString(kCFAllocatorDefault, origin.get())).get();
 }
 
 void TestNotificationProvider::closeWebNotification(WKNotificationRef notification)

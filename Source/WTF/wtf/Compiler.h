@@ -572,6 +572,9 @@
 #define SUPPRESS_UNCOUNTED_LOCAL \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("alpha.webkit.UncountedLocalVarsChecker")
 
+#define SUPPRESS_UNBORROWED_LOCAL \
+    IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("alpha.webkit.UnborrowedLocalVarsChecker")
+
 #define SUPPRESS_UNCOUNTED_MEMBER \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE_ON_MEMBER("webkit.NoUncountedMemberChecker")
 
@@ -596,8 +599,8 @@
 
 // Add this annotation to right after the return type of a function when the function does not run any destructor or free memory.
 // Static analyzer does not require the use of smart pointers in the code which calls a function with this annotation.
-#ifndef NODELETE
-#define NODELETE [[clang::annotate_type("webkit.nodelete")]]
+#ifndef LEGACY_NODELETE
+#define LEGACY_NODELETE [[clang::annotate_type("webkit.nodelete")]]
 #endif
 
 #else
@@ -608,6 +611,7 @@
 #define SUPPRESS_UNRETAINED_MEMBER
 #define SUPPRESS_RETAINPTR_CTOR_ADOPT
 #define CLANG_POINTER_CONVERSION
+#define LEGACY_NODELETE
 #define NODELETE
 
 #endif

@@ -38,8 +38,8 @@ class CSSVariableData;
 class CSSSubstitutionValue;
 struct CSSParserContext;
 struct CSSRegisteredCustomProperty;
-enum CSSPropertyID : uint16_t;
-enum CSSValueID : uint16_t;
+enum class CSSPropertyID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 class MutableStyleProperties;
 

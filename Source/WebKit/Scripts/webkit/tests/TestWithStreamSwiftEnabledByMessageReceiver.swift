@@ -24,7 +24,8 @@
 
 import WebKit_Internal
 
-final class TestWithStreamSwiftEnabledByWeakRef {
+// Safety: target is only written in init, assumeIsolated asserts the main thread, and weak loads are atomic in the Swift runtime
+final class TestWithStreamSwiftEnabledByWeakRef: @unchecked Sendable {
     private weak var target: TestWithStreamSwiftEnabledBy?
     init(target: TestWithStreamSwiftEnabledBy) {
         self.target = target
@@ -37,21 +38,51 @@ final class TestWithStreamSwiftEnabledByWeakRef {
 
     @used
     func dispatchSendString(
-        connection: IPC.StreamServerConnection,
-        url: WTF.String
+        connection: sending IPC.StreamServerConnection,
+        url: sending WTF.String
     ) {
-        guard let target else {
-            return
-        }
-        do {
-            try mayThrowInvalidMessage(
-                target.sendString(
+        MainActor.assumeIsolated {
+            guard let target else {
+                return
+            }
+            Task.immediateOnMainActor {
+                await SendStringInvocation(
+                    target: target,
                     connection: connection,
                     url: url
                 )
-            )
-        } catch {
-            markMessageInvalid(error, on: connection)
+                .run()
+            }
+        }
+    }
+
+    private final class SendStringInvocation {
+        private let target: TestWithStreamSwiftEnabledBy
+        private let connection: IPC.StreamServerConnection
+        private let url: WTF.String
+
+        init(
+            target: TestWithStreamSwiftEnabledBy,
+            connection: IPC.StreamServerConnection,
+            url: WTF.String
+        ) {
+            self.target = target
+            self.connection = connection
+            self.url = url
+        }
+
+        @MainActor
+        func run() async {
+            do {
+                try await mayThrowInvalidMessage(
+                    target.sendString(
+                        connection: connection,
+                        url: url
+                    )
+                )
+            } catch {
+                markMessageInvalid(error, on: connection)
+            }
         }
     }
 }

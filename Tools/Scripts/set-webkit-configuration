@@ -106,13 +106,15 @@ if (checkForArgumentAndRemoveFromARGV("--reset")) {
 
 if (isAppleCocoaWebKit() && !isCMakeBuild()) {
     markBaseProductDirectoryAsCreatedByXcodeBuildSystem();
-    if ($workspace) {
-        open WORKSPACE, ">", "$baseProductDir/Workspace";
-        print WORKSPACE realpath($workspace);
-        close WORKSPACE;
-    }
 } else {
     make_path($baseProductDir);
+}
+
+# Record this even for a CMake build, or a later Xcode build in the same directory would use a stale workspace.
+if (isAppleCocoaWebKit() && $workspace) {
+    open WORKSPACE, ">", "$baseProductDir/Workspace";
+    print WORKSPACE realpath($workspace);
+    close WORKSPACE;
 }
 
 if ($enableASAN && $enableTSAN) {

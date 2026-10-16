@@ -66,6 +66,16 @@ public:
             removeAt(size() - 1);
     }
 
+    // Spec: the steps for synchronizing a list interface object. Only the items
+    // past the new length are detached; the others are updated in place, so a
+    // script holding one of them still sees and writes the list.
+    void updateItems(std::span<const typename PropertyType::ValueType> values)
+    {
+        resize(values.size());
+        for (size_t index = 0; index < values.size(); ++index)
+            protect(items()[index])->setValue(values[index]);
+    }
+
 protected:
     using Base::append;
     using Base::removeAt;

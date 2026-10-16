@@ -239,6 +239,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/IndexedDB/upgrade-transaction-lifecycle-backend-aborted.any.js
 /LayoutTests/imported/w3c/web-platform-tests/IndexedDB/upgrade-transaction-lifecycle-committed.any.js
 /LayoutTests/imported/w3c/web-platform-tests/IndexedDB/upgrade-transaction-lifecycle-user-aborted.any.js
+/LayoutTests/imported/w3c/web-platform-tests/IndexedDB/value-not-exposed-in-worker-helper.js
+/LayoutTests/imported/w3c/web-platform-tests/IndexedDB/value-not-exposed-in-worker.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/IndexedDB/value.any.js
 /LayoutTests/imported/w3c/web-platform-tests/IndexedDB/value_recursive.any.js
 /LayoutTests/imported/w3c/web-platform-tests/IndexedDB/worker-termination-aborts-upgrade.window.js

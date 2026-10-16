@@ -158,5 +158,6 @@ class TextFileReader(object):
         to check style, but they may effect the association check.
         """
         if file_path:
-            self._files[self.filesystem.abspath(file_path)] = None
+            abs_file_path = self.filesystem.abspath(file_path)
+            self._files[abs_file_path] = [] if self.filesystem.exists(abs_file_path) else None
         self.delete_only_file_count += 1

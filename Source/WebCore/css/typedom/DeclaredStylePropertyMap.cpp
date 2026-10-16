@@ -65,12 +65,12 @@ auto DeclaredStylePropertyMap::entries(ScriptExecutionContext* context) const ->
     if (!styleRule)
         return { };
 
-    auto& document = downcast<Document>(*context);
+    Ref document = downcast<Document>(*context);
     Ref properties = styleRule->properties();
     return map(properties.get(), [&document](auto propertyReference) {
         return StylePropertyMapEntry {
             propertyReference.cssName(),
-            propertyReference.id() == CSSPropertyCustom
+            propertyReference.id() == CSSPropertyID::Custom
                 ? reifyValueToVector(document, RefPtr<CSSValue> { propertyReference.value() }, AtomString { propertyReference.cssName() })
                 : reifyValueToVector(document, RefPtr<CSSValue> { propertyReference.value() }, propertyReference.id()),
         };
@@ -133,7 +133,7 @@ bool DeclaredStylePropertyMap::setCustomProperty(Document&, const AtomString& pr
 
     CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
     Ref customPropertyValue = CSSCustomPropertyValue::createUnresolved(property, WTF::move(value));
-    protect(styleRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertyCustom, WTF::move(customPropertyValue)));
+    protect(styleRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertyID::Custom, WTF::move(customPropertyValue)));
     return true;
 }
 

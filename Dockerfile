@@ -6,6 +6,11 @@ ARG LLVM_VERSION="23"
 # The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
+# Assertions in a build type that has none. The sanitizer variants turn them on by themselves.
+ARG ENABLE_ASSERTS="AUTO"
+# JavaScriptCore compiled with -fsanitize-coverage=trace-pc-guard, and a jsc that Fuzzilli can drive. A CMake option and
+# not a flag in CFLAGS: those also build ICU, whose tools run during the build and have no coverage callbacks.
+ARG ENABLE_FUZZILLI="OFF"
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 # What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
@@ -289,6 +294,8 @@ ARG LTO_FLAG
 ARG RELEASE_FLAGS
 ARG DEFAULT_CFLAGS
 ARG ENABLE_SANITIZERS
+ARG ENABLE_ASSERTS
+ARG ENABLE_FUZZILLI
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 ARG LINUX_ARCH
@@ -373,6 +380,8 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # After linking, the newest glibc symbol version jsc needs is read off it: that is the oldest glibc the artifact runs
 # on, and it must not be past the container's, 2.31.
 #
+# With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
+#
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
@@ -381,7 +390,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="$CFLAGS $G $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="$CXXFLAGS $G $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
-    export ENABLE_ASSERTS="AUTO" && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
     if [ -n "$ENABLE_SANITIZERS" ]; then \
         export ENABLE_ASSERTS="ON"; \
@@ -415,6 +423,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
+    -DENABLE_FUZZILLI="$ENABLE_FUZZILLI" \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -G Ninja \
@@ -429,12 +438,18 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
     echo "jsc needs glibc symbols up to $glibc" && \
     { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
+    if [ "$ENABLE_FUZZILLI" = ON ]; then \
+        for callback in __sanitizer_cov_trace_pc_guard __sanitizer_cov_trace_pc_guard_init; do \
+            llvm-nm --undefined-only $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -qw $callback || { echo "error: libJavaScriptCore.a does not call $callback" >&2; exit 1; }; \
+            ! llvm-nm --defined-only $WEBKIT_OUT_DIR/lib/*.a | grep -w $callback || { echo "error: a library defines $callback, which is for whoever links it to do" >&2; exit 1; }; \
+        done; \
+    fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.json" -exec sh -c 'cp "$1" "/output/$(basename "$1")"' sh {} \; && \
+    cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \

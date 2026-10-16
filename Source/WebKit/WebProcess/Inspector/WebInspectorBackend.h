@@ -60,7 +60,7 @@ public:
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    WebPage* NODELETE page() const;
+    WebPage* LEGACY_NODELETE page() const;
 
     void updateDockingAvailability();
 
@@ -117,8 +117,9 @@ public:
     void searchInFrameResource(WebCore::FrameIdentifier, const String& url, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
     void searchInFramesAndRequests(Vector<WebCore::FrameIdentifier>&& frameIDs, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchResult>&&)>&&);
 
-    // Fan the paint-rects toggle out to every per-frame PageAgentProxy this process hosts.
+    // Fan the paint-rects toggle and the bootstrap script out to every per-frame PageAgentProxy this process hosts.
     void setShowPaintRects(bool);
+    void setBootstrapScript(const String&);
 
     // Set up / tear down every per-frame instrumentation agent for a frame. Callers
     // don't need to know which agents are frame-scoped; each helper no-ops unless its
@@ -168,10 +169,11 @@ private:
     HashMap<WebCore::FrameIdentifier, std::unique_ptr<PageAgentProxy>> m_framePageAgentProxies;
     bool m_pageInstrumentationEnabled { false };
 
-    // Latest paint-rects toggle for this process, remembered so a proxy created later by
+    // Latest paint-rects toggle and bootstrap script for this process, remembered so a proxy created later by
     // ensurePageInstrumentationForFrame starts in the correct state (the UIProcess replays state
     // only on the first (process, page) registration).
     bool m_showPaintRects { false };
+    String m_bootstrapScript;
 };
 
 } // namespace WebKit

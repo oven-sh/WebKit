@@ -50,6 +50,7 @@
 #include <wtf/TypeCasts.h>
 #include <wtf/TypeTraits.h>
 #include <wtf/Variant.h>
+#include <wtf/text/Latin1Character.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -149,9 +150,9 @@ static constexpr size_t KB = 1024;
 static constexpr size_t MB = 1024 * 1024;
 static constexpr size_t GB = 1024 * 1024 * 1024;
 
-// std::min and std::max are not annotated NODELETE, but they run no destructors, so the suppression is safe.
-template<typename T> constexpr const T& NODELETE min(const T& a, const T& b) { SUPPRESS_NODELETE return std::min(a, b); }
-template<typename T> constexpr const T& NODELETE max(const T& a, const T& b) { SUPPRESS_NODELETE return std::max(a, b); }
+// std::min and std::max are not annotated LEGACY_NODELETE, but they run no destructors, so the suppression is safe.
+template<typename T> constexpr const T& LEGACY_NODELETE min(const T& a, const T& b) { SUPPRESS_NODELETE return std::min(a, b); }
+template<typename T> constexpr const T& LEGACY_NODELETE max(const T& a, const T& b) { SUPPRESS_NODELETE return std::max(a, b); }
 
 inline bool isPointerAligned(void* p)
 {
@@ -876,14 +877,14 @@ template<typename T>
 }
 
 template<typename T, std::size_t N>
-[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> NODELETE toArray(T (&array)[N])
+[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> LEGACY_NODELETE toArray(T (&array)[N])
     noexcept(std::is_nothrow_constructible_v<T, T&>)
 {
     return std::to_array<T>(array); // NOLINT(runtime/wtf_to_array)
 }
 
 template<typename T, std::size_t N>
-[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> NODELETE toArray(T (&&array)[N])
+[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> LEGACY_NODELETE toArray(T (&&array)[N])
     noexcept(std::is_nothrow_move_constructible_v<T>)
 {
     return std::to_array<T>(WTF::move(array)); // NOLINT(runtime/wtf_to_array)
@@ -1088,7 +1089,7 @@ template<typename T, typename U>
 concept TriviallyComparableCodeUnits = std::is_same_v<std::remove_const_t<T>, std::remove_const_t<U>> || (!std::is_same_v<std::remove_const_t<T>, char8_t> && !std::is_same_v<std::remove_const_t<U>, char8_t>);
 
 template<typename T>
-concept CanBeConstByteType = sizeof(T) == 1 && ((std::is_integral_v<T> && !std::same_as<T, bool>) || std::same_as<T, std::byte>);
+concept CanBeConstByteType = sizeof(T) == 1 && ((std::is_integral_v<T> && !std::same_as<std::remove_const_t<T>, bool>) || std::same_as<std::remove_const_t<T>, std::byte> || std::same_as<std::remove_const_t<T>, Latin1Character>);
 
 template<typename T, typename U>
 concept TriviallyComparableOneByteCodeUnits = TriviallyComparableCodeUnits<T, U> && CanBeConstByteType<T> && CanBeConstByteType<U>;
@@ -1129,8 +1130,9 @@ bool contains(std::span<T, TExtent> haystack, std::span<U, UExtent> needle)
     return find(haystack, needle) != notFound;
 }
 
+// memcpy() is not annotated LEGACY_NODELETE, but it runs no destructors, so the suppression is safe.
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-void NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
+SUPPRESS_NODELETE void LEGACY_NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
@@ -1139,8 +1141,9 @@ void NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent
     memcpy(destination.data(), source.data(), source.size_bytes()); // NOLINT
 }
 
+// memmove() is not annotated LEGACY_NODELETE, but it runs no destructors, so the suppression is safe.
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-void NODELETE memmoveSpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
+SUPPRESS_NODELETE void LEGACY_NODELETE memmoveSpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
@@ -1169,8 +1172,9 @@ void zeroBytes(T& object)
     zeroSpan(asMutableByteSpan(object));
 }
 
+// memset(), memset_s() and the compiler barrier are not annotated LEGACY_NODELETE, but they run no destructors, so the suppression is safe.
 template<typename T, std::size_t Extent>
-void NODELETE secureZeroSpan(std::span<T, Extent> destination)
+SUPPRESS_NODELETE void LEGACY_NODELETE secureZeroSpan(std::span<T, Extent> destination)
 {
     static_assert(std::is_trivially_copyable_v<T>);
 #ifdef __STDC_LIB_EXT1__
@@ -1185,7 +1189,7 @@ void NODELETE secureZeroSpan(std::span<T, Extent> destination)
 }
 
 // Like zeroBytes, but guaranteed not to be optimized away by the compiler.
-template<typename T> void NODELETE secureZeroBytes(T& object)
+template<typename T> void LEGACY_NODELETE secureZeroBytes(T& object)
 {
     secureZeroSpan(asMutableByteSpan(object));
 }
@@ -1267,6 +1271,13 @@ bool spansOverlap(std::span<T, TExtent> a, std::span<U, UExtent> b)
     dataLogF(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__))) \
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+// PrintStream::printf() is a C variadic function, so it cannot convert typed strings itself without losing
+// format checking. This converts them at the call site, keeping the format a literal that the compiler checks.
+#define SAFE_PRINTSTREAM_PRINTF(stream, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    (stream).printf(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 // WTFLogAlways() and the other WTF_ATTRIBUTE_NSSTRING functions accept %@ as well as the printf
 // conversions, and vprintf_stderr_common() routes a format containing %@ through
 // CFStringCreateWithFormatAndArguments(). An Objective-C object argument therefore has to arrive
@@ -1280,12 +1291,71 @@ template<typename T> concept ObjectiveCObjectPointer = false;
 
 template<ObjectiveCObjectPointer T> inline T CLANG_POINTER_CONVERSION safeNSStringPrintfType(T argument) { return argument; }
 template<typename T> requires (!ObjectiveCObjectPointer<std::decay_t<T>>)
-inline decltype(auto) NODELETE safeNSStringPrintfType(T&& argument) { return safePrintfType(std::forward<T>(argument)); }
+inline decltype(auto) LEGACY_NODELETE safeNSStringPrintfType(T&& argument) { return safePrintfType(std::forward<T>(argument)); }
 
 #define SAFE_NSSTRING_PRINTF_TYPE(...) WTF_FOR_EACH(WTF::safeNSStringPrintfType, __VA_ARGS__)
 
 #define SAFE_WTFLOGALWAYS(format, ...) \
     SUPPRESS_UNCOUNTED_ARG WTFLogAlways(format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+// For call sites that log to a channel they were handed, so cannot use LOG() and LOG_VERBOSE(). The file and
+// function of SAFE_WTFLOG_VERBOSE() are converted with logPrintfType(), so either a typed string or __FILE__ works.
+#define SAFE_WTFLOG(channel, format, ...) \
+    SUPPRESS_UNCOUNTED_ARG WTFLog(channel, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+#define SAFE_WTFLOG_VERBOSE(file, line, function, channel, format, ...) \
+    SUPPRESS_UNCOUNTED_ARG WTFLogVerbose(WTF::logPrintfType(file), line, WTF::logPrintfType(function), channel, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+#if OS(DARWIN)
+// For call sites that log to an os_log_t they hold, so cannot use the RELEASE_LOG() family. os_log() accepts %@
+// as well as the printf conversions, so Objective-C object arguments are passed unchanged.
+#define SAFE_OS_LOG(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_INFO(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_info(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_DEBUG(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_debug(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_ERROR(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_error(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_FAULT(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_fault(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_WITH_TYPE(log, type, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_with_type(log, type, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
+#if OS(ANDROID)
+#define SAFE_ANDROID_LOG_PRINT(priority, tag, format, ...) \
+    __android_log_print(priority, tag, format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__)))
+#endif
+
+#if ENABLE(JOURNALD_LOG)
+// sd_journal_send() takes a list of "FIELD=format", arguments... groups, so every argument, including the
+// formats, is converted with logPrintfType(), which passes those through. The macros supply the terminating
+// nullptr themselves: the functions are declared with the sentinel attribute, which requires a null pointer
+// constant rather than the result of a conversion.
+#define SAFE_SD_JOURNAL_SEND(format, ...) \
+    sd_journal_send(format WTF_LOG_PRINTF_ARGS(__VA_ARGS__), nullptr)
+
+#define SAFE_SD_JOURNAL_SEND_WITH_LOCATION(file, line, function, format, ...) \
+    sd_journal_send_with_location(WTF::logPrintfType(file), WTF::logPrintfType(line), WTF::logPrintfType(function), format WTF_LOG_PRINTF_ARGS(__VA_ARGS__), nullptr)
+#endif
 
 // logPrintfType() and LOG_PRINTF_TYPE(), the logging counterpart to safePrintfType(), are defined
 // in wtf/Assertions.h too, next to the LOG and RELEASE_LOG macro families that use them.
@@ -1390,21 +1460,21 @@ constexpr decltype(auto) apply(NOESCAPE F&& functor, T&& tupleLike)
 //   This leaves result transposed and equal to:
 //
 //      std::tuple {
-//          std::tuple<int, double, int>        { 1,       0.5,     2         },
-//          std::tuple<string, char, string>    { "hello", 'i',     "goodbye" },
-//          std::tuple<double, float, double>   { 1.5,     0.1f,    3.0       },
+//          std::tuple<int&, double&, int&> { 1, 0.5, 2 },
+//          std::tuple<string&, char&, string&> { "hello", 'i', "goodbye" },
+//          std::tuple<double&, float&, double&> { 1.5, 0.1f, 3.0 },
 //      }
 
 namespace detail {
 
-template<std::size_t I, typename... TupleLikes> using zip_tuple_at_index_t = std::tuple<std::tuple_element_t<I, std::decay_t<TupleLikes>>...>;
+template<std::size_t I, typename... TupleLikes> using zip_tuple_at_index_t = std::tuple<decltype(get<I>(std::declval<TupleLikes>()))...>;
 
 template<std::size_t I, typename... TupleLikes> auto zip_tuple_at_index(TupleLikes&&... tupleLikes)
 {
-    return zip_tuple_at_index_t<I, TupleLikes...> { get<I>(std::forward<TupleLikes>(tupleLikes))... };
+    return std::forward_as_tuple(get<I>(std::forward<TupleLikes>(tupleLikes))...);
 }
 
-template<typename... TupleLikes, std::size_t... I> auto tuple_zip_impl(TupleLikes&& ... tupleLikes, std::index_sequence<I...>)
+template<typename... TupleLikes, std::size_t... I> auto tuple_zip_impl(TupleLikes&&... tupleLikes, std::index_sequence<I...>)
 {
     return std::tuple<zip_tuple_at_index_t<I, TupleLikes...>...> {
         zip_tuple_at_index<I>(std::forward<TupleLikes>(tupleLikes)...)...
@@ -1551,7 +1621,7 @@ template<typename Object, typename Allocator = FastMalloc> void destroyWithTrail
 }
 
 template<typename T, typename TDeleter, typename U, typename UDeleter>
-SUPPRESS_NODELETE ALWAYS_INLINE void NODELETE lazyInitialize(const std::unique_ptr<T, TDeleter>& ptr, const std::unique_ptr<U, UDeleter>&& obj)
+SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE lazyInitialize(const std::unique_ptr<T, TDeleter>& ptr, const std::unique_ptr<U, UDeleter>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<std::unique_ptr<T, TDeleter>&>(ptr) = std::move(const_cast<std::unique_ptr<U, UDeleter>&&>(obj)); // NOLINT.

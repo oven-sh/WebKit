@@ -73,7 +73,8 @@ void SVGScriptElement::svgAttributeChanged(const QualifiedName& attrName)
     InstanceInvalidationGuard guard(*this);
 
     if (SVGURIReference::isKnownAttribute(attrName)) {
-        handleSourceAttribute(href());
+        if (auto href = this->href(); !href.isEmpty())
+            handleSourceAttribute(href);
         return;
     }
 

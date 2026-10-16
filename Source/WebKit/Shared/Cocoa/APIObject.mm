@@ -610,7 +610,7 @@ RetainPtr<NSObject<NSSecureCoding>> Object::toNSObject()
     return nullptr;
 }
 
-RefPtr<API::Object> Object::fromNSObject(NSObject<NSSecureCoding> *object)
+RefPtr<API::Object> Object::fromNSObject(id object)
 {
     if (auto *str = dynamic_objc_cast<NSString>(object))
         return API::String::create(str);
@@ -621,7 +621,8 @@ RefPtr<API::Object> Object::fromNSObject(NSObject<NSSecureCoding> *object)
     if (auto *array = dynamic_objc_cast<NSArray>(object)) {
         Vector<RefPtr<API::Object>> result;
         result.reserveInitialCapacity(array.count);
-        for (id member in array) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id member in array) {
             if (auto memberObject = fromNSObject(member))
                 result.append(WTF::move(memberObject));
         }

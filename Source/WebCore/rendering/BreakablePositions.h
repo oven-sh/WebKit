@@ -240,8 +240,9 @@ inline size_t BreakablePositions::nextBreakablePosition(CachedLineBreakIteratorF
             nextBreak = factory.get().following(i - 1);
         // Fast forward while our behavior matches ICU.
         if (nextBreak && i < nextBreak.value()) {
-            for (size_t max = std::min(nextBreak.value(), string.size() - 1); i < max; beforeBefore = before, before = after, ++i) {
-                char16_t lookahead = string[i + 1];
+            char16_t lookahead;
+            for (size_t max = std::min(nextBreak.value(), string.size() - 1); i < max; beforeBefore = before, before = after, after = { lookahead }, ++i) {
+                lookahead = string[i + 1];
                 if ((lookahead <= lineBreakTable.lastCharacter && !isASCIIAlpha(lookahead))
                     || (nonBreakingSpaceBehavior == NoBreakSpaceBehavior::Break && lookahead == noBreakSpace))
                     break;

@@ -333,6 +333,7 @@ $(PROJECT_DIR)/Shared/Extensions/WebExtensionMenuItem.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionNotification.serialization.in
+$(PROJECT_DIR)/Shared/Extensions/WebExtensionOffscreenDocumentParameters.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionSidebarParameters.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionStorage.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionTab.serialization.in
@@ -567,6 +568,7 @@ $(PROJECT_DIR)/UIProcess/Automation/WebAutomationSession.messages.in
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiBrowser.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiBrowsingContext.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiDigitalCredentials.json
+$(PROJECT_DIR)/UIProcess/Automation/protocol/BidiInput.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiLog.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiPermissions.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiScript.json
@@ -580,9 +582,9 @@ $(PROJECT_DIR)/UIProcess/Extensions/WebExtension.serialization.in
 $(PROJECT_DIR)/UIProcess/Extensions/WebExtensionContext.messages.in
 $(PROJECT_DIR)/UIProcess/Extensions/WebExtensionController.messages.in
 $(PROJECT_DIR)/UIProcess/GPU/GPUProcessProxy.messages.in
-$(PROJECT_DIR)/UIProcess/Inspector/RemoteWebInspectorUIProxy.messages.in
 $(PROJECT_DIR)/UIProcess/Inspector/Agents/ProxyingNetworkAgent.messages.in
 $(PROJECT_DIR)/UIProcess/Inspector/Agents/ProxyingPageAgent.messages.in
+$(PROJECT_DIR)/UIProcess/Inspector/RemoteWebInspectorUIProxy.messages.in
 $(PROJECT_DIR)/UIProcess/Inspector/WebInspectorBackendProxy.messages.in
 $(PROJECT_DIR)/UIProcess/Inspector/WebInspectorUIExtensionControllerProxy.messages.in
 $(PROJECT_DIR)/UIProcess/Inspector/WebInspectorUIProxy.messages.in
@@ -772,6 +774,7 @@ $(PROJECT_DIR)/webpushd/PushClientConnection.messages.in
 $(PROJECT_DIR)/webpushd/mac/com.apple.WebKit.webpushd.mac.sb.in
 $(PROJECT_DIR)/webpushd/mac/com.apple.WebKit.webpushd.relocatable.mac.sb.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/ActivityState.serialization.in
+$(WEBCORE_PRIVATE_HEADERS_DIR)/CSSValueKeywords.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/CodeGenerator.pm
 $(WEBCORE_PRIVATE_HEADERS_DIR)/DocumentSyncData.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/DragActions.serialization.in

@@ -155,6 +155,7 @@
 		A1B8D76A2D67CD830045C305 /* InjectedBundleTestWebKitAPI.bundle in Copy Resources */ = {isa = PBXBuildFile; fileRef = BC575980126E74AF006F0F12 /* InjectedBundleTestWebKitAPI.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1B8D76B2D67CD9B0045C305 /* TestWebKitAPIPlugIn.wkbundle in Copy Resources */ = {isa = PBXBuildFile; fileRef = A13EBB491B87339E00097110 /* TestWebKitAPIPlugIn.wkbundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1B8D76C2D67CDA20045C305 /* TestWebKitAPIResources.bundle in Copy Resources */ = {isa = PBXBuildFile; fileRef = A17C46462C98E3430023F3C7 /* TestWebKitAPIResources.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		7A1C4E2F2E8B9D0100A1B2D1 /* QuirkTable.json in Copy Resources */ = {isa = PBXBuildFile; fileRef = 7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */; };
 		BC575A97126E74F1006F0F12 /* InjectedBundleMain.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BC575946126E7351006F0F12 /* InjectedBundleMain.cpp */; };
 		BC575AA2126E7660006F0F12 /* InjectedBundleController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BC575AA0126E7657006F0F12 /* InjectedBundleController.cpp */; };
 		CC1FEED000000000000FF002 /* WebFoundTextRange.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CC1FEED000000000000FF001 /* WebFoundTextRange.cpp */; };
@@ -383,6 +384,7 @@
 			dstPath = "";
 			dstSubfolder = Resources;
 			files = (
+				7A1C4E2F2E8B9D0100A1B2D1 /* QuirkTable.json in Copy Resources */,
 			);
 			name = "Copy Resources";
 		};
@@ -541,6 +543,7 @@
 		C081224813FC1B0300DC39AE /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = WebKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C20F88A62295B96700D610FA /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
 		CC1FEED000000000000FF001 /* WebFoundTextRange.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = WebFoundTextRange.cpp; path = ../../Source/WebKit/Shared/WebFoundTextRange.cpp; sourceTree = SOURCE_ROOT; };
+		7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = QuirkTable.json; path = ../../Source/WebCore/page/QuirkTable.json; sourceTree = SOURCE_ROOT; };
 		CDA3159C1ED5643F009F60D3 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		DD403D4928EB932F009B4684 /* libbmalloc.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libbmalloc.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		DD5697FF2DC1320500050321 /* rdar150228472.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rdar150228472.swift; sourceTree = "<group>"; };
@@ -595,9 +598,15 @@
 				WebKit/WKWebView/CodingTests.swift,
 				WebKit/WKWebView/HTTP2Server.swift,
 				WebKit/WKWebView/HTTP3Server.swift,
+				WebKit/WKWebView/SiteIsolationCookieTests.swift,
+				WebKit/WKWebView/SiteIsolationEditingTests.swift,
+				WebKit/WKWebView/SiteIsolationNavigationTests.swift,
+				WebKit/WKWebView/SiteIsolationServiceWorkerTests.swift,
+				WebKit/WKWebView/SiteIsolationSessionStateTests.swift,
+				WebKit/WKWebView/SiteIsolationUIDelegateTests.swift,
+				WebKit/WKWebView/SiteIsolationUserAgentTests.swift,
 				WebKit/WKWebView/TextExtractionTests.swift,
 				WebKit/WKWebView/TextFragments.swift,
-				WebKit/WKWebView/TextManipulation.swift,
 				WebKit/WKWebView/TextPlaceholderTests.swift,
 				WebKit/WKWebView/TextSize.swift,
 				WebKit/WKWebView/TextWidth.swift,
@@ -614,17 +623,13 @@
 				WebKit/WKWebView/WKWebExtensionAPINamespace.swift,
 				WebKit/WKWebView/WKWebExtensionAPIOffscreen.swift,
 				WebKit/WKWebView/WKWebExtensionAPIPermissions.swift,
-				WebKit/WKWebView/WKWebExtensionAPITest.swift,
-				WebKit/WKWebView/WKWebExtensionAPIWebNavigation.swift,
-				WebKit/WKWebView/WKWebExtensionAPIWebRequest.swift,
 				WebKit/WKWebView/WKWebExtensionAPIWindows.swift,
-				WebKit/WKWebView/WKWebExtensionContext.swift,
-				WebKit/WKWebView/WKWebExtensionController.swift,
 				WebKit/WKWebView/WKWebExtensionControllerConfiguration.swift,
 				WebKit/WKWebView/WKWebExtensionDataRecord.swift,
 				WebKit/WKWebView/WKWebExtensionMatchPattern.swift,
 				WebKit/WKWebView/WKWebExtensionTab.swift,
 				WebKit/WKWebView/WKWebExtensionWindow.swift,
+				WebKit/WKWebView/WKWebViewHitTestTests.swift,
 				WebKit/WKWebView/WKWebViewSwiftOverlayTests.swift,
 			);
 			target = 8DD76F960486AA7600D96B5E /* TestWebKitAPI */;
@@ -799,6 +804,7 @@
 				WebCore/cocoa/ISOBMFFTrackInfoParserTests.cpp,
 				WebCore/cocoa/MediaPlayerPrivateAVFoundationObjCTests.mm,
 				WebCore/cocoa/MediaRecorderPrivateWriterTests.cpp,
+				WebCore/cocoa/PaymentSummaryItemsCocoa.mm,
 				WebCore/cocoa/PlatformScreenTests.mm,
 				WebCore/cocoa/PrivateClickMeasurementCocoa.mm,
 				WebCore/cocoa/ResourceMonitor.mm,
@@ -830,6 +836,7 @@
 				WebCore/Decimal.cpp,
 				WebCore/DFACombiner.cpp,
 				WebCore/DFAMinimizer.cpp,
+				WebCore/DigitalCredentialsRequestDataBuilder.cpp,
 				WebCore/DisplayListRecorderTests.cpp,
 				WebCore/DocumentOrder.cpp,
 				WebCore/FidoHidMessageTest.cpp,
@@ -890,6 +897,7 @@
 				WebCore/PublicSuffix.cpp,
 				WebCore/PushDatabase.cpp,
 				WebCore/PushMessageCrypto.cpp,
+				WebCore/QuirkMatchPattern.cpp,
 				WebCore/Quirks.cpp,
 				WebCore/RegionTests.cpp,
 				WebCore/RegistrableDomain.cpp,
@@ -915,7 +923,6 @@
 				WebCore/TimeRanges.cpp,
 				WebCore/TransformationMatrix.cpp,
 				WebCore/U2fCommandConstructorTest.cpp,
-				WebCore/URLMatch.cpp,
 				WebCore/URLParserTextEncoding.cpp,
 				WebCore/UserAgentStringParser.cpp,
 				WebCore/WebCodecsBufferTransfer.cpp,
@@ -1094,6 +1101,7 @@
 				WebKit/WKWebView/ios/WKWebViewAutofillTests.mm,
 				WebKit/WKWebView/ios/WKWebViewOpaque.mm,
 				WebKit/WKWebView/ios/WKWebViewPausePlayingAudioTests.mm,
+				WebKit/WKWebView/ios/ZoomToFocusedElement.mm,
 				WebKit/WKWebView/mac/AcceptsFirstMouse.mm,
 				WebKit/WKWebView/mac/AttributedString.mm,
 				WebKit/WKWebView/mac/AttributedSubstringForProposedRange.mm,
@@ -1542,7 +1550,6 @@
 				WebKit/WKWebView/AccessibilityTestPlugin.mm,
 				WebKit/WKWebView/AdditionalReadAccessAllowedURLsPlugin.mm,
 				WebKit/WKWebView/AppPrivacyReportPlugIn.mm,
-				WebKit/WKWebView/AutoFillAvailable.mm,
 				WebKit/WKWebView/BasicProposedCredentialPlugIn.mm,
 				WebKit/WKWebView/BundleCSSStyleDeclarationHandlePlugIn.mm,
 				WebKit/WKWebView/BundleEditingDelegatePlugIn.mm,
@@ -1554,7 +1561,6 @@
 				WebKit/WKWebView/ClickAutoFillButton.mm,
 				WebKit/WKWebView/ContentFilteringPlugIn.mm,
 				WebKit/WKWebView/ContentWorldPlugIn.mm,
-				WebKit/WKWebView/DisableSpellcheckPlugIn.mm,
 				WebKit/WKWebView/GetComputedStyleAfterIframeRemovalPlugIn.mm,
 				WebKit/WKWebView/InjectedBundleHitTestPlugIn.mm,
 				WebKit/WKWebView/InjectedBundleNodeHandleIsSelectElement.mm,
@@ -2065,6 +2071,7 @@
 		DD7024AE302CE42A009B6CC0 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */,
 				2B7E14D63A5F60718293C1A1 /* SyntheticNSEvent.h */,
 				2B7E14D63A5F60718293C1A2 /* SyntheticNSEvent.mm */,
 				CC1FEED000000000000FF001 /* WebFoundTextRange.cpp */,
@@ -2437,6 +2444,13 @@
 				"$(PLATFORM_DIR)/Developer/Library/Frameworks/_Testing_Foundation.framework",
 				"$(PLATFORM_DIR)/Developer/Library/Frameworks/_Testing_UIKit.framework",
 				"$(PLATFORM_DIR)/Developer/usr/lib/lib_TestingInterop.dylib",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/Testing.framework",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/_Testing_AppKit.framework",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/_Testing_CoreGraphics.framework",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/_Testing_CoreImage.framework",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/_Testing_CoreTransferable.framework",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/_Testing_Foundation.framework",
+				"$(SDKROOT)/AppleInternal/Developer/Library/Frameworks/_Testing_UIKit.framework",
 			);
 			name = "Embed Testing.framework";
 			outputPaths = (
@@ -2454,10 +2468,25 @@
 				"# The Swift explicit-modules dep scanner resolves cross-import overlays relative to the",
 				"# parent module's location, so the _Testing_* overlays must live next to the dittoed",
 				"# Testing.framework, not just in PLATFORM_DIR.",
-				"for (( i=0 ; $i < $SCRIPT_INPUT_FILE_COUNT ; i++ )); do",
-				"    eval input=\"\\${SCRIPT_INPUT_FILE_$i}\"",
+				"",
+				"# Prefer copy from SDKROOT over PLATFORM_DIR if it's present",
+				"frameworks_dir=\"${PLATFORM_DIR}/Developer/Library/Frameworks\"",
+				"libraries_dir=\"${PLATFORM_DIR}/Developer/usr/lib\"",
+				"if [ \"$(basename \"${TOOLCHAIN_DIR}\")\" != XcodeDefault.xctoolchain ] && [ -d \"${SDKROOT}/AppleInternal/Developer/Library/Frameworks/Testing.framework\" ]; then",
+				"    frameworks_dir=\"${SDKROOT}/AppleInternal/Developer/Library/Frameworks\"",
+				"    libraries_dir=\"${SDKROOT}/AppleInternal/Developer/usr/lib\"",
+				"fi",
+				"",
+				"for (( i=0 ; $i < $SCRIPT_OUTPUT_FILE_COUNT ; i++ )); do",
+				"    eval output=\"\\${SCRIPT_OUTPUT_FILE_$i}\"",
+				"    name=\"$(basename \"$output\")\"",
+				"    case \"$name\" in",
+				"        *.framework) input=\"$frameworks_dir/$name\" ;;",
+				"        *) input=\"$libraries_dir/$name\" ;;",
+				"    esac",
+				"    rm -rf \"$output\"",
 				"    if [ -e \"$input\" ]; then",
-				"        ditto \"$input\" \"${BUILT_PRODUCTS_DIR}/$(basename \"$input\")\"",
+				"        ditto \"$input\" \"$output\"",
 				"    fi",
 				"done",
 				"",

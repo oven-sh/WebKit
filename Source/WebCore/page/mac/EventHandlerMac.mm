@@ -39,6 +39,7 @@
 #import "DocumentView.h"
 #import "DragController.h"
 #import "Editor.h"
+#import "EventNames.h"
 #import "FocusController.h"
 #import "FrameLoader.h"
 #import "HTMLBodyElement.h"
@@ -51,6 +52,7 @@
 #import "LocalFrameInlines.h"
 #import "LocalFrameView.h"
 #import "Logging.h"
+#import "MouseEvent.h"
 #import "MouseEventWithHitTestResults.h"
 #import "NodeInlines.h"
 #import "Page.h"
@@ -58,7 +60,9 @@
 #import "PlatformEventFactoryMac.h"
 #import "PlatformScreen.h"
 #import "PlatformWheelEvent.h"
+#import "PointerCaptureController.h"
 #import "Range.h"
+#import "RemoteFrame.h"
 #import "RenderLayer.h"
 #import "RenderLayerScrollableArea.h"
 #import "RenderListBox.h"
@@ -89,7 +93,7 @@
 
 namespace WebCore {
 
-static RetainPtr<NSEvent>& NODELETE currentNSEventSlot()
+static RetainPtr<NSEvent>& LEGACY_NODELETE currentNSEventSlot()
 {
     static NeverDestroyed<RetainPtr<NSEvent>> event;
     return event;
@@ -100,7 +104,7 @@ NSEvent *EventHandler::currentNSEvent()
     return currentNSEventSlot().get();
 }
 
-static RetainPtr<NSEvent>& NODELETE correspondingPressureEventSlot()
+static RetainPtr<NSEvent>& LEGACY_NODELETE correspondingPressureEventSlot()
 {
     static NeverDestroyed<RetainPtr<NSEvent>> event;
     return event;
@@ -324,9 +328,9 @@ static bool findViewInSubviews(NSView *superview, NSView *target)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     NSEnumerator *e = [[superview subviews] objectEnumerator];
-    NSView *subview;
+    RetainPtr<NSView> subview;
     while ((subview = [e nextObject])) {
-        if (subview == target || findViewInSubviews(subview, target)) {
+        if (subview == target || findViewInSubviews(subview.get(), target)) {
             return true;
         }
     }
@@ -455,7 +459,7 @@ static IMP originalNSScrollViewScrollWheel;
 static bool _nsScrollViewScrollWheelShouldRetainSelf;
 static void selfRetainingNSScrollViewScrollWheel(NSScrollView *, SEL, NSEvent *);
 
-static bool NODELETE nsScrollViewScrollWheelShouldRetainSelf()
+static bool LEGACY_NODELETE nsScrollViewScrollWheelShouldRetainSelf()
 {
     ASSERT(isMainThread());
 
@@ -747,12 +751,12 @@ PlatformMouseEvent EventHandler::currentPlatformMouseEvent() const
     return PlatformEventFactory::createPlatformMouseEvent(protect(currentNSEvent()), protect(correspondingPressureEvent()), windowView);
 }
 
-bool NODELETE EventHandler::eventActivatedView(const PlatformMouseEvent& event) const
+bool LEGACY_NODELETE EventHandler::eventActivatedView(const PlatformMouseEvent& event) const
 {
     return m_activationEventNumber == event.eventNumber();
 }
 
-bool NODELETE EventHandler::needsKeyboardEventDisambiguationQuirks() const
+bool LEGACY_NODELETE EventHandler::needsKeyboardEventDisambiguationQuirks() const
 {
     return m_frame->settings().needsKeyboardEventDisambiguationQuirks();
 }
@@ -768,7 +772,7 @@ OptionSet<PlatformEvent::Modifier> EventHandler::accessKeyModifiers()
     return { PlatformEvent::Modifier::ControlKey, PlatformEvent::Modifier::AltKey };
 }
 
-static ScrollableArea* NODELETE scrollableAreaForBox(RenderBox& box)
+static ScrollableArea* LEGACY_NODELETE scrollableAreaForBox(RenderBox& box)
 {
     if (auto* listBox = dynamicDowncast<RenderListBox>(box))
         return listBox;
@@ -812,7 +816,7 @@ static ContainerNode* findEnclosingScrollableContainer(ContainerNode* node, cons
     return nullptr;
 }
 
-static WeakPtr<ScrollableArea> NODELETE scrollableAreaForEventTarget(Element* eventTarget)
+static WeakPtr<ScrollableArea> LEGACY_NODELETE scrollableAreaForEventTarget(Element* eventTarget)
 {
     return dynamicDowncast<ScrollView>(EventHandler::widgetForEventTarget(eventTarget));
 }
@@ -823,7 +827,7 @@ static bool eventTargetIsPlatformWidget(Element* eventTarget)
     return widget && widget->platformWidget();
 }
 
-static WeakPtr<ScrollableArea> NODELETE scrollableAreaForContainerNode(ContainerNode& container)
+static WeakPtr<ScrollableArea> LEGACY_NODELETE scrollableAreaForContainerNode(ContainerNode& container)
 {
     auto* box = container.renderBox();
     if (!box)
@@ -1156,6 +1160,103 @@ IntPoint EventHandler::targetPositionInWindowForSelectionAutoscroll() const
 
     auto frame = toUserSpaceForPrimaryScreen(screenRectForDisplay(page->chrome().displayID()));
     return flooredIntPoint(valueOrDefault(m_lastKnownMousePosition)) + autoscrollAdjustmentFactorForScreenBoundaries(flooredIntPoint(m_lastKnownMouseGlobalPosition), frame);
+}
+
+static const AtomString& mouseEventTypeForTrackedPointerEvent(PlatformEvent::Type type)
+{
+    switch (type) {
+    case PlatformEvent::Type::MousePressed:
+        return eventNames().mousedownEvent;
+    case PlatformEvent::Type::MouseMoved:
+        return eventNames().mousemoveEvent;
+    case PlatformEvent::Type::MouseReleased:
+        return eventNames().mouseupEvent;
+    default:
+        ASSERT_NOT_REACHED();
+        return nullAtom();
+    }
+}
+
+HandleUserInputEventResult EventHandler::dispatchTrackedPointerEvent(const PlatformMouseEvent& platformEvent)
+{
+    Ref frame = m_frame.get();
+    RefPtr view = frame->view();
+    RefPtr document = frame->document();
+    RefPtr page = frame->page();
+    if (!view || !document || !page)
+        return false;
+
+    auto documentPoint = view->windowToContents(platformEvent.position());
+    constexpr OptionSet hitType {
+        HitTestRequest::Type::ReadOnly,
+        HitTestRequest::Type::Active,
+        HitTestRequest::Type::DisallowUserAgentShadowContent,
+        HitTestRequest::Type::SkipTransformToRootFrameCoordinates
+    };
+    auto hitTestResult = hitTestResultAtPoint(LayoutPoint { documentPoint }, hitType);
+
+    if (platformEvent.type() == PlatformEvent::Type::MousePressed)
+        m_trackedPointerSubframe = subframeForTargetNode(protect(hitTestResult.targetNode()).get());
+
+    if (RefPtr subframe = m_trackedPointerSubframe) {
+        if (platformEvent.type() == PlatformEvent::Type::MouseReleased)
+            m_trackedPointerSubframe = nullptr;
+
+        if (RefPtr remoteSubframe = dynamicDowncast<RemoteFrame>(*subframe)) {
+            if (auto remoteUserInputEventData = userInputEventDataForRemoteFrame(remoteSubframe.get(), documentPoint))
+                return *remoteUserInputEventData;
+            return false;
+        }
+
+        RefPtr localSubframe = dynamicDowncast<LocalFrame>(*subframe);
+        if (!localSubframe || !localSubframe->view())
+            return false;
+
+        return localSubframe->eventHandler().dispatchTrackedPointerEvent(platformEvent);
+    }
+
+    // A pointer captured by the page keeps its target however far the press travels.
+    auto& pointerCaptureController = page->pointerCaptureController();
+    auto pointerId = platformEvent.pointerId();
+    pointerCaptureController.processPendingPointerCapture(pointerId);
+
+    RefPtr target = pointerCaptureController.pointerCaptureElement(document.get(), pointerId);
+    if (!target)
+        target = hitTestResult.targetElement();
+    if (!target)
+        return false;
+
+    const auto& eventType = mouseEventTypeForTrackedPointerEvent(platformEvent.type());
+
+    Vector<Ref<MouseEvent>> coalescedEvents;
+    if (platformEvent.type() == PlatformEvent::Type::MouseMoved)
+        coalescedEvents.append(MouseEvent::create(eventType, document->windowProxy(), platformEvent, { }, { }, 0, nullptr));
+
+    Ref mouseEvent = MouseEvent::create(eventType, document->windowProxy(), platformEvent, coalescedEvents, { }, 0, nullptr);
+    return pointerCaptureController.dispatchEventForTrackedPointer(*target, mouseEvent, pointerId, platformEvent.pointerType());
+}
+
+HandleUserInputEventResult EventHandler::cancelTrackedPointer(const DoublePoint& positionInRootView, PointerID pointerId)
+{
+    Ref frame = m_frame.get();
+    if (RefPtr subframe = std::exchange(m_trackedPointerSubframe, nullptr)) {
+        if (RefPtr remoteSubframe = dynamicDowncast<RemoteFrame>(*subframe)) {
+            RefPtr view = frame->view();
+            if (!view)
+                return false;
+            if (auto remoteUserInputEventData = userInputEventDataForRemoteFrame(remoteSubframe.get(), view->windowToContents(positionInRootView)))
+                return *remoteUserInputEventData;
+            return false;
+        }
+
+        if (RefPtr localSubframe = dynamicDowncast<LocalFrame>(*subframe))
+            return localSubframe->eventHandler().cancelTrackedPointer(positionInRootView, pointerId);
+        return false;
+    }
+
+    if (RefPtr page = frame->page())
+        page->pointerCaptureController().cancelTrackedPointer(pointerId);
+    return false;
 }
 
 }

@@ -111,6 +111,7 @@ void GPUComputePipeline::setLabel(String&& label)
 {
     m_descriptor.label = label;
     protect(backing())->setLabel(WTF::move(label));
+    InspectorInstrumentation::didChangeWebGPUComputePipelineLabel(*this);
 }
 
 Ref<GPUBindGroupLayout> GPUComputePipeline::getBindGroupLayout(uint32_t index)

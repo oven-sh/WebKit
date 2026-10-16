@@ -308,7 +308,7 @@ void SWClientConnection::clearPendingJobs()
     for (auto& keyValue : jobSources) {
         dispatchToContextThreadIfNecessary(keyValue.value, [identifier = keyValue.key] (auto& context) {
             if (RefPtr container = context.serviceWorkerContainer()) {
-                if (auto* job = container->job(identifier))
+                if (RefPtr job = container->job(identifier))
                     job->failedWithException(Exception { ExceptionCode::TypeError, "Internal error"_s });
             }
         });

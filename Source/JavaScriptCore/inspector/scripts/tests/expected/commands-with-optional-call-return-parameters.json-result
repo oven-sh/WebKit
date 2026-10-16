@@ -861,8 +861,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeAllOptionalParameters(long p
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ **out_opt_columnNames, NSString **out_opt_notes, double *out_opt_timestamp, RWIProtocolJSONObject **out_opt_values, RWIProtocolJSONObject **out_opt_payload, int *out_opt_databaseId, TestProtocolDatabaseError **out_opt_sqlError, TestProtocolDatabasePrimaryColors *out_opt_screenColor, NSArray/*<NSString>*/ **out_opt_alternateColors, TestProtocolDatabase(anonymous) *out_opt_printColor) {
@@ -938,8 +937,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeNoOptionalParameters(long pr
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ *out_columnNames, NSString *out_notes, double out_timestamp, RWIProtocolJSONObject *out_values, RWIProtocolJSONObject *out_payload, int out_databaseId, TestProtocolDatabaseError *out_sqlError, TestProtocolDatabasePrimaryColors out_screenColor, NSArray/*<NSString>*/ *out_alternateColors, TestProtocolDatabase(anonymous) out_printColor) {

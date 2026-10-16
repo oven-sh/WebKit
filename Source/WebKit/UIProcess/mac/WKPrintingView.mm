@@ -147,7 +147,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     // those stashed-away values on subsequent calls.
     double originalTopMargin;
     double originalBottomMargin;
-    RetainPtr<NSNumber> originalTopMarginNumber = [infoDictionary objectForKey:WebKitOriginalTopPrintingMarginKey];
+    RetainPtr originalTopMarginNumber = dynamic_objc_cast<NSNumber>([infoDictionary objectForKey:WebKitOriginalTopPrintingMarginKey]);
     if (!originalTopMarginNumber) {
         ASSERT(![infoDictionary objectForKey:WebKitOriginalBottomPrintingMarginKey]);
         originalTopMargin = [info topMargin];
@@ -492,7 +492,8 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         CGPDFContextAddDestinationAtPoint(context.get(), bridge_cast(linkDestinationName(pdfDocument, destination.get())).get(), destinationPoint);
     }
 
-    for (PDFAnnotation *annotation in [pdfPage annotations]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in [pdfPage annotations]) {
         if (![[annotation valueForAnnotationKey:WebKit::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:WebKit::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
             continue;
 
@@ -563,7 +564,8 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         return;
     }
 
-    WebCore::GraphicsContextCG context([[NSGraphicsContext currentContext] CGContext]);
+    RetainPtr cgContext = [[NSGraphicsContext currentContext] CGContext];
+    WebCore::GraphicsContextCG context(cgContext.get());
     WebCore::GraphicsContextStateSaver stateSaver(context);
 
     bitmap->paint(context, _webFrame->page()->deviceScaleFactor(), WebCore::IntPoint(nsRect.origin), bitmap->bounds());
@@ -598,7 +600,8 @@ static RetainPtr<NSString> linkDestinationName(PDFDocument *document, PDFDestina
         _linkDestinationsPerPage.resize(pageCount);
         for (unsigned i = 0; i < pageCount; i++) {
             RetainPtr page = [_printedPagesPDFDocument pageAtIndex:i];
-            for (PDFAnnotation *annotation in page.get().annotations) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in page.get().annotations) {
                 if (![[annotation valueForAnnotationKey:WebKit::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:WebKit::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
                     continue;
 

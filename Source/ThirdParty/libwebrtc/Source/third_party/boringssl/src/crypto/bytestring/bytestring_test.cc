@@ -1669,6 +1669,12 @@ TEST(CBBTest, AddRelativeOIDFromText) {
     EXPECT_STREQ(t.text, text.get());
 
     EXPECT_TRUE(CBS_is_valid_asn1_relative_oid(&cbs));
+
+    ScopedCBB text_cbb;
+    ASSERT_TRUE(CBB_init(text_cbb.get(), 0));
+    EXPECT_TRUE(CBB_add_asn1_relative_oid_from_der_to_text(
+        text_cbb.get(), t.der.data(), t.der.size()));
+    EXPECT_EQ(Bytes(CBBAsSpan(text_cbb.get())), Bytes(t.text));
   }
 
   for (const char *t : kInvalidTexts) {
@@ -1685,6 +1691,11 @@ TEST(CBBTest, AddRelativeOIDFromText) {
     UniquePtr<char> text(CBS_asn1_relative_oid_to_text(&cbs));
     EXPECT_FALSE(text);
     EXPECT_EQ(t.overflow ? 1 : 0, CBS_is_valid_asn1_relative_oid(&cbs));
+
+    ScopedCBB text_cbb;
+    ASSERT_TRUE(CBB_init(text_cbb.get(), 0));
+    EXPECT_FALSE(CBB_add_asn1_relative_oid_from_der_to_text(
+        text_cbb.get(), t.der.data(), t.der.size()));
   }
 }
 

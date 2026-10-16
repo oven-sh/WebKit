@@ -96,25 +96,28 @@ SlotVisitor::~SlotVisitor()
     clearMarkStacks();
 }
 
-void SlotVisitor::didStartMarking(CollectionScope scope, HeapVersion markingVersion, HeapAnalyzer* analyzer)
+void SlotVisitor::didStartMarking(CollectionScope scope, HeapVersion markingVersion, bool isAnalyzingHeap)
 {
-    switch (scope) {
-    case CollectionScope::Eden:
-        reset();
-        break;
-    case CollectionScope::Full:
-        m_extraMemorySize = 0;
-        break;
-    }
-    // After the reset above, which clears the analyzer.
-    Base::didStartMarking(scope, analyzer);
+    // The previous collection's End reset this visitor.
+    ASSERT(!m_bytesMarkedHeap);
+    ASSERT(!m_bytesMarkedInHeap);
+    ASSERT(!m_flushedBytesMarked);
+    ASSERT(!m_extraMemoryHeap);
+    ASSERT(!m_extraMemoryInHeap.hasOverflowed() && !m_extraMemoryInHeap);
+    ASSERT(!m_currentCell);
+    Base::didStartMarking(scope, isAnalyzingHeap);
     m_markingVersion = markingVersion;
 }
 
 void SlotVisitor::reset()
 {
     Base::reset();
-    m_bytesVisited = 0;
+    // These counts should have been flushed to each heap by now.
+    RELEASE_ASSERT(!m_bytesMarkedInHeap);
+    RELEASE_ASSERT(!m_extraMemoryInHeap.hasOverflowed() && !m_extraMemoryInHeap);
+    m_bytesMarkedHeap = nullptr;
+    m_flushedBytesMarked = 0;
+    m_extraMemoryHeap = nullptr;
     RELEASE_ASSERT(!m_currentCell);
 }
 
@@ -141,6 +144,7 @@ void SlotVisitor::appendJSCellOrAuxiliary(HeapCell* heapCell)
         return;
     
     ASSERT(!m_isCheckingForDefaultMarkViolation);
+    ASSERT(m_collector.hasHeap(*heapCell->heap()));
     
     auto validateCell = [&] (JSCell* jsCell) {
         StructureID structureID = jsCell->structureID();
@@ -203,7 +207,7 @@ void SlotVisitor::appendJSCellOrAuxiliary(HeapCell* heapCell)
     
         JSCell* jsCell = static_cast<JSCell*>(heapCell);
         validateCell(jsCell);
-        Integrity::auditCell(m_collector.heap().vm(), jsCell);
+        Integrity::auditCell(jsCell->vm(), jsCell);
         
         jsCell->setCellState(CellState::PossiblyGrey);
 
@@ -219,8 +223,12 @@ void SlotVisitor::appendJSCellOrAuxiliary(HeapCell* heapCell)
 
 void SlotVisitor::appendSlow(JSCell* cell, Dependency dependency)
 {
-    if (m_heapAnalyzer) [[unlikely]]
-        m_heapAnalyzer->analyzeEdge(m_currentCell, cell, rootMarkReason());
+    if (m_isAnalyzingHeap) [[unlikely]] {
+        // FIXME: A cross-heap edge appears in neither VM's snapshot: it goes to the target cell's VM's snapshot,
+        // which has no node for the source and drops it.
+        if (HeapAnalyzer* analyzer = cell->vm().activeHeapAnalyzer())
+            analyzer->analyzeEdge(m_currentCell, cell, rootMarkReason());
+    }
 
     appendHiddenSlowImpl(cell, dependency);
 }
@@ -283,7 +291,7 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
     container.noteMarked();
     
     m_visitCount++;
-    m_bytesVisited += container.cellSize();
+    noteBytesMarked(container.vm().heap, container.cellSize());
 
     m_collectorStack.append(cell);
 }
@@ -292,7 +300,7 @@ void SlotVisitor::markAuxiliary(const void* base)
 {
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
     
-    ASSERT(cell->heap() == &m_collector.heap());
+    ASSERT(m_collector.hasHeap(*cell->heap()));
     
     if (Heap::testAndSetMarked(m_markingVersion, cell))
         return;
@@ -310,14 +318,32 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     
     CellContainer container = cell->cellContainer();
     
-    container.assertValidCell(m_collector.heap().vm(), cell);
+    container.assertValidCell(cell->vm(), cell);
     container.noteMarked();
     
     m_visitCount++;
 
     size_t cellSize = container.cellSize();
-    m_bytesVisited += cellSize;
+    noteBytesMarked(container.vm().heap, cellSize);
     m_nonCellVisitCount += cellSize;
+}
+
+ALWAYS_INLINE void SlotVisitor::noteBytesMarked(JSC::Heap& heap, size_t bytes)
+{
+    if (&heap != m_bytesMarkedHeap) [[unlikely]] {
+        flushBytesMarked();
+        m_bytesMarkedHeap = &heap;
+    }
+    m_bytesMarkedInHeap += bytes;
+}
+
+NEVER_INLINE void SlotVisitor::flushBytesMarked()
+{
+    if (!m_bytesMarkedInHeap)
+        return;
+    m_bytesMarkedHeap->reportBytesMarked(m_bytesMarkedInHeap);
+    m_flushedBytesMarked += m_bytesMarkedInHeap;
+    m_bytesMarkedInHeap = 0;
 }
 
 class SetCurrentCellScope {
@@ -392,9 +418,11 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
         break;
     }
 
-    if (m_heapAnalyzer) [[unlikely]] {
-        if (m_isFirstVisit)
-            m_heapAnalyzer->analyzeNode(const_cast<JSCell*>(cell));
+    if (m_isAnalyzingHeap) [[unlikely]] {
+        if (m_isFirstVisit) {
+            if (HeapAnalyzer* analyzer = cell->vm().activeHeapAnalyzer())
+                analyzer->analyzeNode(const_cast<JSCell*>(cell));
+        }
     }
 }
 
@@ -406,13 +434,17 @@ void SlotVisitor::visitAsConstraint(const JSCell* cell)
 
 inline void SlotVisitor::propagateExternalMemoryVisitedIfNecessary()
 {
-    if (m_isFirstVisit) {
-        if (m_extraMemorySize.hasOverflowed())
-            m_collector.heap().reportExtraMemoryVisited(std::numeric_limits<size_t>::max());
-        else if (m_extraMemorySize)
-            m_collector.heap().reportExtraMemoryVisited(m_extraMemorySize);
-        m_extraMemorySize = 0;
-    }
+    if (m_isFirstVisit)
+        flushExtraMemoryVisited();
+}
+
+void SlotVisitor::flushExtraMemoryVisited()
+{
+    if (m_extraMemoryInHeap.hasOverflowed())
+        m_extraMemoryHeap->reportExtraMemoryVisited(std::numeric_limits<size_t>::max());
+    else if (m_extraMemoryInHeap)
+        m_extraMemoryHeap->reportExtraMemoryVisited(m_extraMemoryInHeap);
+    m_extraMemoryInHeap = 0;
 }
 
 void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
@@ -450,44 +482,14 @@ void SlotVisitor::donateKnownParallel()
         });
 }
 
-void SlotVisitor::updateMutatorIsStopped(const AbstractLocker&)
-{
-    m_mutatorIsStopped = (m_collector.heap().worldIsStopped() & m_canOptimizeForStoppedMutator);
-}
-
-void SlotVisitor::updateMutatorIsStopped()
-{
-    if (mutatorIsStoppedIsUpToDate())
-        return;
-    updateMutatorIsStopped(Locker { m_rightToRun });
-}
-
-bool SlotVisitor::hasAcknowledgedThatTheMutatorIsResumed() const
-{
-    return !m_mutatorIsStopped;
-}
-
-bool SlotVisitor::mutatorIsStoppedIsUpToDate() const
-{
-    return m_mutatorIsStopped == (m_collector.heap().worldIsStopped() & m_canOptimizeForStoppedMutator);
-}
-
-void SlotVisitor::optimizeForStoppedMutator()
-{
-    m_canOptimizeForStoppedMutator = true;
-}
-
 NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
 {
     if (!m_isInParallelMode) {
         dataLog("FATAL: attempting to drain when not in parallel mode.\n");
         RELEASE_ASSERT_NOT_REACHED();
     }
-    
-    Locker locker { m_rightToRun };
-    
+
     while (!hasElapsed(timeout)) {
-        updateMutatorIsStopped(locker);
         IterationStatus status = forEachMarkStack(
             [&] (MarkStackArray& stack) -> IterationStatus {
                 if (stack.isEmpty())
@@ -518,8 +520,7 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
         propagateExternalMemoryVisitedIfNecessary();
         if (status == IterationStatus::Continue)
             break;
-        
-        m_rightToRun.safepoint();
+
         donateKnownParallel();
     }
 }
@@ -549,41 +550,35 @@ size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
         return bytesVisited() >= bytesRequested;
     };
     
-    {
-        Locker locker { m_rightToRun };
-        
-        while (!isDone()) {
-            updateMutatorIsStopped(locker);
-            IterationStatus status = forEachMarkStack(
-                [&] (MarkStackArray& stack) -> IterationStatus {
-                    if (stack.isEmpty() || isDone())
-                        return IterationStatus::Continue;
+    while (!isDone()) {
+        IterationStatus status = forEachMarkStack(
+            [&](MarkStackArray& stack) -> IterationStatus {
+                if (stack.isEmpty() || isDone())
+                    return IterationStatus::Continue;
 
-                    stack.refill();
-                    
-                    m_isFirstVisit = (&stack == &m_collectorStack);
+                stack.refill();
 
-                    unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
-                    auto popAndPrefetch = [&] ALWAYS_INLINE_LAMBDA -> const JSCell* {
-                        if (!countdown || !stack.canRemoveLast() || isDone())
-                            return nullptr;
-                        --countdown;
-                        return stack.popAndPrefetch();
-                    };
-                    for (const JSCell* next = popAndPrefetch(); next;) {
-                        const JSCell* cell = next;
-                        next = popAndPrefetch();
-                        cellBytesVisited += cell->cellSize();
-                        visitChildren(cell);
-                    }
-                    return IterationStatus::Done;
-                });
-            propagateExternalMemoryVisitedIfNecessary();
-            if (status == IterationStatus::Continue)
-                break;
-            m_rightToRun.safepoint();
-            donateKnownParallel();
-        }
+                m_isFirstVisit = (&stack == &m_collectorStack);
+
+                unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
+                auto popAndPrefetch = [&] ALWAYS_INLINE_LAMBDA -> const JSCell* {
+                    if (!countdown || !stack.canRemoveLast() || isDone())
+                        return nullptr;
+                    --countdown;
+                    return stack.popAndPrefetch();
+                };
+                for (const JSCell* next = popAndPrefetch(); next;) {
+                    const JSCell* cell = next;
+                    next = popAndPrefetch();
+                    cellBytesVisited += cell->cellSize();
+                    visitChildren(cell);
+                }
+                return IterationStatus::Done;
+            });
+        propagateExternalMemoryVisitedIfNecessary();
+        if (status == IterationStatus::Continue)
+            break;
+        donateKnownParallel();
     }
 
     donateAll();

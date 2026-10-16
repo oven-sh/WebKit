@@ -32,13 +32,18 @@
 #include "DeprecatedCSSOMValue.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
+#include "RenderElement.h"
 #include "Theme.h"
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
 namespace Style {
 
 NamedImage::NamedImage(CustomIdent&& name)
-    : GeneratedImage { Type::NamedImage, NamedImage::isFixedSize }
+    : GeneratedImage { Type::NamedImage }
     , m_name { WTF::move(name) }
 {
 }
@@ -75,19 +80,29 @@ void NamedImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-ImageDrawResult NamedImage::draw(GraphicsContext& context, const RenderElement&, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool) const
+static WTF::String adjustNamedImage(const RenderElement& renderer, const AtomString& name)
+{
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    return AXCustomColorModeController::adjustNamedImage(renderer, name);
+#else
+    UNUSED_PARAM(renderer);
+    return name;
+#endif
+}
+
+ImageDrawResult NamedImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool) const
 {
     auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
     if (size.isEmpty())
         return ImageDrawResult::DidNothing;
 
     return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
-        Theme::singleton().drawNamedImage(m_name.value, context, destination.size());
+        Theme::singleton().drawNamedImage(adjustNamedImage(renderer, m_name.value), context, destination.size());
         return ImageDrawResult::DidDraw;
     });
 }
 
-ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const RenderElement&, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool) const
+ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool) const
 {
     auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
     if (size.isEmpty() || context.paintingDisabled())
@@ -97,7 +112,7 @@ ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const Render
     if (!imageBuffer)
         return ImageDrawResult::DidNothing;
 
-    Theme::singleton().drawNamedImage(m_name.value, imageBuffer->context(), size);
+    Theme::singleton().drawNamedImage(adjustNamedImage(renderer, m_name.value), imageBuffer->context(), size);
     context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
 
     return ImageDrawResult::DidDraw;
@@ -106,11 +121,6 @@ ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const Render
 bool NamedImage::knownToBeOpaque(const RenderElement&) const
 {
     return false;
-}
-
-FloatSize NamedImage::fixedSize(const RenderElement&) const
-{
-    return { };
 }
 
 } // namespace Style

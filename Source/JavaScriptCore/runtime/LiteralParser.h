@@ -135,7 +135,7 @@ template<typename CharacterType> struct LiteralParserToken {
 };
 
 template <typename CharType>
-ALWAYS_INLINE void NODELETE setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
+ALWAYS_INLINE void LEGACY_NODELETE setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
 
 template <typename CharType, JSONReviverMode reviverMode>
 class LiteralParser {
@@ -227,7 +227,7 @@ private:
         TokenType nextAfterValue();
         bool consumeColon();
         void skipWhitespaceBeforeKey();
-        CharType peek() const { return m_ptr < m_end ? *m_ptr : 0; }
+        CharType peek() const { return m_ptr < m_end ? *m_ptr : CharType { }; }
         TokenType nextString();
         TokenType nextNumber();
         bool tryConsumeStringEqualTo(std::span<const Latin1Character>);
@@ -284,8 +284,8 @@ private:
         const CharType* end() const { return m_end; }
         void advanceTo(const CharType* p) { m_ptr = p; }
 #endif
-        inline const CharType* NODELETE currentTokenStart() const;
-        inline const CharType* NODELETE currentTokenEnd() const;
+        inline const CharType* LEGACY_NODELETE currentTokenStart() const;
+        inline const CharType* LEGACY_NODELETE currentTokenEnd() const;
         
     private:
         template<JSONIdentifierHint>

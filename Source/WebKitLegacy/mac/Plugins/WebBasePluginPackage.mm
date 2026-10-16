@@ -188,9 +188,7 @@ static constexpr auto QuickTimeCocoaPluginIdentifier = "com.apple.quicktime.webp
 - (void)dealloc
 {
     ASSERT(!pluginDatabases || [pluginDatabases count] == 0);
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [pluginDatabases release];
-    
+
     [super dealloc];
 }
 
@@ -252,7 +250,7 @@ static constexpr auto QuickTimeCocoaPluginIdentifier = "com.apple.quicktime.webp
     return bundleIdentifier == JavaCocoaPluginIdentifier || bundleIdentifier == JavaCarbonPluginIdentifier;
 }
 
-static inline void NODELETE swapIntsInHeader(std::span<uint32_t> rawData)
+static inline void LEGACY_NODELETE swapIntsInHeader(std::span<uint32_t> rawData)
 {
     for (auto& data : rawData)
         data = OSSwapInt32(data);
@@ -346,7 +344,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (void)wasAddedToPluginDatabase:(WebPluginDatabase *)database
 {    
     if (!pluginDatabases)
-        pluginDatabases = [[NSMutableSet alloc] init];
+        pluginDatabases = adoptNS([[NSMutableSet alloc] init]);
         
     ASSERT(![pluginDatabases containsObject:database]);
     [protect(pluginDatabases) addObject:database];

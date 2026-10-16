@@ -50,7 +50,7 @@ public:
 
     static PlatformPathPtr emptyPlatformPath();
 
-    PlatformPathPtr NODELETE platformPath() const;
+    PlatformPathPtr LEGACY_NODELETE platformPath() const;
 
     void addPath(const PathCG&, const AffineTransform&);
 
@@ -82,7 +82,8 @@ public:
 private:
     PathCG(RetainPtr<CGMutablePathRef>&&);
 
-    PlatformPathPtr ensureMutablePlatformPath();
+    // Must return a reference: holding a RetainPtr copy across a mutation triggers a copy-on-write, so later edits through that copy are lost.
+    const RetainPtr<CGMutablePathRef>& ensureMutablePlatformPath();
 
     FloatPoint currentPoint() const final;
 

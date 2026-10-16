@@ -60,11 +60,7 @@ struct AllocationBindings {
 template<typename Backend>
 class RegisterAllocator {
 public:
-#ifdef NDEBUG
     static constexpr bool verbose = false;
-#else
-    static constexpr bool verbose = true;
-#endif
 
     static constexpr GPRReg s_scratch = GPRInfo::nonPreservedNonArgumentGPR0;
 

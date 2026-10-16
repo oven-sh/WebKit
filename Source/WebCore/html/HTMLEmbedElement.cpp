@@ -83,13 +83,13 @@ void HTMLEmbedElement::collectPresentationalHintsForAttribute(const QualifiedNam
 {
     if (name == hiddenAttr) {
         ASSERT(!value.isNull());
-        addPropertyToPresentationalHintStyle(style, CSSPropertyWidth, 0, CSSUnitType::Px);
-        addPropertyToPresentationalHintStyle(style, CSSPropertyHeight, 0, CSSUnitType::Px);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Width, 0, CSSUnitType::Px);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Height, 0, CSSUnitType::Px);
     } else
         HTMLPlugInElement::collectPresentationalHintsForAttribute(name, value, style);
 }
 
-static bool NODELETE hasTypeOrSrc(const HTMLEmbedElement& embed)
+static bool LEGACY_NODELETE hasTypeOrSrc(const HTMLEmbedElement& embed)
 {
     return embed.hasAttributeWithoutSynchronization(typeAttr) || embed.hasAttributeWithoutSynchronization(srcAttr);
 }

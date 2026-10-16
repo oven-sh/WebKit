@@ -234,13 +234,13 @@ void WindowProxy::setDOMWindow(DOMWindow* newDOMWindow)
 
 #if ENABLE(WEBDRIVER_BIDI)
         // Navigations reuse the JSWindowProxy with a new DOMWindow, which means a new realm.
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame.get())) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame)) {
             AutomationInstrumentation::scriptRealmDestroyed(localFrame->frameID(), windowProxy->world());
             AutomationInstrumentation::scriptRealmCreated(localFrame->frameID(), resolveOriginForRealm(*localFrame), windowProxy->world());
         }
 #endif
 
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame.get())) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame)) {
             CheckedRef scriptController = localFrame->script();
 
             // ScriptController's m_cacheableBindingRootObject persists between page navigations

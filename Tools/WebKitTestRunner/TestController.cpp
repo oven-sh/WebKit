@@ -871,7 +871,7 @@ PlatformWebView* TestController::createOtherPlatformWebView(PlatformWebView* par
         nullptr, // runWebAuthenticationPanel
         nullptr, // decidePolicyForSpeechRecognitionPermissionRequest
         nullptr, // decidePolicyForMediaKeySystemPermissionRequest
-        nullptr, // queryPermission
+        queryPermission,
         nullptr, // lockScreenOrientationCallback,
         nullptr, // unlockScreenOrientationCallback,
         addMessageToConsole,
@@ -1182,6 +1182,16 @@ WKRetainPtr<WKPageConfigurationRef> TestController::generatePageConfiguration(co
     m_userContentController = adoptWK(WKUserContentControllerCreate());
     WKPageConfigurationSetUserContentController(pageConfiguration.get(), userContentController());
     WKPageConfigurationSetPortsForUpgradingInsecureSchemeForTesting(pageConfiguration.get(), options.insecureUpgradePort(), options.secureUpgradePort());
+
+#if ENABLE(APPLICATION_MANIFEST) && !PLATFORM(COCOA)
+    // Cocoa sets the application manifest in platformCreateWebView() via _WKApplicationManifest SPI instead.
+    auto applicationManifestPath = options.applicationManifest();
+    if (!applicationManifestPath.empty()) {
+        if (auto fileContents = FileSystem::readEntireFile(String::fromUTF8(applicationManifestPath.c_str())))
+            WKPageConfigurationSetApplicationManifest(pageConfiguration.get(), toWK(String::fromUTF8(fileContents->span())).get(), nullptr, nullptr);
+    }
+#endif
+
     return pageConfiguration;
 }
 
@@ -1529,6 +1539,10 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     m_beforeUnloadReturnValue = true;
 
     m_globalPrivacyControlEnabled = std::nullopt;
+
+#if PLATFORM(MAC)
+    handleAXRemoveNotificationListener();
+#endif
 
     for (auto& auxiliaryWebView : std::exchange(m_auxiliaryWebViews, { }))
         WKPageClose(auxiliaryWebView->page());
@@ -2739,7 +2753,8 @@ void TestController::didReceiveScriptMessage(WKScriptMessageRef message, Complet
         auto isLoopback = booleanValue(argumentDictionary, "IsLoopback");
         auto requestingOrigin = stringValue(argumentDictionary, "RequestingOrigin");
         m_localNetworkAccessPermissions.set(localNetworkAccessPermissionKey(originString(adoptWK(WKSecurityOriginCreateFromString(requestingOrigin)).get()), isLoopback), value);
-        return completionHandler(nullptr);
+        // WebKit keeps the answers it was given, so an embedder that changes one has to drop them.
+        return WKWebsiteDataStoreClearLocalNetworkAccessPermissionsForTesting(websiteDataStore(), completionHandler.leak(), adoptAndCallCompletionHandler);
     }
 
     if (WKStringIsEqualToUTF8CString(command, "SetStorageAccessPermission")) {
@@ -3887,6 +3902,14 @@ void TestController::didReceiveSynchronousMessageFromInjectedBundle(WKStringRef 
 
     if (WKStringIsEqualToUTF8CString(messageName, "AXPerformAction")) {
         handleAXPerformAction(dictionaryValue(messageBody));
+        return completionHandler(nullptr);
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "AXAddNotificationListener"))
+        return completionHandler(handleAXAddNotificationListener().get());
+
+    if (WKStringIsEqualToUTF8CString(messageName, "AXRemoveNotificationListener")) {
+        handleAXRemoveNotificationListener();
         return completionHandler(nullptr);
     }
 #endif
@@ -5901,6 +5924,11 @@ void TestController::setHasMouseDeviceForTesting(bool)
 // Private API for creating an AXUIElement from a remote token
 extern "C" AXUIElementRef _AXUIElementCreateWithRemoteToken(CFDataRef remoteToken);
 
+// Private API for the process actually serving an element. AXUIElementGetPid returns the
+// presenting process, which for web content is the UI process.
+extern "C" AXError _AXUIElementGetActualPid(AXUIElementRef, pid_t*);
+extern "C" AXUIElementRef _AXUIElementCreateApplicationWithPresenterPid(pid_t, pid_t presenterPid);
+
 uint64_t TestController::storeAXElement(CFTypeRef element)
 {
     if (!element)
@@ -5908,6 +5936,12 @@ uint64_t TestController::storeAXElement(CFTypeRef element)
 
     uint64_t token = m_nextAXElementToken++;
     m_axElementTokens.set(token, element);
+
+    // A test reaches the elements of a cross-site iframe by walking the tree into it, so make sure
+    // notifications from that element's process are observed by the time the test can act on it.
+    if (m_isListeningForAXNotifications)
+        observeAXApplicationForElement(element);
+
     return token;
 }
 
@@ -6201,6 +6235,137 @@ void TestController::handleAXPerformAction(WKDictionaryRef messageBody)
 
     RetainPtr actionNameCF = adoptCF(CFStringCreateWithCString(kCFAllocatorDefault, toSTD(actionName).c_str(), kCFStringEncodingUTF8));
     AXUIElementPerformAction(element, actionNameCF.get());
+}
+
+// Observing the application element delivers these notifications for every element in that
+// process, which is how VoiceOver observes an app.
+static std::span<const CFStringRef> observedAXNotifications()
+{
+    static const CFStringRef notifications[] = {
+        kAXFocusedUIElementChangedNotification,
+        kAXValueChangedNotification,
+        kAXSelectedTextChangedNotification,
+        kAXSelectedChildrenChangedNotification,
+        CFSTR("AXLoadComplete"),
+    };
+    return notifications;
+}
+
+static void axObserverCallback(AXObserverRef, AXUIElementRef element, CFStringRef notification, CFDictionaryRef userInfo, void* observedPid)
+{
+    TestController::singleton().axNotificationReceived(element, notification, userInfo, static_cast<pid_t>(reinterpret_cast<intptr_t>(observedPid)));
+}
+
+static pid_t actualPidForAXElement(CFTypeRef element)
+{
+    if (!element || CFGetTypeID(element) != AXUIElementGetTypeID())
+        return 0;
+
+    pid_t pid = 0;
+    if (_AXUIElementGetActualPid(static_cast<AXUIElementRef>(element), &pid) != kAXErrorSuccess)
+        return 0;
+    return pid;
+}
+
+bool TestController::observeAXApplicationForElement(CFTypeRef element)
+{
+    pid_t pid = actualPidForAXElement(element);
+    // Never observe ourselves: registering requires a reply from this process's main thread.
+    if (pid <= 0 || pid == getpid())
+        return false;
+
+    if (m_axObservers.contains(pid))
+        return true;
+
+    RetainPtr application = adoptCF(_AXUIElementCreateApplicationWithPresenterPid(pid, getpid()));
+    return observeAXApplication(application.get());
+}
+
+bool TestController::observeAXApplication(CFTypeRef applicationElement)
+{
+    if (!applicationElement || CFGetTypeID(applicationElement) != AXUIElementGetTypeID())
+        return false;
+
+    auto application = static_cast<AXUIElementRef>(applicationElement);
+    pid_t pid = actualPidForAXElement(application);
+    if (pid <= 0 || pid == getpid())
+        return false;
+
+    if (m_axObservers.contains(pid))
+        return true;
+
+    AXObserverRef observer = nullptr;
+    if (AXObserverCreateWithInfoCallback(pid, axObserverCallback, &observer) != kAXErrorSuccess || !observer)
+        return false;
+    RetainPtr adoptedObserver = adoptCF(observer);
+
+    bool observedAny = false;
+    for (auto notification : observedAXNotifications()) {
+        if (AXObserverAddNotification(observer, application, notification, reinterpret_cast<void*>(static_cast<intptr_t>(pid))) == kAXErrorSuccess)
+            observedAny = true;
+    }
+    if (!observedAny)
+        return false;
+
+    CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), kCFRunLoopCommonModes);
+    m_axObservers.set(pid, AXApplicationObserver { WTF::move(adoptedObserver), application });
+    return true;
+}
+
+WKRetainPtr<WKTypeRef> TestController::handleAXAddNotificationListener()
+{
+    m_isListeningForAXNotifications = true;
+
+    // Start with the main frame's web content process. AppKit extends that registration to the processes
+    // it hosts remote accessibility content from (cross-site iframes), but asynchronously, so a test could
+    // act inside an iframe before its notifications are forwarded. To make that deterministic, also observe
+    // an iframe's process directly, as soon as the test walks into its tree.
+    bool observing = false;
+    if (CFDataRef remoteToken = getRemoteAccessibilityToken()) {
+        RetainPtr webContentElement = adoptCF(_AXUIElementCreateWithRemoteToken(remoteToken));
+        observing = observeAXApplicationForElement(webContentElement.get());
+    }
+
+    // Also cover any process the test has already walked into.
+    for (auto& element : m_axElementTokens.values())
+        observeAXApplicationForElement(element.get());
+
+    return adoptWK(WKBooleanCreate(observing));
+}
+
+void TestController::handleAXRemoveNotificationListener()
+{
+    m_isListeningForAXNotifications = false;
+    for (auto& entry : m_axObservers.values()) {
+        auto observer = static_cast<AXObserverRef>(const_cast<void*>(entry.observer.get()));
+        auto application = static_cast<AXUIElementRef>(const_cast<void*>(entry.application.get()));
+        // Unregister explicitly rather than letting the observed process find out that our observer
+        // died. Until it does, it keeps the dead observer registered, and it can drop the next
+        // notification it tries to deliver, which would then be missed by the next test.
+        for (auto notification : observedAXNotifications())
+            AXObserverRemoveNotification(observer, application, notification);
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), kCFRunLoopCommonModes);
+    }
+    m_axObservers.clear();
+}
+
+void TestController::axNotificationReceived(CFTypeRef element, CFStringRef notification, CFDictionaryRef userInfo, pid_t observedPid)
+{
+    if (!m_isListeningForAXNotifications)
+        return;
+
+    // A notification from an iframe's process also reaches the main frame process's observer. Deliver it
+    // once, through the observer of the process it came from, when that process is observed directly.
+    if (pid_t elementPid = actualPidForAXElement(element); elementPid != observedPid && m_axObservers.contains(elementPid))
+        return;
+
+    if (!m_mainWebView)
+        return;
+
+    WKRetainPtr body = adoptWK(WKMutableDictionaryCreate());
+    setValue(body, "elementToken", storeAXElement(element));
+    setValue(body, "notificationName", String(notification));
+    WKPagePostMessageToInjectedBundle(m_mainWebView->page(), toWK("AXClientNotification").get(), body.get());
 }
 
 #endif // PLATFORM(MAC)

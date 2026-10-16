@@ -469,6 +469,7 @@ void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const
     LOG_IF_DIFFERENT_WITH_CAST(PseudoId, pseudoElementType);
     LOG_IF_DIFFERENT_WITH_CAST(unsigned, pseudoBits);
     LOG_IF_DIFFERENT(pseudoElementBoxGeneration);
+    LOG_IF_DIFFERENT(useSVGZoomRulesForLength);
 }
 
 void ComputedStyleBase::InheritedFlags::dumpDifferences(TextStream& ts, const InheritedFlags& other) const

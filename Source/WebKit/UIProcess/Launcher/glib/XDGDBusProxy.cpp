@@ -193,7 +193,7 @@ void XDGDBusProxy::launch(const ProcessLaunchOptions& webProcessLaunchOptions)
     // sandboxed process's application ID, and will break if it's missing.
     int proxyFd = argumentsToFileDescriptor(proxyArgs, "dbus-proxy");
     Vector<UTF8CString> args = {
-        ASCIILiteral::fromLiteralUnsafe(DBUS_PROXY_EXECUTABLE),
+        ASCIILiteral { DBUS_PROXY_EXECUTABLE },
         makeString("--args="_s, proxyFd).utf8(),
     };
     auto argv = args.map([](auto& arg) {

@@ -38,7 +38,7 @@ namespace WebCore {
 namespace Style {
 
 ColorImage::ColorImage(Color&& color)
-    : GeneratedImage { Type::ColorImage, ColorImage::isFixedSize }
+    : GeneratedImage { Type::ColorImage }
     , m_color { WTF::move(color) }
 {
 }
@@ -114,14 +114,14 @@ bool ColorImage::knownToBeOpaque(const RenderElement& renderer) const
     return resolvedColor(renderer).isOpaque();
 }
 
-FloatSize ColorImage::fixedSize(const RenderElement&) const
+bool ColorImage::containsCurrentColor() const
 {
-    return { };
+    return m_color.containsCurrentColor();
 }
 
 WebCore::Color ColorImage::resolvedColor(const RenderElement& renderer) const
 {
-    return ColorResolver { renderer.style() }.colorResolvingCurrentColor(m_color);
+    return ColorResolver { renderer.style() }.colorResolvingCurrentColorApplyingColorFilter(m_color);
 }
 
 } // namespace Style

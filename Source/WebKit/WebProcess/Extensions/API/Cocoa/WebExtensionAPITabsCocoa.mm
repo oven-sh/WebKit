@@ -54,6 +54,7 @@
 #import "WebPage.h"
 #import "WebProcess.h"
 #import <WebCore/UserGestureIndicator.h>
+#import <wtf/Borrow.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/Base64.h>
 
@@ -330,7 +331,7 @@ bool WebExtensionAPITabs::parseTabQueryOptions(NSDictionary *options, WebExtensi
         parameters.urlPatterns = makeVector<String>(urls);
 
     if (parameters.urlPatterns) {
-        for (auto& patternString : parameters.urlPatterns.value()) {
+        for (auto& patternString : borrow(parameters.urlPatterns.value())) {
             auto pattern = WebExtensionMatchPattern::getOrCreate(patternString);
             if (!pattern || !pattern->isSupported()) {
                 *outExceptionString = toErrorString(nullString(), urlKey, makeString("'"_s, patternString, "' is not a valid pattern"_s)).createNSString().autorelease();
@@ -676,7 +677,7 @@ void WebExtensionAPITabs::getSelected(WebPageProxyIdentifier webPageProxyIdentif
 
         ASSERT(tabs.size() == 1);
 
-        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(tabs.first())));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(borrow(tabs)->first())));
     }, extensionContext().identifier());
 }
 
@@ -777,7 +778,7 @@ void WebExtensionAPITabs::move(NSObject *tabIDs, NSDictionary *properties, Ref<W
         auto& movedTabs = result.value();
 
         if (movedTabs.size() == 1)
-            callback->call(toJSValueRef(callback->globalContext(), toWebAPI(movedTabs[0])));
+            callback->call(toJSValueRef(callback->globalContext(), toWebAPI(borrow(movedTabs)[0])));
         else
             callback->call(toJSValueRef(callback->globalContext(), toWebAPI(movedTabs)));
     }, extensionContext().identifier());
@@ -1224,7 +1225,7 @@ void WebExtensionContextProxy::dispatchTabsCreatedEvent(const WebExtensionTabPar
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/onCreated
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onCreated().invokeListenersWithArgument(toWebAPI(parameters));
+        protect(protect(namespaceObject.tabs())->onCreated())->invokeListenersWithArgument(toWebAPI(parameters));
     });
 }
 
@@ -1233,7 +1234,7 @@ void WebExtensionContextProxy::dispatchTabsUpdatedEvent(const WebExtensionTabPar
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/onUpdated
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onUpdated().invokeListenersWithArgument(@(toWebAPI(parameters.identifier.value())), toWebAPI(changedParameters), toWebAPI(parameters));
+        protect(protect(namespaceObject.tabs())->onUpdated())->invokeListenersWithArgument(@(toWebAPI(parameters.identifier.value())), toWebAPI(changedParameters), toWebAPI(parameters));
     });
 }
 
@@ -1242,7 +1243,7 @@ void WebExtensionContextProxy::dispatchTabsReplacedEvent(WebExtensionTabIdentifi
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/onReplaced
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onReplaced().invokeListenersWithArgument(@(toWebAPI(newTabIdentifier)), @(toWebAPI(replacedTabIdentifier)));
+        protect(protect(namespaceObject.tabs())->onReplaced())->invokeListenersWithArgument(@(toWebAPI(newTabIdentifier)), @(toWebAPI(replacedTabIdentifier)));
     });
 }
 
@@ -1262,7 +1263,7 @@ void WebExtensionContextProxy::dispatchTabsDetachedEvent(WebExtensionTabIdentifi
     auto *detachInfo = @{ oldWindowIdKey: @(toWebAPI(oldWindowIdentifier)), oldPositionKey: toWebAPI(oldIndex) };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onDetached().invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), detachInfo);
+        protect(protect(namespaceObject.tabs())->onDetached())->invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), detachInfo);
     });
 }
 
@@ -1273,7 +1274,7 @@ void WebExtensionContextProxy::dispatchTabsMovedEvent(WebExtensionTabIdentifier 
     auto *moveInfo = @{ windowIdKey: @(toWebAPI(windowIdentifier)), fromIndexKey: toWebAPI(oldIndex), toIndexKey: toWebAPI(newIndex) };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onMoved().invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), moveInfo);
+        protect(protect(namespaceObject.tabs())->onMoved())->invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), moveInfo);
     });
 }
 
@@ -1292,7 +1293,7 @@ void WebExtensionContextProxy::dispatchTabsAttachedEvent(WebExtensionTabIdentifi
     auto *attachInfo = @{ newWindowIdKey: @(toWebAPI(newWindowIdentifier)), newPositionKey: toWebAPI(newIndex) };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onAttached().invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), attachInfo);
+        protect(protect(namespaceObject.tabs())->onAttached())->invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), attachInfo);
     });
 }
 
@@ -1303,7 +1304,7 @@ void WebExtensionContextProxy::dispatchTabsActivatedEvent(WebExtensionTabIdentif
     auto *activateInfo = @{ previousTabIdKey: @(toWebAPI(previousActiveTabIdentifier)), tabIdKey: @(toWebAPI(newActiveTabIdentifier)), windowIdKey: @(toWebAPI(windowIdentifier)) };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onActivated().invokeListenersWithArgument(activateInfo);
+        protect(protect(namespaceObject.tabs())->onActivated())->invokeListenersWithArgument(activateInfo);
     });
 }
 
@@ -1318,7 +1319,7 @@ void WebExtensionContextProxy::dispatchTabsHighlightedEvent(const Vector<WebExte
     auto *highlightInfo = @{ windowIdKey: @(toWebAPI(windowIdentifier)), tabIdsKey: tabIds };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onHighlighted().invokeListenersWithArgument(highlightInfo);
+        protect(protect(namespaceObject.tabs())->onHighlighted())->invokeListenersWithArgument(highlightInfo);
     });
 }
 
@@ -1329,7 +1330,7 @@ void WebExtensionContextProxy::dispatchTabsRemovedEvent(WebExtensionTabIdentifie
     auto *removeInfo = @{ windowIdKey: @(toWebAPI(windowIdentifier)), isWindowClosingKey: @(windowIsClosing == WebExtensionContext::WindowIsClosing::Yes) };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.tabs().onRemoved().invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), removeInfo);
+        protect(protect(namespaceObject.tabs())->onRemoved())->invokeListenersWithArgument(@(toWebAPI(tabIdentifier)), removeInfo);
     });
 }
 

@@ -59,9 +59,6 @@ header: <wtf/text/AtomString.h>
     uint64_t low();
 }
 
-header: "RemoteSnapshotIdentifier.h"
-using WebKit::RemoteSnapshotIdentifier = WTF::UUID;
-
 header: <wtf/JSONValues.h>
 [RefCounted, CustomHeader, CreateUsing=optionalParseJSON] class WTF::JSONImpl::Value {
     String toJSONString();
@@ -115,6 +112,7 @@ template: enum class WebKit::VisitedLinkTableIdentifierType
 template: enum class WebKit::WCLayerTreeHostIdentifierType
 template: enum class WebKit::WebExtensionControllerIdentifierType
 template: enum class WebKit::XRDeviceIdentifierType
+template: struct WebCore::AgentClusterIdentifierType
 template: struct WebCore::AttributedStringTextListIDType
 #if PLATFORM(COCOA)
 template: struct WebCore::AttributedStringTextTableBlockIDType

@@ -79,7 +79,7 @@ bool HTMLFrameSetElement::hasPresentationalHintsForAttribute(const QualifiedName
 void HTMLFrameSetElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     if (name == bordercolorAttr)
-        addHTMLColorToStyle(style, CSSPropertyBorderColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::BorderColor, value);
     else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
 }

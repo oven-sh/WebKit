@@ -2178,22 +2178,15 @@ static bool MLDSAKeyGen(const Span<const uint8_t> args[],
 }
 
 template <typename PrivateKey, size_t SignatureBytes,
-          bcm_status (*ParsePrivateKey)(PrivateKey *, CBS *),
           bcm_status (*SignInternal)(uint8_t *, const PrivateKey *,
                                      const uint8_t *, size_t, const uint8_t *,
                                      size_t, const uint8_t *, size_t,
                                      const uint8_t *),
           bcm_status (*SignMuInternal)(uint8_t *, const PrivateKey *,
                                        const uint8_t *, const uint8_t *)>
-static bool MLDSASigGen(const Span<const uint8_t> args[],
-                        ReplyCallback write_reply) {
-  CBS cbs = args[0];
-  auto priv = std::make_unique<PrivateKey>();
-  if (ParsePrivateKey(priv.get(), &cbs) != bcm_status::approved) {
-    LOG_ERROR("Failed to parse ML-DSA private key.\n");
-    return false;
-  }
-
+static bool MLDSASigGenWithKey(const PrivateKey *priv,
+                               const Span<const uint8_t> args[],
+                               ReplyCallback write_reply) {
   const Span<const uint8_t> msg = args[1];
   const Span<const uint8_t> randomizer = args[2];
   const Span<const uint8_t> context = args[3];
@@ -2216,12 +2209,12 @@ static bool MLDSASigGen(const Span<const uint8_t> args[],
 
   uint8_t signature[SignatureBytes];
   if (mu.size() != 0) {
-    if (SignMuInternal(signature, priv.get(), mu.data(), randomizer.data()) !=
+    if (SignMuInternal(signature, priv, mu.data(), randomizer.data()) !=
         bcm_status::approved) {
       LOG_ERROR("ML-DSA mu-signing failed.\n");
       return false;
     }
-  } else if (SignInternal(signature, priv.get(), msg.data(), msg.size(),
+  } else if (SignInternal(signature, priv, msg.data(), msg.size(),
                           // It's not just an empty context, the context
                           // prefix is omitted too.
                           nullptr, 0, nullptr, 0,
@@ -2231,6 +2224,53 @@ static bool MLDSASigGen(const Span<const uint8_t> args[],
   }
 
   return write_reply({signature});
+}
+
+template <typename PrivateKey, size_t SignatureBytes,
+          bcm_status (*ParsePrivateKey)(PrivateKey *, CBS *),
+          bcm_status (*SignInternal)(uint8_t *, const PrivateKey *,
+                                     const uint8_t *, size_t, const uint8_t *,
+                                     size_t, const uint8_t *, size_t,
+                                     const uint8_t *),
+          bcm_status (*SignMuInternal)(uint8_t *, const PrivateKey *,
+                                       const uint8_t *, const uint8_t *)>
+static bool MLDSASigGen(const Span<const uint8_t> args[],
+                        ReplyCallback write_reply) {
+  CBS cbs = args[0];
+  auto priv = std::make_unique<PrivateKey>();
+  if (ParsePrivateKey(priv.get(), &cbs) != bcm_status::approved) {
+    LOG_ERROR("Failed to parse ML-DSA private key.\n");
+    return false;
+  }
+
+  return MLDSASigGenWithKey<PrivateKey, SignatureBytes, SignInternal,
+                            SignMuInternal>(priv.get(), args, write_reply);
+}
+
+template <typename PrivateKey, size_t SignatureBytes,
+          bcm_status (*PrivateKeyFromSeed)(PrivateKey *, const uint8_t *),
+          bcm_status (*SignInternal)(uint8_t *, const PrivateKey *,
+                                     const uint8_t *, size_t, const uint8_t *,
+                                     size_t, const uint8_t *, size_t,
+                                     const uint8_t *),
+          bcm_status (*SignMuInternal)(uint8_t *, const PrivateKey *,
+                                       const uint8_t *, const uint8_t *)>
+static bool MLDSASigGenSeed(const Span<const uint8_t> args[],
+                            ReplyCallback write_reply) {
+  const Span<const uint8_t> seed = args[0];
+  if (seed.size() != MLDSA_SEED_BYTES) {
+    LOG_ERROR("Bad seed size.\n");
+    return false;
+  }
+
+  auto priv = std::make_unique<PrivateKey>();
+  if (PrivateKeyFromSeed(priv.get(), seed.data()) != bcm_status::approved) {
+    LOG_ERROR("ML-DSA private key from seed failed.\n");
+    return false;
+  }
+
+  return MLDSASigGenWithKey<PrivateKey, SignatureBytes, SignInternal,
+                            SignMuInternal>(priv.get(), args, write_reply);
 }
 
 template <typename PublicKey, size_t SignatureBytes,
@@ -2349,6 +2389,31 @@ static bool MLKEMDecap(const Span<const uint8_t> args[],
   CBS cbs = priv_key_bytes;
   if (!bcm_success(ParsePrivate(priv.get(), &cbs))) {
     LOG_ERROR("Failed to parse private key.\n");
+    return false;
+  }
+
+  uint8_t shared_secret[MLKEM_SHARED_SECRET_BYTES];
+  if (!bcm_success(Decap(shared_secret, ciphertext.data(), ciphertext.size(),
+                         priv.get()))) {
+    LOG_ERROR("ML-KEM decapsulation failed.\n");
+    return false;
+  }
+
+  return write_reply({shared_secret});
+}
+
+template <
+    typename PrivateKey,
+    bcm_status (*PrivateKeyFromSeed)(PrivateKey *, const uint8_t *, size_t),
+    bcm_status (*Decap)(uint8_t *, const uint8_t *, size_t, const PrivateKey *)>
+static bool MLKEMDecapSeed(const Span<const uint8_t> args[],
+                           ReplyCallback write_reply) {
+  const Span<const uint8_t> seed = args[0];
+  const Span<const uint8_t> ciphertext = args[1];
+
+  auto priv = std::make_unique<PrivateKey>();
+  if (!bcm_success(PrivateKeyFromSeed(priv.get(), seed.data(), seed.size()))) {
+    LOG_ERROR("Failed to derive private key from seed.\n");
     return false;
   }
 
@@ -2535,12 +2600,12 @@ static constexpr struct {
     {"RSA/sigGen/SHA2-384/pkcs1v1.5", 2, RSASigGen<EVP_sha384, false>},
     {"RSA/sigGen/SHA2-512/pkcs1v1.5", 2, RSASigGen<EVP_sha512, false>},
     {"RSA/sigGen/SHA-1/pkcs1v1.5", 2, RSASigGen<EVP_sha1, false>},
-    {"RSA/sigGen/SHA2-224/pss", 2, RSASigGen<EVP_sha224, true>},
-    {"RSA/sigGen/SHA2-256/pss", 2, RSASigGen<EVP_sha256, true>},
-    {"RSA/sigGen/SHA2-384/pss", 2, RSASigGen<EVP_sha384, true>},
-    {"RSA/sigGen/SHA2-512/pss", 2, RSASigGen<EVP_sha512, true>},
-    {"RSA/sigGen/SHA2-512/256/pss", 2, RSASigGen<EVP_sha512_256, true>},
-    {"RSA/sigGen/SHA-1/pss", 2, RSASigGen<EVP_sha1, true>},
+    {"RSA/sigGen/SHA2-224/pss", 3, RSASigGen<EVP_sha224, true>},
+    {"RSA/sigGen/SHA2-256/pss", 3, RSASigGen<EVP_sha256, true>},
+    {"RSA/sigGen/SHA2-384/pss", 3, RSASigGen<EVP_sha384, true>},
+    {"RSA/sigGen/SHA2-512/pss", 3, RSASigGen<EVP_sha512, true>},
+    {"RSA/sigGen/SHA2-512/256/pss", 3, RSASigGen<EVP_sha512_256, true>},
+    {"RSA/sigGen/SHA-1/pss", 3, RSASigGen<EVP_sha1, true>},
     {"RSA/sigVer/SHA2-224/pkcs1v1.5", 4, RSASigVer<EVP_sha224, false>},
     {"RSA/sigVer/SHA2-256/pkcs1v1.5", 4, RSASigVer<EVP_sha256, false>},
     {"RSA/sigVer/SHA2-384/pkcs1v1.5", 4, RSASigVer<EVP_sha384, false>},
@@ -2584,6 +2649,18 @@ static constexpr struct {
      MLDSASigGen<MLDSA87_private_key, MLDSA87_SIGNATURE_BYTES,
                  BCM_mldsa87_parse_private_key, BCM_mldsa87_sign_internal,
                  BCM_mldsa87_sign_mu_internal>},
+    {"ML-DSA-44/sigGen/seed", 5,
+     MLDSASigGenSeed<MLDSA44_private_key, MLDSA44_SIGNATURE_BYTES,
+                     BCM_mldsa44_private_key_from_seed_fips,
+                     BCM_mldsa44_sign_internal, BCM_mldsa44_sign_mu_internal>},
+    {"ML-DSA-65/sigGen/seed", 5,
+     MLDSASigGenSeed<MLDSA65_private_key, MLDSA65_SIGNATURE_BYTES,
+                     BCM_mldsa65_private_key_from_seed_fips,
+                     BCM_mldsa65_sign_internal, BCM_mldsa65_sign_mu_internal>},
+    {"ML-DSA-87/sigGen/seed", 5,
+     MLDSASigGenSeed<MLDSA87_private_key, MLDSA87_SIGNATURE_BYTES,
+                     BCM_mldsa87_private_key_from_seed_fips,
+                     BCM_mldsa87_sign_internal, BCM_mldsa87_sign_mu_internal>},
     {"ML-DSA-44/sigVer", 5,
      MLDSASigVer<MLDSA44_public_key, MLDSA44_SIGNATURE_BYTES,
                  BCM_mldsa44_parse_public_key, BCM_mldsa44_verify_internal,
@@ -2618,6 +2695,12 @@ static constexpr struct {
     {"ML-KEM-1024/decap", 2,
      MLKEMDecap<MLKEM1024_private_key, BCM_mlkem1024_parse_private_key,
                 BCM_mlkem1024_decap>},
+    {"ML-KEM-768/decap/seed", 2,
+     MLKEMDecapSeed<MLKEM768_private_key, BCM_mlkem768_private_key_from_seed,
+                    BCM_mlkem768_decap>},
+    {"ML-KEM-1024/decap/seed", 2,
+     MLKEMDecapSeed<MLKEM1024_private_key, BCM_mlkem1024_private_key_from_seed,
+                    BCM_mlkem1024_decap>},
     {"ML-KEM-768/encapKeyCheck", 1,
      MLKEMEncapKeyCheck<MLKEM768_public_key, BCM_mlkem768_parse_public_key>},
     {"ML-KEM-1024/encapKeyCheck", 1,

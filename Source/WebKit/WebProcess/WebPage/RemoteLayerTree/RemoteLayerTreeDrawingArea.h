@@ -40,6 +40,7 @@
 
 namespace WebCore {
 class PlatformCALayer;
+class RunLoopObserver;
 class ThreadSafeImageBufferFlusher;
 class TiledBacking;
 }
@@ -86,6 +87,7 @@ private:
     void setRootCompositingLayer(WebCore::Frame&, WebCore::GraphicsLayer*) final;
     void addRootFrame(WebCore::FrameIdentifier) final;
     void removeRootFrame(WebCore::FrameIdentifier) final;
+    bool hasRootFrame(WebCore::FrameIdentifier) const final;
     void triggerRenderingUpdate() final;
     bool scheduleRenderingUpdate() final;
     void renderingUpdateFramesPerSecondChanged() final;
@@ -143,6 +145,7 @@ private:
     void adoptLayersFromDrawingArea(DrawingArea&) final;
 
     void scheduleRenderingUpdateTimerFired();
+    void postRenderingUpdateRunLoopCallback();
 
     class BackingStoreFlusher : public ThreadSafeRefCounted<BackingStoreFlusher> {
     public:
@@ -179,9 +182,11 @@ private:
     std::optional<WebCore::FloatRect> m_viewExposedRect;
 
     WebCore::Timer m_updateRenderingTimer;
+    const std::unique_ptr<WebCore::RunLoopObserver> m_postRenderingUpdateRunLoopObserver;
     Markable<MonotonicTime> m_updateStartTime;
     bool m_isRenderingSuspended { false };
     bool m_hasDeferredRenderingUpdate { false };
+    bool m_shouldStartRenderingUpdateBeforeDueTimers { false };
     bool m_inUpdateRendering { false };
 
     bool m_waitingForBackingStoreSwap { false };

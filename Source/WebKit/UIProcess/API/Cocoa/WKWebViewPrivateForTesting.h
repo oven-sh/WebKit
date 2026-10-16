@@ -190,7 +190,7 @@ typedef NSVisualEffectView _WKPlatformVisualEffectView;
 - (void)_computePagesForPrinting:(_WKFrameHandle *)handle completionHandler:(void(^)(void))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
 - (void)_endPrintingForTesting:(void(^)(void))completionHandler;
 // Blocks the main thread until the pages have been drawn, as UIKit printing does. Needs printing to have begun.
-- (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle;
+- (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle pageCount:(NSUInteger)pageCount;
 
 - (void)_setConnectedToHardwareConsoleForTesting:(BOOL)connected;
 

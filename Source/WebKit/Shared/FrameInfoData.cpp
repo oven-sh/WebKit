@@ -33,17 +33,13 @@ FrameInfoData legacyEmptyFrameInfo(WebCore::ResourceRequest&& request)
     constexpr bool isFocused { false };
     constexpr bool errorOccurred { false };
 
-    auto opaqueOrigin = WebCore::SecurityOriginData::createOpaque();
     return FrameInfoData {
         FrameType::Local,
         WTF::move(request),
-        opaqueOrigin,
-        opaqueOrigin,
+        WebCore::SecurityOriginData::createOpaque(),
         String { },
         WebCore::generateFrameIdentifier(),
         std::nullopt,
-        std::nullopt,
-        getCurrentProcessID(),
         isFocused,
         errorOccurred,
         WebFrameMetrics { }

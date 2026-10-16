@@ -13,9 +13,13 @@ test(() => {
 
     assert_false('requestVolumetricScene' in div, 'requestVolumetricScene should be absent from Element');
     assert_false('exitVolumetricScene' in div, 'exitVolumetricScene should be absent from Element');
+    assert_false('inVolumetricScene' in div, 'inVolumetricScene should be absent from Element');
+    assert_false('onvolumetricchange' in div, 'onvolumetricchange should be absent from Element');
 
     assert_false('requestVolumetricScene' in model, 'requestVolumetricScene should be absent from a model');
     assert_false('exitVolumetricScene' in model, 'exitVolumetricScene should be absent from a model');
+    assert_false('inVolumetricScene' in model, 'inVolumetricScene should be absent from a model');
+    assert_false('onvolumetricchange' in model, 'onvolumetricchange should be absent from a model');
 }, 'The volumetric scene API is not exposed while the setting is off');
 </script>
 </body>

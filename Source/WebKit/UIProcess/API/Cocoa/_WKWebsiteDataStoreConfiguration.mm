@@ -74,7 +74,7 @@ static void checkURLArgument(NSURL *url)
 
     auto uuid = WTF::UUID::fromNSUUID(identifier);
     if (!uuid || !uuid->isValid())
-        [NSException raise:NSInvalidArgumentException format:@"Identifier (%s) is invalid for data store", UTF8CString { identifier.UUIDString }.legacyCStringPointer()];
+        [NSException raise:NSInvalidArgumentException format:@"Identifier (%@) is invalid for data store", identifier.UUIDString];
 
     API::Object::constructInWrapper<WebKit::WebsiteDataStoreConfiguration>(self, *uuid);
 
@@ -421,7 +421,7 @@ static void checkURLArgument(NSURL *url)
     protect(_configuration.get())->setGeneralStorageDirectory(url.path);
 }
 
-static _WKUnifiedOriginStorageLevel NODELETE toWKUnifiedOriginStorageLevel(WebKit::UnifiedOriginStorageLevel level)
+static _WKUnifiedOriginStorageLevel LEGACY_NODELETE toWKUnifiedOriginStorageLevel(WebKit::UnifiedOriginStorageLevel level)
 {
     switch (level) {
     case WebKit::UnifiedOriginStorageLevel::None:
@@ -433,7 +433,7 @@ static _WKUnifiedOriginStorageLevel NODELETE toWKUnifiedOriginStorageLevel(WebKi
     }
 }
 
-static WebKit::UnifiedOriginStorageLevel NODELETE toUnifiedOriginStorageLevel(_WKUnifiedOriginStorageLevel wkLevel)
+static WebKit::UnifiedOriginStorageLevel LEGACY_NODELETE toUnifiedOriginStorageLevel(_WKUnifiedOriginStorageLevel wkLevel)
 {
     switch (wkLevel) {
     case _WKUnifiedOriginStorageLevelNone:
@@ -589,7 +589,8 @@ static WebKit::UnifiedOriginStorageLevel NODELETE toUnifiedOriginStorageLevel(_W
 {
     Vector<WebCore::SecurityOriginData> origins;
     origins.reserveInitialCapacity(originStrings.count);
-    for (NSString *originString in originStrings) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *originString in originStrings) {
         auto origin = WebCore::SecurityOriginData::fromURL(URL { String { originString } });
         if (origin.isNull() || origin.isOpaque())
             continue;

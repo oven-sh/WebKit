@@ -169,18 +169,26 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
 
     // FIXME: Do we need to consult the content security policy here about blocked plug-ins?
 
-    bool shouldReuseDefaultView = frameLoader->stateMachine().isDisplayingInitialEmptyDocument()
+    bool mayReuseDefaultView = frameLoader->stateMachine().isDisplayingInitialEmptyDocument()
         && frame->document()->isSecureTransitionTo(url)
         && (frame->window() && !frame->window()->wasWrappedWithoutInitializedSecurityOrigin() && frame->window()->mayReuseForNavigation());
 
-    RefPtr<LocalDOMWindow> previousWindow;
-    if (shouldReuseDefaultView) {
+    bool shouldReuseDefaultView = [&] {
+        if (!mayReuseDefaultView)
+            return false;
+
         ASSERT(frameLoader->documentLoader());
-        if (auto* contentSecurityPolicy = frameLoader->documentLoader()->contentSecurityPolicy())
-            shouldReuseDefaultView = !contentSecurityPolicy->sandboxFlags().contains(SandboxFlag::Origin);
-    } else {
-        previousWindow = frame->window();
-    }
+        Ref documentLoader = *frameLoader->documentLoader();
+        if (auto* contentSecurityPolicy = documentLoader->contentSecurityPolicy(); contentSecurityPolicy && contentSecurityPolicy->sandboxFlags().contains(SandboxFlag::Origin))
+            return false;
+
+        if (!canAccessAgentCluster(protect(protect(frame->document())->securityOrigin()), frame->document()->agentClusterIdentifier(), documentLoader->agentClusterAssignment().identifier))
+            return false;
+
+        return true;
+    }();
+
+    RefPtr previousWindow = mayReuseDefaultView ? nullptr : frame->window();
 
     // Temporarily extend the lifetime of the existing document so that FrameLoader::clear() doesn't destroy it as
     // we need to retain its ongoing set of upgraded requests in new navigation contexts per <http://www.w3.org/TR/upgrade-insecure-requests/>
@@ -216,6 +224,7 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         document->setSecurityOriginPolicy(ownerDocument->securityOriginPolicy());
         document->setCrossOriginEmbedderPolicy(ownerDocument->crossOriginEmbedderPolicy());
         document->setDocumentIsolationPolicy(ownerDocument->documentIsolationPolicy());
+        document->setAgentClusterIdentifier(ownerDocument->agentClusterIdentifier());
         document->setIPAddressSpace(ownerDocument->ipAddressSpace());
 
         document->setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { url }, document));

@@ -131,7 +131,7 @@ struct MaskLayer {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyMaskImage> { };
+    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyID::MaskImage> { };
     static constexpr auto properties = std::tuple { FOR_EACH_MASK_LAYER_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static MaskLayer clone(const MaskLayer& other) { return other; }
     bool isInitial() const { return m_image.isNone(); }
@@ -164,7 +164,7 @@ FOR_EACH_MASK_LAYER_SHORTHAND(DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_S
 // MARK: - Blending
 
 template<> struct Blending<MaskLayer> {
-    bool NODELETE canBlend(const MaskLayer&, const MaskLayer&);
+    bool LEGACY_NODELETE canBlend(const MaskLayer&, const MaskLayer&);
 };
 
 // MARK: - Logging

@@ -35,7 +35,8 @@ template <typename Visitor>
 void JSStylePropertyMapReadOnly::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     if (auto* computedStylePropertyMap = dynamicDowncast<ComputedStylePropertyMapReadOnly>(wrapped()))
-        addWebCoreOpaqueRoot(visitor, computedStylePropertyMap->elementConcurrently());
+        // Cannot ref on the GC thread.
+        SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, computedStylePropertyMap->elementConcurrently());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSStylePropertyMapReadOnly);

@@ -718,7 +718,7 @@ parser/ParserArena.cpp
 parser/SourceCharacters.cpp
 parser/SourceProvider.cpp
 parser/SourceProviderCache.cpp
-parser/SourceTaintedOrigin.cpp
+parser/SourceTaintedness.cpp
 parser/UnlinkedSourceCode.cpp
 parser/VariableEnvironment.cpp
 

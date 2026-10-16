@@ -104,10 +104,10 @@ void HTMLIFrameElement::collectPresentationalHintsForAttribute(const QualifiedNa
 {
     switch (name.nodeName()) {
     case AttributeNames::widthAttr:
-        addHTMLLengthToStyle(style, CSSPropertyWidth, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Width, value);
         break;
     case AttributeNames::heightAttr:
-        addHTMLLengthToStyle(style, CSSPropertyHeight, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Height, value);
         break;
     case AttributeNames::alignAttr:
         applyAlignmentAttributeToStyle(value, style);
@@ -117,7 +117,7 @@ void HTMLIFrameElement::collectPresentationalHintsForAttribute(const QualifiedNa
         // a presentational hint that the border should be off if set to zero.
         if (!parseHTMLInteger(value).value_or(0)) {
             // Add a rule that nulls out our border width.
-            addPropertyToPresentationalHintStyle(style, CSSPropertyBorderWidth, 0, CSSUnitType::Px);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::BorderWidth, 0, CSSUnitType::Px);
         }
         break;
     default:

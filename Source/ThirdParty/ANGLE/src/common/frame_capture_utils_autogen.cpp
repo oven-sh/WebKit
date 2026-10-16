@@ -416,6 +416,10 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
             WriteParamValueReplay<ParamType::TMemoryObjectIDPointer>(
                 os, call, param.value.MemoryObjectIDPointerVal);
             break;
+        case ParamType::TMemoryTrimLevel:
+            WriteParamValueReplay<ParamType::TMemoryTrimLevel>(os, call,
+                                                               param.value.MemoryTrimLevelVal);
+            break;
         case ParamType::TObjectType:
             WriteParamValueReplay<ParamType::TObjectType>(os, call, param.value.ObjectTypeVal);
             break;
@@ -1156,6 +1160,8 @@ const char *ParamTypeToString(ParamType paramType)
             return "const GLuint *";
         case ParamType::TMemoryObjectIDPointer:
             return "GLuint *";
+        case ParamType::TMemoryTrimLevel:
+            return "GLenum";
         case ParamType::TObjectType:
             return "GLenum";
         case ParamType::TPackUnpackParameter:

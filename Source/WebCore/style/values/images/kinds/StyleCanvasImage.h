@@ -38,6 +38,7 @@
 
 namespace WebCore {
 
+class BitmapImage;
 class Document;
 
 namespace Style {
@@ -53,9 +54,7 @@ public:
     virtual ~CanvasImage();
 
     bool operator==(const Image&) const final;
-    bool NODELETE equals(const CanvasImage&) const;
-
-    static constexpr bool isFixedSize = true;
+    bool LEGACY_NODELETE equals(const CanvasImage&) const;
 
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
 
@@ -72,9 +71,9 @@ private:
     ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
     bool canDraw(const RenderElement&) const final;
+    bool containsCurrentColor() const final { return false; }
     bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
-    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, const void* layer, const LayoutSize&) const final;
-    FloatSize fixedSize(const RenderElement&) const final;
+    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
     NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
     void didAddClient(RenderElement&) final;
     void didRemoveClient(RenderElement&) final;
@@ -86,7 +85,7 @@ private:
     void canvasDestroyed(CanvasBase&) final;
 
     HTMLCanvasElement* element(Document&) const;
-    RefPtr<WebCore::Image> resolvedImage(const RenderElement&) const;
+    RefPtr<BitmapImage> resolvedImage(const RenderElement&) const;
 
     // The name of the canvas.
     CustomIdent m_name;

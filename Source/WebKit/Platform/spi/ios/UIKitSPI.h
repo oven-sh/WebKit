@@ -155,6 +155,7 @@ DECLARE_SYSTEM_HEADER
 #if PLATFORM(VISION)
 #import <UIKit/UIActivityViewController_Private.h>
 #import <UIKit/UIView+SpatialComputing.h>
+#import <UIKit/UIWindowSceneGeometry_Private.h>
 #import <UIKit/_UIVolumetricWindowSceneActivationRequestOptions_ForUIFrameworksOnly.h>
 #endif
 
@@ -665,6 +666,8 @@ extern NSString * const UIPresentationControllerDismissalTransitionDidEndComplet
 
 #if PLATFORM(VISION)
 
+#import <Spatial/Spatial.h>
+
 typedef NS_ENUM(NSInteger, _UIPlatterGroundingShadowVisibility) {
     _UIPlatterGroundingShadowVisibilityAutomatic = 0,
     _UIPlatterGroundingShadowVisibilityVisible = 1,
@@ -673,6 +676,11 @@ typedef NS_ENUM(NSInteger, _UIPlatterGroundingShadowVisibility) {
 
 @interface UIView (SpatialComputing)
 @property (nonatomic, setter=_setPreferredGroundingShadowVisibility:) _UIPlatterGroundingShadowVisibility _preferredGroundingShadowVisibility;
+@property (nonatomic, setter=_setClipsToREBounds:) BOOL _clipsToREBounds;
+@end
+
+@interface UIWindowSceneGeometry ()
+@property (nonatomic, readonly) SPSize3D _size;
 @end
 
 #endif

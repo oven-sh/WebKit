@@ -80,7 +80,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static ALWAYS_INLINE JSCell* NODELETE dynamicCastToCell(JSValue value)
+static ALWAYS_INLINE JSCell* LEGACY_NODELETE dynamicCastToCell(JSValue value)
 {
     if (value.isCell())
         return value.asCell();
@@ -141,7 +141,6 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(functionObject.asCell()), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
             ASSERT(newCodeBlock);
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         if (microtaskCallCache) {
@@ -992,9 +991,8 @@ void asyncModuleResolveEvaluation(JSGlobalObject* globalObject, VM& vm, ThrowSco
     }
 
     if (module->isTopLevelExecutionFinished())
-        capability->resolve(globalObject, vm, result);
-    else
-        JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, result, InternalMicrotask::AsyncModuleExecutionResume, module);
+        RELEASE_AND_RETURN(scope, capability->resolve(globalObject, vm, result));
+    RELEASE_AND_RETURN(scope, JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, result, InternalMicrotask::AsyncModuleExecutionResume, module));
 }
 
 static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSModuleRecord* module, JSValue resolution, JSPromise::Status status)
@@ -1012,7 +1010,7 @@ static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSM
 static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
 {
     // arguments[0] = pre-created modulePromise
-    // arguments[1] = resolution (JSSourceCode*) or rejection (error)
+    // arguments[1] = resolution (JSSourceCode* for JS/WASM/JSON/text, JSValue for anything else) or rejection (error)
     // arguments[2] = ModuleRegistryEntry*
     auto* entry = uncheckedDowncast<ModuleRegistryEntry>(arguments[2]);
     auto* modulePromise = uncheckedDowncast<JSPromise>(arguments[0]);
@@ -1024,8 +1022,8 @@ static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, Thr
         return;
 #endif
     if (status == JSPromise::Status::Fulfilled) {
-        auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-        JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), jsSourceCode);
+        auto moduleData = arguments[1];
+        JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
         if (scope.exception()) {
             modulePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1170,22 +1168,23 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 {
     // loadModule first overload: fetch promise settled
     // arguments[0] = pre-created intermediatePromise
-    // arguments[1] = resolution (JSSourceCode*) or error
+    // arguments[1] = resolution (JSSourceCode* for JS/WASM/JSON/text, JSValue for anything else) or error
     // arguments[2] = ModuleLoadingContext*
     auto* context = uncheckedDowncast<ModuleLoadingContext>(arguments[2]);
     auto* intermediatePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
+        auto moduleData = arguments[1];
+
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         ScriptFetcher* scriptFetcher = context->scriptFetcher();
 
 #if USE(BUN_JSC_ADDITIONS)
         // ModuleRegistryEntry::provideModule(): the entry already holds its record, nothing to provide.
-        if (!arguments[1].inherits<AbstractModuleRecord>()) {
+        if (!moduleData.inherits<AbstractModuleRecord>()) {
 #endif
-        auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-        context->loader()->provideFetch(globalObject, specifier, type, jsSourceCode);
+        context->loader()->provideFetch(globalObject, specifier, type, moduleData);
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;

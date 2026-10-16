@@ -28,6 +28,11 @@
 #include <wtf/PointerComparison.h>
 
 namespace WebCore {
+
+namespace CSS {
+struct ImageOrNone;
+}
+
 namespace Style {
 
 struct ImageOrNone {
@@ -71,12 +76,15 @@ private:
 
 // MARK: - Conversion
 
+template<> struct ToCSS<ImageOrNone> { auto operator()(const ImageOrNone&, const Style::ComputedStyle&) -> CSS::ImageOrNone; };
+template<> struct ToStyle<CSS::ImageOrNone> { auto operator()(const CSS::ImageOrNone&, const BuilderState&) -> ImageOrNone; };
+
 template<> struct CSSValueConversion<ImageOrNone> { auto operator()(BuilderState&, const CSSValue&) -> ImageOrNone; };
 
 // MARK: - Blending
 
 template<> struct Blending<ImageOrNone> {
-    bool NODELETE canBlend(const ImageOrNone&, const ImageOrNone&);
+    bool LEGACY_NODELETE canBlend(const ImageOrNone&, const ImageOrNone&);
     auto blend(const ImageOrNone&, const ImageOrNone&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> ImageOrNone;
 };
 

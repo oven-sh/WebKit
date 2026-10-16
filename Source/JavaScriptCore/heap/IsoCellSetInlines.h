@@ -172,10 +172,5 @@ void IsoCellSet::forEachLiveCell(NOESCAPE const Func& func)
         });
 }
 
-inline void IsoCellSet::clearLowerTierPreciseCell(unsigned index)
-{
-    m_lowerTierPreciseBits.concurrentTestAndClear(index);
-}
-
 } // namespace JSC
 

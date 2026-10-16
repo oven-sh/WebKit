@@ -207,18 +207,18 @@ void HTMLPlugInElement::collectPresentationalHintsForAttribute(const QualifiedNa
 {
     switch (name.nodeName()) {
     case AttributeNames::widthAttr:
-        addHTMLLengthToStyle(style, CSSPropertyWidth, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Width, value);
         break;
     case AttributeNames::heightAttr:
-        addHTMLLengthToStyle(style, CSSPropertyHeight, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Height, value);
         break;
     case AttributeNames::vspaceAttr:
-        addHTMLLengthToStyle(style, CSSPropertyMarginTop, value);
-        addHTMLLengthToStyle(style, CSSPropertyMarginBottom, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::MarginTop, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::MarginBottom, value);
         break;
     case AttributeNames::hspaceAttr:
-        addHTMLLengthToStyle(style, CSSPropertyMarginLeft, value);
-        addHTMLLengthToStyle(style, CSSPropertyMarginRight, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::MarginLeft, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::MarginRight, value);
         break;
     case AttributeNames::alignAttr:
         applyAlignmentAttributeToStyle(value, style);
@@ -526,7 +526,7 @@ void HTMLPlugInElement::scheduleUpdateForAfterStyleResolution()
 bool HTMLPlugInElement::shouldBypassCSPForPDFPlugin(const String& contentType) const
 {
 #if ENABLE(PDF_PLUGIN)
-    return document().frame()->loader().client().shouldUsePDFPlugin(contentType, protect(document())->url().path());
+    return protect(document().frame()->loader().client())->shouldUsePDFPlugin(contentType, protect(document())->url().path());
 #else
     UNUSED_PARAM(contentType);
     return false;
@@ -580,7 +580,7 @@ bool HTMLPlugInElement::wouldLoadAsPlugIn(const String& relativeURL, const Strin
     URL completedURL;
     if (!relativeURL.isEmpty())
         completedURL = document->encodingParseURL(relativeURL);
-    return document->frame()->loader().client().objectContentType(completedURL, serviceType) == ObjectContentType::PlugIn;
+    return protect(document->frame()->loader().client())->objectContentType(completedURL, serviceType) == ObjectContentType::PlugIn;
 }
 
 bool HTMLPlugInElement::isImageType()

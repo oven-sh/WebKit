@@ -132,7 +132,7 @@ bool CachedFont::ensureCustomFontData()
         return ensureCustomFontData(nullptr);
     if (RefPtr data = m_data; !data->isContiguous())
         m_data = data->makeContiguous();
-    return ensureCustomFontData(downcast<SharedBuffer>(m_data).get());
+    return ensureCustomFontData(protect(downcast<SharedBuffer>(m_data)).get());
 }
 
 String CachedFont::calculateItemInCollection() const

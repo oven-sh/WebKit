@@ -271,7 +271,7 @@ public:
 
     size_t length() const { return m_map.size(); }
 
-    Ref<Value> NODELETE get(size_t index) const;
+    Ref<Value> LEGACY_NODELETE get(size_t index) const;
 
 protected:
     ~ArrayBase();
@@ -552,7 +552,8 @@ inline RefPtr<Object> Value::asObject()
 {
     return WTF::visit(WTF::makeVisitor([&](ObjectTypeTag) -> RefPtr<Object> {
         static_assert(sizeof(Object) == sizeof(ObjectBase));
-        return static_cast<Object*>(this);
+        // Values tagged as objects are always ObjectBase, which is layout compatible with Object.
+        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<Object*>(this);
     }, [&](auto&) -> RefPtr<Object> {
         return nullptr;
     }), m_value);
@@ -562,7 +563,8 @@ inline RefPtr<const Object> Value::asObject() const
 {
     return WTF::visit(WTF::makeVisitor([&](ObjectTypeTag) -> RefPtr<const Object> {
         static_assert(sizeof(Object) == sizeof(ObjectBase));
-        return static_cast<const Object*>(this);
+        // Values tagged as objects are always ObjectBase, which is layout compatible with Object.
+        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<const Object*>(this);
     }, [&](auto&) -> RefPtr<const Object> {
         return nullptr;
     }), m_value);
@@ -572,7 +574,8 @@ inline RefPtr<Array> Value::asArray()
 {
     return WTF::visit(WTF::makeVisitor([&](ArrayTypeTag) -> RefPtr<Array> {
         static_assert(sizeof(Array) == sizeof(ArrayBase));
-        return static_cast<Array*>(this);
+        // Values tagged as arrays are always ArrayBase, which is layout compatible with Array.
+        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<Array*>(this);
     }, [&](auto&) -> RefPtr<Array> {
         return nullptr;
     }), m_value);

@@ -154,13 +154,13 @@ public:
     bool operator!() const { return !m_impl || !*m_impl; }
     explicit operator bool() const { return m_impl && *m_impl; }
 
-    SUPPRESS_NODELETE WeakPtr& NODELETE operator=(const WeakPtr&) = default;
-    SUPPRESS_NODELETE WeakPtr& NODELETE operator=(WeakPtr&&) = default;
-    SUPPRESS_NODELETE WeakPtr& NODELETE operator=(std::nullptr_t) { m_impl = nullptr; return *this; }
-    template<typename U> WeakPtr& NODELETE operator=(const WeakPtr<U, WeakPtrImpl, PtrTraits>&);
-    template<typename U> WeakPtr& NODELETE operator=(WeakPtr<U, WeakPtrImpl, PtrTraits>&&);
-    template<typename U> WeakPtr& NODELETE operator=(const WeakRef<U, WeakPtrImpl>&);
-    template<typename U> WeakPtr& NODELETE operator=(WeakRef<U, WeakPtrImpl>&&);
+    SUPPRESS_NODELETE WeakPtr& LEGACY_NODELETE operator=(const WeakPtr&) = default;
+    SUPPRESS_NODELETE WeakPtr& LEGACY_NODELETE operator=(WeakPtr&&) = default;
+    SUPPRESS_NODELETE WeakPtr& LEGACY_NODELETE operator=(std::nullptr_t) { m_impl = nullptr; return *this; }
+    template<typename U> WeakPtr& LEGACY_NODELETE operator=(const WeakPtr<U, WeakPtrImpl, PtrTraits>&);
+    template<typename U> WeakPtr& LEGACY_NODELETE operator=(WeakPtr<U, WeakPtrImpl, PtrTraits>&&);
+    template<typename U> WeakPtr& LEGACY_NODELETE operator=(const WeakRef<U, WeakPtrImpl>&);
+    template<typename U> WeakPtr& LEGACY_NODELETE operator=(WeakRef<U, WeakPtrImpl>&&);
 
     T* operator->() const
     {
@@ -390,22 +390,46 @@ inline bool isAnyOf(const WeakPtr<ArgType, WeakPtrImpl, PtrTraits>& source)
 }
 
 template<typename Target, typename Source, typename WeakPtrImpl, typename PtrTraits>
-inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl, PtrTraits> downcast(WeakPtr<Source, WeakPtrImpl, PtrTraits> source)
+inline match_constness_t<Source, Target>* downcast(WeakPtr<Source, WeakPtrImpl, PtrTraits>& source)
 {
-    static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
-    static_assert(std::derived_from<Target, Source>, "Should be a downcast");
-    RELEASE_ASSERT(!source || is<Target>(*source));
-    return WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl, PtrTraits> { unsafeRefPtrDowncast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
+    return downcast<Target>(source.get());
 }
 
 template<typename Target, typename Source, typename WeakPtrImpl, typename PtrTraits>
-inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl, PtrTraits> dynamicDowncast(WeakPtr<Source, WeakPtrImpl, PtrTraits> source)
+inline match_constness_t<Source, Target>* downcast(const WeakPtr<Source, WeakPtrImpl, PtrTraits>& source)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl, typename PtrTraits>
+inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl, PtrTraits> downcast(WeakPtr<Source, WeakPtrImpl, PtrTraits>&& source)
+{
+    static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
+    static_assert(std::derived_from<Target, Source>, "Should be a downcast");
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(!source || is<Target>(*source));
+    return WTF::move(source);
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl, typename PtrTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(WeakPtr<Source, WeakPtrImpl, PtrTraits>& source)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl, typename PtrTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(const WeakPtr<Source, WeakPtrImpl, PtrTraits>& source)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl, typename PtrTraits>
+inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl, PtrTraits> dynamicDowncast(WeakPtr<Source, WeakPtrImpl, PtrTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
     if (!is<Target>(source))
         return nullptr;
-    return WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl, PtrTraits> { unsafeRefPtrDowncast<match_constness_t<Source, Target>, WeakPtrImpl>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
+    return WTF::move(source);
 }
 
 template<typename T, typename U, typename WeakPtrImpl, typename PtrTraits> inline bool operator==(const WeakPtr<T, WeakPtrImpl, PtrTraits>& a, const WeakPtr<U, WeakPtrImpl, PtrTraits>& b)

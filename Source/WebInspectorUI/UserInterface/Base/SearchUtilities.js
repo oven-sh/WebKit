@@ -55,6 +55,24 @@ WI.SearchUtilities = class SearchUtilities {
         return WI.SearchUtilities._regExpForString(query, settings);
     }
 
+    static forEachMatch(regex, text, callback)
+    {
+        console.assert(regex instanceof RegExp && regex.global, regex);
+
+        regex.lastIndex = 0;
+
+        let match;
+        while ((match = regex.exec(text))) {
+            // An empty match doesn't advance `lastIndex`, so skip it to avoid looping forever.
+            if (!match[0]) {
+                ++regex.lastIndex;
+                continue;
+            }
+
+            callback(match);
+        }
+    }
+
     static createSettingsButton(settings)
     {
         console.assert(!isEmptyObject(settings));

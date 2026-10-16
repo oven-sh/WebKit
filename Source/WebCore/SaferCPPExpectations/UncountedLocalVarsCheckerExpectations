@@ -1,8 +1,6 @@
 rendering/RenderCounter.cpp
 rendering/RenderLayer.cpp
-rendering/RenderLayerBackingSVGAdditions.cpp
 rendering/RenderLayerCompositor.cpp
-rendering/RenderTreeAsText.cpp
 style/ElementRuleCollector.cpp
 style/StyleBuilderCustom.h
 style/StyleDocumentScope.cpp
@@ -11,4 +9,4 @@ style/UserAgentStyle.cpp
 style/computed/StyleComputedStyleBase+SettersInlines.h
 style/computed/StyleComputedStyleBase.cpp
 style/computed/StyleComputedStyleProperties+SettersCustomInlines.h
-style/values/primitives/StyleLengthResolution.cpp
+[ iOS ] style/values/primitives/StyleLengthResolution.cpp

@@ -37,8 +37,8 @@ class MathMLUnderOverElement final : public MathMLScriptsElement {
 public:
     static Ref<MathMLUnderOverElement> create(const QualifiedName& tagName, Document&);
     
-    const BooleanValue& NODELETE accent() LIFETIME_BOUND;
-    const BooleanValue& NODELETE accentUnder() LIFETIME_BOUND;
+    const BooleanValue& LEGACY_NODELETE accent() LIFETIME_BOUND;
+    const BooleanValue& LEGACY_NODELETE accentUnder() LIFETIME_BOUND;
 
 private:
     MathMLUnderOverElement(const QualifiedName& tagName, Document&);
@@ -50,5 +50,14 @@ private:
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MathMLUnderOverElement)
+    static bool isType(const WebCore::MathMLElement& element) { return element.hasTagName(WebCore::MathMLNames::munderTag) || element.hasTagName(WebCore::MathMLNames::moverTag) || element.hasTagName(WebCore::MathMLNames::munderoverTag); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* mathMLElement = dynamicDowncast<WebCore::MathMLElement>(node);
+        return mathMLElement && isType(*mathMLElement);
+    }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(MATHML)

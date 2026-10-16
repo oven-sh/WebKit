@@ -18,6 +18,9 @@
 #ifndef _GENDER
 #define _GENDER
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: GenderInfo computes the gender of a list.

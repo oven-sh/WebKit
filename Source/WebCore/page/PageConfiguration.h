@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <WebCore/BrowsingContextGroupIdentifier.h>
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
@@ -86,6 +85,7 @@ class MediaSessionManagerInterface;
 class ModelPlayerProvider;
 class PaymentCoordinatorClient;
 class PerformanceLoggingClient;
+class ProofOfPossessionCoordinatorClient;
 class PluginInfoProvider;
 class DocumentSyncClient;
 class ProgressTrackerClient;
@@ -121,7 +121,6 @@ public:
 
     WEBCORE_EXPORT PageConfiguration(
         std::optional<PageIdentifier>,
-        std::optional<BrowsingContextGroupIdentifier>,
         PAL::SessionID,
         UniqueRef<EditorClient>&&,
         Ref<SocketProvider>&&,
@@ -157,7 +156,6 @@ public:
     PageConfiguration(PageConfiguration&&);
 
     std::optional<PageIdentifier> identifier;
-    std::optional<BrowsingContextGroupIdentifier> browsingContextGroupIdentifier;
     PAL::SessionID sessionID;
     std::unique_ptr<AlternativeTextClient> alternativeTextClient;
     UniqueRef<ChromeClient> chromeClient;
@@ -174,6 +172,10 @@ public:
 
 #if ENABLE(WEB_AUTHN)
     std::unique_ptr<AuthenticatorCoordinatorClient> authenticatorCoordinatorClient;
+#endif
+
+#if ENABLE(PROOF_OF_POSSESSION)
+    std::unique_ptr<ProofOfPossessionCoordinatorClient> proofOfPossessionCoordinatorClient;
 #endif
 
 #if ENABLE(APPLICATION_MANIFEST)

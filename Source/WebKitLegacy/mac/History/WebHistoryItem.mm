@@ -100,12 +100,12 @@ NSString * const WebHistoryItemChangedNotification = @"WebHistoryItemChangedNoti
 
 using HistoryItemMap = HashMap<WeakRef<WebCore::HistoryItem>, WebHistoryItem*>;
 
-SUPPRESS_NODELETE static inline WebCoreHistoryItem* NODELETE core(WebHistoryItemPrivate* itemPrivate)
+SUPPRESS_NODELETE static inline WebCoreHistoryItem* LEGACY_NODELETE core(WebHistoryItemPrivate* itemPrivate)
 {
     return itemPrivate->_historyItem.get();
 }
 
-static HistoryItemMap& NODELETE historyItemWrappers()
+static HistoryItemMap& LEGACY_NODELETE historyItemWrappers()
 {
     static NeverDestroyed<HistoryItemMap> historyItemWrappers;
     return historyItemWrappers;
@@ -149,8 +149,6 @@ void WKNotifyHistoryItemChanged()
         return;
 
     historyItemWrappers().remove(protect(*_private->_historyItem));
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
 
     [super dealloc];
 }
@@ -289,7 +287,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
     if (!(self = [super init]))
         return nil;
 
-    _private = [[WebHistoryItemPrivate alloc] init];
+    _private = adoptNS([[WebHistoryItemPrivate alloc] init]);
     _private->_historyItem = WTF::move(item);
 
     ASSERT(!historyItemWrappers().get(*core(_private)));

@@ -38,14 +38,26 @@ struct NaturalDimensions {
     std::optional<FloatSize> aspectRatio;
 
     // https://html.spec.whatwg.org/multipage/images.html#density-corrected-intrinsic-width-and-height
-    constexpr NaturalDimensions densityCorrected(float imageDevicePixelRatio) const
+    constexpr NaturalDimensions densityCorrected(float density) const
     {
-        if (imageDevicePixelRatio == 1)
+        if (density == 1)
             return *this;
         auto scaled = [&](auto dimension) -> std::optional<float> {
             if (!dimension)
                 return std::nullopt;
-            return *dimension * imageDevicePixelRatio;
+            return *dimension / density;
+        };
+        return { scaled(width), scaled(height), aspectRatio };
+    }
+
+    constexpr NaturalDimensions zoomed(float zoom) const
+    {
+        if (zoom == 1)
+            return *this;
+        auto scaled = [&](auto dimension) -> std::optional<float> {
+            if (!dimension)
+                return std::nullopt;
+            return *dimension * zoom;
         };
         return { scaled(width), scaled(height), aspectRatio };
     }

@@ -294,6 +294,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/WebGPU/InternalAPI/WebGPUTexture.h
     Modules/WebGPU/InternalAPI/WebGPUTextureAspect.h
     Modules/WebGPU/InternalAPI/WebGPUTextureBindingLayout.h
+    Modules/WebGPU/InternalAPI/WebGPUTextureComponentSwizzle.h
     Modules/WebGPU/InternalAPI/WebGPUTextureDescriptor.h
     Modules/WebGPU/InternalAPI/WebGPUTextureDimension.h
     Modules/WebGPU/InternalAPI/WebGPUTextureFormat.h
@@ -478,7 +479,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/DigitalCredentialPresentationProtocol.h
     Modules/identity/DigitalCredentialRequestOptions.h
     Modules/identity/DigitalCredentialsMobileDocumentRequestData.h
+    Modules/identity/DigitalCredentialsOpenID4VPRequestData.h
     Modules/identity/DigitalCredentialsRequestData.h
+    Modules/identity/DigitalCredentialsRequestDataBuilder.h
     Modules/identity/DigitalCredentialsResponseData.h
     Modules/identity/DigitalCredentialsSecurityOriginData.h
 
@@ -498,6 +501,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/protocols/openid/OpenID4VPMultisignedRequest.h
     Modules/identity/protocols/openid/OpenID4VPSignature.h
     Modules/identity/protocols/openid/OpenID4VPSignedRequest.h
+    Modules/identity/protocols/openid/OpenID4VPUnsignedRequest.h
+    Modules/identity/protocols/openid/ValidatedOpenID4VPRequest.h
 
     Modules/indexeddb/IDBActiveDOMObject.h
     Modules/indexeddb/IDBActiveDOMObjectInlines.h
@@ -569,6 +574,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/mediasession/MediaSessionAction.h
     Modules/mediasession/MediaSessionActionDetails.h
     Modules/mediasession/MediaSessionActionHandler.h
+    Modules/mediasession/MediaSessionArtworkSizing.h
     Modules/mediasession/MediaSessionCoordinator.h
     Modules/mediasession/MediaSessionCoordinatorPrivate.h
     Modules/mediasession/MediaSessionCoordinatorState.h
@@ -657,9 +663,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/permissions/PermissionState.h
     Modules/permissions/Permissions.h
 
-
     Modules/plugins/PluginReplacement.h
     Modules/plugins/YouTubePluginReplacement.h
+
+    Modules/proofofpossession/ProofOfPossessionCoordinatorClient.h
+    Modules/proofofpossession/ProofOfPossessionProviderData.h
+    Modules/proofofpossession/ProofOfPossessionRequest.h
+    Modules/proofofpossession/ProofOfPossessionResponse.h
+    Modules/proofofpossession/ProofOfPossessionResponseScope.h
 
     Modules/push-api/PushCrypto.h
     Modules/push-api/PushDatabase.h
@@ -986,7 +997,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     bindings/js/JSNodeCustom.h
     bindings/js/JSNodeCustomInlines.h
     bindings/js/JSNodeListCustom.h
-    bindings/js/JSShadowRealmGlobalScopeBase.h
     bindings/js/JSStyleSheetCustom.h
     bindings/js/JSValueInWrappedObject.h
     bindings/js/JSValueInWrappedObjectInlines.h
@@ -1380,6 +1390,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/ImageOverlay.h
     dom/ImportNodeOptions.h
     dom/InlineStyleSheetOwner.h
+    dom/IsSecureContext.h
     dom/KeyboardEvent.h
     dom/LiveNodeList.h
     dom/LiveNodeListInlines.h
@@ -1779,7 +1790,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     inspector/agents/InspectorPageAgent.h
 
-    layout/FormattingState.h
     layout/LayoutState.h
     layout/LayoutUnits.h
     layout/MarginTypes.h
@@ -1788,18 +1798,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/floats/PlacedFloats.h
 
     layout/formattingContexts/FormattingConstraints.h
-    layout/formattingContexts/FormattingContext.h
-    layout/formattingContexts/FormattingGeometry.h
-    layout/formattingContexts/FormattingQuirks.h
 
-    layout/formattingContexts/block/BlockFormattingContext.h
-    layout/formattingContexts/block/BlockFormattingGeometry.h
-    layout/formattingContexts/block/BlockFormattingQuirks.h
     layout/formattingContexts/block/BlockFormattingState.h
     layout/formattingContexts/block/BlockLayoutState.h
 
-    layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingContext.h
-    layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingQuirks.h
 
     layout/formattingContexts/flex/FlexFormattingContext.h
     layout/formattingContexts/flex/FlexFormattingUtils.h
@@ -1812,29 +1814,26 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/formattingContexts/grid/GridLayoutConstraints.h
     layout/formattingContexts/grid/GridTypeAliases.h
 
-    layout/formattingContexts/inline/AbstractLineBuilder.h
     layout/formattingContexts/inline/AvailableLineWidthOverride.h
     layout/formattingContexts/inline/InlineContentAligner.h
     layout/formattingContexts/inline/InlineContentBreaker.h
     layout/formattingContexts/inline/InlineContentCache.h
     layout/formattingContexts/inline/InlineContentConstrainer.h
     layout/formattingContexts/inline/InlineFormattingConstraints.h
-    layout/formattingContexts/inline/InlineFormattingContext.h
     layout/formattingContexts/inline/InlineFormattingUtils.h
     layout/formattingContexts/inline/InlineItem.h
     layout/formattingContexts/inline/InlineLayoutState.h
     layout/formattingContexts/inline/InlineLevelBox.h
-    layout/formattingContexts/inline/InlineLine.h
     layout/formattingContexts/inline/InlineLineBox.h
     layout/formattingContexts/inline/InlineLineBoxBuilder.h
     layout/formattingContexts/inline/InlineLineBoxVerticalAligner.h
+    layout/formattingContexts/inline/InlineLineRun.h
     layout/formattingContexts/inline/InlineLineTypes.h
     layout/formattingContexts/inline/InlineQuirks.h
     layout/formattingContexts/inline/InlineRect.h
     layout/formattingContexts/inline/InlineTextItem.h
     layout/formattingContexts/inline/IntrinsicWidthHandler.h
     layout/formattingContexts/inline/LineLayoutResult.h
-    layout/formattingContexts/inline/TextOnlySimpleLineBuilder.h
 
     layout/formattingContexts/inline/display/InlineDisplayBox.h
     layout/formattingContexts/inline/display/InlineDisplayContent.h
@@ -1850,8 +1849,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/formattingContexts/inline/text/TextBreakingPositionContext.h
     layout/formattingContexts/inline/text/TextUtil.h
 
-    layout/formattingContexts/table/TableFormattingGeometry.h
-    layout/formattingContexts/table/TableFormattingQuirks.h
 
     layout/integration/LayoutIntegrationBoxGeometryUpdater.h
     layout/integration/LayoutIntegrationBoxTreeUpdater.h
@@ -1863,11 +1860,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     layout/integration/grid/LayoutIntegrationGridLayout.h
     layout/integration/inline/InlineIteratorBox.h
-    layout/integration/inline/InlineIteratorBoxLegacyPath.h
-    layout/integration/inline/InlineIteratorBoxModernPath.h
     layout/integration/inline/InlineIteratorLineBox.h
-    layout/integration/inline/InlineIteratorLineBoxLegacyPath.h
-    layout/integration/inline/InlineIteratorLineBoxModernPath.h
     layout/integration/inline/InlineIteratorLogicalOrderTraversal.h
     layout/integration/inline/InlineIteratorTextBox.h
     layout/integration/inline/LayoutIntegrationInlineContent.h
@@ -2008,6 +2001,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/ActivityState.h
     page/ActivityStateChangeObserver.h
     page/AdjustViewSize.h
+    page/AgentClusterAssignment.h
+    page/AgentClusterIdentifier.h
     page/AlternativeTextClient.h
     page/AttachmentElementClient.h
     page/AutoplayEvent.h
@@ -2117,6 +2112,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/PrintContext.h
     page/ProcessWarming.h
     page/QuirkBehaviors.h
+    page/QuirkMatchPattern.h
     page/QuirkSelectors.h
     page/QuirkTable.h
     page/Quirks.h
@@ -2128,6 +2124,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/RemoteFrameLayoutInfo.h
     page/RemoteFrameView.h
     page/RemoteUserInputEventData.h
+    page/RuntimeQuirkTable.h
     page/ScreenOrientationLockType.h
     page/ScreenOrientationType.h
     page/ScriptTrackingPrivacyCategory.h
@@ -2141,7 +2138,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/SecurityOriginHash.h
     page/SecurityPolicy.h
     page/SettingsBase.h
-    page/ShadowRealmGlobalScope.h
     page/ShareData.h
     page/SocketProvider.h
     page/SpeechRecognitionProvider.h
@@ -2153,7 +2149,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/TextAnimationTypes.h
     page/TextDirectionSubmenuInclusionBehavior.h
     page/TextIndicator.h
-    page/URLMatch.h
     page/TranslationContextMenuInfo.h
     page/UADataValues.h
     page/UALowEntropyJSON.h
@@ -2177,6 +2172,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/ValidationMessageClient.h
     page/ViewportConfiguration.h
     page/ViewportProximityInfo.h
+    page/ViewportSegments.h
     page/VisitedLinkStore.h
     page/WebCoreKeyboardUIMode.h
     page/WebKitBuffer.h
@@ -2782,6 +2778,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/VideoTarget.h
     platform/graphics/VideoTrackPrivate.h
     platform/graphics/VideoTrackPrivateClient.h
+    platform/graphics/ViewCoordinateSpaceRect.h
     platform/graphics/WebGPUFramePacer.h
     platform/graphics/WidthIterator.h
     platform/graphics/WindRule.h
@@ -3059,8 +3056,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/sql/SQLiteStatementAutoResetScope.h
     platform/sql/SQLiteTransaction.h
 
-    platform/text/BidiContext.h
-    platform/text/BidiRunList.h
     platform/text/LocaleToScriptMapping.h
     platform/text/PlatformLocale.h
     platform/text/SegmentedString.h
@@ -3103,11 +3098,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/LayerAncestorClippingStack.h
     rendering/LayerFragment.h
     rendering/LayoutRepainter.h
-    rendering/LegacyInlineBox.h
-    rendering/LegacyInlineFlowBox.h
-    rendering/LegacyInlineTextBox.h
-    rendering/LegacyLineLayout.h
-    rendering/LegacyRootInlineBox.h
     rendering/LineClampUpdater.h
     rendering/MarkedText.h
     rendering/MotionPath.h
@@ -3149,7 +3139,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/RenderLayerSVGAdditions.h
     rendering/RenderLayerScrollableArea.h
     rendering/RenderLayoutState.h
-    rendering/RenderLineBoxList.h
     rendering/RenderListItem.h
     rendering/RenderMedia.h
     rendering/RenderMediaInlines.h
@@ -3167,7 +3156,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/RenderSelectionGeometry.h
     rendering/RenderText.h
     rendering/RenderTextControl.h
-    rendering/RenderTextLineBoxes.h
     rendering/RenderTheme.h
     rendering/RenderTreeAsText.h
     rendering/RenderTreeOrder.h
@@ -3177,14 +3165,13 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/RenderWidget.h
     rendering/RepaintRectCalculation.h
     rendering/ReplacedElementIntrinsicSizing.h
+    rendering/ReplacedElementSizing.h
     rendering/SubtreeScrollbarChangesState.h
 
     rendering/TextBoxSelectableRange.h
     rendering/TransformOperationData.h
     rendering/VisibleRectContext.h
 
-    rendering/line/LineWidth.h
-    rendering/line/TrailingObjects.h
 
     rendering/shapes/LayoutShape.h
     rendering/shapes/PathLayoutShape.h
@@ -3203,11 +3190,12 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/style/RenderStyleConstants.h
     rendering/style/StyleContentAlignmentData.h
     rendering/style/StyleSelfAlignmentData.h
+    rendering/style/UsedStyle.h
+    rendering/style/UsedStyleReferenceSize.h
 
     rendering/svg/RenderSVGInlineText.h
     rendering/svg/RenderSVGModelObject.h
     rendering/svg/SVGBoundingBoxComputation.h
-    rendering/svg/SVGInlineTextBox.h
     rendering/svg/SVGRenderSupport.h
     rendering/svg/SVGTextLayoutAttributes.h
     rendering/svg/SVGTextMetrics.h
@@ -3661,6 +3649,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/ui/StyleAccentColor.h
     style/values/ui/StyleCaretColor.h
     style/values/ui/StyleCursor.h
+    style/values/ui/StyleCursorSizing.h
     style/values/ui/StyleResize.h
 
     style/values/view-transitions/StyleViewTransitionClass.h
@@ -3871,6 +3860,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties+GettersInlines.h
     ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties+InitialInlines.h
     ${WebCore_DERIVED_SOURCES_DIR}/TagName.h
+    ${WebCore_DERIVED_SOURCES_DIR}/UsedStyleProperties.h
     ${WebCore_DERIVED_SOURCES_DIR}/UserAgentParts.h
     ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheets.h
     ${WebCore_DERIVED_SOURCES_DIR}/WebCoreJSBuiltinInternals.h

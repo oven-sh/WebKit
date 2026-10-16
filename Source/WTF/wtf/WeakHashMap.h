@@ -41,7 +41,8 @@ public:
     using MapType = HashMap<WeakKeyType, ValueType>;
 
     struct PeekType {
-        KeyType& key;
+        // PeekType is a short-lived view created during iteration and never stored, so a raw reference is safe.
+        SUPPRESS_UNCOUNTED_MEMBER SUPPRESS_UNCHECKED_MEMBER KeyType& key;
         ValueType& value;
     };
 

@@ -146,9 +146,12 @@ private:
     friend struct IPC::ArgumentCoder<TrackInfo>;
     Variant<Ref<AudioInfo>, Ref<VideoInfo>> toVariant() const
     {
-        if (isAudio())
-            return const_cast<AudioInfo&>(downcast<AudioInfo>(*this));
-        return const_cast<VideoInfo&>(downcast<VideoInfo>(*this));
+        if (isAudio()) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<AudioInfo&>(downcast<AudioInfo>(*this));
+        }
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<VideoInfo&>(downcast<VideoInfo>(*this));
     }
 
     WEBCORE_EXPORT static Ref<TrackInfo> fromVariant(Variant<Ref<AudioInfo>, Ref<VideoInfo>>);
@@ -165,6 +168,7 @@ struct VideoSpecificInfoData {
     std::optional<PlatformVideoFieldCount> fieldCount { };
     std::optional<PlatformVideoFieldDetail> fieldDetail { };
     Vector<TrackInfo::AtomData> extensionAtoms { };
+    std::optional<uint8_t> reorderQueueMaxSize { };
 
 #if PLATFORM(VISION)
     std::optional<ImmersiveVideoMetadata> immersiveVideoMetadata { };
@@ -187,6 +191,7 @@ public:
     const PlatformVideoColorSpace& colorSpace() const LIFETIME_BOUND { return m_data.colorSpace; }
     std::optional<PlatformVideoFieldCount> fieldCount() const { return m_data.fieldCount; }
     std::optional<PlatformVideoFieldDetail> fieldDetail() const { return m_data.fieldDetail; }
+    std::optional<uint8_t> reorderQueueMaxSize() const { return m_data.reorderQueueMaxSize; }
 
     const Vector<AtomData>& extensionAtoms() const LIFETIME_BOUND { return m_data.extensionAtoms; }
 

@@ -48,7 +48,7 @@ import socket
 import sys
 import time
 
-from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
+from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, cmake_tools_path, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
 from Shared import generate_s3_url
 
 if sys.version_info < (3, 9):  # noqa: UP036
@@ -2825,6 +2825,15 @@ class RevertAppliedChanges(steps.ShellSequence):
             config = self.getProperty('configuration').capitalize()
             target = os.path.join("WebKitBuild", platform, config, "build-webkit-options.txt")
             self.commands.append(util.ShellArg(command=['rm', '-f', target], logname='stdio'))
+        elif '--cmake' in (self.getProperty('additionalArguments') or []):
+            config = self.getProperty('configuration').capitalize()
+            if platform == 'ios':
+                is_simulator = 'simulator' in self.getProperty('fullPlatform')
+                platform_dir = 'cmake-iphonesimulator' if is_simulator else 'cmake-iphoneos'
+            else:
+                platform_dir = f'cmake-{platform}'  # e.g. 'cmake-mac'
+            target = os.path.join('WebKitBuild', platform_dir, config, 'build-webkit-options.txt')
+            self.commands.append(util.ShellArg(command=['rm', '-f', target], logname='stdio'))
         return super().run()
 
 
@@ -3217,7 +3226,7 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
     haltOnFailure = False
     build_command = ['perl', 'Tools/Scripts/build-webkit']
     filter_command = ['perl', 'Tools/Scripts/filter-build-webkit', '-logfile', 'build-log.txt']
-    VALID_ADDITIONAL_ARGUMENTS_LIST = []  # If additionalArguments is added to config.json for CompileWebKit step, it should be added here as well.
+    VALID_ADDITIONAL_ARGUMENTS_LIST = ['--cmake']  # If additionalArguments is added to config.json for CompileWebKit step, it should be added here as well.
     APPLE_PLATFORMS = ('mac', 'ios', 'visionos', 'tvos', 'watchos')
     MAX_ERROR_LINES = 1000
 
@@ -3245,6 +3254,8 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
         for additionalArgument in (additionalArguments or []):
             if additionalArgument in self.VALID_ADDITIONAL_ARGUMENTS_LIST:
                 build_command += [additionalArgument]
+        if '--cmake' in (additionalArguments or []):
+            self.env['PATH'] = cmake_tools_path(self.getProperty('builddir'))
         if platform in self.APPLE_PLATFORMS:
             # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
             # be removed here. We can't have build-webkit pass this by default

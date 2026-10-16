@@ -36,6 +36,7 @@ public:
     static Ref<AccessibilityProgressIndicator> create(AXID, Element&, AXObjectCache&);
 
     bool isIndeterminate() const final;
+    bool isAccessibilityProgressIndicatorInstance() const final { return true; }
 
 private:
     explicit AccessibilityProgressIndicator(AXID, RenderObject&, AXObjectCache&);
@@ -49,8 +50,8 @@ private:
     float maxValueForRange() const final;
     float minValueForRange() const final;
 
-    HTMLProgressElement* NODELETE progressElement() const;
-    HTMLMeterElement* NODELETE meterElement() const;
+    HTMLProgressElement* LEGACY_NODELETE progressElement() const;
+    HTMLMeterElement* LEGACY_NODELETE meterElement() const;
 
     bool computeIsIgnored() const final;
 };

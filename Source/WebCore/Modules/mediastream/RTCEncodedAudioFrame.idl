@@ -54,6 +54,7 @@
     Conditional=WEB_RTC,
     EnabledBySetting=WebRTCEncodedTransformEnabled,
     Exposed=(Window,DedicatedWorker),
+    Serializable,
 ] interface RTCEncodedAudioFrame {
     constructor(RTCEncodedAudioFrame originalFrame, optional RTCEncodedAudioFrameOptions options = {});
 

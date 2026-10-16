@@ -42,4 +42,9 @@ inline IndexingType indexingTypeForValue(JSValue value)
     return ContiguousShape;
 }
 
+inline IndexingType leastUpperBoundOfIndexingTypeAndValue(IndexingType indexingType, JSValue value)
+{
+    return leastUpperBoundOfIndexingTypes(indexingType, indexingTypeForValue(value) | (indexingType & IsArray));
+}
+
 } // namespace JSC

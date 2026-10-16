@@ -58,6 +58,7 @@
 #include "Page.h"
 #include "PathUtilities.h"
 #include "ReferencedSVGResources.h"
+#include "RenderAncestorIterator.h"
 #include "RenderBlock.h"
 #include "RenderBlockFlowInlines.h"
 #include "RenderBoxModelObjectInlines.h"
@@ -72,6 +73,7 @@
 #include "RenderFragmentedFlow.h"
 #include "RenderGeometryMap.h"
 #include "RenderGrid.h"
+#include "RenderHTMLCanvas.h"
 #include "RenderImage.h"
 #include "RenderInline.h"
 #include "RenderIterator.h"
@@ -139,6 +141,11 @@ float opacity(const RenderElement& renderer)
 }
 
 static_assert(sizeof(RenderElement) == sizeof(SameSizeAsRenderElement), "RenderElement should stay small");
+
+static Visibility visibilityIncludingForceHidden(const Style::ComputedStyle& style)
+{
+    return style.isForceHidden() ? Visibility::Hidden : style.visibility();
+}
 
 inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument, Style::ComputedStyle&& style, OptionSet<TypeFlag> flags, TypeSpecificFlags typeSpecificFlags)
     : RenderObject(type, elementOrDocument, flags, typeSpecificFlags)
@@ -532,17 +539,17 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
                 return RequiredRepaint::RendererOnly;
             }
 
-            auto willBecomeHiddenSkippedContent =  newStyle.usedContentVisibility() == ContentVisibility::Hidden && oldStyle.usedContentVisibility() != ContentVisibility::Hidden && oldStyle.usedVisibility() == Visibility::Visible;
+            auto willBecomeHiddenSkippedContent =  newStyle.usedContentVisibility() == ContentVisibility::Hidden && oldStyle.usedContentVisibility() != ContentVisibility::Hidden && visibilityIncludingForceHidden(oldStyle) == Visibility::Visible;
             if (willBecomeHiddenSkippedContent) {
                 ASSERT(diff == Style::DifferenceResult::Layout);
                 return RequiredRepaint::RendererOnly;
             }
         }
 
-        if (diff > Style::DifferenceResult::RepaintLayer && oldStyle.usedVisibility() != newStyle.usedVisibility()) {
+        if (diff > Style::DifferenceResult::RepaintLayer && visibilityIncludingForceHidden(oldStyle) != visibilityIncludingForceHidden(newStyle)) {
             if (auto* enclosingLayer = this->enclosingLayer()) {
-                bool rendererWillBeHidden = newStyle.usedVisibility() != Visibility::Visible;
-                if (rendererWillBeHidden && enclosingLayer->hasVisibleContent() && (this == &enclosingLayer->renderer() || enclosingLayer->renderer().style().usedVisibility() != Visibility::Visible))
+                bool rendererWillBeHidden = visibilityIncludingForceHidden(newStyle) != Visibility::Visible;
+                if (rendererWillBeHidden && enclosingLayer->hasVisibleContent() && (this == &enclosingLayer->renderer() || enclosingLayer->renderer().usedStyle().visibility() != UsedVisibility::Visible))
                     return RequiredRepaint::RendererOnly;
             }
         }
@@ -564,7 +571,7 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
 
     if (shouldRepaintBeforeStyleChange == RequiredRepaint::RendererOnly) {
         if (isOutOfFlowPositioned() && downcast<RenderLayerModelObject>(*this).layer()->isSelfPaintingLayer()) {
-            if (oldStyle.usedVisibility() == Visibility::Hidden) {
+            if (visibilityIncludingForceHidden(oldStyle) == Visibility::Hidden) {
                 // Repaint on hidden renderer is a no-op.
                 return false;
             }
@@ -897,7 +904,7 @@ bool RenderElement::layerCreationAllowedForSubtree() const
             return false;
         parentRenderer = parentRenderer->parent();
     }
-    
+
     return true;
 }
 
@@ -973,7 +980,7 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
         }
         // If our z-index changes value or our visibility changes,
         // we need to dirty our stacking context's z-order list.
-        bool visibilityChanged = m_style.usedVisibility() != newStyle.usedVisibility()
+        bool visibilityChanged = visibilityIncludingForceHidden(m_style) != visibilityIncludingForceHidden(newStyle)
             || m_style.usedZIndex() != newStyle.usedZIndex();
 
         if (visibilityChanged)
@@ -988,7 +995,7 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
         }
 
         // Keep layer hierarchy visibility bits up to date if visibility or skipped content state changes.
-        if (m_style.usedVisibility() != newStyle.usedVisibility()) {
+        if (visibilityIncludingForceHidden(m_style) != visibilityIncludingForceHidden(newStyle)) {
             if (auto* layer = enclosingLayer())
                 layer->dirtyVisibleContentStatusIncludingAncestors();
         }
@@ -1269,7 +1276,7 @@ void RenderElement::insertedIntoTree()
 
     // If |this| is visible but this object was not, tell the layer it has some visible content
     // that needs to be drawn and layer visibility optimization can't be used
-    if (parent()->style().usedVisibility() != Visibility::Visible && style().usedVisibility() == Visibility::Visible && !hasSelfPaintingLayer()) {
+    if (parent()->usedStyle().visibility() != UsedVisibility::Visible && usedStyle().visibility() == UsedVisibility::Visible && !hasSelfPaintingLayer()) {
         if (CheckedPtr parentLayer = layerParent())
             parentLayer->dirtyVisibleContentStatus();
     }
@@ -1290,7 +1297,7 @@ void RenderElement::willBeRemovedFromTree()
     }
 
     // If we remove a visible child from an invisible parent, we don't know the layer visibility any more.
-    if (parent()->style().usedVisibility() != Visibility::Visible && style().usedVisibility() == Visibility::Visible && !hasSelfPaintingLayer()) {
+    if (parent()->usedStyle().visibility() != UsedVisibility::Visible && usedStyle().visibility() == UsedVisibility::Visible && !hasSelfPaintingLayer()) {
         // FIXME: should get parent layer. Necessary?
         if (CheckedPtr enclosingLayer = parent()->enclosingLayer())
             enclosingLayer->dirtyVisibleContentStatus();
@@ -1565,8 +1572,8 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
             // If the border radius changed, repaints at style change time will take care of that.
             // This code is attempting to detect whether border-radius constraining based on box size
             // affects the radii, using the outlineBoundsRect as a proxy for the border box.
-            auto oldShapeApproximation = BorderShape::shapeForBorderRect(style(), oldOutlineBounds);
-            auto newShapeApproximation = BorderShape::shapeForBorderRect(style(), newOutlineBounds);
+            auto oldShapeApproximation = BorderShape::shapeForBorderRect(usedStyle(), oldOutlineBounds);
+            auto newShapeApproximation = BorderShape::shapeForBorderRect(usedStyle(), newOutlineBounds);
             if (oldShapeApproximation.radii() != newShapeApproximation.radii())
                 return true;
         }
@@ -1796,7 +1803,7 @@ bool RenderElement::isVisibleIgnoringGeometry() const
 {
     if (document().activeDOMObjectsAreSuspended())
         return false;
-    if (style().usedVisibility() != Visibility::Visible)
+    if (usedStyle().visibility() != UsedVisibility::Visible)
         return false;
     if (protect(view())->frameView().isOffscreen())
         return false;
@@ -1825,7 +1832,7 @@ bool RenderElement::isInsideEntirelyHiddenLayer() const
 {
     if (isSVGLayerAwareRenderer() && document().settings().layerBasedSVGEngineEnabled() && enclosingLayer()->enclosingHiddenOrResourceContainerForSVG())
         return true;
-    return style().usedVisibility() != Visibility::Visible && !enclosingLayer()->hasVisibleContent();
+    return usedStyle().visibility() != UsedVisibility::Visible && !enclosingLayer()->hasVisibleContent();
 }
 
 void RenderElement::registerForVisibleInViewportCallback()
@@ -1982,8 +1989,10 @@ const Style::ComputedStyle* RenderElement::lazyPseudoElementStyle(const Style::P
         return cachedStyle;
 
     std::unique_ptr<Style::ComputedStyle> result = resolvePseudoElementStyle(pseudoElementIdentifier, parentStyle);
-    if (result)
-        return const_cast<Style::ComputedStyle&>(m_style).addPseudoElementStyle(WTF::move(result));
+    if (result) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Style::ComputedStyle&>(m_style).addPseudoElementStyle(WTF::move(result));
+    }
     return nullptr;
 }
 
@@ -2064,9 +2073,11 @@ Color RenderElement::selectionColor() const
         return color;
     }
 
+    auto styleColorOptions = this->styleColorOptions(StyleColorOptionsPurpose::Rendering);
+
     if (frame().selection().isFocusedAndActive())
-        return theme().activeSelectionForegroundColor(styleColorOptions());
-    return theme().inactiveSelectionForegroundColor(styleColorOptions());
+        return theme().activeSelectionForegroundColor(styleColorOptions);
+    return theme().inactiveSelectionForegroundColor(styleColorOptions);
 }
 
 const Style::ComputedStyle* RenderElement::selectionPseudoStyle() const
@@ -2076,12 +2087,12 @@ const Style::ComputedStyle* RenderElement::selectionPseudoStyle() const
 
 Color RenderElement::selectionForegroundColor() const
 {
-    return selectionColor<PropertyNameConstant<CSSPropertyWebkitTextFillColor>>();
+    return selectionColor<PropertyNameConstant<CSSPropertyID::WebkitTextFillColor>>();
 }
 
 Color RenderElement::selectionEmphasisMarkColor() const
 {
-    return selectionColor<PropertyNameConstant<CSSPropertyTextEmphasisColor>>();
+    return selectionColor<PropertyNameConstant<CSSPropertyID::TextEmphasisColor>>();
 }
 
 Color RenderElement::selectionBackgroundColor() const
@@ -2089,8 +2100,10 @@ Color RenderElement::selectionBackgroundColor() const
     if (style().usedUserSelect() == UserSelect::None)
         return Color();
 
+    auto styleColorOptions = this->styleColorOptions(StyleColorOptionsPurpose::Rendering);
+
     if (frame().selection().shouldShowBlockCursor() && frame().selection().isCaret())
-        return theme().transformSelectionBackgroundColor(style().visitedDependentColorApplyingColorFilter(), styleColorOptions());
+        return theme().transformSelectionBackgroundColor(style().visitedDependentColorApplyingColorFilter(), styleColorOptions);
 
     auto pseudoStyleCandidate = this;
     if (pseudoStyleCandidate->isAnonymous())
@@ -2098,13 +2111,13 @@ Color RenderElement::selectionBackgroundColor() const
 
     if (pseudoStyleCandidate) {
         CheckedPtr pseudoStyle = pseudoStyleCandidate->selectionPseudoStyle();
-        if (pseudoStyle && pseudoStyle->visitedDependentBackgroundColorApplyingColorFilter().isValid())
-            return theme().transformSelectionBackgroundColor(pseudoStyle->visitedDependentBackgroundColorApplyingColorFilter(), styleColorOptions());
+        if (pseudoStyle && pseudoStyle->visitedDependentUsedBackgroundColorApplyingColorFilter().isValid())
+            return theme().transformSelectionBackgroundColor(pseudoStyle->visitedDependentUsedBackgroundColorApplyingColorFilter(), styleColorOptions);
     }
 
     if (frame().selection().isFocusedAndActive())
-        return theme().activeSelectionBackgroundColor(styleColorOptions());
-    return theme().inactiveSelectionBackgroundColor(styleColorOptions());
+        return theme().activeSelectionBackgroundColor(styleColorOptions);
+    return theme().inactiveSelectionBackgroundColor(styleColorOptions);
 }
 
 const Style::ComputedStyle* RenderElement::spellingErrorPseudoStyle() const
@@ -2920,6 +2933,13 @@ void RenderElement::layoutIfNeeded()
     layout();
     if (Style::AnchorPositionEvaluator::isAnchorPositioned(style()))
         Style::AnchorPositionEvaluator::captureScrollSnapshots(downcast<RenderBox>(*this));
+}
+
+RenderHTMLCanvas* RenderElement::drawableCanvas() const
+{
+    auto* canvasRenderer = ancestorsOfType<RenderHTMLCanvas>(*this).first();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return canvasRenderer && canvasRenderer->hasDrawableContent() ? const_cast<RenderHTMLCanvas*>(canvasRenderer) : nullptr;
 }
 
 }

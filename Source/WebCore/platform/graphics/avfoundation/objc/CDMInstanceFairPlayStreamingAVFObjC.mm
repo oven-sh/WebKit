@@ -202,7 +202,7 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 namespace WebCore {
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& NODELETE logChannel() { return LogEME; }
+static WTFLogChannel& LEGACY_NODELETE logChannel() { return LogEME; }
 
 // Variants of LOGIDENTIFIER / *_LOG for use inside lambdas, where the logging members have to be
 // reached through a protected pointer instead of an implicitly captured `this`. The LoggerHelper
@@ -674,7 +674,7 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
     return nullptr;
 }
 
-static bool NODELETE isPotentiallyUsableKeyStatus(CDMInstanceSession::KeyStatus status)
+static bool LEGACY_NODELETE isPotentiallyUsableKeyStatus(CDMInstanceSession::KeyStatus status)
 {
     switch (status) {
     case CDMInstanceSession::KeyStatus::Expired:
@@ -990,7 +990,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::updateLicense(const String&, Li
                 if (!payloadVector)
                     return false;
                 auto payloadData = SharedBuffer::create(WTF::move(*payloadVector));
-                [request processContentKeyResponse:[PAL::getAVContentKeyResponseClassSingleton() contentKeyResponseWithFairPlayStreamingKeyResponseData:payloadData->makeContiguous()->createNSData().get()]];
+                [request processContentKeyResponse:checked_objc_cast<AVContentKeyResponse>([PAL::getAVContentKeyResponseClassSingleton() contentKeyResponseWithFairPlayStreamingKeyResponseData:payloadData->makeContiguous()->createNSData().get()])];
             }
             return true;
         };
@@ -1003,7 +1003,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::updateLicense(const String&, Li
         }
     } else {
         ALWAYS_LOG(LOGIDENTIFIER, "'sinf' initData, processing response");
-        [m_currentRequest.value().requests.first() processContentKeyResponse:[PAL::getAVContentKeyResponseClassSingleton() contentKeyResponseWithFairPlayStreamingKeyResponseData:responseData->makeContiguous()->createNSData().get()]];
+        [m_currentRequest.value().requests.first() processContentKeyResponse:checked_objc_cast<AVContentKeyResponse>([PAL::getAVContentKeyResponseClassSingleton() contentKeyResponseWithFairPlayStreamingKeyResponseData:responseData->makeContiguous()->createNSData().get()])];
     }
 
     // FIXME(rdar://problem/35592277): stash the callback and call it once AVContentKeyResponse supports a success callback.
@@ -1035,7 +1035,8 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::loadSession(LicenseType license
 
         RetainPtr<NSData> appIdentifier = certificate->makeContiguous()->createNSData();
         KeyStatusVector changedKeys;
-        for (NSData* expiredSessionData in [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:appIdentifier.get() storageDirectoryAtURL:storageURL.get()]) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSData* expiredSessionData in [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:appIdentifier.get() storageDirectoryAtURL:storageURL.get()]) {
             static const NSString *PlaybackSessionIdKey = @"PlaybackSessionID";
             NSDictionary *expiredSession = [NSPropertyListSerialization propertyListWithData:expiredSessionData options:kCFPropertyListImmutable format:nullptr error:nullptr];
             RetainPtr playbackSessionIdValue = dynamic_objc_cast<NSString>([expiredSession objectForKey:PlaybackSessionIdKey]);
@@ -1101,7 +1102,8 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::removeSessionData(const String&
         RetainPtr<NSData> appIdentifier = certificate->makeContiguous()->createNSData();
         RetainPtr<NSMutableArray> expiredSessionsArray = adoptNS([[NSMutableArray alloc] init]);
         KeyStatusVector changedKeys;
-        for (NSData* expiredSessionData in [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:appIdentifier.get() storageDirectoryAtURL:storageURL.get()]) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSData* expiredSessionData in [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:appIdentifier.get() storageDirectoryAtURL:storageURL.get()]) {
             NSDictionary *expiredSession = [NSPropertyListSerialization propertyListWithData:expiredSessionData options:kCFPropertyListImmutable format:nullptr error:nullptr];
             static const NSString *PlaybackSessionIdKey = @"PlaybackSessionID";
             RetainPtr playbackSessionIdValue = dynamic_objc_cast<NSString>([expiredSession objectForKey:PlaybackSessionIdKey]);
@@ -1614,7 +1616,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::groupSessionIdentifierChanged(A
 #endif
 }
 
-static CDMKeyStatus NODELETE requestStatusToCDMStatus(AVContentKeyRequestStatus status)
+static CDMKeyStatus LEGACY_NODELETE requestStatusToCDMStatus(AVContentKeyRequestStatus status)
 {
     switch (status) {
         case AVContentKeyRequestStatusRequestingResponse:
@@ -1684,7 +1686,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::externalProtectionStatusDidChan
 }
 
 #if HAVE(AVCONTENTKEYREQUEST_PENDING_PROTECTION_STATUS)
-static std::optional<CDMKeyStatus> NODELETE keyStatusForContentProtectionStatus(AVExternalContentProtectionStatus status)
+static std::optional<CDMKeyStatus> LEGACY_NODELETE keyStatusForContentProtectionStatus(AVExternalContentProtectionStatus status)
 {
     switch (status) {
     case AVExternalContentProtectionStatusPending:

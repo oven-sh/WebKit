@@ -225,6 +225,7 @@ class WebCore::ResourceResponse : WebCore::ResourceResponseBase {
     bool isRangeRequested;
     std::optional<WebCore::CertificateInfo> certificateInfo;
     WebCore::IPAddressSpace ipAddressSpace;
+    bool isFromPrevalentDomain;
 };
 
 [CreateUsing=create] class WebCore::HTTPHeaderField {

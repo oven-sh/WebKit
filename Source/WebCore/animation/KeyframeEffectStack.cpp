@@ -231,19 +231,19 @@ bool KeyframeEffectStack::allowsAcceleration() const
 
     auto toAcceleratedProperties = [](const HashSet<AnimatableCSSProperty>& properties) {
         OptionSet<AcceleratedEffectProperty> acceleratedProperties;
-        if (properties.contains(CSSPropertyFilter) || properties.contains(CSSPropertyBackdropFilter))
+        if (properties.contains(CSSPropertyID::Filter) || properties.contains(CSSPropertyID::BackdropFilter))
             acceleratedProperties.add(AcceleratedEffectProperty::Filter);
-        if (properties.contains(CSSPropertyOpacity))
+        if (properties.contains(CSSPropertyID::Opacity))
             acceleratedProperties.add(AcceleratedEffectProperty::Opacity);
-        if (properties.contains(CSSPropertyRotate)
-            || properties.contains(CSSPropertyScale)
-            || properties.contains(CSSPropertyTransform)
-            || properties.contains(CSSPropertyTranslate)
-            || properties.contains(CSSPropertyOffsetAnchor)
-            || properties.contains(CSSPropertyOffsetDistance)
-            || properties.contains(CSSPropertyOffsetPath)
-            || properties.contains(CSSPropertyOffsetPosition)
-            || properties.contains(CSSPropertyOffsetRotate))
+        if (properties.contains(CSSPropertyID::Rotate)
+            || properties.contains(CSSPropertyID::Scale)
+            || properties.contains(CSSPropertyID::Transform)
+            || properties.contains(CSSPropertyID::Translate)
+            || properties.contains(CSSPropertyID::OffsetAnchor)
+            || properties.contains(CSSPropertyID::OffsetDistance)
+            || properties.contains(CSSPropertyID::OffsetPath)
+            || properties.contains(CSSPropertyID::OffsetPosition)
+            || properties.contains(CSSPropertyID::OffsetRotate))
             acceleratedProperties.add(AcceleratedEffectProperty::Transform);
         return acceleratedProperties;
     };

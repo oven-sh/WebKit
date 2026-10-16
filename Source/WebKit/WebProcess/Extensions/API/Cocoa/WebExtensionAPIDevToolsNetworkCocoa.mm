@@ -57,7 +57,7 @@ void WebExtensionContextProxy::dispatchDevToolsNetworkNavigatedEvent(const URL& 
     RetainPtr urlString = url.string().createNSString();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.devtools().network().onNavigated().invokeListenersWithArgument(urlString.get());
+        protect(protect(protect(namespaceObject.devtools())->network())->onNavigated())->invokeListenersWithArgument(urlString.get());
     });
 }
 

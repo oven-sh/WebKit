@@ -77,7 +77,7 @@ void RuleSet::addToRuleSet(const AtomString& key, AtomRuleMap& map, const RuleDa
     rules->append(ruleData);
 }
 
-static unsigned NODELETE rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
+static unsigned LEGACY_NODELETE rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
 {
     if (const auto* rules = map.get(name))
         return rules->size();
@@ -585,7 +585,8 @@ void RuleSet::traverseRuleDatas(NOESCAPE const Function& function)
 
 template<typename Function> void RuleSet::traverseRuleDatas(NOESCAPE const Function& function) const
 {
-    const_cast<RuleSet&>(*this).traverseRuleDatas([&](const RuleData& ruleData) {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RuleSet&>(*this).traverseRuleDatas([&](const RuleData& ruleData) {
         function(ruleData);
     });
 }

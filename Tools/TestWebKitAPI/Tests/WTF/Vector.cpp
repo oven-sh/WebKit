@@ -1984,6 +1984,34 @@ TEST(WTF_Vector, MapCustomReturnType)
     EXPECT_FLOAT_EQ(output[1], 2.0f);
 }
 
+TEST(WTF_Vector, MapStaticWithInlineCapacity)
+{
+    Vector<int> input { 1, 2 };
+    auto output = Vector<float, 2>::map(input, [](int value) {
+        return static_cast<float>(value);
+    });
+
+    static_assert(std::is_same_v<decltype(output), Vector<float, 2>>);
+    ASSERT_EQ(output.size(), input.size());
+    EXPECT_EQ(output.capacity(), 2U);
+    EXPECT_FLOAT_EQ(output[0], 1.0f);
+    EXPECT_FLOAT_EQ(output[1], 2.0f);
+}
+
+TEST(WTF_Vector, MapStaticFromSpan)
+{
+    std::array<int, 3> input { 1, 2, 3 };
+    auto output = Vector<MoveOnly, 4>::map(std::span { input }, [](int value) {
+        return MoveOnly(2 * value);
+    });
+
+    ASSERT_EQ(output.size(), 3U);
+    EXPECT_EQ(output.capacity(), 4U);
+    EXPECT_EQ(output[0].value(), 2U);
+    EXPECT_EQ(output[1].value(), 4U);
+    EXPECT_EQ(output[2].value(), 6U);
+}
+
 TEST(WTF_Vector, MoveConstructor)
 {
     {

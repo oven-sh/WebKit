@@ -107,7 +107,7 @@ private:
         GST_DEBUG("BaseSinkPositionFlushWorkaroundProbe: running %s, the bug was fixed in 1.24.", versionString.utf8());
 #endif
         WorkaroundMode mode = getWorkAroundModeFromEnvironment("WEBKIT_GST_WORKAROUND_BASE_SINK_POSITION_FLUSH"_s,
-            ASCIILiteral::fromLiteralUnsafe(WEBKIT_GST_WORKAROUND_BASE_SINK_POSITION_FLUSH_DEFAULT_MODE));
+            WEBKIT_GST_WORKAROUND_BASE_SINK_POSITION_FLUSH_DEFAULT_MODE);
         if (mode == WorkaroundMode::ForceEnable) {
             GST_DEBUG("BaseSinkPositionFlushWorkaroundProbe: forcing workaround to be enabled.");
             return true;
@@ -213,7 +213,7 @@ private:
         GST_DEBUG("AppSinkFlushCapsWorkaroundProbe: gst-plugins-base version is %s, bug was fixed in 1.21.1 and backported to 1.20.3.", version.utf8());
 #endif
         WorkaroundMode mode = getWorkAroundModeFromEnvironment("WEBKIT_GST_WORKAROUND_APP_SINK_FLUSH_CAPS"_s,
-            ASCIILiteral::fromLiteralUnsafe(WEBKIT_GST_WORKAROUND_APP_SINK_FLUSH_CAPS_DEFAULT_MODE));
+            WEBKIT_GST_WORKAROUND_APP_SINK_FLUSH_CAPS_DEFAULT_MODE);
         if (mode == WorkaroundMode::ForceEnable) {
             GST_DEBUG("AppSinkFlushCapsWorkaroundProbe: forcing workaround to be enabled.");
             return true;

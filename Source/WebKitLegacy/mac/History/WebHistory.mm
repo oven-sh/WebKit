@@ -54,7 +54,7 @@ NSString * const WebHistoryItemsDiscardedWhileLoadingNotification = @"WebHistory
 NSString * const WebHistorySavedNotification = @"WebHistorySavedNotification";
 NSString * const WebHistoryItemsKey = @"WebHistoryItems";
 
-static RetainPtr<WebHistory>& NODELETE sharedHistory()
+static RetainPtr<WebHistory>& LEGACY_NODELETE sharedHistory()
 {
     static NeverDestroyed<RetainPtr<WebHistory>> _sharedHistory;
     return _sharedHistory;
@@ -650,7 +650,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 @end
 
-@implementation WebHistory
+@implementation WebHistory {
+    RetainPtr<WebHistoryPrivate> _historyPrivate;
+}
 
 + (WebHistory *)optionalSharedHistory
 {
@@ -679,7 +681,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     self = [super init];
     if (!self)
         return nil;
-    _historyPrivate = [[WebHistoryPrivate alloc] init];
+    _historyPrivate = adoptNS([[WebHistoryPrivate alloc] init]);
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(timeZoneChanged:)
                                                  name:NSSystemTimeZoneDidChangeNotification
@@ -692,8 +694,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:NSSystemTimeZoneDidChangeNotification
                                                   object:nil];
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_historyPrivate release];
     [super dealloc];
 }
 

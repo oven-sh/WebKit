@@ -151,10 +151,9 @@ MediaPlayerPrivateMediaStreamAVFObjC::MediaPlayerPrivateMediaStreamAVFObjC(Media
 {
     INFO_LOG(LOGIDENTIFIER);
     // MediaPlayerPrivateMediaStreamAVFObjC::processNewVideoFrame expects a weak pointer to be created in the constructor.
-    lazyInitialize(m_boundsChangeListener, adoptNS([[WebRootSampleBufferBoundsChangeListener alloc] initWithCallback:[this, weakThis = WeakPtr { *this }] {
-        if (!weakThis)
-            return;
-        rootLayerBoundsDidChange();
+    lazyInitialize(m_boundsChangeListener, adoptNS([[WebRootSampleBufferBoundsChangeListener alloc] initWithCallback:[weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->rootLayerBoundsDidChange();
     }]));
 }
 
@@ -562,7 +561,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::prepareToPlay()
     INFO_LOG(LOGIDENTIFIER);
 }
 
-PlatformLayer* MediaPlayerPrivateMediaStreamAVFObjC::platformLayer() const
+PlatformLayer* MediaPlayerPrivateMediaStreamAVFObjC::platformLayer()
 {
     RefPtr sampleBufferDisplayLayer = m_sampleBufferDisplayLayer;
     if (!sampleBufferDisplayLayer || !sampleBufferDisplayLayer->rootLayer() || m_displayMode == None)

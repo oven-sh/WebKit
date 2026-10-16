@@ -593,7 +593,10 @@ void UIDelegate::UIClient::decidePolicyForGeolocationPermissionRequest(WebKit::W
 
     if (uiDelegate->m_delegateMethods.webViewRequestGeolocationPermissionForOriginDecisionHandlerSPI
         || uiDelegate->m_delegateMethods.webViewRequestGeolocationPermissionForOriginDecisionHandler) {
-        Ref securityOrigin = frameInfo.topOrigin.securityOrigin();
+        RefPtr mainFrame = frame.mainFrame();
+        if (!mainFrame)
+            return std::exchange(completionHandler, nullptr)(false);
+        Ref securityOrigin = mainFrame->documentSecurityOriginData().securityOrigin();
         auto checker = CompletionHandlerCallChecker::create(delegate.get(), @selector(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:));
         auto decisionHandler = makeBlockPtr([completionHandler = std::exchange(completionHandler, nullptr), securityOrigin = securityOrigin->data(), checker = WTF::move(checker), weakPage = WeakPtr { page }] (WKPermissionDecision decision) mutable {
             if (checker->completionHandlerHasBeenCalled())
@@ -770,7 +773,7 @@ void UIDelegate::UIClient::unlockScreenOrientation(WebPageProxy&)
 #endif
 }
 
-static inline _WKFocusDirection NODELETE toWKFocusDirection(WKFocusDirection direction)
+static inline _WKFocusDirection LEGACY_NODELETE toWKFocusDirection(WKFocusDirection direction)
 {
     switch (direction) {
     case kWKFocusDirectionBackward:
@@ -799,7 +802,7 @@ bool UIDelegate::UIClient::takeFocus(WebPageProxy*, WKFocusDirection direction)
     return true;
 }
 
-static _WKAutoplayEventFlags NODELETE toWKAutoplayEventFlags(OptionSet<WebCore::AutoplayEventFlags> flags)
+static _WKAutoplayEventFlags LEGACY_NODELETE toWKAutoplayEventFlags(OptionSet<WebCore::AutoplayEventFlags> flags)
 {
     _WKAutoplayEventFlags wkFlags = _WKAutoplayEventFlagsNone;
     if (flags.contains(WebCore::AutoplayEventFlags::HasAudio))
@@ -812,7 +815,7 @@ static _WKAutoplayEventFlags NODELETE toWKAutoplayEventFlags(OptionSet<WebCore::
     return wkFlags;
 }
 
-static _WKAutoplayEvent NODELETE toWKAutoplayEvent(WebCore::AutoplayEvent event)
+static _WKAutoplayEvent LEGACY_NODELETE toWKAutoplayEvent(WebCore::AutoplayEvent event)
 {
     switch (event) {
     case WebCore::AutoplayEvent::DidPreventMediaFromPlaying:
@@ -947,7 +950,8 @@ bool UIDelegate::UIClient::runOpenPanel(WebPageProxy& page, WebFrameProxy* webFr
                 filenames.append(maybeMovedURL.get().path);
         }
 #else
-        for (NSURL *url in URLs)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in URLs)
             filenames.append(url.path);
 #endif
         listener->chooseFiles(filenames, openPanelParameters->allowedMIMETypes()->toStringVector());
@@ -1261,7 +1265,10 @@ void UIDelegate::UIClient::willCloseLocalInspector(WebPageProxy&, WebInspectorUI
 #if ENABLE(DEVICE_ORIENTATION)
 void UIDelegate::UIClient::shouldAllowDeviceOrientationAndMotionAccess(WebKit::WebPageProxy& page, WebFrameProxy& webFrameProxy, FrameInfoData&& frameInfo, CompletionHandler<void(bool)>&& completionHandler)
 {
-    Ref securityOrigin = frameInfo.topOrigin.securityOrigin();
+    RefPtr mainFrame = webFrameProxy.mainFrame();
+    if (!mainFrame)
+        return completionHandler(false);
+    Ref securityOrigin = mainFrame->documentSecurityOriginData().securityOrigin();
     RefPtr uiDelegate = m_uiDelegate.get();
     if (!uiDelegate || !uiDelegate->m_delegate.get() || !uiDelegate->m_delegateMethods.webViewRequestDeviceOrientationAndMotionPermissionForOriginDecisionHandler) {
         alertForPermission(page, MediaPermissionReason::DeviceOrientation, securityOrigin->data(), WTF::move(completionHandler));
@@ -1833,7 +1840,7 @@ void UIDelegate::UIClient::confirmPDFOpening(WebPageProxy& page, const WTF::URL&
 
 #if ENABLE(WEB_AUTHN)
 
-static WebAuthenticationPanelResult NODELETE webAuthenticationPanelResult(_WKWebAuthenticationPanelResult result)
+static WebAuthenticationPanelResult LEGACY_NODELETE webAuthenticationPanelResult(_WKWebAuthenticationPanelResult result)
 {
     switch (result) {
     case _WKWebAuthenticationPanelResultUnavailable:

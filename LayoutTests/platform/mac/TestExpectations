@@ -168,12 +168,6 @@ accessibility/multiselect-list-reports-active-option.html
 # uiController.simulateRotationLikeSafari() is not implemented on macOS.
 fast/screen-orientation/orientation-in-resize-event.html [ Skip ]
 
-# Need to implement AccessibilityUIElement::clearSelectedChildren()
-accessibility/aria-listbox-clear-selection-crash.html
-accessibility/isolated-tree/aria-listbox-clear-selection-crash.html
-accessibility/listbox-clear-selection.html
-accessibility/isolated-tree/listbox-clear-selection.html
-
 # The dismiss action doesn't return a result on macOS
 accessibility/dismiss-action-returns-whether-keyevent-handled.html
 accessibility/isolated-tree/dismiss-action-returns-whether-keyevent-handled.html
@@ -253,9 +247,6 @@ http/wpt/mediarecorder/MediaRecorder-first-frame.html [ Pass Failure ]
 
 # DRT does not support toggling caret browsing on / off
 editing/selection/caret-mode-paragraph-keys-navigation.html
-
-# Non-premultiplied-alpha currently broken on mac.
-webkit.org/b/55509 compositing/webgl/webgl-nonpremultiplied-blend.html
 
 # DataTransferItems is not yet implemented.
 editing/pasteboard/data-transfer-items.html
@@ -525,6 +516,9 @@ webkit.org/b/124321 animations/resume-after-page-cache.html [ Pass Failure ]
 webkit.org/b/87748 fast/forms/select/optgroup-clicking.html [ Skip ]
 webkit.org/b/113220 fast/forms/select/popup-closes-on-blur.html [ Skip ]
 webkit.org/b/74384 fast/forms/select/menulist-onchange-fired-with-key-up-down.html [ WontFix ] # Additionally, this is not an expected behavior on Mac.
+
+# A native <select multiple size=1> is a dropdown box here.
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/select-multiple-size-1.html [ Pass ]
 
 webkit.org/b/123029 [ Debug ] editing/mac/attributed-string [ Pass Crash ]
 
@@ -881,11 +875,7 @@ webkit.org/b/137589 compositing/hidpi-compositing-vs-non-compositing-check-on-te
 
 # Tests that fail with the SVG -> OTF font converter, but are lower priority than live-on
 webkit.org/b/140588 svg/W3C-SVG-1.1/fonts-desc-02-t.svg [ Failure ]
-webkit.org/b/137096 svg/W3C-SVG-1.1/text-altglyph-01-b.svg [ Failure ]
-webkit.org/b/137096 svg/custom/altglyph.svg [ Failure ]
 webkit.org/b/140590 svg/custom/svg-fonts-in-text-controls.html [ Failure ]
-webkit.org/b/137096 svg/text/text-altglyph-01-b.svg [ Failure ]
-webkit.org/b/137096 svg/text/alt-glyph-for-surrogate-pair.svg [ ImageOnlyFailure ]
 webkit.org/b/140589 svg/W3C-SVG-1.1/text-text-06-t.svg [ Failure ]
 webkit.org/b/140589 svg/text/text-text-06-t.svg [ Failure ]
 webkit.org/b/137098 svg/text/text-hkern.svg [ Failure ]
@@ -911,8 +901,6 @@ webkit.org/b/229101 http/tests/media/modern-media-controls/pip-support/pip-suppo
 webkit.org/b/174066 inspector/canvas/console-record-webgl2.html [ Pass Timeout ]
 webkit.org/b/174066 inspector/canvas/console-record-offscreen-webgl2.html [ Pass Timeout ]
 webkit.org/b/173931 inspector/canvas/context-attributes.html [ Pass Timeout ]
-webkit.org/b/178028 inspector/canvas/create-context-2d.html [ Pass Failure Timeout ]
-webkit.org/b/174066 inspector/canvas/create-context-webgl2.html [ Pass Failure Timeout ]
 webkit.org/b/174066 inspector/canvas/recording-offscreen-webgl2-full.html [ Slow ]
 webkit.org/b/174272 inspector/canvas/requestClientNodes-css.html [ Pass Failure Timeout ]
 webkit.org/b/152025 [ Debug ] inspector/console/messagesCleared.html [ Pass Timeout ]
@@ -959,6 +947,7 @@ webkit.org/b/182620 inspector/console/clearMessages.html [ Pass Timeout ]
 webkit.org/b/183880 [ Debug ] inspector/console/messageAdded-from-named-evaluations.html [ Slow ]
 webkit.org/b/156634 inspector/formatting/formatting-javascript.html [ Pass Timeout ]
 webkit.org/b/158948 inspector/timeline [ Pass Timeout ]
+webkit.org/b/302413 inspector/timeline/timeline-event-TimerInstall.html [ Skip ]
 webkit.org/b/191539 http/tests/inspector/network/resource-security-connection.html [ Skip ]
 
 # Touch events are not enabled on Mac
@@ -1310,8 +1299,6 @@ webkit.org/b/189686 webgl/2.0.y/conformance/textures/misc/tex-image-and-sub-imag
 webkit.org/b/190724 [ Debug ] http/tests/misc/large-js-program.py [ Pass Timeout ]
 
 webkit.org/b/239405 fast/css/counters/element-removal-crash.xhtml [ Pass Failure ]
-
-webkit.org/b/189680 platform/mac/media/audio-session-category-video-paused.html [ Pass Timeout ]
 
 webkit.org/b/195466 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/ready-states/autoplay.html [ Pass Failure ]
 webkit.org/b/195466 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/error-codes/error.html [ Pass Failure ]
@@ -2260,6 +2247,10 @@ imported/w3c/web-platform-tests/css/css-tables/paint/table-border-paint-caption-
 
 [ x86_64 ] imported/w3c/web-platform-tests/svg/text/reftests/dominant-baseline-central-large-font-size.svg [ Skip ]
 
+# Snapshot of the test or of its reference sometimes comes back blank white on EWS.
+webkit.org/b/278868 imported/w3c/web-platform-tests/svg/text/reftests/text-unknown-element-not-rendered.svg [ Pass ImageOnlyFailure ]
+webkit.org/b/311609 imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-001.svg [ Pass ImageOnlyFailure ]
+
 webkit.org/b/296976 [ x86_64 ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworklet-denormals.https.window.html [ Failure ]
 
 webkit.org/b/297067 fast/forms/state-restore-form-associated-custom-elements.html [ Pass Timeout Failure ]
@@ -2304,7 +2295,6 @@ webkit.org/b/292182 [ x86_64 ] webgl/1.0.x/conformance/textures/misc/texture-srg
 imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the-canvas/drawimage_canvas.html [ Pass ImageOnlyFailure Failure ]
 imported/w3c/web-platform-tests/fetch/h1-parsing/lone-cr.window.html [ Pass Failure ]
 imported/w3c/web-platform-tests/digital-credentials/allow-attribute-with-get.https.html [ Pass Failure ]
-imported/w3c/web-platform-tests/digital-credentials/get.https.html [ Pass Failure ]
 imported/w3c/web-platform-tests/cookies/name/name-ctl.html [ Pass Failure ]
 imported/w3c/web-platform-tests/cookies/value/value-ctl.html [ Pass Failure ]
 http/tests/inspector/network/xhr-response-body.html [ Pass Failure ]

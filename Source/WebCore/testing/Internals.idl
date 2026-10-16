@@ -101,13 +101,6 @@ enum TreeType {
     "ComposedTreeIncludingPseudoElements"
 };
 
-[Conditional=WEBGL] enum SimulatedWebGLContextEvent {
-    "GPUStatusFailure",
-    "Timeout",
-    "DisplayBufferAllocationFailure",
-    "RenderbufferAllocationFailure"
-};
-
 enum AudioSessionCategory {
     "None",
     "AmbientSound",
@@ -136,12 +129,6 @@ enum AutoplayPolicy {
     "Allow",
     "AllowWithoutSound",
     "Deny"
-};
-
-[Conditional=WEBGL] enum RequestedGPU {
-    "default",
-    "low-power",
-    "high-performance"
 };
 
 [
@@ -571,6 +558,7 @@ enum ContentsFormat {
     float usedOutlineOffset(Element element);
 
     DOMString computedAppleColorFilter(Element element);
+    DOMString usedBackgroundColor(Element element);
 
     Node ensureUserAgentShadowRoot(Element host);
     Node? shadowRoot(Element host);
@@ -626,6 +614,7 @@ enum ContentsFormat {
 
     DOMRect boundingBox(Element element);
     DOMRect boundingBoxInRootViewCoordinates(Element element);
+    DOMRect boundingBoxInMainFrameViewCoordinates(Element element);
 
     unsigned long inspectorGridOverlayCount();
     unsigned long inspectorFlexOverlayCount();
@@ -662,6 +651,8 @@ enum ContentsFormat {
 
     DOMString documentBackgroundColor();
 
+    DOMString textScaleMetaMode();
+
     DOMString paintedCaretColor();
 
     boolean displayP3Available();
@@ -673,6 +664,7 @@ enum ContentsFormat {
 
     boolean wasLastChangeUserEdit(Element textField);
     boolean elementShouldAutoComplete(HTMLInputElement inputElement);
+    undefined setValueForUser(HTMLInputElement inputElement, DOMString value);
     undefined setAutofilled(HTMLInputElement inputElement, boolean enabled);
     undefined setAutofilledAndViewable(HTMLInputElement inputElement, boolean enabled);
     undefined setAutofilledAndObscured(HTMLInputElement inputElement, boolean enabled);
@@ -1204,6 +1196,8 @@ enum ContentsFormat {
     DOMString createTemporaryFile(DOMString name, DOMString contents);
 
     DOMString documentIPAddressSpace();
+    undefined setDocumentIPAddressSpace(DOMString addressSpace);
+    undefined setLoadSourceOriginOverride(DOMString origin);
 
     undefined queueMicroTask(long testNumber);
     boolean testPreloaderSettingViewport();
@@ -1235,6 +1229,7 @@ enum ContentsFormat {
 
     DOMString resourceLoadStatisticsForURL(DOMURL url);
     undefined setTrackingPreventionEnabled(boolean enable);
+    boolean isPrevalentDomainScriptOnStack();
 
     undefined setCanShowModalDialogOverride(boolean allow);
 
@@ -1395,8 +1390,6 @@ enum ContentsFormat {
     boolean hasSameEventLoopAs(WindowProxy windowProxy);
 
     DOMString windowLocationHost(DOMWindow window);
-
-    undefined markContextAsInsecure();
 
     undefined setMaxCanvasArea(unsigned long size);
 
@@ -1592,6 +1585,7 @@ enum ContentsFormat {
 
     undefined setTopDocumentURLForQuirks(DOMString urlString);
     undefined setSubframeURLForQuirks(DOMString urlString);
+    undefined setTopDocumentHostForQuirks(DOMString host);
     sequence<DOMString> activeQuirks();
 
     [CallWith=CurrentGlobalObject] ReadableStream readableStreamFromMessagePort(MessagePort port);

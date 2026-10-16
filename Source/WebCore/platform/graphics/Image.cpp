@@ -222,13 +222,6 @@ void Image::drawPattern(GraphicsContext& ctxt, ConcreteObjectSize concreteObject
         observer->didDraw(*this);
 }
 
-void Image::computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio)
-{
-    intrinsicRatio = size();
-    intrinsicWidth = intrinsicRatio.width();
-    intrinsicHeight = intrinsicRatio.height();
-}
-
 void Image::startAnimationAsynchronously()
 {
     if (!m_animationStartTimer)
@@ -257,7 +250,8 @@ RefPtr<ShareableBitmap> Image::toShareableBitmap(ConcreteObjectSize concreteObje
     if (!graphicsContext)
         return nullptr;
 
-    graphicsContext->drawImage(const_cast<Image&>(*this), concreteObjectSize, IntPoint());
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST graphicsContext->drawImage(const_cast<Image&>(*this), concreteObjectSize, IntPoint());
     return bitmap;
 }
 
@@ -266,7 +260,7 @@ void Image::dump(TextStream& ts) const
     if (isAnimated())
         ts.dumpProperty("animated"_s, isAnimated());
 
-    if (isNull())
+    if (!hasSomethingToDraw())
         ts.dumpProperty("is-null-image"_s, true);
 
     ts.dumpProperty("size"_s, size());

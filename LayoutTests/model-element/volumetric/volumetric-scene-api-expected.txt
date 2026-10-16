@@ -1,5 +1,6 @@
 
 PASS The volumetric scene API is exposed on Element
+PASS inVolumetricScene is read-only and onvolumetricchange is assignable
 PASS A plain element cannot host a volumetric scene
 PASS A model element can host a volumetric scene and starts inline
 PASS exitVolumetricScene() on an element with no scene is a no-op

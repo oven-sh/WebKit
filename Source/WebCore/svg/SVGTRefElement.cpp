@@ -58,7 +58,7 @@ public:
 
     void attach(RefPtr<Element>&& target);
     void detach();
-    bool NODELETE isAttached() const { return m_target.get(); }
+    bool LEGACY_NODELETE isAttached() const { return m_target.get(); }
 
 private:
     explicit SVGTRefTargetEventListener(SVGTRefElement& trefElement);
@@ -196,7 +196,6 @@ bool SVGTRefElement::rendererIsNeeded(const Style::ComputedStyle& style)
 {
     if (parentNode()
         && (parentNode()->hasTagName(SVGNames::aTag)
-            || parentNode()->hasTagName(SVGNames::altGlyphTag)
             || parentNode()->hasTagName(SVGNames::textTag)
             || parentNode()->hasTagName(SVGNames::textPathTag)
             || parentNode()->hasTagName(SVGNames::tspanTag)))
@@ -263,7 +262,7 @@ void SVGTRefElement::removingSteps(RemovalType removalType, ContainerNode& oldPa
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SVGTRefTargetEventListener)
-    static bool NODELETE isType(const WebCore::EventListener& listener)
+    static bool LEGACY_NODELETE isType(const WebCore::EventListener& listener)
     {
         return listener.type() == WebCore::EventListener::SVGTRefTargetEventListenerType;
     }

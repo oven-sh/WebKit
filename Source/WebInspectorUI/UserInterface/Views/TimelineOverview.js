@@ -1025,7 +1025,7 @@ WI.TimelineOverview = class TimelineOverview extends WI.View
 
     _handleTimelineCapturingStateChanged(event)
     {
-        switch (event.data.capturingState) {
+        switch (WI.timelineManager.capturingState) {
         case WI.TimelineManager.CapturingState.Active:
             this._editInstrumentsButton.enabled = false;
             this._stopEditingInstruments();
@@ -1039,6 +1039,9 @@ WI.TimelineOverview = class TimelineOverview extends WI.View
 
     _recordingImported(event)
     {
+        if (event.data.recording !== this._recording)
+            return;
+
         let {overviewData} = event.data;
 
         if (overviewData.secondsPerPixel !== undefined)

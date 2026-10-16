@@ -32,17 +32,18 @@ PASS multipleOne.selected is true
 PASS multipleTwo.selected is false
 PASS multiple.selectedOptions.length is 1
 
-A single-select list box keeps at most one option selected, and unselects it when clicked again.
+A single-select list box keeps at most one option selected, and keeps it selected when clicked again.
 PASS singleOne.selected is true
 PASS single.selectedOptions.length is 1
 PASS singleOne.selected is false
 PASS singleTwo.selected is true
 PASS single.selectedOptions.length is 1
 
-Unselecting fires input and change, like any other list box selection change.
-PASS single.selectedOptions.length is 0
-PASS inputEvents is 1
-PASS changeEvents is 1
+Clicking the selected option again changes nothing, so it fires neither input nor change.
+PASS singleTwo.selected is true
+PASS single.selectedOptions.length is 1
+PASS inputEvents is 0
+PASS changeEvents is 0
 PASS successfullyParsed is true
 
 TEST COMPLETE

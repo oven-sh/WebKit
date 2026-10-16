@@ -225,26 +225,25 @@ endfunction()
 
 # Building for macOS defaults uses the host system's deployment target. Other
 # platforms deploy to the SDK version.
-# FIXME: macOS should use the host version OR SDK version, whichever is
-# smaller.
 if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    if (WEBKIT_SDK_IS_MACOS)
-        execute_process(COMMAND sw_vers -productVersion
-            OUTPUT_VARIABLE _host_os_version
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            RESULT_VARIABLE _host_os_result)
-        if (_host_os_result EQUAL 0)
-            string(REGEX MATCH "^[0-9]+\\.[0-9]+" _deployment_target "${_host_os_version}")
-        endif ()
-        unset(_host_os_version)
-        unset(_host_os_result)
+    execute_process(COMMAND sw_vers -productVersion
+        OUTPUT_VARIABLE _host_version
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+    if (WEBKIT_SDK_IS_MACOS AND (_host_version VERSION_LESS WEBKIT_SDK_VERSION))
+        set(_deployment_target ${_host_version})
     else ()
-        string(REGEX MATCH "^[0-9]+\\.[0-9]+" _deployment_target "${WEBKIT_SDK_VERSION}")
+        set(_deployment_target ${WEBKIT_SDK_VERSION})
     endif ()
-    if (_deployment_target)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "${_deployment_target}" CACHE STRING "Deployment target" FORCE)
-    endif ()
+
+    # Host OS version could be three components, but deployment target is
+    # always a two-component X.Y string.
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" _deployment_target "${_deployment_target}")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${_deployment_target}" CACHE STRING "Deployment target" FORCE)
+
+    unset(_host_version)
     unset(_deployment_target)
+    message(STATUS "Deployment target: ${WEBKIT_SDK_NAME}${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif ()
 
 if (CMAKE_OSX_DEPLOYMENT_TARGET)

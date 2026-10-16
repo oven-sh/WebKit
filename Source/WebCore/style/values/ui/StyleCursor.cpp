@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2025-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,14 +28,100 @@
 
 #include "CSSCursorImageValue.h"
 #include "CSSValueList.h"
+#include "Cursor.h"
+#include "DocumentView.h"
+#include "LocalFrame.h"
+#include "LocalFrameView.h"
+#include "RenderElement.h"
+#include "RenderView.h"
 #include "StyleBuilderChecking.h"
 #include "StyleCursorImage.h"
+#include "StyleCursorSizing.h"
 #include "StyleInvalidImage.h"
 #include "StyleKeyword+CSSValueConversion.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
 namespace Style {
+
+std::optional<WebCore::Cursor> Cursor::selectImageCursor(const RenderObject* renderer, const LocalFrame& frame, float deviceScaleFactor, IntPoint pointInMainFrame) const
+{
+    if (!images)
+        return std::nullopt;
+
+    CheckedPtr renderElement = dynamicDowncast<RenderElement>(renderer);
+    if (!renderElement && renderer && renderer->parent())
+        renderElement = renderer->parent();
+    if (!renderElement)
+        renderElement = frame.contentRenderer();
+    if (!renderElement)
+        return std::nullopt;
+
+    RefPtr frameView = frame.view();
+    if (!frameView)
+        return std::nullopt;
+
+    IntRect visibleContentRect = frameView->visibleContentRect();
+
+    for (auto& styleCursorImage : *images) {
+        Ref styleImage = styleCursorImage.image;
+        if (styleImage->errorOccurred() || !styleImage->canDraw(*renderElement))
+            continue;
+
+        auto concreteCursorSize = styleImage->negotiate(*renderElement, CursorSizing { styleImage->imageScaleFactor() });
+        auto cursorSize = concreteCursorSize.size();
+        if (cursorSize.isEmpty())
+            continue;
+
+        // Limit the size of cursors (in UI pixels) so that they cannot be used to cover UI elements in chrome.
+        if (cursorSize.width() > CursorSizing::maximumCursorSize.width() || cursorSize.height() > CursorSizing::maximumCursorSize.height())
+            continue;
+
+        auto cursorRect = IntRect { pointInMainFrame, expandedIntSize(cursorSize) };
+        auto hotSpot = styleCursorImage.hotSpot ? Style::evaluate<IntPoint>(*styleCursorImage.hotSpot) : IntPoint { -1, -1 };
+        cursorRect.moveBy(-hotSpot);
+
+        if (!visibleContentRect.contains(cursorRect))
+            continue;
+
+        ImagePaintingOptions options {
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+            AXCustomColorModeController::shouldInvertSVGImage(*renderElement, styleImage.get()) ? InvertContent::Yes : InvertContent::No,
+#endif
+        };
+
+        RefPtr nativeImage = styleImage->nativeImage(*renderElement, concreteCursorSize, deviceScaleFactor, options);
+        if (!nativeImage || nativeImage->size().isEmpty())
+            continue;
+
+        // Image pixels per UI pixel.
+        float scale = nativeImage->size().width() / cursorSize.width();
+
+        std::optional<IntPoint> specifiedHotSpot;
+        if (styleCursorImage.hotSpot)
+            specifiedHotSpot = roundedIntPoint(FloatPoint { hotSpot }.scaled(scale));
+        auto effectiveHotSpot = determineHotSpot(nativeImage->size(), specifiedHotSpot, styleImage->hotSpot());
+
+#if ENABLE(MOUSE_CURSOR_SCALE)
+        // It's pretty unlikely that a scale of less than one would ever be used. But all we really
+        // need to ensure here is that the scale isn't so small that integer overflow can occur when
+        // dividing cursor sizes (limited above) by the scale.
+        constexpr double minimumCursorScale = 0.001;
+        if (scale < minimumCursorScale)
+            continue;
+        return WebCore::Cursor(WTF::move(nativeImage), effectiveHotSpot, scale);
+#else
+        return WebCore::Cursor(WTF::move(nativeImage), effectiveHotSpot);
+#endif // ENABLE(MOUSE_CURSOR_SCALE)
+    }
+
+    return std::nullopt;
+}
 
 // MARK: - Conversion
 
@@ -60,7 +146,7 @@ auto CSSValueConversion<Cursor>::operator()(BuilderState& state, const CSSValue&
             return CursorImageAndHotSpot { InvalidImage::create(), std::nullopt };
         }
 
-        auto hotSpot = styleImage->hotSpot();
+        auto hotSpot = styleImage->specifiedHotSpot();
         return CursorImageAndHotSpot { styleImage.releaseNonNull(), WTF::move(hotSpot) };
     });
 

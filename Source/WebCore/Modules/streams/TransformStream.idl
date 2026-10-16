@@ -28,7 +28,8 @@
     JSCustomMarkFunction,
     PrivateIdentifier,
     PublicIdentifier,
-    SkipVTableValidation
+    SkipVTableValidation,
+    Transferable
 ] interface TransformStream {
     [CallWith=CurrentGlobalObject] constructor(optional object transformer, optional object writableStrategy, optional object readableStrategy);
     readonly attribute ReadableStream readable;

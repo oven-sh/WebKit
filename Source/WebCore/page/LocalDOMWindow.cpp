@@ -149,6 +149,7 @@
 #include "SuddenTermination.h"
 #include "UserContentProvider.h"
 #include "UserGestureIndicator.h"
+#include "Viewport.h"
 #include "VisualViewport.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WebKitPoint.h"
@@ -200,7 +201,7 @@ using namespace Inspector;
 
 static constexpr Seconds defaultTransientActivationDuration { 5_s };
 
-static WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>& NODELETE windowsInterestedInStorageEvents()
+static WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>& LEGACY_NODELETE windowsInterestedInStorageEvents()
 {
     static MainThreadNeverDestroyed<WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>> set;
     return set;
@@ -212,7 +213,7 @@ void LocalDOMWindow::forEachWindowInterestedInStorageEvents(NOESCAPE const Funct
         apply(window);
 }
 
-static std::optional<Seconds>& NODELETE transientActivationDurationOverrideForTesting()
+static std::optional<Seconds>& LEGACY_NODELETE transientActivationDurationOverrideForTesting()
 {
     static NeverDestroyed<std::optional<Seconds>> overrideForTesting;
     return overrideForTesting;
@@ -229,13 +230,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LocalDOMWindow);
 
 typedef HashCountedSet<LocalDOMWindow*> LocalDOMWindowSet;
 
-static LocalDOMWindowSet& NODELETE windowsWithUnloadEventListeners()
+static LocalDOMWindowSet& LEGACY_NODELETE windowsWithUnloadEventListeners()
 {
     static NeverDestroyed<LocalDOMWindowSet> windowsWithUnloadEventListeners;
     return windowsWithUnloadEventListeners;
 }
 
-static LocalDOMWindowSet& NODELETE windowsWithBeforeUnloadEventListeners()
+static LocalDOMWindowSet& LEGACY_NODELETE windowsWithBeforeUnloadEventListeners()
 {
     static NeverDestroyed<LocalDOMWindowSet> windowsWithBeforeUnloadEventListeners;
     return windowsWithBeforeUnloadEventListeners;
@@ -277,7 +278,7 @@ static void removeAllBeforeUnloadEventListeners(LocalDOMWindow* domWindow)
         domWindow->enableSuddenTermination();
 }
 
-static bool NODELETE allowsBeforeUnloadListeners(LocalDOMWindow* window)
+static bool LEGACY_NODELETE allowsBeforeUnloadListeners(LocalDOMWindow* window)
 {
     ASSERT_ARG(window, window);
     auto* frame = window->frame();
@@ -323,7 +324,8 @@ bool LocalDOMWindow::dispatchAllPendingBeforeUnloadEvents()
 
 unsigned LocalDOMWindow::pendingUnloadEventListeners() const
 {
-    return windowsWithUnloadEventListeners().count(const_cast<LocalDOMWindow*>(this));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return windowsWithUnloadEventListeners().count(const_cast<LocalDOMWindow*>(this));
 }
 
 void LocalDOMWindow::dispatchAllPendingUnloadEvents()
@@ -671,7 +673,8 @@ CustomElementRegistry& LocalDOMWindow::ensureCustomElementRegistry()
         for (Ref shadowRoot : document()->inDocumentShadowRoots()) {
             if (shadowRoot->mode() == ShadowRootMode::UserAgent || shadowRoot->hasScopedCustomElementRegistry())
                 continue;
-            const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
         }
         protect(document())->setCustomElementRegistry(*m_customElementRegistry);
     }
@@ -775,7 +778,7 @@ History& LocalDOMWindow::history()
     return *m_history;
 }
 
-Navigation& LocalDOMWindow::navigation()
+SUPPRESS_NODELETE Navigation& LocalDOMWindow::navigation()
 {
     if (!m_navigation)
         m_navigation = Navigation::create(*this);
@@ -870,6 +873,13 @@ void LocalDOMWindow::unfreezeNowTimestamp()
 ReducedResolutionSeconds LocalDOMWindow::frozenNowTimestamp() const
 {
     return m_frozenNowTimestamp.value_or(nowTimestamp());
+}
+
+Viewport& LocalDOMWindow::viewport()
+{
+    if (!m_viewport)
+        m_viewport = Viewport::create(*this);
+    return *m_viewport;
 }
 
 VisualViewport& LocalDOMWindow::visualViewport()
@@ -1589,7 +1599,19 @@ void LocalDOMWindow::overrideTransientActivationDurationForTesting(std::optional
 bool LocalDOMWindow::hasTransientActivation() const
 {
     auto now = MonotonicTime::now();
-    return now >= m_lastActivationTimestamp && now < (m_lastActivationTimestamp + transientActivationDuration());
+    auto lastActivationTimestamp = this->lastActivationTimestamp();
+    return now >= lastActivationTimestamp && now < (lastActivationTimestamp + transientActivationDuration());
+}
+
+MonotonicTime LocalDOMWindow::lastActivationTimestamp() const
+{
+    auto timestamp = m_lastActivationTimestamp;
+    for (auto& forcedActivation : m_forcedActivations) {
+        // Per spec, positive infinity means that the window has never been activated.
+        if (timestamp == MonotonicTime::infinity() || forcedActivation.timestamp > timestamp)
+            timestamp = forcedActivation.timestamp;
+    }
+    return timestamp;
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#sticky-activation
@@ -1617,11 +1639,11 @@ bool LocalDOMWindow::consumeTransientActivation()
         return false;
 
     RefPtr thisFrame = this->frame();
-    for (auto* frame = thisFrame ? &thisFrame->tree().top() : nullptr; frame; frame = frame->tree().traverseNext()) {
-        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+    for (RefPtr frame = thisFrame ? &thisFrame->tree().top() : nullptr; frame; frame = frame->tree().traverseNext()) {
+        RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
         if (!localFrame)
             continue;
-        if (auto* window = localFrame->window())
+        if (RefPtr window = localFrame->window())
             window->consumeLastActivationIfNecessary();
     }
 
@@ -1631,10 +1653,39 @@ bool LocalDOMWindow::consumeTransientActivation()
     return true;
 }
 
+void LocalDOMWindow::updateActivation(MonotonicTime activationTime, std::optional<UserGestureTokenIdentifier> forcedActivationToken)
+{
+    // Clean up forced activations that have expired. This can prevent buildup if another process
+    // sent us an UpdateUserActivationState message with a forced user activation without sending us
+    // a corresponding DidRevokeForcedUserActivation message (e.g. due to unexpected process death).
+    if (!m_forcedActivations.isEmpty()) [[unlikely]] {
+        auto now = MonotonicTime::now();
+        m_forcedActivations.removeAllMatching([&](auto& forcedActivation) {
+            return now >= forcedActivation.timestamp + transientActivationDuration();
+        });
+    }
+
+    if (forcedActivationToken)
+        m_forcedActivations.append({ *forcedActivationToken, activationTime });
+    else
+        m_lastActivationTimestamp = activationTime;
+
+    m_hasStickyActivation = true;
+    m_hasHistoryActionActivation = true;
+}
+
 void LocalDOMWindow::consumeLastActivationIfNecessary()
 {
+    m_forcedActivations.clear();
     if (!m_lastActivationTimestamp.isInfinity())
         m_lastActivationTimestamp = -MonotonicTime::infinity();
+}
+
+void LocalDOMWindow::revokeForcedActivation(UserGestureTokenIdentifier grantingToken)
+{
+    m_forcedActivations.removeFirstMatching([&](auto& forcedActivation) {
+        return forcedActivation.grantingToken == grantingToken;
+    });
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#consume-history-action-user-activation
@@ -1667,25 +1718,29 @@ std::optional<LocalDOMWindow::ClickEventData> LocalDOMWindow::consumeLastUserCli
     return std::exchange(m_lastUserClickEvent, std::nullopt);
 }
 
-static void updateActivationTimestampAndNotify(LocalDOMWindow& window, MonotonicTime activationTime, bool closeWatcherEnabled)
+static void updateActivationTimestampAndNotify(LocalDOMWindow& window, UserGestureToken& token, bool closeWatcherEnabled)
 {
-    window.updateActivation(activationTime);
+    if (token.removesTransientActivation()) {
+        window.updateActivation(token.startTime(), token.identifier());
+        token.didGrantForcedActivation(window);
+    } else
+        window.updateActivation(token.startTime());
     if (closeWatcherEnabled)
         window.closeWatcherManager().notifyAboutUserActivation();
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#activation-notification
-void LocalDOMWindow::notifyActivated(MonotonicTime activationTime)
+void LocalDOMWindow::notifyActivated(UserGestureToken& token)
 {
     RefPtr frame = this->frame();
     bool closeWatcherEnabled = frame && frame->settings().closeWatcherEnabled();
-    updateActivationTimestampAndNotify(*this, activationTime, closeWatcherEnabled);
+    updateActivationTimestampAndNotify(*this, token, closeWatcherEnabled);
     if (!frame)
         return;
 
     for (Ref localAncestor : ancestorFrames<LocalFrame>(*frame)) {
         if (RefPtr window = localAncestor->window())
-            updateActivationTimestampAndNotify(*window, activationTime, closeWatcherEnabled);
+            updateActivationTimestampAndNotify(*window, token, closeWatcherEnabled);
     }
 
     RefPtr securityOrigin = this->securityOrigin();
@@ -1705,11 +1760,16 @@ void LocalDOMWindow::notifyActivated(MonotonicTime activationTime)
         if (!descendantSecurityOrigin || !descendantSecurityOrigin->isSameOriginAs(*securityOrigin))
             continue;
 
-        updateActivationTimestampAndNotify(*descendantWindow, activationTime, closeWatcherEnabled);
+        updateActivationTimestampAndNotify(*descendantWindow, token, closeWatcherEnabled);
     }
 
-    if (RefPtr page = frame->page(); page && page->mainFrame().tree().containsRemoteFrame())
-        frame->loader().client().didNotifyUserActivation(activationTime);
+    if (RefPtr page = frame->page(); page && page->mainFrame().tree().containsRemoteFrame()) {
+        if (token.removesTransientActivation()) {
+            frame->loader().client().didNotifyUserActivation(token.startTime(), token.identifier());
+            token.didGrantForcedActivationInOtherProcesses(*frame);
+        } else
+            frame->loader().client().didNotifyUserActivation(token.startTime(), std::nullopt);
+    }
 }
 
 StyleMedia& LocalDOMWindow::styleMedia()
@@ -1993,13 +2053,13 @@ void LocalDOMWindow::clearInterval(int timeoutId)
         DOMTimer::removeById(*context, timeoutId);
 }
 
-int LocalDOMWindow::requestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
+unsigned LocalDOMWindow::requestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
 {
     RefPtr document = this->document();
     return document ? document->requestAnimationFrame(WTF::move(callback)) : 0;
 }
 
-int LocalDOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
+unsigned LocalDOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
 {
     static bool firstTime = true;
     if (firstTime && document()) {
@@ -2009,19 +2069,19 @@ int LocalDOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallbac
     return requestAnimationFrame(WTF::move(callback));
 }
 
-void LocalDOMWindow::cancelAnimationFrame(int id)
+void LocalDOMWindow::cancelAnimationFrame(unsigned id)
 {
     if (RefPtr document = this->document())
         document->cancelAnimationFrame(id);
 }
 
-int LocalDOMWindow::requestIdleCallback(Ref<IdleRequestCallback>&& callback, const IdleRequestOptions& options)
+unsigned LocalDOMWindow::requestIdleCallback(Ref<IdleRequestCallback>&& callback, const IdleRequestOptions& options)
 {
     RefPtr document = this->document();
     return document ? document->requestIdleCallback(WTF::move(callback), Seconds::fromMilliseconds(options.timeout)) : 0;
 }
 
-void LocalDOMWindow::cancelIdleCallback(int id)
+void LocalDOMWindow::cancelIdleCallback(unsigned id)
 {
     if (RefPtr document = this->document())
         document->cancelIdleCallback(id);
@@ -2062,7 +2122,7 @@ bool LocalDOMWindow::crossOriginIsolated() const
 // https://html.spec.whatwg.org/multipage/origin.html#dom-originagentcluster
 bool LocalDOMWindow::originAgentCluster() const
 {
-    auto* document = this->document();
+    RefPtr document = this->document();
     return document && document->originAgentCluster();
 }
 
@@ -2888,7 +2948,7 @@ void LocalDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& comple
     LockBackForwardList lockBackForwardList = (locking != SetLocationLocking::LockHistoryBasedOnGestureState) ? LockBackForwardList::Yes : LockBackForwardList::No;
     protect(frame->navigationScheduler())->scheduleLocationChange(*activeDocument, protect(activeDocument->securityOrigin()),
         // FIXME: What if activeDocument()->frame() is 0?
-        completedURL, activeDocument->frame()->loader().outgoingReferrer(),
+        completedURL, protect(activeDocument->frame()->loader())->outgoingReferrer(),
         lockHistory, lockBackForwardList,
         historyHandling);
 }

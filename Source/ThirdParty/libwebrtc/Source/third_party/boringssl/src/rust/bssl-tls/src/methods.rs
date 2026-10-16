@@ -19,12 +19,9 @@ use core::ffi::{
     c_void, //
 };
 
-use crate::{
-    Methods,
-    abort_on_panic, //
-};
+use crate::abort_on_panic;
 
-pub(crate) unsafe extern "C" fn drop_box_rust_methods<M: Methods>(
+pub(crate) unsafe extern "C" fn drop_box_rust_methods<M>(
     _parent: *mut c_void,
     ptr: *mut c_void,
     _ad: *mut bssl_sys::CRYPTO_EX_DATA,
@@ -32,11 +29,11 @@ pub(crate) unsafe extern "C" fn drop_box_rust_methods<M: Methods>(
     _argl: c_long,
     _argp: *mut c_void,
 ) {
+    if ptr.is_null() {
+        return;
+    }
     abort_on_panic(move || {
         let _ = unsafe {
-            if ptr.is_null() {
-                return;
-            }
             // Safety: the data was boxed and stored via SSL_CTX_set_ex_data.
             Box::from_raw(ptr as *mut M)
         };

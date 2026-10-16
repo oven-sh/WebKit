@@ -25,13 +25,11 @@
 
 #import "DOMImplementationInternal.h"
 
-#import "DOMCSSStyleSheetInternal.h"
 #import "DOMDocumentInternal.h"
 #import "DOMDocumentTypeInternal.h"
 #import "DOMHTMLDocumentInternal.h"
 #import "DOMInternal.h"
 #import "ExceptionHandlers.h"
-#import <WebCore/CSSStyleSheet.h>
 #import <WebCore/DOMImplementation.h>
 #import <WebCore/DocumentType.h>
 #import <WebCore/HTMLDocument.h>
@@ -81,8 +79,7 @@ static inline Ref<WebCore::DOMImplementation> unwrap(DOMImplementation& wrapper)
 
 - (DOMCSSStyleSheet *)createCSSStyleSheet:(NSString *)title media:(NSString *)media
 {
-    WebCore::JSMainThreadNullState state;
-    return kit(unwrap(*self)->createCSSStyleSheet(title, media).ptr());
+    return nil;
 }
 
 - (DOMHTMLDocument *)createHTMLDocument:(NSString *)title

@@ -24,6 +24,8 @@ import os
 import json
 import unittest
 
+from unittest.mock import patch
+
 from reporelaypy import Checkout, CheckoutRoute, Redirector
 from webkitcorepy import testing, OutputCapture
 from webkitflaskpy import mock_app
@@ -176,6 +178,41 @@ class CheckoutRouteUnittest(testing.PathTestCase):
             response = client.get('4@main/json')
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), reference)
+
+    @mock_app
+    def test_json_details_before_origin_commit(self, app=None, client=None):
+        with OutputCapture(), mocks.local.Git(self.path) as repo:
+            app.register_blueprint(CheckoutRoute(
+                Checkout(path=self.path, url=repo.remote, sentinal=False),
+                redirectors=[Redirector('https://trac.webkit.org')],
+            ))
+            self.assertEqual(client.get('5@main/json').status_code, 200)
+
+            # Without origin, details are only preserved if the ancestry query was skipped
+            repo.remotes['fork/main'] = repo.remotes.pop('origin/main')
+            reference = Commit.Encoder().default(repo.commits['main'][2])
+            reference['message'] = reference['message'].rstrip()
+
+            response = client.get('3@main/json')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), reference)
+
+    @mock_app
+    def test_strip_details_no_branch(self, app=None, client=None):
+        with OutputCapture(), mocks.local.Git(self.path) as repo, patch('webkitscmpy.local.Git.branches_for', return_value=[]):
+            app.register_blueprint(CheckoutRoute(
+                Checkout(path=self.path, url=repo.remote, sentinal=False),
+                redirectors=[Redirector('https://trac.webkit.org')],
+            ))
+            commit = repo.commits['branch-a'][1]
+
+            response = client.get(commit.hash[:12])
+            self.assertEqual(response.status_code, 302)
+
+            response = client.get('{}/json'.format(commit.hash[:12]))
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn('author', response.json())
+            self.assertNotIn('message', response.json())
 
     @mock_app
     def test_json_invalid(self, app=None, client=None):

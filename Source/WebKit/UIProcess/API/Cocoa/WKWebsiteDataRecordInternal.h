@@ -94,7 +94,8 @@ static inline OptionSet<WebKit::WebsiteDataType> toWebsiteDataTypes(NSSet *websi
 {
     OptionSet<WebKit::WebsiteDataType> result;
 
-    for (NSString *websiteDataType in websiteDataTypes) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *websiteDataType in websiteDataTypes) {
         if (auto dataType = toWebsiteDataType(websiteDataType))
             result.add(*dataType);
     }

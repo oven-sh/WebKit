@@ -128,72 +128,7 @@ struct AXTreeData {
     }
 };
 
-// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
-struct AXDebugInfo {
-    AccessibilityMode accessibilityMode;
-    String liveTree;
-    String isolatedTree;
-    Vector<String> warnings;
-    uint64_t remoteTokenHash;
-    uint64_t webProcessLocalTokenHash;
-};
-
-// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
-struct AriaNotifyData {
-    String message;
-    NotifyPriority priority { NotifyPriority::Normal };
-    InterruptBehavior interrupt { InterruptBehavior::None };
-    String language;
-
-    String debugDescription() const
-    {
-        auto priorityString = [&] {
-            switch (priority) {
-            case NotifyPriority::Normal:
-                return "normal"_s;
-            case NotifyPriority::High:
-                return "high"_s;
-            }
-            return "unknown"_s;
-        };
-        auto interruptString = [&] {
-            switch (interrupt) {
-            case InterruptBehavior::None:
-                return "none"_s;
-            case InterruptBehavior::All:
-                return "all"_s;
-            case InterruptBehavior::Pending:
-                return "pending"_s;
-            }
-            return "unknown"_s;
-        };
-        return makeString("AriaNotifyData { message: \""_s, message, "\", priority: "_s, priorityString(), ", interrupt: "_s, interruptString(), ", language: \""_s, language, "\" }"_s);
-    }
-};
-
 #if PLATFORM(COCOA)
-// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
-struct LiveRegionAnnouncementData {
-    AttributedString message;
-    LiveRegionStatus status { LiveRegionStatus::Polite };
-
-    String debugDescription() const
-    {
-        auto statusString = [&] {
-            switch (status) {
-            case LiveRegionStatus::Off:
-                return "off"_s;
-            case LiveRegionStatus::Polite:
-                return "polite"_s;
-            case LiveRegionStatus::Assertive:
-                return "assertive"_s;
-            }
-            return "unknown"_s;
-        };
-        return makeString("LiveRegionAnnouncementData { message: \""_s, message.string, "\", status: "_s, statusString(), " }"_s);
-    }
-};
-
 struct AXTextChangeContext {
     AXTextStateChangeIntent intent;
     String deletedText;
@@ -218,28 +153,6 @@ struct PossibleFormValidationErrorData {
     }
 };
 #endif // PLATFORM(COCOA)
-
-#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
-// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
-
-// Describes a frame's position and scale on screen for accessibility coordinate conversion.
-// Sent from the UIProcess to the WebProcess via IPC whenever the frame scrolls, moves, or resizes.
-// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
-struct AXFrameGeometry {
-    // The frame's content origin in screen coordinates.
-    //   - Coordinate space: bottom-left on macOS, top-left on other platforms.
-    //   - Points to: the top-left of the frame's document.
-    //   - Units: display pixels.
-    //   - Scroll: document-origin-based, so accounts for the frame's scroll position
-    //     (e.g. scrolling down moves the document origin up on screen).
-    // Element rects in content space compose with this directly to produce screen coordinates.
-    IntPoint screenPosition;
-
-    // Scale accounts for page zoom and device scale factor, among other things.
-    // Applied to the element rect before adding screenPosition.
-    AffineTransform screenTransform;
-};
-#endif
 
 struct AXNotificationWithData {
     using DataVariant = Variant<std::monostate, AriaNotifyData
@@ -587,7 +500,7 @@ public:
     void deferModalChange(Element&);
     void deferMenuListValueChange(Element*);
     void deferElementAddedOrRemoved(Element*);
-    void NODELETE handleScrolledToAnchor(const Node& anchorNode);
+    void LEGACY_NODELETE handleScrolledToAnchor(const Node& anchorNode);
     void onScrollbarUpdate(ScrollView&);
     void onRemoteFrameInitialized(AXRemoteFrame&);
 
@@ -648,13 +561,13 @@ public:
     WEBCORE_EXPORT static void setEnhancedUserInterfaceAccessibility(bool flag);
 
     static bool accessibilityEnabled();
-    WEBCORE_EXPORT static bool NODELETE accessibilityEnhancedUserInterfaceEnabled();
+    WEBCORE_EXPORT static bool LEGACY_NODELETE accessibilityEnhancedUserInterfaceEnabled();
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     static bool useAXThreadTextApis() { return !isMainThread(); }
     static bool shouldCreateAXThreadCompatibleMarkers() { return isIsolatedTreeEnabled(); }
 #endif
     static bool isAXTextStitchingEnabled() { return gAccessibilityTextStitchingEnabled; }
-    WEBCORE_EXPORT static bool NODELETE isAXThreadHitTestingEnabled();
+    WEBCORE_EXPORT static bool LEGACY_NODELETE isAXThreadHitTestingEnabled();
 
 #if PLATFORM(COCOA)
     static bool shouldRepostNotificationsForTests() { return gShouldRepostNotificationsForTests; }
@@ -664,7 +577,7 @@ public:
 #endif
 
     static bool forceInitialFrameCaching() { return gForceInitialFrameCaching; }
-    WEBCORE_EXPORT static void NODELETE setForceInitialFrameCaching(bool);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setForceInitialFrameCaching(bool);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     static bool shouldServeInitialCachedFrame();
 #endif
@@ -747,6 +660,10 @@ public:
     void postNotification(AccessibilityObject&, AXNotification);
     void postDeferredNotification(RenderObject&, AXNotification);
     void postARIANotifyNotification(Node&, const String&, const AriaNotifyOptions&);
+#if PLATFORM(IOS_FAMILY)
+    // Tells assistive technology which captions or subtitles are currently displayed for a media element.
+    void postCaptionsDisplayedNotification(const Vector<String>&);
+#endif
 #if PLATFORM(COCOA)
     void postLiveRegionNotification(AccessibilityObject&, LiveRegionStatus, const AttributedString&);
     void postPossibleFormValidationErrorNotification(AccessibilityObject&, Vector<String>&& unannouncedText, unsigned errorFieldCount, bool targetIsSubmitter);
@@ -773,8 +690,8 @@ public:
 
     WEBCORE_EXPORT static void setAnnouncementTranslationTimeoutForTesting(std::optional<Seconds>);
 
-    void NODELETE setTextSelectionIntent(const AXTextStateChangeIntent&);
-    void NODELETE setIsSynchronizingSelection(bool);
+    void LEGACY_NODELETE setTextSelectionIntent(const AXTextStateChangeIntent&);
+    void LEGACY_NODELETE setIsSynchronizingSelection(bool);
 
     // While non-std::nullopt, a focus change onto the given element will not be surfaced to assistive
     // technology. A null target suppresses a *clearing* of focus instead.
@@ -804,7 +721,7 @@ public:
     Document* document() const;
     FrameIdentifier frameID() const { return m_frameID; }
 
-    RefPtr<Page> NODELETE page() const;
+    RefPtr<Page> LEGACY_NODELETE page() const;
     IntPoint mapScreenPointToPagePoint(const IntPoint&) const;
 
     void objectBecameIgnored(const AccessibilityObject&);
@@ -848,7 +765,7 @@ public:
     void reconcileCount(const AccessibilityObject&, bool wasCounted);
 
 #if PLATFORM(COCOA)
-    static void NODELETE setShouldRepostNotificationsForTests(bool);
+    static void LEGACY_NODELETE setShouldRepostNotificationsForTests(bool);
 #endif
 
     void deferRecomputeIsIgnoredIfNeeded(Element*);
@@ -856,7 +773,7 @@ public:
     void deferRecomputeTableIsExposed(Element*);
     void deferRecomputeTableCellSlots(AccessibilityNodeObject&);
     void deferTextChangedIfNeeded(Node*);
-    void deferSelectedChildrenChangedIfNeeded(Element&);
+    void deferSelectedChildrenChanged(Element&);
     WEBCORE_EXPORT void performDeferredCacheUpdate(ForceLayout);
     void deferTextReplacementNotificationForTextControl(HTMLTextFormControlElement&, const String& previousValue);
 
@@ -896,7 +813,7 @@ public:
     inline void willUpdateObjectRegions();
     static bool isIsolatedTreeEnabled() { return accessibilityMode() == AccessibilityMode::AXThread; }
     WEBCORE_EXPORT static void initializeAXThreadIfNeeded();
-    WEBCORE_EXPORT static bool NODELETE isAXThreadInitialized();
+    WEBCORE_EXPORT static bool LEGACY_NODELETE isAXThreadInitialized();
     WEBCORE_EXPORT RefPtr<AXIsolatedTree> getOrCreateIsolatedTree();
     void initializeIsolatedTreeGeometry();
 
@@ -964,8 +881,8 @@ protected:
 
     // CharacterOffset functions.
     enum TraverseOption { TraverseOptionDefault = 1 << 0, TraverseOptionToNodeEnd = 1 << 1, TraverseOptionIncludeStart = 1 << 2, TraverseOptionValidateOffset = 1 << 3, TraverseOptionDoNotEnterTextControls = 1 << 4 };
-    Node* NODELETE nextNode(Node*) const;
-    Node* NODELETE previousNode(Node*) const;
+    Node* LEGACY_NODELETE nextNode(Node*) const;
+    Node* LEGACY_NODELETE previousNode(Node*) const;
     CharacterOffset traverseToOffsetInRange(const SimpleRange&, int, TraverseOption = TraverseOptionDefault, bool stayWithinRange = false);
 public:
     VisiblePosition visiblePositionFromCharacterOffset(const CharacterOffset&, AllowUserSelectNone = AllowUserSelectNone::No);
@@ -1020,7 +937,7 @@ private:
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     void selectedTextRangeTimerFired();
-    Seconds NODELETE platformSelectedTextRangeDebounceInterval() const;
+    Seconds LEGACY_NODELETE platformSelectedTextRangeDebounceInterval() const;
     void updateTreeSnapshotTimerFired() { processQueuedIsolatedNodeUpdates(); }
     void processQueuedIsolatedNodeUpdates();
 
@@ -1082,9 +999,9 @@ private:
 
     // Relationships between objects.
     static Vector<QualifiedName>& relationAttributes();
-    AXRelation NODELETE attributeToRelationType(const QualifiedName&);
+    AXRelation LEGACY_NODELETE attributeToRelationType(const QualifiedName&);
     enum class AddSymmetricRelation : bool { No, Yes };
-    static AXRelation NODELETE symmetricRelation(AXRelation);
+    static AXRelation LEGACY_NODELETE symmetricRelation(AXRelation);
     bool addRelation(Element&, Element&, AXRelation);
     bool addRelation(AccessibilityObject*, AccessibilityObject*, AXRelation, AddSymmetricRelation = AddSymmetricRelation::Yes);
     bool addRelation(Element&, const QualifiedName&);

@@ -52,7 +52,7 @@ TEST(CSSParser, ParseColorInput)
     auto properties = MutableStyleProperties::create();
 
     ASSERT_TRUE(CSSParser::parseDeclarationList(properties, "color: #ff0000;"_s, strictCSSParserContext()));
-    auto value = properties->getPropertyCSSValue(CSSPropertyColor).unsafeGet();
+    auto value = properties->getPropertyCSSValue(CSSPropertyID::Color).unsafeGet();
 
     ASSERT_TRUE(is<CSSValue>(value));
     Color valueColor(Color::red);
@@ -66,7 +66,7 @@ TEST(CSSParser, ParseColorWithNewlineAndWhitespacesInput)
     auto properties = MutableStyleProperties::create();
 
     ASSERT_TRUE(CSSParser::parseDeclarationList(properties, "color:  \n    #ff0000;"_s, strictCSSParserContext()));
-    auto value = properties->getPropertyCSSValue(CSSPropertyColor).unsafeGet();
+    auto value = properties->getPropertyCSSValue(CSSPropertyID::Color).unsafeGet();
 
     ASSERT_TRUE(is<CSSValue>(value));
     Color valueColor(Color::red);
@@ -142,8 +142,8 @@ TEST(CSSParser, ParseTextTransformPropertyWithNewlineBetweenTwoIdentInput)
         auto& valueList = *downcast<CSSValueList>(value);
 
         ASSERT_EQ((size_t)2, valueList.size());
-        EXPECT_EQ(CSSValueCapitalize, valueID(valueList[0]));
-        EXPECT_EQ(CSSValueFullWidth, valueID(valueList[1]));
+        EXPECT_EQ(CSSValueID::Capitalize, valueID(valueList[0]));
+        EXPECT_EQ(CSSValueID::FullWidth, valueID(valueList[1]));
     };
 
     auto properties = MutableStyleProperties::create();
@@ -293,22 +293,22 @@ TEST(CSSPropertyParser, GridTrackLimits)
     }
 
     testCases[] = {
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(999999, 20px);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(999999, 20px);"_s, 999999 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(1000000, 10%);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(1000000, 10%);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(1000001, auto);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(1000001, auto);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(999999, 20px);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(999999, 20px);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(1000000, 10%);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(1000000, 10%);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(1000001, auto);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(1000001, auto);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
     };
 
     auto properties = MutableStyleProperties::create();

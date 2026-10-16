@@ -64,22 +64,17 @@ NSString * const WebActionOriginalURLKey = @"WebActionOriginalURLKey";
 
 @end
 
-@implementation WebPolicyDecisionListener
+@implementation WebPolicyDecisionListener {
+    RetainPtr<WebPolicyDecisionListenerPrivate> _private;
+}
 
 - (id)_initWithTarget:(id)target action:(SEL)action
 {
     self = [super init];
     if (!self)
         return nil;
-    _private = [[WebPolicyDecisionListenerPrivate alloc] initWithTarget:target action:action];
+    _private = adoptNS([[WebPolicyDecisionListenerPrivate alloc] initWithTarget:target action:action]);
     return self;
-}
-
--(void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
-    [super dealloc];
 }
 
 - (void)_usePolicy:(WebCore::PolicyAction)policy

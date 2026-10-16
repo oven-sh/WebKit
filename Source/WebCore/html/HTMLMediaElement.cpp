@@ -464,7 +464,7 @@ static MediaElementSessionInfo mediaElementSessionInfoForSession(const MediaElem
     return { };
 }
 
-static bool NODELETE preferMediaControlsForCandidateSessionOverOtherCandidateSession(const MediaElementSessionInfo& session, const MediaElementSessionInfo& otherSession)
+static bool LEGACY_NODELETE preferMediaControlsForCandidateSessionOverOtherCandidateSession(const MediaElementSessionInfo& session, const MediaElementSessionInfo& otherSession)
 {
     MediaElementSession::PlaybackControlsPurpose purpose = session.purpose;
     ASSERT(purpose == otherSession.purpose);
@@ -488,7 +488,7 @@ static bool NODELETE preferMediaControlsForCandidateSessionOverOtherCandidateSes
     return session.timeOfLastUserInteraction.value_or(MonotonicTime { }) > otherSession.timeOfLastUserInteraction.value_or(MonotonicTime { });
 }
 
-static bool NODELETE mediaSessionMayBeConfusedWithMainContent(const MediaElementSessionInfo& session, MediaElementSession::PlaybackControlsPurpose purpose)
+static bool LEGACY_NODELETE mediaSessionMayBeConfusedWithMainContent(const MediaElementSessionInfo& session, MediaElementSession::PlaybackControlsPurpose purpose)
 {
     if (purpose == MediaElementSession::PlaybackControlsPurpose::MediaSession)
         return false;
@@ -507,7 +507,7 @@ static bool NODELETE mediaSessionMayBeConfusedWithMainContent(const MediaElement
     return true;
 }
 
-SUPPRESS_NODELETE static bool NODELETE defaultVolumeLocked()
+SUPPRESS_NODELETE static bool LEGACY_NODELETE defaultVolumeLocked()
 {
 #if PLATFORM(IOS)
     return PAL::currentUserInterfaceIdiomIsSmallScreen();
@@ -516,7 +516,7 @@ SUPPRESS_NODELETE static bool NODELETE defaultVolumeLocked()
 #endif
 }
 
-static bool NODELETE isInWindowOrStandardFullscreen(HTMLMediaElementEnums::VideoFullscreenMode mode)
+static bool LEGACY_NODELETE isInWindowOrStandardFullscreen(HTMLMediaElementEnums::VideoFullscreenMode mode)
 {
     return mode == HTMLMediaElementEnums::VideoFullscreenModeStandard || mode == HTMLMediaElementEnums::VideoFullscreenModeInWindow;
 }
@@ -525,6 +525,9 @@ struct HTMLMediaElement::CueData {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(CueData);
     TextTrackCueIntervalTree cueTree;
     CueList currentlyActiveCues;
+    // textTrackRemoveCue() takes active cues out of currentlyActiveCues itself, so the next
+    // updateActiveTextTrackCues() can't see that the active set changed without this.
+    bool activeCueWasRemoved { false };
 };
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(HTMLMediaElement::CueData);
@@ -1837,7 +1840,7 @@ void HTMLMediaElement::selectMediaResource()
                 HTMLMEDIAELEMENT_RELEASE_LOG_WITH_THIS(&element, SelectMediaResourceHasSrcAttrPlayerNotCreated);
                 return;
             }
-        } else if (auto firstSource = childrenOfType<HTMLSourceElement>(element).first()) {
+        } else if (RefPtr firstSource = childrenOfType<HTMLSourceElement>(element).first()) {
             //    Otherwise, if the media element does not have an assigned media provider object and does not have a src attribute,
             //    but does have a source element child, then let mode be children and let candidate be the first such source element
             //    child in tree order.
@@ -1926,7 +1929,7 @@ void HTMLMediaElement::selectMediaResource()
                 return;
             }
 
-            auto absoluteURL = element.document().encodingParseURL(srcValue);
+            auto absoluteURL = protect(element.document())->encodingParseURL(srcValue);
             if (!element.isSafeToLoadURL(absoluteURL, InvalidURLAction::Complain)) {
                 element.mediaLoadingFailed(MediaPlayer::NetworkState::FormatError);
                 return;
@@ -2138,7 +2141,7 @@ void HTMLMediaElement::loadResource(const URL& initialURL, const ContentType& in
 #if ENABLE(MEDIA_SOURCE)
 #if USE(AVFOUNDATION)
     if (document().settings().mediaSourcePrefersDecompressionSession())
-        options.videoRendererPreferences = videoRendererPreferences(document().settings(), m_forceStereoDecoding);
+        options.videoRendererPreferences = videoRendererPreferences(protect(document().settings()), m_forceStereoDecoding);
 #endif
     if (!m_mediaSource && url.protocolIs(mediaSourceBlobProtocol) && !m_remotePlaybackConfiguration) {
         if (RefPtr mediaSource = MediaSource::lookup(url.string()))
@@ -2335,7 +2338,7 @@ void HTMLMediaElement::updateActiveTextTrackCues(const MediaTime& movieTime)
     // 6 - If all of the cues in current cues have their text track cue active
     // flag set, none of the cues in other cues have their text track cue active
     // flag set, and missed cues is empty, then abort these steps.
-    bool activeSetChanged = missedCuesSize;
+    bool activeSetChanged = missedCuesSize || std::exchange(m_cueData->activeCueWasRemoved, false);
 
     for (size_t i = 0; !activeSetChanged && i < previousCuesSize; ++i)
         if (!currentCues.contains(previousCues[i]) && previousCues[i].data()->isActive())
@@ -2889,6 +2892,7 @@ void HTMLMediaElement::textTrackRemoveCue(TextTrack&, TextTrackCue& cue)
     if (index != notFound) {
         cue.setIsActive(false);
         m_cueData->currentlyActiveCues.removeAt(index);
+        m_cueData->activeCueWasRemoved = true;
     }
 
     cue.removeDisplayTree();
@@ -3647,9 +3651,10 @@ void HTMLMediaElement::setMediaKeys(MediaKeys* mediaKeys, Ref<DeferredPromise>&&
             // 5.2.4. If the preceding step failed, let this object's attaching media keys value be false and reject promise with the appropriate error name.
             // FIXME: ^
 
-            element.m_mediaKeys->detachCDMClient(element);
+            Ref oldMediaKeys = *element.m_mediaKeys;
+            oldMediaKeys->detachCDMClient(element);
             if (RefPtr player = element.m_player)
-                player->cdmInstanceDetached(element.m_mediaKeys->cdmInstance());
+                player->cdmInstanceDetached(protect(oldMediaKeys->cdmInstance()));
         }
 
         // 5.3. If mediaKeys is not null, run the following steps:
@@ -5057,7 +5062,8 @@ void HTMLMediaElement::setVolumeLocked(bool volumeLocked)
 
     Style::PseudoClassChangeInvalidation styleInvalidation(*this, CSSSelector::PseudoClass::VolumeLocked, volumeLocked);
     m_volumeLocked = volumeLocked;
-    protect(player())->setVolumeLocked(volumeLocked);
+    if (RefPtr player = m_player)
+        player->setVolumeLocked(volumeLocked);
 }
 
 void HTMLMediaElement::updateBufferingState()
@@ -6574,12 +6580,12 @@ void HTMLMediaElement::mediaEngineWasUpdated()
 
 #if ENABLE(ENCRYPTED_MEDIA)
     if (RefPtr player = m_player; player && m_mediaKeys)
-        player->cdmInstanceAttached(m_mediaKeys->cdmInstance());
+        player->cdmInstanceAttached(protect(m_mediaKeys->cdmInstance()));
 #endif
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     if (RefPtr player = m_player; player && m_webKitMediaKeys)
-        player->setCDM(&m_webKitMediaKeys->cdm());
+        player->setCDM(protect(m_webKitMediaKeys->cdm()).ptr());
 #endif
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
@@ -7545,7 +7551,7 @@ void HTMLMediaElement::setIsPlayingToWirelessTarget(bool isPlayingToWirelessTarg
         if (element.isContextStopped())
             return;
 
-        auto newValue = isPlayingToWirelessTarget && element.m_player && element.m_player->isCurrentPlaybackTargetWireless();
+        auto newValue = isPlayingToWirelessTarget && element.m_player && protect(element.m_player)->isCurrentPlaybackTargetWireless();
         if (newValue == element.m_isPlayingToWirelessTarget)
             return;
 
@@ -7555,7 +7561,7 @@ void HTMLMediaElement::setIsPlayingToWirelessTarget(bool isPlayingToWirelessTarg
         Ref { element.m_remote }->isPlayingToRemoteTargetChanged(element.m_isPlayingToWirelessTarget);
         ALWAYS_LOG_WITH_THIS(&element, logSiteIdentifier, element.m_isPlayingToWirelessTarget);
         element.configureMediaControls();
-        element.mediaSession().isPlayingToWirelessPlaybackTargetChanged(element.m_isPlayingToWirelessTarget);
+        protect(element.mediaSession())->isPlayingToWirelessPlaybackTargetChanged(element.m_isPlayingToWirelessTarget);
         element.canProduceAudioChanged();
         element.scheduleUpdateMediaState();
 
@@ -7934,7 +7940,7 @@ void HTMLMediaElement::enterFullscreen(VideoFullscreenMode mode)
     if (videoUsesElementFullscreen() && page->isDocumentFullscreenEnabled() && isInWindowOrStandardFullscreen(mode)) {
         m_temporarilyAllowingInlinePlaybackAfterFullscreen = false;
         m_waitingToEnterFullscreen = true;
-        auto fullscreenCheckType = m_ignoreFullscreenPermissionsPolicy ? DocumentFullscreen::ExemptIFrameAllowFullscreenRequirement : DocumentFullscreen::EnforceIFrameAllowFullscreenRequirement;
+        auto fullscreenCheckType = m_ignoreFullscreenPermissionsPolicy ? DocumentFullscreen::FullscreenCheckType::ExemptIFrameAllowFullscreenRequirement : DocumentFullscreen::FullscreenCheckType::EnforceIFrameAllowFullscreenRequirement;
         m_ignoreFullscreenPermissionsPolicy = false;
         protect(protect(document())->fullscreen())->requestFullscreen(*this, fullscreenCheckType, [weakThis = WeakPtr { *this }](ExceptionOr<void> result) {
             RefPtr protectedThis = weakThis.get();
@@ -7954,7 +7960,7 @@ void HTMLMediaElement::enterFullscreen(VideoFullscreenMode mode)
         if (element.isContextStopped())
             return;
 
-        if (element.document().hidden() && mode != HTMLMediaElementEnums::VideoFullscreenModePictureInPicture) {
+        if (protect(element.document())->hidden() && mode != HTMLMediaElementEnums::VideoFullscreenModePictureInPicture) {
             ALWAYS_LOG_WITH_THIS(&element, logIdentifier, " returning because document is hidden");
             element.setChangingVideoFullscreenMode(false);
             return;
@@ -8341,6 +8347,34 @@ void HTMLMediaElement::updateTextTrackRepresentationImageIfNeeded()
         m_mediaControlsHost->updateTextTrackRepresentationImageIfNeeded();
 }
 
+#if PLATFORM(IOS_FAMILY)
+void HTMLMediaElement::displayedCaptionsDidChange(Vector<String>&& captions)
+{
+    if (!AXObjectCache::accessibilityEnabled())
+        return;
+
+    // Changing a cue's text removes and re-adds it, so the displayed set can briefly be missing
+    // cues. Wait for the set to settle, so assistive technology doesn't output the intermediate state.
+    m_pendingDisplayedCaptions = WTF::move(captions);
+    if (m_displayedCaptionsTaskCancellationGroup.hasPendingTask())
+        return;
+
+    queueCancellableTaskKeepingObjectAlive(*this, TaskSource::MediaElement, m_displayedCaptionsTaskCancellationGroup, [](auto& element) {
+        if (element.m_pendingDisplayedCaptions == element.m_lastDisplayedCaptions)
+            return;
+        element.m_lastDisplayedCaptions = WTF::move(element.m_pendingDisplayedCaptions);
+
+        // An empty set means no captions are displayed. There's nothing to output, but remembering it
+        // means the same caption is output again if it reappears later.
+        if (element.m_lastDisplayedCaptions.isEmpty())
+            return;
+
+        if (CheckedPtr cache = protect(element.document())->axObjectCache())
+            cache->postCaptionsDisplayedNotification(element.m_lastDisplayedCaptions);
+    });
+}
+#endif
+
 void HTMLMediaElement::showCaptionDisplaySettingsPreview()
 {
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
@@ -8423,7 +8457,7 @@ void HTMLMediaElement::setShouldDelayLoadEvent(bool shouldDelay)
         protect(document())->decrementLoadEventDelayCount();
 }
 
-static String& NODELETE sharedMediaCacheDirectory()
+static String& LEGACY_NODELETE sharedMediaCacheDirectory()
 {
     static NeverDestroyed<String> sharedMediaCacheDirectory;
     return sharedMediaCacheDirectory;
@@ -8944,7 +8978,7 @@ String HTMLMediaElement::mediaPlayerUserAgent() const
     return frame->loader().userAgent(m_currentSrc);
 }
 
-static inline PlatformTextTrackData::TrackKind NODELETE toPlatform(TextTrack::Kind kind)
+static inline PlatformTextTrackData::TrackKind LEGACY_NODELETE toPlatform(TextTrack::Kind kind)
 {
     switch (kind) {
     case TextTrack::Kind::Captions:
@@ -8964,7 +8998,7 @@ static inline PlatformTextTrackData::TrackKind NODELETE toPlatform(TextTrack::Ki
     return PlatformTextTrackData::TrackKind::Caption;
 }
 
-static inline PlatformTextTrackData::TrackMode NODELETE toPlatform(TextTrack::Mode mode)
+static inline PlatformTextTrackData::TrackMode LEGACY_NODELETE toPlatform(TextTrack::Mode mode)
 {
     switch (mode) {
     case TextTrack::Mode::Disabled:
@@ -9244,9 +9278,9 @@ void HTMLMediaElement::mediaPlayerBufferedTimeRangesChanged()
 
             track->removeCuesNotInTimeRanges(
 #if ENABLE(MEDIA_SOURCE)
-                element.m_mediaSource ? element.m_mediaSource->buffered() :
+                element.m_mediaSource ? protect(element.m_mediaSource)->buffered() :
 #endif
-                element.m_player->buffered());
+                protect(element.m_player)->buffered());
         }
     });
 }
@@ -9687,7 +9721,7 @@ void HTMLMediaElement::didReceiveRemoteControlCommand(PlatformMediaSession::Remo
 {
     ALWAYS_LOG(LOGIDENTIFIER, command);
 
-    UserGestureIndicator remoteControlUserGesture(IsProcessingUserGesture::Yes, &document());
+    UserGestureIndicator remoteControlUserGesture(IsProcessingUserGesture::Yes, protect(document()).ptr());
     const double defaultSkipAmount = 15;
     switch (command) {
     case PlatformMediaSession::RemoteControlCommandType::PlayCommand:
@@ -10147,7 +10181,7 @@ void HTMLMediaElement::isVisibleInViewportChanged()
     queueTaskKeepingObjectAlive(*this, TaskSource::MediaElement, [](auto& element) {
         if (element.isContextStopped())
             return;
-        element.mediaSession().isVisibleInViewportChanged();
+        protect(element.mediaSession())->isVisibleInViewportChanged();
         element.updateShouldAutoplay();
         element.schedulePlaybackControlsManagerUpdate();
     });
@@ -10258,11 +10292,11 @@ void HTMLMediaElement::playbackControlsManagerBehaviorRestrictionsTimerFired()
         return;
 
     queueCancellableTaskKeepingObjectAlive(*this, TaskSource::MediaElement, m_playbackControlsManagerBehaviorRestrictionsTaskCancellationGroup, [](auto& element) {
-        auto& mediaElementSession = element.mediaSession();
-        if (element.isPlaying() || mediaElementSession.state() == PlatformMediaSession::State::Autoplaying || mediaElementSession.state() == PlatformMediaSession::State::Playing)
+        Ref mediaElementSession = element.mediaSession();
+        if (element.isPlaying() || mediaElementSession->state() == PlatformMediaSession::State::Autoplaying || mediaElementSession->state() == PlatformMediaSession::State::Playing)
             return;
 
-        mediaElementSession.addBehaviorRestriction(MediaElementSession::RequirePlaybackToControlControlsManager);
+        mediaElementSession->addBehaviorRestriction(MediaElementSession::RequirePlaybackToControlControlsManager);
         element.schedulePlaybackControlsManagerUpdate();
     });
 }
@@ -10479,8 +10513,10 @@ void HTMLMediaElement::setShowPosterFlag(bool flag)
 
 MediaElementSession& HTMLMediaElement::mediaSession() const
 {
-    if (!m_mediaSession)
-        const_cast<HTMLMediaElement&>(*this).initializeMediaSession();
+    if (!m_mediaSession) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLMediaElement&>(*this).initializeMediaSession();
+    }
     return *m_mediaSession;
 }
 

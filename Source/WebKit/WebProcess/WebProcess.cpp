@@ -160,6 +160,7 @@
 #include <WebCore/WorkerGlobalScope.h>
 #include <algorithm>
 #include <pal/Logging.h>
+#include <wtf/Borrow.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/CoroutineUtilities.h>
 #include <wtf/DateMath.h>
@@ -658,43 +659,43 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
     m_hasStylusDevice = parameters.hasStylusDevice;
 #endif
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsEmptyDocument)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsEmptyDocument))
         registerURLSchemeAsEmptyDocument(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsSecure)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsSecure))
         registerURLSchemeAsSecure(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsBypassingContentSecurityPolicy)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsBypassingContentSecurityPolicy))
         registerURLSchemeAsBypassingContentSecurityPolicy(scheme);
 
-    for (auto& scheme : parameters.urlSchemesForWhichDomainRelaxationIsForbidden)
+    for (auto& scheme : borrow(parameters.urlSchemesForWhichDomainRelaxationIsForbidden))
         setDomainRelaxationForbiddenForURLScheme(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsLocal)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsLocal))
         registerURLSchemeAsLocal(scheme);
 
 #if ENABLE(ALL_LEGACY_REGISTERED_SPECIAL_URL_SCHEMES)
-    for (auto& scheme : parameters.urlSchemesRegisteredAsNoAccess)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsNoAccess))
         registerURLSchemeAsNoAccess(scheme);
 #endif
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsDisplayIsolated)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsDisplayIsolated))
         registerURLSchemeAsDisplayIsolated(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsCORSEnabled)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsCORSEnabled))
         LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsAlwaysRevalidated)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsAlwaysRevalidated))
         registerURLSchemeAsAlwaysRevalidated(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsCachePartitioned)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsCachePartitioned))
         registerURLSchemeAsCachePartitioned(scheme);
 
-    for (auto& scheme : parameters.urlSchemesRegisteredAsCanDisplayOnlyIfCanRequest)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsCanDisplayOnlyIfCanRequest))
         registerURLSchemeAsCanDisplayOnlyIfCanRequest(scheme);
 
 #if ENABLE(WK_WEB_EXTENSIONS)
-    for (auto& scheme : parameters.urlSchemesRegisteredAsWebExtensions)
+    for (auto& scheme : borrow(parameters.urlSchemesRegisteredAsWebExtensions))
         WebExtensionMatchPattern::registerCustomURLScheme(scheme);
 #endif
 
@@ -1261,8 +1262,8 @@ std::optional<WebCore::UserGestureTokenIdentifier> WebProcess::userGestureTokenI
     if (!token || !token->processingUserGesture())
         return std::nullopt;
 
-    auto result = m_userGestureTokens.ensure(*token, [] {
-        return UserGestureTokenIdentifier::generate();
+    auto result = m_userGestureTokens.ensure(*token, [&] {
+        return token->identifier();
     });
     if (result.isNewEntry) {
         Ref { result.iterator->key }->addDestructionObserver([pageID] (UserGestureToken& tokenBeingDestroyed) {
@@ -1536,11 +1537,10 @@ void WebProcess::networkProcessConnectionClosed(NetworkProcessConnection* connec
 
     m_cacheStorageProvider->networkProcessConnectionClosed();
 
-    Vector<ThreadSafeWeakPtr<WebTransportSession>> sessions;
-    {
+    const Vector sessions = [&] {
         Locker locker { m_webTransportSessionsLock };
-        sessions = copyToVector(m_webTransportSessions.values());
-    }
+        return copyToVector(m_webTransportSessions.values());
+    }();
     for (auto& weakSession : sessions) {
         if (RefPtr webtransportSession = weakSession.get())
             webtransportSession->didFail(std::nullopt, String(emptyString()));
@@ -1777,7 +1777,7 @@ void WebProcess::deleteWebsiteDataForOrigins(OptionSet<WebsiteDataType> websiteD
 {
     if (websiteDataTypes.contains(WebsiteDataType::MemoryCache)) {
         HashSet<Ref<SecurityOrigin>> origins;
-        for (auto& originData : originDatas)
+        for (auto& originData : borrow(originDatas))
             origins.add(originData.securityOrigin());
 
         MemoryCache::singleton().removeResourcesWithOrigins(sessionID(), origins);
@@ -2390,7 +2390,7 @@ void WebProcess::grantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensi
         machBootstrapExtension->consume();
 }
 
-static inline void NODELETE checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
+static inline void LEGACY_NODELETE checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
 {
 #if ASSERT_ENABLED
     bool isCapturingAudio = std::ranges::any_of(Document::allDocumentsMap().values(), [](auto& document) {
@@ -2411,7 +2411,7 @@ void WebProcess::revokeUserMediaDeviceSandboxExtensions(const Vector<String>& ex
 {
     checkDocumentsCaptureStateConsistency(extensionIDs);
     
-    for (const auto& extensionID : extensionIDs) {
+    for (const auto& extensionID : borrow(extensionIDs)) {
         auto extension = m_mediaCaptureSandboxExtensions.take(extensionID);
         ASSERT(extension || MockRealtimeMediaSourceCenter::mockRealtimeMediaSourceCenterEnabled());
         if (extension) {
@@ -2497,7 +2497,7 @@ void WebProcess::setDomainsWithUserInteraction(HashSet<WebCore::RegistrableDomai
 void WebProcess::setDomainsWithCrossPageStorageAccess(HashMap<TopFrameDomain, Vector<SubResourceDomain>>&& domains, CompletionHandler<void()>&& completionHandler)
 {
     for (auto& [domain, subResourceDomains] : domains) {
-        for (auto& subResourceDomain : subResourceDomains) {
+        for (auto& subResourceDomain : borrow(subResourceDomains)) {
             for (auto& webPage : m_pageMap.values())
                 webPage->addDomainWithPageLevelStorageAccess(domain, subResourceDomain);
         }

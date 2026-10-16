@@ -28,11 +28,13 @@
 #import "Helpers/cocoa/DragAndDropSimulator.h"
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
+#import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/Utilities.h"
 #import <WebKit/WebKit.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/StdLibExtras.h>
+#import <wtf/text/MakeString.h>
 #import <wtf/text/WTFString.h>
 
 @interface UploadDelegate : NSObject <WKUIDelegate>
@@ -227,4 +229,158 @@ TEST(WebKit, AllowTempUploadDirectory)
 
     EXPECT_TRUE([fileManager removeItemAtPath:directory.path error:&error]);
     EXPECT_FALSE(error);
+}
+
+static constexpr auto uploadFileFromIndexedDBScript = R"UPLOADRESOURCE(
+function openDatabase()
+{
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('upload-file-from-indexeddb', 1);
+        request.onupgradeneeded = () => request.result.createObjectStore('files');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function saveToIndexedDB(file)
+{
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction('files', 'readwrite');
+        transaction.objectStore('files').put(file, 'test-file');
+        transaction.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        transaction.onerror = () => {
+            db.close();
+            reject(transaction.error);
+        };
+    });
+}
+
+async function loadFromIndexedDB()
+{
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+        const request = db.transaction('files', 'readonly').objectStore('files').get('test-file');
+        request.onsuccess = () => {
+            db.close();
+            resolve(request.result);
+        };
+        request.onerror = () => {
+            db.close();
+            reject(request.error);
+        };
+    });
+}
+
+async function runTest()
+{
+    try {
+        await saveToIndexedDB(new File(['IndexedDB file content'], 'test.txt', { type: 'text/plain' }));
+
+        // The File loaded from IndexedDB is backed by a file in the origin's IndexedDB directory.
+        const file = await loadFromIndexedDB();
+
+        const formData = new FormData();
+        formData.append('file', file, 'test.txt');
+        const response = await fetch('/upload', { method: 'POST', body: formData });
+        alert(await response.text());
+    } catch (error) {
+        alert('error: ' + error);
+    }
+}
+)UPLOADRESOURCE"_s;
+
+TEST(WebKit, UploadFileFromIndexedDB)
+{
+    using namespace TestWebKitAPI;
+    auto mainBytes = makeString("<script>"_s, uploadFileFromIndexedDBScript, "runTest();</script>"_s);
+    HTTPServer server(HTTPServer::UseCoroutines::Yes, [&](auto connection) -> ConnectionTask {
+        while (1) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            auto path = HTTPServer::parsePath(request);
+            if (path == "/"_s) {
+                co_await connection.awaitableSend(makeString("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: "_s, mainBytes.length(), "\r\n\r\n"_s, mainBytes));
+                continue;
+            }
+            if (path == "/upload"_s) {
+                auto result = contains(request.span(), "IndexedDB file content"_span) ? "PASS"_s : "FAIL"_s;
+                co_await connection.awaitableSend(makeString("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "_s, result.length(), "\r\n\r\n"_s, result));
+                continue;
+            }
+            EXPECT_FALSE(true);
+        }
+    });
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600)]);
+    [webView loadRequest:server.request()];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "PASS");
+}
+
+static constexpr auto uploadFileFromIndexedDBServiceWorkerBytes = R"SWRESOURCE(
+self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', event => event.respondWith(fetch(event.request)));
+)SWRESOURCE"_s;
+
+TEST(WebKit, UploadFileFromIndexedDBThroughServiceWorker)
+{
+    using namespace TestWebKitAPI;
+    auto mainBytes = makeString("<script>"_s, uploadFileFromIndexedDBScript, R"SWRESOURCE(
+async function registerServiceWorkerAndRunTest()
+{
+    try {
+        await navigator.serviceWorker.register('/sw.js');
+        await navigator.serviceWorker.ready;
+        if (!navigator.serviceWorker.controller)
+            await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+    } catch (error) {
+        alert('error: ' + error);
+        return;
+    }
+    await runTest();
+}
+registerServiceWorkerAndRunTest();
+</script>)SWRESOURCE"_s);
+
+    bool uploadReceived = false;
+    HTTPServer server(HTTPServer::UseCoroutines::Yes, [&](auto connection) -> ConnectionTask {
+        while (1) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            auto path = HTTPServer::parsePath(request);
+            if (path == "/"_s) {
+                co_await connection.awaitableSend(makeString("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: "_s, mainBytes.length(), "\r\n\r\n"_s, mainBytes));
+                continue;
+            }
+            if (path == "/sw.js"_s) {
+                co_await connection.awaitableSend(makeString("HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: "_s, uploadFileFromIndexedDBServiceWorkerBytes.length(), "\r\n\r\n"_s, uploadFileFromIndexedDBServiceWorkerBytes));
+                continue;
+            }
+            if (path == "/upload"_s) {
+                uploadReceived = true;
+                auto result = contains(request.span(), "IndexedDB file content"_span) ? "PASS"_s : "FAIL"_s;
+                co_await connection.awaitableSend(makeString("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "_s, result.length(), "\r\n\r\n"_s, result));
+                continue;
+            }
+            EXPECT_FALSE(true);
+        }
+    });
+
+    auto removeServiceWorkerRegistrations = [] {
+        __block bool done = false;
+        [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:[NSSet setWithObject:WKWebsiteDataTypeServiceWorkerRegistrations] modifiedSince:[NSDate distantPast] completionHandler:^{
+            done = true;
+        }];
+        Util::run(&done);
+    };
+    removeServiceWorkerRegistrations();
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600)]);
+    [webView loadRequest:server.request()];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "PASS");
+    EXPECT_TRUE(uploadReceived);
+
+    removeServiceWorkerRegistrations();
 }

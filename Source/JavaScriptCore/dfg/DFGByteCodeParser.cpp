@@ -96,6 +96,7 @@
 #include "ObjectConstructor.h"
 #include "OpcodeInlines.h"
 #include "PreciseJumpTargets.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "PrivateFieldPutKind.h"
 #include "PropertyInlineCache.h"
 #include "PutByIdFlags.h"
@@ -241,7 +242,7 @@ unsigned InliningPlan::priceCandidate(CallVariant callee, CodeSpecializationKind
             return UINT_MAX;
     }
 
-    return targetCodeBlock->bytecodeCost();
+    return m_jitType == JITType::FTLJIT ? targetCodeBlock->bytecodeCostForFTLInlining() : targetCodeBlock->bytecodeCost();
 }
 
 // Because call frequency data is available only for polymorphic sites and not monomorphic ones,
@@ -507,6 +508,7 @@ private:
     enum class CallOptimizationResult { OptimizedToJump, Inlined, InlinedTerminal, DidNothing };
     CallOptimizationResult handleCallVariant(Node* callTargetNode, Operand result, CallVariant, int registerOffset, VirtualRegister thisArgument, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind, SpeculatedType prediction, Node* newTarget, unsigned& inliningBalance, BasicBlock* continuationBlock, bool needsToCheckCallee);
     CallOptimizationResult handleInlining(Node* callTargetNode, Operand result, const CallLinkStatus&, int registerOffset, VirtualRegister thisArgument, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind, SpeculatedType prediction, Node* newTarget, ECMAMode);
+    bool emitDirectCallForPolymorphicCallVariant(CallVariant, Operand result, NodeType callOp, InlineCallFrame::Kind, int argumentCountIncludingThis, int registerOffset, SpeculatedType prediction);
     template<typename ChecksFunctor>
     void inlineCall(Node* callTargetNode, Operand result, CallVariant, int registerOffset, int argumentCountIncludingThis, InlineCallFrame::Kind, BasicBlock* continuationBlock, NOESCAPE const ChecksFunctor& insertChecks);
     // Handle intrinsic functions. Return true if it succeeded, false if we need to plant a call.
@@ -628,8 +630,8 @@ private:
     void linkBlock(BasicBlock*, Vector<BasicBlock*>& possibleTargets);
     void linkBlocks(Vector<BasicBlock*>& unlinkedBlocks, Vector<BasicBlock*>& possibleTargets);
     
-    BytecodeIndex NODELETE nextOpcodeIndex() const { return BytecodeIndex(m_currentIndex.offset() + m_currentInstruction->size()); }
-    BytecodeIndex NODELETE nextCheckpoint() const { return m_currentIndex.withCheckpoint(m_currentIndex.checkpoint() + 1); }
+    BytecodeIndex LEGACY_NODELETE nextOpcodeIndex() const { return BytecodeIndex(m_currentIndex.offset() + m_currentInstruction->size()); }
+    BytecodeIndex LEGACY_NODELETE nextCheckpoint() const { return m_currentIndex.withCheckpoint(m_currentIndex.checkpoint() + 1); }
 
     BytecodeIndex progressToNextCheckpoint()
     {
@@ -893,7 +895,7 @@ private:
         return node;
     }
     
-    ArgumentPosition* NODELETE findArgumentPositionForArgument(int argument)
+    ArgumentPosition* LEGACY_NODELETE findArgumentPositionForArgument(int argument)
     {
         InlineStackEntry* stack = m_inlineStackTop;
         while (stack->m_inlineCallFrame)
@@ -901,7 +903,7 @@ private:
         return stack->m_argumentPositions[argument];
     }
     
-    ArgumentPosition* NODELETE findArgumentPositionForLocal(VirtualRegister operand)
+    ArgumentPosition* LEGACY_NODELETE findArgumentPositionForLocal(VirtualRegister operand)
     {
         for (InlineStackEntry* stack = m_inlineStackTop; ; stack = stack->m_caller) {
             InlineCallFrame* inlineCallFrame = stack->m_inlineCallFrame;
@@ -917,7 +919,7 @@ private:
         return nullptr;
     }
     
-    ArgumentPosition* NODELETE findArgumentPosition(Operand operand)
+    ArgumentPosition* LEGACY_NODELETE findArgumentPosition(Operand operand)
     {
         if (operand.isTmp())
             return nullptr;
@@ -1094,22 +1096,22 @@ private:
         return jsConstant(m_graph.freeze(constantValue));
     }
 
-    InlineCallFrame* NODELETE inlineCallFrame()
+    InlineCallFrame* LEGACY_NODELETE inlineCallFrame()
     {
         return m_inlineStackTop->m_inlineCallFrame;
     }
 
-    bool NODELETE allInlineFramesAreTailCalls()
+    bool LEGACY_NODELETE allInlineFramesAreTailCalls()
     {
         return !inlineCallFrame() || !inlineCallFrame()->getCallerSkippingTailCalls();
     }
 
-    CodeOrigin NODELETE currentCodeOrigin()
+    CodeOrigin currentCodeOrigin()
     {
         return CodeOrigin(m_currentIndex, inlineCallFrame());
     }
 
-    NodeOrigin NODELETE currentNodeOrigin()
+    NodeOrigin currentNodeOrigin()
     {
         CodeOrigin semantic = m_currentSemanticOrigin.isSet() ? m_currentSemanticOrigin : currentCodeOrigin();
         CodeOrigin forExit = m_currentExitOrigin.isSet() ? m_currentExitOrigin : currentCodeOrigin();
@@ -1529,7 +1531,7 @@ private:
         return node;
     }
     
-    void NODELETE noticeArgumentsUse()
+    void LEGACY_NODELETE noticeArgumentsUse()
     {
         // All of the arguments in this function need to be formatted as JSValues because we will
         // load from them in a random-access fashion and we don't want to have to switch on
@@ -1591,7 +1593,7 @@ private:
         CodeBlock* const m_profiledBlock;
         InlineCallFrame* m_inlineCallFrame;
         
-        ScriptExecutable* NODELETE executable() { return m_codeBlock->ownerExecutable(); }
+        ScriptExecutable* LEGACY_NODELETE executable() { return m_codeBlock->ownerExecutable(); }
         
         QueryableExitProfile m_exitProfile;
         
@@ -1651,7 +1653,7 @@ private:
         
         ~InlineStackEntry();
         
-        Operand NODELETE remapOperand(Operand operand) const
+        Operand LEGACY_NODELETE remapOperand(Operand operand) const
         {
             if (!m_inlineCallFrame)
                 return operand;
@@ -2074,11 +2076,7 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
         return { UINT_MAX, InlineAttribute::None };
     }
     
-    // Check if the caller is already too large. We do this check here because that's just
-    // where we happen to also have the callee's code block, and we want that for the
-    // purpose of unsetting SABI.
     if (!isSmallEnoughToInlineCodeInto(m_codeBlock)) {
-        codeBlock->m_shouldAlwaysBeInlined = false;
         VERBOSE_LOG("    Failing because the caller is too large.\n");
         return { UINT_MAX, InlineAttribute::None };
     }
@@ -2118,7 +2116,8 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     VERBOSE_LOG("    Inlining should be possible.\n");
     
     // It might be possible to inline.
-    return { targetCodeBlock->bytecodeCost(), codeBlock->ownerExecutable()->inlineAttribute() };
+    unsigned cost = m_graph.m_plan.isFTL() ? targetCodeBlock->bytecodeCostForFTLInlining() : targetCodeBlock->bytecodeCost();
+    return { cost, codeBlock->ownerExecutable()->inlineAttribute() };
 }
 
 template<typename ChecksFunctor>
@@ -2765,7 +2764,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
     BasicBlock* continuationBlock = allocateUntargetableBlock();
     VERBOSE_LOG("Adding untargetable block ", RawPointer(continuationBlock), " (continuation)\n");
     
-    // We may force this true if we give up on inlining any of the edges.
+    // We may force this true if we can neither inline nor direct call one of the edges.
     bool couldTakeSlowPath = callLinkStatus.couldTakeSlowPath();
     
     VERBOSE_LOG("About to loop over functions at ", currentCodeOrigin(), ".\n");
@@ -2790,9 +2789,19 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
             inliningBalance, continuationBlock, needsToCheckCallee);
         
         if (inliningResult == CallOptimizationResult::DidNothing) {
+            ASSERT(m_graph.m_blocks.last().get() == m_currentBlock);
+            if (allAreDirectCalls && emitDirectCallForPolymorphicCallVariant(callLinkStatus[i], result, callOp, kind, argumentCountIncludingThis, registerOffset, prediction)) {
+                m_currentIndex = osrExitIndex;
+                m_exitOK = true;
+                processSetLocalQueue();
+                addJumpTo(continuationBlock);
+                data.cases.append(SwitchCase(m_graph.freeze(callLinkStatus[i].nonExecutableCallee()), calleeEntryBlock));
+                VERBOSE_LOG("Emitted a direct call for ", callLinkStatus[i], " at ", currentCodeOrigin(), ".\n");
+                continue;
+            }
+
             // That failed so we let the block die. Nothing interesting should have been added to
             // the block. We also give up on inlining any of the (less frequent) callees.
-            ASSERT(m_graph.m_blocks.last().get() == m_currentBlock);
             m_graph.killBlockAndItsContents(m_currentBlock);
             m_graph.m_blocks.removeLast();
             VERBOSE_LOG("Inlining of a poly call failed, we will have to go through a slow path\n");
@@ -2870,6 +2879,33 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
     return CallOptimizationResult::Inlined;
 }
 
+bool ByteCodeParser::emitDirectCallForPolymorphicCallVariant(CallVariant variant, Operand result, NodeType callOp, InlineCallFrame::Kind kind, int argumentCountIncludingThis, int registerOffset, SpeculatedType prediction)
+{
+    if (callOp != Call && callOp != Construct)
+        return false;
+    if (kind != InlineCallFrame::Call && kind != InlineCallFrame::Construct)
+        return false;
+
+    JSFunction* function = variant.function();
+    if (!function)
+        return false;
+
+    auto* functionExecutable = dynamicDowncast<FunctionExecutable>(variant.executable());
+    if (!functionExecutable)
+        return false;
+    if (callOp == Construct && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct)
+        return false;
+
+    unsigned numAllocatedArgs = std::max(static_cast<unsigned>(functionExecutable->parameterCount()) + 1, static_cast<unsigned>(argumentCountIncludingThis));
+    if (numAllocatedArgs > Options::maximumDirectCallStackSize())
+        return false;
+    m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(numAllocatedArgs));
+
+    Node* callNode = addCall(result, callOp, OpInfo(), weakJSConstant(function), argumentCountIncludingThis, registerOffset, prediction);
+    callNode->convertToDirectCall(m_graph.freeze(functionExecutable));
+    return true;
+}
+
 template<typename ChecksFunctor>
 void ByteCodeParser::handleMinMax(Operand resultOperand, NodeType op, int registerOffset, int argumentCountIncludingThis, NOESCAPE const ChecksFunctor& insertChecks)
 {
@@ -2901,16 +2937,49 @@ void ByteCodeParser::handleMinMax(Operand resultOperand, NodeType op, int regist
         set(resultOperand, resultNode);
 }
 
-static bool calleeMayBeCrossRealm(CallVariant variant, JSGlobalObject* globalObject)
+// Whether the nodes substituted for a call to this intrinsic are correct when the callee comes from a realm other than
+// the calling code's. A builtin runs in its own realm, but substituted nodes otherwise use the calling code's realm, e.g.
+// to create errors and objects or to consult watchpoints.
+static bool intrinsicSupportsCalleeFromAnyRealm(Intrinsic intrinsic)
 {
-    JSFunction* function = variant.function();
-    if (!function)
+    switch (intrinsic) {
+    // These can't throw (other than out of memory), create objects, or read realm state.
+    case ArrayBufferIsViewIntrinsic:
+    case AsyncIteratorIntrinsic:
+    case DateNowIntrinsic:
+    case ErrorIsErrorIntrinsic:
+    case IteratorIntrinsic:
+    case NumberIsFiniteIntrinsic:
+    case NumberIsIntegerIntrinsic:
+    case NumberIsNaNIntrinsic:
+    case NumberIsSafeIntegerIntrinsic:
+    case ObjectIsIntrinsic:
+    // Calling a bound function only calls its target, which runs in its own realm.
+    case BoundFunctionCallIntrinsic:
+    // RegExpExec takes its realm from the callee.
+    case RegExpExecIntrinsic:
+    // CallWasm's argument conversions exit rather than throw, and the wasm function runs with its instance's realm.
+    case WasmFunctionIntrinsic:
+    // Testing intrinsics.
+    case DFGTrueIntrinsic:
+    case FTLTrueIntrinsic:
+    case OSRExitIntrinsic:
+    case IsFinalTierIntrinsic:
+    case SetInt32HeapPredictionIntrinsic:
+    case CheckInt32Intrinsic:
+    case FiatInt52Intrinsic:
+    case CPUMfenceIntrinsic:
+    case CPURdtscIntrinsic:
+    case CPUCpuidIntrinsic:
+    case CPUPauseIntrinsic:
         return true;
-    return function->realmMayBeNull() != globalObject;
+    default:
+        return false;
+    }
 }
 
 template<typename ChecksFunctor>
-auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind kind, CodeSpecializationKind specializationKind, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks) -> CallOptimizationResult
+auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind kind, CodeSpecializationKind specializationKind, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertCalleeChecks) -> CallOptimizationResult
 {
     VERBOSE_LOG("       The intrinsic is ", intrinsic, "\n");
     UNUSED_PARAM(callOp);
@@ -2921,6 +2990,29 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         VERBOSE_LOG("    Failing because instruction is not OpCallShape.\n");
         return CallOptimizationResult::DidNothing;
     }
+
+    // Natives from every realm share one executable, so the callee may come from a realm other than the calling code's.
+    JSGlobalObject* realmToCheck = nullptr;
+    if (!intrinsicSupportsCalleeFromAnyRealm(intrinsic)) {
+        JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+        if (JSFunction* function = variant.function()) {
+            if (function->realmMayBeNull() != globalObject)
+                return CallOptimizationResult::DidNothing;
+        } else {
+            // Only the executable is known. The substituted nodes are correct for any callee with this executable from
+            // this realm, so speculate on the callee's realm unless that has failed before.
+            ASSERT(variant.isClosureCall());
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadRealm))
+                return CallOptimizationResult::DidNothing;
+            realmToCheck = globalObject;
+        }
+    }
+
+    auto insertChecks = [&](bool willDoInliningInsideIntrinsic = false) {
+        insertCalleeChecks(willDoInliningInsideIntrinsic);
+        if (realmToCheck)
+            addToGraph(CheckIsConstant, OpInfo(m_graph.freeze(realmToCheck)), OpInfo(static_cast<unsigned>(BadRealm)), addToGraph(GetGlobalObject, callee));
+    };
 
     bool didSetResult = false;
     auto setResult = [&] (Node* node) {
@@ -3053,8 +3145,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case ArrayKeysIntrinsic:
         case ArrayValuesIntrinsic: {
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             insertChecks();
 
@@ -3142,8 +3232,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             case Array::Int32:
             case Array::Contiguous: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-                if (calleeMayBeCrossRealm(variant, globalObject))
-                    return CallOptimizationResult::DidNothing;
                 // FIXME: We could easily relax the Array/Object.prototype transition as long as we OSR exitted if we saw a hole.
                 // https://bugs.webkit.org/show_bug.cgi?id=173171
                 if (globalObject->arraySpeciesWatchpointSet().state() == IsWatched
@@ -3216,9 +3304,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (!arrayMode.isJSArray())
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             insertChecks();
 
             for (int i = 0; i < argumentCountIncludingThis; ++i)
@@ -3249,8 +3334,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             case Array::Int32:
             case Array::Contiguous: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-                if (calleeMayBeCrossRealm(variant, globalObject))
-                    return CallOptimizationResult::DidNothing;
                 if (globalObject->arraySpeciesWatchpointSet().state() != IsWatched
                     || !globalObject->havingABadTimeWatchpointSet().isStillValid()
                     || globalObject->arrayPrototypeChainIsSaneWatchpointSet().state() != IsWatched
@@ -3700,9 +3783,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -3724,9 +3804,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case StringPrototypeMatchIntrinsic: {
             if (argumentCountIncludingThis < 2)
-                return CallOptimizationResult::DidNothing;
-
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -3751,9 +3828,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case StringPrototypeSearchIntrinsic: {
             if (argumentCountIncludingThis < 2)
-                return CallOptimizationResult::DidNothing;
-
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -3999,8 +4073,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
@@ -4055,8 +4127,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
@@ -4111,8 +4181,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
@@ -4166,8 +4234,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
@@ -4224,8 +4290,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             Structure* iteratorResultStructure = globalObject->iteratorResultObjectStructureConcurrently();
             if (!iteratorResultStructure)
@@ -4298,9 +4362,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             insertChecks();
             setResult(addToGraph(ObjectKeys, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
@@ -4310,9 +4371,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             insertChecks();
             setResult(addToGraph(ObjectGetOwnPropertyNames, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
@@ -4320,9 +4378,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case ObjectGetOwnPropertySymbolsIntrinsic: {
             if (argumentCountIncludingThis < 2)
-                return CallOptimizationResult::DidNothing;
-
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -4395,8 +4450,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             if (!globalObject->stringSymbolReplaceWatchpointSet().isStillValid() || !globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return CallOptimizationResult::DidNothing;
@@ -4645,9 +4698,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             insertChecks();
 
             IterationKind kind = IterationKind::Values;
@@ -4708,8 +4758,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             insertChecks();
 
@@ -4728,8 +4776,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             // The structure is created lazily, but profiling already ran next(), so it exists by
             // the time this call site is hot. Bail if it does not exist for some reason.
@@ -4819,8 +4865,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            if (calleeMayBeCrossRealm(variant, globalObject))
-                return CallOptimizationResult::DidNothing;
 
             Structure* iteratorResultStructure = globalObject->iteratorResultObjectStructureConcurrently();
             if (!iteratorResultStructure)
@@ -5915,9 +5959,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
@@ -5954,9 +5995,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
@@ -5991,9 +6029,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case PromisePrototypeThenIntrinsic: {
             if (argumentCountIncludingThis < 1)
-                return CallOptimizationResult::DidNothing;
-
-            if (calleeMayBeCrossRealm(variant, m_graph.globalObjectFor(currentNodeOrigin().semantic)))
                 return CallOptimizationResult::DidNothing;
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -6334,7 +6369,7 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void NODELETE blessCallDOMGetter(Node* node)
+static void LEGACY_NODELETE blessCallDOMGetter(Node* node)
 {
     DOMJIT::CallDOMGetterSnippet* snippet = node->callDOMGetterData()->snippet;
     if (snippet && !snippet->effect.mustGenerate())
@@ -6630,6 +6665,21 @@ bool ByteCodeParser::handleIndexedProxyObjectIn(VirtualRegister destination, Nod
     return true;
 }
 
+// Whether the nodes substituted for a call to this constant function are correct when it comes from a realm other than
+// the calling code's. These nodes carry the function's realm, as a structure or a frozen global object, and use it
+// instead of the calling code's realm.
+static bool constantFunctionSupportsCalleeFromAnyRealm(const ClassInfo* classInfo)
+{
+    return classInfo == ObjectConstructor::info()
+        || classInfo == RegExpConstructor::info()
+        || classInfo == MapConstructor::info()
+        || classInfo == SetConstructor::info()
+        || classInfo == WeakMapConstructor::info()
+        || classInfo == WeakSetConstructor::info()
+        || classInfo == JSArrayBufferConstructor::info()
+        || classInfo == JSSharedArrayBufferConstructor::info();
+}
+
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleTypedArrayConstructor(
     Operand result, JSObject* function, int registerOffset,
@@ -6642,9 +6692,6 @@ bool ByteCodeParser::handleTypedArrayConstructor(
         return false;
     
     if (kind == CodeSpecializationKind::CodeForCall)
-        return false;
-
-    if (function->realmMayBeNull() != m_inlineStackTop->m_codeBlock->globalObject())
         return false;
     
     // We only have an intrinsic for the case where you say:
@@ -6707,9 +6754,12 @@ bool ByteCodeParser::handleConstantFunction(
     VERBOSE_LOG("    Handling constant function ", JSValue(function), "\n");
     UNUSED_PARAM(newTarget);
     
-    // It so happens that the code below assumes that the result operand is valid. It's extremely
-    // unlikely that the result operand would be invalid - you'd have to call this via a setter call.
+    // The code below assumes that the result operand is valid. It isn't when the result is unused, as for
+    // op_call_ignore_result or a setter call, but such calls to these constructors are rare.
     if (!result.isValid())
+        return false;
+
+    if (function->realmMayBeNull() != m_inlineStackTop->m_codeBlock->globalObject() && !constantFunctionSupportsCalleeFromAnyRealm(function->classInfo()))
         return false;
 
     if (function->classInfo() == ArrayConstructor::info()) {
@@ -6721,9 +6771,6 @@ bool ByteCodeParser::handleConstantFunction(
             if (newTargetNode != callTargetNode)
                 return false;
         }
-
-        if (function->realm() != m_inlineStackTop->m_codeBlock->globalObject())
-            return false;
 
         insertChecks();
         if (argumentCountIncludingThis == 2) {
@@ -6794,7 +6841,7 @@ bool ByteCodeParser::handleConstantFunction(
         return true;
     }
 
-    if (function->classInfo() == RegExpConstructor::info()) {
+    if (function->classInfo() == RegExpConstructor::info() && kind == CodeSpecializationKind::CodeForConstruct) {
         Node* newTargetNode = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
         // We cannot handle the case where new.target != callee (i.e. a construct from a super call) because we
         // don't know what the prototype of the constructed object will be.
@@ -7021,7 +7068,7 @@ bool ByteCodeParser::check(const ObjectPropertyCondition& condition)
     return true;
 }
 
-bool NODELETE ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opcode)
+bool LEGACY_NODELETE ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opcode)
 {
     ASSERT(opcode == op_resolve_scope || opcode == op_get_from_scope || opcode == op_put_to_scope);
 
@@ -8213,13 +8260,13 @@ void ByteCodeParser::handlePutPrivateNameById(
     } }
 }
 
-void NODELETE ByteCodeParser::prepareToParseBlock()
+void LEGACY_NODELETE ByteCodeParser::prepareToParseBlock()
 {
     clearCaches();
     ASSERT(m_setLocalQueue.isEmpty());
 }
 
-void NODELETE ByteCodeParser::clearCaches()
+void LEGACY_NODELETE ByteCodeParser::clearCaches()
 {
     m_constants.shrink(0);
 }
@@ -8244,7 +8291,7 @@ void ByteCodeParser::parseGetById(const JSInstruction* currentInstruction, unsig
     handleGetById(bytecode.m_dst, prediction, base, identifier, identifierNumber, getByStatus, type, nextOpcodeIndex());
 }
 
-static uint64_t NODELETE makeDynamicVarOpInfo(unsigned identifierNumber, unsigned getPutInfo)
+static uint64_t LEGACY_NODELETE makeDynamicVarOpInfo(unsigned identifierNumber, unsigned getPutInfo)
 {
     static_assert(sizeof(identifierNumber) == 4,
         "We cannot fit identifierNumber into the high bits of m_opInfo");
@@ -8958,6 +9005,27 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_instanceof: {
             auto bytecode = currentInstruction->as<OpInstanceof>();
 
+            // If a jtrue / jfalse on the result follows, each arm branches by itself instead of
+            // joining at a boolean Phi, so an arm whose result is or folds to a constant keeps it.
+            const JSInstruction* fusedBranch = nullptr;
+            unsigned fusedTaken = 0;
+            unsigned fusedNotTaken = 0;
+            unsigned fusedFallThrough = 0;
+            BytecodeIndex branchIndex = nextOpcodeIndex();
+            if (branchIndex.offset() < limit) {
+                auto next = instructions.at(branchIndex);
+                fusedFallThrough = branchIndex.offset() + next->size();
+                if (next->is<OpJtrue>() && next->as<OpJtrue>().m_condition == bytecode.m_dst) {
+                    fusedBranch = next.ptr();
+                    fusedTaken = branchIndex.offset() + jumpTargetForInstruction<OpJtrue>(codeBlock, next);
+                    fusedNotTaken = fusedFallThrough;
+                } else if (next->is<OpJfalse>() && next->as<OpJfalse>().m_condition == bytecode.m_dst) {
+                    fusedBranch = next.ptr();
+                    fusedTaken = fusedFallThrough;
+                    fusedNotTaken = branchIndex.offset() + jumpTargetForInstruction<OpJfalse>(codeBlock, next);
+                }
+            }
+
             BytecodeIndex startIndex = m_currentIndex;
             BytecodeIndex itermediateIndex = m_currentIndex;
             BasicBlock* constructorIsObjectBlock = allocateUntargetableBlock();
@@ -8966,7 +9034,25 @@ void ByteCodeParser::parseBlock(unsigned limit)
             BasicBlock* valueIsNotObjectBlock = allocateUntargetableBlock();
             BasicBlock* isCustomBlock = allocateUntargetableBlock();
             BasicBlock* isNotCustomBlock = allocateUntargetableBlock();
-            BasicBlock* continuation = allocateUntargetableBlock();
+            BasicBlock* continuation = fusedBranch ? nullptr : allocateUntargetableBlock();
+
+            auto finishArm = [&] {
+                m_currentIndex = nextOpcodeIndex();
+                m_exitOK = true;
+                processSetLocalQueue();
+
+                if (!fusedBranch) {
+                    addToGraph(Jump, OpInfo(continuation));
+                    return;
+                }
+                // The fused jump is never visited by the parse loop, so count it here.
+                if (m_graph.compilation()) [[unlikely]] {
+                    addToGraph(CountExecution, OpInfo(m_graph.compilation()->executionCounterFor(
+                        Profiler::OriginStack(*m_vm->m_perBytecodeProfiler, m_codeBlock, currentCodeOrigin()))));
+                }
+                addToGraph(Branch, OpInfo(branchData(fusedTaken, fusedNotTaken)), get(bytecode.m_dst));
+                m_inlineStackTop->m_unlinkedBlocks.append(m_currentBlock);
+            };
 
             // 1. Get hasInstance
             // 1.1 Check whether the constructor is an object.
@@ -9022,11 +9108,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 set(bytecode.m_dst, addToGraph(InstanceOfCustom, get(bytecode.m_value), get(bytecode.m_constructor), get(bytecode.m_hasInstanceOrPrototype)));
 
-                m_currentIndex = nextOpcodeIndex();
-                m_exitOK = true;
-                processSetLocalQueue();
-
-                addToGraph(Jump, OpInfo(continuation));
+                finishArm();
             }
 
             m_currentIndex = itermediateIndex;
@@ -9050,11 +9132,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 set(bytecode.m_dst, jsConstant(jsBoolean(false)));
 
-                m_currentIndex = nextOpcodeIndex();
-                m_exitOK = true;
-                processSetLocalQueue();
-
-                addToGraph(Jump, OpInfo(continuation));
+                finishArm();
             }
 
             m_currentIndex = itermediateIndex;
@@ -9122,11 +9200,13 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     set(bytecode.m_dst, addToGraph(op, value, prototype));
                 })();
 
-                m_currentIndex = nextOpcodeIndex();
-                m_exitOK = true;
-                processSetLocalQueue();
+                finishArm();
+            }
 
-                addToGraph(Jump, OpInfo(continuation));
+            if (fusedBranch) {
+                m_currentIndex = BytecodeIndex(fusedFallThrough);
+                m_exitOK = false;
+                return;
             }
 
             m_currentIndex = startIndex;
@@ -12826,9 +12906,15 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
             Node* isDone = addToGraph(CompareStrictEq, index, doneIndex);
 
             Node* iteratedObject = getIteratedObject();
-            Node* butterfly = addToGraph(GetButterfly, iteratedObject);
-            Node* length = addToGraph(GetArrayLength, OpInfo(arrayMode.asWord()), Edge(iteratedObject), Edge(butterfly, KnownStorageUse));
-            // GetArrayLength is pessimized prior to fixup.
+            Node* length = nullptr;
+            if (arrayMode.type() == Array::Generic) {
+                auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(m_vm->propertyNames->length.impl()), CacheType::GetByIdSelf });
+                length = addToGraph(GetById, OpInfo(data), OpInfo(SpecInt32Only), iteratedObject);
+            } else {
+                Node* butterfly = addToGraph(GetButterfly, iteratedObject);
+                length = addToGraph(GetArrayLength, OpInfo(arrayMode.asWord()), Edge(iteratedObject), Edge(butterfly, KnownStorageUse));
+            }
+            // GetById clobbers the world, and GetArrayLength is pessimized prior to fixup.
             emitExitOK();
             Node* isOutOfBounds = addToGraph(CompareGreaterEq, Edge(index, Int32Use), Edge(length, Int32Use));
 
@@ -14307,37 +14393,32 @@ auto ByteCodeParser::handleArraySort(Node* callee, Operand resultOperand, CallVa
 
 void ByteCodeParser::pruneUnreachableNodes()
 {
+    bool changed = false;
     if (m_hasAnyForceOSRExits) {
         BlockSet blocksToIgnore;
+        Vector<BasicBlock*, 16> worklist;
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
-            if (block->isOSRTarget && block->bytecodeBegin == m_graph.m_plan.osrEntryBytecodeIndex()) {
+            if (block->isReachable && block->isOSRTarget && block->bytecodeBegin == m_graph.m_plan.osrEntryBytecodeIndex()) {
                 blocksToIgnore.add(block);
+                worklist.append(block);
                 break;
             }
         }
 
-        {
-            bool isSafeToValidate = false;
-            auto postOrder = m_graph.blocksInPostOrder(isSafeToValidate); // This algorithm doesn't rely on the predecessors list, which is not yet built.
-            bool changed;
-            do {
-                changed = false;
-                for (BasicBlock* block : postOrder) {
-                    for (BasicBlock* successor : block->successors()) {
-                        if (blocksToIgnore.contains(successor)) {
-                            changed |= blocksToIgnore.add(block);
-                            break;
-                        }
-                    }
-                }
-            } while (changed);
+        // Preserve every block that can reach the OSR entry target.
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            for (BasicBlock* predecessor : block->predecessors) {
+                if (blocksToIgnore.add(predecessor))
+                    worklist.append(predecessor);
+            }
         }
 
         InsertionSet insertionSet(m_graph);
         Operands<VariableAccessData*> mapping(OperandsLike, m_graph.block(0)->variablesAtHead);
 
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
-            if (blocksToIgnore.contains(block))
+            if (!block->isReachable || blocksToIgnore.contains(block))
                 continue;
 
             mapping.fill(nullptr);
@@ -14365,14 +14446,7 @@ void ByteCodeParser::pruneUnreachableNodes()
 
                 ++nodeIndex;
 
-                if (validationEnabled()) {
-                    // This verifies that we don't need to change any of the successors's predecessor
-                    // list after planting the Unreachable below. At this point in the bytecode
-                    // parser, we haven't linked up the predecessor lists yet.
-                    for (BasicBlock* successor : block->successors())
-                        RELEASE_ASSERT(successor->predecessors.isEmpty());
-                }
-
+                // Reachability and predecessor lists are recomputed after pruning removes edges.
                 block->resize(nodeIndex);
 
                 {
@@ -14401,6 +14475,7 @@ void ByteCodeParser::pruneUnreachableNodes()
 
                 insertionSet.insertNode(nodeIndex, SpecNone, Unreachable, origin);
                 insertionSet.execute(block);
+                changed = true;
 
                 break;
             }
@@ -14412,6 +14487,9 @@ void ByteCodeParser::pruneUnreachableNodes()
                 RELEASE_ASSERT(node->op() != ForceOSRExit);
         }
     }
+
+    if (changed)
+        m_graph.resetReachability();
 }
 
 #define RUN_ANALYSIS(code)                                           \
@@ -14470,6 +14548,8 @@ bool ByteCodeParser::parse()
     parseCodeBlock();
     linkBlocks(inlineStackEntry.m_unlinkedBlocks, inlineStackEntry.m_blockLinkingTargets);
 
+    m_graph.determineReachability();
+
     // We insert catch variable preservation here to show all bytecode
     // uses to the subsequent backward propagation phase.
     RUN_ANALYSIS(performLiveCatchVariablePreservationPhase(m_graph));
@@ -14483,7 +14563,6 @@ bool ByteCodeParser::parse()
 
     RUN_ANALYSIS(pruneUnreachableNodes());
 
-    m_graph.determineReachability();
     m_graph.killUnreachableBlocks();
 
 #if ASSERT_ENABLED

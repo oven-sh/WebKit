@@ -23,6 +23,13 @@
 enum class WebKit::SafeBrowsingCheckOngoing : bool;
 enum class WebCore::OriginKeyed : bool;
 
+header: <WebCore/AgentClusterAssignment.h>
+struct WebCore::AgentClusterAssignment {
+    std::optional<WebCore::AgentClusterIdentifier> identifier;
+    WebCore::OriginKeyed isOriginKeyed;
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy;
+};
+
 [RValue] struct WebKit::PolicyDecision {
     std::optional<WebKit::NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain;
     WebCore::PolicyAction policyAction;
@@ -33,7 +40,7 @@ enum class WebCore::OriginKeyed : bool;
     std::optional<WebKit::PolicyDecisionConsoleMessage> consoleMessage;
     WebKit::SafeBrowsingCheckOngoing isSafeBrowsingCheckOngoing;
     RefPtr<WebKit::FrameState> backForwardFrameState;
-    WebCore::OriginKeyed isOriginKeyed;
+    WebCore::AgentClusterAssignment agentClusterAssignment;
     std::optional<WebCore::RegistrableDomain> unpartitionedStorageSite;
 }
 

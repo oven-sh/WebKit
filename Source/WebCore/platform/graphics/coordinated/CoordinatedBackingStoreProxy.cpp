@@ -357,7 +357,7 @@ void CoordinatedBackingStoreProxy::createOrDestroyTiles(const IntRect& unscaledV
             return;
 
         if (distance < shortestDistance) {
-            tilesToCreate.clear();
+            tilePositionsToCreate.clear();
             shortestDistance = distance;
         }
         tilePositionsToCreate.append(position);

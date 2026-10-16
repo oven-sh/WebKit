@@ -86,7 +86,7 @@ std::optional<String> WebAutomationSession::platformGenerateLocalFilePathForRemo
     RetainPtr remoteFile = adoptNS([[NSURL alloc] initFileURLWithPath:remoteFilePath.createNSString().get() isDirectory:NO]);
     RetainPtr localFilePath = [temporaryDirectory stringByAppendingPathComponent:retainPtr(remoteFile.get().lastPathComponent).get()];
 
-    NSError *fileWriteError;
+    NSError *fileWriteError = nil;
     [fileContents.get() writeToFile:localFilePath.get() options:NSDataWritingAtomic error:&fileWriteError];
     if (fileWriteError) {
         LOG_ERROR("WebAutomationSession: Error writing image data to temporary file: %@", fileWriteError);
@@ -340,7 +340,8 @@ void WebAutomationSession::setKeyIdentityForVirtualKeyIfNeeded(NSArray *events, 
     if (!identity)
         return;
 
-    for (id event in events)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id event in events)
         AutomationKeyIdentity::setIdentity(event, *identity);
 }
 

@@ -66,12 +66,14 @@ protected:
 
     void reset();
     bool parseAttribute(const QualifiedName&, const AtomString&);
-    std::optional<FloatRect> parseViewBox(StringView);
-    std::optional<FloatRect> parseViewBox(StringParsingBuffer<Latin1Character>&, bool validate = true);
-    std::optional<FloatRect> parseViewBox(StringParsingBuffer<char16_t>&, bool validate = true);
+
+    enum class ParsingContext : bool { Attribute, FragmentIdentifier };
+    std::optional<FloatRect> parseViewBox(StringView, ParsingContext);
+    std::optional<FloatRect> parseViewBox(StringParsingBuffer<Latin1Character>&, ParsingContext);
+    std::optional<FloatRect> parseViewBox(StringParsingBuffer<char16_t>&, ParsingContext);
 
 private:
-    template<typename CharacterType> std::optional<FloatRect> parseViewBoxGeneric(StringParsingBuffer<CharacterType>&, bool validate = true);
+    template<typename CharacterType> std::optional<FloatRect> parseViewBoxGeneric(StringParsingBuffer<CharacterType>&, ParsingContext);
 
     const Ref<SVGAnimatedRect> m_viewBox;
     const Ref<SVGAnimatedPreserveAspectRatio> m_preserveAspectRatio;
