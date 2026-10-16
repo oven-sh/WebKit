@@ -1123,6 +1123,10 @@ public:
     std::unique_ptr<ParsedNode> parse(ParserError&, const Identifier&, ParsingContext, std::optional<int> functionConstructorParametersEndPosition = std::nullopt, const PrivateNameEnvironment* = nullptr, const FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>* = nullptr);
 
     void overrideConstructorKindForTopLevelFunctionExpressions(ConstructorKind constructorKind) { m_constructorKindForTopLevelFunctionExpressions = constructorKind; }
+#if USE(BUN_JSC_ADDITIONS)
+    // The name that was inferred for the function this parser reparses (`const f = async () => { }`). See parseInner().
+    void setInferredFunctionName(const Identifier* name) { m_inferredFunctionName = name; }
+#endif
 
     JSTokenLocation locationBeforeLastToken() const { return m_lastTokenLocation; }
 
@@ -2159,6 +2163,9 @@ private:
     SuperBinding m_superBinding;
     bool m_hasStackOverflow;
     ScopeStack m_scopeStack;
+#if USE(BUN_JSC_ADDITIONS)
+    const Identifier* m_inferredFunctionName { nullptr };
+#endif
 
     static void verifyLayout();
 };
@@ -2285,7 +2292,12 @@ std::unique_ptr<ParsedNode> parse(
     EvalContextType evalContextType = EvalContextType::None,
     const PrivateNameEnvironment* parentScopePrivateNames = nullptr,
     const FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>* classElementDefinitions = nullptr,
+#if USE(BUN_JSC_ADDITIONS)
+    bool isInsideOrdinaryFunction = false,
+    const Identifier* inferredName = nullptr)
+#else
     bool isInsideOrdinaryFunction = false)
+#endif
 {
     ASSERT(!source.provider()->source().isNull());
 
@@ -2296,6 +2308,9 @@ std::unique_ptr<ParsedNode> parse(
     std::unique_ptr<ParsedNode> result;
     if (source.provider()->source().is8Bit()) {
         Parser<Lexer<Latin1Character>> parser(vm, source, implementationVisibility, builtinMode, lexicallyScopedFeatures, scriptMode, parseMode, functionMode, superBinding, constructorKind, derivedContextType, isEvalNode<ParsedNode>(), evalContextType, nullptr, isInsideOrdinaryFunction);
+#if USE(BUN_JSC_ADDITIONS)
+        parser.setInferredFunctionName(inferredName);
+#endif
         result = parser.parse<ParsedNode>(error, name, ParsingContext::Normal, std::nullopt, parentScopePrivateNames, classElementDefinitions);
         if (builtinMode == JSParserBuiltinMode::Builtin) {
             if (!result) {
@@ -2306,6 +2321,9 @@ std::unique_ptr<ParsedNode> parse(
         }
     } else {
         Parser<Lexer<char16_t>> parser(vm, source, implementationVisibility, builtinMode, lexicallyScopedFeatures, scriptMode, parseMode, functionMode, superBinding, constructorKind, derivedContextType, isEvalNode<ParsedNode>(), evalContextType, nullptr, isInsideOrdinaryFunction);
+#if USE(BUN_JSC_ADDITIONS)
+        parser.setInferredFunctionName(inferredName);
+#endif
         result = parser.parse<ParsedNode>(error, name, ParsingContext::Normal, std::nullopt, parentScopePrivateNames, classElementDefinitions);
     }
 
