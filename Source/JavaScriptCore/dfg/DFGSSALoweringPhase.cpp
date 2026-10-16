@@ -117,8 +117,10 @@ private:
             Edge base = m_graph.varArgChild(m_node, 0);
             Edge index = m_graph.varArgChild(m_node, 1);
             Edge storage = m_graph.varArgChild(m_node, 3);
-            if (lowerBoundsCheck(base, index, storage))
+            if (lowerBoundsCheck(base, index, storage)) {
+                lowerIntTypedArrayStoreOperand();
                 break;
+            }
             
             if (m_node->arrayMode().isSomeTypedArrayView() && m_node->arrayMode().isOutOfBounds()) {
 #if USE(LARGE_TYPED_ARRAYS)
@@ -144,10 +146,15 @@ private:
 #if USE(LARGE_TYPED_ARRAYS)
                 }
 #endif
+                lowerIntTypedArrayStoreOperand();
                 break;
             }
             break;
         }
+
+        case PutByValDirectResolved:
+            lowerIntTypedArrayStoreOperand();
+            break;
             
         default:
             break;
@@ -205,6 +212,24 @@ private:
         adjacencyList.setNumChildren(adjacencyList.numChildren() + 1);
         m_node->children = adjacencyList;
         return true;
+    }
+
+    // Inside the store, the conversion of a double is out of reach of every DFG phase, and B3 cannot move
+    // its branch. Ahead of the bounds check, whose exit needs the double, it would keep the double alive
+    // across its slow path call.
+    void lowerIntTypedArrayStoreOperand()
+    {
+        TypedArrayType type = m_node->arrayMode().typedArrayType();
+        if (!isInt(type) || isClamped(type))
+            return;
+
+        Edge& value = m_graph.varArgChild(m_node, 2);
+        if (value.useKind() != DoubleRepUse)
+            return;
+
+        Node* int32Value = m_insertionSet.insertNode(
+            m_nodeIndex, SpecInt32Only, ValueToInt32, m_node->origin, value);
+        value = Edge(int32Value, Int32Use);
     }
 
 #if USE(BUN_JSC_ADDITIONS)
