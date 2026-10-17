@@ -147,12 +147,12 @@ public:
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        void copyFromColumns(std::span<const uint64_t> source, std::span<const unsigned> indexOfColumn)
+        void copyFromColumns(std::span<const uint64_t> source, std::span<const unsigned> columnIndex)
         {
             ASSERT(m_storage == Storage::Dense);
             std::ranges::fill(m_dense, 0);
             WTF::forEachSetBit(source, [&] (size_t column) {
-                unsigned bit = indexOfColumn[column];
+                unsigned bit = columnIndex[column];
                 m_dense[bit / wordBits] |= static_cast<uint64_t>(1) << (bit % wordBits);
             });
         }
@@ -195,7 +195,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
         if (m_storage == Storage::Dense) {
             if (m_isCompact)
-                workset.copyFromColumns(denseTailSlice(block->index()), m_indexOfColumn.span());
+                workset.copyFromColumns(denseTailSlice(block->index()), m_columnIndex.span());
             else
                 workset.copyFromDense(denseTailSlice(block->index()));
         } else
@@ -214,7 +214,7 @@ private:
         Iterator() = default;
 
 #if USE(BUN_JSC_ADDITIONS)
-        static Iterator makeBegin(Liveness& liveness, std::span<const uint64_t> dense, const SparseBitVector<>* sparse, Storage storage, std::span<const unsigned> indexOfColumn = { })
+        static Iterator makeBegin(Liveness& liveness, std::span<const uint64_t> dense, const SparseBitVector<>* sparse, Storage storage, std::span<const unsigned> columnIndex = { })
 #else
         static Iterator makeBegin(Liveness& liveness, std::span<const uint64_t> dense, const SparseBitVector<>* sparse, Storage storage)
 #endif
@@ -225,7 +225,7 @@ private:
             if (storage == Storage::Dense) {
                 iter.m_denseSpan = dense;
 #if USE(BUN_JSC_ADDITIONS)
-                iter.m_indexOfColumn = indexOfColumn;
+                iter.m_columnIndex = columnIndex;
 #endif
                 iter.m_wordIndex = 0;
                 iter.m_currentWord = dense.empty() ? 0 : dense[0];
@@ -254,8 +254,8 @@ private:
             if (m_storage == Storage::Dense) {
                 unsigned bit = static_cast<unsigned>(m_wordIndex * wordBits + std::countr_zero(m_currentWord));
 #if USE(BUN_JSC_ADDITIONS)
-                if (!m_indexOfColumn.empty())
-                    bit = m_indexOfColumn[bit];
+                if (!m_columnIndex.empty())
+                    bit = m_columnIndex[bit];
 #endif
                 return m_liveness->indexToValue(bit);
             }
@@ -294,7 +294,7 @@ private:
         Storage m_storage { Storage::Dense };
         std::span<const uint64_t> m_denseSpan;
 #if USE(BUN_JSC_ADDITIONS)
-        std::span<const unsigned> m_indexOfColumn;
+        std::span<const unsigned> m_columnIndex;
 #endif
         size_t m_wordIndex { 0 };
         uint64_t m_currentWord { 0 };
@@ -314,7 +314,7 @@ public:
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        Iterator begin() const LIFETIME_BOUND { return Iterator::makeBegin(m_liveness, m_dense, m_sparse, m_storage, m_liveness.m_indexOfColumn.span()); }
+        Iterator begin() const LIFETIME_BOUND { return Iterator::makeBegin(m_liveness, m_dense, m_sparse, m_storage, m_liveness.m_columnIndex.span()); }
 #else
         Iterator begin() const LIFETIME_BOUND { return Iterator::makeBegin(m_liveness, m_dense, m_sparse, m_storage); }
 #endif
@@ -525,7 +525,7 @@ protected:
     void computeDense()
     {
 #if USE(BUN_JSC_ADDITIONS)
-        m_indexOfColumn.shrink(0);
+        m_columnIndex.shrink(0);
         m_isCompact = false;
 #endif
         if constexpr (!adapterStreamsActions())
@@ -630,7 +630,7 @@ protected:
             unsigned kill { 0 };
             unsigned tail { 0 };
         };
-        Vector<Ends> endsOfBlock(numNodes);
+        Vector<Ends> blockEnds(numNodes);
         Vector<unsigned> gens;
         Vector<unsigned> kills;
         Vector<unsigned> tails;
@@ -681,7 +681,7 @@ protected:
                 added.shrink(0);
                 ++numActiveBlocks;
             }
-            endsOfBlock[blockIndex] = { static_cast<unsigned>(gens.size()), static_cast<unsigned>(kills.size()), static_cast<unsigned>(tails.size()) };
+            blockEnds[blockIndex] = { static_cast<unsigned>(gens.size()), static_cast<unsigned>(kills.size()), static_cast<unsigned>(tails.size()) };
         }
         for (unsigned index : tails)
             setBit(crossesBoundary, index);
@@ -689,10 +689,10 @@ protected:
         m_isCompact = true;
         m_columnOfIndex.resize(numIndices);
         WTF::forEachSetBit(m_crossesBoundary.span(), [&] (size_t index) {
-            m_columnOfIndex[index] = m_indexOfColumn.size();
-            m_indexOfColumn.append(static_cast<unsigned>(index));
+            m_columnOfIndex[index] = m_columnIndex.size();
+            m_columnIndex.append(static_cast<unsigned>(index));
         });
-        m_wordsPerSet = wordsForBits(m_indexOfColumn.size());
+        m_wordsPerSet = wordsForBits(m_columnIndex.size());
 
         size_t matrixWords = static_cast<size_t>(numNodes) * m_wordsPerSet;
         m_denseStore.fill(0, 2 * matrixWords);
@@ -704,7 +704,7 @@ protected:
 
         Ends begin;
         for (unsigned blockIndex = 0; blockIndex < numNodes; ++blockIndex) {
-            Ends end = endsOfBlock[blockIndex];
+            Ends end = blockEnds[blockIndex];
             size_t offset = static_cast<size_t>(blockIndex) * m_wordsPerSet;
             std::span<uint64_t> genSet = genMatrix.subspan(offset, m_wordsPerSet);
             std::span<uint64_t> killSet = killMatrix.subspan(offset, m_wordsPerSet);
@@ -796,7 +796,7 @@ protected:
     void computeSparse()
     {
 #if USE(BUN_JSC_ADDITIONS)
-        m_indexOfColumn.shrink(0);
+        m_columnIndex.shrink(0);
         m_isCompact = false;
 #endif
         Adapter::prepareToCompute();
@@ -920,7 +920,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         if (m_isCompact) {
             WTF::forEachSetBit(set, [&] (size_t column) {
-                func(this->indexToValue(m_indexOfColumn[column]));
+                func(this->indexToValue(m_columnIndex[column]));
             });
             return;
         }
@@ -947,7 +947,7 @@ private:
                 word &= word - 1;
 #if USE(BUN_JSC_ADDITIONS)
                 unsigned index = static_cast<unsigned>(wordIndex * wordBits + bit);
-                func(this->indexToValue(m_isCompact ? m_indexOfColumn[index] : index));
+                func(this->indexToValue(m_isCompact ? m_columnIndex[index] : index));
 #else
                 func(this->indexToValue(static_cast<unsigned>(wordIndex * wordBits + bit)));
 #endif
@@ -994,7 +994,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     Vector<uint64_t> m_crossesBoundary;
     Vector<unsigned> m_columnOfIndex;
-    Vector<unsigned> m_indexOfColumn;
+    Vector<unsigned> m_columnIndex;
 #endif
     size_t m_wordsPerSet { 0 };
 #if USE(BUN_JSC_ADDITIONS)

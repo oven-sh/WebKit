@@ -28,7 +28,7 @@
 #include "CompilerHooks.h"
 
 #include "AOTFunction.h"
-#include "AOTLockWords.h"
+#include "AOTLockedOperation.h"
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
 #include "BaselineJITPlan.h"
@@ -362,7 +362,7 @@ LLINT_SLOW_PATH_DECL(trace)
 enum EntryKind { Prologue, ArityCheck };
 
 #if !ENABLE(C_LOOP)
-static bool isLeftToBytecode(const JSInstruction* instruction)
+static bool fallsBackToBytecode(const JSInstruction* instruction)
 {
     if (instruction->hasCheckpoints())
         return true;
@@ -437,7 +437,7 @@ private:
     uint8_t* m_bytes;
 };
 
-static int32_t byteOffsetOfProperty(PropertyOffset offset)
+static int32_t propertyByteOffset(PropertyOffset offset)
 {
     if (isInlineOffset(offset))
         return JSObject::offsetOfInlineStorage() + offset * sizeof(EncodedJSValue);
@@ -460,7 +460,7 @@ void copyInlineCacheIntoPredecodedInstruction(CodeBlock* codeBlock, const JSInst
             if (!cache.defaultMode.structureID)
                 return;
             predecoded.setOperand(OpGetById_m_property_index, cache.defaultMode.structureID.bits());
-            predecoded.setOperand(OpGetById_m_valueProfile_index, byteOffsetOfProperty(cache.defaultMode.cachedOffset));
+            predecoded.setOperand(OpGetById_m_valueProfile_index, propertyByteOffset(cache.defaultMode.cachedOffset));
             predecoded.setHandler(isInlineOffset(cache.defaultMode.cachedOffset) ? llint_predecoded_get_by_id_inline : llint_predecoded_get_by_id_out_of_line);
             return;
         case GetByIdMode::Unset:
@@ -469,7 +469,7 @@ void copyInlineCacheIntoPredecodedInstruction(CodeBlock* codeBlock, const JSInst
             return;
         case GetByIdMode::ProtoLoad:
             predecoded.setOperand(OpGetById_m_property_index, cache.protoLoadMode.structureID.bits());
-            predecoded.setOperand(OpGetById_m_valueProfile_index, byteOffsetOfProperty(cache.protoLoadMode.cachedOffset));
+            predecoded.setOperand(OpGetById_m_valueProfile_index, propertyByteOffset(cache.protoLoadMode.cachedOffset));
             predecoded.setHandler(isInlineOffset(cache.protoLoadMode.cachedOffset) ? llint_predecoded_get_by_id_prototype_inline : llint_predecoded_get_by_id_prototype_out_of_line);
             return;
         case GetByIdMode::CustomAccessor:
@@ -486,8 +486,8 @@ void copyInlineCacheIntoPredecodedInstruction(CodeBlock* codeBlock, const JSInst
             case GetByIdCompiledFieldKind::Cell32:
                 handler = llint_predecoded_get_by_id_cell32;
                 break;
-            case GetByIdCompiledFieldKind::Int32OrElsewhere:
-                handler = llint_predecoded_get_by_id_int32_or_elsewhere;
+            case GetByIdCompiledFieldKind::Int32OrNumberBox:
+                handler = llint_predecoded_get_by_id_int32_or_number_box;
                 break;
             case GetByIdCompiledFieldKind::Int32:
                 handler = llint_predecoded_get_by_id_int32;
@@ -531,7 +531,7 @@ void copyInlineCacheIntoPredecodedInstruction(CodeBlock* codeBlock, const JSInst
             return;
         bool isInline = isInlineOffset(cache.m_offset);
         predecoded.setOperand(OpPutById_m_property_index, cache.m_oldStructureID.bits());
-        predecoded.setOperand(OpPutById_m_flags_index, byteOffsetOfProperty(cache.m_offset));
+        predecoded.setOperand(OpPutById_m_flags_index, propertyByteOffset(cache.m_offset));
         if (cache.m_newStructureID)
             predecoded.setHandler(isInline ? llint_predecoded_put_by_id_transition_inline : llint_predecoded_put_by_id_transition_out_of_line);
         else
@@ -632,7 +632,7 @@ static void predecodeInstructions(CodeBlock* codeBlock)
         if (!instruction.offset())
             continue;
         sizeOfInstructions += offsetOfOperandsInPredecodedInstruction;
-        if (!isLeftToBytecode(instruction.ptr()))
+        if (!fallsBackToBytecode(instruction.ptr()))
             sizeOfInstructions += opcodeLengths[instruction->opcodeID()] * sizeof(uint32_t);
     }
     if (sizeOfInstructions > std::numeric_limits<int32_t>::max())
@@ -653,7 +653,7 @@ static void predecodeInstructions(CodeBlock* codeBlock)
         if (!instruction.offset())
             continue;
         offset += offsetOfOperandsInPredecodedInstruction;
-        if (!isLeftToBytecode(instruction.ptr()))
+        if (!fallsBackToBytecode(instruction.ptr()))
             offset += opcodeLengths[instruction->opcodeID()] * sizeof(uint32_t);
     }
 
@@ -662,7 +662,7 @@ static void predecodeInstructions(CodeBlock* codeBlock)
             continue;
         OpcodeID opcodeID = instruction->opcodeID();
         uint8_t* record = instructions + offsets[instruction.offset()];
-        bool isLeft = isLeftToBytecode(instruction.ptr());
+        bool isLeft = fallsBackToBytecode(instruction.ptr());
         WTF::unalignedStore<JSC::Opcode>(record, isLeft ? getOpcode(llint_leave_predecoded_instructions) : g_opcodeConfig.opcodeMapPredecoded[opcodeID]);
         WTF::unalignedStore<uint32_t>(record + offsetOfBytecodeOffsetInPredecodedInstruction, instruction.offset());
         if (isLeft)
@@ -679,7 +679,7 @@ static void predecodeInstructions(CodeBlock* codeBlock)
     codeBlock->setPredecodedInstructions(instructions);
 
     for (const auto& instruction : bytecode) {
-        if (instruction.offset() && !isLeftToBytecode(instruction.ptr()))
+        if (instruction.offset() && !fallsBackToBytecode(instruction.ptr()))
             specializePredecodedInstruction(codeBlock, instruction);
     }
 }
@@ -1243,7 +1243,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     Structure* structure = baseCell->structure();
 
 #if ENABLE(AOT)
-    if (structure->typeInfo().prohibitsPropertyCaching() && (!slot.isValue() || !AOT::Typed::isAbsentFromCompiledObjectByStructure(structure, ident.impl())))
+    if (structure->typeInfo().prohibitsPropertyCaching() && (!slot.isValue() || !AOT::Typed::compiledObjectStructureGuaranteesAbsence(structure, ident.impl())))
         return;
 #else
     if (structure->typeInfo().prohibitsPropertyCaching())
@@ -1333,19 +1333,19 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 #if ENABLE(AOT)
     if (baseValue.isCell() && baseValue.asCell()->type() == ObjectType) {
         JSCell* cell = baseValue.asCell();
-        JSValue ownData = AOT::Typed::tryGetOwnDataOfCompiledObject(vm, cell, ident.impl());
-        bool isAbsentField = !ownData && AOT::Typed::isFieldThatReadsAsUndefinedWhereAbsent(globalObject, cell, ident.impl());
-        bool isNoProperty = !ownData && !isAbsentField && AOT::Typed::isNameThatReadsAsUndefinedByStructure(globalObject, cell, ident.impl());
-        if (ownData || isAbsentField || isNoProperty) {
-            auto place = Options::useLLIntICs() && !isNoProperty ? AOT::Typed::offsetAndKindOfFieldForInterpreter(cell, ident.impl()) : std::nullopt;
-            if (place || (isNoProperty && Options::useLLIntICs())) {
+        JSValue ownData = AOT::Typed::tryGetCompiledObjectOwnData(vm, cell, ident.impl());
+        bool isAbsentField = !ownData && AOT::Typed::absentFieldReadsAsUndefined(globalObject, cell, ident.impl());
+        bool isNotProperty = !ownData && !isAbsentField && AOT::Typed::structureGuaranteesUndefinedRead(globalObject, cell, ident.impl());
+        if (ownData || isAbsentField || isNotProperty) {
+            auto place = Options::useLLIntICs() && !isNotProperty ? AOT::Typed::fieldOffsetAndKindForInterpreter(cell, ident.impl()) : std::nullopt;
+            if (place || (isNotProperty && Options::useLLIntICs())) {
                 ConcurrentJSLocker locker(codeBlock->m_lock);
                 if (place)
                     metadata.setCompiledFieldMode(cell->structure(), place->first, static_cast<GetByIdCompiledFieldKind>(place->second), isAbsentField);
                 else
                     metadata.setCompiledFieldMode(cell->structure(), 0, GetByIdCompiledFieldKind::Nothing, true);
                 vm.writeBarrier(codeBlock);
-            } else if (auto extra = ownData && Options::useLLIntICs() ? AOT::Typed::placeOfExtraPropertyForInterpreter(vm, cell, ident) : std::nullopt) {
+            } else if (auto extra = ownData && Options::useLLIntICs() ? AOT::Typed::extraPropertyLocationForInterpreter(vm, cell, ident) : std::nullopt) {
                 ConcurrentJSLocker locker(codeBlock->m_lock);
                 metadata.setCompiledFieldMode(cell->structure(), extra->first, GetByIdCompiledFieldKind::ExtraProperty, false);
                 metadata.compiledFieldMode.absentIsUndefined = extra->second;
@@ -1439,20 +1439,20 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 
 extern "C" UGPRPair SYSV_ABI llint_call_cached_custom_accessor(CallFrame* callFrame, EncodedJSValue base, GetByIdModeMetadata* cache, unsigned property)
 {
-    static constexpr uintptr_t cacheDoesNotHold = 1;
+    static constexpr uintptr_t cacheIsInvalid = 1;
     CodeBlock* codeBlock = callFrame->codeBlock();
     VM& vm = codeBlock->vm();
     SlowPathFrameTracer tracer(vm, callFrame);
     JSCell* baseCell = JSValue::decode(base).asCell();
     if (cache->mode != GetByIdMode::CustomAccessor || baseCell->structureID() != cache->customAccessorMode.structureID) [[unlikely]]
-        return encodeResult(nullptr, std::bit_cast<void*>(cacheDoesNotHold));
+        return encodeResult(nullptr, std::bit_cast<void*>(cacheIsInvalid));
     JSObject* holder = cache->customAccessorHolder();
     JSValue accessor = holder->getDirect(cache->customAccessorMode.cachedOffset);
     if (!accessor.isCell() || accessor.asCell()->type() != CustomGetterSetterType) [[unlikely]]
-        return encodeResult(nullptr, std::bit_cast<void*>(cacheDoesNotHold));
+        return encodeResult(nullptr, std::bit_cast<void*>(cacheIsInvalid));
     auto* withClass = dynamicDowncast<DOMAttributeGetterSetter>(accessor.asCell());
     if (withClass && !baseCell->inherits(withClass->domAttribute().classInfo)) [[unlikely]]
-        return encodeResult(nullptr, std::bit_cast<void*>(cacheDoesNotHold));
+        return encodeResult(nullptr, std::bit_cast<void*>(cacheIsInvalid));
     EncodedJSValue result = uncheckedDowncast<CustomGetterSetter>(accessor.asCell())->getter()(holder->realm(), base, codeBlock->unlinkedCodeBlock()->identifier(property));
     return encodeResult(std::bit_cast<void*>(result), vm.exceptionForInspection() ? exceptionSignal() : nullptr);
 }
@@ -1596,7 +1596,7 @@ LLINT_SLOW_PATH_DECL(slow_path_instanceof)
     LLINT_RETURN(jsBoolean(result));
 }
 
-static bool tryWatchPrototypeChainOfAddingStore(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, Structure* oldStructure, UniquedStringImpl* uid)
+static bool tryWatchPrototypeChainForAddingStore(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, Structure* oldStructure, UniquedStringImpl* uid)
 {
     if (Options::useJIT())
         return false;
@@ -1625,10 +1625,10 @@ static bool tryWatchPrototypeChainOfAddingStore(VM& vm, JSGlobalObject* globalOb
     return true;
 }
 
-extern "C" EncodedJSValue SYSV_ABI llint_extra_property_of_compiled_object(JSCell* object, unsigned offset)
+extern "C" EncodedJSValue SYSV_ABI llint_get_compiled_object_extra_property(JSCell* object, unsigned offset)
 {
 #if ENABLE(AOT)
-    return JSValue::encode(AOT::Typed::extraPropertyOfCompiledObject(object, offset));
+    return JSValue::encode(AOT::Typed::compiledObjectExtraProperty(object, offset));
 #else
     UNUSED_PARAM(object);
     UNUSED_PARAM(offset);
@@ -1636,10 +1636,10 @@ extern "C" EncodedJSValue SYSV_ABI llint_extra_property_of_compiled_object(JSCel
 #endif
 }
 
-extern "C" size_t SYSV_ABI llint_store_extra_property_of_compiled_object(JSCell* object, unsigned offset, EncodedJSValue value)
+extern "C" size_t SYSV_ABI llint_store_compiled_object_extra_property(JSCell* object, unsigned offset, EncodedJSValue value)
 {
 #if ENABLE(AOT)
-    return AOT::Typed::storeExtraPropertyOfCompiledObject(object, offset, JSValue::decode(value));
+    return AOT::Typed::storeCompiledObjectExtraProperty(object, offset, JSValue::decode(value));
 #else
     UNUSED_PARAM(object);
     UNUSED_PARAM(offset);
@@ -1649,16 +1649,16 @@ extern "C" size_t SYSV_ABI llint_store_extra_property_of_compiled_object(JSCell*
 }
 
 #if ENABLE(AOT)
-static void cacheStoreToFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, const JSInstruction* pc, OpPutById::Metadata& metadata, JSCell* base, const Identifier& ident)
+static void cacheCompiledObjectFieldStore(VM& vm, CodeBlock* codeBlock, const JSInstruction* pc, OpPutById::Metadata& metadata, JSCell* base, const Identifier& ident)
 {
-    auto place = Options::useLLIntICs() ? AOT::Typed::offsetAndKindOfStoreForInterpreter(vm, base, ident) : std::nullopt;
+    auto place = Options::useLLIntICs() ? AOT::Typed::fieldStoreOffsetAndKindForInterpreter(vm, base, ident) : std::nullopt;
     if (!place)
         return;
     {
         ConcurrentJSLocker locker(codeBlock->m_lock);
         metadata.m_oldStructureID = StructureID();
-        metadata.m_offset = place->second << putByIdShiftOfCompiledFieldKind | place->first;
-        static_assert(static_cast<uint32_t>(PutByIdCompiledFieldKind::ExtraProperty) < 1u << (putByIdShiftOfOffsetOfExtraProperty - putByIdShiftOfCompiledFieldKind));
+        metadata.m_offset = place->second << putByIdCompiledFieldKindShift | place->first;
+        static_assert(static_cast<uint32_t>(PutByIdCompiledFieldKind::ExtraProperty) < 1u << (putByIdExtraPropertyOffsetShift - putByIdCompiledFieldKindShift));
         metadata.m_newStructureID = base->structureID();
         metadata.m_structureChain.clear();
     }
@@ -1684,8 +1684,8 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     if (mayBeCompiledObject) {
         if (Options::useAOTOperationCounters()) [[unlikely]]
             AOT::Typed::countIfCompiledObject(vm, baseValue, "InterpreterPutByIdOfCompiledObject");
-        if (AOT::Typed::tryStorePrimitiveIntoFieldOfCompiledObject(vm, baseValue.asCell(), ident.impl(), getOperand(callFrame, bytecode.m_value))) {
-            cacheStoreToFieldOfCompiledObject(vm, codeBlock, pc, metadata, baseValue.asCell(), ident);
+        if (AOT::Typed::tryStorePrimitiveToCompiledObjectField(vm, baseValue.asCell(), ident.impl(), getOperand(callFrame, bytecode.m_value))) {
+            cacheCompiledObjectFieldStore(vm, codeBlock, pc, metadata, baseValue.asCell(), ident);
             LLINT_END();
         }
     }
@@ -1700,7 +1700,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     LLINT_CHECK_EXCEPTION();
 #if ENABLE(AOT)
     if (mayBeCompiledObject)
-        cacheStoreToFieldOfCompiledObject(vm, codeBlock, pc, metadata, baseValue.asCell(), ident);
+        cacheCompiledObjectFieldStore(vm, codeBlock, pc, metadata, baseValue.asCell(), ident);
 #endif
     
     if (Options::useLLIntICs()
@@ -1743,7 +1743,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                     if (result != InvalidPrototypeChain && !sawPolyProto) {
                         ASSERT(oldStructure->isObject());
                         StructureChain* chain = nullptr;
-                        if (!(bytecode.m_flags.isDirect()) && !tryWatchPrototypeChainOfAddingStore(vm, globalObject, codeBlock, codeBlock->bytecodeIndex(pc), oldStructure, ident.impl())) {
+                        if (!(bytecode.m_flags.isDirect()) && !tryWatchPrototypeChainForAddingStore(vm, globalObject, codeBlock, codeBlock->bytecodeIndex(pc), oldStructure, ident.impl())) {
                             chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
                             ASSERT(chain);
                         }
@@ -1790,8 +1790,8 @@ LLINT_SLOW_PATH_DECL(slow_path_del_by_id)
     LLINT_CHECK_EXCEPTION();
     bool couldDelete = JSCell::deleteProperty(baseObject, globalObject, codeBlock->identifier(bytecode.m_property));
     LLINT_CHECK_EXCEPTION();
-    if (!couldDelete && baseObject->noteIfRefusedByLockAlone(vm, codeBlock->identifier(bytecode.m_property).impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !bytecode.m_ecmaMode.isStrict(), true))
-        LLINT_THROW(createTypeError(globalObject, AOT::wordsOfLock(vm, baseObject, AOT::RefusedByLock::Delete, codeBlock->identifier(bytecode.m_property).impl())));
+    if (!couldDelete && baseObject->recordIfOnlyLockRejects(vm, codeBlock->identifier(bytecode.m_property).impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !bytecode.m_ecmaMode.isStrict(), true))
+        LLINT_THROW(createTypeError(globalObject, AOT::lockedOperationErrorMessage(vm, baseObject, AOT::LockedOperation::Delete, codeBlock->identifier(bytecode.m_property).impl())));
     if (!couldDelete && bytecode.m_ecmaMode.isStrict())
         LLINT_THROW(createTypeError(globalObject, UnableToDeletePropertyError));
     LLINT_RETURN(jsBoolean(couldDelete));
@@ -2188,8 +2188,8 @@ LLINT_SLOW_PATH_DECL(slow_path_del_by_val)
         LLINT_CHECK_EXCEPTION();
         couldDelete = JSCell::deleteProperty(baseObject, globalObject, property);
         LLINT_CHECK_EXCEPTION();
-        if (!couldDelete && baseObject->noteIfRefusedByLockAlone(vm, property.impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !bytecode.m_ecmaMode.isStrict(), true))
-            LLINT_THROW(createTypeError(globalObject, AOT::wordsOfLock(vm, baseObject, AOT::RefusedByLock::Delete, property.impl())));
+        if (!couldDelete && baseObject->recordIfOnlyLockRejects(vm, property.impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !bytecode.m_ecmaMode.isStrict(), true))
+            LLINT_THROW(createTypeError(globalObject, AOT::lockedOperationErrorMessage(vm, baseObject, AOT::LockedOperation::Delete, property.impl())));
     }
     LLINT_CHECK_EXCEPTION();
 
@@ -2221,7 +2221,7 @@ LLINT_SLOW_PATH_DECL(slow_path_in_by_id)
             vm.writeBarrier(codeBlock);
         };
 #if ENABLE(AOT)
-        if (auto place = AOT::Typed::offsetAndKindOfFieldForInterpreter(base, ident.impl())) {
+        if (auto place = AOT::Typed::fieldOffsetAndKindForInterpreter(base, ident.impl())) {
             switch (static_cast<GetByIdCompiledFieldKind>(place->second)) {
             case GetByIdCompiledFieldKind::JSValue:
                 remember(place->first, InByIdKind::JSValue);
@@ -2229,8 +2229,8 @@ LLINT_SLOW_PATH_DECL(slow_path_in_by_id)
             case GetByIdCompiledFieldKind::Cell32:
                 remember(place->first, InByIdKind::Cell32);
                 break;
-            case GetByIdCompiledFieldKind::Int32OrElsewhere:
-                remember(place->first, InByIdKind::Int32OrElsewhere);
+            case GetByIdCompiledFieldKind::Int32OrNumberBox:
+                remember(place->first, InByIdKind::Int32OrNumberBox);
                 break;
             case GetByIdCompiledFieldKind::Double:
                 remember(place->first, InByIdKind::Double);

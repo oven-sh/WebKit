@@ -139,7 +139,7 @@ public:
     template<typename CharacterType> ALWAYS_INLINE Structure* getTransition(Structure* from, std::span<const CharacterType> name);
     template<typename CharacterType> ALWAYS_INLINE void addTransition(Structure* from, Structure* to, std::span<const CharacterType> name);
 
-    ALWAYS_INLINE bool isStructureOfFinishedObject(StructureID, unsigned nameIndex) const;
+    ALWAYS_INLINE bool isFinishedObjectStructure(StructureID, unsigned nameIndex) const;
     ALWAYS_INLINE Structure* getStructureForFinishedObject(Structure* from) const;
     ALWAYS_INLINE void addStructureForFinishedObject(Structure* from, Structure* to);
 
@@ -182,7 +182,7 @@ public:
         m_primaryTransitions.fill({ });
         m_secondaryTransitions.fill({ });
         m_structuresForFinishedObjects.fill({ });
-        m_structuresOfFinishedObjects.fill({ });
+        m_finishedObjectStructures.fill({ });
         m_names.m_entries.fill({ });
         m_prefixedNames.m_entries.fill({ });
     }
@@ -264,7 +264,7 @@ private:
     std::array<TransitionEntry, primaryTransitionCapacity> m_primaryTransitions { };
     std::array<TransitionEntry, secondaryTransitionCapacity> m_secondaryTransitions { };
     std::array<TransitionEntry, nameEntrySize> m_structuresForFinishedObjects { };
-    std::array<WriteBarrierStructureID, nameEntrySize> m_structuresOfFinishedObjects { };
+    std::array<WriteBarrierStructureID, nameEntrySize> m_finishedObjectStructures { };
     NameTable<nameEntrySize> m_names { };
     NameTable<prefixedNameEntrySize> m_prefixedNames { };
     StringTable m_strings { };

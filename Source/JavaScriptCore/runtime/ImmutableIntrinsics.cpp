@@ -75,8 +75,7 @@ void ImmutableIntrinsics::ensureShared(VM& vm)
     RELEASE_ASSERT(shared());
 }
 
-// The build describes the realm of a VM that has no image: there a builtin that is implemented in JavaScript is no host function.
-static bool isCompiledAheadOfTime(JSFunction* function)
+static bool isAOTCompiled(JSFunction* function)
 {
 #if ENABLE(AOT)
     return AOT::Typed::declaredAs(function) != AOT::Typed::DeclaredAs::NotCompiled;
@@ -124,8 +123,8 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
                 if (auto index = vm.builtinExecutables()->indexOf(function->jsExecutable()->unlinkedExecutable()))
                     entry.builtinCode = *index + 1;
             } else if (function)
-                entry.isHostFunction = function->isHostFunction() && !isCompiledAheadOfTime(function);
-            entry.inheritsFromFunctionPrototype = number && isFunctionOfIntrinsic(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
+                entry.isHostFunction = function->isHostFunction() && !isAOTCompiled(function);
+            entry.inheritsFromFunctionPrototype = number && isIntrinsicFunction(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
         } else
             entry.primitive = JSValue::encode(value);
         if (number && !description->m_numbers.add(keyFor(holder, name), number).isNewEntry)
@@ -165,12 +164,12 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
 
 namespace {
 
-struct PlaceInProgram {
+struct ProgramLocation {
     String functionName;
     String sourceURL;
     LineColumn position;
     bool isStrict { true };
-    bool isBelowFunctionOfEngine { false };
+    bool isCalledFromEngineFunction { false };
 };
 
 struct PropertyAsStored {
@@ -182,14 +181,14 @@ struct PropertyAsStored {
 
 }
 
-static PlaceInProgram placeInProgram(VM& vm)
+static ProgramLocation programLocation(VM& vm)
 {
-    PlaceInProgram place;
+    ProgramLocation place;
     if (!vm.topCallFrame)
         return place;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (!visitor->hasCode() || visitor->isBuiltinFunction()) {
-            place.isBelowFunctionOfEngine = true;
+            place.isCalledFromEngineFunction = true;
             return IterationStatus::Continue;
         }
         place.functionName = visitor->functionName();
@@ -224,7 +223,7 @@ static PropertyAsStored propertyAsStored(VM& vm, JSObject* object, PropertyName 
     if (!(attributes & (PropertyAttribute::CustomAccessor | PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyPropertyOrConstant)))
         attributes |= PropertyAttribute::CustomValue;
     bool hasSetter = (attributes & PropertyAttribute::CustomAccessorOrValue) && entry->value->propertyPutter();
-    return { true, isStaticPropertyOfIntrinsic(vm, *object, *entry->value), hasSetter, attributes };
+    return { true, isIntrinsicStaticProperty(vm, *object, *entry->value), hasSetter, attributes };
 }
 
 static bool wouldInheritImmutableProperty(VM& vm, JSObject* object, PropertyName name)
@@ -276,7 +275,7 @@ static String nameOfFunction(VM& vm, JSObject* object)
     return name;
 }
 
-static JSObject* generatorFunctionOfPrototype(VM& vm, JSObject* object)
+static JSObject* generatorFunctionForPrototype(VM& vm, JSObject* object)
 {
     JSValue function = object->getDirect(vm, vm.propertyNames->builtinNames().generatorPrivateName());
     return function ? function.getObject() : nullptr;
@@ -309,7 +308,7 @@ static String describeIntrinsic(VM& vm, JSObject* object, unsigned depth = 0)
         builder.append("Prototype%"_s);
         return builder.toString();
     }
-    if (JSObject* function = isPrototype && depth < 2 ? generatorFunctionOfPrototype(vm, object) : nullptr)
+    if (JSObject* function = isPrototype && depth < 2 ? generatorFunctionForPrototype(vm, object) : nullptr)
         return makeString(describeIntrinsic(vm, function, depth + 1), ".prototype"_s);
     return object->classInfo()->className;
 }
@@ -342,23 +341,23 @@ static ASCIILiteral kindOfWrite(VM& vm, JSObject* object)
         return "global-binding-write"_s;
     if (!object->structure()->typeInfo().wouldHaveImmutableProperties())
         return "builtin-member-replace"_s;
-    return generatorFunctionOfPrototype(vm, object) ? "generator-prototype-write"_s : "builtin-prototype-write"_s;
+    return generatorFunctionForPrototype(vm, object) ? "generator-prototype-write"_s : "builtin-prototype-write"_s;
 }
 
-static void reportRefusal(JSGlobalObject* globalObject, ASCIILiteral kind, ASCIILiteral functionOfReflect, JSObject* object, PropertyName name, const String& error, std::optional<bool> shouldThrow)
+static void reportRefusal(JSGlobalObject* globalObject, ASCIILiteral kind, ASCIILiteral reflectFunctionName, JSObject* object, PropertyName name, const String& error, std::optional<bool> shouldThrow)
 {
     VM& vm = globalObject->vm();
-    PlaceInProgram place = placeInProgram(vm);
-    String objectText = describeIntrinsic(vm, object);
-    String touched = name.isNull() ? objectText : makeString(objectText, describeKey(vm, name));
+    ProgramLocation place = programLocation(vm);
+    String objectDescription = describeIntrinsic(vm, object);
+    String touched = name.isNull() ? objectDescription : makeString(objectDescription, describeKey(vm, name));
     String message;
-    if (shouldThrow.value_or(place.isStrict && !place.isBelowFunctionOfEngine))
+    if (shouldThrow.value_or(place.isStrict && !place.isCalledFromEngineFunction))
         message = makeString(touched, ": "_s, error);
-    else if (place.isBelowFunctionOfEngine) {
+    else if (place.isCalledFromEngineFunction) {
         if (name.isNull())
-            message = makeString("Reflect."_s, functionOfReflect, '(', objectText, "): answers false"_s);
+            message = makeString("Reflect."_s, reflectFunctionName, '(', objectDescription, "): answers false"_s);
         else
-            message = makeString("Reflect."_s, functionOfReflect, '(', objectText, ", "_s, describeKeyAsArgument(vm, name), "): answers false"_s);
+            message = makeString("Reflect."_s, reflectFunctionName, '(', objectDescription, ", "_s, describeKeyAsArgument(vm, name), "): answers false"_s);
     } else if (!shouldThrow)
         message = makeString("delete "_s, touched, ": answers false"_s);
     else
@@ -515,7 +514,7 @@ void ImmutableIntrinsicsAudit::willReplacePrototypeProperty(JSGlobalObject* glob
     reportRefusal(globalObject, "generator-prototype-write"_s, "set"_s, function, vm.propertyNames->prototype, makeString("Cannot replace 'prototype' of generator function '"_s, nameOfFunction(vm, function), "': it is fixed when the program is compiled"_s), shouldThrow);
     if (JSObject* object = value.getObject(); object && object->type() == FinalObjectType && object->isStructureExtensible()) {
         object->putDirect(vm, vm.propertyNames->builtinNames().generatorPrivateName(), function, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        object->fixProperties(vm, JSObject::FixedObject::BecomesNonExtensible);
+        object->lockProperties(vm, JSObject::LockedObjectExtensibility::BecomesNonExtensible);
     }
 }
 

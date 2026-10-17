@@ -176,7 +176,7 @@ def add_class(name, listed_as, typed_array_type, js_type, own):
     structures.extend(own)
 
 
-def uses_of(where, text):
+def parse_operand_uses(where, text):
     if text is None or text == '-':
         return None if text is None else 0
     if not text or any(letter not in USES for letter in text) or sorted(text, key=USES.index) != list(text) or len(set(text)) != len(text) or text == 'D':
@@ -189,7 +189,7 @@ def add_entry(where, family, kind, path, parameters, result, effects, lowering, 
     uses = []
     for index, parameter in enumerate(parameters):
         match = re.fullmatch(r'([^/]+)/([^?.]+)(\?|\.\.\.)?', parameter)
-        uses.append(uses_of(where, match.group(2)) if match else None)
+        uses.append(parse_operand_uses(where, match.group(2)) if match else None)
         if match:
             parameters[index] = match.group(1) + (match.group(3) or '')
             if match.group(1) not in ('any', 'TypedArray!'):
@@ -210,7 +210,7 @@ def add_entry(where, family, kind, path, parameters, result, effects, lowering, 
         holder, _, name = path.rpartition('.')
     holder, name = (text.replace('%TypedArray%', 'TypedArray') for text in (holder, name))
     entries.append(dict(where=where, family=family, kind=kind, holder=holder, name=name, parameters=parameters, result=result, effects=effects, lowering=lowering,
-                        this=uses_of(where, this), uses=uses, fresh=fresh))
+                        this=parse_operand_uses(where, this), uses=uses, fresh=fresh))
 
 
 for path in sorted(glob.glob(os.path.join(aot, 'builtins', '*.def'))):
@@ -350,14 +350,14 @@ def cpp_effects(where, effects):
     return ' | '.join('Effect::' + effect for effect in EFFECTS if effect in effects)
 
 
-def enumerator_of(function):
+def enumerator_name(function):
     return ''.join(part[:1].upper() + part[1:] for part in function.split('$'))
 
 
 operations, prelude_functions, numbers = [], [], []
 
 
-def note(names, name):
+def append_unique(names, name):
     if name not in names:
         names.append(name)
 
@@ -396,12 +396,12 @@ def cpp_lowering(entry):
         return 'inlined(InlineBuiltin::%s, %s)' % (match.group(1), cpp_call(entry, match.group(2) or ('HostCall' if is_function else 'None')))
     match = re.fullmatch(r'Operation\((\w+)\)', lowering)
     if match and kind in ('operation', 'intrinsic'):
-        note(operations, match.group(1))
+        append_unique(operations, match.group(1))
         return 'does(LanguageOperation::%s)' % match.group(1)
     match = re.fullmatch(r'Prelude\(([\w$]+)\)', lowering)
     if match and (kind == 'method' or (kind in ('static', 'function', 'call', 'construct') and entry['holder'] != 'TypedArray')):
-        note(prelude_functions, (match.group(1), entry['family'], entry['name']))
-        return 'prelude(PreludeFunction::%s)' % enumerator_of(match.group(1))
+        append_unique(prelude_functions, (match.group(1), entry['family'], entry['name']))
+        return 'prelude(PreludeFunction::%s)' % enumerator_name(match.group(1))
     match = re.fullmatch(r'Number\((.*)\)', lowering)
     if match and kind in ('constant', 'getter'):
         numbers.append((entries.index(entry), match.group(1)))
@@ -421,10 +421,10 @@ PRIMITIVE_HOLDERS = ('String', 'Number', 'Boolean', 'Symbol', 'BigInt')
 GETS = 1 << USES.index('G')
 
 
-def uses_of_operands(entry):
+def operand_uses(entry):
     effects = entry['effects']
-    yields_primitive = not any(alternative.strip().startswith(('new ', 'anything', 'this', 'arg')) for alternative in entry['result'].split('|'))
-    is_harmless = yields_primitive and not any(effect in effects for effect in ('CallsUserCode', 'WritesReceiver', 'WritesArguments', 'WritesRuntimeState'))
+    returns_primitive = not any(alternative.strip().startswith(('new ', 'anything', 'this', 'arg')) for alternative in entry['result'].split('|'))
+    is_harmless = returns_primitive and not any(effect in effects for effect in ('CallsUserCode', 'WritesReceiver', 'WritesArguments', 'WritesRuntimeState'))
     takes_this = entry['kind'] in ('method', 'getter', 'setter') and entry['holder'] not in PRIMITIVE_HOLDERS
     if entry['this'] is not None and not takes_this:
         errors.append('%s: it takes no `this` that is an object' % entry['where'])
@@ -448,7 +448,7 @@ for entry in entries:
     entry['is_first'] = key != previous
     seen.add(key)
     previous = key
-    entry['uses_of_this'], entry['uses_of_parameters'] = uses_of_operands(entry) if entry['kind'] != 'constant' else (0, [])
+    entry['uses_of_this'], entry['uses_of_parameters'] = operand_uses(entry) if entry['kind'] != 'constant' else (0, [])
     parameters = tuple('uses(%s, %d)' % (cpp_parameter(entry['where'], parameter), uses) for parameter, uses in zip(entry['parameters'], entry['uses_of_parameters']))
     if parameters not in runs:
         runs[parameters] = len(pool)
@@ -489,7 +489,7 @@ for entry in entries:
         continue
     engine = engine_classes[class_numbers[entry['holder']]]
     if engine['text'] == 'String' or engine['type'] == 'ArrayType' or engine['count']:
-        speculated[entry['name']] = 'severalClasses' if speculated.get(entry['name'], engine['text']) != engine['text'] else engine['text']
+        speculated[entry['name']] = 'multipleClasses' if speculated.get(entry['name'], engine['text']) != engine['text'] else engine['text']
 
 
 def cpp_name(text):
@@ -507,7 +507,7 @@ table = array('BuiltinParameter builtinParameterPool[]', pool)
 table += array('Builtin builtinEntries[numberOfBuiltins]', ['{ BuiltinKind::%s, "%s"_s, "%s"_s, %s, %s, %s }' % (entry['table_kind'], entry['holder'], entry['name'], cpp_name(entry['holder']), cpp_name(entry['name']), rest)
                                                             for entry, rest in rows])
 table += array('BuiltinNameData builtinNames[numberOfBuiltinNames]', ['{ "%s"_s, %s, %s, %s, %s, %s, %s }' % (
-    text, class_numbers.get(text, 'noClass'), class_numbers.get(speculated[text], 'severalClasses') if text in speculated else 'noClass', operation_numbers.get(text, 'noOperation'),
+    text, class_numbers.get(text, 'noClass'), class_numbers.get(speculated[text], 'multipleClasses') if text in speculated else 'noClass', operation_numbers.get(text, 'noOperation'),
     *('true' if text in texts_with else 'false' for texts_with in (is_global, replaceable, may_be_extended))) for text in texts])
 table += array('EngineClass engineClasses[numberOfEngineClasses]', ['{ "%s"_s, %d, %s, %s, %s, %s, %d, %d }' % (
     engine['text'], number, cpp_name(engine['text']), cpp_name(engine['listed_as']), engine['typed_array_type'], engine['type'], engine['first'], engine['count']) for number, engine in enumerate(engine_classes)])
@@ -556,7 +556,7 @@ for entry in entries:
 
 prelude_files = []
 for function, family, name in prelude_functions:
-    note(prelude_files, family)
+    append_unique(prelude_files, family)
 if bun:
     for family in prelude_files:
         path = os.path.join(bun, 'src', 'aot', 'prelude', family + '.ts')
@@ -572,14 +572,14 @@ for where, file, function in omitted:
 for where, file in written:
     if not any(file == row[0] for row in all_engine_functions):
         errors.append('%s: there is no builtins/%s.js' % (where, file))
-left_out = {(file, function) for where, file, function in omitted}
+excluded_functions = {(file, function) for where, file, function in omitted}
 written_files = {file for where, file in written}
-engine_functions = [row for row in all_engine_functions if row[:2] not in left_out]
+engine_functions = [row for row in all_engine_functions if row[:2] not in excluded_functions]
 engine_files = []
 for path in aot_engine_builtins.sources(javascriptcore):
     file = os.path.basename(path)[:-3]
     if file not in written_files and any(file == row[0] for row in engine_functions):
-        engine_files.append((file + '.js', aot_engine_builtins.derive(open(path).read(), {function for of_file, function in left_out if of_file == file})))
+        engine_files.append((file + '.js', aot_engine_builtins.derive(open(path).read(), {function for of_file, function in excluded_functions if of_file == file})))
 if bun:
     for file in sorted(written_files):
         path = os.path.join(bun, 'src', 'aot', 'prelude', 'engine', file + '.ts')
@@ -666,7 +666,7 @@ lists += x_macro('FOR_EACH_AOT_TYPED_INLINE_BUILTIN', ['%s, %s, %s' % (name, fam
 lists += x_macro('FOR_EACH_AOT_TYPED_BUILTIN_OPERATION', ['operationAOTTyped' + operation[0] for operation in runtime_operations])
 lists += x_macro('FOR_EACH_AOT_TYPED_LANGUAGE_OPERATION', operations)
 lists += x_macro('FOR_EACH_AOT_TYPED_IR_OPERATION', ['%s, %d, %d' % (name, number, name_numbers[name]) for name, number in sorted(operation_numbers.items(), key=lambda operation: operation[1])])
-lists += x_macro('FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION', ['%s, "%s"' % (enumerator_of(function), function) for function, family, name in prelude_functions])
+lists += x_macro('FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION', ['%s, "%s"' % (enumerator_name(function), function) for function, family, name in prelude_functions])
 lists += x_macro('FOR_EACH_AOT_TYPED_ENGINE_BUILTIN_FUNCTION', ['%s, %d' % (code, number) for file, function, code, number in engine_functions])
 lists += x_macro('FOR_EACH_AOT_TYPED_ORIGINAL_STRUCTURE', ['%d, %s' % numbered for numbered in enumerate(structures)])
 lists += x_macro('FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR', ['%s, %d, %s, %s, %s, %s' % (name, name_numbers[name], 'true' if direction == 'write' else 'false', size, kind.capitalize(), 'true' if order == 'little' else 'false')

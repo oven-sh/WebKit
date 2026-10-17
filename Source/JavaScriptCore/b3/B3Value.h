@@ -682,7 +682,7 @@ protected:
     friend class Procedure;
     friend class SparseCollection<Value>;
 #if USE(BUN_JSC_ADDITIONS)
-    friend struct DestroyerOfValue;
+    friend struct ValueDestroyer;
 #endif
 
 private:
@@ -1006,7 +1006,7 @@ public:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-inline void DestroyerOfValue::operator()(Value* value) const
+inline void ValueDestroyer::operator()(Value* value) const
 {
     bool isInArena = value->m_isInArena;
     value->~Value();

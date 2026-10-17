@@ -66,20 +66,16 @@ enum class TransitionKind : uint8_t {
     // Support for transitions related with private brand
     SetBrand = 17,
 
-    // The object becomes non-extensible and its own properties and prototype can no longer change.
     MakePropertiesImmutable = 18,
 
-    // The properties the object has become non-configurable and, unless they are accessors, read-only, and its prototype can no longer
-    // change. The object stays extensible, and what is added to it is as any other property.
-    FixProperties = 19,
+    LockProperties = 19,
 
-    // With immutable intrinsics: an array of ArrayType is of DerivedArrayType from here on. See JSObject::becomeDerivedArray().
     BecomeDerivedArray = 20,
 
-    FixAndMakePropertiesImmutable = 21,
+    LockAndMakePropertiesImmutable = 21,
 
-    NoteFixedProperties = 22,
-    NoteFixedAndImmutableProperties = 23,
+    RecordLockedProperties = 22,
+    RecordLockedAndImmutableProperties = 23,
 
     AllocateTypedContiguous = 24,
 };
@@ -135,7 +131,7 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
     case TransitionKind::AddIndexedAccessors:
         return oldType | MayHaveIndexedAccessors;
     case TransitionKind::MakePropertiesImmutable:
-    case TransitionKind::FixAndMakePropertiesImmutable:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         // A JSArray that still has Int32, Double or Contiguous elements here keeps its shape and becomes copy-on-write:
         // JSObject::makePropertiesImmutable() has moved them to such storage. Every other object with elements has been given dictionary indexing first.
         if ((oldType & IsArray) && (hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType)))
@@ -153,7 +149,7 @@ inline bool preventsExtensions(TransitionKind transition)
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
     case TransitionKind::MakePropertiesImmutable:
-    case TransitionKind::FixAndMakePropertiesImmutable:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         return true;
     default:
         return false;
@@ -162,12 +158,12 @@ inline bool preventsExtensions(TransitionKind transition)
 
 inline bool makesPropertiesImmutable(TransitionKind transition)
 {
-    return transition == TransitionKind::MakePropertiesImmutable || transition == TransitionKind::FixAndMakePropertiesImmutable;
+    return transition == TransitionKind::MakePropertiesImmutable || transition == TransitionKind::LockAndMakePropertiesImmutable;
 }
 
-inline bool notesFixedProperties(TransitionKind transition)
+inline bool recordsLockedPropertiesFor(TransitionKind transition)
 {
-    return transition == TransitionKind::NoteFixedProperties || transition == TransitionKind::NoteFixedAndImmutableProperties;
+    return transition == TransitionKind::RecordLockedProperties || transition == TransitionKind::RecordLockedAndImmutableProperties;
 }
 
 inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
@@ -175,8 +171,8 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
-    case TransitionKind::FixProperties:
-    case TransitionKind::FixAndMakePropertiesImmutable:
+    case TransitionKind::LockProperties:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         return true;
     default:
         return false;
@@ -187,8 +183,8 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 {
     switch (transition) {
     case TransitionKind::Freeze:
-    case TransitionKind::FixProperties:
-    case TransitionKind::FixAndMakePropertiesImmutable:
+    case TransitionKind::LockProperties:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         return true;
     default:
         return false;

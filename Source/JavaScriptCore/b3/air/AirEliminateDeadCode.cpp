@@ -38,7 +38,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace B3 { namespace Air {
 
-static constexpr std::array<bool, 256> makeFormsThatKeepAlive()
+static constexpr std::array<bool, 256> computeLivenessPreservingForms()
 {
     std::array<bool, 256> result { };
     for (unsigned form = 0; form < 256; ++form) {
@@ -62,16 +62,16 @@ bool eliminateDeadCode(Code& code)
 {
     PhaseScope phaseScope(code, "eliminateDeadCode"_s);
 
-    static constexpr std::array<bool, 256> formsThatKeepAlive = makeFormsThatKeepAlive();
+    static constexpr std::array<bool, 256> livenessPreservingForms = computeLivenessPreservingForms();
 
-    const unsigned endOfGPIndices = Tmp::absoluteIndexEnd(code, GP);
-    Vector<uint64_t, 64> liveTmpStore(FillWith { }, (endOfGPIndices + Tmp::absoluteIndexEnd(code, FP) + 63) / 64, static_cast<uint64_t>(0));
+    const unsigned gpIndicesEnd = Tmp::absoluteIndexEnd(code, GP);
+    Vector<uint64_t, 64> liveTmpStore(FillWith { }, (gpIndicesEnd + Tmp::absoluteIndexEnd(code, FP) + 63) / 64, static_cast<uint64_t>(0));
     uint64_t* liveTmps = liveTmpStore.mutableSpan().data();
     Vector<uint64_t, 8> liveStackSlotStore(FillWith { }, (code.stackSlots().size() + 63) / 64, static_cast<uint64_t>(0));
     uint64_t* liveStackSlots = liveStackSlotStore.mutableSpan().data();
 
     auto indexOf = [&](Tmp tmp) ALWAYS_INLINE_LAMBDA -> unsigned {
-        return tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : endOfGPIndices + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+        return tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : gpIndicesEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
     };
 
     auto isArgLive = [&](const Arg& arg) ALWAYS_INLINE_LAMBDA -> bool {
@@ -99,7 +99,7 @@ bool eliminateDeadCode(Code& code)
         if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
             Arg* args = inst.args().data();
             for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
-                if (formsThatKeepAlive[forms[argIndex]] && isArgLive(args[argIndex]))
+                if (livenessPreservingForms[forms[argIndex]] && isArgLive(args[argIndex]))
                     return true;
             }
             return false;

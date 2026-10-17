@@ -69,13 +69,13 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     static constexpr double maxRatioOfTailToLikelyPredecessor = 16;
-    static constexpr unsigned maxCostOfCopyWithDecidedTest = 8;
-    static constexpr unsigned maxCostOfPath = 16;
-    static constexpr unsigned maxPredecessorsToAskFactsFor = 8;
-    static constexpr unsigned maxFactsToAsk = 32;
-    static constexpr unsigned maxDepthOfTest = 8;
+    static constexpr unsigned maxDecidedTestCopyCost = 8;
+    static constexpr unsigned maxPathCost = 16;
+    static constexpr unsigned maxPredecessorsForFactQueries = 8;
+    static constexpr unsigned maxFactQueries = 32;
+    static constexpr unsigned maxTestDepth = 8;
     static constexpr unsigned maxBlocksOnPath = 8;
-    static constexpr double leastFrequency = 1e-6;
+    static constexpr double minFrequency = 1e-6;
     static constexpr uint64_t maxValuesToDemoteTimesBlocks = 1 << 24;
 #endif
 
@@ -138,10 +138,10 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
         IndexSet<BasicBlock*> tailsOnlyForDecidedTests;
         if (m_proc.positionIndependent()) {
-            m_indexOfPathBehind.resize(m_proc.size());
-            m_costOfCopyOnPath.resize(m_proc.size());
+            m_pathAfterIndex.resize(m_proc.size());
+            m_pathCopyCost.resize(m_proc.size());
             for (BasicBlock* block : m_proc) {
-                if (block->numPredecessors() < 2 || !costOfCopyOnPath(block))
+                if (block->numPredecessors() < 2 || !pathCopyCost(block))
                     continue;
                 bool isKnownNotToBeLoopHeader = false;
                 for (BasicBlock* predecessor : block->predecessors()) {
@@ -157,7 +157,7 @@ public:
                     });
                     if (!path)
                         continue;
-                    for (std::span<const Step> steps : { path->steps.span(), path->stepsBehindUndecidedTest[0].span(), path->stepsBehindUndecidedTest[1].span() }) {
+                    for (std::span<const Step> steps : { path->steps.span(), path->stepsAfterUndecidedTest[0].span(), path->stepsAfterUndecidedTest[1].span() }) {
                         for (Step step : steps) {
                             if (candidates.add(step.block))
                                 tailsOnlyForDecidedTests.add(step.block);
@@ -210,7 +210,7 @@ public:
             dataLog(m_proc);
         }
 
-        auto copyBehind = [&](BasicBlock* block, BasicBlock* tail, Outcome outcome) {
+        auto copyAfter = [&](BasicBlock* block, BasicBlock* tail, Outcome outcome) {
             // We're about to change 'block'. Make sure that nobody duplicates block after this
             // point.
             candidates.remove(block);
@@ -223,15 +223,15 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
             bool isDecided = outcome == Outcome::Taken || outcome == Outcome::NotTaken;
             if (isDecided) {
-                m_isNeededBehindDecidedTest.fill(false, tail->size());
-                m_usedBehindDecidedTest.shrink(0);
+                m_isNeededAfterDecidedTest.fill(false, tail->size());
+                m_usedAfterDecidedTest.shrink(0);
                 for (unsigned index = tail->size() - 1; index--;) {
                     Value* value = tail->at(index);
-                    if (!value->effects().mustExecute() && !m_usedBehindDecidedTest.contains(value))
+                    if (!value->effects().mustExecute() && !m_usedAfterDecidedTest.contains(value))
                         continue;
-                    m_isNeededBehindDecidedTest[index] = true;
+                    m_isNeededAfterDecidedTest[index] = true;
                     for (Value* child : value->children())
-                        m_usedBehindDecidedTest.append(child);
+                        m_usedAfterDecidedTest.append(child);
                 }
             }
             unsigned indexInTail = 0;
@@ -248,7 +248,7 @@ public:
 #endif
             for (Value* value : *tail) {
 #if USE(BUN_JSC_ADDITIONS)
-                if (isDecided && !m_isNeededBehindDecidedTest[indexInTail++])
+                if (isDecided && !m_isNeededAfterDecidedTest[indexInTail++])
                     continue;
                 if (value->opcode() == Phi)
                     continue;
@@ -275,7 +275,7 @@ public:
                 block->successors() = tail->successors();
 #if USE(BUN_JSC_ADDITIONS)
             if (outcome != Outcome::Unknown)
-                tail->setFrequency(std::max(tail->frequency() - block->frequency(), leastFrequency));
+                tail->setFrequency(std::max(tail->frequency() - block->frequency(), minFrequency));
 #else
             UNUSED_PARAM(outcome);
 #endif
@@ -284,30 +284,30 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
         for (unsigned index = 0, numberOfBlocks = m_proc.size(); index < numberOfBlocks; ++index) {
             BasicBlock* block = m_proc[index];
-            Path* path = block ? pathBehind(block) : nullptr;
+            Path* path = block ? pathAfter(block) : nullptr;
             if (!path)
                 continue;
-            bool endsInUndecidedTest = false;
+            bool endsWithUndecidedTest = false;
             for (Step step : path->steps) {
                 if (!candidates.contains(step.block) || step.block == block)
                     break;
-                copyBehind(block, step.block, step.outcome);
-                endsInUndecidedTest = step.outcome == Outcome::Unknown;
+                copyAfter(block, step.block, step.outcome);
+                endsWithUndecidedTest = step.outcome == Outcome::Unknown;
             }
-            if (!endsInUndecidedTest)
+            if (!endsWithUndecidedTest)
                 continue;
             for (unsigned arm = 0; arm < 2; ++arm) {
-                if (path->stepsBehindUndecidedTest[arm].isEmpty())
+                if (path->stepsAfterUndecidedTest[arm].isEmpty())
                     continue;
                 FrequentedBlock& successor = block->successor(arm);
                 BasicBlock* behind = m_proc.addBlock(std::min(block->frequency(), successor.block()->frequency()));
                 behind->appendNew<Value>(m_proc, Jump, block->last()->origin());
                 behind->setSuccessors(FrequentedBlock(successor.block()));
                 successor.block() = behind;
-                for (Step step : path->stepsBehindUndecidedTest[arm]) {
+                for (Step step : path->stepsAfterUndecidedTest[arm]) {
                     if (!candidates.contains(step.block))
                         break;
-                    copyBehind(behind, step.block, step.outcome);
+                    copyAfter(behind, step.block, step.outcome);
                 }
             }
         }
@@ -317,7 +317,7 @@ public:
             if (block->last()->opcode() != Jump)
                 continue;
 #if USE(BUN_JSC_ADDITIONS)
-            if (pathBehind(block))
+            if (pathAfter(block))
                 continue;
 #endif
 
@@ -337,7 +337,7 @@ public:
                 continue;
 #endif
 
-            copyBehind(block, tail, Outcome::Unknown);
+            copyAfter(block, tail, Outcome::Unknown);
         }
 
         m_proc.resetReachability();
@@ -353,48 +353,48 @@ private:
 
     struct Path {
         Vector<Step, 4> steps;
-        std::array<Vector<Step, 2>, 2> stepsBehindUndecidedTest;
+        std::array<Vector<Step, 2>, 2> stepsAfterUndecidedTest;
     };
 
-    Path* pathBehind(BasicBlock* block)
+    Path* pathAfter(BasicBlock* block)
     {
-        unsigned index = block->index() < m_indexOfPathBehind.size() ? m_indexOfPathBehind[block] : 0;
+        unsigned index = block->index() < m_pathAfterIndex.size() ? m_pathAfterIndex[block] : 0;
         return index ? &m_paths[index - 1] : nullptr;
     }
 
-    std::optional<unsigned> costOfWholeCopy(BasicBlock* block)
+    std::optional<unsigned> wholeCopyCost(BasicBlock* block)
     {
         unsigned cost = 0;
         for (Value* value : *block) {
             if (value->kind().isCloningForbidden() || value->opcode() == Patchpoint || value->opcode() == CCall)
                 return std::nullopt;
             cost += !value->isConstant() && value->opcode() != Phi && value->opcode() != Nop && value != block->last();
-            if (cost > maxCostOfCopyWithDecidedTest)
+            if (cost > maxDecidedTestCopyCost)
                 return std::nullopt;
         }
         return cost;
     }
 
-    std::optional<unsigned> costOfCopyOnPath(BasicBlock* block)
+    std::optional<unsigned> pathCopyCost(BasicBlock* block)
     {
         static constexpr uint8_t isUnknown = 0;
         static constexpr uint8_t cannotBeCopied = 1;
-        static constexpr uint8_t costsNothing = 2;
-        uint8_t& cached = m_costOfCopyOnPath[block];
+        static constexpr uint8_t zeroCost = 2;
+        uint8_t& cached = m_pathCopyCost[block];
         if (cached == isUnknown) {
             std::optional<unsigned> cost;
             if (block->last()->opcode() == Jump)
-                cost = costOfWholeCopy(block);
+                cost = wholeCopyCost(block);
             else if (block->last()->opcode() == Branch && block->successorBlock(0) != block->successorBlock(1))
-                cost = costOfCopyWithDecidedTest(block);
-            cached = cost ? costsNothing + *cost : cannotBeCopied;
+                cost = decidedTestCopyCost(block);
+            cached = cost ? zeroCost + *cost : cannotBeCopied;
         }
         if (cached == cannotBeCopied)
             return std::nullopt;
-        return cached - costsNothing;
+        return cached - zeroCost;
     }
 
-    std::optional<unsigned> costOfCopyWithDecidedTest(BasicBlock* block)
+    std::optional<unsigned> decidedTestCopyCost(BasicBlock* block)
     {
         unsigned cost = 0;
         for (Value* value : *block) {
@@ -413,14 +413,14 @@ private:
                 addToTest(child);
         }
         cost -= std::min<unsigned>(cost, m_test.size());
-        if (cost > maxCostOfCopyWithDecidedTest)
+        if (cost > maxDecidedTestCopyCost)
             return std::nullopt;
         return cost;
     }
 
     bool isLoopHeader(BasicBlock* block)
     {
-        if (!m_indexOfFactIn.size())
+        if (!m_factIndexInBlock.size())
             walkBlocks();
         return m_isLoopHeader[block];
     }
@@ -436,7 +436,7 @@ private:
         return true;
     }
 
-    void addUpsilonsAndSetsOf(BasicBlock* block)
+    void addUpsilonsAndSetsFrom(BasicBlock* block)
     {
         for (Value* value : *block) {
             if (auto* upsilon = value->as<UpsilonValue>())
@@ -450,65 +450,65 @@ private:
     {
         for (UpsilonValue* upsilon : m_upsilonsOnPath) {
             if (upsilon->phi()->owner == block)
-                m_valuesOfPhisOnEdge.append({ upsilon->phi(), upsilon->child(0) });
+                m_phiValuesOnEdge.append({ upsilon->phi(), upsilon->child(0) });
         }
         m_path.append(block);
-        addUpsilonsAndSetsOf(block);
+        addUpsilonsAndSetsFrom(block);
     }
 
     template<typename Functor>
-    Path* followDecidedTests(BasicBlock* predecessor, BasicBlock* next, const Functor& isCopiedWhole)
+    Path* followDecidedTests(BasicBlock* predecessor, BasicBlock* next, const Functor& isWhollyCopied)
     {
         m_path.shrink(0);
         m_upsilonsOnPath.shrink(0);
         m_setsOnPath.shrink(0);
-        m_valuesOfPhisOnEdge.shrink(0);
-        addUpsilonsAndSetsOf(predecessor);
+        m_phiValuesOnEdge.shrink(0);
+        addUpsilonsAndSetsFrom(predecessor);
         Path path;
-        unsigned costOfPath = 0;
-        unsigned indexOfFact = m_indexOfFactIn[predecessor];
-        unsigned numberOfStepsToLastTest = 0;
-        BasicBlock* undecided = followDecidedTests(predecessor, next, indexOfFact, costOfPath, path.steps, numberOfStepsToLastTest);
-        if (undecided && isCopiedWhole(undecided) && predecessor->frequency() * maxRatioOfTailToLikelyPredecessor >= undecided->frequency()) {
+        unsigned pathCost = 0;
+        unsigned indexOfFact = m_factIndexInBlock[predecessor];
+        unsigned stepsToLastTest = 0;
+        BasicBlock* undecided = followDecidedTests(predecessor, next, indexOfFact, pathCost, path.steps, stepsToLastTest);
+        if (undecided && isWhollyCopied(undecided) && predecessor->frequency() * maxRatioOfTailToLikelyPredecessor >= undecided->frequency()) {
             auto [strippedTest, testIsNegated] = withoutNegations(undecided->last()->child(0), true);
             if (strippedTest) {
-                forEachLeaf(strippedTest, false, false, maxDepthOfTest, [&](Value* leaf, bool) {
-                    uint8_t& number = m_numberOfBranchesOn[leaf];
+                forEachLeaf(strippedTest, false, false, maxTestDepth, [&](Value* leaf, bool) {
+                    uint8_t& number = m_branchCountOn[leaf];
                     number += number < 2;
                     return true;
                 });
-                unsigned sizeOfPath = m_path.size();
+                unsigned pathSize = m_path.size();
                 unsigned numberOfUpsilons = m_upsilonsOnPath.size();
                 unsigned numberOfSets = m_setsOnPath.size();
-                unsigned numberOfPhis = m_valuesOfPhisOnEdge.size();
+                unsigned numberOfPhis = m_phiValuesOnEdge.size();
                 for (unsigned arm = 0; arm < 2; ++arm) {
                     m_facts.append(Fact { strippedTest, !arm != testIsNegated, indexOfFact });
-                    auto& steps = path.stepsBehindUndecidedTest[arm];
-                    unsigned costOfArm = costOfPath;
+                    auto& steps = path.stepsAfterUndecidedTest[arm];
+                    unsigned branchCost = pathCost;
                     unsigned numberOfSteps = 0;
-                    followDecidedTests(predecessor, undecided->successorBlock(arm), m_facts.size(), costOfArm, steps, numberOfSteps);
+                    followDecidedTests(predecessor, undecided->successorBlock(arm), m_facts.size(), branchCost, steps, numberOfSteps);
                     steps.shrink(numberOfSteps);
-                    m_path.shrink(sizeOfPath);
+                    m_path.shrink(pathSize);
                     m_upsilonsOnPath.shrink(numberOfUpsilons);
                     m_setsOnPath.shrink(numberOfSets);
-                    m_valuesOfPhisOnEdge.shrink(numberOfPhis);
+                    m_phiValuesOnEdge.shrink(numberOfPhis);
                 }
-                if (!path.stepsBehindUndecidedTest[0].isEmpty() || !path.stepsBehindUndecidedTest[1].isEmpty()) {
+                if (!path.stepsAfterUndecidedTest[0].isEmpty() || !path.stepsAfterUndecidedTest[1].isEmpty()) {
                     path.steps.append(Step { undecided, Outcome::Unknown });
-                    numberOfStepsToLastTest = path.steps.size();
+                    stepsToLastTest = path.steps.size();
                 }
             }
         }
-        if (!numberOfStepsToLastTest)
+        if (!stepsToLastTest)
             return nullptr;
-        path.steps.shrink(numberOfStepsToLastTest);
+        path.steps.shrink(stepsToLastTest);
         m_paths.append(WTF::move(path));
-        m_indexOfPathBehind[predecessor] = m_paths.size();
+        m_pathAfterIndex[predecessor] = m_paths.size();
         return &m_paths.last();
     }
 
     template<size_t inlineCapacity>
-    BasicBlock* followDecidedTests(BasicBlock* predecessor, BasicBlock* next, unsigned indexOfFact, unsigned& costOfPath, Vector<Step, inlineCapacity>& steps, unsigned& numberOfStepsToLastTest)
+    BasicBlock* followDecidedTests(BasicBlock* predecessor, BasicBlock* next, unsigned indexOfFact, unsigned& pathCost, Vector<Step, inlineCapacity>& steps, unsigned& stepsToLastTest)
     {
         while (m_path.size() < maxBlocksOnPath) {
             if (next == predecessor || m_path.contains(next) || (!m_path.isEmpty() && isLoopHeader(next)))
@@ -519,11 +519,11 @@ private:
                 continue;
             }
             bool jumps = next->last()->opcode() == Jump;
-            std::optional<unsigned> cost = costOfCopyOnPath(next);
+            std::optional<unsigned> cost = pathCopyCost(next);
             if (!cost || (*cost && predecessor->frequency() * maxRatioOfTailToLikelyPredecessor < next->frequency()))
                 break;
-            costOfPath += *cost;
-            if (costOfPath > maxCostOfPath)
+            pathCost += *cost;
+            if (pathCost > maxPathCost)
                 break;
             enter(next);
             if (jumps) {
@@ -531,11 +531,11 @@ private:
                 next = next->successorBlock(0);
                 continue;
             }
-            std::optional<bool> isTaken = outcomeOfTest(next, indexOfFact, next->numPredecessors() <= maxPredecessorsToAskFactsFor);
+            std::optional<bool> isTaken = evaluateTest(next, indexOfFact, next->numPredecessors() <= maxPredecessorsForFactQueries);
             if (!isTaken)
                 return next;
             steps.append(Step { next, *isTaken ? Outcome::Taken : Outcome::NotTaken });
-            numberOfStepsToLastTest = steps.size();
+            stepsToLastTest = steps.size();
             next = next->successorBlock(*isTaken ? 0 : 1);
         }
         return nullptr;
@@ -557,8 +557,8 @@ private:
             VariableValue* set = m_setsOnPath[i];
             if (set->variable() != get->variable())
                 continue;
-            size_t positionOfSet = m_path.find(set->owner);
-            if (positionOfSet == notFound || positionOfSet < position)
+            size_t setPosition = m_path.find(set->owner);
+            if (setPosition == notFound || setPosition < position)
                 return set->child(0);
         }
         return nullptr;
@@ -575,9 +575,9 @@ private:
                 continue;
             }
             Value* phi = std::exchange(value, nullptr);
-            for (unsigned i = m_valuesOfPhisOnEdge.size(); i--;) {
-                if (m_valuesOfPhisOnEdge[i].first == phi) {
-                    value = m_valuesOfPhisOnEdge[i].second;
+            for (unsigned i = m_phiValuesOnEdge.size(); i--;) {
+                if (m_phiValuesOnEdge[i].first == phi) {
+                    value = m_phiValuesOnEdge[i].second;
                     break;
                 }
             }
@@ -585,11 +585,11 @@ private:
         return value;
     }
 
-    std::pair<Value*, bool> withoutNegations(Value* value, bool isSeenFromEdge)
+    std::pair<Value*, bool> withoutNegations(Value* value, bool isValueOnEdge)
     {
         bool isNegated = false;
         for (;;) {
-            if (isSeenFromEdge)
+            if (isValueOnEdge)
                 value = onEdge(value);
             if (!value)
                 break;
@@ -640,31 +640,31 @@ private:
         }
     }
 
-    bool childrenAreSameOnEdge(Value* seenFromEdge, Value* other, unsigned depth)
+    bool childrenAreSameOnEdge(Value* valueOnEdge, Value* other, unsigned depth)
     {
-        if (!depth || seenFromEdge->numChildren() != other->numChildren())
+        if (!depth || valueOnEdge->numChildren() != other->numChildren())
             return false;
-        for (unsigned i = 0; i < seenFromEdge->numChildren(); ++i) {
-            if (!isSameOnEdge(seenFromEdge->child(i), other->child(i), depth - 1))
+        for (unsigned i = 0; i < valueOnEdge->numChildren(); ++i) {
+            if (!isSameOnEdge(valueOnEdge->child(i), other->child(i), depth - 1))
                 return false;
         }
         return true;
     }
 
-    bool isSameOnEdge(Value* seenFromEdge, Value* other, unsigned depth)
+    bool isSameOnEdge(Value* valueOnEdge, Value* other, unsigned depth)
     {
-        seenFromEdge = onEdge(seenFromEdge);
-        if (!seenFromEdge)
+        valueOnEdge = onEdge(valueOnEdge);
+        if (!valueOnEdge)
             return false;
-        if (seenFromEdge == other)
+        if (valueOnEdge == other)
             return true;
-        if (seenFromEdge->type() != other->type())
+        if (valueOnEdge->type() != other->type())
             return false;
-        if (seenFromEdge->hasInt() || other->hasInt())
-            return seenFromEdge->hasInt() && other->hasInt() && seenFromEdge->asInt() == other->asInt();
-        if (seenFromEdge->kind() != other->kind() || !isPureIntegerOperation(seenFromEdge->opcode()))
+        if (valueOnEdge->hasInt() || other->hasInt())
+            return valueOnEdge->hasInt() && other->hasInt() && valueOnEdge->asInt() == other->asInt();
+        if (valueOnEdge->kind() != other->kind() || !isPureIntegerOperation(valueOnEdge->opcode()))
             return false;
-        return childrenAreSameOnEdge(seenFromEdge, other, depth);
+        return childrenAreSameOnEdge(valueOnEdge, other, depth);
     }
 
     bool isBoxedInt32OnEdge(Value* value)
@@ -767,21 +767,21 @@ private:
     }
 
     template<typename Functor>
-    bool forEachLeaf(Value* value, bool isSeenFromEdge, bool isReplacedOnEdge, unsigned depth, const Functor& functor)
+    bool forEachLeaf(Value* value, bool isValueOnEdge, bool isReplacedOnEdge, unsigned depth, const Functor& functor)
     {
-        if (isSeenFromEdge) {
-            Value* seenFromEdge = onEdge(value);
-            if (!seenFromEdge)
+        if (isValueOnEdge) {
+            Value* valueOnEdge = onEdge(value);
+            if (!valueOnEdge)
                 return false;
-            isReplacedOnEdge |= seenFromEdge != value;
-            value = seenFromEdge;
+            isReplacedOnEdge |= valueOnEdge != value;
+            value = valueOnEdge;
         }
         if (value->isConstant())
             return true;
         if (!depth || !isPureIntegerOperation(value->opcode()))
             return functor(value, isReplacedOnEdge);
         for (Value* child : value->children()) {
-            if (!forEachLeaf(child, isSeenFromEdge, isReplacedOnEdge, depth - 1, functor))
+            if (!forEachLeaf(child, isValueOnEdge, isReplacedOnEdge, depth - 1, functor))
                 return false;
         }
         return true;
@@ -789,25 +789,25 @@ private:
 
     bool mayBeDecidedByFact(Value* strippedTest, bool isReplacedOnEdge)
     {
-        return forEachLeaf(strippedTest, true, isReplacedOnEdge, maxDepthOfTest, [&](Value* leaf, bool isReplaced) {
-            return m_numberOfBranchesOn[leaf] >= (isReplaced ? 1 : 2);
+        return forEachLeaf(strippedTest, true, isReplacedOnEdge, maxTestDepth, [&](Value* leaf, bool isReplaced) {
+            return m_branchCountOn[leaf] >= (isReplaced ? 1 : 2);
         });
     }
 
     void walkBlocks()
     {
-        m_numberOfBranchesOn.resize(m_proc.values().size());
-        m_indexOfFactIn.resize(m_proc.size());
+        m_branchCountOn.resize(m_proc.values().size());
+        m_factIndexInBlock.resize(m_proc.size());
         m_isLoopHeader.resize(m_proc.size());
-        enum : uint8_t { IsNotReached, IsOnTheWay, IsLeft };
+        enum : uint8_t { IsNotReached, IsOnPath, IsUnchanged };
         IndexMap<BasicBlock*, uint8_t> state(m_proc.size(), static_cast<uint8_t>(IsNotReached));
         Vector<std::pair<BasicBlock*, unsigned>, 64> way;
         auto reach = [&](BasicBlock* block) {
-            state[block] = IsOnTheWay;
+            state[block] = IsOnPath;
             way.append({ block, 0 });
             if (block->last()->opcode() == Branch) {
-                forEachLeaf(withoutNegations(block->last()->child(0), false).first, false, false, maxDepthOfTest, [&](Value* leaf, bool) {
-                    uint8_t& number = m_numberOfBranchesOn[leaf];
+                forEachLeaf(withoutNegations(block->last()->child(0), false).first, false, false, maxTestDepth, [&](Value* leaf, bool) {
+                    uint8_t& number = m_branchCountOn[leaf];
                     number += number < 2;
                     return true;
                 });
@@ -815,50 +815,50 @@ private:
             if (block->numPredecessors() != 1)
                 return;
             BasicBlock* from = block->predecessor(0);
-            unsigned index = m_indexOfFactIn[from];
+            unsigned index = m_factIndexInBlock[from];
             if (from->last()->opcode() == Branch && from->successorBlock(0) != from->successorBlock(1)) {
                 auto [condition, conditionIsNegated] = withoutNegations(from->last()->child(0), false);
                 m_facts.append(Fact { condition, (from->successorBlock(0) == block) != conditionIsNegated, index });
                 index = m_facts.size();
             }
-            m_indexOfFactIn[block] = index;
+            m_factIndexInBlock[block] = index;
         };
         reach(m_proc.at(0));
         while (!way.isEmpty()) {
             auto& [block, indexOfSuccessor] = way.last();
             if (indexOfSuccessor == block->numSuccessors()) {
-                state[block] = IsLeft;
+                state[block] = IsUnchanged;
                 way.removeLast();
                 continue;
             }
             BasicBlock* successor = block->successorBlock(indexOfSuccessor++);
-            if (state[successor] == IsOnTheWay)
+            if (state[successor] == IsOnPath)
                 m_isLoopHeader[successor] = true;
             else if (state[successor] == IsNotReached)
                 reach(successor);
         }
     }
 
-    std::optional<bool> outcomeOfTest(BasicBlock* tail, unsigned indexOfFact, bool mayAskFacts)
+    std::optional<bool> evaluateTest(BasicBlock* tail, unsigned indexOfFact, bool mayQueryFacts)
     {
         Value* test = tail->last()->child(0);
-        if (std::optional<int64_t> constant = constantOnEdge(test, maxDepthOfTest))
+        if (std::optional<int64_t> constant = constantOnEdge(test, maxTestDepth))
             return !!*constant;
-        if (!mayAskFacts)
+        if (!mayQueryFacts)
             return std::nullopt;
         auto [strippedTest, testIsNegated] = withoutNegations(test, true);
         if (!strippedTest)
             return std::nullopt;
         if (!indexOfFact || !mayBeDecidedByFact(strippedTest, strippedTest != withoutNegations(test, false).first))
             return std::nullopt;
-        unsigned numberOfFactsAsked = 0;
-        for (unsigned index = indexOfFact; index && numberOfFactsAsked < maxFactsToAsk; index = m_facts[index - 1].indexOfNext, ++numberOfFactsAsked) {
+        unsigned factQueryCount = 0;
+        for (unsigned index = indexOfFact; index && factQueryCount < maxFactQueries; index = m_facts[index - 1].indexOfNext, ++factQueryCount) {
             Value* condition = m_facts[index - 1].condition;
             bool conditionHolds = m_facts[index - 1].holds;
-            if (isSameOnEdge(strippedTest, condition, maxDepthOfTest))
+            if (isSameOnEdge(strippedTest, condition, maxTestDepth))
                 return conditionHolds != testIsNegated;
             bool areOpposites = (strippedTest->opcode() == Equal && condition->opcode() == NotEqual) || (strippedTest->opcode() == NotEqual && condition->opcode() == Equal);
-            if (areOpposites && strippedTest->child(0)->type() == condition->child(0)->type() && childrenAreSameOnEdge(strippedTest, condition, maxDepthOfTest))
+            if (areOpposites && strippedTest->child(0)->type() == condition->child(0)->type() && childrenAreSameOnEdge(strippedTest, condition, maxTestDepth))
                 return conditionHolds == testIsNegated;
         }
         return std::nullopt;
@@ -868,21 +868,21 @@ private:
     Vector<UpsilonValue*, 16> m_upsilonsOnPath;
     Vector<VariableValue*, 8> m_setsOnPath;
     Vector<Value*, 8> m_test;
-    Vector<std::pair<Value*, Value*>, 8> m_valuesOfPhisOnEdge;
-    IndexMap<BasicBlock*, uint8_t> m_costOfCopyOnPath;
-    Vector<bool, 32> m_isNeededBehindDecidedTest;
-    Vector<Value*, 32> m_usedBehindDecidedTest;
+    Vector<std::pair<Value*, Value*>, 8> m_phiValuesOnEdge;
+    IndexMap<BasicBlock*, uint8_t> m_pathCopyCost;
+    Vector<bool, 32> m_isNeededAfterDecidedTest;
+    Vector<Value*, 32> m_usedAfterDecidedTest;
     struct Fact {
         Value* condition;
         bool holds;
         unsigned indexOfNext;
     };
     Vector<Fact> m_facts;
-    IndexMap<BasicBlock*, unsigned> m_indexOfFactIn;
+    IndexMap<BasicBlock*, unsigned> m_factIndexInBlock;
     IndexMap<BasicBlock*, bool> m_isLoopHeader;
-    IndexMap<Value*, uint8_t> m_numberOfBranchesOn;
+    IndexMap<Value*, uint8_t> m_branchCountOn;
     Vector<Path> m_paths;
-    IndexMap<BasicBlock*, unsigned> m_indexOfPathBehind;
+    IndexMap<BasicBlock*, unsigned> m_pathAfterIndex;
 #endif
 
     Procedure& m_proc;

@@ -108,7 +108,7 @@ bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* thisO
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
     if (thisObject->type() == ObjectType) {
-        if (std::optional<bool> isOwn = AOT::Typed::hasOwnPropertyOfCompiledObject(thisObject, propertyName.uid()))
+        if (std::optional<bool> isOwn = AOT::Typed::compiledObjectHasOwnProperty(thisObject, propertyName.uid()))
             return *isOwn;
     }
 #endif

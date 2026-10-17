@@ -18,7 +18,6 @@
 
 namespace JSC { namespace AOT {
 
-// To list what it and those it inherits from have takes no code of the program.
 static bool isOrdinaryWithOrdinaryPrototypes(JSObject* object)
 {
     for (; object; object = object->getPrototypeDirect().getObject()) {
@@ -29,11 +28,6 @@ static bool isOrdinaryWithOrdinaryPrototypes(JSObject* object)
     return true;
 }
 
-// The keys `for..in` visits, each of which it asks about again when its turn comes (HasEnumerableProperty).
-//
-// A list that is shared until it is written to says more: the keys are the own enumerable properties of an object, all of them named by its
-// Structure or, of an object of the program, by its Structure and its key order. So each is there for as long as those stay. It is the
-// list Object.keys yields, which the engine keeps for the Structure and the run time for the key order.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -61,13 +55,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
             OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly()));
         }
         if (inheritsNone && ofProgram->extraProperties()) {
-            ofProgram->knowExtraPropertiesByStructure(vm);
-            if (JSArray* keys = ofProgram->tryListKeysWithExtraProperties(globalObject))
+            ofProgram->specializeStructureForExtraProperties(vm);
+            if (JSArray* keys = ofProgram->tryCreateKeysArrayWithExtraProperties(globalObject))
                 OPERATION_RETURN(scope, keys);
         }
     }
 
-    // The engine keeps it for the Structure where it can.
     auto* enumerator = propertyNameEnumerator(globalObject, object);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     uint32_t indexedLength = enumerator->indexedLength();
@@ -151,8 +144,6 @@ namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/language.def.
-
 std::optional<Writes> writesOfInlineLanguage(InlineBuiltin which, std::span<const Type>)
 {
     switch (which) {
@@ -160,14 +151,11 @@ std::optional<Writes> writesOfInlineLanguage(InlineBuiltin which, std::span<cons
         return Writes::Pure;
     case InlineBuiltin::GetSuperConstructor:
         return Writes::Nothing;
-    // The structure it compares with is looked up on first use.
     case InlineBuiltin::HasOriginalStructure:
         return Writes::RuntimeState;
-    // Of anything but an array of ArrayType: HasProperty, Get.
     case InlineBuiltin::ArrayHasIndex:
     case InlineBuiltin::ArrayGetIndex:
     case InlineBuiltin::Call:
-    // A proxy answers with code of the program.
     case InlineBuiltin::ForInKeys:
     case InlineBuiltin::HasEnumerableProperty:
     case InlineBuiltin::Increment:
@@ -183,18 +171,17 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
     auto& type = typeOf(result);
     auto& arguments = value.arguments;
     switch (which) {
-    // `valueOf` and the like.
     case InlineBuiltin::This: {
         auto& receiver = typeOf(value.child(0));
         if (!receiver.hasCells())
-            return yieldValue(value.child(0), type);
-        return ensure(nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)), receiver.withoutPrimitives(Primitive::UndefinedOrNull), type);
+            return valueResult(value.child(0), type);
+        return ensure(nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)), receiver.withoutPrimitives(Primitive::UndefinedOrNull), type);
     }
     case InlineBuiltin::HasOriginalStructure: {
-        if (m_isCarriedOutByBranch.get(result.index()))
-            return yieldBoolean(boolean(false), type);
+        if (m_isFusedWithBranch.get(result.index()))
+            return booleanResult(boolean(false), type);
         if (value.engineClass() == Format::none)
-            return yieldBoolean(boolean(false), type);
+            return booleanResult(boolean(false), type);
         auto& engineClass = m_builtins.classes()[value.engineClass()];
         auto holdsOf = [&](CellPointer cell) {
             Word32 isOriginal = hasOriginalStructure(cell, engineClass);
@@ -204,11 +191,11 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
         };
         Operand operand = get(arguments[0]);
         if (operand.rep == Rep::Cell)
-            return yieldBoolean(holdsOf(operand.as<CellPointer>()), type);
+            return booleanResult(holdsOf(operand.as<CellPointer>()), type);
         if (operand.rep != Rep::JSValue)
-            return yieldBoolean(boolean(false), type);
+            return booleanResult(boolean(false), type);
         Boxed boxed = operand.as<Boxed>();
-        return yieldBoolean(either<Word32>(isCell(boxed), [&] {
+        return booleanResult(either<Word32>(isCell(boxed), [&] {
             return holdsOf(asCell(boxed));
         }, [&] {
             return boolean(false);
@@ -216,12 +203,12 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
     }
     case InlineBuiltin::GetSuperConstructor: {
         CellPointer classObject = asCell(in<Boxed>(arguments[0]));
-        LBasicBlock keepsItItself = newColdBlock();
+        LBasicBlock storedInCell = newColdBlock();
         Join join(m_out, Rep::JSValue, Int64);
         Boxed parent(m_out.load64(structureOf(classObject.value()), m_heaps.Structure_prototype));
-        orElse(isNotEmpty(parent), keepsItItself);
+        orElse(isNotEmpty(parent), storedInCell);
         join.add(parent);
-        m_out.appendTo(keepsItItself);
+        m_out.appendTo(storedInCell);
         join.add(AOT_TYPED_OPERATION(GetSuperConstructor, classObject));
         return ensure(join.finish().as<Boxed>(), m_program.at(m_program.types.anything), type);
     }
@@ -231,7 +218,7 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
     case InlineBuiltin::Call: {
         Arguments passed;
         passed.append(arguments.span().subspan(2));
-        return ensure(callGenerally(in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), passed), type);
+        return ensure(callGeneric(in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), passed), type);
     }
     case InlineBuiltin::ForInKeys:
         return lowerForInKeys(result, value);
@@ -252,12 +239,11 @@ ValueID Lowering::originOf(ValueID id) const
     return id;
 }
 
-// See operationAOTTypedForInKeys(). Where the list is a shared one, what the keys go by is kept for the loop.
 Operand Lowering::lowerForInKeys(ValueID result, const Value& value)
 {
     Boxed object = in<Boxed>(value.arguments[0]);
     CellPointer keys = listKeysForIn(object, typeOf(value.arguments[0]));
-    Word32 isShared = hasBits(indexingModeOfAnyArray(keys, CopyOnWrite), CopyOnWrite);
+    Word32 isShared = hasBits(anyArrayIndexingMode(keys, CopyOnWrite), CopyOnWrite);
     Word32 structureID = either<Word32>(isShared, [&] {
         return loadField<Word32>(asCell(object), m_heaps.JSCell_structureID);
     }, [&] {
@@ -270,7 +256,7 @@ Operand Lowering::lowerForInKeys(ValueID result, const Value& value)
     });
     Word32 finalStructureID = word32(0);
     Integer inlineCapacity = integer(0);
-    if (isAskedForFinalObject(result)) {
+    if (isRequestedForFinalObject(result)) {
         Word32 isFinal = either<Word32>(isShared, [&] {
             return Word32(isCellOfType(asCell(object).value(), FinalObjectType));
         }, [&] {
@@ -305,7 +291,7 @@ bool Lowering::isForInKeys(const Value& value) const
     return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ForInKeys;
 }
 
-bool Lowering::isTestOfForInStamp(const Value& value) const
+bool Lowering::isForInStampCheck(const Value& value) const
 {
     if (value.opcode != Opcode::CallBuiltin || value.arguments.size() != 3 || (m_function.at(value.arguments[1]).opcode != Opcode::Undefined && m_function.at(value.arguments[1]).opcode != Opcode::Boolean))
         return false;
@@ -313,10 +299,10 @@ bool Lowering::isTestOfForInStamp(const Value& value) const
     return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::HasEnumerableProperty;
 }
 
-bool Lowering::isAskedForFinalObject(ValueID keys) const
+bool Lowering::isRequestedForFinalObject(ValueID keys) const
 {
     for (auto& value : m_function.values) {
-        if (isTestOfForInStamp(value) && m_function.at(value.arguments[1]).opcode == Opcode::Boolean && originOf(value.arguments[2]) == keys)
+        if (isForInStampCheck(value) && m_function.at(value.arguments[1]).opcode == Opcode::Boolean && originOf(value.arguments[2]) == keys)
             return true;
     }
     return false;
@@ -362,14 +348,12 @@ CellPointer Lowering::isAsListedOrElse(const ForInStamp& stamp, Boxed object, LB
     return cell;
 }
 
-// With the list the key was read from, which is of the same object (Preparation::linkForInKeys()): the key is there while the object is as it
-// was when the list was made.
 Operand Lowering::lowerHasEnumerableProperty(ValueID result, const Value& value)
 {
     auto& type = typeOf(result);
-    if (m_isCarriedOutByBranch.get(result.index()))
-        return yieldBoolean(boolean(false), type);
-    if (isTestOfForInStamp(value)) {
+    if (m_isFusedWithBranch.get(result.index()))
+        return booleanResult(boolean(false), type);
+    if (isForInStampCheck(value)) {
         LBasicBlock isAsListed = m_out.newBlock();
         LBasicBlock isNot = m_out.newBlock();
         Join join(m_out, Rep::Int32, Int32);
@@ -378,21 +362,20 @@ Operand Lowering::lowerHasEnumerableProperty(ValueID result, const Value& value)
         join.add(boolean(true));
         m_out.appendTo(isNot);
         join.add(boolean(false));
-        return yieldBoolean(join.finish().as<Word32>(), type);
+        return booleanResult(join.finish().as<Word32>(), type);
     }
     Boxed object = in<Boxed>(value.arguments[0]);
-    auto generally = [&] {
+    auto genericPath = [&] {
         return AOT_TYPED_OPERATION(HasEnumerableProperty, object, in<Boxed>(value.arguments[1]));
     };
-    // Not where the list has come by the frame of a coroutine: what was kept with it has not.
     const ForInStamp* stamp = nullptr;
     for (auto& candidate : m_forInStamps) {
         if (value.arguments.size() == 3 && candidate.keys == originOf(value.arguments[2]))
             stamp = &candidate;
     }
     if (!stamp) {
-        Word32 answer = generally();
-        Operand yielded = yieldBoolean(answer, type);
+        Word32 answer = genericPath();
+        Operand yielded = booleanResult(answer, type);
         m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
         return yielded;
     }
@@ -401,30 +384,27 @@ Operand Lowering::lowerHasEnumerableProperty(ValueID result, const Value& value)
     isAsListedOrElse(*stamp, object, slowPath);
     join.add(boolean(true));
     m_out.appendTo(slowPath);
-    join.add(generally());
+    join.add(genericPath());
     Word32 answer = join.finish().as<Word32>();
-    // The loop only asks whether it is true: lowerToBoolean() finds that here, and nothing is boxed.
-    Operand yielded = yieldBoolean(answer, type);
+    Operand yielded = booleanResult(answer, type);
     m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
     return yielded;
 }
 
-// HasProperty(object, index) and Get(object, index). An element of an array of ArrayType is looked at in place: such an array has no
-// accessors, and inherits no elements.
-bool Lowering::standsInLoopOfItsOwnFunction(const Value& value) const
+bool Lowering::isInLoopOfOriginalFunction(const Value& value) const
 {
     unsigned loop = m_innermostLoop[m_currentBlockID.index()];
     if (loop == noLoop)
         return false;
-    bool isOfSameFrame = false;
+    bool isInSameFrame = false;
     m_loops[loop].blocks.forEachSetBit([&](size_t block) {
         for (ValueID id : m_function.blocks[block].values)
-            isOfSameFrame |= m_function.at(id).opcode == Opcode::LoopHint && m_function.at(id).inlineFrame == value.inlineFrame;
+            isInSameFrame |= m_function.at(id).opcode == Opcode::LoopHint && m_function.at(id).inlineFrame == value.inlineFrame;
     });
-    return isOfSameFrame;
+    return isInSameFrame;
 }
 
-ValueID Lowering::getIndexBehindBranchOn(const Value& hasIndex)
+ValueID Lowering::getIndexAfterBranchOn(const Value& hasIndex)
 {
     auto& terminator = m_currentBlock->terminator;
     if (terminator.kind != TerminatorKind::Branch || terminator.value != m_currentBlock->values[m_currentIndexInBlock] || &m_function.at(terminator.value) != &hasIndex)
@@ -449,15 +429,14 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
     bool isGet = which == InlineBuiltin::ArrayGetIndex;
     Rep rep = repOf(type);
     auto& booleanType = m_program.at(m_program.types.boolean);
-    // A primitive by its type, once a callback is inlined. A test around this keeps control away: it only has to be code.
     if (Rep kept = get(object).rep; kept != Rep::Cell && kept != Rep::JSValue) {
         if (isGet)
-            return ensure(getByValGenerally(object, key), type);
+            return ensure(genericGetByVal(object, key), type);
         return ensure(AOT_TYPED_OPERATION(HasKey, in<Boxed>(object), in<Boxed>(key)), booleanType, type);
     }
     if (auto found = m_elementsFoundByHasIndex.get(m_currentBlock->values[m_currentIndexInBlock].index()); isGet && found.element && found.object == get(object).value && found.key == get(key).value) {
         Boxed element(found.element);
-        if (Options::validateAOTTypedFacts() && found.isAlwaysThere) [[unlikely]] {
+        if (Options::validateAOTTypedFacts() && found.isAlwaysPresent) [[unlikely]] {
             Boxed base = in<Boxed>(object);
             LBasicBlock isCellCase = m_out.newBlock();
             LBasicBlock isPlain = m_out.newBlock();
@@ -465,44 +444,44 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
             LBasicBlock continuation = m_out.newBlock();
             m_out.branch(isCell(base).value(), unsure(isCellCase), unsure(continuation));
             m_out.appendTo(isCellCase);
-            m_out.branch(logicalAnd(isPlainArray(asCell(base)), below(indexingModeOfAnyArray(asCell(base), IndexingShapeMask), word32(ArrayStorageShape))).value(), unsure(isPlain), unsure(continuation));
+            m_out.branch(logicalAnd(isPlainArray(asCell(base)), below(anyArrayIndexingMode(asCell(base), IndexingShapeMask), word32(ArrayStorageShape))).value(), unsure(isPlain), unsure(continuation));
             m_out.appendTo(isPlain);
-            Boxed general = getByValGenerally(object, key);
+            Boxed general = genericGetByVal(object, key);
             Word32 isSame = logicalOr(equal(element, general), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(general.value()))));
             m_out.branch(isSame.value(), usually(continuation), rarely(differs));
             m_out.appendTo(differs);
-            AOT_TYPED_OPERATION(FactDoesNotHold, element, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+            AOT_TYPED_OPERATION(FactViolated, element, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             return ensure(element, type);
         }
         if (Options::validateAOTTypedFacts()) [[unlikely]] {
-            Boxed general = getByValGenerally(object, key);
+            Boxed general = genericGetByVal(object, key);
             LBasicBlock differs = newColdBlock();
             LBasicBlock continuation = m_out.newBlock();
             Word32 isSame = logicalOr(equal(element, general), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(general.value()))));
             m_out.branch(logicalOr(logicalNot(isNotEmpty(element)), isSame).value(), usually(continuation), rarely(differs));
             m_out.appendTo(differs);
-            AOT_TYPED_OPERATION(FactDoesNotHold, element, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+            AOT_TYPED_OPERATION(FactViolated, element, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             return ensure(general, type);
         }
-        if (found.isAlwaysThere)
+        if (found.isAlwaysPresent)
             return ensure(element, type);
-        LBasicBlock wasNotLookedAt = newColdBlock();
+        LBasicBlock wasNotVisited = newColdBlock();
         Join join(m_out, rep, b3TypeOf(rep));
-        orElse(isNotEmpty(element), wasNotLookedAt);
+        orElse(isNotEmpty(element), wasNotVisited);
         join.add(ensure(element, type));
-        m_out.appendTo(wasNotLookedAt);
-        join.add(ensure(getByValGenerally(object, key), type));
+        m_out.appendTo(wasNotVisited);
+        join.add(ensure(genericGetByVal(object, key), type));
         return join.finish();
     }
-    ValueID reader = isGet ? ValueID() : getIndexBehindBranchOn(value);
-    if constexpr (hasStubsForFunctionsWithoutFrame) {
-        static_assert(static_cast<unsigned>(Stub::ElementOrNothing) + 1 == static_cast<unsigned>(Stub::LeafElementOrNothing));
-        if (get(key).rep == Rep::Int64 && (reader || (isGet && &m_function.at(m_currentBlock->values[m_currentIndexInBlock]) == &value && standsInLoopOfItsOwnFunction(value)))) {
-            LValue element = callAllocationStub(Stub::ElementOrNothing, { { in<Boxed>(object).value(), GPRInfo::argumentGPR1 }, { in<Integer>(key).value(), GPRInfo::argumentGPR2 }, { isGet ? undefined().value() : m_out.int64Zero, GPRInfo::argumentGPR3 } }, effectsOfOperation<operationAOTTypedElementOrNothing>(), true);
+    ValueID reader = isGet ? ValueID() : getIndexAfterBranchOn(value);
+    if constexpr (hasFramelessFunctionStubs) {
+        static_assert(static_cast<unsigned>(Stub::ElementOrEmpty) + 1 == static_cast<unsigned>(Stub::LeafElementOrEmpty));
+        if (get(key).rep == Rep::Int64 && (reader || (isGet && &m_function.at(m_currentBlock->values[m_currentIndexInBlock]) == &value && isInLoopOfOriginalFunction(value)))) {
+            LValue element = callAllocationStub(Stub::ElementOrEmpty, { { in<Boxed>(object).value(), GPRInfo::argumentGPR1 }, { in<Integer>(key).value(), GPRInfo::argumentGPR2 }, { isGet ? undefined().value() : m_out.int64Zero, GPRInfo::argumentGPR3 } }, effectsForOperation<operationAOTTypedElementOrEmpty>(), true);
             if (isGet)
                 return ensure(Boxed(element), type);
             m_elementsFoundByHasIndex.set(reader.index(), ElementFound { get(object).value, get(key).value, element, true });
@@ -523,7 +502,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
         orElse(isCell(operand.as<Boxed>()), generic);
     CellPointer array = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
     Integer index = indexOrElse(key, generic);
-    Word32 shape = indexingModeOfAnyArray(array, IndexingShapeMask);
+    Word32 shape = anyArrayIndexingMode(array, IndexingShapeMask);
     LBasicBlock isDouble = m_out.newBlock();
     LBasicBlock isNotDouble = m_out.newBlock();
     m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(isDouble), unsure(isNotDouble));
@@ -555,7 +534,6 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
         join.add(ensure(boolean(true), booleanType, type));
     }
 
-    // What is no array index may be the name of a property.
     m_out.appendTo(absent);
     orElse(isPlainArray(array), generic);
     orElse(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), generic);
@@ -568,7 +546,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
 
     m_out.appendTo(generic);
     if (isGet)
-        join.add(ensure(getByValGenerally(object, key), type));
+        join.add(ensure(genericGetByVal(object, key), type));
     else {
         Operand has = ensure(AOT_TYPED_OPERATION(HasKey, in<Boxed>(object), in<Boxed>(key)), booleanType, type);
         find(m_out.int64Zero);

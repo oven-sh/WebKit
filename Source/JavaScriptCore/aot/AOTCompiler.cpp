@@ -39,7 +39,6 @@ namespace JSC { namespace AOT {
 
 #if CPU(ARM64) || CPU(X86_64)
 
-// The ways out of a block that are not rare are as likely as one another, except that a loop goes around ten times before it is left.
 void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
 {
     constexpr double coldFrequency = 1.0 / 1024;
@@ -47,14 +46,13 @@ void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
     proc.setReachabilityIsFresh();
     B3::CycleForest cycles(proc);
     constexpr double iterations = 10;
-    constexpr double leastFrequency = 1e-6;
-    constexpr double mostFrequency = 1e6;
+    constexpr double minFrequency = 1e-6;
+    constexpr double maxFrequency = 1e6;
 
-    // What a block starts with is its weight among the successors of a branch: see Typed::Lowering::newUnlikelyBlock().
     IndexMap<B3::BasicBlock*, double> weight(proc.size(), 1.0);
-    constexpr double weightOfBlockThatReturns = 0.25;
+    constexpr double returningBlockWeight = 0.25;
     for (B3::BasicBlock* block : proc)
-        weight[block] = std::clamp(block->frequency(), coldFrequency, returnsAreUnlikely && block->last()->opcode() == B3::Return ? weightOfBlockThatReturns : 1.0);
+        weight[block] = std::clamp(block->frequency(), coldFrequency, returnsAreUnlikely && block->last()->opcode() == B3::Return ? returningBlockWeight : 1.0);
 
     IndexMap<B3::BasicBlock*, double> incoming(proc.size(), 0.0);
     Vector<double, 16> entering(FillWith { }, cycles.size(), 0.0);
@@ -64,13 +62,13 @@ void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
     auto& postOrder = cycles.blocksInPostOrder();
     for (unsigned index = postOrder.size(); index--;) {
         B3::BasicBlock* block = postOrder[index];
-        unsigned cycleOfBlock = cycles.innermost(block);
-        double frequency = cycles.isHeader(block) ? entering[cycleOfBlock] * iterations : incoming[block];
-        block->setFrequency(static_cast<float>(std::clamp(frequency, leastFrequency, mostFrequency)));
+        unsigned blockCycle = cycles.innermost(block);
+        double frequency = cycles.isHeader(block) ? entering[blockCycle] * iterations : incoming[block];
+        block->setFrequency(static_cast<float>(std::clamp(frequency, minFrequency, maxFrequency)));
 
         auto send = [&](B3::BasicBlock* successor, double amount) {
             unsigned cycle = cycles.innermost(successor);
-            unsigned common = cycles.nearestCommon(cycleOfBlock, cycle);
+            unsigned common = cycles.nearestCommon(blockCycle, cycle);
             if (cycle == common) {
                 incoming[successor] += amount;
                 return;
@@ -85,49 +83,45 @@ void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
             continue;
         }
 
-        auto shareIfLeavingLoops = [&](B3::BasicBlock* successor) {
+        auto shareWhenLeavingLoops = [&](B3::BasicBlock* successor) {
             double share = 1;
-            for (unsigned left = cycles.depth(cycleOfBlock) - cycles.depth(cycles.nearestCommon(cycleOfBlock, cycles.innermost(successor))); left--;)
+            for (unsigned left = cycles.depth(blockCycle) - cycles.depth(cycles.nearestCommon(blockCycle, cycles.innermost(successor))); left--;)
                 share /= iterations;
             return share;
         };
         double weightStaying = 0;
         double leaving = 0;
-        // What goes the rare ways does not go the others: where the ways meet again no more arrives than has set out.
         double rare = 0;
         for (auto& successor : block->successors()) {
             if (successor.frequency() == B3::FrequencyClass::Rare) {
-                rare += shareIfLeavingLoops(successor.block()) * coldFrequency;
+                rare += shareWhenLeavingLoops(successor.block()) * coldFrequency;
                 continue;
             }
-            if (double share = shareIfLeavingLoops(successor.block()); share < 1)
+            if (double share = shareWhenLeavingLoops(successor.block()); share < 1)
                 leaving += share;
             else
                 weightStaying += weight[successor.block()];
         }
-        double scaleOfLeaving = leaving > 0.5 ? 0.5 / leaving : 1;
-        // A switch may have a thousand rare cases.
+        double leavingScale = leaving > 0.5 ? 0.5 / leaving : 1;
         rare = std::min(rare, 0.5);
         for (auto& successor : block->successors()) {
-            double share = shareIfLeavingLoops(successor.block());
+            double share = shareWhenLeavingLoops(successor.block());
             if (successor.frequency() == B3::FrequencyClass::Rare)
                 share *= coldFrequency;
             else if (share < 1)
-                share *= scaleOfLeaving * (1 - rare);
+                share *= leavingScale * (1 - rare);
             else
-                share = (1 - rare) * (1 - leaving * scaleOfLeaving) * weight[successor.block()] / weightStaying;
+                share = (1 - rare) * (1 - leaving * leavingScale) * weight[successor.block()] / weightStaying;
             send(successor.block(), frequency * share);
         }
     }
 }
 
-// After the frame pointer is set. Leaves the stack pointer at the bottom of the frame. The test falls through: where the frame does not fit it goes to what emitStackOverflow() puts behind the code.
 static constexpr unsigned maxFrameSizeToMoveFirst = 4 * KB;
 
 CCallHelpers::JumpList emitStackCheck(CCallHelpers& jit, unsigned frameSize)
 {
-    // Below the limit lies the reserved zone, so for a frame much smaller than that the stack pointer may move before the test.
-    static_assert(maxFrameSizeToMoveFirst + maxStackTakenWithoutCheck < minimumReservedZoneSize);
+    static_assert(maxFrameSizeToMoveFirst + maxStackUsedWithoutCheck < minimumReservedZoneSize);
     CCallHelpers::Address limit(instanceGPR, Instance::offsetOfSoftStackLimit());
     if (frameSize <= maxFrameSizeToMoveFirst) {
         if (frameSize)
@@ -225,7 +219,7 @@ void dropCollapsibleCallerFrames(CCallHelpers& jit, GPRReg scratch)
 }
 
 #if CPU(ARM64)
-static unsigned numberOfSavesMovedWithStackPointer(const RegisterAtOffsetList& list)
+static unsigned savesMovedWithStackPointerCount(const RegisterAtOffsetList& list)
 {
     return list.registerCount() > 1 && list.at(0).reg().isGPR() == list.at(1).reg().isGPR() ? 2 : 1;
 }
@@ -239,7 +233,7 @@ void pushCalleeSaves(CCallHelpers& jit, const RegisterAtOffsetList& list)
     int size = -static_cast<int>(list.at(0).offset());
     RELEASE_ASSERT(size > 0 && !(size % stackAlignmentBytes()));
     Reg first = list.at(0).reg();
-    size_t i = numberOfSavesMovedWithStackPointer(list);
+    size_t i = savesMovedWithStackPointerCount(list);
     if (i == 2 && first.isGPR())
         jit.m_assembler.stp<64>(first.gpr(), list.at(1).reg().gpr(), sp, PairPreIndex(-size));
     else if (i == 2)
@@ -265,7 +259,7 @@ void popCalleeSaves(CCallHelpers& jit, const RegisterAtOffsetList& list)
     constexpr auto sp = CCallHelpers::stackPointerRegister;
     int size = -static_cast<int>(list.at(0).offset());
     Reg first = list.at(0).reg();
-    size_t moved = numberOfSavesMovedWithStackPointer(list);
+    size_t moved = savesMovedWithStackPointerCount(list);
     size_t i = moved;
     AssemblyHelpers::LoadRegSpooler spooler(jit, GPRInfo::callFrameRegister);
     for (; i < count && list.at(i).reg().isGPR(); ++i)
@@ -300,7 +294,6 @@ void emitStackOverflow(CCallHelpers& jit, StubCalls& stubCalls, const CCallHelpe
         stubCalls.tailCall(jit, Stub::ThrowStackOverflowAtPrologue);
 }
 
-// What branch compaction saved is left behind the code as nops: see LinkBuffer::copyCompactAndLinkCode(). A breakpoint at the end that no call comes back to is not reached.
 void dropPaddingAtEnd(CompiledFunctionInfo& info, const void* start, B3::Air::Code& code)
 {
 #if CPU(ARM64)

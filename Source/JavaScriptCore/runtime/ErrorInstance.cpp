@@ -204,7 +204,7 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
 void ErrorInstance::materializeStackTrace()
 {
     auto stackTrace = makeUnique<Vector<StackFrame>>();
-    unsigned onTop = m_returnAddresses->hasFrameOfHostFunctionOnTop;
+    unsigned onTop = m_returnAddresses->hasHostFunctionFrameOnTop;
     if (onTop)
         stackTrace->append(m_stackTrace->span().first(onTop));
     StackFrame::appendTypedFrames(*m_returnAddresses, *stackTrace);
@@ -266,7 +266,7 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     if (vm.useImmutableIntrinsics) [[unlikely]] {
         if (useCurrentFrame) {
             if (std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit())
-                returnAddresses = subclassCaller ? vm.interpreter.tryGetStackTraceBehindConstructors(this, *stackTraceLimit, stackTrace, subclassCaller) : vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
+                returnAddresses = subclassCaller ? vm.interpreter.tryGetStackTraceSkippingConstructors(this, *stackTraceLimit, stackTrace, subclassCaller) : vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
         }
     }
 #endif
@@ -282,7 +282,7 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     String messageWithSource = message;
 
     if (hasSourceAppender() && (m_returnAddresses || (m_stackTrace && !m_stackTrace->isEmpty()))) {
-        if (auto quote = quoteSourceWithoutText(vm, vm.topCallFrame)) {
+        if (auto quote = quoteSourceWithoutSourceText(vm, vm.topCallFrame)) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
             RuntimeType type = runtimeTypeForCause();
@@ -639,7 +639,7 @@ static bool isErrorInfoProperty(VM& vm, PropertyName propertyName)
         || propertyName == vm.propertyNames->stack;
 }
 
-bool ErrorInstance::isMadeWhenAskedFor(VM& vm, PropertyName propertyName)
+bool ErrorInstance::isLazilyMaterialized(VM& vm, PropertyName propertyName)
 {
     return isErrorInfoProperty(vm, propertyName);
 }

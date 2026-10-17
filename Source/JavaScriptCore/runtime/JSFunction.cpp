@@ -219,7 +219,7 @@ String JSFunction::name(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
 #if ENABLE(AOT)
         if (executable->isSharedByAOTTypedClosures())
-            return AOT::nameOfTypedClosure(this);
+            return AOT::typedClosureName(this);
 #endif
         return executable->name();
     }
@@ -238,7 +238,7 @@ String JSFunction::nameWithoutGC(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
 #if ENABLE(AOT)
         if (executable->isSharedByAOTTypedClosures())
-            return AOT::nameOfTypedClosure(this);
+            return AOT::typedClosureName(this);
 #endif
         return executable->name();
     }
@@ -329,11 +329,11 @@ CallData JSFunction::getCallData(JSCell* cell)
 
 static constexpr unsigned prototypeAttributesForNonClass = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
 
-static inline JSObject* notePrototypeOfGeneratorFunction(VM& vm, JSFunction* function, JSObject* prototype)
+static inline JSObject* recordGeneratorFunctionPrototype(VM& vm, JSFunction* function, JSObject* prototype)
 {
     if (vm.auditsImmutableIntrinsics()) [[unlikely]] {
         prototype->putDirect(vm, vm.propertyNames->builtinNames().generatorPrivateName(), function, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        prototype->fixProperties(vm, JSObject::FixedObject::BecomesNonExtensible);
+        prototype->lockProperties(vm, JSObject::LockedObjectExtensibility::BecomesNonExtensible);
     }
     return prototype;
 }
@@ -345,11 +345,11 @@ static inline JSObject* constructPrototypeObject(JSGlobalObject* globalObject, J
     // Unlike Function instances, the prototype object of GeneratorFunction instances lacks own "constructor" property.
     // https://tc39.es/ecma262/#sec-runtime-semantics-instantiategeneratorfunctionobject (step 6)
     if (isGeneratorWrapperParseMode(thisObject->jsExecutable()->parseMode()))
-        return notePrototypeOfGeneratorFunction(vm, thisObject, constructEmptyObject(globalObject, scopeGlobalObject->generatorPrototype()));
+        return recordGeneratorFunctionPrototype(vm, thisObject, constructEmptyObject(globalObject, scopeGlobalObject->generatorPrototype()));
     // Unlike Function instances, the prototype object of AsyncGeneratorFunction instances lacks own "constructor" property.
     // https://tc39.es/ecma262/#sec-runtime-semantics-instantiateasyncgeneratorfunctionobject (step 6)
     if (isAsyncGeneratorWrapperParseMode(thisObject->jsExecutable()->parseMode()))
-        return notePrototypeOfGeneratorFunction(vm, thisObject, constructEmptyObject(globalObject, scopeGlobalObject->asyncGeneratorPrototype()));
+        return recordGeneratorFunctionPrototype(vm, thisObject, constructEmptyObject(globalObject, scopeGlobalObject->asyncGeneratorPrototype()));
 
     JSObject* prototype = constructEmptyObject(globalObject, scopeGlobalObject->objectPrototype());
     prototype->putDirect(vm, vm.propertyNames->constructor, thisObject, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -549,7 +549,7 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     }
 
 #if ENABLE(AOT)
-    if (String displayName = AOT::displayNameOfClosure(object); !displayName.isNull())
+    if (String displayName = AOT::closureDisplayName(object); !displayName.isNull())
         return displayName;
 #endif
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
@@ -603,7 +603,7 @@ void JSFunction::reifyLength(VM& vm)
     double length = originalLength(vm);
     JSValue initialValue = jsNumber(length);
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-    if (structure()->hasImmutablePropertiesWithFixedAttributes())
+    if (structure()->hasImmutablePropertiesWithLockedAttributes())
         initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& identifier = vm.propertyNames->length;
     rareData->setHasReifiedLength();
@@ -633,7 +633,7 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     ASSERT(!hasReifiedName());
     ASSERT(!isHostFunction());
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-    if (structure()->hasImmutablePropertiesWithFixedAttributes())
+    if (structure()->hasImmutablePropertiesWithLockedAttributes())
         initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& propID = vm.propertyNames->name;
 
@@ -767,7 +767,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         JSString* name = originalName(realm());
         scope.assertNoException();
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        if (structure()->hasImmutablePropertiesWithFixedAttributes())
+        if (structure()->hasImmutablePropertiesWithLockedAttributes())
             initialAttributes |= PropertyAttribute::DontDelete;
         rareData->setHasReifiedName();
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);

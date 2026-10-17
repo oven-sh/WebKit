@@ -30,7 +30,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(JIT)
 
-#include "AOTLockWords.h"
+#include "AOTLockedOperation.h"
 #include "ArithProfile.h"
 #include "ArrayConstructor.h"
 #include "CacheableIdentifierInlines.h"
@@ -4189,8 +4189,8 @@ static bool deleteById(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot&
         return false;
     bool couldDelete = baseObj->methodTable()->deleteProperty(baseObj, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!couldDelete && baseObj->noteIfRefusedByLockAlone(vm, propertyName.uid(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true))
-        throwTypeError(globalObject, scope, AOT::wordsOfLock(vm, baseObj, AOT::RefusedByLock::Delete, propertyName.uid()));
+    if (!couldDelete && baseObj->recordIfOnlyLockRejects(vm, propertyName.uid(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true))
+        throwTypeError(globalObject, scope, AOT::lockedOperationErrorMessage(vm, baseObj, AOT::LockedOperation::Delete, propertyName.uid()));
     else if (!couldDelete && ecmaMode.isStrict())
         throwTypeError(globalObject, scope, UnableToDeletePropertyError);
     return couldDelete;
@@ -4315,8 +4315,8 @@ static bool deleteByVal(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot
         RETURN_IF_EXCEPTION(scope, false);
         couldDelete = baseObj->methodTable()->deleteProperty(baseObj, globalObject, property, slot);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!couldDelete && baseObj->noteIfRefusedByLockAlone(vm, property.impl(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true)) {
-            throwTypeError(globalObject, scope, AOT::wordsOfLock(vm, baseObj, AOT::RefusedByLock::Delete, property.impl()));
+        if (!couldDelete && baseObj->recordIfOnlyLockRejects(vm, property.impl(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true)) {
+            throwTypeError(globalObject, scope, AOT::lockedOperationErrorMessage(vm, baseObj, AOT::LockedOperation::Delete, property.impl()));
             return false;
         }
     }

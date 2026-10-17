@@ -36,7 +36,7 @@ BrandedStructure::BrandedStructure(VM& vm, Structure* previous, UniquedStringImp
     , m_brand(brandUid)
     , m_parentBrand(previous->isBrandedStructure() ? previous : nullptr, WriteBarrierEarlyInit)
 {
-    static_assert(OBJECT_OFFSETOF(BrandedStructure, m_roomForAOTFields) == sizeof(Structure));
+    static_assert(OBJECT_OFFSETOF(BrandedStructure, m_aotFieldsStorage) == sizeof(Structure));
     ASSERT(isBrandedStructure());
 }
 

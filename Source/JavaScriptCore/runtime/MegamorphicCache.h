@@ -66,7 +66,6 @@ public:
     static constexpr uint32_t getterCacheSecondaryMask = getterCacheSecondarySize - 1;
 
     static constexpr uint16_t invalidEpoch = 0;
-    // Of a load entry that says what no change of any object can make false. It ends with its Structure.
     static constexpr uint16_t permanentEpoch = 1;
     static constexpr uint16_t firstEpoch = 2;
     static constexpr PropertyOffset maxOffset = UINT16_MAX;
@@ -223,11 +222,11 @@ public:
     }
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
-    JS_EXPORT_PRIVATE void takeOutDead(Heap&, CollectionScope);
+    JS_EXPORT_PRIVATE void removeDeadEntries(Heap&, CollectionScope);
 
     bool isLiveLoad(const LoadEntry& entry) const { return entry.m_epoch == m_epoch || entry.m_epoch == permanentEpoch; }
 
-    LoadEntry& makeRoomForLoad(StructureID structureID, UniquedStringImpl* uid)
+    LoadEntry& evictForLoad(StructureID structureID, UniquedStringImpl* uid)
     {
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
@@ -243,62 +242,61 @@ public:
     static constexpr unsigned numberOfNameFilterBits = 32768;
     static_assert(hasOneBitSet(numberOfNameFilterBits));
 
-    bool mayHoldFactAbout(const StringImpl& name) const
+    bool mayHaveEntryForName(const StringImpl& name) const
     {
         unsigned bit = name.hash() & (numberOfNameFilterBits - 1);
-        return m_namesOfFacts[bit / 64] >> (bit % 64) & 1;
+        return m_nameFilter[bit / 64] >> (bit % 64) & 1;
     }
 
     static constexpr unsigned numberOfObjectFilterBits = 16384;
     static_assert(hasOneBitSet(numberOfObjectFilterBits));
-    static unsigned bitOfObject(const void* object)
+    static unsigned objectFilterBit(const void* object)
     {
         uintptr_t bits = std::bit_cast<uintptr_t>(object) >> 4;
         return (bits ^ bits >> 14) & (numberOfObjectFilterBits - 1);
     }
 
-    bool mayHoldFactThrough(const void* object) const
+    bool mayHaveEntryThroughObject(const void* object) const
     {
-        unsigned bit = bitOfObject(object);
-        return m_objectsOfFacts[bit / 64] >> (bit % 64) & 1;
+        unsigned bit = objectFilterBit(object);
+        return m_objectFilter[bit / 64] >> (bit % 64) & 1;
     }
 
-    uint16_t epochForFactAbout(const StringImpl& name, StructureID structureID)
+    uint16_t epochForName(const StringImpl& name, StructureID structureID)
     {
         unsigned bit = name.hash() & (numberOfNameFilterBits - 1);
-        m_namesOfFacts[bit / 64] |= 1ull << (bit % 64);
-        notePrototypesOf(structureID);
+        m_nameFilter[bit / 64] |= 1ull << (bit % 64);
+        recordPrototypesOf(structureID);
         return m_epoch;
     }
 
-    uint16_t epochForFactAboutSomeName(StructureID structureID)
+    uint16_t epochForAnyName(StructureID structureID)
     {
-        m_namesOfFacts.fill(~0ull);
-        notePrototypesOf(structureID);
+        m_nameFilter.fill(~0ull);
+        recordPrototypesOf(structureID);
         return m_epoch;
     }
 
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
-        makeRoomForLoad(structureID, uid).initAsMiss(structureID, uid, epochForFactAbout(*uid, structureID));
+        evictForLoad(structureID, uid).initAsMiss(structureID, uid, epochForName(*uid, structureID));
     }
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
-        makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, ownProperty ? m_epoch : epochForFactAbout(*uid, structureID), holder, offset, ownProperty);
+        evictForLoad(structureID, uid).initAsHit(structureID, uid, ownProperty ? m_epoch : epochForName(*uid, structureID), holder, offset, ownProperty);
     }
 
-    // No object of the Structure, which is no dictionary, has the property, and nothing on their prototype chain has it or can change.
     void initAsPermanentMiss(StructureID structureID, UniquedStringImpl* uid)
     {
         m_hasPermanentEntries = true;
-        makeRoomForLoad(structureID, uid).initAsMiss(structureID, uid, permanentEpoch);
+        evictForLoad(structureID, uid).initAsMiss(structureID, uid, permanentEpoch);
     }
 
     void initAsPermanentHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset)
     {
         m_hasPermanentEntries = true;
-        makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, permanentEpoch, holder, offset, false);
+        evictForLoad(structureID, uid).initAsHit(structureID, uid, permanentEpoch, holder, offset, false);
     }
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
@@ -311,7 +309,7 @@ public:
             m_writtenGetterCacheSecondaryEntries.set(secondaryIndex);
         }
         m_writtenGetterCachePrimaryEntries.set(primaryIndex);
-        m_getterCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, ownProperty ? m_epoch : epochForFactAbout(*uid, structureID), holder, offset, ownProperty);
+        m_getterCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, ownProperty ? m_epoch : epochForName(*uid, structureID), holder, offset, ownProperty);
     }
 
     void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, uint8_t reallocating)
@@ -324,7 +322,7 @@ public:
             m_writtenStoreCacheSecondaryEntries.set(secondaryIndex);
         }
         m_writtenStoreCachePrimaryEntries.set(primaryIndex);
-        m_storeCachePrimaryEntries[primaryIndex].init(oldStructureID, newStructureID, uid, epochForFactAbout(*uid, oldStructureID), offset, reallocating);
+        m_storeCachePrimaryEntries[primaryIndex].init(oldStructureID, newStructureID, uid, epochForName(*uid, oldStructureID), offset, reallocating);
     }
 
     void initAsReplace(StructureID structureID, UniquedStringImpl* uid, uint16_t offset)
@@ -350,7 +348,7 @@ public:
             m_writtenHasCacheSecondaryEntries.set(secondaryIndex);
         }
         m_writtenHasCachePrimaryEntries.set(primaryIndex);
-        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, epochForFactAbout(*uid, structureID), true);
+        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, epochForName(*uid, structureID), true);
     }
 
     void initAsHasMiss(StructureID structureID, UniquedStringImpl* uid)
@@ -363,7 +361,7 @@ public:
             m_writtenHasCacheSecondaryEntries.set(secondaryIndex);
         }
         m_writtenHasCachePrimaryEntries.set(primaryIndex);
-        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, epochForFactAbout(*uid, structureID), false);
+        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, epochForName(*uid, structureID), false);
     }
 
     uint16_t epoch() const { return m_epoch; }
@@ -398,8 +396,8 @@ public:
     bool bumpEpoch()
     {
         ++m_epoch;
-        m_namesOfFacts.fill(0);
-        m_objectsOfFacts.fill(0);
+        m_nameFilter.fill(0);
+        m_objectFilter.fill(0);
         if (m_epoch != invalidEpoch) [[likely]]
             return false;
         clearEntries();
@@ -408,7 +406,7 @@ public:
 
 private:
     JS_EXPORT_PRIVATE void LEGACY_NODELETE clearEntries();
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE notePrototypesOf(StructureID);
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE recordPrototypesOf(StructureID);
 
     std::array<LoadEntry, loadCachePrimarySize> m_loadCachePrimaryEntries { };
     std::array<LoadEntry, loadCacheSecondarySize> m_loadCacheSecondaryEntries { };
@@ -428,8 +426,8 @@ private:
     WTF::BitSet<getterCacheSecondarySize> m_writtenGetterCacheSecondaryEntries;
     uint16_t m_epoch { firstEpoch };
     bool m_hasPermanentEntries { false };
-    std::array<uint64_t, numberOfNameFilterBits / 64> m_namesOfFacts { };
-    std::array<uint64_t, numberOfObjectFilterBits / 64> m_objectsOfFacts { };
+    std::array<uint64_t, numberOfNameFilterBits / 64> m_nameFilter { };
+    std::array<uint64_t, numberOfObjectFilterBits / 64> m_objectFilter { };
 };
 
 } // namespace JSC

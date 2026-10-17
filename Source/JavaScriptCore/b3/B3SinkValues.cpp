@@ -93,7 +93,7 @@ public:
     }
 
 private:
-    static constexpr bool makesClones = true;
+    static constexpr bool createsClones = true;
     static constexpr unsigned maxLoopsLeft = 8;
 
     struct Place {
@@ -116,7 +116,7 @@ private:
         BasicBlock* block { nullptr };
     };
 
-    static Place aheadOfTerminal(BasicBlock* block) { return { block, static_cast<unsigned>(block->size() - 1) }; }
+    static Place beforeTerminal(BasicBlock* block) { return { block, static_cast<unsigned>(block->size() - 1) }; }
 
     BasicBlock* nearestCommonDominator(BasicBlock* a, BasicBlock* b)
     {
@@ -168,14 +168,14 @@ private:
                 uses.second = { };
             return;
         }
-        if (isAboveSecond || (makesClones && !uses.second.block)) {
+        if (isAboveSecond || (createsClones && !uses.second.block)) {
             uses.second = place;
             return;
         }
         BasicBlock* common = nearestCommonDominator(uses.first.block, place.block);
         if (uses.second.block)
             common = nearestCommonDominator(common, uses.second.block);
-        uses.first = aheadOfTerminal(common);
+        uses.first = beforeTerminal(common);
         uses.second = { };
     }
 
@@ -208,7 +208,7 @@ private:
                 outermost = loop;
             if (!outermost)
                 return true;
-            place = aheadOfTerminal(m_dominators.idom(outermost->header()));
+            place = beforeTerminal(m_dominators.idom(outermost->header()));
         }
         return false;
     }
@@ -245,10 +245,10 @@ private:
         if (!isReducible) {
             CycleForest cycles(m_proc);
             for (BasicBlock* candidate : m_proc) {
-                bool isOnCycleWithSeveralEntries = false;
+                bool isOnIrreducibleCycle = false;
                 for (unsigned cycle = cycles.innermost(candidate); cycle != CycleForest::none; cycle = cycles[cycle].parent)
-                    isOnCycleWithSeveralEntries |= !cycles[cycle].isReducible();
-                m_isOrdered[candidate] = !isOnCycleWithSeveralEntries;
+                    isOnIrreducibleCycle |= !cycles[cycle].isReducible();
+                m_isOrdered[candidate] = !isOnIrreducibleCycle;
             }
         }
         return m_isOrdered[block];
@@ -290,7 +290,7 @@ private:
                     addUse(child, second);
                 return move(value, from, first);
             }
-            uses.first = aheadOfTerminal(nearestCommonDominator(uses.first.block, uses.second.block));
+            uses.first = beforeTerminal(nearestCommonDominator(uses.first.block, uses.second.block));
         }
         Place place = uses.first;
         if (place.block == from.block || !leaveLoops(from.block, place) || !isAtMostHalf(place.block->frequency(), from.block) || !isOrdered(place.block))

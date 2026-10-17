@@ -163,7 +163,7 @@ public:
     void markAuxiliary(const void* base) final;
 #if ENABLE(AOT)
     bool markLeafCell(JSCell*);
-    void reportExtraMemoryVisitedOfLeafCell(JSC::Heap&, size_t);
+    void reportLeafCellExtraMemoryVisited(JSC::Heap&, size_t);
 #endif
 
     void reportExtraMemoryVisited(size_t) final;

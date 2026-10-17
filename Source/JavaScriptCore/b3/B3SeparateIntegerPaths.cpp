@@ -43,10 +43,10 @@ private:
     static constexpr unsigned maxRounds = 2;
     static constexpr unsigned maxCopiedInstructions = 10;
     static constexpr unsigned maxBlocksInRegion = 4;
-    static constexpr unsigned maxDepthOfTest = 4;
+    static constexpr unsigned maxTestDepth = 4;
     static constexpr unsigned maxNumbers = 16;
     static constexpr double minRatioOfIntegerToOtherFrequency = 0.5;
-    static constexpr double minFrequencyOfJoin = 1.0 / 256;
+    static constexpr double minJoinFrequency = 1.0 / 256;
     static constexpr double maxRatioOfJoinToUser = 16;
 
     struct Part {
@@ -64,7 +64,7 @@ private:
     struct Region {
         Vector<Part, 4> parts;
         Vector<BasicBlock*, 2> otherPredecessors;
-        double shareOfOthers { 0 };
+        double otherShare { 0 };
     };
 
     static bool isInteger(Value* value, unsigned depth = 2)
@@ -104,7 +104,7 @@ private:
         switch (user->opcode()) {
         case Patchpoint: {
             int32_t key = user->as<PatchpointValue>()->pureFunctionOfChildrenKey;
-            return (key == keyOfTruncationToInt64 || key == keyOfConversionToInt32) && user->numChildren() == 1;
+            return (key == toInt64TruncationKey || key == toInt32ConversionKey) && user->numChildren() == 1;
         }
         case Equal:
         case NotEqual:
@@ -165,7 +165,7 @@ private:
     std::optional<Region> regionFor(Value* phi, const Vector<UpsilonValue*, 4>& upsilons)
     {
         BasicBlock* join = phi->owner;
-        if (join->frequency() < minFrequencyOfJoin || upsilons.size() != join->numPredecessors())
+        if (join->frequency() < minJoinFrequency || upsilons.size() != join->numPredecessors())
             return std::nullopt;
         Region region;
         double integerFrequency = 0;
@@ -187,7 +187,7 @@ private:
             return std::nullopt;
         if (!(integerFrequency > 0) || otherFrequency * minRatioOfIntegerToOtherFrequency > integerFrequency)
             return std::nullopt;
-        region.shareOfOthers = otherFrequency / (integerFrequency + otherFrequency);
+        region.otherShare = otherFrequency / (integerFrequency + otherFrequency);
 
         m_numbers.shrink(0);
         m_liveIn.shrink(0);
@@ -239,7 +239,7 @@ private:
             }
             unsigned end = afterLastUse;
             if (firstFixed == block->size()) {
-                bool goesOn = block->last()->numChildren() && dependsOnNumber(block->last()->child(0), block, maxDepthOfTest);
+                bool goesOn = block->last()->numChildren() && dependsOnNumber(block->last()->child(0), block, maxTestDepth);
                 for (BasicBlock* successor : block->successorBlocks())
                     goesOn |= m_liveIn.contains(successor) && successor != join;
                 if (goesOn || (end + 1 == block->size() && block->last()->opcode() == Jump))
@@ -249,7 +249,7 @@ private:
                 return false;
             unsigned instructions = 0;
             for (unsigned index = 0; index < end; ++index)
-                instructions += takesInstructions(block->at(index));
+                instructions += emitsInstructions(block->at(index));
             if (region.parts.size() == maxBlocksInRegion || copiedInstructions + instructions > maxCopiedInstructions)
                 return false;
             copiedInstructions += instructions;
@@ -267,10 +267,10 @@ private:
             for (BasicBlock* successor : block->successorBlocks()) {
                 if (seen.contains(successor) || !m_liveIn.contains(successor))
                     continue;
-                bool isEnteredFromRegionOnly = true;
+                bool isOnlyEnteredFromRegion = true;
                 for (BasicBlock* predecessor : successor->predecessors())
-                    isEnteredFromRegionOnly &= whole.contains(predecessor);
-                if (isEnteredFromRegionOnly)
+                    isOnlyEnteredFromRegion &= whole.contains(predecessor);
+                if (isOnlyEnteredFromRegion)
                     add(successor);
             }
         }
@@ -389,7 +389,7 @@ private:
         for (Region& region : regions) {
             UncheckedKeyHashMap<BasicBlock*, BasicBlock*> copyOf;
             for (Part& part : region.parts)
-                copyOf.add(part.block, m_proc.addBlock(part.block->frequency() * region.shareOfOthers));
+                copyOf.add(part.block, m_proc.addBlock(part.block->frequency() * region.otherShare));
             UncheckedKeyHashMap<Value*, Value*> map;
             for (Part& part : region.parts) {
                 BasicBlock* copy = copyOf.get(part.block);
@@ -415,11 +415,11 @@ private:
                     successor->addPredecessor(copy);
             }
             BasicBlock* join = region.parts[0].block;
-            BasicBlock* copyOfJoin = copyOf.get(join);
+            BasicBlock* joinCopy = copyOf.get(join);
             for (BasicBlock* predecessor : region.otherPredecessors) {
-                predecessor->replaceSuccessor(join, copyOfJoin);
+                predecessor->replaceSuccessor(join, joinCopy);
                 join->removePredecessor(predecessor);
-                copyOfJoin->addPredecessor(predecessor);
+                joinCopy->addPredecessor(predecessor);
             }
         }
         m_proc.invalidateCFG();

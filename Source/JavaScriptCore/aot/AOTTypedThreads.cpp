@@ -18,7 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool saysClocks()
+bool shouldPrintTimings()
 {
     static const bool result = Options::verboseAOTCompilation();
     return result;
@@ -37,14 +37,14 @@ static ParallelHelperPool& helpers()
 void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(unsigned)>& functor)
 {
     constexpr unsigned longestRun = 256;
-    constexpr unsigned mostTakenAtOnce = 16;
-    constexpr unsigned wordsOfSlot = 16;
+    constexpr unsigned maxBatchSize = 16;
+    constexpr unsigned slotWords = 16;
     constexpr uint64_t moveBegins = 1;
     constexpr uint64_t moveEnds = 1ull << 32;
     const unsigned numberOfSlots = WTF::numberOfProcessorCores();
     const unsigned shares = 4 * numberOfSlots;
-    Vector<std::atomic<uint64_t>> slots(count < 2 ? 0 : numberOfSlots * wordsOfSlot);
-    for (unsigned k = 0; k < slots.size(); k += wordsOfSlot)
+    Vector<std::atomic<uint64_t>> slots(count < 2 ? 0 : numberOfSlots * slotWords);
+    for (unsigned k = 0; k < slots.size(); k += slotWords)
         slots[k].store(0);
     alignas(128) std::atomic<unsigned> next { 0 };
     alignas(128) std::atomic<uint64_t> moves { 0 };
@@ -61,11 +61,11 @@ void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(uns
         unsigned self = numberOfThreads++;
         if (self >= numberOfSlots)
             return;
-        auto& own = slots[self * wordsOfSlot];
+        auto& own = slots[self * slotWords];
         unsigned run = 1;
         for (;;) {
             for (uint64_t range = own.load(); firstOf(range) < endOf(range);) {
-                unsigned taken = std::clamp((endOf(range) - firstOf(range)) / 8, 1u, mostTakenAtOnce);
+                unsigned taken = std::clamp((endOf(range) - firstOf(range)) / 8, 1u, maxBatchSize);
                 if (!own.compare_exchange_weak(range, range + taken))
                     continue;
                 for (unsigned index = firstOf(range); index < firstOf(range) + taken; ++index)
@@ -87,7 +87,7 @@ void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(uns
                 moves.fetch_add(moveEnds);
             }
             for (unsigned k = 1; k < numberOfSlots && taken == count; ++k) {
-                auto& other = slots[(self + k) % numberOfSlots * wordsOfSlot];
+                auto& other = slots[(self + k) % numberOfSlots * slotWords];
                 uint64_t range = other.load();
                 if (firstOf(range) >= endOf(range))
                     continue;

@@ -45,7 +45,6 @@ void Emitter::orElse(LValue condition, LBasicBlock otherwise)
     m_out.appendTo(next);
 }
 
-// The Instance is there for as long as the code runs.
 static LValue notControlDependent(LValue load)
 {
     load->as<B3::MemoryValue>()->setControlDependent(false);
@@ -118,8 +117,7 @@ LValue Emitter::allocateHeapCell(LValue allocator, std::optional<size_t> cellSiz
     allocation->clobber(RegisterSet::macroClobberedGPRs());
     m_out.appendSuccessor(usually(continuation));
     m_out.appendSuccessor(rarely(slowPath));
-    allocation->setGenerator([cellSize, leavesNextIntervalToSlowPath = m_leavesNextIntervalToSlowPath](CCallHelpers& jit, const StackmapGenerationParams& params) {
-        // AssemblyHelpers::emitAllocateWithNonNullAllocator(), with what comes behind the bump out of line.
+    allocation->setGenerator([cellSize, refillsIntervalOnSlowPath = m_refillsIntervalOnSlowPath](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg result = params[0].gpr();
         GPRReg allocator = params[1].gpr();
@@ -166,7 +164,7 @@ LValue Emitter::allocateHeapCell(LValue allocator, std::optional<size_t> cellSiz
             done = jit.jump();
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            if (leavesNextIntervalToSlowPath) {
+            if (refillsIntervalOnSlowPath) {
                 intervalIsUsedUp.linkTo(*labels[1], &jit);
                 if (done.isSet())
                     done.linkTo(*labels[0], &jit);
@@ -846,11 +844,11 @@ LValue Emitter::entry(Entry which)
 {
     if (!m_table) {
         auto& atHead = m_proc.at(0)->values();
-        size_t behindInstance = atHead.find(m_instance) + 1;
-        RELEASE_ASSERT(behindInstance);
+        size_t afterInstance = atHead.find(m_instance) + 1;
+        RELEASE_ASSERT(afterInstance);
         m_table = m_proc.add<MemoryValue>(B3::Load, B3::pointerType(), Origin(), m_instance, static_cast<int32_t>(m_heaps.AOTInstance_runtimeTable.offset()));
         m_heaps.decorateMemory(&m_heaps.AOTInstance_runtimeTable, m_table);
-        atHead.insert(behindInstance, m_table);
+        atHead.insert(afterInstance, m_table);
     }
     LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[static_cast<unsigned>(which)]));
     static_cast<MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);

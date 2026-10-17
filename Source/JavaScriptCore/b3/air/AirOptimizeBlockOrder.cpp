@@ -160,11 +160,11 @@ private:
             return left->frequency() < right->frequency();
         };
 #if USE(BUN_JSC_ADDITIONS)
-        constexpr size_t mostForBubbleSort = 16;
+        constexpr size_t maxSizeForBubbleSort = 16;
         auto hasNoFrequency = [] (BasicBlock* block) {
             return std::isnan(block->frequency());
         };
-        if (m_successors.size() > mostForBubbleSort && std::none_of(m_successors.begin(), m_successors.end(), hasNoFrequency)) {
+        if (m_successors.size() > maxSizeForBubbleSort && std::none_of(m_successors.begin(), m_successors.end(), hasNoFrequency)) {
             std::stable_sort(m_successors.begin(), m_successors.end(), isLessFrequent);
             return;
         }
@@ -328,12 +328,12 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     ChainWorklist chainWorklist;
     IndexSet<BasicBlock*> done;
 #if USE(BUN_JSC_ADDITIONS)
-    constexpr unsigned reachOfGap = 24;
-    static const char* const askedForTesting = byteCast<char>(Options::airBlockOrderFaultForTesting());
-    const bool laysInGaps = code.laysRareBlocksInGaps() && !(askedForTesting && !strcmp(askedForTesting, "off"));
-    IndexSet<BasicBlock*> laidInGaps;
+    constexpr unsigned gapRange = 24;
+    static const char* const requestedForTesting = byteCast<char>(Options::airBlockOrderFaultForTesting());
+    const bool placesInGaps = code.placesRareBlocksInGaps() && !(requestedForTesting && !strcmp(requestedForTesting, "off"));
+    IndexSet<BasicBlock*> placedInGaps;
     Vector<std::pair<BasicBlock*, unsigned>, 8> waitingForGap;
-    unsigned numberOfInstsLaid = 0;
+    unsigned placedInstCount = 0;
     auto isGuard = [](BasicBlock* asked) {
         return asked->numSuccessors() == 2 && asked->successor(0).isRare() != asked->successor(1).isRare();
     };
@@ -347,9 +347,9 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         }
         return numberOfLikelyPredecessors == 1;
     };
-    auto hasOnlyRareWaysIn = [&](BasicBlock* asked) {
+    auto hasOnlyRarePredecessors = [&](BasicBlock* asked) {
         for (BasicBlock* predecessor : asked->predecessors()) {
-            if (laidInGaps.contains(predecessor))
+            if (placedInGaps.contains(predecessor))
                 continue;
             if (!done.contains(predecessor))
                 return false;
@@ -387,15 +387,15 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         blocksInOrder.append(block);
 
 #if USE(BUN_JSC_ADDITIONS)
-        numberOfInstsLaid += block->size();
-        if (laysInGaps && isGuard(block))
-            waitingForGap.append({ block->successor(block->successor(0).isRare() ? 0 : 1).block(), numberOfInstsLaid });
-        static const bool breaksForTesting = askedForTesting && !strcmp(askedForTesting, "1");
+        placedInstCount += block->size();
+        if (placesInGaps && isGuard(block))
+            waitingForGap.append({ block->successor(block->successor(0).isRare() ? 0 : 1).block(), placedInstCount });
+        static const bool breaksForTesting = requestedForTesting && !strcmp(requestedForTesting, "1");
         if (breaksForTesting && !waitingForGap.isEmpty()) {
             BasicBlock* rare = waitingForGap.takeLast().first;
-            if (!done.contains(rare) && rare->size() <= 16 && hasOnlyRareWaysIn(rare)) {
+            if (!done.contains(rare) && rare->size() <= 16 && hasOnlyRarePredecessors(rare)) {
                 done.add(rare);
-                laidInGaps.add(rare);
+                placedInGaps.add(rare);
                 blocksInOrder.append(rare);
                 for (BasicBlock* successor : rare->successorBlocks())
                     sortedSlowSuccessors.append(successor);
@@ -434,15 +434,15 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
                 auto [rare, endOfGuard] = waitingForGap[i];
                 if (done.contains(rare))
                     continue;
-                bool anotherWayOutIsNotLaid = false;
+                bool hasUnplacedSuccessor = false;
                 for (BasicBlock* successor : block->successorBlocks())
-                    anotherWayOutIsNotLaid |= successor != rare && !done.contains(successor);
-                if (anotherWayOutIsNotLaid || rare->size() > 16 || numberOfInstsLaid - endOfGuard + rare->size() > reachOfGap || !hasOnlyRareWaysIn(rare))
+                    hasUnplacedSuccessor |= successor != rare && !done.contains(successor);
+                if (hasUnplacedSuccessor || rare->size() > 16 || placedInstCount - endOfGuard + rare->size() > gapRange || !hasOnlyRarePredecessors(rare))
                     continue;
                 done.add(rare);
-                laidInGaps.add(rare);
+                placedInGaps.add(rare);
                 blocksInOrder.append(rare);
-                numberOfInstsLaid += rare->size();
+                placedInstCount += rare->size();
             }
             waitingForGap.shrink(0);
             chainWorklist.markStartNewChain();
@@ -454,7 +454,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (laysInGaps && isX86()) {
+    if (placesInGaps && isX86()) {
         Vector<std::pair<unsigned, BasicBlock*>, 8> insertions;
         std::optional<unsigned> lastGapIndex;
         unsigned instsSinceLastGap = 0;
@@ -463,9 +463,9 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
             instsSinceLastGap += block->size();
             if (lastGapIndex && isGuard(block)) {
                 BasicBlock* rare = block->successor(block->successor(0).isRare() ? 0 : 1).block();
-                if (!done.contains(rare) && rare->size() <= 16 && instsSinceLastGap + rare->size() <= reachOfGap && hasOnlyRareWaysIn(rare)) {
+                if (!done.contains(rare) && rare->size() <= 16 && instsSinceLastGap + rare->size() <= gapRange && hasOnlyRarePredecessors(rare)) {
                     done.add(rare);
-                    laidInGaps.add(rare);
+                    placedInGaps.add(rare);
                     insertions.append({ *lastGapIndex, rare });
                     instsSinceLastGap += rare->size();
                 }
@@ -490,7 +490,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
             blocksInOrder = WTF::move(withInsertions);
         }
     }
-    if (code.notesStartOfRareCode()) [[unlikely]]
+    if (code.recordsRareCodeStart()) [[unlikely]]
         code.setNumberOfBlocksInChains(blocksInOrder.size());
 #endif
     BlockWorklist slowWorklist;
@@ -499,14 +499,14 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     while (BasicBlock* block = slowWorklist.pop()) {
         // We might have already processed this block.
 #if USE(BUN_JSC_ADDITIONS)
-        if (done.contains(block) && !laidInGaps.contains(block))
+        if (done.contains(block) && !placedInGaps.contains(block))
             continue;
 
         if (!done.contains(block)) {
             done.add(block);
             blocksInOrder.append(block);
         }
-        while (code.laysRareBlocksInGaps()) {
+        while (code.placesRareBlocksInGaps()) {
             BasicBlock* next = nullptr;
             for (BasicBlock* successor : block->successorBlocks()) {
                 if (!done.contains(successor) && (!next || successor->frequency() > next->frequency()))

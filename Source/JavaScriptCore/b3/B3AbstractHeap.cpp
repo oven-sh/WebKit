@@ -61,7 +61,7 @@ void AbstractHeap::changeParent(AbstractHeap* parent)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void AbstractHeap::forgetChildrenFrom(size_t first)
+void AbstractHeap::removeChildrenFrom(size_t first)
 {
     for (size_t i = first; i < m_children.size(); ++i) {
         AbstractHeap* child = m_children[i];
@@ -155,20 +155,20 @@ IndexedAbstractHeap::IndexedAbstractHeap(AbstractHeap* parent, const char* heapN
 IndexedAbstractHeap::~IndexedAbstractHeap() = default;
 
 #if USE(BUN_JSC_ADDITIONS)
-void IndexedAbstractHeap::keepHeapsMadeSoFar()
+void IndexedAbstractHeap::retainCurrentHeaps()
 {
     RELEASE_ASSERT(m_largeIndices.isEmpty());
-    m_numberOfHeapsKept = m_heapForAnyIndex.numberOfChildren();
-    RELEASE_ASSERT(m_largeIndexNames.size() == m_numberOfHeapsKept);
+    m_retainedHeapCount = m_heapForAnyIndex.numberOfChildren();
+    RELEASE_ASSERT(m_largeIndexNames.size() == m_retainedHeapCount);
 }
 
-void IndexedAbstractHeap::forgetOtherHeaps()
+void IndexedAbstractHeap::removeTemporaryHeaps()
 {
-    if (m_heapForAnyIndex.numberOfChildren() == m_numberOfHeapsKept)
+    if (m_heapForAnyIndex.numberOfChildren() == m_retainedHeapCount)
         return;
-    m_heapForAnyIndex.forgetChildrenFrom(m_numberOfHeapsKept);
+    m_heapForAnyIndex.removeChildrenFrom(m_retainedHeapCount);
     m_largeIndices.clear();
-    m_largeIndexNames.shrink(m_numberOfHeapsKept);
+    m_largeIndexNames.shrink(m_retainedHeapCount);
 }
 #endif
 

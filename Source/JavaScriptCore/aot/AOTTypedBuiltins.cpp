@@ -36,7 +36,7 @@ unsigned Builtin::numberOfRequiredParameters() const
     return result;
 }
 
-uint16_t Builtin::usesOfArgument(unsigned index) const
+uint16_t Builtin::argumentUses(unsigned index) const
 {
     if (index < parameters.size())
         return parameters[index].uses;
@@ -62,7 +62,6 @@ struct FirstBuiltin {
     uint16_t index;
 };
 
-// The vocabulary of AOTTypedBuiltinEntries.inc.
 namespace {
 
 using Result = BuiltinResult;
@@ -88,19 +87,19 @@ constexpr BuiltinImplementation does(LanguageOperation which) { return { Builtin
 constexpr BuiltinImplementation prelude(PreludeFunction which) { return { BuiltinImplementation::Prelude, BuiltinCallee::Function, InlineBuiltin::This, LanguageOperation::CopyDataProperties, which }; }
 
 constexpr uint16_t noClass = BuiltinNameData::noClass;
-constexpr uint16_t severalClasses = BuiltinNameData::severalClasses;
+constexpr uint16_t multipleClasses = BuiltinNameData::multipleClasses;
 constexpr uint16_t noOperation = BuiltinNameData::noOperation;
 
 } // anonymous namespace
 
 #include "AOTTypedBuiltinEntries.inc"
 
-static constexpr std::string_view viewOf(ASCIILiteral text) { return { text.characters(), text.length() }; }
+static constexpr std::string_view toStringView(ASCIILiteral text) { return { text.characters(), text.length() }; }
 
 static_assert([] {
     for (unsigned i = 0; i + 1 < numberOfBuiltinNames; ++i) {
-        auto a = viewOf(builtinNames[i].text);
-        auto b = viewOf(builtinNames[i + 1].text);
+        auto a = toStringView(builtinNames[i].text);
+        auto b = toStringView(builtinNames[i + 1].text);
         if (!std::ranges::lexicographical_compare(a, b, [](char x, char y) { return static_cast<uint8_t>(x) < static_cast<uint8_t>(y); }))
             return false;
     }
@@ -113,9 +112,9 @@ static_assert([] {
 
 static_assert([] {
     for (auto& entry : builtinEntries) {
-        if (entry.nameName.index() >= numberOfBuiltinNames || viewOf(entry.name) != viewOf(builtinNames[entry.nameName.index()].text))
+        if (entry.nameName.index() >= numberOfBuiltinNames || toStringView(entry.name) != toStringView(builtinNames[entry.nameName.index()].text))
             return false;
-        if (entry.holderName ? entry.holderName.index() >= numberOfBuiltinNames || viewOf(entry.holder) != viewOf(builtinNames[entry.holderName.index()].text) : !entry.holder.isEmpty())
+        if (entry.holderName ? entry.holderName.index() >= numberOfBuiltinNames || toStringView(entry.holder) != toStringView(builtinNames[entry.holderName.index()].text) : !entry.holder.isEmpty())
             return false;
         if (entry.parameters.first + entry.parameters.count > std::size(builtinParameterPool))
             return false;
@@ -131,7 +130,7 @@ static_assert([] {
     }
     for (unsigned i = 0; i < numberOfEngineClasses; ++i) {
         auto& engineClass = engineClasses[i];
-        if (engineClass.index != i || builtinNames[engineClass.name.index()].engineClass != i || viewOf(engineClass.text) != viewOf(builtinNames[engineClass.name.index()].text))
+        if (engineClass.index != i || builtinNames[engineClass.name.index()].engineClass != i || toStringView(engineClass.text) != toStringView(builtinNames[engineClass.name.index()].text))
             return false;
         if (engineClass.firstOriginalStructure + engineClass.numberOfOriginalStructures > numberOfOriginalStructures)
             return false;
@@ -143,15 +142,15 @@ static_assert([] {
     return true;
 }());
 
-#define AOT_TYPED_CHECK_OPERATION(spelled, entry, nameOfEntry) static_assert(builtinEntries[entry].kind == BuiltinKind::Operation && viewOf(builtinEntries[entry].name) == #spelled && builtinEntries[entry].nameName == BuiltinName(nameOfEntry) && builtinNames[nameOfEntry].operation == entry);
+#define AOT_TYPED_CHECK_OPERATION(spelled, entry, nameOfEntry) static_assert(builtinEntries[entry].kind == BuiltinKind::Operation && toStringView(builtinEntries[entry].name) == #spelled && builtinEntries[entry].nameName == BuiltinName(nameOfEntry) && builtinNames[nameOfEntry].operation == entry);
 FOR_EACH_AOT_TYPED_IR_OPERATION(AOT_TYPED_CHECK_OPERATION)
 #undef AOT_TYPED_CHECK_OPERATION
 
-static constinit const Builtins theBuiltins;
+static constinit const Builtins s_builtins;
 
 const Builtins& Builtins::singleton()
 {
-    return theBuiltins;
+    return s_builtins;
 }
 
 double Builtins::numberOf(BuiltinID id) const
@@ -159,20 +158,19 @@ double Builtins::numberOf(BuiltinID id) const
     return numberOfBuiltin(id.index());
 }
 
-std::span<const uint16_t> Builtins::cellsOfReplaceableGlobals() const
+std::span<const uint16_t> Builtins::replaceableGlobalCells() const
 {
     return cellsOfReplaceableGlobalsData;
 }
 
-// `@@name` is how the table spells a symbol. A string of a program that reads like that is no such name.
-static bool spellsSymbol(std::span<const uint8_t> bytes)
+static bool isSymbolSpelling(std::span<const uint8_t> bytes)
 {
     return bytes.size() > 2 && bytes[0] == '@' && bytes[1] == '@';
 }
 
 BuiltinName Builtins::nameOf(std::span<const uint8_t> bytes) const
 {
-    if (bytes.empty() || spellsSymbol(bytes))
+    if (bytes.empty() || isSymbolSpelling(bytes))
         return { };
     auto* found = std::lower_bound(std::begin(builtinNames), std::end(builtinNames), bytes, [](const BuiltinNameData& name, std::span<const uint8_t> bytes) {
         return std::ranges::lexicographical_compare(byteCast<uint8_t>(name.text.span8()), bytes);
@@ -245,7 +243,7 @@ const EngineClass* Builtins::classNamed(BuiltinName name) const
 
 const EngineClass* Builtins::classSpeculatedFor(BuiltinName method) const
 {
-    if (!method || builtinNames[method.index()].classSpeculatedFor >= severalClasses)
+    if (!method || builtinNames[method.index()].classSpeculatedFor >= multipleClasses)
         return nullptr;
     return &engineClasses[builtinNames[method.index()].classSpeculatedFor];
 }
@@ -295,7 +293,6 @@ static Structure* originalStructure(JSGlobalObject* globalObject, unsigned index
 enum class PropertyKind : uint8_t { Data, Getter, Setter };
 enum class Mutability : bool { Fixed, Replaceable };
 
-// An own property. Fixed: compiled code keeps what is found here, so no program may be able to change it.
 static std::expected<JSValue, ASCIILiteral> findOwnProperty(JSGlobalObject* globalObject, JSObject* holder, const Identifier& key, PropertyKind kind, Mutability mutability = Mutability::Fixed)
 {
     VM& vm = globalObject->vm();
@@ -375,7 +372,6 @@ static ASCIILiteral textOf(BuiltinCallee callee)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Null: the value can be called the way the table says.
 static String calleeMismatch(BuiltinCallee expected, JSValue value)
 {
     BuiltinCallee found = calleeKindOf(value);
@@ -384,7 +380,6 @@ static String calleeMismatch(BuiltinCallee expected, JSValue value)
     return makeString("is "_s, textOf(found), ", the table says "_s, expected == BuiltinCallee::Function ? "a function"_s : textOf(expected));
 }
 
-// As the entry is written in its .def file.
 static String textOf(const Builtin& builtin)
 {
     switch (builtin.kind) {
@@ -408,7 +403,6 @@ static String textOf(const Builtin& builtin)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What the realm has where the entry says: a function, a number or a symbol. `given`: the global object that holds it, if that is at hand.
 std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObject, const Builtin& builtin, JSObject* given, bool underPrivateName) const
 {
     VM& vm = globalObject->vm();
@@ -425,12 +419,12 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
             return makeUnexpected(String("Int8Array inherits from no object"_s));
         holder = shared;
     }
-    if (holder && builtin.takesReceiver())
+    if (holder && builtin.hasReceiver())
         holder = findObject(globalObject, *holder, vm.propertyNames->prototype);
     if (!holder)
         return makeUnexpected(holder.error());
     Identifier key = Identifier::fromString(vm, builtin.name);
-    if (spellsSymbol(asBytes(builtin.name.span8()))) {
+    if (isSymbolSpelling(asBytes(builtin.name.span8()))) {
         auto symbols = findGlobal(globalObject, "Symbol"_s);
         if (!symbols)
             return makeUnexpected(symbols.error());
@@ -439,7 +433,6 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
             return makeUnexpected(String("is named by no symbol"_s));
         key = Identifier::fromUid(asSymbol(*symbol)->privateName());
     }
-    // No program can spell it, so nothing has to keep it from being replaced.
     if (underPrivateName) {
         PrivateSymbolImpl* name = vm.propertyNames->builtinNames().lookUpPrivateName(builtin.name.span8());
         if (!name)
@@ -447,7 +440,6 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
         key = Identifier::fromUid(vm, name);
         mutability = Mutability::Replaceable;
     }
-    // A number that is read from every instance is a data property of the prototype.
     PropertyKind kind = PropertyKind::Data;
     if (builtin.implementation.kind != BuiltinImplementation::Number) {
         if (builtin.kind == BuiltinKind::Getter)
@@ -461,7 +453,6 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
     return *found;
 }
 
-// An object with this structure finds what the prototype of its class has, and nothing before that.
 std::expected<JSCell*, String> Builtins::findOriginalStructure(JSGlobalObject* globalObject, unsigned index) const
 {
     const EngineClass* engineClass = nullptr;
@@ -492,16 +483,16 @@ std::expected<JSCell*, String> Builtins::findOriginalStructure(JSGlobalObject* g
 
 std::expected<JSCell*, String> Builtins::lookUp(JSGlobalObject* globalObject, unsigned index, JSObject* holder) const
 {
-    if (index >= firstCellOfPrototypes()) {
-        auto prototype = findGlobal(globalObject, engineClasses[index - firstCellOfPrototypes()].text);
+    if (index >= firstPrototypeCell()) {
+        auto prototype = findGlobal(globalObject, engineClasses[index - firstPrototypeCell()].text);
         if (prototype)
             prototype = findObject(globalObject, *prototype, globalObject->vm().propertyNames->prototype);
         if (!prototype)
             return makeUnexpected(String(prototype.error()));
         return static_cast<JSCell*>(*prototype);
     }
-    if (index >= cellOfOriginalStructure(0))
-        return findOriginalStructure(globalObject, index - cellOfOriginalStructure(0));
+    if (index >= originalStructureCell(0))
+        return findOriginalStructure(globalObject, index - originalStructureCell(0));
     if (index >= numberOfBuiltins) {
         BuiltinName name(index - numberOfBuiltins);
         ASCIILiteral text = builtinNames[name.index()].text;
@@ -533,7 +524,7 @@ std::expected<JSCell*, String> Builtins::lookUp(JSGlobalObject* globalObject, un
     return found->asCell();
 }
 
-BuiltinID Builtins::entryCarriedOutBy(PreludeFunction which) const
+BuiltinID Builtins::entryImplementedBy(PreludeFunction which) const
 {
     for (unsigned index = 0; index < numberOfBuiltins; ++index) {
         auto& implementation = builtinEntries[index].implementation;
@@ -553,14 +544,13 @@ bool Builtins::isHostFunctionInEngine(BuiltinID id) const
     return false;
 }
 
-// What is found cannot change, so it does not matter when this is asked.
 JSCell* Builtins::findCell(JSGlobalObject* globalObject, unsigned index) const
 {
     if (index < numberOfBuiltins && isReplaceable(builtinEntries[index].holderName))
         return globalObject->vm().structureStructure.get();
     if (globalObject->vm().useImmutableIntrinsics && !globalObject->hasImmutableIntrinsics()) [[unlikely]] {
         Instance* instance = globalObject->aotInstance();
-        JSCell* captured = instance && instance->fieldsBelow().typedBuiltins ? instance->fieldsBelow().typedBuiltins[index] : nullptr;
+        JSCell* captured = instance && instance->negativeOffsetFields().typedBuiltins ? instance->negativeOffsetFields().typedBuiltins[index] : nullptr;
         return captured ? captured : globalObject->vm().structureStructure.get();
     }
     DeferTerminationForAWhile deferTermination(globalObject->vm());
@@ -579,32 +569,30 @@ JSCell* Builtins::captureCell(JSGlobalObject* globalObject, JSObject* holder, un
     return found ? *found : globalObject->vm().structureStructure.get();
 }
 
-unsigned Builtins::cellOfGlobal(ASCIILiteral global) const
+unsigned Builtins::globalCell(ASCIILiteral global) const
 {
     BuiltinName name = nameOf(byteCast<uint8_t>(global.span8()));
     RELEASE_ASSERT(isGlobal(name));
     return cellOf(name);
 }
 
-unsigned Builtins::cellOfStaticFunction(ASCIILiteral global, ASCIILiteral name) const
+unsigned Builtins::staticFunctionCell(ASCIILiteral global, ASCIILiteral name) const
 {
     BuiltinID entry = findStatic(BuiltinKind::StaticFunction, nameOf(byteCast<uint8_t>(global.span8())), nameOf(byteCast<uint8_t>(name.span8())));
     RELEASE_ASSERT(entry && hasCell(entry));
     return cellOf(entry);
 }
 
-// Whether compiled code may ask for the cell.
 bool Builtins::hasCell(unsigned index) const
 {
-    if (index >= firstCellOfPrototypes())
-        return isGlobal(engineClasses[index - firstCellOfPrototypes()].name);
-    if (index >= cellOfOriginalStructure(0))
+    if (index >= firstPrototypeCell())
+        return isGlobal(engineClasses[index - firstPrototypeCell()].name);
+    if (index >= originalStructureCell(0))
         return true;
     if (index >= numberOfBuiltins)
         return builtinNames[index - numberOfBuiltins].isGlobal;
     auto& builtin = builtinEntries[index];
     switch (builtin.kind) {
-    // These go by the cell of the name.
     case BuiltinKind::Function:
     case BuiltinKind::Constructor:
     case BuiltinKind::Operation:
@@ -632,7 +620,6 @@ Vector<String> Builtins::mismatches(JSGlobalObject* globalObject) const
     for (unsigned index = 0; index < numberOfCells(); ++index) {
         if (!hasCell(index))
             continue;
-        // A host need not have the object.
         if (index < numberOfBuiltins && isReplaceable(builtinEntries[index].holderName) && !findGlobal(globalObject, builtinEntries[index].holder, Mutability::Replaceable))
             continue;
         if (auto found = lookUp(globalObject, index); !found)
@@ -649,7 +636,6 @@ Vector<String> Builtins::mismatches(JSGlobalObject* globalObject) const
         else if (!found->isNumber() || std::bit_cast<uint64_t>(purifyNaN(found->asNumber())) != std::bit_cast<uint64_t>(purifyNaN(number)))
             add(makeString(textOf(builtin), ": is not "_s, number));
     }
-    // The same object, or another with the same code.
     auto isSameFunction = [](JSValue a, JSValue b) {
         auto* first = dynamicDowncast<JSFunction>(a);
         auto* second = dynamicDowncast<JSFunction>(b);
@@ -659,7 +645,7 @@ Vector<String> Builtins::mismatches(JSGlobalObject* globalObject) const
     };
     for (unsigned index = 0; index < numberOfBuiltins; ++index) {
         auto& builtin = builtinEntries[index];
-        auto found = builtin.hasPrivateTwin ? findProperty(globalObject, builtin) : makeUnexpected(String());
+        auto found = builtin.hasPrivateAlias ? findProperty(globalObject, builtin) : makeUnexpected(String());
         if (!found)
             continue;
         auto twin = findProperty(globalObject, builtin, nullptr, true);

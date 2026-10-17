@@ -14,35 +14,31 @@
 
 namespace JSC { namespace B3 {
 
-// What the loop phases for position-independent procedures agree on.
-
-static constexpr unsigned minClobberedArgumentGPRsOfCall = 4;
+static constexpr unsigned minCallClobberedArgumentGPRs = 4;
 static constexpr double maxRatioOfHeaderToLikelyBlock = 16;
 
-// Going by the edge, and by the block: a Jump has no way to say so.
 inline bool isRare(const FrequentedBlock& successor, BasicBlock* from)
 {
     return successor.frequency() == FrequencyClass::Rare || successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency();
 }
 
-inline bool isRareForItsPlace(const FrequentedBlock& successor, BasicBlock* from)
+inline bool isRareForChainPosition(const FrequentedBlock& successor, BasicBlock* from)
 {
     if (from->last()->opcode() != Switch || successor.frequency() == FrequencyClass::Rare)
         return isRare(successor, from);
     unsigned numberOfCases = from->numSuccessors() - 1;
     double shareInChain = 0;
-    double shareOfCase = 1;
+    double caseShare = 1;
     for (unsigned i = 0; i < numberOfCases; ++i) {
-        shareOfCase /= 2;
+        caseShare /= 2;
         if (from->successorBlock(i) == successor.block())
-            shareInChain += shareOfCase;
+            shareInChain += caseShare;
     }
     if (from->successorBlock(numberOfCases) == successor.block())
-        shareInChain += shareOfCase;
+        shareInChain += caseShare;
     return successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency() * std::min(shareInChain, 1.0 / from->numSuccessors());
 }
 
-// A stub that keeps the registers of its caller is none.
 inline bool isCall(Value* value)
 {
     if (value->opcode() == CCall)
@@ -53,10 +49,9 @@ inline bool isCall(Value* value)
     unsigned numberOfClobberedArgumentGPRs = 0;
     for (unsigned i = 0; i < GPRInfo::numberOfArgumentRegisters; ++i)
         numberOfClobberedArgumentGPRs += patchpoint->lateClobbered().contains(GPRInfo::toArgumentRegister(i), IgnoreVectors);
-    return numberOfClobberedArgumentGPRs >= minClobberedArgumentGPRsOfCall;
+    return numberOfClobberedArgumentGPRs >= minCallClobberedArgumentGPRs;
 }
 
-// A patchpoint that writes memory or exits sideways has a call site, which is numbered once.
 inline bool canCloneForLoop(Value* value)
 {
     if (value->kind().isCloningForbidden() || value->type().isTuple())
@@ -77,7 +72,7 @@ inline bool canCloneForLoop(Value* value)
     }
 }
 
-inline bool takesInstructions(Value* value)
+inline bool emitsInstructions(Value* value)
 {
     switch (value->opcode()) {
     case Phi:

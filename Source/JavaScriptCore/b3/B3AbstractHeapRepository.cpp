@@ -134,13 +134,13 @@ AbstractHeapRepository::AbstractHeapRepository()
     RELEASE_ASSERT(!JSCell_freeListNext.offset());
 
 #if USE(BUN_JSC_ADDITIONS)
-#define KEEP_HEAPS_OF_INDEXED_ABSTRACT_HEAP(name, offset, size) name.keepHeapsMadeSoFar();
-    FOR_EACH_INDEXED_ABSTRACT_HEAP(KEEP_HEAPS_OF_INDEXED_ABSTRACT_HEAP)
-#undef KEEP_HEAPS_OF_INDEXED_ABSTRACT_HEAP
-#define KEEP_HEAPS_OF_NUMBERED_ABSTRACT_HEAP(name) name.keepHeapsMadeSoFar();
-    FOR_EACH_NUMBERED_ABSTRACT_HEAP(KEEP_HEAPS_OF_NUMBERED_ABSTRACT_HEAP)
-#undef KEEP_HEAPS_OF_NUMBERED_ABSTRACT_HEAP
-    absolute.keepHeapsMadeSoFar();
+#define RETAIN_INDEXED_ABSTRACT_HEAPS(name, offset, size) name.retainCurrentHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(RETAIN_INDEXED_ABSTRACT_HEAPS)
+#undef RETAIN_INDEXED_ABSTRACT_HEAPS
+#define RETAIN_NUMBERED_ABSTRACT_HEAPS(name) name.retainCurrentHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(RETAIN_NUMBERED_ABSTRACT_HEAPS)
+#undef RETAIN_NUMBERED_ABSTRACT_HEAPS
+    absolute.retainCurrentHeaps();
 #endif
 }
 
@@ -181,7 +181,7 @@ void AbstractHeapRepository::reparentHeapsForAOT()
 AbstractHeapRepository::~AbstractHeapRepository() = default;
 
 #if USE(BUN_JSC_ADDITIONS)
-static std::unique_ptr<AbstractHeapRepository>& repositoryOfThread()
+static std::unique_ptr<AbstractHeapRepository>& threadLocalRepository()
 {
     static thread_local std::unique_ptr<AbstractHeapRepository> repository;
     return repository;
@@ -189,7 +189,7 @@ static std::unique_ptr<AbstractHeapRepository>& repositoryOfThread()
 
 std::unique_ptr<AbstractHeapRepository> AbstractHeapRepository::takeFromThread()
 {
-    if (auto repository = std::exchange(repositoryOfThread(), nullptr))
+    if (auto repository = std::exchange(threadLocalRepository(), nullptr))
         return repository;
     auto repository = makeUnique<AbstractHeapRepository>();
 #if ENABLE(AOT)
@@ -200,21 +200,21 @@ std::unique_ptr<AbstractHeapRepository> AbstractHeapRepository::takeFromThread()
 
 void AbstractHeapRepository::giveBackToThread(std::unique_ptr<AbstractHeapRepository>&& repository)
 {
-    if (repositoryOfThread())
+    if (threadLocalRepository())
         return;
-    repository->forgetProcedure();
-    repositoryOfThread() = WTF::move(repository);
+    repository->detachProcedure();
+    threadLocalRepository() = WTF::move(repository);
 }
 
-void AbstractHeapRepository::forgetProcedure()
+void AbstractHeapRepository::detachProcedure()
 {
-#define FORGET_HEAPS_OF_INDEXED_ABSTRACT_HEAP(name, offset, size) name.forgetOtherHeaps();
-    FOR_EACH_INDEXED_ABSTRACT_HEAP(FORGET_HEAPS_OF_INDEXED_ABSTRACT_HEAP)
-#undef FORGET_HEAPS_OF_INDEXED_ABSTRACT_HEAP
-#define FORGET_HEAPS_OF_NUMBERED_ABSTRACT_HEAP(name) name.forgetOtherHeaps();
-    FOR_EACH_NUMBERED_ABSTRACT_HEAP(FORGET_HEAPS_OF_NUMBERED_ABSTRACT_HEAP)
-#undef FORGET_HEAPS_OF_NUMBERED_ABSTRACT_HEAP
-    absolute.forgetOtherHeaps();
+#define REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS(name, offset, size) name.removeTemporaryHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS)
+#undef REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS
+#define REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS(name) name.removeTemporaryHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS)
+#undef REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS
+    absolute.removeTemporaryHeaps();
     m_heapForMemory.shrink(0);
     m_heapForCCallRead.shrink(0);
     m_heapForCCallWrite.shrink(0);

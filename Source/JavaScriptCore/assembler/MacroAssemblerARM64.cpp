@@ -754,7 +754,7 @@ void MacroAssemblerARM64::collectCPUFeatures()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void MacroAssemblerARM64::useOnlyFeaturesOfBuildTarget()
+void MacroAssemblerARM64::restrictToBuildTargetFeatures()
 {
     collectCPUFeatures();
 #if !HAVE(LSE_INSTRUCTION)
@@ -777,7 +777,7 @@ void MacroAssemblerARM64::useOnlyFeaturesOfBuildTarget()
 #endif
 }
 
-unsigned MacroAssemblerARM64::featuresOfBuildTarget()
+unsigned MacroAssemblerARM64::buildTargetFeatures()
 {
     unsigned features = 0;
 #if HAVE(LSE_INSTRUCTION)

@@ -410,8 +410,8 @@ private:
         src = src.labelAtOffset(-executableOffsetFor(src.offset()));
 #endif
 #if CPU(X86_64) && USE(BUN_JSC_ADDITIONS)
-        if (!m_shiftsOfShortenedJumps.isEmpty()) [[unlikely]]
-            src = src.labelAtOffset(-static_cast<int>(shiftOfShortenedJumpsAt(m_shiftsOfShortenedJumps, src.offset())));
+        if (!m_shortenedJumpShifts.isEmpty()) [[unlikely]]
+            src = src.labelAtOffset(-static_cast<int>(shortenedJumpShiftAt(m_shortenedJumpShifts, src.offset())));
 #endif
         return src;
     }
@@ -464,7 +464,7 @@ private:
     bool m_shouldPerformBranchCompaction { true };
 #endif
 #if CPU(X86_64) && USE(BUN_JSC_ADDITIONS)
-    Vector<X86JumpShift> m_shiftsOfShortenedJumps;
+    Vector<X86JumpShift> m_shortenedJumpShifts;
 #endif
     bool m_didAllocate { false };
 #ifndef NDEBUG

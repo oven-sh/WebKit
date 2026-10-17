@@ -104,7 +104,6 @@ public:
     void freeMemory();
 
     static size_t optimalSizeFor(size_t);
-    // The size classes of a process with that Options::sizeClassProgression(), ascending.
     JS_EXPORT_PRIVATE static Vector<size_t> sizeClassesFor(double progression);
     
     void prepareForAllocation();

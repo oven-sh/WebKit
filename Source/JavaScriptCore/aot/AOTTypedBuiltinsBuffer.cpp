@@ -37,8 +37,7 @@ static constexpr BufferAccessor bufferAccessors[] = {
 };
 static_assert(std::size(bufferAccessors) == Instance::numberOfBufferAccessors);
 
-// Whether every object with the structure of the receiver finds, under the name of the row, the function the embedder has registered as what the row says. Runs no code of the program.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLookForBufferAccessor, void, (Instance* instance, JSCell* receiver, uint32_t row))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindBufferAccessor, void, (Instance* instance, JSCell* receiver, uint32_t row))
 {
     VM& vm = *instance->vm;
     auto& accessor = bufferAccessors[row];
@@ -54,8 +53,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLookForBufferAccessor, void, 
         Identifier name = Identifier::fromString(vm, accessor.name);
         if (isValidOffset(structure->get(vm, name)))
             return nullptr;
-        if (Structure* ofHolder = holder->structure(); ofHolder->isDictionary() && !ofHolder->isUncacheableDictionary() && !ofHolder->hasBeenFlattenedBefore())
-            ofHolder->flattenDictionaryStructure(vm, holder);
+        if (Structure* forHolder = holder->structure(); forHolder->isDictionary() && !forHolder->isUncacheableDictionary() && !forHolder->hasBeenFlattenedBefore())
+            forHolder->flattenDictionaryStructure(vm, holder);
         makePrototypeChainWatchable(vm, receiver);
         if (holder->structure()->typeInfo().overridesGetOwnPropertySlot() || holder->hasNonReifiedStaticProperties())
             return nullptr;
@@ -78,25 +77,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLookForBufferAccessor, void, 
         return function;
     };
     JSCell* function = find();
-    countOperationNamed(instance, "operationAOTTypedLookForBufferAccessor", function ? "found" : "not-found");
+    countOperationNamed(instance, "operationAOTTypedFindBufferAccessor", function ? "found" : "not-found");
     if (function) {
         instance->bufferAccessors[row] = function;
         instance->bufferAccessorStructureIDs[row] = receiver->structureID().bits();
         vm.writeBarrier(instance->globalObject);
     } else if (++instance->bufferAccessorAttempts[row] == Instance::maxBufferAccessorAttempts)
-        instance->bufferAccessorStructureIDs[row] = Instance::bufferAccessorIsNotLookedFor;
+        instance->bufferAccessorStructureIDs[row] = Instance::bufferAccessorLookupDisabled;
 }
 
-static constexpr size_t sizeOfBigIntOfOneDigit = roundUpToMultipleOf<MarkedBlock::atomSize>(JSBigInt::allocationSize(1));
+static constexpr size_t oneDigitBigIntSize = roundUpToMultipleOf<MarkedBlock::atomSize>(JSBigInt::allocationSize(1));
 
-// Also sees to it that the next one is made in place.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewBigInt64, JSCell*, (Instance* instance, uint64_t bits, uint32_t isSigned))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     if (auto& data = instance->inlineAllocations[static_cast<unsigned>(Instance::InlineAllocation::BigInt)]; !data.allocator) {
         Structure* structure = vm.bigIntStructure.get();
         auto* allocator = subspaceFor<JSBigInt>(vm)->allocatorFor(JSBigInt::allocationSize(1), AllocatorForMode::EnsureAllocator).localAllocator();
-        RELEASE_ASSERT(allocator->cellSize() == sizeOfBigIntOfOneDigit);
+        RELEASE_ASSERT(allocator->cellSize() == oneDigitBigIntSize);
         data.header = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
         data.allocator = allocator;
     }
@@ -108,8 +106,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewBigInt64, JSCell*, (Instance* insta
 namespace Typed {
 
 using namespace B3;
-
-// The family aot/builtins/buffer.def.
 
 #define FOR_EACH_DATA_VIEW_ELEMENT(v) \
     v(Int8) \
@@ -128,7 +124,7 @@ struct DataViewAccess {
     TypedArrayType elements;
 };
 
-static DataViewAccess dataViewAccessOf(InlineBuiltin which)
+static DataViewAccess dataViewAccessFor(InlineBuiltin which)
 {
     switch (which) {
 #define AOT_DATA_VIEW_ACCESS(name) \
@@ -143,10 +139,9 @@ static DataViewAccess dataViewAccessOf(InlineBuiltin which)
     }
 }
 
-// The index is a number, what is stored a number or a BigInt, and the byte order a boolean or left out. Anything else is converted first, which is left to the function.
 std::optional<Writes> writesOfInlineBuffer(InlineBuiltin which, std::span<const Type> arguments)
 {
-    auto [isWrite, elements] = dataViewAccessOf(which);
+    auto [isWrite, elements] = dataViewAccessFor(which);
     unsigned numberOfOperands = 1 + isWrite;
     if (arguments.size() < numberOfOperands || !arguments[0].isNumber())
         return std::nullopt;
@@ -154,14 +149,12 @@ std::optional<Writes> writesOfInlineBuffer(InlineBuiltin which, std::span<const 
         return std::nullopt;
     if (arguments.size() > numberOfOperands && !arguments[numberOfOperands].hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull))
         return std::nullopt;
-    // Where the index is outside, or the length depends on that of the buffer, the function is called.
     return Writes::RuntimeState;
 }
 
-// As FTL::LowerDFGToB3::compileDataViewGet() and compileDataViewSet().
-std::optional<Operand> Lowering::lowerInlineBuffer(InlineBuiltin which, ValueID result, const Value& value, Writes inPlace)
+std::optional<Operand> Lowering::lowerInlineBuffer(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
 {
-    auto [isWrite, elements] = dataViewAccessOf(which);
+    auto [isWrite, elements] = dataViewAccessFor(which);
     auto& arguments = value.arguments;
     auto& type = typeOf(result);
     unsigned size = elementSize(elements);
@@ -171,7 +164,7 @@ std::optional<Operand> Lowering::lowerInlineBuffer(InlineBuiltin which, ValueID 
         if (given & Primitive::True)
             order = given == Primitive::True ? ByteOrder { true, { } } : ByteOrder { std::nullopt, lowerToBoolean(arguments[index]) };
     }
-    CellPointer view = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    CellPointer view = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
     Rep rep = repOf(type);
     LBasicBlock slowPath = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
@@ -183,14 +176,14 @@ std::optional<Operand> Lowering::lowerInlineBuffer(InlineBuiltin which, ValueID 
     if (isWrite) {
         storeBytes(address, elements, stored, order);
         ensureStillAliveHere(view);
-        join.add(yieldAsTableSays(undefined(), m_program.at(m_program.types.undefined), value, type));
+        join.add(convertToDeclaredResult(undefined(), m_program.at(m_program.types.undefined), value, type));
     } else {
         Operand element = loadBytes(address, elements, order);
         ensureStillAliveHere(view);
-        join.add(yieldAsTableSays(element, elementTypeOf(elements), value, type));
+        join.add(convertToDeclaredResult(element, elementTypeOf(elements), value, type));
     }
     m_out.appendTo(slowPath);
-    join.add(yieldAsTableSays(callBuiltinFunction(value, OperationEffects { std::max(inPlace, effectsOfBuiltinCall(value).writes), true }), m_program.at(m_program.types.anything), value, type));
+    join.add(convertToDeclaredResult(callBuiltinFunction(value, OperationEffects { std::max(inlinePath, builtinCallEffects(value).writes), true }), m_program.at(m_program.types.anything), value, type));
     return join.finish();
 }
 
@@ -207,7 +200,7 @@ static TypedArrayType elementsMovedBy(const BufferAccessor& accessor)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Store storeOfElements(TypedArrayType elements)
+static Store elementStore(TypedArrayType elements)
 {
     switch (elements) {
     case TypeInt8:
@@ -237,10 +230,9 @@ static Store storeOfElements(TypedArrayType elements)
 bool Lowering::mayBeNegative(ValueID id) const
 {
     auto& type = typeOf(id);
-    return !type.isInteger() || type.integers.least < 0;
+    return !type.isInteger() || type.integers.minimum < 0;
 }
 
-// Goes on where so many bytes from the offset on are inside the view, which is as long as it says itself, and yields where they are.
 Pointer Lowering::findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise)
 {
     if (size > 1 && mayBeNegative)
@@ -286,7 +278,6 @@ LValue Lowering::inByteOrder(LValue bits, unsigned size, const ByteOrder& order)
     return order.isLittle ? swapped : m_out.select(order.isLittleAtRunTime.value(), bits, swapped);
 }
 
-// In the representation of the type of the elements.
 Operand Lowering::loadBytes(Pointer address, TypedArrayType elements, const ByteOrder& order)
 {
     TypedPointer pointer(m_heaps.TypedArrayProperties, address.value());
@@ -294,7 +285,7 @@ Operand Lowering::loadBytes(Pointer address, TypedArrayType elements, const Byte
     Type elementType = elementTypeOf(elements);
     Operand element;
     if (size == 1 || order.isLittle == true)
-        element = load(storeOfElements(elements), pointer, 0);
+        element = load(elementStore(elements), pointer, 0);
     else {
         LValue bits = inByteOrder(size == 2 ? m_out.load16ZeroExt32(pointer) : size == 4 ? m_out.load32(pointer) : m_out.load64(pointer), size, order);
         switch (elements) {
@@ -327,13 +318,12 @@ Operand Lowering::loadBytes(Pointer address, TypedArrayType elements, const Byte
     return convert(element, elementType, repOf(elementType));
 }
 
-// Of an integer the low bits, in 32 of them or, for a BigInt, in 64. A number for the floats.
 void Lowering::storeBytes(Pointer address, TypedArrayType elements, Operand stored, const ByteOrder& order)
 {
     TypedPointer pointer(m_heaps.TypedArrayProperties, address.value());
     unsigned size = elementSize(elements);
     if (isFloat(elements) && order.isLittle == true) {
-        store(storeOfElements(elements), stored, pointer);
+        store(elementStore(elements), stored, pointer);
         return;
     }
     LValue bits = stored.value;
@@ -361,10 +351,9 @@ void Lowering::storeBytes(Pointer address, TypedArrayType elements, Operand stor
 
 Word32 Lowering::isNegativeBigInt(CellPointer bigInt)
 {
-    return logicalNot(lacksBits(loadByte(bigInt, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit));
+    return logicalNot(hasNoBits(loadByte(bigInt, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit));
 }
 
-// What BigInt.asIntN(64, ..) and BigInt.asUintN(64, ..) have in common. As FTL::LowerDFGToB3::toBigInt64().
 Integer Lowering::low64Of(CellPointer bigInt)
 {
     return either<Integer>(logicalNot(isZero(loadField<Word32>(bigInt, m_heaps.JSBigInt_length))), [&] {
@@ -375,17 +364,15 @@ Integer Lowering::low64Of(CellPointer bigInt)
     });
 }
 
-// As FTL::LowerDFGToB3::allocateHeapBigInt64(). Zero has no digit.
 CellPointer Lowering::newBigInt(Integer bits, bool isSigned)
 {
     constexpr auto kind = Instance::InlineAllocation::BigInt;
     static_assert(JSCell::typeInfoFlagsOffset() == 6 && JSBigInt::offsetOfLength() == sizeof(JSCell) && JSBigInt::offsetOfData() == JSBigInt::offsetOfLength() + sizeof(uint64_t));
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    // Null until the operation has been called once.
     LValue allocator = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind)));
     orElse(m_out.notNull(allocator), slowPath);
-    CellPointer cell = allocateCell(allocator, sizeOfBigIntOfOneDigit, slowPath);
+    CellPointer cell = allocateCell(allocator, oneDigitBigIntSize, slowPath);
     LValue header = m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfHeaderFor(kind)));
     Integer magnitude = bits;
     if (isSigned) {
@@ -394,17 +381,16 @@ CellPointer Lowering::newBigInt(Integer bits, bool isSigned)
         header = m_out.select(isNegative.value(), m_out.bitOr(header, integer(static_cast<int64_t>(TypeInfoPerCellBit) << 48).value()), header);
     }
     m_out.store64(header, cell.value(), m_heaps.JSCell_header);
-    // With it: no hash yet.
     m_out.store64(zeroExtended(isNotZero(bits)).value(), cell.value(), m_heaps.JSBigInt_length);
     m_out.store64(magnitude.value(), cell.value(), m_heaps.JSBigInt_data);
     fenceAfterInitialization();
-    ValueFromBlock inPlace = m_out.anchor(cell.value());
+    ValueFromBlock inlinePath = m_out.anchor(cell.value());
     m_out.jump(continuation);
     m_out.appendTo(slowPath);
     ValueFromBlock made = m_out.anchor(AOT_TYPED_OPERATION(NewBigInt64, bits, word32(isSigned)).value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-    return CellPointer(m_out.phi(pointerType(), inPlace, made));
+    return CellPointer(m_out.phi(pointerType(), inlinePath, made));
 }
 
 std::optional<unsigned> Lowering::bufferAccessorNamed(StringID name) const
@@ -419,13 +405,12 @@ std::optional<unsigned> Lowering::bufferAccessorNamed(StringID name) const
     return std::nullopt;
 }
 
-// What the value has under the name of the row. An object with the structure that was looked at finds the function that was found then: Instance::bufferAccessorStructureIDs.
 Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned row, bool isCalled)
 {
     LBasicBlock isCellCase = m_out.newBlock();
     LBasicBlock hit = m_out.newBlock();
     LBasicBlock miss = newUnlikelyBlock();
-    LBasicBlock mayLook = newColdBlock();
+    LBasicBlock mayProbe = newColdBlock();
     LBasicBlock look = newColdBlock();
     LBasicBlock read = newUnlikelyBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -438,11 +423,11 @@ Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned row, bool 
     ValueFromBlock known = m_out.anchor(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfBufferAccessor(row))));
     m_out.jump(continuation);
     m_out.appendTo(miss);
-    m_out.branch(isZero(expected).value(), rarely(mayLook), usually(read));
-    m_out.appendTo(mayLook);
-    m_out.branch(equal(typeOfCell(cell), word32(Uint8ArrayType)).value(), unsure(look), unsure(read));
+    m_out.branch(isZero(expected).value(), rarely(mayProbe), usually(read));
+    m_out.appendTo(mayProbe);
+    m_out.branch(equal(loadCellType(cell), word32(Uint8ArrayType)).value(), unsure(look), unsure(read));
     m_out.appendTo(look);
-    AOT_TYPED_OPERATION(LookForBufferAccessor, cell, word32(row));
+    AOT_TYPED_OPERATION(FindBufferAccessor, cell, word32(row));
     m_out.jump(read);
     m_out.appendTo(read);
     ValueFromBlock found = m_out.anchor(emitCachedGetById(base, name, isCalled).value());
@@ -451,9 +436,6 @@ Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned row, bool 
     return Boxed(m_out.phi(Int64, known, found));
 }
 
-// `buffer.readUInt32LE(offset)`, `buffer.writeInt16BE(value, offset)`: what the fast path of the host function does (bufferRead(), bufferWrite() in Bun's JSBuffer.cpp), as
-// FTL::LowerDFGToB3::compileBufferRead() and compileBufferWrite() have it. Whatever else there is to the call, every error among it, is left to the function, before anything is done.
-// `method`: what has been read from the buffer under the name.
 std::optional<Operand> Lowering::lowerBufferAccess(ValueID buffer, StringID name, std::optional<Boxed> method, const Arguments& arguments, const Type& type)
 {
     auto row = bufferAccessorNamed(name);
@@ -461,26 +443,25 @@ std::optional<Operand> Lowering::lowerBufferAccess(ValueID buffer, StringID name
         return std::nullopt;
     auto& accessor = bufferAccessors[*row];
     auto& bufferType = typeOf(buffer);
-    const EngineClass* engineClass = bufferType.withoutPrimitives(Primitive::UndefinedOrNull).onlyEngineClass();
+    const EngineClass* engineClass = bufferType.withoutPrimitives(Primitive::UndefinedOrNull).singleEngineClass();
     bool isByteArray = engineClass && engineClass->type == Uint8ArrayType;
     if (!isByteArray && !bufferType.anyObject)
         return std::nullopt;
-    if (auto expected = predictionOf(buffer); expected && expected->onlyView())
+    if (auto expected = predictionOf(buffer); expected && expected->singleLayout())
         return std::nullopt;
     unsigned numberOfValues = accessor.isWrite;
     if (arguments.size() < numberOfValues)
         return std::nullopt;
     TypedArrayType elements = elementsMovedBy(accessor);
     Type elementType = elementTypeOf(elements);
-    if (accessor.isWrite && !(isFloat(elements) || isBigInt(elements) ? !!(expectedTypeOf(arguments[0]).primitives & elementType.primitives) : mayBeIndex(arguments[0])))
+    if (accessor.isWrite && !(isFloat(elements) || isBigInt(elements) ? !!(predictedTypeOf(arguments[0]).primitives & elementType.primitives) : mayBeIndex(arguments[0])))
         return std::nullopt;
     bool hasOffset = arguments.size() > numberOfValues;
     if (hasOffset && !mayBeIndex(arguments[numberOfValues]))
         return std::nullopt;
     ByteOrder order { accessor.isLittleEndian, { } };
 
-    return ifAsExpected({ }, repOf(type), [&](LBasicBlock otherwise) {
-        // Any cell has a structure and a type.
+    return ifPredictionHolds({ }, repOf(type), [&](LBasicBlock otherwise) {
         Operand receiver = get(buffer);
         if (receiver.rep != Rep::Cell)
             orElse(isCell(receiver.as<Boxed>(), bufferType), otherwise);
@@ -488,26 +469,25 @@ std::optional<Operand> Lowering::lowerBufferAccess(ValueID buffer, StringID name
         if (method) {
             orElse(equal(*method, Boxed(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfBufferAccessor(*row))))), otherwise);
             if (!isByteArray)
-                orElse(equal(typeOfCell(view), word32(Uint8ArrayType)), otherwise);
+                orElse(equal(loadCellType(view), word32(Uint8ArrayType)), otherwise);
         } else
             orElse(equal(loadField<Word32>(view, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(Instance::offsetOfBufferAccessorStructureID(*row)))), otherwise);
 
         Operand stored;
         if (accessor.isWrite && isFloat(elements))
-            stored = expectOrElse(Expectation { arguments[0], &elementType }, otherwise);
+            stored = speculateOrElse(Expectation { arguments[0], &elementType }, otherwise);
         else if (accessor.isWrite && isBigInt(elements)) {
-            CellPointer bigInt = expectOrElse(Expectation { arguments[0], &elementType }, otherwise).as<CellPointer>();
+            CellPointer bigInt = speculateOrElse(Expectation { arguments[0], &elementType }, otherwise).as<CellPointer>();
             orElse(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), word32(1)), otherwise);
             Integer value = low64Of(bigInt);
             Word32 isNegative = isNegativeBigInt(bigInt);
             orElse(elements == TypeBigUint64 ? logicalNot(isNegative) : logicalOr(isZero(value), equal(lessThan(value, integer(0)), isNegative)), otherwise);
             stored = value;
         } else if (accessor.isWrite) {
-            // A number that is no integer is truncated if it is in the range: that is left to the function.
             Integer value = indexOrElse(arguments[0], otherwise);
             Range range = elementType.integers;
-            if (auto& valueType = typeOf(arguments[0]); !valueType.isInteger() || !valueType.integers.isWithin(range))
-                orElse(belowOrEqual(sub(value, integer(range.least)), integer(range.most - range.least)), otherwise);
+            if (auto& valueType = typeOf(arguments[0]); !valueType.isInteger() || !valueType.integers.isSubsetOf(range))
+                orElse(belowOrEqual(sub(value, integer(range.minimum)), integer(range.maximum - range.minimum)), otherwise);
             stored = low32(value);
         }
 
@@ -516,14 +496,14 @@ std::optional<Operand> Lowering::lowerBufferAccess(ValueID buffer, StringID name
         if (accessor.isWrite) {
             storeBytes(address, elements, stored, order);
             ensureStillAliveHere(view);
-            return ensure(add(offset, integer(accessor.size)), Type::integer({ accessor.size, Range::full().most }), type);
+            return ensure(add(offset, integer(accessor.size)), Type::integer({ accessor.size, Range::full().maximum }), type);
         }
         Operand element = loadBytes(address, elements, order);
         ensureStillAliveHere(view);
         return ensure(element, elementType, type);
     }, [&] {
         Boxed receiver = in<Boxed>(buffer);
-        return ensure(method ? callGenerally(*method, receiver, arguments) : callMethodGenerally(receiver, name, arguments), type);
+        return ensure(method ? callGeneric(*method, receiver, arguments) : callMethodGeneric(receiver, name, arguments), type);
     });
 }
 

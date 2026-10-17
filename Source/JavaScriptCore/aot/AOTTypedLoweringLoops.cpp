@@ -15,7 +15,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-// Natural loops of the function's blocks. A back edge whose target does not dominate its source belongs to no loop here.
 void Lowering::computeLoops(const Vector<BlockID>& order)
 {
     unsigned numberOfBlocks = m_function.blocks.size();
@@ -30,7 +29,6 @@ void Lowering::computeLoops(const Vector<BlockID>& order)
         for (auto& target : successorsOf(m_function.at(block).terminator))
             predecessors[target.block.index()].append(block);
     }
-    // The header of an outer loop comes first, so that a block ends up with the innermost loop it is in.
     for (BlockID header : order) {
         Loop loop;
         loop.header = header;
@@ -65,7 +63,6 @@ bool Lowering::isLoopInvariant(const Loop& loop, ValueID id) const
     return definingBlock && !loop.blocks.get(definingBlock.index());
 }
 
-// As B3::hoistLoopInvariantValues() has it for a position-independent procedure: from the header to the block being appended to there is one way that is not rare.
 bool Lowering::isGuaranteedToExecute(const Loop& loop) const
 {
     static constexpr unsigned maxNumberOfBlocks = 32;
@@ -86,7 +83,6 @@ bool Lowering::isGuaranteedToExecute(const Loop& loop) const
     return block == m_out.m_block;
 }
 
-// Whether the back end moves what is computed here from the operand alone in front of the innermost loop.
 bool Lowering::willHoistComputationOn(ValueID operand) const
 {
     unsigned index = m_innermostLoop[m_currentBlockID.index()];
@@ -95,27 +91,24 @@ bool Lowering::willHoistComputationOn(ValueID operand) const
     return isLoopInvariant(m_loops[index], operand) && isGuaranteedToExecute(m_loops[index]);
 }
 
-// For a kept integer i and any number: `i opcode number` holds exactly where `i opcode bound` does.
-// i < d is i < ceil(d), i <= d is i <= floor(d), i > d is i > floor(d), i >= d is i >= ceil(d). Nothing holds of NaN. No kept integer reaches the least or the greatest int64.
 Integer Lowering::integerBound(Opcode opcode, Number number)
 {
     bool roundsUp = opcode == Opcode::Less || opcode == Opcode::GreaterEq;
-    bool holdsOfLeastNumbers = opcode == Opcode::Greater || opcode == Opcode::GreaterEq;
-    constexpr int64_t least = std::numeric_limits<int64_t>::min();
+    bool holdsForMinimum = opcode == Opcode::Greater || opcode == Opcode::GreaterEq;
+    constexpr int64_t minimum = std::numeric_limits<int64_t>::min();
     constexpr int64_t greatest = std::numeric_limits<int64_t>::max();
     if (number.value()->hasDouble()) {
         double constant = number.value()->asDouble();
         if (std::isnan(constant))
-            return integer(holdsOfLeastNumbers ? greatest : least);
+            return integer(holdsForMinimum ? greatest : minimum);
         double rounded = roundsUp ? std::ceil(constant) : std::floor(constant);
-        return integer(rounded >= 0x1p63 ? greatest : rounded < -0x1p63 ? least : static_cast<int64_t>(rounded));
+        return integer(rounded >= 0x1p63 ? greatest : rounded < -0x1p63 ? minimum : static_cast<int64_t>(rounded));
     }
-    // Below -2^63 truncation yields the least integer on every processor.
     Integer rounded = truncateToInteger(roundsUp ? ceil(number) : floor(number));
     Number beyond = this->number(0x1p63);
-    if (holdsOfLeastNumbers)
+    if (holdsForMinimum)
         return select(lessThan(number, beyond), rounded, integer(greatest));
-    return select(greaterThanOrEqual(number, beyond), integer(greatest), select(equal(number, number), rounded, integer(least)));
+    return select(greaterThanOrEqual(number, beyond), integer(greatest), select(equal(number, number), rounded, integer(minimum)));
 }
 
 std::optional<Word32> Lowering::lowerRelationalWithIntegerBound(const Value& value)
@@ -161,20 +154,20 @@ std::optional<Word32> Lowering::lowerRelationalWithIntegerBound(const Value& val
 
 std::optional<Word32> Lowering::lowerRelationalWithLikelyInteger(const Value& value)
 {
-    if (m_likelyIntegersOfNumbers.isEmpty())
+    if (m_likelyIntegerNumbers.isEmpty())
         return std::nullopt;
     bool integerIsFirst = typeOf(value.child(0)).isInteger();
     ValueID integerOperand = value.child(integerIsFirst ? 0 : 1);
     ValueID numberOperand = value.child(integerIsFirst ? 1 : 0);
     if (!typeOf(integerOperand).isInteger())
         return std::nullopt;
-    auto found = m_likelyIntegersOfNumbers.find(numberOperand.index());
-    if (found == m_likelyIntegersOfNumbers.end() || get(numberOperand).value != found->value.number)
+    auto found = m_likelyIntegerNumbers.find(numberOperand.index());
+    if (found == m_likelyIntegerNumbers.end() || get(numberOperand).value != found->value.number)
         return std::nullopt;
     Integer kept(found->value.integer);
-    bool keptIsNotNegative = found->value.least >= 0;
-    bool neitherIsNegative = keptIsNotNegative && typeOf(integerOperand).integers.least >= 0;
-    return either<Word32>(keptIsNotNegative ? greaterThanOrEqual(kept, integer(0)) : greaterThan(kept, integer(INT64_MIN)), [&] {
+    bool savedIsNonNegative = found->value.minimum >= 0;
+    bool neitherIsNegative = savedIsNonNegative && typeOf(integerOperand).integers.minimum >= 0;
+    return either<Word32>(savedIsNonNegative ? greaterThanOrEqual(kept, integer(0)) : greaterThan(kept, integer(INT64_MIN)), [&] {
         Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
         Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);
         switch (value.opcode) {
@@ -215,7 +208,7 @@ std::optional<Word32> Lowering::lowerRelationalWithOptionalInteger(const Value& 
     if (optional.rep != Rep::OptionalInt64)
         return std::nullopt;
     Integer kept = assumedInteger(optional.as<OptionalInteger>());
-    bool neitherIsNegative = optionalType.integers.least >= 0 && typeOf(integerOperand).integers.least >= 0;
+    bool neitherIsNegative = optionalType.integers.minimum >= 0 && typeOf(integerOperand).integers.minimum >= 0;
     return either<Word32>(lessThan(kept, integer(undefinedInteger)), [&] {
         Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
         Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);
@@ -234,11 +227,10 @@ std::optional<Word32> Lowering::lowerRelationalWithOptionalInteger(const Value& 
     });
 }
 
-// ToInt32 of a sum or a difference of numbers of which one is kept as an integer. Where the other is an int32 too, -0 counting as 0, and a double stands for the result exactly, that is the low half of what integers come out with.
-std::optional<Word32> Lowering::toInt32OfSum(ValueID id)
+std::optional<Word32> Lowering::sumToInt32(ValueID id)
 {
     auto& value = m_function.at(id);
-    if ((value.opcode != Opcode::Add && value.opcode != Opcode::Sub) || !hasOperandsHere(id))
+    if ((value.opcode != Opcode::Add && value.opcode != Opcode::Sub) || !operandsAreAvailable(id))
         return std::nullopt;
     ValueID a = value.child(0);
     ValueID b = value.child(1);
@@ -246,23 +238,20 @@ std::optional<Word32> Lowering::toInt32OfSum(ValueID id)
     auto& right = typeOf(b);
     if (!isNumericOperand(left) || !isNumericOperand(right) || (!left.isInteger() && !right.isInteger()))
         return std::nullopt;
-    // Trying a double as an int32 costs what the sum of doubles and its conversion cost. It keeps the integer from going through doubles.
-    if ((!left.isInteger() || !right.isInteger()) && (numberOfUsesOf(id) != 1 || m_function.at(left.isInteger() ? a : b).opcode == Opcode::Integer))
+    if ((!left.isInteger() || !right.isInteger()) && (useCountOf(id) != 1 || m_function.at(left.isInteger() ? a : b).opcode == Opcode::Integer))
         return std::nullopt;
 
     bool isAdd = value.opcode == Opcode::Add;
     LBasicBlock otherwise = newColdBlock();
     Join join(m_out, Rep::Int32, Int32);
-    // By operand: the integer that was taken in the place of the number.
-    std::array<Integer, 2> keptBesideNumber;
+    std::array<Integer, 2> savedWithNumber;
     auto asInteger = [&](ValueID operand, const Type& type) {
         if (type.isInteger())
             return in<Integer>(operand);
-        // What is kept beside the number is all of it. What stands for "not a number" there is, read as unsigned, above every int32.
-        if (auto found = m_integersOfNumbers.find(operand.index()); found != m_integersOfNumbers.end() && found->value.least && *found->value.least >= 0 && get(operand).value == found->value.number) {
+        if (auto found = m_numbersAsIntegers.find(operand.index()); found != m_numbersAsIntegers.end() && found->value.minimum && *found->value.minimum >= 0 && get(operand).value == found->value.number) {
             Integer kept(found->value.integer);
             orElse(below(kept, integer(1ll << 31)), otherwise);
-            keptBesideNumber[operand == b] = kept;
+            savedWithNumber[operand == b] = kept;
             return kept;
         }
         Number number = asNumericOperand(operand);
@@ -272,32 +261,29 @@ std::optional<Word32> Lowering::toInt32OfSum(ValueID id)
     };
     Integer x = asInteger(a, left);
     Integer y = asInteger(b, right);
-    Range rangeOfLeft = left.isInteger() ? left.integers : Range::int32();
-    Range rangeOfRight = right.isInteger() ? right.integers : Range::int32();
-    Int128 least = isAdd ? static_cast<Int128>(rangeOfLeft.least) + rangeOfRight.least : static_cast<Int128>(rangeOfLeft.least) - rangeOfRight.most;
-    Int128 most = isAdd ? static_cast<Int128>(rangeOfLeft.most) + rangeOfRight.most : static_cast<Int128>(rangeOfLeft.most) - rangeOfRight.least;
-    // Kept integers are at most 2^62: a result that 64 bits have no room for wraps around to the least integer.
+    Range leftRange = left.isInteger() ? left.integers : Range::int32();
+    Range rightRange = right.isInteger() ? right.integers : Range::int32();
+    Int128 minimum = isAdd ? static_cast<Int128>(leftRange.minimum) + rightRange.minimum : static_cast<Int128>(leftRange.minimum) - rightRange.maximum;
+    Int128 maximum = isAdd ? static_cast<Int128>(leftRange.maximum) + rightRange.maximum : static_cast<Int128>(leftRange.maximum) - rightRange.minimum;
     Integer result = isAdd ? add(x, y) : sub(x, y);
-    if (most > maxExactInteger)
+    if (maximum > maxExactInteger)
         orElse(lessThanOrEqual(result, integer(maxExactInteger)), otherwise);
-    if (least < -maxExactInteger || most >= static_cast<Int128>(1) << 63)
+    if (minimum < -maxExactInteger || maximum >= static_cast<Int128>(1) << 63)
         orElse(greaterThanOrEqual(result, integer(-maxExactInteger)), otherwise);
     join.add(low32(result));
 
     m_out.appendTo(otherwise);
-    // Made here, so that it is not made where it is not wanted.
     auto asNumber = [&](ValueID operand, Integer kept) {
         if (!kept)
             return asNumericOperand(operand);
         return select(equal(kept, integer(INT64_MIN)), number(PNaN), toNumber(kept));
     };
-    Number p = asNumber(a, a == b ? Integer() : keptBesideNumber[0]);
-    Number q = asNumber(b, keptBesideNumber[1]);
+    Number p = asNumber(a, a == b ? Integer() : savedWithNumber[0]);
+    Number q = asNumber(b, savedWithNumber[1]);
     join.add(toInt32(isAdd ? add(p, q) : sub(p, q)));
     return join.finish().as<Word32>();
 }
 
-// For an integer that exceeds the limit by what rounding takes back. In a loop a branch keeps the comparison off the loop-carried dependency chain.
 Integer Lowering::clampToMaximum(Integer value, int64_t limit)
 {
     Word32 isWithinLimit = lessThanOrEqual(value, integer(limit));

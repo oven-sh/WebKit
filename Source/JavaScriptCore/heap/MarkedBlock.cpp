@@ -156,16 +156,16 @@ static void clearBits(std::span<Word> words, size_t start, size_t end)
         return;
     size_t firstWord = start / wordSize;
     size_t lastWord = (end - 1) / wordSize;
-    Word keptInFirst = (static_cast<Word>(1) << (start % wordSize)) - 1;
-    Word keptInLast = end % wordSize ? ~static_cast<Word>(0) << (end % wordSize) : 0;
+    Word preservedInFirstWord = (static_cast<Word>(1) << (start % wordSize)) - 1;
+    Word preservedInLastWord = end % wordSize ? ~static_cast<Word>(0) << (end % wordSize) : 0;
     if (firstWord == lastWord) {
-        words[firstWord] &= keptInFirst | keptInLast;
+        words[firstWord] &= preservedInFirstWord | preservedInLastWord;
         return;
     }
-    words[firstWord] &= keptInFirst;
+    words[firstWord] &= preservedInFirstWord;
     for (size_t i = firstWord + 1; i < lastWord; ++i)
         words[i] = 0;
-    words[lastWord] &= keptInLast;
+    words[lastWord] &= preservedInLastWord;
 }
 
 void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
@@ -730,18 +730,18 @@ void MarkedBlock::Handle::poisonDeadCells()
 void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
-    bool cellsHaveJustDied = false;
+    bool hasNewlyDeadCells = false;
     forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
-        cellsHaveJustDied = !__asan_address_is_poisoned(cell);
-        return cellsHaveJustDied ? IterationStatus::Done : IterationStatus::Continue;
+        hasNewlyDeadCells = !__asan_address_is_poisoned(cell);
+        return hasNewlyDeadCells ? IterationStatus::Done : IterationStatus::Continue;
     });
-    if (cellsHaveJustDied) {
+    if (hasNewlyDeadCells) {
         Locker locker { m_directory->bitvectorLock() };
         m_directory->setIsCanAllocate(this, false);
         m_directory->setIsEmpty(this, false);
     }
-    bool owesDestructors = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
-    if (m_directory->isUnswept(this) && !owesDestructors)
+    bool hasPendingDestructors = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    if (m_directory->isUnswept(this) && !hasPendingDestructors)
         poisonDeadCells();
 }
 
@@ -775,7 +775,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
 #if ASAN_ENABLED
     unpoisonCells();
-    auto poisonAgain = makeScopeExit([&] {
+    auto repoisonOnExit = makeScopeExit([&] {
         if (sweepMode == SweepOnly && !heap()->isShuttingDown())
             poisonDeadCells();
     });

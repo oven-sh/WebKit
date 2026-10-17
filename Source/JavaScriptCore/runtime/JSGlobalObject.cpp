@@ -1262,7 +1262,7 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
-            if (init.owner->fixesOrNotesIntrinsics()) [[unlikely]]
+            if (init.owner->locksOrAuditsIntrinsics()) [[unlikely]]
                 init.owner->makeIntrinsicImmutable(constructor, IntrinsicKind::Other);
         });
 
@@ -1368,13 +1368,13 @@ void JSGlobalObject::init(VM& vm)
         Options::allowDoubleShape() ? JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithDouble) : arrayWithContiguousStructure);
     m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ContiguousShape)].set(vm, this, arrayWithContiguousStructure);
 
-    auto createStructureOfArraysInArrayStorage = [&](IndexingType indexingType) {
+    auto createArrayStorageStructure = [&](IndexingType indexingType) {
         if (!vm.useImmutableIntrinsics || m_hasImmutableIntrinsics) [[likely]]
             return JSArray::createStructure(vm, this, m_arrayPrototype.get(), indexingType);
         return Structure::create(vm, this, m_arrayPrototype.get(), TypeInfo(DerivedArrayType, JSArray::StructureFlags), JSArray::info(), indexingType);
     };
-    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ArrayStorageShape)].set(vm, this, createStructureOfArraysInArrayStorage(ArrayWithArrayStorage));
-    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(SlowPutArrayStorageShape)].set(vm, this, createStructureOfArraysInArrayStorage(ArrayWithSlowPutArrayStorage));
+    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ArrayStorageShape)].set(vm, this, createArrayStorageStructure(ArrayWithArrayStorage));
+    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(SlowPutArrayStorageShape)].set(vm, this, createArrayStorageStructure(ArrayWithSlowPutArrayStorage));
     m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(CopyOnWriteArrayWithInt32)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), CopyOnWriteArrayWithInt32));
 
     Structure* copyOnWriteArrayWithContiguous = JSArray::createStructure(vm, this, m_arrayPrototype.get(), CopyOnWriteArrayWithContiguous);
@@ -1623,34 +1623,34 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_regExpPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, regExpConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_shadowRealmPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    unsigned attributesOfIntrinsic = static_cast<unsigned>(PropertyAttribute::DontEnum);
+    unsigned intrinsicAttributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
     if (m_hasImmutableIntrinsics) [[unlikely]]
-        attributesOfIntrinsic |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+        intrinsicAttributes |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        attributesOfIntrinsic |= static_cast<unsigned>(PropertyAttribute::WouldBeFixed);
+        intrinsicAttributes |= static_cast<unsigned>(PropertyAttribute::WouldBeFixed);
 
-    putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, attributesOfIntrinsic);
-    putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, attributesOfIntrinsic);
-    putDirectWithoutTransition(vm, vm.propertyNames->Array, arrayConstructor, attributesOfIntrinsic);
-    putDirectWithoutTransition(vm, vm.propertyNames->RegExp, regExpConstructor, attributesOfIntrinsic);
+    putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, intrinsicAttributes);
+    putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, intrinsicAttributes);
+    putDirectWithoutTransition(vm, vm.propertyNames->Array, arrayConstructor, intrinsicAttributes);
+    putDirectWithoutTransition(vm, vm.propertyNames->RegExp, regExpConstructor, intrinsicAttributes);
 
     JSIteratorConstructor* iteratorConstructor = JSIteratorConstructor::create(vm, this, JSIteratorConstructor::createStructure(vm, this, m_functionPrototype.get()), m_iteratorPrototype.get());
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Iterator)].set(vm, this, iteratorConstructor);
     m_iteratorConstructor.set(vm, this, iteratorConstructor);
-    putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, attributesOfIntrinsic);
+    putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, intrinsicAttributes);
 
     if (Options::useSharedArrayBuffer())
-        putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), attributesOfIntrinsic);
+        putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), intrinsicAttributes);
 
     if (Options::useExplicitResourceManagement()) {
-        putDirectWithoutTransition(vm, vm.propertyNames->SuppressedError, m_suppressedErrorStructure.constructor(this), attributesOfIntrinsic);
-        putDirectWithoutTransition(vm, vm.propertyNames->DisposableStack, m_disposableStackStructure.constructor(this), attributesOfIntrinsic);
-        putDirectWithoutTransition(vm, vm.propertyNames->AsyncDisposableStack, m_asyncDisposableStackStructure.constructor(this), attributesOfIntrinsic);
+        putDirectWithoutTransition(vm, vm.propertyNames->SuppressedError, m_suppressedErrorStructure.constructor(this), intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames->DisposableStack, m_disposableStackStructure.constructor(this), intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames->AsyncDisposableStack, m_asyncDisposableStackStructure.constructor(this), intrinsicAttributes);
     }
 
 #define PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
     if (featureFlag) \
-        putDirectWithoutTransition(vm, vm.propertyNames-> jsName, lowerName ## Constructor, attributesOfIntrinsic);
+        putDirectWithoutTransition(vm, vm.propertyNames-> jsName, lowerName ## Constructor, intrinsicAttributes);
 
     FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR(PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE)
 
@@ -1727,7 +1727,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentIteratorPrototype* segmentIteratorPrototype = IntlSegmentIteratorPrototype::create(init.vm, IntlSegmentIteratorPrototype::createStructure(init.vm, globalObject, globalObject->iteratorPrototype()));
             init.set(IntlSegmentIterator::createStructure(init.vm, globalObject, segmentIteratorPrototype));
-            if (globalObject->fixesOrNotesIntrinsics()) [[unlikely]]
+            if (globalObject->locksOrAuditsIntrinsics()) [[unlikely]]
                 globalObject->makeIntrinsicImmutable(segmentIteratorPrototype, IntrinsicKind::Prototype);
         });
     m_segmenterStructure.initLater(
@@ -1741,7 +1741,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentsPrototype* segmentsPrototype = IntlSegmentsPrototype::create(init.vm, globalObject, IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
             init.set(IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
-            if (globalObject->fixesOrNotesIntrinsics()) [[unlikely]]
+            if (globalObject->locksOrAuditsIntrinsics()) [[unlikely]]
                 globalObject->makeIntrinsicImmutable(segmentsPrototype, IntrinsicKind::Prototype);
         });
     m_segmentDataObjectStructure.initLater(
@@ -1839,7 +1839,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
 
     IntlObject* intl = IntlObject::create(vm, this, IntlObject::createStructure(vm, this, m_objectPrototype.get()));
-    putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, attributesOfIntrinsic);
+    putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, intrinsicAttributes);
 
     if (Options::useTemporal()) {
         m_durationStructure.initLater(
@@ -1907,10 +1907,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             });
 
         TemporalObject* temporal = TemporalObject::create(vm, TemporalObject::createStructure(vm, this));
-        putDirectWithoutTransition(vm, vm.propertyNames->Temporal, temporal, attributesOfIntrinsic);
+        putDirectWithoutTransition(vm, vm.propertyNames->Temporal, temporal, intrinsicAttributes);
     }
     if (Options::useShadowRealm())
-        putDirectWithoutTransition(vm, vm.propertyNames->ShadowRealm, shadowRealmConstructor, attributesOfIntrinsic);
+        putDirectWithoutTransition(vm, vm.propertyNames->ShadowRealm, shadowRealmConstructor, intrinsicAttributes);
 
     m_moduleLoader.initLater(
         [] (const Initializer<JSModuleLoader>& init) {
@@ -2360,7 +2360,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
-    if (fixesOrNotesIntrinsics()) [[unlikely]]
+    if (locksOrAuditsIntrinsics()) [[unlikely]]
         makeIntrinsicsImmutable();
 
     // Detect property change.
@@ -2863,7 +2863,7 @@ inline IterationStatus ObjectsWithBrokenIndexingFinder<mode>::visit(JSObject* ob
 
 #if ENABLE(AOT)
     for (AOT::Instance* instance : object->vm().m_aotInstances) {
-        if (instance->isArrayInTheMaking(object))
+        if (instance->isArrayUnderConstruction(object))
             return IterationStatus::Continue;
     }
 #endif
@@ -3537,7 +3537,7 @@ void JSGlobalObject::tryInstallSpeciesWatchpoint(JSObject* prototype, JSObject* 
     speciesWatchpoint->install(vm);
 }
 
-void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyName name, JSValue value, unsigned attributes)
+void JSGlobalObject::makeIntrinsicValueImmutable(JSObject& holder, PropertyName name, JSValue value, unsigned attributes)
 {
     VM& vm = this->vm();
     if (name.isPrivateName() || attributes & PropertyAttribute::CustomAccessorOrValue)
@@ -3545,9 +3545,9 @@ void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyNam
     if (attributes & PropertyAttribute::Accessor) {
         auto* accessor = uncheckedDowncast<GetterSetter>(value);
         if (!accessor->isGetterNull())
-            accessor->getter()->fixProperties(vm, JSObject::FixedObject::StaysExtensible);
+            accessor->getter()->lockProperties(vm, JSObject::LockedObjectExtensibility::StaysExtensible);
         if (!accessor->isSetterNull())
-            accessor->setter()->fixProperties(vm, JSObject::FixedObject::StaysExtensible);
+            accessor->setter()->lockProperties(vm, JSObject::LockedObjectExtensibility::StaysExtensible);
         return;
     }
     JSObject* object = value.getObject();
@@ -3561,14 +3561,12 @@ void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyNam
         makeIntrinsicImmutable(object, IntrinsicKind::Other);
         return;
     }
-    // Besides functions a prototype has data (Array.prototype[Symbol.unscopables]). The methods of console are for a host to replace.
     if (object->type() != InternalFunctionType && (holder.structure()->hasImmutableProperties() || holder.structure()->typeInfo().wouldHaveImmutableProperties() || object->isGlobalObject() || object->type() == GlobalProxyType || object->classInfo() == ConsoleObject::info()))
         return;
     makeIntrinsicImmutable(object, IntrinsicKind::Other);
 }
 
-// Error.prototype and what inherits from it. A program may change them: it gives errors a look of their own, names and fields.
-static bool isPrototypeOfErrors(JSObject* object)
+static bool isErrorPrototype(JSObject* object)
 {
     for (; object; object = object->getPrototypeDirect().getObject()) {
         if (object->inherits<ErrorPrototype>())
@@ -3582,16 +3580,15 @@ void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind
     VM& vm = this->vm();
     if (object->structure()->inheritorsMayOverrideReadOnlyProperties() || object->structure()->typeInfo().wouldHaveFixedProperties())
         return;
-    if (kind == IntrinsicKind::Prototype && isPrototypeOfErrors(object))
+    if (kind == IntrinsicKind::Prototype && isErrorPrototype(object))
         return;
     if (m_isNumberingIntrinsics && object->hasNonReifiedStaticProperties())
         object->reifyAllStaticProperties(this);
-    object->fixProperties(vm, kind == IntrinsicKind::Prototype ? JSObject::FixedObject::BecomesNonExtensible : JSObject::FixedObject::StaysExtensible);
-    // A setting, which programs change.
+    object->lockProperties(vm, kind == IntrinsicKind::Prototype ? JSObject::LockedObjectExtensibility::BecomesNonExtensible : JSObject::LockedObjectExtensibility::StaysExtensible);
     if (object->classInfo() == ErrorConstructor::info())
         object->putDirect(vm, vm.propertyNames->stackTraceLimit, object->getDirect(vm, vm.propertyNames->stackTraceLimit), static_cast<unsigned>(PropertyAttribute::None));
     object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        makeValueOfIntrinsicImmutable(*object, entry.key(), object->getDirect(entry.offset()), entry.attributes());
+        makeIntrinsicValueImmutable(*object, entry.key(), object->getDirect(entry.offset()), entry.attributes());
         return true;
     });
 }
@@ -3604,7 +3601,6 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     if (vm.useImmutableIntrinsics)
         AOT::Typed::installGeneratorMethods(this);
 #endif
-    // What ImmutableIntrinsics numbers: these variables and, of the first group, what they lead to. All of it is made here.
     static constexpr ASCIILiteral names[] = {
         "Object"_s, "Function"_s, "Array"_s, "String"_s, "Number"_s, "Boolean"_s, "Symbol"_s, "RegExp"_s, "Promise"_s, "Map"_s, "Set"_s,
         "Math"_s, "JSON"_s, "Reflect"_s, "Date"_s, "WeakMap"_s, "WeakSet"_s, "ArrayBuffer"_s,
@@ -3614,7 +3610,6 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     };
     constexpr unsigned numberOfNamesWithNumberedProperties = 18;
     RELEASE_ASSERT(names[numberOfNamesWithNumberedProperties - 1] == "ArrayBuffer"_s);
-    // Only for whoever goes by the numbers. That they stay what they are takes none of it: what is made later is dealt with then.
     bool numbersIntrinsics = true;
 #if ENABLE(AOT)
     numbersIntrinsics = AOT::Image::usesNumberedIntrinsics();
@@ -3630,11 +3625,10 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     if (numbersIntrinsics)
         m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names, numberOfNamesWithNumberedProperties);
 
-    // Whatever else the realm was made with: what a variable names, and the prototypes that only their objects lead to.
     structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
         constexpr unsigned fixed = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
         if ((entry.attributes() & fixed) == fixed || entry.attributes() & PropertyAttribute::WouldBeFixed)
-            makeValueOfIntrinsicImmutable(*this, entry.key(), getDirect(entry.offset()), entry.attributes());
+            makeIntrinsicValueImmutable(*this, entry.key(), getDirect(entry.offset()), entry.attributes());
         return true;
     });
     for (JSObject* prototype : std::initializer_list<JSObject*> {
@@ -3990,7 +3984,7 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 #if ENABLE(AOT)
     for (AOT::Instance* instance : vm.m_aotInstances) {
         if (instance->globalObject == this)
-            instance->forgetValuesOfGlobalProperties();
+            instance->clearGlobalPropertyValues();
     }
 #endif
     if (++m_globalLexicalBindingEpoch == Options::thresholdForGlobalLexicalBindingEpoch()) {
@@ -4004,7 +3998,7 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 #if ENABLE(AOT)
         for (AOT::Instance* instance : vm.m_aotInstances) {
             if (instance->globalObject == this)
-                instance->forgetResolvedGlobalScopes();
+                instance->clearResolvedGlobalScopes();
         }
 #endif
     }

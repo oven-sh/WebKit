@@ -14,13 +14,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/typedarray.def.
-
 std::optional<Writes> writesOfInlineTypedArray(InlineBuiltin which, std::span<const Type>)
 {
     switch (which) {
     case InlineBuiltin::TypedArrayWithLength:
-    // Where the length depends on that of the buffer, the engine is asked.
     case InlineBuiltin::TypedArrayLength:
     case InlineBuiltin::TypedArrayByteLength:
     case InlineBuiltin::TypedArrayByteOffset:
@@ -30,22 +27,21 @@ std::optional<Writes> writesOfInlineTypedArray(InlineBuiltin which, std::span<co
     }
 }
 
-std::optional<Operand> Lowering::lowerInlineTypedArray(InlineBuiltin which, ValueID result, const Value& value, Writes inPlace)
+std::optional<Operand> Lowering::lowerInlineTypedArray(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
 {
     if (which != InlineBuiltin::TypedArrayByteLength && which != InlineBuiltin::TypedArrayByteOffset)
-        return lowerContainerBuiltin(which, result, value, inPlace);
-    // Of a view that has been detached both are zero, as its length is.
-    TypedArrayReceiver view = typedArrayReceiver(nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)));
+        return lowerContainerBuiltin(which, result, value, inlinePath);
+    TypedArrayReceiver view = typedArrayReceiver(nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)));
     Type sizeType = Type::integer({ 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
-    bool isSizeOfElementsKnown = value.engineClass() != Format::none;
-    Word32 isInPlace = which == InlineBuiltin::TypedArrayByteOffset || isSizeOfElementsKnown ? hasLengthOfItsOwn(view) : boolean(false);
-    return ensure(either<Integer>(isInPlace, [&] {
+    bool isElementSizeKnown = value.engineClass() != Format::none;
+    Word32 isInline = which == InlineBuiltin::TypedArrayByteOffset || isElementSizeKnown ? hasFixedLength(view) : boolean(false);
+    return ensure(either<Integer>(isInline, [&] {
         if (which == InlineBuiltin::TypedArrayByteOffset)
             return loadField<Integer>(view.view, m_heaps.JSArrayBufferView_byteOffset, view.flags);
         Integer length = loadField<Integer>(view.view, m_heaps.JSArrayBufferView_length, view.flags);
-        return Integer(m_out.shl(length.value(), m_out.constInt32(isSizeOfElementsKnown ? logElementSize(m_builtins.classes()[value.engineClass()].typedArrayType) : 0)));
+        return Integer(m_out.shl(length.value(), m_out.constInt32(isElementSizeKnown ? logElementSize(m_builtins.classes()[value.engineClass()].typedArrayType) : 0)));
     }, [&] {
-        return convertTo<Integer>(callBuiltinFunction(value, OperationEffects { inPlace, true }), sizeType);
+        return convertTo<Integer>(callBuiltinFunction(value, OperationEffects { inlinePath, true }), sizeType);
     }), sizeType, typeOf(result));
 }
 

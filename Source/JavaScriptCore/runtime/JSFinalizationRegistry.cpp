@@ -61,8 +61,10 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
     // JS objects can be allocated. This only works because we no longer weakly hold DOM wrappers.
     globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject);
 
-    auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
-    vm.deferredWorkTimer->scheduleWorkSoonIfActive(ticket, [](DeferredWorkTimer::Ticket&) { });
+    if (vm.useImmutableIntrinsics) {
+        auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
+        vm.deferredWorkTimer->scheduleWorkSoonIfActive(ticket, [](DeferredWorkTimer::Ticket&) { });
+    }
 }
 
 template<typename Visitor>

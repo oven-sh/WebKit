@@ -25,8 +25,8 @@ struct Slot;
 
 #define FOR_EACH_AOT_OBJECT_OPERATION(v) \
     v(operationAOTNewObjectLiteral) \
-    v(operationAOTNewObjectOfRow) \
-    v(operationAOTNewObjectOfFilledRow) \
+    v(operationAOTNewObjectFromDescriptor) \
+    v(operationAOTNewObjectFromFilledDescriptor) \
     v(operationAOTNewArray) \
     v(operationAOTInstanceofAndCache) \
     v(operationAOTDefaultHasInstance) \
@@ -39,7 +39,7 @@ struct Slot;
     v(operationAOTStringStartsWith) \
     v(operationAOTStringIndexOf) \
     v(operationAOTEnsureData) \
-    v(operationAOTNoteFilledSlots) \
+    v(operationAOTDidFillSlots) \
 
 enum class WellKnownIdentifier : uint32_t {
     Length,
@@ -58,10 +58,10 @@ enum class FunctionKind : uint32_t {
 };
 
 bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation);
-bool tryCopyDataPropertiesOfRecord(Instance*, VM&, JSObject* target, JSObject* record, const char* operation);
+bool tryCopyRecordDataProperties(Instance*, VM&, JSObject* target, JSObject* record, const char* operation);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, uint32_t indexOfPlace));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfFilledRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectFromDescriptor, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, uint32_t slotIndex));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectFromFilledDescriptor, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));
 JSCell* spread(JSGlobalObject*, JSValue iterable);
 
@@ -78,7 +78,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTStringStartsWith, EncodedJSValue, (Instanc
 JSC_DECLARE_JIT_OPERATION(operationAOTStringIndexOf, EncodedJSValue, (Instance*, JSCell* string, JSCell* other));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilledSlots, void, (Data*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDidFillSlots, void, (Data*));
 
 } } // namespace JSC::AOT
 

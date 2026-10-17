@@ -266,8 +266,8 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     if (hasAOTFields()) {
         new (NotNull, &existingAOTFields()) AOTFields();
 #if ENABLE(AOT)
-        if (const uint32_t* emptyRow = vm.m_aotEmptyRowOfPlacesByName) [[likely]]
-            existingAOTFields().placesByName = emptyRow;
+        if (const uint32_t* clearStructureDescriptorSlot = vm.m_aotEmptyLookupTableRow) [[likely]]
+            existingAOTFields().lookupTableRow = clearStructureDescriptorSlot;
         else
             AOT::initializeRowsByName(vm, *this);
 #endif
@@ -276,7 +276,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
     bool isArrayStorage = hasAnyArrayStorage(indexingType);
-    RELEASE_ASSERT((typeInfo.type() != JSFunctionType && typeInfo.type() != InternalFunctionType) || typeInfo.inlineTypeFlags() & TypeOfYieldsFunction);
+    RELEASE_ASSERT((typeInfo.type() != JSFunctionType && typeInfo.type() != InternalFunctionType) || typeInfo.inlineTypeFlags() & TypeOfReturnsFunction);
 
     setDictionaryKind(NoneDictionaryKind);
     setIsPinnedPropertyTable(false);
@@ -333,8 +333,8 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     if (hasAOTFields()) {
         new (NotNull, &existingAOTFields()) AOTFields();
 #if ENABLE(AOT)
-        if (const uint32_t* emptyRow = vm.m_aotEmptyRowOfPlacesByName) [[likely]]
-            existingAOTFields().placesByName = emptyRow;
+        if (const uint32_t* clearStructureDescriptorSlot = vm.m_aotEmptyLookupTableRow) [[likely]]
+            existingAOTFields().lookupTableRow = clearStructureDescriptorSlot;
         else
             AOT::initializeRowsByName(vm, *this);
 #endif
@@ -392,8 +392,8 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
         new (NotNull, &existingAOTFields()) AOTFields();
 #if ENABLE(AOT)
         existingAOTFields().aotInstance = previous->existingAOTFields().aotInstance;
-        if (const uint32_t* emptyRow = vm.m_aotEmptyRowOfPlacesByName) [[likely]]
-            existingAOTFields().placesByName = emptyRow;
+        if (const uint32_t* clearStructureDescriptorSlot = vm.m_aotEmptyLookupTableRow) [[likely]]
+            existingAOTFields().lookupTableRow = clearStructureDescriptorSlot;
         else
             AOT::initializeRowsByName(vm, *this);
 #endif
@@ -429,7 +429,6 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
 
     ASSERT(!previous->typeInfo().structureIsImmortal());
 #if USE(BUN_JSC_ADDITIONS)
-    // An object of a compiled layout has no butterfly and no property table: its Structure has no transitions.
     RELEASE_ASSERT(!previous->compiledLayout());
     RELEASE_ASSERT(!previous->hasImmutableShape());
 #endif
@@ -508,12 +507,12 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
 }
 
 namespace AOT {
-UniquedStringImpl* nameInRow(VM&, unsigned number, unsigned index);
+UniquedStringImpl* nameInStructureDescriptor(VM&, unsigned number, unsigned index);
 }
 
-Structure* Structure::createOfRow(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, uint16_t numberOfRowPlusOne)
+Structure* Structure::createFromDescriptor(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, uint16_t structureDescriptorPlusOne)
 {
-    RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && !names.empty() && names.size() <= empty->inlineCapacity() && numberOfRowPlusOne);
+    RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && !names.empty() && names.size() <= empty->inlineCapacity() && structureDescriptorPlusOne);
     Structure* result = Structure::create(vm, empty->globalObject(), empty->storedPrototype(), empty->typeInfo(), empty->classInfoForCells(), empty->indexingType(), empty->inlineCapacity());
     for (UniquedStringImpl* name : names) {
         if (name->isSymbol())
@@ -527,19 +526,19 @@ Structure* Structure::createOfRow(VM& vm, Structure* empty, std::span<UniquedStr
     }
     result->setMaxOffset(vm, offsetForPropertyNumber(names.size() - 1, result->m_inlineCapacity));
     result->setDidTransition(true);
-    result->setNumberOfRowPlusOne(numberOfRowPlusOne);
+    result->setStructureDescriptorPlusOne(structureDescriptorPlusOne);
     return result;
 }
 
 Vector<UniquedStringImpl*, 16> Structure::namesIfNumbered() const
 {
     Vector<UniquedStringImpl*, 16> names;
-    unsigned numberPlusOne = numberOfRowPlusOne();
+    unsigned numberPlusOne = structureDescriptorPlusOne();
     if (!numberPlusOne || previousID() || maxOffset() == invalidOffset || isPinnedPropertyTable())
         return names;
     unsigned count = numberOfSlotsForMaxOffset(maxOffset(), m_inlineCapacity);
     for (unsigned i = 0; i < count; ++i)
-        names.append(AOT::nameInRow(vm(), numberPlusOne - 1, i));
+        names.append(AOT::nameInStructureDescriptor(vm(), numberPlusOne - 1, i));
     return names;
 }
 
@@ -1100,9 +1099,9 @@ Structure* Structure::makePropertiesImmutableTransition(VM& vm, Structure* struc
     return nonPropertyTransition(vm, structure, TransitionKind::MakePropertiesImmutable, deferred);
 }
 
-Structure* Structure::fixPropertiesTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+Structure* Structure::lockPropertiesTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    return nonPropertyTransition(vm, structure, TransitionKind::FixProperties, deferred);
+    return nonPropertyTransition(vm, structure, TransitionKind::LockProperties, deferred);
 }
 
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
@@ -1134,8 +1133,8 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
 
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    bool fixesProperties = transitionKind == TransitionKind::FixAndMakePropertiesImmutable || transitionKind == TransitionKind::FixProperties;
-    bool notesProperties = notesFixedProperties(transitionKind);
+    bool locksProperties = transitionKind == TransitionKind::LockAndMakePropertiesImmutable || transitionKind == TransitionKind::LockProperties;
+    bool recordsLockedProperties = recordsLockedPropertiesFor(transitionKind);
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
     
     if (!structure->isDictionary()) {
@@ -1172,7 +1171,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (makesPropertiesImmutable(transitionKind))
         transition->setHasImmutableProperties(true);
 
-    if (fixesProperties || notesProperties || makesPropertiesImmutable(transitionKind)) {
+    if (locksProperties || recordsLockedProperties || makesPropertiesImmutable(transitionKind)) {
         // A structure is not watched once a watched predecessor of it has transitioned, on the grounds that the object will change
         // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once, and for one
         // that stays extensible the rare addition.
@@ -1182,12 +1181,12 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setDidTransition(structure->didTransition());
     }
     
-    if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind) || notesProperties) {
+    if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind) || recordsLockedProperties) {
         // We pin the property table on transitions that do wholesale editing of the property
         // table, since our logic for walking the property transition chain to rematerialize the
         // table doesn't know how to take into account such wholesale edits.
 
-        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || fixesProperties || notesProperties);
+        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || locksProperties || recordsLockedProperties);
 
         PropertyTable* table = structure->copyPropertyTableForPinning(vm);
         transition->pinForCaching(Locker { transition->m_lock }, vm, table);
@@ -1197,23 +1196,23 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         RELEASE_ASSERT(table);
         if (transitionKind == TransitionKind::Seal)
             table->seal();
-        else if (fixesProperties || notesProperties) {
+        else if (locksProperties || recordsLockedProperties) {
             JSType type = structure->typeInfo().type();
-            bool isFunction = (transitionKind == TransitionKind::FixProperties || transitionKind == TransitionKind::NoteFixedProperties) && (type == JSFunctionType || type == InternalFunctionType);
-            unsigned attributesOfName = std::get<1>(table->get(vm.propertyNames->name.impl()));
-            unsigned attributesOfLength = std::get<1>(table->get(vm.propertyNames->length.impl()));
-            if (notesProperties)
-                table->noteFixed();
+            bool isFunction = (transitionKind == TransitionKind::LockProperties || transitionKind == TransitionKind::RecordLockedProperties) && (type == JSFunctionType || type == InternalFunctionType);
+            unsigned nameAttributes = std::get<1>(table->get(vm.propertyNames->name.impl()));
+            unsigned lengthAttributes = std::get<1>(table->get(vm.propertyNames->length.impl()));
+            if (recordsLockedProperties)
+                table->didLock();
             else
                 table->fix();
             if (isFunction) {
-                table->updateAttributeIfExists(vm.propertyNames->name.impl(), attributesOfName);
-                table->updateAttributeIfExists(vm.propertyNames->length.impl(), attributesOfLength);
+                table->updateAttributeIfExists(vm.propertyNames->name.impl(), nameAttributes);
+                table->updateAttributeIfExists(vm.propertyNames->length.impl(), lengthAttributes);
             }
         } else
             table->freeze();
 
-        if (!notesProperties) {
+        if (!recordsLockedProperties) {
             transition->setHasNonEnumerableProperties(true);
             transition->setHasNonConfigurableProperties(true);
             transition->setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
@@ -1228,12 +1227,11 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
 #endif
     }
     
-    // (An object with immutable properties refuses as the receiver whatever this says, and does not slow down its inheritors.)
-    if (fixesProperties)
+    if (locksProperties)
         transition->setInheritorsMayOverrideReadOnlyProperties(true);
-    if (notesProperties)
-        transition->m_outOfLineTypeFlags |= (transitionKind == TransitionKind::NoteFixedProperties ? WouldHaveFixedProperties : WouldHaveFixedProperties | WouldHaveImmutableProperties) >> numberOfInlineBits;
-    if (setsReadOnlyOnNonAccessorProperties(transitionKind) && transitionKind != TransitionKind::FixAndMakePropertiesImmutable
+    if (recordsLockedProperties)
+        transition->m_outOfLineTypeFlags |= (transitionKind == TransitionKind::RecordLockedProperties ? WouldHaveFixedProperties : WouldHaveFixedProperties | WouldHaveImmutableProperties) >> numberOfInlineBits;
+    if (setsReadOnlyOnNonAccessorProperties(transitionKind) && transitionKind != TransitionKind::LockAndMakePropertiesImmutable
         && !transition->propertyTableOrNull()->isEmpty())
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     
@@ -1399,7 +1397,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && (isReplacedWithoutNotice() || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
+    if (result.isNewEntry && (isReplacedSilently() || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }
@@ -1700,7 +1698,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->aotFieldsOrEmpty().aotInstance) [[unlikely]] {
         visitor.appendUnbarriered(AOT::ownerOf(thisObject->aotFieldsOrEmpty().aotInstance));
         visitor.appendUnbarriered(AOT::tokenOf(thisObject->aotFieldsOrEmpty().aotInstance));
-        if (StructureID ofExtraProperties = thisObject->compiledLayout() ? thisObject->structureIDOfExtraProperties() : StructureID())
+        if (StructureID ofExtraProperties = thisObject->compiledLayout() ? thisObject->extraPropertiesStructureID() : StructureID())
             visitor.appendUnbarriered(ofExtraProperties.decode());
     }
 #endif
@@ -2096,17 +2094,17 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
     case TransitionKind::MakePropertiesImmutable:
         kindName = "MakePropertiesImmutable";
         break;
-    case TransitionKind::FixProperties:
-        kindName = "FixProperties";
+    case TransitionKind::LockProperties:
+        kindName = "LockProperties";
         break;
-    case TransitionKind::FixAndMakePropertiesImmutable:
-        kindName = "FixAndMakePropertiesImmutable";
+    case TransitionKind::LockAndMakePropertiesImmutable:
+        kindName = "LockAndMakePropertiesImmutable";
         break;
-    case TransitionKind::NoteFixedProperties:
-        kindName = "NoteFixedProperties";
+    case TransitionKind::RecordLockedProperties:
+        kindName = "RecordLockedProperties";
         break;
-    case TransitionKind::NoteFixedAndImmutableProperties:
-        kindName = "NoteFixedAndImmutableProperties";
+    case TransitionKind::RecordLockedAndImmutableProperties:
+        kindName = "RecordLockedAndImmutableProperties";
         break;
     case TransitionKind::BecomeDerivedArray:
         kindName = "BecomeDerivedArray";

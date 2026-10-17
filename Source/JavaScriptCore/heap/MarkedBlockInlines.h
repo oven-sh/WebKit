@@ -397,19 +397,19 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         auto words = live.storage();
         using Word = std::remove_cvref_t<decltype(words[0])>;
         constexpr unsigned wordSize = sizeof(Word) * 8;
-        constexpr int fewestMarkedCellsToWalkRuns = 48;
-        if (m_atomsPerCell < wordSize && marksMode == MarksNotStale && header.m_biasedMarkCount - header.m_markCountBias >= fewestMarkedCellsToWalkRuns) {
+        constexpr int minMarkedCellsToWalkRuns = 48;
+        if (m_atomsPerCell < wordSize && marksMode == MarksNotStale && header.m_biasedMarkCount - header.m_markCountBias >= minMarkedCellsToWalkRuns) {
             Word everyCell = 1;
             for (unsigned shift = m_atomsPerCell; shift < wordSize; shift *= 2)
                 everyCell |= everyCell << shift;
             unsigned remainder = wordSize % m_atomsPerCell;
             unsigned offset = m_startAtom % wordSize;
-            Word cellsAheadInLastWord = static_cast<Word>(1) << offset;
+            Word precedingCellsInLastWord = static_cast<Word>(1) << offset;
             for (unsigned i = m_startAtom / wordSize; i < words.size(); ++i) {
                 Word word = words[i];
-                Word cellAheadIsAlive = word << m_atomsPerCell | cellsAheadInLastWord;
-                cellsAheadInLastWord = word >> (wordSize - m_atomsPerCell);
-                for (Word changes = (word ^ cellAheadIsAlive) & everyCell << offset; changes; changes &= changes - 1) {
+                Word precedingCellIsAlive = word << m_atomsPerCell | precedingCellsInLastWord;
+                precedingCellsInLastWord = word >> (wordSize - m_atomsPerCell);
+                for (Word changes = (word ^ precedingCellIsAlive) & everyCell << offset; changes; changes &= changes - 1) {
                     unsigned bit = WTF::ctz(changes);
                     unsigned index = i * wordSize + bit;
                     if (word >> bit & 1)

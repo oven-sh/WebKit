@@ -561,12 +561,12 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     return true;
 }
 
-JSArray* JSArray::tryCreateWithTypedContiguous(VM& vm, Structure* structure, unsigned length, unsigned leastCapacity)
+JSArray* JSArray::tryCreateWithTypedContiguous(VM& vm, Structure* structure, unsigned length, unsigned minCapacity)
 {
     RELEASE_ASSERT(structure->indexingMode() == ArrayWithTypedContiguous && !structure->outOfLineCapacity());
-    if (std::max(length, leastCapacity) > MAX_STORAGE_VECTOR_LENGTH)
+    if (std::max(length, minCapacity) > MAX_STORAGE_VECTOR_LENGTH)
         return nullptr;
-    unsigned capacity = typedContiguousCapacityFor(std::max(length, leastCapacity));
+    unsigned capacity = typedContiguousCapacityFor(std::max(length, minCapacity));
     void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(uint32_t)), nullptr, AllocationFailureMode::ReturnNull);
     if (!base)
         return nullptr;

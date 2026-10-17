@@ -234,7 +234,6 @@ private:
     // cannot handle it being a reference.
     VM* const m_vm;
     AOT::Instance* m_aotInstance { nullptr };
-    // Of AOT::Typed::Closure: see AOT::Instance::typedClosureStructureIDs.
     WriteBarrierStructureID m_aotClosureStructures[5];
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
@@ -1292,18 +1291,12 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
-    // With VM::useImmutableIntrinsics. What the engine gives a realm stays what it is:
-    // - a prototype keeps its properties and gets no others;
-    // - any other object (a constructor, a namespace such as Math, a function) keeps its properties, and can be given others;
-    // - the properties of the global object that name them are read-only and non-configurable.
-    // What exists when the realm is made is dealt with then, anything else when it is made, and nothing is made for this but what
-    // ImmutableIntrinsics numbers.
     bool hasImmutableIntrinsics() const { return m_hasImmutableIntrinsics; }
-    bool fixesOrNotesIntrinsics() const { return m_hasImmutableIntrinsics || vm().auditsImmutableIntrinsics(); }
+    bool locksOrAuditsIntrinsics() const { return m_hasImmutableIntrinsics || vm().auditsImmutableIntrinsics(); }
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
     enum class IntrinsicKind : bool { Prototype, Other };
     JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind);
-    void makeValueOfIntrinsicImmutable(JSObject& holder, PropertyName, JSValue, unsigned attributes);
+    void makeIntrinsicValueImmutable(JSObject& holder, PropertyName, JSValue, unsigned attributes);
     std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 

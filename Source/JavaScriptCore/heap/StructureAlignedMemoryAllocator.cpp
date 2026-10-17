@@ -111,7 +111,7 @@ public:
         RELEASE_ASSERT(hasOneBitSet(preferredStructureHeapSize));
 
         uintptr_t mappedHeapSize = preferredStructureHeapSize;
-        while (mappedHeapSize > addressSpaceToReserve() / partOfAddressSpaceForStructures && mappedHeapSize > MB)
+        while (mappedHeapSize > addressSpaceToReserve() / addressSpaceDivisorForStructures && mappedHeapSize > MB)
             mappedHeapSize /= 2;
         for (unsigned i = 0; i < 8; ++i) {
             // We need to align the address range to mappedHeapSize to ensure that the range does not span

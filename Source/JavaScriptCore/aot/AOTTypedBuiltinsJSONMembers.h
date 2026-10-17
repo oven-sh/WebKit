@@ -6,10 +6,10 @@
     struct JSONOutput {
         B3::Variable* cursor { nullptr };
         LBasicBlock givesUp { nullptr };
-        Vector<uint8_t, 64> pendingText;
+        Vector<uint8_t, 64> pendingBytes;
         unsigned knownCapacity { 0 };
-        unsigned fieldsLeft { 0 };
-        LBasicBlock handsOverRestOfList { nullptr };
+        unsigned remainingFields { 0 };
+        LBasicBlock delegatesRestOfList { nullptr };
     };
     struct JSONExit {
         LBasicBlock block { nullptr };
@@ -19,7 +19,7 @@
         LayoutID layout;
         uint32_t order;
         uint32_t count;
-        uint32_t leastCount;
+        uint32_t minKeyCount;
         Vector<uint16_t, 8> fields;
     };
     enum class JSONPosition : uint8_t { Property, Element };
@@ -30,13 +30,29 @@
     enum class JSONSeparator : uint8_t { None, Always, Unknown };
     template<typename Append> void appendMember(JSONOutput&, JSONSeparator&, JSONMember, const Append&);
     template<typename Describe, typename Append> void appendMembers(JSONOutput&, unsigned count, const Describe&, const Append&);
-    void appendObjectByItsOwnKeys(JSONOutput&, CellPointer, LayoutID, LBasicBlock otherwise, JSONExit& continuation);
+    void appendObjectByOwnKeys(JSONOutput&, CellPointer, LayoutID, LBasicBlock otherwise, JSONExit& continuation);
     struct JSONLiteralMember {
         StringID name;
         ValueID value;
         ValueID definition;
     };
-    std::optional<Vector<JSONLiteralMember, 8>> membersOfFreshLiteral(ValueID, ValueID holder) const;
+    std::optional<Vector<JSONLiteralMember, 8>> freshLiteralMembers(ValueID, ValueID holder) const;
+    struct DeferredLiteral {
+        const Block* block;
+        ValueID object;
+        size_t callIndex;
+        Vector<size_t, 8> memberIndices;
+        LBasicBlock materializedIn { nullptr };
+        Operand materialized;
+        bool isPlainObject { false };
+        bool isBeingMaterialized { false };
+    };
+    DeferredLiteral* deferredLiteralFor(ValueID object);
+    std::optional<DeferredLiteral> findDeferrableLiteral(ValueID object, size_t index, std::span<const size_t> plainObjectFields, unsigned depth);
+    bool tryDeferLiteralAllocation(ValueID object, std::span<const size_t> plainObjectFields = { });
+    bool isDeferredLiteralStore(size_t index) const;
+    Operand materializeDeferredLiteral(DeferredLiteral&);
+    Vector<DeferredLiteral, 2> m_deferredLiterals;
     void appendFreshLiteral(JSONOutput&, const Vector<JSONLiteralMember, 8>&, unsigned depth);
     Vector<JSONKeyOrder, 4> keyOrdersForJSON(const Type&) const;
     Vector<JSONKeyOrder, 4> keyOrdersForJSON(std::span<const LayoutID>) const;
@@ -47,21 +63,22 @@
     void setCursor(JSONOutput&, LValue);
     LBasicBlock exitThrough(JSONOutput&, JSONExit&);
     void reserveCapacity(JSONOutput&, unsigned size);
-    void appendText(JSONOutput&, std::span<const uint8_t>);
-    void appendText(JSONOutput& output, ASCIILiteral text) { appendText(output, asBytes(text.span8())); }
-    void flushText(JSONOutput&);
-    void didAppendWithRoomToSpare(JSONOutput&, Pointer cursor);
+    void appendBytes(JSONOutput&, std::span<const uint8_t>);
+    void appendBytes(JSONOutput& output, ASCIILiteral text) { appendBytes(output, asBytes(text.span8())); }
+    void flushPendingBytes(JSONOutput&);
+    void didAppendWithinCapacity(JSONOutput&, Pointer cursor);
     void appendInteger(JSONOutput&, Integer, unsigned maxLength);
     void appendNumber(JSONOutput&, Number);
     void appendBoolean(JSONOutput&, Word32);
     void appendString(JSONOutput&, CellPointer);
-    void appendGenerally(JSONOutput&, Boxed, JSONPosition, JSONExit& nothing);
-    void appendNilOrLeaveOut(JSONOutput&, Word32 isNull, const Type&, JSONPosition, JSONExit& nothing, JSONExit& continuation);
+    void appendDate(JSONOutput&, CellPointer, const EngineClass&, JSONPosition, JSONExit& nothing);
+    void appendGeneric(JSONOutput&, Boxed, JSONPosition, JSONExit& nothing);
+    void appendNullishOrOmit(JSONOutput&, Word32 isNull, const Type&, JSONPosition, JSONExit& nothing, JSONExit& continuation);
     void appendCell(JSONOutput&, CellPointer, const Type&, bool typeIsFact, unsigned depth, JSONPosition, JSONExit& nothing);
     void appendBySerializer(JSONOutput&, CellPointer, FunctionID);
-    void appendObjectBeyondPlace(JSONOutput&, CellPointer, const Type&, JSONPosition, JSONExit& nothing);
+    void appendObjectOutOfLine(JSONOutput&, CellPointer, const Type&, JSONPosition, JSONExit& nothing);
     void appendObject(JSONOutput&, CellPointer, const Type&, unsigned depth, JSONPosition, JSONExit& nothing);
-    void appendObjectInPlace(JSONOutput&, CellPointer, const Vector<JSONKeyOrder, 4>&, unsigned depth, LBasicBlock otherwise, JSONExit& continuation);
+    void appendObjectInline(JSONOutput&, CellPointer, const Vector<JSONKeyOrder, 4>&, unsigned depth, LBasicBlock otherwise, JSONExit& continuation);
     Operand lowerAppendJSON(const Value&);
     void appendField(JSONOutput&, CellPointer, const Field&, unsigned depth, JSONExit& nothing);
     void appendArray(JSONOutput&, CellPointer, const Type&, unsigned depth, JSONPosition, JSONExit& nothing);

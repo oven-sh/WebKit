@@ -16,8 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-// As constructErrorConstructor(), callErrorConstructor() and NativeErrorConstructor::constructImpl() where `new.target` is the constructor. They have a frame of their own,
-// which the stack of the error leaves out. Here the frame at the top is the one that makes the error.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewError, JSCell*, (Instance* instance, uint32_t type, EncodedJSValue message, EncodedJSValue options))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -29,8 +27,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewError, JSCell*, (Instance* instance
 namespace Typed {
 
 using namespace B3;
-
-// The family aot/builtins/error-json-global.def.
 
 static ErrorType errorTypeOf(InlineBuiltin which)
 {
@@ -56,7 +52,6 @@ static ErrorType errorTypeOf(InlineBuiltin which)
 
 std::optional<Writes> writesOfInlineErrorJSONGlobal(InlineBuiltin, std::span<const Type> arguments)
 {
-    // ToString of the message, then [[Get]] of `cause`.
     for (auto& argument : arguments.first(std::min<size_t>(arguments.size(), 2))) {
         if (argument.hasObjects())
             return Writes::Heap;
@@ -69,17 +64,16 @@ std::optional<Operand> Lowering::lowerInlineErrorJSONGlobal(InlineBuiltin which,
     auto& arguments = value.arguments;
     OperationEffects effects { writes, true };
     Type errorClass = Type::engineClass(m_builtins.classes()[m_builtins.at(value.builtin()).result.engineClass]);
-    if (isErrorThrownToHandlerThatIgnoresIt(*m_currentBlock, result)) {
-        m_isFetchedLate.set(result.index());
+    if (isErrorThrownToIgnoringHandler(*m_currentBlock, result)) {
+        m_isLazilyFetched.set(result.index());
         return Operand(value.rep, nullptr);
     }
-    // A frame that stacks leave out is listed where it is at the very top. Under the frame of the engine's function it is not.
     uint32_t inlineFrame = m_function.at(result).inlineFrame;
     auto& maker = inlineFrame ? m_program.at(m_function.inlineFrames[inlineFrame].callee) : m_function;
-    if (m_program.isHiddenInStackTraces(maker) && !m_program.standsForBuiltin(maker))
+    if (m_program.isHiddenInStackTraces(maker) && !m_program.implementsBuiltin(maker))
         return ensure(asCell(callBuiltinFunction(value, effects)), errorClass, typeOf(result));
-    if (isErrorThrownWhereMade(*m_currentBlock, result) && isFetchedWhereNeeded(arguments[0])) {
-        m_isFetchedLate.set(result.index());
+    if (isErrorThrownAtCreation(*m_currentBlock, result) && isLazilyFetched(arguments[0])) {
+        m_isLazilyFetched.set(result.index());
         return Operand(value.rep, nullptr);
     }
     auto argument = [&](unsigned i) {
@@ -88,10 +82,10 @@ std::optional<Operand> Lowering::lowerInlineErrorJSONGlobal(InlineBuiltin which,
     return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(NewError, effects, word32(static_cast<int32_t>(errorTypeOf(which))), argument(0), argument(1)), errorClass, typeOf(result));
 }
 
-bool Lowering::isErrorThrownWhereMade(const Block& block, ValueID id)
+bool Lowering::isErrorThrownAtCreation(const Block& block, ValueID id)
 {
     auto& value = m_function.at(id);
-    if (value.opcode != Opcode::CallBuiltin || block.terminator.kind != TerminatorKind::Throw || !block.terminator.targets.isEmpty() || block.terminator.value != id || block.values.last() != id || numberOfUsesOf(id) != 1)
+    if (value.opcode != Opcode::CallBuiltin || block.terminator.kind != TerminatorKind::Throw || !block.terminator.targets.isEmpty() || block.terminator.value != id || block.values.last() != id || useCountOf(id) != 1)
         return false;
     auto& implementation = m_builtins.at(value.builtin()).implementation;
     if (implementation.kind != BuiltinImplementation::Inline || familyOf(implementation.inlined) != BuiltinFamily::ErrorJSONGlobal)
@@ -99,15 +93,15 @@ bool Lowering::isErrorThrownWhereMade(const Block& block, ValueID id)
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
         return false;
     auto& maker = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
-    if (m_program.isHiddenInStackTraces(maker) && !m_program.standsForBuiltin(maker))
+    if (m_program.isHiddenInStackTraces(maker) && !m_program.implementsBuiltin(maker))
         return false;
     return value.arguments.size() == 1 && m_function.at(value.arguments[0]).opcode == Opcode::String;
 }
 
-bool Lowering::isErrorThrownToHandlerThatIgnoresIt(const Block& block, ValueID id)
+bool Lowering::isErrorThrownToIgnoringHandler(const Block& block, ValueID id)
 {
     auto& value = m_function.at(id);
-    if (value.opcode != Opcode::CallBuiltin || numberOfUsesOf(id) != 1)
+    if (value.opcode != Opcode::CallBuiltin || useCountOf(id) != 1)
         return false;
     auto* thrower = &block.terminator;
     if (thrower->kind == TerminatorKind::Invoke && block.values.last() == id)
@@ -128,14 +122,14 @@ void Lowering::throwNewError(const Value& error)
 {
     RELEASE_ASSERT(error.opcode == Opcode::CallBuiltin);
     ErrorType type = errorTypeOf(m_builtins.at(error.builtin()).implementation.inlined);
-    auto& placeOfThrow = m_currentBlock->terminator.cases;
+    auto& throwCases = m_currentBlock->terminator.cases;
     uint32_t callSite = m_nextSite;
-    throwAt(placeOfThrow.isEmpty() ? ThrowKind::TypeMismatch : ThrowKind::KindMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
-    if (placeOfThrow.isEmpty())
+    throwAt(throwCases.isEmpty() ? ThrowKind::TypeMismatch : ThrowKind::KindMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
+    if (throwCases.isEmpty())
         return;
     RELEASE_ASSERT(m_nextSite == callSite + 1);
-    uint32_t inlineFrame = placeOfThrow.size() > 1 ? static_cast<uint32_t>(placeOfThrow[1]) : 0;
-    m_context.sitePositions.append({ static_cast<uint32_t>(placeOfThrow[0]), inlineFrame });
+    uint32_t inlineFrame = throwCases.size() > 1 ? static_cast<uint32_t>(throwCases[1]) : 0;
+    m_context.sitePositions.append({ static_cast<uint32_t>(throwCases[0]), inlineFrame });
     m_context.itemSites.append({ callSite, 0, PackedSite::pack(inlineFrame, CallSiteIndex(BytecodeIndex(m_nextSite++)).bits()) });
 }
 

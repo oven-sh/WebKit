@@ -238,7 +238,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 AOT::Instance& instance = AOT::Instance::ensure(moduleLoader());
                 if (JSCell** slot = instance.environmentSlot(environment); slot && !*slot) {
                     *slot = env;
-                    instance.noteCellAdded(env);
+                    instance.didAddCell(env);
                 }
             }
         }

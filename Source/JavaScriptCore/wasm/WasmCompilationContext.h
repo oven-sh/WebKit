@@ -63,7 +63,7 @@ class OptimizingJITCallee;
 class TierUpCount;
 
 struct CodeForImage {
-    Vector<uint32_t> callsToStubThatThrows;
+    Vector<uint32_t> callsToThrowStub;
     String whyDeclined;
 };
 

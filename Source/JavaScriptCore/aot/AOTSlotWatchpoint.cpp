@@ -67,7 +67,7 @@ void BufferAccessorWatchpoint::watch(VM& vm, const ObjectPropertyCondition& cond
 
 void BufferAccessorWatchpoint::handleFire(VM&, const FireDetail&)
 {
-    m_instance->bufferAccessorStructureIDs[m_row] = Instance::bufferAccessorIsNotLookedFor;
+    m_instance->bufferAccessorStructureIDs[m_row] = Instance::bufferAccessorLookupDisabled;
     m_instance->bufferAccessors[m_row] = nullptr;
 }
 
@@ -118,7 +118,7 @@ void SlotWatchpoint::initialize(Data* owner, const ObjectPropertyCondition& key,
     m_slot = slot;
 }
 
-static bool interceptsNoStore(const ObjectPropertyCondition& key)
+static bool doesNotInterceptStores(const ObjectPropertyCondition& key)
 {
     Structure* structure = key.object()->structure();
     return !structure->isDictionary() && !structure->hasPolyProto() && structure->transitionWatchpointSetIsStillValid() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()
@@ -127,7 +127,7 @@ static bool interceptsNoStore(const ObjectPropertyCondition& key)
 
 static NEVER_INLINE bool isAbsenceDeterminedByStructure(const ObjectPropertyCondition& key)
 {
-    return key.kind() == PropertyCondition::Absence && Typed::lacksWhatItsStructureLacks(key.object()->vm(), key.object(), key.uid(), false);
+    return key.kind() == PropertyCondition::Absence && Typed::hasNoLazyPropertyNamed(key.object()->vm(), key.object(), key.uid(), false);
 }
 
 static ALWAYS_INLINE bool isWatchable(const ObjectPropertyCondition& key, PropertyCondition::WatchabilityEffort effort)
@@ -139,13 +139,13 @@ void SlotWatchpoint::install(VM& vm)
 {
     if (Options::useAOTOperationCounters()) [[unlikely]]
         runtimeTable(vm).countOperation("SlotWatchpoint", "installed");
-    RELEASE_ASSERT(m_key.uid() ? isWatchable(m_key, PropertyCondition::MakeNoChanges) : interceptsNoStore(m_key));
+    RELEASE_ASSERT(m_key.uid() ? isWatchable(m_key, PropertyCondition::MakeNoChanges) : doesNotInterceptStores(m_key));
     m_key.object()->structure()->addTransitionWatchpoint(this);
 }
 
 void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
 {
-    if (m_key.uid() ? isWatchable(m_key, PropertyCondition::EnsureWatchability) : interceptsNoStore(m_key)) {
+    if (m_key.uid() ? isWatchable(m_key, PropertyCondition::EnsureWatchability) : doesNotInterceptStores(m_key)) {
         install(vm);
         return;
     }
@@ -241,7 +241,7 @@ bool watchForStores(VM& vm, Data* data, Slot* slot, std::span<JSObject* const> p
     };
     Vector<size_t, 4> watched;
     for (size_t i = 0; i < prototypes.size(); ++i) {
-        if (!interceptsNoStore(keyAt(i)))
+        if (!doesNotInterceptStores(keyAt(i)))
             return false;
         if (!isImmutablePrototype(prototypes[i]->structure()))
             watched.append(i);

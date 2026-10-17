@@ -867,13 +867,13 @@ public:
     // For function-kind RTTs: returns the JS->Wasm IC entrypoint for this signature.
     // The IC cache + lock live on the RTT itself.
     CodePtr<JSEntryPtrTag> jsToWasmICEntrypoint() const;
-    struct PointersOfICEntrypointInImage {
+    struct ICEntrypointImagePointers {
         unsigned callee;
         unsigned generalEntry;
     };
     bool mayHaveICEntrypointInImage() const;
-    RegisterAtOffsetList registersSavedByICEntrypoint() const;
-    bool emitJSToWasmICEntrypoint(CCallHelpers&, const RegisterAtOffsetList& registersToSpill, void* boxedCallee, std::optional<PointersOfICEntrypointInImage>) const;
+    RegisterAtOffsetList icEntrypointSavedRegisters() const;
+    bool emitJSToWasmICEntrypoint(CCallHelpers&, const RegisterAtOffsetList& registersToSpill, void* boxedCallee, std::optional<ICEntrypointImagePointers>) const;
 #endif
 
     // Function-kind only. Lazy-installed via a CAS in ThreadSafeLazyUniquePtr;

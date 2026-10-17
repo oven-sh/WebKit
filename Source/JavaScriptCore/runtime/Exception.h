@@ -83,7 +83,7 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
-    JS_EXPORT_PRIVATE void noteThatTopFrameIsAtSiteOfItsItem();
+    JS_EXPORT_PRIVATE void setTopFrameIsAtStackTraceItemSite();
     bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndFlags.type() & didNotifyInspectorOfThrowFlag; }
     void setDidNotifyInspectorOfThrow() { m_returnAddressesAndFlags.setType(m_returnAddressesAndFlags.type() | didNotifyInspectorOfThrowFlag); }
 
@@ -101,7 +101,7 @@ public:
 private:
     Exception(VM&, JSValue thrownValue);
     void finishCreation(VM&, StackCaptureAction);
-    bool tryKeepReturnAddresses(VM&);
+    bool tryRetainReturnAddresses(VM&);
     JS_EXPORT_PRIVATE void materializeStack();
     static void destroy(JSCell*);
 

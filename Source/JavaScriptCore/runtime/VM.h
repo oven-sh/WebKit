@@ -185,7 +185,7 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 
 #if ENABLE(FTL_JIT)
 namespace AOT {
-class PlaceTable;
+class PropertyLookupTable;
 class VMProgram;
 class RuntimeTable;
 struct Instance;
@@ -508,8 +508,8 @@ public:
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
 #if ENABLE(AOT)
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
-    AOT::PlaceTable* m_aotPlaceTable { nullptr };
-    const uint32_t* m_aotEmptyRowOfPlacesByName { nullptr };
+    AOT::PropertyLookupTable* m_aotPropertyLookupTable { nullptr };
+    const uint32_t* m_aotEmptyLookupTableRow { nullptr };
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
     uintptr_t m_structureIDBase { 0 };
@@ -528,13 +528,13 @@ public:
 
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
     bool hasRealmWithImmutableIntrinsics { false };
-    using GuardOfDeclaredObjects = String (*)(JSGlobalObject*, JSObject*, unsigned change, UniquedStringImpl* name, unsigned given, JSValue);
-    GuardOfDeclaredObjects guardOfDeclaredObjects { nullptr };
+    using DeclaredObjectGuard = String (*)(JSGlobalObject*, JSObject*, unsigned change, UniquedStringImpl* name, unsigned given, JSValue);
+    DeclaredObjectGuard declaredObjectGuard { nullptr };
     using ImmutableIntrinsicsAuditReporter = void (*)(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column);
     ImmutableIntrinsicsAuditReporter immutableIntrinsicsAuditReporter() const { return m_immutableIntrinsicsAuditReporter; }
     void setImmutableIntrinsicsAuditReporter(ImmutableIntrinsicsAuditReporter reporter) { m_immutableIntrinsicsAuditReporter = useImmutableIntrinsics ? nullptr : reporter; }
     bool auditsImmutableIntrinsics() const { return m_immutableIntrinsicsAuditReporter; }
-    bool fixesOrNotesIntrinsics() const { return useImmutableIntrinsics || m_immutableIntrinsicsAuditReporter; }
+    bool locksOrAuditsIntrinsics() const { return useImmutableIntrinsics || m_immutableIntrinsicsAuditReporter; }
     ImmutableIntrinsicsAuditReporter m_immutableIntrinsicsAuditReporter { nullptr };
 #if ENABLE(AOT)
     static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); }
@@ -1064,7 +1064,7 @@ public:
     };
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent);
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty = nullptr);
-    void endWhatIsCachedUnderTheEpoch();
+    void invalidateEpochCaches();
 
 #if ENABLE(REGEXP_TRACING)
     using RTTraceList = ListHashSet<RegExp*>;
@@ -1230,7 +1230,6 @@ public:
 #endif
     }
 #if USE(BUN_JSC_ADDITIONS)
-    // Something of the host runs between two microtasks, or goes with each of them.
     void updateHostObservesMicrotaskBoundaries()
     {
         m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken;

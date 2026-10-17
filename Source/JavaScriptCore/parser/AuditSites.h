@@ -27,11 +27,10 @@ enum class AuditedValueClass : uint16_t {
     BigInt = 1 << 7,
     Object = 1 << 8,
     Function = 1 << 9,
-    // No class of its own: a plain object with a property that is not enumerable, as the audit's tag is, or whose prototype is a plain object.
     TaggedObject = 1 << 10,
     Acts = 1 << 11,
     HasSecondBody = 1 << 12,
-    ReadsElementOfArray = 1 << 13,
+    ReadsArrayElement = 1 << 13,
     Array = 1 << 14,
     StoresThroughUntyped = 1 << 15,
 };
@@ -69,7 +68,7 @@ public:
 
     static constexpr OptionSet<AuditedValueClass> valueClasses(uint32_t passes)
     {
-        return OptionSet<AuditedValueClass>::fromRaw(static_cast<uint16_t>(passes)) & (allValueClasses() | AuditedValueClass::TaggedObject | AuditedValueClass::Acts | AuditedValueClass::HasSecondBody | AuditedValueClass::Array | AuditedValueClass::ReadsElementOfArray);
+        return OptionSet<AuditedValueClass>::fromRaw(static_cast<uint16_t>(passes)) & (allValueClasses() | AuditedValueClass::TaggedObject | AuditedValueClass::Acts | AuditedValueClass::HasSecondBody | AuditedValueClass::Array | AuditedValueClass::ReadsArrayElement);
     }
 
     std::span<const AuditedExpression> find(uint32_t start, uint32_t end) const
@@ -87,7 +86,7 @@ public:
         return false;
     }
 
-    std::span<const AuditedParameter> parametersOfFunction(uint32_t functionStart) const
+    std::span<const AuditedParameter> functionParameters(uint32_t functionStart) const
     {
         return std::span<const AuditedParameter>(std::ranges::equal_range(m_parameters.span(), functionStart, { }, &AuditedParameter::functionStart));
     }

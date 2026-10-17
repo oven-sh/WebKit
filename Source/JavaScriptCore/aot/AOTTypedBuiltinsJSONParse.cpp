@@ -30,6 +30,18 @@ static constexpr size_t maxRetainedJSONSourceCapacity = 64 * KB;
 static constexpr unsigned maxSkippedJSONDepth = 64;
 static constexpr unsigned maxExactMantissaDigits = 15;
 
+static ALWAYS_INLINE uint8_t* poisonUnusedCapacity(uint8_t* start, size_t size, size_t capacity)
+{
+#if ASAN_ENABLED
+    __asan_unpoison_memory_region(start, size);
+    __asan_poison_memory_region(start + size, capacity - size);
+#else
+    UNUSED_PARAM(size);
+    UNUSED_PARAM(capacity);
+#endif
+    return start;
+}
+
 static NEVER_INLINE uint8_t* replaceJSONSource(Instance* instance, size_t size)
 {
     fastFree(std::exchange(instance->jsonSourceStart, nullptr));
@@ -40,18 +52,18 @@ static NEVER_INLINE uint8_t* replaceJSONSource(Instance* instance, size_t size)
         return nullptr;
     instance->jsonSourceStart = static_cast<uint8_t*>(storage);
     instance->jsonSourceCapacity = capacity;
-    return instance->jsonSourceStart;
+    return poisonUnusedCapacity(instance->jsonSourceStart, size, capacity);
 }
 
 static ALWAYS_INLINE uint8_t* reserveJSONSource(Instance* instance, size_t size)
 {
     size_t capacity = instance->jsonSourceCapacity;
     if (size <= capacity && (capacity <= maxRetainedJSONSourceCapacity || size > maxRetainedJSONSourceCapacity)) [[likely]]
-        return instance->jsonSourceStart;
+        return poisonUnusedCapacity(instance->jsonSourceStart, size, capacity);
     return replaceJSONSource(instance, size);
 }
 
-static NEVER_INLINE const StringImpl* flattenJSONText(Instance* instance, CallFrame* callFrame, JSString* string)
+static NEVER_INLINE const StringImpl* flattenJSONSource(Instance* instance, CallFrame* callFrame, JSString* string)
 {
     VM& vm = *instance->vm;
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -59,19 +71,38 @@ static NEVER_INLINE const StringImpl* flattenJSONText(Instance* instance, CallFr
     return value.data.impl();
 }
 
-static NEVER_INLINE uint8_t* openWideJSONText(Instance* instance, std::span<const char16_t> characters)
+static constexpr uint8_t saturatedCharacter = 0xff;
+
+static NEVER_INLINE uint8_t* open16BitJSONSource(Instance* instance, std::span<const char16_t> characters)
 {
-    uint8_t* start = reserveJSONSource(instance, characters.size() * 3 + jsonSourcePadding);
+    size_t length = characters.size();
+    uint8_t* start = reserveJSONSource(instance, length + jsonSourcePadding);
     if (!start)
         return nullptr;
-    auto converted = WTF::Unicode::convert(characters, std::span<char8_t> { byteCast<char8_t>(start), characters.size() * 3 });
-    if (converted.code != WTF::Unicode::ConversionResultCode::Success)
-        return nullptr;
-    size_t length = converted.buffer.size();
+    for (size_t i = 0; i < length; ++i)
+        start[i] = std::min<char16_t>(characters[i], saturatedCharacter);
     memset(start + length, 0, jsonSourcePadding);
     instance->jsonSourceEnd = start + length;
-    instance->jsonSourceIsUTF8 = 1;
+    instance->jsonSourceEncoding = JSONSourceEncoding::Saturated16Bit;
+    instance->jsonSource16Bit = characters.data();
     return start;
+}
+
+static NEVER_INLINE bool isLatin1AfterDecoding(const Instance* instance, std::span<const uint8_t> characters)
+{
+    if (instance->jsonSourceEncoding == JSONSourceEncoding::UTF8)
+        return charactersAreAllASCII(characters);
+    return !memchr(characters.data(), saturatedCharacter, characters.size());
+}
+
+static ALWAYS_INLINE bool isLatin1(const Instance* instance, std::span<const uint8_t> characters)
+{
+    return instance->jsonSourceEncoding == JSONSourceEncoding::Latin1 || isLatin1AfterDecoding(instance, characters);
+}
+
+static ALWAYS_INLINE std::span<const char16_t> original16BitCharacters(const Instance* instance, std::span<const uint8_t> characters)
+{
+    return { instance->jsonSource16Bit + (characters.data() - instance->jsonSourceStart), characters.size() };
 }
 
 static std::span<const uint8_t> withoutByteOrderMark(std::span<const uint8_t> bytes)
@@ -92,13 +123,13 @@ static NEVER_INLINE uint8_t* openJSONBytes(Instance* instance, JSValue value, ui
         memcpy(start, bytes.data(), bytes.size());
     memset(start + bytes.size(), 0, jsonSourcePadding);
     instance->jsonSourceEnd = start + bytes.size();
-    instance->jsonSourceIsUTF8 = 1;
+    instance->jsonSourceEncoding = charactersAreAllASCII(bytes) ? JSONSourceEncoding::Latin1 : JSONSourceEncoding::UTF8;
     instance->jsonParserGaveUp = 0;
     instance->jsonParserFrame = frame;
     return start;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONTextOf, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONDecodeSource, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue value = JSValue::decode(encodedValue);
@@ -108,23 +139,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONTextOf, EncodedJSValue, (
     return text.isNull() ? encodedValue : JSValue::encode(jsString(vm, WTF::move(text)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONOpen, void*, (Instance* instance, EncodedJSValue encodedText, uint64_t frame))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONOpen, void*, (Instance* instance, EncodedJSValue encodedSource, uint64_t frame))
 {
     countOperationNamed(instance, __func__);
-    JSValue text = JSValue::decode(encodedText);
+    JSValue text = JSValue::decode(encodedSource);
     if (!text.isString() || frame < instance->jsonParserFrame) [[unlikely]]
         return openJSONBytes(instance, text, frame);
     JSString* string = asString(text);
     const StringImpl* impl = string->tryGetValueImpl();
     if (!impl) [[unlikely]] {
-        impl = flattenJSONText(instance, DECLARE_CALL_FRAME(*instance->vm), string);
+        impl = flattenJSONSource(instance, DECLARE_CALL_FRAME(*instance->vm), string);
         if (!impl)
             return nullptr;
     }
     instance->jsonParserGaveUp = 0;
     instance->jsonParserFrame = frame;
     if (!impl->is8Bit()) [[unlikely]]
-        return openWideJSONText(instance, impl->span16());
+        return open16BitJSONSource(instance, impl->span16());
     size_t length = impl->length();
     uint8_t* start = reserveJSONSource(instance, length + jsonSourcePadding);
     if (!start) [[unlikely]]
@@ -132,7 +163,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONOpen, void*, (Instance* i
     memcpy(start, impl->span8().data(), length);
     memset(start + length, 0, jsonSourcePadding);
     instance->jsonSourceEnd = start + length;
-    instance->jsonSourceIsUTF8 = 0;
+    instance->jsonSourceEncoding = JSONSourceEncoding::Latin1;
     return start;
 }
 
@@ -369,8 +400,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONGiveUpIfRepeated, void, (
 
 static bool appendPlainCharacters(Instance* instance, StringBuilder& builder, std::span<const uint8_t> characters)
 {
-    if (!instance->jsonSourceIsUTF8 || charactersAreAllASCII(characters)) {
+    if (isLatin1(instance, characters)) {
         builder.append(byteCast<Latin1Character>(characters));
+        return true;
+    }
+    if (instance->jsonSourceEncoding == JSONSourceEncoding::Saturated16Bit) {
+        builder.append(original16BitCharacters(instance, characters));
         return true;
     }
     String decoded = String::fromUTF8(characters);
@@ -434,8 +469,20 @@ static NEVER_INLINE JSCell* makeUncachedString(Instance* instance, CallFrame* ca
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     const uint8_t* cursor = findEndOfPlainJSONCharacters(start);
     instance->jsonCursor = 0;
-    if (*cursor != '"' || (instance->jsonSourceIsUTF8 && !charactersAreAllASCII(std::span<const uint8_t> { start, cursor }))) [[unlikely]]
+    if (*cursor != '"') [[unlikely]]
         return makeStringWithEscapes(instance, vm, start, cursor);
+    if (!isLatin1(instance, { start, cursor })) [[unlikely]] {
+        if (instance->jsonSourceEncoding != JSONSourceEncoding::Saturated16Bit)
+            return makeStringWithEscapes(instance, vm, start, cursor);
+        auto characters = original16BitCharacters(instance, { start, cursor });
+        std::span<char16_t> copy;
+        auto impl = StringImpl::tryCreateUninitialized(characters.size(), copy);
+        if (!impl)
+            return jsEmptyString(vm);
+        memcpy(copy.data(), characters.data(), characters.size_bytes());
+        instance->jsonCursor = std::bit_cast<uint64_t>(cursor + 1);
+        return jsString(vm, String { impl.releaseNonNull() });
+    }
     JSString* made = nullptr;
     if (size_t length = cursor - start; length > 1) [[likely]] {
         std::span<Latin1Character> copy;
@@ -451,15 +498,24 @@ static NEVER_INLINE JSCell* makeUncachedString(Instance* instance, CallFrame* ca
     return made;
 }
 
+static NEVER_INLINE JSCell* stringAtInDecodedSource(Instance* instance, CallFrame* callFrame, const uint8_t* start)
+{
+    auto* entry = instance->vm->jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding });
+    if (!entry || !isLatin1AfterDecoding(instance, { start, entry->textLength }))
+        return makeUncachedString(instance, callFrame, start);
+    instance->jsonCursor = std::bit_cast<uint64_t>(start - 1 + entry->textLength);
+    return entry->string;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONStringAt, JSCell*, (Instance* instance, uint64_t cursorBits))
 {
     countOperationNamed(instance, __func__);
     auto* start = std::bit_cast<const uint8_t*>(cursorBits);
+    if (instance->jsonSourceEncoding != JSONSourceEncoding::Latin1) [[unlikely]]
+        return stringAtInDecodedSource(instance, DECLARE_CALL_FRAME(*instance->vm), start);
     if (auto* entry = instance->vm->jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding })) [[likely]] {
-        if (!instance->jsonSourceIsUTF8 || charactersAreAllASCII(std::span<const uint8_t> { start, entry->textLength })) [[likely]] {
-            instance->jsonCursor = std::bit_cast<uint64_t>(start - 1 + entry->textLength);
-            return entry->string;
-        }
+        instance->jsonCursor = std::bit_cast<uint64_t>(start - 1 + entry->textLength);
+        return entry->string;
     }
     return makeUncachedString(instance, DECLARE_CALL_FRAME(*instance->vm), start);
 }
@@ -474,7 +530,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONKeyAt, JSCell*, (Instance
         instance->jsonParserGaveUp = 1;
         return jsEmptyString(vm);
     }
-    if (instance->jsonSourceIsUTF8 && !charactersAreAllASCII(std::span<const uint8_t> { start, cursor })) [[unlikely]]
+    if (!isLatin1(instance, { start, cursor })) [[unlikely]]
         return makeStringWithEscapes(instance, vm, start, cursor);
     JSString* made = vm.jsonCache().tryMakeJSString(vm, std::span<const Latin1Character> { byteCast<Latin1Character>(start), byteCast<Latin1Character>(cursor) });
     if (!made) [[unlikely]]
@@ -493,9 +549,8 @@ static NEVER_INLINE void* parseNumberSlow(Instance* instance, const uint8_t* sta
     return const_cast<uint8_t*>(start + length);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONNumberAt, void*, (Instance* instance, uint64_t cursorBits))
+static ALWAYS_INLINE void* parseNumber(Instance* instance, const uint8_t* start)
 {
-    auto* start = std::bit_cast<const uint8_t*>(cursorBits);
     const uint8_t* cursor = start;
     bool isNegative = *cursor == '-';
     cursor += isNegative;
@@ -535,6 +590,27 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONNumberAt, void*, (Instanc
     return const_cast<uint8_t*>(cursor);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONNumberAt, void*, (Instance* instance, uint64_t cursor))
+{
+    return parseNumber(instance, std::bit_cast<const uint8_t*>(cursor));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONIntegerAt, void*, (Instance* instance, uint64_t cursor))
+{
+    void* end = parseNumber(instance, std::bit_cast<const uint8_t*>(cursor));
+    if (!end)
+        return nullptr;
+    double number = instance->jsonNumber;
+    if (std::trunc(number) != number)
+        return nullptr;
+    if (std::abs(number) > static_cast<double>(Typed::maxExactInteger) || (!number && std::signbit(number))) {
+        instance->jsonParserGaveUp = 1;
+        return nullptr;
+    }
+    instance->jsonNumber = std::bit_cast<double>(static_cast<int64_t>(number));
+    return end;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONValueAt, EncodedJSValue, (Instance* instance, uint64_t cursorBits))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -544,12 +620,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONValueAt, EncodedJSValue, 
     if (!end)
         return JSValue::encode(jsUndefined());
     std::span<const uint8_t> characters { start, end };
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue parsed;
-    if (!instance->jsonSourceIsUTF8 || charactersAreAllASCII(characters))
+    if (isLatin1(instance, characters))
         parsed = JSONParse(globalObject, StringView { byteCast<Latin1Character>(characters) });
+    else if (instance->jsonSourceEncoding == JSONSourceEncoding::Saturated16Bit)
+        parsed = JSONParse(globalObject, StringView { original16BitCharacters(instance, characters) });
     else
         parsed = JSONParse(globalObject, String::fromUTF8(characters));
-    if (auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm); catchScope.exception()) [[unlikely]] {
+    if (catchScope.exception()) [[unlikely]] {
         catchScope.clearException();
         parsed = JSValue();
     }
@@ -564,6 +643,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONValueAt, EncodedJSValue, 
 void destroyJSONSource(Instance& instance)
 {
     fastFree(instance.jsonSourceStart);
+}
+
+void releaseLargeJSONSource(Instance& instance)
+{
+    if (instance.jsonSourceCapacity <= maxRetainedJSONSourceCapacity || instance.jsonParserFrame)
+        return;
+    fastFree(std::exchange(instance.jsonSourceStart, nullptr));
+    instance.jsonSourceCapacity = 0;
 }
 
 namespace Typed {
@@ -582,14 +669,16 @@ std::optional<Writes> writesOfInlineJSONParse(InlineBuiltin which, std::span<con
     case InlineBuiltin::JSONStartsWith:
     case InlineBuiltin::JSONCursor:
     case InlineBuiltin::JSONNumber:
+    case InlineBuiltin::JSONInteger:
     case InlineBuiltin::JSONSkipWhitespace:
         return Writes::Nothing;
     case InlineBuiltin::JSONOpen:
-    case InlineBuiltin::JSONTextOf:
+    case InlineBuiltin::JSONDecodeSource:
     case InlineBuiltin::JSONClose:
     case InlineBuiltin::JSONAbandon:
     case InlineBuiltin::JSONStringAt:
     case InlineBuiltin::JSONNumberAt:
+    case InlineBuiltin::JSONIntegerAt:
     case InlineBuiltin::JSONValueAt:
     case InlineBuiltin::JSONKeyAt:
     case InlineBuiltin::JSONHasStackSpace:
@@ -629,20 +718,20 @@ void Lowering::branchOnJSONParserTest(const Value& value, LBasicBlock holds, LBa
     }
     if (m_builtins.at(value.builtin()).implementation.inlined == InlineBuiltin::JSONClose) {
         LBasicBlock isAtEnd = m_out.newBlock();
-        LBasicBlock hasTrailingText = newUnlikelyBlock();
+        LBasicBlock hasTrailingCharacters = newUnlikelyBlock();
         Integer cursor = in<Integer>(value.arguments[0]);
         LValue end = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONSourceEnd()));
-        m_out.branch(m_out.equal(cursor.value(), end), usually(isAtEnd), rarely(hasTrailingText));
-        m_out.appendTo(hasTrailingText);
+        m_out.branch(m_out.equal(cursor.value(), end), usually(isAtEnd), rarely(hasTrailingCharacters));
+        m_out.appendTo(hasTrailingCharacters);
         m_out.branch(m_out.equal(skipJSONWhitespace(cursor).value(), end), unsure(isAtEnd), unsure(fails));
         m_out.appendTo(isAtEnd);
         m_out.branch(m_out.isZero32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONParserGaveUp()))), usually(holds), rarely(fails));
         return;
     }
-    auto& textOperand = constantJSONParserOperand(value, 1);
+    auto& sourceOperand = constantJSONParserOperand(value, 1);
     auto& isExpectedOperand = constantJSONParserOperand(value, 2);
-    RELEASE_ASSERT(textOperand.opcode == Opcode::String && isExpectedOperand.opcode == Opcode::Integer);
-    std::span<const uint8_t> text = m_program.string(textOperand.string());
+    RELEASE_ASSERT(sourceOperand.opcode == Opcode::String && isExpectedOperand.opcode == Opcode::Integer);
+    std::span<const uint8_t> text = m_program.string(sourceOperand.string());
     bool isExpected = isExpectedOperand.integer();
     RELEASE_ASSERT(!text.empty());
     LValue cursor = in<Integer>(value.arguments[0]).value();
@@ -729,17 +818,17 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
     auto cursorSlot = [&] {
         return m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONCursor());
     };
-    auto yieldCursor = [&](LValue cursor) {
+    auto returnCursor = [&](LValue cursor) {
         return ensure(Integer(cursor), cursorType, type);
     };
     switch (which) {
     case InlineBuiltin::Likely:
-        if (m_isCarriedOutByBranch.get(result.index()))
-            return yieldBoolean(boolean(false), type);
-        return yieldBoolean(in<Word32>(arguments[0]), type);
+        if (m_isFusedWithBranch.get(result.index()))
+            return booleanResult(boolean(false), type);
+        return booleanResult(in<Word32>(arguments[0]), type);
     case InlineBuiltin::JSONStartsWith: {
-        if (m_isCarriedOutByBranch.get(result.index()))
-            return yieldBoolean(boolean(false), type);
+        if (m_isFusedWithBranch.get(result.index()))
+            return booleanResult(boolean(false), type);
         LBasicBlock holds = m_out.newBlock();
         LBasicBlock fails = m_out.newBlock();
         Join join(m_out, Rep::Int32, Int32);
@@ -748,14 +837,14 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
         join.add(boolean(true));
         m_out.appendTo(fails);
         join.add(boolean(false));
-        return yieldBoolean(join.finish().as<Word32>(), type);
+        return booleanResult(join.finish().as<Word32>(), type);
     }
     case InlineBuiltin::JSONOpen:
         didEmitWrite(writes);
-        return yieldCursor(AOT_TYPED_OPERATION(JSONOpen, in<Boxed>(arguments[0]), Integer(m_out.framePointer())).value());
-    case InlineBuiltin::JSONTextOf:
+        return returnCursor(AOT_TYPED_OPERATION(JSONOpen, in<Boxed>(arguments[0]), Integer(m_out.framePointer())).value());
+    case InlineBuiltin::JSONDecodeSource:
         didEmitWrite(writes);
-        return ensure(AOT_TYPED_OPERATION(JSONTextOf, in<Boxed>(arguments[0])), type);
+        return ensure(AOT_TYPED_OPERATION(JSONDecodeSource, in<Boxed>(arguments[0])), type);
     case InlineBuiltin::JSONAbandon: {
         didEmitWrite(writes);
         LBasicBlock isOpen = m_out.newBlock();
@@ -771,8 +860,8 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
     case InlineBuiltin::JSONClose: {
         didEmitWrite(writes);
         m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONParserFrame()));
-        if (m_isCarriedOutByBranch.get(result.index()))
-            return yieldBoolean(boolean(false), type);
+        if (m_isFusedWithBranch.get(result.index()))
+            return booleanResult(boolean(false), type);
         LBasicBlock holds = m_out.newBlock();
         LBasicBlock fails = m_out.newBlock();
         Join join(m_out, Rep::Int32, Int32);
@@ -781,7 +870,7 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
         join.add(boolean(true));
         m_out.appendTo(fails);
         join.add(boolean(false));
-        return yieldBoolean(join.finish().as<Word32>(), type);
+        return booleanResult(join.finish().as<Word32>(), type);
     }
     case InlineBuiltin::JSONByteAt:
         return ensure(zeroExtended(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, in<Integer>(arguments[0]).value(), 0)))), Type::integer({ 0, 255 }), type);
@@ -789,10 +878,63 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
         didEmitWrite(writes);
         return ensure(AOT_TYPED_OPERATION(JSONStringAt, in<Integer>(arguments[0])), m_program.at(m_program.types.string), type);
     case InlineBuiltin::JSONNumberAt:
+    case InlineBuiltin::JSONIntegerAt: {
         didEmitWrite(writes);
-        return yieldCursor(AOT_TYPED_OPERATION(JSONNumberAt, in<Integer>(arguments[0])).value());
+        TypedPointer slot = m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONNumber());
+        auto digitAt = [&](LValue at) {
+            return m_out.sub(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, at, 0)), m_out.constInt32('0'));
+        };
+        Integer start = in<Integer>(arguments[0]);
+        LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock nextDigit = m_out.newBlock();
+        LBasicBlock hasDigit = m_out.newBlock();
+        LBasicBlock hasNoMoreDigits = m_out.newBlock();
+        LBasicBlock isIntegralNumber = m_out.newBlock();
+        LBasicBlock genericPath = m_out.newBlock();
+        LValue first = digitAt(start.value());
+        ValueFromBlock firstCursor = m_out.anchor(start.value());
+        ValueFromBlock firstDigits = m_out.anchor(m_out.zeroExt(first, Int64));
+        m_out.branch(m_out.below(m_out.sub(first, m_out.constInt32(1)), m_out.constInt32(9)), unsure(nextDigit), unsure(genericPath));
+
+        m_out.appendTo(nextDigit);
+        LValue previous = m_out.phi(Int64, firstCursor);
+        LValue digits = m_out.phi(Int64, firstDigits);
+        LValue at = m_out.add(previous, m_out.constInt64(1));
+        LValue digit = digitAt(at);
+        m_out.branch(m_out.below(digit, m_out.constInt32(10)), unsure(hasDigit), unsure(hasNoMoreDigits));
+
+        m_out.appendTo(hasDigit);
+        m_out.addIncomingToPhi(previous, m_out.anchor(at));
+        m_out.addIncomingToPhi(digits, m_out.anchor(m_out.add(m_out.mul(digits, m_out.constInt64(10)), m_out.zeroExt(digit, Int64))));
+        m_out.jump(nextDigit);
+
+        m_out.appendTo(hasNoMoreDigits);
+        for (LValue continuesNumber : { m_out.equal(digit, m_out.constInt32('.' - '0')), m_out.equal(m_out.bitOr(digit, m_out.constInt32(0x20)), m_out.constInt32('e' - '0')) }) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(continuesNumber, unsure(genericPath), unsure(next));
+            m_out.appendTo(next);
+        }
+        m_out.branch(m_out.above(m_out.sub(at, start.value()), m_out.constInt64(maxExactMantissaDigits)), rarely(genericPath), usually(isIntegralNumber));
+
+        m_out.appendTo(isIntegralNumber);
+        if (which == InlineBuiltin::JSONIntegerAt)
+            m_out.store64(digits, slot);
+        else
+            m_out.storeDouble(m_out.intToDouble(digits), slot);
+        ValueFromBlock inlinePath = m_out.anchor(at);
+        m_out.jump(continuation);
+
+        m_out.appendTo(genericPath);
+        ValueFromBlock byOperation = m_out.anchor(which == InlineBuiltin::JSONIntegerAt ? AOT_TYPED_OPERATION(JSONIntegerAt, start).value() : AOT_TYPED_OPERATION(JSONNumberAt, start).value());
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        return returnCursor(m_out.phi(Int64, inlinePath, byOperation));
+    }
     case InlineBuiltin::JSONNumber:
         return ensure(Number(m_out.loadDouble(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONNumber()))), m_program.at(m_program.types.number), type);
+    case InlineBuiltin::JSONInteger:
+        return ensure(Integer(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONNumber()))), Type::integer({ -maxExactInteger, maxExactInteger }), type);
     case InlineBuiltin::JSONKeyAt:
         didEmitWrite(writes);
         return ensure(AOT_TYPED_OPERATION(JSONKeyAt, in<Integer>(arguments[0])), m_program.at(m_program.types.string), type);
@@ -807,25 +949,25 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
         ValueFromBlock no = m_out.anchor(m_out.constInt32(0));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        return yieldBoolean(Word32(m_out.phi(Int32, yes, no)), type);
+        return booleanResult(Word32(m_out.phi(Int32, yes, no)), type);
     }
     case InlineBuiltin::JSONValueAt:
         didEmitWrite(writes);
         return ensure(AOT_TYPED_OPERATION(JSONValueAt, in<Integer>(arguments[0])), type);
     case InlineBuiltin::JSONCursor:
-        return yieldCursor(m_out.load64(cursorSlot()));
+        return returnCursor(m_out.load64(cursorSlot()));
     case InlineBuiltin::JSONSetCursor:
         didEmitWrite(writes);
         m_out.store64(in<Integer>(arguments[0]).value(), cursorSlot());
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     case InlineBuiltin::JSONSkipWhitespace:
-        return yieldCursor(skipJSONWhitespace(in<Integer>(arguments[0])).value());
+        return returnCursor(skipJSONWhitespace(in<Integer>(arguments[0])).value());
     case InlineBuiltin::JSONSkipValue:
         didEmitWrite(writes);
-        return yieldCursor(AOT_TYPED_OPERATION(JSONSkipValue, in<Integer>(arguments[0])).value());
+        return returnCursor(AOT_TYPED_OPERATION(JSONSkipValue, in<Integer>(arguments[0])).value());
     case InlineBuiltin::JSONSkipMember:
         didEmitWrite(writes);
-        return yieldCursor(AOT_TYPED_OPERATION(JSONSkipMember, in<Integer>(arguments[0])).value());
+        return returnCursor(AOT_TYPED_OPERATION(JSONSkipMember, in<Integer>(arguments[0])).value());
     case InlineBuiltin::JSONGiveUpIfEscaped:
         didEmitWrite(writes);
         AOT_TYPED_OPERATION(JSONGiveUpIfEscaped, in<Integer>(arguments[0]));

@@ -70,7 +70,7 @@ private:
     std::array<unsigned, maxSize> m_numberOfYields { };
     std::array<void*, maxSize> m_stackPointers { };
     std::array<void*, maxSize> m_stacks { };
-    void* m_stackPointerOfCaller { nullptr };
+    void* m_callerStackPointer { nullptr };
     const ScopedLambda<void(unsigned)>* m_compile { nullptr };
     const char* m_phase { nullptr };
     unsigned m_size { 0 };

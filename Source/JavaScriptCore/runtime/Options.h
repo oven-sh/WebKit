@@ -134,9 +134,6 @@ public:
 
     JS_EXPORT_PRIVATE static void assertOptionsAreCoherent();
     JS_EXPORT_PRIVATE static void notifyOptionsChanged();
-    // What sizeClassProgression is in a process with useAOT: as it was set, or else finer than the default. The objects of a compiled program
-    // are of the sizes their types give them, so a cell that is much larger than what was asked for is wasted on every one of them.
-    // The AOT compiler asks too, which runs in a process without an image.
     JS_EXPORT_PRIVATE static double sizeClassProgressionWithAOT();
 
 #define DECLARE_OPTION_ACCESSORS(type_, name_, defaultValue_, availability_, description_) \

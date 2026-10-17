@@ -67,15 +67,13 @@ public:
     }
 
 private:
-    static constexpr double frequencyScaleOfStripEnd = 1.0 / 1024;
+    static constexpr double stripEndFrequencyScale = 1.0 / 1024;
 
     struct Poll {
-        // Ends in the Branch on the condition, which compares the limit with a constant.
         BasicBlock* block;
         Value* limit;
         Value* condition;
         BasicBlock* slowPath;
-        // The one call of the slow path. duplicateTails() may have put a copy of what follows the poll behind it.
         Value* handler;
         BasicBlock* continuation;
     };
@@ -132,10 +130,10 @@ private:
     void stripMine(const CountedLoop& loop, const Poll& poll)
     {
         Origin origin = loop.test->last()->origin();
-        double frequency = loop.header->frequency() * frequencyScaleOfStripEnd;
+        double frequency = loop.header->frequency() * stripEndFrequencyScale;
         BasicBlock* realTest = m_proc.addBlock(loop.preHeader->frequency());
-        BasicBlock* pollOfStrip = m_proc.addBlock(frequency);
-        BasicBlock* slowPathOfStrip = m_proc.addBlock(poll.slowPath->frequency());
+        BasicBlock* stripPoll = m_proc.addBlock(frequency);
+        BasicBlock* stripSlowPath = m_proc.addBlock(poll.slowPath->frequency());
         BasicBlock* nextStrip = m_proc.addBlock(frequency);
 
         Value* end = m_proc.add<Value>(Phi, Int64, origin);
@@ -144,13 +142,13 @@ private:
         loop.latch->values().insert(0, endAtLatch);
         loop.latch->appendNonTerminal(m_proc.add<UpsilonValue>(origin, endAtLatch, end));
 
-        loop.preHeader->appendNonTerminal(m_proc.add<UpsilonValue>(origin, appendEndOfStrip(m_proc, loop.preHeader, loop, loop.start, loop.bound, !relationHoldsOnEntry(loop)), end));
+        loop.preHeader->appendNonTerminal(m_proc.add<UpsilonValue>(origin, appendStripEnd(m_proc, loop.preHeader, loop, loop.start, loop.bound, !relationHoldsOnEntry(loop)), end));
 
-        BasicBlock* exit = loop.test->successorBlock(1 - loop.indexOfLatchInSuccessors);
+        BasicBlock* exit = loop.test->successorBlock(1 - loop.latchSuccessorIndex);
         Value* branch = loop.test->last();
         realTest->append(m_proc.add<Value>(loop.relation, origin, loop.next, loop.bound));
         realTest->append(m_proc.add<Value>(Branch, origin, realTest->at(0)));
-        realTest->setSuccessors(FrequentedBlock(pollOfStrip, FrequencyClass::Rare), FrequentedBlock(exit));
+        realTest->setSuccessors(FrequentedBlock(stripPoll, FrequencyClass::Rare), FrequentedBlock(exit));
 
         loop.test->appendNonTerminal(m_proc.add<UpsilonValue>(origin, end, endAtLatch));
         Value* isWithinStrip = m_proc.add<Value>(loop.relation, origin, loop.next, end);
@@ -162,22 +160,21 @@ private:
             if (value == poll.limit || value == poll.condition)
                 value = m_proc.add<Value>(Nop, Void, value->origin());
         }
-        pollOfStrip->append(poll.limit);
+        stripPoll->append(poll.limit);
         for (Value*& child : poll.condition->children()) {
             if (child != poll.limit) {
                 child = m_proc.add<Const64Value>(origin, child->asInt64());
-                pollOfStrip->append(child);
+                stripPoll->append(child);
             }
         }
-        pollOfStrip->append(poll.condition);
-        pollOfStrip->append(poll.block->last());
-        pollOfStrip->successors() = poll.block->successors();
-        pollOfStrip->replaceSuccessor(poll.continuation, nextStrip);
-        pollOfStrip->replaceSuccessor(poll.slowPath, slowPathOfStrip);
+        stripPoll->append(poll.condition);
+        stripPoll->append(poll.block->last());
+        stripPoll->successors() = poll.block->successors();
+        stripPoll->replaceSuccessor(poll.continuation, nextStrip);
+        stripPoll->replaceSuccessor(poll.slowPath, stripSlowPath);
         poll.block->last() = m_proc.add<Value>(Jump, origin);
         poll.block->setSuccessors(FrequentedBlock(poll.continuation));
 
-        // Nothing leads to the old slow path any more.
         for (Value*& value : *poll.slowPath) {
             if (value == poll.handler)
                 value = m_proc.add<Value>(Nop, Void, value->origin());
@@ -185,16 +182,16 @@ private:
         for (Value*& child : poll.handler->children()) {
             if (child->isConstant()) {
                 child = m_proc.clone(child);
-                slowPathOfStrip->append(child);
+                stripSlowPath->append(child);
             }
         }
-        slowPathOfStrip->append(poll.handler);
-        slowPathOfStrip->append(m_proc.add<Value>(Jump, origin));
-        slowPathOfStrip->setSuccessors(FrequentedBlock(nextStrip));
+        stripSlowPath->append(poll.handler);
+        stripSlowPath->append(m_proc.add<Value>(Jump, origin));
+        stripSlowPath->setSuccessors(FrequentedBlock(nextStrip));
 
         nextStrip->append(m_proc.add<Value>(Jump, origin));
         nextStrip->setSuccessors(FrequentedBlock(loop.latch));
-        nextStrip->appendNonTerminal(m_proc.add<UpsilonValue>(origin, appendEndOfStrip(m_proc, nextStrip, loop, loop.next, loop.bound, false), endAtLatch));
+        nextStrip->appendNonTerminal(m_proc.add<UpsilonValue>(origin, appendStripEnd(m_proc, nextStrip, loop, loop.next, loop.bound, false), endAtLatch));
     }
 
     Procedure& m_proc;

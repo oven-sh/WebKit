@@ -73,7 +73,7 @@ void JSOrderedHashTable<Traits>::clearCompactTable()
 }
 
 template<typename Traits>
-static NEVER_INLINE JSValue findInCompactTableGenerally(JSGlobalObject* globalObject, CompactTable* table, JSValue key)
+static NEVER_INLINE JSValue findInCompactTableGeneric(JSGlobalObject* globalObject, CompactTable* table, JSValue key)
 {
     auto entry = table->find(globalObject, key);
     if (!entry)
@@ -94,7 +94,7 @@ JSValue JSOrderedHashTable<Traits>::findInCompactTable(JSGlobalObject* globalObj
     case CompactTable::Quickly::Unknown:
         break;
     }
-    return findInCompactTableGenerally<Traits>(globalObject, table, key);
+    return findInCompactTableGeneric<Traits>(globalObject, table, key);
 }
 
 template<typename Traits>

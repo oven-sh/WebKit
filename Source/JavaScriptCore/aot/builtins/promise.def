@@ -21,7 +21,7 @@ inline AsyncGeneratorYield
 runtime SuspendAsyncFunction : Heap void (JSCell* resumeClosure, EncodedJSValue awaited)
 runtime SaveFrameAndAwait : Heap JSCell* (EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra)
 runtime AwaitWithSavedFrame : Heap JSCell* (EncodedJSValue awaited, JSCell* saved)
-runtime TakeStepAtOnceOrAwait : Heap EncodedJSValue (EncodedJSValue awaited, JSCell* saved) noexcept
+runtime StepOrAwait : Heap EncodedJSValue (EncodedJSValue awaited, JSCell* saved) noexcept
 runtime PromiseThen : RuntimeState void (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived)
 runtime PromiseCatch : RuntimeState JSCell* (JSCell* promise, EncodedJSValue onRejected)
 runtime GetAsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)

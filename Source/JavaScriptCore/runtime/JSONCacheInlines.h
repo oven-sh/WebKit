@@ -320,10 +320,10 @@ ALWAYS_INLINE void JSONCache::addTransition(Structure* from, Structure* to, std:
     entry.to.setWithoutWriteBarrier(to);
 }
 
-ALWAYS_INLINE bool JSONCache::isStructureOfFinishedObject(StructureID structureID, unsigned index) const
+ALWAYS_INLINE bool JSONCache::isFinishedObjectStructure(StructureID structureID, unsigned index) const
 {
     ASSERT(index == nameIndex(structureID));
-    return m_structuresOfFinishedObjects.data()[index].value() == structureID;
+    return m_finishedObjectStructures.data()[index].value() == structureID;
 }
 
 ALWAYS_INLINE Structure* JSONCache::getStructureForFinishedObject(Structure* from) const
@@ -337,7 +337,7 @@ ALWAYS_INLINE void JSONCache::addStructureForFinishedObject(Structure* from, Str
 {
     unsigned index = nameIndex(StructureID::encode(from));
     if (from == to) {
-        m_structuresOfFinishedObjects[index].setWithoutWriteBarrier(from);
+        m_finishedObjectStructures[index].setWithoutWriteBarrier(from);
         return;
     }
     auto& entry = m_structuresForFinishedObjects[index];
@@ -508,7 +508,7 @@ void JSONCache::visitAggregate(Visitor& visitor)
         visitor.append(entry.from);
         visitor.append(entry.to);
     }
-    for (auto& entry : m_structuresOfFinishedObjects)
+    for (auto& entry : m_finishedObjectStructures)
         visitor.append(entry);
 }
 

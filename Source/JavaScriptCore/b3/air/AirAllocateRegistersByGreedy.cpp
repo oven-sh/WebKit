@@ -242,8 +242,8 @@ public:
 private:
     NEVER_INLINE void addChunk(size_t count)
     {
-        size_t size = std::max(count + count / 2, m_sizeOfNextChunk);
-        m_sizeOfNextChunk = size * 2;
+        size_t size = std::max(count + count / 2, m_nextChunkSize);
+        m_nextChunkSize = size * 2;
         m_next = static_cast<Interval*>(fastMalloc(size * sizeof(Interval)));
         m_end = m_next + size;
         m_chunks.append(m_next);
@@ -252,7 +252,7 @@ private:
     Vector<Interval*, 4> m_chunks;
     Interval* m_next { nullptr };
     Interval* m_end { nullptr };
-    size_t m_sizeOfNextChunk { 64 };
+    size_t m_nextChunkSize { 64 };
 };
 
 class LiveRange {
@@ -879,7 +879,7 @@ struct TmpData {
     uint32_t hasColdUse : 1 { 0 };
     bool paysForCalleeSave { false };
 #if USE(BUN_JSC_ADDITIONS)
-    bool goesRoundAStretch { false };
+    bool spansStretch { false };
     bool isClusterOverBlocks { false };
 #endif
     Stage stage { Stage::New };
@@ -916,7 +916,7 @@ struct TmpData {
 
     Tmp neighbours[2];
 
-    void addNeighbour(Tmp tmp)
+    void addNeighbor(Tmp tmp)
     {
         if (neighbours[0] == tmp || neighbours[1] == tmp)
             return;
@@ -1040,7 +1040,7 @@ struct Mentions {
     static constexpr unsigned widthShift = 9;
     static constexpr unsigned widthMask = 7;
     static constexpr unsigned isFP = 1 << 12;
-    static constexpr unsigned saysNothingOfWidth = 1 << 13;
+    static constexpr unsigned hasNoWidthInformation = 1 << 13;
     static constexpr unsigned isDefByConstant = 1 << 14;
     static constexpr unsigned numberOfRoles = 12;
 
@@ -1080,7 +1080,7 @@ struct Mentions {
         return traitsOf(role) | static_cast<unsigned>(width) << widthShift | (bank == FP ? isFP : 0);
     }
 
-    static constexpr std::array<uint16_t, 256> makeTraitsOfForms()
+    static constexpr std::array<uint16_t, 256> computeFormTraits()
     {
         std::array<uint16_t, 256> result { };
         for (unsigned form = 0; form < 256; ++form) {
@@ -1095,14 +1095,14 @@ struct Mentions {
 
     Vector<unsigned> tmps;
     Vector<uint16_t> traits;
-    Vector<unsigned> firstOfInst;
-    Vector<uint8_t> timingsOfInst;
+    Vector<unsigned> instFirstMention;
+    Vector<uint8_t> instTimings;
     unsigned numberOfInsts { 0 };
 };
 
-static constexpr std::array<uint16_t, 256> traitsOfForms = Mentions::makeTraitsOfForms();
+static constexpr std::array<uint16_t, 256> formTraits = Mentions::computeFormTraits();
 
-static void validateTraitsOfForms()
+static void validateFormTraits()
 {
     for (unsigned i = 0; i < Mentions::numberOfRoles; ++i) {
         Arg::Role role = static_cast<Arg::Role>(i);
@@ -1113,7 +1113,7 @@ static void validateTraitsOfForms()
             for (Bank bank : { GP, FP }) {
                 uint8_t form = ENCODE_INST_FORM(role, bank, width);
                 RELEASE_ASSERT(decodeFormRole(form) == role && decodeFormBank(form) == bank && decodeFormWidth(form) == width);
-                RELEASE_ASSERT(traitsOfForms[form] == Mentions::traitsOf(role, bank, width));
+                RELEASE_ASSERT(formTraits[form] == Mentions::traitsOf(role, bank, width));
             }
         }
     }
@@ -1127,12 +1127,12 @@ struct Piece {
     unsigned higher;
 };
 
-struct StateOfRange {
+struct RangeState {
     Point activeEnd;
     unsigned lowestPiece;
 };
 
-class WidthsOfTmps {
+class TmpWidths {
 public:
     struct Widths {
         Width use;
@@ -1141,19 +1141,19 @@ public:
 
     Widths* prepare(Code& code)
     {
-        unsigned endOfGP = Tmp::absoluteIndexEnd(code, GP);
-        unsigned endOfFP = Tmp::absoluteIndexEnd(code, FP);
-        m_gp.grow(endOfGP + endOfFP);
+        unsigned gpEnd = Tmp::absoluteIndexEnd(code, GP);
+        unsigned fpEnd = Tmp::absoluteIndexEnd(code, FP);
+        m_gp.grow(gpEnd + fpEnd);
         Widths* widths = m_gp.mutableSpan().data();
-        std::fill(widths, widths + endOfGP, Widths { minimumWidth(GP), minimumWidth(GP) });
-        std::fill(widths + endOfGP, widths + endOfGP + endOfFP, Widths { minimumWidth(FP), minimumWidth(FP) });
+        std::fill(widths, widths + gpEnd, Widths { minimumWidth(GP), minimumWidth(GP) });
+        std::fill(widths + gpEnd, widths + gpEnd + fpEnd, Widths { minimumWidth(FP), minimumWidth(FP) });
         return widths;
     }
 
-    void finish(unsigned endOfGP)
+    void finish(unsigned gpEnd)
     {
-        m_fp.append(m_gp.span().subspan(endOfGP));
-        m_gp.shrink(endOfGP);
+        m_fp.append(m_gp.span().subspan(gpEnd));
+        m_gp.shrink(gpEnd);
     }
 
     Width useWidth(Tmp tmp) const { return widths(tmp).use; }
@@ -1181,7 +1181,7 @@ private:
     Vector<Widths> m_fp;
 };
 
-class CountsOfTmps {
+class TmpCounts {
 public:
     static constexpr uint8_t hasConstDef = 1;
     static constexpr uint8_t hasOtherDef = 2;
@@ -1191,7 +1191,7 @@ public:
         m_ends[GP] = Tmp::absoluteIndexEnd(code, GP);
         m_ends[FP] = Tmp::absoluteIndexEnd(code, FP);
         counts.fill(0, m_ends[GP] + m_ends[FP]);
-        kindsOfDefs.fill(0, m_ends[GP] + m_ends[FP]);
+        defKinds.fill(0, m_ends[GP] + m_ends[FP]);
         gpConstants.grow(m_ends[GP]);
         fpConstants.grow(m_ends[FP]);
         fpConstantWidths.grow(m_ends[FP]);
@@ -1202,7 +1202,7 @@ public:
     {
         if (absoluteIndex >= m_ends[bank])
             return false;
-        return kindsOfDefs[linearIndex<bank>(absoluteIndex)] == hasConstDef;
+        return defKinds[linearIndex<bank>(absoluteIndex)] == hasConstDef;
     }
 
     template<Bank bank>
@@ -1228,7 +1228,7 @@ public:
     }
 
     Vector<float> counts;
-    Vector<uint8_t> kindsOfDefs;
+    Vector<uint8_t> defKinds;
     Vector<int64_t> gpConstants;
     Vector<v128_t> fpConstants;
     Vector<Width> fpConstantWidths;
@@ -1243,9 +1243,9 @@ private:
     std::array<unsigned, numBanks> m_ends { };
 };
 
-class MapOfTmpData {
+class TmpDataMap {
 public:
-    explicit MapOfTmpData(Code& code)
+    explicit TmpDataMap(Code& code)
     {
         fill(m_gp, Tmp::absoluteIndexEnd(code, GP));
         fill(m_fp, Tmp::absoluteIndexEnd(code, FP));
@@ -1327,7 +1327,7 @@ public:
             return;
 
         if (Options::airValidateGreedRegAlloc()) [[unlikely]] {
-            validateTraitsOfForms();
+            validateFormTraits();
             validateFusedAnalyses();
             for (BasicBlock* block : m_code) {
                 for (Inst& inst : *block)
@@ -1338,10 +1338,10 @@ public:
 
     void decode()
     {
-        m_endOfGPIndices = Tmp::absoluteIndexEnd(m_code, GP);
+        m_gpIndicesEnd = Tmp::absoluteIndexEnd(m_code, GP);
         m_numberOfLinearIndices = Tmp::linearIndexEnd(m_code);
         m_useCounts.prepare(m_code);
-        m_endsOfBlock.grow(m_code.size());
+        m_blockEnds.grow(m_code.size());
 
         m_fastBlocks.push(m_code[0]);
         while (BasicBlock* block = m_fastBlocks.pop()) {
@@ -1353,10 +1353,10 @@ public:
 
         Vector<unsigned> movesForWidths;
         Vector<PaddingSite> paddingSites;
-        writeDownMentions(movesForWidths, paddingSites);
+        recordMentions(movesForWidths, paddingSites);
         findWidths(movesForWidths);
         countUsesAndDefs();
-        findWhatBlocksExposeAndDefine();
+        findBlockExposedUsesAndDefs();
         if (m_searchesForDeadCode && m_hasDefOfUnreadTmp && findDeadCode()) [[unlikely]] {
             m_hasDeadCode = true;
             return;
@@ -1401,24 +1401,24 @@ public:
         unsigned instIndex;
     };
 
-    void writeDownMentions(Vector<unsigned>& movesForWidths, Vector<PaddingSite>& paddingSites)
+    void recordMentions(Vector<unsigned>& movesForWidths, Vector<PaddingSite>& paddingSites)
     {
-        const unsigned endOfGPIndices = m_endOfGPIndices;
+        const unsigned gpIndicesEnd = m_gpIndicesEnd;
 
-        unsigned numberOfInstsAhead = 0;
+        unsigned precedingInstCount = 0;
         for (BasicBlock* block : m_code)
-            numberOfInstsAhead += block->size();
-        m_mentions.firstOfInst.grow(static_cast<size_t>(numberOfInstsAhead) * 2 + 1);
-        m_mentions.timingsOfInst.grow(static_cast<size_t>(numberOfInstsAhead) * 2 + 1);
-        unsigned* firstOfInst = m_mentions.firstOfInst.mutableSpan().data();
-        uint8_t* timingsOfInsts = m_mentions.timingsOfInst.mutableSpan().data();
+            precedingInstCount += block->size();
+        m_mentions.instFirstMention.grow(static_cast<size_t>(precedingInstCount) * 2 + 1);
+        m_mentions.instTimings.grow(static_cast<size_t>(precedingInstCount) * 2 + 1);
+        unsigned* instFirstMention = m_mentions.instFirstMention.mutableSpan().data();
+        uint8_t* allInstTimings = m_mentions.instTimings.mutableSpan().data();
         unsigned ordinal = 0;
 
-        size_t capacity = static_cast<size_t>(numberOfInstsAhead) * 2 + 64;
+        size_t capacity = static_cast<size_t>(precedingInstCount) * 2 + 64;
         m_mentions.tmps.grow(capacity);
         m_mentions.traits.grow(capacity);
         unsigned* tmps = m_mentions.tmps.mutableSpan().data();
-        uint16_t* traitsOfMentions = m_mentions.traits.mutableSpan().data();
+        uint16_t* mentionTraits = m_mentions.traits.mutableSpan().data();
         unsigned numberOfMentions = 0;
 
         m_isRead.fill(0, m_numberOfLinearIndices);
@@ -1426,10 +1426,10 @@ public:
         for (unsigned i = 0; i <= Reg::maxIndex(); ++i)
             isRead[linearIndex(Tmp(Reg::fromIndex(i)))] = 1;
 
-        movesForWidths.grow(numberOfInstsAhead);
+        movesForWidths.grow(precedingInstCount);
         unsigned* nextMoveForWidths = movesForWidths.mutableSpan().data();
-        m_movesOfTmps.grow(numberOfInstsAhead);
-        unsigned* nextMoveOfTmps = m_movesOfTmps.mutableSpan().data();
+        m_tmpMoves.grow(precedingInstCount);
+        unsigned* nextTmpMove = m_tmpMoves.mutableSpan().data();
 
         struct Clobbers {
             RegisterSet set;
@@ -1453,13 +1453,13 @@ public:
         Clobbers early;
         Clobbers late;
         Vector<MentionDecodedSlowly, 16> mentionsDecodedSlowly;
-        const bool notesNeighbours = isX86() && m_code.chargesForCalleeSaves();
-        constexpr unsigned traitsOfBase = Mentions::traitsOf(Arg::Use, GP, pointerWidth());
+        const bool recordsNeighbors = isX86() && m_code.chargesForCalleeSaves();
+        constexpr unsigned baseTraits = Mentions::traitsOf(Arg::Use, GP, pointerWidth());
         constexpr unsigned kindsWithBase = 1u << Arg::SimpleAddr | 1u << Arg::Addr | 1u << Arg::ExtendedOffsetAddr | 1u << Arg::Index | 1u << Arg::PreIndex | 1u << Arg::PostIndex;
 
         for (unsigned blockIndex = 0; blockIndex < m_code.size(); ++blockIndex) {
             BasicBlock* block = m_code[blockIndex];
-            m_endsOfBlock[blockIndex].firstInst = ordinal;
+            m_blockEnds[blockIndex].firstInst = ordinal;
             if (!block)
                 continue;
 
@@ -1484,11 +1484,11 @@ public:
                     m_mentions.tmps.grow(capacity);
                     m_mentions.traits.grow(capacity);
                     tmps = m_mentions.tmps.mutableSpan().data();
-                    traitsOfMentions = m_mentions.traits.mutableSpan().data();
+                    mentionTraits = m_mentions.traits.mutableSpan().data();
                 }
 
-                unsigned traitsOfAllMentions = 0;
-                bool isMoveOfTmps = false;
+                unsigned allMentionTraits = 0;
+                bool isTmpMove = false;
                 bool isConditionalMove = false;
                 switch (opcode) {
                 case Move:
@@ -1499,15 +1499,15 @@ public:
                     if (!args[1].isTmp())
                         break;
                     if (args[0].isTmp()) {
-                        isMoveOfTmps = numberOfArgs == 2;
+                        isTmpMove = numberOfArgs == 2;
                         if (opcode == Move) {
                             *nextMoveForWidths++ = numberOfMentions;
-                            traitsOfAllMentions = Mentions::saysNothingOfWidth;
+                            allMentionTraits = Mentions::hasNoWidthInformation;
                         }
                         break;
                     }
                     if (args[0].isSomeImm())
-                        traitsOfAllMentions = noteMoveOfConstant(opcode, args[0], args[1].tmp());
+                        allMentionTraits = recordConstantMove(opcode, args[0], args[1].tmp());
                     break;
                 case MoveConditionally32:
                 case MoveConditionally64:
@@ -1515,31 +1515,31 @@ public:
                 case MoveConditionallyTest64:
                 case MoveConditionallyDouble:
                 case MoveConditionallyFloat:
-                    isConditionalMove = notesNeighbours && numberOfArgs == 6;
+                    isConditionalMove = recordsNeighbors && numberOfArgs == 6;
                     break;
                 default:
                     break;
                 }
 
-                unsigned traitsOfArgs = 0;
-                unsigned traitsOfInst = 0;
+                unsigned argTraits = 0;
+                unsigned instTraits = 0;
                 unsigned wasDecodedSlowly = 0;
                 const unsigned firstMention = numberOfMentions;
                 auto note = [&](Tmp tmp, unsigned traits) ALWAYS_INLINE_LAMBDA {
-                    unsigned index = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : endOfGPIndices + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+                    unsigned index = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : gpIndicesEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
                     tmps[numberOfMentions] = index;
                     if ((traits & (Mentions::anyUse | Mentions::anyDef)) == Mentions::anyUse)
                         isRead[index] = 1;
-                    traitsOfMentions[numberOfMentions] = traits | traitsOfAllMentions;
+                    mentionTraits[numberOfMentions] = traits | allMentionTraits;
                     ++numberOfMentions;
-                    traitsOfInst |= traits;
+                    instTraits |= traits;
                 };
                 unsigned argIndex = 0;
                 if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
                     for (; argIndex < numberOfArgs; ++argIndex) {
                         Arg& arg = args[argIndex];
-                        unsigned traits = traitsOfForms[forms[argIndex]];
-                        traitsOfArgs |= traits;
+                        unsigned traits = formTraits[forms[argIndex]];
+                        argTraits |= traits;
                         unsigned kind = arg.kind();
                         if (kind == Arg::Tmp) {
                             note(arg.tmp(), traits);
@@ -1547,31 +1547,31 @@ public:
                         }
                         if (!(kindsWithBase >> kind & 1))
                             continue;
-                        unsigned traitsOfTmp = traitsOfBase;
+                        unsigned tmpTraits = baseTraits;
                         if (((forms[argIndex] >> formRoleShift) & formRoleMask) == Arg::UseAddr) [[unlikely]]
-                            traitsOfTmp = Mentions::traitsOf(Arg::Use) | (traits & (Mentions::widthMask << Mentions::widthShift));
+                            tmpTraits = Mentions::traitsOf(Arg::Use) | (traits & (Mentions::widthMask << Mentions::widthShift));
                         if (kind == Arg::PreIndex || kind == Arg::PostIndex) [[unlikely]]
-                            traitsOfTmp = Mentions::traitsOf(Arg::UseDef) | (traitsOfTmp & (Mentions::widthMask << Mentions::widthShift));
-                        note(arg.base(), traitsOfTmp);
+                            tmpTraits = Mentions::traitsOf(Arg::UseDef) | (tmpTraits & (Mentions::widthMask << Mentions::widthShift));
+                        note(arg.base(), tmpTraits);
                         if (kind == Arg::Index)
-                            note(arg.index(), traitsOfTmp);
+                            note(arg.index(), tmpTraits);
                     }
                 } else {
                     mentionsDecodedSlowly.shrink(0);
-                    traitsOfArgs = decodeSlowly(inst, mentionsDecodedSlowly);
+                    argTraits = decodeSlowly(inst, mentionsDecodedSlowly);
                     for (auto& mention : mentionsDecodedSlowly)
                         note(mention.tmp, Mentions::traitsOf(mention.role, mention.bank, mention.width));
                     wasDecodedSlowly = Mentions::wasDecodedSlowly;
                 }
 
-                bool hasEarlyDef = traitsOfArgs & Mentions::earlyDef;
-                bool hasLateUseOrDef = traitsOfArgs & (Mentions::lateUse | Mentions::lateDef);
+                bool hasEarlyDef = argTraits & Mentions::earlyDef;
+                bool hasLateUseOrDef = argTraits & (Mentions::lateUse | Mentions::lateDef);
                 if (opcode == Patch) [[unlikely]] {
                     early.update(inst.extraEarlyClobberedRegs());
                     late.update(inst.extraClobberedRegs());
                     hasEarlyDef |= early.whole || early.high64;
                     hasLateUseOrDef |= late.whole || late.high64;
-                    if ((traitsOfInst & (Mentions::earlyDef | Mentions::lateDef)) && inst.hasNonArgEffects()) {
+                    if ((instTraits & (Mentions::earlyDef | Mentions::lateDef)) && inst.hasNonArgEffects()) {
                         for (unsigned i = firstMention; i < numberOfMentions; ++i)
                             isRead[tmps[i]] = 1;
                     }
@@ -1579,61 +1579,61 @@ public:
 
                 if (previousHasLateUseOrDef && hasEarlyDef) {
                     paddingSites.append(PaddingSite { blockIndex, instIndex });
-                    firstOfInst[ordinal] = firstMention;
-                    timingsOfInsts[ordinal] = 0;
+                    instFirstMention[ordinal] = firstMention;
+                    allInstTimings[ordinal] = 0;
                     ++ordinal;
                 }
                 previousHasLateUseOrDef = hasLateUseOrDef;
 
-                firstOfInst[ordinal] = firstMention;
-                timingsOfInsts[ordinal] = (traitsOfInst & Mentions::timingMask) | wasDecodedSlowly;
+                instFirstMention[ordinal] = firstMention;
+                allInstTimings[ordinal] = (instTraits & Mentions::timingMask) | wasDecodedSlowly;
 
-                if (isMoveOfTmps)
-                    *nextMoveOfTmps++ = ordinal;
-                else if (opcode == Patch || isConditionalMove || (traitsOfInst & Mentions::coldUse)) [[unlikely]] {
+                if (isTmpMove)
+                    *nextTmpMove++ = ordinal;
+                else if (opcode == Patch || isConditionalMove || (instTraits & Mentions::coldUse)) [[unlikely]] {
                     if (isConditionalMove)
                         m_conditionalMoves.append(unsigned { ordinal });
-                    if (traitsOfInst & Mentions::coldUse) {
+                    if (instTraits & Mentions::coldUse) {
                         for (unsigned i = firstMention; i < numberOfMentions; ++i) {
-                            if (traitsOfMentions[i] & Mentions::coldUse)
+                            if (mentionTraits[i] & Mentions::coldUse)
                                 m_map[tmpForLinearIndex(tmps[i])].hasColdUse = true;
                         }
                     }
                     if (opcode == Patch)
-                        noteClobbers(ordinal, early.whole, early.high64, late.whole, late.high64);
+                        recordClobbers(ordinal, early.whole, early.high64, late.whole, late.high64);
                 }
                 ++ordinal;
             }
             if (instIndex != blockSize)
                 block->insts().shrink(instIndex);
         }
-        firstOfInst[ordinal] = numberOfMentions;
+        instFirstMention[ordinal] = numberOfMentions;
         m_mentions.numberOfInsts = ordinal;
         movesForWidths.shrink(nextMoveForWidths - movesForWidths.mutableSpan().data());
-        m_movesOfTmps.shrink(nextMoveOfTmps - m_movesOfTmps.mutableSpan().data());
+        m_tmpMoves.shrink(nextTmpMove - m_tmpMoves.mutableSpan().data());
     }
 
-    NEVER_INLINE unsigned noteMoveOfConstant(Opcode opcode, const Arg& constant, Tmp tmp)
+    NEVER_INLINE unsigned recordConstantMove(Opcode opcode, const Arg& constant, Tmp tmp)
     {
         unsigned traits = 0;
         unsigned index = linearIndex(tmp);
         if (opcode == Move && constant.isImm() && constant.value() >= 0) {
-            m_defsOfSmallConstants.append({ index, constant.value() });
-            traits = Mentions::saysNothingOfWidth;
+            m_smallConstantDefs.append({ index, constant.value() });
+            traits = Mentions::hasNoWidthInformation;
         }
         bool isGPMove = opcode == Move || opcode == Move32;
         if (isGPMove != tmp.isGP())
             return traits;
-        uint8_t& kindsOfDefs = m_useCounts.kindsOfDefs[index];
-        if (kindsOfDefs & CountsOfTmps::hasConstDef) {
-            kindsOfDefs |= CountsOfTmps::hasOtherDef;
+        uint8_t& defKinds = m_useCounts.defKinds[index];
+        if (defKinds & TmpCounts::hasConstDef) {
+            defKinds |= TmpCounts::hasOtherDef;
             return traits | Mentions::isDefByConstant;
         }
-        kindsOfDefs |= CountsOfTmps::hasConstDef;
+        defKinds |= TmpCounts::hasConstDef;
         if (isGPMove)
             m_useCounts.gpConstants[index] = opcode == Move32 ? static_cast<int64_t>(static_cast<uint64_t>(static_cast<uint32_t>(static_cast<uint64_t>(constant.value())))) : constant.value();
         else {
-            unsigned fpIndex = index - m_endOfGPIndices;
+            unsigned fpIndex = index - m_gpIndicesEnd;
             if (constant.isFPImm128())
                 m_useCounts.fpConstants[fpIndex] = constant.asV128();
             else {
@@ -1646,7 +1646,7 @@ public:
         return traits | Mentions::isDefByConstant;
     }
 
-    NEVER_INLINE void noteClobbers(unsigned ordinal, uint64_t early, uint64_t earlyHigh64, uint64_t late, uint64_t lateHigh64)
+    NEVER_INLINE void recordClobbers(unsigned ordinal, uint64_t early, uint64_t earlyHigh64, uint64_t late, uint64_t lateHigh64)
     {
         Point positionOfEarly = ordinal * PointOffsets::PointsPerInst + PointOffsets::Early;
         Point positionOfLate = ordinal * PointOffsets::PointsPerInst + PointOffsets::Late;
@@ -1671,7 +1671,7 @@ public:
 
     void findWidths(Vector<unsigned>& movesForWidths)
     {
-        WidthsOfTmps::Widths* widths = m_tmpWidth.prepare(m_code);
+        TmpWidths::Widths* widths = m_tmpWidth.prepare(m_code);
         std::array<Width, numBanks> conservativeWidths;
         conservativeWidths[GP] = m_code.usesSIMD() ? conservativeWidth(GP) : conservativeWidthWithoutVectors(GP);
         conservativeWidths[FP] = m_code.usesSIMD() ? conservativeWidth(FP) : conservativeWidthWithoutVectors(FP);
@@ -1681,13 +1681,13 @@ public:
         });
 
         const unsigned* tmps = m_mentions.tmps.span().data();
-        const uint16_t* traitsOfMentions = m_mentions.traits.span().data();
-        const unsigned numberOfMentions = m_mentions.firstOfInst[m_mentions.numberOfInsts];
+        const uint16_t* mentionTraits = m_mentions.traits.span().data();
+        const unsigned numberOfMentions = m_mentions.instFirstMention[m_mentions.numberOfInsts];
         for (unsigned i = 0; i < numberOfMentions; ++i) {
-            unsigned traits = traitsOfMentions[i];
-            if (traits & Mentions::saysNothingOfWidth)
+            unsigned traits = mentionTraits[i];
+            if (traits & Mentions::hasNoWidthInformation)
                 continue;
-            WidthsOfTmps::Widths& tmpWidths = widths[tmps[i]];
+            TmpWidths::Widths& tmpWidths = widths[tmps[i]];
             Width width = static_cast<Width>((traits >> Mentions::widthShift) & Mentions::widthMask);
             if (traits & Mentions::anyUse)
                 tmpWidths.use = std::max(tmpWidths.use, width);
@@ -1696,7 +1696,7 @@ public:
             else if (traits & Mentions::anyDef)
                 tmpWidths.def = conservativeWidths[traits & Mentions::isFP ? FP : GP];
         }
-        for (auto& def : m_defsOfSmallConstants) {
+        for (auto& def : m_smallConstantDefs) {
             Width maxWidth = Width64;
             if (def.value <= std::numeric_limits<int8_t>::max())
                 maxWidth = Width8;
@@ -1706,7 +1706,7 @@ public:
                 maxWidth = Width32;
             widths[def.index].def = std::max(widths[def.index].def, maxWidth);
         }
-        m_defsOfSmallConstants.clear();
+        m_smallConstantDefs.clear();
 
         bool changed = true;
         bool goesDown = false;
@@ -1716,11 +1716,11 @@ public:
         while (changed) {
             changed = false;
             goesDown = !goesDown;
-            size_t numberOfMovesKept = 0;
+            size_t keptMoveCount = 0;
             for (size_t step = 0; step < numberOfMoves; ++step) {
                 unsigned mention = moves[goesDown ? step : numberOfMoves - 1 - step];
-                WidthsOfTmps::Widths& srcWidths = widths[tmps[mention]];
-                WidthsOfTmps::Widths& dstWidths = widths[tmps[mention + 1]];
+                TmpWidths::Widths& srcWidths = widths[tmps[mention]];
+                TmpWidths::Widths& dstWidths = widths[tmps[mention + 1]];
                 if (dstWidths.def < srcWidths.def) {
                     dstWidths.def = srcWidths.def;
                     changed = true;
@@ -1730,21 +1730,21 @@ public:
                     changed = true;
                 }
                 if (goesDown && (dstWidths.def != widest || srcWidths.use != widest))
-                    moves[numberOfMovesKept++] = mention;
+                    moves[keptMoveCount++] = mention;
             }
             if (goesDown)
-                numberOfMoves = numberOfMovesKept;
+                numberOfMoves = keptMoveCount;
         }
-        m_tmpWidth.finish(m_endOfGPIndices);
+        m_tmpWidth.finish(m_gpIndicesEnd);
     }
 
     void countUsesAndDefs()
     {
         float* counts = m_useCounts.counts.mutableSpan().data();
-        uint8_t* kindsOfDefs = m_useCounts.kindsOfDefs.mutableSpan().data();
+        uint8_t* defKinds = m_useCounts.defKinds.mutableSpan().data();
         const unsigned* tmps = m_mentions.tmps.span().data();
-        const uint16_t* traitsOfMentions = m_mentions.traits.span().data();
-        const unsigned* firstOfInst = m_mentions.firstOfInst.span().data();
+        const uint16_t* mentionTraits = m_mentions.traits.span().data();
+        const unsigned* instFirstMention = m_mentions.instFirstMention.span().data();
         for (unsigned blockIndex = 0; blockIndex < m_code.size(); ++blockIndex) {
             BasicBlock* block = m_code[blockIndex];
             if (!block)
@@ -1752,29 +1752,29 @@ public:
             double frequency = block->frequency();
             if (!m_fastBlocks.saw(block))
                 frequency *= Options::rareBlockPenalty();
-            unsigned end = firstOfInst[blockIndex + 1 < m_code.size() ? m_endsOfBlock[blockIndex + 1].firstInst : m_mentions.numberOfInsts];
-            for (unsigned i = firstOfInst[m_endsOfBlock[blockIndex].firstInst]; i < end; ++i) {
-                unsigned traits = traitsOfMentions[i];
+            unsigned end = instFirstMention[blockIndex + 1 < m_code.size() ? m_blockEnds[blockIndex + 1].firstInst : m_mentions.numberOfInsts];
+            for (unsigned i = instFirstMention[m_blockEnds[blockIndex].firstInst]; i < end; ++i) {
+                unsigned traits = mentionTraits[i];
                 if (!(traits & Mentions::warmUseOrDef))
                     continue;
                 unsigned index = tmps[i];
                 counts[index] += frequency;
                 if ((traits & (Mentions::anyDef | Mentions::isDefByConstant)) == Mentions::anyDef)
-                    kindsOfDefs[index] |= CountsOfTmps::hasOtherDef;
+                    defKinds[index] |= TmpCounts::hasOtherDef;
             }
         }
     }
 
-    void findWhatBlocksExposeAndDefine()
+    void findBlockExposedUsesAndDefs()
     {
         const unsigned* tmps = m_mentions.tmps.span().data();
-        const uint16_t* traitsOfMentions = m_mentions.traits.span().data();
-        const unsigned* firstOfInst = m_mentions.firstOfInst.span().data();
-        const uint8_t* timingsOfInsts = m_mentions.timingsOfInst.span().data();
-        const unsigned numberOfMentions = firstOfInst[m_mentions.numberOfInsts];
+        const uint16_t* mentionTraits = m_mentions.traits.span().data();
+        const unsigned* instFirstMention = m_mentions.instFirstMention.span().data();
+        const uint8_t* allInstTimings = m_mentions.instTimings.span().data();
+        const unsigned numberOfMentions = instFirstMention[m_mentions.numberOfInsts];
 
         Vector<unsigned> stampStore(FillWith { }, m_numberOfLinearIndices, 0u);
-        unsigned* stampOfTmp = stampStore.mutableSpan().data();
+        unsigned* tmpStamp = stampStore.mutableSpan().data();
         m_crossesBoundary.fill(0, m_numberOfLinearIndices);
         uint8_t* crossesBoundary = m_crossesBoundary.mutableSpan().data();
         m_exposedUses.grow(numberOfMentions);
@@ -1787,51 +1787,51 @@ public:
         unsigned areAllDefsRead = 1;
 
         for (unsigned blockIndex = 0; blockIndex < m_code.size(); ++blockIndex) {
-            const unsigned stampOfUse = (blockIndex + 1) << 1;
-            const unsigned stampOfDef = stampOfUse | 1;
+            const unsigned useStamp = (blockIndex + 1) << 1;
+            const unsigned defStamp = useStamp | 1;
             auto noteUse = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
-                if ((stampOfTmp[index] | 1) == stampOfDef)
+                if ((tmpStamp[index] | 1) == defStamp)
                     return;
-                stampOfTmp[index] = stampOfUse;
+                tmpStamp[index] = useStamp;
                 crossesBoundary[index] = 1;
                 exposedUses[numberOfExposedUses++] = index;
             };
-            auto noteDef = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
-                if (stampOfTmp[index] == stampOfDef)
+            auto recordDef = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
+                if (tmpStamp[index] == defStamp)
                     return;
-                stampOfTmp[index] = stampOfDef;
+                tmpStamp[index] = defStamp;
                 defsInBlocks[numberOfDefs++] = index;
                 areAllDefsRead &= isRead[index];
             };
 
-            unsigned endOfInsts = blockIndex + 1 < m_code.size() ? m_endsOfBlock[blockIndex + 1].firstInst : m_mentions.numberOfInsts;
-            for (unsigned ordinal = m_endsOfBlock[blockIndex].firstInst; ordinal < endOfInsts; ++ordinal) {
-                unsigned timings = timingsOfInsts[ordinal];
-                unsigned begin = firstOfInst[ordinal];
-                unsigned end = firstOfInst[ordinal + 1];
+            unsigned instsEnd = blockIndex + 1 < m_code.size() ? m_blockEnds[blockIndex + 1].firstInst : m_mentions.numberOfInsts;
+            for (unsigned ordinal = m_blockEnds[blockIndex].firstInst; ordinal < instsEnd; ++ordinal) {
+                unsigned timings = allInstTimings[ordinal];
+                unsigned begin = instFirstMention[ordinal];
+                unsigned end = instFirstMention[ordinal + 1];
                 if (timings & Mentions::earlyDef) [[unlikely]] {
                     for (unsigned i = begin; i < end; ++i) {
-                        if (traitsOfMentions[i] & Mentions::earlyDef)
-                            noteDef(tmps[i]);
+                        if (mentionTraits[i] & Mentions::earlyDef)
+                            recordDef(tmps[i]);
                     }
                 }
                 if (timings & Mentions::earlyUse) {
                     for (unsigned i = begin; i < end; ++i) {
-                        if (traitsOfMentions[i] & Mentions::earlyUse)
+                        if (mentionTraits[i] & Mentions::earlyUse)
                             noteUse(tmps[i]);
                     }
                 }
                 if (timings & Mentions::lateDef) {
                     for (unsigned i = begin; i < end; ++i) {
-                        if (traitsOfMentions[i] & Mentions::lateDef)
-                            noteDef(tmps[i]);
+                        if (mentionTraits[i] & Mentions::lateDef)
+                            recordDef(tmps[i]);
                     }
                 }
                 if (timings & Mentions::lateUse) [[unlikely]] {
                     for (unsigned i = begin; i < end; ++i) {
-                        if (!(traitsOfMentions[i] & Mentions::lateUse))
+                        if (!(mentionTraits[i] & Mentions::lateUse))
                             continue;
-                        if (ordinal + 1 < endOfInsts) {
+                        if (ordinal + 1 < instsEnd) {
                             noteUse(tmps[i]);
                             continue;
                         }
@@ -1840,9 +1840,9 @@ public:
                     }
                 }
             }
-            m_endsOfBlock[blockIndex].exposedUses = numberOfExposedUses;
-            m_endsOfBlock[blockIndex].defs = numberOfDefs;
-            m_endsOfBlock[blockIndex].usesAtTail = m_usesAtTails.size();
+            m_blockEnds[blockIndex].exposedUses = numberOfExposedUses;
+            m_blockEnds[blockIndex].defs = numberOfDefs;
+            m_blockEnds[blockIndex].usesAtTail = m_usesAtTails.size();
         }
         m_hasDefOfUnreadTmp = !areAllDefsRead;
     }
@@ -1856,16 +1856,16 @@ public:
 
     NEVER_INLINE static unsigned decodeSlowly(Inst& inst, Vector<MentionDecodedSlowly, 16>& mentions)
     {
-        unsigned traitsOfArgs = 0;
+        unsigned argTraits = 0;
         inst.forEachArg(
             [&](Arg& arg, Arg::Role argRole, Bank argBank, Width argWidth) {
-                traitsOfArgs |= Mentions::traitsOf(argRole);
+                argTraits |= Mentions::traitsOf(argRole);
                 arg.forEachTmp(argRole, argBank, argWidth,
                     [&](Tmp& tmp, Arg::Role role, Bank bank, Width width) {
                         mentions.append(MentionDecodedSlowly { tmp, role, bank, width });
                     });
             });
-        return traitsOfArgs;
+        return argTraits;
     }
 
     void solveLiveness()
@@ -1874,21 +1874,21 @@ public:
         unsigned numberOfBlocks = m_code.size();
 
         Vector<unsigned> columnStore(m_numberOfLinearIndices);
-        unsigned* columnOfIndex = columnStore.mutableSpan().data();
+        unsigned* indexColumn = columnStore.mutableSpan().data();
         for (unsigned index = 0; index < m_numberOfLinearIndices; ++index) {
             if (!m_crossesBoundary[index])
                 continue;
-            columnOfIndex[index] = m_indexOfColumn.size();
-            m_indexOfColumn.append(index);
+            indexColumn[index] = m_columnIndex.size();
+            m_columnIndex.append(index);
         }
-        m_wordsPerSet = (m_indexOfColumn.size() + wordBits - 1) / wordBits;
+        m_wordsPerSet = (m_columnIndex.size() + wordBits - 1) / wordBits;
         const size_t wordsPerSet = m_wordsPerSet;
         if (!wordsPerSet)
             return;
 
         size_t matrixWords = static_cast<size_t>(numberOfBlocks) * wordsPerSet;
         if (matrixWords > maxWordsPerLivenessMatrix) [[unlikely]] {
-            solveLivenessInSlices(columnOfIndex);
+            solveLivenessInSlices(indexColumn);
             return;
         }
         m_liveAtBoundaries.fill(0, 2 * matrixWords);
@@ -1903,20 +1903,20 @@ public:
             set[bit / wordBits] |= static_cast<uint64_t>(1) << (bit % wordBits);
         };
 
-        EndsOfBlock begin;
+        BlockEnds begin;
         unsigned numberOfActiveBlocks = 0;
         for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
-            EndsOfBlock end = m_endsOfBlock[blockIndex];
+            BlockEnds end = m_blockEnds[blockIndex];
             size_t offset = static_cast<size_t>(blockIndex) * wordsPerSet;
             for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
-                setBit(gen + offset, columnOfIndex[m_exposedUses[i]]);
+                setBit(gen + offset, indexColumn[m_exposedUses[i]]);
             for (unsigned i = begin.defs; i < end.defs; ++i) {
                 unsigned index = m_defsInBlocks[i];
                 if (m_crossesBoundary[index])
-                    setBit(kill + offset, columnOfIndex[index]);
+                    setBit(kill + offset, indexColumn[index]);
             }
             for (unsigned i = begin.usesAtTail; i < end.usesAtTail; ++i)
-                setBit(liveAtTail + offset, columnOfIndex[m_usesAtTails[i]]);
+                setBit(liveAtTail + offset, indexColumn[m_usesAtTails[i]]);
             begin = end;
             if (m_code[blockIndex])
                 ++numberOfActiveBlocks;
@@ -1961,7 +1961,7 @@ public:
         }
     }
 
-    NEVER_INLINE void solveLivenessInSlices(const unsigned* columnOfIndex)
+    NEVER_INLINE void solveLivenessInSlices(const unsigned* indexColumn)
     {
         constexpr unsigned wordBits = 64;
         const unsigned numberOfBlocks = m_code.size();
@@ -2005,18 +2005,18 @@ public:
             unsigned columnAndSet;
         };
         auto forEachFact = [&](const auto& func) {
-            EndsOfBlock begin;
+            BlockEnds begin;
             for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
-                EndsOfBlock end = m_endsOfBlock[blockIndex];
+                BlockEnds end = m_blockEnds[blockIndex];
                 for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
-                    func(blockIndex, columnOfIndex[m_exposedUses[i]], Set::Gen);
+                    func(blockIndex, indexColumn[m_exposedUses[i]], Set::Gen);
                 for (unsigned i = begin.defs; i < end.defs; ++i) {
                     unsigned index = m_defsInBlocks[i];
                     if (m_crossesBoundary[index])
-                        func(blockIndex, columnOfIndex[index], Set::Kill);
+                        func(blockIndex, indexColumn[index], Set::Kill);
                 }
                 for (unsigned i = begin.usesAtTail; i < end.usesAtTail; ++i)
-                    func(blockIndex, columnOfIndex[m_usesAtTails[i]], Set::Tail);
+                    func(blockIndex, indexColumn[m_usesAtTails[i]], Set::Tail);
                 begin = end;
             }
         };
@@ -2035,7 +2035,7 @@ public:
         const size_t maxMatrixWords = static_cast<size_t>(numberOfBlocks) * std::min(wordsPerSlice, m_wordsPerSet);
         Vector<uint64_t> store(FillWith { }, 4 * maxMatrixWords, static_cast<uint64_t>(0));
         Vector<unsigned> sliceThatTouched(FillWith { }, numberOfBlocks, 0u);
-        Vector<unsigned> sliceThatLookedBehind(FillWith { }, numberOfBlocks, 0u);
+        Vector<unsigned> sliceThatLookedBack(FillWith { }, numberOfBlocks, 0u);
         Vector<unsigned> touched;
         Vector<unsigned, 64> worklist;
         size_t firstFact = 0;
@@ -2100,29 +2100,29 @@ public:
                 }
             }
 
-            auto note = [&](Vector<AtEdgeOfBlock>& list, unsigned blockIndex, const uint64_t* a, const uint64_t* b) {
+            auto note = [&](Vector<BlockEdgeKind>& list, unsigned blockIndex, const uint64_t* a, const uint64_t* b) {
                 for (size_t wordIndex = 0; wordIndex < words; ++wordIndex) {
                     uint64_t word = a[wordIndex] & ~(b ? b[wordIndex] : 0);
                     for (; word; word &= word - 1)
-                        list.append(AtEdgeOfBlock { blockIndex, m_indexOfColumn[(firstWord + wordIndex) * wordBits + std::countr_zero(word)] });
+                        list.append(BlockEdgeKind { blockIndex, m_columnIndex[(firstWord + wordIndex) * wordBits + std::countr_zero(word)] });
                 }
             };
-            auto lookBehind = [&](unsigned blockIndex) {
-                if (sliceThatLookedBehind[blockIndex] == stamp)
+            auto lookBack = [&](unsigned blockIndex) {
+                if (sliceThatLookedBack[blockIndex] == stamp)
                     return;
-                sliceThatLookedBehind[blockIndex] = stamp;
+                sliceThatLookedBack[blockIndex] = stamp;
                 const uint64_t* tail = liveAtTail + static_cast<size_t>(blockIndex) * words;
                 const uint64_t* headAfter = blockAfter[blockIndex] != noBlock ? liveAtHead + static_cast<size_t>(blockAfter[blockIndex]) * words : nullptr;
                 if (headAfter)
-                    note(m_closesBehindBlock, blockIndex, headAfter, tail);
+                    note(m_closesAfterBlock, blockIndex, headAfter, tail);
                 note(m_opensAtTailOfBlock, blockIndex, tail, headAfter);
             };
             for (unsigned blockIndex : touched) {
-                lookBehind(blockIndex);
+                lookBack(blockIndex);
                 if (blockBefore[blockIndex] != noBlock)
-                    lookBehind(blockBefore[blockIndex]);
+                    lookBack(blockBefore[blockIndex]);
                 else if (blockIndex == firstBlock)
-                    note(m_closesBehindBlock, numberOfBlocks, liveAtHead + static_cast<size_t>(blockIndex) * words, nullptr);
+                    note(m_closesAfterBlock, numberOfBlocks, liveAtHead + static_cast<size_t>(blockIndex) * words, nullptr);
             }
             for (unsigned blockIndex : touched) {
                 size_t offset = static_cast<size_t>(blockIndex) * words;
@@ -2133,10 +2133,10 @@ public:
             }
         }
 
-        auto byBlock = [](const AtEdgeOfBlock& left, const AtEdgeOfBlock& right) {
+        auto byBlock = [](const BlockEdgeKind& left, const BlockEdgeKind& right) {
             return left.blockIndex < right.blockIndex;
         };
-        std::stable_sort(m_closesBehindBlock.begin(), m_closesBehindBlock.end(), byBlock);
+        std::stable_sort(m_closesAfterBlock.begin(), m_closesAfterBlock.end(), byBlock);
         std::stable_sort(m_opensAtTailOfBlock.begin(), m_opensAtTailOfBlock.end(), byBlock);
     }
 
@@ -2144,14 +2144,14 @@ public:
     {
         if (tmp.isGP())
             return AbsoluteTmpMapper<GP>::absoluteIndex(tmp);
-        return m_endOfGPIndices + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+        return m_gpIndicesEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
     }
 
     Tmp tmpForLinearIndex(unsigned index) const
     {
-        if (index < m_endOfGPIndices)
+        if (index < m_gpIndicesEnd)
             return AbsoluteTmpMapper<GP>::tmpFromAbsoluteIndex(index);
-        return AbsoluteTmpMapper<FP>::tmpFromAbsoluteIndex(index - m_endOfGPIndices);
+        return AbsoluteTmpMapper<FP>::tmpFromAbsoluteIndex(index - m_gpIndicesEnd);
     }
 
     void validateFusedAnalyses()
@@ -2208,7 +2208,7 @@ public:
             coalesceTmps<FP>();
         rewriteCoalescedTmps();
 #if USE(BUN_JSC_ADDITIONS)
-        noteNeighbours();
+        recordNeighbors();
 #endif
 
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " state before allocate registers:\n", *this, "IR:\n", m_code);
@@ -2344,8 +2344,8 @@ private:
     {
         Point headPosition = 0;
         Point tailPosition = 0;
-        m_blockIndexOfInst.grow(m_mentions.numberOfInsts);
-        unsigned* blockIndexOfInst = m_blockIndexOfInst.mutableSpan().data();
+        m_instBlockIndex.grow(m_mentions.numberOfInsts);
+        unsigned* instBlockIndex = m_instBlockIndex.mutableSpan().data();
         for (size_t i = 0; i < m_code.size(); i++) {
             BasicBlock* block = m_code[i];
             if (!block) {
@@ -2357,20 +2357,20 @@ private:
             m_tailPoints[i] = tailPosition;
             headPosition += block->size() * PointOffsets::PointsPerInst;
             for (unsigned count = block->size(); count--;)
-                *blockIndexOfInst++ = i;
+                *instBlockIndex++ = i;
         }
-        RELEASE_ASSERT(blockIndexOfInst == m_blockIndexOfInst.mutableSpan().data() + m_blockIndexOfInst.size());
+        RELEASE_ASSERT(instBlockIndex == m_instBlockIndex.mutableSpan().data() + m_instBlockIndex.size());
 
         if (m_allClobberedRegs) {
-            m_firstClobberOfInst.grow(m_mentions.numberOfInsts);
-            unsigned* firstClobberOfInst = m_firstClobberOfInst.mutableSpan().data();
+            m_instFirstClobber.grow(m_mentions.numberOfInsts);
+            unsigned* instFirstClobber = m_instFirstClobber.mutableSpan().data();
             const Point* points = m_clobberPoints.span().data();
             const unsigned numberOfPoints = m_clobberPoints.size();
             unsigned next = 0;
             for (unsigned ordinal = 0; ordinal < m_mentions.numberOfInsts; ++ordinal) {
                 while (next < numberOfPoints && points[next] < ordinal * PointOffsets::PointsPerInst)
                     ++next;
-                firstClobberOfInst[ordinal] = next;
+                instFirstClobber[ordinal] = next;
             }
             if (numberOfPoints >= minClobberPointsForChunks) {
                 m_clobberedRegsInChunk.fill(0, (numberOfPoints + clobberPointsPerChunk - 1) / clobberPointsPerChunk);
@@ -2401,7 +2401,7 @@ private:
 
     size_t findBlockIndexContainingPoint(Point point)
     {
-        size_t blockIndex = m_blockIndexOfInst[point / PointOffsets::PointsPerInst];
+        size_t blockIndex = m_instBlockIndex[point / PointOffsets::PointsPerInst];
         ASSERT(m_code[blockIndex]);
         ASSERT(positionOfHead(m_code[blockIndex]) <= point && point <= m_tailPoints[blockIndex]);
         return blockIndex;
@@ -2634,12 +2634,12 @@ private:
         solveLiveness();
 
         Vector<Piece> pieceStore;
-        unsigned capacityOfPieces = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_clobberPoints.size() + 16;
-        pieceStore.grow(capacityOfPieces);
+        unsigned pieceCapacity = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_clobberPoints.size() + 16;
+        pieceStore.grow(pieceCapacity);
         Piece* pieces = pieceStore.mutableSpan().data();
         unsigned numberOfPieces = 0;
-        Vector<StateOfRange> stateStore(FillWith { }, m_numberOfLinearIndices, StateOfRange { 0, noPiece });
-        StateOfRange* states = stateStore.mutableSpan().data();
+        Vector<RangeState> stateStore(FillWith { }, m_numberOfLinearIndices, RangeState { 0, noPiece });
+        RangeState* states = stateStore.mutableSpan().data();
         constexpr uint8_t isPinnedFlag = 1;
         constexpr uint8_t mayBeCoalescedFlag = 2;
         constexpr uint8_t isRegFlag = 4;
@@ -2653,17 +2653,17 @@ private:
             m_map[a].coalescables.add(b, freq);
             m_map[b].coalescables.add(a, freq);
             for (Tmp tmp : { a, b }) {
-                uint8_t& flagsOfTmp = flags[linearIndex(tmp)];
-                if (!(flagsOfTmp & mayBeCoalescedFlag))
+                uint8_t& tmpFlags = flags[linearIndex(tmp)];
+                if (!(tmpFlags & mayBeCoalescedFlag))
                     m_tmpsWithCoalescables.append(tmp);
-                flagsOfTmp |= mayBeCoalescedFlag;
+                tmpFlags |= mayBeCoalescedFlag;
             }
         };
 
-        std::array<unsigned, Reg::maxIndex() + 1> linearIndexOfReg;
+        std::array<unsigned, Reg::maxIndex() + 1> regLinearIndex;
         for (unsigned i = 0; i <= Reg::maxIndex(); ++i) {
-            linearIndexOfReg[i] = linearIndex(Tmp(Reg::fromIndex(i)));
-            flags[linearIndexOfReg[i]] |= isRegFlag;
+            regLinearIndex[i] = linearIndex(Tmp(Reg::fromIndex(i)));
+            flags[regLinearIndex[i]] |= isRegFlag;
         }
         const Point* clobberPoints = m_clobberPoints.span().data();
         const uint64_t* clobberedRegsAtPoint = m_clobberedRegsAtPoint.span().data();
@@ -2673,7 +2673,7 @@ private:
         uint64_t* deadClobbersAtPoint = m_deadClobbersAtPoint.mutableSpan().data();
         uint64_t activeRegs = 0;
 
-        auto bitOfReg = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
+        auto regBit = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
             return static_cast<uint64_t>(1) << tmpForLinearIndex(index).reg().index();
         };
         auto takeDeadClobberAt = [&](uint64_t bit, Point point) ALWAYS_INLINE_LAMBDA {
@@ -2688,7 +2688,7 @@ private:
             if (!end) {
                 end = point + 1;
                 if (flags[index] & isRegFlag) [[unlikely]] {
-                    uint64_t bit = bitOfReg(index);
+                    uint64_t bit = regBit(index);
                     activeRegs |= bit;
                     if (takeDeadClobberAt(bit, point + 1))
                         end = point + 2;
@@ -2696,15 +2696,15 @@ private:
             }
         };
         auto appendPiece = [&](Point begin, Point end, unsigned higher) ALWAYS_INLINE_LAMBDA {
-            if (numberOfPieces == capacityOfPieces) [[unlikely]] {
-                capacityOfPieces *= 2;
-                pieceStore.grow(capacityOfPieces);
+            if (numberOfPieces == pieceCapacity) [[unlikely]] {
+                pieceCapacity *= 2;
+                pieceStore.grow(pieceCapacity);
                 pieces = pieceStore.mutableSpan().data();
             }
             pieces[numberOfPieces++] = Piece { begin, end, higher };
         };
         auto closeRange = [&](unsigned index, Point point) ALWAYS_INLINE_LAMBDA {
-            StateOfRange& state = states[index];
+            RangeState& state = states[index];
             Point end = state.activeEnd;
             if (!end) [[unlikely]]
                 end = point + 1;
@@ -2719,21 +2719,21 @@ private:
             appendPiece(point, end, lowest);
         };
         auto markDef = [&](BasicBlock* block, unsigned instIndex, unsigned index, Point point) ALWAYS_INLINE_LAMBDA {
-            uint8_t flagsOfTmp = flags[index];
-            if ((flagsOfTmp & (isRegFlag | isPinnedFlag)) == isRegFlag) [[unlikely]] {
-                uint64_t bit = bitOfReg(index);
+            uint8_t tmpFlags = flags[index];
+            if ((tmpFlags & (isRegFlag | isPinnedFlag)) == isRegFlag) [[unlikely]] {
+                uint64_t bit = regBit(index);
                 activeRegs &= ~bit;
                 if (!states[index].activeEnd && takeDeadClobberAt(bit, point + 1))
                     states[index].activeEnd = point + 2;
             }
-            if (!(flagsOfTmp & isPinnedFlag)) [[likely]]
+            if (!(tmpFlags & isPinnedFlag)) [[likely]]
                 closeRange(index, point);
-            if (flagsOfTmp & mayBeCoalescedFlag)
+            if (tmpFlags & mayBeCoalescedFlag)
                 pruneCoalescables(block->at(instIndex), tmpForLinearIndex(index), point, states, pieces);
         };
 
-        for (unsigned ordinal : m_movesOfTmps) {
-            BasicBlock* block = m_code[m_blockIndexOfInst[ordinal]];
+        for (unsigned ordinal : m_tmpMoves) {
+            BasicBlock* block = m_code[m_instBlockIndex[ordinal]];
             Inst& inst = block->at(ordinal - positionOfHead(block) / PointOffsets::PointsPerInst);
             if (!mayBeCoalescable(inst))
                 continue;
@@ -2773,32 +2773,32 @@ private:
 
         const unsigned* tmps = m_mentions.tmps.span().data();
         const uint16_t* timings = m_mentions.traits.span().data();
-        const unsigned* firstOfInst = m_mentions.firstOfInst.span().data();
-        const uint8_t* timingsOfInsts = m_mentions.timingsOfInst.span().data();
+        const unsigned* instFirstMention = m_mentions.instFirstMention.span().data();
+        const uint8_t* allInstTimings = m_mentions.instTimings.span().data();
         Point nextClobberPoint = nextClobber ? clobberPoints[nextClobber - 1] : std::numeric_limits<Point>::max();
 
         const size_t wordsPerSet = m_livenessIsInLists ? 0 : m_wordsPerSet;
         const uint64_t* liveAtHead = m_liveAtBoundaries.span().data();
         const uint64_t* liveAtTail = liveAtHead + static_cast<size_t>(m_code.size()) * wordsPerSet;
-        size_t nextClose = m_closesBehindBlock.size();
+        size_t nextClose = m_closesAfterBlock.size();
         size_t nextOpen = m_opensAtTailOfBlock.size();
-        auto forEachAtEdgeOf = [&](const Vector<AtEdgeOfBlock>& list, size_t& next, unsigned blockIndex, const auto& func) {
+        auto forEachAtBlockEdge = [&](const Vector<BlockEdgeKind>& list, size_t& next, unsigned blockIndex, const auto& func) {
             size_t end = next;
             while (next && list[next - 1].blockIndex == blockIndex)
                 --next;
             for (size_t i = next; i < end; ++i)
                 func(list[i].index);
         };
-        Vector<unsigned> liveAtHeadOfFirstBlock;
-        forEachAtEdgeOf(m_closesBehindBlock, nextClose, m_code.size(), [&](unsigned index) {
-            liveAtHeadOfFirstBlock.append(index);
+        Vector<unsigned> liveAtEntry;
+        forEachAtBlockEdge(m_closesAfterBlock, nextClose, m_code.size(), [&](unsigned index) {
+            liveAtEntry.append(index);
         });
-        const unsigned* indexOfColumn = m_indexOfColumn.span().data();
+        const unsigned* columnIndex = m_columnIndex.span().data();
         auto forEachInDifference = [&](const uint64_t* a, const uint64_t* b, const auto& func) {
             for (size_t wordIndex = 0; wordIndex < wordsPerSet; ++wordIndex) {
                 uint64_t word = a[wordIndex] & ~(b ? b[wordIndex] : 0);
                 for (; word; word &= word - 1)
-                    func(indexOfColumn[wordIndex * 64 + std::countr_zero(word)]);
+                    func(columnIndex[wordIndex * 64 + std::countr_zero(word)]);
             }
         };
 
@@ -2828,11 +2828,11 @@ private:
                 });
             }
             if (m_livenessIsInLists) [[unlikely]] {
-                forEachAtEdgeOf(m_closesBehindBlock, nextClose, blockIndex, [&](unsigned index) {
+                forEachAtBlockEdge(m_closesAfterBlock, nextClose, blockIndex, [&](unsigned index) {
                     if (states[index].activeEnd && !(flags[index] & isPinnedFlag)) [[likely]]
                         closeRange(index, this->positionOfHead(blockAfter));
                 });
-                forEachAtEdgeOf(m_opensAtTailOfBlock, nextOpen, blockIndex, [&](unsigned index) {
+                forEachAtBlockEdge(m_opensAtTailOfBlock, nextOpen, blockIndex, [&](unsigned index) {
                     markUse(index, positionOfTail);
                 });
             }
@@ -2841,17 +2841,17 @@ private:
             for (unsigned instIndex = block->size(); instIndex--;) {
                 Point positionOfEarly = this->positionOfEarly(positionOfHead, instIndex);
                 Point positionOfLate = this->positionOfLate(positionOfHead, instIndex);
-                unsigned begin = firstOfInst[headOrdinal + instIndex];
-                unsigned end = firstOfInst[headOrdinal + instIndex + 1];
-                uint8_t timingsOfInst = timingsOfInsts[headOrdinal + instIndex];
+                unsigned begin = instFirstMention[headOrdinal + instIndex];
+                unsigned end = instFirstMention[headOrdinal + instIndex + 1];
+                uint8_t instTimings = allInstTimings[headOrdinal + instIndex];
 
-                if (timingsOfInst & Mentions::lateUse) [[unlikely]] {
+                if (instTimings & Mentions::lateUse) [[unlikely]] {
                     for (unsigned i = begin; i < end; ++i) {
                         if (timings[i] & Mentions::lateUse)
                             markUse(tmps[i], positionOfLate);
                     }
                 }
-                if (timingsOfInst & Mentions::lateDef) {
+                if (instTimings & Mentions::lateDef) {
                     for (unsigned i = begin; i < end; ++i) {
                         if (timings[i] & Mentions::lateDef)
                             markDef(block, instIndex, tmps[i], positionOfLate);
@@ -2863,15 +2863,15 @@ private:
                     deadClobbersAtPoint[nextClobber] = regs & ~activeRegs;
                     m_regsWithDeadClobbers |= regs & ~activeRegs;
                     for (regs &= activeRegs; regs; regs &= regs - 1)
-                        markDef(block, instIndex, linearIndexOfReg[std::countr_zero(regs)], positionOfLate);
+                        markDef(block, instIndex, regLinearIndex[std::countr_zero(regs)], positionOfLate);
                 }
-                if (timingsOfInst & Mentions::earlyUse) {
+                if (instTimings & Mentions::earlyUse) {
                     for (unsigned i = begin; i < end; ++i) {
                         if (timings[i] & Mentions::earlyUse)
                             markUse(tmps[i], positionOfEarly);
                     }
                 }
-                if (timingsOfInst & Mentions::earlyDef) [[unlikely]] {
+                if (instTimings & Mentions::earlyDef) [[unlikely]] {
                     for (unsigned i = begin; i < end; ++i) {
                         if (timings[i] & Mentions::earlyDef)
                             markDef(block, instIndex, tmps[i], positionOfEarly);
@@ -2881,12 +2881,12 @@ private:
                     uint64_t regs = clobberedRegsAtPoint[nextClobber - 1] & regsToMark;
                     uint64_t deadClobbers = 0;
                     for (; regs; regs &= regs - 1) {
-                        unsigned index = linearIndexOfReg[std::countr_zero(regs)];
-                        const StateOfRange& state = states[index];
+                        unsigned index = regLinearIndex[std::countr_zero(regs)];
+                        const RangeState& state = states[index];
                         uint64_t bit = regs & -regs;
-                        bool meetsWhatIsAbove = (nextClobber < numberOfClobberPoints && clobberPoints[nextClobber] == positionOfLate && (deadClobbersAtPoint[nextClobber] & bit))
+                        bool reachesUpperPiece = (nextClobber < numberOfClobberPoints && clobberPoints[nextClobber] == positionOfLate && (deadClobbersAtPoint[nextClobber] & bit))
                             || (state.lowestPiece != noPiece && pieces[state.lowestPiece].begin == positionOfLate);
-                        if (!(activeRegs & bit) && !meetsWhatIsAbove)
+                        if (!(activeRegs & bit) && !reachesUpperPiece)
                             deadClobbers |= bit;
                         else
                             markDef(block, instIndex, index, positionOfEarly);
@@ -2919,7 +2919,7 @@ private:
                 if (!(flags[index] & isPinnedFlag))
                     closeRange(index, firstBlockPositionOfHead);
             });
-            for (unsigned index : liveAtHeadOfFirstBlock) {
+            for (unsigned index : liveAtEntry) {
                 if (!(flags[index] & isPinnedFlag))
                     closeRange(index, firstBlockPositionOfHead);
             }
@@ -2958,17 +2958,17 @@ private:
         m_intervalArena.tryResizeInPlace(allIntervals, numberOfPieces, nextInterval - allIntervals);
 
         m_liveAtBoundaries.clear();
-        m_closesBehindBlock.clear();
+        m_closesAfterBlock.clear();
         m_opensAtTailOfBlock.clear();
-        m_indexOfColumn.clear();
+        m_columnIndex.clear();
         m_crossesBoundary.clear();
         m_exposedUses.clear();
         m_defsInBlocks.clear();
         m_usesAtTails.clear();
-        m_endsOfBlock.clear();
+        m_blockEnds.clear();
     }
 
-    NEVER_INLINE void pruneCoalescables(Inst& inst, Tmp def, Point point, const StateOfRange* states, const Piece* pieces)
+    NEVER_INLINE void pruneCoalescables(Inst& inst, Tmp def, Point point, const RangeState* states, const Piece* pieces)
     {
         TmpData& defData = m_map[def];
         if (defData.coalescables.isEmpty())
@@ -2978,7 +2978,7 @@ private:
             ASSERT(tmp != def);
             if (tmp == movSrc)
                 return false;
-            const StateOfRange& state = states[linearIndex(tmp)];
+            const RangeState& state = states[linearIndex(tmp)];
             if (!state.activeEnd) {
                 if (state.lowestPiece == noPiece)
                     return false;
@@ -2994,11 +2994,11 @@ private:
 
     Inst& instAtOrdinal(unsigned ordinal)
     {
-        BasicBlock* block = m_code[m_blockIndexOfInst[ordinal]];
+        BasicBlock* block = m_code[m_instBlockIndex[ordinal]];
         return block->at(ordinal - positionOfHead(block) / PointOffsets::PointsPerInst);
     }
 
-    bool cannotBeSpilledInPlace(Tmp tmp, Interval interval)
+    bool cannotSpillInPlace(Tmp tmp, Interval interval)
     {
         unsigned last = (interval.end() - 1) / PointOffsets::PointsPerInst;
         for (unsigned ordinal = interval.begin() / PointOffsets::PointsPerInst; ordinal <= last; ++ordinal) {
@@ -3009,11 +3009,11 @@ private:
                         return true;
                     continue;
                 }
-                bool namesIt = false;
+                bool mentionsTmp = false;
                 arg.forEachTmpFast([&](Tmp& named) {
-                    namesIt |= named == tmp;
+                    mentionsTmp |= named == tmp;
                 });
-                if (namesIt)
+                if (mentionsTmp)
                     return true;
             }
         }
@@ -3713,31 +3713,31 @@ private:
     void rewriteCoalescedTmps()
     {
         unsigned* tmps = m_mentions.tmps.mutableSpan().data();
-        const unsigned* firstOfInst = m_mentions.firstOfInst.span().data();
-        const uint8_t* timingsOfInsts = m_mentions.timingsOfInst.span().data();
+        const unsigned* instFirstMention = m_mentions.instFirstMention.span().data();
+        const uint8_t* allInstTimings = m_mentions.instTimings.span().data();
         const unsigned* representatives = m_representatives.span().data();
-        const unsigned endOfGPIndices = m_endOfGPIndices;
+        const unsigned gpIndicesEnd = m_gpIndicesEnd;
         for (BasicBlock* block : m_code) {
             unsigned headOrdinal = positionOfHead(block) / PointOffsets::PointsPerInst;
             unsigned blockSize = block->size();
             for (unsigned instIndex = 0; instIndex < blockSize; ++instIndex) {
-                unsigned begin = firstOfInst[headOrdinal + instIndex];
-                unsigned end = firstOfInst[headOrdinal + instIndex + 1];
-                bool mustBeLookedAt = end - begin == 2 && tmps[begin] == tmps[begin + 1];
+                unsigned begin = instFirstMention[headOrdinal + instIndex];
+                unsigned end = instFirstMention[headOrdinal + instIndex + 1];
+                bool needsVisit = end - begin == 2 && tmps[begin] == tmps[begin + 1];
                 for (unsigned i = begin; i < end; ++i) {
                     unsigned index = tmps[i];
                     if (unsigned representative = representatives[index]) {
                         tmps[i] = representative;
-                        mustBeLookedAt = true;
-                    } else if (index >= endOfGPIndices) [[unlikely]]
-                        tmps[i] = AbsoluteTmpMapper<FP>::tmpFromAbsoluteIndex(index - endOfGPIndices).internalValue();
+                        needsVisit = true;
+                    } else if (index >= gpIndicesEnd) [[unlikely]]
+                        tmps[i] = AbsoluteTmpMapper<FP>::tmpFromAbsoluteIndex(index - gpIndicesEnd).internalValue();
                 }
-                if (!mustBeLookedAt)
+                if (!needsVisit)
                     continue;
 
                 Inst& inst = block->at(instIndex);
                 bool maybeCoalescable = mayBeCoalescable(inst);
-                if (timingsOfInsts[headOrdinal + instIndex] & Mentions::wasDecodedSlowly) [[unlikely]] {
+                if (allInstTimings[headOrdinal + instIndex] & Mentions::wasDecodedSlowly) [[unlikely]] {
                     inst.forEachTmpFast([&](Tmp& tmp) {
                         if (unsigned representative = representatives[linearIndex(tmp)])
                             tmp = Tmp::tmpForInternalValue(representative);
@@ -3787,7 +3787,7 @@ private:
             tmpData.useDefCost = useDefCost;
 
             if (tmpData.liveRange.intervals().size() == 1 && tmpData.liveRange.size() <= PointOffsets::PointsPerInst
-                && cannotBeSpilledInPlace(tmp, tmpData.liveRange.intervals().first())) {
+                && cannotSpillInPlace(tmp, tmpData.liveRange.intervals().first())) {
                 tmpData.spillability = TmpData::Spillability::Unspillable;
                 m_stats[bank].numUnspillableTmps++;
             }
@@ -4058,7 +4058,7 @@ private:
         for (auto& interval : tmpData.liveRange.intervals()) {
             if (result == m_allClobberedRegs)
                 break;
-            size_t index = m_firstClobberOfInst[interval.begin() / PointOffsets::PointsPerInst];
+            size_t index = m_instFirstClobber[interval.begin() / PointOffsets::PointsPerInst];
             while (index < numberOfPoints && points[index] < interval.begin())
                 ++index;
             for (; index < numberOfPoints && points[index] < interval.end() && result != m_allClobberedRegs; ++index) {
@@ -4078,9 +4078,9 @@ private:
         return result;
     }
 
-    bool m_isTakingFromHolder { false };
+    bool m_isEvictingHolder { false };
 
-    void noteNeighbours()
+    void recordNeighbors()
     {
         if (!isX86() || !m_code.chargesForCalleeSaves())
             return;
@@ -4093,13 +4093,13 @@ private:
                 Arg& taken = inst.args()[i];
                 if (!taken.isTmp() || taken.isReg() || taken.tmp().bank() != GP || taken.tmp() == yielded.tmp())
                     continue;
-                m_map[yielded.tmp()].addNeighbour(taken.tmp());
-                m_map[taken.tmp()].addNeighbour(yielded.tmp());
+                m_map[yielded.tmp()].addNeighbor(taken.tmp());
+                m_map[taken.tmp()].addNeighbor(yielded.tmp());
             }
         }
     }
 
-    NEVER_INLINE void tellNeighbours(TmpData& tmpData, Reg reg)
+    NEVER_INLINE void notifyNeighbors(TmpData& tmpData, Reg reg)
     {
         for (Tmp neighbour : tmpData.neighbours) {
             if (neighbour)
@@ -4124,7 +4124,7 @@ private:
             if (!mayTake(tmpData, r))
                 return false;
 #if USE(BUN_JSC_ADDITIONS)
-            if (failedAtEpoch && m_epochOfLastRemoval[r.index()] <= failedAtEpoch)
+            if (failedAtEpoch && m_lastRemovalEpoch[r.index()] <= failedAtEpoch)
                 return false;
             if (clobbered >> r.index() & 1)
                 return false;
@@ -4146,8 +4146,8 @@ private:
         Reg secondPreferredReg = m_code.chargesForCalleeSaves() ? tmpData.secondPreferredReg : Reg();
         if (secondPreferredReg && tryAllocateToReg(secondPreferredReg))
             return true;
-        if (m_code.chargesForCalleeSaves() && !m_isTakingFromHolder && tmpData.spillability != TmpData::Spillability::Unspillable) {
-            auto tryTakeFromHolder = [&](Reg r) {
+        if (m_code.chargesForCalleeSaves() && !m_isEvictingHolder && tmpData.spillability != TmpData::Spillability::Unspillable) {
+            auto tryEvictHolder = [&](Reg r) {
                 float wish = tmpData.wishFor(r);
                 if (!r || !(wish > 0) || !mayTake(tmpData, r) || (clobbered >> r.index() & 1))
                     return false;
@@ -4170,9 +4170,9 @@ private:
                 uint32_t holderFailedAtEpoch = holderData.allocationFailedAtEpoch;
                 evict(holder, holderData, r);
                 assign(tmp, tmpData, r);
-                m_isTakingFromHolder = true;
+                m_isEvictingHolder = true;
                 bool isMoved = tryAllocate<bank>(holder, holderData);
-                m_isTakingFromHolder = false;
+                m_isEvictingHolder = false;
                 if (isMoved)
                     return true;
                 evict(tmp, tmpData, r);
@@ -4181,7 +4181,7 @@ private:
                 assign(holder, holderData, r);
                 return false;
             };
-            if (tryTakeFromHolder(tmpData.preferredReg) || tryTakeFromHolder(secondPreferredReg))
+            if (tryEvictHolder(tmpData.preferredReg) || tryEvictHolder(secondPreferredReg))
                 return true;
         }
 #endif
@@ -4241,7 +4241,7 @@ private:
             if (!mayTake(tmpData, r))
                 continue;
 #if USE(BUN_JSC_ADDITIONS)
-            if (failedAtEpoch && m_epochOfLastRemoval[r.index()] <= failedAtEpoch)
+            if (failedAtEpoch && m_lastRemovalEpoch[r.index()] <= failedAtEpoch)
                 continue;
             if (clobbered >> r.index() & 1)
                 continue;
@@ -4315,10 +4315,10 @@ private:
     void assign(Tmp tmp, TmpData& tmpData, Reg reg)
     {
         ASSERT(m_allAllowedRegisters.contains(reg, IgnoreVectors));
-        if (m_freshCalleeSaves.contains(reg) && (!tmp.isReg() || tmpData.liveRange.size() || ((m_regsWithDeadClobbers >> reg.index() & 1) && !m_code.calleeSavesLostAtSuspensions().contains(reg, IgnoreVectors)))) {
+        if (m_freshCalleeSaves.contains(reg) && (!tmp.isReg() || tmpData.liveRange.size() || ((m_regsWithDeadClobbers >> reg.index() & 1) && !m_code.calleeSavesClobberedAtSuspensions().contains(reg, IgnoreVectors)))) {
             m_freshCalleeSaves.remove(reg);
 #if USE(BUN_JSC_ADDITIONS)
-            m_epochOfLastRemoval[reg.index()] = ++m_removalEpoch;
+            m_lastRemovalEpoch[reg.index()] = ++m_removalEpoch;
 #endif
             --m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
         }
@@ -4326,7 +4326,7 @@ private:
         assignImpl(tmp, tmpData, reg);
 #if USE(BUN_JSC_ADDITIONS)
         if (tmpData.neighbours[0]) [[unlikely]]
-            tellNeighbours(tmpData, reg);
+            notifyNeighbors(tmpData, reg);
 #endif
     }
 
@@ -4337,7 +4337,7 @@ private:
         ASSERT(tmpData.assigned == reg);
         m_regRanges[reg].evict(tmpData.liveRange);
 #if USE(BUN_JSC_ADDITIONS)
-        m_epochOfLastRemoval[reg.index()] = ++m_removalEpoch;
+        m_lastRemovalEpoch[reg.index()] = ++m_removalEpoch;
 #endif
         tmpData.stage = Stage::New;
         tmpData.assigned = Reg();
@@ -4538,7 +4538,7 @@ private:
                             loopData.hasColdUse = true;
                         else
                             loopData.useDefCost += UseDefCost(block.frequency());
-                        m_useDefListsOfNewTmps.ensure(loopTmp, [] {
+                        m_newTmpUseDefLists.ensure(loopTmp, [] {
                             return UseDefList();
                         }).iterator->value.add(point);
                     });
@@ -4577,24 +4577,24 @@ private:
         return true;
     }
 
-    NEVER_INLINE size_t nextDeadClobberOf(Reg reg, size_t from)
+    NEVER_INLINE size_t nextDeadClobberFor(Reg reg, size_t from)
     {
-        if (m_firstDeadClobberOfReg.isEmpty()) {
-            m_firstDeadClobberOfReg.fill(0, Reg::maxIndex() + 2);
+        if (m_regFirstDeadClobber.isEmpty()) {
+            m_regFirstDeadClobber.fill(0, Reg::maxIndex() + 2);
             for (uint64_t regs : m_deadClobbersAtPoint) {
                 for (; regs; regs &= regs - 1)
-                    ++m_firstDeadClobberOfReg[std::countr_zero(regs) + 1];
+                    ++m_regFirstDeadClobber[std::countr_zero(regs) + 1];
             }
             for (unsigned i = 0; i <= Reg::maxIndex(); ++i)
-                m_firstDeadClobberOfReg[i + 1] += m_firstDeadClobberOfReg[i];
-            m_deadClobbersOfRegs.grow(m_firstDeadClobberOfReg.last());
-            Vector<unsigned> next = m_firstDeadClobberOfReg;
+                m_regFirstDeadClobber[i + 1] += m_regFirstDeadClobber[i];
+            m_regDeadClobbers.grow(m_regFirstDeadClobber.last());
+            Vector<unsigned> next = m_regFirstDeadClobber;
             for (unsigned clobber = 0; clobber < m_deadClobbersAtPoint.size(); ++clobber) {
                 for (uint64_t regs = m_deadClobbersAtPoint[clobber]; regs; regs &= regs - 1)
-                    m_deadClobbersOfRegs[next[std::countr_zero(regs)]++] = clobber;
+                    m_regDeadClobbers[next[std::countr_zero(regs)]++] = clobber;
             }
         }
-        auto own = m_deadClobbersOfRegs.span().subspan(m_firstDeadClobberOfReg[reg.index()], m_firstDeadClobberOfReg[reg.index() + 1] - m_firstDeadClobberOfReg[reg.index()]);
+        auto own = m_regDeadClobbers.span().subspan(m_regFirstDeadClobber[reg.index()], m_regFirstDeadClobber[reg.index() + 1] - m_regFirstDeadClobber[reg.index()]);
         auto iterator = std::ranges::lower_bound(own, static_cast<unsigned>(from));
         return iterator == own.end() ? m_deadClobbersAtPoint.size() : *iterator;
     }
@@ -4620,24 +4620,24 @@ private:
         const uint64_t* deadClobbersAtPoint = m_deadClobbersAtPoint.span().data();
         const size_t numberOfPoints = m_clobberPoints.size();
         for (auto interval : range.intervals()) {
-            size_t clobber = m_firstClobberOfInst[interval.begin() / PointOffsets::PointsPerInst];
+            size_t clobber = m_instFirstClobber[interval.begin() / PointOffsets::PointsPerInst];
             while (clobber < numberOfPoints && points[clobber] < interval.begin())
                 ++clobber;
             while (true) {
                 auto conflict = regRange.firstConflict(interval);
                 Point limit = conflict ? conflict->interval.begin() : interval.end();
-                [[maybe_unused]] unsigned missesInARow = 0;
+                [[maybe_unused]] unsigned consecutiveMisses = 0;
                 for (; clobber < numberOfPoints && points[clobber] < limit; ++clobber) {
                     if (!(deadClobbersAtPoint[clobber] & bit)) {
                         if constexpr (leaps) {
-                            if (++missesInARow > mostMissesInARow) [[unlikely]] {
-                                clobber = nextDeadClobberOf(reg, clobber) - 1;
-                                missesInARow = 0;
+                            if (++consecutiveMisses > maxConsecutiveMisses) [[unlikely]] {
+                                clobber = nextDeadClobberFor(reg, clobber) - 1;
+                                consecutiveMisses = 0;
                             }
                         }
                         continue;
                     }
-                    missesInARow = 0;
+                    consecutiveMisses = 0;
                     RegisterRange::AllocatedInterval deadClobber { std::pair { Interval(points[clobber]), Tmp(reg) } };
                     if (func(deadClobber) == IterationStatus::Done)
                         return;
@@ -4661,7 +4661,7 @@ private:
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false; // Already split around clobbers
 #if USE(BUN_JSC_ADDITIONS)
-        if (tmpData.goesRoundAStretch)
+        if (tmpData.spansStretch)
             return false;
 #endif
         if (tmpData.liveRange.size() < splitMinRangeSize)
@@ -4694,7 +4694,7 @@ private:
         };
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
 #if USE(BUN_JSC_ADDITIONS)
-        const bool goesRoundStretches = m_code.chargesForCalleeSaves();
+        const bool spansStretches = m_code.chargesForCalleeSaves();
 #endif
 
         Reg bestSplitReg;
@@ -4788,7 +4788,7 @@ private:
                 return IterationStatus::Continue;
             });
 #if USE(BUN_JSC_ADDITIONS)
-        if (goesRoundStretches && holeRange.intervals().size() > 1) {
+        if (spansStretches && holeRange.intervals().size() > 1) {
             LiveRange stretches;
             Interval stretch;
             unsigned sitesInStretch = 0;
@@ -4805,11 +4805,11 @@ private:
                 Point head = positionOfHead(block);
                 size_t site = instIndex(head, hole.begin());
                 for (size_t index = instIndex(head, stretch.end() - 1) + 1; index < site; ++index) {
-                    bool namesIt = false;
+                    bool mentionsTmp = false;
                     block->at(index).forEachTmpFast([&](Tmp& named) {
-                        namesIt |= named == tmp;
+                        mentionsTmp |= named == tmp;
                     });
-                    if (namesIt)
+                    if (mentionsTmp)
                         return false;
                 }
                 return true;
@@ -4864,7 +4864,7 @@ private:
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
 #if USE(BUN_JSC_ADDITIONS)
             Interval gapInterval = hole | Interval(hole.begin() - 1);
-            if (goesRoundStretches)
+            if (spansStretches)
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
 #else
             Interval gapInterval = hole | Interval(hole.begin() - 1);
@@ -4872,7 +4872,7 @@ private:
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);
             metadata.splits.append({ gapTmp });
 #if USE(BUN_JSC_ADDITIONS)
-            m_map.get<bank>(gapTmp).goesRoundAStretch = hole.distance() > 2;
+            m_map.get<bank>(gapTmp).spansStretch = hole.distance() > 2;
 #endif
             setStageAndEnqueue(gapTmp, m_map.get<bank>(gapTmp), Stage::TryAllocate);
         }
@@ -4914,15 +4914,15 @@ private:
         m_hasUseDefLists = true;
 
         const unsigned* tmps = m_mentions.tmps.span().data();
-        const unsigned* firstOfInst = m_mentions.firstOfInst.span().data();
+        const unsigned* instFirstMention = m_mentions.instFirstMention.span().data();
         const unsigned numberOfInsts = m_mentions.numberOfInsts;
-        const unsigned numberOfMentions = firstOfInst[numberOfInsts];
-        m_endOfGPUseDefLists = Tmp::absoluteIndexEnd(m_code, GP);
-        const unsigned endOfGP = m_endOfGPUseDefLists;
-        const unsigned numberOfLists = endOfGP + Tmp::absoluteIndexEnd(m_code, FP);
+        const unsigned numberOfMentions = instFirstMention[numberOfInsts];
+        m_gpUseDefListsEnd = Tmp::absoluteIndexEnd(m_code, GP);
+        const unsigned gpEnd = m_gpUseDefListsEnd;
+        const unsigned numberOfLists = gpEnd + Tmp::absoluteIndexEnd(m_code, FP);
         auto listOf = [&](unsigned value) ALWAYS_INLINE_LAMBDA {
             int signedValue = static_cast<int>(value);
-            return signedValue > 0 ? value : endOfGP - signedValue;
+            return signedValue > 0 ? value : gpEnd - signedValue;
         };
 
         m_firstUseDef.fill(0, numberOfLists + 1);
@@ -4936,21 +4936,21 @@ private:
 
         m_useDefs.grow(firstUseDef[numberOfLists]);
         Point* useDefs = m_useDefs.mutableSpan().data();
-        m_endOfUseDefs.grow(numberOfLists);
-        unsigned* endOfUseDefs = m_endOfUseDefs.mutableSpan().data();
+        m_useDefsEnd.grow(numberOfLists);
+        unsigned* useDefsEnd = m_useDefsEnd.mutableSpan().data();
         for (unsigned list = 0; list < numberOfLists; ++list)
-            endOfUseDefs[list] = firstUseDef[list];
+            useDefsEnd[list] = firstUseDef[list];
         for (unsigned ordinal = 0; ordinal < numberOfInsts; ++ordinal) {
             Point instPoint = ordinal * PointOffsets::PointsPerInst;
-            for (unsigned i = firstOfInst[ordinal]; i < firstOfInst[ordinal + 1]; ++i) {
+            for (unsigned i = instFirstMention[ordinal]; i < instFirstMention[ordinal + 1]; ++i) {
                 if (!tmps[i] || Tmp::tmpForInternalValue(tmps[i]).isReg())
                     continue;
                 unsigned list = listOf(tmps[i]);
-                unsigned end = endOfUseDefs[list];
+                unsigned end = useDefsEnd[list];
                 if (end != firstUseDef[list] && useDefs[end - 1] == instPoint)
                     continue;
                 useDefs[end] = instPoint;
-                endOfUseDefs[list] = end + 1;
+                useDefsEnd[list] = end + 1;
             }
         }
     }
@@ -4958,14 +4958,14 @@ private:
     std::span<const Point> useDefsOf(Tmp tmp)
     {
         ASSERT(m_hasUseDefLists && !tmp.isReg());
-        unsigned list = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : m_endOfGPUseDefLists + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
-        if ((tmp.isGP() && list >= m_endOfGPUseDefLists) || list >= m_endOfUseDefs.size()) [[unlikely]] {
-            auto iterator = m_useDefListsOfNewTmps.find(tmp);
-            if (iterator == m_useDefListsOfNewTmps.end())
+        unsigned list = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : m_gpUseDefListsEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+        if ((tmp.isGP() && list >= m_gpUseDefListsEnd) || list >= m_useDefsEnd.size()) [[unlikely]] {
+            auto iterator = m_newTmpUseDefLists.find(tmp);
+            if (iterator == m_newTmpUseDefLists.end())
                 return { };
             return iterator->value.useDefs().span();
         }
-        return m_useDefs.span().subspan(m_firstUseDef[list], m_endOfUseDefs[list] - m_firstUseDef[list]);
+        return m_useDefs.span().subspan(m_firstUseDef[list], m_useDefsEnd[list] - m_firstUseDef[list]);
     }
 
     // forEachUseDefWithin calls `func` for each instruction in the given interval that
@@ -5012,9 +5012,9 @@ private:
             BasicBlock* block { nullptr };
             Interval cluster;
             Point lastDefPoint { 0 };
-            unsigned endOfPtrs { 0 };
-            unsigned endOfColdUsePtrs { 0 };
-            unsigned endOfPoints { 0 };
+            unsigned ptrsEnd { 0 };
+            unsigned coldUsePtrsEnd { 0 };
+            unsigned pointsEnd { 0 };
             unsigned root { 0 };
             unsigned numberOfPtrsInCluster { 0 };
             unsigned numberOfGroupsInCluster { 1 };
@@ -5022,7 +5022,7 @@ private:
             bool isLiveIn { false };
             Tmp clusterTmp;
         };
-        constexpr unsigned maxBlocksOnTheWays = 6;
+        constexpr unsigned maxBlocksOnPaths = 6;
         Vector<Group, 16> groups;
         Vector<Tmp*, 32> ptrs;
         Vector<std::pair<Tmp*, Point>, 8> coldUsePtrs;
@@ -5052,32 +5052,32 @@ private:
                     });
                 });
                 if (!group.block) {
-                    coldUsePtrs.shrink(groups.isEmpty() ? 0 : groups.last().endOfColdUsePtrs);
+                    coldUsePtrs.shrink(groups.isEmpty() ? 0 : groups.last().coldUsePtrsEnd);
                     continue;
                 }
                 group.isLiveIn = interval.contains(pointAtOffset(group.cluster.begin(), PointOffsets::Pre));
-                group.endOfPtrs = ptrs.size();
-                group.endOfColdUsePtrs = coldUsePtrs.size();
-                group.endOfPoints = points.size();
+                group.ptrsEnd = ptrs.size();
+                group.coldUsePtrsEnd = coldUsePtrs.size();
+                group.pointsEnd = points.size();
                 group.root = groups.size();
-                group.numberOfPtrsInCluster = ptrs.size() - (groups.isEmpty() ? 0 : groups.last().endOfPtrs);
+                group.numberOfPtrsInCluster = ptrs.size() - (groups.isEmpty() ? 0 : groups.last().ptrsEnd);
                 groups.append(group);
             } while (remaining);
         }
 
         RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
         calleeSaves.exclude(m_code.unsavedCalleeSaves());
-        uint64_t regsLostAtCalls = 0;
+        uint64_t regsClobberedAtCalls = 0;
         for (Reg reg : m_allowedRegistersInPriorityOrder[bank]) {
             if (!calleeSaves.contains(reg, IgnoreVectors))
-                regsLostAtCalls |= 1ULL << reg.index();
+                regsClobberedAtCalls |= 1ULL << reg.index();
         }
-        regsLostAtCalls &= m_allClobberedRegs;
+        regsClobberedAtCalls &= m_allClobberedRegs;
         auto keepsSomeRegisterWithin = [&](Interval interval) {
             auto clobberPoints = m_clobberPoints.span();
             size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
             for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
-                if ((m_clobberedRegsAtPoint[index] & regsLostAtCalls) == regsLostAtCalls)
+                if ((m_clobberedRegsAtPoint[index] & regsClobberedAtCalls) == regsClobberedAtCalls)
                     return false;
             }
             return true;
@@ -5093,13 +5093,13 @@ private:
         for (unsigned i = 0; i < groups.size(); ++i) {
             Group& group = groups[i];
             pieces[i].append(group.cluster);
-            if (!regsLostAtCalls || group.lastDefPoint || !group.isLiveIn || (i && groups[i - 1].block == group.block))
+            if (!regsClobberedAtCalls || group.lastDefPoint || !group.isLiveIn || (i && groups[i - 1].block == group.block))
                 continue;
-            Vector<Interval, maxBlocksOnTheWays + 1> way;
+            Vector<Interval, maxBlocksOnPaths + 1> way;
             way.append(Interval(positionOfHead(group.block), group.cluster.end()));
-            Vector<BasicBlock*, maxBlocksOnTheWays + 1> seen { group.block };
+            Vector<BasicBlock*, maxBlocksOnPaths + 1> seen { group.block };
             auto earlier = groups.span().first(i);
-            unsigned rootOfWays = i;
+            unsigned pathsRoot = i;
             bool isOpen = true;
             for (unsigned next = 0; isOpen && next < seen.size(); ++next) {
                 BasicBlock* block = seen[next];
@@ -5116,15 +5116,15 @@ private:
                     }) - earlier.begin();
                     if (candidate && groups[candidate - 1].block == predecessor) {
                         const Group& above = groups[candidate - 1];
-                        if ((rootOfWays != i && rootOfWays != above.root) || !keepsSomeRegisterWithin(above.cluster)) {
+                        if ((pathsRoot != i && pathsRoot != above.root) || !keepsSomeRegisterWithin(above.cluster)) {
                             isOpen = false;
                             break;
                         }
-                        rootOfWays = above.root;
+                        pathsRoot = above.root;
                         way.append(Interval(above.cluster.end() - 1, positionOfTail(predecessor) + 1));
                         continue;
                     }
-                    if (seen.size() > maxBlocksOnTheWays) {
+                    if (seen.size() > maxBlocksOnPaths) {
                         isOpen = false;
                         break;
                     }
@@ -5132,14 +5132,14 @@ private:
                     seen.append(predecessor);
                 }
             }
-            if (!isOpen || rootOfWays == i)
+            if (!isOpen || pathsRoot == i)
                 continue;
             for (Interval interval : way)
                 isOpen &= isLiveThroughout(interval) && keepsSomeRegisterWithin(interval);
             if (!isOpen)
                 continue;
-            Group& root = groups[rootOfWays];
-            group.root = rootOfWays;
+            Group& root = groups[pathsRoot];
+            group.root = pathsRoot;
             root.numberOfPtrsInCluster += group.numberOfPtrsInCluster;
             root.numberOfGroupsInCluster++;
             root.weight += group.weight;
@@ -5187,19 +5187,19 @@ private:
             if (!clusterTmp)
                 continue;
             TmpData& clusterData = m_map.get<bank>(clusterTmp);
-            for (unsigned k = i ? groups[i - 1].endOfPtrs : 0; k < groups[i].endOfPtrs; ++k)
+            for (unsigned k = i ? groups[i - 1].ptrsEnd : 0; k < groups[i].ptrsEnd; ++k)
                 *ptrs[k] = clusterTmp;
-            for (unsigned k = i ? groups[i - 1].endOfColdUsePtrs : 0; k < groups[i].endOfColdUsePtrs; ++k) {
+            for (unsigned k = i ? groups[i - 1].coldUsePtrsEnd : 0; k < groups[i].coldUsePtrsEnd; ++k) {
                 if (clusterData.liveRange.contains(coldUsePtrs[k].second)) {
                     *coldUsePtrs[k].first = clusterTmp;
                     clusterData.hasColdUse = true;
                 }
             }
             if (clusterData.isClusterOverBlocks) {
-                UseDefList& list = m_useDefListsOfNewTmps.ensure(clusterTmp, [] {
+                UseDefList& list = m_newTmpUseDefLists.ensure(clusterTmp, [] {
                     return UseDefList();
                 }).iterator->value;
-                for (unsigned k = i ? groups[i - 1].endOfPoints : 0; k < groups[i].endOfPoints; ++k)
+                for (unsigned k = i ? groups[i - 1].pointsEnd : 0; k < groups[i].pointsEnd; ++k)
                     list.add(points[k]);
             }
         }
@@ -5220,7 +5220,7 @@ private:
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false;
 #if USE(BUN_JSC_ADDITIONS)
-        if (tmpData.goesRoundAStretch)
+        if (tmpData.spansStretch)
             return false;
 #endif
 
@@ -5436,7 +5436,7 @@ private:
 
         for (unsigned ordinal : ordinals) {
             {
-                BasicBlock* block = m_code[m_blockIndexOfInst[ordinal]];
+                BasicBlock* block = m_code[m_instBlockIndex[ordinal]];
                 Point positionOfHead = this->positionOfHead(block);
                 unsigned instIndex = ordinal - positionOfHead / PointOffsets::PointsPerInst;
                 Inst& inst = block->at(instIndex);
@@ -5726,10 +5726,10 @@ private:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    void validateMovesRoundClobbers()
+    void validateMovesAroundClobbers()
     {
-        auto& moves = m_movesRoundClobbers;
-        std::ranges::sort(moves, [](const MoveRoundClobber& a, const MoveRoundClobber& b) {
+        auto& moves = m_movesAroundClobbers;
+        std::ranges::sort(moves, [](const MoveAroundClobber& a, const MoveAroundClobber& b) {
             return std::tuple(a.blockIndex, a.index, a.isBehind) < std::tuple(b.blockIndex, b.index, b.isBehind);
         });
         bool anyFailures = false;
@@ -5758,7 +5758,7 @@ private:
         for (size_t i = 1; i < m_aroundClobbersMetadata.size(); i++)
             insertSplitAroundClobbersFixupCode(m_aroundClobbersMetadata[i]);
 #if USE(BUN_JSC_ADDITIONS)
-        validateMovesRoundClobbers();
+        validateMovesAroundClobbers();
 #endif
         for (auto& metadata : m_intraBlockMetadata)
             insertSplitIntraBlockFixupCode(metadata);
@@ -5799,7 +5799,7 @@ private:
     void insertInst(BasicBlock* block, size_t index, unsigned phase, Inst&& inst)
     {
         m_insertions.append(PhaseInsertion(index, phase, WTF::move(inst)));
-        m_blockOfInsertion.append(block->index());
+        m_insertionBlock.append(block->index());
     }
 
     template<typename... Arguments>
@@ -5813,14 +5813,14 @@ private:
         if (m_insertions.isEmpty())
             return;
         Vector<unsigned> endOfBlock(FillWith { }, m_code.size(), 0u);
-        for (unsigned blockIndex : m_blockOfInsertion)
+        for (unsigned blockIndex : m_insertionBlock)
             ++endOfBlock[blockIndex];
         unsigned sum = 0;
         for (unsigned& end : endOfBlock)
             sum += std::exchange(end, sum);
         Vector<unsigned> order(m_insertions.size());
         for (unsigned i = 0; i < m_insertions.size(); ++i)
-            order[endOfBlock[m_blockOfInsertion[i]]++] = i;
+            order[endOfBlock[m_insertionBlock[i]]++] = i;
         PhaseInsertionSet insertionSet;
         unsigned begin = 0;
         for (unsigned blockIndex = 0; blockIndex < endOfBlock.size(); ++blockIndex) {
@@ -5838,7 +5838,7 @@ private:
             insertionSet.execute(m_code[blockIndex]);
         }
         m_insertions.shrink(0);
-        m_blockOfInsertion.shrink(0);
+        m_insertionBlock.shrink(0);
 #else
         for (BasicBlock* block : m_code)
             m_insertionSets[block].execute(block);
@@ -5875,16 +5875,16 @@ private:
                     arg = Arg::stack(spilled);
                 Opcode move = moveOpcode(gapTmp);
 #if USE(BUN_JSC_ADDITIONS)
-                unsigned indexAhead = this->instIndex(positionOfHead(block), interval.begin());
+                unsigned precedingIndex = this->instIndex(positionOfHead(block), interval.begin());
                 if (Options::airValidateGreedRegAlloc()) [[unlikely]] {
                     Reg home = assignedReg(metadata.originalTmp);
                     Reg away = spilled ? Reg() : assignedReg(gapTmp);
-                    m_movesRoundClobbers.append({ block->index(), indexAhead, false, home, away });
-                    m_movesRoundClobbers.append({ block->index(), instIndex + 1, true, away, home });
+                    m_movesAroundClobbers.append({ block->index(), precedingIndex, false, home, away });
+                    m_movesAroundClobbers.append({ block->index(), instIndex + 1, true, away, home });
                     if (Options::airGreedyRegAllocRecordsFalseMoveForTesting() && away)
-                        m_movesRoundClobbers.append({ block->index(), indexAhead, false, away, home });
+                        m_movesAroundClobbers.append({ block->index(), precedingIndex, false, away, home });
                 }
-                insert(block, indexAhead, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
+                insert(block, precedingIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
 #else
                 m_insertionSets[block].insert(instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
 #endif
@@ -6152,80 +6152,80 @@ private:
     UseDefCost m_calleeSaveCost { 0 };
     IndexMap<BasicBlock*, Point> m_blockToHeadPoint;
     Vector<Point> m_tailPoints;
-    Vector<unsigned> m_blockIndexOfInst;
+    Vector<unsigned> m_instBlockIndex;
     Mentions m_mentions;
-    Vector<unsigned> m_movesOfTmps;
+    Vector<unsigned> m_tmpMoves;
     Vector<uint8_t> m_isRead;
     const bool m_searchesForDeadCode;
     bool m_hasDefOfUnreadTmp { false };
     bool m_hasDeadCode { false };
     Vector<Tmp> m_tmpsWithCoalescables;
     Vector<unsigned> m_conditionalMoves;
-    unsigned m_endOfGPIndices { 0 };
+    unsigned m_gpIndicesEnd { 0 };
     unsigned m_numberOfLinearIndices { 0 };
-    struct DefOfSmallConstant {
+    struct SmallConstantDef {
         unsigned index;
         int64_t value;
     };
-    Vector<DefOfSmallConstant> m_defsOfSmallConstants;
-    struct EndsOfBlock {
+    Vector<SmallConstantDef> m_smallConstantDefs;
+    struct BlockEnds {
         unsigned firstInst { 0 };
         unsigned exposedUses { 0 };
         unsigned defs { 0 };
         unsigned usesAtTail { 0 };
     };
-    Vector<EndsOfBlock> m_endsOfBlock;
+    Vector<BlockEnds> m_blockEnds;
     Vector<unsigned> m_exposedUses;
     Vector<unsigned> m_defsInBlocks;
     Vector<unsigned> m_usesAtTails;
     Vector<uint8_t> m_crossesBoundary;
-    Vector<unsigned> m_indexOfColumn;
+    Vector<unsigned> m_columnIndex;
     Vector<uint64_t> m_liveAtBoundaries;
     size_t m_wordsPerSet { 0 };
     static constexpr size_t maxWordsPerLivenessMatrix = 1 << 19;
-    struct AtEdgeOfBlock {
+    struct BlockEdgeKind {
         unsigned blockIndex;
         unsigned index;
     };
-    Vector<AtEdgeOfBlock> m_closesBehindBlock;
-    Vector<AtEdgeOfBlock> m_opensAtTailOfBlock;
+    Vector<BlockEdgeKind> m_closesAfterBlock;
+    Vector<BlockEdgeKind> m_opensAtTailOfBlock;
     bool m_livenessIsInLists { false };
     IntervalArena m_intervalArena;
-    MapOfTmpData m_map;
+    TmpDataMap m_map;
     Vector<unsigned> m_firstUseDef;
-    Vector<unsigned> m_endOfUseDefs;
+    Vector<unsigned> m_useDefsEnd;
     Vector<Point> m_useDefs;
-    unsigned m_endOfGPUseDefLists { 0 };
-    HashMap<Tmp, UseDefList> m_useDefListsOfNewTmps;
+    unsigned m_gpUseDefListsEnd { 0 };
+    HashMap<Tmp, UseDefList> m_newTmpUseDefLists;
     Vector<Tmp> m_newlySpilledTmps;
-    Vector<unsigned> m_firstClobberOfInst;
+    Vector<unsigned> m_instFirstClobber;
     static constexpr unsigned clobberPointsPerChunk = 64;
     static constexpr unsigned minClobberPointsForChunks = 1024;
     Vector<uint64_t> m_clobberedRegsInChunk;
     Vector<uint64_t> m_deadClobbersAtPoint;
     uint64_t m_regsWithDeadClobbers { 0 };
-    static constexpr unsigned mostMissesInARow = 64;
+    static constexpr unsigned maxConsecutiveMisses = 64;
     static constexpr size_t fewClobberPoints = 4096;
-    Vector<unsigned> m_firstDeadClobberOfReg;
-    Vector<unsigned> m_deadClobbersOfRegs;
+    Vector<unsigned> m_regFirstDeadClobber;
+    Vector<unsigned> m_regDeadClobbers;
     Vector<unsigned> m_representatives;
     Vector<AroundClobbersSplitMetadata> m_aroundClobbersMetadata;
 #if USE(BUN_JSC_ADDITIONS)
-    struct MoveRoundClobber {
+    struct MoveAroundClobber {
         unsigned blockIndex;
         unsigned index;
         bool isBehind;
         Reg source;
         Reg destination;
     };
-    Vector<MoveRoundClobber> m_movesRoundClobbers;
+    Vector<MoveAroundClobber> m_movesAroundClobbers;
 #endif
     Vector<IntraBlockSplitMetadata> m_intraBlockMetadata;
     Vector<AroundLoopSplitMetadata> m_aroundLoopMetadata;
     Vector<StackSlot*> m_spillSlotTable;
     IndexMap<Reg, RegisterRange> m_regRanges;
 #if USE(BUN_JSC_ADDITIONS)
-    std::array<uint32_t, Reg::maxIndex() + 1> m_epochOfLastRemoval { };
+    std::array<uint32_t, Reg::maxIndex() + 1> m_lastRemovalEpoch { };
     uint32_t m_removalEpoch { 1 };
 #endif
     Vector<Point> m_clobberPoints;
@@ -6238,13 +6238,13 @@ private:
     bool m_isFillingQueueAtStart { false };
 #if USE(BUN_JSC_ADDITIONS)
     Vector<PhaseInsertion> m_insertions;
-    Vector<unsigned> m_blockOfInsertion;
+    Vector<unsigned> m_insertionBlock;
 #else
     IndexMap<BasicBlock*, PhaseInsertionSet> m_insertionSets;
 #endif
     BlockWorklist m_fastBlocks;
-    CountsOfTmps m_useCounts;
-    WidthsOfTmps m_tmpWidth;
+    TmpCounts m_useCounts;
+    TmpWidths m_tmpWidth;
     std::array<AirAllocateRegistersStats, numBanks> m_stats = { { { GP, m_code.proc().name() }, { FP, m_code.proc().name() } } };
     std::array<bool, numBanks> m_didSpill { };
     bool m_needsEmitSpillCode { false };

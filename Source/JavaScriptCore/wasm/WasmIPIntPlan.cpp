@@ -55,8 +55,8 @@ IPIntPlan::IPIntPlan(VM& vm, Vector<uint8_t>&& source, CompilerMode compilerMode
         return;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (!Options::useBBQJIT() && !Options::useOMGJIT()) {
-        m_factsOfFunctionsInImage = CodeInImage::savedRegistersOfFunctionsIfFound(m_moduleInformation.get());
-        m_moduleInformation->lacksInterpreterMetadata = !!m_factsOfFunctionsInImage;
+        m_imageFunctionFlags = CodeInImage::functionSavedRegistersIfFound(m_moduleInformation.get());
+        m_moduleInformation->isMissingInterpreterMetadata = !!m_imageFunctionFlags;
     }
 #endif
     prepare();
@@ -100,8 +100,8 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
     ASSERT_UNUSED(functionIndexSpace, &m_moduleInformation->rtt(functionIndexSpace) == &m_moduleInformation->rtt(typeSignatureIndex));
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    if (m_factsOfFunctionsInImage) {
-        if (m_factsOfFunctionsInImage[functionIndex] & CodeInImage::functionUsesVectors)
+    if (m_imageFunctionFlags) {
+        if (m_imageFunctionFlags[functionIndex] & CodeInImage::functionUsesVectors)
             m_moduleInformation->markUsesSIMD(functionIndex);
         m_moduleInformation->doneSeeingFunction(functionIndex);
         m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.span());

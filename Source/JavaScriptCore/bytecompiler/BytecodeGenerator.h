@@ -385,16 +385,16 @@ namespace JSC {
         void setAuditedTailCall(std::optional<uint32_t> id) { m_auditedTailCall = id; }
         void setAuditedElementRead(uint32_t id) { m_auditedElementRead = id; }
         std::optional<uint32_t> takeAuditedElementRead() { return std::exchange(m_auditedElementRead, std::nullopt); }
-        struct AuditOfStoredValue {
+        struct StoredValueAudit {
             uint32_t id;
             OptionSet<AuditedValueClass> passes;
             int32_t least;
             int32_t most;
             JSTextPosition position;
         };
-        void setAuditOfStoredValue(AuditOfStoredValue audit) { m_auditOfStoredValue = audit; }
-        std::optional<AuditOfStoredValue> takeAuditOfStoredValue() { return std::exchange(m_auditOfStoredValue, std::nullopt); }
-        void emitAuditOfStoredValue(RegisterID* value, const std::optional<AuditOfStoredValue>& audit)
+        void setStoredValueAudit(StoredValueAudit audit) { m_storedValueAudit = audit; }
+        std::optional<StoredValueAudit> takeStoredValueAudit() { return std::exchange(m_storedValueAudit, std::nullopt); }
+        void emitStoredValueAudit(RegisterID* value, const std::optional<StoredValueAudit>& audit)
         {
             if (!audit) [[likely]]
                 return;
@@ -968,9 +968,7 @@ namespace JSC {
         RegisterID* emitIsGenerator(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSGeneratorType); }
         RegisterID* emitIsIteratorHelper(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSIteratorHelperType); }
 #if USE(BUN_JSC_ADDITIONS)
-        // One is_cell_with_type for each type, until one holds. `dst` is not `src`.
         RegisterID* emitIsCellWithTypeInRange(RegisterID* dst, RegisterID* src, JSType first, JSType last);
-        // As isJSArray(JSCell*).
         RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithTypeInRange(dst, src, ArrayType, DerivedArrayType); }
 #else
         RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ArrayType); }
@@ -993,7 +991,7 @@ namespace JSC {
         RegisterID* emitIsUndefinedOrNull(RegisterID* dst, RegisterID* src);
         RegisterID* emitIsEmpty(RegisterID* dst, RegisterID* src);
         void emitAudit(RegisterID* value, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most);
-        void emitAuditOfElementRead(RegisterID* base, RegisterID* subscript, uint32_t id);
+        void emitElementReadAudit(RegisterID* base, RegisterID* subscript, uint32_t id);
         RegisterID* emitIsDerivedArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DerivedArrayType); }
         RegisterID* emitIsDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DisposableStackType); }
         RegisterID* emitIsAsyncDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, AsyncDisposableStackType); }
@@ -1301,14 +1299,14 @@ namespace JSC {
         void emitLogShadowChickenTailIfNecessary();
 
         void initializeParameters(FunctionParameters&);
-        void emitAuditOfParameters(const AuditSites&, FunctionParameters&);
-        unsigned m_costOfAudits { 0 };
+        void emitParameterAudits(const AuditSites&, FunctionParameters&);
+        unsigned m_auditCost { 0 };
         std::array<JSTextPosition, 3> m_lastExpressionInfo;
         RefPtr<RegisterID> m_auditsAreOff;
         std::optional<uint32_t> m_auditedTailCall;
         std::optional<uint32_t> m_auditedElementRead;
-        std::optional<AuditOfStoredValue> m_auditOfStoredValue;
-        RefPtr<RegisterID> emitAskWhetherCallerHoldsResult(uint32_t id);
+        std::optional<StoredValueAudit> m_storedValueAudit;
+        RefPtr<RegisterID> emitCallerChecksResult(uint32_t id);
         void emitJumpIfValueClassIsIn(RegisterID* value, OptionSet<AuditedValueClass>, Label& target);
         void initializeVarLexicalEnvironment(int symbolTableConstantIndex, SymbolTable* functionSymbolTable, bool hasCapturedVariables);
         void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, NOESCAPE const ScopedLambda<bool(UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);

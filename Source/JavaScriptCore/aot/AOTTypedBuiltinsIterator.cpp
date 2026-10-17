@@ -14,8 +14,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/iterator.def.
-
 std::optional<Writes> writesOfInlineIterator(InlineBuiltin, std::span<const Type>)
 {
     RELEASE_ASSERT_NOT_REACHED();

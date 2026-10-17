@@ -3,10 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Members of class Lowering: the family aot/builtins/buffer.def.
-
 struct ByteOrder {
-    // Nothing: that is found out when the code runs.
     std::optional<bool> isLittle;
     Word32 isLittleAtRunTime;
 };

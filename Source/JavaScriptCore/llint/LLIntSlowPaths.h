@@ -47,8 +47,8 @@ extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame*, CallLinkInfo*) REFER
 extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" void SYSV_ABI llint_write_barrier_slow(CallFrame*, JSCell*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_call_cached_custom_accessor(CallFrame*, EncodedJSValue base, GetByIdModeMetadata*, unsigned property) REFERENCED_FROM_ASM WTF_INTERNAL;
-extern "C" size_t SYSV_ABI llint_store_extra_property_of_compiled_object(JSCell*, unsigned offset, EncodedJSValue) REFERENCED_FROM_ASM WTF_INTERNAL;
-extern "C" EncodedJSValue SYSV_ABI llint_extra_property_of_compiled_object(JSCell*, unsigned offset) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" size_t SYSV_ABI llint_store_compiled_object_extra_property(JSCell*, unsigned offset, EncodedJSValue) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" EncodedJSValue SYSV_ABI llint_get_compiled_object_extra_property(JSCell*, unsigned offset) REFERENCED_FROM_ASM WTF_INTERNAL;
 
 #define LLINT_SLOW_PATH_DECL(name) \
     extern "C" UGPRPair SYSV_ABI llint_##name(CallFrame* callFrame, const JSInstruction* pc)

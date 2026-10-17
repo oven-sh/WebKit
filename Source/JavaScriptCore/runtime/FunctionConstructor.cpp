@@ -221,7 +221,7 @@ JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::noteGuest(globalObject, "Function", { }, program);
+        AOT::recordSample(globalObject, "Function", { }, program);
 #endif
 
     JSObject* exception = nullptr;

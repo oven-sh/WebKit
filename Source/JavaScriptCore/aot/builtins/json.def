@@ -8,6 +8,7 @@ runtime JSONReserve : RuntimeState void* (uint64_t cursor, uint64_t size) noexce
 runtime JSONAppendString : RuntimeState void* (uint64_t cursor, JSCell* string) noexcept
 runtime JSONAppendInteger : Nothing void* (uint64_t cursor, uint64_t integer) noexcept leaf
 runtime JSONAppendNumber : Nothing void* (uint64_t cursor, double number) noexcept leaf
+runtime JSONAppendDate : Nothing void* (uint64_t cursor, double timeValue) noexcept leaf
 runtime JSONAppendValue : RuntimeState void* (uint64_t cursor, EncodedJSValue value, uint32_t isElement) noexcept
 runtime JSONAppendElementsFrom : RuntimeState void* (uint64_t cursor, JSCell* array, uint64_t index) noexcept
 runtime JSONKeyOrdersOf : RuntimeState void* (JSCell* object) noexcept

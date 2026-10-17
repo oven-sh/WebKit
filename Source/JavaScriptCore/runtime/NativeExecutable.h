@@ -91,15 +91,13 @@ public:
 
     JSString* asStringConcurrently() const LIFETIME_BOUND { return m_asString.get(); }
 #if ENABLE(AOT)
-    // The closures of many functions that are compiled ahead of time from types have it, and it has the name and the length of none:
-    // AOT::nameOfTypedClosure().
     bool isSharedByAOTTypedClosures() const { return m_isSharedByAOTTypedClosures; }
     void setIsSharedByAOTTypedClosures() { m_isSharedByAOTTypedClosures = true; }
 #endif
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
 #if ENABLE(AOT)
-    enum class BuiltInServedByStubs : uint8_t { None, MapGet, MapHas, MapSet, SetHas, SetAdd, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas, StringStartsWith, StringIndexOf, ArrayIsArray, ArrayPush };
-    static constexpr ptrdiff_t offsetOfBuiltInServedByStubs() { return OBJECT_OFFSETOF(NativeExecutable, m_builtInServedByStubs); }
+    enum class StubBuiltin : uint8_t { None, MapGet, MapHas, MapSet, SetHas, SetAdd, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas, StringStartsWith, StringIndexOf, ArrayIsArray, ArrayPush };
+    static constexpr ptrdiff_t offsetOfStubBuiltin() { return OBJECT_OFFSETOF(NativeExecutable, m_stubBuiltin); }
 #endif
 private:
     NativeExecutable(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility);
@@ -112,7 +110,7 @@ private:
 
     uint8_t m_implementationVisibility : bitWidthOfImplementationVisibility;
     uint8_t m_isSharedByAOTTypedClosures : 1 { 0 };
-    uint8_t m_builtInServedByStubs { 0 };
+    uint8_t m_stubBuiltin { 0 };
     unsigned m_length { 0 };
 
     String m_name;

@@ -483,7 +483,7 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
     macroAssembler.m_assembler.buffer().flushConstantPool(false);
 #endif
 #if CPU(X86_64) && USE(BUN_JSC_ADDITIONS)
-    m_shiftsOfShortenedJumps = macroAssembler.m_assembler.takeShiftsOfShortenedJumps();
+    m_shortenedJumpShifts = macroAssembler.m_assembler.takeShortenedJumpShifts();
 #endif
     allocate(macroAssembler, effort);
     if (!m_didAllocate)

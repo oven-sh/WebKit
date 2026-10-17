@@ -9,7 +9,7 @@
 namespace JSC {
 
 namespace AOT {
-class RegExpsFoundAhead;
+class DiscoveredRegExps;
 }
 
 class CodeBlock;
@@ -20,8 +20,8 @@ struct CompilerHooks {
     CompilationResult (*compileBaselineNow)(VM&, CodeBlock*, JITCompilationEffort) { nullptr };
     void* compileRegExp { nullptr };
     void* newBBQPlan { nullptr };
-    Vector<uint8_t> (*compileImage)(void* implOfBytecodeLinkEncoder) { nullptr };
-    AOT::RegExpsFoundAhead* (*newRegExpsFoundAhead)(std::span<const uint8_t> typedProgramAsWritten) { nullptr };
+    Vector<uint8_t> (*compileImage)(void* bytecodeLinkEncoderImpl) { nullptr };
+    AOT::DiscoveredRegExps* (*newDiscoveredRegExps)(std::span<const uint8_t> typedProgramAsWritten) { nullptr };
 
     bool areInstalled() const { return !!enqueueBaselinePlan; }
 };

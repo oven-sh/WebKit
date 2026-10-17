@@ -56,9 +56,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryManager);
 static unsigned maxFastMemoryCount()
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    constexpr unsigned countForCodeInImage = 4096;
+    constexpr unsigned fastMemoryCountForImageCode = 4096;
     if (Wasm::CodeInImage::isInProcess())
-        return std::max(Options::maxNumWasmFastMemories(), countForCodeInImage);
+        return std::max(Options::maxNumWasmFastMemories(), fastMemoryCountForImageCode);
 #endif
     return Options::maxNumWasmFastMemories();
 }

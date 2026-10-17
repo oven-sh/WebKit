@@ -190,12 +190,12 @@ void RegExp::finishCreation(VM& vm)
     if (code && code->hasCode)
         m_codeWasFoundInImage = true;
     m_sourceIsPattern = code && code->sourceIsPattern;
-    if (code && !code->keepsMoreOfPattern) {
-        if (code->recordOfTextInPieces) {
+    if (code && !code->retainsPatternDetails) {
+        if (code->recordWithSourceInPieces) {
             m_rareData = makeUnique<RareData>();
-            m_rareData->m_recordOfTextInPieces = code->recordOfTextInPieces;
+            m_rareData->m_recordWithSourceInPieces = code->recordWithSourceInPieces;
             m_patternString = String();
-        } else if (m_patternString.length() > AOT::ImageRegExp::minLengthKeptAsTextOfImage)
+        } else if (m_patternString.length() > AOT::ImageRegExp::minLengthStoredAsImageString)
             m_patternString = code->text.is8Bit() ? String(StringImpl::createWithoutCopyingWithHash(code->text.span8(), m_patternString.hash())) : String(StringImpl::createWithoutCopyingWithHash(code->text.span16(), m_patternString.hash()));
         m_specificPattern = code->specificPattern;
         m_numSubpatterns = code->numSubpatterns;
@@ -333,7 +333,7 @@ RegExp* RegExp::tryCreateFromImage(VM& vm, const String& patternString, OptionSe
 {
     auto code = AOT::Image::codeForRegExp(patternString, flags);
     countDigest(vm, code);
-    if (!code || code->keepsMoreOfPattern || !code->hasCode)
+    if (!code || code->retainsPatternDetails || !code->hasCode)
         return nullptr;
     RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
     regExp->Base::finishCreation(vm);
@@ -347,15 +347,15 @@ RegExp* RegExp::tryCreateFromImage(VM& vm, const String& patternString, OptionSe
 #endif
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-RegExp* RegExp::createWithTextInPieces(VM& vm, const AOT::ImageRegExp& record, OptionSet<Yarr::Flags> flags)
+RegExp* RegExp::createWithSourceInPieces(VM& vm, const AOT::ImageRegExp& record, OptionSet<Yarr::Flags> flags)
 {
-    auto code = AOT::Image::codeOfRegExp(record);
-    RELEASE_ASSERT(!code.keepsMoreOfPattern);
+    auto code = AOT::Image::codeForRegExpRecord(record);
+    RELEASE_ASSERT(!code.retainsPatternDetails);
     RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, String(), flags);
     regExp->Base::finishCreation(vm);
     regExp->m_sourceIsPattern = code.sourceIsPattern;
     regExp->m_rareData = makeUnique<RareData>();
-    regExp->m_rareData->m_recordOfTextInPieces = &record;
+    regExp->m_rareData->m_recordWithSourceInPieces = &record;
     regExp->m_specificPattern = code.specificPattern;
     regExp->m_numSubpatterns = code.numSubpatterns;
     regExp->m_ovector = FixedVector<int>(regExp->offsetVectorBaseForNamedCaptures());
@@ -384,9 +384,9 @@ static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yar
     return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);
 }
 
-void RegExp::crashIfLiteralOfCompiledProgramIsInterpreted() const
+void RegExp::crashIfCompiledProgramLiteralIsInterpreted() const
 {
-    if (!Options::crashIfInterpreterIsUsed() || !m_isLiteralOfCompiledProgram || hasValidAtom()) [[likely]]
+    if (!Options::crashIfInterpreterIsUsed() || !m_isCompiledProgramLiteral || hasValidAtom()) [[likely]]
         return;
     dataLogLn("crashIfInterpreterIsUsed: regular expression /", pattern(), "/", StringView { Yarr::flagsString(m_flags).span() });
     CRASH();
@@ -394,7 +394,7 @@ void RegExp::crashIfLiteralOfCompiledProgramIsInterpreted() const
 
 void RegExp::byteCodeCompileIfNecessary(VM* vm)
 {
-    crashIfLiteralOfCompiledProgramIsInterpreted();
+    crashIfCompiledProgramLiteralIsInterpreted();
     Locker locker { cellLock() };
 
     if (m_regExpBytecode)
@@ -417,18 +417,17 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
 }
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-// Without a Yarr::YarrPattern: finishCreation() made none either.
-void RegExp::makePatternOfPieces() const
+void RegExp::materializePatternFromPieces() const
 {
-    if (m_rareData && m_rareData->m_recordOfTextInPieces)
-        m_patternString = AOT::Image::textOfRegExp(*m_rareData->m_recordOfTextInPieces);
+    if (m_rareData && m_rareData->m_recordWithSourceInPieces)
+        m_patternString = AOT::Image::regExpSource(*m_rareData->m_recordWithSourceInPieces);
 }
 
 bool RegExp::takeCodeFromImage(VM& vm)
 {
-    auto code = hasTextInPieces() && m_rareData && m_rareData->m_recordOfTextInPieces ? std::optional { AOT::Image::codeOfRegExp(*m_rareData->m_recordOfTextInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage);
+    auto code = hasSourceInPieces() && m_rareData && m_rareData->m_recordWithSourceInPieces ? std::optional { AOT::Image::codeForRegExpRecord(*m_rareData->m_recordWithSourceInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage);
     countDigest(vm, code);
-    if (!code || code->keepsMoreOfPattern || !code->hasCode)
+    if (!code || code->retainsPatternDetails || !code->hasCode)
         return false;
     if (!hasCode())
         vm.regExpCache()->addToStrongCache(this);
@@ -474,10 +473,10 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         m_minimumSize = pattern.m_body->m_minimumSize;
         return;
     }
-    crashIfLiteralOfCompiledProgramIsInterpreted();
+    crashIfCompiledProgramLiteralIsInterpreted();
     if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
-        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
-        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
+        AOT::recordSample(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
+        AOT::recordSample(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
     }
 #endif
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
@@ -590,10 +589,10 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_minimumSize = pattern.m_body->m_minimumSize;
         return;
     }
-    crashIfLiteralOfCompiledProgramIsInterpreted();
+    crashIfCompiledProgramLiteralIsInterpreted();
     if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
-        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
-        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
+        AOT::recordSample(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
+        AOT::recordSample(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
     }
 #endif
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()

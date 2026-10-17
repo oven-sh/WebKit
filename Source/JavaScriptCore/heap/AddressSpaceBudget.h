@@ -40,8 +40,8 @@ inline size_t addressSpaceToReserve()
 #endif
 }
 
-static constexpr unsigned partOfAddressSpaceForMarkedBlockCages = 2;
-static constexpr unsigned partOfAddressSpaceForNumberBoxes = 4;
-static constexpr unsigned partOfAddressSpaceForStructures = 8;
+static constexpr unsigned addressSpaceDivisorForMarkedBlockCages = 2;
+static constexpr unsigned addressSpaceDivisorForNumberBoxes = 4;
+static constexpr unsigned addressSpaceDivisorForStructures = 8;
 
 } // namespace JSC

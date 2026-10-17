@@ -8311,8 +8311,8 @@ protected:
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
 #if USE(BUN_JSC_ADDITIONS)
 public:
-    JS_EXPORT_PRIVATE static void useOnlyFeaturesOfBuildTarget();
-    JS_EXPORT_PRIVATE static unsigned featuresOfBuildTarget();
+    JS_EXPORT_PRIVATE static void restrictToBuildTargetFeatures();
+    JS_EXPORT_PRIVATE static unsigned buildTargetFeatures();
 protected:
 #endif
 

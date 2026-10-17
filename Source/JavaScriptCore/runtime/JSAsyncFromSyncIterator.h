@@ -99,7 +99,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSAsyncFromSyncIterator);
 
 void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject*, JSAsyncFromSyncIterator*, JSObject* driver, JSValue resumeValue);
 #if ENABLE(AOT)
-JSObject* driveAsyncFromSyncIteratorAtOnceOrWithDriver(JSGlobalObject*, JSAsyncFromSyncIterator*, JSObject* driver);
+JSObject* driveAsyncFromSyncIterator(JSGlobalObject*, JSAsyncFromSyncIterator*, JSObject* driver);
 #endif
 JSValue asyncFromSyncIteratorNext(JSGlobalObject*, JSAsyncFromSyncIterator*, JSValue argument, JSPromise* immediateStep = nullptr);
 

@@ -85,7 +85,7 @@ WebAssemblyFunction* WebAssemblyFunction::create(VM& vm, JSGlobalObject* globalO
     // Since ClosureCall uses this executable as an identity for Wasm CallIC thunk, we need to make it diversified.
     NativeExecutable* executable = NativeExecutable::create(vm, base->generatedJITCodeForCall(), callWebAssemblyFunction, base->generatedJITCodeForConstruct(), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
     if (auto* calleeGroup = instance->calleeGroup(); calleeGroup && !instance->taintedness().isTainted()) {
-        if (auto entry = calleeGroup->entryFromJavaScriptInImage(rtt.get()))
+        if (auto entry = calleeGroup->jsEntrypointInImage(rtt.get()))
             executable->setCallEntrypoint(entry);
     }
     WebAssemblyFunction* function = new (NotNull, allocateCell<WebAssemblyFunction>(vm)) WebAssemblyFunction(vm, executable, globalObject, structure, instance, wasmCallee, wasmToWasmEntrypointLoadLocation, WTF::move(rtt));

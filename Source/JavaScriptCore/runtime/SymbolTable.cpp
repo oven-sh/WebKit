@@ -277,11 +277,11 @@ bool SymbolTable::hasSameScopePartAs(SymbolTable& other)
     other.materializeCachedEntriesIfNeeded(otherLocker);
     ConcurrentJSLocker locker(m_lock);
     materializeCachedEntriesIfNeeded(locker);
-    unsigned scopeEntriesOfOther = 0;
+    unsigned otherScopeEntries = 0;
     for (auto& entry : other.m_map) {
         if (!entry.value.varOffset().isScope())
             continue;
-        scopeEntriesOfOther++;
+        otherScopeEntries++;
         auto iter = m_map.find(entry.key);
         if (iter == m_map.end() || iter->value.varOffset() != entry.value.varOffset() || iter->value.getAttributes() != entry.value.getAttributes())
             return false;
@@ -289,7 +289,7 @@ bool SymbolTable::hasSameScopePartAs(SymbolTable& other)
     unsigned scopeEntries = 0;
     for (auto& entry : m_map)
         scopeEntries += entry.value.varOffset().isScope();
-    return scopeEntries == scopeEntriesOfOther;
+    return scopeEntries == otherScopeEntries;
 }
 
 void SymbolTable::adoptOriginal(VM& vm, SymbolTable& original)

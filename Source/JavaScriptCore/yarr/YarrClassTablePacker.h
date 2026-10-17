@@ -44,9 +44,9 @@ struct ClassTableLayout {
     static constexpr unsigned bytesInBlock = wordsInBlock * sizeof(uint32_t);
     static constexpr unsigned firstSurrogatePage = 0xd800 / (wordsInBlock * 32);
     static constexpr unsigned limitOffset = firstSurrogatePage * sizeof(int16_t);
-    static constexpr unsigned rangesBehindOffset = limitOffset + sizeof(uint32_t);
-    static constexpr unsigned firstBlockOffset = rangesBehindOffset + sizeof(uint32_t);
-    static constexpr unsigned restOfIndexOffset = firstBlockOffset + bytesInBlock;
+    static constexpr unsigned trailingRangesOffset = limitOffset + sizeof(uint32_t);
+    static constexpr unsigned firstBlockOffset = trailingRangesOffset + sizeof(uint32_t);
+    static constexpr unsigned upperIndexOffset = firstBlockOffset + bytesInBlock;
 };
 
 class ClassTablePacker {
@@ -67,65 +67,65 @@ public:
 
     void pack()
     {
-        std::map<Block, uint32_t> numberOfBlock;
-        Vector<Vector<uint32_t>> blocksOfTable;
+        std::map<Block, uint32_t> blockNumber;
+        Vector<Vector<uint32_t>> tableBlocks;
         for (auto& table : m_tables) {
             Vector<uint32_t> blocks;
             for (auto& entry : table.entries) {
-                entry.block = numberOfBlock.emplace(entry.contents, static_cast<uint32_t>(numberOfBlock.size())).first->second;
+                entry.block = blockNumber.emplace(entry.contents, static_cast<uint32_t>(blockNumber.size())).first->second;
                 blocks.append(entry.block);
             }
             std::sort(blocks.begin(), blocks.end());
             blocks.shrink(std::unique(blocks.begin(), blocks.end()) - blocks.begin());
-            blocksOfTable.append(WTF::move(blocks));
+            tableBlocks.append(WTF::move(blocks));
         }
-        Vector<const Block*> contentsOfBlock;
-        contentsOfBlock.fill(nullptr, numberOfBlock.size());
-        for (auto& [contents, number] : numberOfBlock)
-            contentsOfBlock[number] = &contents;
+        Vector<const Block*> blockContents;
+        blockContents.fill(nullptr, blockNumber.size());
+        for (auto& [contents, number] : blockNumber)
+            blockContents[number] = &contents;
 
         constexpr uint32_t notInPool = std::numeric_limits<uint32_t>::max();
-        Vector<bool> isPlaced;
-        isPlaced.fill(false, m_tables.size());
+        Vector<bool> hasPlacement;
+        hasPlacement.fill(false, m_tables.size());
         for (size_t placed = 0; placed < m_tables.size();) {
             Vector<size_t> cluster;
-            Vector<uint32_t> placeInPool;
-            placeInPool.fill(notInPool, numberOfBlock.size());
+            Vector<uint32_t> poolOffsets;
+            poolOffsets.fill(notInPool, blockNumber.size());
             Vector<uint32_t> pool;
             size_t sizeOfFrames = 0;
             while (true) {
                 size_t best = notFound;
-                size_t newBlocksOfBest = 0;
+                size_t bestNewBlockCount = 0;
                 for (size_t i = 0; i < m_tables.size(); ++i) {
-                    if (isPlaced[i])
+                    if (hasPlacement[i])
                         continue;
                     size_t newBlocks = 0;
-                    for (uint32_t block : blocksOfTable[i])
-                        newBlocks += placeInPool[block] == notInPool;
+                    for (uint32_t block : tableBlocks[i])
+                        newBlocks += poolOffsets[block] == notInPool;
                     if (!cluster.isEmpty() && sizeOfFrames + m_tables[i].frame.size() + (pool.size() + newBlocks) * ClassTableLayout::bytesInBlock > maxClusterSize)
                         continue;
                     bool isBetter = cluster.isEmpty()
-                        ? best == notFound || blocksOfTable[i].size() > blocksOfTable[best].size()
-                        : best == notFound || newBlocks * blocksOfTable[best].size() < newBlocksOfBest * blocksOfTable[i].size();
+                        ? best == notFound || tableBlocks[i].size() > tableBlocks[best].size()
+                        : best == notFound || newBlocks * tableBlocks[best].size() < bestNewBlockCount * tableBlocks[i].size();
                     if (isBetter) {
                         best = i;
-                        newBlocksOfBest = newBlocks;
+                        bestNewBlockCount = newBlocks;
                     }
                 }
                 if (best == notFound)
                     break;
-                isPlaced[best] = true;
+                hasPlacement[best] = true;
                 ++placed;
                 cluster.append(best);
                 sizeOfFrames += m_tables[best].frame.size();
-                for (uint32_t block : blocksOfTable[best]) {
-                    if (placeInPool[block] == notInPool) {
-                        placeInPool[block] = pool.size();
+                for (uint32_t block : tableBlocks[best]) {
+                    if (poolOffsets[block] == notInPool) {
+                        poolOffsets[block] = pool.size();
                         pool.append(block);
                     }
                 }
             }
-            layOutCluster(cluster, pool, placeInPool, contentsOfBlock);
+            layOutCluster(cluster, pool, poolOffsets, blockContents);
         }
     }
 
@@ -170,10 +170,10 @@ private:
     {
         if (bytes.size() < sizeof(int16_t) || bytes.size() % sizeof(uint32_t))
             return false;
-        int16_t wordsOfIndex = read<int16_t>(bytes, 0);
-        size_t pages = static_cast<size_t>(wordsOfIndex) * 2;
+        int16_t indexWordCount = read<int16_t>(bytes, 0);
+        size_t pages = static_cast<size_t>(indexWordCount) * 2;
         size_t sizeOfIndex = pages * sizeof(int16_t);
-        if (wordsOfIndex <= 0 || pages > maxPages || sizeOfIndex >= bytes.size())
+        if (indexWordCount <= 0 || pages > maxPages || sizeOfIndex >= bytes.size())
             return false;
         for (size_t page = 0; page < pages; ++page) {
             int16_t value = read<int16_t>(bytes, page * sizeof(int16_t));
@@ -192,19 +192,19 @@ private:
 
     static bool parseForRoutine(std::span<const uint8_t> bytes, Table& table)
     {
-        if (bytes.size() < ClassTableLayout::restOfIndexOffset || bytes.size() % sizeof(uint32_t))
+        if (bytes.size() < ClassTableLayout::upperIndexOffset || bytes.size() % sizeof(uint32_t))
             return false;
         size_t limit = read<uint32_t>(bytes, ClassTableLayout::limitOffset);
-        size_t rangesBehind = read<uint32_t>(bytes, ClassTableLayout::rangesBehindOffset);
+        size_t trailingRanges = read<uint32_t>(bytes, ClassTableLayout::trailingRangesOffset);
         size_t pages = limit + limit % 2;
         if (limit < ClassTableLayout::firstSurrogatePage || pages > maxPages)
             return false;
-        size_t endOfIndex = ClassTableLayout::restOfIndexOffset + (pages - ClassTableLayout::firstSurrogatePage) * sizeof(int16_t);
-        size_t endOfBlocks = rangesBehind ? rangesBehind : bytes.size();
+        size_t endOfIndex = ClassTableLayout::upperIndexOffset + (pages - ClassTableLayout::firstSurrogatePage) * sizeof(int16_t);
+        size_t endOfBlocks = trailingRanges ? trailingRanges : bytes.size();
         if (endOfIndex > endOfBlocks || endOfBlocks > bytes.size())
             return false;
         for (size_t page = 0; page < pages; ++page) {
-            size_t offsetInFrame = page < ClassTableLayout::firstSurrogatePage ? page * sizeof(int16_t) : ClassTableLayout::restOfIndexOffset + (page - ClassTableLayout::firstSurrogatePage) * sizeof(int16_t);
+            size_t offsetInFrame = page < ClassTableLayout::firstSurrogatePage ? page * sizeof(int16_t) : ClassTableLayout::upperIndexOffset + (page - ClassTableLayout::firstSurrogatePage) * sizeof(int16_t);
             int64_t word = static_cast<int64_t>(read<int16_t>(bytes, offsetInFrame)) + page * ClassTableLayout::wordsInBlock;
             if (word * sizeof(uint32_t) == ClassTableLayout::firstBlockOffset)
                 continue;
@@ -214,15 +214,15 @@ private:
             table.entries.append(entry);
         }
         table.frame.append(bytes.first(endOfIndex));
-        if (rangesBehind) {
+        if (trailingRanges) {
             uint32_t movedTo = endOfIndex;
-            memcpy(table.frame.mutableSpan().data() + ClassTableLayout::rangesBehindOffset, &movedTo, sizeof(movedTo));
-            table.frame.append(bytes.subspan(rangesBehind));
+            memcpy(table.frame.mutableSpan().data() + ClassTableLayout::trailingRangesOffset, &movedTo, sizeof(movedTo));
+            table.frame.append(bytes.subspan(trailingRanges));
         }
         return true;
     }
 
-    void layOutCluster(const Vector<size_t>& cluster, const Vector<uint32_t>& pool, const Vector<uint32_t>& placeInPool, const Vector<const Block*>& contentsOfBlock)
+    void layOutCluster(const Vector<size_t>& cluster, const Vector<uint32_t>& pool, const Vector<uint32_t>& poolOffsets, const Vector<const Block*>& blockContents)
     {
         while (m_bytes.size() % sizeof(uint64_t))
             m_bytes.append(0);
@@ -233,11 +233,11 @@ private:
         size_t poolAt = m_bytes.size();
         m_bytes.grow(poolAt + pool.size() * ClassTableLayout::bytesInBlock);
         for (size_t place = 0; place < pool.size(); ++place)
-            memcpy(m_bytes.mutableSpan().data() + poolAt + place * ClassTableLayout::bytesInBlock, contentsOfBlock[pool[place]]->data(), ClassTableLayout::bytesInBlock);
+            memcpy(m_bytes.mutableSpan().data() + poolAt + place * ClassTableLayout::bytesInBlock, blockContents[pool[place]]->data(), ClassTableLayout::bytesInBlock);
         for (size_t i : cluster) {
             auto& table = m_tables[i];
             for (auto& entry : table.entries) {
-                int64_t word = static_cast<int64_t>(poolAt + placeInPool[entry.block] * ClassTableLayout::bytesInBlock - table.offset) / static_cast<int64_t>(sizeof(uint32_t));
+                int64_t word = static_cast<int64_t>(poolAt + poolOffsets[entry.block] * ClassTableLayout::bytesInBlock - table.offset) / static_cast<int64_t>(sizeof(uint32_t));
                 int64_t value = word - static_cast<int64_t>(entry.page) * ClassTableLayout::wordsInBlock;
                 RELEASE_ASSERT(value == static_cast<int16_t>(value));
                 int16_t encoded = static_cast<int16_t>(value);

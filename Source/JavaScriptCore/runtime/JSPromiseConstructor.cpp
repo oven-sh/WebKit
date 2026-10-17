@@ -119,7 +119,6 @@ JSC_DEFINE_HOST_FUNCTION(callPromise, (JSGlobalObject* globalObject, CallFrame*)
     return throwVMTypeError(globalObject, scope, "Cannot call a constructor Promise without |new|"_s);
 }
 
-// `Promise` of builtins/PromiseConstructor.js.
 JSC_DEFINE_HOST_FUNCTION(constructPromise, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

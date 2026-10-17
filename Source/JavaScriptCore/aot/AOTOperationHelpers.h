@@ -15,10 +15,10 @@
 namespace JSC { namespace AOT {
 
 ALWAYS_INLINE FunctionRef caller(Instance* instance, CallFrame* callFrame) { return FunctionRef::at(instance, removeCodePtrTag(callFrame->rawReturnPC())); }
-ALWAYS_INLINE CallFrame* frameOfSite(Instance* instance, CallFrame* callFrame)
+ALWAYS_INLINE CallFrame* siteFrame(Instance* instance, CallFrame* callFrame)
 {
     FunctionRef function = caller(instance, callFrame);
-    return function.info().isTyped && typedFunctionStandsForNoFunction(function.info().typedFunction()) ? callFrame->callerFrame() : callFrame;
+    return function.info().isTyped && typedFunctionIsSynthetic(function.info().typedFunction()) ? callFrame->callerFrame() : callFrame;
 }
 ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* callFrame)
 {
@@ -117,10 +117,10 @@ inline NEVER_INLINE void countNamedAccess(Instance* instance, const char* operat
     auto& table = runtimeTable(vm);
     for (const char* detail : { access.key, access.receiver, access.place })
         table.countOperation(operation, detail);
-    table.noteGuest("named-access", makeString(StringView::fromLatin1(operation), ' ', StringView::fromLatin1(access.key), ' ', StringView::fromLatin1(access.receiver), access.className.isEmpty() ? ""_s : ":"_s, access.className, ' ', StringView::fromLatin1(access.place)), { });
+    table.recordSample("named-access", makeString(StringView::fromLatin1(operation), ' ', StringView::fromLatin1(access.key), ' ', StringView::fromLatin1(access.receiver), access.className.isEmpty() ? ""_s : ":"_s, access.className, ' ', StringView::fromLatin1(access.place)), { });
 }
 
-ALWAYS_INLINE void noteNamedAccess(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
+ALWAYS_INLINE void recordNamedAccess(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
 {
     if (Options::useAOTOperationCounters()) [[unlikely]]
         countNamedAccess(instance, operation, base, key, name);
@@ -139,16 +139,16 @@ inline NEVER_INLINE void countLookup(Instance* instance, const char* operation, 
         return;
     }
     uint64_t shape = base.isCell() ? base.asCell()->structureID().bits() : 0;
-    if (table.noteLookup(operation, shape, name)) {
+    if (table.recordLookup(operation, shape, name)) {
         table.countOperation(operation, "new-pair");
         return;
     }
     table.countOperation(operation, "pair-again");
     const char* primitive = base.isString() ? "string" : base.isSymbol() ? "symbol" : base.isNumber() ? "number" : base.isBoolean() ? "boolean" : base.isBigInt() ? "bigint" : "";
-    table.noteGuest("looked-up-again", makeString(StringView::fromLatin1(operation), ' ', StringView::fromLatin1(access.receiver), ':', access.className.isEmpty() ? StringView::fromLatin1(primitive) : StringView(access.className), ' ', StringView::fromLatin1(access.place), " ."_s, StringView(name)), String());
+    table.recordSample("looked-up-again", makeString(StringView::fromLatin1(operation), ' ', StringView::fromLatin1(access.receiver), ':', access.className.isEmpty() ? StringView::fromLatin1(primitive) : StringView(access.className), ' ', StringView::fromLatin1(access.place), " ."_s, StringView(name)), String());
 }
 
-ALWAYS_INLINE void noteLookup(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
+ALWAYS_INLINE void recordLookup(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
 {
     if (Options::useAOTOperationCounters()) [[unlikely]]
         countLookup(instance, operation, base, key, name);
@@ -262,7 +262,7 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
         return;
     data->slotEpoch++;
     if (!data->hasBeenFilledSinceLastCollection)
-        data->noteFilled();
+        data->didFill();
 }
 ALWAYS_INLINE const Identifier& identifierAt(Instance* instance, CallFrame* callFrame, unsigned index) { UNUSED_PARAM(callFrame); return instance->program->identifierAsIdentifier(index); }
 template<typename CellType>

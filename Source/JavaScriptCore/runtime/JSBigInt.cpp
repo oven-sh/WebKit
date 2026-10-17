@@ -7831,7 +7831,6 @@ static ALWAYS_INLINE unsigned LEGACY_NODELETE computeHash(JSBigInt::Digit* digit
     WTF::add(hasher, sign);
     for (unsigned index = 0; index < length; ++index)
         WTF::add(hasher, digits[index]);
-    // m_hash is where a typed AOT object has its shape word, whose top bit and bit 23 are set: see offsetOfShapeWord in AOTTypedData.h.
     return hasher.hash() & 0x7f7fffff;
 }
 

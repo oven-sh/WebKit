@@ -91,14 +91,14 @@ bool JSString::equalSlowCase(JSGlobalObject* globalObject, JSString* other) cons
 {
 #if USE(BUN_JSC_ADDITIONS)
     UNUSED_PARAM(globalObject);
-    return equalMakingRopesFlat(other);
+    return equalResolvingRopes(other);
 #else
     return equalInline(globalObject, other);
 #endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool JSString::equalMakingRopesFlat(JSString* other) const
+bool JSString::equalResolvingRopes(JSString* other) const
 {
     if (length() != other->length())
         return false;

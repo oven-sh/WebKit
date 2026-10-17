@@ -18,8 +18,8 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
 {
     BitVector isHandler(m_function.blocks.size());
     BitVector isRefused(m_function.blocks.size());
-    BitVector hasUnmarkedClaim(m_function.blocks.size());
-    Vector<std::pair<ValueID, unsigned>, 4> markedClaims;
+    BitVector hasUnflaggedClaim(m_function.blocks.size());
+    Vector<std::pair<ValueID, unsigned>, 4> flaggedClaims;
     for (BlockID id : order) {
         auto& block = m_function.at(id);
         if (block.terminator.kind == TerminatorKind::Throw && !block.terminator.targets.isEmpty())
@@ -31,16 +31,16 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
         bool isClaim = !block.values.isEmpty() && target.arguments.isEmpty();
         if (isClaim) {
             auto& last = m_function.at(block.values.last());
-            isClaim = last.opcode == Opcode::Cast && last.castReason() == CastReason::Claim && !last.string() && (m_function.isGenericEntrypoint() || m_function.has(Format::FunctionIsHiddenInStackTraces) || last.notesMisfitAtCaller() || !claimMayMakeObjects(m_program, m_function, last));
-            if (last.notesMisfitAtCaller())
-                markedClaims.append({ block.values.last(), target.block.index() });
+            isClaim = last.opcode == Opcode::Cast && last.castReason() == CastReason::Claim && !last.string() && (m_function.isGenericEntrypoint() || m_function.has(Format::FunctionIsHiddenInStackTraces) || last.reportsMismatchAtCaller() || !claimMayAllocate(m_program, m_function, last));
+            if (last.reportsMismatchAtCaller())
+                flaggedClaims.append({ block.values.last(), target.block.index() });
             else
-                hasUnmarkedClaim.set(target.block.index());
+                hasUnflaggedClaim.set(target.block.index());
         }
         if (!isClaim)
             isRefused.set(target.block.index());
     }
-    if (!markedClaims.isEmpty()) {
+    if (!flaggedClaims.isEmpty()) {
         BitVector isUsed(m_function.values.size());
         auto use = [&](ValueID child) {
             isUsed.set(child.index());
@@ -56,7 +56,7 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
                     use(argument);
             }
         }
-        for (auto [claim, handler] : markedClaims) {
+        for (auto [claim, handler] : flaggedClaims) {
             if (isUsed.get(claim.index()))
                 isRefused.set(handler);
         }
@@ -64,22 +64,22 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
     isHandler.exclude(isRefused);
     if (isHandler.isEmpty() || Options::auditAOTTypedAssertions())
         return;
-    BitVector isParameterOfEntry(m_function.values.size());
+    BitVector isEntryParameter(m_function.values.size());
     for (ValueID parameter : m_function.blocks[0].parameters)
-        isParameterOfEntry.set(parameter.index());
+        isEntryParameter.set(parameter.index());
     for (unsigned index : isHandler) {
         auto& handler = m_function.blocks[index];
-        bool isPassThrough = handler.terminator.kind == TerminatorKind::Jump && handler.values.size() == 1 && handler.terminator.targets[0].arguments.isEmpty() && !hasUnmarkedClaim.get(index);
+        bool isPassThrough = handler.terminator.kind == TerminatorKind::Jump && handler.values.size() == 1 && handler.terminator.targets[0].arguments.isEmpty() && !hasUnflaggedClaim.get(index);
         if (!handler.parameters.isEmpty() || handler.values.isEmpty() || m_function.at(handler.values[0]).opcode != Opcode::CatchValue || (handler.terminator.kind != TerminatorKind::Return && !isPassThrough) || exceptionCaughtIn(BlockID(index)))
             continue;
-        BitVector isThere = isParameterOfEntry;
+        BitVector isDefined = isEntryParameter;
         bool isClosed = true;
         auto look = [&](ValueID child) {
-            isClosed &= isThere.get(child.index());
+            isClosed &= isDefined.get(child.index());
         };
         for (unsigned i = 1; i < handler.values.size(); ++i) {
             m_function.at(handler.values[i]).forEachChild(look);
-            isThere.set(handler.values[i].index());
+            isDefined.set(handler.values[i].index());
         }
         if (handler.terminator.value)
             look(handler.terminator.value);
@@ -103,32 +103,33 @@ void Lowering::define(ValueID id, Operand operand)
 
 Operand Lowering::get(ValueID id)
 {
+    if (!m_deferredLiterals.isEmpty()) [[unlikely]] {
+        if (auto* literal = deferredLiteralFor(id); literal && !literal->isBeingMaterialized)
+            return materializeDeferredLiteral(*literal);
+    }
     for (size_t i = m_assumptions.size(); i--;) {
         if (m_assumptions[i].value == id)
             return m_assumptions[i].operand;
     }
-    if (isFetchedWhereNeeded(id)) {
+    if (isLazilyFetched(id)) {
         auto& fetched = m_fetchedLeaves.add(id.index(), std::pair<LBasicBlock, Operand> { }).iterator->value;
         if (fetched.first != m_out.m_block) {
             auto& value = m_function.at(id);
-            // The fetch may end the block.
-            CellPointer cell = value.opcode == Opcode::String ? stringConstant(value.string()) : value.opcode == Opcode::BuiltinFunction ? builtinCell(m_builtins.cellOf(value.builtin())) : concatenateWhereNeeded(value);
+            CellPointer cell = value.opcode == Opcode::String ? stringConstant(value.string()) : value.opcode == Opcode::BuiltinFunction ? builtinCell(m_builtins.cellOf(value.builtin())) : concatenateIfNeeded(value);
             Operand operand = convert(cell, m_program.at(value.type), value.rep);
             if (operand.rep == Rep::Cell)
-                m_typeOfCell.add(operand.value, value.type);
+                m_cellTypes.add(operand.value, value.type);
             m_fetchedLeaves.set(id.index(), std::pair { m_out.m_block, operand });
             return operand;
         }
         return fetched.second;
     }
     Operand operand = m_values[id.index()];
-    // As typeOf() has it.
     auto& declared = m_program.at(m_function.at(id).type);
-    if (!declared.mayBeUndefinedOrNull() || declared.isUndefinedOrNull() || !hasPassedNilTest(id))
+    if (!declared.mayBeUndefinedOrNull() || declared.isUndefinedOrNull() || !hasPassedNullishTest(id))
         return operand;
-    // It is kept as its type is: whoever goes by typeOf() finds what it expects.
     if (operand.rep != Rep::JSValue) {
-        auto& narrowed = withoutNil(m_function.at(id).type);
+        auto& narrowed = withoutNullish(m_function.at(id).type);
         return repOf(narrowed) == operand.rep ? operand : convert(operand, narrowed, repOf(narrowed));
     }
     if (Options::validateAOTTypedFacts()) [[unlikely]] {
@@ -136,11 +137,11 @@ Operand Lowering::get(ValueID id)
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(isUndefinedOrNull(operand.as<Boxed>()).value(), rarely(doesNotHold), usually(continuation));
         m_out.appendTo(doesNotHold);
-        AOT_TYPED_OPERATION(FactDoesNotHold, operand.as<Boxed>(), word32(m_id.index()), word32(id.index()));
+        AOT_TYPED_OPERATION(FactViolated, operand.as<Boxed>(), word32(m_id.index()), word32(id.index()));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
     }
-    auto& narrowed = withoutNil(m_function.at(id).type);
+    auto& narrowed = withoutNullish(m_function.at(id).type);
     if (repOf(narrowed) == Rep::Cell)
         return asCell(operand.as<Boxed>());
     return repOf(narrowed) == Rep::JSValue ? operand : convert(operand, narrowed, repOf(narrowed));
@@ -148,10 +149,10 @@ Operand Lowering::get(ValueID id)
 
 ValueID Lowering::exceptionCaughtIn(BlockID handler) const
 {
-    if (!m_program.passesExceptionsOn)
+    if (!m_program.propagatesExceptionObjects)
         return { };
     for (ValueID id : m_function.at(handler).values) {
-        if (m_function.at(id).yieldsExceptionItself())
+        if (m_function.at(id).catchesExceptionObject())
             return id;
     }
     return { };
@@ -163,7 +164,7 @@ bool Lowering::ignoresCaughtValue(BlockID handler)
     for (ValueID id : m_function.at(handler).values) {
         if (m_function.at(id).opcode != Opcode::CatchValue)
             continue;
-        if (numberOfUsesOf(id))
+        if (useCountOf(id))
             return false;
         catches = true;
     }
@@ -186,9 +187,9 @@ Boxed Lowering::catchException(BlockID handler)
 
 LBasicBlock Lowering::landingPadFor(const Target& handler)
 {
-    static constexpr unsigned maxLandingPadsLookedAt = 4;
+    static constexpr unsigned maxLandingPadsSearched = 4;
     auto& landingPads = m_landingPads.add(handler.block.index(), Vector<LandingPad, 2> { }).iterator->value;
-    for (size_t i = landingPads.size(); i-- && i + maxLandingPadsLookedAt >= landingPads.size();) {
+    for (size_t i = landingPads.size(); i-- && i + maxLandingPadsSearched >= landingPads.size();) {
         if (landingPads[i].handler->arguments == handler.arguments && dominates(landingPads[i].source, m_currentBlockID)) {
             m_isCurrentLandingPadShared = true;
             return landingPads[i].block;
@@ -198,10 +199,10 @@ LBasicBlock Lowering::landingPadFor(const Target& handler)
     return landingPads.last().block;
 }
 
-void Lowering::didLowerWatchedOperation()
+void Lowering::didLowerOperationWithHandler()
 {
     RELEASE_ASSERT(!m_callSitesAwaitingLandingPad);
-    const Target* handler = std::exchange(m_watchingHandler, nullptr);
+    const Target* handler = std::exchange(m_activeHandler, nullptr);
     LBasicBlock landingPad = std::exchange(m_currentLandingPad, nullptr);
     if (!landingPad || std::exchange(m_isCurrentLandingPadShared, false))
         return;
@@ -209,7 +210,7 @@ void Lowering::didLowerWatchedOperation()
     m_out.appendTo(landingPad);
     LBasicBlock target = edgeTo(*handler, false);
     if (LValue caught = m_caughtValues.get(handler->block.index())) {
-        target = m_blocksThatCatch.ensure(handler->block.index(), [&] {
+        target = m_catchBlocks.ensure(handler->block.index(), [&] {
             LBasicBlock edge = m_out.m_block;
             LBasicBlock block = newColdBlock();
             m_out.appendTo(block);

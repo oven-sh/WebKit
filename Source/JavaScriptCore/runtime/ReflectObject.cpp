@@ -159,8 +159,8 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDefineProperty, (JSGlobalObject* globalObj
     JSObject* targetObject = asObject(target);
     bool isDefined = targetObject->methodTable()->defineOwnProperty(targetObject, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!isDefined && targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true))
-        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->wordsOfRefusalByLock(vm, propertyName.impl(), UnconfigurablePropertyChangeAccessMechanismError)));
+    if (!isDefined && targetObject->recordIfOnlyLockRejects(vm, propertyName.impl(), true))
+        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->lockViolationMessage(vm, propertyName.impl(), UnconfigurablePropertyChangeAccessMechanismError)));
     return JSValue::encode(jsBoolean(isDefined));
 }
 
@@ -255,11 +255,11 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSet, (JSGlobalObject* globalObject, CallFr
     // Do not raise any readonly errors that happen in strict mode.
     bool shouldThrowIfCantSet = false;
     PutPropertySlot slot(receiver, shouldThrowIfCantSet, PutPropertySlot::ReflectSet);
-    bool isIndexOfImmutableObject = receiver == target && targetObject->structure()->hasImmutableProperties() && parseIndex(propertyName);
-    bool isStored = !isIndexOfImmutableObject && targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot);
+    bool isImmutableObjectIndex = receiver == target && targetObject->structure()->hasImmutableProperties() && parseIndex(propertyName);
+    bool isStored = !isImmutableObjectIndex && targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!isStored && receiver == target && targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true))
-        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->wordsOfRefusalByLock(vm, propertyName.impl(), ReadonlyPropertyWriteError)));
+    if (!isStored && receiver == target && targetObject->recordIfOnlyLockRejects(vm, propertyName.impl(), true))
+        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->lockViolationMessage(vm, propertyName.impl(), ReadonlyPropertyWriteError)));
     return JSValue::encode(jsBoolean(isStored));
 }
 
@@ -284,8 +284,8 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObj
     bool wouldInheritFromItself = false;
     for (JSValue next = proto; !didSetPrototype && next.isObject() && !wouldInheritFromItself && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect())
         wouldInheritFromItself = asObject(next) == object;
-    if (!didSetPrototype && !wouldInheritFromItself && object != globalObject->objectPrototype() && object->noteIfRefusedByLockAlone(vm, nullptr, true))
-        return JSValue::encode(throwTypeError(globalObject, scope, object->wordsOfRefusalByLock(vm, nullptr, ReadonlyPropertyWriteError)));
+    if (!didSetPrototype && !wouldInheritFromItself && object != globalObject->objectPrototype() && object->recordIfOnlyLockRejects(vm, nullptr, true))
+        return JSValue::encode(throwTypeError(globalObject, scope, object->lockViolationMessage(vm, nullptr, ReadonlyPropertyWriteError)));
     return JSValue::encode(jsBoolean(didSetPrototype));
 }
 

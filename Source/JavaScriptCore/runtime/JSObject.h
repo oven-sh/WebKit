@@ -401,7 +401,7 @@ public:
         checkOffset(offset, structure->inlineCapacity());
 #if ENABLE(AOT)
         if (offset == invalidOffset && structure->hasImmutableShape()) [[unlikely]]
-            return getDirectOfCompiledObject(vm, propertyName, nullptr);
+            return getDirectFromCompiledObject(vm, propertyName, nullptr);
 #endif
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
@@ -413,7 +413,7 @@ public:
         checkOffset(offset, structure->inlineCapacity());
 #if ENABLE(AOT)
         if (offset == invalidOffset && structure->hasImmutableShape()) [[unlikely]]
-            return getDirectOfCompiledObject(vm, propertyName, &attributes);
+            return getDirectFromCompiledObject(vm, propertyName, &attributes);
 #endif
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
@@ -546,7 +546,7 @@ public:
     // Returns false, and changes nothing, for a class with write hooks of its own that do not check for this: ProxyObject, typed
     // arrays, DirectArguments and ScopedArguments, and any class outside JavaScriptCore that overrides a write hook.
     JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&);
-    JS_EXPORT_PRIVATE bool fixAndMakePropertiesImmutable(VM&);
+    JS_EXPORT_PRIVATE bool lockAndMakePropertiesImmutable(VM&);
     bool makePropertiesImmutable(VM&, TransitionKind);
     JS_EXPORT_PRIVATE bool hasImmutableProperties() const;
     void materializeLazyOwnProperties(VM&);
@@ -591,18 +591,9 @@ public:
 
     inline void setStructure(VM&, Structure*); // Defined in StructureCreateInlines.h
 
-    // For the intrinsics (JSGlobalObject::makeIntrinsicsImmutable()). The properties the object has become non-configurable and, unless
-    // they are accessors, read-only; so does an entry of its class's static table when it is reified, and before that it is treated
-    // as if it were. Its prototype stays the one it has, and it gets no property under a name that it inherits from another such
-    // object. An object that inherits from it can still be assigned a property of its own under such a name.
-    enum class FixedObject : bool { StaysExtensible, BecomesNonExtensible };
-    JS_EXPORT_PRIVATE void fixProperties(VM&, FixedObject);
+    enum class LockedObjectExtensibility : bool { StaysExtensible, BecomesNonExtensible };
+    JS_EXPORT_PRIVATE void lockProperties(VM&, LockedObjectExtensibility);
     JS_EXPORT_PRIVATE bool inheritsImmutableProperty(VM&, PropertyName);
-    // With immutable intrinsics, ArrayType says that an array is as the engine makes them: it inherits from Array.prototype directly, has
-    // no property of its own under a name it inherits, and no element that is an accessor. One that is about to be given any of these
-    // is of DerivedArrayType from then on, and keeps its elements in ArrayStorage, which it never leaves: code that stores or reads
-    // elements in place by their shape does not take it for what it was. What a class that extends Array makes is of DerivedArrayType from
-    // the start, and keeps its elements as any array does: nothing has taken it for a plain array.
     JS_EXPORT_PRIVATE void becomeDerivedArray(VM&);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
@@ -610,24 +601,22 @@ public:
     JS_EXPORT_PRIVATE ASCIILiteral throwImmutableShapeError(VM&);
 #endif
 #if ENABLE(AOT)
-    // What getDirect() and putDirect() come to for an AOT::Typed::Object, whose properties its Structure does not list. For any other object
-    // of an immutable shape: nothing, and the error.
-    JS_EXPORT_PRIVATE JSValue getDirectOfCompiledObject(VM&, PropertyName, unsigned* attributes) const;
+    JS_EXPORT_PRIVATE JSValue getDirectFromCompiledObject(VM&, PropertyName, unsigned* attributes) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
-    JS_EXPORT_PRIVATE std::optional<bool> getOwnPropertySlotOfCompiledObject(PropertyName, PropertySlot&);
+    JS_EXPORT_PRIVATE std::optional<bool> getOwnPropertySlotFromCompiledObject(PropertyName, PropertySlot&);
     JS_EXPORT_PRIVATE bool reifyIfSlimClosure(VM&);
-    JS_EXPORT_PRIVATE void noteRefusalByLock(VM&, UniquedStringImpl* name = nullptr, ASCIILiteral kind = { }, bool isAnswered = false);
-    JS_EXPORT_PRIVATE bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl* name, bool isAnswered, bool isDelete = false);
-    JS_EXPORT_PRIVATE String wordsOfRefusalByLock(VM&, UniquedStringImpl* name, ASCIILiteral otherwise);
-    JS_EXPORT_PRIVATE bool isRefusedByLockAlone(VM&, UniquedStringImpl* name, JSValue& held);
-    JS_EXPORT_PRIVATE void fixAsPrototypeOfClass(JSGlobalObject*, std::span<const Identifier> replaceable, bool constructorMayBeReplaced);
+    JS_EXPORT_PRIVATE void recordLockViolation(VM&, UniquedStringImpl* name = nullptr, ASCIILiteral kind = { }, bool failsSilently = false);
+    JS_EXPORT_PRIVATE bool recordIfOnlyLockRejects(VM&, UniquedStringImpl* name, bool failsSilently, bool isDelete = false);
+    JS_EXPORT_PRIVATE String lockViolationMessage(VM&, UniquedStringImpl* name, ASCIILiteral otherwise);
+    JS_EXPORT_PRIVATE bool isRejectedOnlyByLock(VM&, UniquedStringImpl* name, JSValue& held);
+    JS_EXPORT_PRIVATE void lockAsClassPrototype(JSGlobalObject*, std::span<const Identifier> replaceable, bool constructorMayBeReplaced);
     JS_EXPORT_PRIVATE bool becomeGuarded(VM&);
     bool isLockedBuiltin() const { return structure()->hasImmutableProperties() || structure()->inheritorsMayOverrideReadOnlyProperties() || isGlobalObject() || type() == GlobalProxyType; }
 #else
-    void noteRefusalByLock(VM&, UniquedStringImpl* = nullptr, ASCIILiteral = { }, bool = false) { }
-    bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl*, bool, bool = false) { return false; }
-    String wordsOfRefusalByLock(VM&, UniquedStringImpl*, ASCIILiteral otherwise) { return otherwise; }
-    bool isRefusedByLockAlone(VM&, UniquedStringImpl*, JSValue&) { return false; }
+    void recordLockViolation(VM&, UniquedStringImpl* = nullptr, ASCIILiteral = { }, bool = false) { }
+    bool recordIfOnlyLockRejects(VM&, UniquedStringImpl*, bool, bool = false) { return false; }
+    String lockViolationMessage(VM&, UniquedStringImpl*, ASCIILiteral otherwise) { return otherwise; }
+    bool isRejectedOnlyByLock(VM&, UniquedStringImpl*, JSValue&) { return false; }
     bool isLockedBuiltin() const { return false; }
 #endif
 
@@ -698,7 +687,7 @@ public:
     void ensureWritable(VM& vm); // Defined in JSObjectInlines.h
     JS_EXPORT_PRIVATE ContiguousJSValues convertTypedContiguousToContiguous(VM&);
     JS_EXPORT_PRIVATE bool tryConvertContiguousToTypedContiguous(VM&);
-    JS_EXPORT_PRIVATE bool tryGrowTypedContiguous(VM&, unsigned leastCapacity);
+    JS_EXPORT_PRIVATE bool tryGrowTypedContiguous(VM&, unsigned minCapacity);
     JS_EXPORT_PRIVATE bool tryPutTypedContiguousIndex(VM&, unsigned index, JSValue);
     static JSValue decodeTypedElement(uint32_t); // Defined in JSObjectInlines.h
     static std::optional<uint32_t> tryEncodeTypedElement(JSValue); // Defined in JSObjectInlines.h

@@ -50,20 +50,20 @@ struct Body {
     Vector<Reference> references;
 };
 
-struct PlacedReference {
+struct ResolvedReference {
     uint32_t offset;
-    bool isOfWideBody;
+    bool isInWideBody;
     uint32_t index;
     uint64_t identity;
 };
 
 struct Result {
     Vector<uint8_t> bytes;
-    Vector<PlacedReference> references;
+    Vector<ResolvedReference> references;
     uint32_t entryForWideSubjects { 0 };
 };
 
-enum class Kind : uint8_t { Plain, ConditionalJump, Jump, Return, IndirectJump, AddressOfCode, Call, Reference, Fill, JumpIfWide };
+enum class Kind : uint8_t { Plain, ConditionalJump, Jump, Return, IndirectJump, CodeAddress, Call, Reference, Fill, JumpIfWide };
 
 struct Unit {
     uint32_t offset { 0 };
@@ -408,7 +408,7 @@ inline bool computeEffects(const uint8_t* p, size_t size, Effects& result)
     bool hasModRM = true;
     bool isAddressOnly = false;
     auto bit = [](unsigned reg) -> uint16_t { return static_cast<uint16_t>(1u << reg); };
-    unsigned middleOfModRM = i < size ? (p[i] >> 3) & 7 : 0;
+    unsigned modRMReg = i < size ? (p[i] >> 3) & 7 : 0;
     if (opcode < 0x40) {
         unsigned operation = opcode >> 3;
         bool compares = operation == 7;
@@ -512,12 +512,12 @@ inline bool computeEffects(const uint8_t* p, size_t size, Effects& result)
             [[fallthrough]];
         case 0x81:
         case 0x83:
-            lastDoes = middleOfModRM == 7 ? Does::Reads : Does::ReadsAndWrites;
-            if (opcode == 0x83 && middleOfModRM == 1 && p[size - 1] == 0xff && !hasOperandSizePrefix)
+            lastDoes = modRMReg == 7 ? Does::Reads : Does::ReadsAndWrites;
+            if (opcode == 0x83 && modRMReg == 1 && p[size - 1] == 0xff && !hasOperandSizePrefix)
                 lastDoes = Does::Writes;
             result.setsAllFlags = true;
             result.touchesFlags = true;
-            result.readsFlags = middleOfModRM == 2 || middleOfModRM == 3;
+            result.readsFlags = modRMReg == 2 || modRMReg == 3;
             break;
         case 0x84:
             isByte = true;
@@ -550,7 +550,7 @@ inline bool computeEffects(const uint8_t* p, size_t size, Effects& result)
             isByte = true;
             [[fallthrough]];
         case 0xc7:
-            if (middleOfModRM)
+            if (modRMReg)
                 return false;
             lastDoes = Does::Writes;
             break;
@@ -563,14 +563,14 @@ inline bool computeEffects(const uint8_t* p, size_t size, Effects& result)
             isByte = true;
             [[fallthrough]];
         case 0xf7:
-            if (middleOfModRM > 3)
+            if (modRMReg > 3)
                 return false;
-            lastDoes = middleOfModRM < 2 ? Does::Reads : Does::ReadsAndWrites;
-            result.setsAllFlags = middleOfModRM != 2;
-            result.touchesFlags = middleOfModRM != 2;
+            lastDoes = modRMReg < 2 ? Does::Reads : Does::ReadsAndWrites;
+            result.setsAllFlags = modRMReg != 2;
+            result.touchesFlags = modRMReg != 2;
             break;
         case 0xff:
-            if (middleOfModRM > 1)
+            if (modRMReg > 1)
                 return false;
             lastDoes = Does::ReadsAndWrites;
             result.touchesFlags = true;
@@ -581,7 +581,7 @@ inline bool computeEffects(const uint8_t* p, size_t size, Effects& result)
             result.touchesFlags = true;
             break;
         case 0x1ba:
-            if (middleOfModRM != 4)
+            if (modRMReg != 4)
                 return false;
             lastDoes = Does::Reads;
             result.touchesFlags = true;
@@ -694,7 +694,7 @@ inline uint64_t hashOf(const uint8_t* bytes, size_t size, uint64_t seed)
     return hash;
 }
 
-inline uint64_t hashOfContents(const uint8_t* bytes, size_t size, uint64_t seed)
+inline uint64_t contentHash(const uint8_t* bytes, size_t size, uint64_t seed)
 {
     uint64_t hash = seed ^ size * 0x9e3779b97f4a7c15ull;
     size_t i = 0;
@@ -715,7 +715,7 @@ public:
     {
         m_body = &body;
         units.reserveInitialCapacity(body.size / 3);
-        m_identityOfUnit.reserveInitialCapacity(body.size / 3);
+        m_unitIdentities.reserveInitialCapacity(body.size / 3);
         Vector<int32_t> unitIndexAtOffset;
         unitIndexAtOffset.fill(-1, body.size + 1);
         size_t nextReference = 0;
@@ -765,8 +765,8 @@ public:
                     memcpy(&nextInstruction, body.bytes + at + 4, 4);
                 bool addsPagesNext = (nextInstruction & 0xbfc00000) == 0x91400000 && (nextInstruction & 0x1f) == (decoded.word & 0x1f) && ((nextInstruction >> 5) & 0x1f) == (decoded.word & 0x1f);
                 if (decoded.kind != Kind::Reference && addsPagesNext) {
-                    constexpr size_t reachOfAddressInstruction = 1 << 20;
-                    if (body.size >= reachOfAddressInstruction)
+                    constexpr size_t addressInstructionRange = 1 << 20;
+                    if (body.size >= addressInstructionRange)
                         return false;
                     int64_t pages = (nextInstruction >> 10) & 0xfff;
                     named += (nextInstruction & 0x40000000 ? -pages : pages) * 4096;
@@ -779,7 +779,7 @@ public:
                 bool isInside = named >= 0 && named < static_cast<int64_t>(body.size);
                 if (!isInside || (decoded.kind != Kind::Reference && !isAddress))
                     return false;
-                unit.kind = decoded.kind == Kind::Reference ? Kind::Call : Kind::AddressOfCode;
+                unit.kind = decoded.kind == Kind::Reference ? Kind::Call : Kind::CodeAddress;
                 target = named;
             } else if (decoded.kind == Kind::Jump || decoded.kind == Kind::ConditionalJump) {
                 if (named < 0 || named >= static_cast<int64_t>(body.size))
@@ -797,7 +797,7 @@ public:
             case Kind::ConditionalJump:
                 unit.key = 2 + static_cast<uint64_t>(unit.word) * 0x9e3779b97f4a7c15ull;
                 break;
-            case Kind::AddressOfCode:
+            case Kind::CodeAddress:
                 unit.key = 3 + static_cast<uint64_t>(unit.word) * 0x9e3779b97f4a7c15ull;
                 break;
             case Kind::Reference:
@@ -807,7 +807,7 @@ public:
             case Kind::ConditionalJump:
                 unit.key = 2 + unit.condition;
                 break;
-            case Kind::AddressOfCode:
+            case Kind::CodeAddress:
                 unit.key = hashOf(body.bytes + at, 3, 3);
                 break;
             case Kind::Reference:
@@ -823,7 +823,7 @@ public:
             if (unit.kind == Kind::Fill)
                 continue;
             unit.target = static_cast<int32_t>(target);
-            m_identityOfUnit.append(identity);
+            m_unitIdentities.append(identity);
             units.append(unit);
         }
         if (nextReference != body.references.size())
@@ -858,7 +858,7 @@ public:
 #else
         size_t compared = one.kind == Kind::Plain || one.kind == Kind::Return || one.kind == Kind::IndirectJump ? one.size : one.size - 4;
 #endif
-        return !memcmp(bytesOf(one), bytesOf(other), compared) && m_identityOfUnit[a] == m_identityOfUnit[b];
+        return !memcmp(bytesOf(one), bytesOf(other), compared) && m_unitIdentities[a] == m_unitIdentities[b];
     }
 
     void tidy()
@@ -902,10 +902,10 @@ public:
                 continue;
             static constexpr uint8_t loadsAddressIntoScratch[] = { 0x4c, 0x8d, 0x1d };
             if (unit.kind == Kind::Reference && unit.size == 7 && !memcmp(bytesOf(unit), loadsAddressIntoScratch, sizeof(loadsAddressIntoScratch))) {
-                if (scratchIsKnown && addressInScratch == m_identityOfUnit[i])
+                if (scratchIsKnown && addressInScratch == m_unitIdentities[i])
                     marks[i] |= isDropped;
                 scratchIsKnown = true;
-                addressInScratch = m_identityOfUnit[i];
+                addressInScratch = m_unitIdentities[i];
                 continue;
             }
             if (unit.hasScratchAsOperand || unit.kind == Kind::Reference || unit.kind == Kind::Call || endsBlock(unit.kind))
@@ -960,7 +960,7 @@ public:
             else
                 newIndex[i] = next;
         }
-        uint64_t* identities = m_identityOfUnit.mutableSpan().data();
+        uint64_t* identities = m_unitIdentities.mutableSpan().data();
         kept = 0;
         for (size_t i = 0; i < n; ++i) {
             if (marks[i] & isDropped)
@@ -974,7 +974,7 @@ public:
             ++kept;
         }
         units.shrink(kept);
-        m_identityOfUnit.shrink(kept);
+        m_unitIdentities.shrink(kept);
     }
 
 #if CPU(X86_64)
@@ -1047,7 +1047,7 @@ public:
                 }
                 break;
             case Kind::Plain:
-            case Kind::AddressOfCode:
+            case Kind::CodeAddress:
                 break;
             default:
                 return;
@@ -1150,7 +1150,7 @@ public:
             uint64_t liveOutputSlotsAtTakenAddresses = 0;
             uint64_t liveFrameSlotsAtTakenAddresses = 0;
             for (size_t i = 0; i < n; ++i) {
-                if (all[i].kind == Kind::AddressOfCode) {
+                if (all[i].kind == Kind::CodeAddress) {
                     liveRegistersAtTakenAddresses |= liveRegisters[all[i].target];
                     liveOutputSlotsAtTakenAddresses |= liveOutputSlots[all[i].target];
                     liveFrameSlotsAtTakenAddresses |= liveFrameSlots[all[i].target];
@@ -1242,13 +1242,13 @@ public:
             if (isRemoved[i])
                 continue;
             units[kept] = units[i];
-            m_identityOfUnit[kept] = m_identityOfUnit[i];
+            m_unitIdentities[kept] = m_unitIdentities[i];
             if (units[kept].target >= 0)
                 units[kept].target = newIndex[units[kept].target];
             ++kept;
         }
         units.shrink(kept);
-        m_identityOfUnit.shrink(kept);
+        m_unitIdentities.shrink(kept);
     }
 
     void optimizeLoops(unsigned maxLoopSize)
@@ -1303,7 +1303,7 @@ public:
             newIndex[i] = rebuiltUnits.size();
             if (next == rotatedLoops.size() || rotatedLoops[next] != i) {
                 rebuiltUnits.append(units[i]);
-                identities.append(m_identityOfUnit[i]);
+                identities.append(m_unitIdentities[i]);
                 continue;
             }
             ++next;
@@ -1314,7 +1314,7 @@ public:
             invertCondition(repeatedBranch);
             repeatedBranch.target = head + 2;
             rebuiltUnits.append(units[head]);
-            identities.append(m_identityOfUnit[head]);
+            identities.append(m_unitIdentities[head]);
             rebuiltUnits.append(repeatedBranch);
             identities.append(0);
             rebuiltUnits.append(out);
@@ -1325,48 +1325,48 @@ public:
                 unit.target = newIndex[unit.target];
         }
         units = WTF::move(rebuiltUnits);
-        m_identityOfUnit = WTF::move(identities);
+        m_unitIdentities = WTF::move(identities);
     }
 
     void placeBlocksAfterTheirPredecessors()
     {
         size_t n = units.size();
-        Vector<uint32_t> blockOfUnit;
-        blockOfUnit.fill(0, n);
+        Vector<uint32_t> unitBlocks;
+        unitBlocks.fill(0, n);
         Vector<std::pair<uint32_t, uint32_t>> blocks;
         for (size_t i = 0; i < n;) {
             size_t end = i;
             while (end + 1 < n && !endsBlock(units[end].kind))
                 ++end;
             for (size_t k = i; k <= end; ++k)
-                blockOfUnit[k] = blocks.size();
+                unitBlocks[k] = blocks.size();
             blocks.append(std::pair<uint32_t, uint32_t> { static_cast<uint32_t>(i), static_cast<uint32_t>(end + 1) });
             i = end + 1;
         }
         if (blocks.size() < 3)
             return;
-        Vector<bool> isPlaced;
-        isPlaced.fill(false, blocks.size());
+        Vector<bool> hasPlacement;
+        hasPlacement.fill(false, blocks.size());
         Vector<uint32_t> order;
         Vector<uint32_t> pendingBlocks;
         for (size_t first = 0; first < blocks.size(); ++first) {
-            if (isPlaced[first])
+            if (hasPlacement[first])
                 continue;
             pendingBlocks.append(first);
             while (!pendingBlocks.isEmpty()) {
                 uint32_t block = pendingBlocks.last();
                 pendingBlocks.removeLast();
-                if (isPlaced[block])
+                if (hasPlacement[block])
                     continue;
-                isPlaced[block] = true;
+                hasPlacement[block] = true;
                 order.append(block);
                 for (uint32_t i = blocks[block].second; i-- > blocks[block].first;) {
-                    if (units[i].target >= 0 && !isPlaced[blockOfUnit[units[i].target]])
-                        pendingBlocks.append(blockOfUnit[units[i].target]);
+                    if (units[i].target >= 0 && !hasPlacement[unitBlocks[units[i].target]])
+                        pendingBlocks.append(unitBlocks[units[i].target]);
                 }
                 auto& last = units[blocks[block].second - 1];
-                if (last.kind == Kind::Jump && !isPlaced[blockOfUnit[last.target]] && blocks[blockOfUnit[last.target]].first == static_cast<uint32_t>(last.target))
-                    pendingBlocks.append(blockOfUnit[last.target]);
+                if (last.kind == Kind::Jump && !hasPlacement[unitBlocks[last.target]] && blocks[unitBlocks[last.target]].first == static_cast<uint32_t>(last.target))
+                    pendingBlocks.append(unitBlocks[last.target]);
             }
         }
         Vector<Unit> rebuiltUnits;
@@ -1377,7 +1377,7 @@ public:
             for (uint32_t i = blocks[block].first; i < blocks[block].second; ++i) {
                 newIndex[i] = rebuiltUnits.size();
                 rebuiltUnits.append(units[i]);
-                identities.append(m_identityOfUnit[i]);
+                identities.append(m_unitIdentities[i]);
             }
         }
         for (auto& unit : rebuiltUnits) {
@@ -1385,7 +1385,7 @@ public:
                 unit.target = newIndex[unit.target];
         }
         units = WTF::move(rebuiltUnits);
-        m_identityOfUnit = WTF::move(identities);
+        m_unitIdentities = WTF::move(identities);
     }
 
 #if CPU(X86_64)
@@ -1395,7 +1395,7 @@ public:
     {
         constexpr unsigned maxCopiedBlockSize = 16;
         constexpr unsigned maxUnitsInCopiedBlock = 5;
-        constexpr uint32_t reachOfShortJump = 110;
+        constexpr uint32_t shortJumpRange = 110;
         size_t n = units.size();
         Vector<uint32_t> longJumpsTo;
         longJumpsTo.fill(0, n);
@@ -1450,17 +1450,17 @@ public:
             }
             for (size_t i = groupBegin; canBeCopied && i < groupEnd;) {
                 uint32_t from = address[jumps[i].second];
-                auto firstGapOutOfReach = std::upper_bound(gaps.begin(), gaps.end(), from + reachOfShortJump, [&](uint32_t limit, uint32_t gap) {
+                auto firstGapOutOfRange = std::upper_bound(gaps.begin(), gaps.end(), from + shortJumpRange, [&](uint32_t limit, uint32_t gap) {
                     return limit < address[gap];
                 });
-                if (firstGapOutOfReach == gaps.begin() || address[*(firstGapOutOfReach - 1)] + reachOfShortJump < from) {
+                if (firstGapOutOfRange == gaps.begin() || address[*(firstGapOutOfRange - 1)] + shortJumpRange < from) {
                     ++i;
                     continue;
                 }
-                uint32_t gap = *(firstGapOutOfReach - 1);
+                uint32_t gap = *(firstGapOutOfRange - 1);
                 unsigned saved = 0;
                 size_t served = i;
-                for (; served < groupEnd && address[jumps[served].second] <= address[gap] + reachOfShortJump; ++served)
+                for (; served < groupEnd && address[jumps[served].second] <= address[gap] + shortJumpRange; ++served)
                     saved += units[jumps[served].second].kind == Kind::Jump ? 3 : 4;
                 if (saved <= size) {
                     ++i;
@@ -1478,21 +1478,21 @@ public:
         Vector<uint64_t> identities;
         Vector<uint32_t> newIndex;
         newIndex.fill(0, n);
-        Vector<uint32_t> firstUnitOfCopy;
+        Vector<uint32_t> copyFirstUnits;
         size_t nextCopy = 0;
         for (size_t i = 0; i <= n; ++i) {
             for (; nextCopy < copies.size() && copies[nextCopy].gap == i; ++nextCopy) {
-                firstUnitOfCopy.append(rebuiltUnits.size());
+                copyFirstUnits.append(rebuiltUnits.size());
                 for (uint32_t k = copies[nextCopy].first; k < copies[nextCopy].end; ++k) {
                     rebuiltUnits.append(units[k]);
-                    identities.append(m_identityOfUnit[k]);
+                    identities.append(m_unitIdentities[k]);
                 }
             }
             if (i == n)
                 break;
             newIndex[i] = rebuiltUnits.size();
             rebuiltUnits.append(units[i]);
-            identities.append(m_identityOfUnit[i]);
+            identities.append(m_unitIdentities[i]);
         }
         for (auto& unit : rebuiltUnits) {
             if (unit.target >= 0)
@@ -1500,23 +1500,23 @@ public:
         }
         for (size_t copy = 0; copy < copies.size(); ++copy) {
             for (uint32_t jump = copies[copy].firstJump; jump < copies[copy].endJump; ++jump)
-                rebuiltUnits[newIndex[jumps[jump].second]].target = firstUnitOfCopy[copy];
+                rebuiltUnits[newIndex[jumps[jump].second]].target = copyFirstUnits[copy];
         }
-        unitsWithoutCopies = { WTF::move(units), WTF::move(m_identityOfUnit) };
+        unitsWithoutCopies = { WTF::move(units), WTF::move(m_unitIdentities) };
         units = WTF::move(rebuiltUnits);
-        m_identityOfUnit = WTF::move(identities);
+        m_unitIdentities = WTF::move(identities);
         return true;
     }
 
     void restoreUnits(SavedUnits&& saved)
     {
         units = WTF::move(saved.first);
-        m_identityOfUnit = WTF::move(saved.second);
+        m_unitIdentities = WTF::move(saved.second);
     }
 #endif
 
     const uint8_t* bytesOf(const Unit& unit) const { return m_body->bytes + unit.offset; }
-    uint64_t identityOf(size_t index) const { return m_identityOfUnit[index]; }
+    uint64_t identityOf(size_t index) const { return m_unitIdentities[index]; }
 
     Vector<Unit> units;
 
@@ -1549,17 +1549,17 @@ private:
                 units[i].target = target + 1;
         }
         Unit moved = units[address];
-        uint64_t identity = m_identityOfUnit[address];
+        uint64_t identity = m_unitIdentities[address];
         uint32_t firstJumpToHead = firstJumpTo[head];
         uint32_t lastJumpToHead = lastJumpTo[head];
         for (size_t i = address; i > head; --i) {
             units[i] = units[i - 1];
-            m_identityOfUnit[i] = m_identityOfUnit[i - 1];
+            m_unitIdentities[i] = m_unitIdentities[i - 1];
             firstJumpTo[i] = firstJumpTo[i - 1];
             lastJumpTo[i] = lastJumpTo[i - 1];
         }
         units[head] = moved;
-        m_identityOfUnit[head] = identity;
+        m_unitIdentities[head] = identity;
         firstJumpTo[head + 1] = head;
         lastJumpTo[head + 1] = last;
         firstJumpTo[head] = firstJumpToHead < head ? firstJumpToHead : lastJumpToHead > last ? lastJumpToHead : std::numeric_limits<uint32_t>::max();
@@ -1628,7 +1628,7 @@ private:
     }
 
     const Body* m_body { nullptr };
-    Vector<uint64_t> m_identityOfUnit;
+    Vector<uint64_t> m_unitIdentities;
 };
 
 inline bool endsBlock(Kind kind)
@@ -1679,7 +1679,7 @@ public:
             uint8_t* at = out + address[i];
             memcpy(at, stream.bytesOf(unit), unit.size);
             if (unit.kind == Kind::Reference) {
-                result.references.append(PlacedReference { address[i], false, static_cast<uint32_t>(unit.reference), stream.identityOf(i) });
+                result.references.append(ResolvedReference { address[i], false, static_cast<uint32_t>(unit.reference), stream.identityOf(i) });
                 continue;
             }
             if (unit.target < 0)
@@ -1693,7 +1693,7 @@ public:
                 if (!fits(28))
                     return false;
                 word |= static_cast<uint32_t>(distance >> 2) & 0x3ffffff;
-            } else if (unit.kind == Kind::AddressOfCode) {
+            } else if (unit.kind == Kind::CodeAddress) {
                 if (!fits(21))
                     return false;
                 word |= (static_cast<uint32_t>(distance) & 3) << 29 | (static_cast<uint32_t>(distance >> 2) & 0x7ffff) << 5;
@@ -1777,10 +1777,10 @@ public:
                 continue;
             }
             memcpy(at, stream.bytesOf(unit), size);
-            if (unit.kind == Kind::AddressOfCode || unit.kind == Kind::Call)
+            if (unit.kind == Kind::CodeAddress || unit.kind == Kind::Call)
                 memcpy(at + size - 4, &distance, 4);
             else if (unit.kind == Kind::Reference)
-                result.references.append(PlacedReference { address[i], false, static_cast<uint32_t>(unit.reference), stream.identityOf(i) });
+                result.references.append(ResolvedReference { address[i], false, static_cast<uint32_t>(unit.reference), stream.identityOf(i) });
         }
 #endif
         return true;

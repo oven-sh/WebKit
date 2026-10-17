@@ -330,7 +330,7 @@ RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSVa
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    if (VM& vm = globalObject->vm(); vm.useImmutableIntrinsics && patternArg.isString() && asString(patternArg)->isRope() && asString(patternArg)->length() > AOT::ImageRegExp::minLengthKeptAsTextOfImage) {
+    if (VM& vm = globalObject->vm(); vm.useImmutableIntrinsics && patternArg.isString() && asString(patternArg)->isRope() && asString(patternArg)->length() > AOT::ImageRegExp::minLengthStoredAsImageString) {
         auto flags = toFlags(globalObject, flagsArg);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (RegExp* regExp = RegExpObject::tryCreateRegExpFromLongRope(vm, asString(patternArg), flags)) {

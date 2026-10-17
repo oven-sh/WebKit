@@ -17,8 +17,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// Compiled code tests nothing that a type says. So a value that is used as something its type does not say would be read as what it is
-// not. This makes sure there is none: it goes once over a function and compares types that are given. It finds out no type.
 class Verifier {
 public:
     Verifier(const Program& program, FunctionID id, const Function& function, Vector<String>& findings, VerifierScope scope)
@@ -34,9 +32,8 @@ public:
     {
         if (m_function.blocks.isEmpty())
             return;
-        if (m_scope != VerifierScope::DefinitionsAlone)
+        if (m_scope != VerifierScope::DefinitionsOnly)
             verifyEntry();
-        // What nothing gets to is never run, and not lowered.
         BitVector isReached;
         Vector<unsigned> worklist { 0u };
         isReached.set(0);
@@ -51,7 +48,7 @@ public:
             if (!isReached.get(b))
                 continue;
             auto& block = m_function.blocks[b];
-            if (m_scope != VerifierScope::DefinitionsAlone) {
+            if (m_scope != VerifierScope::DefinitionsOnly) {
                 for (ValueID id : block.values)
                     verify(id, m_function.at(id));
                 verify(block.terminator);
@@ -69,11 +66,11 @@ public:
         }
         if (hasInvokeWithoutTwoTargets)
             return;
-        if (m_scope != VerifierScope::DefinitionsAlone)
+        if (m_scope != VerifierScope::DefinitionsOnly)
             verifyInitialStores(isReached);
         if (m_scope != VerifierScope::EverythingButDefinitions)
             verifyDefinitions(isReached);
-        if (m_scope == VerifierScope::DefinitionsAlone)
+        if (m_scope == VerifierScope::DefinitionsOnly)
             return;
         for (unsigned v = 0; v < m_function.values.size(); ++v) {
             auto& value = m_function.values[v];
@@ -128,43 +125,37 @@ private:
     void need(ValueID user, ValueID operand, const Type& needed, ASCIILiteral as)
     {
         auto& type = typeOf(operand);
-        if (&type != &needed && !type.isWithin(needed, m_program))
+        if (&type != &needed && !type.isSubsetOf(needed, m_program))
             fail(user, operand, needed, as);
     }
 
-    // None: anything will do.
     void need(ValueID user, ValueID operand, TypeID needed, ASCIILiteral as)
     {
         if (needed)
             need(user, operand, m_program.at(needed), as);
     }
 
-    // The prototype of an object goes with its allocation, and whether an object is of a class goes by its shape.
-    void needOneClassObject(ValueID id, LayoutID layout)
+    void requireSingleClassObject(ValueID id, LayoutID layout)
     {
-        if (m_program.at(layout).kind == LayoutKind::Instance && !(m_program.at(layout).constructor && m_program.at(layout).isLaidOut && m_program.at(layout).isEvaluatedOnce))
+        if (m_program.at(layout).kind == LayoutKind::Instance && !(m_program.at(layout).constructor && m_program.at(layout).hasFixedLayout && m_program.at(layout).isEvaluatedOnce))
             fail(id, "names a class that has no layout or is not evaluated exactly once"_s);
     }
 
-    // GetField and PutField go by where the field is, untested. The type of the operand vouches for that, but for a layout that admits
-    // foreign objects, of which any object is. There the operand has to be an allocation of this function.
-    void needObjectWithFieldsOf(ValueID id, const Value& value)
+    void requireObjectWithFieldsOf(ValueID id, const Value& value)
     {
-        need(id, value.child(0), Type::view(value.layout()), "an object"_s);
+        need(id, value.child(0), Type::forLayout(value.layout()), "an object"_s);
         auto& layout = m_program.at(value.layout());
         if (layout.fields[value.field()].flags & fieldIsNeverStored)
             fail(id, "names a field that is never stored, so it has no slot"_s);
-        if (!layout.admitsForeignObjects)
+        if (!layout.acceptsUntypedObjects)
             return;
-        ValueID made = value.child(0);
-        while (m_function.at(made).opcode == Opcode::Cast)
-            made = m_function.at(made).child(0);
-        if (m_function.at(made).opcode != Opcode::NewObjectWithShape || (m_function.at(made).layout() != value.layout() && !std::ranges::binary_search(layout.members, m_function.at(made).layout())))
+        ValueID created = value.child(0);
+        while (m_function.at(created).opcode == Opcode::Cast)
+            created = m_function.at(created).child(0);
+        if (m_function.at(created).opcode != Opcode::NewObjectWithShape || (m_function.at(created).layout() != value.layout() && !std::ranges::binary_search(layout.subtypes, m_function.at(created).layout())))
             fail(id, "names a field of a value that may not have the layout"_s);
     }
 
-    // The lowering carries them out together, and only so are the fields counted among the keys of the object: see Lowering::lowerInitialStores(). So the
-    // stores of a list stay together, in order, all of them, wherever they were copied to.
     void verifyInitialStores(const BitVector& isReached)
     {
         auto isInitialStore = [&](ValueID id, const Value& like, uint32_t index) {
@@ -198,11 +189,10 @@ private:
                     if (m_function.at(block.values[i - 1 - earlier]).string() == store.string())
                         fail(id, "is an initial store to a name that was already stored"_s);
                 }
-                // In a copy the receiver may be known to be of a layout that lacks a field of the list.
                 if (store.inlineFrame)
                     continue;
-                LayoutID view = typeOf(store.child(0)).onlyView();
-                if (!view || !fieldOf(m_program, typeOf(store.child(0)), store.string()) || inheritsByItsLayout(m_program, view, store.string()))
+                LayoutID supertype = typeOf(store.child(0)).singleLayout();
+                if (!supertype || !fieldOf(m_program, typeOf(store.child(0)), store.string()) || inheritsThroughLayoutPrototype(m_program, supertype, store.string()))
                     fail(id, "is an initial store to a name that is not a field or may be inherited"_s);
                 bool hasThis = m_function.kind == FunctionKind::Plain && m_function.has(Format::FunctionHasThis) && !m_function.has(FunctionUsesArgumentBuffer) && !m_function.isGenericEntrypoint();
                 auto& entry = m_function.blocks[0].parameters;
@@ -212,7 +202,6 @@ private:
         }
     }
 
-    // Null: by the end of the block.
     void fail(ValueID operand, ValueID user, unsigned block, ASCIILiteral what)
     {
         StringPrintStream out;
@@ -224,30 +213,27 @@ private:
         m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
     }
 
-    // The definition of an operand dominates its use. The edge of an Invoke to the handler is taken from within the last value of the
-    // block, which is not defined then: see Lowering::lowerBlock(). So such a block counts as two: all but that value, which leads to
-    // the handler, and that value, which leads on.
     void verifyDefinitions(const BitVector& isReached)
     {
         static constexpr unsigned none = UINT_MAX;
         unsigned numberOfBlocks = m_function.blocks.size();
         unsigned numberOfNodes = 2 * numberOfBlocks;
-        auto hasWatchedValue = [&](unsigned block) {
+        auto hasThrowingValue = [&](unsigned block) {
             return m_function.blocks[block].terminator.kind == TerminatorKind::Invoke && !m_function.blocks[block].values.isEmpty();
         };
-        auto nodeOfWatchedValue = [&](unsigned block) {
+        auto throwingValueNode = [&](unsigned block) {
             return numberOfBlocks + block;
         };
         auto numberOfSuccessors = [&](unsigned node) -> unsigned {
             if (node >= numberOfBlocks)
                 return 1;
-            return hasWatchedValue(node) ? 2 : m_function.blocks[node].terminator.targets.size();
+            return hasThrowingValue(node) ? 2 : m_function.blocks[node].terminator.targets.size();
         };
         auto successorAt = [&](unsigned node, unsigned index) -> unsigned {
             if (node >= numberOfBlocks)
                 return m_function.blocks[node - numberOfBlocks].terminator.targets[0].block.index();
-            if (hasWatchedValue(node))
-                return index ? m_function.blocks[node].terminator.targets[1].block.index() : nodeOfWatchedValue(node);
+            if (hasThrowingValue(node))
+                return index ? m_function.blocks[node].terminator.targets[1].block.index() : throwingValueNode(node);
             return m_function.blocks[node].terminator.targets[index].block.index();
         };
 
@@ -341,19 +327,18 @@ private:
             stack.append({ next, firstDominated[next] });
         }
 
-        // Where a value is defined: the node, and its place there. A parameter is at 0, the first value of the block at 1.
         Vector<unsigned> nodeOf;
         nodeOf.fill(none, m_function.values.size());
-        Vector<unsigned> placeInNode;
-        placeInNode.fill(0, m_function.values.size());
+        Vector<unsigned> indexInNode;
+        indexInNode.fill(0, m_function.values.size());
         auto define = [&](ValueID id, unsigned node, unsigned at) {
             if (nodeOf[id.index()] != none)
                 fail(id, "is defined twice"_s);
             nodeOf[id.index()] = node;
-            placeInNode[id.index()] = at;
+            indexInNode[id.index()] = at;
         };
-        auto nodeOfValueAt = [&](unsigned block, size_t index) {
-            return hasWatchedValue(block) && index + 1 == m_function.blocks[block].values.size() ? nodeOfWatchedValue(block) : block;
+        auto valueNodeAt = [&](unsigned block, size_t index) {
+            return hasThrowingValue(block) && index + 1 == m_function.blocks[block].values.size() ? throwingValueNode(block) : block;
         };
         for (unsigned b = 0; b < numberOfBlocks; ++b) {
             if (!isReached.get(b))
@@ -362,7 +347,7 @@ private:
             for (ValueID parameter : block.parameters)
                 define(parameter, b, 0);
             for (size_t i = 0; i < block.values.size(); ++i)
-                define(block.values[i], nodeOfValueAt(b, i), i + 1);
+                define(block.values[i], valueNodeAt(b, i), i + 1);
         }
         auto use = [&](ValueID operand, ValueID user, unsigned block, unsigned node, unsigned at) {
             unsigned definedIn = nodeOf[operand.index()];
@@ -370,7 +355,7 @@ private:
                 fail(operand, user, block, "has no reachable definition"_s);
                 return;
             }
-            bool isDefined = definedIn == node ? placeInNode[operand.index()] < at : enter[definedIn] <= enter[node] && leave[node] <= leave[definedIn];
+            bool isDefined = definedIn == node ? indexInNode[operand.index()] < at : enter[definedIn] <= enter[node] && leave[node] <= leave[definedIn];
             if (!isDefined)
                 fail(operand, user, block, "is not defined on every path to its use"_s);
         };
@@ -380,18 +365,17 @@ private:
             auto& block = m_function.blocks[b];
             for (size_t i = 0; i < block.values.size(); ++i) {
                 m_function.at(block.values[i]).forEachChild([&](ValueID child) {
-                    use(child, block.values[i], b, nodeOfValueAt(b, i), i + 1);
+                    use(child, block.values[i], b, valueNodeAt(b, i), i + 1);
                 });
             }
             unsigned end = block.values.size() + 1;
             if (block.terminator.value)
                 use(block.terminator.value, ValueID(), b, b, end);
             for (size_t t = 0; t < block.terminator.targets.size(); ++t) {
-                // The handler is passed what there is before the watched value.
-                bool isAfterWatchedValue = hasWatchedValue(b) && !t;
-                bool isBeforeWatchedValue = hasWatchedValue(b) && t;
+                bool isAfterThrowingValue = hasThrowingValue(b) && !t;
+                bool isBeforeThrowingValue = hasThrowingValue(b) && t;
                 for (ValueID argument : block.terminator.targets[t].arguments)
-                    use(argument, ValueID(), b, isAfterWatchedValue ? nodeOfWatchedValue(b) : b, isBeforeWatchedValue ? end - 1 : end);
+                    use(argument, ValueID(), b, isAfterThrowingValue ? throwingValueNode(b) : b, isBeforeThrowingValue ? end - 1 : end);
             }
         }
     }
@@ -403,8 +387,7 @@ private:
         auto is = [&](const Type& type, ASCIILiteral what) {
             if (at >= entry.size())
                 return;
-            // Whoever calls passes what the declaration says. The body may take it for no less.
-            if (!type.isWithin(typeOf(entry[at]), m_program))
+            if (!type.isSubsetOf(typeOf(entry[at]), m_program))
                 fail(ValueID(), entry[at], type, what);
             ++at;
         };
@@ -433,40 +416,38 @@ private:
             need(id, value.child(0), m_program.types.boolean, "the negated operand"_s);
             break;
         case Opcode::NewObjectWithShape:
-            if (m_program.at(value.type) != Type::view(value.layout()))
+            if (m_program.at(value.type) != Type::forLayout(value.layout()))
                 fail(id, "does not have the layout it is created with"_s);
-            // The child says how large the object is made, and nothing of any type.
             if (!!value.child(0) != (m_function.allocations[value.allocation()].discriminant != UINT16_MAX))
                 fail(id, "has a child and no discriminant, or a discriminant and no child"_s);
-            needOneClassObject(id, value.layout());
+            requireSingleClassObject(id, value.layout());
             break;
         case Opcode::IsInstanceOfClass:
             if (m_program.at(value.layout()).kind != LayoutKind::Instance)
                 fail(id, "requests the instances of a layout that is not a class"_s);
-            needOneClassObject(id, value.layout());
+            requireSingleClassObject(id, value.layout());
             break;
-        // The closure of a constructor is the class object.
         case Opcode::FunctionReference:
             if (auto& function = m_program.at(value.function()); function.kind == FunctionKind::Constructor && !(function.constructedClass && m_program.at(function.constructedClass).isEvaluatedOnce))
                 fail(id, "is the unique class object of a class that is not evaluated exactly once"_s);
             break;
         case Opcode::GetField:
-            needObjectWithFieldsOf(id, value);
-            if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsClosureMadeOnce)
+            requireObjectWithFieldsOf(id, value);
+            if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsCachedClosure)
                 fail(id, "reads the slot of a closure that is created once"_s);
             break;
         case Opcode::PutField:
-            needObjectWithFieldsOf(id, value);
+            requireObjectWithFieldsOf(id, value);
             need(id, value.child(1), m_program.at(value.layout()).fields[value.field()].type, "the field's value"_s);
-            if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsClosureMadeOnce)
+            if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsCachedClosure)
                 need(id, value.child(1), m_program.at(m_program.types.undefined), "the initial value of a variable that holds a closure created once"_s);
             break;
         case Opcode::GetById:
-            if (value.isAtKnownPlace() && value.knownPlace() >= Value::numberOfKnownPlaces)
+            if (value.isAtKnownSlot() && value.knownSlot() >= Value::numberOfKnownSlots)
                 fail(id, "names an inline slot that no object has"_s);
             break;
         case Opcode::PutById:
-            if ((value.isAtKnownPlace() || value.isFirstStoreToThis()) && value.knownPlace() >= Value::numberOfKnownPlaces)
+            if ((value.isAtKnownSlot() || value.isFirstStoreToThis()) && value.knownSlot() >= Value::numberOfKnownSlots)
                 fail(id, "names an inline slot that no object has"_s);
             if (auto access = fieldOf(m_program, typeOf(value.child(0)), value.string()))
                 need(id, value.child(1), m_program.at(access->layout).fields[access->field].type, "the field's value"_s);
@@ -474,17 +455,14 @@ private:
         case Opcode::NewClosure:
         case Opcode::NewClosureOnce: {
             auto& callee = m_program.at(value.function());
-            // A class object captures the environment of its class, whether its constructor takes that or not: the run time makes the closures
-            // of the members with it.
             if (callee.kind == FunctionKind::Constructor) {
                 LayoutID environment = callee.constructedClass ? m_program.at(callee.constructedClass).environment : LayoutID();
                 if (!environment)
                     fail(id, "is a second class object of a class that is evaluated once"_s);
                 else if (value.opcode != Opcode::NewClosure || value.arguments.size() != 1)
                     fail(id, "is a class object that does not capture exactly the environment of its class"_s);
-                // That very type: the lowering goes by it for what the cell holds, and the run time hands the word on to the members.
-                else if (typeOf(value.arguments[0]) != Type::view(environment))
-                    fail(id, value.arguments[0], Type::view(environment), "the environment of a class"_s);
+                else if (typeOf(value.arguments[0]) != Type::forLayout(environment))
+                    fail(id, value.arguments[0], Type::forLayout(environment), "the environment of a class"_s);
                 break;
             }
             if (value.arguments.size() != callee.captureTypes.size()) {
@@ -495,13 +473,13 @@ private:
                 need(id, value.arguments[i], callee.captureTypes[i], "a capture"_s);
             if (value.opcode == Opcode::NewClosure)
                 break;
-            LayoutID environment = typeOf(value.child(0)).onlyView();
-            if (!environment || typeOf(value.child(0)) != Type::view(environment) || m_program.at(environment).kind != LayoutKind::Environment || value.field() >= m_program.at(environment).fields.size()) {
+            LayoutID environment = typeOf(value.child(0)).singleLayout();
+            if (!environment || typeOf(value.child(0)) != Type::forLayout(environment) || m_program.at(environment).kind != LayoutKind::Environment || value.field() >= m_program.at(environment).fields.size()) {
                 fail(id, "is stored in something other than an environment variable"_s);
                 break;
             }
             auto& field = m_program.at(environment).fields[value.field()];
-            if (!(field.flags & fieldHoldsClosureMadeOnce) || field.onlyFunction != value.function())
+            if (!(field.flags & fieldHoldsCachedClosure) || field.singleFunction != value.function())
                 fail(id, "is stored in a variable that is not declared to hold only closures of its function"_s);
             break;
         }
@@ -539,17 +517,15 @@ private:
         case Opcode::Cast:
             if (value.castReason() == CastReason::Upcast)
                 need(id, value.child(0), value.type, "a value"_s);
-            // Whatever comes of it is of the type of the cast untested: a value of the type after `as`, or the object that went in.
             if (value.castReason() == CastReason::Coerce) {
                 auto& type = m_program.at(value.type);
                 auto& coercedTo = m_program.at(value.coercedType());
-                if (!coercedTo.isWithin(type, m_program))
+                if (!coercedTo.isSubsetOf(type, m_program))
                     fail(id, "coerces to a type that its own type does not include"_s);
-                if (coercedTo.hasObjects() && !typeOf(value.child(0)).withoutPrimitives(Primitive::All).isWithin(type, m_program))
+                if (coercedTo.hasObjects() && !typeOf(value.child(0)).withoutPrimitives(Primitive::All).isSubsetOf(type, m_program))
                     fail(id, value.child(0), type, "an object that a coercion may leave unchanged"_s);
             }
             break;
-        // The run time makes the object, so no allocation says that the layout has objects.
         case Opcode::Operation: {
             Vector<Type, 4> arguments;
             for (ValueID argument : value.arguments)
@@ -560,8 +536,8 @@ private:
                 m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
             }
             if (m_program.operationOf(value) == Operations::NewObjectOfClass) {
-                LayoutID made = m_program.at(value.assertedType() ? value.assertedType() : value.type).onlyView();
-                if (!made || m_program.at(made).kind != LayoutKind::Instance || !m_program.at(made).isAllocated)
+                LayoutID created = m_program.at(value.assertedType() ? value.assertedType() : value.type).singleLayout();
+                if (!created || m_program.at(created).kind != LayoutKind::Instance || !m_program.at(created).isAllocated)
                     fail(id, "creates an instance of a layout that is not an instantiable class"_s);
             }
             break;
@@ -586,7 +562,6 @@ private:
             need(ValueID(), terminator.value, Type::integer(Range::full()), "the subject of a switch"_s);
             break;
         case TerminatorKind::Return:
-            // What an async function or a generator is declared to yield is not what `return` carries in its body.
             if (terminator.value && !m_function.has(Format::FunctionIsAsync | Format::FunctionIsGenerator))
                 need(ValueID(), terminator.value, m_function.resultType, "the result"_s);
             break;

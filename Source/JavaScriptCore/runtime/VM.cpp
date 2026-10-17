@@ -695,7 +695,7 @@ VM::~VM()
 #endif
     heap.shutDown();
 #if ENABLE(AOT)
-    AOT::PlaceTable::destroy(*this);
+    AOT::PropertyLookupTable::destroy(*this);
 #endif
 
     while (!m_microtaskQueues.isEmpty())
@@ -1376,7 +1376,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 
 #if ENABLE(AOT)
     for (AOT::Instance* instance : m_aotInstances)
-        instance->forgetNewTarget();
+        instance->clearNewTarget();
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -2246,7 +2246,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     }
 #endif
     if (std::is_same_v<Visitor, SlotVisitor> && heap.collectionScope() == CollectionScope::Eden)
-        numericStrings.visitPlacesWrittenSinceLastCollection(visitor);
+        numericStrings.visitSlotsWrittenSinceLastCollection(visitor);
     else
         numericStrings.visitAggregate(visitor);
     m_jsonCache->visitAggregate(visitor);
@@ -2426,28 +2426,28 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
     if (changed->structure()->isUncacheableDictionary())
         nameOfProperty = nullptr;
 #if ENABLE(AOT)
-    if (m_aotPlaceTable)
-        m_aotPlaceTable->didChangePrototype(nameOfProperty);
+    if (m_aotPropertyLookupTable)
+        m_aotPropertyLookupTable->didChangePrototype(nameOfProperty);
     for (AOT::Instance* instance : m_aotInstances) {
-        if (instance->typed && instance->typed->hasLookedAtPrototypesOfHeirs()) [[unlikely]]
-            instance->typed->didChangePrototypeOfHeirs(*this, changed, nameOfProperty);
+        if (instance->typed && instance->typed->hasDescendantPrototypes()) [[unlikely]]
+            instance->typed->didChangeDescendantPrototype(*this, changed, nameOfProperty);
     }
 #endif
     auto* megamorphicCache = this->megamorphicCache();
-    if (megamorphicCache && megamorphicCache->mayHoldFactThrough(changed) && (!nameOfProperty || megamorphicCache->mayHoldFactAbout(*nameOfProperty)))
-        endWhatIsCachedUnderTheEpoch();
+    if (megamorphicCache && megamorphicCache->mayHaveEntryThroughObject(changed) && (!nameOfProperty || megamorphicCache->mayHaveEntryForName(*nameOfProperty)))
+        invalidateEpochCaches();
 }
 
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 {
 #if ENABLE(AOT)
-    if (m_aotPlaceTable)
-        m_aotPlaceTable->didChangePrototype(nullptr);
+    if (m_aotPropertyLookupTable)
+        m_aotPropertyLookupTable->didChangePrototype(nullptr);
 #endif
-    endWhatIsCachedUnderTheEpoch();
+    invalidateEpochCaches();
 }
 
-void VM::endWhatIsCachedUnderTheEpoch()
+void VM::invalidateEpochCaches()
 {
     auto* megamorphicCache = this->megamorphicCache();
     if (!megamorphicCache || !megamorphicCache->bumpEpoch()) [[likely]]

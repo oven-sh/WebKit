@@ -74,7 +74,7 @@ private:
 
     Vector<std::unique_ptr<FunctionIPIntMetadataGenerator>> m_wasmInternalFunctions;
     RefPtr<IPIntCallees> m_ipintCallees;
-    const uint16_t* m_factsOfFunctionsInImage { nullptr };
+    const uint16_t* m_imageFunctionFlags { nullptr };
     bool m_calleesAlreadyRegistered { false };
 };
 

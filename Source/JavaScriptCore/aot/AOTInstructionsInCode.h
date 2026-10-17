@@ -15,7 +15,7 @@ struct InstructionInCode {
         StubCall,
         Jump,
         ConditionalJump,
-        AddressOfTable,
+        TableAddress,
         TableEntry,
         End,
     };
@@ -28,7 +28,7 @@ struct InstructionInCode {
 #if CPU(X86_64)
 struct DecodedInstruction {
     uint8_t length;
-    uint8_t placeOfModRM;
+    uint8_t modRMOffset;
 };
 
 inline DecodedInstruction decodeInstructionSlow(const uint8_t* bytes, size_t available)
@@ -277,7 +277,7 @@ inline DecodedInstruction decodeInstruction(const uint8_t* bytes, size_t availab
     return { static_cast<uint8_t>(at), static_cast<uint8_t>(place) };
 }
 
-inline Vector<uint8_t> recordsOfInstructions(std::span<const uint8_t> bytes, std::span<const DataInCode> data)
+inline Vector<uint8_t> instructionRecords(std::span<const uint8_t> bytes, std::span<const DataInCode> data)
 {
     Vector<uint8_t> records;
     size_t size = bytes.size();
@@ -294,51 +294,51 @@ inline Vector<uint8_t> recordsOfInstructions(std::span<const uint8_t> bytes, std
         DecodedInstruction decoded = at < endOfInstructions && endOfInstructions <= size ? decodeInstruction(bytes.data() + at, endOfInstructions - at) : DecodedInstruction { 0, 0 };
         if (!decoded.length)
             return { };
-        records.append(static_cast<uint8_t>(decoded.length | decoded.placeOfModRM << 4));
+        records.append(static_cast<uint8_t>(decoded.length | decoded.modRMOffset << 4));
         at += decoded.length;
     }
     return records;
 }
 #endif
 
-#define FOR_EACH_CAUSE_OF_NO_WALK(macro) \
+#define FOR_EACH_WALK_FAILURE(macro) \
     macro(None, "it can be walked") \
     macro(NoRecords, "no lengths were kept") \
     macro(LengthsDoNotSum, "the lengths do not sum to the bytes") \
-    macro(StubCallIsNoInstruction, "a stub call is opaque, lies in data or is not as long as a near call") \
+    macro(StubCallIsNotAnInstruction, "a stub call is opaque, lies in data or is not as long as a near call") \
     macro(DataIsNotInWords, "data does not lie in records of four bytes") \
     macro(TableEntryLeadsOut, "an entry of a table leads out of the function") \
-    macro(InstructionIsNotKnown, "an instruction is not known") \
-    macro(PlaceOfModRMIsWrong, "the ModRM byte does not follow the opcode") \
-    macro(DirectCallThatIsNoStubCall, "a direct call is no stub call") \
+    macro(UnknownInstruction, "an instruction is not known") \
+    macro(ModRMOffsetIsWrong, "the ModRM byte does not follow the opcode") \
+    macro(DirectCallIsNotStubCall, "a direct call is no stub call") \
     macro(AbsoluteAddress, "a move from or to an absolute address") \
     macro(JumpWithAPrefix, "a jump has a prefix or a REX ahead") \
-    macro(TargetOutOfTheFunction, "a target lies out of the function") \
+    macro(TargetOutsideFunction, "a target lies out of the function") \
     macro(PCRelativeOperand, "an operand relative to the pc is no address of a range") \
-    macro(AddressOfNoRange, "an address relative to the pc leads to no start of a range") \
+    macro(AddressOutsideRanges, "an address relative to the pc leads to no start of a range") \
     macro(KeyOnABranch, "a faulting access or an index reference is a branch") \
-    macro(StubCallsAreNotUsedUp, "a stub call is at no start, or the list is not sorted") \
-    macro(FaultingAccessesAreNotUsedUp, "a faulting access is at no start, or the list is not sorted") \
-    macro(IndexReferencesAreNotUsedUp, "an index reference is at no start, or the list is not sorted") \
+    macro(UnconsumedStubCalls, "a stub call is at no start, or the list is not sorted") \
+    macro(UnconsumedFaultingAccesses, "a faulting access is at no start, or the list is not sorted") \
+    macro(UnconsumedIndexReferences, "an index reference is at no start, or the list is not sorted") \
     macro(DataIsNotUsedUp, "a range of data lies behind the end")
 
-enum class CauseOfNoWalk : uint8_t {
-#define AOT_CAUSE_OF_NO_WALK(name, words) name,
-    FOR_EACH_CAUSE_OF_NO_WALK(AOT_CAUSE_OF_NO_WALK)
-#undef AOT_CAUSE_OF_NO_WALK
+enum class WalkFailure : uint8_t {
+#define AOT_WALK_FAILURE(name, words) name,
+    FOR_EACH_WALK_FAILURE(AOT_WALK_FAILURE)
+#undef AOT_WALK_FAILURE
 };
 
-static constexpr ASCIILiteral wordsOfCausesOfNoWalk[] = {
-#define AOT_CAUSE_OF_NO_WALK(name, words) words ## _s,
-    FOR_EACH_CAUSE_OF_NO_WALK(AOT_CAUSE_OF_NO_WALK)
-#undef AOT_CAUSE_OF_NO_WALK
+static constexpr ASCIILiteral walkFailureMessages[] = {
+#define AOT_WALK_FAILURE(name, words) words ## _s,
+    FOR_EACH_WALK_FAILURE(AOT_WALK_FAILURE)
+#undef AOT_WALK_FAILURE
 };
-static constexpr unsigned numberOfCausesOfNoWalk = std::size(wordsOfCausesOfNoWalk);
+static constexpr unsigned numberOfWalkFailures = std::size(walkFailureMessages);
 
 namespace InstructionsInCodeInternal {
 
 using Kind = InstructionInCode::Kind;
-using Cause = CauseOfNoWalk;
+using Cause = WalkFailure;
 
 inline int32_t readInt32(const uint8_t* at)
 {
@@ -390,7 +390,7 @@ inline constexpr bool isLegacyPrefix(uint8_t byte)
     }
 }
 
-inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, unsigned placeOfModRM)
+inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, unsigned modRMOffset)
 {
     constexpr unsigned stackPointer = 4;
     unsigned length = instruction.length;
@@ -398,15 +398,15 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
     while (at < length && isLegacyPrefix(bytes[at]))
         ++at;
     if (at >= length)
-        return Cause::InstructionIsNotKnown;
+        return Cause::UnknownInstruction;
     unsigned r = 0;
     unsigned b = 0;
     unsigned map = 1;
     bool hasVex = false;
-    if ((bytes[at] == 0xc4 || bytes[at] == 0xc5) && placeOfModRM) {
+    if ((bytes[at] == 0xc4 || bytes[at] == 0xc5) && modRMOffset) {
         hasVex = true;
         if (at + 3 >= length)
-            return Cause::InstructionIsNotKnown;
+            return Cause::UnknownInstruction;
         r = ~bytes[at + 1] >> 7 & 1;
         if (bytes[at] == 0xc5) {
             map = 2;
@@ -415,7 +415,7 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
             b = ~bytes[at + 1] >> 5 & 1;
             unsigned encodedMap = bytes[at + 1] & 31;
             if (!encodedMap || encodedMap > 3)
-                return Cause::InstructionIsNotKnown;
+                return Cause::UnknownInstruction;
             map = encodedMap + 1;
             at += 3;
         }
@@ -433,7 +433,7 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
         }
     }
     if (at >= length)
-        return Cause::InstructionIsNotKnown;
+        return Cause::UnknownInstruction;
     uint8_t opcode = bytes[at];
     auto jumps = [&](Kind kind, unsigned width) {
         if (at != (map == 2 ? 1u : 0u) || at + 1 + width != length)
@@ -441,7 +441,7 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
         int64_t distance = width == 1 ? static_cast<int8_t>(bytes[length - 1]) : readInt32(bytes + length - 4);
         int64_t target = static_cast<int64_t>(instruction.offset) + length + distance;
         if (target < 0 || target > std::numeric_limits<uint32_t>::max())
-            return Cause::TargetOutOfTheFunction;
+            return Cause::TargetOutsideFunction;
         instruction.kind = kind;
         instruction.target = static_cast<uint32_t>(target);
         return Cause::None;
@@ -449,7 +449,7 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
     bool namesStackPointer = false;
     if (map == 1 && !hasVex) {
         if (opcode == 0xe8)
-            return Cause::DirectCallThatIsNoStubCall;
+            return Cause::DirectCallIsNotStubCall;
         if (opcode >= 0xa0 && opcode <= 0xa3)
             return Cause::AbsoluteAddress;
         if (opcode == 0xe9)
@@ -476,10 +476,10 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
         if (opcode >= 0xc8 && opcode <= 0xcf)
             namesStackPointer = ((opcode & 7) | b << 3) == stackPointer;
     }
-    if (placeOfModRM) {
-        if (placeOfModRM != at + 1 || placeOfModRM >= length)
-            return Cause::PlaceOfModRMIsWrong;
-        uint8_t modRM = bytes[placeOfModRM];
+    if (modRMOffset) {
+        if (modRMOffset != at + 1 || modRMOffset >= length)
+            return Cause::ModRMOffsetIsWrong;
+        uint8_t modRM = bytes[modRMOffset];
         unsigned mode = modRM >> 6;
         unsigned extension = modRM >> 3 & 7;
         if (regFieldExtendsOpcode(map, opcode, hasVex)) {
@@ -498,9 +498,9 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
         if (mode == 3)
             namesStackPointer |= ((modRM & 7) | b << 3) == stackPointer;
         else if ((modRM & 7) == 4) {
-            if (placeOfModRM + 1 >= length)
-                return Cause::InstructionIsNotKnown;
-            uint8_t sib = bytes[placeOfModRM + 1];
+            if (modRMOffset + 1 >= length)
+                return Cause::UnknownInstruction;
+            uint8_t sib = bytes[modRMOffset + 1];
             if (!(!mode && (sib & 7) == 5))
                 namesStackPointer |= ((sib & 7) | b << 3) == stackPointer;
         } else if (!mode && (modRM & 7) == 5)
@@ -569,7 +569,7 @@ struct X86OpcodeClasses {
     }
 };
 
-inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsigned placeOfModRM)
+inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsigned modRMOffset)
 {
     static constexpr std::array<uint8_t, 256> firstMap = X86OpcodeClasses::makeFirstMap();
     static constexpr std::array<uint8_t, 256> secondMap = X86OpcodeClasses::makeSecondMap();
@@ -592,7 +592,7 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsi
             classes = secondMap[bytes[++at]];
     }
     if (!(classes & X86OpcodeClasses::isFast)) [[unlikely]]
-        return classifySlow(bytes, instruction, placeOfModRM);
+        return classifySlow(bytes, instruction, modRMOffset);
     uint8_t opcode = bytes[at];
     if (classes & (X86OpcodeClasses::isJump | X86OpcodeClasses::isConditionalJump | X86OpcodeClasses::isEnd)) {
         if (classes & X86OpcodeClasses::isEnd) {
@@ -605,7 +605,7 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsi
         int64_t distance = width == 1 ? static_cast<int8_t>(bytes[length - 1]) : readInt32(bytes + length - 4);
         int64_t target = static_cast<int64_t>(instruction.offset) + length + distance;
         if (target < 0 || target > std::numeric_limits<uint32_t>::max())
-            return Cause::TargetOutOfTheFunction;
+            return Cause::TargetOutsideFunction;
         instruction.kind = classes & X86OpcodeClasses::isJump ? Kind::Jump : Kind::ConditionalJump;
         instruction.target = static_cast<uint32_t>(target);
         return Cause::None;
@@ -613,19 +613,19 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsi
     bool namesStackPointer = classes & X86OpcodeClasses::namesStackPointer;
     if (classes & X86OpcodeClasses::hasRegisterInOpcode)
         namesStackPointer = ((opcode & 7) | b << 3) == stackPointer;
-    if (placeOfModRM) {
-        if (placeOfModRM != at + 1 || placeOfModRM >= length)
-            return Cause::PlaceOfModRMIsWrong;
-        uint8_t modRM = bytes[placeOfModRM];
+    if (modRMOffset) {
+        if (modRMOffset != at + 1 || modRMOffset >= length)
+            return Cause::ModRMOffsetIsWrong;
+        uint8_t modRM = bytes[modRMOffset];
         unsigned mode = modRM >> 6;
         if (!(classes & X86OpcodeClasses::regFieldExtendsOpcode) && ((modRM >> 3 & 7) | r << 3) == stackPointer)
             namesStackPointer = true;
         if (mode == 3)
             namesStackPointer |= ((modRM & 7) | b << 3) == stackPointer;
         else if ((modRM & 7) == 4) {
-            if (placeOfModRM + 1 >= length)
-                return Cause::InstructionIsNotKnown;
-            uint8_t sib = bytes[placeOfModRM + 1];
+            if (modRMOffset + 1 >= length)
+                return Cause::UnknownInstruction;
+            uint8_t sib = bytes[modRMOffset + 1];
             if (!(!mode && (sib & 7) == 5))
                 namesStackPointer |= ((sib & 7) | b << 3) == stackPointer;
         } else if (!mode && (modRM & 7) == 5)
@@ -667,7 +667,7 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction)
         int64_t distance = static_cast<int64_t>(static_cast<uint64_t>(word >> shift) << (64 - width)) >> (64 - width);
         int64_t target = static_cast<int64_t>(instruction.offset) + distance * 4;
         if (target < 0 || target > std::numeric_limits<uint32_t>::max())
-            return Cause::TargetOutOfTheFunction;
+            return Cause::TargetOutsideFunction;
         instruction.kind = kind;
         instruction.target = static_cast<uint32_t>(target);
         return Cause::None;
@@ -675,7 +675,7 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction)
     if ((word & 0xfc000000) == 0x14000000)
         return jumps(Kind::Jump, 0, 26);
     if ((word & 0xfc000000) == 0x94000000)
-        return Cause::DirectCallThatIsNoStubCall;
+        return Cause::DirectCallIsNotStubCall;
     if ((word & 0xff000010) == 0x54000000 || (word & 0x7e000000) == 0x34000000)
         return jumps(Kind::ConditionalJump, 5, 19);
     if ((word & 0x7e000000) == 0x36000000)
@@ -684,8 +684,8 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction)
         int64_t distance = static_cast<int64_t>(static_cast<uint64_t>((word >> 5 & 0x7ffff) << 2 | (word >> 29 & 3)) << 43) >> 43;
         int64_t target = static_cast<int64_t>(instruction.offset) + distance;
         if (target < 0 || target > std::numeric_limits<uint32_t>::max())
-            return Cause::TargetOutOfTheFunction;
-        instruction.kind = Kind::AddressOfTable;
+            return Cause::TargetOutsideFunction;
+        instruction.kind = Kind::TableAddress;
         instruction.target = static_cast<uint32_t>(target);
         return Cause::None;
     }
@@ -706,7 +706,7 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction)
 #endif
 
 template<typename Code, typename Functor>
-Cause tryToWalk(const Code& code, const Functor& functor)
+Cause tryDecode(const Code& code, const Functor& functor)
 {
     const uint8_t* bytes = code.bytes.span().data();
     size_t size = code.bytes.size();
@@ -730,8 +730,8 @@ Cause tryToWalk(const Code& code, const Functor& functor)
         });
         return found != ranges.end() && found->offset == offset;
     };
-    auto step = [&](InstructionInCode& instruction, bool isOpaque, unsigned placeOfModRM) {
-        UNUSED_PARAM(placeOfModRM);
+    auto step = [&](InstructionInCode& instruction, bool isOpaque, unsigned modRMOffset) {
+        UNUSED_PARAM(modRMOffset);
         bool isInData = false;
         if (hasRanges) [[unlikely]] {
             while (range < ranges.size() && ranges[range].offset + ranges[range].numberOfWords * sizeof(uint32_t) <= at)
@@ -740,7 +740,7 @@ Cause tryToWalk(const Code& code, const Functor& functor)
         }
         if (nextCall == at) {
             if (isOpaque || isInData || instruction.length != sizeOfNearCall)
-                return Cause::StubCallIsNoInstruction;
+                return Cause::StubCallIsNotAnInstruction;
             instruction.kind = Kind::StubCall;
             instruction.target = static_cast<uint32_t>(call++);
             nextCall = call < calls.size() ? calls[call].offset : never;
@@ -759,16 +759,16 @@ Cause tryToWalk(const Code& code, const Functor& functor)
             instruction.kind = Kind::Pinned;
         else {
 #if CPU(X86_64)
-            if (Cause cause = classify(bytes + at, instruction, placeOfModRM); cause != Cause::None)
+            if (Cause cause = classify(bytes + at, instruction, modRMOffset); cause != Cause::None)
                 return cause;
 #else
             if (Cause cause = classify(bytes + at, instruction); cause != Cause::None)
                 return cause;
 #endif
             if ((instruction.kind == Kind::Jump || instruction.kind == Kind::ConditionalJump) && instruction.target > size)
-                return Cause::TargetOutOfTheFunction;
-            if (instruction.kind == Kind::AddressOfTable && !isStartOfData(instruction.target))
-                return Cause::AddressOfNoRange;
+                return Cause::TargetOutsideFunction;
+            if (instruction.kind == Kind::TableAddress && !isStartOfData(instruction.target))
+                return Cause::AddressOutsideRanges;
         }
         bool isKey = false;
         if (nextFault == at) {
@@ -796,7 +796,7 @@ Cause tryToWalk(const Code& code, const Functor& functor)
             instruction.kind = Kind::Pinned;
         }
 #if CPU(ARM64)
-        if (at >= code.startOfGuests && instruction.kind == Kind::Plain)
+        if (at >= code.appendedEntriesStart && instruction.kind == Kind::Plain)
             instruction.kind = Kind::Pinned;
 #endif
         functor(static_cast<const InstructionInCode&>(instruction));
@@ -827,11 +827,11 @@ Cause tryToWalk(const Code& code, const Functor& functor)
     if (at != size)
         return Cause::LengthsDoNotSum;
     if (call != calls.size())
-        return Cause::StubCallsAreNotUsedUp;
+        return Cause::UnconsumedStubCalls;
     if (fault != faults.size())
-        return Cause::FaultingAccessesAreNotUsedUp;
+        return Cause::UnconsumedFaultingAccesses;
     if (reference != references.size())
-        return Cause::IndexReferencesAreNotUsedUp;
+        return Cause::UnconsumedIndexReferences;
     if (range != ranges.size())
         return Cause::DataIsNotUsedUp;
     return Cause::None;
@@ -840,20 +840,20 @@ Cause tryToWalk(const Code& code, const Functor& functor)
 template<typename Code, typename Functor>
 bool walk(const Code& code, const Functor& functor)
 {
-    return tryToWalk(code, functor) == Cause::None;
+    return tryDecode(code, functor) == Cause::None;
 }
 
 } // namespace InstructionsInCodeInternal
 
 inline bool canBeWalked(const CompiledCode& code)
 {
-    return code.hasNotes && !code.isRewritten && InstructionsInCodeInternal::walk(code, [](const InstructionInCode&) { });
+    return code.hasCodeAnnotations && !code.isRewritten && InstructionsInCodeInternal::walk(code, [](const InstructionInCode&) { });
 }
 
 template<typename Functor>
 void forEachInstructionInCode(const CompiledCode& code, const Functor& functor)
 {
-    RELEASE_ASSERT(code.hasNotes && !code.isRewritten);
+    RELEASE_ASSERT(code.hasCodeAnnotations && !code.isRewritten);
     bool wasWalked = InstructionsInCodeInternal::walk(code, functor);
     RELEASE_ASSERT(wasWalked);
 }
@@ -897,7 +897,7 @@ inline void setTarget(std::span<uint8_t> newBytes, const InstructionInCode& inst
     case Kind::ConditionalJump:
         set(5, (word & 0x7e000000) == 0x36000000 ? 14 : 19);
         break;
-    case Kind::AddressOfTable:
+    case Kind::TableAddress:
         RELEASE_ASSERT(distance >= -(1ll << 20) && distance < (1ll << 20));
         word = (word & 0x9f00001f) | (static_cast<uint32_t>(distance) & 3) << 29 | (static_cast<uint32_t>(distance >> 2) & 0x7ffff) << 5;
         break;

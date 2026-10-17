@@ -86,7 +86,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, ScriptExecutable* 
 {
 }
 
-void StackFrame::appendTypedFrames(VM& vm, JSCell* owner, JSCell* instanceToken, std::span<const AOT::FrameInTrace> frames, Vector<StackFrame>& results, bool mayBeFollowedByMore)
+void StackFrame::appendTypedFrames(VM& vm, JSCell* owner, JSCell* instanceToken, std::span<const AOT::StackTraceFrame> frames, Vector<StackFrame>& results, bool mayBeFollowedByMore)
 {
     if (frames.empty())
         return;
@@ -102,44 +102,44 @@ void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<
 {
 #if ENABLE(AOT)
     JSCell* instanceToken = AOT::tokenOf(trace.instance);
-    bool isAtTheTop = !trace.hasFrameOfHostFunctionOnTop && !trace.numberOfFramesLeftOut;
-    unsigned numberToLeaveOut = trace.numberOfFramesLeftOut;
-    results.reserveCapacity(std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses + trace.hasFrameOfHostFunctionOnTop));
-    const AOT::Instance::PlaceInTrace* places = trace.instance->placesInTraces();
-    AOT::InlineFramesRead inlineFramesRead;
+    bool isAtTheTop = !trace.hasHostFunctionFrameOnTop && !trace.omittedFrameCount;
+    unsigned framesToOmit = trace.omittedFrameCount;
+    results.reserveCapacity(std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses + trace.hasHostFunctionFrameOnTop));
+    const AOT::Instance::StackTraceInfo* places = trace.instance->stackTraceInfos();
+    AOT::InlineFrameReader inlineFramesRead;
     uint32_t lastShown = AOT::FunctionRef::none;
-    uintptr_t startOfImageCode = AOT::startOfImageCode();
+    uintptr_t imageCodeStart = AOT::imageCodeStart();
     std::optional<AOT::CallSiteOverride> atItem;
-    if (trace.topIsAtSiteOfItsItem) [[unlikely]]
+    if (trace.topIsAtStackTraceItemSite) [[unlikely]]
         atItem.emplace(*trace.instance, &trace);
     for (uint32_t kept : trace.returnAddresses()) {
-        const void* frameOfTop = atItem ? &trace : nullptr;
-        auto isBehindTheTop = makeScopeExit([&] {
+        const void* topFrame = atItem ? &trace : nullptr;
+        auto clearTopFrame = makeScopeExit([&] {
             atItem.reset();
         });
-        const void* returnAddress = AOT::ReturnAddressTrace::addressOf(kept, startOfImageCode);
-        bool rootIsConstructed = kept & AOT::ReturnAddressTrace::isOfConstructed;
+        const void* returnAddress = AOT::ReturnAddressTrace::addressOf(kept, imageCodeStart);
+        bool rootIsConstructed = kept & AOT::ReturnAddressTrace::isConstructedRoot;
         const AOT::Instance::CachedAddressInfo* asked = trace.instance->resolveReturnAddress(returnAddress);
         RELEASE_ASSERT(asked);
-        if (auto place = places[asked - trace.instance->cachedReturnAddresses].ofSite(); !isAtTheTop && !numberToLeaveOut && place.kind == AOT::Instance::PlaceInTrace::IsShown) {
+        if (auto place = places[asked - trace.instance->cachedReturnAddresses].forSite(); !isAtTheTop && !framesToOmit && place.kind == AOT::Instance::StackTraceInfo::IsVisible) {
             if (results.size() == trace.limit)
                 return;
-            results.constructAndAppend(instanceToken, AOT::FrameInTrace::create(asked->function, place.typedFunction, CallSiteIndex(place.callSiteBits).bytecodeIndex(), rootIsConstructed));
+            results.constructAndAppend(instanceToken, AOT::StackTraceFrame::create(asked->function, place.typedFunction, CallSiteIndex(place.callSiteBits).bytecodeIndex(), rootIsConstructed));
             lastShown = place.typedFunction;
             continue;
         }
         AOT::FunctionRef function { trace.instance, asked->function };
-        for (auto location = function.locationForReturnAddress(returnAddress, frameOfTop, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
-            bool isHidden = isAtTheTop ? AOT::typedFunctionStandsForNoFunction(location.typedFunction) : AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction);
+        for (auto location = function.locationForReturnAddress(returnAddress, topFrame, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
+            bool isHidden = isAtTheTop ? AOT::typedFunctionIsSynthetic(location.typedFunction) : AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction);
             bool isConstructed = location.inlineFrame ? location.isConstructed : rootIsConstructed;
-            if (!location.isTailDeleted && !isHidden && numberToLeaveOut) {
-                --numberToLeaveOut;
+            if (!location.isTailDeleted && !isHidden && framesToOmit) {
+                --framesToOmit;
                 lastShown = AOT::FunctionRef::none;
             } else if (!location.isTailDeleted && !isHidden) {
                 if (results.size() == trace.limit)
                     return;
                 isAtTheTop = false;
-                results.constructAndAppend(instanceToken, AOT::FrameInTrace::create(function.index, location.typedFunction, location.bytecodeIndex, isConstructed));
+                results.constructAndAppend(instanceToken, AOT::StackTraceFrame::create(function.index, location.typedFunction, location.bytecodeIndex, isConstructed));
                 lastShown = location.typedFunction;
             } else if (isConstructed && lastShown != AOT::FunctionRef::none && AOT::typedFunctionWraps(location.typedFunction, lastShown)) [[unlikely]]
                 results.last().setIsConstructed();
@@ -165,7 +165,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* instanceToken, uint32_t ty
 {
 }
 
-CodeBlock* StackFrame::makeCodeBlock() const
+CodeBlock* StackFrame::createCodeBlock() const
 {
 #if ENABLE(AOT)
     auto& jsFrame = *jsFrameData();
@@ -208,16 +208,16 @@ bool StackFrame::isConstructor() const
     auto& jsFrame = *jsFrameData();
 #if ENABLE(AOT)
     if (jsFrame.isTyped())
-        return jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct || AOT::typedFunctionIsConstructor(jsFrame.aotTypedFunction()) || AOT::builtinThatTypedFunctionStandsFor(jsFrame.aotTypedFunction()) == AOT::BuiltinInTrace::ConstructorWrittenInJavaScript;
+        return jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct || AOT::typedFunctionIsConstructor(jsFrame.aotTypedFunction()) || AOT::builtinKindOfTypedFunction(jsFrame.aotTypedFunction()) == AOT::StackTraceBuiltinKind::JSBuiltinConstructor;
 #endif
     return jsFrame.aotExecutable() ? jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct : jsFrame.codeBlock()->isConstructor();
 }
 
-bool StackFrame::standsForHostFunction() const
+bool StackFrame::representsHostFunction() const
 {
 #if ENABLE(AOT)
     auto* jsFrame = jsFrameData();
-    return jsFrame && jsFrame->isTyped() && AOT::builtinThatTypedFunctionStandsFor(jsFrame->aotTypedFunction()) == AOT::BuiltinInTrace::HostFunction;
+    return jsFrame && jsFrame->isTyped() && AOT::builtinKindOfTypedFunction(jsFrame->aotTypedFunction()) == AOT::StackTraceBuiltinKind::HostFunction;
 #else
     return false;
 #endif
@@ -228,7 +228,7 @@ bool StackFrame::isBuiltinFunction() const
     auto& jsFrame = *jsFrameData();
     if (jsFrame.isTyped()) {
 #if ENABLE(AOT)
-        if (standsForHostFunction())
+        if (representsHostFunction())
             return false;
         auto position = reportedPosition();
         return position && position->source && AOT::ProgramData::get()->isSourceNameEmpty(position->source);
@@ -532,7 +532,7 @@ String StackFrame::toString(VM& vm) const
         fullSourceURL = this->sourceURLStripped(vm);
     auto sourceURL = truncateLongDataURL(fullSourceURL);
 
-    if (sourceURL.isEmpty() && standsForHostFunction())
+    if (sourceURL.isEmpty() && representsHostFunction())
         return makeString(functionName, "@[native code]"_s);
     if (sourceURL.isEmpty() || !hasLineAndColumnInfo())
         return makeString(functionName, '@', sourceURL);

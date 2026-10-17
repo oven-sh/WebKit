@@ -46,13 +46,13 @@ void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObje
     thisObject.putDirectNonIndexAccessor(vm, propertyName, accessor, attributes);
 }
 
-void reifyFixedStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObject)
+void reifyLockedStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObject)
 {
-    reifyStaticProperty(vm, classInfo, propertyName, value, thisObject, attributesOfStaticProperty(vm, thisObject, value));
+    reifyStaticProperty(vm, classInfo, propertyName, value, thisObject, staticPropertyAttributes(vm, thisObject, value));
     unsigned attributes;
     PropertyOffset offset = thisObject.getDirectOffset(vm, propertyName, attributes);
     if (isValidOffset(offset))
-        thisObject.realm()->makeValueOfIntrinsicImmutable(thisObject, propertyName, thisObject.getDirect(offset), attributes);
+        thisObject.realm()->makeIntrinsicValueImmutable(thisObject, propertyName, thisObject.getDirect(offset), attributes);
 }
 
 bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertyName propertyName, PropertySlot& slot)

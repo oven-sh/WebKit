@@ -52,7 +52,7 @@ MarkingConstraintSolver::~MarkingConstraintSolver() = default;
 bool MarkingConstraintSolver::mayFindWork(MarkingConstraint& constraint)
 {
     const auto& last = m_set.m_lastExecutions[constraint.index()];
-    if (!last.hasHappened || last.mutatorExecutionVersion != m_mutatorExecutionVersion || constraint.quickWorkEstimate(m_mainVisitor) > 0.)
+    if (!last.didExecuteOnce || last.mutatorExecutionVersion != m_mutatorExecutionVersion || constraint.quickWorkEstimate(m_mainVisitor) > 0.)
         return true;
     return constraint.volatility() != ConstraintVolatility::GreyedByExecution && last.visitCountAtStartOfRound != m_visitCountAtStart;
 }
@@ -140,7 +140,7 @@ void MarkingConstraintSolver::converge(const Vector<MarkingConstraint*>& order)
             return;
     }
     
-    auto takeNextThatMayFindWork = [&] () -> MarkingConstraint* {
+    auto takeNextProductiveConstraint = [&] () -> MarkingConstraint* {
         while (index < order.size()) {
             MarkingConstraint* constraint = order[index++];
             if (mayFindWork(*constraint))
@@ -148,7 +148,7 @@ void MarkingConstraintSolver::converge(const Vector<MarkingConstraint*>& order)
         }
         return nullptr;
     };
-    MarkingConstraint* next = takeNextThatMayFindWork();
+    MarkingConstraint* next = takeNextProductiveConstraint();
     if (!next && m_toExecuteInParallel.isEmpty())
         return;
 
@@ -157,7 +157,7 @@ void MarkingConstraintSolver::converge(const Vector<MarkingConstraint*>& order)
             return std::nullopt;
 
         unsigned result = next->index();
-        next = takeNextThatMayFindWork();
+        next = takeNextProductiveConstraint();
         return result;
     };
     

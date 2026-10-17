@@ -61,9 +61,9 @@ struct Access {
 
 struct Accesses {
     Vector<Access, 64> list;
-    Vector<unsigned, 32> firstOfVariable;
+    Vector<unsigned, 32> firstAccessOfVariable;
 
-    std::span<Access> of(unsigned variable) { return list.mutableSpan().subspan(firstOfVariable[variable], firstOfVariable[variable + 1] - firstOfVariable[variable]); }
+    std::span<Access> of(unsigned variable) { return list.mutableSpan().subspan(firstAccessOfVariable[variable], firstAccessOfVariable[variable + 1] - firstAccessOfVariable[variable]); }
 };
 
 bool killDeadVariables(Procedure& proc, Accesses& accesses)
@@ -185,20 +185,20 @@ public:
                 return a.variable < b.variable;
             return a.block->index() < b.block->index();
         });
-        m_accesses.firstOfVariable.fill(0, numVariables + 1);
+        m_accesses.firstAccessOfVariable.fill(0, numVariables + 1);
         for (Access& access : m_accesses.list)
-            ++m_accesses.firstOfVariable[access.variable + 1];
+            ++m_accesses.firstAccessOfVariable[access.variable + 1];
         for (unsigned i = 0; i < numVariables; ++i)
-            m_accesses.firstOfVariable[i + 1] += m_accesses.firstOfVariable[i];
+            m_accesses.firstAccessOfVariable[i + 1] += m_accesses.firstAccessOfVariable[i];
 
         m_isLiveAtHead.fill(0, m_proc.size());
         m_isLiveAtTail.fill(0, m_proc.size());
         m_hasSet.fill(0, m_proc.size());
-        m_firstOfVariable.fill(0, numVariables + 1);
+        m_firstAccessOfVariable.fill(0, numVariables + 1);
         uint64_t budget = static_cast<uint64_t>(m_proc.size()) * stepsPerBlock;
         Vector<BasicBlock*, 32> worklist;
         for (unsigned variable = 0; variable < numVariables; ++variable) {
-            m_firstOfVariable[variable] = m_blocksLiveAtHead.size();
+            m_firstAccessOfVariable[variable] = m_blocksLiveAtHead.size();
             if (!m_proc.variables()[variable])
                 continue;
             unsigned epoch = variable + 1;
@@ -238,15 +238,15 @@ public:
                     access.value->replaceWithNop();
             }
         }
-        m_firstOfVariable[numVariables] = m_blocksLiveAtHead.size();
+        m_firstAccessOfVariable[numVariables] = m_blocksLiveAtHead.size();
         m_isLiveAtHead.fill(0);
         return true;
     }
 
-    void turnTo(unsigned variable)
+    void selectVariable(unsigned variable)
     {
         m_epoch = variable + 1;
-        for (unsigned i = m_firstOfVariable[variable]; i < m_firstOfVariable[variable + 1]; ++i)
+        for (unsigned i = m_firstAccessOfVariable[variable]; i < m_firstAccessOfVariable[variable + 1]; ++i)
             m_isLiveAtHead[m_blocksLiveAtHead[i]] = m_epoch;
     }
 
@@ -261,7 +261,7 @@ private:
     Vector<unsigned> m_isLiveAtTail;
     Vector<unsigned> m_hasSet;
     Vector<unsigned> m_blocksLiveAtHead;
-    Vector<unsigned, 32> m_firstOfVariable;
+    Vector<unsigned, 32> m_firstAccessOfVariable;
     unsigned m_epoch { 0 };
 };
 
@@ -272,10 +272,10 @@ void fixSSAGlobally(Procedure& proc)
 {
 #if USE(BUN_JSC_ADDITIONS)
     LivenessByVariable livenessByVariable(proc, accesses);
-    bool goesByVariable = livenessByVariable.run();
+    bool usesPerVariableLiveness = livenessByVariable.run();
     std::optional<VariableLiveness> dense;
     std::optional<VariableLiveness::LiveAtHead> denseLiveAtHead;
-    if (!goesByVariable) {
+    if (!usesPerVariableLiveness) {
         dense.emplace(proc);
         VariableLiveness& liveness = *dense;
 #else
@@ -315,7 +315,7 @@ void fixSSAGlobally(Procedure& proc)
 
     // Create Defs for all of the stores to the stack variable.
 #if USE(BUN_JSC_ADDITIONS)
-    if (goesByVariable) {
+    if (usesPerVariableLiveness) {
         for (Access& access : accesses.list) {
             if (access.value->opcode() != Set)
                 continue;
@@ -342,14 +342,14 @@ void fixSSAGlobally(Procedure& proc)
         ssa.computePhis(
 #if USE(BUN_JSC_ADDITIONS)
             [&] (SSACalculator::Variable* calcVar) {
-                if (goesByVariable)
-                    livenessByVariable.turnTo(calcVarToVariable[calcVar->index()]->index());
+                if (usesPerVariableLiveness)
+                    livenessByVariable.selectVariable(calcVarToVariable[calcVar->index()]->index());
             },
 #endif
             [&] (SSACalculator::Variable* calcVar, BasicBlock* block) -> Value* {
                 Variable* variable = calcVarToVariable[calcVar->index()];
 #if USE(BUN_JSC_ADDITIONS)
-                if (!(goesByVariable ? livenessByVariable.isLiveAtHead(block) : denseLiveAtHead->isLiveAtHead(block, variable)))
+                if (!(usesPerVariableLiveness ? livenessByVariable.isLiveAtHead(block) : denseLiveAtHead->isLiveAtHead(block, variable)))
                     return nullptr;
 #else
                 if (!liveAtHead.isLiveAtHead(block, variable))
@@ -372,13 +372,13 @@ void fixSSAGlobally(Procedure& proc)
     IndexSparseSet<KeyValuePair<unsigned, Value*>> mapping(proc.variables().size());
     IndexSet<Value*> valuesToDelete;
 #if USE(BUN_JSC_ADDITIONS)
-    Vector<uint8_t, 256> hasNothingToRemove;
-    hasNothingToRemove.fill(0, proc.size());
+    Vector<uint8_t, 256> hasNoRemovals;
+    hasNoRemovals.fill(0, proc.size());
 #endif
     for (BasicBlock* block : proc.blocksInPreOrder()) {
         mapping.clear();
 #if USE(BUN_JSC_ADDITIONS)
-        bool hasSomethingToRemove = false;
+        bool hasRemovals = false;
 #endif
         
         auto ensureMapping = [&] (Variable* variable, unsigned valueIndex, Origin origin) -> Value* {
@@ -422,7 +422,7 @@ void fixSSAGlobally(Procedure& proc)
                 value->replaceWithIdentity(ensureMapping(variable, valueIndex, value->origin()));
                 valuesToDelete.add(value);
 #if USE(BUN_JSC_ADDITIONS)
-                hasSomethingToRemove = true;
+                hasRemovals = true;
 #endif
                 break;
             }
@@ -434,14 +434,14 @@ void fixSSAGlobally(Procedure& proc)
                 mapping.set(variable->index(), value->child(0));
                 value->replaceWithNop();
 #if USE(BUN_JSC_ADDITIONS)
-                hasSomethingToRemove = true;
+                hasRemovals = true;
 #endif
                 break;
             }
 
 #if USE(BUN_JSC_ADDITIONS)
             case Nop:
-                hasSomethingToRemove = true;
+                hasRemovals = true;
                 break;
 #endif
 
@@ -450,7 +450,7 @@ void fixSSAGlobally(Procedure& proc)
             }
         }
 #if USE(BUN_JSC_ADDITIONS)
-        hasNothingToRemove[block->index()] = !hasSomethingToRemove;
+        hasNoRemovals[block->index()] = !hasRemovals;
 #endif
 
         unsigned upsilonInsertionPoint = block->size() - 1;
@@ -480,7 +480,7 @@ void fixSSAGlobally(Procedure& proc)
     // useful for phases that do size estimates.
     for (BasicBlock* block : proc) {
 #if USE(BUN_JSC_ADDITIONS)
-        if (hasNothingToRemove[block->index()])
+        if (hasNoRemovals[block->index()])
             continue;
 #endif
         block->values().removeAllMatching(

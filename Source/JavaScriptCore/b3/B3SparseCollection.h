@@ -42,12 +42,12 @@ struct SparseCollectionTraits {
 };
 
 class Value;
-struct DestroyerOfValue {
+struct ValueDestroyer {
     inline void operator()(Value*) const;
 };
 template<>
 struct SparseCollectionTraits<Value> {
-    using Deleter = DestroyerOfValue;
+    using Deleter = ValueDestroyer;
 };
 #endif
 

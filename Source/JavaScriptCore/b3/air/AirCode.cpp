@@ -144,9 +144,9 @@ void Code::setRegsInPriorityOrder(Bank bank, const Vector<Reg>& regs)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void Code::setCalleeSavesLostAtSuspensions(const RegisterSet& registers)
+void Code::setCalleeSavesClobberedAtSuspensions(const RegisterSet& registers)
 {
-    m_calleeSavesLostAtSuspensions = registers;
+    m_calleeSavesClobberedAtSuspensions = registers;
     Vector<Reg> order;
     Vector<Reg> lost;
     for (Reg reg : regsInPriorityOrder(GP))
@@ -250,7 +250,7 @@ void Code::setCalleeSaveRegisterAtOffsetList(RegisterAtOffsetList&& registerAtOf
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void Code::tryToPlaceSpillsAboveFrameRecord()
+void Code::tryPlaceSpillsAboveFrameRecord()
 {
     constexpr unsigned maxBytesAbove = 480;
     constexpr unsigned maxBytesBelow = 240;
@@ -273,10 +273,10 @@ void Code::tryToPlaceSpillsAboveFrameRecord()
     m_frameSize = above + below;
 }
 
-void Code::tryToPlaceCalleeSavesAtFootOfFrame()
+void Code::tryPlaceCalleeSavesAtFrameBottom()
 {
     constexpr unsigned maxFrameSize = 496;
-    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFootOfFrame || m_callArgAreaSize || !m_calleeSaveStackSlot || m_frameSize > maxFrameSize)
+    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFrameBottom || m_callArgAreaSize || !m_calleeSaveStackSlot || m_frameSize > maxFrameSize)
         return;
     unsigned saved = m_calleeSaveStackSlot->byteSize();
     if (m_calleeSaveStackSlot->offsetFromFP() != -static_cast<intptr_t>(saved) || saved != m_uncorrectedCalleeSaveRegisterAtOffsetList.registerCount() * sizeof(CPURegister))
@@ -294,16 +294,16 @@ void Code::tryToPlaceCalleeSavesAtFootOfFrame()
             slot->setOffsetFromFP(slot->offsetFromFP() + saved);
     }
     m_calleeSaveStackSlot->setOffsetFromFP(-static_cast<intptr_t>(m_frameSize));
-    m_placesCalleeSavesAtFootOfFrame = true;
+    m_placesCalleeSavesAtFrameBottom = true;
 }
 
-void Code::tryToPushRegistersInPrologue()
+void Code::tryPushRegistersInPrologue()
 {
     constexpr unsigned maxFrameSize = 496;
     constexpr unsigned maxInstructions = 16;
     constexpr unsigned maxPushes = 6;
     constexpr intptr_t wordSize = sizeof(CPURegister);
-    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFootOfFrame || m_callArgAreaSize || m_frameSize > maxFrameSize || (m_calleeSaveStackSlot && !m_placesCalleeSavesAtFootOfFrame) || m_entrypoints.size() > 1)
+    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFrameBottom || m_callArgAreaSize || m_frameSize > maxFrameSize || (m_calleeSaveStackSlot && !m_placesCalleeSavesAtFrameBottom) || m_entrypoints.size() > 1)
         return;
     BasicBlock* entry = at(0);
     if (!entry || entry->numPredecessors())
@@ -330,21 +330,21 @@ void Code::tryToPushRegistersInPrologue()
             intptr_t to = -wordSize * static_cast<intptr_t>(m_registersPushedInPrologue.size() + 1);
             if (!source || !slot->isSpill() || slot->byteSize() != wordSize || inst.args()[1].offset() || from > to)
                 return;
-            auto liesIn = [](StackSlot* other, intptr_t word) {
+            auto isContainedIn = [](StackSlot* other, intptr_t word) {
                 return other->offsetFromFP() >= word && other->offsetFromFP() + static_cast<intptr_t>(other->byteSize()) <= word + wordSize;
             };
             auto touches = [](StackSlot* other, intptr_t word) {
                 return other->offsetFromFP() < word + wordSize && other->offsetFromFP() + static_cast<intptr_t>(other->byteSize()) > word;
             };
             for (StackSlot* other : m_stackSlots) {
-                if ((touches(other, from) && !liesIn(other, from)) || (touches(other, to) && !liesIn(other, to)))
+                if ((touches(other, from) && !isContainedIn(other, from)) || (touches(other, to) && !isContainedIn(other, to)))
                     return;
             }
             if (from != to) {
                 for (StackSlot* other : m_stackSlots) {
-                    if (liesIn(other, from))
+                    if (isContainedIn(other, from))
                         other->setOffsetFromFP(other->offsetFromFP() - from + to);
-                    else if (liesIn(other, to))
+                    else if (isContainedIn(other, to))
                         other->setOffsetFromFP(other->offsetFromFP() - to + from);
                 }
             }
@@ -555,7 +555,7 @@ void Code::appendIonGraphPass(ASCIILiteral passName)
 
 
 #if USE(BUN_JSC_ADDITIONS)
-void Code::noteTableInCode(MacroAssembler::Label table, unsigned numberOfEntries)
+void Code::recordTableInCode(MacroAssembler::Label table, unsigned numberOfEntries)
 {
     m_tablesInCode.append({ table, numberOfEntries });
 }

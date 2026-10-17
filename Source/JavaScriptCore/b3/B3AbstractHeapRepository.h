@@ -35,7 +35,7 @@
 namespace JSC::B3 {
 
 #if ENABLE(AOT)
-#define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
+#define FOR_EACH_AOT_ABSTRACT_FIELD(macro) \
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
@@ -52,28 +52,28 @@ namespace JSC::B3 {
     macro(JSMap_compactTable, (JSMap::offsetOfCompactTable()), Mutability::Mutable) \
     macro(JSSet_compactTable, (JSSet::offsetOfCompactTable()), Mutability::Mutable) \
     macro(AOTTyped_shapeSets, 0, Mutability::Immutable)
-#define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
+#define FOR_EACH_AOT_ABSTRACT_HEAP(macro) \
     macro(AOTTyped_fields) \
     macro(AOTTyped_collectorState) \
     macro(AOTTyped_cards) \
     macro(AOTTyped_runtimeState) \
     macro(AOTTyped_argumentBuffer)
-#define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
+#define FOR_EACH_AOT_NUMBERED_ABSTRACT_HEAP(macro) \
     macro(AOTTyped_slots) \
     macro(AOTTyped_variables)
-#define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
+#define FOR_EACH_AOT_INDEXED_ABSTRACT_HEAP(macro) \
     macro(AOTRuntimeTable, 0, sizeof(void*)) \
     macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t)) \
     macro(AOTTypedSlimClosure_captures, AOT::Typed::SlimClosure::offsetOfCaptures(), sizeof(uint64_t))
 #else
-#define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro)
-#define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro)
-#define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro)
-#define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro)
+#define FOR_EACH_AOT_ABSTRACT_FIELD(macro)
+#define FOR_EACH_AOT_ABSTRACT_HEAP(macro)
+#define FOR_EACH_AOT_INDEXED_ABSTRACT_HEAP(macro)
+#define FOR_EACH_AOT_NUMBERED_ABSTRACT_HEAP(macro)
 #endif
 
 #define FOR_EACH_ABSTRACT_HEAP(macro) \
-    FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
+    FOR_EACH_AOT_ABSTRACT_HEAP(macro) \
     macro(TypedArrayProperties) \
     macro(JSCellHeaderAndNamedProperties) \
     macro(OrderedHashTableData) \
@@ -81,7 +81,7 @@ namespace JSC::B3 {
 
 // macro(name, offset, mutability)
 #define FOR_EACH_ABSTRACT_FIELD(macro) \
-    FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
+    FOR_EACH_AOT_ABSTRACT_FIELD(macro) \
     macro(ArrayBuffer_data, ArrayBuffer::offsetOfData(), Mutability::Mutable) \
     macro(ArrayStorage_numValuesInVector, ArrayStorage::numValuesInVectorOffset(), Mutability::Mutable) \
     macro(Butterfly_arrayBuffer, Butterfly::offsetOfArrayBuffer(), Mutability::Mutable) \
@@ -246,7 +246,7 @@ namespace JSC::B3 {
     macro(Symbol_string, Symbol::offsetOfString(), Mutability::Mutable) \
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
-    FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
+    FOR_EACH_AOT_INDEXED_ABSTRACT_HEAP(macro) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \
     macro(CompleteSubspace_allocatorForSizeStep, CompleteSubspace::offsetOfAllocatorForSizeStep(), sizeof(Allocator)) \
     macro(DirectArguments_storage, DirectArguments::storageOffset(), sizeof(EncodedJSValue)) \
@@ -273,7 +273,7 @@ namespace JSC::B3 {
     macro(WebAssemblyGCStructure_inlinedDisplay, WebAssemblyGCStructure::offsetOfInlinedDisplay(), sizeof(WriteBarrierStructureID)) \
 
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP(macro) \
-    FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
+    FOR_EACH_AOT_NUMBERED_ABSTRACT_HEAP(macro) \
     macro(properties) \
     /* WasmGC Struct access are analyzed via field index and field type. We can include Wasm type definition to further make alias analysis better. */ \
     macro(JSWebAssemblyStruct_fields) \
@@ -410,7 +410,7 @@ public:
 
 private:
 #if USE(BUN_JSC_ADDITIONS)
-    void forgetProcedure();
+    void detachProcedure();
 #if ENABLE(AOT)
     void reparentHeapsForAOT();
 #endif

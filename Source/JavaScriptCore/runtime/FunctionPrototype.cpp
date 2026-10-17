@@ -102,7 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
         Integrity::auditStructureID(object->structureID());
 #if ENABLE(AOT)
         if (isSlimClosureType(object->type()))
-            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::textOfSlimClosure(globalObject, object)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::slimClosureSourceText(globalObject, object)));
 #endif
         if (object->isCallable())
             RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() { [native code] }"_s)));
@@ -257,7 +257,7 @@ static JSValue retrieveArguments(VM& vm, CallFrame* callFrame, JSFunction* funct
     return functor.result();
 }
 
-static bool isSloppyFunctionCompiledAheadOfTime(JSValue receiver)
+static bool isSloppyAOTFunction(JSValue receiver)
 {
 #if ENABLE(AOT)
     return receiver.isCell() && AOT::isSloppyPlainClosure(receiver.asCell());
@@ -275,7 +275,7 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-        if (isSloppyFunctionCompiledAheadOfTime(JSValue::decode(thisValue)))
+        if (isSloppyAOTFunction(JSValue::decode(thisValue)))
             return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
@@ -354,7 +354,7 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-        if (isSloppyFunctionCompiledAheadOfTime(JSValue::decode(thisValue)))
+        if (isSloppyAOTFunction(JSValue::decode(thisValue)))
             return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
@@ -393,7 +393,7 @@ JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyFunctionCompiledAheadOfTime(JSValue::decode(thisValue)))
+    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyAOTFunction(JSValue::decode(thisValue)))
         throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
     return true;

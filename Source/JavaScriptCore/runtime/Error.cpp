@@ -147,7 +147,6 @@ public:
             return IterationStatus::Continue;
 
 #if ENABLE(AOT)
-        // What was compiled from types has no executable, and nothing to quote.
         if (AOT::FunctionRef function = visitor->aotFunction(); function && !function.executable())
             return IterationStatus::Done;
         if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoSourceText()) {
@@ -225,7 +224,7 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
     return { functor.codeBlock(), functor.bytecodeIndex() };
 }
 
-std::optional<SourceQuote> quoteSourceWithoutText(VM& vm, CallFrame* startCallFrame)
+std::optional<SourceQuote> quoteSourceWithoutSourceText(VM& vm, CallFrame* startCallFrame)
 {
 #if ENABLE(AOT)
     if (!vm.useImmutableIntrinsics) [[likely]]

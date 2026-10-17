@@ -20,21 +20,21 @@ namespace JSC { namespace AOT {
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
-static std::optional<Vector<uint8_t>> moduleWrittenIn(std::span<const uint8_t> text)
+static std::optional<Vector<uint8_t>> decodeEmbeddedModule(std::span<const uint8_t> text)
 {
-    auto startOfModule = "AGFzbQEAAA"_span;
-    auto endOfPrefix = "base64,"_span;
-    constexpr size_t maxLengthOfPrefix = 64;
-    if (text.size() < startOfModule.size())
+    auto modulePrefix = "AGFzbQEAAA"_span;
+    auto base64Marker = "base64,"_span;
+    constexpr size_t maxPrefixLength = 64;
+    if (text.size() < modulePrefix.size())
         return std::nullopt;
-    if (!spanHasPrefix(text, startOfModule)) {
+    if (!spanHasPrefix(text, modulePrefix)) {
         if (text[0] != 'd')
             return std::nullopt;
-        size_t at = WTF::find(text.first(std::min(text.size(), maxLengthOfPrefix)), endOfPrefix);
+        size_t at = WTF::find(text.first(std::min(text.size(), maxPrefixLength)), base64Marker);
         if (at == notFound)
             return std::nullopt;
-        text = text.subspan(at + endOfPrefix.size());
-        if (!spanHasPrefix(text, startOfModule))
+        text = text.subspan(at + base64Marker.size());
+        if (!spanHasPrefix(text, modulePrefix))
             return std::nullopt;
     }
     return base64Decode(text);
@@ -60,7 +60,7 @@ void addWebAssemblyModules(VM& vm, const Typed::Program& program, ImageBuilder& 
             modules.append(WTF::move(*module));
     };
     for (auto text : program.strings) {
-        if (auto source = moduleWrittenIn(text))
+        if (auto source = decodeEmbeddedModule(text))
             add(source->span());
     }
     for (auto source : program.webAssemblyModules)

@@ -189,22 +189,22 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    static constexpr size_t mostLeavesToRebalance = 32;
-    if (leaves.size() > mostLeavesToRebalance) {
-        size_t numberOfLeavesLeft = leaves.size();
+    static constexpr size_t maxLeavesToRebalance = 32;
+    if (leaves.size() > maxLeavesToRebalance) {
+        size_t remainingLeafCount = leaves.size();
         if (op != Mul) {
             Vector<Value*, 4> sortedLeaves = leaves;
             std::ranges::sort(sortedLeaves, { }, &Value::index);
-            numberOfLeavesLeft = 0;
+            remainingLeafCount = 0;
             for (size_t begin = 0; begin < sortedLeaves.size();) {
                 size_t end = begin + 1;
                 while (end < sortedLeaves.size() && sortedLeaves[end] == sortedLeaves[begin])
                     ++end;
-                numberOfLeavesLeft += op != BitXor || (end - begin) % 2;
+                remainingLeafCount += op != BitXor || (end - begin) % 2;
                 begin = end;
             }
         }
-        if (numberOfLeavesLeft > mostLeavesToRebalance)
+        if (remainingLeafCount > maxLeavesToRebalance)
             return false;
     }
 #endif

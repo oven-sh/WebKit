@@ -294,7 +294,7 @@ void MarkedSpace::sweepPreciseAllocations()
 void MarkedSpace::prepareForAllocation()
 {
     ASSERT(!Thread::mayBeGCThread() || heap().worldIsStopped());
-    if (!heap().isCollectingYoungWhileNothingIsYoung()) {
+    if (!heap().isEdenCollectionWithEmptyEden()) {
         for (Subspace* subspace : m_subspaces)
             subspace->prepareForAllocation();
     }
@@ -471,7 +471,7 @@ void MarkedSpace::endMarking()
             ASSERT_UNUSED(allocation, !allocation->isNewlyAllocated());
     }
 
-    if (!heap().isCollectingYoungWhileNothingIsYoung()) {
+    if (!heap().isEdenCollectionWithEmptyEden()) {
         forEachDirectory(
             [&] (BlockDirectory& directory) -> IterationStatus {
                 directory.endMarking();

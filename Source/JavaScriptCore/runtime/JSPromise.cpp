@@ -597,8 +597,6 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
 
     auto* structure = object->structure();
 #if ENABLE(AOT)
-    // What a compiled object has is not in its structure: its fields are in its layout, of which the structure has one, and a bit in the
-    // object says whether it has anything besides.
     bool isCompiledObject = structure->compiledLayout();
     if (isCompiledObject && uncheckedDowncast<AOT::Typed::Object>(object)->hasExtraProperties())
         return false;
@@ -621,15 +619,15 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
     auto* current = structure;
     JSObject* holder = object;
     while (current) {
-        bool absenceShows = !current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
+        bool absenceIsObservable = !current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
 #if ENABLE(AOT)
         if (isCompiledObject && current == structure)
-            absenceShows = !AOT::Typed::hasFieldNamedThen(structure);
-        else if (!absenceShows)
-            absenceShows = AOT::Typed::isPrototypeOfClassThatDeclaresNoThen(holder);
+            absenceIsObservable = !AOT::Typed::hasFieldNamedThen(structure);
+        else if (!absenceIsObservable)
+            absenceIsObservable = AOT::Typed::isClassPrototypeWithoutThen(holder);
 #endif
         if (current->hasSpecialProperties()
-            || !absenceShows
+            || !absenceIsObservable
             || current->typeInfo().overridesGetPrototype()
             || !current->hasMonoProto()) {
             result = false;
@@ -815,7 +813,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
 
 #if ENABLE(AOT)
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::Typed::countLookupOfThen(vm);
+        AOT::Typed::countThenLookup(vm);
 #endif
     JSValue then;
     JSValue error;
@@ -1190,7 +1188,7 @@ void JSPromise::resolveWithInternalMicrotask(JSGlobalObject* globalObject, VM& v
 
 #if ENABLE(AOT)
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::Typed::countLookupOfThen(vm);
+        AOT::Typed::countThenLookup(vm);
 #endif
     JSValue then;
     JSValue error;

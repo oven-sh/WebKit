@@ -246,7 +246,7 @@ ALWAYS_INLINE bool JSCell::isConstructor()
 ALWAYS_INLINE void JSCell::setStructure(VM& vm, Structure* structure)
 {
 #if ENABLE(AOT)
-    ASSERT(structure->classInfoForCells() == this->structure()->classInfoForCells() || AOT::becomesOrdinaryObject(this->structure()->classInfoForCells(), structure->classInfoForCells()));
+    ASSERT(structure->classInfoForCells() == this->structure()->classInfoForCells() || AOT::convertsToOrdinaryObject(this->structure()->classInfoForCells(), structure->classInfoForCells()));
 #else
     ASSERT(structure->classInfoForCells() == this->structure()->classInfoForCells());
 #endif

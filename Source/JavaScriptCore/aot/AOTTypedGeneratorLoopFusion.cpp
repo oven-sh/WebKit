@@ -62,7 +62,7 @@ private:
     };
 
     struct Loop {
-        ValueID made;
+        ValueID created;
         Vector<ValueID, 2> casts;
         ValueID hasNext;
         ValueID value;
@@ -80,20 +80,20 @@ private:
     std::optional<Loop> loopOver(ValueID open)
     {
         Loop loop;
-        loop.made = at(open).child(0);
-        while (at(loop.made).opcode == Opcode::Cast) {
-            if (!m_program.at(at(loop.made).type).anyObject)
+        loop.created = at(open).child(0);
+        while (at(loop.created).opcode == Opcode::Cast) {
+            if (!m_program.at(at(loop.created).type).anyObject)
                 return std::nullopt;
-            loop.casts.append(loop.made);
-            loop.made = at(loop.made).child(0);
+            loop.casts.append(loop.created);
+            loop.created = at(loop.created).child(0);
         }
-        if (at(loop.made).opcode != Opcode::CallDirect || at(loop.made).isJumpToContinuation())
+        if (at(loop.created).opcode != Opcode::CallDirect || at(loop.created).isJumpToContinuation())
             return std::nullopt;
-        if (!frameMadeBy(m_program.at(at(loop.made).function())))
+        if (!frameAllocatedBy(m_program.at(at(loop.created).function())))
             return std::nullopt;
         bool isOnlyIterated = true;
         auto isGenerator = [&](ValueID id) {
-            return id == loop.made || loop.casts.contains(id);
+            return id == loop.created || loop.casts.contains(id);
         };
         for (auto& block : m_function.blocks) {
             for (ValueID id : block.values) {
@@ -125,7 +125,7 @@ private:
         return loop;
     }
 
-    std::optional<Frame> frameMadeBy(const Function& ramp) const
+    std::optional<Frame> frameAllocatedBy(const Function& ramp) const
     {
         if (!ramp.resumeFunction || ramp.startFunction || (ramp.declaredAs & (functionIsAsync | functionIsGenerator)) != functionIsGenerator || ramp.blocks.size() != 1)
             return std::nullopt;
@@ -167,11 +167,11 @@ private:
         return frame;
     }
 
-    bool mayRunAgainWithoutBirth(ValueID use, ValueID birth)
+    bool mayRepeatWithoutAllocation(ValueID use, ValueID allocationSite)
     {
         BlockID from = siteOf(use).block;
-        BlockID born = siteOf(birth).block;
-        if (from == born)
+        BlockID allocationBlock = siteOf(allocationSite).block;
+        if (from == allocationBlock)
             return false;
         BitVector seen(m_function.blocks.size());
         Vector<BlockID, 16> worklist { from };
@@ -179,7 +179,7 @@ private:
             for (auto& target : at(worklist.takeLast()).terminator.targets) {
                 if (target.block == from)
                     return true;
-                if (target.block != born && !seen.set(target.block.index()))
+                if (target.block != allocationBlock && !seen.set(target.block.index()))
                     worklist.append(target.block);
             }
         }
@@ -326,7 +326,7 @@ private:
         Site site = siteOf(hasNext);
         Value like = at(hasNext);
         Cut cut = cutAt(site);
-        ValueID yielded = appendResume(site.block, resumeModeNext, like);
+        ValueID returnedValue = appendResume(site.block, resumeModeNext, like);
         BlockID resumed = addBlock();
         jump(site.block, Target { resumed, { } }, cut.handler);
         ValueID state = appendState(resumed, like);
@@ -336,7 +336,7 @@ private:
         at(hasNext) = WTF::move(isNotDone);
         at(resumed).values.append(hasNext);
         jump(resumed, cut.after);
-        return yielded;
+        return returnedValue;
     }
 
     void close(ValueID id)
@@ -366,11 +366,11 @@ private:
     struct Steps {
         Vector<ValueID, 4> calls;
         ValueID merged;
-        Vector<ValueID, 4> readsOfDone;
-        Vector<ValueID, 4> readsOfValue;
+        Vector<ValueID, 4> doneReads;
+        Vector<ValueID, 4> valueReads;
     };
 
-    std::optional<Steps> stepsOf(ValueID made)
+    std::optional<Steps> stepsOf(ValueID created)
     {
         auto next = m_program.find(asBytes("next"_s.span8()));
         auto done = m_program.find(asBytes("done"_s.span8()));
@@ -383,14 +383,14 @@ private:
             for (ValueID id : block.values) {
                 auto& user = at(id);
                 user.forEachChild([&](ValueID& child) {
-                    if (child != made)
+                    if (child != created)
                         return;
                     isOnlyStepped &= user.opcode == Opcode::CallMethod && &child == &user.children[0] && user.string() == *next && user.arguments.size() <= 1;
                     steps.calls.append(id);
                 });
             }
             block.terminator.forEachChild([&](ValueID& child) {
-                isOnlyStepped &= child != made;
+                isOnlyStepped &= child != created;
             });
         }
         if (!isOnlyStepped || steps.calls.isEmpty())
@@ -428,9 +428,9 @@ private:
                     if (!isResult(child))
                         return;
                     if (user.opcode == Opcode::GetById && user.string() == *done)
-                        steps.readsOfDone.append(id);
+                        steps.doneReads.append(id);
                     else if (user.opcode == Opcode::GetById && user.string() == *value)
-                        steps.readsOfValue.append(id);
+                        steps.valueReads.append(id);
                     else
                         isOnlyStepped = false;
                 });
@@ -454,7 +454,7 @@ private:
         return id;
     }
 
-    std::pair<ValueID, ValueID> stepByHand(ValueID call)
+    std::pair<ValueID, ValueID> emitManualStep(ValueID call)
     {
         Site site = siteOf(call);
         Value like = at(call);
@@ -482,7 +482,7 @@ private:
         ValueID over = append(isOver, WTF::move(yes));
         jump(isOver, Target { stepped, { nothing, over } });
 
-        ValueID yielded = appendResume(runs, resumeModeNext, like, like.arguments.isEmpty() ? ValueID() : like.arguments[0]);
+        ValueID returnedValue = appendResume(runs, resumeModeNext, like, like.arguments.isEmpty() ? ValueID() : like.arguments[0]);
         if (cut.handler) {
             BlockID failed = addBlock();
             jump(runs, Target { resumed, { } }, Target { failed, { } });
@@ -499,7 +499,7 @@ private:
         } else
             jump(runs, Target { resumed, { } });
         ValueID isCompleted = appendIsCompleted(resumed);
-        jump(resumed, Target { stepped, { yielded, isCompleted } });
+        jump(resumed, Target { stepped, { returnedValue, isCompleted } });
 
         at(call) = make(Opcode::Undefined, m_program.types.undefined, like);
         at(stepped).values.append(call);
@@ -507,25 +507,25 @@ private:
         return { value, isDone };
     }
 
-    bool fuseSteps(ValueID made)
+    bool fuseSteps(ValueID created)
     {
-        if (at(made).opcode != Opcode::CallDirect)
+        if (at(created).opcode != Opcode::CallDirect)
             return false;
-        auto& ramp = m_program.at(at(made).function());
-        auto frame = frameMadeBy(ramp);
-        if (!frame || at(made).arguments.size() != ramp.blocks[0].parameters.size())
+        auto& ramp = m_program.at(at(created).function());
+        auto frame = frameAllocatedBy(ramp);
+        if (!frame || at(created).arguments.size() != ramp.blocks[0].parameters.size())
             return false;
-        auto steps = stepsOf(made);
+        auto steps = stepsOf(created);
         if (!steps)
             return false;
-        m_frame = made;
+        m_frame = created;
         m_layout = ramp.at(frame->allocation).layout();
         m_resume = ramp.resumeFunction;
-        m_inliningDepth = at(made).immediates[1];
+        m_inliningDepth = at(created).immediates[1];
         makeFrame(ramp, *frame);
         UncheckedKeyHashMap<uint32_t, std::pair<ValueID, ValueID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> parts;
         for (ValueID call : steps->calls)
-            parts.add(call.index(), stepByHand(call));
+            parts.add(call.index(), emitManualStep(call));
         if (steps->merged) {
             BlockID mergeBlock = at(steps->merged).parameterBlock();
             unsigned index = at(steps->merged).parameterIndex();
@@ -544,7 +544,7 @@ private:
             }
             parts.add(steps->merged.index(), std::pair { value, isDone });
         }
-        for (ValueID read : steps->readsOfDone) {
+        for (ValueID read : steps->doneReads) {
             ValueID isDone = parts.get(at(read).child(0).index()).second;
             auto replace = [&](ValueID& child) {
                 if (child == read)
@@ -557,26 +557,26 @@ private:
             }
             remove(read);
         }
-        for (ValueID read : steps->readsOfValue) {
+        for (ValueID read : steps->valueReads) {
             Value cast = make(Opcode::Cast, at(read).type, Value(at(read)));
             cast.children[0] = parts.get(at(read).child(0).index()).first;
             cast.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
-            cast.takePredictionOf(at(read));
+            cast.copyPredictionFrom(at(read));
             at(read) = WTF::move(cast);
         }
         return true;
     }
 
-    bool fuseSpread(ValueID made)
+    bool fuseSpread(ValueID created)
     {
         auto push = m_program.find(asBytes("push"_s.span8()));
-        if (at(made).opcode != Opcode::CallDirect || !push)
+        if (at(created).opcode != Opcode::CallDirect || !push)
             return false;
-        auto& ramp = m_program.at(at(made).function());
-        auto frame = frameMadeBy(ramp);
-        if (!frame || at(made).arguments.size() != ramp.blocks[0].parameters.size())
+        auto& ramp = m_program.at(at(created).function());
+        auto frame = frameAllocatedBy(ramp);
+        if (!frame || at(created).arguments.size() != ramp.blocks[0].parameters.size())
             return false;
-        Vector<ValueID, 2> aliases { made };
+        Vector<ValueID, 2> aliases { created };
         for (bool isGrowing = true; isGrowing;) {
             isGrowing = false;
             for (auto& block : m_function.blocks) {
@@ -606,12 +606,12 @@ private:
                 isOnlySpread &= !aliases.contains(child);
             });
         }
-        if (!isOnlySpread || !spread || mayRunAgainWithoutBirth(spread, made))
+        if (!isOnlySpread || !spread || mayRepeatWithoutAllocation(spread, created))
             return false;
-        m_frame = made;
+        m_frame = created;
         m_layout = ramp.at(frame->allocation).layout();
         m_resume = ramp.resumeFunction;
-        m_inliningDepth = at(made).immediates[1];
+        m_inliningDepth = at(created).immediates[1];
         makeFrame(ramp, *frame);
         for (unsigned i = 1; i < aliases.size(); ++i)
             remove(aliases[i]);
@@ -624,7 +624,7 @@ private:
         BlockID exit = addBlock();
         jump(site.block, Target { header, { } });
         append(header, make(Opcode::LoopHint, m_program.types.undefined, like));
-        ValueID yielded = appendResume(header, resumeModeNext, like);
+        ValueID returnedValue = appendResume(header, resumeModeNext, like);
         jump(header, Target { resumed, { } }, cut.handler);
         ValueID state = appendState(resumed, like);
         ValueID isDone = appendCompare(resumed, Opcode::StrictEq, state, appendInteger(resumed, CoroutineFrame::completedState, m_program.types.int32, like), like);
@@ -636,7 +636,7 @@ private:
         Value call = make(Opcode::CallMethod, m_program.types.anything, like);
         call.children[0] = like.arguments[0];
         call.immediates = { push->index(), m_inliningDepth };
-        call.arguments = { yielded };
+        call.arguments = { returnedValue };
         append(pushes, WTF::move(call));
         jump(pushes, Target { header, { } }, cut.handler);
         Value array = make(Opcode::Cast, like.type, like);
@@ -653,23 +653,23 @@ private:
         auto loop = loopOver(open);
         if (!loop)
             return false;
-        auto& ramp = m_program.at(at(loop->made).function());
-        auto frame = frameMadeBy(ramp);
-        if (!frame || at(loop->made).arguments.size() != ramp.blocks[0].parameters.size() || mayRunAgainWithoutBirth(open, loop->made))
+        auto& ramp = m_program.at(at(loop->created).function());
+        auto frame = frameAllocatedBy(ramp);
+        if (!frame || at(loop->created).arguments.size() != ramp.blocks[0].parameters.size() || mayRepeatWithoutAllocation(open, loop->created))
             return false;
-        m_frame = loop->made;
+        m_frame = loop->created;
         m_layout = ramp.at(frame->allocation).layout();
         m_resume = ramp.resumeFunction;
-        m_inliningDepth = at(loop->made).immediates[1];
+        m_inliningDepth = at(loop->created).immediates[1];
         makeFrame(ramp, *frame);
         for (ValueID cast : loop->casts)
             remove(cast);
         remove(open);
-        ValueID yielded = step(loop->hasNext);
+        ValueID returnedValue = step(loop->hasNext);
         if (loop->value) {
             auto replace = [&](ValueID& child) {
                 if (child == loop->value)
-                    child = yielded;
+                    child = returnedValue;
             };
             for (auto& block : m_function.blocks) {
                 for (ValueID id : block.values)

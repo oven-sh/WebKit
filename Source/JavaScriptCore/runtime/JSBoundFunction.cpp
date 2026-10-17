@@ -288,7 +288,7 @@ JSString* JSBoundFunction::nameSlow(VM& vm)
     while (true) {
 #if ENABLE(AOT)
         if (isSlimClosureType(cursor->type())) {
-            terminal = jsString(vm, AOT::nameOfSlimClosure(cursor));
+            terminal = jsString(vm, AOT::slimClosureName(cursor));
             break;
         }
 #endif
@@ -347,7 +347,7 @@ String JSBoundFunction::nameStringWithoutGCSlow(VM& vm)
     while (true) {
 #if ENABLE(AOT)
         if (isSlimClosureType(cursor->type())) {
-            terminal = AOT::nameOfSlimClosure(cursor);
+            terminal = AOT::slimClosureName(cursor);
             break;
         }
 #endif
@@ -385,7 +385,7 @@ double JSBoundFunction::lengthSlow(VM& vm)
     while (true) {
 #if ENABLE(AOT)
         if (isSlimClosureType(cursor->type())) {
-            length = AOT::lengthOfSlimClosure(cursor);
+            length = AOT::slimClosureLength(cursor);
             break;
         }
 #endif

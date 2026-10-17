@@ -24,7 +24,7 @@
 #include "config.h"
 #include "JSObject.h"
 
-#include "AOTLockWords.h"
+#include "AOTLockedOperation.h"
 #include "AllocationFailureMode.h"
 #include "BlockDirectory.h"
 #include "ClonedArguments.h"
@@ -918,15 +918,15 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     // canPerformFastPutInlineExcludingProto() says no for such a receiver.
     if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]] {
         JSValue held;
-        bool isByLockAlone = isRefusedByLockAlone(vm, propertyName.uid(), held);
-        if (isByLockAlone && (held == value || (propertyName == vm.propertyNames->underscoreProto && !value.isObject() && !value.isNull())))
+        bool isRejectedOnlyByLockHere = isRejectedOnlyByLock(vm, propertyName.uid(), held);
+        if (isRejectedOnlyByLockHere && (held == value || (propertyName == vm.propertyNames->underscoreProto && !value.isObject() && !value.isNull())))
             return true;
-        bool isLeftToAccessor = !isByLockAlone && propertyName != vm.propertyNames->underscoreProto && resolvesToAccessor(globalObject, this, propertyName);
-        if (!isLeftToAccessor) {
-            if (!slot.isStrictMode() && (!isByLockAlone || slot.context() == PutPropertySlot::ReflectSet))
+        bool resolvesToAccessorOnChain = !isRejectedOnlyByLockHere && propertyName != vm.propertyNames->underscoreProto && resolvesToAccessor(globalObject, this, propertyName);
+        if (!resolvesToAccessorOnChain) {
+            if (!slot.isStrictMode() && (!isRejectedOnlyByLockHere || slot.context() == PutPropertySlot::ReflectSet))
                 return false;
-            noteRefusalByLock(vm, propertyName.uid());
-            return typeError(globalObject, scope, true, wordsOfRefusalByLock(vm, propertyName.uid(), ReadonlyPropertyWriteError));
+            recordLockViolation(vm, propertyName.uid());
+            return typeError(globalObject, scope, true, lockViolationMessage(vm, propertyName.uid(), ReadonlyPropertyWriteError));
         }
     }
 
@@ -963,7 +963,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
                 if (attributes & PropertyAttribute::CustomAccessorOrValue)
                     customSetter = entry->value->propertyPutter();
-                else if (!(attributes & PropertyAttribute::Accessor) && isFixedStaticProperty(vm, *obj, *entry->value)) [[unlikely]]
+                else if (!(attributes & PropertyAttribute::Accessor) && isLockedStaticProperty(vm, *obj, *entry->value)) [[unlikely]]
                     attributes |= PropertyAttribute::ReadOnly;
             }
         }
@@ -972,12 +972,12 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
             if (attributes & PropertyAttribute::ReadOnly) {
                 if (!mayBeOverriddenByInheritors(vm, obj, propertyName.uid(), isValidOffset(offset) ? obj->getDirect(offset) : JSValue()) || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
                     JSValue held;
-                    bool isByLockAlone = obj->isLockedBuiltin() && obj->isRefusedByLockAlone(vm, propertyName.uid(), held);
-                    if (isByLockAlone && !isThisValueAltered(slot, obj) && held == value)
+                    bool isRejectedOnlyByLockHere = obj->isLockedBuiltin() && obj->isRejectedOnlyByLock(vm, propertyName.uid(), held);
+                    if (isRejectedOnlyByLockHere && !isThisValueAltered(slot, obj) && held == value)
                         return true;
-                    if ((slot.isStrictMode() && obj->isLockedBuiltin()) || (isByLockAlone && slot.context() != PutPropertySlot::ReflectSet)) {
-                        obj->noteRefusalByLock(vm, propertyName.uid());
-                        return typeError(globalObject, scope, true, obj->wordsOfRefusalByLock(vm, propertyName.uid(), ReadonlyPropertyWriteError));
+                    if ((slot.isStrictMode() && obj->isLockedBuiltin()) || (isRejectedOnlyByLockHere && slot.context() != PutPropertySlot::ReflectSet)) {
+                        obj->recordLockViolation(vm, propertyName.uid());
+                        return typeError(globalObject, scope, true, obj->lockViolationMessage(vm, propertyName.uid(), ReadonlyPropertyWriteError));
                     }
                     return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
                 }
@@ -1141,7 +1141,7 @@ bool JSObject::putInlineFastReplacingStaticPropertyIfNeeded(JSGlobalObject* glob
                 if (customSetter)
                     RELEASE_AND_RETURN(scope, customSetter(structure->realm(), JSValue::encode(this), JSValue::encode(value), propertyName));
             }
-            if (isFixedStaticProperty(vm, *this, *entry->value)) [[unlikely]]
+            if (isLockedStaticProperty(vm, *this, *entry->value)) [[unlikely]]
                 return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
             // Avoid PutModePut because it fails for non-extensible structures.
             putDirect(vm, propertyName, value, attributesForStructure(entry->value->attributes()) & ~PropertyAttribute::CustomValue, slot);
@@ -1160,10 +1160,10 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
     if (thisObject->structure()->hasImmutableProperties()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue held;
-        if (!shouldThrow && !thisObject->isRefusedByLockAlone(vm, nullptr, held))
+        if (!shouldThrow && !thisObject->isRejectedOnlyByLock(vm, nullptr, held))
             return false;
-        thisObject->noteRefusalByLock(vm);
-        return typeError(globalObject, scope, true, AOT::wordsOfLock(vm, thisObject, AOT::RefusedByLock::Change, Identifier::from(vm, propertyName).impl()));
+        thisObject->recordLockViolation(vm);
+        return typeError(globalObject, scope, true, AOT::lockedOperationErrorMessage(vm, thisObject, AOT::LockedOperation::Change, Identifier::from(vm, propertyName).impl()));
     }
 
     if (thisObject->structure()->typeInfo().wouldHaveImmutableProperties()) [[unlikely]]
@@ -2054,16 +2054,16 @@ ContiguousJSValues JSObject::convertTypedContiguousToContiguous(VM& vm)
     return newButterfly->contiguous();
 }
 
-bool JSObject::tryGrowTypedContiguous(VM& vm, unsigned leastCapacity)
+bool JSObject::tryGrowTypedContiguous(VM& vm, unsigned minCapacity)
 {
     RELEASE_ASSERT(indexingMode() == ArrayWithTypedContiguous);
     Butterfly* oldButterfly = this->butterfly();
     unsigned oldCapacity = oldButterfly->vectorLength();
-    if (leastCapacity <= oldCapacity)
+    if (minCapacity <= oldCapacity)
         return true;
-    if (leastCapacity > MAX_STORAGE_VECTOR_LENGTH)
+    if (minCapacity > MAX_STORAGE_VECTOR_LENGTH)
         return false;
-    unsigned capacity = JSArray::typedContiguousCapacityFor(static_cast<unsigned>(std::min<size_t>(std::max<size_t>(leastCapacity, nextLength(oldCapacity)), MAX_STORAGE_VECTOR_LENGTH)));
+    unsigned capacity = JSArray::typedContiguousCapacityFor(static_cast<unsigned>(std::min<size_t>(std::max<size_t>(minCapacity, nextLength(oldCapacity)), MAX_STORAGE_VECTOR_LENGTH)));
     size_t propertyCapacity = structure()->outOfLineCapacity();
     Butterfly* newButterfly = Butterfly::tryCreateUninitialized(vm, this, 0, propertyCapacity, true, capacity * sizeof(uint32_t));
     if (!newButterfly)
@@ -2486,9 +2486,9 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
             return true;
 
         if (shouldThrowIfCantSet && isLockedBuiltin() && this != globalObject->objectPrototype()) {
-            noteRefusalByLock(vm);
+            recordLockViolation(vm);
             if (!this->structure()->isImmutablePrototypeExoticObject())
-                return typeError(globalObject, scope, true, AOT::wordsOfLock(vm, this, AOT::RefusedByLock::ChangeOfPrototype));
+                return typeError(globalObject, scope, true, AOT::lockedOperationErrorMessage(vm, this, AOT::LockedOperation::ChangePrototype));
         }
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
@@ -2499,7 +2499,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         if (!shouldThrowIfCantSet)
             return false;
         if (this != globalObject->objectPrototype())
-            noteRefusalByLock(vm);
+            recordLockViolation(vm);
         return typeError(globalObject, scope, true, withAOTErrorNote("Cannot set the prototype of a built-in object: built-ins are read-only in a program compiled ahead of time"_s));
     }
 
@@ -2764,7 +2764,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             // If the static table contains a non-configurable (DontDelete) property then we can return early;
             // if there is a property in the storage array it too must be non-configurable (the language does
             // not allow repacement of a non-configurable property with a configurable one).
-            if ((entry->value->attributes() & PropertyAttribute::DontDelete || isFixedStaticProperty(vm, *thisObject, *entry->value)) && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
+            if ((entry->value->attributes() & PropertyAttribute::DontDelete || isLockedStaticProperty(vm, *thisObject, *entry->value)) && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
                 ASSERT(!isValidOffset(thisObject->structure()->get(vm, propertyName, attributes)) || attributes & PropertyAttribute::DontDelete);
                 return false;
             }
@@ -3318,7 +3318,7 @@ void JSObject::seal(VM& vm)
     }
 }
 
-void JSObject::fixProperties(VM& vm, FixedObject kind)
+void JSObject::lockProperties(VM& vm, LockedObjectExtensibility kind)
 {
     if (structure()->inheritorsMayOverrideReadOnlyProperties() || structure()->typeInfo().wouldHaveFixedProperties())
         return;
@@ -3327,9 +3327,9 @@ void JSObject::fixProperties(VM& vm, FixedObject kind)
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
     if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, kind == FixedObject::StaysExtensible ? TransitionKind::NoteFixedProperties : TransitionKind::NoteFixedAndImmutableProperties, &deferred));
+        setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, kind == LockedObjectExtensibility::StaysExtensible ? TransitionKind::RecordLockedProperties : TransitionKind::RecordLockedAndImmutableProperties, &deferred));
     else
-        setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::FixAndMakePropertiesImmutable, &deferred));
+        setStructure(vm, kind == LockedObjectExtensibility::StaysExtensible ? Structure::lockPropertiesTransition(vm, oldStructure, &deferred) : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::LockAndMakePropertiesImmutable, &deferred));
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this);
 }
@@ -3495,9 +3495,9 @@ bool JSObject::makePropertiesImmutable(VM& vm)
     return makePropertiesImmutable(vm, TransitionKind::MakePropertiesImmutable);
 }
 
-bool JSObject::fixAndMakePropertiesImmutable(VM& vm)
+bool JSObject::lockAndMakePropertiesImmutable(VM& vm)
 {
-    return makePropertiesImmutable(vm, TransitionKind::FixAndMakePropertiesImmutable);
+    return makePropertiesImmutable(vm, TransitionKind::LockAndMakePropertiesImmutable);
 }
 
 bool JSObject::makePropertiesImmutable(VM& vm, TransitionKind transitionKind)
@@ -3511,7 +3511,7 @@ bool JSObject::makePropertiesImmutable(VM& vm, TransitionKind transitionKind)
     if (!canMakePropertiesImmutable(this))
         return false;
     if (structure()->inheritorsMayOverrideReadOnlyProperties())
-        transitionKind = TransitionKind::FixAndMakePropertiesImmutable;
+        transitionKind = TransitionKind::LockAndMakePropertiesImmutable;
     // The global object keeps top-level `var` and function declarations in its symbol table, and compiled code writes those slots
     // directly, past every property check. Make each one read-only and fire the watchpoint that makes such code look again: the
     // same two steps JSGlobalObject::defineOwnProperty takes when a script freezes the global.
@@ -4717,10 +4717,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible) {
             if (throwException && object && object->isLockedBuiltin()) {
-                object->noteRefusalByLock(vm, propertyName.uid());
+                object->recordLockViolation(vm, propertyName.uid());
                 JSValue held;
-                bool isNamed = object->isRefusedByLockAlone(vm, propertyName.uid(), held);
-                return typeError(globalObject, scope, true, isNamed ? object->wordsOfRefusalByLock(vm, propertyName.uid(), NonExtensibleObjectPropertyDefineError) : vm.useImmutableIntrinsics ? withAOTErrorNote(NonExtensibleObjectPropertyDefineError) : String(NonExtensibleObjectPropertyDefineError));
+                bool isNamed = object->isRejectedOnlyByLock(vm, propertyName.uid(), held);
+                return typeError(globalObject, scope, true, isNamed ? object->lockViolationMessage(vm, propertyName.uid(), NonExtensibleObjectPropertyDefineError) : vm.useImmutableIntrinsics ? withAOTErrorNote(NonExtensibleObjectPropertyDefineError) : String(NonExtensibleObjectPropertyDefineError));
             }
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
@@ -4756,7 +4756,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isUnchanged)
-            return typeError(globalObject, scope, throwException, AOT::wordsOfLock(vm, object, AOT::RefusedByLock::Change, propertyName.uid()));
+            return typeError(globalObject, scope, throwException, AOT::lockedOperationErrorMessage(vm, object, AOT::LockedOperation::Change, propertyName.uid()));
         return true;
     }
 
@@ -4845,10 +4845,10 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
         RETURN_IF_EXCEPTION(throwScope, false);
         if (isDefined)
             return true;
-        if (noteIfRefusedByLockAlone(vm, propertyName.uid(), false, true) || (!isCurrentDefined && isExtensible)) {
+        if (recordIfOnlyLockRejects(vm, propertyName.uid(), false, true) || (!isCurrentDefined && isExtensible)) {
             JSValue held;
-            bool isNamed = isRefusedByLockAlone(vm, propertyName.uid(), held);
-            return typeError(globalObject, throwScope, true, isNamed ? wordsOfRefusalByLock(vm, propertyName.uid(), ImmutablePropertyDefineError) : vm.useImmutableIntrinsics ? withAOTErrorNote(ImmutablePropertyDefineError) : String(ImmutablePropertyDefineError));
+            bool isNamed = isRejectedOnlyByLock(vm, propertyName.uid(), held);
+            return typeError(globalObject, throwScope, true, isNamed ? lockViolationMessage(vm, propertyName.uid(), ImmutablePropertyDefineError) : vm.useImmutableIntrinsics ? withAOTErrorNote(ImmutablePropertyDefineError) : String(ImmutablePropertyDefineError));
         }
     }
 #endif

@@ -15,14 +15,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What is done for one index writes nothing that is read or written for another, so the outcome does not depend on the threads.
-// A helper that has not woken by the time the indices are gone is not waited for.
 void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(unsigned)>&);
 
-bool saysClocks();
+bool shouldPrintTimings();
 
-template<typename T, typename IsAhead>
-void sortOnPool(std::span<T> list, const IsAhead& isAhead)
+template<typename T, typename Less>
+void sortOnPool(std::span<T> list, const Less& isAhead)
 {
     constexpr size_t numberOfRuns = 16;
     constexpr size_t fewestForPool = 1 << 13;
@@ -51,7 +49,7 @@ void sortOnPool(std::span<T> list, const IsAhead& isAhead)
 }
 
 template<typename T>
-void destroyBeside(T&& value)
+void destroyOnHelperThread(T&& value)
 {
     static_assert(!std::is_lvalue_reference_v<T>);
     Thread::create("AOT destroyer"_s, [value = WTF::move(value)]() mutable {

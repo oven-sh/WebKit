@@ -129,7 +129,7 @@ void JSLock::didAcquireLock()
 
     if (MarkedBlockCage::isEnabled()) {
         m_entryMarkedBlockCage = MarkedBlockCage::current();
-        m_baseOfEntryMarkedBlockCage = MarkedBlockCage::baseOfCurrent();
+        m_entryMarkedBlockCageBase = MarkedBlockCage::currentBase();
         m_vm->heap.fastMallocAllocator->markedBlockCage().makeCurrent();
     }
 
@@ -338,7 +338,7 @@ void JSLock::willReleaseLock()
     }
 
     if (m_entryMarkedBlockCage) {
-        MarkedBlockCage::setCurrent(m_entryMarkedBlockCage, m_baseOfEntryMarkedBlockCage);
+        MarkedBlockCage::setCurrent(m_entryMarkedBlockCage, m_entryMarkedBlockCageBase);
         m_entryMarkedBlockCage = nullptr;
     }
 }

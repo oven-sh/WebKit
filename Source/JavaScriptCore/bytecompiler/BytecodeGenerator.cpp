@@ -377,8 +377,8 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     size = instructions().size();
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
-    if (m_costOfAudits) [[unlikely]]
-        m_codeBlock->setCostOfAudits(m_costOfAudits);
+    if (m_auditCost) [[unlikely]]
+        m_codeBlock->setAuditCost(m_auditCost);
 
     // We limit total bytecode sequence size to int32_t so that we can use int32_t jump offsets.
     // Also, this allows us to use one bit of bytecode for some flag, including "ignore-result-flag".
@@ -967,8 +967,8 @@ IGNORE_GCC_WARNINGS_END
         emitPutDerivedConstructorToArrowFunctionContextScope();
     }
 
-    auto* providerOfFunction = functionNode->source().provider();
-    bool hasAuditedParameters = providerOfFunction && providerOfFunction->auditSites() && !providerOfFunction->auditSites()->parametersOfFunction(m_scopeNode->source().startOffset()).empty();
+    auto* functionProvider = functionNode->source().provider();
+    bool hasAuditedParameters = functionProvider && functionProvider->auditSites() && !functionProvider->auditSites()->functionParameters(m_scopeNode->source().startOffset()).empty();
     if (isAsyncFunctionWrapperParseMode(parseMode) && (!isSimpleParameterList || hasAuditedParameters))
         m_asyncFuncParametersTryCatchInfo = { newLabel(), newTemporary() };
 
@@ -976,7 +976,7 @@ IGNORE_GCC_WARNINGS_END
         // All "addVar()"s needs to happen before "initializeDefaultParameterValuesAndSetupFunctionScopeStack()" is called
         // because a function's default parameter ExpressionNodes will use temporary registers.
         if (auto* provider = functionNode->source().provider(); provider && provider->auditSites()) [[unlikely]]
-            emitAuditOfParameters(*provider->auditSites(), parameters);
+            emitParameterAudits(*provider->auditSites(), parameters);
         initializeDefaultParameterValuesAndSetupFunctionScopeStack(parameters, isSimpleParameterList, functionNode, functionSymbolTable, symbolTableConstantIndex, captures, shouldCreateArgumentsVariableInParameterScope);
     });
 
@@ -1469,11 +1469,11 @@ void BytecodeGenerator::initializeParameters(FunctionParameters& parameters)
     }
 }
 
-void BytecodeGenerator::emitAuditOfParameters(const AuditSites& auditSites, FunctionParameters& parameters)
+void BytecodeGenerator::emitParameterAudits(const AuditSites& auditSites, FunctionParameters& parameters)
 {
     if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
         return;
-    for (auto& site : auditSites.parametersOfFunction(m_scopeNode->source().startOffset())) {
+    for (auto& site : auditSites.functionParameters(m_scopeNode->source().startOffset())) {
         if (site.index >= parameters.size() || parameters.at(site.index).first->isRestParameter())
             continue;
         if (AuditSites::valueClasses(site.passes).containsAll({ AuditedValueClass::Acts, AuditedValueClass::HasSecondBody }) && !m_auditsAreOff) {
@@ -1534,7 +1534,7 @@ void BytecodeGenerator::emitJumpIfValueClassIsIn(RegisterID* value, OptionSet<Au
     }
 }
 
-RefPtr<RegisterID> BytecodeGenerator::emitAskWhetherCallerHoldsResult(uint32_t id)
+RefPtr<RegisterID> BytecodeGenerator::emitCallerChecksResult(uint32_t id)
 {
     RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
     RefPtr<RegisterID> result = newTemporary();
@@ -1550,7 +1550,7 @@ RefPtr<RegisterID> BytecodeGenerator::emitAskWhetherCallerHoldsResult(uint32_t i
     return result;
 }
 
-void BytecodeGenerator::emitAuditOfElementRead(RegisterID* base, RegisterID* subscript, uint32_t id)
+void BytecodeGenerator::emitElementReadAudit(RegisterID* base, RegisterID* subscript, uint32_t id)
 {
     unsigned begin = instructions().size();
     Ref<Label> done = newLabel();
@@ -1572,7 +1572,7 @@ void BytecodeGenerator::emitAuditOfElementRead(RegisterID* base, RegisterID* sub
     emitLabel(done.get());
     for (unsigned offset = begin; offset < instructions().size();) {
         auto instruction = instructions().at(offset);
-        m_costOfAudits += opcodeLengths[instruction->opcodeID()] + 1;
+        m_auditCost += opcodeLengths[instruction->opcodeID()] + 1;
         offset += instruction->size();
     }
 }
@@ -1622,12 +1622,12 @@ void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<Audi
         emitJumpIfTrue(emitIsJSArray(newTemporary(), value), done.get());
 
     if (passes.contains(AuditedValueClass::TaggedObject) && fails.contains(AuditedValueClass::Object)) {
-        Ref<Label> isNoObject = newLabel();
-        emitJumpIfFalse(emitIsCellWithType(newTemporary(), value, FinalObjectType), isNoObject.get());
+        Ref<Label> notObject = newLabel();
+        emitJumpIfFalse(emitIsCellWithType(newTemporary(), value, FinalObjectType), notObject.get());
         emitJumpIfTrue(emitHasStructureWithFlags(newTemporary(), value, Structure::s_hasNonEnumerablePropertiesBits), done.get());
         RefPtr<RegisterID> prototype = emitGetPrototypeOf(newTemporary(), value);
         emitJumpIfTrue(emitIsCellWithType(newTemporary(), prototype.get(), FinalObjectType), done.get());
-        emitLabel(isNoObject.get());
+        emitLabel(notObject.get());
     }
 
     RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
@@ -1652,7 +1652,7 @@ void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<Audi
     emitLabel(done.get());
     for (unsigned offset = begin; offset < instructions().size();) {
         auto instruction = instructions().at(offset);
-        m_costOfAudits += opcodeLengths[instruction->opcodeID()] + 1;
+        m_auditCost += opcodeLengths[instruction->opcodeID()] + 1;
         offset += instruction->size();
     }
 }
@@ -4243,7 +4243,7 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
         if (m_auditedTailCall) {
             Ref<Label> dropsFrame = newLabel();
             Ref<Label> returned = newLabel();
-            emitJumpIfTrue(emitAskWhetherCallerHoldsResult(*m_auditedTailCall).get(), dropsFrame.get());
+            emitJumpIfTrue(emitCallerChecksResult(*m_auditedTailCall).get(), dropsFrame.get());
             OpCall::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), nextValueProfileIndex());
             emitJump(returned.get());
             emitLabel(dropsFrame.get());
@@ -4299,7 +4299,7 @@ RegisterID* BytecodeGenerator::emitCallVarargs(RegisterID* dst, RegisterID* func
         if (m_auditedTailCall) {
             Ref<Label> dropsFrame = newLabel();
             Ref<Label> returned = newLabel();
-            emitJumpIfTrue(emitAskWhetherCallerHoldsResult(*m_auditedTailCall).get(), dropsFrame.get());
+            emitJumpIfTrue(emitCallerChecksResult(*m_auditedTailCall).get(), dropsFrame.get());
             OpCallVarargs::emit(this, dst, func, thisRegister, arguments ? arguments : VirtualRegister(0), firstFreeRegister, firstVarArgOffset, nextValueProfileIndex());
             emitJump(returned.get());
             emitLabel(dropsFrame.get());

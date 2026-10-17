@@ -63,7 +63,7 @@ public:
     void changeParent(AbstractHeap* parent);
 #if USE(BUN_JSC_ADDITIONS)
     size_t numberOfChildren() const { return m_children.size(); }
-    void forgetChildrenFrom(size_t first);
+    void removeChildrenFrom(size_t first);
 #endif
 
     AbstractHeap* parent() const
@@ -149,8 +149,8 @@ public:
     size_t elementSize() const { return m_elementSize; }
 
 #if USE(BUN_JSC_ADDITIONS)
-    void keepHeapsMadeSoFar();
-    void forgetOtherHeaps();
+    void retainCurrentHeaps();
+    void removeTemporaryHeaps();
 #endif
 
 private:
@@ -179,7 +179,7 @@ private:
     MapType m_largeIndices;
     Vector<ASCIICString, 16> m_largeIndexNames;
 #if USE(BUN_JSC_ADDITIONS)
-    size_t m_numberOfHeapsKept { 0 };
+    size_t m_retainedHeapCount { 0 };
 #endif
 };
 
@@ -197,8 +197,8 @@ public:
 
     const AbstractHeap& at(ptrdiff_t number) LIFETIME_BOUND { return m_indexedHeap.at(number); }
 #if USE(BUN_JSC_ADDITIONS)
-    void keepHeapsMadeSoFar() { m_indexedHeap.keepHeapsMadeSoFar(); }
-    void forgetOtherHeaps() { m_indexedHeap.forgetOtherHeaps(); }
+    void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
+    void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
 #endif
     const AbstractHeap& operator[](ptrdiff_t number) { return at(number); }
 
@@ -217,8 +217,8 @@ public:
 
     const AbstractHeap& atAnyAddress() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
 #if USE(BUN_JSC_ADDITIONS)
-    void keepHeapsMadeSoFar() { m_indexedHeap.keepHeapsMadeSoFar(); }
-    void forgetOtherHeaps() { m_indexedHeap.forgetOtherHeaps(); }
+    void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
+    void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
 #endif
 
     const AbstractHeap& at(const void* address)

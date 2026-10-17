@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
-#include "AOTLockWords.h"
+#include "AOTLockedOperation.h"
 #include "AOTRuntime.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTTypedCompactTable.h"
@@ -89,14 +89,12 @@ Structure* Object::createStructure(VM& vm, Instance& instance, JSValue prototype
         : Structure::create(vm, nullptr, jsNull(), TypeInfo(CellType, StructureFlags), info(), NonArray, 0);
     structure->setCompiledLayout(layout);
     structure->setAOTInstance(&instance);
-    // `Object.create(object)`: becoming a prototype is a transition otherwise, and these have none.
     structure->setMayBePrototype(true);
-    // What goes past the method table (putDirect(), setPrivateBrand(), ensureArrayStorage()) throws a TypeError where it would make a transition.
     structure->setHasImmutableShape(true);
     return structure;
 }
 
-static_assert(offsetOfLowByteOfEnvironmentShape == JSCell::indexingTypeAndMiscOffset() && offsetOfHighByteOfEnvironmentShape == JSCell::typeInfoFlagsOffset());
+static_assert(offsetOfEnvironmentShapeLowByte == JSCell::indexingTypeAndMiscOffset() && offsetOfEnvironmentShapeHighByte == JSCell::typeInfoFlagsOffset());
 
 static void clearSlot(void* slot, Store);
 
@@ -119,11 +117,11 @@ Object* Object::create(VM& vm, Structure* structure, const LayoutData& layout, s
         object->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
     } else {
         for (auto& variable : layout.describedVariables()) {
-            if (!isAbsentAsZero(variable.store()))
+            if (!representsAbsentAsZero(variable.store()))
                 clearSlot(reinterpret_cast<uint8_t*>(object) + variable.offset, variable.store());
         }
-        object->at<uint8_t>(offsetOfLowByteOfEnvironmentShape) = layout.shape;
-        object->at<uint8_t>(offsetOfHighByteOfEnvironmentShape) = layout.shape >> 8;
+        object->at<uint8_t>(offsetOfEnvironmentShapeLowByte) = layout.shape;
+        object->at<uint8_t>(offsetOfEnvironmentShapeHighByte) = layout.shape >> 8;
     }
     if (isObjectLayout(layout.kind))
         object->JSCell::finishCreation(vm);
@@ -140,23 +138,21 @@ Object* Object::createWithBody(VM& vm, Structure* structure, std::span<const uin
     return object;
 }
 
-Object* Object::createWithBornFields(VM& vm, Structure* structure, const LayoutData& layout, size_t size, uint32_t orderWord)
+Object* Object::createWithInitializedFields(VM& vm, Structure* structure, const LayoutData& layout, size_t size, uint32_t orderWord)
 {
     Object* object = create(vm, structure, layout, size, orderWord);
-    // Once, and not a little with each store.
     const FieldData* farthest = nullptr;
     for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
         const FieldData& field = layout.fields()[i];
-        if (field.flags & fieldIsOutOfLine && field.flags & fieldAllowsUndefined && !(field.flags & fieldIsAbsentAtBirth) && (!farthest || field.offset > farthest->offset))
+        if (field.flags & fieldIsOutOfLine && field.flags & fieldAllowsUndefined && !(field.flags & fieldIsAbsentAtCreation) && (!farthest || field.offset > farthest->offset))
             farthest = &field;
     }
     if (farthest)
         object->ensureExtensionCovers(vm, object->state(), *farthest);
     for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
         const FieldData& field = layout.fields()[i];
-        if (field.flags & fieldIsAbsentAtBirth)
+        if (field.flags & fieldIsAbsentAtCreation)
             continue;
-        // What cannot hold `undefined` is stored to before anyone looks.
         bool isUndefined = field.flags & fieldAllowsUndefined;
         if (isUndefined && !(field.flags & (fieldIsOutOfLine | fieldIsPinned))) {
             if (field.store() == Store::OptionalCell32) {
@@ -185,7 +181,7 @@ Object* Object::createWithBornFields(VM& vm, Structure* structure, const LayoutD
         case Store::OptionalDouble:
             object->at<uint64_t>(field.offset) = isUndefined ? undefinedDouble : 0;
             break;
-        case Store::Int32OrElsewhere:
+        case Store::Int32OrNumberBox:
             object->at<int32_t>(field.offset) = isUndefined ? undefinedInt32 : 0;
             break;
         default:
@@ -217,11 +213,11 @@ Object* Object::clone(JSGlobalObject* globalObject)
     State& state = this->state();
     const LayoutData& layout = this->layout();
     RELEASE_ASSERT(layout.kind == LayoutKind::Record);
-    makeClosuresNotMade();
+    materializeLazyClosures();
     Structure* structure = state.structureFor(vm, layout.shape, globalObject->objectPrototype());
-    size_t size = state.sizeWithRoomToSpecialize(layout.shape);
-    JSFinalObject* extraPropertiesOfCopy = tryCopyExtraPropertiesForClone(vm);
-    if (hasExtraProperties() && !extraPropertiesOfCopy) {
+    size_t size = state.sizeWithSpecializationCapacity(layout.shape);
+    JSFinalObject* copiedExtraProperties = tryCopyExtraPropertiesForClone(vm);
+    if (hasExtraProperties() && !copiedExtraProperties) {
         Object* copy = create(vm, structure, layout, size, state.orderStartingWith(layout, { }));
         state.countObject(copy);
         PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -235,8 +231,6 @@ Object* Object::clone(JSGlobalObject* globalObject)
                 continue;
             JSValue value = slot.getValue(globalObject, name);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            // Whatever a getter has made of the record, it still has the fields of the layout it had, and they hold what they may hold. Also a
-            // field that is immutable: the copy is born with it.
             if (const FieldData* field = copy->fieldNamed(state, name)) {
                 bool didStore = copy->store(vm, *field, value);
                 RELEASE_ASSERT(didStore);
@@ -248,23 +242,21 @@ Object* Object::clone(JSGlobalObject* globalObject)
         }
         return copy;
     }
-    // Before the copy, which nothing is allocated after until it is filled: the collector has not looked at it by then.
-    Extension* extensionOfCopy = nullptr;
+    Extension* copiedExtension = nullptr;
     if (layout.hasExtension && extension()) {
-        extensionOfCopy = Extension::create(vm, extension()->size());
-        memcpySpan(extensionOfCopy->slots(), extension()->slots());
-        state.countExtension(0, extensionOfCopy->size());
+        copiedExtension = Extension::create(vm, extension()->size());
+        memcpySpan(copiedExtension->slots(), extension()->slots());
+        state.countExtension(0, copiedExtension->size());
     }
-    // What the record has been made (frozen, sealed) the copy is not.
     Object* copy = create(vm, structure, layout, size, orderWord() & orderAndCountMask);
     memcpySpan(std::span { &copy->at<uint8_t>(offsetOfFirstField), layout.size - offsetOfFirstField }, std::span { &at<uint8_t>(offsetOfFirstField), layout.size - offsetOfFirstField });
     if (layout.hasExtension)
-        copy->setExtension(extensionOfCopy);
+        copy->setExtension(copiedExtension);
     copy->copyNumberBoxes(state);
     vm.mutatorFence();
     state.countObject(copy);
-    if (extraPropertiesOfCopy)
-        copy->setExtraProperties(vm, extraPropertiesOfCopy);
+    if (copiedExtraProperties)
+        copy->setExtraProperties(vm, copiedExtraProperties);
     return copy;
 }
 
@@ -275,11 +267,10 @@ JSObject* Object::tryCopyAsPlainObject(JSGlobalObject* globalObject) const
         return nullptr;
     VM& vm = globalObject->vm();
     if (hasExtraProperties())
-        return tryCopyByListing(vm, nullptr);
-    auto& plan = state.planOfPlainCopy(vm, layout(), orderWord() & orderAndCountMask);
+        return tryCopyUsingPropertyList(vm, nullptr);
+    auto& plan = state.plainCopyPlan(vm, layout(), orderWord() & orderAndCountMask);
     if (!plan.structure)
         return nullptr;
-    // Its slots are empty until they are filled: the collector may look at it at any time, and so may nobody else.
     JSFinalObject* copy = JSFinalObject::create(vm, plan.structure);
     auto* slot = copy->inlineStorage();
     for (auto& property : plan.properties) {
@@ -291,26 +282,26 @@ JSObject* Object::tryCopyAsPlainObject(JSGlobalObject* globalObject) const
     return copy;
 }
 
-Structure* Object::structureOfPlainCopy(JSGlobalObject* globalObject) const
+Structure* Object::plainCopyStructure(JSGlobalObject* globalObject) const
 {
     State& state = this->state();
     if (globalObject != state.instance.globalObject)
         return nullptr;
     if (hasExtraProperties()) {
         DeferGC deferGC(globalObject->vm());
-        auto* listing = listingWithExtraProperties(globalObject->vm());
-        return listing ? state.structureOfPlainCopy(globalObject->vm(), *listing) : nullptr;
+        auto* listing = cachedPropertyList(globalObject->vm());
+        return listing ? state.plainCopyStructure(globalObject->vm(), *listing) : nullptr;
     }
-    return state.planOfPlainCopy(globalObject->vm(), layout(), orderWord() & orderAndCountMask).structure;
+    return state.plainCopyPlan(globalObject->vm(), layout(), orderWord() & orderAndCountMask).structure;
 }
 
-JSFinalObject* Object::tryCopyAsPlainObjectWithRoom(JSGlobalObject* globalObject, Structure* beginsAsPlainCopy) const
+JSFinalObject* Object::tryCopyAsPlainObjectWithCapacity(JSGlobalObject* globalObject, Structure* plainCopyPrefixStructure) const
 {
     VM& vm = globalObject->vm();
     if (hasExtraProperties())
-        return tryCopyByListing(vm, beginsAsPlainCopy);
-    auto& plan = state().planOfPlainCopy(vm, layout(), orderWord() & orderAndCountMask);
-    JSFinalObject* copy = JSFinalObject::create(vm, beginsAsPlainCopy);
+        return tryCopyUsingPropertyList(vm, plainCopyPrefixStructure);
+    auto& plan = state().plainCopyPlan(vm, layout(), orderWord() & orderAndCountMask);
+    JSFinalObject* copy = JSFinalObject::create(vm, plainCopyPrefixStructure);
     auto* slot = copy->inlineStorage();
     for (auto& property : plan.properties) {
         JSValue value = readInline(*property.field);
@@ -337,7 +328,7 @@ JSObject* Object::tryCopyAsPlainObject(JSGlobalObject* globalObject, std::span<c
         atoms.append(static_cast<UniquedStringImpl*>(string->impl()));
     }
     VM& vm = globalObject->vm();
-    auto& plan = state.planOfPlainCopyWithout(vm, layout(), orderWord() & orderAndCountMask, atoms.span());
+    auto& plan = state.plainCopyExcludingPlan(vm, layout(), orderWord() & orderAndCountMask, atoms.span());
     if (!plan.structure)
         return nullptr;
     JSFinalObject* copy = JSFinalObject::create(vm, plan.structure);
@@ -351,19 +342,18 @@ JSObject* Object::tryCopyAsPlainObject(JSGlobalObject* globalObject, std::span<c
     return copy;
 }
 
-Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, NamesOfCopy namesAre, std::span<const EncodedJSValue> namesOfCopy, bool* isNeverCopied)
+Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, CopyNamesKind namesKind, std::span<const EncodedJSValue> copyNames, bool* neverCopyable)
 {
     VM& vm = globalObject->vm();
     State& state = this->state();
-    auto namesIf = [&](NamesOfCopy which) {
-        return namesOfCopy.first(namesAre == which ? namesOfCopy.size() : 0);
+    auto namesWhen = [&](CopyNamesKind which) {
+        return copyNames.first(namesKind == which ? copyNames.size() : 0);
     };
-    auto excluded = namesIf(NamesOfCopy::Excluded);
-    auto storedNext = namesIf(NamesOfCopy::StoredNext);
-    auto storedFirst = namesIf(NamesOfCopy::StoredFirst);
+    auto excluded = namesWhen(CopyNamesKind::Excluded);
+    auto storedNext = namesWhen(CopyNamesKind::StoredNext);
+    auto storedFirst = namesWhen(CopyNamesKind::StoredFirst);
     if (layout().kind != LayoutKind::Record || to.kind != LayoutKind::Record || hasExtraProperties() || storedFirst.size() % 2)
         return nullptr;
-    // A symbol names no field. What is no property key yet is for the operation to convert, once.
     Vector<UniquedStringImpl*, 8> atoms;
     bool areAtoms = orderOf(orderWord()) != keysAreInLayoutOrder;
     for (EncodedJSValue key : excluded) {
@@ -403,12 +393,12 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Na
     }
     auto put = [&](Object* copy, const FieldData& field, JSValue value) {
         const RuntimeType& type = state.ownTypeOf(field);
-        return (value.isObject() ? state.fitsAsOneOfItsOwn(type, asObject(value)) : state.fits(type, value)) && copy->store(vm, field, value);
+        return (value.isObject() ? state.matchesTypedSubtype(type, asObject(value)) : state.fits(type, value)) && copy->store(vm, field, value);
     };
-    if (const State::PlanOfCopy* plan = areAtoms ? state.planOfCopy(layout().shape, orderWord(), to.shape, atoms.span()) : nullptr) {
+    if (const State::CopyPlan* plan = areAtoms ? state.copyPlan(layout().shape, orderWord(), to.shape, atoms.span()) : nullptr) {
         if (!plan->structure) {
-            if (isNeverCopied)
-                *isNeverCopied = true;
+            if (neverCopyable)
+                *neverCopyable = true;
             return nullptr;
         }
         Object* copy = create(vm, plan->structure, to, plan->size, plan->orderWord);
@@ -421,12 +411,12 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Na
             if (!copy->store(vm, to.fields()[conversion.to], read(layout().fields()[conversion.from])) || copy->hasExtraProperties())
                 return nullptr;
         }
-        for (auto& conversion : plan->fitted) {
+        for (auto& conversion : plan->checkedConversions) {
             JSValue value = read(layout().fields()[conversion.from]);
             if (!value)
                 return nullptr;
             const FieldData& field = to.fields()[conversion.to];
-            bool isStored = conversion.kindsTaken & State::PlanOfCoercion::kindOf(value) ? copy->store(vm, field, value) : put(copy, field, value);
+            bool isStored = conversion.acceptedKinds & State::CoercionPlan::kindOf(value) ? copy->store(vm, field, value) : put(copy, field, value);
             if (!isStored || copy->hasExtraProperties())
                 return nullptr;
         }
@@ -446,7 +436,7 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Na
     Vector<Identifier, 4> next;
     for (EncodedJSValue key : storedNext)
         next.append(Identifier::fromString(vm, asString(JSValue::decode(key))->tryGetValue()));
-    Object* copy = create(vm, state.structureFor(vm, to.shape, globalObject->objectPrototype()), to, state.sizeWithRoomToSpecialize(to.shape), state.orderStartingWith(to, { }));
+    Object* copy = create(vm, state.structureFor(vm, to.shape, globalObject->objectPrototype()), to, state.sizeWithSpecializationCapacity(to.shape), state.orderStartingWith(to, { }));
     BitVector created;
     BitVector filled;
     BitVector given;
@@ -454,13 +444,13 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Na
         return copy->read(field) || copy->store(vm, field, jsUndefined());
     };
     Vector<uint16_t, 16> keys;
-    bool isCopied = true;
-    bool failsForAll = false;
-    for (size_t i = 0; i < storedFirst.size() && isCopied; i += 2) {
+    bool isInlinedBlock = true;
+    bool alwaysFails = false;
+    for (size_t i = 0; i < storedFirst.size() && isInlinedBlock; i += 2) {
         const FieldData* field = state.field(vm, to, Identifier::fromString(vm, asString(JSValue::decode(storedFirst[i]))->tryGetValue()).impl());
-        failsForAll = !field || field->flags & fieldIsImmutable || copy->isDiscriminant(*field) || created.get(copy->indexOf(*field));
-        isCopied = !failsForAll && put(copy, *field, JSValue::decode(storedFirst[i + 1]));
-        if (!isCopied)
+        alwaysFails = !field || field->flags & fieldIsImmutable || copy->isDiscriminant(*field) || created.get(copy->indexOf(*field));
+        isInlinedBlock = !alwaysFails && put(copy, *field, JSValue::decode(storedFirst[i + 1]));
+        if (!isInlinedBlock)
             break;
         copy->willCreateField(state, *field);
         keys.append(copy->indexOf(*field));
@@ -468,116 +458,116 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Na
         given.set(keys.last());
     }
     forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
-        if (!isCopied)
+        if (!isInlinedBlock)
             return false;
         if (names.containsIf([&](const Identifier& other) { return other.impl() == &name; }))
             return true;
         const FieldData* field = state.field(vm, to, &name);
-        isCopied = field && !(field->flags & fieldIsImmutable) && !copy->isDiscriminant(*field);
-        failsForAll = !isCopied;
+        isInlinedBlock = field && !(field->flags & fieldIsImmutable) && !copy->isDiscriminant(*field);
+        alwaysFails = !isInlinedBlock;
         bool isStoredNext = next.containsIf([&](const Identifier& other) { return other.impl() == &name; });
-        if (isCopied && isStoredNext) {
-            isCopied = fill(*field);
+        if (isInlinedBlock && isStoredNext) {
+            isInlinedBlock = fill(*field);
             filled.set(copy->indexOf(*field));
-        } else if (isCopied)
-            isCopied = put(copy, *field, value);
-        if (isCopied && given.get(copy->indexOf(*field)))
+        } else if (isInlinedBlock)
+            isInlinedBlock = put(copy, *field, value);
+        if (isInlinedBlock && given.get(copy->indexOf(*field)))
             given.clear(copy->indexOf(*field));
-        else if (isCopied) {
+        else if (isInlinedBlock) {
             copy->willCreateField(state, *field);
             keys.append(copy->indexOf(*field));
             created.set(keys.last());
         }
-        return isCopied;
+        return isInlinedBlock;
     });
     for (auto& name : next) {
-        if (!isCopied)
+        if (!isInlinedBlock)
             break;
         const FieldData* field = state.field(vm, to, name.impl());
-        isCopied = field && !(field->flags & fieldIsImmutable) && !copy->isDiscriminant(*field);
-        failsForAll = !isCopied;
-        if (!isCopied || created.get(copy->indexOf(*field)))
+        isInlinedBlock = field && !(field->flags & fieldIsImmutable) && !copy->isDiscriminant(*field);
+        alwaysFails = !isInlinedBlock;
+        if (!isInlinedBlock || created.get(copy->indexOf(*field)))
             continue;
-        isCopied = fill(*field);
-        if (isCopied) {
+        isInlinedBlock = fill(*field);
+        if (isInlinedBlock) {
             copy->willCreateField(state, *field);
             keys.append(copy->indexOf(*field));
             created.set(keys.last());
             filled.set(keys.last());
         }
     }
-    for (uint32_t i = 0; i < to.numberOfFields && isCopied; ++i) {
-        isCopied = to.fields()[i].flags & fieldIsOptional || created.get(i);
-        failsForAll = !isCopied;
+    for (uint32_t i = 0; i < to.numberOfFields && isInlinedBlock; ++i) {
+        isInlinedBlock = to.fields()[i].flags & fieldIsOptional || created.get(i);
+        alwaysFails = !isInlinedBlock;
     }
-    if (!isCopied || copy->hasExtraProperties()) {
-        if (failsForAll && areAtoms) {
-            auto plan = makeUnique<State::PlanOfCopy>();
+    if (!isInlinedBlock || copy->hasExtraProperties()) {
+        if (alwaysFails && areAtoms) {
+            auto plan = makeUnique<State::CopyPlan>();
             for (UniquedStringImpl* atom : atoms)
                 plan->excluded.append(atom);
-            state.addPlanOfCopy(layout().shape, orderWord(), to.shape, WTF::move(plan));
-            if (isNeverCopied)
-                *isNeverCopied = true;
+            state.addCopyPlan(layout().shape, orderWord(), to.shape, WTF::move(plan));
+            if (neverCopyable)
+                *neverCopyable = true;
         }
         return nullptr;
     }
     copy->setOrderAndCount(state.orderStartingWith(to, keys.span()));
     state.countObject(copy);
     if (areAtoms && orderOf(copy->orderWord()) != keysAreInLayoutOrder && copy->structure() == state.structure(vm, to.shape)) {
-        auto plan = makeUnique<State::PlanOfCopy>();
+        auto plan = makeUnique<State::CopyPlan>();
         plan->structure = copy->structure();
-        plan->size = state.sizeWithRoomToSpecialize(to.shape);
+        plan->size = state.sizeWithSpecializationCapacity(to.shape);
         plan->orderWord = copy->orderWord();
-        bool holdsForAll = true;
+        bool appliesToAll = true;
         for (uint16_t key : keys) {
             const FieldData& field = to.fields()[key];
             if (filled.get(key)) {
-                holdsForAll = holdsForAll && !(field.flags & fieldIsOutOfLine) && sizeOf(field.store()) <= sizeof(uint64_t);
-                if (holdsForAll) {
-                    State::PlanOfCopy::Fill bits { field.offset, sizeOf(field.store()), 0 };
+                appliesToAll = appliesToAll && !(field.flags & fieldIsOutOfLine) && sizeOf(field.store()) <= sizeof(uint64_t);
+                if (appliesToAll) {
+                    State::CopyPlan::Fill bits { field.offset, sizeOf(field.store()), 0 };
                     memcpy(&bits.bits, &copy->at<uint8_t>(field.offset), bits.size);
                     plan->fills.append(bits);
                 }
                 continue;
             }
             if (given.get(key)) {
-                holdsForAll = holdsForAll && !(field.flags & fieldIsOutOfLine);
+                appliesToAll = appliesToAll && !(field.flags & fieldIsOutOfLine);
                 plan->given.append({ key, static_cast<uint16_t>(2 * keys.find(key) + 1) });
                 continue;
             }
             const FieldData* source = state.field(vm, layout(), state.name(vm, field.name).impl());
-            holdsForAll = holdsForAll && source && !((source->flags | field.flags) & fieldIsOutOfLine);
-            bool isTypedAlike = holdsForAll && source->type() == field.type() && source->ownType() == field.ownType() && source->numberOfLiterals() == field.numberOfLiterals()
+            appliesToAll = appliesToAll && source && !((source->flags | field.flags) & fieldIsOutOfLine);
+            bool hasSameFieldType = appliesToAll && source->type() == field.type() && source->ownType() == field.ownType() && source->numberOfLiterals() == field.numberOfLiterals()
                 && (!field.numberOfLiterals() || source->literalsOffset() == field.literalsOffset());
-            if (isTypedAlike && source->store() == field.store() && !((source->flags | field.flags) & fieldHoldsClosureMadeWhenRead))
+            if (hasSameFieldType && source->store() == field.store() && !((source->flags | field.flags) & fieldHoldsLazyClosure))
                 plan->moves.append({ source->offset, field.offset, sizeOf(field.store()) });
-            else if (isTypedAlike)
+            else if (hasSameFieldType)
                 plan->conversions.append({ indexOf(*source), key });
-            else if (holdsForAll)
-                plan->fitted.append({ indexOf(*source), key, state.kindsTakenBy(state.ownTypeOf(field)) });
+            else if (appliesToAll)
+                plan->checkedConversions.append({ indexOf(*source), key, state.kindsAcceptedBy(state.ownTypeOf(field)) });
         }
-        if (holdsForAll) {
+        if (appliesToAll) {
             for (UniquedStringImpl* atom : atoms)
                 plan->excluded.append(atom);
-            state.addPlanOfCopy(layout().shape, orderWord(), to.shape, WTF::move(plan));
+            state.addCopyPlan(layout().shape, orderWord(), to.shape, WTF::move(plan));
         }
     }
     return copy;
 }
 
-Object* Object::tryMakeAs(JSGlobalObject* globalObject, State& state, const LayoutData& to, std::span<const EncodedJSValue> namesStoredNext)
+Object* Object::tryCreateAs(JSGlobalObject* globalObject, State& state, const LayoutData& to, std::span<const EncodedJSValue> namesToStoreNext)
 {
     VM& vm = globalObject->vm();
     if (to.kind != LayoutKind::Record || state.data.isCompiledForAudit)
         return nullptr;
-    for (EncodedJSValue key : namesStoredNext) {
+    for (EncodedJSValue key : namesToStoreNext) {
         if (JSValue value = JSValue::decode(key); !value.isString() || asString(value)->isRope())
             return nullptr;
     }
-    Object* made = create(vm, state.structureFor(vm, to.shape, globalObject->objectPrototype()), to, state.sizeWithRoomToSpecialize(to.shape), state.orderStartingWith(to, { }));
+    Object* made = create(vm, state.structureFor(vm, to.shape, globalObject->objectPrototype()), to, state.sizeWithSpecializationCapacity(to.shape), state.orderStartingWith(to, { }));
     BitVector created;
     Vector<uint16_t, 16> keys;
-    for (EncodedJSValue key : namesStoredNext) {
+    for (EncodedJSValue key : namesToStoreNext) {
         const FieldData* field = state.field(vm, to, Identifier::fromString(vm, asString(JSValue::decode(key))->tryGetValue()).impl());
         if (!field || field->flags & fieldIsImmutable || made->isDiscriminant(*field))
             return nullptr;
@@ -611,8 +601,8 @@ Object* Object::tryMergeAs(JSGlobalObject* globalObject, const LayoutData& to, O
         if (source->layout().kind != LayoutKind::Record || source->hasExtraProperties() || orderOf(source->orderWord()) == keysAreInLayoutOrder)
             return nullptr;
     }
-    State::KeyOfMerge key { first.layout().shape, first.orderWord(), second.layout().shape, second.orderWord(), to.shape };
-    if (const State::PlanOfMerge* plan = state.planOfMerge(key)) {
+    State::MergeKey key { first.layout().shape, first.orderWord(), second.layout().shape, second.orderWord(), to.shape };
+    if (const State::MergePlan* plan = state.mergePlan(key)) {
         if (!plan->structure)
             return nullptr;
         DeferGC deferGC(vm);
@@ -623,13 +613,13 @@ Object* Object::tryMergeAs(JSGlobalObject* globalObject, const LayoutData& to, O
             const void* from = &sources[move.source]->at<uint8_t>(move.from);
             void* slot = move.isToExtension ? merged->extension()->slot(move.to) : &merged->at<uint8_t>(move.to);
             switch (move.kind) {
-            case State::PlanOfMerge::MoveKind::Copy:
+            case State::MergePlan::MoveKind::Copy:
                 memcpy(slot, from, move.size);
                 break;
-            case State::PlanOfMerge::MoveKind::PurifiedDouble:
+            case State::MergePlan::MoveKind::PurifiedDouble:
                 *static_cast<double*>(slot) = purifyNaN(*static_cast<const double*>(from));
                 break;
-            case State::PlanOfMerge::MoveKind::BoxedDouble:
+            case State::MergePlan::MoveKind::BoxedDouble:
                 *static_cast<EncodedJSValue*>(slot) = JSValue::encode(jsNumber(purifyNaN(*static_cast<const double*>(from))));
                 break;
             }
@@ -639,9 +629,9 @@ Object* Object::tryMergeAs(JSGlobalObject* globalObject, const LayoutData& to, O
             JSValue value = sources[conversion.source]->readInline(*conversion.from);
             if (!value)
                 return nullptr;
-            if (!conversion.alwaysFits) {
+            if (!conversion.alwaysMatches) {
                 const RuntimeType& type = state.ownTypeOf(*conversion.to);
-                if (!(value.isObject() ? state.fitsAsOneOfItsOwn(type, asObject(value)) : state.fits(type, value)))
+                if (!(value.isObject() ? state.matchesTypedSubtype(type, asObject(value)) : state.fits(type, value)))
                     return nullptr;
             }
             if (!merged->store(vm, *conversion.to, value))
@@ -653,116 +643,115 @@ Object* Object::tryMergeAs(JSGlobalObject* globalObject, const LayoutData& to, O
         state.countObject(merged);
         return merged;
     }
-    Object* merged = create(vm, state.structureFor(vm, to.shape, globalObject->objectPrototype()), to, state.sizeWithRoomToSpecialize(to.shape), state.orderStartingWith(to, { }));
+    Object* merged = create(vm, state.structureFor(vm, to.shape, globalObject->objectPrototype()), to, state.sizeWithSpecializationCapacity(to.shape), state.orderStartingWith(to, { }));
     BitVector created;
     Vector<uint16_t, 32> keys;
-    Vector<uint16_t, 32> sourceOfField(FillWith { }, to.numberOfFields, static_cast<uint16_t>(0));
-    bool isCopied = true;
-    for (uint16_t i = 0; i < sources.size() && isCopied; ++i) {
+    Vector<uint16_t, 32> fieldSource(FillWith { }, to.numberOfFields, static_cast<uint16_t>(0));
+    bool isInlinedBlock = true;
+    for (uint16_t i = 0; i < sources.size() && isInlinedBlock; ++i) {
         sources[i]->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
             const FieldData* field = state.field(vm, to, &name);
-            isCopied = field && !(field->flags & fieldIsImmutable) && !merged->isDiscriminant(*field);
-            if (isCopied) {
+            isInlinedBlock = field && !(field->flags & fieldIsImmutable) && !merged->isDiscriminant(*field);
+            if (isInlinedBlock) {
                 const RuntimeType& type = state.ownTypeOf(*field);
-                isCopied = (value.isObject() ? state.fitsAsOneOfItsOwn(type, asObject(value)) : state.fits(type, value)) && merged->store(vm, *field, value);
+                isInlinedBlock = (value.isObject() ? state.matchesTypedSubtype(type, asObject(value)) : state.fits(type, value)) && merged->store(vm, *field, value);
             }
-            if (isCopied) {
+            if (isInlinedBlock) {
                 uint16_t index = merged->indexOf(*field);
                 if (!created.get(index)) {
                     merged->willCreateField(state, *field);
                     keys.append(index);
                     created.set(index);
                 }
-                sourceOfField[index] = i;
+                fieldSource[index] = i;
             }
-            return isCopied;
+            return isInlinedBlock;
         });
     }
-    for (uint32_t i = 0; i < to.numberOfFields && isCopied; ++i)
-        isCopied = to.fields()[i].flags & fieldIsOptional || created.get(i);
-    if (!isCopied || merged->hasExtraProperties()) {
-        state.addPlanOfMerge(key, makeUnique<State::PlanOfMerge>());
+    for (uint32_t i = 0; i < to.numberOfFields && isInlinedBlock; ++i)
+        isInlinedBlock = to.fields()[i].flags & fieldIsOptional || created.get(i);
+    if (!isInlinedBlock || merged->hasExtraProperties()) {
+        state.addMergePlan(key, makeUnique<State::MergePlan>());
         return nullptr;
     }
     merged->setOrderAndCount(state.orderStartingWith(to, keys.span()));
     state.countObject(merged);
     if (orderOf(merged->orderWord()) == keysAreInLayoutOrder || merged->structure() != state.structure(vm, to.shape))
         return merged;
-    auto plan = makeUnique<State::PlanOfMerge>();
+    auto plan = makeUnique<State::MergePlan>();
     plan->structure = merged->structure();
-    plan->size = state.sizeWithRoomToSpecialize(to.shape);
+    plan->size = state.sizeWithSpecializationCapacity(to.shape);
     plan->orderWord = merged->orderWord();
     for (uint16_t index : keys) {
         const FieldData& field = to.fields()[index];
-        const FieldData* source = state.field(vm, sources[sourceOfField[index]]->layout(), state.name(vm, field.name).impl());
+        const FieldData* source = state.field(vm, sources[fieldSource[index]]->layout(), state.name(vm, field.name).impl());
         if (!source)
             return merged;
         bool isToExtension = field.flags & fieldIsOutOfLine;
         if (isToExtension && (!plan->lastOutOfLine || plan->lastOutOfLine->offset < field.offset))
             plan->lastOutOfLine = &field;
-        bool isOfSameType = source->type() == field.type() && source->ownType() == field.ownType() && source->numberOfLiterals() == field.numberOfLiterals() && (!field.numberOfLiterals() || source->literalsOffset() == field.literalsOffset());
+        bool hasSameType = source->type() == field.type() && source->ownType() == field.ownType() && source->numberOfLiterals() == field.numberOfLiterals() && (!field.numberOfLiterals() || source->literalsOffset() == field.literalsOffset());
         const RuntimeType& held = state.typeOf(*source);
         const RuntimeType& wanted = state.ownTypeOf(field);
-        bool holdsOnlyPrimitives = !held.allowsAnyObject() && !held.allowsAnyFunction() && !held.admitsForeignObjects() && !held.numberOfViews() && !held.numberOfJSTypes();
-        bool alwaysFits = isOfSameType || (holdsOnlyPrimitives && !field.numberOfLiterals() && !(held.primitives & ~wanted.primitives) && (!(held.primitives & Primitive::Int) || (held.minInteger() >= wanted.minInteger() && held.maxInteger() <= wanted.maxInteger())));
-        std::optional<State::PlanOfMerge::MoveKind> kind;
-        if (alwaysFits && !(source->flags & (fieldIsOutOfLine | fieldHoldsClosureMadeWhenRead)) && !(field.flags & (fieldIsPinned | fieldHoldsClosureMadeWhenRead))) {
+        bool acceptsOnlyPrimitives = !held.allowsAnyObject() && !held.allowsAnyFunction() && !held.acceptsUntypedObjects() && !held.numberOfSupertypes() && !held.numberOfJSTypes();
+        bool alwaysMatches = hasSameType || (acceptsOnlyPrimitives && !field.numberOfLiterals() && !(held.primitives & ~wanted.primitives) && (!(held.primitives & Primitive::Int) || (held.minInteger() >= wanted.minInteger() && held.maxInteger() <= wanted.maxInteger())));
+        std::optional<State::MergePlan::MoveKind> kind;
+        if (alwaysMatches && !(source->flags & (fieldIsOutOfLine | fieldHoldsLazyClosure)) && !(field.flags & (fieldIsPinned | fieldHoldsLazyClosure))) {
             if (source->store() == field.store())
-                kind = State::PlanOfMerge::MoveKind::Copy;
+                kind = State::MergePlan::MoveKind::Copy;
             else if (source->store() == Store::Double && field.store() == Store::OptionalDouble)
-                kind = State::PlanOfMerge::MoveKind::PurifiedDouble;
+                kind = State::MergePlan::MoveKind::PurifiedDouble;
             else if (source->store() == Store::Double && field.store() == Store::JSValue)
-                kind = State::PlanOfMerge::MoveKind::BoxedDouble;
+                kind = State::MergePlan::MoveKind::BoxedDouble;
         }
         if (kind)
-            plan->moves.append({ source->offset, field.offset, static_cast<uint8_t>(sizeOf(field.store())), static_cast<uint8_t>(sourceOfField[index]), *kind, isToExtension });
+            plan->moves.append({ source->offset, field.offset, static_cast<uint8_t>(sizeOf(field.store())), static_cast<uint8_t>(fieldSource[index]), *kind, isToExtension });
         else
-            plan->conversions.append({ source, &field, sourceOfField[index], alwaysFits });
+            plan->conversions.append({ source, &field, fieldSource[index], alwaysMatches });
     }
-    state.addPlanOfMerge(key, WTF::move(plan));
+    state.addMergePlan(key, WTF::move(plan));
     return merged;
 }
 
 bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
 {
     State& state = this->state();
-    // There write() asks what the slot has room for, and what is asserted is for the general way to report.
     if (state.data.isCompiledForAudit || this == &source || layout().kind != LayoutKind::Record || source.layout().kind != LayoutKind::Record || orderWord() & (orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible))
         return false;
-    bool isCopied = true;
+    bool isInlinedBlock = true;
     bool hasOnlyFields = source.forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
         const FieldData* field = state.field(vm, layout(), &name);
-        isCopied = field && !isDiscriminant(*field);
-        if (!isCopied)
+        isInlinedBlock = field && !isDiscriminant(*field);
+        if (!isInlinedBlock)
             return false;
-        bool wasThere = !!read(*field);
-        isCopied = write(vm, *field, value);
-        if (isCopied && !wasThere)
+        bool wasPresent = !!read(*field);
+        isInlinedBlock = write(vm, *field, value);
+        if (isInlinedBlock && !wasPresent)
             didCreateField(state, *field);
-        return isCopied;
+        return isInlinedBlock;
     });
-    return hasOnlyFields && isCopied;
+    return hasOnlyFields && isInlinedBlock;
 }
 
 } } // namespace AOT::Typed
 
-static ALWAYS_INLINE const AOT::Typed::LayoutData* compiledLayoutOf(const Structure::AOTFields& aotFields, uint32_t firstShapeOfCompiledEnvironments, const JSCell* cell)
+static ALWAYS_INLINE const AOT::Typed::LayoutData* compiledLayoutOf(const Structure::AOTFields& aotFields, uint32_t firstCompiledEnvironmentShape, const JSCell* cell)
 {
-    if (auto* data = aotFields.dataOfCompiledEnvironments())
-        return &AOT::Typed::layoutOfEnvironment(*data, firstShapeOfCompiledEnvironments, cell);
+    if (auto* data = aotFields.compiledEnvironmentData())
+        return &AOT::Typed::environmentLayout(*data, firstCompiledEnvironmentShape, cell);
     return aotFields.compiledLayout();
 }
 
 const AOT::Typed::LayoutData* Structure::compiledLayoutOf(const JSCell* cell) const
 {
-    return JSC::compiledLayoutOf(aotFieldsOrEmpty(), firstShapeOfCompiledEnvironments(), cell);
+    return JSC::compiledLayoutOf(aotFieldsOrEmpty(), firstCompiledEnvironmentShape(), cell);
 }
 
 namespace AOT { namespace Typed {
 
 const LayoutData& Object::layout() const
 {
-    return *compiledLayoutOf(structure()->existingAOTFields(), structure()->firstShapeOfCompiledEnvironments(), this);
+    return *compiledLayoutOf(structure()->existingAOTFields(), structure()->firstCompiledEnvironmentShape(), this);
 }
 
 State& Object::state() const
@@ -772,12 +761,9 @@ State& Object::state() const
 
 static_assert(cell32Shift == MarkedBlockCage::shift);
 static_assert(absentCell32 == JSValue::ValueEmpty && nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined);
-// Store::OptionalBoolean: each is told by its low byte, and is that byte.
 static_assert(std::max({ JSValue::ValueEmpty, JSValue::ValueNull, JSValue::ValueFalse, JSValue::ValueTrue, JSValue::ValueUndefined }) <= UINT8_MAX);
-// A slot for any function may be a 32-bit one, so no closure is a PreciseAllocation. The number of captures is kept in a byte.
 static_assert(Closure::allocationSize(UINT8_MAX) <= MarkedSpace::largeCutoff);
 
-// What is kept at the address that way. Empty: nothing.
 static JSValue readAs(Store store, const void* address, State* state)
 {
     auto as = [&]<typename T>(T) {
@@ -810,7 +796,7 @@ static JSValue readAs(Store store, const void* address, State* state)
     case Store::Cell32:
     case Store::OptionalCell32: {
         uint32_t word = as(uint32_t());
-        if (word == closureNotMadeCell32) [[unlikely]]
+        if (word == unmaterializedClosureCell32) [[unlikely]]
             return { };
         return word <= undefinedCell32 ? JSValue::decode(word) : JSValue(MarkedBlockCage::decode(word));
     }
@@ -845,14 +831,12 @@ static JSValue readAs(Store store, const void* address, State* state)
         default:
             return jsNumber(purifyNaN(as(double())));
         }
-    // Only a field of an object is kept so, and it takes the object: Object::read().
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// False: the value cannot be kept that way. Whoever owns the memory sees to the write barrier.
 static bool storeAs(State& state, Store store, void* address, JSValue value)
 {
     auto keep = [&](auto bits) {
@@ -924,8 +908,7 @@ static bool storeAs(State& state, Store store, void* address, JSValue value)
             return keep(word);
         return keep(word < minCell32 ? static_cast<uint32_t>(word) : MarkedBlockCage::encode(asString(value)));
     }
-    // See Object::store().
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -933,13 +916,13 @@ static bool storeAs(State& state, Store store, void* address, JSValue value)
 
 JSValue Object::read(const FieldData& field) const
 {
-    if (field.store() != Store::Int32OrElsewhere) {
+    if (field.store() != Store::Int32OrNumberBox) {
         const void* slot = slotOf(field);
         JSValue value = slot ? readAs(field.store(), slot, &state()) : JSValue();
-        if (!value && field.flags & fieldMayExistWithoutStorage && isAmongKeysInOrder(state(), field))
+        if (!value && field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state(), field))
             return jsUndefined();
-        if (!value && holdsClosureNotMade(field))
-            return const_cast<Object*>(this)->makeClosureHeldBy(field);
+        if (!value && holdsUnmaterializedClosure(field))
+            return const_cast<Object*>(this)->materializeLazyClosure(field);
         return value && isNotDefinedYet(field, value) ? JSValue() : value;
     }
     int32_t word = at<int32_t>(field.offset);
@@ -957,21 +940,21 @@ JSValue Object::read(const FieldData& field) const
     }
 }
 
-void Object::makeClosuresNotMade()
+void Object::materializeLazyClosures()
 {
     const LayoutData& layout = this->layout();
     for (auto& field : std::span { layout.fields(), layout.numberOfFields }) {
-        if (holdsClosureNotMade(field))
-            makeClosureHeldBy(field);
+        if (holdsUnmaterializedClosure(field))
+            materializeLazyClosure(field);
     }
 }
 
-JSValue Object::makeClosureHeldBy(const FieldData& field)
+JSValue Object::materializeLazyClosure(const FieldData& field)
 {
     VM& vm = this->vm();
-    uint32_t function = field.literalsOffset() & ~closureMadeWhenReadCapturesItsObject;
+    uint32_t function = field.literalsOffset() & ~lazyClosureCapturesObject;
     uint64_t captured = std::bit_cast<uint64_t>(this);
-    bool captures = field.literalsOffset() & closureMadeWhenReadCapturesItsObject;
+    bool captures = field.literalsOffset() & lazyClosureCapturesObject;
     SlimClosure* closure = SlimClosure::create(vm, state().slimClosureStructure(vm, function), function, std::span<const uint64_t> { &captured, captures ? 1u : 0u }, captures);
     bool didStore = store(vm, field, closure);
     RELEASE_ASSERT(didStore);
@@ -1002,7 +985,6 @@ bool Object::isDiscriminant(const FieldData& field) const
 
 bool Object::write(VM& vm, const FieldData& field, JSValue value)
 {
-    // Compiled code takes it that such a field keeps the value the object was born with.
     if (field.flags & fieldIsImmutable)
         return false;
     State& state = this->state();
@@ -1015,28 +997,27 @@ bool Object::write(VM& vm, const FieldData& field, JSValue value)
 
 bool Object::assign(JSGlobalObject* globalObject, const FieldData& field, JSValue value, bool* givesUp)
 {
-    givesUp = layout().mayGiveUp ? givesUp : nullptr;
+    givesUp = layout().mayDespecialize ? givesUp : nullptr;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     State& state = this->state();
-    // The layout of the object goes by its discriminant, from the allocation on. Compiled code never stores another value by name.
     if (isDiscriminant(field)) {
         JSValue current = read(field);
-        if (current ? !(current.isNumber() && value.isNumber() && current.asNumber() == value.asNumber()) : !state.isAmongLiterals(field, value)) {
+        if (current ? !(current.isNumber() && value.isNumber() && current.asNumber() == value.asNumber()) : !state.isAllowedLiteral(field, value)) {
             if (givesUp) {
                 *givesUp = true;
                 return false;
             }
             String message = makeString("Cannot assign to '"_s, StringView(state.name(vm, field.name).impl()), "' of "_s, state.nameOf(layout()), ": a discriminant property cannot change, got "_s, State::describe(value));
-            bool goesOn = state.reportOrThrow(globalObject, { .kind = "discriminant-change"_s, .on = &layout(), .member = state.name(vm, field.name).impl(), .got = value }, message, State::InAudit::CarriedOut);
+            bool goesOn = state.reportOrThrow(globalObject, { .kind = "discriminant-change"_s, .on = &layout(), .member = state.name(vm, field.name).impl(), .got = value }, message, State::InAudit::Performed);
             EXCEPTION_ASSERT(!!scope.exception() == !goesOn);
             if (!goesOn)
                 return false;
         }
     }
     String failure;
-    SetForScope onlyCopies(state.storesMakeOverPlainData, state.storesMakeOverPlainData && !(orderWord() & orderWordIsFrozen));
-    JSValue held = field.flags & fieldIsImmutable ? JSValue() : state.holdToTypeOf(globalObject, field, value, failure);
+    SetForScope onlyCopies(state.storesConvertPlainData, state.storesConvertPlainData && !(orderWord() & orderWordIsFrozen));
+    JSValue held = field.flags & fieldIsImmutable ? JSValue() : state.coerceToFieldType(globalObject, field, value, failure);
     RETURN_IF_EXCEPTION(scope, false);
     if (!held || !store(vm, field, held)) {
         if (givesUp) {
@@ -1055,8 +1036,8 @@ bool Object::assign(JSGlobalObject* globalObject, const FieldData& field, JSValu
 bool Object::store(VM& vm, const FieldData& field, JSValue value)
 {
     if (field.flags & fieldIsPinned) [[unlikely]]
-        state().willAlter(field, value);
-    if (field.store() == Store::Int32OrElsewhere) {
+        state().willModify(field, value);
+    if (field.store() == Store::Int32OrNumberBox) {
         if (value.isUndefinedOrNull()) {
             at<int32_t>(field.offset) = value.isUndefined() ? undefinedInt32 : nullInt32;
             return true;
@@ -1064,11 +1045,10 @@ bool Object::store(VM& vm, const FieldData& field, JSValue value)
         if (!value.isNumber())
             return false;
         double number = value.asNumber();
-        // Negative zero is no int32.
-        if (number >= leastInt32InPlace && number <= INT32_MAX && number == std::trunc(number) && !(!number && std::signbit(number)) && !refersToNumberBox(at<int32_t>(field.offset)))
+        if (number >= minInlineInt32 && number <= INT32_MAX && number == std::trunc(number) && !(!number && std::signbit(number)) && !refersToNumberBox(at<int32_t>(field.offset)))
             at<int32_t>(field.offset) = static_cast<int32_t>(number);
         else
-            storeElsewhere(vm, field, value);
+            storeInNumberBox(vm, field, value);
         return true;
     }
     if (field.flags & fieldIsOutOfLine)
@@ -1118,16 +1098,16 @@ void Object::replaceExtension(VM& vm, State& state, uint32_t size)
     state.countExtension(current ? current->size() : 0, replacement->size());
 }
 
-void Object::storeElsewhere(VM&, const FieldData& field, JSValue number)
+void Object::storeInNumberBox(VM&, const FieldData& field, JSValue number)
 {
-    RELEASE_ASSERT(field.store() == Store::Int32OrElsewhere && number.isNumber());
+    RELEASE_ASSERT(field.store() == Store::Int32OrNumberBox && number.isNumber());
     if (int32_t word = at<int32_t>(field.offset); refersToNumberBox(word))
         *numberBoxAt(word) = number.asNumber();
     else
-        storeInNumberBoxOfItsOwn(state(), field.offset, number.asNumber());
+        storeInOwnNumberBox(state(), field.offset, number.asNumber());
 }
 
-void Object::storeInNumberBoxOfItsOwn(State& state, uint32_t offset, double number)
+void Object::storeInOwnNumberBox(State& state, uint32_t offset, double number)
 {
     int32_t word = state.numberBoxes.wordFor(this, offset);
     *numberBoxAt(word) = number;
@@ -1139,10 +1119,10 @@ void Object::copyNumberBoxes(State& state)
     if (state.numberBoxes.isEmpty())
         return;
     for (auto& field : std::span { layout().fields(), layout().numberOfFields }) {
-        if (field.store() != Store::Int32OrElsewhere)
+        if (field.store() != Store::Int32OrNumberBox)
             continue;
         if (int32_t word = at<int32_t>(field.offset); refersToNumberBox(word))
-            storeInNumberBoxOfItsOwn(state, field.offset, *numberBoxAt(word));
+            storeInOwnNumberBox(state, field.offset, *numberBoxAt(word));
     }
 }
 
@@ -1170,7 +1150,7 @@ static void clearSlot(void* slot, Store store)
     case Store::OptionalDouble:
         *static_cast<uint64_t*>(slot) = absentDouble;
         return;
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
         *static_cast<int32_t*>(slot) = absentInt32;
         return;
     default:
@@ -1189,17 +1169,15 @@ void Object::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Object* object = uncheckedDowncast<Object>(cell);
     JSCell::visitChildren(cell, visitor);
-    // While specialize() is at work this may be the old layout or the new one. The fields of either are fit to be visited.
     const LayoutData& layout = object->layout();
-    if (uint32_t word = object->at<uint32_t>(offsetOfOrderWord); isObjectLayout(layout.kind) && word & orderWordHasExtraProperties && object->structure()->markingStampAndFlags() & Structure::isOfObjectsWithExtraProperties) {
+    if (uint32_t word = object->at<uint32_t>(offsetOfOrderWord); isObjectLayout(layout.kind) && word & orderWordHasExtraProperties && object->structure()->markingStampAndFlags() & Structure::isStructureWithExtraProperties) {
         if (uint32_t offset = layout.offsetOfExtraProperties())
             visitor.appendUnbarriered(MarkedBlockCage::decode(object->at<uint32_t>(offset)));
-        else if (JSObject* extra = object->state().handlesOfExtraProperties.extraPropertiesConcurrently(object, word & orderAndCountMask))
+        else if (JSObject* extra = object->state().extraPropertiesHandleTable.extraPropertiesConcurrently(object, word & orderAndCountMask))
             visitor.appendUnbarriered(extra);
     }
     if (!layout.referencesOffset)
         return;
-    // Boxed slots, then cell slots. A cell slot holds a cell or nothing, which reads the same as a boxed value. Then 32-bit slots.
     const uint32_t* references = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(&layout) + layout.referencesOffset);
     std::span wide { references + 3, static_cast<size_t>(references[0]) + references[1] };
     for (uint32_t offset : wide)
@@ -1247,7 +1225,7 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             if (!holdsCells(variable.store()))
                 continue;
             JSValue value = readAs(variable.store(), reinterpret_cast<const uint8_t*>(object) + variable.offset, nullptr);
-            const Identifier& name = state.nameIfMade(variable.name);
+            const Identifier& name = state.nameIfCreated(variable.name);
             if (value && value.isCell() && !name.isNull())
                 analyzer.analyzeVariableNameEdge(object, value.asCell(), name.impl());
         }
@@ -1259,8 +1237,7 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             continue;
         const void* slot = object->slotOf(field);
         JSValue value = slot ? readAs(field.store(), slot, nullptr) : JSValue();
-        // The collector cannot make an identifier of a name that nothing has asked for yet.
-        const Identifier& name = state.nameIfMade(field.name);
+        const Identifier& name = state.nameIfCreated(field.name);
         if (!value || !value.isCell() || name.isNull())
             continue;
         analyzer.analyzePropertyNameEdge(object, value.asCell(), name.impl());
@@ -1272,7 +1249,7 @@ Extension* Extension::create(VM& vm, uint32_t size)
     RELEASE_ASSERT(size > offsetOfFirstExtensionSlot && size <= MarkedSpace::largeCutoff);
     void* storage = vm.auxiliarySpace().allocate(vm, size, nullptr, AllocationFailureMode::Assert);
     size_t cellSize = static_cast<HeapCell*>(storage)->cellSize();
-    static_assert(leastExtensionSize == MarkedBlock::atomSize);
+    static_assert(minExtensionSize == MarkedBlock::atomSize);
     zeroSpan(std::span { static_cast<uint8_t*>(storage), cellSize });
     Extension* extension = static_cast<Extension*>(storage);
     extension->m_size = safeCast<uint32_t>(cellSize);
@@ -1306,71 +1283,71 @@ void ExtraPropertiesTable::remove(Object* object)
     m_map.remove(object);
 }
 
-static constexpr size_t sizeOfSegmentOfHandles = ExtraPropertiesHandles::handlesInSegment * sizeof(ExtraPropertiesHandle);
-static constexpr size_t sizeOfSegmentsOfHandles = ((orderAndCountMask + 1) >> ExtraPropertiesHandles::bitsOfPlaceInSegment) * sizeof(ExtraPropertiesHandle*);
-static_assert(!(sizeOfSegmentOfHandles % (16 * KB)) && !(sizeOfSegmentsOfHandles % (16 * KB)));
-static constinit ExtraPropertiesHandle handleOfNothing { nullptr, nullptr, 0, 0 };
-static constinit ExtraPropertiesHandle* segmentsWithoutHandles[1] { &handleOfNothing };
+static constexpr size_t handleSegmentSize = ExtraPropertiesHandleTable::handlesPerSegment * sizeof(ExtraPropertiesHandle);
+static constexpr size_t handleSegmentTableSize = ((orderAndCountMask + 1) >> ExtraPropertiesHandleTable::segmentIndexBits) * sizeof(ExtraPropertiesHandle*);
+static_assert(!(handleSegmentSize % (16 * KB)) && !(handleSegmentTableSize % (16 * KB)));
+static constinit ExtraPropertiesHandle emptyHandle { nullptr, nullptr, 0, 0 };
+static constinit ExtraPropertiesHandle* emptyHandleSegments[1] { &emptyHandle };
 
-ExtraPropertiesHandles::ExtraPropertiesHandles(VM& vm)
+ExtraPropertiesHandleTable::ExtraPropertiesHandleTable(VM& vm)
     : m_vm(vm)
 {
 }
 
-Ref<ExtraPropertiesHandles> ExtraPropertiesHandles::of(VM& vm, Instance& instance)
+Ref<ExtraPropertiesHandleTable> ExtraPropertiesHandleTable::of(VM& vm, Instance& instance)
 {
     for (Instance* other : vm.m_aotInstances) {
         if (!other->typed)
             continue;
-        instance.typedSegmentsOfHandlesOfExtraProperties = other->typedSegmentsOfHandlesOfExtraProperties;
-        return other->typed->handlesOfExtraPropertiesOfVM.copyRef();
+        instance.typedExtraPropertiesHandleSegments = other->typedExtraPropertiesHandleSegments;
+        return other->typed->vmExtraPropertiesHandleTable.copyRef();
     }
-    instance.typedSegmentsOfHandlesOfExtraProperties = segmentsWithoutHandles;
-    return adoptRef(*new ExtraPropertiesHandles(vm));
+    instance.typedExtraPropertiesHandleSegments = emptyHandleSegments;
+    return adoptRef(*new ExtraPropertiesHandleTable(vm));
 }
 
-ExtraPropertiesHandles::~ExtraPropertiesHandles()
+ExtraPropertiesHandleTable::~ExtraPropertiesHandleTable()
 {
     if (!m_segments)
         return;
-    for (uint32_t number = 0; number < m_end; number += handlesInSegment)
-        OSAllocator::decommitAndRelease(m_segments[number >> bitsOfPlaceInSegment], sizeOfSegmentOfHandles);
-    OSAllocator::decommitAndRelease(m_segments, sizeOfSegmentsOfHandles);
+    for (uint32_t number = 0; number < m_end; number += handlesPerSegment)
+        OSAllocator::decommitAndRelease(m_segments[number >> segmentIndexBits], handleSegmentSize);
+    OSAllocator::decommitAndRelease(m_segments, handleSegmentTableSize);
 }
 
-bool ExtraPropertiesHandles::tryAddMore()
+bool ExtraPropertiesHandleTable::tryGrow()
 {
-    static_assert(!(handlesInSegment % handlesAddedAtOnce));
+    static_assert(!(handlesPerSegment % handleGrowthIncrement));
     if (m_end > orderAndCountMask)
         return false;
     if (!m_segments) {
-        m_segments = static_cast<ExtraPropertiesHandle**>(OSAllocator::tryReserveAndCommit(sizeOfSegmentsOfHandles));
+        m_segments = static_cast<ExtraPropertiesHandle**>(OSAllocator::tryReserveAndCommit(handleSegmentTableSize));
         if (!m_segments)
             return false;
     }
-    if (!(m_end % handlesInSegment)) {
-        void* segment = OSAllocator::tryReserveAndCommit(sizeOfSegmentOfHandles);
+    if (!(m_end % handlesPerSegment)) {
+        void* segment = OSAllocator::tryReserveAndCommit(handleSegmentSize);
         if (!segment)
             return false;
-        m_segments[m_end >> bitsOfPlaceInSegment] = static_cast<ExtraPropertiesHandle*>(segment);
+        m_segments[m_end >> segmentIndexBits] = static_cast<ExtraPropertiesHandle*>(segment);
         WTF::storeStoreFence();
         for (Instance* instance : m_vm.m_aotInstances) {
             if (instance->typed)
-                instance->typedSegmentsOfHandlesOfExtraProperties = m_segments;
+                instance->typedExtraPropertiesHandleSegments = m_segments;
         }
     }
-    for (uint32_t number = m_end + handlesAddedAtOnce; number-- > std::max(m_end, 1u);)
+    for (uint32_t number = m_end + handleGrowthIncrement; number-- > std::max(m_end, 1u);)
         release(nullptr, number);
     WTF::storeStoreFence();
-    m_end += handlesAddedAtOnce;
+    m_end += handleGrowthIncrement;
     return true;
 }
 
-uint32_t ExtraPropertiesHandles::take(const JSCell* object, JSObject* extraProperties, uint32_t orderAndCount)
+uint32_t ExtraPropertiesHandleTable::take(const JSCell* object, JSObject* extraProperties, uint32_t orderAndCount)
 {
-    if (!hasFreeHandle() && !tryAddMore()) [[unlikely]] {
+    if (!hasFreeHandle() && !tryGrow()) [[unlikely]] {
         Locker locker { m_lock };
-        m_withoutNumber.set(object, makeUniqueWithoutFastMallocCheck<ExtraPropertiesHandle>(ExtraPropertiesHandle { object, extraProperties, orderAndCount, 0 }));
+        m_unnumberedHandles.set(object, makeUniqueWithoutFastMallocCheck<ExtraPropertiesHandle>(ExtraPropertiesHandle { object, extraProperties, orderAndCount, 0 }));
         return 0;
     }
     uint32_t number = m_segments[0]->nextFree;
@@ -1379,50 +1356,50 @@ uint32_t ExtraPropertiesHandles::take(const JSCell* object, JSObject* extraPrope
     return number;
 }
 
-void ExtraPropertiesHandles::release(const JSCell* object, uint32_t number)
+void ExtraPropertiesHandleTable::release(const JSCell* object, uint32_t number)
 {
     if (!number) {
         Locker locker { m_lock };
-        m_withoutNumber.remove(object);
+        m_unnumberedHandles.remove(object);
         return;
     }
     *numbered(number) = { nullptr, nullptr, 0, m_segments[0]->nextFree };
     m_segments[0]->nextFree = number;
 }
 
-void ExtraPropertiesHandles::didBecome(const JSCell* object, uint32_t number, const JSCell* itself)
+void ExtraPropertiesHandleTable::didReplaceObject(const JSCell* object, uint32_t number, const JSCell* itself)
 {
     if (number) {
         numbered(number)->object = itself;
         return;
     }
     Locker locker { m_lock };
-    auto handle = m_withoutNumber.take(object);
+    auto handle = m_unnumberedHandles.take(object);
     handle->object = itself;
-    m_withoutNumber.set(itself, WTF::move(handle));
+    m_unnumberedHandles.set(itself, WTF::move(handle));
 }
 
-JSObject* ExtraPropertiesHandles::extraPropertiesConcurrently(const JSCell* object, uint32_t number)
+JSObject* ExtraPropertiesHandleTable::extraPropertiesConcurrently(const JSCell* object, uint32_t number)
 {
     if (number) {
         ExtraPropertiesHandle* handle = number < m_end ? numbered(number) : nullptr;
         return handle && handle->object == object ? handle->extraProperties : nullptr;
     }
     Locker locker { m_lock };
-    ExtraPropertiesHandle* handle = m_withoutNumber.get(object);
+    ExtraPropertiesHandle* handle = m_unnumberedHandles.get(object);
     return handle ? handle->extraProperties : nullptr;
 }
 
-void ExtraPropertiesHandles::releaseThoseOfDeadObjects(VM& vm)
+void ExtraPropertiesHandleTable::releaseHandlesOfDeadObjects(VM& vm)
 {
     for (uint32_t number = 1; number < m_end; ++number) {
         if (const JSCell* object = numbered(number)->object; object && !vm.heap.isMarked(object))
             release(object, number);
     }
-    if (m_withoutNumber.isEmpty()) [[likely]]
+    if (m_unnumberedHandles.isEmpty()) [[likely]]
         return;
     Locker locker { m_lock };
-    m_withoutNumber.removeIf([&](auto& entry) {
+    m_unnumberedHandles.removeIf([&](auto& entry) {
         return !vm.heap.isMarked(entry.key);
     });
 }
@@ -1442,8 +1419,8 @@ public:
     {
         void* start = nullptr;
         for (unsigned i = 0; i < 8 && !start; ++i) {
-            m_end = (static_cast<uint32_t>(leastInt32InPlace) - static_cast<uint32_t>(INT32_MIN)) >> i;
-            if (static_cast<size_t>(m_end) << numberBoxShift <= addressSpaceToReserve() / partOfAddressSpaceForNumberBoxes)
+            m_end = (static_cast<uint32_t>(minInlineInt32) - static_cast<uint32_t>(INT32_MIN)) >> i;
+            if (static_cast<size_t>(m_end) << numberBoxShift <= addressSpaceToReserve() / addressSpaceDivisorForNumberBoxes)
                 start = OSAllocator::tryReserveUncommitted(static_cast<size_t>(m_end) << numberBoxShift);
         }
         RELEASE_ASSERT(start);
@@ -1474,7 +1451,7 @@ public:
         }
         if (m_next >= m_committed) {
             RELEASE_ASSERT(m_committed < m_end);
-            uint32_t more = std::min(m_end - m_committed, placesCommittedAtOnce);
+            uint32_t more = std::min(m_end - m_committed, entriesCommittedAtOnce);
             OSAllocator::commit(at(m_committed), static_cast<size_t>(more) << numberBoxShift, true, false);
 #if ASAN_ENABLED
             __asan_poison_memory_region(at(m_committed), static_cast<size_t>(more) << numberBoxShift);
@@ -1498,7 +1475,7 @@ public:
     }
 
 private:
-    static constexpr uint32_t placesCommittedAtOnce = 1 << 15;
+    static constexpr uint32_t entriesCommittedAtOnce = 1 << 15;
 
     uint64_t* at(uint32_t place) const { return std::bit_cast<uint64_t*>(m_base + (static_cast<uintptr_t>(place) << numberBoxShift)); }
 
@@ -1597,14 +1574,14 @@ bool Object::isFrozen() const
     return !own || own->isFrozen;
 }
 
-unsigned Object::attributesOfFieldOfWhatAsks(const FieldData& field) const
+unsigned Object::attributesOfSlow(const FieldData& field) const
 {
     unsigned ofAll = static_cast<unsigned>(isSealed() ? PropertyAttribute::DontDelete : PropertyAttribute::None);
     auto* own = state().fieldAttributes.get(this);
     if (!own || own->isFrozen)
         ofAll = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     if (own) {
-        for (auto& [name, attributes] : own->ofFields) {
+        for (auto& [name, attributes] : own->attributesByField) {
             if (name == field.name)
                 return ofAll | attributes;
         }
@@ -1615,39 +1592,39 @@ unsigned Object::attributesOfFieldOfWhatAsks(const FieldData& field) const
 void Object::setAttributesOf(VM& vm, const FieldData& field, unsigned attributes)
 {
     auto& own = state().fieldAttributes.ensure(this);
-    own.ofFields.removeFirstMatching([&](auto& entry) {
+    own.attributesByField.removeFirstMatching([&](auto& entry) {
         return entry.first == field.name;
     });
     if (attributes)
-        own.ofFields.append({ field.name, static_cast<uint8_t>(attributes) });
+        own.attributesByField.append({ field.name, static_cast<uint8_t>(attributes) });
     ensureExtraProperties(vm);
     at<uint32_t>(offsetOfOrderWord) |= orderWordIsFrozen;
 }
 
-JSObject* Object::extraPropertiesOfMarkedObject() const
+JSObject* Object::extraPropertiesSlow() const
 {
     Structure* structure = this->structure();
-    if (!(structure->markingStampAndFlags() & Structure::isOfObjectsWithExtraProperties))
+    if (!(structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties))
         return nullptr;
     if (uint32_t offset = structure->compiledLayout()->offsetOfExtraProperties())
         return asObject(MarkedBlockCage::decode(at<uint32_t>(offset)));
-    return state().handlesOfExtraProperties.of(this, at<uint32_t>(offsetOfOrderWord) & orderAndCountMask)->extraProperties;
+    return state().extraPropertiesHandleTable.of(this, at<uint32_t>(offsetOfOrderWord) & orderAndCountMask)->extraProperties;
 }
 
-ExtraPropertiesHandle* Object::handleOfExtraProperties() const
+ExtraPropertiesHandle* Object::extraPropertiesHandle() const
 {
     uint32_t word = at<uint32_t>(offsetOfOrderWord);
     if (!(word & orderWordHasExtraProperties))
         return nullptr;
     Structure* structure = this->structure();
-    if (!(structure->markingStampAndFlags() & Structure::isOfObjectsWithExtraProperties) || structure->compiledLayout()->offsetOfExtraProperties())
+    if (!(structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties) || structure->compiledLayout()->offsetOfExtraProperties())
         return nullptr;
-    return state().handlesOfExtraProperties.of(this, word & orderAndCountMask);
+    return state().extraPropertiesHandleTable.of(this, word & orderAndCountMask);
 }
 
-uint32_t Object::orderWordOfMarkedObject(uint32_t word) const
+uint32_t Object::orderWordSlow(uint32_t word) const
 {
-    ExtraPropertiesHandle* handle = handleOfExtraProperties();
+    ExtraPropertiesHandle* handle = extraPropertiesHandle();
     return handle ? (word & ~orderAndCountMask) | handle->orderAndCount : word;
 }
 
@@ -1663,12 +1640,12 @@ bool hasFieldNamedThen(Structure* structure)
     return state.field(vm, *structure->compiledLayout(), vm.propertyNames->then.impl());
 }
 
-bool isPrototypeOfClassThatDeclaresNoThen(JSObject* holder)
+bool isClassPrototypeWithoutThen(JSObject* holder)
 {
     return holder->classInfo() == ClassPrototype::info() && !ClassPrototype::hasMember(holder, holder->vm().propertyNames->then);
 }
 
-void countLookupOfThen(VM& vm)
+void countThenLookup(VM& vm)
 {
     runtimeTable(vm).countOperation("a promise looks up then");
 }
@@ -1681,7 +1658,7 @@ bool neverHasThen(Structure* structure)
     PropertyName then = structure->vm().propertyNames->then;
     if (hasThenOrMayChangePrototype(structure))
         return false;
-    if (structure->compiledLayout() ? !Object::absenceIsByStructure(structure, then.uid()) : structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence())
+    if (structure->compiledLayout() ? !Object::structureGuaranteesAbsence(structure, then.uid()) : structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence())
         return false;
     JSObject* objectPrototype = structure->realm()->objectPrototype();
     for (JSObject* holder = structure->storedPrototypeObject(); holder && holder != objectPrototype; holder = holder->structure()->storedPrototypeObject()) {
@@ -1706,17 +1683,17 @@ JSObject* Object::ensureExtraProperties(VM& vm)
     return extra;
 }
 
-void Object::setExtraProperties(VM& vm, JSObject* extra, bool isForTableOfPlaces)
+void Object::setExtraProperties(VM& vm, JSObject* extra, bool isForLookupTable)
 {
     ASSERT(!extraProperties());
-    Structure* withExtraProperties = isForTableOfPlaces ? state().structureFor(vm, layout().shape, getPrototypeDirect(), *extra->structure()) : state().structureIfMadeFor(layout().shape, getPrototypeDirect(), *extra->structure());
+    Structure* withExtraProperties = isForLookupTable ? state().structureFor(vm, layout().shape, getPrototypeDirect(), *extra->structure()) : state().existingStructureFor(layout().shape, getPrototypeDirect(), *extra->structure());
     if (!withExtraProperties)
         withExtraProperties = state().structureFor(vm, layout().shape, getPrototypeDirect(), true);
     uint32_t word = at<uint32_t>(offsetOfOrderWord);
     if (uint32_t offset = layout().offsetOfExtraProperties())
         at<uint32_t>(offset) = MarkedBlockCage::encode(extra);
     else
-        word = (word & ~orderAndCountMask) | state().handlesOfExtraProperties.take(this, extra, word & orderAndCountMask);
+        word = (word & ~orderAndCountMask) | state().extraPropertiesHandleTable.take(this, extra, word & orderAndCountMask);
     vm.mutatorFence();
     if (state().isCounting()) [[unlikely]]
         state().extraProperties.set(this, extra);
@@ -1727,7 +1704,7 @@ void Object::setExtraProperties(VM& vm, JSObject* extra, bool isForTableOfPlaces
     state().countExtraPropertyTable(layout());
 }
 
-JSObject* Object::makeExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder)
+JSObject* Object::createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder)
 {
     VM& vm = realm->vm();
     Structure* structure = realm->nullPrototypeObjectStructure();
@@ -1762,34 +1739,34 @@ JSObject* Object::makeExtraProperties(JSGlobalObject* realm, std::span<const Ext
     return extra;
 }
 
-void Object::giveExtraProperties(VM& vm, std::span<const ExtraProperty> inOrder)
+void Object::initializeExtraProperties(VM& vm, std::span<const ExtraProperty> inOrder)
 {
     if (inOrder.empty())
         return;
     for (auto& property : inOrder)
         willAddExtraProperty(vm, property.name);
-    setExtraProperties(vm, makeExtraProperties(structure()->realm(), inOrder));
+    setExtraProperties(vm, createExtraProperties(structure()->realm(), inOrder));
 }
 
 void Object::didChangeExtraProperties(VM& vm)
 {
     JSObject* extra = extraProperties();
     Structure* structure = this->structure();
-    StructureID known = structure->structureIDOfExtraProperties();
+    StructureID known = structure->extraPropertiesStructureID();
     if (!extra || known == extra->structureID())
         return;
     State& state = *structure->aotInstance()->typed;
     uint32_t shape = structure->compiledLayout()->shape;
-    Structure* now = state.structureIfMadeFor(shape, structure->storedPrototype(), *extra->structure());
+    Structure* now = state.existingStructureFor(shape, structure->storedPrototype(), *extra->structure());
     if (!now && !known)
         return;
     JSCell::setStructure(vm, now ? now : state.structureFor(vm, shape, structure->storedPrototype(), true));
 }
 
-void Object::knowExtraPropertiesByStructure(VM& vm)
+void Object::specializeStructureForExtraProperties(VM& vm)
 {
     JSObject* extra = extraProperties();
-    if (!extra || structure()->structureIDOfExtraProperties() == extra->structureID())
+    if (!extra || structure()->extraPropertiesStructureID() == extra->structureID())
         return;
     Structure* now = state().structureFor(vm, layout().shape, getPrototypeDirect(), *extra->structure());
     if (now != structure())
@@ -1802,7 +1779,7 @@ std::optional<PropertyOffset> Object::offsetOfExtraProperty(VM& vm, JSCell* cell
     const LayoutData* layout = structure->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
         return std::nullopt;
-    StructureID ofExtraProperties = structure->structureIDOfExtraProperties();
+    StructureID ofExtraProperties = structure->extraPropertiesStructureID();
     Object* object = uncheckedDowncast<Object>(cell);
     if (!ofExtraProperties || parseIndex(name) || name.isPrivateName() || object->fieldNamed(object->state(), name))
         return std::nullopt;
@@ -1810,38 +1787,38 @@ std::optional<PropertyOffset> Object::offsetOfExtraProperty(VM& vm, JSCell* cell
     return isValidOffset(offset) ? std::optional(offset) : std::nullopt;
 }
 
-Object::ExtraPropertyStore Object::tryStoreExtraProperty(VM& vm, PropertyName name, JSValue value, PropertyOffset& offset, bool isKnownToBeNoField, bool isDefinition, bool* hasDefaultAttributes, bool isForTableOfPlaces)
+Object::ExtraPropertyStore Object::tryStoreExtraProperty(VM& vm, PropertyName name, JSValue value, PropertyOffset& offset, bool isKnownNotToBeField, bool isDefinition, bool* hasDefaultAttributes, bool isForLookupTable)
 {
     State& state = this->state();
     const LayoutData& layout = this->layout();
-    if (state.data.isCompiledForAudit || state.isCounting() || (!isKnownToBeNoField && fieldNamed(state, name)))
-        return ExtraPropertyStore::NotServed;
+    if (state.data.isCompiledForAudit || state.isCounting() || (!isKnownNotToBeField && fieldNamed(state, name)))
+        return ExtraPropertyStore::NotHandled;
     unsigned attributes = 0;
     JSObject* extra = extraProperties();
     offset = extra ? extra->structure()->get(vm, name, attributes) : invalidOffset;
-    if (!isValidOffset(offset) && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto || state.hasFixedMethod(layout, name.uid())))
-        return ExtraPropertyStore::NotServed;
+    if (!isValidOffset(offset) && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto || state.hasImmutableMethod(layout, name.uid())))
+        return ExtraPropertyStore::NotHandled;
     if (isValidOffset(offset)) {
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || (isDefinition && attributes))
-            return ExtraPropertyStore::NotServed;
+            return ExtraPropertyStore::NotHandled;
         if (hasDefaultAttributes)
             *hasDefaultAttributes = !attributes;
         extra->putDirectOffset(vm, offset, value);
         return ExtraPropertyStore::Replaced;
     }
     if (isNotExtensible() || !state.storeNeverSpecializes(layout, name.uid()))
-        return ExtraPropertyStore::NotServed;
+        return ExtraPropertyStore::NotHandled;
     for (JSValue next = isDefinition ? jsNull() : getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
         JSObject* holder = asObject(next);
         ClassPrototype::look(holder);
         Structure* structure = holder->structure();
         TypeInfo typeInfo = structure->typeInfo();
         if (typeInfo.overridesGetOwnPropertySlot() || (typeInfo.overridesPut() && structure->classInfoForCells() != PrototypeObject::info()) || typeInfo.overridesGetPrototype() || holder->hasNonReifiedStaticProperties())
-            return ExtraPropertyStore::NotServed;
+            return ExtraPropertyStore::NotHandled;
         if (!holder->getDirect(vm, name, attributes))
             continue;
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue))
-            return ExtraPropertyStore::NotServed;
+            return ExtraPropertyStore::NotHandled;
         break;
     }
     willAddExtraProperty(vm, name);
@@ -1850,19 +1827,18 @@ Object::ExtraPropertyStore Object::tryStoreExtraProperty(VM& vm, PropertyName na
         extra = constructEmptyObject(vm, structure()->realm()->nullPrototypeObjectStructure());
     extra->putDirect(vm, name, value);
     if (hadNone)
-        setExtraProperties(vm, extra, isForTableOfPlaces);
-    else if (isForTableOfPlaces)
-        knowExtraPropertiesByStructure(vm);
+        setExtraProperties(vm, extra, isForLookupTable);
+    else if (isForLookupTable)
+        specializeStructureForExtraProperties(vm);
     else
         didChangeExtraProperties(vm);
     offset = extra->structure()->get(vm, name);
     return ExtraPropertyStore::Added;
 }
 
-// Array.prototype.concat() takes it from the Structure that what inherits from Object.prototype has no such property.
 bool Object::mayDefineAccessorOnExtraProperties(VM& vm, State& state, PropertyName name, JSObject*& extra)
 {
-    if (fieldNamed(state, name) || parseIndex(name) || isNotExtensible() || state.hasFixedMethod(layout(), name.uid()))
+    if (fieldNamed(state, name) || parseIndex(name) || isNotExtensible() || state.hasImmutableMethod(layout(), name.uid()))
         return false;
     if (!extra)
         extra = ensureExtraProperties(vm);
@@ -1878,7 +1854,7 @@ void Object::willAddExtraProperty(VM& vm, PropertyName name)
     state().countExtraProperty(layout(), name);
 }
 
-JSFinalObject* Object::copyAsOrdinary(VM& vm, unsigned inlineCapacity, JSValue prototype)
+JSFinalObject* Object::copyAsOrdinaryObject(VM& vm, unsigned inlineCapacity, JSValue prototype)
 {
     State& state = this->state();
     const LayoutData& layout = this->layout();
@@ -1903,12 +1879,12 @@ JSFinalObject* Object::copyAsOrdinary(VM& vm, unsigned inlineCapacity, JSValue p
         keys.append(key);
     });
     const FieldData* fields = layout.fields();
-    auto namesOfExtraKeys = this->namesOfExtraKeys();
+    auto extraKeyNames = this->extraKeyNames();
     size_t nextExtraKey = 0;
     for (uint16_t key : keys) {
         if (key >= layout.numberOfFields) {
-            for (size_t end = std::min<size_t>(key - layout.numberOfFields + 1, namesOfExtraKeys.size()); nextExtraKey < end; ++nextExtraKey)
-                copyExtra(namesOfExtraKeys[nextExtraKey]);
+            for (size_t end = std::min<size_t>(key - layout.numberOfFields + 1, extraKeyNames.size()); nextExtraKey < end; ++nextExtraKey)
+                copyExtra(extraKeyNames[nextExtraKey]);
         } else if (JSValue value = read(fields[key]))
             ordinary->putDirect(vm, state.name(vm, fields[key].name), value, attributesOf(fields[key]));
     }
@@ -1930,21 +1906,21 @@ JSFinalObject* Object::copyAsOrdinary(VM& vm, unsigned inlineCapacity, JSValue p
     return ordinary;
 }
 
-JSObject* Object::becomeOrdinary(VM& vm, JSValue prototype)
+JSObject* Object::convertToOrdinaryObject(VM& vm, JSValue prototype)
 {
     State& state = this->state();
-    RELEASE_ASSERT(layout().mayGiveUp);
+    RELEASE_ASSERT(layout().mayDespecialize);
     static_assert(sizeof(JSObjectWithButterfly) == offsetOfFirstField && JSObjectWithButterfly::butterflyOffset() == offsetOfOrderWord);
     unsigned inlineCapacity = std::min<size_t>((cellSize() - offsetOfFirstField) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
-    JSFinalObject* ordinary = copyAsOrdinary(vm, inlineCapacity, prototype);
-    if (state.isShapeOfPrototypes(layout().shape))
+    JSFinalObject* ordinary = copyAsOrdinaryObject(vm, inlineCapacity, prototype);
+    if (state.isPrototypeShape(layout().shape))
         ordinary->didBecomePrototype(vm);
     RELEASE_ASSERT(ordinary->structure()->inlineCapacity() == inlineCapacity);
 
-    bool hasHandle = handleOfExtraProperties();
+    bool hasHandle = extraPropertiesHandle();
     uint32_t number = at<uint32_t>(offsetOfOrderWord) & orderAndCountMask;
     if (extraProperties())
-        state.forgetExtraPropertiesOf(this);
+        state.removeExtraPropertiesOf(this);
     if (orderWord() & orderWordIsFrozen)
         state.fieldAttributes.remove(this);
     {
@@ -1955,7 +1931,7 @@ JSObject* Object::becomeOrdinary(VM& vm, JSValue prototype)
         JSCell::setStructure(vm, ordinary->structure());
     }
     if (hasHandle)
-        state.handlesOfExtraProperties.release(this, number);
+        state.extraPropertiesHandleTable.release(this, number);
     vm.writeBarrier(this);
     ensureStillAliveHere(ordinary);
     return this;
@@ -1979,67 +1955,67 @@ void Object::dropExtraPropertiesIfEmpty(VM& vm)
     }
     Structure* withoutExtraProperties = state().structureFor(vm, layout().shape, getPrototypeDirect(), false);
     uint32_t word = orderWord();
-    bool hasHandle = handleOfExtraProperties();
+    bool hasHandle = extraPropertiesHandle();
     uint32_t number = at<uint32_t>(offsetOfOrderWord) & orderAndCountMask;
-    state().forgetExtraPropertiesOf(this);
+    state().removeExtraPropertiesOf(this);
     JSCell::setStructure(vm, withoutExtraProperties);
     at<uint32_t>(offsetOfOrderWord) = word & ~orderWordHasExtraProperties;
     if (hasHandle)
-        state().handlesOfExtraProperties.release(this, number);
-    noteWhetherToAsk(state());
+        state().extraPropertiesHandleTable.release(this, number);
+    updateNeedsSlowLookup(state());
 }
 
-bool State::heirsAddNothing(JSObject* prototype, JSObject* prototypeOfClass)
+bool State::descendantsAddNoProperties(JSObject* prototype, JSObject* classPrototype)
 {
-    static constexpr unsigned maxHeirs = 8;
-    if (auto known = m_prototypesOfClassesBelowHeirs.find(prototype); known != m_prototypesOfClassesBelowHeirs.end())
-        return known->value == prototypeOfClass;
+    static constexpr unsigned maxDescendants = 8;
+    if (auto known = m_classPrototypeByDescendantPrototype.find(prototype); known != m_classPrototypeByDescendantPrototype.end())
+        return known->value == classPrototype;
     VM& vm = *instance.vm;
-    Vector<JSObject*, maxHeirs> heirs;
-    bool addNothing = true;
-    for (JSObject* next = prototype; addNothing && next != prototypeOfClass; next = next->getPrototypeDirect().getObject()) {
+    Vector<JSObject*, maxDescendants> descendants;
+    bool addNoProperties = true;
+    for (JSObject* next = prototype; addNoProperties && next != classPrototype; next = next->getPrototypeDirect().getObject()) {
         if (next)
             ClassPrototype::look(next);
         Structure* structure = next ? next->structure() : nullptr;
-        if (!next || heirs.size() == maxHeirs || next->type() != FinalObjectType || structure->isDictionary() || structure->hasPolyProto() || hasIndexedProperties(next->indexingType()) || next->hasNonReifiedStaticProperties() || m_alteredPrototypesOfHeirs.contains(next)) {
-            addNothing = false;
+        if (!next || descendants.size() == maxDescendants || next->type() != FinalObjectType || structure->isDictionary() || structure->hasPolyProto() || hasIndexedProperties(next->indexingType()) || next->hasNonReifiedStaticProperties() || m_modifiedDescendantPrototypes.contains(next)) {
+            addNoProperties = false;
             break;
         }
         JSValue constructor = next->getDirect(vm, vm.propertyNames->constructor);
         auto* classObject = constructor ? dynamicDowncast<Closure>(constructor) : nullptr;
-        const LayoutData* ofHeir = classObject && classObject->structure()->aotInstance() == &instance ? classObject->classData() : nullptr;
-        if (ofHeir && prototypeOfClassIfExists(ofHeir->index) != next)
-            ofHeir = nullptr;
+        const LayoutData* descendantLayout = classObject && classObject->structure()->aotInstance() == &instance ? classObject->classData() : nullptr;
+        if (descendantLayout && classPrototypeIfExists(descendantLayout->index) != next)
+            descendantLayout = nullptr;
         structure->forEachProperty(vm, [&](const auto& entry) {
-            addNothing = entry.key() == vm.propertyNames->constructor.impl() || (ofHeir && !entry.key()->isSymbol() && std::ranges::any_of(ofHeir->methods(), [&](const MethodData& method) {
-                return !(method.flags & (methodHasComputedName | methodHasNameThatIsTakenForAbsent)) && isName(method.name, entry.key());
+            addNoProperties = entry.key() == vm.propertyNames->constructor.impl() || (descendantLayout && !entry.key()->isSymbol() && std::ranges::any_of(descendantLayout->methods(), [&](const MethodData& method) {
+                return !(method.flags & (methodHasComputedName | methodNameIsAssumedAbsent)) && isName(method.name, entry.key());
             }));
-            return addNothing;
+            return addNoProperties;
         });
-        heirs.append(next);
+        descendants.append(next);
     }
-    m_prototypesOfClassesBelowHeirs.add(prototype, addNothing ? prototypeOfClass : nullptr);
-    if (addNothing) {
-        for (JSObject* heir : heirs)
-            m_prototypesOfHeirs.add(heir);
+    m_classPrototypeByDescendantPrototype.add(prototype, addNoProperties ? classPrototype : nullptr);
+    if (addNoProperties) {
+        for (JSObject* heir : descendants)
+            m_descendantPrototypes.add(heir);
     }
-    return addNothing;
+    return addNoProperties;
 }
 
-void State::didChangePrototypeOfHeirs(VM& vm, JSObject* changed, UniquedStringImpl* nameOfProperty)
+void State::didChangeDescendantPrototype(VM& vm, JSObject* changed, UniquedStringImpl* nameOfProperty)
 {
-    if (!m_prototypesOfHeirs.contains(changed) || nameOfProperty == vm.propertyNames->constructor.impl())
+    if (!m_descendantPrototypes.contains(changed) || nameOfProperty == vm.propertyNames->constructor.impl())
         return;
-    m_alteredPrototypesOfHeirs.add(changed);
-    m_prototypesOfHeirs.clear();
-    m_prototypesOfClassesBelowHeirs.clear();
-    m_objectsAtBirthByNewTarget.fill({ });
-    judgePrototypesAnew(vm, [&](Structure*, const LayoutData& layout) {
+    m_modifiedDescendantPrototypes.add(changed);
+    m_descendantPrototypes.clear();
+    m_classPrototypeByDescendantPrototype.clear();
+    m_initialObjectStatesByNewTarget.fill({ });
+    revalidatePrototypes(vm, [&](Structure*, const LayoutData& layout) {
         return layout.kind == LayoutKind::Instance && layout.mayHaveOtherPrototype;
     });
 }
 
-void State::judgePrototypesAnew(VM& vm, const ScopedLambda<bool(Structure*, const LayoutData&)>& isOfObjectsToJudge)
+void State::revalidatePrototypes(VM& vm, const ScopedLambda<bool(Structure*, const LayoutData&)>& shouldRevalidate)
 {
     DeferGC deferGC(vm);
     PreventCollectionScope preventCollection(vm.heap);
@@ -2054,78 +2030,77 @@ void State::judgePrototypesAnew(VM& vm, const ScopedLambda<bool(Structure*, cons
             if (cell->type() == StructureType) {
                 auto* structure = uncheckedDowncast<Structure>(cell);
                 const LayoutData* layout = structure->aotInstance() == &instance ? structure->compiledLayout() : nullptr;
-                if (layout && isObjectLayout(layout->kind) && structure->markingStampAndFlags() & Structure::isOfObjectsWithExtraProperties)
+                if (layout && isObjectLayout(layout->kind) && structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties)
                     structures.append(structure);
                 return IterationStatus::Continue;
             }
             Structure* structure = cell->structure();
             const LayoutData* layout = structure->compiledLayout();
-            if (layout && isObjectLayout(layout->kind) && isOfObjectsToJudge(structure, *layout))
+            if (layout && isObjectLayout(layout->kind) && shouldRevalidate(structure, *layout))
                 objects.append(uncheckedDowncast<Object>(cell));
             return IterationStatus::Continue;
         });
     }
     for (Structure* structure : structures)
-        noteWhetherPrototypeIsByLayout(structure);
+        updatePrototypeMatchesLayout(structure);
     for (Object* object : objects)
-        object->noteWhetherToAsk(*this);
+        object->updateNeedsSlowLookup(*this);
 }
 
-void State::forgetPrototypesOfHeirsThatAreDead(VM& vm)
+void State::removeDeadDescendantPrototypes(VM& vm)
 {
     auto isDead = [&](JSObject* object) {
         return !vm.heap.isMarked(object);
     };
-    m_prototypesOfClassesBelowHeirs.removeIf([&](auto& entry) {
+    m_classPrototypeByDescendantPrototype.removeIf([&](auto& entry) {
         return isDead(entry.key) || (entry.value && isDead(entry.value));
     });
-    m_prototypesOfHeirs.removeIf(isDead);
-    m_alteredPrototypesOfHeirs.removeIf(isDead);
+    m_descendantPrototypes.removeIf(isDead);
+    m_modifiedDescendantPrototypes.removeIf(isDead);
 }
 
-bool State::isPrototypeByLayout(const LayoutData& layout, JSValue prototype)
+bool State::prototypeMatchesLayout(const LayoutData& layout, JSValue prototype)
 {
     if (layout.kind == LayoutKind::Instance) {
-        JSObject* prototypeOfClass = prototypeOfClassIfExists(layout.index);
-        return prototype == JSValue(prototypeOfClass) || (prototypeOfClass && prototype.isObject() && heirsAddNothing(asObject(prototype), prototypeOfClass));
+        JSObject* classPrototype = classPrototypeIfExists(layout.index);
+        return prototype == JSValue(classPrototype) || (classPrototype && prototype.isObject() && descendantsAddNoProperties(asObject(prototype), classPrototype));
     }
-    auto* prototypeOfFunction = dynamicDowncast<PrototypeObject>(prototype);
-    return prototype.isNull() || prototype == JSValue(instance.globalObject->objectPrototype()) || (prototypeOfFunction && (layout.mayBeMadeByNew || !(layout.mayHaveOtherPrototype || layout.mayGiveUp)) && prototypeOfFunction->isGuarded() && !prototypeOfFunction->isAltered());
+    auto* functionPrototypeObject = dynamicDowncast<PrototypeObject>(prototype);
+    return prototype.isNull() || prototype == JSValue(instance.globalObject->objectPrototype()) || (functionPrototypeObject && (layout.mayBeConstructed || !(layout.mayHaveOtherPrototype || layout.mayDespecialize)) && functionPrototypeObject->isGuarded() && !functionPrototypeObject->isModified());
 }
 
-void State::noteWhetherPrototypeIsByLayout(Structure* structure)
+void State::updatePrototypeMatchesLayout(Structure* structure)
 {
     const LayoutData& layout = *structure->compiledLayout();
-    if (!layout.mayHaveOtherPrototype || isPrototypeByLayout(layout, structure->storedPrototype()))
+    if (!layout.mayHaveOtherPrototype || prototypeMatchesLayout(layout, structure->storedPrototype()))
         structure->markingStampAndFlags() |= Structure::hasPrototypeOfLayout;
     else
         structure->markingStampAndFlags() &= ~Structure::hasPrototypeOfLayout;
 }
 
-void Object::noteWhetherToAsk(State& state, bool isBirth)
+void Object::updateNeedsSlowLookup(State& state, bool isCreation)
 {
     if (!layout().mayHaveOtherPrototype)
         return;
-    if (!state.isPrototypeByLayout(layout(), getPrototypeDirect()))
+    if (!state.prototypeMatchesLayout(layout(), getPrototypeDirect()))
         at<uint32_t>(offsetOfOrderWord) |= orderWordHasExtraProperties;
-    else if (!isBirth && !extraProperties())
+    else if (!isCreation && !extraProperties())
         at<uint32_t>(offsetOfOrderWord) &= ~orderWordHasExtraProperties;
 }
 
-void State::didAlterPrototypeObject(VM& vm, PrototypeObject* prototype)
+void State::didModifyPrototypeObject(VM& vm, PrototypeObject* prototype)
 {
     for (uint32_t i = 0; i < data.numberOfAllocations; ++i) {
-        // An allocation without a row is asked each time: orderWordAtBirth().
         Instance::TypedAllocation* row = instance.typedAllocation(i);
         if (row && std::bit_cast<StructureID>(static_cast<uint32_t>(row->header)).decode()->storedPrototype() == JSValue(prototype))
             row->words |= orderWordHasExtraProperties;
     }
-    judgePrototypesAnew(vm, [&](Structure* structure, const LayoutData&) {
+    revalidatePrototypes(vm, [&](Structure* structure, const LayoutData&) {
         return structure->storedPrototype() == JSValue(prototype);
     });
 }
 
-bool Object::absenceIsByStructure(Structure* structure, UniquedStringImpl* name)
+bool Object::structureGuaranteesAbsence(Structure* structure, UniquedStringImpl* name)
 {
     const LayoutData* layout = structure->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
@@ -2136,32 +2111,30 @@ bool Object::absenceIsByStructure(Structure* structure, UniquedStringImpl* name)
     VM& vm = *state.instance.vm;
     if (!name->isSymbol() && state.field(vm, *layout, name))
         return false;
-    if (state.isOfObjectsWithoutExtraProperties(structure))
+    if (state.isStructureWithoutExtraProperties(structure))
         return true;
-    StructureID ofExtraProperties = structure->structureIDOfExtraProperties();
+    StructureID ofExtraProperties = structure->extraPropertiesStructureID();
     return ofExtraProperties && !isValidOffset(ofExtraProperties.decode()->get(vm, name));
 }
 
-std::optional<Object::FieldAccess> Object::fieldAccessFor(VM&, PropertyName name, bool takesWhateverFits)
+std::optional<Object::FieldAccess> Object::fieldAccessFor(VM&, PropertyName name, bool acceptsAnyMatchingValue)
 {
     State& state = this->state();
     const FieldData* field = fieldNamed(state, name);
     if (!field)
         return std::nullopt;
     FieldAccess access { field->offset, field->store(), !!(field->flags & fieldIsOutOfLine), state.mayBeAbsent(*field) };
-    // See assign(). In an audit image every store is looked at.
     if (field->flags & (fieldIsImmutable | fieldIsPinned | fieldMayBeUnlisted) || isDiscriminant(*field) || state.data.isCompiledForAudit)
         return access;
     const RuntimeType& type = state.ownTypeOf(*field);
     access.acceptedPrimitives = type.primitives & (Primitive::All & ~Primitive::Int);
     if (type.primitives & Primitive::Int) {
         access.acceptsInt32 = type.minInteger() <= INT32_MIN && type.maxInteger() >= INT32_MAX;
-        if (type.minInteger() <= -maxKeptInteger && type.maxInteger() >= maxKeptInteger)
+        if (type.minInteger() <= -maxTrackedInteger && type.maxInteger() >= maxTrackedInteger)
             access.acceptedPrimitives |= Primitive::Int;
     }
-    // Of any other type an object may be made one of the program's on its way in: see State::holdToTypeOf().
-    access.acceptsAnyObject = type.allowsAnyObject() && (takesWhateverFits || !type.numberOfViews());
-    if (!type.allowsAnyObject() && !(field->ownType() & 3) && (takesWhateverFits || state.membersHaveNoSpecializations(type)))
+    access.acceptsAnyObject = type.allowsAnyObject() && (acceptsAnyMatchingValue || !type.numberOfSupertypes());
+    if (!type.allowsAnyObject() && !(field->ownType() & 3) && (acceptsAnyMatchingValue || state.subtypesHaveNoSpecializations(type)))
         access.typeOfAcceptedObjects = field->ownType();
     return access;
 }
@@ -2209,7 +2182,7 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
     return true;
 }
 
-ListingWithExtraProperties* Object::listingWithExtraProperties(VM& vm) const
+CachedPropertyList* Object::cachedPropertyList(VM& vm) const
 {
     JSObject* extra = extraProperties();
     if (!extra || orderWord() & orderWordIsFrozen)
@@ -2218,8 +2191,8 @@ ListingWithExtraProperties* Object::listingWithExtraProperties(VM& vm) const
     Structure* structure = extra->structure();
     uint32_t shapeWord = shapeWordOf(shape());
     uint32_t orderAndCount = orderWord() & orderAndCountMask;
-    auto& kept = state.placeOfListingWithExtraProperties(structure->id(), shapeWord, orderAndCount);
-    if (kept.structureIDOfExtraProperties == structure->id() && kept.shapeWord == shapeWord && kept.orderAndCount == orderAndCount)
+    auto& kept = state.propertyListCacheEntry(structure->id(), shapeWord, orderAndCount);
+    if (kept.extraPropertiesStructureID == structure->id() && kept.shapeWord == shapeWord && kept.orderAndCount == orderAndCount)
         return &kept;
     if (extra->type() != FinalObjectType || structure->isDictionary() || !structure->isQuickPropertyAccessAllowedForEnumeration() || !structure->canPerformFastPropertyEnumeration() || structure->hasNonReifiedStaticProperties())
         return nullptr;
@@ -2227,12 +2200,12 @@ ListingWithExtraProperties* Object::listingWithExtraProperties(VM& vm) const
     if (orderOf(orderAndCount) == keysAreInLayoutOrder || state.leavesFieldsUnlisted(layout, orderAndCount))
         return nullptr;
     const FieldData* fields = layout.fields();
-    Vector<ListedProperty, 16> extraKeys;
+    Vector<PropertyListEntry, 16> extraKeys;
     structure->forEachProperty(vm, [&](const auto& entry) {
-        extraKeys.append(ListedProperty { entry.key(), nullptr, entry.offset() });
+        extraKeys.append(PropertyListEntry { entry.key(), nullptr, entry.offset() });
         return true;
     });
-    Vector<ListedProperty> properties;
+    Vector<PropertyListEntry> properties;
     size_t nextExtraKey = 0;
     bool isWhole = true;
     forEachListedKey(state, [&](uint16_t entry) {
@@ -2244,18 +2217,18 @@ ListingWithExtraProperties* Object::listingWithExtraProperties(VM& vm) const
         if (state.isPrivate(fields[entry]))
             return;
         isWhole &= !!read(fields[entry]);
-        properties.append(ListedProperty { state.name(vm, fields[entry].name).impl(), &fields[entry], invalidOffset });
+        properties.append(PropertyListEntry { state.name(vm, fields[entry].name).impl(), &fields[entry], invalidOffset });
     });
     if (!isWhole)
         return nullptr;
     for (; nextExtraKey < extraKeys.size(); ++nextExtraKey)
         properties.append(extraKeys[nextExtraKey]);
-    auto& place = state.placeOfListingWithExtraProperties(structure->id(), shapeWord, orderAndCount);
+    auto& place = state.propertyListCacheEntry(structure->id(), shapeWord, orderAndCount);
     place = { structure->id(), shapeWord, orderAndCount, false, nullptr, nullptr, WTF::move(properties) };
     return &place;
 }
 
-ALWAYS_INLINE JSValue Object::readListed(const ListedProperty& property, JSObject* extra) const
+ALWAYS_INLINE JSValue Object::readPropertyListEntry(const PropertyListEntry& property, JSObject* extra) const
 {
     if (!property.field)
         return extra->getDirect(property.offsetInExtraProperties);
@@ -2263,34 +2236,34 @@ ALWAYS_INLINE JSValue Object::readListed(const ListedProperty& property, JSObjec
     return value ? value : read(*property.field);
 }
 
-JSFinalObject* Object::tryCopyByListing(VM& vm, Structure* beginsAsPlainCopy) const
+JSFinalObject* Object::tryCopyUsingPropertyList(VM& vm, Structure* plainCopyPrefixStructure) const
 {
     DeferGC deferGC(vm);
-    auto* listing = listingWithExtraProperties(vm);
-    Structure* structure = !listing ? nullptr : beginsAsPlainCopy ? beginsAsPlainCopy : state().structureOfPlainCopy(vm, *listing);
+    auto* listing = cachedPropertyList(vm);
+    Structure* structure = !listing ? nullptr : plainCopyPrefixStructure ? plainCopyPrefixStructure : state().plainCopyStructure(vm, *listing);
     if (!structure)
         return nullptr;
     JSObject* extra = extraProperties();
     JSFinalObject* copy = JSFinalObject::create(vm, structure);
     auto* slot = copy->inlineStorage();
     for (auto& property : listing->properties)
-        (slot++)->setWithoutWriteBarrier(readListed(property, extra));
+        (slot++)->setWithoutWriteBarrier(readPropertyListEntry(property, extra));
     return copy;
 }
 
-bool Object::appendValuesOfPlainCopy(VM& vm, Vector<JSValue, 16>& values) const
+bool Object::appendPlainCopyValues(VM& vm, Vector<JSValue, 16>& values) const
 {
     if (hasExtraProperties()) {
         DeferGC deferGC(vm);
-        auto* listing = listingWithExtraProperties(vm);
+        auto* listing = cachedPropertyList(vm);
         if (!listing)
             return false;
         JSObject* extra = extraProperties();
         for (auto& property : listing->properties)
-            values.append(readListed(property, extra));
+            values.append(readPropertyListEntry(property, extra));
         return true;
     }
-    for (auto& property : state().planOfPlainCopy(vm, layout(), orderWord() & orderAndCountMask).properties) {
+    for (auto& property : state().plainCopyPlan(vm, layout(), orderWord() & orderAndCountMask).properties) {
         JSValue value = readInline(*property.field);
         if (!value)
             return false;
@@ -2299,15 +2272,15 @@ bool Object::appendValuesOfPlainCopy(VM& vm, Vector<JSValue, 16>& values) const
     return true;
 }
 
-bool Object::keysGoByStructureAndOrderWord() const
+bool Object::keysDependOnlyOnStructureAndOrderWord() const
 {
-    return !hasExtraProperties() || (structure()->structureIDOfExtraProperties() && layout().offsetOfExtraProperties());
+    return !hasExtraProperties() || (structure()->extraPropertiesStructureID() && layout().offsetOfExtraProperties());
 }
 
 JSCellButterfly* Object::keysWithExtraProperties(VM& vm) const
 {
     DeferGC deferGC(vm);
-    auto* listing = listingWithExtraProperties(vm);
+    auto* listing = cachedPropertyList(vm);
     if (!listing || listing->keys)
         return listing ? listing->keys : nullptr;
     JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, listing->properties.size());
@@ -2319,14 +2292,14 @@ JSCellButterfly* Object::keysWithExtraProperties(VM& vm) const
     return list;
 }
 
-JSArray* Object::tryListKeysWithExtraProperties(JSGlobalObject* globalObject) const
+JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     DeferGC deferGC(vm);
     JSCellButterfly* keys = keysWithExtraProperties(vm);
     if (!keys)
         return nullptr;
-    if (keysGoByStructureAndOrderWord())
+    if (keysDependOnlyOnStructureAndOrderWord())
         return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
     unsigned length = keys->length();
     JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
@@ -2344,28 +2317,28 @@ bool Object::forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringI
     State& state = this->state();
     VM& vm = *state.instance.vm;
     JSObject* extra = extraProperties();
-    Structure* structureOfExtra = extra ? extra->structure() : nullptr;
-    if (extra && (extra->type() != FinalObjectType || !structureOfExtra->canPerformFastPropertyEnumeration() || structureOfExtra->hasNonReifiedStaticProperties() || extra->getDirect(vm, vm.propertyNames->toJSON)))
+    Structure* extraPropertiesStructure = extra ? extra->structure() : nullptr;
+    if (extra && (extra->type() != FinalObjectType || !extraPropertiesStructure->canPerformFastPropertyEnumeration() || extraPropertiesStructure->hasNonReifiedStaticProperties() || extra->getDirect(vm, vm.propertyNames->toJSON)))
         return false;
-    if (auto* listing = listingWithExtraProperties(vm)) {
-        Vector<ListedProperty, 16> properties(listing->properties.span());
+    if (auto* listing = cachedPropertyList(vm)) {
+        Vector<PropertyListEntry, 16> properties(listing->properties.span());
         for (auto& property : properties) {
-            if (!functor(*property.name, readListed(property, extra)))
+            if (!functor(*property.name, readPropertyListEntry(property, extra)))
                 break;
         }
         return true;
     }
     const LayoutData& layout = this->layout();
     const FieldData* fields = layout.fields();
-    auto namesOfExtraKeys = this->namesOfExtraKeys();
+    auto extraKeyNames = this->extraKeyNames();
     size_t nextExtraKey = 0;
     bool goesOn = true;
     forEachListedKey(state, [&](uint16_t entry) {
         if (!goesOn)
             return;
         if (entry >= layout.numberOfFields) {
-            for (size_t end = std::min<size_t>(entry - layout.numberOfFields + 1, namesOfExtraKeys.size()); goesOn && nextExtraKey < end; ++nextExtraKey) {
-                UniquedStringImpl* name = namesOfExtraKeys[nextExtraKey];
+            for (size_t end = std::min<size_t>(entry - layout.numberOfFields + 1, extraKeyNames.size()); goesOn && nextExtraKey < end; ++nextExtraKey) {
+                UniquedStringImpl* name = extraKeyNames[nextExtraKey];
                 unsigned attributes;
                 JSValue value = extra->getDirect(vm, name, attributes);
                 if (value && !(attributes & PropertyAttribute::DontEnum))
@@ -2380,7 +2353,7 @@ bool Object::forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringI
     });
     if (extra && goesOn) {
         size_t ordinal = 0;
-        structureOfExtra->forEachProperty(vm, [&](const auto& entry) -> bool {
+        extraPropertiesStructure->forEachProperty(vm, [&](const auto& entry) -> bool {
             if (entry.key()->isSymbol() || ordinal++ < nextExtraKey || entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
             return functor(*entry.key(), extra->getDirect(entry.offset()));
@@ -2404,17 +2377,17 @@ JSCellButterfly* Object::keys(VM& vm) const
     return list;
 }
 
-void Object::placeExtraKey(State& state, PropertyName name, uint32_t position)
+void Object::positionExtraKey(State& state, PropertyName name, uint32_t position)
 {
     if (name.isSymbol() || parseIndex(name) || orderOf(orderWord()) == keysAreInLayoutOrder)
         return;
     const LayoutData& layout = this->layout();
-    auto entry = ordinalOfExtraKey(name);
+    auto entry = extraKeyOrdinal(name);
     if (!entry)
         return;
     *entry += layout.numberOfFields;
     uint32_t before = orderWord() & orderAndCountMask;
-    if (auto placed = state.orderWithExtraKeyPlaced(layout, before, *entry, position)) {
+    if (auto placed = state.orderWithExtraKeyAt(layout, before, *entry, position)) {
         setOrderAndCount(*placed);
         return;
     }
@@ -2423,16 +2396,15 @@ void Object::placeExtraKey(State& state, PropertyName name, uint32_t position)
         keys.append(key);
     });
     uint32_t result = before;
-    // Unless it is the second accessor of a pair.
     if (!keys.containsIf([&](uint16_t key) { return key >= *entry; })) {
         keys.insert(std::min<size_t>(position, keys.size()), *entry);
         result = state.orderStartingWith(layout, keys.span(), false);
     }
-    state.didPlaceExtraKey(layout, before, *entry, position, result);
+    state.didPositionExtraKey(layout, before, *entry, position, result);
     setOrderAndCount(result);
 }
 
-void Object::placeExtraKeys(State& state, std::span<const std::pair<UniquedStringImpl*, uint32_t>> namesAndPositions)
+void Object::positionExtraKeys(State& state, std::span<const std::pair<UniquedStringImpl*, uint32_t>> namesAndPositions)
 {
     if (orderOf(orderWord()) == keysAreInLayoutOrder)
         return;
@@ -2441,19 +2413,18 @@ void Object::placeExtraKeys(State& state, std::span<const std::pair<UniquedStrin
     forEachKeyInOrder(state, [&](uint16_t key) {
         keys.append(key);
     });
-    size_t numberOfPlacedKeys = keys.size();
+    size_t positionedKeyCount = keys.size();
     for (auto [name, position] : namesAndPositions) {
         if (name->isSymbol() || parseIndex(*name))
             continue;
-        // Unless it is the second accessor of a pair.
-        if (auto ordinal = ordinalOfExtraKey(name); ordinal && !keys.containsIf([&](uint16_t key) { return key >= layout.numberOfFields + *ordinal; }))
+        if (auto ordinal = extraKeyOrdinal(name); ordinal && !keys.containsIf([&](uint16_t key) { return key >= layout.numberOfFields + *ordinal; }))
             keys.insert(std::min<size_t>(position, keys.size()), static_cast<uint16_t>(layout.numberOfFields + *ordinal));
     }
-    if (keys.size() != numberOfPlacedKeys)
+    if (keys.size() != positionedKeyCount)
         setOrderAndCount(state.orderStartingWith(layout, keys.span(), false));
 }
 
-Vector<UniquedStringImpl*, 16> Object::namesOfExtraKeys() const
+Vector<UniquedStringImpl*, 16> Object::extraKeyNames() const
 {
     Vector<UniquedStringImpl*, 16> names;
     if (JSObject* extra = extraProperties()) {
@@ -2466,7 +2437,7 @@ Vector<UniquedStringImpl*, 16> Object::namesOfExtraKeys() const
     return names;
 }
 
-std::optional<uint16_t> Object::ordinalOfExtraKey(PropertyName name) const
+std::optional<uint16_t> Object::extraKeyOrdinal(PropertyName name) const
 {
     JSObject* extra = extraProperties();
     if (!extra || name.isSymbol())
@@ -2483,19 +2454,19 @@ std::optional<uint16_t> Object::ordinalOfExtraKey(PropertyName name) const
     return static_cast<uint16_t>(ordinal);
 }
 
-void Object::didRemoveExtraKey(State& state, uint16_t ordinal, const FieldData* inItsPlace)
+void Object::didRemoveExtraKey(State& state, uint16_t ordinal, const FieldData* replacementField)
 {
     const LayoutData& layout = this->layout();
     uint32_t numberOfFields = layout.numberOfFields;
-    uint32_t numberWithPlaces = 0;
+    uint32_t positionedCount = 0;
     bool isPassed = false;
     bool changes = false;
     Vector<uint16_t, 16> keys;
-    auto placeUpTo = [&](uint32_t end) {
-        if (end <= numberWithPlaces)
+    auto positionUpTo = [&](uint32_t end) {
+        if (end <= positionedCount)
             return;
         keys.append(static_cast<uint16_t>(numberOfFields + end - 1));
-        numberWithPlaces = end;
+        positionedCount = end;
     };
     forEachKeyInOrder(state, [&](uint16_t key) {
         if (key < numberOfFields) {
@@ -2504,19 +2475,19 @@ void Object::didRemoveExtraKey(State& state, uint16_t ordinal, const FieldData* 
         }
         uint32_t last = key - numberOfFields;
         if (last < ordinal) {
-            placeUpTo(last + 1);
+            positionUpTo(last + 1);
             return;
         }
         changes = true;
         if (!std::exchange(isPassed, true)) {
-            placeUpTo(ordinal);
-            if (inItsPlace)
-                keys.append(indexOf(*inItsPlace));
+            positionUpTo(ordinal);
+            if (replacementField)
+                keys.append(indexOf(*replacementField));
         }
-        placeUpTo(last);
+        positionUpTo(last);
     });
-    if (inItsPlace && !isPassed) {
-        keys.append(indexOf(*inItsPlace));
+    if (replacementField && !isPassed) {
+        keys.append(indexOf(*replacementField));
         changes = true;
     }
     if (changes)
@@ -2553,11 +2524,11 @@ void Object::forEachListedKey(State& state, const Invocable<void(uint16_t)> auto
     }
 }
 
-void Object::placeExtraKeys(State& state)
+void Object::positionExtraKeys(State& state)
 {
     JSObject* extra = extraProperties();
     const LayoutData& layout = this->layout();
-    if (!extra || state.allExtraKeysHavePlaces(layout, orderWord(), extra))
+    if (!extra || state.allExtraKeysHavePositions(layout, orderWord(), extra))
         return;
     uint32_t numberOfExtraKeys = 0;
     extra->structure()->forEachProperty(vm(), [&](const auto& property) {
@@ -2565,16 +2536,16 @@ void Object::placeExtraKeys(State& state)
         return true;
     });
     uint32_t entry = layout.numberOfFields + numberOfExtraKeys - 1;
-    bool haveAllPlaces = !numberOfExtraKeys;
+    bool allHavePositions = !numberOfExtraKeys;
     forEachKeyInOrder(state, [&](uint16_t key) {
-        haveAllPlaces |= key >= entry;
+        allHavePositions |= key >= entry;
     });
-    if (haveAllPlaces)
+    if (allHavePositions)
         return;
     setOrderAndCount(entry < UINT16_MAX ? state.orderAfterCreating(layout, orderWord(), static_cast<uint16_t>(entry)) : orderWordOf(keysAreInLayoutOrder, 0));
 }
 
-bool Object::isAmongKeysInOrder(State& state, const FieldData& field) const
+bool Object::isInKeyOrder(State& state, const FieldData& field) const
 {
     uint32_t word = orderWord();
     if (orderOf(word) == keysAreInLayoutOrder)
@@ -2590,16 +2561,16 @@ void Object::listFieldsDefinedSoFar(State& state, const FieldData& named, bool i
 
 void Object::listFieldStoredEarly(State& state, const FieldData& field)
 {
-    if (orderOf(orderWord()) == keysAreInLayoutOrder || isAmongKeysInOrder(state, field))
+    if (orderOf(orderWord()) == keysAreInLayoutOrder || isInKeyOrder(state, field))
         return;
     if (hasExtraProperties()) [[unlikely]]
-        placeExtraKeys(state);
+        positionExtraKeys(state);
     setOrderAndCount(state.orderAfterCreating(layout(), orderWord(), indexOf(field)));
 }
 
 bool Object::isNotDefinedYet(const FieldData& field, JSValue held) const
 {
-    return field.flags & fieldMayBeUnlisted && held.isUndefined() && orderOf(orderWord()) != keysAreInLayoutOrder && !isAmongKeysInOrder(state(), field);
+    return field.flags & fieldMayBeUnlisted && held.isUndefined() && orderOf(orderWord()) != keysAreInLayoutOrder && !isInKeyOrder(state(), field);
 }
 
 void Object::listFieldsBelow(State& state, uint32_t end, bool mayUnlist)
@@ -2621,7 +2592,7 @@ void Object::listFieldsBelow(State& state, uint32_t end, bool mayUnlist)
         return;
     }
     if (hasExtraProperties()) [[unlikely]] {
-        placeExtraKeys(state);
+        positionExtraKeys(state);
         word = orderWord();
         if (orderOf(word) == keysAreInLayoutOrder)
             return;
@@ -2642,27 +2613,26 @@ void Object::listFieldsBelow(State& state, uint32_t end, bool mayUnlist)
 
 void Object::didCreateField(State& state, const FieldData& field, bool withStorage)
 {
-    if (field.flags & (fieldMayExistWithoutStorage | fieldMayBeUnlisted) && isAmongKeysInOrder(state, field)) {
+    if (field.flags & (fieldMayExistWithoutStorage | fieldMayBeUnlisted) && isInKeyOrder(state, field)) {
         if (withStorage && field.flags & fieldMayExistWithoutStorage)
             ensureExtensionCovers(vm(), state, field);
         return;
     }
-    // Keys are listed in the order of their creation, and an extra property without a place after all that have one.
-    if (JSObject* extra = extraProperties(); extra && !state.allExtraKeysHavePlaces(layout(), orderWord(), extra)) [[unlikely]] {
+    if (JSObject* extra = extraProperties(); extra && !state.allExtraKeysHavePositions(layout(), orderWord(), extra)) [[unlikely]] {
         uint64_t slotKey = withStorage && !(field.flags & (fieldMayExistWithoutStorage | fieldMayBeUnlisted)) ? slotKeyFor(field.offset, field.flags & fieldIsOutOfLine) : 0;
         if (slotKey) {
-            if (auto known = state.orderAfterCreatingBehindExtraProperties(*this, extra, slotKey)) {
+            if (auto known = state.orderAfterLateFieldCreation(*this, extra, slotKey)) {
                 willCreateField(state, field);
                 setOrderAndCount(*known);
                 return;
             }
             uint32_t before = orderWord();
-            placeExtraKeys(state);
+            positionExtraKeys(state);
             appendField(state, field);
-            state.noteCreationBehindExtraProperties(*this, extra, before, slotKey);
+            state.cacheLateFieldCreation(*this, extra, before, slotKey);
             return;
         }
-        placeExtraKeys(state);
+        positionExtraKeys(state);
     }
     if (!withStorage) {
         state.countFieldCreation(layout(), field);
@@ -2696,7 +2666,7 @@ void Object::willKeepKeysInLayoutOrder()
 
 void Object::didMoveExtraPropertyToField(State& state, const FieldData& field)
 {
-    auto ordinal = orderOf(orderWord()) != keysAreInLayoutOrder ? ordinalOfExtraKey(state.name(vm(), field.name)) : std::nullopt;
+    auto ordinal = orderOf(orderWord()) != keysAreInLayoutOrder ? extraKeyOrdinal(state.name(vm(), field.name)) : std::nullopt;
     if (!ordinal) {
         appendField(state, field);
         return;
@@ -2718,7 +2688,6 @@ void Object::willCreateField(State& state, const FieldData& field)
     state.countFieldCreation(layout(), field);
 }
 
-// Nothing is inherited, and no proxy is asked. What is not in a field or of the class is kept as a property by the name: read-only if a method.
 Object::PrivateElement Object::findPrivateElement(VM& vm, JSObject* object, PropertyName name)
 {
     PrivateElement element;
@@ -2754,14 +2723,10 @@ Object::PrivateElement Object::findPrivateElement(VM& vm, JSObject* object, Prop
         return element;
     if (JSObject* extra = compiled->extraProperties(); extra && findIn(extra))
         return element;
-    // Of a class that is not evaluated once they are functions of the evaluation the object is of: its prototype object keeps them.
     for (JSValue next = compiled->getPrototypeDirect(); next.isObject() && !findIn(asObject(next)); next = asObject(next)->getPrototypeDirect()) { }
     return element;
 }
 
-// Compiled code calls a method of a class by the shape of the object, whatever the object has by the name, unless the program is seen to
-// replace the method. The one thing the object may have is what makes no difference to that: the method it inherits, bound to the
-// object itself. `this.stop = this.stop.bind(this)`.
 static bool isInheritedMethodBoundTo(VM& vm, Object* object, PropertyName name, JSValue value)
 {
     JSObject* target = nullptr;
@@ -2784,7 +2749,6 @@ static bool isInheritedMethodBoundTo(VM& vm, Object* object, PropertyName name, 
             bound = { slim->functionIndex(), slim->captures() };
         else
             break;
-        // It captures what the function captures, which of the one closure of a method is nothing, then `this`, then the arguments.
         const Data& data = object->state().data;
         std::span all { data.at<std::array<uint32_t, 3>>(data.boundFunctionsOffset), data.numberOfBoundFunctions };
         auto found = std::ranges::lower_bound(all, closure->functionIndex(), { }, [](auto& entry) {
@@ -2805,16 +2769,15 @@ static bool isInheritedMethodBoundTo(VM& vm, Object* object, PropertyName name, 
     return false;
 }
 
-static bool reportOrThrowIsMethodOfClass(ThrowScope& scope, JSGlobalObject* globalObject, State& state, const LayoutData& layout, PropertyName name)
+static bool reportOrThrowIsClassMethod(ThrowScope& scope, JSGlobalObject* globalObject, State& state, const LayoutData& layout, PropertyName name)
 {
-    return state.reportOrThrow(scope, globalObject, { .kind = "method-shadow"_s, .on = &layout, .member = name.uid() }, makeString("Cannot replace method '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": a method can be replaced only if TypeScript code of the program assigns to it (binding the method to its own object is allowed)"_s), State::InAudit::CarriedOut);
+    return state.reportOrThrow(scope, globalObject, { .kind = "method-shadow"_s, .on = &layout, .member = name.uid() }, makeString("Cannot replace method '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": a method can be replaced only if TypeScript code of the program assigns to it (binding the method to its own object is allowed)"_s), State::InAudit::Performed);
 }
 
 bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
     if (const FieldData* field = object->fieldNamed(object->state(), name)) {
-        // A field that is absent is no property: the search goes on along the prototype chain.
         JSValue value = object->readInline(*field);
         if (!value) [[unlikely]]
             value = object->read(*field);
@@ -2841,7 +2804,6 @@ bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObj
     return found;
 }
 
-// Integer indices, the fields in the order of their creation, the other strings, the symbols.
 void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
     Object* object = uncheckedDowncast<Object>(cell);
@@ -2854,15 +2816,14 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
         const LayoutData& layout = object->layout();
         const FieldData* fields = layout.fields();
         bool mayHideFields = mode == DontEnumPropertiesMode::Exclude && object->orderWord() & orderWordIsFrozen;
-        auto namesOfExtraKeys = object->namesOfExtraKeys();
+        auto extraKeyNames = object->extraKeyNames();
         size_t nextExtraKey = 0;
         object->forEachListedKey(state, [&](uint16_t index) {
-            // What is listed here is not listed again with the other extra properties below.
             if (index >= layout.numberOfFields) {
-                for (size_t end = std::min<size_t>(index - layout.numberOfFields + 1, namesOfExtraKeys.size()); nextExtraKey < end; ++nextExtraKey) {
+                for (size_t end = std::min<size_t>(index - layout.numberOfFields + 1, extraKeyNames.size()); nextExtraKey < end; ++nextExtraKey) {
                     unsigned attributes;
-                    if (extra->getDirect(vm, namesOfExtraKeys[nextExtraKey], attributes) && (mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum)))
-                        names.add(Identifier::fromUid(vm, namesOfExtraKeys[nextExtraKey]));
+                    if (extra->getDirect(vm, extraKeyNames[nextExtraKey], attributes) && (mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum)))
+                        names.add(Identifier::fromUid(vm, extraKeyNames[nextExtraKey]));
                 }
                 return;
             }
@@ -2874,14 +2835,12 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
         extra->getOwnNonIndexPropertyNames(globalObject, names, mode);
 }
 
-// Whether [[Set]] of the object with another receiver may do anything but have the receiver define the property.
 static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
 {
     if (name == vm.propertyNames->underscoreProto)
         return true;
     while (true) {
         Structure* structure = object->structure();
-        // What a PrototypeObject does for another receiver is what an ordinary object does.
         if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype() || (structure->typeInfo().overridesPut() && structure->classInfoForCells() != PrototypeObject::info()))
             return true;
         JSValue prototype = object->getPrototypeDirect();
@@ -2891,7 +2850,7 @@ static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
     }
 }
 
-static std::pair<JSObject*, PropertyOffset> accessorOnChainOfOrdinaryObjects(VM& vm, JSObject* object, PropertyName name)
+static std::pair<JSObject*, PropertyOffset> findAccessorOnOrdinaryPrototypeChain(VM& vm, JSObject* object, PropertyName name)
 {
     if (name == vm.propertyNames->underscoreProto)
         return { nullptr, invalidOffset };
@@ -2910,10 +2869,7 @@ static std::pair<JSObject*, PropertyOffset> accessorOnChainOfOrdinaryObjects(VM&
     }
 }
 
-// OrdinarySet step by step: with another receiver, as when the object is on the prototype chain of the receiver, and with an index. What
-// the object has not got is for [[Set]] of its parent. ordinarySetSlow() walks the chain by itself, and takes for read-only what
-// inheritors may override (Structure::inheritorsMayOverrideReadOnlyProperties()).
-static bool setStepByStep(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue value, PutPropertySlot& slot)
+static bool ordinarySet(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2929,14 +2885,13 @@ static bool setStepByStep(JSGlobalObject* globalObject, JSObject* object, Proper
     RELEASE_AND_RETURN(scope, ordinarySetWithOwnDescriptor(globalObject, object, name, value, slot.thisValue(), WTF::move(ownDescriptor), slot.isStrictMode()));
 }
 
-// OrdinarySet.
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
-    return putKnowingField(cell, globalObject, name, value, slot, object->fieldNamed(object->state(), name));
+    return putWithKnownField(cell, globalObject, name, value, slot, object->fieldNamed(object->state(), name));
 }
 
-bool Object::putKnowingField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
+bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
 {
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
@@ -2950,9 +2905,8 @@ bool Object::putKnowingField(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (slot.thisValue() == JSValue(object) && state.storeByKnownTransition(vm, object, name.uid(), value))
         return true;
     if (slot.thisValue() != JSValue(object) || parseIndex(name)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, setStepByStep(globalObject, object, name, value, slot));
+        RELEASE_AND_RETURN(scope, ordinarySet(globalObject, object, name, value, slot));
     if (field) {
-        // Also of a field that is absent, whatever is inherited: a compiled store does not ask the prototype chain either. `#name` is no property.
         if (!name.isPrivateName() && object->attributesOf(*field) & PropertyAttribute::ReadOnly)
             return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
         if (object->read(*field)) {
@@ -2961,9 +2915,9 @@ bool Object::putKnowingField(JSCell* cell, JSGlobalObject* globalObject, Propert
             if (!givesUp)
                 RELEASE_AND_RETURN(scope, isStored);
             scope.assertNoException();
-            RELEASE_AND_RETURN(scope, object->becomeOrdinary(vm)->methodTable()->put(cell, globalObject, name, value, slot));
+            RELEASE_AND_RETURN(scope, object->convertToOrdinaryObject(vm)->methodTable()->put(cell, globalObject, name, value, slot));
         }
-    } else if (PropertyOffset offset; object->tryStoreExtraProperty(vm, name, value, offset, true) != ExtraPropertyStore::NotServed)
+    } else if (PropertyOffset offset; object->tryStoreExtraProperty(vm, name, value, offset, true) != ExtraPropertyStore::NotHandled)
         return true;
     else if (JSObject* extra = object->extraProperties()) {
         unsigned attributes;
@@ -2972,16 +2926,15 @@ bool Object::putKnowingField(JSCell* cell, JSGlobalObject* globalObject, Propert
                 RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(existing)->callSetter(globalObject, object, value, slot.isStrictMode()));
             if (attributes & PropertyAttribute::ReadOnly)
                 return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-            if (state.hasFixedMethod(object->layout(), name.uid()) && !isInheritedMethodBoundTo(vm, object, name, value) && !reportOrThrowIsMethodOfClass(scope, globalObject, state, object->layout(), name))
+            if (state.hasImmutableMethod(object->layout(), name.uid()) && !isInheritedMethodBoundTo(vm, object, name, value) && !reportOrThrowIsClassMethod(scope, globalObject, state, object->layout(), name))
                 return false;
             extra->putDirect(vm, name, value, attributes);
             return true;
         }
     }
-    // It has no such property, so its parent is asked, where a setter or a read-only property may take the store.
     JSValue prototype = object->getPrototypeDirect();
     if (prototype.isObject() && !name.isPrivateName() && mayInterceptPut(vm, asObject(prototype), name)) {
-        if (auto [holder, offset] = accessorOnChainOfOrdinaryObjects(vm, asObject(prototype), name); holder) {
+        if (auto [holder, offset] = findAccessorOnOrdinaryPrototypeChain(vm, asObject(prototype), name); holder) {
             slot.setCacheableSetter(holder, offset);
             RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(holder->getDirect(offset))->callSetter(globalObject, object, value, slot.isStrictMode()));
         }
@@ -3002,7 +2955,7 @@ void Object::putExtraWithoutRunningCode(JSGlobalObject* globalObject, PropertyNa
     auto refuse = [&](ASCIILiteral why) {
         state.reportOrThrow(scope, globalObject, { .kind = "runtime-accessor"_s, .on = &layout() }, messageFor(why), State::InAudit::Ignored);
     };
-    auto refuseAsTheLanguageDoes = [&](ASCIILiteral why) {
+    auto rejectPerSpec = [&](ASCIILiteral why) {
         throwTypeError(globalObject, scope, messageFor(why));
     };
     unsigned attributes;
@@ -3011,7 +2964,7 @@ void Object::putExtraWithoutRunningCode(JSGlobalObject* globalObject, PropertyNa
         if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
             return refuse("TypeScript code of the program cannot call a setter that was added at run time"_s);
         if (attributes & PropertyAttribute::ReadOnly)
-            return refuseAsTheLanguageDoes("the property is read only"_s);
+            return rejectPerSpec("the property is read only"_s);
         extra->putDirect(vm, name, value, attributes);
         return;
     }
@@ -3027,10 +2980,10 @@ void Object::putExtraWithoutRunningCode(JSGlobalObject* globalObject, PropertyNa
         if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
             return refuse("TypeScript code of the program cannot call an inherited setter that is not declared in the type"_s);
         if (attributes & PropertyAttribute::ReadOnly && !structure->inheritorsMayOverride(vm, name.uid()))
-            return refuseAsTheLanguageDoes("the inherited property is read only"_s);
+            return rejectPerSpec("the inherited property is read only"_s);
         break;
     }
-    if (!isNotExtensible() && !parseIndex(name) && !state.hasFixedMethod(layout(), name.uid())) {
+    if (!isNotExtensible() && !parseIndex(name) && !state.hasImmutableMethod(layout(), name.uid())) {
         bool isStored = state.specializeToStore(globalObject, this, name, value);
         RETURN_IF_EXCEPTION(scope, void());
         if (isStored)
@@ -3047,7 +3000,7 @@ void Object::putExtraWithoutRunningCode(JSGlobalObject* globalObject, PropertyNa
 bool Object::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
     PutPropertySlot slot(cell, shouldThrow);
-    return setStepByStep(globalObject, uncheckedDowncast<Object>(cell), Identifier::from(globalObject->vm(), index), value, slot);
+    return ordinarySet(globalObject, uncheckedDowncast<Object>(cell), Identifier::from(globalObject->vm(), index), value, slot);
 }
 
 bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
@@ -3061,11 +3014,11 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         if (object->attributesOf(*field) & PropertyAttribute::DontDelete)
             return false;
         const LayoutData& layout = object->layout();
-        if (layout.mayGiveUp && (!(field->flags & fieldIsOptional) || object->isDiscriminant(*field)))
-            return object->becomeOrdinary(vm)->methodTable()->deleteProperty(cell, globalObject, name, slot);
+        if (layout.mayDespecialize && (!(field->flags & fieldIsOptional) || object->isDiscriminant(*field)))
+            return object->convertToOrdinaryObject(vm)->methodTable()->deleteProperty(cell, globalObject, name, slot);
         if (!(field->flags & fieldIsOptional))
             return state.reportOrThrow(globalObject, { .kind = "field-delete"_s, .on = &layout, .member = name.uid() }, makeString("Cannot delete property '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": only optional properties can be deleted"_s), State::InAudit::Ignored);
-        if (object->isDiscriminant(*field) && !state.reportOrThrow(globalObject, { .kind = "discriminant-change"_s, .on = &layout, .member = name.uid() }, makeString("Cannot delete property '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": a discriminant property cannot change"_s), State::InAudit::CarriedOut))
+        if (object->isDiscriminant(*field) && !state.reportOrThrow(globalObject, { .kind = "discriminant-change"_s, .on = &layout, .member = name.uid() }, makeString("Cannot delete property '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": a discriminant property cannot change"_s), State::InAudit::Performed))
             return false;
         RELEASE_ASSERT(state.mayBeAbsent(*field));
         if (orderOf(object->orderWord()) != keysAreInLayoutOrder) {
@@ -3077,7 +3030,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
             object->setOrderAndCount(state.orderStartingWith(layout, remaining.span()));
         }
         if (field->flags & fieldIsPinned) [[unlikely]]
-            state.willAlter(*field, JSValue());
+            state.willModify(*field, JSValue());
         object->clear(*field);
         if (object->orderWord() & orderWordIsFrozen) [[unlikely]]
             object->setAttributesOf(vm, *field, 0);
@@ -3086,7 +3039,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     JSObject* extra = object->extraProperties();
     if (!extra)
         return true;
-    auto ordinal = orderOf(object->orderWord()) != keysAreInLayoutOrder ? object->ordinalOfExtraKey(name) : std::nullopt;
+    auto ordinal = orderOf(object->orderWord()) != keysAreInLayoutOrder ? object->extraKeyOrdinal(name) : std::nullopt;
     bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
     slot.disableCaching();
     if (isDeleted) {
@@ -3120,12 +3073,11 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
         JSObject* extra = object->extraProperties();
         bool exists = extra && extra->hasOwnProperty(globalObject, name);
         RETURN_IF_EXCEPTION(scope, false);
-        // A store to a hole of what inherits from the object looks for setters and read-only elements in indexed storage only.
-        if (parseIndex(name) && !object->isFrozen() && (descriptor.isAccessorDescriptor() || !(descriptor.writablePresent() ? descriptor.writable() : exists)) && layout.mayGiveUp)
-            RELEASE_AND_RETURN(scope, object->becomeOrdinary(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
+        if (parseIndex(name) && !object->isFrozen() && (descriptor.isAccessorDescriptor() || !(descriptor.writablePresent() ? descriptor.writable() : exists)) && layout.mayDespecialize)
+            RELEASE_AND_RETURN(scope, object->convertToOrdinaryObject(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
         if (parseIndex(name) && !object->isFrozen() && (descriptor.isAccessorDescriptor() || !(descriptor.writablePresent() ? descriptor.writable() : exists)))
             return state.reportOrThrow(scope, globalObject, { .kind = "index-accessor"_s, .on = &layout }, makeString("Cannot define property '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": indexed properties of an object of a declared type cannot be accessors or read only"_s), State::InAudit::Ignored);
-        if (state.hasFixedMethod(layout, name.uid()) && (descriptor.isAccessorDescriptor() || (descriptor.value() ? !isInheritedMethodBoundTo(vm, object, name, descriptor.value()) : !exists)) && !reportOrThrowIsMethodOfClass(scope, globalObject, state, layout, name))
+        if (state.hasImmutableMethod(layout, name.uid()) && (descriptor.isAccessorDescriptor() || (descriptor.value() ? !isInheritedMethodBoundTo(vm, object, name, descriptor.value()) : !exists)) && !reportOrThrowIsClassMethod(scope, globalObject, state, layout, name))
             return false;
         if (!exists) {
             if (object->isNotExtensible())
@@ -3145,7 +3097,6 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
         return isDefined;
     }
 
-    // ValidateAndApplyPropertyDescriptor. What a field holds is a data property, writable, enumerable and configurable unless the object is frozen.
     JSValue current = object->read(*field);
     unsigned currentAttributes = object->attributesOf(*field);
     PropertyDescriptor currentDescriptor;
@@ -3158,8 +3109,8 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
     unsigned attributes = current ? descriptor.attributesOverridingCurrent(currentDescriptor) : descriptor.attributes();
     bool getsAttributes = attributes != currentAttributes && layout.mayBeFrozen && !descriptor.isAccessorDescriptor() && !name.isPrivateName() && (!(attributes & PropertyAttribute::DontEnum) || state.mayBeAbsent(*field));
     if (attributes != currentAttributes && !getsAttributes) {
-        if (layout.mayGiveUp)
-            RELEASE_AND_RETURN(scope, object->becomeOrdinary(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
+        if (layout.mayDespecialize)
+            RELEASE_AND_RETURN(scope, object->convertToOrdinaryObject(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
         bool goesOn = state.reportOrThrow(globalObject, { .kind = "field-redefine"_s, .on = &layout, .member = name.uid() }, makeString("Cannot redefine property '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": declared properties stay writable, enumerable and configurable data properties"_s), State::InAudit::Ignored);
         EXCEPTION_ASSERT(!!scope.exception() == !goesOn);
         if (!goesOn)
@@ -3169,13 +3120,12 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
     }
     if (object->isFrozen())
         return true;
-    // What is there stays as it is.
     if (!current || descriptor.value()) {
         bool givesUp = false;
         bool isStored = object->assign(globalObject, *field, descriptor.value() ? descriptor.value() : jsUndefined(), &givesUp);
         RETURN_IF_EXCEPTION(scope, false);
         if (givesUp)
-            RELEASE_AND_RETURN(scope, object->becomeOrdinary(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
+            RELEASE_AND_RETURN(scope, object->convertToOrdinaryObject(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
         if (!isStored)
             return false;
         if (!current)
@@ -3206,10 +3156,10 @@ bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, u
     if (const FieldData* field = fieldNamed(state, name)) {
         if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || isDiscriminant(*field))
             return false;
-        bool wasThere = !!read(*field);
+        bool wasPresent = !!read(*field);
         if (!write(vm, *field, value))
             return false;
-        if (!wasThere)
+        if (!wasPresent)
             didCreateField(state, *field);
         if (attributes != attributesOf(*field) && (layout().mayBeFrozen || !(attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete))) && !name.isPrivateName() && (!(attributes & PropertyAttribute::DontEnum) || state.mayBeAbsent(*field)))
             setAttributesOf(vm, *field, attributes);
@@ -3240,8 +3190,8 @@ bool Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
     bool isToBeFrozen = own && !own->isFrozen && integrity == Integrity::Frozen;
     if ((orderWord() & bits) == bits && !isToBeFrozen)
         return true;
-    if (!layout().mayBeFrozen && layout().mayGiveUp) {
-        JSObject* ordinary = becomeOrdinary(vm);
+    if (!layout().mayBeFrozen && layout().mayDespecialize) {
+        JSObject* ordinary = convertToOrdinaryObject(vm);
         switch (integrity) {
         case Integrity::NotExtensible:
             RELEASE_AND_RETURN(scope, ordinary->methodTable()->preventExtensions(ordinary, globalObject));
@@ -3255,7 +3205,7 @@ bool Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
         RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
-    if (!layout().mayBeFrozen && !state().reportOrThrow(scope, globalObject, { .kind = "object-freeze"_s, .on = &layout() }, makeString("Cannot freeze, seal or prevent extensions of "_s, state().nameOf(layout()), ": no TypeScript code of the program passes a value to Object.freeze, Object.seal or Object.preventExtensions as this type, so its objects cannot be frozen"_s), State::InAudit::CarriedOut))
+    if (!layout().mayBeFrozen && !state().reportOrThrow(scope, globalObject, { .kind = "object-freeze"_s, .on = &layout() }, makeString("Cannot freeze, seal or prevent extensions of "_s, state().nameOf(layout()), ": no TypeScript code of the program passes a value to Object.freeze, Object.seal or Object.preventExtensions as this type, so its objects cannot be frozen"_s), State::InAudit::Performed))
         return false;
     if (JSObject* extra = extraProperties()) {
         switch (integrity) {
@@ -3295,7 +3245,6 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (object->getPrototypeDirect() == prototype)
         return true;
-    // OrdinarySetPrototypeOf.
     if (object->isNotExtensible())
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     for (JSValue next = prototype; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
@@ -3304,14 +3253,10 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
     }
     State& state = object->state();
     const LayoutData& layout = object->layout();
-    // A record may cease to inherit, and inherit from what a record may be born with: see createThis(). Compiled code tells objects by the
-    // shape word, which stays. What it takes for absent stays absent, and the names that Object.prototype or the `prototype` of a function
-    // supplies it asks for: see mayInherit(). Any other parent could supply a name that the layout takes for absent, unless the layout
-    // says that nothing is known of the chain. The methods of a class are called by the shape.
-    if (layout.kind != LayoutKind::Record || !(state.isPrototypeByLayout(layout, prototype) || layout.mayHaveOtherPrototype)) {
-        if (layout.mayGiveUp) {
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype, object->becomeOrdinary(vm, prototype));
-            if (state.isShapeOfPrototypes(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
+    if (layout.kind != LayoutKind::Record || !(state.prototypeMatchesLayout(layout, prototype) || layout.mayHaveOtherPrototype)) {
+        if (layout.mayDespecialize) {
+            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype, object->convertToOrdinaryObject(vm, prototype));
+            if (state.isPrototypeShape(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
                 object->realm()->haveABadTime(vm);
             return true;
         }
@@ -3319,31 +3264,31 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
         State::Violation violation { .kind = "object-set-prototype"_s, .on = &layout };
         if (!state.data.isCompiledForAudit) {
             if (shouldThrow)
-                state.noteViolation(vm, violation);
+                state.recordViolation(vm, violation);
             return typeError(globalObject, scope, shouldThrow, withAOTErrorNote(message));
         }
-        state.reportOrThrow(scope, globalObject, violation, message, State::InAudit::CarriedOut);
+        state.reportOrThrow(scope, globalObject, violation, message, State::InAudit::Performed);
     }
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
-    object->JSCell::setStructure(vm, state.structureWithExtraPropertiesLike(vm, object->structure(), layout.shape, prototype));
-    object->noteWhetherToAsk(state);
-    if (state.isShapeOfPrototypes(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
+    object->JSCell::setStructure(vm, state.structureWithExtraPropertiesMatching(vm, object->structure(), layout.shape, prototype));
+    object->updateNeedsSlowLookup(state);
+    if (state.isPrototypeShape(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
         object->realm()->haveABadTime(vm);
     return true;
 }
 
-void Object::setPrototypeAtBirth(VM& vm, JSObject* prototype)
+void Object::setPrototypeAtCreation(VM& vm, JSObject* prototype)
 {
     if (getPrototypeDirect() == JSValue(prototype))
         return;
-    JSCell::setStructure(vm, state().structureWithExtraPropertiesLike(vm, structure(), layout().shape, prototype));
-    noteWhetherToAsk(state(), true);
+    JSCell::setStructure(vm, state().structureWithExtraPropertiesMatching(vm, structure(), layout().shape, prototype));
+    updateNeedsSlowLookup(state(), true);
 }
 
 void Object::specialize(VM& vm, State& state, uint32_t shape)
 {
-    bool hasRoom = specialize(vm, state, state.planOfTransition(vm, this, shape));
+    bool hasRoom = specialize(vm, state, state.transitionPlanFor(vm, this, shape));
     RELEASE_ASSERT(hasRoom);
 }
 
@@ -3363,10 +3308,9 @@ bool Object::specialize(VM& vm, State& state, TransitionPlan& plan)
         willKeepKeysInLayoutOrder();
     for (auto& slot : plan.addedSlots)
         clearSlot(&at<uint8_t>(slot.offset), slot.store);
-    // The collector goes by the Structure, and may be marking.
     WTF::storeStoreFence();
     JSCell::setStructure(vm, plan.structure);
-    if (ExtraPropertiesHandle* handle = handleOfExtraProperties())
+    if (ExtraPropertiesHandle* handle = extraPropertiesHandle())
         handle->orderAndCount = wordInSpecialization;
     else
         at<uint32_t>(offsetOfOrderWord) = (at<uint32_t>(offsetOfOrderWord) & ~orderAndCountMask) | wordInSpecialization;
@@ -3375,7 +3319,7 @@ bool Object::specialize(VM& vm, State& state, TransitionPlan& plan)
     return true;
 }
 
-bool Object::specializeAsBefore(VM& vm, const TransitionPlan& plan)
+bool Object::specializeWithPlan(VM& vm, const TransitionPlan& plan)
 {
     if (plan.size > cellSize())
         return false;
@@ -3426,7 +3370,7 @@ void EvalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(EvalScope);
 
-Identifier EvalScope::keyOfNewTarget(VM& vm)
+Identifier EvalScope::newTargetKey(VM& vm)
 {
     static constexpr Latin1Character key[] = { 0, 't', 'a', 'r', 'g', 'e', 't' };
     return Identifier::fromString(vm, String(std::span<const Latin1Character> { key }));
@@ -3437,7 +3381,7 @@ bool EvalScope::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     JSObject* bindings = uncheckedDowncast<EvalScope>(object)->m_bindings.get();
     if (name == vm.propertyNames->builtinNames().newTargetLocalPrivateName())
-        return bindings->methodTable()->getOwnPropertySlot(bindings, globalObject, keyOfNewTarget(vm), slot);
+        return bindings->methodTable()->getOwnPropertySlot(bindings, globalObject, newTargetKey(vm), slot);
     return bindings->methodTable()->getOwnPropertySlot(bindings, globalObject, name, slot);
 }
 
@@ -3470,7 +3414,6 @@ Structure* Closure::createStructure(VM& vm, JSGlobalObject* globalObject, JSValu
 Closure* Closure::create(VM& vm, Structure* structure, uint32_t function, std::span<const uint64_t> captures, unsigned numberOfReferences)
 {
     RELEASE_ASSERT(numberOfReferences <= captures.size() && captures.size() <= maxNumberOfCaptures);
-    // Whoever hands the captures over keeps them alive: both of these may collect garbage.
     FunctionTables& tables = FunctionTables::of(vm);
     RELEASE_ASSERT(ProgramData::get()->closureWordOf(function));
     RELEASE_ASSERT((tables.data.at<std::array<uint8_t, 2>>(tables.data.closureCountsOffset)[function] == std::array { static_cast<uint8_t>(numberOfReferences), static_cast<uint8_t>(captures.size()) }));
@@ -3497,7 +3440,6 @@ void Closure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Closure* closure = uncheckedDowncast<Closure>(cell);
     Base::visitChildren(cell, visitor);
-    // See createForCompiledCode().
     if (!closure->m_entry)
         return;
     visitor.appendValues(reinterpret_cast<const WriteBarrier<Unknown>*>(closure->captures().data()), closure->numberOfReferences());
@@ -3509,7 +3451,6 @@ void Closure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    // See createForCompiledCode().
     if (!closure->m_entry)
         return;
     for (unsigned i = 0; i < closure->numberOfReferences(); ++i) {
@@ -3519,10 +3460,9 @@ void Closure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 }
 
 static void setNameReportedForFrames(uint32_t function, const String&, bool isOnlyClosure);
-static bool isNamedInFramesByItsProperties(JSCell* closure);
-static std::atomic<bool> someClosureWasGivenDisplayName;
+static bool usesOwnPropertiesForStackTraceName(JSCell* closure);
+static std::atomic<bool> anyClosureHasDisplayName;
 
-// What tells a closure that [[Call]] runs: see JSFunction::getCallDataInline(). Whoever goes by that enters at closureEntrypoint() by itself.
 JSC_DEFINE_HOST_FUNCTION(callClosure, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3538,7 +3478,6 @@ JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, Ca
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // In the words of the engine: see ScriptExecutable::prepareForExecutionImpl().
     Closure* classObject = uncheckedDowncast<Closure>(callFrame->jsCallee());
     String name = classObject->structure()->aotInstance()->typed->nameOfFunction(classObject->functionIndex());
     return throwVMTypeError(globalObject, scope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
@@ -3582,8 +3521,7 @@ private:
     State::ConstructionFromNative m_construction;
 };
 
-// What the function is handed when it is constructed: a constructor that asks for it gets `new.target` first.
-static void appendArgumentsOfConstruct(MarkedArgumentBuffer& all, const Closure* closure, JSValue newTarget, const ArgList& arguments)
+static void appendConstructArguments(MarkedArgumentBuffer& all, const Closure* closure, JSValue newTarget, const ArgList& arguments)
 {
     if (const LayoutData* ofClass = closure->classData(); ofClass && ofClass->constructorTakesNewTarget)
         all.append(newTarget);
@@ -3591,12 +3529,12 @@ static void appendArgumentsOfConstruct(MarkedArgumentBuffer& all, const Closure*
         all.append(arguments.at(i));
 }
 
-static JSValue createThisAsRemembered(JSGlobalObject* globalObject, State& state, Closure* constructor, JSObject* newTarget)
+static JSValue createThisFromCache(JSGlobalObject* globalObject, State& state, Closure* constructor, JSObject* newTarget)
 {
     VM& vm = globalObject->vm();
     Instance& instance = state.instance;
     AOT::Slot* remembered = instance.thisAllocationFor(newTarget);
-    uintptr_t epoch = instance.fieldsBelow().typedPrototypeEpoch;
+    uintptr_t epoch = instance.negativeOffsetFields().typedPrototypeEpoch;
     if (remembered[0].structureID && remembered[0].pointer == newTarget && remembered[3].pointer == constructor && std::bit_cast<uintptr_t>(remembered[2].pointer) == epoch) {
         if (Options::useAOTOperationCounters()) [[unlikely]]
             runtimeTable(vm).countOperation("createThis", "remembered");
@@ -3626,10 +3564,10 @@ JSC_DEFINE_HOST_FUNCTION(constructClosure, (JSGlobalObject* globalObject, CallFr
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* closure = uncheckedDowncast<Closure>(callFrame->jsCallee());
     JSObject* newTarget = asObject(callFrame->newTarget());
-    JSValue thisValue = createThisAsRemembered(globalObject, *closure->structure()->aotInstance()->typed, closure, newTarget);
+    JSValue thisValue = createThisFromCache(globalObject, *closure->structure()->aotInstance()->typed, closure, newTarget);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer arguments;
-    appendArgumentsOfConstruct(arguments, closure, newTarget, ArgList(callFrame));
+    appendConstructArguments(arguments, closure, newTarget, ArgList(callFrame));
     if (arguments.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return { };
@@ -3642,7 +3580,6 @@ JSC_DEFINE_HOST_FUNCTION(constructClosure, (JSGlobalObject* globalObject, CallFr
     RETURN_IF_EXCEPTION(scope, { });
     if (!result.isObject())
         result = thisValue;
-    // Under a foreign root the constructor hands back what that has made.
     RELEASE_ASSERT(result.isObject());
     return JSValue::encode(result);
 }
@@ -3663,22 +3600,22 @@ PrototypeObject* PrototypeObject::create(VM& vm, Structure* structure, uint32_t 
 
 bool PrototypeObject::isGuarded() const
 {
-    return !(structure()->aotInstance()->typed->kindAndDeclarationOf(m_function) & functionIsOfBuiltinModule);
+    return !(structure()->aotInstance()->typed->kindAndDeclarationOf(m_function) & functionIsInBuiltinModule);
 }
 
-bool PrototypeObject::letsItselfBeAltered(VM& vm)
+bool PrototypeObject::allowsModification(VM& vm)
 {
     State& state = *structure()->aotInstance()->typed;
-    if (!state.mayAlterPrototypeObjectOf(m_function))
+    if (!state.mayModifyPrototypeObjectOf(m_function))
         return false;
-    if (!std::exchange(m_isAltered, true))
-        state.didAlterPrototypeObject(vm, this);
+    if (!std::exchange(m_isModified, true))
+        state.didModifyPrototypeObject(vm, this);
     return true;
 }
 
-bool PrototypeObject::letsItselfBeReparented(VM& vm)
+bool PrototypeObject::allowsPrototypeChange(VM& vm)
 {
-    return !structure()->aotInstance()->typed->makesObjectsWithDefinitelyInitializedFields(m_function) && letsItselfBeAltered(vm);
+    return !structure()->aotInstance()->typed->createsObjectsWithDefinitelyInitializedFields(m_function) && allowsModification(vm);
 }
 
 bool PrototypeObject::mayDefine(JSGlobalObject* globalObject, PropertyName name, bool isWritableData)
@@ -3686,20 +3623,16 @@ bool PrototypeObject::mayDefine(JSGlobalObject* globalObject, PropertyName name,
     State& state = *structure()->aotInstance()->typed;
     if (name.isSymbol() || !isGuarded() || !state.isReservedFieldName(globalObject->vm(), name.uid(), m_function))
         return true;
-    // `this.x = x` in the function is [[Set]]: under a setter, or a property that cannot be stored over, the field would never be created. Compiled code stores to what it has
-    // just made without asking, where some field of it is read without a test: isBornUnderAnyPrototype().
-    if ((isWritableData || !state.makesObjectsWithDefinitelyInitializedFields(m_function)) && letsItselfBeAltered(globalObject->vm()))
+    if ((isWritableData || !state.createsObjectsWithDefinitelyInitializedFields(m_function)) && allowsModification(globalObject->vm()))
         return true;
-    return state.reportOrThrow(globalObject, { .kind = "function-prototype-write"_s, .onFunction = m_function, .member = name.uid() }, makeString("Cannot define property '"_s, StringView(name.uid()), "' on the prototype of function '"_s, state.nameOfFunction(m_function), "': its objects have a declared field of that name, and the compiler did not see this definition"_s), State::InAudit::CarriedOut);
+    return state.reportOrThrow(globalObject, { .kind = "function-prototype-write"_s, .onFunction = m_function, .member = name.uid() }, makeString("Cannot define property '"_s, StringView(name.uid()), "' on the prototype of function '"_s, state.nameOfFunction(m_function), "': its objects have a declared field of that name, and the compiler did not see this definition"_s), State::InAudit::Performed);
 }
 
 bool PrototypeObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
-    // With another receiver nothing is defined here.
     if (slot.thisValue() == JSValue(cell) && !uncheckedDowncast<PrototypeObject>(cell)->mayDefine(globalObject, name, true))
         return false;
     bool result = Base::put(cell, globalObject, name, value, slot);
-    // A cache would store to the next one without coming here.
     slot.disableCaching();
     return result;
 }
@@ -3714,7 +3647,7 @@ bool PrototypeObject::defineOwnProperty(JSObject* object, JSGlobalObject* global
 bool PrototypeObject::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
     State& state = *object->structure()->aotInstance()->typed;
-    if (object->getPrototypeDirect() != prototype && uncheckedDowncast<PrototypeObject>(object)->isGuarded() && !uncheckedDowncast<PrototypeObject>(object)->letsItselfBeReparented(globalObject->vm()) && !state.reportOrThrow(globalObject, { .kind = "function-prototype-write"_s, .onFunction = uncheckedDowncast<PrototypeObject>(object)->m_function }, makeString("Cannot set the prototype of the 'prototype' object of function '"_s, state.nameOfFunction(uncheckedDowncast<PrototypeObject>(object)->m_function), "': TypeScript code in the program creates instances of it"_s), State::InAudit::CarriedOut))
+    if (object->getPrototypeDirect() != prototype && uncheckedDowncast<PrototypeObject>(object)->isGuarded() && !uncheckedDowncast<PrototypeObject>(object)->allowsPrototypeChange(globalObject->vm()) && !state.reportOrThrow(globalObject, { .kind = "function-prototype-write"_s, .onFunction = uncheckedDowncast<PrototypeObject>(object)->m_function }, makeString("Cannot set the prototype of the 'prototype' object of function '"_s, state.nameOfFunction(uncheckedDowncast<PrototypeObject>(object)->m_function), "': TypeScript code in the program creates instances of it"_s), State::InAudit::Performed))
         return false;
     return Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
 }
@@ -3726,7 +3659,6 @@ static_assert(sizeof(ClassPrototype) == sizeof(JSObjectWithButterfly) + ClassPro
 Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
-    // Every object of it is one: none makes a transition for that.
     structure->setMayBePrototype(true);
     return structure;
 }
@@ -3738,40 +3670,37 @@ ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t cl
     return object;
 }
 
-void ClassPrototype::becomeOrdinary(VM& vm, Structure* ordinary)
+void ClassPrototype::convertToOrdinaryObject(VM& vm, Structure* ordinary)
 {
     RELEASE_ASSERT(ordinary->classInfoForCells() == JSFinalObject::info() && ordinary->inlineCapacity() == inlineCapacity && ordinary->storedPrototype() == structure()->storedPrototype());
     m_classIndex = 0;
     m_declaredMemberLookups = 0;
-    // A marker that sees the Structure takes the two words for values.
     WTF::storeStoreFence();
     if (butterfly())
         nukeStructureAndSetButterfly(vm, structureID(), nullptr);
     setStructure(vm, ordinary);
 }
 
-void ClassPrototype::makeMembers(JSObject* object)
+void ClassPrototype::createMembers(JSObject* object)
 {
     State& state = *object->structure()->aotInstance()->typed;
     if (Options::useAOTOperationCounters()) [[unlikely]]
         runtimeTable(object->vm()).countOperation("ClassPrototype", "made");
     MarkedArgumentBuffer entryOwners;
     auto entries = state.collectDeclaredMemberEntries(object->vm(), *state.classWithIndex(uncheckedDowncast<ClassPrototype>(object)->classIndex()), entryOwners);
-    PlaceTable& table = PlaceTable::of(object->vm());
-    table.willMakeDeclaredMembers();
-    // `constructor` is one of them.
+    PropertyLookupTable& table = PropertyLookupTable::of(object->vm());
+    table.willCreateDeclaredMembers();
     Closure* classObject = state.closure(object->vm(), state.classWithIndex(static_cast<uint32_t>(uncheckedDowncast<ClassPrototype>(object)->m_classIndex))->classData().classConstructor);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(object->vm());
-    state.makeClass(state.instance.globalObject, classObject, JSValue(), State::PartOfClass::MembersOfPrototype);
+    state.createClass(state.instance.globalObject, classObject, JSValue(), State::ClassPart::PrototypeMembers);
     scope.assertNoException();
-    table.didMakeDeclaredMembers();
+    table.didCreateDeclaredMembers();
     RELEASE_ASSERT(object->type() == FinalObjectType);
     state.repointDeclaredMemberEntries(object->vm(), object, entries);
 }
 
 bool ClassPrototype::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
-    // An inquiry while the heap is collected or walked: nothing can be made.
     if (object->vm().heap.currentThreadIsDoingGCWork()) [[unlikely]] {
         slot.setIsTaintedByOpaqueObject();
         return false;
@@ -3779,7 +3708,7 @@ bool ClassPrototype::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
     if (auto answer = uncheckedDowncast<ClassPrototype>(object)->tryGetDeclaredMember(globalObject->vm(), name, slot))
         return *answer;
     State& state = *object->structure()->aotInstance()->typed;
-    makeMembers(object);
+    createMembers(object);
     state.didGetDeclaredMember = true;
     return JSObject::getOwnPropertySlot(object, globalObject, name, slot);
 }
@@ -3797,13 +3726,13 @@ std::optional<bool> ClassPrototype::tryGetDeclaredMember(VM& vm, PropertyName na
         return false;
     }
     constexpr uint64_t oneRepeatedLookup = 1ull << 16;
-    constexpr unsigned firstBitOfNames = 20;
-    uint64_t bitOfName = 1ull << (firstBitOfNames + name.uid()->hash() % (64 - firstBitOfNames));
-    bool isRepeated = m_declaredMemberLookups & bitOfName;
-    bool hasRepeatedBefore = m_declaredMemberLookups & ((1ull << firstBitOfNames) - oneRepeatedLookup);
+    constexpr unsigned firstNameBit = 20;
+    uint64_t nameBit = 1ull << (firstNameBit + name.uid()->hash() % (64 - firstNameBit));
+    bool isRepeated = m_declaredMemberLookups & nameBit;
+    bool hasRepeatedBefore = m_declaredMemberLookups & ((1ull << firstNameBit) - oneRepeatedLookup);
     if ((m_declaredMemberLookups & (oneRepeatedLookup - 1)) >= std::max<size_t>(4, ofClass.methods().size()) || (isRepeated && hasRepeatedBefore))
         return std::nullopt;
-    uint64_t lookupsWithThisOne = (m_declaredMemberLookups + 1 + (isRepeated ? oneRepeatedLookup : 0)) | bitOfName;
+    uint64_t lookupsWithThisOne = (m_declaredMemberLookups + 1 + (isRepeated ? oneRepeatedLookup : 0)) | nameBit;
     auto member = state.declaredMethod(vm, ofClass, name.uid());
     if (!member) {
         GetterSetter* accessor = state.declaredAccessor(vm, ofClass, name.uid());
@@ -3837,62 +3766,62 @@ bool ClassPrototype::willBeImmutable(JSObject* object)
 {
     State& state = *object->structure()->aotInstance()->typed;
     const LayoutData& ofClass = *state.classWithIndex(static_cast<uint32_t>(uncheckedDowncast<ClassPrototype>(object)->m_classIndex));
-    return ofClass.isLaidOut && !ofClass.constructorMayBeReplaced && std::ranges::none_of(ofClass.methods(), [](auto& method) {
+    return ofClass.hasFixedLayout && !ofClass.constructorMayBeReplaced && std::ranges::none_of(ofClass.methods(), [](auto& method) {
         return method.flags & methodMayBeReplaced;
     });
 }
 
 void ClassPrototype::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
-    makeMembers(object);
+    createMembers(object);
     JSObject::getOwnPropertyNames(object, globalObject, names, mode);
 }
 
 bool ClassPrototype::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
-    makeMembers(asObject(cell));
+    createMembers(asObject(cell));
     return JSObject::put(cell, globalObject, name, value, slot);
 }
 
 bool ClassPrototype::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
-    makeMembers(asObject(cell));
+    createMembers(asObject(cell));
     return JSObject::putByIndex(cell, globalObject, index, value, shouldThrow);
 }
 
 bool ClassPrototype::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
-    makeMembers(asObject(cell));
+    createMembers(asObject(cell));
     return JSObject::deleteProperty(cell, globalObject, name, slot);
 }
 
 bool ClassPrototype::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
 {
-    makeMembers(asObject(cell));
+    createMembers(asObject(cell));
     return JSObject::deletePropertyByIndex(cell, globalObject, index);
 }
 
 bool ClassPrototype::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    makeMembers(object);
+    createMembers(object);
     return JSObject::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
 }
 
 bool ClassPrototype::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
-    makeMembers(object);
+    createMembers(object);
     return JSObject::preventExtensions(object, globalObject);
 }
 
 bool ClassPrototype::isExtensible(JSObject* object, JSGlobalObject* globalObject)
 {
-    makeMembers(object);
+    createMembers(object);
     return JSObject::isExtensible(object, globalObject);
 }
 
 bool ClassPrototype::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
-    makeMembers(object);
+    createMembers(object);
     return JSObject::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
 }
 
@@ -3906,28 +3835,28 @@ void GuardedObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(GuardedObject);
 
-enum class RefusedChange : uint8_t { No, Silently, Thrown };
+enum class RejectedChange : uint8_t { No, Silently, Thrown };
 
-static RefusedChange askGuard(JSGlobalObject* globalObject, JSObject* object, unsigned change, UniquedStringImpl* name, unsigned given, JSValue value, bool throws = true)
+static RejectedChange checkGuard(JSGlobalObject* globalObject, JSObject* object, unsigned change, UniquedStringImpl* name, unsigned given, JSValue value, bool throws = true)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto guard = vm.guardOfDeclaredObjects;
+    auto guard = vm.declaredObjectGuard;
     if (!guard || (name && name->isSymbol()))
-        return RefusedChange::No;
+        return RejectedChange::No;
     String refusal = guard(globalObject, object, change, name, given, value);
-    RETURN_IF_EXCEPTION(scope, RefusedChange::Thrown);
+    RETURN_IF_EXCEPTION(scope, RejectedChange::Thrown);
     if (refusal.isNull())
-        return RefusedChange::No;
+        return RejectedChange::No;
     if (!throws)
-        return RefusedChange::Silently;
+        return RejectedChange::Silently;
     throwTypeError(globalObject, scope, withAOTErrorNote(refusal));
-    return RefusedChange::Thrown;
+    return RejectedChange::Thrown;
 }
 
 enum class StoredBy : uint8_t { UntypedCode, TypedCodeByKey, TypedCode };
 
-static StoredBy whoStores(VM& vm)
+static StoredBy storeOrigin(VM& vm)
 {
     CallFrame* frame = vm.topCallFrame;
     if (!frame || frame->isNativeCalleeFrame())
@@ -3957,8 +3886,8 @@ static StoredBy whoStores(VM& vm)
     const AuditSites* sites = provider ? provider->auditSites() : nullptr;
     StoredBy storedBy = StoredBy::UntypedCode;
     OpcodeID opcode = codeBlock->instructionAt(origin.bytecodeIndex())->opcodeID();
-    bool isOfActivationWithoutAudits = opcode == op_put_by_val && codeBlock->instructionAt(origin.bytecodeIndex())->as<OpPutByVal>().m_property.isConstant();
-    if (sites && !isOfActivationWithoutAudits && (opcode == op_put_by_id || opcode == op_put_by_val)) {
+    bool isUnauditedActivation = opcode == op_put_by_val && codeBlock->instructionAt(origin.bytecodeIndex())->as<OpPutByVal>().m_property.isConstant();
+    if (sites && !isUnauditedActivation && (opcode == op_put_by_id || opcode == op_put_by_val)) {
         auto info = codeBlock->expressionInfoForBytecodeIndex(origin.bytecodeIndex());
         if (!sites->storesThroughUntyped(info.divot - info.startOffset, info.divot))
             storedBy = opcode == op_put_by_id ? StoredBy::TypedCode : StoredBy::TypedCodeByKey;
@@ -3970,10 +3899,10 @@ static StoredBy whoStores(VM& vm)
 bool GuardedObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     JSObject* object = asObject(cell);
-    StoredBy storedBy = slot.thisValue() == JSValue(object) ? whoStores(globalObject->vm()) : StoredBy::TypedCode;
+    StoredBy storedBy = slot.thisValue() == JSValue(object) ? storeOrigin(globalObject->vm()) : StoredBy::TypedCode;
     if (storedBy == StoredBy::TypedCode)
         return JSObject::put(cell, globalObject, name, value, slot);
-    if (askGuard(globalObject, object, storedBy == StoredBy::TypedCodeByKey ? 5 : 4, name.uid(), 0, value) != RefusedChange::No)
+    if (checkGuard(globalObject, object, storedBy == StoredBy::TypedCodeByKey ? 5 : 4, name.uid(), 0, value) != RejectedChange::No)
         return false;
     bool isStored = JSObject::put(cell, globalObject, name, value, slot);
     slot.disableCaching();
@@ -3983,9 +3912,9 @@ bool GuardedObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
 bool GuardedObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    RefusedChange refused = askGuard(globalObject, asObject(cell), 0, name.uid(), 0, JSValue());
+    RejectedChange refused = checkGuard(globalObject, asObject(cell), 0, name.uid(), 0, JSValue());
     RETURN_IF_EXCEPTION(scope, false);
-    if (refused != RefusedChange::No)
+    if (refused != RejectedChange::No)
         return false;
     scope.release();
     bool isDeleted = JSObject::deleteProperty(cell, globalObject, name, slot);
@@ -4028,9 +3957,9 @@ bool GuardedObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
     if (descriptor.value() && isDefinedByBuiltin(globalObject->vm()))
         given |= 128;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    RefusedChange refused = askGuard(globalObject, object, 1, name.uid(), given, descriptor.value());
+    RejectedChange refused = checkGuard(globalObject, object, 1, name.uid(), given, descriptor.value());
     RETURN_IF_EXCEPTION(scope, false);
-    if (refused != RefusedChange::No)
+    if (refused != RejectedChange::No)
         return false;
     RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow));
 }
@@ -4038,9 +3967,9 @@ bool GuardedObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
 bool GuardedObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    RefusedChange refused = askGuard(globalObject, object, 2, nullptr, 0, JSValue());
+    RejectedChange refused = checkGuard(globalObject, object, 2, nullptr, 0, JSValue());
     RETURN_IF_EXCEPTION(scope, false);
-    if (refused != RefusedChange::No)
+    if (refused != RejectedChange::No)
         return false;
     RELEASE_AND_RETURN(scope, JSObject::preventExtensions(object, globalObject));
 }
@@ -4049,9 +3978,9 @@ bool GuardedObject::setPrototype(JSObject* object, JSGlobalObject* globalObject,
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (object->getPrototypeDirect() != prototype) {
-        RefusedChange refused = askGuard(globalObject, object, 3, nullptr, 0, prototype, shouldThrowIfCantSet);
+        RejectedChange refused = checkGuard(globalObject, object, 3, nullptr, 0, prototype, shouldThrowIfCantSet);
         RETURN_IF_EXCEPTION(scope, false);
-        if (refused != RefusedChange::No)
+        if (refused != RejectedChange::No)
             return false;
     }
     RELEASE_AND_RETURN(scope, JSObject::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet));
@@ -4059,15 +3988,15 @@ bool GuardedObject::setPrototype(JSObject* object, JSGlobalObject* globalObject,
 
 const ClassInfo ModuleNamespace::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleNamespace) };
 
-Structure* ModuleNamespace::createStructure(VM& vm, JSGlobalObject* globalObject, bool hasPrototypeOfHost)
+Structure* ModuleNamespace::createStructure(VM& vm, JSGlobalObject* globalObject, bool hasHostPrototype)
 {
-    JSValue prototype = hasPrototypeOfHost ? globalObject->moduleNamespaceObjectStructure()->storedPrototype() : jsNull();
+    JSValue prototype = hasHostPrototype ? globalObject->moduleNamespaceObjectStructure()->storedPrototype() : jsNull();
     return Structure::preventExtensionsTransition(vm, Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info()));
 }
 
-ModuleNamespace* ModuleNamespace::create(VM& vm, Structure* structure, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar, bool isDeferred)
+ModuleNamespace* ModuleNamespace::create(VM& vm, Structure* structure, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* starExportNames, bool isDeferred)
 {
-    ModuleNamespace* object = new (NotNull, allocateCell<ModuleNamespace>(vm)) ModuleNamespace(vm, structure, read, names, star, namesOfStar, isDeferred);
+    ModuleNamespace* object = new (NotNull, allocateCell<ModuleNamespace>(vm)) ModuleNamespace(vm, structure, read, names, star, starExportNames, isDeferred);
     object->finishCreation(vm);
     return object;
 }
@@ -4080,12 +4009,12 @@ void ModuleNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_read);
     visitor.append(thisObject->m_names);
     visitor.append(thisObject->m_star);
-    visitor.append(thisObject->m_namesOfStar);
+    visitor.append(thisObject->m_starExportNames);
 }
 
 DEFINE_VISIT_CHILDREN(ModuleNamespace);
 
-static unsigned placeAmong(JSCellButterfly* names, UniquedStringImpl* name)
+static unsigned indexIn(JSCellButterfly* names, UniquedStringImpl* name)
 {
     if (name->isSymbol())
         return ModuleNamespace::noExport;
@@ -4126,17 +4055,17 @@ bool ModuleNamespace::evaluateIfNeeded(JSGlobalObject* globalObject)
 
 unsigned ModuleNamespace::numberOf(UniquedStringImpl* name) const
 {
-    return isSymbolLikeKey(name) ? noExport : placeAmong(m_names.get(), name);
+    return isSymbolLikeKey(name) ? noExport : indexIn(m_names.get(), name);
 }
 
-bool ModuleNamespace::isBroughtByStar(UniquedStringImpl* name) const
+bool ModuleNamespace::isStarExport(UniquedStringImpl* name) const
 {
-    return m_namesOfStar && !isSymbolLikeKey(name) && placeAmong(m_namesOfStar.get(), name) != noExport;
+    return m_starExportNames && !isSymbolLikeKey(name) && indexIn(m_starExportNames.get(), name) != noExport;
 }
 
-static JSC_DECLARE_HOST_FUNCTION(readExportOfDetachedNamespace);
+static JSC_DECLARE_HOST_FUNCTION(readDetachedNamespaceExport);
 
-JSC_DEFINE_HOST_FUNCTION(readExportOfDetachedNamespace, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(readDetachedNamespaceExport, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4169,7 +4098,7 @@ void ModuleNamespace::detach(JSGlobalObject* globalObject)
         if (scope.exception()) [[unlikely]]
             return;
     }
-    JSFunction* target = JSFunction::create(vm, globalObject, 1, emptyString(), readExportOfDetachedNamespace, ImplementationVisibility::Private);
+    JSFunction* target = JSFunction::create(vm, globalObject, 1, emptyString(), readDetachedNamespaceExport, ImplementationVisibility::Private);
     JSObject* detached = JSBoundFunction::create(vm, globalObject, target, values, { }, 1, nullptr, SourceTaintedOrigin::Untainted);
     if (scope.exception()) [[unlikely]]
         return;
@@ -4181,7 +4110,7 @@ JSValue ModuleNamespace::fixedProperty(VM& vm, PropertyName name) const
 {
     if (name == vm.propertyNames->toStringTagSymbol)
         return m_isDeferred ? jsNontrivialString(vm, "Deferred Module"_s) : jsNontrivialString(vm, "Module"_s);
-    if (name == vm.propertyNames->__esModule && m_saysItIsAModule)
+    if (name == vm.propertyNames->__esModule && m_hasESModuleFlag)
         return jsBoolean(true);
     return { };
 }
@@ -4197,10 +4126,9 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
         RETURN_IF_EXCEPTION(scope, false);
     }
     unsigned number = thisObject->numberOf(name.uid());
-    bool isBroughtByStar = number == noExport && thisObject->isBroughtByStar(name.uid());
-    if (number == noExport && !isBroughtByStar) {
+    bool isStarExport = number == noExport && thisObject->isStarExport(name.uid());
+    if (number == noExport && !isStarExport) {
         JSValue fixed = thisObject->fixedProperty(vm, name);
-        // Bun's namespace inherits its marker: whoever asks for the object's own properties does not find it.
         if (!fixed || (name == vm.propertyNames->__esModule && slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty))
             return false;
         slot.setValue(thisObject, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete, fixed);
@@ -4209,7 +4137,7 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     switch (slot.internalMethodType()) {
     case PropertySlot::InternalMethodType::GetOwnProperty:
     case PropertySlot::InternalMethodType::Get: {
-        if (isBroughtByStar) {
+        if (isStarExport) {
             JSValue value = thisObject->m_star->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, false);
             slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
@@ -4223,7 +4151,6 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
         slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
         return true;
     }
-    // It has the export, whether or not that can be read yet.
     case PropertySlot::InternalMethodType::HasProperty:
         slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontDelete), jsUndefined());
         return true;
@@ -4248,7 +4175,7 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
     thisObject->evaluateIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     JSCellButterfly* own = thisObject->m_names.get();
-    JSCellButterfly* ofStar = thisObject->m_namesOfStar.get();
+    JSCellButterfly* ofStar = thisObject->m_starExportNames.get();
     unsigned numberOfStar = ofStar ? ofStar->length() : 0;
     for (unsigned number = 0, place = 0; number < own->length() || place < numberOfStar;) {
         bool isOwn = place == numberOfStar || (number < own->length() && codePointCompare(StringView(*asString(own->get(number))->tryGetValueImpl()), StringView(*asString(ofStar->get(place))->tryGetValueImpl())) < 0);
@@ -4257,7 +4184,6 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
         if (thisObject->isSymbolLikeKey(name.impl()))
             continue;
         if (mode == DontEnumPropertiesMode::Exclude) {
-            // Whoever asks which are enumerable asks for each: that throws in the dead zone.
             PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
             getOwnPropertySlot(thisObject, globalObject, name, slot);
             RETURN_IF_EXCEPTION(scope, void());
@@ -4272,8 +4198,8 @@ bool ModuleNamespace::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* thisObject = uncheckedDowncast<ModuleNamespace>(cell); name == vm.propertyNames->__esModule && thisObject->numberOf(name.uid()) == noExport && !thisObject->isBroughtByStar(name.uid())) {
-        thisObject->m_saysItIsAModule = value.toBoolean(globalObject);
+    if (auto* thisObject = uncheckedDowncast<ModuleNamespace>(cell); name == vm.propertyNames->__esModule && thisObject->numberOf(name.uid()) == noExport && !thisObject->isStarExport(name.uid())) {
+        thisObject->m_hasESModuleFlag = value.toBoolean(globalObject);
         return true;
     }
     if (slot.isStrictMode())
@@ -4296,7 +4222,7 @@ bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     if (!thisObject->isSymbolLikeKey(name.uid()) && !thisObject->evaluateIfNeeded(globalObject))
         return false;
-    return thisObject->numberOf(name.uid()) == noExport && !thisObject->isBroughtByStar(name.uid()) && (name == vm.propertyNames->__esModule || !thisObject->fixedProperty(vm, name));
+    return thisObject->numberOf(name.uid()) == noExport && !thisObject->isStarExport(name.uid()) && (name == vm.propertyNames->__esModule || !thisObject->fixedProperty(vm, name));
 }
 
 bool ModuleNamespace::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
@@ -4305,25 +4231,23 @@ bool ModuleNamespace::deletePropertyByIndex(JSCell* cell, JSGlobalObject* global
     Identifier name = Identifier::from(globalObject->vm(), index);
     if (!thisObject->evaluateIfNeeded(globalObject))
         return false;
-    return thisObject->numberOf(name.impl()) == noExport && !thisObject->isBroughtByStar(name.impl());
+    return thisObject->numberOf(name.impl()) == noExport && !thisObject->isStarExport(name.impl());
 }
 
 bool ModuleNamespace::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // What `require` of the module does.
-    if (auto* thisObject = uncheckedDowncast<ModuleNamespace>(object); name == vm.propertyNames->__esModule && descriptor.value().isTrue() && thisObject->numberOf(name.uid()) == noExport && !thisObject->isBroughtByStar(name.uid())) {
-        thisObject->m_saysItIsAModule = true;
+    if (auto* thisObject = uncheckedDowncast<ModuleNamespace>(object); name == vm.propertyNames->__esModule && descriptor.value().isTrue() && thisObject->numberOf(name.uid()) == noExport && !thisObject->isStarExport(name.uid())) {
+        thisObject->m_hasESModuleFlag = true;
         return true;
     }
     PropertyDescriptor current;
     bool isCurrentDefined = object->getOwnPropertyDescriptor(globalObject, name, current);
     RETURN_IF_EXCEPTION(scope, false);
-    // Nothing is applied. An export is described as writable, and yet takes no other value.
     bool isValid = validateAndApplyPropertyDescriptor(globalObject, nullptr, name, false, descriptor, isCurrentDefined, current, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!isValid || (uncheckedDowncast<ModuleNamespace>(object)->numberOf(name.uid()) == noExport && !uncheckedDowncast<ModuleNamespace>(object)->isBroughtByStar(name.uid())))
+    if (!isValid || (uncheckedDowncast<ModuleNamespace>(object)->numberOf(name.uid()) == noExport && !uncheckedDowncast<ModuleNamespace>(object)->isStarExport(name.uid())))
         return isValid;
     bool isSame = !(descriptor.writablePresent() && !descriptor.writable());
     if (isSame && descriptor.value()) {
@@ -4372,15 +4296,15 @@ Structure* State::savedFrameStructure(VM& vm)
     if (!m_savedFrameStructure) {
         m_savedFrameStructure = SavedFrame::createStructure(vm, instance);
         didCreate(m_savedFrameStructure);
-        instance.spaceOfSavedFrames = &vm.cellSpace();
-        instance.headerOfSavedFrames = static_cast<uint64_t>(m_savedFrameStructure->typeInfoBlob()) << 32 | m_savedFrameStructure->id().bits();
+        instance.savedFrameSpace = &vm.cellSpace();
+        instance.savedFrameHeader = static_cast<uint64_t>(m_savedFrameStructure->typeInfoBlob()) << 32 | m_savedFrameStructure->id().bits();
     }
     return m_savedFrameStructure;
 }
 
-SavedFrame* SavedFrame::ofFrame(const Instance& instance, const uint64_t* frame)
+SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
 {
-    if (std::bit_cast<const void*>(frame[1]) != instance.returnAddressOfSavedFrames)
+    if (std::bit_cast<const void*>(frame[1]) != instance.savedFrameReturnAddress)
         return nullptr;
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
@@ -4388,7 +4312,7 @@ SavedFrame* SavedFrame::ofFrame(const Instance& instance, const uint64_t* frame)
 bool SavedFrame::isEnteredByJobLoop(const Instance& instance, const uint64_t* frame)
 {
     auto* returnAddress = std::bit_cast<const void*>(frame[1]);
-    if (returnAddress != instance.returnAddressOfSavedFrames && returnAddress != instance.returnAddressOfResumeFunctions()) {
+    if (returnAddress != instance.savedFrameReturnAddress && returnAddress != instance.resumeFunctionReturnAddress()) {
         if (AsyncGenerator::wasEnteredByStub(frame))
             return std::bit_cast<const uint64_t*>(frame[0])[AsyncGenerator::modeSlotInStubFrame] & CoroutineFrame::isEnteredByJobLoop;
         if (!AsyncGenerator::wasEnteredByJobLoopAdapter(frame))
@@ -4400,23 +4324,23 @@ bool SavedFrame::isEnteredByJobLoop(const Instance& instance, const uint64_t* fr
 SavedFrame* SavedFrame::save(VM& vm, Instance& instance, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* extra)
 {
     size_t numberOfWords = frame - bottom;
-    SavedFrame* saved = ofFrame(instance, frame);
+    SavedFrame* saved = forFrame(instance, frame);
     if (!saved) {
         Structure* structure = instance.typed->savedFrameStructure(vm);
         saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, structure, static_cast<uint32_t>(numberOfWords));
         saved->finishCreation(vm);
-        uint32_t place = static_cast<uint32_t>(extra[0] >> shiftOfPlaceOfPromise);
-        uint64_t promise = place == placeInRegister ? extra[1] : frame[-static_cast<intptr_t>(place)];
+        uint32_t place = static_cast<uint32_t>(extra[0] >> promiseLocationShift);
+        uint64_t promise = place == locationInRegister ? extra[1] : frame[-static_cast<intptr_t>(place)];
         saved->m_promise = uncheckedDowncast<JSPromise>(std::bit_cast<JSCell*>(promise));
     }
-    RELEASE_ASSERT(saved->m_numberOfWords == numberOfWords && !saved->m_rowPlusOne);
+    RELEASE_ASSERT(saved->m_numberOfWords == numberOfWords && !saved->m_liveSlotMapOffsetPlusOne);
     saved->willWrite();
     uint64_t* words = saved->words();
     for (size_t i = 0; i < numberOfWords; ++i)
         words[i] = bottom[i];
     saved->m_register = extra[isARM64() ? 0 : 1];
     saved->m_resumeAddress = resumeAddress;
-    saved->m_rowPlusOne = (static_cast<uint32_t>(extra[0]) & ((1u << bitsOfRow) - 1)) + 1;
+    saved->m_liveSlotMapOffsetPlusOne = (static_cast<uint32_t>(extra[0]) & ((1u << liveSlotMapOffsetBits) - 1)) + 1;
     saved->didWrite();
     vm.writeBarrier(saved);
     return saved;
@@ -4432,15 +4356,15 @@ void SavedFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     WTF::loadLoadFence();
     Vector<JSCell*, 32> cells;
     bool isInKnownFunction = true;
-    if (uint32_t rowPlusOne = saved->m_rowPlusOne; rowPlusOne && !(version & 1)) {
+    if (uint32_t liveSlotMapOffsetPlusOne = saved->m_liveSlotMapOffsetPlusOne; liveSlotMapOffsetPlusOne && !(version & 1)) {
         ImageAddressInfo where = classifyAddress(static_cast<const uint8_t*>(saved->m_resumeAddress) - 1);
         isInKnownFunction = where.kind == ImageAddressInfo::Function;
         if (where.kind == ImageAddressInfo::Function) {
-            const uint32_t* row = saved->structure()->aotInstance()->infos[where.index].function()->plans() + rowPlusOne - 1;
+            const uint32_t* row = saved->structure()->aotInstance()->infos[where.index].function()->plans() + liveSlotMapOffsetPlusOne - 1;
             for (uint32_t i = 0; i < row[0]; ++i) {
                 for (uint32_t bits = row[1 + i]; bits; bits &= bits - 1) {
                     uint32_t place = i * 32 + ctz(bits);
-                    uint64_t word = place == placeInRegister ? saved->m_register : saved->words()[saved->m_numberOfWords - place];
+                    uint64_t word = place == locationInRegister ? saved->m_register : saved->words()[saved->m_numberOfWords - place];
                     JSValue value = JSValue::decode(static_cast<EncodedJSValue>(word));
                     if (value && value.isCell())
                         cells.append(value.asCell());
@@ -4460,12 +4384,10 @@ void SavedFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(SavedFrame);
 
-// Runs the coroutine until it suspends or completes. Whoever asks has entered the VM. Empty: it has thrown, or the function yields nothing.
 static JSValue resumeCoroutine(JSGlobalObject* globalObject, Closure* resumeClosure, int32_t mode, JSValue value, JSCell* context = nullptr)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Its entry is the resume function itself: see Stub::EnterResume. Nothing else can call it.
     RELEASE_ASSERT(!resumeClosure->mayBeCalled());
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
@@ -4495,14 +4417,12 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     return createIteratorResultObject(globalObject, result, isDone);
 }
 
-bool Generator::iteratesAsMade(JSGlobalObject* globalObject)
+bool Generator::hasUnmodifiedIteration(JSGlobalObject* globalObject)
 {
-    // Neither it nor the `prototype` of its function has a property.
     JSObject* prototype = getPrototypeDirect().getObject();
     if (structure()->maxOffset() != invalidOffset || !prototype || prototype->type() != FinalObjectType || prototype->structure()->maxOffset() != invalidOffset || !prototype->structure()->hasImmutableProperties())
         return false;
     JSObject* shared = globalObject->generatorPrototype();
-    // What those two have cannot be changed where a compiled program runs: see Instance::ensure() and installGeneratorMethods().
     return prototype->getPrototypeDirect() == JSValue(shared) && shared->getPrototypeDirect() == JSValue(globalObject->iteratorPrototype());
 }
 
@@ -4534,7 +4454,6 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
         return { };
     }
     int32_t& state = this->state();
-    // A generator that has not started completes without running: there is no `try` around its first instruction.
     if (!state && mode != ResumeMode::Next)
         state = CoroutineFrame::completedState;
     if (state == CoroutineFrame::completedState) {
@@ -4570,11 +4489,11 @@ AsyncGenerator* AsyncGenerator::create(VM& vm, JSGlobalObject*, Structure* struc
     generator->finishCreation(vm);
     State& typedState = *resumeClosure->structure()->aotInstance()->typed;
     generator->set(canBeEnteredByStubFlag, typedState.stubCanEnterAsyncGenerator(resumeClosure));
-    if (JSPromise* step = typedState.immediateStepOfAsyncGenerators)
+    if (JSPromise* step = typedState.asyncGeneratorImmediateStep)
         generator->m_immediateStep.set(vm, generator, step);
-    if (!typedState.instance.headerOfIteratorResults) [[unlikely]] {
+    if (!typedState.instance.iteratorResultHeader) [[unlikely]] {
         Structure* ofResults = typedState.instance.globalObject->iteratorResultObjectStructure();
-        typedState.instance.headerOfIteratorResults = static_cast<uint64_t>(ofResults->typeInfoBlob()) << 32 | ofResults->id().bits();
+        typedState.instance.iteratorResultHeader = static_cast<uint64_t>(ofResults->typeInfoBlob()) << 32 | ofResults->id().bits();
     }
     return generator;
 }
@@ -4582,7 +4501,7 @@ AsyncGenerator* AsyncGenerator::create(VM& vm, JSGlobalObject*, Structure* struc
 bool State::stubCanEnterAsyncGenerator(Closure* resumeClosure)
 {
     uint32_t resumeFunction = resumeClosure->functionIndex();
-    uint64_t& answer = m_answersForAsyncGenerators[resumeFunction % std::size(m_answersForAsyncGenerators)];
+    uint64_t& answer = m_asyncGeneratorStubEntryResults[resumeFunction % std::size(m_asyncGeneratorStubEntryResults)];
     if (answer >> 1 != resumeFunction) {
         ImageAddressInfo body = classifyAddress(instance.code + (resumeClosure->entry() & ClosureWord::offsetMask) * ClosureWord::offsetUnit);
         answer = static_cast<uint64_t>(resumeFunction) << 1 | (body.kind == ImageAddressInfo::Function && AsyncGenerator::bodyCapturesExceptions(resumeFunction) && instance.frameSizeInBytesOf(body.index) <= AsyncGenerator::maxBodyFrameSizeForStubEntry);
@@ -4610,7 +4529,7 @@ DEFINE_VISIT_CHILDREN(AsyncGenerator);
 
 static void enterJobLoop(JSGlobalObject*, VM&, Instance&, AsyncGenerator* first, JSValue);
 
-static ALWAYS_INLINE bool nextJobRunsAtOnce(JSGlobalObject* globalObject, VM& vm)
+static ALWAYS_INLINE bool nextJobRunsImmediately(JSGlobalObject* globalObject, VM& vm)
 {
     return globalObject->microtaskQueue().isEmpty() && globalObject->canFastQueueMicrotask() && !vm.hostObservesMicrotaskBoundaries();
 }
@@ -4692,7 +4611,7 @@ JSObject* AsyncGenerator::takeFrontRequest(VM& vm)
     return target;
 }
 
-void AsyncGenerator::appendTargetsOfRequests(Vector<JSCell*, 4>& targets) const
+void AsyncGenerator::appendRequestTargets(Vector<JSCell*, 4>& targets) const
 {
     JSObject* front = m_target.pointer();
     if (!front)
@@ -4719,7 +4638,7 @@ JSPromise* AsyncGenerator::enqueue(JSGlobalObject* globalObject, Generator::Resu
     return promise;
 }
 
-bool AsyncGenerator::iteratesAsMade(JSGlobalObject* globalObject)
+bool AsyncGenerator::hasUnmodifiedIteration(JSGlobalObject* globalObject)
 {
     if (structure()->maxOffset() != invalidOffset) {
         VM& vm = globalObject->vm();
@@ -4733,9 +4652,9 @@ bool AsyncGenerator::iteratesAsMade(JSGlobalObject* globalObject)
 ALWAYS_INLINE JSValue AsyncGenerator::enter(VM& vm, int32_t mode, JSValue value)
 {
     State& typedState = *m_resumeClosure->structure()->aotInstance()->typed;
-    AsyncGenerator* enteredOutside = std::exchange(typedState.asyncGeneratorEntered, this);
+    AsyncGenerator* enteredOutside = std::exchange(typedState.enteredAsyncGenerator, this);
     JSValue result = enterResumeFunction(vm, m_resumeClosure, mode, value);
-    typedState.asyncGeneratorEntered = enteredOutside;
+    typedState.enteredAsyncGenerator = enteredOutside;
     return result;
 }
 
@@ -4744,9 +4663,9 @@ void AsyncGenerator::startEagerly(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     State& typedState = *m_resumeClosure->structure()->aotInstance()->typed;
-    AsyncGenerator* enteredOutside = std::exchange(typedState.asyncGeneratorEntered, this);
+    AsyncGenerator* enteredOutside = std::exchange(typedState.enteredAsyncGenerator, this);
     resumeCoroutine(globalObject, m_resumeClosure, static_cast<int32_t>(Generator::ResumeMode::Next), jsUndefined());
-    typedState.asyncGeneratorEntered = enteredOutside;
+    typedState.enteredAsyncGenerator = enteredOutside;
     RETURN_IF_EXCEPTION(scope, void());
     if (!is(hasThrownFlag)) [[likely]]
         return;
@@ -4773,24 +4692,24 @@ bool AsyncGenerator::bodyCapturesExceptions(uint32_t resumeFunction)
 
 bool AsyncGenerator::wasEnteredByStub(const uint64_t* frame)
 {
-    uint32_t behindCall;
-    memcpy(&behindCall, std::bit_cast<const void*>(frame[1]), sizeof(behindCall));
-    return behindCall == markerAfterBodyCall;
+    uint32_t afterCall;
+    memcpy(&afterCall, std::bit_cast<const void*>(frame[1]), sizeof(afterCall));
+    return afterCall == markerAfterBodyCall;
 }
 
 bool AsyncGenerator::wasEnteredByJobLoopAdapter(const uint64_t* frame)
 {
-    uint32_t behindCall;
-    memcpy(&behindCall, std::bit_cast<const void*>(frame[1]), sizeof(behindCall));
-    return behindCall == markerAfterBodyCallInJobLoop;
+    uint32_t afterCall;
+    memcpy(&afterCall, std::bit_cast<const void*>(frame[1]), sizeof(afterCall));
+    return afterCall == markerAfterBodyCallInJobLoop;
 }
 
 AsyncGenerator* AsyncGenerator::forBodyFrame(const Instance& instance, const uint64_t* frame)
 {
     if (wasEnteredByJobLoopAdapter(frame))
         return std::bit_cast<AsyncGenerator* const*>(frame[0])[static_cast<int>(CallFrameSlot::callee)];
-    if (std::bit_cast<const void*>(frame[1]) == instance.returnAddressOfResumeFunctions())
-        return instance.typed->asyncGeneratorEntered;
+    if (std::bit_cast<const void*>(frame[1]) == instance.resumeFunctionReturnAddress())
+        return instance.typed->enteredAsyncGenerator;
     if (wasEnteredByStub(frame))
         return std::bit_cast<AsyncGenerator* const*>(frame[0])[generatorSlotInStubFrame];
     return nullptr;
@@ -4802,11 +4721,11 @@ JSPromise* AsyncGenerator::immediateStep(JSGlobalObject* globalObject, JSValue v
     JSPromise* step = m_immediateStep.get();
     if (!step) [[unlikely]] {
         State& typedState = *m_resumeClosure->structure()->aotInstance()->typed;
-        step = typedState.immediateStepOfAsyncGenerators;
+        step = typedState.asyncGeneratorImmediateStep;
         if (!step) {
             step = JSPromise::create(vm, globalObject->promiseStructure());
             step->fulfill(vm, createIteratorResultObject(globalObject, jsUndefined(), false));
-            typedState.immediateStepOfAsyncGenerators = step;
+            typedState.asyncGeneratorImmediateStep = step;
         }
         m_immediateStep.set(vm, this, step);
     }
@@ -4825,10 +4744,10 @@ JSValue AsyncGenerator::enqueueDriver(JSGlobalObject* globalObject, JSValue valu
     uint16_t flags = m_target.type();
     m_value.set(vm, this, value);
     if (!(flags & isBusyFlag) && state() != CoroutineFrame::completedState && vm.isSafeToRecurseSoft()) [[likely]] {
-        m_target = { this, static_cast<uint16_t>((flags & ~(modeMask | isSuspendingAtAwaitFlag | isEnteredByJobLoopFlag)) | isDrainingAheadOfDriverFlag | isBusyFlag | (driverCanContinueImmediately ? isEnteredByJobLoopFlag : 0)) };
+        m_target = { this, static_cast<uint16_t>((flags & ~(modeMask | isSuspendingAtAwaitFlag | isEnteredByJobLoopFlag)) | isDrainingBeforeDriverFlag | isBusyFlag | (driverCanContinueImmediately ? isEnteredByJobLoopFlag : 0)) };
         return finishStepForDriver(globalObject, enter(vm, static_cast<int32_t>(Generator::ResumeMode::Next) | (driverCanContinueImmediately ? CoroutineFrame::isEnteredByJobLoop : 0), value));
     }
-    m_target = { this, static_cast<uint16_t>((flags & ~modeMask) | isDrainingAheadOfDriverFlag) };
+    m_target = { this, static_cast<uint16_t>((flags & ~modeMask) | isDrainingBeforeDriverFlag) };
     return valueForDriverToAwait(globalObject);
 }
 
@@ -4839,23 +4758,23 @@ JSValue AsyncGenerator::finishStepForDriver(JSGlobalObject* globalObject, JSValu
     uint16_t flags = m_target.type();
     bool hasThrown = scope.exception() || flags & hasThrownFlag;
     if (!hasThrown && flags & isSuspendingAtAwaitFlag && m_target.pointer() == this) [[likely]] {
-        m_target.setType(flags & ~(isDrainingAheadOfDriverFlag | isEnteredByJobLoopFlag));
+        m_target.setType(flags & ~(isDrainingBeforeDriverFlag | isEnteredByJobLoopFlag));
         return this;
     }
     if (!hasThrown && flags & isYieldingInPlaceFlag && m_target.pointer() == this && !m_lastRequest) [[likely]] {
         JSValue yielded = m_yieldedInPlace.get();
         m_yieldedInPlace.clear();
         m_value.clear();
-        m_target = { nullptr, static_cast<uint16_t>(flags & ~(isDrainingAheadOfDriverFlag | isEnteredByJobLoopFlag | isBusyFlag | isYieldingInPlaceFlag)) };
+        m_target = { nullptr, static_cast<uint16_t>(flags & ~(isDrainingBeforeDriverFlag | isEnteredByJobLoopFlag | isBusyFlag | isYieldingInPlaceFlag)) };
         return immediateStep(globalObject, yielded);
     }
     if (!hasThrown && !(flags & (isSuspendingAtAwaitFlag | isYieldingInPlaceFlag)) && state() == CoroutineFrame::completedState && m_target.pointer() == this && !m_lastRequest) {
         m_value.clear();
-        m_target = { nullptr, static_cast<uint16_t>(flags & ~(isDrainingAheadOfDriverFlag | isEnteredByJobLoopFlag | isBusyFlag)) };
+        m_target = { nullptr, static_cast<uint16_t>(flags & ~(isDrainingBeforeDriverFlag | isEnteredByJobLoopFlag | isBusyFlag)) };
         if (!globalObject->microtaskQueue().isEmpty()) {
-            JSPromise* stepOfItsOwn = JSPromise::create(vm, globalObject->promiseStructure());
-            stepOfItsOwn->fulfill(vm, createIteratorResultObject(globalObject, result, true));
-            return stepOfItsOwn;
+            JSPromise* ownStep = JSPromise::create(vm, globalObject->promiseStructure());
+            ownStep->fulfill(vm, createIteratorResultObject(globalObject, result, true));
+            return ownStep;
         }
         JSPromise* step = immediateStep(globalObject, result);
         asObject(step->result())->putDirectOffset(vm, iteratorResultObjectDonePropertyOffset, jsBoolean(true));
@@ -4869,7 +4788,7 @@ JSValue AsyncGenerator::valueForDriverToAwait(JSGlobalObject* globalObject)
 {
     if (!is(isBusyFlag) && m_target.pointer()) [[unlikely]]
         drain(globalObject);
-    set(isDrainingAheadOfDriverFlag, false);
+    set(isDrainingBeforeDriverFlag, false);
     if (isAwaitingDriver())
         return this;
     JSObject* promise = m_cachedDriverResultTarget.get();
@@ -4903,9 +4822,9 @@ void AsyncGenerator::settleFrontRequest(JSGlobalObject* globalObject, JSValue va
     }
     JSObject* driver = target;
     InternalMicrotask task = driver->type() == JSFunctionType || driver->classInfo() == SavedFrame::info() ? InternalMicrotask::AOTAsyncFunctionResume : InternalMicrotask::AOTAsyncGeneratorResume;
-    bool resumesAtOnce = atOnce && !atOnce->driver && nextJobRunsAtOnce(globalObject, vm) && vm.isSafeToRecurseSoft();
+    bool resumesImmediately = atOnce && !atOnce->driver && nextJobRunsImmediately(globalObject, vm) && vm.isSafeToRecurseSoft();
     if (isRejected) {
-        if (resumesAtOnce)
+        if (resumesImmediately)
             *atOnce = { driver, value, asyncContext, true };
         else
             globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), jsUndefined(), value, driver, asyncContext);
@@ -4920,7 +4839,7 @@ void AsyncGenerator::settleFrontRequest(JSGlobalObject* globalObject, JSValue va
         m_cachedDriverResult.set(vm, this, result);
         m_cachedDriverResultTarget.set(vm, this, driver);
     }
-    if (resumesAtOnce)
+    if (resumesImmediately)
         *atOnce = { driver, result, asyncContext, false };
     else
         globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), result, driver, asyncContext);
@@ -4956,11 +4875,11 @@ void AsyncGenerator::run(JSGlobalObject* globalObject, int32_t mode, JSValue val
 {
     m_target.setType((m_target.type() & ~(isSuspendingAtAwaitFlag | isEnteredByJobLoopFlag)) | isBusyFlag | (atOnce ? isEnteredByJobLoopFlag : 0));
     State& typedState = *m_resumeClosure->structure()->aotInstance()->typed;
-    AsyncGenerator* enteredOutside = std::exchange(typedState.asyncGeneratorEntered, this);
+    AsyncGenerator* enteredOutside = std::exchange(typedState.enteredAsyncGenerator, this);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSValue result = resumeCoroutine(globalObject, m_resumeClosure, mode | (atOnce ? CoroutineFrame::isEnteredByJobLoop : 0), value);
     EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || !result);
-    typedState.asyncGeneratorEntered = enteredOutside;
+    typedState.enteredAsyncGenerator = enteredOutside;
     finishRun(globalObject, result, atOnce);
 }
 
@@ -5080,24 +4999,22 @@ bool driveAsyncIterator(JSGlobalObject* globalObject, VM& vm, JSCell* awaited, J
     return true;
 }
 
-static JSObject* methodOfGenerators(JSGlobalObject* globalObject, JSObject* prototype, const Identifier& name, unsigned& attributes)
+static JSObject* generatorMethod(JSGlobalObject* globalObject, JSObject* prototype, const Identifier& name, unsigned& attributes)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // It makes a property of what is in the static table of the class.
     JSValue found = prototype->get(globalObject, name);
     scope.assertNoException();
     RELEASE_ASSERT(found.isCallable() && prototype->getDirect(vm, name, attributes) == found);
     return asObject(found);
 }
 
-// next(), return() or throw() for the generators of the program. Whatever else it is called on is for the function it takes the place of.
 template<Generator::ResumeMode mode>
 static void installGeneratorMethod(JSGlobalObject* globalObject, JSObject* prototype, const Identifier& name)
 {
     VM& vm = globalObject->vm();
     unsigned attributes;
-    JSObject* original = methodOfGenerators(globalObject, prototype, name, attributes);
+    JSObject* original = generatorMethod(globalObject, prototype, name, attributes);
     if (original->inherits<JSNativeStdFunction>())
         return;
     auto* function = JSNativeStdFunction::create(vm, globalObject, 1, name.string(), [original](JSGlobalObject* globalObject, CallFrame* callFrame) {
@@ -5112,7 +5029,7 @@ static void installGeneratorMethod(JSGlobalObject* globalObject, JSObject* proto
 }
 
 template<Generator::ResumeMode mode, auto original>
-static ALWAYS_INLINE EncodedJSValue callMethodOfAsyncGenerators(JSGlobalObject* globalObject, CallFrame* callFrame)
+static ALWAYS_INLINE EncodedJSValue callAsyncGeneratorMethod(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -5122,30 +5039,30 @@ static ALWAYS_INLINE EncodedJSValue callMethodOfAsyncGenerators(JSGlobalObject* 
     RELEASE_AND_RETURN(scope, JSValue::encode(generator->enqueue(globalObject, mode, callFrame->argument(0))));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(nextOfAsyncGenerators);
-static JSC_DECLARE_HOST_FUNCTION(returnOfAsyncGenerators);
-static JSC_DECLARE_HOST_FUNCTION(throwOfAsyncGenerators);
+static JSC_DECLARE_HOST_FUNCTION(asyncGeneratorNext);
+static JSC_DECLARE_HOST_FUNCTION(asyncGeneratorReturn);
+static JSC_DECLARE_HOST_FUNCTION(asyncGeneratorThrow);
 
-JSC_DEFINE_HOST_FUNCTION(nextOfAsyncGenerators, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(asyncGeneratorNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return callMethodOfAsyncGenerators<Generator::ResumeMode::Next, asyncGeneratorPrototypeNext>(globalObject, callFrame);
+    return callAsyncGeneratorMethod<Generator::ResumeMode::Next, asyncGeneratorPrototypeNext>(globalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(returnOfAsyncGenerators, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(asyncGeneratorReturn, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return callMethodOfAsyncGenerators<Generator::ResumeMode::Return, asyncGeneratorPrototypeReturn>(globalObject, callFrame);
+    return callAsyncGeneratorMethod<Generator::ResumeMode::Return, asyncGeneratorPrototypeReturn>(globalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(throwOfAsyncGenerators, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(asyncGeneratorThrow, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return callMethodOfAsyncGenerators<Generator::ResumeMode::Throw, asyncGeneratorPrototypeThrow>(globalObject, callFrame);
+    return callAsyncGeneratorMethod<Generator::ResumeMode::Throw, asyncGeneratorPrototypeThrow>(globalObject, callFrame);
 }
 
-static void installMethodOfAsyncGenerators(JSGlobalObject* globalObject, JSObject* prototype, const Identifier& name, NativeFunction function)
+static void installAsyncGeneratorMethod(JSGlobalObject* globalObject, JSObject* prototype, const Identifier& name, NativeFunction function)
 {
     VM& vm = globalObject->vm();
     unsigned attributes;
-    auto* original = uncheckedDowncast<JSFunction>(methodOfGenerators(globalObject, prototype, name, attributes));
+    auto* original = uncheckedDowncast<JSFunction>(generatorMethod(globalObject, prototype, name, attributes));
     if (original->nativeFunction() != toTagged(function))
         prototype->putDirect(vm, name, JSFunction::create(vm, globalObject, 1, name.string(), function, ImplementationVisibility::Public), attributes);
 }
@@ -5158,19 +5075,19 @@ void installGeneratorMethods(JSGlobalObject* globalObject)
     installGeneratorMethod<Generator::ResumeMode::Return>(globalObject, prototype, names.returnKeyword);
     installGeneratorMethod<Generator::ResumeMode::Throw>(globalObject, prototype, names.throwKeyword);
     prototype = globalObject->asyncGeneratorPrototype();
-    installMethodOfAsyncGenerators(globalObject, prototype, names.next, nextOfAsyncGenerators);
-    installMethodOfAsyncGenerators(globalObject, prototype, names.returnKeyword, returnOfAsyncGenerators);
-    installMethodOfAsyncGenerators(globalObject, prototype, names.throwKeyword, throwOfAsyncGenerators);
+    installAsyncGeneratorMethod(globalObject, prototype, names.next, asyncGeneratorNext);
+    installAsyncGeneratorMethod(globalObject, prototype, names.returnKeyword, asyncGeneratorReturn);
+    installAsyncGeneratorMethod(globalObject, prototype, names.throwKeyword, asyncGeneratorThrow);
 }
 
 uint32_t State::resumeFunctionOf(uint32_t generatorFunction) const
 {
-    return resumeFunctionAndFlagOf(generatorFunction) & ~Data::generatorTakesItsClosure;
+    return resumeFunctionAndFlagOf(generatorFunction) & ~Data::generatorTakesCalleeClosure;
 }
 
-bool State::takesItsClosure(uint32_t generatorFunction) const
+bool State::takesCalleeClosure(uint32_t generatorFunction) const
 {
-    return resumeFunctionAndFlagOf(generatorFunction) & Data::generatorTakesItsClosure;
+    return resumeFunctionAndFlagOf(generatorFunction) & Data::generatorTakesCalleeClosure;
 }
 
 uint32_t State::resumeFunctionAndFlagOf(uint32_t generatorFunction) const
@@ -5183,7 +5100,7 @@ uint32_t State::resumeFunctionAndFlagOf(uint32_t generatorFunction) const
     return (*found)[1];
 }
 
-void State::setPrototypeOfGenerators(VM& vm, uint32_t resumeFunction, bool isAsync, JSObject* prototype)
+void State::setGeneratorPrototype(VM& vm, uint32_t resumeFunction, bool isAsync, JSObject* prototype)
 {
     JSGlobalObject* globalObject = instance.globalObject;
     Structure* structure = isAsync ? AsyncGenerator::createStructure(vm, globalObject, prototype) : Generator::createStructure(vm, globalObject, prototype);
@@ -5196,31 +5113,30 @@ Structure* State::generatorStructure(VM& vm, uint32_t resumeFunction, bool isAsy
     if (!m_generatorStructures.get(resumeFunction)) {
         JSGlobalObject* globalObject = instance.globalObject;
         JSObject* prototype = constructEmptyObject(globalObject, isAsync ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
-        prototype->fixAndMakePropertiesImmutable(vm);
-        setPrototypeOfGenerators(vm, resumeFunction, isAsync, prototype);
+        prototype->lockAndMakePropertiesImmutable(vm);
+        setGeneratorPrototype(vm, resumeFunction, isAsync, prototype);
     }
     return m_generatorStructures.get(resumeFunction);
 }
 
 Structure* State::generatorStructure(VM& vm, Closure* generatorFunction, bool isAsync)
 {
-    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_versionOfGeneratorStructures) [[unlikely]] {
-        m_generatorStructuresOfClosures.fill({ });
-        m_versionOfGeneratorStructures = version;
+    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_generatorStructuresVersion) [[unlikely]] {
+        m_closureGeneratorStructures.fill({ });
+        m_generatorStructuresVersion = version;
     }
-    auto& known = m_generatorStructuresOfClosures[(std::bit_cast<uintptr_t>(generatorFunction) >> 4) % m_generatorStructuresOfClosures.size()];
-    if (known.closure == generatorFunction && known.epoch == instance.fieldsBelow().typedPrototypeEpoch) [[likely]]
+    auto& known = m_closureGeneratorStructures[(std::bit_cast<uintptr_t>(generatorFunction) >> 4) % m_closureGeneratorStructures.size()];
+    if (known.closure == generatorFunction && known.epoch == instance.negativeOffsetFields().typedPrototypeEpoch) [[likely]]
         return known.structure;
     JSGlobalObject* globalObject = instance.globalObject;
-    Structure*& ofRealm = m_generatorStructuresOfRealm[isAsync];
+    Structure*& ofRealm = m_realmGeneratorStructures[isAsync];
     if (!ofRealm) {
         ofRealm = isAsync ? AsyncGenerator::createStructure(vm, globalObject, globalObject->asyncGeneratorPrototype()) : Generator::createStructure(vm, globalObject, globalObject->generatorPrototype());
         didCreate(ofRealm);
     }
-    // OrdinaryCreateFromConstructor, with what the realm has for a `prototype` that is no object.
     JSValue prototype = generatorFunction->ensurePrototypeProperty(vm) ? generatorFunction->getDirect(vm, vm.propertyNames->prototype) : JSValue();
     Structure* structure = prototype && prototype.isObject() ? globalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(globalObject, asObject(prototype), ofRealm) : ofRealm;
-    known = { generatorFunction, structure, instance.fieldsBelow().typedPrototypeEpoch };
+    known = { generatorFunction, structure, instance.negativeOffsetFields().typedPrototypeEpoch };
     return structure;
 }
 
@@ -5242,10 +5158,9 @@ JSFunction* State::liveBindingGetter(VM& vm)
     return m_liveBindingGetter;
 }
 
-static JSC_DECLARE_CUSTOM_GETTER(getLiveBindingOfHolder);
+static JSC_DECLARE_CUSTOM_GETTER(getHolderLiveBinding);
 
-// It is handed the object that has the property, and the name: so one does for every property of every such object. What the object is a view of is its first property.
-JSC_DEFINE_CUSTOM_GETTER(getLiveBindingOfHolder, (JSGlobalObject* globalObject, EncodedJSValue holder, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(getHolderLiveBinding, (JSGlobalObject* globalObject, EncodedJSValue holder, PropertyName name))
 {
     return JSValue::encode(asObject(JSValue::decode(holder))->getDirect(0).get(globalObject, name));
 }
@@ -5253,13 +5168,13 @@ JSC_DEFINE_CUSTOM_GETTER(getLiveBindingOfHolder, (JSGlobalObject* globalObject, 
 CustomGetterSetter* State::liveBindingAccessor(VM& vm)
 {
     if (!m_liveBindingAccessor)
-        m_liveBindingAccessor = CustomGetterSetter::create(vm, getLiveBindingOfHolder, nullptr);
+        m_liveBindingAccessor = CustomGetterSetter::create(vm, getHolderLiveBinding, nullptr);
     return m_liveBindingAccessor;
 }
 
-bool tryToLeaveWaiterToBeResumedAtOnce(Instance& instance, const uint64_t* frame, JSPromise* promise, JSValue resolution)
+bool tryScheduleImmediateResume(Instance& instance, const uint64_t* frame, JSPromise* promise, JSValue resolution)
 {
-    if (instance.waiterToResume || instance.awaitMustSuspend || !SavedFrame::ofFrame(instance, frame))
+    if (instance.waiterToResume || instance.awaitMustSuspend || !SavedFrame::forFrame(instance, frame))
         return false;
     if (!(std::bit_cast<CallFrame*>(frame[0])->uncheckedArgument(0).asInt32() & CoroutineFrame::isEnteredByJobLoop))
         return false;
@@ -5268,25 +5183,25 @@ bool tryToLeaveWaiterToBeResumedAtOnce(Instance& instance, const uint64_t* frame
     if (promise->inlineReactionKind() != JSPromise::InlineReactionKind::InternalMicrotask)
         return false;
     JSValue waiter = promise->inlineReactionContext();
-    if (!waiter || !waiter.isCell() || waiter.asCell()->structureID() != std::bit_cast<StructureID>(static_cast<uint32_t>(instance.headerOfSavedFrames)))
+    if (!waiter || !waiter.isCell() || waiter.asCell()->structureID() != std::bit_cast<StructureID>(static_cast<uint32_t>(instance.savedFrameHeader)))
         return false;
     auto job = promise->tryFulfillTakingInlineJob(*instance.vm, resolution);
     if (!job)
         return false;
     RELEASE_ASSERT(job->task == InternalMicrotask::AOTAsyncFunctionResume);
     instance.waiterToResume = waiter.asCell();
-    instance.resolutionForWaiter = JSValue::encode(resolution);
-    instance.asyncContextOfWaiter = JSValue::encode(job->asyncContext);
+    instance.waiterResolution = JSValue::encode(resolution);
+    instance.waiterAsyncContext = JSValue::encode(job->asyncContext);
     return true;
 }
 
-static NEVER_INLINE void resumeWaitersLeftBehind(JSGlobalObject* globalObject, VM& vm, Instance& instance)
+static NEVER_INLINE void resumeRemainingWaiters(JSGlobalObject* globalObject, VM& vm, Instance& instance)
 {
     if (AsyncGenerator* left = std::exchange(instance.typed->asyncGeneratorToFinishAfterJobLoop, nullptr)) {
         if (instance.waiterToResume == left)
             instance.waiterToResume = nullptr;
         if (!vm.hasPendingTerminationException()) [[likely]]
-            left->finishAfterJobLoop(globalObject, JSValue::decode(instance.typed->resultOfAsyncGeneratorToFinishAfterJobLoop));
+            left->finishAfterJobLoop(globalObject, JSValue::decode(instance.typed->asyncGeneratorResultAfterJobLoop));
         if (!instance.waiterToResume)
             return;
     }
@@ -5296,8 +5211,8 @@ static NEVER_INLINE void resumeWaitersLeftBehind(JSGlobalObject* globalObject, V
     while (JSCell* waiter = std::exchange(instance.waiterToResume, nullptr)) {
         if (vm.hasPendingTerminationException()) [[unlikely]]
             break;
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, JSValue::decode(instance.asyncContextOfWaiter));
-        resumeAsyncFunction(globalObject, vm, waiter, JSValue::decode(instance.resolutionForWaiter), false, true);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, JSValue::decode(instance.waiterAsyncContext));
+        resumeAsyncFunction(globalObject, vm, waiter, JSValue::decode(instance.waiterResolution), false, true);
     }
     instance.isResumingWaiters = false;
 }
@@ -5305,16 +5220,16 @@ static NEVER_INLINE void resumeWaitersLeftBehind(JSGlobalObject* globalObject, V
 static void enterJobLoop(JSGlobalObject* globalObject, VM& vm, Instance& instance, AsyncGenerator* first, JSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSCell* enteredOutside = std::exchange(instance.savedFrameEntered, nullptr);
-    vmEntryToJavaScriptWith2Arguments(asyncGeneratorEntrypoint().taggedPtr(), &vm, nullptr, first, jsUndefined(), nullptr, jsNumber(CoroutineFrame::isEnteredByJobLoop | SavedFrame::nothingIsLeftBehindIt), value);
-    JSCell* saved = std::exchange(instance.savedFrameEntered, enteredOutside);
+    JSCell* enteredOutside = std::exchange(instance.enteredSavedFrame, nullptr);
+    vmEntryToJavaScriptWith2Arguments(asyncGeneratorEntrypoint().taggedPtr(), &vm, nullptr, first, jsUndefined(), nullptr, jsNumber(CoroutineFrame::isEnteredByJobLoop | SavedFrame::mayRunNextMicrotask), value);
+    JSCell* saved = std::exchange(instance.enteredSavedFrame, enteredOutside);
     if (Exception* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
         if (scope.clearExceptionExceptTermination() && saved)
             uncheckedDowncast<SavedFrame>(saved)->promise()->reject(vm, error);
     }
     if (instance.waiterToResume)
-        resumeWaitersLeftBehind(globalObject, vm, instance);
+        resumeRemainingWaiters(globalObject, vm, instance);
 }
 
 void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop)
@@ -5323,26 +5238,25 @@ void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, 
     if (context.asCell()->type() != JSFunctionType) {
         auto* saved = uncheckedDowncast<SavedFrame>(context);
         if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
-            saved->willBeLaidOnStack();
+            saved->willBeRestoredToStack();
             saved->promise()->reject(vm, createStackOverflowError(globalObject));
             return;
         }
-        saved->willBeLaidOnStack();
+        saved->willBeRestoredToStack();
         Instance& instance = *saved->structure()->aotInstance();
-        JSCell* enteredOutside = std::exchange(instance.savedFrameEntered, saved);
-        vmEntryToJavaScriptWith2Arguments(savedFrameEntrypoint().taggedPtr(), &vm, nullptr, saved, jsUndefined(), saved, jsNumber(isRejected | (isEnteredByJobLoop ? CoroutineFrame::isEnteredByJobLoop | SavedFrame::nothingIsLeftBehindIt : 0)), resolution);
-        saved = uncheckedDowncast<SavedFrame>(std::exchange(instance.savedFrameEntered, enteredOutside));
+        JSCell* enteredOutside = std::exchange(instance.enteredSavedFrame, saved);
+        vmEntryToJavaScriptWith2Arguments(savedFrameEntrypoint().taggedPtr(), &vm, nullptr, saved, jsUndefined(), saved, jsNumber(isRejected | (isEnteredByJobLoop ? CoroutineFrame::isEnteredByJobLoop | SavedFrame::mayRunNextMicrotask : 0)), resolution);
+        saved = uncheckedDowncast<SavedFrame>(std::exchange(instance.enteredSavedFrame, enteredOutside));
         if (Exception* exception = scope.exception()) [[unlikely]] {
             JSValue error = exception->value();
             if (scope.clearExceptionExceptTermination())
                 saved->promise()->reject(vm, error);
         }
         if (instance.waiterToResume) [[unlikely]]
-            resumeWaitersLeftBehind(globalObject, vm, instance);
+            resumeRemainingWaiters(globalObject, vm, instance);
         return;
     }
     auto* resumeClosure = uncheckedDowncast<Closure>(context);
-    // Whoever runs jobs has entered the VM.
     resumeCoroutine(globalObject, resumeClosure, isRejected | (isEnteredByJobLoop ? CoroutineFrame::isEnteredByJobLoop : 0), resolution, resumeClosure);
     if (Exception* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
@@ -5360,15 +5274,15 @@ struct SuspendedAsyncFunction {
     int32_t state { 0 };
     bool isHiddenInStackTraces { false };
     bool isSavedFrame { false };
-    std::tuple<uint32_t, uint32_t, BytecodeIndex> placeOfSavedFrame { };
+    std::tuple<uint32_t, uint32_t, BytecodeIndex> savedFrameLocation { };
 
-    static std::tuple<uint32_t, uint32_t, BytecodeIndex> placeOfResumeAddress(Instance* instance, const void* address)
+    static std::tuple<uint32_t, uint32_t, BytecodeIndex> resumeAddressLocation(Instance* instance, const void* address)
     {
-        using Place = Instance::PlaceInTrace;
+        using Place = Instance::StackTraceInfo;
         const Instance::CachedAddressInfo* asked = instance->resolveReturnAddress(address);
         RELEASE_ASSERT(asked);
-        Place place = instance->placesInTraces()[asked - instance->cachedReturnAddresses].ofSite();
-        if (place.kind == Place::IsShown || place.kind == Place::IsHidden) [[likely]]
+        Place place = instance->stackTraceInfos()[asked - instance->cachedReturnAddresses].forSite();
+        if (place.kind == Place::IsVisible || place.kind == Place::IsHidden) [[likely]]
             return { asked->function, place.typedFunction, CallSiteIndex(place.callSiteBits).bytecodeIndex() };
         Instance::CachedAddressInfo& inlinedFunction = instance->cachedAddressInfo(address);
         if (place.kind == Place::IsInInlinedBody && !instance->callSiteOverrides && inlinedFunction.address == address && inlinedFunction.site != Instance::CachedAddressInfo::siteNotResolved)
@@ -5380,10 +5294,10 @@ struct SuspendedAsyncFunction {
         return { function, location.typedFunction, location.bytecodeIndex };
     }
 
-    std::tuple<uint32_t, uint32_t, BytecodeIndex> placeInTrace(Instance* instance, uintptr_t code) const
+    std::tuple<uint32_t, uint32_t, BytecodeIndex> stackTraceLocation(Instance* instance, uintptr_t code) const
     {
         if (isSavedFrame)
-            return placeOfSavedFrame;
+            return savedFrameLocation;
         auto* closure = uncheckedDowncast<Closure>(resumeClosure);
         return { FunctionRef::at(instance, std::bit_cast<const void*>(ClosureWord::addressOf(closure->entry(), code))).index, closure->functionIndex(), BytecodeIndex(state) };
     }
@@ -5391,7 +5305,7 @@ struct SuspendedAsyncFunction {
 
 static const Data& dataInImage();
 
-static ALWAYS_INLINE JSCell* cellKeptIn(const VariableData& variable, const JSCell* environment)
+static ALWAYS_INLINE JSCell* cellStoredIn(const VariableData& variable, const JSCell* environment)
 {
     auto* address = reinterpret_cast<const uint8_t*>(environment) + variable.offset;
     switch (variable.store()) {
@@ -5418,9 +5332,9 @@ static ALWAYS_INLINE SavedFrame* savedFrameIn(JSCell* cell)
 static ALWAYS_INLINE SuspendedAsyncFunction suspendedAsyncFunctionIn(JSCell* cell)
 {
     if (auto* saved = savedFrameIn(cell)) {
-        SuspendedAsyncFunction result { saved, saved->promise(), 0, false, true, SuspendedAsyncFunction::placeOfResumeAddress(saved->structure()->aotInstance(), saved->resumeAddress()) };
+        SuspendedAsyncFunction result { saved, saved->promise(), 0, false, true, SuspendedAsyncFunction::resumeAddressLocation(saved->structure()->aotInstance(), saved->resumeAddress()) };
         const Data& image = dataInImage();
-        uint8_t kindByte = image.at<uint8_t>(image.functionKindsOffset)[std::get<1>(result.placeOfSavedFrame)];
+        uint8_t kindByte = image.at<uint8_t>(image.functionKindsOffset)[std::get<1>(result.savedFrameLocation)];
         result.isHiddenInStackTraces = kindByte & functionIsHiddenInStackTraces || (kindByte & functionKindMask) == static_cast<uint8_t>(Format::FunctionKind::Module);
         return result;
     }
@@ -5432,7 +5346,7 @@ static ALWAYS_INLINE SuspendedAsyncFunction suspendedAsyncFunctionIn(JSCell* cel
         return { };
     const Data& image = dataInImage();
     uint8_t kindByte = image.at<uint8_t>(image.functionKindsOffset)[ClosureWord::functionOf(entry)];
-    if ((kindByte & functionKindMask) == functionKindOfConstructors)
+    if ((kindByte & functionKindMask) == constructorFunctionKind)
         return { };
     if (!image.at<std::array<uint8_t, 2>>(image.closureCountsOffset)[ClosureWord::functionOf(entry)][0])
         return { };
@@ -5440,15 +5354,15 @@ static ALWAYS_INLINE SuspendedAsyncFunction suspendedAsyncFunctionIn(JSCell* cel
     if (!environment)
         return { };
     Structure* structure = environment->structure();
-    const Data* data = structure->dataOfCompiledEnvironments();
+    const Data* data = structure->compiledEnvironmentData();
     if (!data)
         return { };
-    auto variables = layoutOfEnvironment(*data, structure->firstShapeOfCompiledEnvironments(), environment).describedVariables();
+    auto variables = environmentLayout(*data, structure->firstCompiledEnvironmentShape(), environment).describedVariables();
     if (variables.size() <= CoroutineFrame::resumeClosureField || variables[CoroutineFrame::stateField].store() != Store::Int32)
         return { };
-    if (cellKeptIn(variables[CoroutineFrame::resumeClosureField], environment) != closure)
+    if (cellStoredIn(variables[CoroutineFrame::resumeClosureField], environment) != closure)
         return { };
-    JSCell* driver = cellKeptIn(variables[CoroutineFrame::promiseField], environment);
+    JSCell* driver = cellStoredIn(variables[CoroutineFrame::promiseField], environment);
     auto* promise = driver ? dynamicDowncast<JSPromise>(driver) : nullptr;
     if (!promise)
         return { };
@@ -5461,16 +5375,16 @@ static void append(VM& vm, JSCell* owner, Vector<StackFrame>& results, const Sus
     if (!function.resumeClosure || function.isHiddenInStackTraces)
         return;
     Instance* instance = function.resumeClosure->structure()->aotInstance();
-    auto [code, reported, callSite] = function.placeInTrace(instance, std::bit_cast<uintptr_t>(Image::withCode()->code()));
+    auto [code, reported, callSite] = function.stackTraceLocation(instance, std::bit_cast<uintptr_t>(Image::withCode()->code()));
     results.constructAndAppend(vm, owner, tokenOf(instance), code, reported, callSite, true);
 }
 
-bool isResumeClosureOfAsyncFunction(JSCell* cell)
+bool isAsyncFunctionResumeClosure(JSCell* cell)
 {
     return savedFrameIn(cell) || suspendedAsyncFunctionIn(cell).resumeClosure;
 }
 
-JSPromise* promiseOfAsyncFunction(JSCell* resumeClosure)
+JSPromise* asyncFunctionPromise(JSCell* resumeClosure)
 {
     if (auto* saved = savedFrameIn(resumeClosure))
         return saved->promise();
@@ -5494,15 +5408,15 @@ Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine)
         JSCell* current = work[i];
         if (auto* promise = dynamicDowncast<JSPromise>(current))
             promises.append(promise);
-        else if (JSPromise* own = promiseOfAsyncFunction(current))
+        else if (JSPromise* own = asyncFunctionPromise(current))
             promises.append(own);
         else if (auto* generator = current->type() == ObjectType ? dynamicDowncast<AsyncGenerator>(current) : nullptr; generator && numberOfGenerators++ < maxGenerators)
-            generator->appendTargetsOfRequests(work);
+            generator->appendRequestTargets(work);
     }
     return promises;
 }
 
-Vector<JSPromise*, 4> promisesSettledBehind(JSPromise* promise)
+Vector<JSPromise*, 4> promisesSettledAfter(JSPromise* promise)
 {
     AssertNoGC assertNoGC;
     Vector<JSPromise*, 4> promises;
@@ -5524,7 +5438,7 @@ void appendSuspendedAsyncFunction(VM& vm, JSCell* owner, Vector<StackFrame>& res
 JSCell* appendDirectAsyncCallers(VM& vm, JSCell* owner, Vector<StackFrame>& results, JSCell* resumeClosure, size_t maxStackSize)
 {
     constexpr uint16_t asked = JSPromise::stateMask | JSPromise::inlineReactionKindMask | JSPromise::inlineReactionMicrotaskMask;
-    constexpr uint16_t isAwaitedByOneOfOurs = static_cast<uint16_t>(JSPromise::Status::Pending)
+    constexpr uint16_t isAwaitedByCompiledCode = static_cast<uint16_t>(JSPromise::Status::Pending)
         | static_cast<uint16_t>(JSPromise::InlineReactionKind::InternalMicrotask) << JSPromise::inlineReactionKindShift
         | static_cast<uint16_t>(InternalMicrotask::AOTAsyncFunctionResume) << JSPromise::inlineReactionMicrotaskShift;
     SuspendedAsyncFunction current = suspendedAsyncFunctionIn(resumeClosure);
@@ -5540,9 +5454,9 @@ JSCell* appendDirectAsyncCallers(VM& vm, JSCell* owner, Vector<StackFrame>& resu
     };
     for (;;) {
         uint16_t flags = current.promise->flags();
-        if ((flags & asked) != isAwaitedByOneOfOurs || results.size() >= maxStackSize) {
-            bool isAwaitedByNobody = (flags & JSPromise::stateMask) != static_cast<uint16_t>(JSPromise::Status::Pending) || (!(flags & JSPromise::inlineReactionKindMask) && !current.promise->payloadCell());
-            return leave(isAwaitedByNobody ? nullptr : current.resumeClosure);
+        if ((flags & asked) != isAwaitedByCompiledCode || results.size() >= maxStackSize) {
+            bool hasNoAwaiters = (flags & JSPromise::stateMask) != static_cast<uint16_t>(JSPromise::Status::Pending) || (!(flags & JSPromise::inlineReactionKindMask) && !current.promise->payloadCell());
+            return leave(hasNoAwaiters ? nullptr : current.resumeClosure);
         }
         JSValue context = current.promise->inlineReactionContext();
         if (!context || !context.isCell())
@@ -5551,15 +5465,15 @@ JSCell* appendDirectAsyncCallers(VM& vm, JSCell* owner, Vector<StackFrame>& resu
         if (!caller.resumeClosure)
             return leave(current.resumeClosure);
         current = caller;
-        if (Instance* itsInstance = current.resumeClosure->structure()->aotInstance(); itsInstance != instance) {
+        if (Instance* closureInstance = current.resumeClosure->structure()->aotInstance(); closureInstance != instance) {
             if (token)
                 vm.writeBarrier(owner, token);
-            instance = itsInstance;
+            instance = closureInstance;
             token = tokenOf(instance);
             code = std::bit_cast<uintptr_t>(Image::withCode()->code());
         }
         if (!current.isHiddenInStackTraces) {
-            auto [inImage, reported, callSite] = current.placeInTrace(instance, code);
+            auto [inImage, reported, callSite] = current.stackTraceLocation(instance, code);
             results.constructAndAppend(StackFrame::Suspended, token, inImage, reported, callSite);
         }
     }
@@ -5584,35 +5498,32 @@ bool Closure::mayBeCalled() const
     return !(m_entry & 1ULL << ClosureWord::isNotCallableBit);
 }
 
-static TextOfFunctionInFile s_textOfFunctionInFile;
-static JSString* textOfFunction(JSGlobalObject*, uint32_t function);
+static FunctionSourceProvider s_functionSourceProvider;
+static JSString* functionSourceText(JSGlobalObject*, uint32_t function);
 
 JSValue Closure::toString(JSGlobalObject* globalObject) const
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    // As the engine has it for its bound functions, which are native: under the name of the function that is bound.
     if (kind() == Format::FunctionKind::Bound)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "function "_s, structure()->aotInstance()->typed->nameOfFunction(functionIndex()).substring("bound "_s.length()), "() { [native code] }"_s));
     ASCIILiteral async = isDeclaredAs(functionIsAsync) ? "async "_s : ""_s;
-    bool isOfProgram = !isDeclaredAs(functionIsOfBuiltinModule);
-    JSString* text = isOfProgram ? textOfFunction(globalObject, functionIndex()) : nullptr;
+    bool isProgramObject = !isDeclaredAs(functionIsInBuiltinModule);
+    JSString* text = isProgramObject ? functionSourceText(globalObject, functionIndex()) : nullptr;
     RETURN_IF_EXCEPTION(scope, { });
     if (text)
         return text;
-    if (isOfProgram && kind() == Format::FunctionKind::Arrow)
+    if (isProgramObject && kind() == Format::FunctionKind::Arrow)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
-    // What an arrow function is called it has from where it is written, and its text would not say.
     String name = kind() == Format::FunctionKind::Arrow ? emptyString() : structure()->aotInstance()->typed->nameOfFunction(functionIndex());
     if (kind() == Format::FunctionKind::Constructor)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s));
-    if (isOfProgram && kind() == Format::FunctionKind::Method)
+    if (isProgramObject && kind() == Format::FunctionKind::Method)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, isDeclaredAs(functionIsGenerator) ? "*"_s : ""_s, name, "() { [native code] }"_s));
     RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, isDeclaredAs(functionIsGenerator) ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
 }
 
 static const Data& dataInImage();
 
-// By the image alone: a builtin function is asked these while its realm is being created, when it has no Instance.
 Format::FunctionKind Closure::kind() const
 {
     const Data& data = dataInImage();
@@ -5631,28 +5542,27 @@ bool Closure::isDeclaredAs(uint8_t asyncOrGenerator) const
     return data.at<uint8_t>(data.functionKindsOffset)[functionIndex()] & asyncOrGenerator;
 }
 
-bool Closure::makesLaidOutObjects() const
+bool Closure::createsFixedLayoutObjects() const
 {
-    return kind() == Format::FunctionKind::Plain && !isDeclaredAs(functionIsAsync | functionIsGenerator) && structure()->aotInstance()->typed->makesLaidOutObjects(functionIndex());
+    return kind() == Format::FunctionKind::Plain && !isDeclaredAs(functionIsAsync | functionIsGenerator) && structure()->aotInstance()->typed->createsFixedLayoutObjects(functionIndex());
 }
 
-bool Closure::keepsPrototypeProperty() const
+bool Closure::hasImmutablePrototypeProperty() const
 {
-    // What is defined later on an ordinary object nobody sees. The checker sees `.prototype` replaced wherever that is written down, and then no field of the objects is read without a test.
     State& state = *structure()->aotInstance()->typed;
-    return makesLaidOutObjects() && (!state.mayAlterPrototypeObjectOf(functionIndex()) || state.makesObjectsWithDefinitelyInitializedFields(functionIndex()));
+    return createsFixedLayoutObjects() && (!state.mayModifyPrototypeObjectOf(functionIndex()) || state.createsObjectsWithDefinitelyInitializedFields(functionIndex()));
 }
 
 bool Closure::sharesPrototypeProperty() const
 {
     Instance* instance = structure()->aotInstance();
-    return isDeclaredAs(functionIsGenerator) && instance->typed->closureIfMade(functionIndex()) != this && !instance->typed->takesItsClosure(functionIndex());
+    return isDeclaredAs(functionIsGenerator) && instance->typed->closureIfCreated(functionIndex()) != this && !instance->typed->takesCalleeClosure(functionIndex());
 }
 
-bool lacksWhatItsStructureLacks(VM& vm, JSCell* cell, UniquedStringImpl* uid, bool isReceiver)
+bool hasNoLazyPropertyNamed(VM& vm, JSCell* cell, UniquedStringImpl* uid, bool isReceiver)
 {
     if (cell->type() == ErrorInstanceType)
-        return !ErrorInstance::isMadeWhenAskedFor(vm, uid);
+        return !ErrorInstance::isLazilyMaterialized(vm, uid);
     if (uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype)
         return false;
     if (isSlimClosureType(cell->type()))
@@ -5666,9 +5576,9 @@ bool lacksWhatItsStructureLacks(VM& vm, JSCell* cell, UniquedStringImpl* uid, bo
     return ofClass && closure->getDirect(vm, vm.propertyNames->prototype) && !closure->structure()->aotInstance()->typed->staticField(*ofClass, uid);
 }
 
-static JSC_DECLARE_CUSTOM_GETTER(prototypePropertyOfClosure);
+static JSC_DECLARE_CUSTOM_GETTER(closurePrototypeProperty);
 
-JSC_DEFINE_CUSTOM_GETTER(prototypePropertyOfClosure, (JSGlobalObject* globalObject, EncodedJSValue encodedClosure, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(closurePrototypeProperty, (JSGlobalObject* globalObject, EncodedJSValue encodedClosure, PropertyName name))
 {
     JSCell* cell = JSValue::decode(encodedClosure).asCell();
     if (cell->type() == SlimClosureType) {
@@ -5679,14 +5589,14 @@ JSC_DEFINE_CUSTOM_GETTER(prototypePropertyOfClosure, (JSGlobalObject* globalObje
     return JSValue::encode(prototype ? prototype : jsUndefined());
 }
 
-bool closureAnswersForPrototypeProperty(JSCell* cell)
+bool closureHandlesPrototypeProperty(JSCell* cell)
 {
     return cell->type() == SlimClosureType || (cell->type() == JSFunctionType && cell->classInfo() == Closure::info());
 }
 
-GetValueFunc getterOfPrototypePropertyOfClosures()
+GetValueFunc closurePrototypePropertyGetter()
 {
-    return prototypePropertyOfClosure;
+    return closurePrototypeProperty;
 }
 
 const LayoutData* Closure::classData() const
@@ -5699,14 +5609,13 @@ JSValue Closure::callAsConstructor(JSGlobalObject* globalObject, JSValue thisVal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer all;
-    appendArgumentsOfConstruct(all, this, newTarget, arguments);
+    appendConstructArguments(all, this, newTarget, arguments);
     if (all.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
     NewTargetScope newTargetScope(this, newTarget);
     ConstructionScope constructionScope(vm, *structure()->aotInstance()->typed);
-    // Not what getCallData() says: [[Call]] of a class throws.
     CallData callData;
     callData.type = CallData::Type::JS;
     callData.js.functionExecutable = nullptr;
@@ -5714,64 +5623,60 @@ JSValue Closure::callAsConstructor(JSGlobalObject* globalObject, JSValue thisVal
     RELEASE_AND_RETURN(scope, call(globalObject, this, callData, thisValue, all));
 }
 
-bool Closure::isUnmadeClassObject() const
+bool Closure::isLazyClassObject() const
 {
-    // The usual closure is no class object, and the usual class object that is asked has been made.
     if (kind() != Format::FunctionKind::Constructor || getDirect(vm(), vm().propertyNames->prototype))
         return false;
     const LayoutData* ofClass = classData();
     if (!ofClass)
         return false;
     State& state = *structure()->aotInstance()->typed;
-    // What extends something foreign is nothing at all until its declaration has been evaluated, which makes the prototype.
-    return state.makesClassObjectWhenChanged(*ofClass) && (state.hasPrototypeAheadOfClassObject(*ofClass) || state.prototypeOfClassIfExists(ofClass->index));
+    return state.createsClassObjectOnMutation(*ofClass) && (state.createsPrototypeBeforeClassObject(*ofClass) || state.classPrototypeIfExists(ofClass->index));
 }
 
-static NEVER_INLINE void makeClassObject(Closure* classObject)
+static NEVER_INLINE void createClassObject(Closure* classObject)
 {
     State& state = *classObject->structure()->aotInstance()->typed;
     if (Options::useAOTOperationCounters()) [[unlikely]]
         runtimeTable(classObject->vm()).countOperation("ClassObject", "made");
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(classObject->vm());
-    state.makeClass(state.instance.globalObject, classObject, JSValue(), State::PartOfClass::ClassObject);
+    state.createClass(state.instance.globalObject, classObject, JSValue(), State::ClassPart::ClassObject);
     scope.assertNoException();
 }
 
-void Closure::takeStructureOfBoundFunction(VM& vm)
+void Closure::adoptBoundFunctionStructure(VM& vm)
 {
     State& state = *structure()->aotInstance()->typed;
     if (structure() == state.closureStructure(vm, functionIndex()))
-        setStructure(vm, state.structureOfBoundClosures(vm, functionIndex()));
+        setStructure(vm, state.boundClosureStructure(vm, functionIndex()));
 }
 
 void Closure::ensureClassObject(VM& vm)
 {
     if (kind() == Format::FunctionKind::Bound) [[unlikely]] {
-        takeStructureOfBoundFunction(vm);
+        adoptBoundFunctionStructure(vm);
         return;
     }
-    if (!isUnmadeClassObject())
+    if (!isLazyClassObject())
         return;
-    makeClassObject(this);
+    createClassObject(this);
 }
 
 JSValue Closure::prototypeProperty(VM& vm)
 {
     if (JSValue stored = getDirect(vm, vm.propertyNames->prototype))
         return stored;
-    if (isUnmadeClassObject())
-        return structure()->aotInstance()->typed->prototypeOfClass(vm, classData()->index);
+    if (isLazyClassObject())
+        return structure()->aotInstance()->typed->classPrototype(vm, classData()->index);
     ensurePrototypeProperty(vm);
     return getDirect(vm, vm.propertyNames->prototype);
 }
 
-static bool isBornWithPrototypeProperty(const Closure& closure)
+static bool hasPrototypePropertyAtCreation(const Closure& closure)
 {
     if (closure.kind() == Format::FunctionKind::Constructor)
         return true;
-    // As a function of the engine's or the host's own code, which the host's modules are: it has none until it is given one, and that is an
-    // ordinary property. But objects that are laid out are born from a PrototypeObject.
-    if (closure.isDeclaredAs(functionIsOfBuiltinModule) && !closure.structure()->aotInstance()->typed->hasGuardedPrototype(closure.functionIndex()))
+    if (closure.isDeclaredAs(functionIsInBuiltinModule) && !closure.structure()->aotInstance()->typed->hasGuardedPrototype(closure.functionIndex()))
         return false;
     return closure.isDeclaredAs(functionIsGenerator) || (closure.kind() == Format::FunctionKind::Plain && !closure.isDeclaredAs(functionIsAsync));
 }
@@ -5783,20 +5688,18 @@ bool Closure::ensurePrototypeProperty(VM& vm)
     ensureClassObject(vm);
     if (getDirect(vm, vm.propertyNames->prototype))
         return true;
-    if (kind() == Format::FunctionKind::Constructor || !isBornWithPrototypeProperty(*this))
+    if (kind() == Format::FunctionKind::Constructor || !hasPrototypePropertyAtCreation(*this))
         return false;
     State& state = *structure()->aotInstance()->typed;
     JSObject* prototype;
     if (isDeclaredAs(functionIsGenerator)) {
-        // What the generators it makes inherit from.
         JSGlobalObject* globalObject = state.instance.globalObject;
-        if (state.takesItsClosure(functionIndex())) {
+        if (state.takesCalleeClosure(functionIndex())) {
             prototype = constructEmptyObject(globalObject, isDeclaredAs(functionIsAsync) ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
-            prototype->fixAndMakePropertiesImmutable(vm);
+            prototype->lockAndMakePropertiesImmutable(vm);
         } else
             prototype = state.generatorStructure(vm, state.resumeFunctionOf(functionIndex()), isDeclaredAs(functionIsAsync))->storedPrototypeObject();
     } else {
-        // What `new` on an ordinary function gives its objects.
         if (state.hasGuardedPrototype(functionIndex()))
             prototype = PrototypeObject::create(vm, state.prototypeObjectStructure(vm), functionIndex());
         else
@@ -5811,13 +5714,11 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    // What is stored comes first, also what a host has stored with putDirect() under a name that is made a property only when it is asked for.
     if (JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot))
         return true;
     State& state = *object->structure()->aotInstance()->typed;
     if (const LayoutData* ofClass = closure->classData()) {
-        // Whoever looks for what it has not leaves it as it is.
-        if (closure->isUnmadeClassObject()) {
+        if (closure->isLazyClassObject()) {
             if (propertyName != vm.propertyNames->prototype && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && !state.hasStaticMethodNamed(*ofClass, propertyName.uid()))
                 return false;
             closure->ensureClassObject(vm);
@@ -5828,7 +5729,7 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     if (propertyName == vm.propertyNames->prototype)
         return closure->ensurePrototypeProperty(vm) && JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot);
     if ((propertyName == vm.propertyNames->hasInstanceSymbol || propertyName == vm.propertyNames->length || propertyName == vm.propertyNames->name) && closure->kind() == Format::FunctionKind::Bound) [[unlikely]]
-        closure->takeStructureOfBoundFunction(vm);
+        closure->adoptBoundFunctionStructure(vm);
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
@@ -5854,7 +5755,7 @@ Structure* SlimClosure::createStructure(VM& vm, Instance& instance, JSValue prot
 SlimClosure* SlimClosure::create(VM& vm, Structure* structure, uint32_t function, std::span<const uint64_t> captures, unsigned numberOfReferences)
 {
     FunctionTables& tables = FunctionTables::of(vm);
-    RELEASE_ASSERT(ProgramData::get()->closureWordOf(function) && structure->aotInstance()->typed->makesSlimClosures(function));
+    RELEASE_ASSERT(ProgramData::get()->closureWordOf(function) && structure->aotInstance()->typed->usesSlimClosures(function));
     RELEASE_ASSERT((tables.data.at<std::array<uint8_t, 2>>(tables.data.closureCountsOffset)[function] == std::array { static_cast<uint8_t>(numberOfReferences), static_cast<uint8_t>(captures.size()) }));
     SlimClosure* closure = new (NotNull, allocateCell<SlimClosure>(vm, allocationSize(captures.size()))) SlimClosure(vm, structure, tables.words[function]);
     memcpySpan(std::span { reinterpret_cast<uint64_t*>(closure + 1), captures.size() }, captures);
@@ -6005,29 +5906,29 @@ Structure* State::structureForThisWithSlimClosure(JSGlobalObject* globalObject, 
 {
     VM& vm = globalObject->vm();
     auto* slimConstructor = dynamicDowncast<SlimClosure>(constructor);
-    if (!slimConstructor || allocationOfThis(slimConstructor->functionIndex()) || newTarget->structure()->aotInstance() != &instance)
+    if (!slimConstructor || thisAllocation(slimConstructor->functionIndex()) || newTarget->structure()->aotInstance() != &instance)
         return nullptr;
     unsigned attributes = 0;
     JSValue prototype;
-    uint32_t functionOfTarget;
+    uint32_t targetFunction;
     if (auto* target = dynamicDowncast<SlimClosure>(newTarget)) {
         if (!target->canConstruct())
             return nullptr;
         target->reifyProperties(vm);
         prototype = target->getDirect(vm, vm.propertyNames->prototype, attributes);
-        functionOfTarget = target->functionIndex();
+        targetFunction = target->functionIndex();
     } else if (auto* target = dynamicDowncast<Closure>(newTarget)) {
         prototype = target->getDirect(vm, vm.propertyNames->prototype, attributes);
         if (!prototype)
             prototype = target->prototypeProperty(vm);
-        functionOfTarget = target->functionIndex();
+        targetFunction = target->functionIndex();
     } else
         return nullptr;
     if (!prototype || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
         return nullptr;
     JSObject* parent = prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
-    unsigned capacity = m_inlineCapacitiesForThis.ensure(functionOfTarget, [&] {
-        return inlineCapacityForThis(vm, slimConstructor->functionIndex(), functionOfTarget, inlineCapacity, parent);
+    unsigned capacity = m_inlineCapacitiesForThis.ensure(targetFunction, [&] {
+        return inlineCapacityForThis(vm, slimConstructor->functionIndex(), targetFunction, inlineCapacity, parent);
     }).iterator->value;
     return globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, parent, capacity);
 }
@@ -6054,14 +5955,14 @@ JSValue SlimClosure::toString(JSGlobalObject* globalObject) const
     if (static_cast<Format::FunctionKind>(kind & functionKindMask) == Format::FunctionKind::Bound)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "function "_s, nameOfFunction().substring("bound "_s.length()), "() { [native code] }"_s));
     ASCIILiteral async = kind & functionIsAsync ? "async "_s : ""_s;
-    bool isOfProgram = !(kind & functionIsOfBuiltinModule);
-    JSString* text = isOfProgram ? textOfFunction(globalObject, functionIndex()) : nullptr;
+    bool isProgramObject = !(kind & functionIsInBuiltinModule);
+    JSString* text = isProgramObject ? functionSourceText(globalObject, functionIndex()) : nullptr;
     RETURN_IF_EXCEPTION(scope, { });
     if (text)
         return text;
-    if (isOfProgram && static_cast<Format::FunctionKind>(kind & functionKindMask) == Format::FunctionKind::Arrow)
+    if (isProgramObject && static_cast<Format::FunctionKind>(kind & functionKindMask) == Format::FunctionKind::Arrow)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
-    if (isOfProgram && static_cast<Format::FunctionKind>(kind & functionKindMask) == Format::FunctionKind::Method)
+    if (isProgramObject && static_cast<Format::FunctionKind>(kind & functionKindMask) == Format::FunctionKind::Method)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, nameOfFunction(), "() { [native code] }"_s));
     String name = static_cast<Format::FunctionKind>(kind & functionKindMask) == Format::FunctionKind::Arrow ? emptyString() : nameOfFunction();
     RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, "function "_s, name, "() { [native code] }"_s));
@@ -6069,9 +5970,9 @@ JSValue SlimClosure::toString(JSGlobalObject* globalObject) const
 
 } // namespace Typed
 
-void setTextOfFunctionInFile(TextOfFunctionInFile function)
+void setFunctionSourceProvider(FunctionSourceProvider function)
 {
-    Typed::s_textOfFunctionInFile = function;
+    Typed::s_functionSourceProvider = function;
 }
 
 Structure* cachedBoundFunctionStructure(JSObject* closure)
@@ -6101,7 +6002,7 @@ void SlimClosure::reifyProperties(VM& vm)
     State& state = this->state();
     uint32_t function = functionIndex();
     Structure* withProperties = state.reifiedSlimClosureStructure(vm, function);
-    JSValue values[] = { jsNumber(function), jsNumber(state.data.lengthOfFunction(function)), state.string(vm, state.data.at<uint32_t>(state.data.functionsOffset)[function]), JSValue() };
+    JSValue values[] = { jsNumber(function), jsNumber(state.data.functionLengthOf(function)), state.string(vm, state.data.at<uint32_t>(state.data.functionsOffset)[function]), JSValue() };
     if (canConstruct()) {
         JSObject* prototype = constructEmptyObject(state.instance.globalObject);
         prototype->putDirect(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -6117,7 +6018,7 @@ void SlimClosure::reifyProperties(VM& vm)
     vm.writeBarrier(this);
 }
 
-static String computedNameOfFunction(JSGlobalObject* globalObject, const Identifier& key, Format::MethodKind kind)
+static String functionComputedName(JSGlobalObject* globalObject, const Identifier& key, Format::MethodKind kind)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6141,13 +6042,13 @@ static String computedNameOfFunction(JSGlobalObject* globalObject, const Identif
 void SlimClosure::setComputedName(VM& vm, const Identifier& key, Format::MethodKind kind)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String name = computedNameOfFunction(globalObject(), key, kind);
+    String name = functionComputedName(globalObject(), key, kind);
     RETURN_IF_EXCEPTION(scope, void());
     reifyProperties(vm);
     putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
 }
 
-static JSObject* targetOfBoundFunction(VM& vm, State& state, uint32_t function, std::span<const uint64_t> captures, unsigned numberOfReferences)
+static JSObject* boundFunctionTarget(VM& vm, State& state, uint32_t function, std::span<const uint64_t> captures, unsigned numberOfReferences)
 {
     const Data& data = state.data;
     std::span all { data.at<std::array<uint32_t, 3>>(data.boundFunctionsOffset), data.numberOfBoundFunctions };
@@ -6155,7 +6056,7 @@ static JSObject* targetOfBoundFunction(VM& vm, State& state, uint32_t function, 
         return entry[0];
     });
     RELEASE_ASSERT(found != all.end() && (*found)[0] == function);
-    if (!((*found)[2] & boundFunctionHoldsItsTarget))
+    if (!((*found)[2] & boundFunctionHoldsTarget))
         return state.closureObjectFor(vm, (*found)[1]);
     RELEASE_ASSERT(numberOfReferences && numberOfReferences <= captures.size());
     return std::bit_cast<JSObject*>(captures[numberOfReferences - 1]);
@@ -6164,13 +6065,13 @@ static JSObject* targetOfBoundFunction(VM& vm, State& state, uint32_t function, 
 bool Closure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
     Closure* closure = uncheckedDowncast<Closure>(object);
-    return targetOfBoundFunction(globalObject->vm(), *object->structure()->aotInstance()->typed, closure->functionIndex(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
+    return boundFunctionTarget(globalObject->vm(), *object->structure()->aotInstance()->typed, closure->functionIndex(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
 }
 
 bool SlimClosure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
-    return targetOfBoundFunction(globalObject->vm(), closure->state(), closure->functionIndex(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
+    return boundFunctionTarget(globalObject->vm(), closure->state(), closure->functionIndex(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
 }
 
 bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
@@ -6185,7 +6086,7 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
             closure->setPerCellBit(true);
             State& state = closure->state();
             if (name == vm.propertyNames->length)
-                slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, jsNumber(state.data.lengthOfFunction(closure->functionIndex())));
+                slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, jsNumber(state.data.functionLengthOf(closure->functionIndex())));
             else
                 slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, state.string(vm, state.data.at<uint32_t>(state.data.functionsOffset)[closure->functionIndex()]));
             return true;
@@ -6209,16 +6110,16 @@ void SlimClosure::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalOb
 bool SlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(cell);
-    bool wasAsMade = !closure->isReified();
+    bool wasUnmodified = !closure->isReified();
     closure->reifyProperties(globalObject->vm());
     bool result = Base::put(cell, globalObject, name, value, slot);
     bool isPrototype = name == globalObject->vm().propertyNames->prototype;
     if (name == globalObject->vm().propertyNames->displayName) [[unlikely]]
-        someClosureWasGivenDisplayName.store(true, std::memory_order_relaxed);
-    if (wasAsMade || isPrototype)
+        anyClosureHasDisplayName.store(true, std::memory_order_relaxed);
+    if (wasUnmodified || isPrototype)
         slot.disableCaching();
     if (isPrototype) [[unlikely]]
-        ++closure->state().instance.fieldsBelow().typedPrototypeEpoch;
+        ++closure->state().instance.negativeOffsetFields().typedPrototypeEpoch;
     return result;
 }
 
@@ -6231,10 +6132,10 @@ bool SlimClosure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigne
 bool SlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(cell);
-    bool wasAsMade = !closure->isReified();
+    bool wasUnmodified = !closure->isReified();
     closure->reifyProperties(globalObject->vm());
     bool isDeleted = Base::deleteProperty(cell, globalObject, name, slot);
-    if (wasAsMade)
+    if (wasUnmodified)
         slot.disableCaching();
     return isDeleted;
 }
@@ -6248,18 +6149,18 @@ bool SlimClosure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObje
 {
     uncheckedDowncast<SlimClosure>(object)->reifyProperties(globalObject->vm());
     if (name == globalObject->vm().propertyNames->prototype) [[unlikely]]
-        ++uncheckedDowncast<SlimClosure>(object)->state().instance.fieldsBelow().typedPrototypeEpoch;
+        ++uncheckedDowncast<SlimClosure>(object)->state().instance.negativeOffsetFields().typedPrototypeEpoch;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
     if (name == vm.propertyNames->displayName) [[unlikely]]
-        someClosureWasGivenDisplayName.store(true, std::memory_order_relaxed);
-    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && isNamedInFramesByItsProperties(closure)) [[unlikely]] {
+        anyClosureHasDisplayName.store(true, std::memory_order_relaxed);
+    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && usesOwnPropertiesForStackTraceName(closure)) [[unlikely]] {
         String reported = asString(descriptor.value())->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        setNameReportedForFrames(closure->functionIndex(), reported, closure->state().closureIfMade(closure->functionIndex()) == closure);
+        setNameReportedForFrames(closure->functionIndex(), reported, closure->state().closureIfCreated(closure->functionIndex()) == closure);
     }
     return result;
 }
@@ -6288,7 +6189,7 @@ static String describeStaticField(State& state, const LayoutData& ofClass, Prope
     return makeString("static '"_s, StringView(name.uid()), "' of "_s, state.nameOf(ofClass));
 }
 
-static uint32_t kindsStoredAsGiven(const RuntimeType& type)
+static uint32_t kindsStoredUnchanged(const RuntimeType& type)
 {
     uint32_t kinds = 0;
     if (type.primitives & Primitive::Undefined)
@@ -6297,34 +6198,32 @@ static uint32_t kindsStoredAsGiven(const RuntimeType& type)
         kinds |= SoundTypeNull;
     if ((type.primitives & (Primitive::False | Primitive::True)) == (Primitive::False | Primitive::True))
         kinds |= SoundTypeBoolean;
-    if (type.primitives & Primitive::Double && type.primitives & Primitive::Int && type.minInteger() <= -maxKeptInteger && type.maxInteger() >= maxKeptInteger)
+    if (type.primitives & Primitive::Double && type.primitives & Primitive::Int && type.minInteger() <= -maxTrackedInteger && type.maxInteger() >= maxTrackedInteger)
         kinds |= SoundTypeNumber;
     if (type.primitives & Primitive::String)
         kinds |= SoundTypeString;
-    if (type.allowsAnyObject() && !type.numberOfViews())
+    if (type.allowsAnyObject() && !type.numberOfSupertypes())
         kinds |= SoundTypeAnyObject;
     return kinds;
 }
 
-static JSValue holdToTypeOfStaticField(JSGlobalObject* globalObject, State& state, const LayoutData& ofClass, const FieldData& field, PropertyName name, JSValue value)
+static JSValue coerceToStaticFieldType(JSGlobalObject* globalObject, State& state, const LayoutData& ofClass, const FieldData& field, PropertyName name, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     String failure;
-    JSValue held = state.holdToTypeOf(globalObject, field, value, failure);
+    JSValue held = state.coerceToFieldType(globalObject, field, value, failure);
     RETURN_IF_EXCEPTION(scope, { });
     if (!held)
         state.reportOrThrow(scope, globalObject, { .kind = "class-static-write"_s, .on = &ofClass, .member = name.uid(), .expected = &state.ownTypeOf(field), .got = value }, state.assignmentMessage(vm, describeStaticField(state, ofClass, name), field, value, failure), State::InAudit::Ignored);
     return held;
 }
 
-// Compiled code that calls a generator function by itself has no closure at hand to ask for its `prototype`. So the closures of such a function
-// share theirs, and only where there is one closure can it be replaced. Not where every call goes through a closure: State::takesItsClosure().
 bool Closure::mayReplacePrototypeProperty(JSGlobalObject* globalObject, JSValue value, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
     bool isGenerator = isDeclaredAs(functionIsGenerator);
-    if (!isGenerator && !keepsPrototypeProperty())
+    if (!isGenerator && !hasImmutablePrototypeProperty())
         return true;
     ensurePrototypeProperty(vm);
     if (getDirect(vm, vm.propertyNames->prototype) == value)
@@ -6332,7 +6231,7 @@ bool Closure::mayReplacePrototypeProperty(JSGlobalObject* globalObject, JSValue 
     State& state = *structure()->aotInstance()->typed;
     if (isGenerator && !shouldThrow && !state.data.isCompiledForAudit)
         return false;
-    return state.reportOrThrow(globalObject, { .kind = isGenerator ? "generator-prototype-write"_s : "function-prototype-write"_s, .onFunction = functionIndex() }, makeString("Cannot replace 'prototype' of "_s, isGenerator ? "generator function '"_s : "function '"_s, state.nameOfFunction(functionIndex()), isGenerator ? "': it is fixed when the program is compiled"_s : "': TypeScript code of the program creates its objects"_s), State::InAudit::CarriedOut);
+    return state.reportOrThrow(globalObject, { .kind = isGenerator ? "generator-prototype-write"_s : "function-prototype-write"_s, .onFunction = functionIndex() }, makeString("Cannot replace 'prototype' of "_s, isGenerator ? "generator function '"_s : "function '"_s, state.nameOfFunction(functionIndex()), isGenerator ? "': it is fixed when the program is compiled"_s : "': TypeScript code of the program creates its objects"_s), State::InAudit::Performed);
 }
 
 static bool reportOrThrowSharesPrototypeProperty(JSGlobalObject* globalObject, State& state, Closure* closure)
@@ -6350,7 +6249,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     JSValue given = value;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (field) [[unlikely]] {
-        value = holdToTypeOfStaticField(globalObject, state, *ofClass, *field, name, value);
+        value = coerceToStaticFieldType(globalObject, state, *ofClass, *field, name, value);
         RETURN_IF_EXCEPTION(scope, false);
         if (!value)
             return false;
@@ -6366,7 +6265,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     bool result = Base::put(cell, globalObject, name, value, slot);
     if (field) [[unlikely]] {
         bool mayBeCached = value == given && !state.data.isCompiledForAudit;
-        uint32_t kinds = mayBeCached ? kindsStoredAsGiven(state.ownTypeOf(*field)) : 0;
+        uint32_t kinds = mayBeCached ? kindsStoredUnchanged(state.ownTypeOf(*field)) : 0;
         if (Object* object = mayBeCached && !(kinds & SoundTypeOtherObject) ? state.compiledObject(value) : nullptr) {
             uint32_t shapeWord = static_cast<uint32_t>(object->orderAndShapeWords() >> 32);
             if (shapeWord >> 16 == 0xffff)
@@ -6378,12 +6277,11 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
             slot.disableCaching();
     }
     if (name == vm.propertyNames->prototype) [[unlikely]] {
-        // A cache would store to the next closure without coming here.
         slot.disableCaching();
         state.didChangePrototypeOf(vm, closure);
     }
     if (name == vm.propertyNames->displayName) [[unlikely]]
-        someClosureWasGivenDisplayName.store(true, std::memory_order_relaxed);
+        anyClosureHasDisplayName.store(true, std::memory_order_relaxed);
     return result;
 }
 
@@ -6396,7 +6294,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     const LayoutData* ofClass = closure->classData();
     PropertyDescriptor descriptor = given;
     if (const FieldData* field = ofClass && descriptor.value() ? state.staticField(*ofClass, name.uid()) : nullptr) [[unlikely]] {
-        JSValue held = holdToTypeOfStaticField(globalObject, state, *ofClass, *field, name, descriptor.value());
+        JSValue held = coerceToStaticFieldType(globalObject, state, *ofClass, *field, name, descriptor.value());
         RETURN_IF_EXCEPTION(scope, false);
         if (!held)
             return false;
@@ -6418,12 +6316,11 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (name == vm.propertyNames->prototype) [[unlikely]]
         state.didChangePrototypeOf(vm, closure);
     if (name == vm.propertyNames->displayName) [[unlikely]]
-        someClosureWasGivenDisplayName.store(true, std::memory_order_relaxed);
-    // The host hides frames of its own modules by the name of the function. A frame has no closure to ask: most calls pass none.
-    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && (closure->isDeclaredAs(functionIsOfBuiltinModule) || isNamedInFramesByItsProperties(closure))) [[unlikely]] {
+        anyClosureHasDisplayName.store(true, std::memory_order_relaxed);
+    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && (closure->isDeclaredAs(functionIsInBuiltinModule) || usesOwnPropertiesForStackTraceName(closure))) [[unlikely]] {
         String reported = asString(descriptor.value())->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        setNameReportedForFrames(closure->functionIndex(), reported, closure->isDeclaredAs(functionIsOfBuiltinModule) || state.closureIfMade(closure->functionIndex()) == closure);
+        setNameReportedForFrames(closure->functionIndex(), reported, closure->isDeclaredAs(functionIsInBuiltinModule) || state.closureIfCreated(closure->functionIndex()) == closure);
     }
     return result;
 }
@@ -6438,7 +6335,6 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     return Base::deleteProperty(cell, globalObject, name, slot);
 }
 
-// Elements need storage, and a Structure that says so.
 bool Closure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
     uncheckedDowncast<Closure>(cell)->ensureClassObject(globalObject->vm());
@@ -6457,11 +6353,9 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     uncheckedDowncast<Closure>(object)->ensureClassObject(vm);
     const LayoutData* ofClass = uncheckedDowncast<Closure>(object)->classData();
-    // `super(..)` in the constructor of a class that extends another goes by the declaration.
-    if (!ofClass || !ofClass->hasFixedMembers || object->getPrototypeDirect() == prototype || (ofClass->base() == LayoutData::noBase && !ofClass->hasForeignRoot)) {
-        // Where that is allowed to change, compiled code asks: see CallResolution::resolveConstructSuper().
+    if (!ofClass || !ofClass->hasImmutableMembers || object->getPrototypeDirect() == prototype || (ofClass->base() == LayoutData::noBase && !ofClass->hasUntypedBase)) {
         if (ofClass && object->getPrototypeDirect() != prototype)
-            object->structure()->aotInstance()->typedAlteredClassObjects[ofClass->index] = 1;
+            object->structure()->aotInstance()->typedModifiedClassObjects[ofClass->index] = 1;
         RELEASE_AND_RETURN(scope, Base::setPrototype(object, globalObject, prototype, shouldThrow));
     }
     State& state = *object->structure()->aotInstance()->typed;
@@ -6470,18 +6364,17 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     if (state.data.isCompiledForAudit)
         RELEASE_AND_RETURN(scope, state.reportOrThrow(globalObject, violation, message, State::InAudit::Ignored));
     if (shouldThrow)
-        state.noteViolation(vm, violation);
+        state.recordViolation(vm, violation);
     return typeError(globalObject, scope, shouldThrow, withAOTErrorNote(message));
 }
 
-// `length`, `name` and `prototype` are made when they are asked for.
 void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
     closure->ensureClassObject(vm);
     Base::getOwnSpecialPropertyNames(object, globalObject, names, mode);
-    if (mode == DontEnumPropertiesMode::Include && isBornWithPrototypeProperty(*closure) && closure->ensurePrototypeProperty(vm))
+    if (mode == DontEnumPropertiesMode::Include && hasPrototypePropertyAtCreation(*closure) && closure->ensurePrototypeProperty(vm))
         names.add(vm.propertyNames->prototype);
 }
 
@@ -6502,18 +6395,17 @@ static void destroyZeroedTable(T* table, size_t count)
     OSAllocator::decommitAndRelease(table, sizeOfZeroedTable(count, sizeof(T)));
 }
 
-static size_t sizeOfAllocationRows(const Data& data)
+static size_t allocationEntriesSize(const Data& data)
 {
-    return sizeOfZeroedTable(std::min(data.numberOfAllocations, State::maxNumberOfAllocationRows), sizeof(Instance::TypedAllocation));
+    return sizeOfZeroedTable(std::min(data.numberOfAllocations, State::maxAllocationEntries), sizeof(Instance::TypedAllocation));
 }
 
-static size_t sizeOfAllocationRowsAndNumbers(const Data& data)
+static size_t allocationEntriesAndIndicesSize(const Data& data)
 {
-    return sizeOfAllocationRows(data) + sizeOfZeroedTable(data.numberOfAllocations, sizeof(uint16_t));
+    return allocationEntriesSize(data) + sizeOfZeroedTable(data.numberOfAllocations, sizeof(uint16_t));
 }
 
-// A page.
-static constexpr uint32_t initialCapacityOfStringTable = 2048;
+static constexpr uint32_t stringTableInitialCapacity = 2048;
 
 static uint64_t* createStringTable(uint32_t capacity)
 {
@@ -6522,7 +6414,7 @@ static uint64_t* createStringTable(uint32_t capacity)
     return slots;
 }
 
-static uint32_t capacityOfStringTable(const uint64_t* slots)
+static uint32_t stringTableCapacity(const uint64_t* slots)
 {
     return static_cast<uint32_t>(slots[0] >> 32) + 1;
 }
@@ -6536,46 +6428,30 @@ struct State::Counts {
     };
     using CountsByPair = UncheckedKeyHashMap<std::pair<uint32_t, uint32_t>, uint64_t>;
 
-    // By the number of the AllocationData.
     Vector<Allocation> allocations;
-    // By shape and cell size.
     CountsByPair objectsWithoutAllocation;
-    // By the shape before and the shape after.
     CountsByPair transitions;
-    // By shape and order word.
     CountsByPair orderStates;
-    // By shape, then by field. Empty until a field of the layout is created.
     Vector<Vector<uint64_t>> fieldCreations;
-    // By Extension::size().
     UncheckedKeyHashMap<uint32_t, uint64_t> extensions;
-    // By the size before, which is that of the empty one for the first, and the size after.
     CountsByPair extensionGrowth;
-    // By function and number of captures.
     CountsByPair closures;
-    // By function, and kind and value: see State::countPlainAllocation().
     CountsByPair plainAllocations;
-    CountsByPair bytesOfPlainCells;
-    CountsByPair bytesOfPlainStorage;
-    // By what countArrayGet() makes of the read, and countArrayPut() of the store.
+    CountsByPair plainCellBytes;
+    CountsByPair plainStorageBytes;
     UncheckedKeyHashMap<String, uint64_t> arrayGets;
-    // By what countCoercion() makes of the cast, and the type of each as text.
     UncheckedKeyHashMap<String, uint64_t> coercions;
-    UncheckedKeyHashMap<String, String> typesOfCoercions;
+    UncheckedKeyHashMap<String, String> coercionTypes;
     UncheckedKeyHashMap<String, uint64_t> arrayPuts;
-    // The arrays that a store has made ArrayStorage of.
-    UncheckedKeyHashMap<String, uint64_t> arraysLeft;
-    // By the event: tables, and their entries.
+    UncheckedKeyHashMap<String, uint64_t> remainingArrays;
     UncheckedKeyHashMap<String, std::pair<uint64_t, uint64_t>> compactTables;
-    // By shape.
     Vector<uint64_t> extraPropertyTables;
-    // By shape, then by the name of the property.
     Vector<UncheckedKeyHashMap<String, uint64_t>> extraProperties;
     enum class Place : uint8_t { Field, AbsentField, Extra, NotOwn, OtherReceiver };
     struct Access {
         uint64_t count { 0 };
         RefPtr<UniquedStringImpl> name;
     };
-    // By return address; AccessKind and Place; the shape of the receiver, or the ClassInfo of a cell that is no object of the program.
     UncheckedKeyHashMap<std::tuple<uintptr_t, uint32_t, uintptr_t>, Access> accesses;
 
     struct Collection {
@@ -6586,8 +6462,7 @@ struct State::Counts {
         size_t blocks;
         size_t bytesInPreciseAllocations;
     };
-    // From 1, so that no key is all zeros.
-    enum class LiveKind : uint32_t { Layout = 1, Closure, Extension, ExtraProperties, StorageOfExtraProperties, Class, StorageOfClass, OtherAuxiliary };
+    enum class LiveKind : uint32_t { Layout = 1, Closure, Extension, ExtraProperties, ExtraPropertiesStorage, Class, ClassStorage, OtherAuxiliary };
     struct FreeCells {
         uint64_t cells { 0 };
         uint64_t blocks { 0 };
@@ -6595,14 +6470,11 @@ struct State::Counts {
     };
     struct LiveCells {
         size_t collection { 0 };
-        // By LiveKind; the LayoutData or the ClassInfo, or zero; the cell size.
         UncheckedKeyHashMap<std::tuple<uint32_t, uintptr_t, size_t>, uint64_t> cells;
-        // By Subspace and cell size.
         UncheckedKeyHashMap<std::pair<Subspace*, size_t>, FreeCells> freeCells;
         uint64_t extraPropertyTables { 0 };
-        // Each StringImpl once. The bytes are malloc memory. Those of a static or external one, and the characters of a substring, are not counted.
         uint64_t strings { 0 };
-        uint64_t bytesOfStrings { 0 };
+        uint64_t stringBytes { 0 };
         uint64_t ropes { 0 };
         uint64_t staticStrings { 0 };
         uint64_t externalStrings { 0 };
@@ -6623,7 +6495,6 @@ struct State::Counts {
             uint64_t maps { 0 };
             uint64_t emptyMaps { 0 };
         };
-        // 0 to 16 as they are, above that by the power of two that bounds the number.
         static constexpr unsigned numberOfBuckets = 50;
         static unsigned bucketOf(uint64_t number) { return number <= 16 ? number : 12 + WTF::fastLog2(number - 1) + 1; }
         static uint64_t boundOf(unsigned bucket) { return bucket <= 16 ? bucket : 1ull << (bucket - 12); }
@@ -6633,8 +6504,8 @@ struct State::Counts {
         std::array<std::array<uint64_t, numberOfBuckets>, numberOfBuckets> arrays { };
         std::array<uint64_t, numberOfBuckets> maps { };
         std::array<uint64_t, numberOfBuckets> sets { };
-        uint64_t arraysHeldOnce { 0 };
-        uint64_t arraysHeldByMore { 0 };
+        uint64_t arraysReferencedOnce { 0 };
+        uint64_t arraysReferencedMoreThanOnce { 0 };
     };
     struct Observer final : HeapObserver {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Observer);
@@ -6646,14 +6517,12 @@ struct State::Counts {
         void didGarbageCollect(CollectionScope scope) final { state.countCollection(scope); }
         State& state;
     };
-    // The collector's thread writes these three, whoever prints reads them.
     Lock collectionsLock;
     Vector<Collection> collections;
     LiveCells liveCells;
     std::unique_ptr<Observer> observer;
 };
 
-// Held by whoever looks at the list.
 static Lock statesWithCountsLock;
 static Vector<State*>& statesWithCounts()
 {
@@ -6661,7 +6530,7 @@ static Vector<State*>& statesWithCounts()
     return states;
 }
 
-void State::fillStatics(uint32_t firstWord, uint32_t endWord)
+void State::initializeStatics(uint32_t firstWord, uint32_t endWord)
 {
     for (auto& run : std::span { data.at<std::array<uint32_t, 4>>(data.staticsRunsOffset), data.numberOfStaticsRuns }) {
         if (run[0] >= firstWord && run[0] < endWord)
@@ -6672,36 +6541,36 @@ void State::fillStatics(uint32_t firstWord, uint32_t endWord)
 void State::createStatics()
 {
     RELEASE_ASSERT(data.numberOfCards <= Instance::roundedUpToGranule(data.sizeOfStatics) >> Instance::typedCardShift);
-    instance.typedCards = reinterpret_cast<uint8_t*>(&instance) + Instance::displacementOfTypedCards(data.sizeOfStatics);
-    instance.typedStatics = reinterpret_cast<uint8_t*>(&instance) + Instance::displacementOfTypedStatics(data.sizeOfStatics);
-    fillStatics(data.sizeOfStaticsFilledLate / sizeof(uint64_t), std::numeric_limits<uint32_t>::max());
-    m_sizeOfStaticsWithoutAccess = static_cast<uint32_t>(WTF::roundDownToMultipleOf(pageSize(), static_cast<size_t>(data.sizeOfStaticsFilledLate)));
-    if (m_sizeOfStaticsWithoutAccess)
-        OSAllocator::protect(instance.typedStatics, m_sizeOfStaticsWithoutAccess, false, false);
+    instance.typedCards = reinterpret_cast<uint8_t*>(&instance) + Instance::typedCardsDisplacement(data.sizeOfStatics);
+    instance.typedStatics = reinterpret_cast<uint8_t*>(&instance) + Instance::typedStaticsDisplacement(data.sizeOfStatics);
+    initializeStatics(data.sizeOfLazilyInitializedStatics / sizeof(uint64_t), std::numeric_limits<uint32_t>::max());
+    m_inaccessibleStaticsSize = static_cast<uint32_t>(WTF::roundDownToMultipleOf(pageSize(), static_cast<size_t>(data.sizeOfLazilyInitializedStatics)));
+    if (m_inaccessibleStaticsSize)
+        OSAllocator::protect(instance.typedStatics, m_inaccessibleStaticsSize, false, false);
 }
 
-void State::fillStaticsOfProgram()
+void State::initializeProgramStatics()
 {
-    if (m_sizeOfStaticsWithoutAccess)
-        OSAllocator::protect(instance.typedStatics, m_sizeOfStaticsWithoutAccess, true, true);
-    fillStatics(0, data.sizeOfStaticsFilledLate / sizeof(uint64_t));
+    if (m_inaccessibleStaticsSize)
+        OSAllocator::protect(instance.typedStatics, m_inaccessibleStaticsSize, true, true);
+    initializeStatics(0, data.sizeOfLazilyInitializedStatics / sizeof(uint64_t));
     WTF::storeStoreFence();
-    m_sizeOfStaticsWithoutAccess = 0;
-    m_areStaticsOfProgramFilled = true;
+    m_inaccessibleStaticsSize = 0;
+    m_programStaticsInitialized = true;
 }
 
 void State::destroyStatics()
 {
-    if (m_sizeOfStaticsWithoutAccess)
-        OSAllocator::protect(instance.typedStatics, m_sizeOfStaticsWithoutAccess, true, true);
+    if (m_inaccessibleStaticsSize)
+        OSAllocator::protect(instance.typedStatics, m_inaccessibleStaticsSize, true, true);
 }
 
 State::State(VM& vm, Instance& instance, const Data& data)
     : instance(instance)
     , data(data)
     , extraProperties(vm)
-    , handlesOfExtraPropertiesOfVM(ExtraPropertiesHandles::of(vm, instance))
-    , handlesOfExtraProperties(handlesOfExtraPropertiesOfVM.get())
+    , vmExtraPropertiesHandleTable(ExtraPropertiesHandleTable::of(vm, instance))
+    , extraPropertiesHandleTable(vmExtraPropertiesHandleTable.get())
     , numberBoxes(vm)
     , fieldAttributes(vm)
     , m_structuresWithOtherPrototype(vm)
@@ -6713,44 +6582,43 @@ State::State(VM& vm, Instance& instance, const Data& data)
     m_cachedFields = createZeroedTable<CachedField>(numberOfCachedFields);
     m_cachedFieldNames = createZeroedTable<CachedFieldName>(numberOfCachedFieldNames);
     m_cachedTransitions = createZeroedTable<CachedTransition>(numberOfCachedTransitions);
-    m_transitionsMadeBefore = createZeroedTable<TransitionMadeBefore>(numberOfTransitionsMadeBefore);
-    m_castTransitions = createZeroedTable<CastTransition>(1u << CastTransition::bitsOfPlace);
+    m_previousTransitions = createZeroedTable<PreviousTransition>(numberOfPreviousTransitions);
+    m_castTransitions = createZeroedTable<CastTransition>(1u << CastTransition::indexBits);
     instance.typedCastTransitions = m_castTransitions;
     m_cachedStores = createZeroedTable<CachedStore>(numberOfCachedStores);
-    instance.typedKnownStoreTransitions = createZeroedTable<KnownStoreTransition>(1 << KnownStoreTransition::bitsOfPlace);
-    instance.typedPlacesOfExtraProperties = createZeroedTable<PlaceOfExtraProperty>(1 << PlaceOfExtraProperty::bitsOfPlace);
-    instance.typedCreationsBehindExtraProperties = createZeroedTable<CreationBehindExtraProperties>(1 << CreationBehindExtraProperties::bitsOfPlace);
-    m_typesAskedAboutProperties = createZeroedTable<uintptr_t>(numberOfTypesAskedAboutProperties);
-    m_propertiesWithViews = createZeroedTable<PropertiesWithViews>(numberOfPropertiesWithViews);
-    // Here, and not where the program is entered: the host evaluates modules of its own before that.
+    instance.typedKnownStoreTransitions = createZeroedTable<KnownStoreTransition>(1 << KnownStoreTransition::indexBits);
+    instance.typedExtraPropertyLocations = createZeroedTable<ExtraPropertyLocation>(1 << ExtraPropertyLocation::indexBits);
+    instance.typedLateFieldCreations = createZeroedTable<LateFieldCreation>(1 << LateFieldCreation::indexBits);
+    m_propertyConversionCache = createZeroedTable<uintptr_t>(propertyConversionCacheSize);
+    m_propertiesWithSupertypes = createZeroedTable<PropertiesWithSupertypes>(numberOfPropertiesWithSupertypes);
     createStatics();
-    instance.typedAllocationRows = reinterpret_cast<uint16_t*>(createZeroedTable<uint8_t>(sizeOfAllocationRowsAndNumbers(data)) + sizeOfAllocationRows(data));
-    instance.typedAlteredClassObjects = createZeroedTable<uint8_t>(data.numberOfLayoutIndices);
+    instance.typedAllocationIndices = reinterpret_cast<uint16_t*>(createZeroedTable<uint8_t>(allocationEntriesAndIndicesSize(data)) + allocationEntriesSize(data));
+    instance.typedModifiedClassObjects = createZeroedTable<uint8_t>(data.numberOfLayoutIndices);
     instance.typedShapeSets = data.at<uint32_t>(data.shapeSetsOffset);
-    instance.fieldsBelow().typedStrings = createStringTable(initialCapacityOfStringTable);
+    instance.negativeOffsetFields().typedStrings = createStringTable(stringTableInitialCapacity);
     instance.typedLiteralStrings = createZeroedTable<JSCell*>(data.numberOfLiteralStrings);
     instance.typedLiteralStringCache = createZeroedTable<uint64_t>(1 << literalStringCacheIndexBits);
     instance.typedData = data.at<uint8_t>(0);
-    RELEASE_ASSERT(data.numberOfRows <= Instance::maxNumberOfRows);
-    instance.objectPrototypeOfRealm = instance.globalObject->objectPrototype();
-    instance.firstRowOfThisPlusOne = data.firstNumberOfRowsOfThis + 1;
-    instance.displacementsOfNames = data.at<uint32_t>(data.displacementsOfNamesOffset);
-    instance.placesByNameAndRow = data.at<uint32_t>(data.placesByNameAndRowOffset);
+    RELEASE_ASSERT(data.numberOfStructureDescriptors <= Instance::maxStructureDescriptors);
+    instance.realmObjectPrototype = instance.globalObject->objectPrototype();
+    instance.firstThisStructureDescriptorPlusOne = data.firstThisStructureDescriptor + 1;
+    instance.nameDisplacements = data.at<uint32_t>(data.nameDisplacementsOffset);
+    instance.offsetsByNameAndStructure = data.at<uint32_t>(data.offsetsByNameAndStructureOffset);
     instance.typedFunctions = FunctionTables::of(vm).words;
     for (unsigned kind = 0; kind < Instance::numberOfTypedExecutables; ++kind)
         instance.typedExecutables[kind] = FunctionTables::of(vm).executables[kind].get();
     instance.typedClosures = createZeroedTable<uint8_t>(data.numberOfFunctions * (data.usesWideReferences ? sizeof(JSCell*) : sizeof(uint32_t)));
-    instance.fieldsBelow().typedBuiltins = createZeroedTable<JSCell*>(Builtins::numberOfCells());
-    isOfLockedRealm = instance.globalObject->hasImmutableIntrinsics();
-    if (isOfLockedRealm) {
-        instance.objectPrototypeOfLockedRealm = instance.globalObject->objectPrototype();
-        for (unsigned index : Builtins::singleton().cellsFilledFromStart())
-            instance.fieldsBelow().typedBuiltins[index] = Builtins::singleton().findCell(instance.globalObject, index);
-        for (uint32_t index : std::span { data.at<uint32_t>(data.builtinCellsFilledFromStartOffset), data.numberOfBuiltinCellsFilledFromStart })
-            instance.fieldsBelow().typedBuiltins[index] = Builtins::singleton().findCell(instance.globalObject, index);
+    instance.negativeOffsetFields().typedBuiltins = createZeroedTable<JSCell*>(Builtins::numberOfCells());
+    realmIsLocked = instance.globalObject->hasImmutableIntrinsics();
+    if (realmIsLocked) {
+        instance.lockedRealmObjectPrototype = instance.globalObject->objectPrototype();
+        for (unsigned index : Builtins::singleton().eagerCells())
+            instance.negativeOffsetFields().typedBuiltins[index] = Builtins::singleton().findCell(instance.globalObject, index);
+        for (uint32_t index : std::span { data.at<uint32_t>(data.eagerBuiltinCellsOffset), data.numberOfEagerBuiltinCells })
+            instance.negativeOffsetFields().typedBuiltins[index] = Builtins::singleton().findCell(instance.globalObject, index);
     }
-    instance.typedOrderKeys = createZeroedTable<uintptr_t*>(Instance::numberOfPlacesForTypedOrderKeys(data.numberOfLayouts));
-    instance.typedPlacesOfOrderKeys = createZeroedTable<uint16_t>(data.numberOfLayouts);
+    instance.typedOrderKeys = createZeroedTable<uintptr_t*>(Instance::numberOfTypedOrderKeyIndices(data.numberOfLayouts));
+    instance.typedOrderKeyIndices = createZeroedTable<uint16_t>(data.numberOfLayouts);
     instance.typedKeyLists = createZeroedTable<Instance::TypedKeyList>(Instance::numberOfTypedKeyLists);
     instance.emptyKeyList = JSArray::tryCreate(vm, instance.globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
     RELEASE_ASSERT(instance.emptyKeyList);
@@ -6774,7 +6642,6 @@ State::State(VM& vm, Instance& instance, const Data& data)
 #endif
         });
     }
-    // The collector does not visit this State before the Instance is registered, and is held off until then: see Instance::ensure().
     RELEASE_ASSERT(vm.heap.isDeferred());
 }
 
@@ -6800,45 +6667,45 @@ State::~State()
     }
     destroyZeroedTable(m_cachedFieldNames, numberOfCachedFieldNames);
     destroyZeroedTable(m_cachedTransitions, numberOfCachedTransitions);
-    destroyZeroedTable(m_transitionsMadeBefore, numberOfTransitionsMadeBefore);
-    destroyZeroedTable(m_castTransitions, 1u << CastTransition::bitsOfPlace);
+    destroyZeroedTable(m_previousTransitions, numberOfPreviousTransitions);
+    destroyZeroedTable(m_castTransitions, 1u << CastTransition::indexBits);
     destroyZeroedTable(m_cachedStores, numberOfCachedStores);
-    destroyZeroedTable(static_cast<KnownStoreTransition*>(instance.typedKnownStoreTransitions), 1 << KnownStoreTransition::bitsOfPlace);
-    destroyZeroedTable(static_cast<PlaceOfExtraProperty*>(instance.typedPlacesOfExtraProperties), 1 << PlaceOfExtraProperty::bitsOfPlace);
-    destroyZeroedTable(static_cast<CreationBehindExtraProperties*>(instance.typedCreationsBehindExtraProperties), 1 << CreationBehindExtraProperties::bitsOfPlace);
-    destroyZeroedTable(m_typesAskedAboutProperties, numberOfTypesAskedAboutProperties);
-    destroyZeroedTable(m_propertiesWithViews, numberOfPropertiesWithViews);
+    destroyZeroedTable(static_cast<KnownStoreTransition*>(instance.typedKnownStoreTransitions), 1 << KnownStoreTransition::indexBits);
+    destroyZeroedTable(static_cast<ExtraPropertyLocation*>(instance.typedExtraPropertyLocations), 1 << ExtraPropertyLocation::indexBits);
+    destroyZeroedTable(static_cast<LateFieldCreation*>(instance.typedLateFieldCreations), 1 << LateFieldCreation::indexBits);
+    destroyZeroedTable(m_propertyConversionCache, propertyConversionCacheSize);
+    destroyZeroedTable(m_propertiesWithSupertypes, numberOfPropertiesWithSupertypes);
     fastFree(m_youngRoots);
     destroyStatics();
-    destroyZeroedTable(reinterpret_cast<uint8_t*>(instance.typedAllocationRows) - sizeOfAllocationRows(data), sizeOfAllocationRowsAndNumbers(data));
-    destroyZeroedTable(instance.typedAlteredClassObjects, data.numberOfLayoutIndices);
-    destroyZeroedTable(instance.fieldsBelow().typedStrings, capacityOfStringTable(instance.fieldsBelow().typedStrings));
+    destroyZeroedTable(reinterpret_cast<uint8_t*>(instance.typedAllocationIndices) - allocationEntriesSize(data), allocationEntriesAndIndicesSize(data));
+    destroyZeroedTable(instance.typedModifiedClassObjects, data.numberOfLayoutIndices);
+    destroyZeroedTable(instance.negativeOffsetFields().typedStrings, stringTableCapacity(instance.negativeOffsetFields().typedStrings));
     destroyZeroedTable(instance.typedLiteralStrings, data.numberOfLiteralStrings);
     destroyZeroedTable(instance.typedLiteralStringCache, 1 << literalStringCacheIndexBits);
-    for (uint32_t capacity = initialCapacityOfStringTable; uint64_t* former : m_formerStringTables) {
+    for (uint32_t capacity = stringTableInitialCapacity; uint64_t* former : m_retiredStringTables) {
         destroyZeroedTable(former, capacity);
         capacity *= 2;
     }
     destroyZeroedTable(static_cast<uint8_t*>(instance.typedClosures), data.numberOfFunctions * (data.usesWideReferences ? sizeof(JSCell*) : sizeof(uint32_t)));
-    destroyZeroedTable(instance.fieldsBelow().typedBuiltins, Builtins::numberOfCells());
-    destroyZeroedTable(instance.typedOrderKeys, Instance::numberOfPlacesForTypedOrderKeys(data.numberOfLayouts));
-    destroyZeroedTable(instance.typedPlacesOfOrderKeys, data.numberOfLayouts);
+    destroyZeroedTable(instance.negativeOffsetFields().typedBuiltins, Builtins::numberOfCells());
+    destroyZeroedTable(instance.typedOrderKeys, Instance::numberOfTypedOrderKeyIndices(data.numberOfLayouts));
+    destroyZeroedTable(instance.typedOrderKeyIndices, data.numberOfLayouts);
     destroyZeroedTable(instance.typedKeyLists, Instance::numberOfTypedKeyLists);
 }
 
 } // namespace Typed
 
-bool becomesOrdinaryObject(const ClassInfo* from, const ClassInfo* to)
+bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to)
 {
     return ((from == Typed::ClassPrototype::info() || from == Typed::Object::info()) && to == JSFinalObject::info()) || (from == JSFinalObject::info() && (to == Typed::Object::info() || to == Typed::GuardedObject::info()));
 }
 
 namespace Typed {
 
-JSObject* State::importMetaOfModule(JSGlobalObject* globalObject, JSString* path)
+JSObject* State::importMetaForModule(JSGlobalObject* globalObject, JSString* path)
 {
     String text = path->value(globalObject);
-    for (auto& [known, meta] : m_importMetaOfModules) {
+    for (auto& [known, meta] : m_moduleImportMetas) {
         if (known == text)
             return meta;
     }
@@ -6846,7 +6713,7 @@ JSObject* State::importMetaOfModule(JSGlobalObject* globalObject, JSString* path
     if (!meta)
         return nullptr;
     didCreate(meta);
-    m_importMetaOfModules.append({ WTF::move(text), meta });
+    m_moduleImportMetas.append({ WTF::move(text), meta });
     return meta;
 }
 
@@ -6856,34 +6723,34 @@ void State::didCreate(JSCell* cell)
     m_cells.append(cell);
 }
 
-void State::captureBuiltinsOfRealm()
+void State::captureRealmBuiltins()
 {
     VM& vm = *instance.vm;
     auto& builtins = Builtins::singleton();
     if (Instance* first = instance.globalObject->aotInstance(); first != &instance) {
-        memcpySpan(std::span { instance.fieldsBelow().typedBuiltins, Builtins::numberOfCells() }, std::span { first->fieldsBelow().typedBuiltins, Builtins::numberOfCells() });
+        memcpySpan(std::span { instance.negativeOffsetFields().typedBuiltins, Builtins::numberOfCells() }, std::span { first->negativeOffsetFields().typedBuiltins, Builtins::numberOfCells() });
         return;
     }
-    for (unsigned index = 0; index < Builtins::firstCellOfPrototypes(); ++index) {
-        if (index >= builtins.cellOfOriginalStructure(0) || builtins.isCellOfReplaceableGlobal(index)) {
-            instance.fieldsBelow().typedBuiltins[index] = vm.structureStructure.get();
+    for (unsigned index = 0; index < Builtins::firstPrototypeCell(); ++index) {
+        if (index >= builtins.originalStructureCell(0) || builtins.isReplaceableGlobalCell(index)) {
+            instance.negativeOffsetFields().typedBuiltins[index] = vm.structureStructure.get();
             continue;
         }
         if (!builtins.hasCellAt(index))
             continue;
-        instance.fieldsBelow().typedBuiltins[index] = builtins.captureCell(instance.globalObject, nullptr, index);
-        didCreate(instance.fieldsBelow().typedBuiltins[index]);
+        instance.negativeOffsetFields().typedBuiltins[index] = builtins.captureCell(instance.globalObject, nullptr, index);
+        didCreate(instance.negativeOffsetFields().typedBuiltins[index]);
     }
 }
 
-void State::captureBuiltinsOf(ASCIILiteral global, JSObject* object)
+void State::captureBuiltinsFrom(ASCIILiteral global, JSObject* object)
 {
     auto& builtins = Builtins::singleton();
-    for (unsigned index : builtins.cellsOfReplaceableGlobals()) {
+    for (unsigned index : builtins.replaceableGlobalCells()) {
         if (builtins.at(BuiltinID(index)).holder != global)
             continue;
-        instance.fieldsBelow().typedBuiltins[index] = builtins.captureCell(instance.globalObject, object, index);
-        didCreate(instance.fieldsBelow().typedBuiltins[index]);
+        instance.negativeOffsetFields().typedBuiltins[index] = builtins.captureCell(instance.globalObject, object, index);
+        didCreate(instance.negativeOffsetFields().typedBuiltins[index]);
     }
 }
 
@@ -6924,7 +6791,7 @@ JSValue requireCompiledEntryPoint(JSGlobalObject* globalObject, AbstractModuleRe
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* yielded = Instance::importOfCompiledEntryPoint(record);
+    JSObject* yielded = Instance::compiledEntryPointImport(record);
     if (!yielded)
         return { };
     MarkedArgumentBuffer arguments;
@@ -6953,7 +6820,6 @@ static const std::array<uint32_t, 3>* findBuiltinFunction(uint32_t id)
     return found != functions.end() && (*found)[0] == id ? &*found : nullptr;
 }
 
-// By the image alone: there may be no State yet.
 static const LayoutData* classConstructedBy(const Data& data, uint32_t function)
 {
     if (static_cast<Format::FunctionKind>(data.at<uint8_t>(data.functionKindsOffset)[function] & functionKindMask) != Format::FunctionKind::Constructor)
@@ -6967,7 +6833,7 @@ static const LayoutData* classConstructedBy(const Data& data, uint32_t function)
     return offset ? data.at<LayoutData>(offset) : nullptr;
 }
 
-static const AllocationData* allocationOfThis(const Data& data, uint32_t function)
+static const AllocationData* thisAllocation(const Data& data, uint32_t function)
 {
     std::span functions { data.at<std::array<uint32_t, 2>>(data.constructorFunctionsOffset), data.numberOfConstructorFunctions };
     auto found = std::ranges::lower_bound(functions, function, { }, [](auto& functionAndAllocation) {
@@ -6984,18 +6850,15 @@ FunctionTables::FunctionTables(VM& vm)
     RELEASE_ASSERT(data.numberOfFunctions <= ClosureWord::firstReservedFunction);
     for (auto& builtin : builtinFunctionsInImage()) {
         if (static_cast<ImplementationVisibility>(builtin[2]) == ImplementationVisibility::PrivateRecursive)
-            functionsHiddenWithWhatTheyCall.append(builtin[1]);
+            functionsHiddenWithCallees.append(builtin[1]);
     }
-    // A new one each time, whatever the name: there is no JIT, so the VM shares none.
     RELEASE_ASSERT(!Options::useJIT());
     for (unsigned kind = 0; kind < executables.size(); ++kind) {
         bool isClass = kind == 4;
-        bool isBound = kind == executableOfBoundClosures;
-        // Private: where the engine comes in through the host function, the frame of that is not the function's. The compiled frame is.
+        bool isBound = kind == boundClosureExecutableKind;
         auto visibility = !isClass && !isBound && kind & 1 ? ImplementationVisibility::PrivateRecursive : ImplementationVisibility::Private;
         NativeExecutable* executable = vm.getHostFunction(isClass ? callClassConstructor : callClosure, visibility, isClass || (!isBound && kind & 2) ? constructClosure : callHostFunctionAsConstructor, 0, String());
         executable->setIsSharedByAOTTypedClosures();
-        // Interpreted code that calls it goes there without a native frame in between.
         if (!isClass)
             executable->setCallEntrypoint(closureEntrypoint());
         executables[kind] = Strong<JSCell>(vm, executable);
@@ -7004,7 +6867,7 @@ FunctionTables::FunctionTables(VM& vm)
 
 NativeExecutable* FunctionTables::executableOf(uint32_t function) const
 {
-    return uncheckedDowncast<NativeExecutable>(executables[kindOfExecutable(data.at<uint8_t>(data.functionKindsOffset)[function], functionsHiddenWithWhatTheyCall.contains(function))].get());
+    return uncheckedDowncast<NativeExecutable>(executables[executableKind(data.at<uint8_t>(data.functionKindsOffset)[function], functionsHiddenWithCallees.contains(function))].get());
 }
 
 FunctionTables& FunctionTables::of(VM& vm)
@@ -7029,21 +6892,20 @@ static uint64_t closureWord(const Data& data, uint32_t function, uint64_t relati
     bool constructs = kind == Format::FunctionKind::Constructor || (kind == Format::FunctionKind::Plain && !(kindAndDeclaration & (functionIsAsync | functionIsGenerator)));
     if (kind == Format::FunctionKind::Constructor)
         word |= 1ULL << ClosureWord::isNotCallableBit;
-    // As createThis() and constructClosure() go about it. Closures go by the generic entrypoint of a constructor, which is what is listed.
     std::span constructors { data.at<std::array<uint32_t, 2>>(data.constructorsOffset), data.numberOfConstructors };
     bool isListed = std::ranges::binary_search(constructors, function, { }, [](auto& constructorAndClass) {
         return constructorAndClass[0];
     });
     const LayoutData* ofClass = isListed ? classConstructedBy(data, function) : nullptr;
-    if (ofClass ? !ofClass->hasForeignRoot && !ofClass->constructorTakesNewTarget : constructs && kind == Format::FunctionKind::Plain)
+    if (ofClass ? !ofClass->hasUntypedBase && !ofClass->constructorTakesNewTarget : constructs && kind == Format::FunctionKind::Plain)
         word |= 1ULL << ClosureWord::constructsOrdinaryObjectBit;
-    if (ofClass && !ofClass->isLaidOut && ofClass->hasForeignRoot && ofClass->constructorTakesNewTarget)
+    if (ofClass && !ofClass->hasFixedLayout && ofClass->hasUntypedBase && ofClass->constructorTakesNewTarget)
         word |= 1ULL << ClosureWord::isDerivedConstructorBit;
     RELEASE_ASSERT((word >> ClosureWord::isDerivedConstructorBit & 3) != 3);
     return word;
 }
 
-static Structure* closureStructureOfRealm(VM& vm, JSGlobalObject* globalObject, unsigned which)
+static Structure* realmClosureStructure(VM& vm, JSGlobalObject* globalObject, unsigned which)
 {
     if (Structure* structure = globalObject->aotClosureStructure(which))
         return structure;
@@ -7061,7 +6923,7 @@ static Structure* closureStructureOfRealm(VM& vm, JSGlobalObject* globalObject, 
     case 3:
         prototype = globalObject->asyncGeneratorFunctionPrototype();
         break;
-    case closureStructureOfClassObjects:
+    case classObjectClosureStructure:
         prototype = globalObject->functionPrototype();
         break;
     }
@@ -7083,8 +6945,8 @@ JSFunction* builtinFunction(JSGlobalObject* globalObject, uint32_t id, JSObject*
     RELEASE_ASSERT(builtin);
     uint32_t function = (*builtin)[1];
     const Data& data = *dataInImageIfAny();
-    RELEASE_ASSERT(closureStructureOf(data.at<uint8_t>(data.functionKindsOffset)[function]) != closureStructureOfClassObjects);
-    Closure* closure = Closure::create(vm, closureStructureOfRealm(vm, globalObject, closureStructureOf(data.at<uint8_t>(data.functionKindsOffset)[function])), function);
+    RELEASE_ASSERT(closureStructureOf(data.at<uint8_t>(data.functionKindsOffset)[function]) != classObjectClosureStructure);
+    Closure* closure = Closure::create(vm, realmClosureStructure(vm, globalObject, closureStructureOf(data.at<uint8_t>(data.functionKindsOffset)[function])), function);
     if (prototype)
         closure->setPrototypeDirect(vm, prototype);
     return closure;
@@ -7095,7 +6957,6 @@ void didFinishCreation(JSGlobalObject* globalObject)
     VMProgram* program = globalObject->vm().m_aotProgram.get();
     if (!program || !program->typedFunctionTables)
         return;
-    // Nothing has called one of them so far. What does needs the Instance.
     for (auto& closure : program->typedFunctionTables->closuresWithoutInstance) {
         if (closure && closure->structure()->realm() == globalObject) {
             Instance::ensure(globalObject);
@@ -7104,7 +6965,7 @@ void didFinishCreation(JSGlobalObject* globalObject)
     }
 }
 
-void State::adoptClosuresOfRealm(VM& vm)
+void State::adoptRealmClosures(VM& vm)
 {
     closureStructures(vm);
     JSGlobalObject* globalObject = instance.globalObject;
@@ -7115,7 +6976,6 @@ void State::adoptClosuresOfRealm(VM& vm)
             return true;
         if (closure->structure()->realm() != globalObject)
             return false;
-        // The one it has by now, if it has been given properties or another prototype, and those it went through: another closure may go the same way.
         for (Structure* structure = closure->structure(); structure && !structure->aotInstance(); structure = structure->previousID())
             structure->setAOTInstance(&instance);
         return true;
@@ -7123,7 +6983,7 @@ void State::adoptClosuresOfRealm(VM& vm)
 
 }
 
-static std::optional<uint32_t> entrypointOfBuiltinModule(uint32_t id)
+static std::optional<uint32_t> builtinModuleEntrypoint(uint32_t id)
 {
     Image* image = Image::withCode();
     if (!image || !image->header().typedDataSize)
@@ -7140,33 +7000,32 @@ static std::optional<uint32_t> entrypointOfBuiltinModule(uint32_t id)
 
 bool hasBuiltinModule(JSGlobalObject*, uint32_t id)
 {
-    return !!entrypointOfBuiltinModule(id);
+    return !!builtinModuleEntrypoint(id);
 }
 
-void willAskProgramForFile(JSGlobalObject* globalObject, const String& path)
+void willRequestFileFromProgram(JSGlobalObject* globalObject, const String& path)
 {
     State& state = *Instance::ensure(globalObject).typed;
-    if (!state.moduleRecord && state.pathOfFileAskedFor.isNull())
-        state.pathOfFileAskedFor = path;
+    if (!state.moduleRecord && state.requestedFilePath.isNull())
+        state.requestedFilePath = path;
 }
 
-Identifier State::keyOfImporter(VM& vm) const
+Identifier State::importerKey(VM& vm) const
 {
     if (moduleRecord) [[likely]]
         return moduleRecord->moduleKey();
-    return pathOfFileAskedFor.isNull() ? vm.propertyNames->emptyIdentifier : Identifier::fromString(vm, pathOfFileAskedFor);
+    return requestedFilePath.isNull() ? vm.propertyNames->emptyIdentifier : Identifier::fromString(vm, requestedFilePath);
 }
 
 JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
 {
-    constexpr uint32_t filesOfProgramByPath = 0x7fffffff;
-    if (id == filesOfProgramByPath && !globalObject->hasImmutableIntrinsics()) [[unlikely]]
+    constexpr uint32_t programFilesByPath = 0x7fffffff;
+    if (id == programFilesByPath && !globalObject->hasImmutableIntrinsics()) [[unlikely]]
         return jsUndefined();
-    auto entrypoint = entrypointOfBuiltinModule(id);
+    auto entrypoint = builtinModuleEntrypoint(id);
     RELEASE_ASSERT(entrypoint);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // That of the default loader of the global object, whichever loader asks.
     State& state = *Instance::ensure(globalObject).typed;
     using Outcome = State::BuiltinModule::Outcome;
     if (auto earlier = state.m_builtinModules.find(id); earlier != state.m_builtinModules.end()) [[unlikely]] {
@@ -7176,13 +7035,11 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
         case Outcome::Thrown:
             throwException(globalObject, scope, JSValue::decode(earlier->value.value));
             return { };
-        // A cycle at load: run again and again, that is how it would end.
         case Outcome::None:
             throwStackOverflowError(globalObject, scope);
             return { };
         }
     }
-    // What fails for want of stack would not fail the next time. It is not begun.
     constexpr size_t stackToStartWith = 128 * KB;
     if (std::bit_cast<uintptr_t>(currentStackPointer()) - std::bit_cast<uintptr_t>(vm.softStackLimit()) < stackToStartWith || !vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
@@ -7192,7 +7049,6 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
     state.m_builtinModules.add(id, State::BuiltinModule { });
     JSValue exports = call(globalObject, module, JSC::getCallData(module), jsUndefined(), ArgList());
     Exception* exception = scope.exception();
-    // The end of the thread is no outcome of the module.
     if (exception && vm.isTerminationException(exception)) [[unlikely]]
         return { };
     JSValue outcome = exception ? exception->value() : exports;
@@ -7206,7 +7062,6 @@ Identifier enginePrivateName(VM& vm, const String& text)
 {
     if (PrivateSymbolImpl* symbol = vm.propertyNames->builtinNames().lookUpPrivateName(text))
         return Identifier::fromUid(vm, symbol);
-    // What is not registered no native code can spell. The registry holds no reference, and lives as long as the VM: so does the symbol.
     Ref<PrivateSymbolImpl> symbol = PrivateSymbolImpl::create(*text.impl());
     Identifier name = Identifier::fromUid(vm, symbol.ptr());
     vm.propertyNames->appendExternalName(Identifier::fromString(vm, text), name);
@@ -7218,41 +7073,39 @@ Identifier enginePrivateName(VM& vm, const String& text)
 void didCreateReplaceableGlobal(JSGlobalObject* globalObject, ASCIILiteral name, JSObject* object)
 {
     if (Instance* instance = globalObject->aotInstance(); instance && instance->typed)
-        instance->typed->captureBuiltinsOf(name, object);
+        instance->typed->captureBuiltinsFrom(name, object);
 }
 
-void didCreateStructureOfHostClass(JSGlobalObject* globalObject, unsigned number, Structure* structure)
+void didCreateHostClassStructure(JSGlobalObject* globalObject, unsigned number, Structure* structure)
 {
     if (Instance* instance = globalObject->aotInstance(); instance && number < Instance::numberOfHostClasses)
-        instance->structureIDsOfHostClasses[number] = structure->id().bits();
+        instance->hostClassStructureIDs[number] = structure->id().bits();
 }
 
-// UTF-8, but that half of a surrogate pair on its own, which a string of the language may have, is encoded like any other code unit.
 static String textOf(std::span<const uint8_t> bytes)
 {
     if (charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
         return StringImpl::createWithoutCopying(byteCast<Latin1Character>(bytes));
     if (String text = String::fromUTF8(bytes); !text.isNull())
         return text;
-    return String(decodeTextOfProgram(bytes).span());
+    return String(decodeProgramString(bytes).span());
 }
 
-// The characters of an ASCII text stay where they are, in the image: an atom may outlive the State (a property table, a JSString holds it), so an image is never unmapped.
-static String textOfConstant(const Data&, uint32_t index);
+static String constantString(const Data&, uint32_t index);
 
 static String atomOf(const Data& data, uint32_t index)
 {
     if (uint32_t facts = data.stringFacts(index); facts & Data::stringIsASCII) {
         auto characters = byteCast<Latin1Character>(data.stringInImage(index));
-        WTF::HashTranslatorCharBuffer<Latin1Character> buffer { characters, facts & Data::stringHasIdentifierNumber ? data.hashOfIdentifier(facts & Data::stringHashMask) : facts & Data::stringHashMask };
+        WTF::HashTranslatorCharBuffer<Latin1Character> buffer { characters, facts & Data::stringHasIdentifierNumber ? data.identifierHash(facts & Data::stringHashMask) : facts & Data::stringHashMask };
         RELEASE_ASSERT(AtomStringImpl::isValidPrecomputedHash(buffer.hash));
         ASSERT(buffer.hash == StringHasher::computeHashAndMaskTop8Bits(buffer.characters));
         return AtomStringImpl::addWithoutCopying(buffer);
     }
-    return AtomString(textOfConstant(data, index)).string();
+    return AtomString(constantString(data, index)).string();
 }
 
-static Identifier makeConstantSymbol(VM& vm, std::span<const uint8_t> name)
+static Identifier createConstantSymbol(VM& vm, std::span<const uint8_t> name)
 {
     size_t endOfHead = 1;
     while (name[endOfHead] != ':' && name[endOfHead] != ';')
@@ -7265,30 +7118,29 @@ static Identifier makeConstantSymbol(VM& vm, std::span<const uint8_t> name)
     return Identifier::fromUid(SymbolImpl::create(*text.impl()).get());
 }
 
-static Identifier makeNumberedIdentifier(VM& vm, const Data& data, uint32_t index)
+static Identifier createNumberedIdentifier(VM& vm, const Data& data, uint32_t index)
 {
     auto name = data.string(index);
     if (isConstantSymbol(name))
-        return makeConstantSymbol(vm, name);
+        return createConstantSymbol(vm, name);
     if (isEnginePrivateName(name))
         return enginePrivateName(vm, textOf(name.subspan(1)));
     return Identifier::fromString(vm, atomOf(data, index));
 }
 
-Identifier tryMakeIdentifier(VM& vm, uint32_t identifier)
+Identifier tryCreateIdentifier(VM& vm, uint32_t identifier)
 {
     const Data* data = dataInImageIfAny();
-    uint32_t stringPlusOne = data ? data->stringOfIdentifierPlusOne(identifier) : 0;
+    uint32_t stringPlusOne = data ? data->identifierStringPlusOne(identifier) : 0;
     if (!stringPlusOne)
         return Identifier();
-    return makeNumberedIdentifier(vm, *data, stringPlusOne - 1);
+    return createNumberedIdentifier(vm, *data, stringPlusOne - 1);
 }
 
-// The characters stay where they are, in the image.
-static String textOfConstant(const Data& data, uint32_t index)
+static String constantString(const Data& data, uint32_t index)
 {
     if (uint32_t facts = data.stringFacts(index); facts & Data::stringIsASCII)
-        return StringImpl::createWithoutCopyingWithHash(byteCast<Latin1Character>(data.stringInImage(index)), facts & Data::stringHasIdentifierNumber ? data.hashOfIdentifier(facts & Data::stringHashMask) : facts & Data::stringHashMask);
+        return StringImpl::createWithoutCopyingWithHash(byteCast<Latin1Character>(data.stringInImage(index)), facts & Data::stringHasIdentifierNumber ? data.identifierHash(facts & Data::stringHashMask) : facts & Data::stringHashMask);
     std::span decoded { data.at<std::array<uint32_t, 3>>(data.decodedStringsOffset), data.numberOfDecodedStrings };
     auto found = std::ranges::lower_bound(decoded, index, { }, [](auto& entry) {
         return entry[0];
@@ -7303,7 +7155,7 @@ static String textOfConstant(const Data& data, uint32_t index)
     return StringImpl::createWithoutCopying(std::span { data.at<Latin1Character>((*found)[1]), length });
 }
 
-std::span<const uint8_t> Data::encodedFormOfDecodedString(uint32_t index) const
+std::span<const uint8_t> Data::encodedBytesOfDecodedString(uint32_t index) const
 {
     static Lock lock;
     static NeverDestroyed<std::map<std::pair<const Data*, uint32_t>, Vector<uint8_t>>> encodedForms;
@@ -7313,7 +7165,7 @@ std::span<const uint8_t> Data::encodedFormOfDecodedString(uint32_t index) const
         return entry->second.span();
     if (Options::validateAOTTypedFacts()) [[unlikely]]
         dataLogLn("AOT: the bytes of string ", index, " are asked for, which stands in the image decoded alone");
-    String text = textOfConstant(*this, index);
+    String text = constantString(*this, index);
     auto& bytes = entry->second;
     for (unsigned i = 0; i < text.length(); ++i) {
         char32_t character = text[i];
@@ -7328,7 +7180,7 @@ std::span<const uint8_t> Data::encodedFormOfDecodedString(uint32_t index) const
         else
             bytes.appendList({ static_cast<uint8_t>(0xf0 | character >> 18), static_cast<uint8_t>(0x80 | (character >> 12 & 0x3f)), static_cast<uint8_t>(0x80 | (character >> 6 & 0x3f)), static_cast<uint8_t>(0x80 | (character & 0x3f)) });
     }
-    RELEASE_ASSERT(bytes.size() <= sizeOfString(index));
+    RELEASE_ASSERT(bytes.size() <= stringSize(index));
     return bytes.span();
 }
 
@@ -7353,7 +7205,7 @@ bool State::trustGlobalProperty(VM& vm, JSGlobalObject* globalObject, uint32_t c
     return true;
 }
 
-bool State::trustMemberOfGlobal(VM& vm, JSGlobalObject* globalObject, uint32_t cacheNumber, UniquedStringImpl* global, JSObject* holder, UniquedStringImpl* name)
+bool State::trustGlobalMember(VM& vm, JSGlobalObject* globalObject, uint32_t cacheNumber, UniquedStringImpl* global, JSObject* holder, UniquedStringImpl* name)
 {
     if (Structure* structure = holder->structure(); structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore())
         structure->flattenDictionaryStructure(vm, holder);
@@ -7366,21 +7218,21 @@ bool State::trustMemberOfGlobal(VM& vm, JSGlobalObject* globalObject, uint32_t c
     ObjectPropertyCondition ofGlobal = generateConditionForSelfEquivalence(vm, nullptr, globalObject, global);
     if (!ofGlobal || ofGlobal.requiredValue() != JSValue(holder) || !ofGlobal.isWatchable(PropertyCondition::EnsureWatchability))
         return false;
-    ObjectPropertyCondition ofHolder = generateConditionForSelfEquivalence(vm, nullptr, holder, name);
-    if (!ofHolder || !ofHolder.isWatchable(PropertyCondition::EnsureWatchability))
+    ObjectPropertyCondition forHolder = generateConditionForSelfEquivalence(vm, nullptr, holder, name);
+    if (!forHolder || !forHolder.isWatchable(PropertyCondition::EnsureWatchability))
         return false;
     if (m_globalPropertyWatchpoints.isEmpty())
         m_globalPropertyWatchpoints.grow(data.numberOfGlobalPropertyCaches);
-    if (m_holderOfMemberWatchpoints.isEmpty())
-        m_holderOfMemberWatchpoints.grow(data.numberOfGlobalPropertyCaches);
+    if (m_memberHolderWatchpoints.isEmpty())
+        m_memberHolderWatchpoints.grow(data.numberOfGlobalPropertyCaches);
     GlobalPropertyCache& cache = globalPropertyCaches()[cacheNumber - 1];
-    auto& holderWatchpoint = m_holderOfMemberWatchpoints[cacheNumber - 1];
+    auto& holderWatchpoint = m_memberHolderWatchpoints[cacheNumber - 1];
     auto& memberWatchpoint = m_globalPropertyWatchpoints[cacheNumber - 1];
     holderWatchpoint = makeUnique<GlobalPropertyWatchpoint>();
     memberWatchpoint = makeUnique<GlobalPropertyWatchpoint>();
     holderWatchpoint->watch(vm, ofGlobal, cache, &memberWatchpoint);
-    memberWatchpoint->watch(vm, ofHolder, cache, &holderWatchpoint);
-    cache = { 0, 0, 0, JSValue::encode(ofHolder.requiredValue()) };
+    memberWatchpoint->watch(vm, forHolder, cache, &holderWatchpoint);
+    cache = { 0, 0, 0, JSValue::encode(forHolder.requiredValue()) };
     instance.didStoreRootInStatics(data.globalPropertyCachesOffset + (cacheNumber - 1) * sizeof(GlobalPropertyCache) + OBJECT_OFFSETOF(GlobalPropertyCache, value));
     return true;
 }
@@ -7388,7 +7240,7 @@ bool State::trustMemberOfGlobal(VM& vm, JSGlobalObject* globalObject, uint32_t c
 const Identifier& State::name(VM& vm, uint32_t index)
 {
     if (uint32_t facts = data.stringFacts(index); facts & Data::stringHasIdentifierNumber) [[likely]] {
-        if (const Identifier* made = instance.program->identifierIfMade(facts & Data::stringHashMask)) [[likely]]
+        if (const Identifier* made = instance.program->identifierIfCreated(facts & Data::stringHashMask)) [[likely]]
             return *made;
     }
     return nameSlow(vm, index);
@@ -7398,37 +7250,36 @@ NEVER_INLINE const Identifier& State::nameSlow(VM& vm, uint32_t index)
 {
     if (uint32_t facts = data.stringFacts(index); facts & Data::stringHasIdentifierNumber) {
         uint32_t number = facts & Data::stringHashMask;
-        ASSERT(data.stringOfIdentifierPlusOne(number) == index + 1);
-        if (instance.program->isIdentifierKept(number)) [[unlikely]]
+        ASSERT(data.identifierStringPlusOne(number) == index + 1);
+        if (instance.program->isIdentifierRetained(number)) [[unlikely]]
             return instance.program->identifierAsIdentifier(number);
-        return instance.program->keepIdentifier(number, makeNumberedIdentifier(vm, data, index));
+        return instance.program->retainIdentifier(number, createNumberedIdentifier(vm, data, index));
     }
-    if (auto found = m_placesOfNames.find(index); found != m_placesOfNames.end())
+    if (auto found = m_nameIndices.find(index); found != m_nameIndices.end())
         return m_names[found->value];
     Identifier name;
     {
         uint32_t facts = data.stringFacts(index);
         if (facts & Data::stringIsPrivateName) {
-            // A name of its own, that no key the program comes by is equal to.
             auto bytes = data.string(index);
             auto written = bytes.subspan(1, std::ranges::find(bytes, static_cast<uint8_t>('@')) - bytes.begin() - 1);
             name = Identifier::fromUid(PrivateSymbolImpl::create(*textOf(written).impl()).get());
         } else if (facts & Data::stringIsEnginePrivateName) {
             name = enginePrivateName(vm, textOf(data.string(index).subspan(1)));
         } else if (isConstantSymbol(data.string(index)))
-            name = makeConstantSymbol(vm, data.string(index));
+            name = createConstantSymbol(vm, data.string(index));
         else
             name = Identifier::fromString(vm, atomOf(data, index));
     }
-    m_placesOfNames.add(index, static_cast<uint32_t>(m_names.size()));
+    m_nameIndices.add(index, static_cast<uint32_t>(m_names.size()));
     m_names.append(WTF::move(name));
     return m_names.last();
 }
 
-JSCell* State::stringIfMade(uint32_t number) const
+JSCell* State::stringIfCreated(uint32_t number) const
 {
-    const uint64_t* slots = instance.fieldsBelow().typedStrings;
-    uint32_t mask = capacityOfStringTable(slots) - 1;
+    const uint64_t* slots = instance.negativeOffsetFields().typedStrings;
+    uint32_t mask = stringTableCapacity(slots) - 1;
     uint32_t at = startInStringTable(number + 1);
     for (uint32_t step = 1;; at += step++) {
         uint64_t slot = slots[at & mask];
@@ -7439,13 +7290,11 @@ JSCell* State::stringIfMade(uint32_t number) const
     }
 }
 
-void State::keepString(uint32_t number, JSCell* cell)
+void State::setString(uint32_t number, JSCell* cell)
 {
     Locker locker { m_cellsLock };
-    // The last to come gets the slot it is looked for first, and what was there goes on from there on its own way: the strings a program asks for over and over are those of what it
-    // is doing now, and they come when the table is at its fullest.
     auto put = [](uint64_t* slots, uint64_t slot) {
-        uint32_t mask = capacityOfStringTable(slots) - 1;
+        uint32_t mask = stringTableCapacity(slots) - 1;
         uint32_t home = startInStringTable(static_cast<uint32_t>(slot)) & mask;
         if (home)
             std::swap(slot, slots[home]);
@@ -7461,17 +7310,16 @@ void State::keepString(uint32_t number, JSCell* cell)
             at += step++;
         slots[at & mask] = slot;
     };
-    uint32_t capacity = capacityOfStringTable(instance.fieldsBelow().typedStrings);
-    // One slot in four stays free.
-    if (++m_numberOfStringsMade >= capacity - capacity / 4) {
+    uint32_t capacity = stringTableCapacity(instance.negativeOffsetFields().typedStrings);
+    if (++m_createdStringCount >= capacity - capacity / 4) {
         uint64_t* grown = createStringTable(2 * capacity);
-        for (uint64_t slot : std::span { instance.fieldsBelow().typedStrings, capacity }.subspan(1)) {
+        for (uint64_t slot : std::span { instance.negativeOffsetFields().typedStrings, capacity }.subspan(1)) {
             if (slot)
                 put(grown, slot);
         }
-        m_formerStringTables.append(std::exchange(instance.fieldsBelow().typedStrings, grown));
+        m_retiredStringTables.append(std::exchange(instance.negativeOffsetFields().typedStrings, grown));
 #if !OS(WINDOWS)
-        OSAllocator::decommit(m_formerStringTables.last(), sizeOfZeroedTable(capacity, sizeof(uint64_t)));
+        OSAllocator::decommit(m_retiredStringTables.last(), sizeOfZeroedTable(capacity, sizeof(uint64_t)));
 #endif
     }
     uint64_t kept;
@@ -7481,35 +7329,32 @@ void State::keepString(uint32_t number, JSCell* cell)
         instance.typedWideStrings = m_wideStrings.mutableSpan().data();
     } else {
         kept = MarkedBlockCage::encode(cell);
-        auto& madeLately = m_isLastStringConstantBackedByStaticData ? m_stringsBackedByStaticDataMadeLately : m_stringsMadeLately;
-        madeLately.cells.append(static_cast<uint32_t>(kept));
+        auto& recentlyCreated = m_isLastStringConstantBackedByStaticData ? m_recentStaticDataStrings : m_recentStrings;
+        recentlyCreated.cells.append(static_cast<uint32_t>(kept));
     }
-    put(instance.fieldsBelow().typedStrings, kept << 32 | (number + 1));
+    put(instance.negativeOffsetFields().typedStrings, kept << 32 | (number + 1));
 }
 
-JSString* State::makeStringConstant(VM& vm, uint32_t index)
+JSString* State::createStringConstant(VM& vm, uint32_t index)
 {
-    // Compiled code takes the string of a number for a function of the number, see Lowering::stringConstant(): it may ask between an allocation and the first stores to the cell, and goes on by what it has read of the
-    // collector's state. So no collection starts here, nor does one that is under way get a word in.
     DeferGCForAWhile deferGC(vm);
-    // A private name of the engine is no value: it is the key of an operation, which takes it by its number.
     if (data.stringFacts(index) & Data::stringIsEnginePrivateName)
         return jsEmptyString(vm);
-    String text = data.isAtomString(index) ? atomOf(data, index) : textOfConstant(data, index);
+    String text = data.isAtomString(index) ? atomOf(data, index) : constantString(data, index);
     m_isLastStringConstantBackedByStaticData = Image::isBackedByStaticData(*text.impl());
     if (m_isLastStringConstantBackedByStaticData)
         return jsOwnedString(vm, text);
     return jsString(vm, text);
 }
 
-JSString* State::makeAndKeepStringConstant(VM& vm, uint32_t index)
+JSString* State::createAndCacheStringConstant(VM& vm, uint32_t index)
 {
-    JSString* string = makeStringConstant(vm, index);
-    keepString(index, string);
+    JSString* string = createStringConstant(vm, index);
+    setString(index, string);
     return string;
 }
 
-void State::keepBigIntConstant(uint32_t index, JSCell* cell)
+void State::setBigIntConstant(uint32_t index, JSCell* cell)
 {
     didCreate(cell);
     m_bigIntConstants.add(index, cell);
@@ -7517,9 +7362,9 @@ void State::keepBigIntConstant(uint32_t index, JSCell* cell)
 
 JSString* State::string(VM& vm, uint32_t index)
 {
-    if (JSCell* cell = stringIfMade(index))
+    if (JSCell* cell = stringIfCreated(index))
         return uncheckedDowncast<JSString>(cell);
-    return makeAndKeepStringConstant(vm, index);
+    return createAndCacheStringConstant(vm, index);
 }
 
 JSString* State::stringForLiteralStringWord(uint64_t word)
@@ -7528,7 +7373,7 @@ JSString* State::stringForLiteralStringWord(uint64_t word)
     JSCell*& cell = instance.typedLiteralStrings[number];
     if (!cell) {
         VM& vm = *instance.vm;
-        uint32_t text = data.stringIDOfLiteralString(number);
+        uint32_t text = data.literalStringID(number);
         auto bytes = data.string(text);
         if (bytes.empty())
             cell = jsEmptyString(vm);
@@ -7556,7 +7401,7 @@ uint64_t State::literalStringWordFor(JSString* string)
             uint32_t index = (entry & indexMask) - 1;
             if (entry != Data::literalStringTableEntry(index, hash))
                 continue;
-            uint32_t id = data.stringIDOfLiteralString(index);
+            uint32_t id = data.literalStringID(index);
             auto characters = byteCast<Latin1Character>(data.stringInImage(id));
             if (data.stringFacts(id) & Data::stringIsASCII ? characters.size() == text.length() && equal(text, characters) : hasText(id, text))
                 return literalStringWord(index);
@@ -7590,30 +7435,30 @@ RegExp* State::regExpLiteral(VM& vm, uint32_t source, uint32_t flags)
 {
     RegExp*& regExp = m_regExpLiterals.add(static_cast<uint64_t>(source) << 32 | flags, nullptr).iterator->value;
     if (!regExp) {
-        String text = textOfConstant(data, source);
+        String text = constantString(data, source);
 #if ENABLE(YARR_JIT)
         regExp = RegExp::tryCreateFromImage(vm, text, OptionSet<Yarr::Flags>::fromRaw(flags));
 #endif
         if (!regExp)
             regExp = RegExp::create(vm, text, OptionSet<Yarr::Flags>::fromRaw(flags));
-        regExp->setIsLiteralOfCompiledProgram();
+        regExp->setIsCompiledProgramLiteral();
         didCreate(regExp);
     }
     return regExp;
 }
 
-HashedText::Digest HashedText::digestOf(std::span<const char16_t> characters)
+HashedString::Digest HashedString::digestOf(std::span<const char16_t> characters)
 {
     SHA1 sha1;
     sha1.addBytes(std::as_bytes(characters));
     SHA1::Digest whole;
     sha1.computeHash(whole);
-    HashedText::Digest digest;
+    HashedString::Digest digest;
     memcpySpan(std::span { digest }, std::span { whole }.first(digest.size()));
     return digest;
 }
 
-HashedText::Digest HashedText::digestOfNarrowestForm(StringView text)
+HashedString::Digest HashedString::digestOfNarrowestEncoding(StringView text)
 {
     SHA1 sha1;
     if (text.is8Bit())
@@ -7624,17 +7469,17 @@ HashedText::Digest HashedText::digestOfNarrowestForm(StringView text)
         sha1.addBytes(asBytes(text.span16()));
     SHA1::Digest whole;
     sha1.computeHash(whole);
-    HashedText::Digest digest;
+    HashedString::Digest digest;
     memcpySpan(std::span { digest }, std::span { whole }.first(digest.size()));
     return digest;
 }
 
-HashedText HashedText::create(uint32_t string, std::span<const char16_t> characters)
+HashedString HashedString::create(uint32_t string, std::span<const char16_t> characters)
 {
     return { string, safeCast<uint32_t>(characters.size()), StringHasher::computeHashAndMaskTop8Bits(characters), digestOf(characters) };
 }
 
-bool HashedText::matches(StringView text) const
+bool HashedString::matches(StringView text) const
 {
     if (text.length() != length)
         return false;
@@ -7645,10 +7490,10 @@ bool HashedText::matches(StringView text) const
 
 bool State::hasText(uint32_t string, StringView text) const
 {
-    if (const HashedText* hashed = data.hasOnlyDecodedForm(string) ? data.hashedText(string) : nullptr)
+    if (const HashedString* hashed = data.hasOnlyDecodedForm(string) ? data.hashedString(string) : nullptr)
         return hashed->matches(text);
     if (data.hasOnlyDecodedForm(string))
-        return !(data.stringFacts(string) & (Data::stringIsPrivateName | Data::stringIsEnginePrivateName)) && text == textOfConstant(data, string);
+        return !(data.stringFacts(string) & (Data::stringIsPrivateName | Data::stringIsEnginePrivateName)) && text == constantString(data, string);
     auto characters = byteCast<Latin1Character>(data.stringInImage(string));
     if (characters.size() < text.length() || isPrivateName(data.string(string)) || isEnginePrivateName(data.string(string)))
         return false;
@@ -7658,27 +7503,27 @@ bool State::hasText(uint32_t string, StringView text) const
     return !isASCII && text == textOf(data.string(string));
 }
 
-const Identifier& State::nameIfMade(uint32_t string) const
+const Identifier& State::nameIfCreated(uint32_t string) const
 {
     static NeverDestroyed<Identifier> none;
     if (uint32_t facts = data.stringFacts(string); facts & Data::stringHasIdentifierNumber) {
         const Identifier* made = instance.program->tryGetIdentifierConcurrently(facts & Data::stringHashMask);
         return made ? *made : none.get();
     }
-    auto found = m_placesOfNames.find(string);
-    return found == m_placesOfNames.end() ? none.get() : m_names[found->value];
+    auto found = m_nameIndices.find(string);
+    return found == m_nameIndices.end() ? none.get() : m_names[found->value];
 }
 
-void State::makeNamesForHeapAnalysis(VM& vm)
+void State::createNamesForHeapAnalysis(VM& vm)
 {
     auto make = [&](uint32_t string, Store store) {
-        if (holdsCells(store) && data.sizeOfString(string))
+        if (holdsCells(store) && data.stringSize(string))
             name(vm, string);
     };
     for (uint32_t shape = 1; shape < data.numberOfLayouts; ++shape) {
-        if (!hasLayoutOfShape(shape))
+        if (!hasLayoutForShape(shape))
             continue;
-        const LayoutData& layout = layoutOfShape(shape);
+        const LayoutData& layout = layoutForShape(shape);
         if (!isObjectLayout(layout.kind)) {
             for (auto& variable : layout.describedVariables())
                 make(variable.name, variable.store());
@@ -7693,17 +7538,16 @@ void State::makeNamesForHeapAnalysis(VM& vm)
 
 bool State::isName(uint32_t string, UniquedStringImpl* name) const
 {
-    if (uint32_t facts = data.stringFacts(string); facts & Data::stringIsASCII && (facts & Data::stringHasIdentifierNumber ? data.hashOfIdentifier(facts & Data::stringHashMask) : facts & Data::stringHashMask) != name->hash())
+    if (uint32_t facts = data.stringFacts(string); facts & Data::stringIsASCII && (facts & Data::stringHasIdentifierNumber ? data.identifierHash(facts & Data::stringHashMask) : facts & Data::stringHashMask) != name->hash())
         return false;
-    if (const Identifier& known = nameIfMade(string); !known.isNull())
+    if (const Identifier& known = nameIfCreated(string); !known.isNull())
         return known.impl() == name;
     return hasText(string, StringView { *name });
 }
 
-// `#name` of a class is no property. Nor is what has no name.
 bool State::isPrivate(const FieldData& field) const
 {
-    return !data.sizeOfString(field.name) || data.stringFacts(field.name) & Data::stringIsPrivateName;
+    return !data.stringSize(field.name) || data.stringFacts(field.name) & Data::stringIsPrivateName;
 }
 
 const FieldData* State::field(VM& vm, const LayoutData& layout, UniquedStringImpl* name)
@@ -7719,12 +7563,12 @@ const FieldData* State::field(VM& vm, const LayoutData& layout, UniquedStringImp
     return found;
 }
 
-std::optional<uint32_t> State::numberOfFieldName(UniquedStringImpl* name) const
+std::optional<uint32_t> State::fieldNameIndex(UniquedStringImpl* name) const
 {
     CachedFieldName& cached = m_cachedFieldNames[(std::bit_cast<uintptr_t>(name) >> 4) % numberOfCachedFieldNames];
     if (cached.name == name) [[likely]]
         return cached.numberPlusOne ? std::optional(cached.numberPlusOne - 1) : std::nullopt;
-    auto number = findNumberOfFieldName(name);
+    auto number = findFieldNameIndex(name);
     name->ref();
     if (cached.name)
         cached.name->deref();
@@ -7732,7 +7576,7 @@ std::optional<uint32_t> State::numberOfFieldName(UniquedStringImpl* name) const
     return number;
 }
 
-std::optional<uint32_t> State::findNumberOfFieldName(UniquedStringImpl* name) const
+std::optional<uint32_t> State::findFieldNameIndex(UniquedStringImpl* name) const
 {
     auto names = std::span { data.at<std::array<uint32_t, 2>>(data.fieldNamesOffset), data.numberOfFieldNames };
     for (uint32_t hash : { name->hash(), UINT32_MAX }) {
@@ -7751,14 +7595,13 @@ const FieldData* State::findField(VM& vm, const LayoutData& layout, UniquedStrin
 {
     auto fields = std::span { layout.fields(), layout.numberOfFields };
     if (name->isSymbol()) {
-        // `#name`, `@name`: a name of its own, which name() makes or finds.
         for (auto& field : fields) {
             if (data.stringFacts(field.name) & (Data::stringIsPrivateName | Data::stringIsEnginePrivateName) && this->name(vm, field.name).impl() == name)
                 return &field;
         }
         return nullptr;
     }
-    auto number = numberOfFieldName(name);
+    auto number = fieldNameIndex(name);
     if (!number)
         return nullptr;
     if (!layout.fieldsByNameOffset()) {
@@ -7785,54 +7628,53 @@ Object* State::compiledObject(JSValue value) const
 
 bool State::passes(const RuntimeShapeTest& test, uint32_t shape) const
 {
-    uint32_t placeFromLast = test.first + test.count - 1 - shape;
-    return placeFromLast < test.count && (test.set == UINT32_MAX || data.at<uint32_t>(data.shapeSetsOffset)[(test.set + placeFromLast) / 32] >> (test.set + placeFromLast) % 32 & 1);
+    uint32_t indexFromLast = test.first + test.count - 1 - shape;
+    return indexFromLast < test.count && (test.set == UINT32_MAX || data.at<uint32_t>(data.shapeSetsOffset)[(test.set + indexFromLast) / 32] >> (test.set + indexFromLast) % 32 & 1);
 }
 
-bool State::admitsShape(const RuntimeType& type, uint32_t shape) const
+bool State::acceptsShape(const RuntimeType& type, uint32_t shape) const
 {
-    for (uint32_t i = 0; i < type.numberOfViews(); ++i) {
+    for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i) {
         if (passes(type.view(i), shape))
             return true;
     }
     return false;
 }
 
-bool State::membersHaveNoSpecializations(const RuntimeType& type) const
+bool State::subtypesHaveNoSpecializations(const RuntimeType& type) const
 {
     static constexpr uint32_t maxNumberOfShapes = 1024;
     uint32_t numberOfShapes = 0;
-    for (uint32_t i = 0; i < type.numberOfViews(); ++i) {
+    for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i) {
         auto& test = type.view(i);
         numberOfShapes += test.count;
         if (test.count > maxNumberOfShapes || numberOfShapes > maxNumberOfShapes)
             return false;
         for (uint32_t shape = test.first; shape < test.first + test.count; ++shape) {
-            if (passes(test, shape) && hasLayoutOfShape(shape) && layoutOfShape(shape).numberOfSpecializations())
+            if (passes(test, shape) && hasLayoutForShape(shape) && layoutForShape(shape).numberOfSpecializations())
                 return false;
         }
     }
     return true;
 }
 
-void State::willAlter(const FieldData& field, JSValue value)
+void State::willModify(const FieldData& field, JSValue value)
 {
-    if (!holdsText(value, data.at<LiteralData>(field.literalsOffset())->string()))
-        instance.typedAlteredLiterals[field.flags >> guardOfPinnedFieldShift] = 1;
+    if (!isStringEqualTo(value, data.at<LiteralData>(field.literalsOffset())->string()))
+        instance.typedModifiedLiterals[field.flags >> pinnedFieldGuardShift] = 1;
 }
 
-bool State::holdsText(JSValue value, uint32_t string) const
+bool State::isStringEqualTo(JSValue value, uint32_t string) const
 {
-    // A longer one is another, and is not made flat to find that out.
-    return value && value.isString() && asString(value)->length() <= data.sizeOfString(string) && hasText(string, asString(value)->tryGetValue());
+    return value && value.isString() && asString(value)->length() <= data.stringSize(string) && hasText(string, asString(value)->tryGetValue());
 }
 
-bool State::isAmongLiterals(const FieldData& field, JSValue value) const
+bool State::isAllowedLiteral(const FieldData& field, JSValue value) const
 {
-    return isAmongLiterals(std::span { data.at<LiteralData>(field.literalsOffset()), field.numberOfLiterals() }, value);
+    return isAllowedLiteral(std::span { data.at<LiteralData>(field.literalsOffset()), field.numberOfLiterals() }, value);
 }
 
-bool State::isAmongLiteralsWithoutField(VM& vm, const LayoutData& layout, UniquedStringImpl* property, JSValue value)
+bool State::isAllowedLiteralWithoutField(VM& vm, const LayoutData& layout, UniquedStringImpl* property, JSValue value)
 {
     if (!layout.literalsWithoutFieldOffset()) [[likely]]
         return true;
@@ -7840,25 +7682,25 @@ bool State::isAmongLiteralsWithoutField(VM& vm, const LayoutData& layout, Unique
     for (uint32_t i = 0; i < words[0]; ++i) {
         const uint32_t* entry = words + 1 + 3 * i;
         if (name(vm, entry[0]).impl() == property)
-            return isAmongLiterals(std::span { data.at<LiteralData>(entry[2]), entry[1] }, value);
+            return isAllowedLiteral(std::span { data.at<LiteralData>(entry[2]), entry[1] }, value);
     }
     return true;
 }
 
-bool State::isAmongLiterals(std::span<const LiteralData> literals, JSValue value) const
+bool State::isAllowedLiteral(std::span<const LiteralData> literals, JSValue value) const
 {
     bool isNumber = value.isNumber();
     if (literals.empty() || (!isNumber && !value.isString()))
         return true;
-    bool hasLiteralsOfTheKind = false;
+    bool hasLiteralsOfKind = false;
     for (auto& literal : literals) {
         if (literal.isNumber() != isNumber)
             continue;
-        hasLiteralsOfTheKind = true;
+        hasLiteralsOfKind = true;
         if (isNumber ? literal.number() == value.asNumber() : hasText(literal.string(), asString(value)->tryGetValue()))
             return true;
     }
-    return !hasLiteralsOfTheKind;
+    return !hasLiteralsOfKind;
 }
 
 bool State::fits(const RuntimeType& type, JSValue value) const
@@ -7871,7 +7713,7 @@ bool State::fits(const RuntimeType& type, JSValue value) const
         return type.primitives & (value.asBoolean() ? Primitive::True : Primitive::False);
     if (value.isNumber()) {
         double number = value.asNumber();
-        bool isInteger = number == std::trunc(number) && std::abs(number) <= static_cast<double>(maxKeptInteger) && !(!number && std::signbit(number));
+        bool isInteger = number == std::trunc(number) && std::abs(number) <= static_cast<double>(maxTrackedInteger) && !(!number && std::signbit(number));
         if (isInteger)
             return type.primitives & Primitive::Int && number >= static_cast<double>(type.minInteger()) && number <= static_cast<double>(type.maxInteger());
         return type.primitives & Primitive::Double;
@@ -7887,26 +7729,23 @@ bool State::fits(const RuntimeType& type, JSValue value) const
         return type.primitives & Primitive::Symbol;
     if (!cell->isObject())
         return false;
-    return type.admitsUncheckedObjects() || fitsAsOneOfItsOwn(type, asObject(cell));
+    return type.acceptsUncheckedObjects() || matchesTypedSubtype(type, asObject(cell));
 }
 
-bool State::fitsAsOneOfItsOwn(const RuntimeType& type, JSObject* cell) const
+bool State::matchesTypedSubtype(const RuntimeType& type, JSObject* cell) const
 {
     if (type.allowsAnyObject())
         return true;
     if (Object* object = compiledObject(cell))
-        return admitsShape(type, object->shape());
+        return acceptsShape(type, object->shape());
     for (uint32_t i = 0; i < type.numberOfJSTypes(); ++i) {
         if (type.jsTypes()[i] == cell->type())
             return true;
-        // See EngineClass::type.
         if (type.jsTypes()[i] == ArrayType && cell->type() == DerivedArrayType)
             return true;
     }
     return type.allowsAnyFunction() && cell->isCallable();
 }
-
-// Error messages. Nothing here runs user code.
 
 static String functionName(JSObject* function)
 {
@@ -7921,7 +7760,6 @@ static String functionName(JSObject* function)
     return { };
 }
 
-// `Foo` for `new Foo`, read from prototype.constructor. Falls back to the engine's class name: Object, Map, Promise.
 static String className(JSObject* object)
 {
     VM& vm = object->vm();
@@ -7935,23 +7773,19 @@ static String className(JSObject* object)
     return object->classInfo()->className;
 }
 
-// `{ }`, `Object.create(null)`, what JSON.parse makes.
 static bool hasPlainPrototype(JSObject* object)
 {
     JSValue prototype = object->getPrototypeDirect();
     return prototype.isNull() || prototype == JSValue(object->realm()->objectPrototype());
 }
 
-// Made by the engine or the host: a Map, a Date, `performance`. Not a function, an array, or anything made by `{ }` or by `new` on code of the program.
 static bool isNativeObject(JSObject* object)
 {
     return object->type() != FinalObjectType && !object->isCallable() && !dynamicDowncast<JSArray>(object) && !dynamicDowncast<Object>(object);
 }
 
-static thread_local bool s_describesKindsAlone;
+static thread_local bool s_describesKindsOnly;
 
-// A value as it appears after "got": undefined, number 3.5, string "abc", Foo, function foo, plain object, native Map, untyped Foo. A bare
-// name is a type of the program: `expected Performance, got Performance` said nothing when the second was the host's.
 String State::describe(JSValue value)
 {
     if (!value)
@@ -7960,17 +7794,17 @@ String State::describe(JSValue value)
         return "undefined"_s;
     if (value.isNull())
         return "null"_s;
-    if (value.isBoolean() && s_describesKindsAlone)
+    if (value.isBoolean() && s_describesKindsOnly)
         return "boolean"_s;
     if (value.isBoolean())
         return value.asBoolean() ? "boolean true"_s : "boolean false"_s;
-    if (value.isNumber() && s_describesKindsAlone)
+    if (value.isNumber() && s_describesKindsOnly)
         return "number"_s;
     if (value.isNumber())
         return makeString("number "_s, value.asNumber());
     if (value.isString()) {
         static constexpr unsigned maxLength = 40;
-        StringImpl* text = s_describesKindsAlone ? nullptr : asString(value)->tryGetValueImpl();
+        StringImpl* text = s_describesKindsOnly ? nullptr : asString(value)->tryGetValueImpl();
         if (!text)
             return "string"_s;
         return makeString("string \""_s, StringView { *text }.left(maxLength), text->length() > maxLength ? "...\""_s : "\""_s);
@@ -7997,7 +7831,7 @@ String State::describe(JSValue value)
     return hasPlainPrototype(object) ? "untyped object"_str : makeString("untyped "_s, className(object));
 }
 
-ASCIILiteral State::wordForKind(JSValue value, const RuntimeType* heldTo)
+ASCIILiteral State::kindName(JSValue value, const RuntimeType* expectedType)
 {
     if (value.isUndefined())
         return "undefined"_s;
@@ -8006,7 +7840,7 @@ ASCIILiteral State::wordForKind(JSValue value, const RuntimeType* heldTo)
     if (value.isBoolean())
         return "boolean"_s;
     if (value.isNumber()) {
-        if (!heldTo || (heldTo->primitives & Primitive::Number) != Primitive::Int)
+        if (!expectedType || (expectedType->primitives & Primitive::Number) != Primitive::Int)
             return "number"_s;
         return value.isInt32AsAnyInt() ? "number, out of range"_s : "number, no int32"_s;
     }
@@ -8025,8 +7859,7 @@ static void appendUnionMember(StringBuilder& result, bool has, StringView name)
         result.append(result.isEmpty() ? ""_s : " | "_s, name);
 }
 
-// Every reference type of the front end admits undefined and null, declared or not. Both together next to something else are left out.
-static uint32_t withoutImplicitNil(uint32_t primitives, bool hasOtherMembers)
+static uint32_t withoutImplicitNullish(uint32_t primitives, bool hasOtherMembers)
 {
     bool hasBoth = (primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull;
     return hasBoth && (hasOtherMembers || primitives & ~Primitive::UndefinedOrNull) ? primitives & ~Primitive::UndefinedOrNull : primitives;
@@ -8034,7 +7867,7 @@ static uint32_t withoutImplicitNil(uint32_t primitives, bool hasOtherMembers)
 
 static void appendPrimitives(StringBuilder& result, uint32_t primitives)
 {
-    primitives = withoutImplicitNil(primitives, !result.isEmpty());
+    primitives = withoutImplicitNullish(primitives, !result.isEmpty());
     appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::Boolean, "boolean"_s);
     appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::True, "true"_s);
     appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::False, "false"_s);
@@ -8050,17 +7883,16 @@ static void appendPrimitives(StringBuilder& result, uint32_t primitives)
 
 String State::nameOf(const RuntimeShapeTest& view) const
 {
-    if (view.shapeOfView)
-        return nameOf(layoutOfShape(view.shapeOfView));
-    if (data.sizeOfString(view.name))
+    if (view.supertypeShape)
+        return nameOf(layoutForShape(view.supertypeShape));
+    if (data.stringSize(view.name))
         return text(view.name);
-    auto fields = view.fields ? data.at<ViewFields>(view.fields)->decode(data.at<uint32_t>(data.typesOffset)) : Vector<ViewField>();
+    auto fields = view.fields ? data.at<SupertypeFields>(view.fields)->decode(data.at<uint32_t>(data.typesOffset)) : Vector<SupertypeField>();
     return describeAnonymousType(fields.size(), [&](uint32_t i) {
         return fields[i].name;
     });
 }
 
-// `{ a, b, c, d, ... }`
 String State::describeAnonymousType(size_t numberOfProperties, const Invocable<uint32_t(uint32_t)> auto& nameOfProperty) const
 {
     static constexpr size_t maxNamesShown = 4;
@@ -8072,7 +7904,6 @@ String State::describeAnonymousType(size_t numberOfProperties, const Invocable<u
     return result.toString();
 }
 
-// A type in TypeScript syntax, as it appears after "expected".
 String describe(const DescribedType& type, bool logsTypeErrors)
 {
     static constexpr uint32_t allValues = Primitive::Boolean | Primitive::Number | Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::UndefinedOrNull;
@@ -8110,7 +7941,7 @@ String describe(const DescribedType& type, bool logsTypeErrors)
 String State::describe(const RuntimeType& type) const
 {
     DescribedType described { type.primitives, type.allowsAnyObject(), type.allowsAnyFunction(), type.minInteger(), type.maxInteger(), { }, { }, { } };
-    for (uint32_t i = 0; i < type.numberOfViews(); ++i)
+    for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i)
         described.views.append(nameOf(type.view(i)));
     described.jsTypes.append(std::span { type.jsTypes(), type.numberOfJSTypes() });
     if (type.elements())
@@ -8129,7 +7960,7 @@ String State::describeKinds(uint32_t kinds, uint32_t name) const
 
 String State::nameOf(const LayoutData& layout) const
 {
-    if (data.sizeOfString(layout.name))
+    if (data.stringSize(layout.name))
         return text(layout.name);
     return describeAnonymousType(layout.numberOfFields, [&](uint32_t i) {
         return layout.fields()[i].name;
@@ -8144,26 +7975,25 @@ bool State::isAssignable(const RuntimeType& from, const RuntimeType& to) const
         return false;
     if (from.primitives & Primitive::Int && (from.minInteger() < to.minInteger() || from.maxInteger() > to.maxInteger()))
         return false;
-    if (to.allowsAnyObject() || to.admitsForeignObjects())
+    if (to.allowsAnyObject() || to.acceptsUntypedObjects())
         return true;
-    if (from.allowsAnyObject() || from.admitsForeignObjects() || (from.allowsAnyFunction() && !to.allowsAnyFunction()))
+    if (from.allowsAnyObject() || from.acceptsUntypedObjects() || (from.allowsAnyFunction() && !to.allowsAnyFunction()))
         return false;
     std::span toJSTypes { to.jsTypes(), to.numberOfJSTypes() };
     for (uint32_t i = 0; i < from.numberOfJSTypes(); ++i) {
         if (std::ranges::find(toJSTypes, from.jsTypes()[i]) == toJSTypes.end())
             return false;
     }
-    for (uint32_t i = 0; i < from.numberOfViews(); ++i) {
+    for (uint32_t i = 0; i < from.numberOfSupertypes(); ++i) {
         auto& view = from.view(i);
         for (uint32_t shape = view.first; shape < view.first + view.count; ++shape) {
-            if (passes(view, shape) && hasLayoutOfShape(shape) && !admitsShape(to, shape))
+            if (passes(view, shape) && hasLayoutForShape(shape) && !acceptsShape(to, shape))
                 return false;
         }
     }
     return !from.elements() || !to.elements() || isAssignable(*data.at<RuntimeType>(from.elements()), *data.at<RuntimeType>(to.elements()));
 }
 
-// An own or inherited data property. Empty: there is none. nullopt: an accessor, whose value is unknown without running it.
 static std::optional<JSValue> readDataProperty(VM& vm, JSObject* object, PropertyName name)
 {
     for (JSObject* holder = object; holder;) {
@@ -8186,52 +8016,46 @@ static std::optional<JSValue> readDataProperty(VM& vm, JSObject* object, Propert
     return JSValue();
 }
 
-String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type, bool membersAlone)
+String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type, bool subtypesOnly)
 {
-    // A union would need a guess at which member was meant.
-    if (!value.isObject() || type.numberOfViews() != 1)
+    if (!value.isObject() || type.numberOfSupertypes() != 1)
         return { };
-    SetForScope kindsOnlyScope(s_describesKindsAlone, s_describesKindsAlone || membersAlone);
+    SetForScope kindsOnlyScope(s_describesKindsOnly, s_describesKindsOnly || subtypesOnly);
     JSObject* object = asObject(value);
     Object* compiled = compiledObject(object);
     auto& view = type.view(0);
-    if (membersAlone && isNativeObject(object))
+    if (subtypesOnly && isNativeObject(object))
         return { };
     if (isNativeObject(object))
         return makeString("a native object cannot be used as "_s, nameOf(view));
     if (!compiled && object->type() != FinalObjectType)
         return { };
     String reason;
-    // The two types declare the property differently, though the run time cannot tell the two declarations apart (`readonly T[]` and `T[]`).
-    // Given as the reason if nothing else is wrong.
     String differentDeclaration;
-    auto textOrDescription = [&](uint32_t typeText, const RuntimeType& type) {
-        return typeText == UINT32_MAX ? describe(type) : text(typeText);
+    auto sourceOrDescription = [&](uint32_t typeSource, const RuntimeType& type) {
+        return typeSource == UINT32_MAX ? describe(type) : text(typeSource);
     };
-    auto typeTextOf = [&](const LayoutData& layout, size_t field) {
-        return layout.typeTextsOffset() ? data.at<uint32_t>(layout.typeTextsOffset())[field] : UINT32_MAX;
+    auto typeSourceOf = [&](const LayoutData& layout, size_t field) {
+        return layout.typeStringsOffset() ? data.at<uint32_t>(layout.typeStringsOffset())[field] : UINT32_MAX;
     };
-    // False: stop.
-    auto check = [&](uint32_t nameIndex, const RuntimeType& declared, bool isOptional, uint32_t declaredText) {
+    auto check = [&](uint32_t nameIndex, const RuntimeType& declared, bool isOptional, uint32_t declaredTypeSource) {
         if (data.stringFacts(nameIndex) & Data::stringIsPrivateName)
             return true;
         const Identifier& name = this->name(vm, nameIndex);
-        // Whether a compiled object is of a type goes by its layout, not by what it holds: a field that is declared and has not been stored
-        // to yet is no reason. So the two declarations are compared.
         const FieldData* ownField = compiled ? field(vm, compiled->layout(), name.impl()) : nullptr;
-        if (ownField && !membersAlone) {
+        if (ownField && !subtypesOnly) {
             if (ownField->flags & fieldIsOptional && !isOptional) {
                 reason = makeString("property '"_s, name.string(), "' is optional in "_s, describe(value), " but required in "_s, nameOf(view));
                 return false;
             }
-            uint32_t ownText = typeTextOf(compiled->layout(), ownField - compiled->layout().fields());
+            uint32_t ownTypeSource = typeSourceOf(compiled->layout(), ownField - compiled->layout().fields());
             if (!isAssignable(ownTypeOf(*ownField), declared)) {
-                reason = makeString("property '"_s, name.string(), "': "_s, textOrDescription(ownText, ownTypeOf(*ownField)), " is not assignable to "_s, textOrDescription(declaredText, declared));
+                reason = makeString("property '"_s, name.string(), "': "_s, sourceOrDescription(ownTypeSource, ownTypeOf(*ownField)), " is not assignable to "_s, sourceOrDescription(declaredTypeSource, declared));
                 return false;
             }
-            if (differentDeclaration.isNull() && (ownText != declaredText || ownText == UINT32_MAX) && isAssignable(declared, ownTypeOf(*ownField))) {
-                String ownWords = textOrDescription(ownText, ownTypeOf(*ownField));
-                String declaredWords = textOrDescription(declaredText, declared);
+            if (differentDeclaration.isNull() && (ownTypeSource != declaredTypeSource || ownTypeSource == UINT32_MAX) && isAssignable(declared, ownTypeOf(*ownField))) {
+                String ownWords = sourceOrDescription(ownTypeSource, ownTypeOf(*ownField));
+                String declaredWords = sourceOrDescription(declaredTypeSource, declared);
                 if (ownWords != declaredWords)
                     differentDeclaration = makeString("property '"_s, name.string(), "': "_s, ownWords, " in "_s, describe(value), ", "_s, declaredWords, " in "_s, nameOf(view));
             }
@@ -8248,25 +8072,25 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type, bo
             return false;
         }
         if (!fits(declared, actual)) {
-            reason = makeString("property '"_s, name.string(), "': expected "_s, textOrDescription(declaredText, declared), ", got "_s, describe(actual));
+            reason = makeString("property '"_s, name.string(), "': expected "_s, sourceOrDescription(declaredTypeSource, declared), ", got "_s, describe(actual));
             return false;
         }
         return true;
     };
-    if (view.shapeOfView) {
-        const LayoutData& layout = layoutOfShape(view.shapeOfView);
+    if (view.supertypeShape) {
+        const LayoutData& layout = layoutForShape(view.supertypeShape);
         for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
             const FieldData& declared = layout.fields()[i];
-            if (!check(declared.name, ownTypeOf(declared), declared.flags & fieldIsOptional, typeTextOf(layout, i)))
+            if (!check(declared.name, ownTypeOf(declared), declared.flags & fieldIsOptional, typeSourceOf(layout, i)))
                 break;
         }
     } else if (view.fields) {
-        for (auto& declared : data.at<ViewFields>(view.fields)->decode(data.at<uint32_t>(data.typesOffset))) {
-            if (!check(declared.name, *data.at<RuntimeType>(declared.type), declared.isOptional, declared.typeText))
+        for (auto& declared : data.at<SupertypeFields>(view.fields)->decode(data.at<uint32_t>(data.typesOffset))) {
+            if (!check(declared.name, *data.at<RuntimeType>(declared.type), declared.isOptional, declared.typeSource))
                 break;
         }
     }
-    if (!reason.isNull() || membersAlone)
+    if (!reason.isNull() || subtypesOnly)
         return reason;
     if (!differentDeclaration.isNull())
         return differentDeclaration;
@@ -8274,7 +8098,7 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type, bo
         return makeString(describe(value), " is not assignable to "_s, nameOf(view));
     if (!hasPlainPrototype(object))
         return makeString("an instance of an untyped class cannot be used as "_s, nameOf(view));
-    if (view.shapeOfView && layoutOfShape(view.shapeOfView).kind == LayoutKind::Instance)
+    if (view.supertypeShape && layoutForShape(view.supertypeShape).kind == LayoutKind::Instance)
         return makeString("an untyped object cannot be used as an instance of class "_s, nameOf(view));
     return makeString("an object from untyped code is accepted as "_s, nameOf(view), " only at a type annotation or an 'as "_s, nameOf(view), "' cast"_s);
 }
@@ -8282,19 +8106,18 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type, bo
 String State::mismatchMessage(VM& vm, JSValue value, const RuntimeType& expected, const String& knownReason)
 {
     String reason = knownReason.isEmpty() ? explainMismatch(vm, value, expected) : knownReason;
-    String expectedText = describe(expected);
-    String actualText = describe(value);
-    // Two types of one name are told apart by where they are declared.
-    if (Object* object = expectedText == actualText && expected.numberOfViews() == 1 ? compiledObject(value) : nullptr) {
-        auto withPlace = [&](const String& name, uint32_t path, uint32_t line) {
+    String expectedDescription = describe(expected);
+    String actualDescription = describe(value);
+    if (Object* object = expectedDescription == actualDescription && expected.numberOfSupertypes() == 1 ? compiledObject(value) : nullptr) {
+        auto withLocation = [&](const String& name, uint32_t path, uint32_t line) {
             return path == UINT32_MAX ? name : makeString(name, " (declared at "_s, text(path), ':', line, ')');
         };
         auto& view = expected.view(0);
-        const LayoutData* layoutOfView = view.shapeOfView ? &layoutOfShape(view.shapeOfView) : nullptr;
-        expectedText = withPlace(expectedText, layoutOfView ? layoutOfView->declaredPath() : view.hasDeclaredPlace ? view.declaredPath : UINT32_MAX, layoutOfView ? layoutOfView->declaredLine() : view.hasDeclaredPlace ? view.declaredLine : 0);
-        actualText = withPlace(actualText, object->layout().declaredPath(), object->layout().declaredLine());
+        const LayoutData* supertypeLayout = view.supertypeShape ? &layoutForShape(view.supertypeShape) : nullptr;
+        expectedDescription = withLocation(expectedDescription, supertypeLayout ? supertypeLayout->declaredPath() : view.hasDeclaredLocation ? view.declaredPath : UINT32_MAX, supertypeLayout ? supertypeLayout->declaredLine() : view.hasDeclaredLocation ? view.declaredLine : 0);
+        actualDescription = withLocation(actualDescription, object->layout().declaredPath(), object->layout().declaredLine());
     }
-    return makeString("expected "_s, expectedText, ", got "_s, actualText, reason.isEmpty() ? ""_s : "\n  "_s, reason);
+    return makeString("expected "_s, expectedDescription, ", got "_s, actualDescription, reason.isEmpty() ? ""_s : "\n  "_s, reason);
 }
 
 String State::nullishMessage(JSValue value, const String& property, bool isWrite)
@@ -8315,11 +8138,11 @@ String State::nullishMessage(JSGlobalObject* globalObject, JSValue value, JSValu
     return nullishMessage(value, property, isWrite);
 }
 
-String State::nonNullMessage(JSValue value, const String& operandText)
+String State::nonNullMessage(JSValue value, const String& operandSource)
 {
-    if (operandText.isEmpty())
+    if (operandSource.isEmpty())
         return makeString("non-null assertion failed: value is "_s, describe(value));
-    return makeString("non-null assertion failed: `"_s, operandText, "` is "_s, describe(value));
+    return makeString("non-null assertion failed: `"_s, operandSource, "` is "_s, describe(value));
 }
 
 String State::assignmentMessage(VM& vm, const String& target, const FieldData& field, JSValue value, const String& reason)
@@ -8336,13 +8159,12 @@ String State::nameOfFunction(uint32_t function) const
 
 String State::text(uint32_t string) const
 {
-    return textOfConstant(data, string);
+    return constantString(data, string);
 }
 
 String State::describeSite(AuditSite site) const
 {
     RELEASE_ASSERT(data.isCompiledForAudit);
-    // An operation that is the same in every build was not told.
     if (site.function >= data.numberOfFunctions)
         return "an element read"_s;
     String name = nameOfFunction(site.function);
@@ -8357,14 +8179,14 @@ const LayoutData* State::classWithIndex(uint32_t index) const
 
 const LayoutData* State::classConstructedBy(uint32_t function) const
 {
-    auto& askedForLately = classesAskedForLately[function % classesAskedForLately.size()];
-    uint64_t known = askedForLately.load(std::memory_order_relaxed);
+    auto& recentLookup = recentClassLookups[function % recentClassLookups.size()];
+    uint64_t known = recentLookup.load(std::memory_order_relaxed);
     if (known >> 32 == static_cast<uint64_t>(function) + 1) [[likely]]
         return static_cast<uint32_t>(known) ? data.at<LayoutData>(static_cast<uint32_t>(known)) : nullptr;
     const LayoutData* found = Typed::classConstructedBy(data, function);
     uint64_t offset = found ? reinterpret_cast<const uint8_t*>(found) - data.at<uint8_t>(0) : 0;
     if (offset <= UINT32_MAX)
-        askedForLately.store((static_cast<uint64_t>(function) + 1) << 32 | offset, std::memory_order_relaxed);
+        recentLookup.store((static_cast<uint64_t>(function) + 1) << 32 | offset, std::memory_order_relaxed);
     return found;
 }
 
@@ -8393,8 +8215,7 @@ const FieldData* State::staticField(const LayoutData& ofClass, UniquedStringImpl
     return nullptr;
 }
 
-// The first class that declares the name decides: that is where a search by name ends.
-bool State::isFixedIn(std::span<const MethodData> methods, UniquedStringImpl* name, bool& isDeclared) const
+bool State::isImmutableIn(std::span<const MethodData> methods, UniquedStringImpl* name, bool& isDeclared) const
 {
     for (auto& method : methods) {
         if (method.flags & methodHasComputedName || !isName(method.name, name))
@@ -8409,10 +8230,9 @@ bool State::isFixedIn(std::span<const MethodData> methods, UniquedStringImpl* na
 void Closure::setComputedName(VM& vm, const Identifier& key, Format::MethodKind kind)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String name = computedNameOfFunction(globalObject(), key, kind);
+    String name = functionComputedName(globalObject(), key, kind);
     RETURN_IF_EXCEPTION(scope, void());
     putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
-    // Function.prototype.bind() takes the name out of the executable otherwise.
     ensureRareData(vm)->setHasModifiedNameForBoundOrNonHostFunction();
 }
 
@@ -8429,7 +8249,7 @@ struct State::WatchedMembers {
         }
 
     private:
-        void handleFire(VM&, const FireDetail&) final { m_owner.state.didAlterMembers(m_owner); }
+        void handleFire(VM&, const FireDetail&) final { m_owner.state.didModifyMembers(m_owner); }
 
         WatchedMembers& m_owner;
     };
@@ -8443,30 +8263,29 @@ struct State::WatchedMembers {
     }
 
     State& state;
-    // Both are kept by the class, which stays.
     JSObject* holder;
     JSValue parent;
     const LayoutData& ofClass;
-    bool isAltered { false };
+    bool isModified { false };
     TransitionWatchpoint transition;
     Vector<std::unique_ptr<Member>> members;
 };
 
-void State::updateStaticFieldPlaces(VM& vm, WatchedMembers& watched)
+void State::updateStaticFieldLocations(VM& vm, WatchedMembers& watched)
 {
-    uint32_t first = watched.ofClass.classData().firstStaticFieldPlace;
+    uint32_t first = watched.ofClass.classData().firstStaticFieldLocation;
     if (first == LayoutData::noBase)
         return;
     for (auto& member : watched.members)
         member->key().isWatchable(PropertyCondition::EnsureWatchability);
-    int32_t* place = reinterpret_cast<int32_t*>(instance.typedStatics + data.staticFieldPlacesOffset) + first;
+    int32_t* place = reinterpret_cast<int32_t*>(instance.typedStatics + data.staticFieldSlotsOffset) + first;
     bool isWatchedAlready = !!*reinterpret_cast<JSObject**>(place);
     *reinterpret_cast<JSObject**>(place) = watched.holder;
     place += 2;
     Structure* structure = watched.holder->structure();
-    UniquedStringImpl* added = isWatchedAlready && !watched.isAltered && structure->transitionKind() == TransitionKind::PropertyAddition ? structure->transitionPropertyName() : nullptr;
+    UniquedStringImpl* added = isWatchedAlready && !watched.isModified && structure->transitionKind() == TransitionKind::PropertyAddition ? structure->transitionPropertyName() : nullptr;
     const FieldData* readyAndSkipped = nullptr;
-    bool isAnnounced = false;
+    bool didAnnounce = false;
     for (auto& field : watched.ofClass.staticFields()) {
         if (added && name(vm, field.name).impl() != added) {
             if (*place)
@@ -8476,52 +8295,50 @@ void State::updateStaticFieldPlaces(VM& vm, WatchedMembers& watched)
         }
         *place = 0;
         unsigned attributes;
-        PropertyOffset offset = watched.isAltered ? invalidOffset : structure->get(vm, name(vm, field.name), attributes);
+        PropertyOffset offset = watched.isModified ? invalidOffset : structure->get(vm, name(vm, field.name), attributes);
         if (isValidOffset(offset) && isOutOfLineOffset(offset) && !attributes && fits(ownTypeOf(field), watched.holder->getDirect(offset))) {
             structure->didCachePropertyReplacement(vm, offset);
-            isAnnounced = true;
+            didAnnounce = true;
             *place = static_cast<int32_t>(reinterpret_cast<uint8_t*>(watched.holder->locationForOffset(offset)) - reinterpret_cast<uint8_t*>(watched.holder->butterfly()));
         }
         ++place;
     }
-    if (readyAndSkipped && !isAnnounced)
+    if (readyAndSkipped && !didAnnounce)
         structure->didCachePropertyReplacement(vm, structure->get(vm, name(vm, readyAndSkipped->name)));
 }
 
-void State::didAlterMembers(WatchedMembers& watched)
+void State::didModifyMembers(WatchedMembers& watched)
 {
-    if (std::exchange(watched.isAltered, true))
+    if (std::exchange(watched.isModified, true))
         return;
-    updateStaticFieldPlaces(*instance.vm, watched);
-    // What a class that extends it inherits is looked for here too.
+    updateStaticFieldLocations(*instance.vm, watched);
     for (uint32_t index = 0; index < data.numberOfLayoutIndices; ++index) {
         for (const LayoutData* next = classWithIndex(index); next; next = baseOf(*next)) {
             if (next->index == watched.ofClass.index)
-                instance.typedAlteredClassObjects[index] = 1;
+                instance.typedModifiedClassObjects[index] = 1;
         }
     }
 }
 
-void State::didMakeTransition(VM& vm, WatchedMembers& watched)
+void State::didTransition(VM& vm, WatchedMembers& watched)
 {
-    if (watched.isAltered)
+    if (watched.isModified)
         return;
-    // Another parent, or a property of its own in front of what it inherits.
-    bool findsWhatIsDeclared = watched.holder->getPrototypeDirect() == watched.parent && !watched.holder->getDirect(vm, vm.propertyNames->hasInstanceSymbol);
-    for (const LayoutData* next = baseOf(watched.ofClass); next && findsWhatIsDeclared; next = baseOf(*next)) {
+    bool findsDeclaredMembers = watched.holder->getPrototypeDirect() == watched.parent && !watched.holder->getDirect(vm, vm.propertyNames->hasInstanceSymbol);
+    for (const LayoutData* next = baseOf(watched.ofClass); next && findsDeclaredMembers; next = baseOf(*next)) {
         for (auto& method : next->staticMethods()) {
             if (!(method.flags & methodHasComputedName) && !(data.stringFacts(method.name) & Data::stringIsPrivateName) && watched.holder->getDirect(vm, name(vm, method.name)))
-                findsWhatIsDeclared = false;
+                findsDeclaredMembers = false;
         }
     }
     auto again = [](VM& vm, void* context) {
         auto& watched = *static_cast<WatchedMembers*>(context);
-        watched.state.didMakeTransition(vm, watched);
+        watched.state.didTransition(vm, watched);
     };
-    if (!findsWhatIsDeclared || !watched.transition.install(watched.holder, again, &watched))
-        didAlterMembers(watched);
+    if (!findsDeclaredMembers || !watched.transition.install(watched.holder, again, &watched))
+        didModifyMembers(watched);
     else
-        updateStaticFieldPlaces(vm, watched);
+        updateStaticFieldLocations(vm, watched);
 }
 
 void State::watchMembers(VM& vm, JSObject* holder, const LayoutData& ofClass)
@@ -8533,86 +8350,77 @@ void State::watchMembers(VM& vm, JSObject* holder, const LayoutData& ofClass)
             continue;
         ObjectPropertyCondition condition = generateConditionForSelfEquivalence(vm, nullptr, holder, name(vm, method.name).impl());
         if (!condition || !condition.isWatchable(PropertyCondition::EnsureWatchability))
-            return didAlterMembers(watched);
+            return didModifyMembers(watched);
         watched.members.append(makeUnique<WatchedMembers::Member>(condition, watched));
         watched.members.last()->install(vm);
     }
-    didMakeTransition(vm, watched);
+    didTransition(vm, watched);
 }
 
-// ClassDefinitionEvaluation, but for what can be seen to happen at the declaration, which compiled code does there: what stands after
-// `extends` and the computed names are evaluated, the static fields are initialized, the static blocks run.
-void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValue base, PartOfClass part, JSValue prototypeOfBaseIfRead)
+void State::createClass(JSGlobalObject* globalObject, Closure* classObject, JSValue base, ClassPart part, JSValue basePrototypeIfKnown)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     const LayoutData& ofClass = *classObject->classData();
-    if (part == PartOfClass::Everything && ofClass.isEvaluatedOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!hasPrototypeAheadOfClassObject(ofClass) && prototypesOfClasses.get(ofClass.index))))
+    if (part == ClassPart::Everything && ofClass.isEvaluatedOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!createsPrototypeBeforeClassObject(ofClass) && classPrototypes.get(ofClass.index))))
         return;
-    if (!classObject->isDeclaredAs(functionIsOfBuiltinModule))
-        ensureStaticsOfProgramAreFilled();
-    bool makesClassObject = part != PartOfClass::MembersOfPrototype;
-    bool isAtDeclaration = part == PartOfClass::Everything;
-    // The declaration has been evaluated, and has left the class object unmade.
-    bool wasDeclared = part == PartOfClass::ClassObject && !hasPrototypeAheadOfClassObject(ofClass);
-    RELEASE_ASSERT(part == PartOfClass::Everything || makesMembersWhenLookedAt(ofClass));
-    // The members of the prototype may be looked at while the class object is still unmade.
-    RELEASE_ASSERT(!makesClassObject || !classObject->getDirect(vm, vm.propertyNames->prototype));
-    // Compiled code has made it with the environment of the class and nothing else. The variables of the class are reached through that.
+    if (!classObject->isDeclaredAs(functionIsInBuiltinModule))
+        ensureProgramStaticsInitialized();
+    bool createsClassObject = part != ClassPart::PrototypeMembers;
+    bool isAtDeclaration = part == ClassPart::Everything;
+    bool wasDeclared = part == ClassPart::ClassObject && !createsPrototypeBeforeClassObject(ofClass);
+    RELEASE_ASSERT(part == ClassPart::Everything || createsMembersLazily(ofClass));
+    RELEASE_ASSERT(!createsClassObject || !classObject->getDirect(vm, vm.propertyNames->prototype));
     if (ofClass.classData().environment == LayoutData::noBase)
         RELEASE_ASSERT(classObject->captures().empty());
     else
         RELEASE_ASSERT(classObject->captures().size() == 1 && classObject->environment() && uncheckedDowncast<Object>(classObject->environment())->layout().index == ofClass.classData().environment);
 
-    JSValue parentOfPrototype = globalObject->objectPrototype();
-    JSObject* parentOfClassObject = nullptr;
-    // What the class extends was evaluated when the class object was made.
-    if (!makesClassObject)
-        parentOfPrototype = prototypesOfClasses.get(ofClass.index)->getPrototypeDirect();
+    JSValue prototypeParent = globalObject->objectPrototype();
+    JSObject* classObjectParent = nullptr;
+    if (!createsClassObject)
+        prototypeParent = classPrototypes.get(ofClass.index)->getPrototypeDirect();
     else if (wasDeclared) {
-        parentOfClassObject = classObject->getPrototypeDirect().getObject();
-        parentOfPrototype = prototypesOfClasses.get(ofClass.index)->getPrototypeDirect();
+        classObjectParent = classObject->getPrototypeDirect().getObject();
+        prototypeParent = classPrototypes.get(ofClass.index)->getPrototypeDirect();
     } else if (const LayoutData* baseClass = baseOf(ofClass)) {
-        // Of a class that is evaluated once there is one class object. Of any other, compiled code says which this one extends.
         auto* baseClassObject = baseClass->isEvaluatedOnce ? closure(vm, baseClass->classData().classConstructor) : dynamicDowncast<Closure>(base);
         RELEASE_ASSERT(baseClassObject && baseClassObject->classData() == baseClass);
-        parentOfClassObject = baseClassObject;
-        parentOfPrototype = baseClassObject->prototypeProperty(vm);
-        RELEASE_ASSERT(parentOfPrototype);
-    } else if (ofClass.hasForeignRoot && base.isNull())
-        parentOfPrototype = jsNull();
-    else if (ofClass.hasForeignRoot) {
+        classObjectParent = baseClassObject;
+        prototypeParent = baseClassObject->prototypeProperty(vm);
+        RELEASE_ASSERT(prototypeParent);
+    } else if (ofClass.hasUntypedBase && base.isNull())
+        prototypeParent = jsNull();
+    else if (ofClass.hasUntypedBase) {
         if (!base.isConstructor()) {
             throwTypeError(globalObject, scope, "The superclass is not a constructor."_s);
             return;
         }
-        parentOfClassObject = asObject(base);
-        parentOfPrototype = prototypeOfBaseIfRead ? prototypeOfBaseIfRead : parentOfClassObject->get(globalObject, vm.propertyNames->prototype);
+        classObjectParent = asObject(base);
+        prototypeParent = basePrototypeIfKnown ? basePrototypeIfKnown : classObjectParent->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, void());
-        if (!parentOfPrototype.isObject() && !parentOfPrototype.isNull()) {
+        if (!prototypeParent.isObject() && !prototypeParent.isNull()) {
             throwTypeError(globalObject, scope, "The value of the superclass's prototype property is not an object or null."_s);
             return;
         }
     }
 
-    // See below.
-    bool keepsMethodsReplaceable = ofClass.isLaidOut && (ofClass.constructorMayBeReplaced || std::ranges::any_of(ofClass.methods(), [](auto& method) {
+    bool methodsStayReplaceable = ofClass.hasFixedLayout && (ofClass.constructorMayBeReplaced || std::ranges::any_of(ofClass.methods(), [](auto& method) {
         return method.flags & methodMayBeReplaced;
     }));
-    // A Structure that no other object has: the members are added to it where it is, without a Structure for each.
-    if (parentOfPrototype.isObject())
-        asObject(parentOfPrototype)->didBecomePrototype(vm);
-    if (part == PartOfClass::Everything && makesMembersWhenLookedAt(ofClass) && parentOfPrototype.isObject())
-        part = PartOfClass::ClassObject;
-    bool makesMembersOfPrototype = part != PartOfClass::ClassObject;
-    bool mayShareStructures = part == PartOfClass::Everything && !ofClass.isEvaluatedOnce && !ofClass.isLaidOut && !classObject->mayBePrototype();
-    JSCell* parentOfPrototypeOrNull = parentOfPrototype.isCell() ? parentOfPrototype.asCell() : nullptr;
-    Instance::StructuresOfClass shared;
+    if (prototypeParent.isObject())
+        asObject(prototypeParent)->didBecomePrototype(vm);
+    if (part == ClassPart::Everything && createsMembersLazily(ofClass) && prototypeParent.isObject())
+        part = ClassPart::ClassObject;
+    bool createsPrototypeMembers = part != ClassPart::ClassObject;
+    bool mayShareStructures = part == ClassPart::Everything && !ofClass.isEvaluatedOnce && !ofClass.hasFixedLayout && !classObject->mayBePrototype();
+    JSCell* prototypeParentOrNull = prototypeParent.isCell() ? prototypeParent.asCell() : nullptr;
+    Instance::ClassStructures shared;
     if (mayShareStructures)
-        shared = instance.structuresOfClass(ofClass.index, parentOfClassObject, parentOfPrototypeOrNull);
-    if (shared.ofClassObject && (shared.ofClassObject->realm() != globalObject || shared.ofClassObject->storedPrototype() != (parentOfClassObject ? JSValue(parentOfClassObject) : classObject->getPrototypeDirect())))
+        shared = instance.classStructures(ofClass.index, classObjectParent, prototypeParentOrNull);
+    if (shared.classObjectStructure && (shared.classObjectStructure->realm() != globalObject || shared.classObjectStructure->storedPrototype() != (classObjectParent ? JSValue(classObjectParent) : classObject->getPrototypeDirect())))
         shared = { };
-    bool isShared = shared.ofClassObject;
+    bool isShared = shared.classObjectStructure;
     bool hasOnlyPlainMembers = true;
     auto storageFor = [&](Structure* structure) {
         return structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
@@ -8622,37 +8430,35 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
         RELEASE_ASSERT(isValidOffset(offset));
         target->putDirectOffset(vm, offset, value);
     };
-    // A ClassPrototype until somebody looks: made here, or before, for an object of the class: see prototypeOfClass().
     JSObject* prototype;
     if (isShared)
         prototype = JSFinalObject::createWithButterfly(vm, shared.ofPrototype, storageFor(shared.ofPrototype));
-    else if (part == PartOfClass::Everything) {
-        prototype = constructEmptyObject(vm, JSFinalObject::createStructure(vm, globalObject, parentOfPrototype, JSFinalObject::defaultInlineCapacity));
+    else if (part == ClassPart::Everything) {
+        prototype = constructEmptyObject(vm, JSFinalObject::createStructure(vm, globalObject, prototypeParent, JSFinalObject::defaultInlineCapacity));
         if (ofClass.isEvaluatedOnce) {
-            RELEASE_ASSERT(!prototypesOfClasses.get(ofClass.index));
-            prototypesOfClasses.set(ofClass.index, prototype);
+            RELEASE_ASSERT(!classPrototypes.get(ofClass.index));
+            classPrototypes.set(ofClass.index, prototype);
             didCreate(prototype);
         }
     } else {
-        prototype = prototypesOfClasses.get(ofClass.index);
+        prototype = classPrototypes.get(ofClass.index);
         if (!prototype)
-            prototype = makeClassPrototype(vm, ofClass.index, asObject(parentOfPrototype));
-        parentOfPrototype = prototype->getPrototypeDirect();
+            prototype = createClassPrototype(vm, ofClass.index, asObject(prototypeParent));
+        prototypeParent = prototype->getPrototypeDirect();
     }
-    // All that the declaration has to do is done. See Closure::isUnmadeClassObject().
-    if (isAtDeclaration && part == PartOfClass::ClassObject && parentOfClassObject && makesClassObjectWhenChanged(ofClass) && !classObject->mayBePrototype()) {
+    if (isAtDeclaration && part == ClassPart::ClassObject && classObjectParent && createsClassObjectOnMutation(ofClass) && !classObject->mayBePrototype()) {
         RELEASE_ASSERT(!classObject->butterfly());
-        classObject->setStructure(vm, structureOfUnmadeClassObjectInheritingFrom(vm, parentOfClassObject));
-        if (!mayLeaveClassObjectUnmade(parentOfClassObject, ofClass))
+        classObject->setStructure(vm, lazyClassObjectStructureInheritingFrom(vm, classObjectParent));
+        if (!canDeferClassObject(classObjectParent, ofClass))
             classObject->ensureClassObject(vm);
         return;
     }
-    using StoredAhead = Vector<std::pair<RefPtr<UniquedStringImpl>, unsigned>, 2>;
-    StoredAhead storedAhead;
-    MarkedArgumentBuffer valuesStoredAhead;
-    StoredAhead storedAheadOnPrototype;
-    MarkedArgumentBuffer valuesStoredAheadOnPrototype;
-    auto take = [&](JSObject* from, StoredAhead& stored, MarkedArgumentBuffer& values) {
+    using EarlyStores = Vector<std::pair<RefPtr<UniquedStringImpl>, unsigned>, 2>;
+    EarlyStores earlyStores;
+    MarkedArgumentBuffer earlyStoredValues;
+    EarlyStores earlyPrototypeStores;
+    MarkedArgumentBuffer earlyPrototypeStoredValues;
+    auto take = [&](JSObject* from, EarlyStores& stored, MarkedArgumentBuffer& values) {
         from->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             stored.append({ entry.key(), entry.attributes() });
             values.append(from->getDirect(entry.offset()));
@@ -8663,36 +8469,35 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
     auto markAsPrototypes = makeScopeExit([&] {
         if (classObjectMayBePrototype)
             classObject->structure()->setMayBePrototype(true);
-        if (part == PartOfClass::MembersOfPrototype)
+        if (part == ClassPart::PrototypeMembers)
             prototype->structure()->setMayBePrototype(true);
     });
     if (isShared) {
         RELEASE_ASSERT(!classObject->butterfly());
-        if (Butterfly* storage = storageFor(shared.ofClassObject))
+        if (Butterfly* storage = storageFor(shared.classObjectStructure))
             classObject->nukeStructureAndSetButterfly(vm, classObject->structureID(), storage);
-        classObject->setStructure(vm, shared.ofClassObject);
+        classObject->setStructure(vm, shared.classObjectStructure);
         storeShared(classObject, vm.propertyNames->prototype.impl(), prototype);
         storeShared(prototype, vm.propertyNames->constructor.impl(), classObject);
-    } else if (makesClassObject) {
-        // A Structure that no other object has: every transition the class object makes is the first from where it is, and is told. See watchMembers().
-        RELEASE_ASSERT(!parentOfClassObject || !makesClassObjectWhenChanged(ofClass) || classObject->getPrototypeDirect() == parentOfClassObject);
-        Structure* ofThisClassObject = Closure::createStructure(vm, globalObject, parentOfClassObject ? parentOfClassObject : classObject->getPrototypeDirect().getObject());
+    } else if (createsClassObject) {
+        RELEASE_ASSERT(!classObjectParent || !createsClassObjectOnMutation(ofClass) || classObject->getPrototypeDirect() == classObjectParent);
+        Structure* ofThisClassObject = Closure::createStructure(vm, globalObject, classObjectParent ? classObjectParent : classObject->getPrototypeDirect().getObject());
         ofThisClassObject->setAOTInstance(&instance);
         classObjectMayBePrototype = classObject->mayBePrototype();
         if (classObject->butterfly()) {
-            take(classObject, storedAhead, valuesStoredAhead);
+            take(classObject, earlyStores, earlyStoredValues);
             classObject->nukeStructureAndSetButterfly(vm, classObject->structureID(), nullptr);
         }
         classObject->setStructure(vm, ofThisClassObject);
         classObject->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     }
-    if (part == PartOfClass::MembersOfPrototype) {
-        Structure* ordinary = JSFinalObject::createStructure(vm, globalObject, parentOfPrototype, ClassPrototype::inlineCapacity);
+    if (part == ClassPart::PrototypeMembers) {
+        Structure* ordinary = JSFinalObject::createStructure(vm, globalObject, prototypeParent, ClassPrototype::inlineCapacity);
         if (prototype->butterfly())
-            take(prototype, storedAheadOnPrototype, valuesStoredAheadOnPrototype);
-        uncheckedDowncast<ClassPrototype>(prototype)->becomeOrdinary(vm, ordinary);
+            take(prototype, earlyPrototypeStores, earlyPrototypeStoredValues);
+        uncheckedDowncast<ClassPrototype>(prototype)->convertToOrdinaryObject(vm, ordinary);
     }
-    if (makesMembersOfPrototype && !isShared)
+    if (createsPrototypeMembers && !isShared)
         prototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, classObject, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     auto isPrivate = [&](const MethodData& method) {
@@ -8702,36 +8507,31 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
         if (!(method.flags & methodHasComputedName))
             return name(vm, method.name);
         RELEASE_ASSERT(method.name < ofClass.classData().numberOfVariables);
-        // The declaration has stored it.
         JSValue key = readVariable(classObject, ofClass, ofClass.variables()[method.name]);
         RELEASE_ASSERT(key && (key.isString() || key.isSymbol()));
         Identifier identifier = key.toPropertyKey(globalObject);
         scope.assertNoException();
         return identifier;
     };
-    // Nothing is in the way: the objects are new, and this goes past what a class object refuses.
     auto define = [&](JSObject* target, const Identifier& key, const PropertyDescriptor& descriptor) {
         JSObject::defineOwnProperty(target, globalObject, key, descriptor, true);
         scope.assertNoException();
     };
-    // `#name() {}` is no property. See findPrivateElement() for a class that is laid out. For any other, and for `static #name() {}`,
-    // compiled code sees to it.
     auto defineAll = [&](JSObject* target, std::span<const MethodData> methods) {
         for (auto& method : methods) {
-            bool isKeptForObjects = isPrivate(method) && target == prototype && ofClass.isLaidOut && !ofClass.isEvaluatedOnce;
-            if (isPrivate(method) && !isKeptForObjects)
+            bool isStoredPerObject = isPrivate(method) && target == prototype && ofClass.hasFixedLayout && !ofClass.isEvaluatedOnce;
+            if (isPrivate(method) && !isStoredPerObject)
                 continue;
             Identifier key = keyFor(method);
             auto kind = static_cast<Format::MethodKind>(method.kind);
-            // Each evaluation of a class makes its own functions. One that captures anything captures what the class object does.
             bool takesEnvironment = method.flags & methodTakesEnvironment;
             JSObject* function;
             if (ofClass.isEvaluatedOnce)
                 function = closureObjectFor(vm, method.function);
-            else if (makesSlimClosures(method.function))
+            else if (usesSlimClosures(method.function))
                 function = SlimClosure::create(vm, slimClosureStructure(vm, method.function), method.function, classObject->captures().first(takesEnvironment), takesEnvironment);
             else
-                function = Closure::create(vm, structureOfClosureThatIsNoClassObject(vm, method.function), method.function, classObject->captures().first(takesEnvironment), takesEnvironment);
+                function = Closure::create(vm, nonClassClosureStructure(vm, method.function), method.function, classObject->captures().first(takesEnvironment), takesEnvironment);
             if (method.flags & methodHasComputedName) {
                 if (auto* slim = dynamicDowncast<SlimClosure>(function))
                     slim->setComputedName(vm, key, kind);
@@ -8746,12 +8546,10 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
                 storeShared(target, key.impl(), kind == Format::MethodKind::Method ? static_cast<JSCell*>(function) : GetterSetter::create(vm, globalObject, isGetter ? function : nullptr, isGetter ? nullptr : function));
                 continue;
             }
-            // What defineOwnProperty makes of it on an object that has no such property. An index is no property of the Structure. Nor are, until
-            // somebody asks, the properties that a function makes of itself: JSFunction::defineOwnProperty makes them first.
-            bool mayBeMadeByFunction = target == classObject && (key == vm.propertyNames->name || key == vm.propertyNames->length || key == vm.propertyNames->prototype);
-            if (!mayBeMadeByFunction && !parseIndex(key) && !isValidOffset(target->structure()->get(vm, key))) {
+            bool mayBeCreatedByFunction = target == classObject && (key == vm.propertyNames->name || key == vm.propertyNames->length || key == vm.propertyNames->prototype);
+            if (!mayBeCreatedByFunction && !parseIndex(key) && !isValidOffset(target->structure()->get(vm, key))) {
                 if (kind == Format::MethodKind::Method)
-                    target->putDirectWithoutTransition(vm, key, function, PropertyAttribute::DontEnum | (isKeptForObjects ? PropertyAttribute::ReadOnly : PropertyAttribute::None));
+                    target->putDirectWithoutTransition(vm, key, function, PropertyAttribute::DontEnum | (isStoredPerObject ? PropertyAttribute::ReadOnly : PropertyAttribute::None));
                 else {
                     bool isGetter = kind == Format::MethodKind::Getter;
                     target->putDirectNonIndexAccessorWithoutTransition(vm, key, GetterSetter::create(vm, globalObject, isGetter ? function : nullptr, isGetter ? nullptr : function), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
@@ -8763,7 +8561,7 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
             switch (kind) {
             case Format::MethodKind::Method:
                 descriptor.setValue(function);
-                descriptor.setWritable(!isKeptForObjects);
+                descriptor.setWritable(!isStoredPerObject);
                 break;
             case Format::MethodKind::Getter:
                 descriptor.setGetter(function);
@@ -8781,14 +8579,13 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
                 classObject->ensureRareData(vm)->setHasModifiedNameForBoundOrNonHostFunction();
         }
     };
-    if (makesMembersOfPrototype)
+    if (createsPrototypeMembers)
         defineAll(prototype, ofClass.methods());
     RETURN_IF_EXCEPTION(scope, void());
-    if (makesClassObject)
+    if (createsClassObject)
         defineAll(classObject, ofClass.staticMethods());
     RETURN_IF_EXCEPTION(scope, void());
 
-    // From here on it cannot be stored to, redefined or deleted.
     auto fix = [&](JSObject* target, const Identifier& key, bool isAccessor) {
         Structure* structure = target->structure();
         unsigned attributes = 0;
@@ -8806,13 +8603,13 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
             descriptor.setWritable(false);
         define(target, key, descriptor);
     };
-    auto fixAll = [&](JSObject* target, std::span<const MethodData> methods) {
+    auto lockAll = [&](JSObject* target, std::span<const MethodData> methods) {
         for (auto& method : methods) {
             if (!isPrivate(method) && !(method.flags & methodMayBeReplaced))
                 fix(target, keyFor(method), static_cast<Format::MethodKind>(method.kind) != Format::MethodKind::Method);
         }
     };
-    auto putBack = [&](JSObject* target, StoredAhead& stored, MarkedArgumentBuffer& values) {
+    auto restoreEarlyStores = [&](JSObject* target, EarlyStores& stored, MarkedArgumentBuffer& values) {
         for (size_t i = 0; i < stored.size(); ++i) {
             auto& [key, attributes] = stored[i];
             if (attributes & PropertyAttribute::Accessor)
@@ -8823,27 +8620,21 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
                 target->putDirect(vm, key.get(), values.at(i), attributes);
         }
     };
-    putBack(classObject, storedAhead, valuesStoredAhead);
-    putBack(prototype, storedAheadOnPrototype, valuesStoredAheadOnPrototype);
-    // Only of such a class does compiled code look up what the class object has.
-    if (makesClassObject && ofClass.hasFixedMembers && ofClass.isEvaluatedOnce)
+    restoreEarlyStores(classObject, earlyStores, earlyStoredValues);
+    restoreEarlyStores(prototype, earlyPrototypeStores, earlyPrototypeStoredValues);
+    if (createsClassObject && ofClass.hasImmutableMembers && ofClass.isEvaluatedOnce)
         watchMembers(vm, classObject, ofClass);
     if (mayShareStructures && !isShared && hasOnlyPlainMembers)
-        instance.noteStructuresOfClass(ofClass.index, parentOfClassObject, parentOfPrototypeOrNull, { classObject->structure(), prototype->structure() });
-    if (!ofClass.isLaidOut || !makesMembersOfPrototype)
+        instance.cacheClassStructures(ofClass.index, classObjectParent, prototypeParentOrNull, { classObject->structure(), prototype->structure() });
+    if (!ofClass.hasFixedLayout || !createsPrototypeMembers)
         return;
-    // Compiled code calls the methods by the shape of the object, and takes an absent field for `undefined` without looking here.
-    if (!keepsMethodsReplaceable) {
-        bool isImmutable = prototype->fixAndMakePropertiesImmutable(vm);
+    if (!methodsStayReplaceable) {
+        bool isImmutable = prototype->lockAndMakePropertiesImmutable(vm);
         RELEASE_ASSERT(isImmutable);
         return;
     }
-    // The methods the program is seen to replace stay as the language has them, writable and configurable: compiled code looks them up.
-    // makePropertiesImmutable() knows no exceptions, so what it does to an object is done here to all the rest: every other property is
-    // fixed, nothing can be added, the prototype stays, and what inherits a property that has become read-only may still have its own.
-    // In place: nobody has looked at it yet, and no other object has its Structure.
     prototype->convertToUncacheableDictionary(vm);
-    fixAll(prototype, ofClass.methods());
+    lockAll(prototype, ofClass.methods());
     if (!ofClass.constructorMayBeReplaced)
         fix(prototype, vm.propertyNames->constructor, false);
     JSObject::preventExtensions(prototype, globalObject);
@@ -8852,36 +8643,36 @@ void State::makeClass(JSGlobalObject* globalObject, Closure* classObject, JSValu
     prototype->structure()->setInheritorsMayOverrideReadOnlyProperties(true);
 }
 
-bool State::makesMembersWhenLookedAt(const LayoutData& ofClass) const
+bool State::createsMembersLazily(const LayoutData& ofClass) const
 {
-    return ofClass.makesMembersWhenLookedAt;
+    return ofClass.createsMembersLazily;
 }
 
-bool State::hasPrototypeAheadOfClassObject(const LayoutData& ofClass) const
+bool State::createsPrototypeBeforeClassObject(const LayoutData& ofClass) const
 {
-    return ofClass.hasPrototypeAheadOfClassObject;
+    return ofClass.createsPrototypeBeforeClassObject;
 }
 
-bool State::makesClassObjectWhenChanged(const LayoutData& ofClass)
+bool State::createsClassObjectOnMutation(const LayoutData& ofClass)
 {
-    return ofClass.makesClassObjectWhenChanged;
+    return ofClass.createsClassObjectOnMutation;
 }
 
-Structure* State::structureOfUnmadeClassObject(VM& vm, const LayoutData& ofClass)
+Structure* State::lazyClassObjectStructure(VM& vm, const LayoutData& ofClass)
 {
     const LayoutData* baseClass = baseOf(ofClass);
     if (!baseClass)
         return closureStructure(vm, ofClass.classData().classConstructor);
-    return structureOfUnmadeClassObjectInheritingFrom(vm, closure(vm, baseClass->classData().classConstructor));
+    return lazyClassObjectStructureInheritingFrom(vm, closure(vm, baseClass->classData().classConstructor));
 }
 
-Structure* State::structureOfUnmadeClassObjectInheritingFrom(VM& vm, JSObject* parent)
+Structure* State::lazyClassObjectStructureInheritingFrom(VM& vm, JSObject* parent)
 {
-    Structure* structure = structuresOfUnmadeClassObjects.get(parent);
+    Structure* structure = lazyClassObjectStructures.get(parent);
     if (!structure) {
         structure = Closure::createStructure(vm, instance.globalObject, parent);
         structure->setAOTInstance(&instance);
-        structuresOfUnmadeClassObjects.set(parent, structure);
+        lazyClassObjectStructures.set(parent, structure);
         didCreate(structure);
     }
     return structure;
@@ -8896,42 +8687,42 @@ bool State::hasStaticMethodNamed(const LayoutData& ofClass, UniquedStringImpl* n
     });
 }
 
-bool State::mayLeaveClassObjectUnmade(JSObject* parent, const LayoutData& ofClass)
+bool State::canDeferClassObject(JSObject* parent, const LayoutData& ofClass)
 {
     if (!ofClass.classData().numberOfStaticMethods)
         return true;
-    UnmadeHeirs& heirs = unmadeHeirs.add(parent, UnmadeHeirs { }).iterator->value;
-    for (auto& name : heirs.assumedAbsent) {
+    LazySubclasses& descendants = lazySubclasses.add(parent, LazySubclasses { }).iterator->value;
+    for (auto& name : descendants.assumedAbsent) {
         if (hasStaticMethodNamed(ofClass, name.get()))
             return false;
     }
-    heirs.withStaticMembers.append(ofClass.index);
+    descendants.withStaticMembers.append(ofClass.index);
     return true;
 }
 
-bool State::isStructureOfUnmadeHeirsOf(VM& vm, Structure* structure, JSObject* parent)
+bool State::isLazySubclassStructureOf(VM& vm, Structure* structure, JSObject* parent)
 {
-    return structure->storedPrototypeObject() == parent && (structure == structuresOfUnmadeClassObjects.get(parent) || structure == closureStructures(vm)[closureStructureOfClassObjects]);
+    return structure->storedPrototypeObject() == parent && (structure == lazyClassObjectStructures.get(parent) || structure == closureStructures(vm)[classObjectClosureStructure]);
 }
 
-bool State::tryAssumeAbsentFromUnmadeHeirs(VM& vm, JSObject* parent, UniquedStringImpl* name)
+bool State::tryAssumeAbsentFromLazySubclasses(VM& vm, JSObject* parent, UniquedStringImpl* name)
 {
     Vector<Closure*, 4> declaring;
     {
-        UnmadeHeirs& heirs = unmadeHeirs.add(parent, UnmadeHeirs { }).iterator->value;
-        if (heirs.assumedAbsent.contains(name))
+        LazySubclasses& descendants = lazySubclasses.add(parent, LazySubclasses { }).iterator->value;
+        if (descendants.assumedAbsent.contains(name))
             return true;
-        for (uint32_t index : heirs.withStaticMembers) {
+        for (uint32_t index : descendants.withStaticMembers) {
             const LayoutData* ofClass = classWithIndex(index);
             if (!hasStaticMethodNamed(*ofClass, name))
                 continue;
-            JSCell* classObject = closureIfMade(ofClass->classData().classConstructor);
+            JSCell* classObject = closureIfCreated(ofClass->classData().classConstructor);
             if (!classObject)
                 return false;
-            if (uncheckedDowncast<Closure>(classObject)->isUnmadeClassObject())
+            if (uncheckedDowncast<Closure>(classObject)->isLazyClassObject())
                 declaring.append(uncheckedDowncast<Closure>(classObject));
         }
-        heirs.assumedAbsent.append(name);
+        descendants.assumedAbsent.append(name);
     }
     for (Closure* heir : declaring) {
         if (Options::useAOTOperationCounters()) [[unlikely]]
@@ -8941,83 +8732,80 @@ bool State::tryAssumeAbsentFromUnmadeHeirs(VM& vm, JSObject* parent, UniquedStri
     return true;
 }
 
-JSObject* State::makeClassPrototype(VM& vm, uint32_t classIndex, JSObject* parent)
+JSObject* State::createClassPrototype(VM& vm, uint32_t classIndex, JSObject* parent)
 {
-    Structure* structure = structuresOfClassPrototypes.get(parent);
+    Structure* structure = classPrototypeStructures.get(parent);
     if (!structure) {
         structure = ClassPrototype::createStructure(vm, instance.globalObject, parent);
         structure->setAOTInstance(&instance);
-        structuresOfClassPrototypes.set(parent, structure);
+        classPrototypeStructures.set(parent, structure);
         didCreate(structure);
     }
     JSObject* prototype = ClassPrototype::create(vm, structure, classIndex);
-    prototypesOfClasses.set(classIndex, prototype);
+    classPrototypes.set(classIndex, prototype);
     didCreate(prototype);
     return prototype;
 }
 
-JSObject* State::prototypeOfClass(VM& vm, uint32_t classIndex)
+JSObject* State::classPrototype(VM& vm, uint32_t classIndex)
 {
-    if (JSObject* prototype = prototypesOfClasses.get(classIndex))
+    if (JSObject* prototype = classPrototypes.get(classIndex))
         return prototype;
     const LayoutData& ofClass = *classWithIndex(classIndex);
-    if (hasPrototypeAheadOfClassObject(ofClass)) {
+    if (createsPrototypeBeforeClassObject(ofClass)) {
         const LayoutData* baseClass = baseOf(ofClass);
-        return makeClassPrototype(vm, classIndex, baseClass ? prototypeOfClass(vm, baseClass->index) : instance.globalObject->objectPrototype());
+        return createClassPrototype(vm, classIndex, baseClass ? classPrototype(vm, baseClass->index) : instance.globalObject->objectPrototype());
     }
     closure(vm, ofClass.classData().classConstructor);
-    JSObject* prototype = prototypesOfClasses.get(classIndex);
+    JSObject* prototype = classPrototypes.get(classIndex);
     RELEASE_ASSERT(prototype);
     return prototype;
 }
 
-Object* State::createObjectOfClass(VM& vm, const LayoutData& ofClass, JSObject* prototype)
+Object* State::createClassInstance(VM& vm, const LayoutData& ofClass, JSObject* prototype)
 {
-    RELEASE_ASSERT(ofClass.isLaidOut && ofClass.shape);
-    std::optional<uint32_t> orderWord = ordersOf(ofClass).orderWordAtBirthOfInstance;
+    RELEASE_ASSERT(ofClass.hasFixedLayout && ofClass.shape);
+    std::optional<uint32_t> orderWord = orderTableFor(ofClass).initialInstanceOrderWord;
     if (!orderWord) [[unlikely]] {
         Vector<uint16_t, 16> fields;
         for (uint32_t i = 0; i < ofClass.numberOfFields; ++i) {
-            if (!(ofClass.fields()[i].flags & fieldIsAbsentAtBirth))
+            if (!(ofClass.fields()[i].flags & fieldIsAbsentAtCreation))
                 fields.append(static_cast<uint16_t>(i));
         }
         orderWord = orderStartingWith(ofClass, fields.span());
-        ordersOf(ofClass).orderWordAtBirthOfInstance = orderWord;
+        orderTableFor(ofClass).initialInstanceOrderWord = orderWord;
     }
-    Object* object = Object::createWithBornFields(vm, structureFor(vm, ofClass.shape, prototype), ofClass, sizeWithRoomToSpecialize(ofClass.shape), *orderWord);
-    object->noteWhetherToAsk(*this, true);
+    Object* object = Object::createWithInitializedFields(vm, structureFor(vm, ofClass.shape, prototype), ofClass, sizeWithSpecializationCapacity(ofClass.shape), *orderWord);
+    object->updateNeedsSlowLookup(*this, true);
     countObject(object);
     return object;
 }
 
-// OrdinaryCreateFromConstructor. Whoever constructs makes the object, of the class that is constructed: the constructors of the classes
-// that one extends work on it.
 JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JSObject* newTarget)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_versionOfObjectsAtBirth) [[unlikely]] {
-        m_objectsAtBirthByNewTarget.fill({ });
-        m_versionOfObjectsAtBirth = version;
+    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_initialObjectStatesVersion) [[unlikely]] {
+        m_initialObjectStatesByNewTarget.fill({ });
+        m_initialObjectStatesVersion = version;
     }
-    ObjectAtBirth& known = m_objectsAtBirthByNewTarget[(std::bit_cast<uintptr_t>(newTarget) >> 4) % m_objectsAtBirthByNewTarget.size()];
-    if (known.newTarget == newTarget && known.constructor == constructor && known.epoch == instance.fieldsBelow().typedPrototypeEpoch)
+    InitialObjectState& known = m_initialObjectStatesByNewTarget[(std::bit_cast<uintptr_t>(newTarget) >> 4) % m_initialObjectStatesByNewTarget.size()];
+    if (known.newTarget == newTarget && known.constructor == constructor && known.epoch == instance.negativeOffsetFields().typedPrototypeEpoch)
         return Object::createWithBody(vm, known.structure, known.body.span());
     const LayoutData* ofClass = constructor->classData();
-    if (ofClass && ofClass->hasForeignRoot)
+    if (ofClass && ofClass->hasUntypedBase)
         return jsUndefined();
     const LayoutData* made = ofClass;
     JSValue prototype;
-    bool constructorTakesAnyObject = ofClass && ofClass->isLaidOut && ofClass->mayGiveUp;
-    bool isMadeWithoutLayout = false;
+    bool constructorAcceptsAnyObject = ofClass && ofClass->hasFixedLayout && ofClass->mayDespecialize;
+    bool isCreatedWithoutLayout = false;
     if (auto* target = dynamicDowncast<Closure>(newTarget); ofClass && target && target->structure()->aotInstance() == &instance) {
         const LayoutData* ofTarget = target->classData();
         for (const LayoutData* next = ofTarget; next; next = baseOf(*next)) {
             if (next != ofClass)
                 continue;
             made = ofTarget;
-            isMadeWithoutLayout = ofTarget != ofClass && constructorTakesAnyObject;
-            // It cannot be stored to or redefined.
+            isCreatedWithoutLayout = ofTarget != ofClass && constructorAcceptsAnyObject;
             prototype = target->prototypeProperty(vm);
             break;
         }
@@ -9025,9 +8813,8 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
     if (!prototype) {
         prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, { });
-        isMadeWithoutLayout = constructorTakesAnyObject && prototype != constructor->prototypeProperty(vm);
-        // Compiled code calls the methods of the class by the shape of the object, whatever its prototype object has.
-        if (ofClass && ofClass->isLaidOut && !isMadeWithoutLayout && !ofClass->mayHaveOtherPrototype && prototype != constructor->prototypeProperty(vm) && !reportOrThrow(scope, globalObject, { .kind = "construct-new-target"_s, .on = ofClass }, makeString("Cannot construct "_s, nameOf(*ofClass), " with a different new.target: only a subclass in TypeScript code of the program can extend it"_s), InAudit::CarriedOut, "instanceof answers by the class the object was declared as"_s))
+        isCreatedWithoutLayout = constructorAcceptsAnyObject && prototype != constructor->prototypeProperty(vm);
+        if (ofClass && ofClass->hasFixedLayout && !isCreatedWithoutLayout && !ofClass->mayHaveOtherPrototype && prototype != constructor->prototypeProperty(vm) && !reportOrThrow(scope, globalObject, { .kind = "construct-new-target"_s, .on = ofClass }, makeString("Cannot construct "_s, nameOf(*ofClass), " with a different new.target: only a subclass in TypeScript code of the program can extend it"_s), InAudit::Performed, "instanceof answers by the class the object was declared as"_s))
             return { };
     }
     JSObject* parent;
@@ -9039,65 +8826,62 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
         parent = realm->objectPrototype();
     }
     if (!ofClass) {
-        // `function Point(this: Point, ..)`: as `new` makes it where it knows the function.
-        if (const AllocationData* allocation = allocationOfThis(constructor->functionIndex())) {
-            if (parent != instance.globalObject->objectPrototype() && !parent->inherits<PrototypeObject>() && (!layoutOfShape(allocation->shape).mayHaveOtherPrototype || makesObjectsWithDefinitelyInitializedFields(constructor->functionIndex()))) [[unlikely]] {
-                bool goesOn = reportOrThrow(globalObject, { .kind = "construct-new-target"_s, .onFunction = constructor->functionIndex() }, makeString("Cannot construct '"_s, nameOfFunction(constructor->functionIndex()), "' with a new.target whose 'prototype' is not that of a function in TypeScript code of the program"_s), InAudit::CarriedOut);
+        if (const AllocationData* allocation = thisAllocation(constructor->functionIndex())) {
+            if (parent != instance.globalObject->objectPrototype() && !parent->inherits<PrototypeObject>() && (!layoutForShape(allocation->shape).mayHaveOtherPrototype || createsObjectsWithDefinitelyInitializedFields(constructor->functionIndex()))) [[unlikely]] {
+                bool goesOn = reportOrThrow(globalObject, { .kind = "construct-new-target"_s, .onFunction = constructor->functionIndex() }, makeString("Cannot construct '"_s, nameOfFunction(constructor->functionIndex()), "' with a new.target whose 'prototype' is not that of a function in TypeScript code of the program"_s), InAudit::Performed);
                 RETURN_IF_EXCEPTION(scope, { });
                 ASSERT_UNUSED(goesOn, goesOn);
             }
-            Object* object = Object::create(vm, structureFor(vm, allocation->shape, parent), layoutOfShape(allocation->shape), allocation->size, allocation->orderWord);
-            object->noteWhetherToAsk(*this, true);
+            Object* object = Object::create(vm, structureFor(vm, allocation->shape, parent), layoutForShape(allocation->shape), allocation->size, allocation->orderWord);
+            object->updateNeedsSlowLookup(*this, true);
             countAllocation(static_cast<uint32_t>(allocation - &this->allocation(0)), object);
             return object;
         }
     }
-    if (!ofClass || !ofClass->isLaidOut || isMadeWithoutLayout) {
+    if (!ofClass || !ofClass->hasFixedLayout || isCreatedWithoutLayout) {
         auto* target = dynamicDowncast<Closure>(newTarget);
         uint32_t function = (target && target->structure()->aotInstance() == &instance ? target : constructor)->functionIndex();
         unsigned capacity = m_inlineCapacitiesForThis.ensure(function, [&] {
             return inlineCapacityForThis(vm, constructor->functionIndex(), function, JSFinalObject::defaultInlineCapacity, parent);
         }).iterator->value;
         JSObject* object = constructEmptyObject(globalObject, parent, capacity);
-        if (isMadeWithoutLayout) {
+        if (isCreatedWithoutLayout) {
             for (const FieldData& field : std::span { ofClass->fields(), ofClass->numberOfFields }) {
-                if (!(field.flags & (fieldIsAbsentAtBirth | fieldIsPlaceholder)))
+                if (!(field.flags & (fieldIsAbsentAtCreation | fieldIsPlaceholder)))
                     object->putDirect(vm, name(vm, field.name), jsUndefined());
             }
         }
         return object;
     }
     if (!made->shape) {
-        noteViolation(vm, { .kind = "construct-new-target"_s, .on = made });
+        recordViolation(vm, { .kind = "construct-new-target"_s, .on = made });
         throwTypeError(globalObject, scope, withAOTErrorNote(makeString("Cannot construct "_s, nameOf(*made), ": no TypeScript code of the program calls 'new "_s, nameOf(*made), "', so the class was compiled without instances"_s)));
         return { };
     }
-    Object* object = createObjectOfClass(vm, *made, parent);
+    Object* object = createClassInstance(vm, *made, parent);
     auto* target = dynamicDowncast<Closure>(newTarget);
-    bool hasFieldThatIsWatched = std::ranges::any_of(std::span { made->fields(), made->numberOfFields }, [](const FieldData& field) {
-        return field.flags & fieldIsPinned && !(field.flags & fieldIsAbsentAtBirth);
+    bool hasWatchedField = std::ranges::any_of(std::span { made->fields(), made->numberOfFields }, [](const FieldData& field) {
+        return field.flags & fieldIsPinned && !(field.flags & fieldIsAbsentAtCreation);
     });
-    bool isAsTheClassAllows = made->mayHaveOtherPrototype || parent == prototypeOfClassIfExists(made->index);
-    if (target && target->structure()->aotInstance() == &instance && isAsTheClassAllows && !isCounting() && !data.isCompiledForAudit && !hasFieldThatIsWatched && !(made->hasExtension && object->extension()))
-        known = { constructor, newTarget, object->structure(), instance.fieldsBelow().typedPrototypeEpoch, Vector<uint8_t>(std::span { std::bit_cast<const uint8_t*>(object) + sizeof(JSCell), sizeWithRoomToSpecialize(made->shape) - sizeof(JSCell) }) };
+    bool prototypeIsAllowedByClass = made->mayHaveOtherPrototype || parent == classPrototypeIfExists(made->index);
+    if (target && target->structure()->aotInstance() == &instance && prototypeIsAllowedByClass && !isCounting() && !data.isCompiledForAudit && !hasWatchedField && !(made->hasExtension && object->extension()))
+        known = { constructor, newTarget, object->structure(), instance.negativeOffsetFields().typedPrototypeEpoch, Vector<uint8_t>(std::span { std::bit_cast<const uint8_t*>(object) + sizeof(JSCell), sizeWithSpecializationCapacity(made->shape) - sizeof(JSCell) }) };
     return object;
 }
 
 Structure* State::structureForThis(JSGlobalObject* globalObject, Closure* constructor, JSObject* newTarget, unsigned inlineCapacity)
 {
     VM& vm = globalObject->vm();
-    // The `prototype` of anything else may be a getter, or a trap.
     auto* target = dynamicDowncast<Closure>(newTarget);
     if (!target || target->structure()->aotInstance() != &instance)
         return nullptr;
     const LayoutData* ofClass = constructor->classData();
-    if (ofClass ? ofClass->hasForeignRoot || ofClass->isLaidOut || baseOf(*ofClass) : !!allocationOfThis(constructor->functionIndex()))
+    if (ofClass ? ofClass->hasUntypedBase || ofClass->hasFixedLayout || baseOf(*ofClass) : !!thisAllocation(constructor->functionIndex()))
         return nullptr;
     unsigned attributes = 0;
     JSValue prototype = target->getDirect(vm, vm.propertyNames->prototype, attributes);
-    // Made now, or what an unmade class object shows: a data property either way. The class of the constructor is at hand, and as a rule that is the new target.
     if (!prototype)
-        prototype = target == constructor && ofClass && makesClassObjectWhenChanged(*ofClass) ? JSValue(prototypeOfClass(vm, ofClass->index)) : target->prototypeProperty(vm);
+        prototype = target == constructor && ofClass && createsClassObjectOnMutation(*ofClass) ? JSValue(classPrototype(vm, ofClass->index)) : target->prototypeProperty(vm);
     if (prototype && attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
         return nullptr;
     JSObject* parent = prototype && prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
@@ -9109,23 +8893,23 @@ Structure* State::structureForThis(JSGlobalObject* globalObject, Closure* constr
 
 unsigned State::inlineCapacityForThis(VM& vm, uint32_t constructor, uint32_t newTarget, unsigned seen, JSObject* prototype) const
 {
-    std::span counts { data.at<std::array<uint32_t, 2>>(data.propertyCountsOfThisOffset), data.numberOfPropertyCountsOfThis };
+    std::span counts { data.at<std::array<uint32_t, 2>>(data.thisPropertyCountsOffset), data.numberOfThisPropertyCounts };
     auto countOf = [&](uint32_t function) -> uint32_t {
         auto found = std::ranges::lower_bound(counts, function, { }, [](auto& functionAndCount) {
             return functionAndCount[0];
         });
         return found != counts.end() && (*found)[0] == function ? (*found)[1] : 0;
     };
-    auto givenAlongFollowedCalls = [](uint32_t count) -> unsigned {
+    auto countAlongFollowedCalls = [](uint32_t count) -> unsigned {
         return count & Data::propertyCountMask;
     };
-    auto givenByItself = [](uint32_t count) -> unsigned {
+    auto countFromItself = [](uint32_t count) -> unsigned {
         return count >> Data::propertyCountBits & Data::propertyCountMask;
     };
     uint32_t ofTarget = countOf(newTarget);
-    unsigned given = givenAlongFollowedCalls(ofTarget);
-    unsigned givenByConstructor = constructor == newTarget ? 0 : givenAlongFollowedCalls(countOf(constructor));
-    given = ofTarget & Data::propertyCountIsOfWholeChain ? std::max(given, givenByConstructor) : given + givenByConstructor;
+    unsigned given = countAlongFollowedCalls(ofTarget);
+    unsigned countFromConstructor = constructor == newTarget ? 0 : countAlongFollowedCalls(countOf(constructor));
+    given = ofTarget & Data::propertyCountIncludesPrototypeChain ? std::max(given, countFromConstructor) : given + countFromConstructor;
     static constexpr unsigned maxLevels = 16;
     Vector<uint32_t, maxLevels + 1> constructors { newTarget };
     for (unsigned level = 0; prototype && level < maxLevels; ++level) {
@@ -9147,68 +8931,68 @@ unsigned State::inlineCapacityForThis(VM& vm, uint32_t constructor, uint32_t new
         JSValue next = structure->storedPrototype();
         prototype = next.isObject() ? asObject(next) : nullptr;
     }
-    unsigned givenAlongPrototypeChain = 0;
+    unsigned countAlongPrototypeChain = 0;
     for (size_t i = constructors.size(); i--;) {
         uint32_t count = countOf(constructors[i]);
-        unsigned itself = givenByItself(count);
-        unsigned followed = givenAlongFollowedCalls(count);
-        givenAlongPrototypeChain = itself + std::max(followed > itself ? followed - itself : 0, givenAlongPrototypeChain);
+        unsigned itself = countFromItself(count);
+        unsigned followed = countAlongFollowedCalls(count);
+        countAlongPrototypeChain = itself + std::max(followed > itself ? followed - itself : 0, countAlongPrototypeChain);
     }
-    if (Options::useAOTOperationCounters() && givenAlongPrototypeChain > given) [[unlikely]]
-        runtimeTable(vm).countOperation("createThis", "places-found-along-the-prototype-chain", givenAlongPrototypeChain - given);
-    given = std::max(given, givenAlongPrototypeChain);
+    if (Options::useAOTOperationCounters() && countAlongPrototypeChain > given) [[unlikely]]
+        runtimeTable(vm).countOperation("createThis", "places-found-along-the-prototype-chain", countAlongPrototypeChain - given);
+    given = std::max(given, countAlongPrototypeChain);
     seen = std::min<unsigned>(std::max(seen, given), JSFinalObject::maxInlineCapacity);
     size_t room = (MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(seen)) - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
     return std::min<size_t>(room, JSFinalObject::maxInlineCapacity);
 }
 
-const AllocationData* State::allocationOfThis(uint32_t function) const
+const AllocationData* State::thisAllocation(uint32_t function) const
 {
-    return Typed::allocationOfThis(data, function);
+    return Typed::thisAllocation(data, function);
 }
 
-bool State::refusesFreshObject(uint32_t function, uint32_t shape) const
+bool State::rejectsFreshObject(uint32_t function, uint32_t shape) const
 {
-    std::span refused { data.at<std::array<uint32_t, 2>>(data.refusedFreshObjectsOffset), data.numberOfRefusedFreshObjects };
+    std::span refused { data.at<std::array<uint32_t, 2>>(data.rejectedFreshObjectsOffset), data.numberOfRejectedFreshObjects };
     return std::ranges::binary_search(refused, std::array { function, shape });
 }
 
-uint32_t State::makerFlags(uint32_t function) const
+uint32_t State::objectCreatorFlags(uint32_t function) const
 {
-    static_assert(!(isMaker & (Data::makesObjectsOfFlaggedLayout | Data::makesObjectsWithDefinitelyInitializedFields)));
-    std::span makers { data.at<uint32_t>(data.makersOffset), data.numberOfMakers };
+    static_assert(!(isObjectCreator & (Data::createsObjectsOfFlaggedLayout | Data::createsObjectsWithDefinitelyInitializedFields)));
+    std::span makers { data.at<uint32_t>(data.objectCreatorsOffset), data.numberOfObjectCreators };
     auto found = std::ranges::lower_bound(makers, function << 2);
-    return found != makers.end() && *found >> 2 == function ? isMaker | (*found & 3) : 0;
+    return found != makers.end() && *found >> 2 == function ? isObjectCreator | (*found & 3) : 0;
 }
 
 bool State::hasGuardedPrototype(uint32_t function)
 {
-    return makesLaidOutObjects(function);
+    return createsFixedLayoutObjects(function);
 }
 
 bool State::isReservedFieldName(VM&, UniquedStringImpl* name, uint32_t function)
 {
-    auto number = numberOfFieldName(name);
+    auto number = fieldNameIndex(name);
     if (!number)
         return false;
-    if (std::ranges::binary_search(std::span { data.at<uint32_t>(data.functionsThatKeepFieldNamesOffTheirPrototypesOffset), data.numberOfFunctionsThatKeepFieldNamesOffTheirPrototypes }, function))
+    if (std::ranges::binary_search(std::span { data.at<uint32_t>(data.functionsWithoutFieldNamesOnPrototypeOffset), data.numberOfFunctionsWithoutFieldNamesOnPrototype }, function))
         return true;
     return std::ranges::binary_search(std::span { data.at<uint32_t>(data.reservedFieldNamesOffset), data.numberOfReservedFieldNames }, *number);
 }
 
-Structure* State::moduleNamespaceStructure(VM& vm, bool hasPrototypeOfHost)
+Structure* State::moduleNamespaceStructure(VM& vm, bool hasHostPrototype)
 {
     if (!m_moduleNamespaceStructure) {
-        m_moduleNamespaceStructure = ModuleNamespace::createStructure(vm, instance.globalObject, hasPrototypeOfHost);
+        m_moduleNamespaceStructure = ModuleNamespace::createStructure(vm, instance.globalObject, hasHostPrototype);
         didCreate(m_moduleNamespaceStructure);
     }
     return m_moduleNamespaceStructure;
 }
 
-Structure* State::structureForNewModuleNamespace(VM& vm, bool hasPrototypeOfHost)
+Structure* State::structureForNewModuleNamespace(VM& vm, bool hasHostPrototype)
 {
-    moduleNamespaceStructure(vm, hasPrototypeOfHost);
-    return ModuleNamespace::createStructure(vm, instance.globalObject, hasPrototypeOfHost);
+    moduleNamespaceStructure(vm, hasHostPrototype);
+    return ModuleNamespace::createStructure(vm, instance.globalObject, hasHostPrototype);
 }
 
 Structure* State::prototypeObjectStructure(VM& vm)
@@ -9226,11 +9010,11 @@ const State::NamedPropertiesTransition* State::namedPropertiesTransition(VM& vm,
     auto isFor = [&](const NamedPropertiesTransition& known) {
         return known.from == from && std::ranges::equal(known.names, names);
     };
-    if (m_namedPropertiesTransitionFoundLast < m_namedPropertiesTransitions.size() && isFor(m_namedPropertiesTransitions[m_namedPropertiesTransitionFoundLast])) [[likely]]
-        return &m_namedPropertiesTransitions[m_namedPropertiesTransitionFoundLast];
+    if (m_lastNamedPropertiesTransitionIndex < m_namedPropertiesTransitions.size() && isFor(m_namedPropertiesTransitions[m_lastNamedPropertiesTransitionIndex])) [[likely]]
+        return &m_namedPropertiesTransitions[m_lastNamedPropertiesTransitionIndex];
     for (auto& known : m_namedPropertiesTransitions) {
         if (isFor(known)) {
-            m_namedPropertiesTransitionFoundLast = &known - m_namedPropertiesTransitions.span().data();
+            m_lastNamedPropertiesTransitionIndex = &known - m_namedPropertiesTransitions.span().data();
             return &known;
         }
     }
@@ -9244,7 +9028,6 @@ const State::NamedPropertiesTransition* State::namedPropertiesTransition(VM& vm,
     transition.to = [&]() -> Structure* {
         if (from->typeInfo().type() != ArrayType || from->isDictionary() || !from->isStructureExtensible() || from->hasImmutableProperties() || isCopyOnWrite(from->indexingMode()) || hasAnyArrayStorage(from->indexingType()))
             return nullptr;
-        // [[Set]] asks the chain. These two take no property any more and keep what they have, so what they say now they say for good.
         JSGlobalObject* globalObject = instance.globalObject;
         JSObject* arrayPrototype = globalObject->arrayPrototype();
         JSObject* objectPrototype = globalObject->objectPrototype();
@@ -9270,10 +9053,9 @@ const State::NamedPropertiesTransition* State::namedPropertiesTransition(VM& vm,
         }
         transition.oldOutOfLineCapacity = from->outOfLineCapacity();
         transition.newOutOfLineCapacity = to->outOfLineCapacity();
-        transition.elementsGoByVectorLength = hasUndecided(from->indexingType()) || hasInt32(from->indexingType()) || hasDouble(from->indexingType()) || hasContiguous(from->indexingType());
+        transition.elementsDependOnVectorLength = hasUndecided(from->indexingType()) || hasInt32(from->indexingType()) || hasDouble(from->indexingType()) || hasContiguous(from->indexingType());
         return to;
     }();
-    // No other Structure comes to be at the address of one that is remembered.
     didCreate(from);
     if (transition.to)
         didCreate(transition.to);
@@ -9287,10 +9069,9 @@ std::span<Structure* const> State::closureStructures(VM& vm)
         JSGlobalObject* globalObject = instance.globalObject;
         JSObject* prototypes[] = { globalObject->functionPrototype(), globalObject->asyncFunctionPrototype(), globalObject->generatorFunctionPrototype(), globalObject->asyncGeneratorFunctionPrototype(), globalObject->functionPrototype() };
         static_assert(std::size(prototypes) == Instance::numberOfTypedClosureStructures && std::size(prototypes) == std::size(decltype(m_closureStructures) { }));
-        static_assert(functionKindOfConstructors == static_cast<uint8_t>(Format::FunctionKind::Constructor));
+        static_assert(constructorFunctionKind == static_cast<uint8_t>(Format::FunctionKind::Constructor));
         for (unsigned i = 0; i < std::size(prototypes); ++i) {
-            // Those of the realm are those of the Instance of its default loader: see builtinFunction().
-            m_closureStructures[i] = instance.loader() == globalObject->moduleLoader() ? closureStructureOfRealm(vm, globalObject, i) : Closure::createStructure(vm, globalObject, prototypes[i]);
+            m_closureStructures[i] = instance.loader() == globalObject->moduleLoader() ? realmClosureStructure(vm, globalObject, i) : Closure::createStructure(vm, globalObject, prototypes[i]);
             m_closureStructures[i]->setAOTInstance(&instance);
             instance.typedClosureStructureID(i) = m_closureStructures[i]->id().bits();
         }
@@ -9370,10 +9151,10 @@ Structure* State::reifiedSlimClosureStructure(VM& vm, uint32_t function)
     return structure;
 }
 
-Structure* State::structureOfBoundClosures(VM& vm, uint32_t function)
+Structure* State::boundClosureStructure(VM& vm, uint32_t function)
 {
     bool isAsync = kindAndDeclarationOf(function) & functionIsAsync;
-    Structure*& structure = m_structuresOfBoundClosures[isAsync];
+    Structure*& structure = m_boundClosureStructures[isAsync];
     if (!structure) {
         JSGlobalObject* globalObject = instance.globalObject;
         structure = Closure::createStructure(vm, globalObject, isAsync ? static_cast<JSObject*>(globalObject->asyncFunctionPrototype()) : globalObject->functionPrototype(), true);
@@ -9388,7 +9169,7 @@ Structure* State::closureStructure(VM& vm, uint32_t function)
     return closureStructures(vm)[closureStructureOf(kindAndDeclarationOf(function))];
 }
 
-Structure* State::structureOfClosureThatIsNoClassObject(VM& vm, uint32_t function)
+Structure* State::nonClassClosureStructure(VM& vm, uint32_t function)
 {
     RELEASE_ASSERT(kindOf(function) != Format::FunctionKind::Constructor);
     return closureStructure(vm, function);
@@ -9405,11 +9186,11 @@ JSC_DEFINE_CUSTOM_GETTER(lazyClosureGetter, (JSGlobalObject* globalObject, Encod
 JSObject* State::createClosureOver(VM& vm, uint32_t function, JSValue captured)
 {
     uint64_t capture = JSValue::encode(captured);
-    if (!(kindAndDeclarationOf(function) & functionIsOfBuiltinModule))
-        ensureStaticsOfProgramAreFilled();
-    if (makesSlimClosures(function))
+    if (!(kindAndDeclarationOf(function) & functionIsInBuiltinModule))
+        ensureProgramStaticsInitialized();
+    if (usesSlimClosures(function))
         return SlimClosure::create(vm, slimClosureStructure(vm, function), function, std::span { &capture, 1 }, 1);
-    return Closure::create(vm, structureOfClosureThatIsNoClassObject(vm, function), function, std::span { &capture, 1 }, 1);
+    return Closure::create(vm, nonClassClosureStructure(vm, function), function, std::span { &capture, 1 }, 1);
 }
 
 JSObject* State::reifyLazyClosure(VM& vm, JSObject* holder, PropertyName name)
@@ -9417,35 +9198,35 @@ JSObject* State::reifyLazyClosure(VM& vm, JSObject* holder, PropertyName name)
     unsigned attributes;
     PropertyOffset offset = holder->structure()->get(vm, name, attributes);
     RELEASE_ASSERT(isValidOffset(offset) && attributes & PropertyAttribute::CustomValue);
-    uint32_t function = functionOfLazyClosure(holder->getDirect(offset).asCell());
+    uint32_t function = lazyClosureFunction(holder->getDirect(offset).asCell());
     JSObject* closure = createClosureOver(vm, function, holder);
     holder->putDirect(vm, name, closure, attributes & ~PropertyAttribute::CustomValue);
     return closure;
 }
 
-JSObject* State::reifyLazyClosureIfAny(VM& vm, JSObject* holder, UniquedStringImpl* name, PropertyOffset& offset, bool& isMadeByStubs)
+JSObject* State::reifyLazyClosureIfPresent(VM& vm, JSObject* holder, UniquedStringImpl* name, PropertyOffset& offset, bool& isCreatedByStubs)
 {
-    if (m_functionsOfLazyClosures.isEmpty() || !holder->structure()->hasAnyKindOfGetterSetterProperties())
+    if (m_lazyClosureFunctions.isEmpty() || !holder->structure()->hasAnyKindOfGetterSetterProperties())
         return nullptr;
     unsigned attributes;
     offset = holder->structure()->get(vm, name, attributes);
     if (!isValidOffset(offset) || !(attributes & PropertyAttribute::CustomValue))
         return nullptr;
     JSCell* cell = holder->getDirect(offset).asCell();
-    if (!m_functionsOfLazyClosures.contains(cell))
+    if (!m_lazyClosureFunctions.contains(cell))
         return nullptr;
-    isMadeByStubs = uncheckedDowncast<CustomGetterSetter>(cell)->lazyClosureRequest();
+    isCreatedByStubs = uncheckedDowncast<CustomGetterSetter>(cell)->lazyClosureRequest();
     return reifyLazyClosure(vm, holder, name);
 }
 
 void State::reifyLazyClosures(VM& vm, JSObject* holder)
 {
     Structure* structure = holder->structure();
-    if (m_functionsOfLazyClosures.isEmpty() || !structure->hasAnyKindOfGetterSetterProperties())
+    if (m_lazyClosureFunctions.isEmpty() || !structure->hasAnyKindOfGetterSetterProperties())
         return;
     Vector<RefPtr<UniquedStringImpl>, 8> names;
     structure->forEachProperty(vm, [&](const auto& entry) {
-        if (entry.attributes() & PropertyAttribute::CustomValue && m_functionsOfLazyClosures.contains(holder->getDirect(entry.offset()).asCell()))
+        if (entry.attributes() & PropertyAttribute::CustomValue && m_lazyClosureFunctions.contains(holder->getDirect(entry.offset()).asCell()))
             names.append(entry.key());
         return true;
     });
@@ -9455,12 +9236,12 @@ void State::reifyLazyClosures(VM& vm, JSObject* holder)
 
 CustomGetterSetter* State::lazyClosureCell(VM& vm, uint32_t function)
 {
-    if (JSCell* cell = closureIfMade(function))
+    if (JSCell* cell = closureIfCreated(function))
         return uncheckedDowncast<CustomGetterSetter>(cell);
     CustomGetterSetter* cell = CustomGetterSetter::create(vm, lazyClosureGetter, nullptr);
-    if (makesSlimClosures(function))
+    if (usesSlimClosures(function))
         cell->setLazyClosureRequest(function | slimClosureKindOf(kindAndDeclarationOf(function)) << ClosureRequest::executableShift | 1u << ClosureRequest::isSlimBit);
-    m_functionsOfLazyClosures.add(cell, function);
+    m_lazyClosureFunctions.add(cell, function);
     didCreateClosureFor(function, cell);
     return cell;
 }
@@ -9518,26 +9299,23 @@ bool State::tryPutLazyClosure(JSGlobalObject* globalObject, JSValue base, const 
     return holder->putDirectCustomAccessor(vm, name, lazyClosureCell(vm, function), static_cast<unsigned>(PropertyAttribute::CustomValue));
 }
 
-// OrdinaryCreateFromConstructor: the `prototype` of the function if that is an object. It is a data property that cannot be deleted.
-JSObject* State::prototypeForObjectsOf(VM& vm, Closure* constructor)
+JSObject* State::prototypeForInstancesOf(VM& vm, Closure* constructor)
 {
     JSValue prototype = constructor->prototypeProperty(vm);
     return prototype.isObject() ? asObject(prototype) : instance.globalObject->objectPrototype();
 }
 
-// The function has another `prototype`: what it makes from now on has that.
 void State::didChangePrototypeOf(VM& vm, Closure* constructor)
 {
-    ++instance.fieldsBelow().typedPrototypeEpoch;
-    if (closureIfMade(constructor->functionIndex()) != constructor)
+    ++instance.negativeOffsetFields().typedPrototypeEpoch;
+    if (closureIfCreated(constructor->functionIndex()) != constructor)
         return;
     if (constructor->isDeclaredAs(functionIsGenerator)) {
-        // OrdinaryCreateFromConstructor, with what the realm has for a `prototype` that is no object.
         bool isAsync = constructor->isDeclaredAs(functionIsAsync);
         JSObject* prototype = constructor->getDirect(vm, vm.propertyNames->prototype).getObject();
         if (!prototype)
             prototype = isAsync ? static_cast<JSObject*>(instance.globalObject->asyncGeneratorPrototype()) : instance.globalObject->generatorPrototype();
-        setPrototypeOfGenerators(vm, resumeFunctionOf(constructor->functionIndex()), isAsync, prototype);
+        setGeneratorPrototype(vm, resumeFunctionOf(constructor->functionIndex()), isAsync, prototype);
         return;
     }
     uint32_t function = constructor->functionIndex();
@@ -9550,7 +9328,7 @@ void State::didChangePrototypeOf(VM& vm, Closure* constructor)
 
 Structure* State::structure(VM& vm, uint32_t shape)
 {
-    const LayoutData& layout = layoutOfShape(shape);
+    const LayoutData& layout = layoutForShape(shape);
     if (layout.kind == LayoutKind::Environment) {
         uint32_t page = shape >> 16;
         while (m_environmentStructures.size() <= page)
@@ -9563,7 +9341,6 @@ Structure* State::structure(VM& vm, uint32_t shape)
         }
         return m_environmentStructures[page];
     }
-    // Compiled code allocates every closure with it, and then sees to the others: see Instance::typedClosureStructureIDs.
     if (layout.kind == LayoutKind::Closure)
         return closureStructures(vm)[0];
     if (uint32_t known = structures[shape])
@@ -9577,9 +9354,8 @@ Structure* State::structure(VM& vm, uint32_t shape)
     case LayoutKind::Record:
         break;
     case LayoutKind::Instance:
-        // Where there is a class object for each evaluation, whoever makes an object says which it is of: see createObjectOfClass().
         if (layout.isEvaluatedOnce)
-            prototype = prototypeOfClass(vm, layout.index);
+            prototype = classPrototype(vm, layout.index);
         break;
     }
     structure = Object::createStructure(vm, instance, prototype, &layout);
@@ -9588,93 +9364,91 @@ Structure* State::structure(VM& vm, uint32_t shape)
     return structure;
 }
 
-static constexpr uint32_t isKeyOfObjectsWithExtraProperties = 1u << 31;
+static constexpr uint32_t keyHasExtraProperties = 1u << 31;
 
 Structure* State::structureFor(VM& vm, uint32_t shape, JSValue prototype, bool hasExtraProperties)
 {
     Structure* usual = structure(vm, shape);
     if (!hasExtraProperties && usual->storedPrototype() == prototype)
         return usual;
-    RELEASE_ASSERT(shape < isKeyOfObjectsWithExtraProperties);
-    std::pair<uint32_t, JSObject*> key { shape | (hasExtraProperties ? isKeyOfObjectsWithExtraProperties : 0), prototype.getObject() };
+    RELEASE_ASSERT(shape < keyHasExtraProperties);
+    std::pair<uint32_t, JSObject*> key { shape | (hasExtraProperties ? keyHasExtraProperties : 0), prototype.getObject() };
     if (Structure* existing = m_structuresWithOtherPrototype.get(key))
         return existing;
-    const LayoutData& layout = layoutOfShape(shape);
+    const LayoutData& layout = layoutForShape(shape);
     RELEASE_ASSERT(layout.offsetOfExtraProperties() + sizeOfExtraPropertiesWord <= MarkedSpace::optimalSizeFor(layout.size));
     Structure* created = Object::createStructure(vm, instance, prototype, &layout);
     if (hasExtraProperties) {
-        created->markingStampAndFlags() |= Structure::isOfObjectsWithExtraProperties;
-        created->setStructureOfExtraProperties(nullptr, static_cast<uint16_t>(layout.offsetOfExtraProperties()), 0);
+        created->markingStampAndFlags() |= Structure::isStructureWithExtraProperties;
+        created->setExtraPropertiesStructure(nullptr, static_cast<uint16_t>(layout.offsetOfExtraProperties()), 0);
     }
     m_structuresWithOtherPrototype.set(key, created);
     if (hasExtraProperties)
-        noteWhetherPrototypeIsByLayout(created);
+        updatePrototypeMatchesLayout(created);
     return created;
 }
 
 Structure* State::structureFor(VM& vm, uint32_t shape, JSValue prototype, Structure& ofExtraProperties)
 {
-    if (Structure* found = structureFoundLatelyFor(shape, prototype, ofExtraProperties))
+    if (Structure* found = recentStructureFor(shape, prototype, ofExtraProperties))
         return found;
     if (ofExtraProperties.isDictionary() || !ofExtraProperties.propertyAccessesAreCacheable())
         return structureFor(vm, shape, prototype, true);
     std::tuple<uint32_t, JSObject*, Structure*> key { shape, prototype.getObject(), &ofExtraProperties };
     if (Structure* existing = m_structuresByExtraProperties.get(key)) {
-        m_structuresByExtraPropertiesFoundLately[placeOfStructureFoundLately(shape, ofExtraProperties)] = existing->id();
+        m_recentStructuresByExtraProperties[recentStructureIndex(shape, ofExtraProperties)] = existing->id();
         return existing;
     }
-    const LayoutData& layout = layoutOfShape(shape);
+    const LayoutData& layout = layoutForShape(shape);
     RELEASE_ASSERT(layout.offsetOfExtraProperties() + sizeOfExtraPropertiesWord <= MarkedSpace::optimalSizeFor(layout.size));
     Structure* created = Object::createStructure(vm, instance, prototype, &layout);
-    created->markingStampAndFlags() |= Structure::isOfObjectsWithExtraProperties;
-    created->setStructureOfExtraProperties(&ofExtraProperties, static_cast<uint16_t>(layout.offsetOfExtraProperties()), static_cast<uint16_t>(WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(JSFinalObject::allocationSize(ofExtraProperties.inlineCapacity()))));
+    created->markingStampAndFlags() |= Structure::isStructureWithExtraProperties;
+    created->setExtraPropertiesStructure(&ofExtraProperties, static_cast<uint16_t>(layout.offsetOfExtraProperties()), static_cast<uint16_t>(WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(JSFinalObject::allocationSize(ofExtraProperties.inlineCapacity()))));
     m_structuresByExtraProperties.set(key, created);
-    m_structuresByExtraPropertiesFoundLately[placeOfStructureFoundLately(shape, ofExtraProperties)] = created->id();
-    m_structuresOfExtraPropertiesAskedFor.set(placeInStructuresAskedFor(ofExtraProperties));
-    noteWhetherPrototypeIsByLayout(created);
+    m_recentStructuresByExtraProperties[recentStructureIndex(shape, ofExtraProperties)] = created->id();
+    m_requestedExtraPropertiesStructures.set(requestedStructureIndex(ofExtraProperties));
+    updatePrototypeMatchesLayout(created);
     return created;
 }
 
-Structure* State::structureIfMadeFor(uint32_t shape, JSValue prototype, Structure& ofExtraProperties)
+Structure* State::existingStructureFor(uint32_t shape, JSValue prototype, Structure& ofExtraProperties)
 {
-    if (Structure* found = structureFoundLatelyFor(shape, prototype, ofExtraProperties))
+    if (Structure* found = recentStructureFor(shape, prototype, ofExtraProperties))
         return found;
-    if (!m_structuresOfExtraPropertiesAskedFor.get(placeInStructuresAskedFor(ofExtraProperties)))
+    if (!m_requestedExtraPropertiesStructures.get(requestedStructureIndex(ofExtraProperties)))
         return nullptr;
     Structure* existing = m_structuresByExtraProperties.get({ shape, prototype.getObject(), &ofExtraProperties });
     if (existing)
-        m_structuresByExtraPropertiesFoundLately[placeOfStructureFoundLately(shape, ofExtraProperties)] = existing->id();
+        m_recentStructuresByExtraProperties[recentStructureIndex(shape, ofExtraProperties)] = existing->id();
     return existing;
 }
 
-Structure* State::structureFoundLatelyFor(uint32_t shape, JSValue prototype, Structure& ofExtraProperties) const
+Structure* State::recentStructureFor(uint32_t shape, JSValue prototype, Structure& ofExtraProperties) const
 {
-    StructureID id = m_structuresByExtraPropertiesFoundLately[placeOfStructureFoundLately(shape, ofExtraProperties)];
+    StructureID id = m_recentStructuresByExtraProperties[recentStructureIndex(shape, ofExtraProperties)];
     if (!id)
         return nullptr;
     Structure* found = id.decode();
-    return found->structureIDOfExtraProperties() == ofExtraProperties.id() && found->compiledLayout()->shape == shape && found->storedPrototype() == prototype ? found : nullptr;
+    return found->extraPropertiesStructureID() == ofExtraProperties.id() && found->compiledLayout()->shape == shape && found->storedPrototype() == prototype ? found : nullptr;
 }
 
-Structure* State::structureWithExtraPropertiesLike(VM& vm, Structure* model, uint32_t shape, JSValue prototype)
+Structure* State::structureWithExtraPropertiesMatching(VM& vm, Structure* model, uint32_t shape, JSValue prototype)
 {
-    if (StructureID ofExtraProperties = model->structureIDOfExtraProperties())
+    if (StructureID ofExtraProperties = model->extraPropertiesStructureID())
         return structureFor(vm, shape, prototype, *ofExtraProperties.decode());
-    return structureFor(vm, shape, prototype, !isOfObjectsWithoutExtraProperties(model));
+    return structureFor(vm, shape, prototype, !isStructureWithoutExtraProperties(model));
 }
 
-bool State::isOfObjectsWithoutExtraProperties(Structure* structure)
+bool State::isStructureWithoutExtraProperties(Structure* structure)
 {
-    return !(structure->markingStampAndFlags() & Structure::isOfObjectsWithExtraProperties);
+    return !(structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties);
 }
 
-// With orderWordHasExtraProperties where the object has to be asked from the start: see Object::noteWhetherToAsk().
-uint32_t State::orderWordAtBirth(VM& vm, const AllocationData& allocation, Structure* structure)
+uint32_t State::initialOrderWord(VM& vm, const AllocationData& allocation, Structure* structure)
 {
     const LayoutData* layout = structure->compiledLayout();
-    // `new C() as T`, made as a T: the prototype object of a class has no members then, see fill(), and takes none.
-    bool isMadeByClass = allocation.constructedBy != LayoutData::noBase && closure(vm, allocation.constructedBy)->classData();
-    bool asks = layout && isObjectLayout(layout->kind) && layout->mayHaveOtherPrototype && !isMadeByClass && !isPrototypeByLayout(*layout, structure->storedPrototype());
+    bool isCreatedByClass = allocation.constructedBy != LayoutData::noBase && closure(vm, allocation.constructedBy)->classData();
+    bool asks = layout && isObjectLayout(layout->kind) && layout->mayHaveOtherPrototype && !isCreatedByClass && !prototypeMatchesLayout(*layout, structure->storedPrototype());
     return allocation.orderWord | (asks ? orderWordHasExtraProperties : 0);
 }
 
@@ -9683,22 +9457,21 @@ void State::fill(VM& vm, uint32_t number)
     const AllocationData& allocation = this->allocation(number);
     Structure* structure = this->structure(vm, allocation.shape);
     if (allocation.constructedBy != LayoutData::noBase) {
-        // For what is on the prototype of a class compiled code goes by the shape, which is not that of the class here.
         if (const LayoutData* ofClass = closure(vm, allocation.constructedBy)->classData(); ofClass && ofClass->shape != allocation.shape)
             RELEASE_ASSERT(!hasPrototypeMembers(*ofClass));
-        structure = structureFor(vm, allocation.shape, prototypeForObjectsOf(vm, closure(vm, allocation.constructedBy)));
+        structure = structureFor(vm, allocation.shape, prototypeForInstancesOf(vm, closure(vm, allocation.constructedBy)));
         didCreate(structure);
     }
     const LayoutData* layout = structure->compiledLayout();
     size_t size = allocation.size;
     Instance::TypedAllocation slot { };
-    RELEASE_ASSERT((layoutOfShape(allocation.shape).kind == LayoutKind::Closure) == !structure->isOfCompiledCells());
+    RELEASE_ASSERT((layoutForShape(allocation.shape).kind == LayoutKind::Closure) == !structure->isCompiledCellStructure());
     slot.header = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
-    if (structure->dataOfCompiledEnvironments()) {
-        slot.header &= ~(0xffull << 8 * offsetOfLowByteOfEnvironmentShape | 0xffull << 8 * offsetOfHighByteOfEnvironmentShape);
-        slot.header |= static_cast<uint64_t>(allocation.shape & 0xff) << 8 * offsetOfLowByteOfEnvironmentShape | static_cast<uint64_t>(allocation.shape >> 8 & 0xff) << 8 * offsetOfHighByteOfEnvironmentShape;
+    if (structure->compiledEnvironmentData()) {
+        slot.header &= ~(0xffull << 8 * offsetOfEnvironmentShapeLowByte | 0xffull << 8 * offsetOfEnvironmentShapeHighByte);
+        slot.header |= static_cast<uint64_t>(allocation.shape & 0xff) << 8 * offsetOfEnvironmentShapeLowByte | static_cast<uint64_t>(allocation.shape >> 8 & 0xff) << 8 * offsetOfEnvironmentShapeHighByte;
     }
-    slot.words = static_cast<uint64_t>(shapeWordOf(allocation.shape)) << 32 | orderWordAtBirth(vm, allocation, structure);
+    slot.words = static_cast<uint64_t>(shapeWordOf(allocation.shape)) << 32 | initialOrderWord(vm, allocation, structure);
     CompleteSubspace& space = layout && isObjectLayout(layout->kind) ? vm.cellSpace() : vm.heap.aotClosureSpace;
     LocalAllocator* allocator = space.allocatorFor(size, AllocatorForMode::EnsureAllocator).localAllocator();
     if (allocation.usesFieldTemplate && allocator && layout && isObjectLayout(layout->kind) && allocator->cellSize() > offsetOfFirstField)
@@ -9708,21 +9481,20 @@ void State::fill(VM& vm, uint32_t number)
         *row = slot;
         return;
     }
-    if (!allocator || m_numberOfAllocationRows == maxNumberOfAllocationRows) {
-        m_structureIDsOfAllocationsWithoutRow.set(number, structure->id().bits());
+    if (!allocator || m_numberOfAllocationEntries == maxAllocationEntries) {
+        m_structureIDsOfAllocationsWithoutEntry.set(number, structure->id().bits());
         return;
     }
-    uint16_t row = ++m_numberOfAllocationRows;
-    *(reinterpret_cast<Instance::TypedAllocation*>(instance.typedAllocationRows) - row) = slot;
-    // Compiled code allocates by itself from here on.
-    instance.typedAllocationRows[number] = row;
+    uint16_t row = ++m_numberOfAllocationEntries;
+    *(reinterpret_cast<Instance::TypedAllocation*>(instance.typedAllocationIndices) - row) = slot;
+    instance.typedAllocationIndices[number] = row;
 }
 
 uint32_t State::structureIDOf(uint32_t number) const
 {
     if (const Instance::TypedAllocation* row = instance.typedAllocation(number))
         return static_cast<uint32_t>(row->header);
-    return m_structureIDsOfAllocationsWithoutRow.get(number);
+    return m_structureIDsOfAllocationsWithoutEntry.get(number);
 }
 
 const void* State::fieldTemplate(const LayoutData& layout, uint32_t cellSize)
@@ -9745,26 +9517,26 @@ JSCell* State::allocate(VM& vm, uint32_t number)
         fill(vm, number);
     Structure* structure = std::bit_cast<StructureID>(structureIDOf(number)).decode();
     JSCell* cell = nullptr;
-    if (const LayoutData& layout = layoutOfShape(allocation(number).shape); layout.kind != LayoutKind::Closure)
-        cell = Object::create(vm, structure, layout, allocation(number).size, orderWordAtBirth(vm, allocation(number), structure));
+    if (const LayoutData& layout = layoutForShape(allocation(number).shape); layout.kind != LayoutKind::Closure)
+        cell = Object::create(vm, structure, layout, allocation(number).size, initialOrderWord(vm, allocation(number), structure));
     else
         cell = Closure::createForCompiledCode(vm, structure, allocation(number).size);
     countAllocation(number, cell);
     return cell;
 }
 
-uint32_t State::sizeWithRoomToSpecialize(uint32_t shape)
+uint32_t State::sizeWithSpecializationCapacity(uint32_t shape)
 {
-    return layoutOfShape(shape).sizeWithRoomToSpecialize();
+    return layoutForShape(shape).sizeWithSpecializationCapacity();
 }
 
-bool State::hasFixedMethod(const LayoutData& layout, UniquedStringImpl* name) const
+bool State::hasImmutableMethod(const LayoutData& layout, UniquedStringImpl* name) const
 {
     if (name->isSymbol())
         return false;
     bool isDeclared = false;
     for (const LayoutData* next = &layout; next && !isDeclared; next = baseOf(*next)) {
-        if (isFixedIn(next->methods(), name, isDeclared))
+        if (isImmutableIn(next->methods(), name, isDeclared))
             return true;
     }
     return false;
@@ -9806,15 +9578,15 @@ std::optional<JSObject*> State::declaredMethod(VM& vm, const LayoutData& ofClass
     return found ? closureObjectFor(vm, found->function) : nullptr;
 }
 
-std::optional<State::FoundThroughUnmadePrototypes> State::findThroughUnmadePrototypesByString(VM& vm, JSObject* base, UniquedStringImpl* name, uint32_t stringPlusOne, bool baseIsKnownToLackIt)
+std::optional<State::LazyPrototypeLookupResult> State::findThroughLazyPrototypesByString(VM& vm, JSObject* base, UniquedStringImpl* name, uint32_t stringPlusOne, bool baseIsKnownMissing)
 {
     Structure* structure = base->structure();
     JSObject* prototype = structure->hasMonoProto() ? structure->storedPrototypeObject() : nullptr;
-    if (!prototype || (prototype->classInfo() != ClassPrototype::info() && !baseIsKnownToLackIt) || name == vm.propertyNames->underscoreProto.impl())
+    if (!prototype || (prototype->classInfo() != ClassPrototype::info() && !baseIsKnownMissing) || name == vm.propertyNames->underscoreProto.impl())
         return std::nullopt;
-    bool lacksItByStructure = baseIsKnownToLackIt ? true : structure->compiledLayout() ? Object::absenceIsByStructure(structure, name)
+    bool structureGuaranteesAbsent = baseIsKnownMissing ? true : structure->compiledLayout() ? Object::structureGuaranteesAbsence(structure, name)
         : base->type() == FinalObjectType && !structure->isDictionary() && structure->propertyAccessesAreCacheable() && structure->propertyAccessesAreCacheableForAbsence() && !structure->typeInfo().overridesGetOwnPropertySlot() && !isValidOffset(structure->get(vm, name));
-    if (!lacksItByStructure || !stringPlusOne)
+    if (!structureGuaranteesAbsent || !stringPlusOne)
         return std::nullopt;
     for (; prototype && prototype->classInfo() == ClassPrototype::info() && prototype->structure()->aotInstance() == &instance && !prototype->butterfly(); prototype = prototype->getPrototypeDirect().getObject()) {
         const LayoutData& ofClass = *classWithIndex(uncheckedDowncast<ClassPrototype>(prototype)->classIndex());
@@ -9832,22 +9604,22 @@ std::optional<State::FoundThroughUnmadePrototypes> State::findThroughUnmadeProto
         if (method && (getter || setter))
             return std::nullopt;
         if (name == vm.propertyNames->constructor.impl() && !method && !getter && !setter)
-            return FoundThroughUnmadePrototypes { declaredMemberPlace(vm, ofClass.classData().classConstructor, nullptr, nullptr), nullptr };
+            return LazyPrototypeLookupResult { declaredMemberLocation(vm, ofClass.classData().classConstructor, nullptr, nullptr), nullptr };
         if (Options::validateAOTTypedFacts() && !getter && !setter) [[unlikely]]
             RELEASE_ASSERT(declaredMethod(vm, ofClass, name) == std::optional<JSObject*>(method ? closureObjectFor(vm, method->function) : nullptr));
         if (method || getter || setter)
-            return FoundThroughUnmadePrototypes { declaredMemberPlace(vm, method ? std::optional(method->function) : std::nullopt, getter, setter), nullptr };
+            return LazyPrototypeLookupResult { declaredMemberLocation(vm, method ? std::optional(method->function) : std::nullopt, getter, setter), nullptr };
     }
     if (prototype && (prototype->classInfo() == ClassPrototype::info() || prototype->structure()->compiledLayout()))
         return std::nullopt;
-    return FoundThroughUnmadePrototypes { std::nullopt, prototype };
+    return LazyPrototypeLookupResult { std::nullopt, prototype };
 }
 
-State::DeclaredMemberPlace State::declaredMemberPlace(VM& vm, std::optional<uint32_t> method, const MethodData* getter, const MethodData* setter)
+State::DeclaredMemberLocation State::declaredMemberLocation(VM& vm, std::optional<uint32_t> method, const MethodData* getter, const MethodData* setter)
 {
     uint32_t function = method ? *method : (getter ? getter : setter)->function;
-    uint32_t place = declaredMemberPlaces.size();
-    if (auto known = declaredMemberPlaces.find(function); known != declaredMemberPlaces.end())
+    uint32_t place = declaredMemberLocations.size();
+    if (auto known = declaredMemberLocations.find(function); known != declaredMemberLocations.end())
         place = known->value;
     else {
         if (place == declaredMemberHolders.size() * declaredMembersPerHolder) {
@@ -9863,7 +9635,7 @@ State::DeclaredMemberPlace State::declaredMemberPlace(VM& vm, std::optional<uint
             didCreate(member);
         }
         declaredMemberHolders.last()->putDirectOffset(vm, place % declaredMembersPerHolder, member);
-        declaredMemberPlaces.add(function, place);
+        declaredMemberLocations.add(function, place);
     }
     return { declaredMemberHolders[place / declaredMembersPerHolder], static_cast<PropertyOffset>(place % declaredMembersPerHolder), !method };
 }
@@ -9871,14 +9643,14 @@ State::DeclaredMemberPlace State::declaredMemberPlace(VM& vm, std::optional<uint
 auto State::collectDeclaredMemberEntries(VM& vm, const LayoutData& ofClass, MarkedArgumentBuffer& liveOwners) -> Vector<DeclaredMemberEntries>
 {
     Vector<DeclaredMemberEntries> result;
-    if (declaredMemberPlaces.isEmpty())
+    if (declaredMemberLocations.isEmpty())
         return result;
-    PlaceTable& table = PlaceTable::of(vm);
+    PropertyLookupTable& table = PropertyLookupTable::of(vm);
     auto add = [&](uint32_t function, UniquedStringImpl* uid) {
-        auto place = declaredMemberPlaces.find(function);
-        if (place == declaredMemberPlaces.end())
+        auto place = declaredMemberLocations.find(function);
+        if (place == declaredMemberLocations.end())
             return;
-        auto entries = table.entriesPointingAt(uid, declaredMemberHolders[place->value / declaredMembersPerHolder], static_cast<PropertyOffset>(place->value % declaredMembersPerHolder));
+        auto entries = table.entriesReferencing(uid, declaredMemberHolders[place->value / declaredMembersPerHolder], static_cast<PropertyOffset>(place->value % declaredMembersPerHolder));
         if (entries.owners.isEmpty())
             return;
         for (Structure* owner : entries.owners)
@@ -9889,7 +9661,7 @@ auto State::collectDeclaredMemberEntries(VM& vm, const LayoutData& ofClass, Mark
     for (auto& member : ofClass.methods()) {
         if (member.flags & methodHasComputedName)
             continue;
-        if (const Identifier& name = nameIfMade(member.name); !name.isNull())
+        if (const Identifier& name = nameIfCreated(member.name); !name.isNull())
             add(member.function, name.impl());
     }
     return result;
@@ -9901,7 +9673,7 @@ void State::repointDeclaredMemberEntries(VM& vm, JSObject* prototype, const Vect
         return;
     Structure* structure = prototype->structure();
     bool mayEnter = !structure->isDictionary() && structure->propertyAccessesAreCacheable();
-    PlaceTable& table = PlaceTable::of(vm);
+    PropertyLookupTable& table = PropertyLookupTable::of(vm);
     for (auto& member : members) {
         unsigned attributes = 0;
         PropertyOffset offset = mayEnter ? structure->get(vm, member.uid, attributes) : invalidOffset;
@@ -9945,13 +9717,11 @@ bool State::hasPrototypeMembers(const LayoutData& layout) const
     return false;
 }
 
-// `#name() {}`, `get #name() {}` of a class that is evaluated once: every object of the class has it, and of a class that extends it. The
-// name has been asked for by name().
 bool State::findPrivateMethod(VM& vm, const LayoutData& layout, UniquedStringImpl* name, Object::PrivateElement& element)
 {
     for (const LayoutData* next = &layout; next; next = baseOf(*next)) {
         for (auto& method : next->methods()) {
-            if (!next->isEvaluatedOnce || method.flags & methodHasComputedName || nameIfMade(method.name).impl() != name)
+            if (!next->isEvaluatedOnce || method.flags & methodHasComputedName || nameIfCreated(method.name).impl() != name)
                 continue;
             switch (static_cast<Format::MethodKind>(method.kind)) {
             case Format::MethodKind::Method:
@@ -9974,14 +9744,13 @@ bool State::findPrivateMethod(VM& vm, const LayoutData& layout, UniquedStringImp
     return false;
 }
 
-static constexpr uint64_t hashOfNoFields = 0xcbf29ce484222325ull;
+static constexpr uint64_t emptyFieldsHash = 0xcbf29ce484222325ull;
 
 static uint64_t hashWithField(uint64_t hash, uint16_t field)
 {
     return (hash ^ (field + 1)) * 0x100000001b3ull;
 }
 
-// The two greatest numbers are no keys.
 static uint64_t keyOf(uint64_t hash)
 {
     return hash >> 1;
@@ -9990,7 +9759,7 @@ static uint64_t keyOf(uint64_t hash)
 std::span<const uint16_t> State::fieldsInOrder(const LayoutData& layout, uint32_t order)
 {
     if (order >= layout.numberOfOrders)
-        return ordersOf(layout).added[order - layout.numberOfOrders].span();
+        return orderTableFor(layout).added[order - layout.numberOfOrders].span();
     const uint16_t* lengthAndFields = data.at<uint16_t>(data.at<uint32_t>(layout.ordersOffset)[order]);
     return { lengthAndFields + 1, lengthAndFields[0] };
 }
@@ -10006,7 +9775,7 @@ std::optional<std::span<const State::FieldAsProperty>> State::propertiesInOrder(
 {
     if (orderOf(orderWord) == keysAreInLayoutOrder)
         return std::nullopt;
-    auto& table = ordersOf(layout);
+    auto& table = orderTableFor(layout);
     if (table.lastOrderWord == orderWord) [[likely]]
         return table.lastProperties;
     auto& lists = table.propertyLists;
@@ -10032,14 +9801,14 @@ std::optional<std::span<const State::FieldAsProperty>> State::propertiesInOrder(
 
 const State::KeysAsJSON* State::keysAsJSON(VM& vm, const LayoutData& layout, uint32_t orderWord)
 {
-    auto& table = ordersOf(layout);
-    if (table.orderWordOfLastKeysAsJSON == orderWord) [[likely]]
+    auto& table = orderTableFor(layout);
+    if (table.lastKeysAsJSONOrderWord == orderWord) [[likely]]
         return table.lastKeysAsJSON;
     auto properties = propertiesInOrder(vm, layout, orderWord);
     if (!properties)
         return nullptr;
     auto remember = [&](const KeysAsJSON* keys) {
-        table.orderWordOfLastKeysAsJSON = orderWord;
+        table.lastKeysAsJSONOrderWord = orderWord;
         table.lastKeysAsJSON = keys;
         return keys;
     };
@@ -10069,10 +9838,9 @@ const State::KeysAsJSON* State::keysAsJSON(VM& vm, const LayoutData& layout, uin
     return remember(result.iterator->value.get());
 }
 
-Structure* State::structureOfPlainObjectWith(VM& vm, std::span<const FieldAsProperty> properties)
+Structure* State::plainObjectStructureWith(VM& vm, std::span<const FieldAsProperty> properties)
 {
     JSGlobalObject* globalObject = instance.globalObject;
-    // As constructEmptyObject() has it where the properties fit: then it is the Structure that the general way comes to.
     Structure* structure = properties.size() <= JSFinalObject::defaultInlineCapacity ? globalObject->objectStructureForObjectConstructor()
         : properties.size() <= JSFinalObject::maxInlineCapacity ? globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), properties.size()) : nullptr;
     PropertyOffset expected = 0;
@@ -10090,14 +9858,14 @@ Structure* State::structureOfPlainObjectWith(VM& vm, std::span<const FieldAsProp
     return structure;
 }
 
-const State::PlanOfPlainCopyWithout& State::planOfPlainCopyWithout(VM& vm, const LayoutData& layout, uint32_t orderWord, std::span<UniquedStringImpl* const> excluded)
+const State::PlainCopyExcludingPlan& State::plainCopyExcludingPlan(VM& vm, const LayoutData& layout, uint32_t orderWord, std::span<UniquedStringImpl* const> excluded)
 {
-    auto& plans = ordersOf(layout).plansOfPlainCopiesWithout.add(orderWord, Vector<std::unique_ptr<PlanOfPlainCopyWithout>, 1> { }).iterator->value;
+    auto& plans = orderTableFor(layout).plainCopyExcludingPlans.add(orderWord, Vector<std::unique_ptr<PlainCopyExcludingPlan>, 1> { }).iterator->value;
     for (auto& plan : plans) {
         if (std::ranges::equal(plan->excluded, excluded, [](const RefPtr<UniquedStringImpl>& known, UniquedStringImpl* asked) { return known.get() == asked; }))
             return *plan;
     }
-    auto plan = makeUnique<PlanOfPlainCopyWithout>();
+    auto plan = makeUnique<PlainCopyExcludingPlan>();
     for (UniquedStringImpl* name : excluded)
         plan->excluded.append(name);
     if (auto listed = propertiesInOrder(vm, layout, orderWord)) {
@@ -10107,41 +9875,40 @@ const State::PlanOfPlainCopyWithout& State::planOfPlainCopyWithout(VM& vm, const
                 kept.append(property);
         }
         plan->properties = FixedVector<FieldAsProperty>(WTF::move(kept));
-        plan->structure = structureOfPlainObjectWith(vm, plan->properties.span());
+        plan->structure = plainObjectStructureWith(vm, plan->properties.span());
     }
     plans.append(WTF::move(plan));
     return *plans.last();
 }
 
-const State::PlanOfPlainCopy& State::planOfPlainCopy(VM& vm, const LayoutData& layout, uint32_t orderWord)
+const State::PlainCopyPlan& State::plainCopyPlan(VM& vm, const LayoutData& layout, uint32_t orderWord)
 {
-    auto& table = ordersOf(layout);
-    if (table.orderWordOfLastPlainCopy == orderWord) [[likely]]
+    auto& table = orderTableFor(layout);
+    if (table.lastPlainCopyOrderWord == orderWord) [[likely]]
         return table.lastPlainCopy;
-    auto remember = [&](const PlanOfPlainCopy& plan) -> const PlanOfPlainCopy& {
-        table.orderWordOfLastPlainCopy = orderWord;
+    auto remember = [&](const PlainCopyPlan& plan) -> const PlainCopyPlan& {
+        table.lastPlainCopyOrderWord = orderWord;
         table.lastPlainCopy = plan;
         return table.lastPlainCopy;
     };
-    if (auto found = table.plansOfPlainCopies.find(orderWord); found != table.plansOfPlainCopies.end()) [[likely]]
+    if (auto found = table.plainCopyPlans.find(orderWord); found != table.plainCopyPlans.end()) [[likely]]
         return remember(found->value);
     auto listed = propertiesInOrder(vm, layout, orderWord);
     std::span<const FieldAsProperty> properties = listed.value_or(std::span<const FieldAsProperty> { });
-    Structure* structure = listed ? structureOfPlainObjectWith(vm, properties) : nullptr;
-    return remember(table.plansOfPlainCopies.add(orderWord, PlanOfPlainCopy { properties, structure }).iterator->value);
+    Structure* structure = listed ? plainObjectStructureWith(vm, properties) : nullptr;
+    return remember(table.plainCopyPlans.add(orderWord, PlainCopyPlan { properties, structure }).iterator->value);
 }
 
 JSCellButterfly* State::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord)
 {
     if (orderOf(orderWord) == keysAreInLayoutOrder)
         return nullptr;
-    if (JSCellButterfly* known = ordersOf(layout).keyLists.get(orderWord))
+    if (JSCellButterfly* known = orderTableFor(layout).keyLists.get(orderWord))
         return known;
     if (leavesFieldsUnlisted(layout, orderWord)) [[unlikely]]
         return nullptr;
     Vector<uint16_t, 16> listed;
     for (uint16_t index : fieldsInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
-        // The place of an extra property that is gone.
         if (index >= layout.numberOfFields)
             return nullptr;
         if (!isPrivate(layout.fields()[index]))
@@ -10153,15 +9920,15 @@ JSCellButterfly* State::keysInOrder(VM& vm, const LayoutData& layout, uint32_t o
     for (unsigned i = 0; i < listed.size(); ++i)
         list->setIndex(vm, i, jsOwnedString(vm, name(vm, layout.fields()[listed[i]].name).string()));
     didCreate(list);
-    ordersOf(layout).keyLists.add(orderWord, list);
+    orderTableFor(layout).keyLists.add(orderWord, list);
     return list;
 }
 
-State::OrderTable& State::ordersOf(const LayoutData& layout)
+State::OrderTable& State::orderTableFor(const LayoutData& layout)
 {
-    auto& askedForLately = m_orderTablesAskedForLately[layout.shape % m_orderTablesAskedForLately.size()];
-    if (askedForLately.second && askedForLately.first == layout.shape) [[likely]]
-        return *askedForLately.second;
+    auto& recentLookup = m_recentOrderTables[layout.shape % m_recentOrderTables.size()];
+    if (recentLookup.second && recentLookup.first == layout.shape) [[likely]]
+        return *recentLookup.second;
     OrderTable* table = m_orderTables.get(layout.shape);
     if (!table) [[unlikely]] {
         auto created = makeUnique<OrderTable>();
@@ -10170,51 +9937,50 @@ State::OrderTable& State::ordersOf(const LayoutData& layout)
         m_createdOrderTables.append(WTF::move(created));
         RELEASE_ASSERT(layout.numberOfOrders < keysAreInLayoutOrder);
     }
-    askedForLately = { layout.shape, table };
+    recentLookup = { layout.shape, table };
     return *table;
 }
 
-bool State::allExtraKeysHavePlaces(const LayoutData& layout, uint32_t orderWord, JSObject* extraProperties)
+bool State::allExtraKeysHavePositions(const LayoutData& layout, uint32_t orderWord, JSObject* extraProperties)
 {
     uint32_t order = orderOf(orderWord);
     if (order == keysAreInLayoutOrder)
         return true;
     OrderTable::ExtraKeysInOrder placed;
     if (order >= layout.numberOfOrders)
-        placed = ordersOf(layout).extraKeysInAddedOrders[order - layout.numberOfOrders];
+        placed = orderTableFor(layout).extraKeysInAddedOrders[order - layout.numberOfOrders];
     Structure* structure = extraProperties->structure();
     return countOf(orderWord) >= placed.end && placed.count == numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
 }
 
-static uint64_t keyOfPlacement(uint32_t orderAndCount, uint16_t entry, uint32_t position)
+static uint64_t placementKey(uint32_t orderAndCount, uint16_t entry, uint32_t position)
 {
     static_assert(orderAndCountMask < 1u << 28 && maxFieldsInOrder < 1u << 12);
     return static_cast<uint64_t>(orderAndCount) << 28 | static_cast<uint64_t>(entry) << 12 | std::min(position, maxFieldsInOrder);
 }
 
-std::optional<uint32_t> State::orderWithExtraKeyPlaced(const LayoutData& layout, uint32_t orderAndCount, uint16_t entry, uint32_t position)
+std::optional<uint32_t> State::orderWithExtraKeyAt(const LayoutData& layout, uint32_t orderAndCount, uint16_t entry, uint32_t position)
 {
-    auto& placements = ordersOf(layout).placements;
-    auto found = placements.find(keyOfPlacement(orderAndCount, entry, position));
+    auto& placements = orderTableFor(layout).placements;
+    auto found = placements.find(placementKey(orderAndCount, entry, position));
     return found == placements.end() ? std::nullopt : std::optional(found->value);
 }
 
-void State::didPlaceExtraKey(const LayoutData& layout, uint32_t orderAndCount, uint16_t entry, uint32_t position, uint32_t result)
+void State::didPositionExtraKey(const LayoutData& layout, uint32_t orderAndCount, uint16_t entry, uint32_t position, uint32_t result)
 {
-    ordersOf(layout).placements.add(keyOfPlacement(orderAndCount, entry, position), result);
+    orderTableFor(layout).placements.add(placementKey(orderAndCount, entry, position), result);
 }
 
-uint32_t State::orderStartingWith(const LayoutData& layout, std::span<const uint16_t> fields, bool entersPrefixes)
+uint32_t State::orderStartingWith(const LayoutData& layout, std::span<const uint16_t> fields, bool registersPrefixes)
 {
     static constexpr uint32_t noOrder = orderWordOf(keysAreInLayoutOrder, 0);
     if (fields.size() > maxFieldsInOrder)
         return noOrder;
-    OrderTable& table = ordersOf(layout);
-    // Whoever only lists keys has no use for it.
-    if (!table.hasPrefixesOfExpectedOrders) {
-        table.hasPrefixesOfExpectedOrders = true;
+    OrderTable& table = orderTableFor(layout);
+    if (!table.hasExpectedOrderPrefixes) {
+        table.hasExpectedOrderPrefixes = true;
         for (uint16_t order = 0; order < layout.numberOfOrders; ++order) {
-            uint64_t hash = hashOfNoFields;
+            uint64_t hash = emptyFieldsHash;
             table.byPrefix.add(keyOf(hash), order);
             for (uint16_t field : fieldsInOrder(layout, order)) {
                 hash = hashWithField(hash, field);
@@ -10222,7 +9988,7 @@ uint32_t State::orderStartingWith(const LayoutData& layout, std::span<const uint
             }
         }
     }
-    Vector<uint64_t, 16> hashes { hashOfNoFields };
+    Vector<uint64_t, 16> hashes { emptyFieldsHash };
     for (uint16_t field : fields)
         hashes.append(hashWithField(hashes.last(), field));
     auto find = [&](size_t length) -> std::optional<uint16_t> {
@@ -10236,7 +10002,6 @@ uint32_t State::orderStartingWith(const LayoutData& layout, std::span<const uint
     };
     if (auto order = find(fields.size()))
         return orderWordOf(*order, fields.size());
-    // An order that has come up when the program ran, and ends where this one goes on, is made longer.
     if (auto order = fields.empty() ? std::nullopt : find(fields.size() - 1); order && *order >= layout.numberOfOrders) {
         auto& all = table.added[*order - layout.numberOfOrders];
         if (all.size() + 1 == fields.size()) {
@@ -10250,7 +10015,7 @@ uint32_t State::orderStartingWith(const LayoutData& layout, std::span<const uint
     if (order >= keysAreInLayoutOrder)
         return noOrder;
     table.added.append(Vector<uint16_t>(fields));
-    for (uint64_t hash : entersPrefixes ? hashes.span() : hashes.span().last(1))
+    for (uint64_t hash : registersPrefixes ? hashes.span() : hashes.span().last(1))
         table.byPrefix.add(keyOf(hash), static_cast<uint16_t>(order));
     didChangeOrder(layout, table, order);
     return orderWordOf(order, fields.size());
@@ -10294,7 +10059,6 @@ void State::didChangeOrder(const LayoutData& layout, OrderTable& table, uint32_t
 
 void State::didFindTransition(const LayoutData& layout, OrderTable& table, uint32_t order, uint32_t count, uint16_t field, uint32_t next)
 {
-    // Made longer where it is: the field is its next key now.
     if (order >= table.slotsInOrder.size() || next == order || next >= keysAreInLayoutOrder || field >= layout.numberOfFields)
         return;
     auto& created = layout.fields()[field];
@@ -10310,7 +10074,7 @@ void State::didFindTransition(const LayoutData& layout, OrderTable& table, uint3
 
 const FieldData& State::fieldAt(const LayoutData& layout, uint32_t slotKey)
 {
-    OrderTable& table = ordersOf(layout);
+    OrderTable& table = orderTableFor(layout);
     if (table.orderKeys.isEmpty()) [[unlikely]] {
         table.orderKeys.append(0);
         instance.setTypedOrderKeys(layout.shape, table.orderKeys.mutableSpan().data());
@@ -10354,7 +10118,7 @@ uint32_t State::orderAfterCreating(const LayoutData& layout, uint32_t orderWord,
     auto fields = fieldsInOrder(layout, order);
     if (count < fields.size() && fields[count] == field) [[likely]]
         return counted(orderWordOf(order, count + 1));
-    OrderTable& table = ordersOf(layout);
+    OrderTable& table = orderTableFor(layout);
     uint64_t key = static_cast<uint64_t>(order) << 32 | count << 16 | field;
     if (auto found = table.transitions.find(key); found != table.transitions.end()) {
         didFindTransition(layout, table, order, count, field, found->value);
@@ -10368,42 +10132,26 @@ uint32_t State::orderAfterCreating(const LayoutData& layout, uint32_t orderWord,
     return counted(result);
 }
 
-// What becomes of an object that is cast. A plain data object is copied into the layout of the type, through its properties. An object
-// of the program becomes one of a specialization of its layout where it is. Nothing the program can see is changed before all of it is
-// known to work out, and no code of the program runs.
-//
-// An array is of an array type whatever it holds, and is not walked. An element is tested when it is read, and converted then:
-// operationAOTTypedCoerceElement. No cast writes an element, and compiled code counts on that.
-//
-// A type that admits foreign objects has plain objects in its places as they are, so one more is not copied: it would be two from then
-// on. It stays itself, and what its properties hold is coerced where it is. An object that nothing can be made of is of such a type as
-// it is, whatever it has: what is read through such a type is tested where it is read. See ASSERTED.md 3. For any other type the cast fails.
-//
-// Where a value is narrowed, by a type guard or a discriminant, only the second of these is done: nothing is copied, and no plain object
-// gets anything stored to it. Compiled code counts on that: see narrowingMayRetag().
-// An ordinary object that inherits from Object.prototype or from nothing, and can be extended.
-ALWAYS_INLINE std::optional<bool> State::mayBeChangedBelow(JSValue value, const RuntimeType& ofField, bool leavesForeignObjects) const
+ALWAYS_INLINE std::optional<bool> State::mayConvertNestedValue(JSValue value, const RuntimeType& ofField, bool leavesUntypedObjects) const
 {
     if (!value.isObject())
         return false;
     JSObject* below = asObject(value);
     switch (below->type()) {
     case FinalObjectType:
-        // Neither an object of the program nor a ClassPrototype.
-        if (leavesForeignObjects || fitsAsOneOfItsOwn(ofField, below))
+        if (leavesUntypedObjects || matchesTypedSubtype(ofField, below))
             return false;
         return std::nullopt;
     case ObjectType:
-        if (Object* compiled = compiledObject(below); compiled && !layoutOfShape(compiled->shape()).numberOfSpecializations())
+        if (Object* compiled = compiledObject(below); compiled && !layoutForShape(compiled->shape()).numberOfSpecializations())
             return false;
         return std::nullopt;
     default:
-        // No plain data: it fits, or it stays, or all fails.
         return false;
     }
 }
 
-static bool isPlainDataWhateverItsIntegrity(JSObject* object)
+static bool isPlainDataIgnoringIntegrity(JSObject* object)
 {
     if (object->type() != FinalObjectType)
         return false;
@@ -10413,10 +10161,10 @@ static bool isPlainDataWhateverItsIntegrity(JSObject* object)
 
 static bool isPlainData(JSObject* object)
 {
-    return object->isStructureExtensible() && isPlainDataWhateverItsIntegrity(object);
+    return object->isStructureExtensible() && isPlainDataIgnoringIntegrity(object);
 }
 
-static std::optional<Object::Integrity> integrityOfPlainData(VM& vm, JSObject* object)
+static std::optional<Object::Integrity> plainDataIntegrity(VM& vm, JSObject* object)
 {
     Structure* structure = object->structure();
     if (structure->isStructureExtensible())
@@ -10424,7 +10172,7 @@ static std::optional<Object::Integrity> integrityOfPlainData(VM& vm, JSObject* o
     return structure->isFrozen(vm) ? Object::Integrity::Frozen : structure->isSealed(vm) ? Object::Integrity::Sealed : Object::Integrity::NotExtensible;
 }
 
-static unsigned attributesOfDataWith(std::optional<Object::Integrity> integrity)
+static unsigned dataAttributesFor(std::optional<Object::Integrity> integrity)
 {
     if (!integrity || *integrity == Object::Integrity::NotExtensible)
         return 0;
@@ -10433,18 +10181,11 @@ static unsigned attributesOfDataWith(std::optional<Object::Integrity> integrity)
 
 class Coercion {
 public:
-    // Coerce: `x as T`, which never turns an object into one of an abstract layout, and makes nothing of one that is not of the program.
-    // CoerceFreshObject, CoerceFreshGraph: the same, of what nobody else can hold: plain data is copied: the object in hand, or all that hangs
-    // below it as well. Test: nothing becomes of anything.
     enum class Mode : uint8_t { Cast, Narrowing, Coerce, CoerceFreshObject, CoerceFreshGraph, Test };
-    // Whether a transition may leave absent a required field that the layout adds. It may where the program casts, or the front end for
-    // it: an object is made as less, cast, and then filled. Where a value is only tested, and wherever the run time decides by itself, an
-    // object becomes what it has everything for.
-    enum class Completeness : uint8_t { MayLackWhatIsAdded, HasWhatIsAdded };
-    // Whether failure() says why. That is text, which costs more than all the rest: for whoever throws or reports it.
+    enum class Completeness : uint8_t { MayLackAddedFields, HasAddedFields };
     enum class Explains : bool { No, Yes };
 
-    Coercion(JSGlobalObject* globalObject, State& state, Mode mode = Mode::Cast, Completeness completeness = Completeness::HasWhatIsAdded, Explains explains = Explains::Yes)
+    Coercion(JSGlobalObject* globalObject, State& state, Mode mode = Mode::Cast, Completeness completeness = Completeness::HasAddedFields, Explains explains = Explains::Yes)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
         , m_state(state)
@@ -10454,7 +10195,6 @@ public:
     {
     }
 
-    // Empty: it cannot be done, see failure(), or an exception has been thrown.
     JSValue run(JSValue value, const RuntimeType& type)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -10462,46 +10202,43 @@ public:
         RETURN_IF_EXCEPTION(scope, { });
         if (!result)
             return { };
-        if (JSObject* copied = whatOthersMayHoldAndWouldBeCopied(); copied && (m_refusesCopies || m_state.refusesCopiesOfWhatOthersMayHold())) {
-            if (staysBecauseItCannotBecomeTheRecord(copied, type, value))
+        if (JSObject* copied = sharedObjectThatWouldBeCopied(); copied && (m_disallowsCopies || m_state.rejectsCopiesOfSharedObjects())) {
+            if (staysBecauseNotConvertible(copied, type, value))
                 return value;
             return failToCopy(copied, type, value);
         }
         commit();
         result = settled(result);
-        RELEASE_ASSERT(m_state.fits(type, result) || type.admitsOnlyOtherLayouts());
-        bool hasCopiedWhatOthersMayHold = m_copied.containsIf([&](JSObject* object) {
-            return object != m_heldByNobodyElse && (m_isOrdinaryCopy.contains(object) || m_becameTheirCopies.isEmpty());
+        RELEASE_ASSERT(m_state.fits(type, result) || type.acceptsOnlyOtherLayouts());
+        bool hasCopiedSharedObject = m_copied.containsIf([&](JSObject* object) {
+            return object != m_unsharedObject && (m_isOrdinaryCopy.contains(object) || m_convertedInPlace.isEmpty());
         });
-        if (hasCopiedWhatOthersMayHold && m_mode != Mode::CoerceFreshObject && m_mode != Mode::CoerceFreshGraph) [[unlikely]] {
+        if (hasCopiedSharedObject && m_mode != Mode::CoerceFreshObject && m_mode != Mode::CoerceFreshGraph) [[unlikely]] {
             StringBuilder parts;
             for (auto& [original, ordinary] : m_ordinaryCopies) {
-                if (Object* copy = m_copies.get(ordinary))
+                if (Object* copy = m_inlinedCopies.get(ordinary))
                     parts.append(parts.isEmpty() ? "copied: "_s : ", "_s, State::describe(JSValue(original)), " as "_s, State::describe(JSValue(copy)));
             }
             String reason = parts.toString();
-            m_state.noteViolation(m_vm, { .kind = "copy-on-enter"_s, .what = m_mode == Mode::Coerce ? "Coerce"_s : m_mode == Mode::Narrowing ? "Flow"_s : "As"_s, .expected = &type, .got = value, .reason = reason.isEmpty() ? nullptr : &reason, .action = State::ActionOnViolation::Copied });
+            m_state.recordViolation(m_vm, { .kind = "copy-on-enter"_s, .what = m_mode == Mode::Coerce ? "Coerce"_s : m_mode == Mode::Narrowing ? "Flow"_s : "As"_s, .expected = &type, .got = value, .reason = reason.isEmpty() ? nullptr : &reason, .action = State::ActionOnViolation::Copied });
         }
         return result;
     }
 
-    void allowObjectsToBecomeTheirCopies() { m_objectsMayBecomeTheirCopies = true; }
-    void allowCopiesOfObjectsOfProgram() { m_copiesObjectsOfProgram = true; }
-    void refuseCopies() { m_refusesCopies = true; }
-    void allowTransitionsToMembers() { m_mayBecomeMembers = true; }
-    void noteThatNobodyElseHolds(JSObject* object)
+    void allowInPlaceConversion() { m_allowsInPlaceConversion = true; }
+    void allowCopyingProgramObjects() { m_copiesProgramObjects = true; }
+    void disallowCopies() { m_disallowsCopies = true; }
+    void allowTransitionsToMembers() { m_mayConvertToSubtypes = true; }
+    void setUnsharedObject(JSObject* object)
     {
-        m_heldByNobodyElse = object;
+        m_unsharedObject = object;
         m_isOrdinaryCopy.add(object);
     }
 
-    // The object becomes one of the layout, which it can become over some number of transitions: see State::specializeToStore().
-    // `stored`: the name of a field of the layout that the caller stores to right after. False: it cannot be done, or an exception
-    // has been thrown.
     bool run(Object* object, const LayoutData& layout, UniquedStringImpl* stored)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!mayBecome(object, layout, stored))
+        if (!canConvertTo(object, layout, stored))
             return false;
         JSValue result = specializeTo(object, layout);
         RETURN_IF_EXCEPTION(scope, false);
@@ -10518,25 +10255,25 @@ private:
 
     JSValue settled(JSValue value) const
     {
-        if (m_becameTheirCopies.isEmpty() || !value || !value.isCell())
+        if (m_convertedInPlace.isEmpty() || !value || !value.isCell())
             return value;
-        JSObject* object = m_becameTheirCopies.get(value.asCell());
+        JSObject* object = m_convertedInPlace.get(value.asCell());
         return object ? JSValue(object) : value;
     }
 
-    JSObject* whatOthersMayHoldAndWouldBeCopied()
+    JSObject* sharedObjectThatWouldBeCopied()
     {
         if (m_mode == Mode::CoerceFreshObject || m_mode == Mode::CoerceFreshGraph)
             return nullptr;
-        bool becomeTheirCopies = allCopiedHaveRoom();
+        bool convertInPlaceAll = allCopiedHaveCapacity();
         JSObject* first = nullptr;
         for (JSObject* object : m_copied) {
-            bool isOfProgram = m_isOrdinaryCopy.contains(object);
-            if (m_isCopiedForLackOfRoom.contains(object))
+            bool isProgramObject = m_isOrdinaryCopy.contains(object);
+            if (m_copiedForLackOfCapacity.contains(object))
                 return object;
-            if (object == m_heldByNobodyElse || (!isOfProgram && becomeTheirCopies))
+            if (object == m_unsharedObject || (!isProgramObject && convertInPlaceAll))
                 continue;
-            if (isOfProgram || !m_state.hasRoomToBecome(object, m_copies.get(object)))
+            if (isProgramObject || !m_state.hasCapacityToConvertInPlace(object, m_inlinedCopies.get(object)))
                 return object;
             if (!first)
                 first = object;
@@ -10544,49 +10281,49 @@ private:
         return first;
     }
 
-    void recordPathOfCopy(JSObject* object)
+    void recordCopyPath(JSObject* object)
     {
         if (!m_explains || m_path.isEmpty())
             return;
         StringBuilder path;
         for (UniquedStringImpl* name : m_path)
             path.append(path.isEmpty() ? ""_s : "."_s, StringView(name));
-        m_pathsOfCopies.add(object, path.toString());
+        m_copyPaths.add(object, path.toString());
     }
 
     JSValue failToCopy(JSObject* copied, const RuntimeType& type, JSValue cast)
     {
         if (!m_explains || !m_failure.isNull())
             return { };
-        Object* copy = m_copies.get(copied);
+        Object* copy = m_inlinedCopies.get(copied);
         bool isBelow = copy && cast != JSValue(copied) && !m_isOrdinaryCopy.contains(copied);
         String name = isBelow ? m_state.nameOf(copy->layout()) : m_state.describe(type);
-        String why = m_isOrdinaryCopy.contains(copied) && !m_isCopiedForLackOfRoom.contains(copied) ? "TypeScript code of the program may use it as another declared type"_str : copied->structure()->mayBePrototype() ? "it is the prototype of another object"_str : makeString(name, " has more fields than the object has space for"_s);
-        String path = isBelow ? m_pathsOfCopies.get(copied) : String();
+        String why = m_isOrdinaryCopy.contains(copied) && !m_copiedForLackOfCapacity.contains(copied) ? "TypeScript code of the program may use it as another declared type"_str : copied->structure()->mayBePrototype() ? "it is the prototype of another object"_str : makeString(name, " has more fields than the object has space for"_s);
+        String path = isBelow ? m_copyPaths.get(copied) : String();
         m_failure = makeString(!isBelow ? "the object matches "_str : path.isEmpty() ? "an object it holds matches "_str : makeString("property '"_s, path, "' holds an object that matches "_s), name, ", but it cannot be converted in place ("_s, why, "), and a copy would not see later changes made through other references to it\n  convert the data where it enters the program, before anything else refers to it ('JSON.parse(text) as "_s, name, "'), or declare this place as 'unknown' and check it"_s);
         return { };
     }
 
-    bool allCopiedHaveRoom()
+    bool allCopiedHaveCapacity()
     {
-        return m_objectsMayBecomeTheirCopies && std::ranges::all_of(m_copied, [&](JSObject* object) {
-            return m_isOrdinaryCopy.contains(object) || m_state.hasRoomToBecome(object, m_copies.get(object));
+        return m_allowsInPlaceConversion && std::ranges::all_of(m_copied, [&](JSObject* object) {
+            return m_isOrdinaryCopy.contains(object) || m_state.hasCapacityToConvertInPlace(object, m_inlinedCopies.get(object));
         });
     }
 
-    void letObjectsBecomeTheirCopies()
+    void convertObjectsInPlace()
     {
-        if (!allCopiedHaveRoom())
+        if (!allCopiedHaveCapacity())
             return;
         for (JSObject* object : m_copied) {
             if (m_isOrdinaryCopy.contains(object))
                 continue;
-            Object* copy = m_copies.get(object);
+            Object* copy = m_inlinedCopies.get(object);
             m_state.become(m_vm, object, copy);
-            m_becameTheirCopies.add(copy, object);
+            m_convertedInPlace.add(copy, object);
         }
         for (JSObject* object : m_copied) {
-            Object* holder = m_isOrdinaryCopy.contains(object) ? m_copies.get(object) : uncheckedDowncast<Object>(object);
+            Object* holder = m_isOrdinaryCopy.contains(object) ? m_inlinedCopies.get(object) : uncheckedDowncast<Object>(object);
             const LayoutData& layout = holder->layout();
             for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
                 const FieldData& field = layout.fields()[i];
@@ -10602,23 +10339,21 @@ private:
     void commit()
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
-        letObjectsBecomeTheirCopies();
+        convertObjectsInPlace();
         for (auto& specialization : m_specializations) {
             Object* object = specialization.object;
             object->specialize(m_vm, m_state, specialization.shape);
             const LayoutData& layout = object->layout();
             auto& moved = specialization.movedIntoFields;
             if (!moved.isEmpty()) {
-                // In the order of their creation, which the keys keep: one becomes a field, another gets a place among the keys.
                 JSObject* extra = object->extraProperties();
                 size_t next = 0;
                 for (auto& property : propertiesOf(extra)) {
                     const FieldData* field = next < moved.size() ? &layout.fields()[moved[next].first] : nullptr;
                     if (!field || m_state.name(m_vm, field->name).impl() != property.name) {
-                        object->placeExtraKey(m_state, property.name, UINT32_MAX);
+                        object->positionExtraKey(m_state, property.name, UINT32_MAX);
                         continue;
                     }
-                    // The extra property keeps the value alive until the field has it: this may collect garbage.
                     object->didMoveExtraPropertyToField(m_state, *field);
                     bool didStore = object->store(m_vm, *field, settled(moved[next++].second));
                     RELEASE_ASSERT(didStore);
@@ -10630,7 +10365,6 @@ private:
             }
             object->dropExtraPropertiesIfEmpty(m_vm);
         }
-        // They are writable data properties: there is no transition.
         for (auto& store : m_propertyStores)
             store.object->putDirect(m_vm, store.name, settled(store.value));
     }
@@ -10644,7 +10378,6 @@ private:
     struct Specialization {
         Object* object;
         uint32_t shape;
-        // Extra properties by the names of fields that the shape has more.
         Vector<std::pair<uint16_t, JSValue>, 1> movedIntoFields;
     };
     struct PropertyStore {
@@ -10652,11 +10385,8 @@ private:
         UniquedStringImpl* name;
         JSValue value;
     };
-    // How far a plain object is from a layout it can be made one of. The less the better, in this order.
     struct Distance {
-        // Properties that hold none of the strings, or of the numbers, that are all the type of the field allows.
         unsigned otherLiterals { 0 };
-        // Properties the layout has no field for.
         unsigned extraProperties { 0 };
 
         friend auto operator<=>(const Distance&, const Distance&) = default;
@@ -10667,23 +10397,21 @@ private:
         return planned == m_plannedShapes.end() ? object->shape() : planned->value;
     }
 
-    // Whether there is nothing to make of the value.
     bool fits(JSValue value, const RuntimeType& type) const
     {
         if (Object* object = m_state.compiledObject(value))
-            return type.allowsAnyObject() || m_state.admitsShape(type, shapeOf(object));
-        return value.isObject() ? m_state.fitsAsOneOfItsOwn(type, asObject(value)) : m_state.fits(type, value);
+            return type.allowsAnyObject() || m_state.acceptsShape(type, shapeOf(object));
+        return value.isObject() ? m_state.matchesTypedSubtype(type, asObject(value)) : m_state.fits(type, value);
     }
 
-    // Nothing is left of an attempt that has failed.
-    JSValue orAsItIs(JSValue value, bool mayStayAsItIs, const Invocable<JSValue()> auto& attempt)
+    JSValue orUnchanged(JSValue value, bool mayStayUnchanged, const Invocable<JSValue()> auto& attempt)
     {
-        if (!mayStayAsItIs)
+        if (!mayStayUnchanged)
             return attempt();
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         size_t numberOfCopies = m_copied.size();
         size_t numberOfSpecializations = m_specializations.size();
-        size_t numberOfKeptObjects = m_keptInOrder.size();
+        size_t keptObjectCount = m_keptInOrder.size();
         size_t numberOfPropertyStores = m_propertyStores.size();
         size_t lengthOfPath = m_path.size();
         JSValue result = attempt();
@@ -10691,22 +10419,21 @@ private:
         if (result)
             return result;
         for (size_t i = numberOfCopies; i < m_copied.size(); ++i)
-            m_copies.remove(m_copied[i]);
+            m_inlinedCopies.remove(m_copied[i]);
         m_copied.shrink(numberOfCopies);
         m_specializations.shrink(numberOfSpecializations);
         m_plannedShapes.clear();
         for (auto& specialization : m_specializations)
             m_plannedShapes.set(specialization.object, specialization.shape);
-        for (size_t i = numberOfKeptObjects; i < m_keptInOrder.size(); ++i)
+        for (size_t i = keptObjectCount; i < m_keptInOrder.size(); ++i)
             m_kept.remove(m_keptInOrder[i]);
-        m_keptInOrder.shrink(numberOfKeptObjects);
+        m_keptInOrder.shrink(keptObjectCount);
         m_propertyStores.shrink(numberOfPropertyStores);
         m_path.shrink(lengthOfPath);
         m_failure = String();
         return value;
     }
 
-    // "property 'a.b'", or "object" for the value that is being cast.
     String subject() const
     {
         if (m_path.isEmpty())
@@ -10717,7 +10444,6 @@ private:
         return makeString("property '"_s, path.toString(), '\'');
     }
 
-    // The first failure is the reason. What `predicate` yields completes a sentence that starts with subject().
     JSValue fail(const Invocable<String()> auto& predicate)
     {
         if (m_explains && m_failure.isNull())
@@ -10725,11 +10451,10 @@ private:
         return { };
     }
 
-    JSValue failToFit(JSValue value, const RuntimeType& type)
+    JSValue failCoercion(JSValue value, const RuntimeType& type)
     {
         if (!m_explains || !m_failure.isNull())
             return { };
-        // About the cast value itself the first line of the message says this already.
         m_failure = m_path.isEmpty() ? emptyString() : makeString(subject(), ": expected "_s, m_state.describe(type), ", got "_s, State::describe(value));
         return { };
     }
@@ -10747,7 +10472,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (!value.isObject())
-            return m_state.fits(type, value) ? value : failToFit(value, type);
+            return m_state.fits(type, value) ? value : failCoercion(value, type);
         if (!m_vm.isSafeToRecurse()) [[unlikely]] {
             throwStackOverflowError(m_globalObject, scope);
             return { };
@@ -10756,92 +10481,88 @@ private:
             bool isOfType = fits(value, type);
             if (isOfType && (m_mode == Mode::Test || !shouldSpecialize(object, type)))
                 return value;
-            // Nothing can be made of an object whose layout has no specializations: forEachSpecialization().
-            if (m_mode != Mode::Test && m_state.layoutOfShape(shapeOf(object)).numberOfSpecializations()) {
-                JSValue result = orAsItIs(value, isOfType || type.admitsForeignObjectsByNature() || staysIfCopyWouldFit(object, type) || mayCopyObjectOfProgram(object), [&] {
-                    SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, m_copiesObjectsOfProgram && !isOfType && !type.admitsForeignObjectsByNature());
+            if (m_mode != Mode::Test && m_state.layoutForShape(shapeOf(object)).numberOfSpecializations()) {
+                JSValue result = orUnchanged(value, isOfType || type.acceptsUntypedObjectsByNature() || staysIfCopyWouldMatch(object, type) || mayCopyProgramObject(object), [&] {
+                    SetForScope copiesOnlyWhenNeeded(m_copiesProgramObjects, m_copiesProgramObjects && !isOfType && !type.acceptsUntypedObjectsByNature());
                     return specialize(object, type);
                 });
                 RETURN_IF_EXCEPTION(scope, { });
                 if (!result || fits(result, type))
                     return result;
             }
-            bool stays = staysIfCopyWouldFit(object, type);
-            if (type.admitsForeignObjectsByNature() || (!stays && !mayCopyObjectOfProgram(object)))
-                return type.admitsForeignObjectsByNature() ? value : failToFit(value, type);
-            if (stays && m_completeness == Completeness::MayLackWhatIsAdded && m_lackedRoom.contains(object))
+            bool stays = staysIfCopyWouldMatch(object, type);
+            if (type.acceptsUntypedObjectsByNature() || (!stays && !mayCopyProgramObject(object)))
+                return type.acceptsUntypedObjectsByNature() ? value : failCoercion(value, type);
+            if (stays && m_completeness == Completeness::MayLackAddedFields && m_lackedCapacity.contains(object))
                 return value;
             if (stays && !m_explains) {
-                if (auto fitsByName = fitsWhenReadByName(object, type))
-                    return *fitsByName ? value : JSValue();
+                if (auto matchesByName = matchesWhenReadByName(object, type))
+                    return *matchesByName ? value : JSValue();
             }
             JSObject* ordinary = m_ordinaryCopies.get(object);
             if (!ordinary) {
-                ordinary = object->copyAsOrdinary(m_vm, JSFinalObject::defaultInlineCapacity);
+                ordinary = object->copyAsOrdinaryObject(m_vm, JSFinalObject::defaultInlineCapacity);
                 m_copiesKeptAlive.append(ordinary);
                 m_ordinaryCopies.add(object, ordinary);
                 m_isOrdinaryCopy.add(ordinary);
-                if (m_lackedRoom.contains(object) && object != m_heldByNobodyElse)
-                    m_isCopiedForLackOfRoom.add(ordinary);
+                if (m_lackedCapacity.contains(object) && object != m_unsharedObject)
+                    m_copiedForLackOfCapacity.add(ordinary);
             }
-            if (Object* copy = m_copies.get(ordinary)) {
+            if (Object* copy = m_inlinedCopies.get(ordinary)) {
                 if (stays)
                     return value;
-                return fits(copy, type) ? JSValue(copy) : failToFit(copy, type);
+                return fits(copy, type) ? JSValue(copy) : failCoercion(copy, type);
             }
             if (!stays)
                 RELEASE_AND_RETURN(scope, copy(ordinary, type));
-            bool copyFits = false;
+            bool copyMatches = false;
             String failure;
             {
                 SetForScope asCast(m_mode, Mode::Cast);
-                SetForScope copiesNothingElse(m_copiesObjectsOfProgram, false);
-                orAsItIs(value, true, [&]() -> JSValue {
-                    copyFits = !!copy(ordinary, type);
+                SetForScope disableFurtherCopies(m_copiesProgramObjects, false);
+                orUnchanged(value, true, [&]() -> JSValue {
+                    copyMatches = !!copy(ordinary, type);
                     failure = m_failure;
                     return { };
                 });
             }
             RETURN_IF_EXCEPTION(scope, { });
-            if (copyFits)
+            if (copyMatches)
                 return value;
             m_failure = failure;
             return { };
         }
-        // getPrototypeOf() hands it out without looking. What follows goes by what kind of object it is and by what it has.
         ClassPrototype::look(asObject(value));
         if (m_mode == Mode::Narrowing)
-            return (type.checksForeignObjects() ? fits(value, type) : m_state.fits(type, value)) ? value : failToFit(value, type);
+            return (type.checksUntypedObjects() ? fits(value, type) : m_state.fits(type, value)) ? value : failCoercion(value, type);
         if (fits(value, type))
             return value;
-        // Somebody else may hold it: nothing is made of it. It passes where the type admits it as it is. Else the attempt fails, and State::coerce() hands back the object that was
-        // cast. What hangs below a fresh object that is being copied is in the way of the copy then.
-        bool onlyTests = m_mode == Mode::Test || m_mode == Mode::Coerce || (m_mode == Mode::CoerceFreshObject && !m_copied.isEmpty());
+        bool isCheckOnlyCast = m_mode == Mode::Test || m_mode == Mode::Coerce || (m_mode == Mode::CoerceFreshObject && !m_copied.isEmpty());
         JSObject* object = asObject(value);
-        if (Object* copy = m_copies.get(object))
-            return fits(copy, type) || type.admitsForeignObjectsByNature() ? JSValue(copy) : failToFit(copy, type);
-        if (!type.admitsForeignObjectsByNature() && onlyTests)
-            return failToFit(value, type);
-        if (type.admitsForeignObjectsByNature() && object == m_heldByNobodyElse && m_mode == Mode::Cast) {
-            JSValue made = orAsItIs(value, true, [&] {
-                SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, false);
+        if (Object* copy = m_inlinedCopies.get(object))
+            return fits(copy, type) || type.acceptsUntypedObjectsByNature() ? JSValue(copy) : failCoercion(copy, type);
+        if (!type.acceptsUntypedObjectsByNature() && isCheckOnlyCast)
+            return failCoercion(value, type);
+        if (type.acceptsUntypedObjectsByNature() && object == m_unsharedObject && m_mode == Mode::Cast) {
+            JSValue made = orUnchanged(value, true, [&] {
+                SetForScope copiesOnlyWhenNeeded(m_copiesProgramObjects, false);
                 return copy(object, type);
             });
             RETURN_IF_EXCEPTION(scope, { });
             if (made != value)
                 return made;
         }
-        if (type.admitsForeignObjectsByNature() && (onlyTests || !isPlainObject(object) || !mayConvertProperties(type)))
+        if (type.acceptsUntypedObjectsByNature() && (isCheckOnlyCast || !isPlainObject(object) || !mayConvertProperties(type)))
             return value;
-        RELEASE_AND_RETURN(scope, orAsItIs(value, type.admitsForeignObjectsByNature() || mayStayWhereNothingCanBeMadeOfIt(object, type), [&] {
-            SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, m_copiesObjectsOfProgram && !type.admitsForeignObjectsByNature());
-            return type.admitsForeignObjectsByNature() ? keep(object, type) : copy(object, type);
+        RELEASE_AND_RETURN(scope, orUnchanged(value, type.acceptsUntypedObjectsByNature() || mayStayUnconverted(object, type), [&] {
+            SetForScope copiesOnlyWhenNeeded(m_copiesProgramObjects, m_copiesProgramObjects && !type.acceptsUntypedObjectsByNature());
+            return type.acceptsUntypedObjectsByNature() ? keep(object, type) : copy(object, type);
         }));
     }
 
-    bool mayStayWhereNothingCanBeMadeOfIt(JSObject* object, const RuntimeType& type)
+    bool mayStayUnconverted(JSObject* object, const RuntimeType& type)
     {
-        if (!type.admitsOnlyOtherLayouts() || m_mode != Mode::Cast)
+        if (!type.acceptsOnlyOtherLayouts() || m_mode != Mode::Cast)
             return false;
         Structure* structure = object->structure();
         bool isAllPlainData = isPlainData(object) && !structure->hasAnyKindOfGetterSetterProperties() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !structure->hasNonEnumerableProperties() && !structure->hasNonConfigurableProperties();
@@ -10852,7 +10573,7 @@ private:
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         bool result = false;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& candidate) {
+        forEachInstantiableLayout(type, [&](const LayoutData& candidate) {
             for (uint32_t i = 0; i < candidate.numberOfFields; ++i) {
                 const FieldData& field = candidate.fields()[i];
                 PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
@@ -10877,21 +10598,21 @@ private:
         return result;
     }
 
-    std::optional<bool> fitsWhenReadByName(Object* object, const RuntimeType& type)
+    std::optional<bool> matchesWhenReadByName(Object* object, const RuntimeType& type)
     {
         if (object->orderWord() & (orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible))
             return std::nullopt;
         JSValue prototype = object->getPrototypeDirect();
         if (!prototype.isNull() && prototype != JSValue(object->realm()->objectPrototype()))
             return std::nullopt;
-        const LayoutData& own = m_state.layoutOfShape(shapeOf(object));
+        const LayoutData& own = m_state.layoutForShape(shapeOf(object));
         JSObject* extra = object->extraProperties();
         if (extra && hasIndexedProperties(extra->indexingType()))
             return std::nullopt;
         std::optional<bool> result = false;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& candidate) {
-            bool fitsCandidate = true;
-            for (uint32_t i = 0; i < candidate.numberOfFields && fitsCandidate; ++i) {
+        forEachInstantiableLayout(type, [&](const LayoutData& candidate) {
+            bool matchesCandidate = true;
+            for (uint32_t i = 0; i < candidate.numberOfFields && matchesCandidate; ++i) {
                 const FieldData& field = candidate.fields()[i];
                 UniquedStringImpl* name = m_state.name(m_vm, field.name).impl();
                 JSValue held;
@@ -10906,7 +10627,7 @@ private:
                     }
                 }
                 if (!held) {
-                    fitsCandidate = field.flags & fieldIsOptional;
+                    matchesCandidate = field.flags & fieldIsOptional;
                     continue;
                 }
                 if (fits(held, m_state.ownTypeOf(field)))
@@ -10915,21 +10636,21 @@ private:
                     result = std::nullopt;
                     return IterationStatus::Done;
                 }
-                fitsCandidate = false;
+                matchesCandidate = false;
             }
-            if (!fitsCandidate)
+            if (!matchesCandidate)
                 return IterationStatus::Continue;
             result = true;
             return IterationStatus::Done;
         });
         if (!result || *result)
             return result;
-        for (uint32_t i = 0; i < type.numberOfViews(); ++i) {
+        for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i) {
             auto& view = type.view(i);
-            if (view.shapeOfView || !view.fields)
+            if (view.supertypeShape || !view.fields)
                 continue;
-            bool fitsView = true;
-            for (auto& declared : m_state.data.at<ViewFields>(view.fields)->decode(m_state.data.at<uint32_t>(m_state.data.typesOffset))) {
+            bool matchesSupertype = true;
+            for (auto& declared : m_state.data.at<SupertypeFields>(view.fields)->decode(m_state.data.at<uint32_t>(m_state.data.typesOffset))) {
                 UniquedStringImpl* name = m_state.name(m_vm, declared.name).impl();
                 JSValue held;
                 if (const FieldData* ownField = m_state.field(m_vm, own, name))
@@ -10941,8 +10662,8 @@ private:
                         return std::nullopt;
                 }
                 if (!held) {
-                    fitsView = declared.isOptional;
-                    if (!fitsView)
+                    matchesSupertype = declared.isOptional;
+                    if (!matchesSupertype)
                         break;
                     continue;
                 }
@@ -10950,55 +10671,52 @@ private:
                     continue;
                 if (held.isObject())
                     return std::nullopt;
-                fitsView = false;
+                matchesSupertype = false;
                 break;
             }
-            if (fitsView)
+            if (matchesSupertype)
                 return true;
         }
         return result;
     }
 
-    bool staysBecauseItCannotBecomeTheRecord(JSObject* copied, const RuntimeType& type, JSValue value) const
+    bool staysBecauseNotConvertible(JSObject* copied, const RuntimeType& type, JSValue value) const
     {
-        return type.admitsOnlyOtherLayouts() && value.isObject() && !m_state.compiledObject(value) && !m_isOrdinaryCopy.contains(copied);
+        return type.acceptsOnlyOtherLayouts() && value.isObject() && !m_state.compiledObject(value) && !m_isOrdinaryCopy.contains(copied);
     }
 
-    bool staysIfCopyWouldFit(Object* object, const RuntimeType& type) const
+    bool staysIfCopyWouldMatch(Object* object, const RuntimeType& type) const
     {
-        return type.admitsOnlyOtherLayouts() && m_state.layoutOfShape(shapeOf(object)).kind == LayoutKind::Record;
+        return type.acceptsOnlyOtherLayouts() && m_state.layoutForShape(shapeOf(object)).kind == LayoutKind::Record;
     }
 
-    bool mayCopyObjectOfProgram(Object* object) const
+    bool mayCopyProgramObject(Object* object) const
     {
-        return m_copiesObjectsOfProgram && m_mode == Mode::Cast && m_state.layoutOfShape(shapeOf(object)).kind == LayoutKind::Record;
+        return m_copiesProgramObjects && m_mode == Mode::Cast && m_state.layoutForShape(shapeOf(object)).kind == LayoutKind::Record;
     }
 
-    // Of an object that is of the type. Every view that admits it is one whose own layout it can still become: it got among the members
-    // without having what that layout declares, which would be extra properties for good. An A that is cast to `A | B` stays an A.
     bool shouldSpecialize(Object* object, const RuntimeType& type) const
     {
         uint32_t shape = shapeOf(object);
-        const LayoutData& layout = m_state.layoutOfShape(shape);
+        const LayoutData& layout = m_state.layoutForShape(shape);
         if (!layout.numberOfSpecializations() || type.allowsAnyObject())
             return false;
         std::span specializations { m_state.data.at<uint32_t>(layout.specializationsOffset()), layout.numberOfSpecializations() };
-        for (uint32_t i = 0; i < type.numberOfViews(); ++i) {
+        for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i) {
             auto& view = type.view(i);
-            if (m_state.passes(view, shape) && !(view.shapeOfView && std::ranges::binary_search(specializations, view.shapeOfView)))
+            if (m_state.passes(view, shape) && !(view.supertypeShape && std::ranges::binary_search(specializations, view.supertypeShape)))
                 return false;
         }
         return true;
     }
 
-    // Whether the value is one that coerce() may make something of: for choosing among the parts of a union.
     bool mayBeCoerced(JSValue value, const RuntimeType& type)
     {
         if (fits(value, type))
             return true;
         if (!value.isObject())
             return false;
-        if (type.admitsForeignObjectsByNature())
+        if (type.acceptsUntypedObjectsByNature())
             return true;
         if (Object* object = m_state.compiledObject(value)) {
             bool hasSpecialization = false;
@@ -11006,11 +10724,11 @@ private:
                 hasSpecialization = true;
                 return IterationStatus::Done;
             });
-            if (staysIfCopyWouldFit(object, type))
-                return fitsWhenReadByName(object, type).value_or(true);
-            if (hasSpecialization || !m_reckonsWithCopiesOfObjectsOfProgram || !mayCopyObjectOfProgram(object))
+            if (staysIfCopyWouldMatch(object, type))
+                return matchesWhenReadByName(object, type).value_or(true);
+            if (hasSpecialization || !m_expectsProgramObjectCopies || !mayCopyProgramObject(object))
                 return hasSpecialization;
-            forEachLayoutToMakeObjectsOf(type, [&](const LayoutData&) {
+            forEachInstantiableLayout(type, [&](const LayoutData&) {
                 hasSpecialization = true;
                 return IterationStatus::Done;
             });
@@ -11018,53 +10736,45 @@ private:
         }
         if (m_mode == Mode::Narrowing)
             return false;
-        if (Object* copy = m_copies.get(asObject(value)))
+        if (Object* copy = m_inlinedCopies.get(asObject(value)))
             return fits(copy, type);
         if (asObject(value)->type() != FinalObjectType)
             return false;
-        if (m_looksBelow && isPlainDataWhateverItsIntegrity(asObject(value))) {
-            SetForScope oneLess(m_looksBelow, m_looksBelow - 1);
+        if (m_checksNestedValues && isPlainDataIgnoringIntegrity(asObject(value))) {
+            SetForScope oneLess(m_checksNestedValues, m_checksNestedValues - 1);
             return chooseLayout(asObject(value), propertiesOf(asObject(value)), type, false);
         }
         bool hasLayout = false;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData&) {
+        forEachInstantiableLayout(type, [&](const LayoutData&) {
             hasLayout = true;
             return IterationStatus::Done;
         });
         return hasLayout;
     }
 
-    // What an object may be made one of so that it is of the type: the layout of each view. Nothing is made as what the parts of a large
-    // union have in common, which is one view: there it is the members. So it is, if asked for, with an abstract layout: an object whose
-    // discriminant is known belongs in the member that lists it.
-    void forEachLayoutToMakeObjectsOf(const RuntimeType& type, const Invocable<IterationStatus(const LayoutData&)> auto& functor, bool withMembersOfAbstractLayouts = false) const
+    void forEachInstantiableLayout(const RuntimeType& type, const Invocable<IterationStatus(const LayoutData&)> auto& functor, bool includingAbstractLayoutSubtypes = false) const
     {
-        auto isDoneWith = [&](uint32_t shape) {
-            const LayoutData& layout = m_state.layoutOfShape(shape);
+        auto isDoneAfterVisiting = [&](uint32_t shape) {
+            const LayoutData& layout = m_state.layoutForShape(shape);
             return layout.kind == LayoutKind::Record && functor(layout) == IterationStatus::Done;
         };
-        for (uint32_t i = 0; i < type.numberOfViews(); ++i) {
+        for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i) {
             auto& view = type.view(i);
-            if (view.shapeOfView) {
-                if (isDoneWith(view.shapeOfView))
+            if (view.supertypeShape) {
+                if (isDoneAfterVisiting(view.supertypeShape))
                     return;
-                if (!withMembersOfAbstractLayouts || !m_state.layoutOfShape(view.shapeOfView).isAbstract)
+                if (!includingAbstractLayoutSubtypes || !m_state.layoutForShape(view.supertypeShape).isAbstract)
                     continue;
             }
             for (uint32_t shape = view.first; shape < view.first + view.count; ++shape) {
-                if (shape != view.shapeOfView && m_state.passes(view, shape) && m_state.hasLayoutOfShape(shape) && isDoneWith(shape))
+                if (shape != view.supertypeShape && m_state.passes(view, shape) && m_state.hasLayoutForShape(shape) && isDoneAfterVisiting(shape))
                     return;
             }
         }
     }
 
 public:
-    // What the cast makes of every object that is like this one in its Structure and its discriminant, has no extra properties, has not been
-    // frozen, sealed or made non-extensible, and has the room: the shape it becomes one of, or zero, it stays what it is. Nothing: that
-    // is not all it goes by, or the cast fails. `staysWhereNothingCanBeMade`: as `x as T` has it, see State::coerce().
-    // Where it goes by what one field holds besides, `decides` is told which. `isLikeInThatField`: the objects asked about are like this one
-    // in State::classOfValue() of that too.
-    std::optional<uint32_t> outcomeByStructure(Object* object, const RuntimeType& type, bool staysWhereNothingCanBeMade, bool isLikeInThatField, DecidingField& decides)
+    std::optional<uint32_t> outcomeByStructure(Object* object, const RuntimeType& type, bool staysIfNotConvertible, bool matchesInDiscriminatingField, DiscriminatingField& decides)
     {
         bool isOfType = fits(object, type);
         if (isOfType && (m_mode == Mode::Test || !shouldSpecialize(object, type)))
@@ -11072,7 +10782,7 @@ public:
         if (m_mode == Mode::Test)
             return std::nullopt;
         Vector<uint32_t, 2> candidates;
-        SetForScope asksNothingAboutRoom(m_asksAboutRoom, false);
+        SetForScope ignoreCapacity(m_checksCapacity, false);
         forEachSpecialization(object, type, [&](const LayoutData& candidate) {
             if (!candidates.contains(candidate.shape))
                 candidates.append(candidate.shape);
@@ -11081,18 +10791,18 @@ public:
         if (candidates.size() == 1)
             return candidates[0];
         if (candidates.size() > 1) {
-            auto [numberOfFields, field] = fieldsThatTellApart(object, candidates.span());
-            if (!numberOfFields || isLikeInThatField)
+            auto [numberOfFields, field] = distinguishingFields(object, candidates.span());
+            if (!numberOfFields || matchesInDiscriminatingField)
                 return chooseSpecialization(object, type)->shape;
             const LayoutData& layout = object->layout();
             if (numberOfFields == 1 && layout.discriminant() == LayoutData::noBase) {
                 decides.field = &layout.fields()[field];
                 for (uint32_t shape : candidates) {
-                    const FieldData& inCandidate = *m_state.field(m_vm, m_state.layoutOfShape(shape), m_state.name(m_vm, decides.field->name).impl());
+                    const FieldData& inCandidate = *m_state.field(m_vm, m_state.layoutForShape(shape), m_state.name(m_vm, decides.field->name).impl());
                     for (auto& literal : std::span { m_state.data.at<LiteralData>(inCandidate.literalsOffset()), inCandidate.numberOfLiterals() }) {
                         if (literal.isNumber())
                             decides.numbers.add(JSValue::encode(jsNumber(literal.number())));
-                        else if (const HashedText* hashed = m_state.data.hashedText(literal.string())) {
+                        else if (const HashedString* hashed = m_state.data.hashedString(literal.string())) {
                             if (!decides.hashedStrings.contains(hashed))
                                 decides.hashedStrings.append(hashed);
                         } else
@@ -11101,20 +10811,17 @@ public:
                 }
             }
         }
-        if (candidates.isEmpty() && (isOfType || staysWhereNothingCanBeMade || type.admitsForeignObjectsByNature()))
+        if (candidates.isEmpty() && (isOfType || staysIfNotConvertible || type.acceptsUntypedObjectsByNature()))
             return 0;
         return std::nullopt;
     }
 
 private:
-    bool m_asksAboutRoom { true };
-    bool m_mayBecomeMembers { false };
-    unsigned m_looksBelow { 0 };
+    bool m_checksCapacity { true };
+    bool m_mayConvertToSubtypes { false };
+    unsigned m_checksNestedValues { 0 };
 
-    // What chooseSpecialization() goes by, for objects that are like this one in their layout and their discriminant and have no extra
-    // properties. It takes the least distanceTo(), which counts the fields whose value a candidate takes amiss: that comes to the same for
-    // all candidates where they hold the field to one type and list no literals for it. How many fields are not like that, and the last.
-    std::pair<unsigned, uint32_t> fieldsThatTellApart(Object* object, std::span<const uint32_t> candidates)
+    std::pair<unsigned, uint32_t> distinguishingFields(Object* object, std::span<const uint32_t> candidates)
     {
         const LayoutData& layout = object->layout();
         std::pair<unsigned, uint32_t> result { 0, 0 };
@@ -11123,49 +10830,43 @@ private:
                 continue;
             UniquedStringImpl* name = m_state.name(m_vm, layout.fields()[i].name).impl();
             const RuntimeType* type = nullptr;
-            bool tellsApart = false;
+            bool distinguishes = false;
             for (uint32_t shape : candidates) {
-                const FieldData* field = m_state.field(m_vm, m_state.layoutOfShape(shape), name);
+                const FieldData* field = m_state.field(m_vm, m_state.layoutForShape(shape), name);
                 RELEASE_ASSERT(field);
-                tellsApart |= field->numberOfLiterals() || (type && type != &m_state.ownTypeOf(*field));
+                distinguishes |= field->numberOfLiterals() || (type && type != &m_state.ownTypeOf(*field));
                 type = &m_state.ownTypeOf(*field);
             }
-            if (tellsApart)
+            if (distinguishes)
                 result = { result.first + 1, i };
         }
         return result;
     }
 
-    // Whether the object may become one of the layout where it is. Every cast asks this, and every store that makes a transition.
-    bool mayBecome(Object* object, const LayoutData& to, UniquedStringImpl* stored = nullptr)
+    bool canConvertTo(Object* object, const LayoutData& to, UniquedStringImpl* stored = nullptr)
     {
-        const LayoutData& from = m_state.layoutOfShape(shapeOf(object));
-        // A cast goes by the list, as compiled code does. Whoever stores has looked through the lists of the lists.
+        const LayoutData& from = m_state.layoutForShape(shapeOf(object));
         if (!stored && !std::ranges::binary_search(std::span { m_state.data.at<uint32_t>(from.specializationsOffset()), from.numberOfSpecializations() }, to.shape))
             return false;
-        // An object of a class keeps its prototype. But for what it finds there compiled code goes by the shape, which it loses.
         if (m_state.hasPrototypeMembers(from) || to.kind != LayoutKind::Record || to.hasExtension != from.hasExtension)
             return false;
         if (isCoercion() && to.isAbstract)
             return false;
-        // A discriminant never changes after allocation, so the object can never be of a layout that rules its value out.
         JSValue discriminant = discriminantOf(object, from);
-        if (discriminant && to.discriminant() != LayoutData::noBase && !m_state.isAmongLiterals(to.fields()[to.discriminant()], discriminant))
+        if (discriminant && to.discriminant() != LayoutData::noBase && !m_state.isAllowedLiteral(to.fields()[to.discriminant()], discriminant))
             return false;
-        // How much room an object has is settled where it is made.
-        if (m_asksAboutRoom && to.size > object->cellSize()) {
-            m_state.reportLackOfRoom(from, object->cellSize(), to);
-            m_lackedRoom.add(object);
+        if (m_checksCapacity && to.size > object->cellSize()) {
+            m_state.reportInsufficientCapacity(from, object->cellSize(), to);
+            m_lackedCapacity.add(object);
             return false;
         }
-        if (m_completeness == Completeness::MayLackWhatIsAdded)
+        if (m_completeness == Completeness::MayLackAddedFields)
             return true;
         auto& required = m_state.requiredFieldsAdded(from, to);
-        // What refers back to the object is taken to be in order, as coerce() takes it.
-        if (required.isEmpty() || !m_asked.add(object).isNewEntry)
+        if (required.isEmpty() || !m_visited.add(object).isNewEntry)
             return true;
         JSObject* extra = object->extraProperties();
-        bool hasWhatIsAdded = std::ranges::all_of(required, [&](uint16_t index) {
+        bool hasAddedFields = std::ranges::all_of(required, [&](uint16_t index) {
             const FieldData& field = to.fields()[index];
             UniquedStringImpl* name = m_state.name(m_vm, field.name).impl();
             if (name == stored)
@@ -11174,8 +10875,8 @@ private:
             JSValue value = extra ? extra->getDirect(m_vm, name, attributes) : JSValue();
             return value && !attributes && mayBeCoerced(value, m_state.ownTypeOf(field));
         });
-        m_asked.remove(object);
-        return hasWhatIsAdded;
+        m_visited.remove(object);
+        return hasAddedFields;
     }
 
     static JSValue discriminantOf(Object* object, const LayoutData& layout)
@@ -11183,27 +10884,26 @@ private:
         return layout.discriminant() != LayoutData::noBase ? object->read(layout.fields()[layout.discriminant()]) : JSValue();
     }
 
-    // Of what the type offers, what the object can be made one of where it is.
     void forEachSpecialization(Object* object, const RuntimeType& type, const Invocable<IterationStatus(const LayoutData&)> auto& functor)
     {
-        const LayoutData& layout = m_state.layoutOfShape(shapeOf(object));
+        const LayoutData& layout = m_state.layoutForShape(shapeOf(object));
         if (!layout.numberOfSpecializations())
             return;
         bool hasCandidate = false;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& candidate) {
-            if (!mayBecome(object, candidate))
+        forEachInstantiableLayout(type, [&](const LayoutData& candidate) {
+            if (!canConvertTo(object, candidate))
                 return IterationStatus::Continue;
             hasCandidate = true;
             return functor(candidate);
         }, !!discriminantOf(object, layout));
-        if (hasCandidate || !m_mayBecomeMembers)
+        if (hasCandidate || !m_mayConvertToSubtypes)
             return;
         Properties extraProperties;
         if (JSObject* extra = object->extraProperties())
             extraProperties = propertiesOf(extra);
         for (uint32_t shape : std::span { m_state.data.at<uint32_t>(layout.specializationsOffset()), layout.numberOfSpecializations() }) {
-            const LayoutData& candidate = m_state.layoutOfShape(shape);
-            if (candidate.kind != LayoutKind::Record || !m_state.admitsShape(type, shape) || !mayBecome(object, candidate))
+            const LayoutData& candidate = m_state.layoutForShape(shape);
+            if (candidate.kind != LayoutKind::Record || !m_state.acceptsShape(type, shape) || !canConvertTo(object, candidate))
                 continue;
             auto distance = distanceTo(object, extraProperties, candidate);
             if (distance && !distance->otherLiterals && functor(candidate) == IterationStatus::Done)
@@ -11211,8 +10911,6 @@ private:
         }
     }
 
-    // As distanceTo() for a plain object. What the object has in its fields stays there whatever it is, so that rules nothing out.
-    // Nothing: an extra property cannot become the field that the layout has by its name.
     std::optional<Distance> distanceTo(Object* object, const Properties& extraProperties, const LayoutData& layout)
     {
         Distance distance;
@@ -11221,7 +10919,7 @@ private:
             JSValue value = object->read(current.fields()[i]);
             const FieldData* field = value ? m_state.field(m_vm, layout, m_state.name(m_vm, current.fields()[i].name).impl()) : nullptr;
             if (field)
-                distance.otherLiterals += !fits(value, m_state.ownTypeOf(*field)) || !m_state.isAmongLiterals(*field, value);
+                distance.otherLiterals += !fits(value, m_state.ownTypeOf(*field)) || !m_state.isAllowedLiteral(*field, value);
         }
         for (auto& property : extraProperties) {
             const FieldData* field = m_state.field(m_vm, layout, property.name);
@@ -11232,12 +10930,11 @@ private:
             JSValue value = object->extraProperties()->getDirect(property.offset);
             if (property.attributes || !mayBeCoerced(value, m_state.ownTypeOf(*field)))
                 return std::nullopt;
-            distance.otherLiterals += !m_state.isAmongLiterals(*field, value);
+            distance.otherLiterals += !m_state.isAllowedLiteral(*field, value);
         }
         return distance;
     }
 
-    // Of the parts of a union, as chooseLayout() has it. Null: there is none.
     const LayoutData* chooseSpecialization(Object* object, const RuntimeType& type)
     {
         Vector<const LayoutData*, 4> candidates;
@@ -11250,7 +10947,6 @@ private:
         Properties extraProperties;
         if (JSObject* extra = object->extraProperties())
             extraProperties = propertiesOf(extra);
-        // If none will do, specialize() says why the first will not.
         const LayoutData* layout = nullptr;
         Distance least;
         for (const LayoutData* candidate : candidates) {
@@ -11262,7 +10958,6 @@ private:
         return layout ? layout : candidates[0];
     }
 
-    // In the order of their creation.
     Properties propertiesOf(JSObject* object)
     {
         m_state.reifyLazyClosures(m_vm, object);
@@ -11277,7 +10972,7 @@ private:
     JSValue specialize(Object* object, const RuntimeType& type)
     {
         const LayoutData* chosen = chooseSpecialization(object, type);
-        return chosen ? specializeTo(object, *chosen) : failToFit(object, type);
+        return chosen ? specializeTo(object, *chosen) : failCoercion(object, type);
     }
 
     JSValue specializeTo(Object* object, const LayoutData& layout)
@@ -11285,9 +10980,8 @@ private:
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         uint32_t from = shapeOf(object);
         uint32_t to = layout.shape;
-        // Only stores to layouts that may be frozen look at what the object has been made.
         if (auto* own = object->orderWord() & orderWordIsFrozen ? m_state.fieldAttributes.get(object) : nullptr) {
-            for (auto& [name, attributes] : own->ofFields) {
+            for (auto& [name, attributes] : own->attributesByField) {
                 if (!(attributes & PropertyAttribute::DontEnum))
                     continue;
                 for (auto& field : std::span { layout.fields(), layout.numberOfFields }) {
@@ -11298,15 +10992,13 @@ private:
         }
         if (object->orderWord() & (orderWordIsNotExtensible | orderWordIsFrozen) && !layout.mayBeFrozen)
             return fail([&] { return makeString("is frozen, sealed or non-extensible and cannot be used as "_s, m_state.nameOf(layout)); });
-        // First, for what refers back to the object.
         m_plannedShapes.set(object, to);
         size_t index = m_specializations.size();
         m_specializations.append({ object, to, { } });
         if (JSObject* extra = object->extraProperties()) {
-            // As they were created, which is the order they keep as fields.
             for (auto& property : propertiesOf(extra)) {
                 const FieldData* field = m_state.field(m_vm, layout, property.name);
-                if (!field || m_state.field(m_vm, m_state.layoutOfShape(from), property.name))
+                if (!field || m_state.field(m_vm, m_state.layoutForShape(from), property.name))
                     continue;
                 m_path.append(property.name);
                 if (property.attributes)
@@ -11322,43 +11014,39 @@ private:
         return object;
     }
 
-    // Its properties are looked at one by one.
     bool isPlainObject(JSObject* object) const { return isPlainData(object); }
 
-    // Nothing: the object cannot be made one of the layout. With `explains`, says why. It goes by what the type of the layout says of
-    // each property: the slot is shared with the other parts of a union, and holds what any of them does.
     std::optional<Distance> distanceTo(JSObject* object, const Properties& properties, const LayoutData& layout, bool explains)
     {
         Distance distance;
         BitVector isPresent;
-        auto integrity = integrityOfPlainData(m_vm, object);
+        auto integrity = plainDataIntegrity(m_vm, object);
         if (integrity && !layout.mayBeFrozen) {
             if (explains)
                 fail([&] { return makeString("is frozen, sealed or non-extensible and cannot be used as "_s, m_state.nameOf(layout), ", which the program stores to"_s); });
             return std::nullopt;
         }
-        unsigned attributesOfAll = attributesOfDataWith(integrity);
+        unsigned allAttributes = dataAttributesFor(integrity);
         for (auto& property : properties) {
             const FieldData* field = m_state.field(m_vm, layout, property.name);
             if (!field) {
                 ++distance.extraProperties;
-                // A discriminant that nobody stores has no field, and tells the parts of a union apart all the same.
-                distance.otherLiterals += !m_state.isAmongLiteralsWithoutField(m_vm, layout, property.name, object->getDirect(property.offset));
+                distance.otherLiterals += !m_state.isAllowedLiteralWithoutField(m_vm, layout, property.name, object->getDirect(property.offset));
                 continue;
             }
             isPresent.set(field - layout.fields());
             JSValue value = object->getDirect(property.offset);
-            bool hasAttributesOfField = property.attributes == attributesOfAll || (layout.mayBeFrozen && (property.attributes & ~(PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete)) == 0 && (property.attributes & attributesOfAll) == attributesOfAll);
-            if (hasAttributesOfField && mayBeCoerced(value, m_state.ownTypeOf(*field))) {
-                distance.otherLiterals += !m_state.isAmongLiterals(*field, value);
+            bool hasFieldAttributes = property.attributes == allAttributes || (layout.mayBeFrozen && (property.attributes & ~(PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete)) == 0 && (property.attributes & allAttributes) == allAttributes);
+            if (hasFieldAttributes && mayBeCoerced(value, m_state.ownTypeOf(*field))) {
+                distance.otherLiterals += !m_state.isAllowedLiteral(*field, value);
                 continue;
             }
             if (explains) {
                 m_path.append(property.name);
-                if (!hasAttributesOfField)
+                if (!hasFieldAttributes)
                     fail([&] { return String(describeAttributes(property.attributes)); });
                 else
-                    failToFit(value, m_state.ownTypeOf(*field));
+                    failCoercion(value, m_state.ownTypeOf(*field));
             }
             return std::nullopt;
         }
@@ -11381,85 +11069,75 @@ private:
         });
     }
 
-    // Of the parts of a union the one whose discriminants the object has. A discriminant that no part knows rules none of them out: the
-    // program may well look at it and go on. Then the one that leaves the fewest properties without a field, and of those the first.
-    // Null: there is none. With `explains`, says why the first is not it.
     const LayoutData* chooseLayout(JSObject* object, const Properties& properties, const RuntimeType& type, bool explains)
     {
-        if (const State::PlanOfCoercion* plan = m_state.planOfCoercion(object, type); plan && plan->chosen) {
-            SetForScope below(m_looksBelow, plan->hasRivals && !m_looksBelow ? 3u : m_looksBelow);
+        if (const State::CoercionPlan* plan = m_state.coercionPlan(object, type); plan && plan->chosen) {
+            SetForScope below(m_checksNestedValues, plan->hasAlternatives && !m_checksNestedValues ? 3u : m_checksNestedValues);
             if (distanceTo(object, properties, *plan->chosen, false))
                 return plan->chosen;
         }
         const LayoutData* layout = nullptr;
         const LayoutData* firstCandidate = nullptr;
         Distance least;
-        unsigned numberThatMayDo = 0;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& candidate) {
+        unsigned viableCount = 0;
+        forEachInstantiableLayout(type, [&](const LayoutData& candidate) {
             if (!firstCandidate)
                 firstCandidate = &candidate;
             auto distance = distanceTo(object, properties, candidate, false);
-            numberThatMayDo += !!distance;
+            viableCount += !!distance;
             if (distance && (!layout || *distance < least)) {
                 least = *distance;
                 layout = &candidate;
             }
             return IterationStatus::Continue;
         });
-        if (numberThatMayDo > 1 && !m_looksBelow) {
-            SetForScope below(m_looksBelow, 3u);
-            if (const LayoutData* chosenByWhatIsBelow = chooseLayout(object, properties, type, false))
-                return chosenByWhatIsBelow;
+        if (viableCount > 1 && !m_checksNestedValues) {
+            SetForScope below(m_checksNestedValues, 3u);
+            if (const LayoutData* chosenByNestedValues = chooseLayout(object, properties, type, false))
+                return chosenByNestedValues;
         }
         if (!layout && firstCandidate && explains && m_explains)
             distanceTo(object, properties, *firstCandidate, true);
         return layout;
     }
 
-    // Whether keep() can change anything. Only an object is ever made something else, and only for a type with views.
     bool mayConvertProperties(const RuntimeType& type) const
     {
-        uintptr_t& asked = m_state.typeAskedAboutProperties(type);
+        uintptr_t& asked = m_state.propertyConversionCacheEntry(type);
         if ((asked & ~static_cast<uintptr_t>(1)) == std::bit_cast<uintptr_t>(&type))
             return asked & 1;
         bool result = false;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& layout) {
+        forEachInstantiableLayout(type, [&](const LayoutData& layout) {
             for (uint32_t i = 0; i < layout.numberOfFields && !result; ++i)
-                result = !(layout.fields()[i].flags & fieldIsPlaceholder) && m_state.ownTypeOf(layout.fields()[i]).numberOfViews();
+                result = !(layout.fields()[i].flags & fieldIsPlaceholder) && m_state.ownTypeOf(layout.fields()[i]).numberOfSupertypes();
             return result ? IterationStatus::Done : IterationStatus::Continue;
         });
         asked = std::bit_cast<uintptr_t>(&type) | result;
         return result;
     }
 
-    // Whether keep() could change anything: whether it ends well or everything is taken back, the object goes on as it is, so that is all there is to running it. It changes something only through a property whose field has a
-    // type with views and which holds a plain object (copied, or walked in its turn) or an object of the program whose layout has specializations (retagged). A primitive is never converted here, and nothing is ever made of
-    // any other object: they fit, or the whole fails. By the names of such fields, in every layout that the object could be made one of. Nothing is run, and nothing is kept.
-    bool mayChangeSomethingBelow(JSObject* object, const RuntimeType& type)
+    bool mayConvertNestedValues(JSObject* object, const RuntimeType& type)
     {
-        // What is looked at besides the object: data that goes round in a circle, or that is reached in many ways, comes to an end so.
-        unsigned objectsBelow = 32;
-        return mayChangeSomethingBelow(object, type, objectsBelow);
+        unsigned nestedObjectBudget = 32;
+        return mayConvertNestedValues(object, type, nestedObjectBudget);
     }
 
-    bool mayChangeSomethingBelow(JSObject* object, const RuntimeType& type, unsigned& objectsBelow)
+    bool mayConvertNestedValues(JSObject* object, const RuntimeType& type, unsigned& nestedObjectBudget)
     {
         static constexpr unsigned maxLayouts = 4;
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         Structure* structure = object->structure();
-        bool hasPlannedNothing = m_copies.isEmpty() && m_plannedShapes.isEmpty();
-        auto mayChange = [&](JSValue value, const RuntimeType& ofField, bool leavesForeignObjects) {
-            if (auto told = hasPlannedNothing ? m_state.mayBeChangedBelow(value, ofField, leavesForeignObjects) : std::nullopt)
+        bool hasNoPlans = m_inlinedCopies.isEmpty() && m_plannedShapes.isEmpty();
+        auto mayChange = [&](JSValue value, const RuntimeType& ofField, bool leavesUntypedObjects) {
+            if (auto told = hasNoPlans ? m_state.mayConvertNestedValue(value, ofField, leavesUntypedObjects) : std::nullopt)
                 return *told;
             if (!value.isObject())
                 return false;
-            // From here on in the order of coerce().
             if (Object* compiled = m_state.compiledObject(value)) {
-                if (!m_state.layoutOfShape(shapeOf(compiled)).numberOfSpecializations() || (fits(value, ofField) && !shouldSpecialize(compiled, ofField)))
+                if (!m_state.layoutForShape(shapeOf(compiled)).numberOfSpecializations() || (fits(value, ofField) && !shouldSpecialize(compiled, ofField)))
                     return false;
-                // It is tried, as a question of which nothing is left: it may be frozen, or have an extra property that cannot become a field.
                 bool isSpecialized = false;
-                orAsItIs(value, true, [&]() -> JSValue {
+                orUnchanged(value, true, [&]() -> JSValue {
                     isSpecialized = !!specialize(compiled, ofField);
                     return { };
                 });
@@ -11469,88 +11147,80 @@ private:
             ClassPrototype::look(below);
             if (fits(value, ofField))
                 return false;
-            if (!ofField.admitsForeignObjectsByNature() || m_copies.contains(below))
+            if (!ofField.acceptsUntypedObjectsByNature() || m_inlinedCopies.contains(below))
                 return isPlainObject(below);
             if (!mayConvertProperties(ofField) || !isPlainObject(below))
                 return false;
-            // It stays, and is walked in its turn: keep().
-            if (!objectsBelow)
+            if (!nestedObjectBudget)
                 return true;
-            bool mayChangeBelow = mayChangeSomethingBelow(below, ofField, --objectsBelow);
-            return scope.exception() || mayChangeBelow;
+            bool mayConvertNested = mayConvertNestedValues(below, ofField, --nestedObjectBudget);
+            return scope.exception() || mayConvertNested;
         };
-        for (unsigned part = 0; auto* entry = m_state.propertiesWithViews(m_vm, structure, type, part); ++part) {
-            // A copy: a collection empties the table, and what hangs below may take the place.
+        for (unsigned part = 0; auto* entry = m_state.propertiesWithSupertypes(m_vm, structure, type, part); ++part) {
             auto known = *entry;
             for (auto& property : known.span()) {
-                if (mayChange(object->getDirect(property.offset), *m_state.data.at<RuntimeType>(property.type), property.leavesForeignObjects))
+                if (mayChange(object->getDirect(property.offset), *m_state.data.at<RuntimeType>(property.type), property.leavesUntypedObjects))
                     return true;
             }
             if (known.isLast)
                 return false;
         }
-        Vector<State::PropertiesWithViews::Property, State::PropertiesWithViews::maxSize> found;
+        Vector<State::PropertiesWithSupertypes::Property, State::PropertiesWithSupertypes::maxSize> found;
         bool hasFoundAll = !structure->isDictionary();
         unsigned numberOfLayouts = 0;
         bool result = false;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& layout) {
+        forEachInstantiableLayout(type, [&](const LayoutData& layout) {
             result = ++numberOfLayouts > maxLayouts;
             for (uint32_t i = 0; i < layout.numberOfFields && !result; ++i) {
                 const FieldData& field = layout.fields()[i];
                 const RuntimeType& ofField = m_state.ownTypeOf(field);
-                if (!ofField.numberOfViews())
+                if (!ofField.numberOfSupertypes())
                     continue;
                 unsigned attributes = 0;
                 PropertyOffset offset = structure->get(m_vm, m_state.name(m_vm, field.name), attributes);
                 if (!isValidOffset(offset) || attributes)
                     continue;
-                hasFoundAll &= found.size() < State::PropertiesWithViews::maxSize * State::PropertiesWithViews::maxParts;
-                // Where no entry is made it is asked if it comes to that.
-                bool leavesForeignObjects = hasFoundAll && ofField.admitsForeignObjectsByNature() && !mayConvertProperties(ofField);
+                hasFoundAll &= found.size() < State::PropertiesWithSupertypes::maxSize * State::PropertiesWithSupertypes::maxParts;
+                bool leavesUntypedObjects = hasFoundAll && ofField.acceptsUntypedObjectsByNature() && !mayConvertProperties(ofField);
                 if (hasFoundAll)
-                    found.append({ offset, field.ownType(), leavesForeignObjects });
-                result = mayChange(object->getDirect(offset), ofField, leavesForeignObjects);
+                    found.append({ offset, field.ownType(), leavesUntypedObjects });
+                result = mayChange(object->getDirect(offset), ofField, leavesUntypedObjects);
             }
             return result ? IterationStatus::Done : IterationStatus::Continue;
         });
-        // It has been through all of them.
         RELEASE_ASSERT(object->structure() == structure);
         if (!result && hasFoundAll) {
             std::span rest = found.span();
             uint8_t part = 0;
             do {
-                auto ofPart = rest.first(std::min<size_t>(rest.size(), State::PropertiesWithViews::maxSize));
+                auto ofPart = rest.first(std::min<size_t>(rest.size(), State::PropertiesWithSupertypes::maxSize));
                 rest = rest.subspan(ofPart.size());
-                State::PropertiesWithViews entry { structure->id().bits(), static_cast<uint16_t>(ofPart.size()), part++, rest.empty(), &type, { } };
+                State::PropertiesWithSupertypes entry { structure->id().bits(), static_cast<uint16_t>(ofPart.size()), part++, rest.empty(), &type, { } };
                 std::ranges::copy(ofPart, entry.properties);
-                m_state.setPropertiesWithViews(m_vm, structure, entry);
+                m_state.setPropertiesWithSupertypes(m_vm, structure, entry);
             } while (!rest.empty());
         }
         return result;
     }
 
-    // The object stays what it is. What its properties hold becomes what the fields of the layout it would be copied into hold.
     JSValue keep(JSObject* object, const RuntimeType& type)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        // An audit goes all the way.
-        bool mayChange = m_state.data.isCompiledForAudit || mayChangeSomethingBelow(object, type);
+        bool mayChange = m_state.data.isCompiledForAudit || mayConvertNestedValues(object, type);
         RETURN_IF_EXCEPTION(scope, { });
         if (!mayChange)
             return object;
         if (!m_kept.add({ object, &type }).isNewEntry)
             return object;
         m_keptInOrder.append({ object, &type });
-        // All or nothing: where the property that it failed at the last time cannot be made what its field holds now either, the rest need not be looked at. Nothing is left of the question.
         Structure* structure = object->structure();
-        if (auto& known = m_state.failureOfKeeping(m_vm, structure, type); known.structureID == structure->id().bits() && known.type == &type) {
-            // By its name: a dictionary changes what it has and stays the Structure it is.
+        if (auto& known = m_state.keepFailure(m_vm, structure, type); known.structureID == structure->id().bits() && known.type == &type) {
             const FieldData* field = known.field;
             unsigned attributes = 0;
             PropertyOffset offset = structure->get(m_vm, m_state.name(m_vm, field->name), attributes);
             bool stillFails = false;
             if (isValidOffset(offset) && !attributes) {
-                orAsItIs(object, true, [&]() -> JSValue {
+                orUnchanged(object, true, [&]() -> JSValue {
                     stillFails = !coerce(object->getDirect(offset), m_state.ownTypeOf(*field));
                     return { };
                 });
@@ -11558,17 +11228,17 @@ private:
             }
             if (stillFails)
                 return { };
-            m_state.failureOfKeeping(m_vm, structure, type) = { };
+            m_state.keepFailure(m_vm, structure, type) = { };
         }
         Properties properties = propertiesOf(object);
         const LayoutData* layout = hasCustomProperties(properties) ? nullptr : chooseLayout(object, properties, type, false);
         if (!layout)
             return object;
-        if (!m_state.planOfCoercion(object, type) && m_state.takesMorePlansOfCoercions()) {
-            State::PlanOfCoercion::Discriminants discriminants;
+        if (!m_state.coercionPlan(object, type) && m_state.canAddCoercionPlans()) {
+            State::CoercionPlan::Discriminants discriminants;
             auto plan = planFor(object, structure, properties, type, *layout, 0, discriminants);
             plan->layout = nullptr;
-            m_state.addPlanOfCoercion(object, structure, type, WTF::move(plan), discriminants);
+            m_state.addCoercionPlan(object, structure, type, WTF::move(plan), discriminants);
         }
         for (auto& property : properties) {
             const FieldData* field = m_state.field(m_vm, *layout, property.name);
@@ -11579,13 +11249,12 @@ private:
             JSValue coerced = coerce(value, m_state.ownTypeOf(*field));
             RETURN_IF_EXCEPTION(scope, { });
             if (!coerced) {
-                // Where there is one layout to choose from, which field a property goes with does not depend on what the object holds.
                 unsigned numberOfLayouts = 0;
-                forEachLayoutToMakeObjectsOf(type, [&](const LayoutData&) {
+                forEachInstantiableLayout(type, [&](const LayoutData&) {
                     return ++numberOfLayouts > 1 ? IterationStatus::Done : IterationStatus::Continue;
                 });
                 if (numberOfLayouts == 1 && object->structure() == structure)
-                    m_state.failureOfKeeping(m_vm, structure, type) = { structure->id().bits(), &type, field };
+                    m_state.keepFailure(m_vm, structure, type) = { structure->id().bits(), &type, field };
                 return { };
             }
             m_path.removeLast();
@@ -11595,15 +11264,15 @@ private:
         return object;
     }
 
-    bool choiceGoesByNamesAndWhatIsHeldToLiterals(JSObject* object, const Properties& properties, const RuntimeType& type, const LayoutData& chosen, State::PlanOfCoercion::Discriminants& discriminants, bool& isExact, bool& hasRivals, const LayoutData** nearest = nullptr)
+    bool choiceDependsOnNamesAndLiterals(JSObject* object, const Properties& properties, const RuntimeType& type, const LayoutData& chosen, State::CoercionPlan::Discriminants& discriminants, bool& isExact, bool& hasAlternatives, const LayoutData** nearest = nullptr)
     {
         const LayoutData* first = nullptr;
         Distance least;
-        BitVector isHeldToLiterals;
+        BitVector isCheckedAgainstLiterals;
         Vector<std::pair<const LayoutData*, Distance>, 4> candidates;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& candidate) {
+        forEachInstantiableLayout(type, [&](const LayoutData& candidate) {
             Distance distance;
-            Vector<const Property*, 4> heldHere;
+            Vector<const Property*, 4> checkedHere;
             BitVector isPresent;
             for (auto& property : properties) {
                 const FieldData* field = m_state.field(m_vm, candidate, property.name);
@@ -11611,23 +11280,23 @@ private:
                 if (!field) {
                     ++distance.extraProperties;
                     if (candidate.literalsWithoutFieldOffset()) {
-                        heldHere.append(&property);
-                        distance.otherLiterals += !m_state.isAmongLiteralsWithoutField(m_vm, candidate, property.name, value);
+                        checkedHere.append(&property);
+                        distance.otherLiterals += !m_state.isAllowedLiteralWithoutField(m_vm, candidate, property.name, value);
                     }
                     continue;
                 }
                 isPresent.set(field - candidate.fields());
                 if (field->numberOfLiterals()) {
-                    heldHere.append(&property);
-                    distance.otherLiterals += !m_state.isAmongLiterals(*field, value);
+                    checkedHere.append(&property);
+                    distance.otherLiterals += !m_state.isAllowedLiteral(*field, value);
                 }
             }
             for (uint32_t i = 0; i < candidate.numberOfFields; ++i) {
                 if (!(candidate.fields()[i].flags & fieldIsOptional) && !isPresent.get(i))
                     return IterationStatus::Continue;
             }
-            for (const Property* property : heldHere)
-                isHeldToLiterals.set(property - properties.begin());
+            for (const Property* property : checkedHere)
+                isCheckedAgainstLiterals.set(property - properties.begin());
             candidates.append({ &candidate, distance });
             if (!first || distance < least) {
                 first = &candidate;
@@ -11638,32 +11307,32 @@ private:
         for (auto& [candidate, distance] : candidates) {
             if (candidate == first || distance != least)
                 continue;
-            bool takesSameTypes = std::ranges::all_of(properties, [&, candidate = candidate](auto& property) {
+            bool acceptsSameTypes = std::ranges::all_of(properties, [&, candidate = candidate](auto& property) {
                 const FieldData* field = m_state.field(m_vm, *first, property.name);
                 const FieldData* other = m_state.field(m_vm, *candidate, property.name);
                 return field && other ? &m_state.ownTypeOf(*field) == &m_state.ownTypeOf(*other) : field == other;
             });
-            if (!takesSameTypes)
+            if (!acceptsSameTypes)
                 return false;
         }
-        if (isHeldToLiterals.bitCount() > State::PlanOfCoercion::maxNumberOfDiscriminants)
+        if (isCheckedAgainstLiterals.bitCount() > State::CoercionPlan::maxNumberOfDiscriminants)
             return false;
-        for (size_t index : isHeldToLiterals)
+        for (size_t index : isCheckedAgainstLiterals)
             discriminants.append(properties[index].offset);
         isExact = !least.otherLiterals;
-        hasRivals = candidates.size() > 1;
+        hasAlternatives = candidates.size() > 1;
         if (nearest)
             *nearest = first;
         return first == &chosen;
     }
 
-    std::unique_ptr<State::PlanOfCoercion> planFor(JSObject* object, Structure* structure, const Properties& properties, const RuntimeType& type, const LayoutData& layout, uint32_t orderAndCount, State::PlanOfCoercion::Discriminants& discriminants)
+    std::unique_ptr<State::CoercionPlan> planFor(JSObject* object, Structure* structure, const Properties& properties, const RuntimeType& type, const LayoutData& layout, uint32_t orderAndCount, State::CoercionPlan::Discriminants& discriminants)
     {
-        auto plan = makeUnique<State::PlanOfCoercion>();
+        auto plan = makeUnique<State::CoercionPlan>();
         if (object->structure() != structure || structure->isDictionary() || structure->hasPolyProto() || hasIndexedProperties(structure->indexingType()))
             return plan;
         bool isExact = false;
-        if (properties.containsIf([](auto& property) { return !!property.attributes; }) || !choiceGoesByNamesAndWhatIsHeldToLiterals(object, properties, type, layout, discriminants, isExact, plan->hasRivals))
+        if (properties.containsIf([](auto& property) { return !!property.attributes; }) || !choiceDependsOnNamesAndLiterals(object, properties, type, layout, discriminants, isExact, plan->hasAlternatives))
             return plan;
         plan->chosen = &layout;
         if (!isExact)
@@ -11677,30 +11346,30 @@ private:
                 plan->extraProperties.append({ property.offset, property.name });
         }
         for (auto& planned : plan->fields)
-            planned.kindsTaken = m_state.kindsTakenBy(m_state.ownTypeOf(*planned.field));
-        m_state.finishPlanOfCoercion(*plan, layout, orderAndCount);
+            planned.acceptedKinds = m_state.kindsAcceptedBy(m_state.ownTypeOf(*planned.field));
+        m_state.finishCoercionPlan(*plan, layout, orderAndCount);
         return plan;
     }
 
 public:
-    const State::PlanOfCoercion* planForNearestLayout(JSObject* object, const RuntimeType& type)
+    const State::CoercionPlan* planForNearestLayout(JSObject* object, const RuntimeType& type)
     {
         Properties properties = propertiesOf(object);
         Structure* structure = object->structure();
         if (structure->isDictionary() || structure->hasPolyProto() || hasIndexedProperties(structure->indexingType()) || properties.size() > maxFieldsInOrder || properties.containsIf([](auto& property) { return !!property.attributes; }))
             return nullptr;
         const LayoutData* someLayout = nullptr;
-        forEachLayoutToMakeObjectsOf(type, [&](const LayoutData& candidate) {
+        forEachInstantiableLayout(type, [&](const LayoutData& candidate) {
             someLayout = &candidate;
             return IterationStatus::Done;
         });
         if (!someLayout)
             return nullptr;
-        auto plan = makeUnique<State::PlanOfCoercion>();
+        auto plan = makeUnique<State::CoercionPlan>();
         const LayoutData* nearest = nullptr;
-        State::PlanOfCoercion::Discriminants discriminants;
+        State::CoercionPlan::Discriminants discriminants;
         bool isExact = false;
-        choiceGoesByNamesAndWhatIsHeldToLiterals(object, properties, type, *someLayout, discriminants, isExact, plan->hasRivals, &nearest);
+        choiceDependsOnNamesAndLiterals(object, properties, type, *someLayout, discriminants, isExact, plan->hasAlternatives, &nearest);
         if (!nearest || !isExact || nearest->literalsWithoutFieldOffset())
             return nullptr;
         Vector<uint16_t, 16> order;
@@ -11708,31 +11377,31 @@ public:
             const FieldData* field = m_state.field(m_vm, *nearest, property.name);
             if (!field)
                 return nullptr;
-            plan->fields.append({ property.offset, field, property.name, m_state.kindsTakenBy(m_state.ownTypeOf(*field)) });
+            plan->fields.append({ property.offset, field, property.name, m_state.kindsAcceptedBy(m_state.ownTypeOf(*field)) });
             order.append(field - nearest->fields());
         }
         plan->chosen = nearest;
-        m_state.finishPlanOfCoercion(*plan, *nearest, m_state.orderStartingWith(*nearest, order.span()));
-        m_state.addPlanOfCoercion(object, structure, type, WTF::move(plan), discriminants);
-        return m_state.planOfCoercion(object, type);
+        m_state.finishCoercionPlan(*plan, *nearest, m_state.orderStartingWith(*nearest, order.span()));
+        m_state.addCoercionPlan(object, structure, type, WTF::move(plan), discriminants);
+        return m_state.coercionPlan(object, type);
     }
 
 private:
-    JSValue copyByPlan(JSObject* object, const State::PlanOfCoercion& plan)
+    JSValue copyByPlan(JSObject* object, const State::CoercionPlan& plan)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const LayoutData& layout = *plan.layout;
         Structure* structure = m_state.structureFor(m_vm, layout.shape, object->getPrototypeDirect());
-        Object* result = Object::create(m_vm, structure, layout, m_state.sizeWithRoomToSpecialize(layout.shape), orderWordOf(keysAreInLayoutOrder, 0));
+        Object* result = Object::create(m_vm, structure, layout, m_state.sizeWithSpecializationCapacity(layout.shape), orderWordOf(keysAreInLayoutOrder, 0));
         m_copiesKeptAlive.append(result);
         m_copiesKeptAlive.append(object);
         if (m_copiesKeptAlive.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(m_globalObject, scope);
             return { };
         }
-        m_copies.add(object, result);
+        m_inlinedCopies.add(object, result);
         m_copied.append(object);
-        recordPathOfCopy(object);
+        recordCopyPath(object);
         for (auto& planned : plan.fields) {
             const FieldData* field = planned.field;
             JSValue value = object->getDirect(planned.offset);
@@ -11742,7 +11411,7 @@ private:
             if (!coerced)
                 return { };
             if (!result->store(m_vm, *field, coerced))
-                return failToFit(value, m_state.ownTypeOf(*field));
+                return failCoercion(value, m_state.ownTypeOf(*field));
             m_path.removeLast();
         }
         result->setOrderAndCount(plan.orderAndCount);
@@ -11754,48 +11423,46 @@ private:
     JSValue copy(JSObject* object, const RuntimeType& type)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!isPlainDataWhateverItsIntegrity(object))
-            return failToFit(object, type);
-        Structure* structureOfSource = object->structure();
-        auto integrity = integrityOfPlainData(m_vm, object);
-        const State::PlanOfCoercion* plan = integrity ? nullptr : m_state.planOfCoercion(object, type);
+        if (!isPlainDataIgnoringIntegrity(object))
+            return failCoercion(object, type);
+        Structure* sourceStructure = object->structure();
+        auto integrity = plainDataIntegrity(m_vm, object);
+        const State::CoercionPlan* plan = integrity ? nullptr : m_state.coercionPlan(object, type);
         if (plan && plan->layout && plan->extraProperties.isEmpty()) {
-            bool holdsWhatMayBeCoerced = std::ranges::all_of(plan->fields, [&](auto& planned) {
+            bool hasOnlyCoercibleValues = std::ranges::all_of(plan->fields, [&](auto& planned) {
                 return mayBeCoerced(object->getDirect(planned.offset), m_state.ownTypeOf(*planned.field));
             });
-            if (holdsWhatMayBeCoerced)
+            if (hasOnlyCoercibleValues)
                 RELEASE_AND_RETURN(scope, copyByPlan(object, *plan));
         }
-        // A getter and a setter are copied as what they are, which runs neither. No field holds them: see distanceTo().
         Properties properties = propertiesOf(object);
         if (hasCustomProperties(properties))
             return fail([] { return "has native getters and cannot be converted"_str; });
-        bool mayChooseAgain = m_copiesObjectsOfProgram && m_mode == Mode::Cast;
+        bool mayChooseAgain = m_copiesProgramObjects && m_mode == Mode::Cast;
         const LayoutData* layout = chooseLayout(object, properties, type, !mayChooseAgain);
         if (!layout && mayChooseAgain) {
-            SetForScope reckonsWithCopies(m_reckonsWithCopiesOfObjectsOfProgram, true);
+            SetForScope expectCopies(m_expectsProgramObjectCopies, true);
             layout = chooseLayout(object, properties, type, true);
         }
         if (!layout)
-            return failToFit(object, type);
+            return failCoercion(object, type);
 
         Structure* structure = m_state.structureFor(m_vm, layout->shape, object->getPrototypeDirect());
-        Object* result = Object::create(m_vm, structure, *layout, m_state.sizeWithRoomToSpecialize(layout->shape), orderWordOf(keysAreInLayoutOrder, 0));
+        Object* result = Object::create(m_vm, structure, *layout, m_state.sizeWithSpecializationCapacity(layout->shape), orderWordOf(keysAreInLayoutOrder, 0));
         m_copiesKeptAlive.append(result);
         m_copiesKeptAlive.append(object);
         if (m_copiesKeptAlive.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(m_globalObject, scope);
             return { };
         }
-        m_copies.add(object, result);
+        m_inlinedCopies.add(object, result);
         m_copied.append(object);
-        recordPathOfCopy(object);
+        recordCopyPath(object);
         Vector<uint16_t, 16> order;
-        // An extra property needs a place among the keys only if a field comes after it: see Object::didCreateField().
         uint32_t numberOfExtraKeys = 0;
-        uint32_t numberOfExtraKeysWithPlaces = 0;
-        unsigned attributesOfAll = attributesOfDataWith(integrity);
-        Vector<std::pair<const FieldData*, unsigned>, 2> attributesOfFields;
+        uint32_t positionedExtraKeyCount = 0;
+        unsigned allAttributes = dataAttributesFor(integrity);
+        Vector<std::pair<const FieldData*, unsigned>, 2> attributesPerField;
         for (auto& property : properties) {
             JSValue value = object->getDirect(property.offset);
             const FieldData* field = m_state.field(m_vm, *layout, property.name);
@@ -11814,15 +11481,14 @@ private:
             if (!coerced)
                 return { };
             if (!result->store(m_vm, *field, coerced))
-                return failToFit(value, m_state.ownTypeOf(*field));
-            if (property.attributes != attributesOfAll)
-                attributesOfFields.append({ field, property.attributes & ~attributesOfAll });
+                return failCoercion(value, m_state.ownTypeOf(*field));
+            if (property.attributes != allAttributes)
+                attributesPerField.append({ field, property.attributes & ~allAttributes });
             m_path.removeLast();
-            if (uint32_t entry = layout->numberOfFields + numberOfExtraKeys - 1; std::exchange(numberOfExtraKeysWithPlaces, numberOfExtraKeys) != numberOfExtraKeys && entry < UINT16_MAX)
+            if (uint32_t entry = layout->numberOfFields + numberOfExtraKeys - 1; std::exchange(positionedExtraKeyCount, numberOfExtraKeys) != numberOfExtraKeys && entry < UINT16_MAX)
                 order.append(static_cast<uint16_t>(entry));
             order.append(field - layout->fields());
         }
-        // Rather the fields in their order than nothing.
         if (order.size() > maxFieldsInOrder) [[unlikely]] {
             order.removeAllMatching([&](uint16_t entry) {
                 return entry >= layout->numberOfFields;
@@ -11844,19 +11510,19 @@ private:
         uint32_t orderAndCount = m_state.orderStartingWith(*layout, order.span());
         result->setOrderAndCount(orderAndCount);
         m_state.countObject(result);
-        for (auto [field, attributes] : attributesOfFields)
+        for (auto [field, attributes] : attributesPerField)
             result->setAttributesOf(m_vm, *field, attributes);
         if (integrity) {
             RELEASE_ASSERT(layout->mayBeFrozen);
             result->setIntegrity(m_globalObject, *integrity);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        if (integrity || !attributesOfFields.isEmpty())
+        if (integrity || !attributesPerField.isEmpty())
             return result;
-        if (!plan && m_state.takesMorePlansOfCoercions()) {
-            State::PlanOfCoercion::Discriminants discriminants;
-            auto made = planFor(object, structureOfSource, properties, type, *layout, orderAndCount, discriminants);
-            m_state.addPlanOfCoercion(object, structureOfSource, type, WTF::move(made), discriminants);
+        if (!plan && m_state.canAddCoercionPlans()) {
+            State::CoercionPlan::Discriminants discriminants;
+            auto made = planFor(object, sourceStructure, properties, type, *layout, orderAndCount, discriminants);
+            m_state.addCoercionPlan(object, sourceStructure, type, WTF::move(made), discriminants);
         }
         return result;
     }
@@ -11867,25 +11533,22 @@ private:
     Mode m_mode;
     Completeness m_completeness;
     bool m_explains;
-    // See mayBecome().
-    UncheckedKeyHashSet<Object*> m_asked;
-    // What is reached twice is copied once, so that what was one object is one object, and a cycle a cycle.
-    UncheckedKeyHashMap<JSObject*, Object*> m_copies;
+    UncheckedKeyHashSet<Object*> m_visited;
+    UncheckedKeyHashMap<JSObject*, Object*> m_inlinedCopies;
     MarkedArgumentBuffer m_copiesKeptAlive;
-    bool m_objectsMayBecomeTheirCopies { false };
-    UncheckedKeyHashMap<JSCell*, JSObject*> m_becameTheirCopies;
-    bool m_copiesObjectsOfProgram { false };
-    bool m_refusesCopies { false };
-    bool m_reckonsWithCopiesOfObjectsOfProgram { false };
+    bool m_allowsInPlaceConversion { false };
+    UncheckedKeyHashMap<JSCell*, JSObject*> m_convertedInPlace;
+    bool m_copiesProgramObjects { false };
+    bool m_disallowsCopies { false };
+    bool m_expectsProgramObjectCopies { false };
     UncheckedKeyHashMap<Object*, JSObject*> m_ordinaryCopies;
     UncheckedKeyHashSet<JSObject*> m_isOrdinaryCopy;
-    UncheckedKeyHashMap<JSObject*, String> m_pathsOfCopies;
-    UncheckedKeyHashSet<Object*> m_lackedRoom;
-    UncheckedKeyHashSet<JSObject*> m_isCopiedForLackOfRoom;
-    JSObject* m_heldByNobodyElse { nullptr };
+    UncheckedKeyHashMap<JSObject*, String> m_copyPaths;
+    UncheckedKeyHashSet<Object*> m_lackedCapacity;
+    UncheckedKeyHashSet<JSObject*> m_copiedForLackOfCapacity;
+    JSObject* m_unsharedObject { nullptr };
     UncheckedKeyHashMap<Object*, uint32_t> m_plannedShapes;
     UncheckedKeyHashSet<std::pair<JSObject*, const RuntimeType*>> m_kept;
-    // The keys of m_copies and m_kept as they came, for orAsItIs().
     Vector<JSObject*> m_copied;
     Vector<std::pair<JSObject*, const RuntimeType*>> m_keptInOrder;
     Vector<Specialization> m_specializations;
@@ -11894,11 +11557,11 @@ private:
     String m_failure;
 };
 
-auto State::fieldsListedBy(VM& vm, const LayoutData& from, const LayoutData& to) -> const FieldsListed&
+auto State::listedFieldsFor(VM& vm, const LayoutData& from, const LayoutData& to) -> const ListedFields&
 {
     RELEASE_ASSERT(&from != &to);
-    return m_fieldsListed.ensure(static_cast<uint64_t>(from.shape) << 32 | to.shape, [&] {
-        FieldsListed result;
+    return m_listedFields.ensure(static_cast<uint64_t>(from.shape) << 32 | to.shape, [&] {
+        ListedFields result;
         for (uint32_t i = 0; i < from.numberOfFields; ++i) {
             const FieldData* there = i == from.discriminant() ? nullptr : field(vm, to, name(vm, from.fields()[i].name).impl());
             if (there && there->numberOfLiterals())
@@ -11908,19 +11571,19 @@ auto State::fieldsListedBy(VM& vm, const LayoutData& from, const LayoutData& to)
     }).iterator->value;
 }
 
-bool State::holdsWhatIsListed(Object* object, const FieldsListed& listed) const
+bool State::hasListedFields(Object* object, const ListedFields& listed) const
 {
     return std::ranges::all_of(listed, [&](auto& fields) {
         JSValue held = object->read(*fields.first);
-        return !held || isAmongLiterals(*fields.second, held);
+        return !held || isAllowedLiteral(*fields.second, held);
     });
 }
 
-bool State::store(VM& vm, Object* object, const TransitionsOfStore& known, JSValue value)
+bool State::store(VM& vm, Object* object, const StoreSpecializations& known, JSValue value)
 {
     for (auto& transition : known.transitions) {
         uint32_t before = object->orderWord();
-        if (!fits(ownTypeOf(*transition.created), value) || !holdsWhatIsListed(object, transition.listed) || !object->specialize(vm, *this, *transition.plan))
+        if (!fits(ownTypeOf(*transition.created), value) || !hasListedFields(object, transition.listed) || !object->specialize(vm, *this, *transition.plan))
             continue;
         size_t known = transition.orderWords.findIf([&](auto& beforeAndAfter) {
             return beforeAndAfter.first == before;
@@ -11948,56 +11611,53 @@ bool State::storeByKnownTransition(VM& vm, Object* object, UniquedStringImpl* na
     const LayoutData& from = *structure->compiledLayout();
     EncodedJSValue discriminant = from.discriminant() != LayoutData::noBase ? JSValue::encode(object->read(from.fields()[from.discriminant()])) : 0;
     CachedStore& cached = cachedStore(structure, name, discriminant);
-    if (cached.structure != structure || cached.name != name || cached.discriminant != discriminant || !cached.transitions->areReachedByTheChainAlone)
+    if (cached.structure != structure || cached.name != name || cached.discriminant != discriminant || !cached.transitions->dependOnlyOnPrototypeChain)
         return false;
-    // Stricter than mayInterceptPut() and than the walk of putExtraWithoutRunningCode().
     for (JSValue next = structure->storedPrototype(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
-        Structure* ofHolder = asObject(next)->structure();
-        TypeInfo typeInfo = ofHolder->typeInfo();
-        if (ofHolder->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || typeInfo.overridesGetPrototype() || typeInfo.overridesGetOwnPropertySlot() || (typeInfo.overridesPut() && ofHolder->classInfoForCells() != PrototypeObject::info()) || asObject(next)->hasNonReifiedStaticProperties())
+        Structure* forHolder = asObject(next)->structure();
+        TypeInfo typeInfo = forHolder->typeInfo();
+        if (forHolder->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || typeInfo.overridesGetPrototype() || typeInfo.overridesGetOwnPropertySlot() || (typeInfo.overridesPut() && forHolder->classInfoForCells() != PrototypeObject::info()) || asObject(next)->hasNonReifiedStaticProperties())
             return false;
     }
     return store(vm, object, *cached.transitions, value);
 }
 
-State::FailureOfKeeping& State::failureOfKeeping(VM& vm, Structure* structure, const RuntimeType& type)
+State::KeepFailure& State::keepFailure(VM& vm, Structure* structure, const RuntimeType& type)
 {
-    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_versionOfFailuresOfKeeping) [[unlikely]] {
-        zeroSpan(std::span { m_failuresOfKeeping });
-        m_versionOfFailuresOfKeeping = version;
+    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_keepFailuresVersion) [[unlikely]] {
+        zeroSpan(std::span { m_keepFailures });
+        m_keepFailuresVersion = version;
     }
-    return m_failuresOfKeeping[placeOf<numberOfFailuresOfKeeping>(static_cast<uint64_t>(structure->id().bits()) << 32 ^ std::bit_cast<uintptr_t>(&type))];
+    return m_keepFailures[placeOf<numberOfKeepFailures>(static_cast<uint64_t>(structure->id().bits()) << 32 ^ std::bit_cast<uintptr_t>(&type))];
 }
 
-std::span<State::PropertiesWithViews> State::placesOpenToPropertiesWithViews(VM& vm, Structure* structure, const RuntimeType& type, unsigned part)
+std::span<State::PropertiesWithSupertypes> State::propertiesWithSupertypesCandidates(VM& vm, Structure* structure, const RuntimeType& type, unsigned part)
 {
-    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_versionOfPropertiesWithViews) [[unlikely]] {
-        for (auto& entry : std::span { m_propertiesWithViews, numberOfPropertiesWithViews }) {
+    if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_propertiesWithSupertypesVersion) [[unlikely]] {
+        for (auto& entry : std::span { m_propertiesWithSupertypes, numberOfPropertiesWithSupertypes }) {
             if (entry.type)
                 entry.type = nullptr;
         }
-        m_versionOfPropertiesWithViews = version;
+        m_propertiesWithSupertypesVersion = version;
     }
-    // Both are aligned addresses, out of one page as often as not.
-    constexpr unsigned numberOfSets = numberOfPropertiesWithViews / numberOfPlacesOpenToPropertiesWithViews;
+    constexpr unsigned numberOfSets = numberOfPropertiesWithSupertypes / propertiesWithSupertypesWays;
     unsigned set = (WTF::intHash(static_cast<uint64_t>(structure->id().bits()) << 32 ^ std::bit_cast<uintptr_t>(&type)) + part) % numberOfSets;
-    return std::span { m_propertiesWithViews, numberOfPropertiesWithViews }.subspan(set * numberOfPlacesOpenToPropertiesWithViews, numberOfPlacesOpenToPropertiesWithViews);
+    return std::span { m_propertiesWithSupertypes, numberOfPropertiesWithSupertypes }.subspan(set * propertiesWithSupertypesWays, propertiesWithSupertypesWays);
 }
 
-const State::PropertiesWithViews* State::propertiesWithViews(VM& vm, Structure* structure, const RuntimeType& type, unsigned part)
+const State::PropertiesWithSupertypes* State::propertiesWithSupertypes(VM& vm, Structure* structure, const RuntimeType& type, unsigned part)
 {
-    for (auto& entry : placesOpenToPropertiesWithViews(vm, structure, type, part)) {
+    for (auto& entry : propertiesWithSupertypesCandidates(vm, structure, type, part)) {
         if (entry.isOf(structure, type, part))
             return &entry;
     }
     return nullptr;
 }
 
-void State::setPropertiesWithViews(VM& vm, Structure* structure, const PropertiesWithViews& entry)
+void State::setPropertiesWithSupertypes(VM& vm, Structure* structure, const PropertiesWithSupertypes& entry)
 {
-    auto places = placesOpenToPropertiesWithViews(vm, structure, *entry.type, entry.part);
-    // Its own, a free one, or each in its turn.
-    auto* place = &places[m_nextPlaceTakenFromPropertiesWithViews % numberOfPlacesOpenToPropertiesWithViews];
+    auto places = propertiesWithSupertypesCandidates(vm, structure, *entry.type, entry.part);
+    auto* place = &places[m_nextPropertiesWithSupertypesVictim % propertiesWithSupertypesWays];
     bool isTaken = true;
     for (auto& candidate : places) {
         if (candidate.isOf(structure, *entry.type, entry.part) || !candidate.type) {
@@ -12006,19 +11666,19 @@ void State::setPropertiesWithViews(VM& vm, Structure* structure, const Propertie
             break;
         }
     }
-    m_nextPlaceTakenFromPropertiesWithViews += isTaken;
+    m_nextPropertiesWithSupertypesVictim += isTaken;
     *place = entry;
 }
 
-bool State::staysAsItIsBelow(VM& vm, JSObject* object, const RuntimeType& type)
+bool State::isUnchangedByCoercion(VM& vm, JSObject* object, const RuntimeType& type)
 {
     Structure* structure = object->structure();
     for (unsigned part = 0; ; ++part) {
-        auto* known = propertiesWithViews(vm, structure, type, part);
+        auto* known = propertiesWithSupertypes(vm, structure, type, part);
         if (!known)
             return false;
         for (auto& property : known->span()) {
-            if (mayBeChangedBelow(object->getDirect(property.offset), *data.at<RuntimeType>(property.type), property.leavesForeignObjects) != std::optional(false))
+            if (mayConvertNestedValue(object->getDirect(property.offset), *data.at<RuntimeType>(property.type), property.leavesUntypedObjects) != std::optional(false))
                 return false;
         }
         if (known->isLast)
@@ -12026,9 +11686,9 @@ bool State::staysAsItIsBelow(VM& vm, JSObject* object, const RuntimeType& type)
     }
 }
 
-bool State::entersAsItIs(JSObject* object, const RuntimeType& type) const
+bool State::isAcceptedUnchanged(JSObject* object, const RuntimeType& type) const
 {
-    return typeAskedAboutProperties(type) == std::bit_cast<uintptr_t>(&type) || !isPlainData(object);
+    return propertyConversionCacheEntry(type) == std::bit_cast<uintptr_t>(&type) || !isPlainData(object);
 }
 
 static std::optional<StoreTransition::Cleared> clearedSlot(const TransitionPlan::Slot& slot)
@@ -12049,7 +11709,7 @@ static std::optional<StoreTransition::Cleared> clearedSlot(const TransitionPlan:
         return StoreTransition::Cleared { slot.offset, 8, static_cast<uint64_t>(absentInteger) };
     case Store::OptionalDouble:
         return StoreTransition::Cleared { slot.offset, 8, absentDouble };
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
         return StoreTransition::Cleared { slot.offset, 4, static_cast<uint32_t>(absentInt32) };
     default:
         return std::nullopt;
@@ -12079,42 +11739,40 @@ const StoreTransition* State::storeTransitionFor(Structure* before, uint64_t wor
         auto made = makeUnique<StoreTransition>();
         *made = { wordsBefore, object->orderAndShapeWords(), fieldWrite, { }, { }, after->id().bits(), transition.plan->size, 0, nullptr, { } };
         unsigned numberOfHolders = 0;
-        // storeByKnownTransition() has just found nothing on the chain that could take or refuse a store.
         for (JSValue next = before->storedPrototype(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
-            Structure* ofHolder = asObject(next)->structure();
-            if (numberOfHolders == StoreTransition::maxHolders || ofHolder->isDictionary() || ofHolder->hasPolyProto())
+            Structure* forHolder = asObject(next)->structure();
+            if (numberOfHolders == StoreTransition::maxHolders || forHolder->isDictionary() || forHolder->hasPolyProto())
                 return nullptr;
-            // Its ID never comes to mean another.
-            if (m_structuresOfPlans.add(ofHolder).isNewEntry)
-                didCreate(ofHolder);
+            if (m_planStructures.add(forHolder).isNewEntry)
+                didCreate(forHolder);
             made->holders[numberOfHolders] = asObject(next);
-            made->structureIDsOfHolders[numberOfHolders++] = ofHolder->id().bits();
+            made->holderStructureIDs[numberOfHolders++] = forHolder->id().bits();
         }
         for (auto& slot : transition.plan->addedSlots) {
             if (auto cleared = clearedSlot(slot))
                 made->clearedSlots.append(*cleared);
         }
         made->cleared = made->clearedSlots.span().data();
-        made->numberOfCleared = made->clearedSlots.size();
+        made->clearedSlotCount = made->clearedSlots.size();
         forSites.append(WTF::move(made));
         return forSites.last().get();
     }
     return nullptr;
 }
 
-const StoreTransition* State::storeTransitionThatCreates(const FieldData& field, uint64_t wordsBefore, Object* object, uint64_t fieldWrite, bool asksPrototypeChain)
+const StoreTransition* State::fieldCreatingStoreTransition(const FieldData& field, uint64_t wordsBefore, Object* object, uint64_t fieldWrite, bool checksPrototypeChain)
 {
     Structure* structure = object->structure();
     uint64_t wordsAfter = object->orderAndShapeWords();
     uint32_t orderWordBefore = static_cast<uint32_t>(wordsBefore);
-    bool hasExtraProperties = !isOfObjectsWithoutExtraProperties(structure);
+    bool hasExtraProperties = !isStructureWithoutExtraProperties(structure);
     if (data.isCompiledForAudit || isCounting() || (field.flags & fieldIsOutOfLine && !hasExtraProperties) || object->isDiscriminant(field))
         return nullptr;
-    if (hasExtraProperties && (!structure->structureIDOfExtraProperties() || field.flags & (fieldMayExistWithoutStorage | fieldMayBeUnlisted)))
+    if (hasExtraProperties && (!structure->extraPropertiesStructureID() || field.flags & (fieldMayExistWithoutStorage | fieldMayBeUnlisted)))
         return nullptr;
     if (orderWordBefore & (orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible) || orderOf(orderWordBefore) == keysAreInLayoutOrder || orderOf(static_cast<uint32_t>(wordsAfter)) == keysAreInLayoutOrder)
         return nullptr;
-    auto& known = (hasExtraProperties ? m_storeTransitionsThatCreateBehindExtraProperties : m_storeTransitionsThatCreate)[asksPrototypeChain].add({ structure, &field }, Vector<std::unique_ptr<StoreTransition>, 1> { }).iterator->value;
+    auto& known = (hasExtraProperties ? m_lateFieldCreationStoreTransitions : m_fieldCreatingStoreTransitions)[checksPrototypeChain].add({ structure, &field }, Vector<std::unique_ptr<StoreTransition>, 1> { }).iterator->value;
     for (auto& transition : known) {
         if (transition->wordsBefore == wordsBefore)
             return transition.get();
@@ -12124,35 +11782,35 @@ const StoreTransition* State::storeTransitionThatCreates(const FieldData& field,
     auto made = makeUnique<StoreTransition>();
     *made = { wordsBefore, wordsAfter, fieldWrite, { }, { }, structure->id().bits(), structure->compiledLayout()->size, 0, nullptr, { } };
     unsigned numberOfHolders = 0;
-    for (JSValue next = asksPrototypeChain ? structure->storedPrototype() : jsNull(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
-        Structure* ofHolder = asObject(next)->structure();
-        if (numberOfHolders == StoreTransition::maxHolders || ofHolder->isDictionary() || ofHolder->hasPolyProto() || ofHolder->typeInfo().overridesGetPrototype())
+    for (JSValue next = checksPrototypeChain ? structure->storedPrototype() : jsNull(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        Structure* forHolder = asObject(next)->structure();
+        if (numberOfHolders == StoreTransition::maxHolders || forHolder->isDictionary() || forHolder->hasPolyProto() || forHolder->typeInfo().overridesGetPrototype())
             return nullptr;
         made->holders[numberOfHolders] = asObject(next);
-        made->structureIDsOfHolders[numberOfHolders++] = ofHolder->id().bits();
+        made->holderStructureIDs[numberOfHolders++] = forHolder->id().bits();
     }
     for (unsigned i = 0; i < numberOfHolders; ++i) {
-        if (m_structuresOfPlans.add(made->holders[i]->structure()).isNewEntry)
+        if (m_planStructures.add(made->holders[i]->structure()).isNewEntry)
             didCreate(made->holders[i]->structure());
     }
-    if (!hasExtraProperties && m_structuresOfPlans.add(structure).isNewEntry)
+    if (!hasExtraProperties && m_planStructures.add(structure).isNewEntry)
         didCreate(structure);
     known.append(WTF::move(made));
     return known.last().get();
 }
 
-void State::forgetStoreTransitionsOfDeadStructures(VM& vm)
+void State::removeDeadStoreTransitions(VM& vm)
 {
-    for (auto& transitions : m_storeTransitionsThatCreateBehindExtraProperties) {
+    for (auto& transitions : m_lateFieldCreationStoreTransitions) {
         transitions.removeIf([&](auto& entry) {
             return !vm.heap.isMarked(entry.key.first);
         });
     }
 }
 
-bool State::tryCreateFieldAsBefore(VM& vm, Object* object, const FieldData& field, JSValue value)
+bool State::tryCreateFieldWithCachedTransition(VM& vm, Object* object, const FieldData& field, JSValue value)
 {
-    auto& transitions = (isOfObjectsWithoutExtraProperties(object->structure()) ? m_storeTransitionsThatCreate : m_storeTransitionsThatCreateBehindExtraProperties)[true];
+    auto& transitions = (isStructureWithoutExtraProperties(object->structure()) ? m_fieldCreatingStoreTransitions : m_lateFieldCreationStoreTransitions)[true];
     auto known = transitions.find({ object->structure(), &field });
     if (known == transitions.end())
         return false;
@@ -12161,14 +11819,14 @@ bool State::tryCreateFieldAsBefore(VM& vm, Object* object, const FieldData& fiel
         if (transition->wordsBefore != words)
             continue;
         for (unsigned i = 0; i < StoreTransition::maxHolders && transition->holders[i]; ++i) {
-            if (transition->holders[i]->structureID().bits() != transition->structureIDsOfHolders[i])
+            if (transition->holders[i]->structureID().bits() != transition->holderStructureIDs[i])
                 return false;
         }
         if (field.flags & fieldIsOutOfLine)
             object->willCreateField(*this, field);
         if (!object->write(vm, field, value))
             return false;
-        if (object->handleOfExtraProperties())
+        if (object->extraPropertiesHandle())
             object->setOrderAndCount(static_cast<uint32_t>(transition->wordsAfter) & orderAndCountMask);
         else
             object->at<uint64_t>(offsetOfOrderWord) = transition->wordsAfter;
@@ -12184,94 +11842,84 @@ bool State::specializeToStore(JSGlobalObject* globalObject, Object* object, Prop
     const LayoutData& from = object->layout();
     if (!from.numberOfSpecializations() || name.isSymbol())
         return false;
-    bool goesByPlans = !object->hasFlagsInOrderWord() && !data.isCompiledForAudit;
+    bool usesPlans = !object->hasFlagsInOrderWord() && !data.isCompiledForAudit;
     JSValue discriminant = from.discriminant() != LayoutData::noBase ? object->read(from.fields()[from.discriminant()]) : JSValue();
-    std::tuple<Structure*, RefPtr<UniquedStringImpl>, EncodedJSValue> keyOfPlans { object->structure(), name.uid(), JSValue::encode(discriminant) };
-    auto storeByPlans = [&](const TransitionsOfStore& known) {
+    std::tuple<Structure*, RefPtr<UniquedStringImpl>, EncodedJSValue> planKey { object->structure(), name.uid(), JSValue::encode(discriminant) };
+    auto storeByPlans = [&](const StoreSpecializations& known) {
         CachedStore& cached = cachedStore(object->structure(), name.uid(), JSValue::encode(discriminant));
         if (cached.structure && (cached.structure != object->structure() || cached.name != name.uid() || cached.discriminant != JSValue::encode(discriminant)))
-            m_placesOfCachedStores.didReplaceEntry();
+            m_cachedStoreIndices.didReplaceEntry();
         cached = { object->structure(), name.uid(), JSValue::encode(discriminant), &known };
         return store(vm, object, known, value);
     };
-    if (goesByPlans) {
-        if (auto known = m_transitionsOfStores.find(keyOfPlans); known != m_transitionsOfStores.end()) [[likely]]
+    if (usesPlans) {
+        if (auto known = m_storeSpecializations.find(planKey); known != m_storeSpecializations.end()) [[likely]]
             return storeByPlans(*known->value);
     }
-    // It says what the data say, so nothing is lost with it. A program that stores under ever new names does not keep them all.
     if (m_specializationsWithField.size() >= maxNumberOfOutcomes) [[unlikely]]
         m_specializationsWithField.clear();
     auto& shapes = m_specializationsWithField.ensure({ from.shape, name.uid() }, [&] {
         Vector<uint32_t, 1> result;
-        // What the object can become over any number of transitions, nearest first: the lists are not transitive.
         Vector<uint32_t, 16> reached { from.shape };
         UncheckedKeyHashMap<uint32_t, unsigned> distance { { from.shape, 0u } };
         for (size_t at = 0; at < reached.size(); ++at) {
-            const LayoutData& via = layoutOfShape(reached[at]);
+            const LayoutData& via = layoutForShape(reached[at]);
             for (uint32_t shape : std::span { data.at<uint32_t>(via.specializationsOffset()), via.numberOfSpecializations() }) {
                 if (distance.add(shape, distance.get(via.shape) + 1).isNewEntry)
                     reached.append(shape);
             }
         }
-        // What goes by the two layouts and the name alone, and is for a store to ask. The rest is Coercion::mayBecome().
         for (uint32_t shape : reached.span().subspan(1)) {
-            const LayoutData& to = layoutOfShape(shape);
+            const LayoutData& to = layoutForShape(shape);
             const FieldData* created = field(vm, to, name.uid());
-            // Compiled code takes it that an immutable field is what it was when it first looked.
             if (to.isAbstract || !created || created->flags & fieldIsImmutable)
                 continue;
-            // What the layout has more is absent while the object becomes one of it: see Object::specialize().
-            bool mayLackWhatIsAdded = true;
-            for (uint32_t i = 0; i < to.numberOfFields && mayLackWhatIsAdded; ++i)
-                mayLackWhatIsAdded = mayBeAbsent(to.fields()[i]) || field(vm, from, this->name(vm, to.fields()[i].name).impl());
-            if (mayLackWhatIsAdded)
+            bool mayLackAddedFields = true;
+            for (uint32_t i = 0; i < to.numberOfFields && mayLackAddedFields; ++i)
+                mayLackAddedFields = mayBeAbsent(to.fields()[i]) || field(vm, from, this->name(vm, to.fields()[i].name).impl());
+            if (mayLackAddedFields)
                 result.append(shape);
         }
-        // Then the least commitment. Not by size, which is for placement to decide: what an object becomes does not go by that.
         std::ranges::sort(result, [&](uint32_t a, uint32_t b) {
-            return std::tuple { distance.get(a), layoutOfShape(a).numberOfFields, layoutOfShape(a).index } < std::tuple { distance.get(b), layoutOfShape(b).numberOfFields, layoutOfShape(b).index };
+            return std::tuple { distance.get(a), layoutForShape(a).numberOfFields, layoutForShape(a).index } < std::tuple { distance.get(b), layoutForShape(b).numberOfFields, layoutForShape(b).index };
         });
         return result;
     }).iterator->value;
-    if (goesByPlans) {
-        // What the loop below and Coercion::mayBecome() ask of an object without extra properties, but for the value and the room.
-        auto known = makeUnique<TransitionsOfStore>();
+    if (usesPlans) {
+        auto known = makeUnique<StoreSpecializations>();
         auto& transitions = known->transitions;
-        known->areReachedByTheChainAlone = !parseIndex(name) && name != vm.propertyNames->underscoreProto && !hasFixedMethod(from, name.uid());
-        // The address stands for it in the table from here on, also where nothing can be made of the object.
-        if (m_structuresOfPlans.add(object->structure()).isNewEntry)
+        known->dependOnlyOnPrototypeChain = !parseIndex(name) && name != vm.propertyNames->underscoreProto && !hasImmutableMethod(from, name.uid());
+        if (m_planStructures.add(object->structure()).isNewEntry)
             didCreate(object->structure());
         for (uint32_t shape : shapes) {
-            const LayoutData& to = layoutOfShape(shape);
+            const LayoutData& to = layoutForShape(shape);
             bool requiresMore = requiredFieldsAdded(from, to).containsIf([&](uint16_t index) {
                 return this->name(vm, to.fields()[index].name).impl() != name.uid();
             });
             if (requiresMore || hasPrototypeMembers(from) || to.kind != LayoutKind::Record || to.hasExtension != from.hasExtension)
                 continue;
-            if (discriminant && to.discriminant() != LayoutData::noBase && !isAmongLiterals(to.fields()[to.discriminant()], discriminant))
+            if (discriminant && to.discriminant() != LayoutData::noBase && !isAllowedLiteral(to.fields()[to.discriminant()], discriminant))
                 continue;
-            transitions.append({ field(vm, to, name.uid()), &planOfTransition(vm, object, shape), fieldsListedBy(vm, from, to) });
+            transitions.append({ field(vm, to, name.uid()), &transitionPlanFor(vm, object, shape), listedFieldsFor(vm, from, to) });
         }
-        if (m_transitionsOfStores.size() >= maxNumberOfOutcomes) [[unlikely]] {
-            m_transitionsOfStores.clear();
-            zeroSpan(std::span { m_cachedStores, m_placesOfCachedStores.count() });
+        if (m_storeSpecializations.size() >= maxNumberOfOutcomes) [[unlikely]] {
+            m_storeSpecializations.clear();
+            zeroSpan(std::span { m_cachedStores, m_cachedStoreIndices.count() });
         }
-        return storeByPlans(*m_transitionsOfStores.add(keyOfPlans, WTF::move(known)).iterator->value);
+        return storeByPlans(*m_storeSpecializations.add(planKey, WTF::move(known)).iterator->value);
     }
     for (uint32_t shape : shapes) {
-        const LayoutData& to = layoutOfShape(shape);
+        const LayoutData& to = layoutForShape(shape);
         const FieldData& created = *field(vm, to, name.uid());
         if (!fits(ownTypeOf(created), value))
             continue;
-        // Without extra properties the object has nothing of what the layout requires besides. Coercion::mayBecome() would say so at more expense.
         bool requiresMore = requiredFieldsAdded(from, to).containsIf([&](uint16_t index) {
             return this->name(vm, to.fields()[index].name).impl() != name.uid();
         });
         if (requiresMore && !object->extraProperties())
             continue;
-        if (!holdsWhatIsListed(object, fieldsListedBy(vm, from, to)))
+        if (!hasListedFields(object, listedFieldsFor(vm, from, to)))
             continue;
-        // Extra properties by the names of other fields of the layout become those fields, or it is not this layout.
         bool isSpecialized = Coercion(globalObject, *this).run(object, to, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
         if (!isSpecialized)
@@ -12300,29 +11948,27 @@ const Vector<uint16_t, 2>& State::requiredFieldsAdded(const LayoutData& from, co
 static Coercion coercionFor(JSGlobalObject* globalObject, State& state, Format::CastReason reason, Coercion::Explains explains)
 {
     bool isNarrowing = reason == Format::CastReason::Flow;
-    // The edges of the subtype relation that the checker takes for casts. Over every other a value is tested, and nothing else comes of it.
     bool isCoercion = reason == Format::CastReason::Coerce || reason == Format::CastReason::CoerceFreshObject || reason == Format::CastReason::CoerceFreshGraph;
     bool isCast = reason == Format::CastReason::As || isCoercion || isNarrowing;
     if (!isCast)
-        return Coercion(globalObject, state, Coercion::Mode::Test, Coercion::Completeness::HasWhatIsAdded, explains);
-    return Coercion(globalObject, state, isNarrowing ? Coercion::Mode::Narrowing : reason == Format::CastReason::Coerce ? Coercion::Mode::Coerce : reason == Format::CastReason::CoerceFreshObject ? Coercion::Mode::CoerceFreshObject : isCoercion ? Coercion::Mode::CoerceFreshGraph : Coercion::Mode::Cast, Coercion::Completeness::MayLackWhatIsAdded, explains);
+        return Coercion(globalObject, state, Coercion::Mode::Test, Coercion::Completeness::HasAddedFields, explains);
+    return Coercion(globalObject, state, isNarrowing ? Coercion::Mode::Narrowing : reason == Format::CastReason::Coerce ? Coercion::Mode::Coerce : reason == Format::CastReason::CoerceFreshObject ? Coercion::Mode::CoerceFreshObject : isCoercion ? Coercion::Mode::CoerceFreshGraph : Coercion::Mode::Cast, Coercion::Completeness::MayLackAddedFields, explains);
 }
 
 TransitionPlan* State::transitionPlan(JSGlobalObject* globalObject, Object* object, const RuntimeType& type, Format::CastReason reason)
 {
     const LayoutData& from = object->layout();
     EncodedJSValue discriminant = from.discriminant() != LayoutData::noBase ? JSValue::encode(object->read(from.fields()[from.discriminant()])) : 0;
-    OutcomeOfCast outcome = outcomeOfCast(globalObject, object, type, reason, discriminant, false);
-    m_lastPlanWentByStructureAlone = !outcome.decidedBy && from.discriminant() == LayoutData::noBase;
-    if (!outcome.decidedBy) [[likely]]
+    CastOutcome outcome = castOutcome(globalObject, object, type, reason, discriminant, false);
+    m_lastPlanDependsOnlyOnStructure = !outcome.discriminatingField && from.discriminant() == LayoutData::noBase;
+    if (!outcome.discriminatingField) [[likely]]
         return outcome.plan;
-    auto classOfWhatItHolds = classOfValue(*outcome.decidedBy, object->read(*outcome.decidedBy->field));
-    return classOfWhatItHolds ? outcomeOfCast(globalObject, object, type, reason, *classOfWhatItHolds, true).plan : nullptr;
+    auto heldValueClass = discriminantKeyFor(*outcome.discriminatingField, object->read(*outcome.discriminatingField->field));
+    return heldValueClass ? castOutcome(globalObject, object, type, reason, *heldValueClass, true).plan : nullptr;
 }
 
-std::optional<EncodedJSValue> State::classOfValue(const DecidingField& deciding, JSValue value)
+std::optional<EncodedJSValue> State::discriminantKeyFor(const DiscriminatingField& deciding, JSValue value)
 {
-    // No value has such bits: a cell is aligned, a number has high bits.
     auto codeOf = [](uint32_t string) {
         return static_cast<EncodedJSValue>(static_cast<uint64_t>(string) << 4 | 1);
     };
@@ -12344,89 +11990,88 @@ std::optional<EncodedJSValue> State::classOfValue(const DecidingField& deciding,
     auto listed = deciding.strings.find(written.data);
     if (listed != deciding.strings.end())
         return codeOf(listed->value);
-    for (const HashedText* hashed : deciding.hashedStrings) {
+    for (const HashedString* hashed : deciding.hashedStrings) {
         if (hashed->matches(written.data))
             return codeOf(hashed->string);
     }
     return codeOf(isUnlistedString);
 }
 
-State::OutcomeOfCast State::outcomeOfCast(JSGlobalObject* globalObject, Object* object, const RuntimeType& type, Format::CastReason reason, EncodedJSValue discriminant, bool isClassOfValue)
+State::CastOutcome State::castOutcome(JSGlobalObject* globalObject, Object* object, const RuntimeType& type, Format::CastReason reason, EncodedJSValue discriminant, bool isDiscriminantKey)
 {
     VM& vm = globalObject->vm();
     Structure* structure = object->structure();
     uint64_t key = std::bit_cast<uintptr_t>(structure) ^ std::rotl(static_cast<uint64_t>(std::bit_cast<uintptr_t>(&type)), 23) ^ static_cast<uint64_t>(discriminant) * 31 ^ static_cast<uint64_t>(reason) << 57;
-    CachedTransition& cached = m_cachedTransitions[m_placesOfCachedTransitions.placeOf(key)];
+    CachedTransition& cached = m_cachedTransitions[m_cachedTransitionIndices.placeOf(key)];
     if (cached.structure == structure && cached.type == &type && cached.discriminant == discriminant && cached.reason == reason) [[likely]]
         return cached.outcome;
-    if (m_plansOfCasts.size() >= maxNumberOfOutcomes) [[unlikely]] {
-        m_plansOfCasts.clear();
-        zeroSpan(std::span { m_cachedTransitions, m_placesOfCachedTransitions.count() });
-        zeroSpan(std::span { m_transitionsMadeBefore, m_placesOfTransitionsMadeBefore.count() });
-        zeroSpan(std::span { m_castTransitions, static_cast<size_t>(1u << CastTransition::bitsOfPlace) });
-        m_clearedSlotsOfPlans.clear();
-        m_decidingFields.clear();
+    if (m_castOutcomes.size() >= maxNumberOfOutcomes) [[unlikely]] {
+        m_castOutcomes.clear();
+        zeroSpan(std::span { m_cachedTransitions, m_cachedTransitionIndices.count() });
+        zeroSpan(std::span { m_previousTransitions, m_previousTransitionIndices.count() });
+        zeroSpan(std::span { m_castTransitions, static_cast<size_t>(1u << CastTransition::indexBits) });
+        m_planClearedSlots.clear();
+        m_discriminatingFields.clear();
     }
-    OutcomeOfCast outcome = m_plansOfCasts.ensure({ structure, &type, discriminant, static_cast<unsigned>(reason) }, [&]() -> OutcomeOfCast {
-        // The address stands for it in the table from here on.
-        if (m_structuresOfPlans.add(structure).isNewEntry)
+    CastOutcome outcome = m_castOutcomes.ensure({ structure, &type, discriminant, static_cast<unsigned>(reason) }, [&]() -> CastOutcome {
+        if (m_planStructures.add(structure).isNewEntry)
             didCreate(structure);
-        auto decides = makeUnique<DecidingField>();
-        auto shape = coercionFor(globalObject, *this, reason, Coercion::Explains::No).outcomeByStructure(object, type, reason == Format::CastReason::Coerce, isClassOfValue, *decides);
+        auto decides = makeUnique<DiscriminatingField>();
+        auto shape = coercionFor(globalObject, *this, reason, Coercion::Explains::No).outcomeByStructure(object, type, reason == Format::CastReason::Coerce, isDiscriminantKey, *decides);
         if (shape)
-            return { *shape ? &planOfTransition(vm, object, *shape) : &m_planToStay, nullptr };
+            return { *shape ? &transitionPlanFor(vm, object, *shape) : &m_planToStay, nullptr };
         if (!decides->field)
             return { };
-        m_decidingFields.append(WTF::move(decides));
-        return { nullptr, m_decidingFields.last().get() };
+        m_discriminatingFields.append(WTF::move(decides));
+        return { nullptr, m_discriminatingFields.last().get() };
     }).iterator->value;
     if (cached.structure)
-        m_placesOfCachedTransitions.didReplaceEntry();
+        m_cachedTransitionIndices.didReplaceEntry();
     cached = { structure, &type, discriminant, reason, outcome };
     return outcome;
 }
 
-const State::PlanOfCoercion* State::planOfCoercion(Structure* structure, const RuntimeType& type) const
+const State::CoercionPlan* State::coercionPlan(Structure* structure, const RuntimeType& type) const
 {
-    if (m_planOfCoercionLastAskedFor.structure == structure && m_planOfCoercionLastAskedFor.type == &type)
-        return m_planOfCoercionLastAskedFor.plan;
-    auto found = m_plansOfCoercions.find({ structure, &type });
-    m_planOfCoercionLastAskedFor = { structure, &type, found == m_plansOfCoercions.end() ? nullptr : found->value.get() };
-    return m_planOfCoercionLastAskedFor.plan;
+    if (m_lastCoercionPlanLookup.structure == structure && m_lastCoercionPlanLookup.type == &type)
+        return m_lastCoercionPlanLookup.plan;
+    auto found = m_coercionPlans.find({ structure, &type });
+    m_lastCoercionPlanLookup = { structure, &type, found == m_coercionPlans.end() ? nullptr : found->value.get() };
+    return m_lastCoercionPlanLookup.plan;
 }
 
-const State::PlanOfCoercion* State::planOfCoercion(JSObject* object, const RuntimeType& type) const
+const State::CoercionPlan* State::coercionPlan(JSObject* object, const RuntimeType& type) const
 {
-    const PlanOfCoercion* found = planOfCoercion(object->structure(), type);
+    const CoercionPlan* found = coercionPlan(object->structure(), type);
     while (found && found->discriminant != invalidOffset) {
         JSValue held = object->getDirect(found->discriminant);
         if (!held.isString() || asString(held)->isRope())
             return found;
         auto next = found->byDiscriminant.find(asString(held)->tryGetValue());
         if (next == found->byDiscriminant.end())
-            return found->byDiscriminant.size() < PlanOfCoercion::maxNumberByDiscriminant && m_numberOfPlansOfCoercionsByDiscriminants < maxNumberOfPlansOfCoercionsByDiscriminants ? nullptr : found;
+            return found->byDiscriminant.size() < CoercionPlan::maxNumberByDiscriminant && m_coercionPlansByDiscriminantCount < maxCoercionPlansByDiscriminant ? nullptr : found;
         found = next->value.get();
     }
     return found;
 }
 
-void State::addPlanOfCoercion(JSObject* object, Structure* structure, const RuntimeType& type, std::unique_ptr<PlanOfCoercion>&& plan, const PlanOfCoercion::Discriminants& discriminants)
+void State::addCoercionPlan(JSObject* object, Structure* structure, const RuntimeType& type, std::unique_ptr<CoercionPlan>&& plan, const CoercionPlan::Discriminants& discriminants)
 {
-    if (m_plansOfCoercions.size() >= maxNumberOfPlansOfCoercions)
+    if (m_coercionPlans.size() >= maxCoercionPlans)
         return;
-    m_planOfCoercionLastAskedFor = { };
-    m_hasAddedPlansOfCoercionsSinceLastCollection = true;
+    m_lastCoercionPlanLookup = { };
+    m_hasNewCoercionPlans = true;
     if (discriminants.isEmpty()) {
-        m_plansOfCoercions.add({ structure, &type }, WTF::move(plan));
+        m_coercionPlans.add({ structure, &type }, WTF::move(plan));
         return;
     }
-    auto goingBy = [](PropertyOffset discriminant) {
-        auto made = makeUnique<PlanOfCoercion>();
+    auto planWithDiscriminant = [](PropertyOffset discriminant) {
+        auto made = makeUnique<CoercionPlan>();
         made->discriminant = discriminant;
         return made;
     };
-    PlanOfCoercion* at = m_plansOfCoercions.ensure({ structure, &type }, [&] {
-        return goingBy(discriminants[0]);
+    CoercionPlan* at = m_coercionPlans.ensure({ structure, &type }, [&] {
+        return planWithDiscriminant(discriminants[0]);
     }).iterator->value.get();
     for (size_t i = 0; i < discriminants.size(); ++i) {
         JSValue held = object->getDirect(discriminants[i]);
@@ -12438,56 +12083,56 @@ void State::addPlanOfCoercion(JSObject* object, Structure* structure, const Runt
             at = next->value.get();
             continue;
         }
-        if (at->byDiscriminant.size() >= PlanOfCoercion::maxNumberByDiscriminant || m_numberOfPlansOfCoercionsByDiscriminants >= maxNumberOfPlansOfCoercionsByDiscriminants)
+        if (at->byDiscriminant.size() >= CoercionPlan::maxNumberByDiscriminant || m_coercionPlansByDiscriminantCount >= maxCoercionPlansByDiscriminant)
             return;
-        ++m_numberOfPlansOfCoercionsByDiscriminants;
+        ++m_coercionPlansByDiscriminantCount;
         bool isLast = i + 1 == discriminants.size();
-        at = at->byDiscriminant.add(text->isolatedCopy(), isLast ? WTF::move(plan) : goingBy(discriminants[i + 1])).iterator->value.get();
+        at = at->byDiscriminant.add(text->isolatedCopy(), isLast ? WTF::move(plan) : planWithDiscriminant(discriminants[i + 1])).iterator->value.get();
     }
 }
 
-uint8_t State::kindsTakenBy(const RuntimeType& type) const
+uint8_t State::kindsAcceptedBy(const RuntimeType& type) const
 {
     uint8_t kinds = 0;
     if (type.primitives & Primitive::Int && type.minInteger() <= INT32_MIN && type.maxInteger() >= INT32_MAX)
-        kinds |= PlanOfCoercion::takesInt32;
+        kinds |= CoercionPlan::acceptsInt32;
     if (type.primitives & Primitive::String)
-        kinds |= PlanOfCoercion::takesString;
+        kinds |= CoercionPlan::acceptsString;
     if (type.primitives & Primitive::True)
-        kinds |= PlanOfCoercion::takesTrue;
+        kinds |= CoercionPlan::acceptsTrue;
     if (type.primitives & Primitive::False)
-        kinds |= PlanOfCoercion::takesFalse;
+        kinds |= CoercionPlan::acceptsFalse;
     if (type.primitives & Primitive::Undefined)
-        kinds |= PlanOfCoercion::takesUndefined;
+        kinds |= CoercionPlan::acceptsUndefined;
     if (type.primitives & Primitive::Null)
-        kinds |= PlanOfCoercion::takesNull;
+        kinds |= CoercionPlan::acceptsNull;
     if ((type.primitives & Primitive::Number) == Primitive::Number && type.minInteger() <= -maxExactInteger && type.maxInteger() >= maxExactInteger)
-        kinds |= PlanOfCoercion::takesDouble;
-    if (type.admitsForeignObjectsByNature()) {
+        kinds |= CoercionPlan::acceptsDouble;
+    if (type.acceptsUntypedObjectsByNature()) {
         bool mayConvertProperties = false;
         auto look = [&](uint32_t shape) {
-            const LayoutData& layout = layoutOfShape(shape);
+            const LayoutData& layout = layoutForShape(shape);
             for (uint32_t i = 0; layout.kind == LayoutKind::Record && i < layout.numberOfFields && !mayConvertProperties; ++i)
-                mayConvertProperties = ownTypeOf(layout.fields()[i]).numberOfViews();
+                mayConvertProperties = ownTypeOf(layout.fields()[i]).numberOfSupertypes();
         };
-        for (uint32_t i = 0; i < type.numberOfViews(); ++i) {
+        for (uint32_t i = 0; i < type.numberOfSupertypes(); ++i) {
             auto& view = type.view(i);
-            if (view.shapeOfView) {
-                look(view.shapeOfView);
+            if (view.supertypeShape) {
+                look(view.supertypeShape);
                 continue;
             }
             for (uint32_t shape = view.first; shape < view.first + view.count; ++shape) {
-                if (passes(view, shape) && hasLayoutOfShape(shape))
+                if (passes(view, shape) && hasLayoutForShape(shape))
                     look(shape);
             }
         }
         if (!mayConvertProperties)
-            kinds |= PlanOfCoercion::takesForeignObject;
+            kinds |= CoercionPlan::takesUntypedObject;
     }
     return kinds;
 }
 
-bool State::hasRoomToBecome(JSObject* object, Object* copy)
+bool State::hasCapacityToConvertInPlace(JSObject* object, Object* copy)
 {
     return !object->structure()->mayBePrototype() && object->cellSize() >= copy->layout().size;
 }
@@ -12496,7 +12141,7 @@ void State::become(VM& vm, JSObject* object, Object* copy)
 {
     Structure* structure = copy->structure();
     size_t sizeOfCell = object->cellSize();
-    size_t size = std::min<size_t>(sizeWithRoomToSpecialize(copy->shape()), sizeOfCell);
+    size_t size = std::min<size_t>(sizeWithSpecializationCapacity(copy->shape()), sizeOfCell);
     RELEASE_ASSERT(size >= sizeof(JSCell) && size >= copy->layout().size && size <= copy->cellSize());
     Object* itself = std::bit_cast<Object*>(object);
     JSObject* extra = copy->extraProperties();
@@ -12507,11 +12152,11 @@ void State::become(VM& vm, JSObject* object, Object* copy)
         uint32_t offsetOfExtraProperties = structure->compiledLayout()->offsetOfExtraProperties();
         if (extra && offsetOfExtraProperties)
             *reinterpret_cast<uint32_t*>(cell + offsetOfExtraProperties) = MarkedBlockCage::encode(extra);
-        if (copy->handleOfExtraProperties())
-            handlesOfExtraProperties.didBecome(copy, copy->at<uint32_t>(offsetOfOrderWord) & orderAndCountMask, itself);
+        if (copy->extraPropertiesHandle())
+            extraPropertiesHandleTable.didReplaceObject(copy, copy->at<uint32_t>(offsetOfOrderWord) & orderAndCountMask, itself);
         object->JSCell::setStructure(vm, structure);
         if (extra && isCounting()) [[unlikely]] {
-            forgetExtraPropertiesOf(copy);
+            removeExtraPropertiesOf(copy);
             extraProperties.set(itself, extra);
         }
     };
@@ -12521,11 +12166,11 @@ void State::become(VM& vm, JSObject* object, Object* copy)
     } else
         move();
     if (auto* attributes = fieldAttributes.get(copy)) [[unlikely]] {
-        FieldAttributesTable::Attributes moved { attributes->isFrozen, attributes->ofFields };
+        FieldAttributesTable::Attributes moved { attributes->isFrozen, attributes->attributesByField };
         fieldAttributes.remove(copy);
         auto& own = fieldAttributes.ensure(itself);
         own.isFrozen = moved.isFrozen;
-        own.ofFields = WTF::move(moved.ofFields);
+        own.attributesByField = WTF::move(moved.attributesByField);
     }
     vm.writeBarrier(object);
     itself->copyNumberBoxes(*this);
@@ -12533,39 +12178,39 @@ void State::become(VM& vm, JSObject* object, Object* copy)
     ensureStillAliveHere(extra);
 }
 
-Object* State::tryBecomeOrCopyByPlan(VM& vm, JSObject* object, const PlanOfCoercion& plan, bool mayBecomeIt)
+Object* State::tryConvertOrCopyByPlan(VM& vm, JSObject* object, const CoercionPlan& plan, bool mayConvertInPlace)
 {
-    static constexpr size_t maxSize = PlanOfCoercion::maxSizeMadeOverWhereItIs;
-    size_t size = plan.bodyBeforeStores.size() + sizeof(JSCell);
-    if (plan.bodyBeforeStores.isEmpty())
+    static constexpr size_t maxSize = CoercionPlan::maxInPlaceConversionSize;
+    size_t size = plan.initialBody.size() + sizeof(JSCell);
+    if (plan.initialBody.isEmpty())
         return nullptr;
     size_t sizeOfCell = object->cellSize();
-    bool becomesIt = mayBecomeIt && !object->structure()->mayBePrototype() && sizeOfCell >= plan.layout->size;
+    bool convertsInPlace = mayConvertInPlace && !object->structure()->mayBePrototype() && sizeOfCell >= plan.layout->size;
     bool hasExtraProperties = !plan.extraProperties.isEmpty();
-    alignas(sizeof(EncodedJSValue)) uint8_t cellToBe[maxSize];
-    memcpySpan(std::span { cellToBe + sizeof(JSCell), size - sizeof(JSCell) }, plan.bodyBeforeStores.span());
-    if (hasExtraProperties && becomesIt)
-        *reinterpret_cast<uint32_t*>(cellToBe + offsetOfOrderWord) |= orderWordHasExtraProperties;
+    alignas(sizeof(EncodedJSValue)) uint8_t newCellBytes[maxSize];
+    memcpySpan(std::span { newCellBytes + sizeof(JSCell), size - sizeof(JSCell) }, plan.initialBody.span());
+    if (hasExtraProperties && convertsInPlace)
+        *reinterpret_cast<uint32_t*>(newCellBytes + offsetOfOrderWord) |= orderWordHasExtraProperties;
     for (auto& planned : plan.fields) {
         const FieldData& field = *planned.field;
         JSValue value = object->getDirect(planned.offset);
-        void* slot = cellToBe + field.offset;
-        if (field.store() != Store::Int32OrElsewhere) {
+        void* slot = newCellBytes + field.offset;
+        if (field.store() != Store::Int32OrNumberBox) {
             if (!storeAs(*this, field.store(), slot, value))
                 return nullptr;
             continue;
         }
-        if (value.isInt32() && value.asInt32() >= leastInt32InPlace)
+        if (value.isInt32() && value.asInt32() >= minInlineInt32)
             *static_cast<int32_t*>(slot) = value.asInt32();
         else if (value.isUndefinedOrNull())
             *static_cast<int32_t*>(slot) = value.isUndefined() ? undefinedInt32 : nullInt32;
         else
             return nullptr;
     }
-    Structure* structure = structureFor(vm, plan.layout->shape, object->getPrototypeDirect(), hasExtraProperties && becomesIt);
+    Structure* structure = structureFor(vm, plan.layout->shape, object->getPrototypeDirect(), hasExtraProperties && convertsInPlace);
     for (auto& planned : plan.fields) {
         if (planned.field->flags & fieldIsPinned) [[unlikely]]
-            willAlter(*planned.field, object->getDirect(planned.offset));
+            willModify(*planned.field, object->getDirect(planned.offset));
     }
     JSObject* extra = nullptr;
     if (hasExtraProperties) {
@@ -12576,13 +12221,13 @@ Object* State::tryBecomeOrCopyByPlan(VM& vm, JSObject* object, const PlanOfCoerc
             Vector<Object::ExtraProperty, 8> properties;
             for (auto& [offset, name] : plan.extraProperties)
                 properties.append({ name, object->getDirect(offset) });
-            extra = Object::makeExtraProperties(structure->realm(), properties.span());
+            extra = Object::createExtraProperties(structure->realm(), properties.span());
         }
-        if (becomesIt)
+        if (convertsInPlace)
             structure = structureFor(vm, plan.layout->shape, object->getPrototypeDirect(), *extra->structure());
     }
-    if (!becomesIt) {
-        Object* copy = Object::createWithBody(vm, structure, std::span { cellToBe + sizeof(JSCell), size - sizeof(JSCell) });
+    if (!convertsInPlace) {
+        Object* copy = Object::createWithBody(vm, structure, std::span { newCellBytes + sizeof(JSCell), size - sizeof(JSCell) });
         if (extra)
             copy->setExtraProperties(vm, extra);
         ensureStillAliveHere(object);
@@ -12590,13 +12235,13 @@ Object* State::tryBecomeOrCopyByPlan(VM& vm, JSObject* object, const PlanOfCoerc
         return copy;
     }
     if (extra && !plan.layout->offsetOfExtraProperties()) {
-        uint32_t& word = *reinterpret_cast<uint32_t*>(cellToBe + offsetOfOrderWord);
-        word = (word & ~orderAndCountMask) | handlesOfExtraProperties.take(object, extra, word & orderAndCountMask);
+        uint32_t& word = *reinterpret_cast<uint32_t*>(newCellBytes + offsetOfOrderWord);
+        word = (word & ~orderAndCountMask) | extraPropertiesHandleTable.take(object, extra, word & orderAndCountMask);
     }
     auto move = [&] {
         uint8_t* cell = std::bit_cast<uint8_t*>(object);
         size_t moved = std::min(size, sizeOfCell);
-        memcpySpan(std::span { cell + sizeof(JSCell), moved - sizeof(JSCell) }, std::span { cellToBe + sizeof(JSCell), moved - sizeof(JSCell) });
+        memcpySpan(std::span { cell + sizeof(JSCell), moved - sizeof(JSCell) }, std::span { newCellBytes + sizeof(JSCell), moved - sizeof(JSCell) });
         zeroSpan(std::span { cell + moved, sizeOfCell - moved });
         if (uint32_t offset = extra ? plan.layout->offsetOfExtraProperties() : 0)
             *reinterpret_cast<uint32_t*>(cell + offset) = MarkedBlockCage::encode(extra);
@@ -12614,55 +12259,55 @@ Object* State::tryBecomeOrCopyByPlan(VM& vm, JSObject* object, const PlanOfCoerc
     return std::bit_cast<Object*>(object);
 }
 
-bool State::tryBecomeByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop)
+bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop)
 {
-    struct MadeOver {
+    struct ConvertedInPlace {
         JSObject* object;
-        const PlanOfCoercion* plan;
+        const CoercionPlan* plan;
         size_t body;
         Structure* structure;
     };
     static constexpr unsigned maxNumber = 32;
-    Vector<MadeOver, maxNumber> all;
+    Vector<ConvertedInPlace, maxNumber> all;
     Vector<uint64_t, 64> bodies;
     auto lay = [&](auto& lay, JSObject* object, const RuntimeType& type) -> bool {
         for (auto& known : all) {
             if (known.object == object)
-                return admitsShape(type, known.plan->layout->shape);
+                return acceptsShape(type, known.plan->layout->shape);
         }
-        const PlanOfCoercion* plan = planOfCoercion(object, type);
+        const CoercionPlan* plan = coercionPlan(object, type);
         if (!plan)
-            plan = planFirstOfItsShape(vm, object, type);
-        if (!plan || !plan->layout || plan->bodyBeforeStores.isEmpty() || !plan->extraProperties.isEmpty() || all.size() >= maxNumber || object->structure()->mayBePrototype() || object->cellSize() < plan->layout->size)
+            plan = firstCoercionPlanForShape(vm, object, type);
+        if (!plan || !plan->layout || plan->initialBody.isEmpty() || !plan->extraProperties.isEmpty() || all.size() >= maxNumber || object->structure()->mayBePrototype() || object->cellSize() < plan->layout->size)
             return false;
         size_t body = bodies.size();
-        bodies.grow(body + WTF::roundUpToMultipleOf<sizeof(uint64_t)>(plan->bodyBeforeStores.size()) / sizeof(uint64_t));
-        memcpySpan(asMutableByteSpan(bodies.mutableSpan().subspan(body)).first(plan->bodyBeforeStores.size()), plan->bodyBeforeStores.span());
+        bodies.grow(body + WTF::roundUpToMultipleOf<sizeof(uint64_t)>(plan->initialBody.size()) / sizeof(uint64_t));
+        memcpySpan(asMutableByteSpan(bodies.mutableSpan().subspan(body)).first(plan->initialBody.size()), plan->initialBody.span());
         all.append({ object, plan, body, nullptr });
         for (auto& planned : plan->fields) {
             const FieldData& field = *planned.field;
             JSValue value = object->getDirect(planned.offset);
-            if (!(planned.kindsTaken & PlanOfCoercion::kindOf(value))) {
+            if (!(planned.acceptedKinds & CoercionPlan::kindOf(value))) {
                 const RuntimeType& ofField = ownTypeOf(field);
                 if (!value.isObject()) {
                     if (!fits(ofField, value))
                         return false;
                 } else if (Object* compiled = compiledObject(value)) {
-                    bool isOfType = ofField.allowsAnyObject() || admitsShape(ofField, compiled->shape());
-                    if (!isOfType || (layoutOfShape(compiled->shape()).numberOfSpecializations() && !ofField.allowsAnyObject()))
+                    bool isOfType = ofField.allowsAnyObject() || acceptsShape(ofField, compiled->shape());
+                    if (!isOfType || (layoutForShape(compiled->shape()).numberOfSpecializations() && !ofField.allowsAnyObject()))
                         return false;
                 } else if (asObject(value)->classInfo() == ClassPrototype::info())
                     return false;
-                else if (!(planned.kindsTaken & PlanOfCoercion::takesForeignObject) && !fitsAsOneOfItsOwn(ofField, asObject(value)) && (ofField.admitsForeignObjectsByNature() || asObject(value)->type() != FinalObjectType || !lay(lay, asObject(value), ofField)))
+                else if (!(planned.acceptedKinds & CoercionPlan::takesUntypedObject) && !matchesTypedSubtype(ofField, asObject(value)) && (ofField.acceptsUntypedObjectsByNature() || asObject(value)->type() != FinalObjectType || !lay(lay, asObject(value), ofField)))
                     return false;
             }
             void* slot = reinterpret_cast<uint8_t*>(bodies.mutableSpan().data() + body) + field.offset - sizeof(JSCell);
-            if (field.store() != Store::Int32OrElsewhere) {
+            if (field.store() != Store::Int32OrNumberBox) {
                 if (!storeAs(*this, field.store(), slot, value))
                     return false;
                 continue;
             }
-            if (value.isInt32() && value.asInt32() >= leastInt32InPlace)
+            if (value.isInt32() && value.asInt32() >= minInlineInt32)
                 *static_cast<int32_t*>(slot) = value.asInt32();
             else if (value.isUndefinedOrNull())
                 *static_cast<int32_t*>(slot) = value.isUndefined() ? undefinedInt32 : nullInt32;
@@ -12678,13 +12323,13 @@ bool State::tryBecomeByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop
     for (auto& made : all) {
         for (auto& planned : made.plan->fields) {
             if (planned.field->flags & fieldIsPinned) [[unlikely]]
-                willAlter(*planned.field, made.object->getDirect(planned.offset));
+                willModify(*planned.field, made.object->getDirect(planned.offset));
         }
     }
     auto move = [&] {
         for (auto& made : all) {
             uint8_t* cell = std::bit_cast<uint8_t*>(made.object);
-            size_t size = std::min(made.plan->bodyBeforeStores.size() + sizeof(JSCell), made.object->cellSize());
+            size_t size = std::min(made.plan->initialBody.size() + sizeof(JSCell), made.object->cellSize());
             memcpySpan(std::span { cell + sizeof(JSCell), size - sizeof(JSCell) }, asByteSpan(bodies.span().subspan(made.body)).first(size - sizeof(JSCell)));
             zeroSpan(std::span { cell + size, made.object->cellSize() - size });
             made.object->JSCell::setStructure(vm, made.structure);
@@ -12702,7 +12347,7 @@ bool State::tryBecomeByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop
     return true;
 }
 
-uint64_t State::wordOfDiscriminant(JSValue value)
+uint64_t State::discriminantWord(JSValue value)
 {
     if (!value.isString() || asString(value)->isRope())
         return 0;
@@ -12716,7 +12361,7 @@ uint64_t State::wordOfDiscriminant(JSValue value)
     return word;
 }
 
-auto State::quickConversion(uint32_t structureID, const RuntimeType& type, uint64_t discriminant, bool makesRoom) -> QuickConversion*
+auto State::quickConversion(uint32_t structureID, const RuntimeType& type, uint64_t discriminant, bool evictsIfFull) -> QuickConversion*
 {
     uint32_t hash = structureID * 0x9e3779b1u ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(&type) >> 3) ^ static_cast<uint32_t>(discriminant * 0x9e3779b97f4a7c15ull >> 32);
     hash ^= hash >> 16;
@@ -12725,10 +12370,10 @@ auto State::quickConversion(uint32_t structureID, const RuntimeType& type, uint6
         QuickConversion* entry = entries + (hash + i) % numberOfQuickConversions;
         if (entry->structureID == structureID && entry->type == &type && entry->discriminant == discriminant)
             return entry;
-        if (makesRoom && !entry->structureID)
+        if (evictsIfFull && !entry->structureID)
             return entry;
     }
-    return makesRoom ? entries + hash % numberOfQuickConversions : nullptr;
+    return evictsIfFull ? entries + hash % numberOfQuickConversions : nullptr;
 }
 
 static unsigned widthOf(Store store)
@@ -12745,7 +12390,7 @@ static unsigned widthOf(Store store)
     case Store::Int32:
     case Store::Uint32:
     case Store::Float:
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
     case Store::Cell32:
     case Store::OptionalCell32:
     case Store::LiteralString32:
@@ -12762,40 +12407,40 @@ static unsigned widthOf(Store store)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void State::rememberQuickConversion(Structure* structure, const RuntimeType& type, const PlanOfCoercion& root, const PlanOfCoercion& plan, uint64_t discriminant, Structure* made, size_t sizeOfCell)
+void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Structure* made, size_t sizeOfCell)
 {
-    size_t sizeOfBody = plan.bodyBeforeStores.size();
-    if (m_counts || data.isCompiledForAudit || !sizeOfBody || sizeOfCell % 16 || sizeOfCell < 32 || sizeOfCell > maxSizeOfQuickConversion || plan.fields.size() > PlanOfCoercion::maxNumberOfQuickMoves || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity())
+    size_t bodySize = plan.initialBody.size();
+    if (m_counts || data.isCompiledForAudit || !bodySize || sizeOfCell % 16 || sizeOfCell < 32 || sizeOfCell > maxSizeOfQuickConversion || plan.fields.size() > CoercionPlan::maxNumberOfQuickMoves || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity())
         return;
     if (structures[plan.layout->shape] != made->id().bits())
         return;
-    bool goesByDiscriminant = &root != &plan;
-    if (goesByDiscriminant && (!discriminant || !isInlineOffset(root.discriminant)))
+    bool dependsOnDiscriminant = &root != &plan;
+    if (dependsOnDiscriminant && (!discriminant || !isInlineOffset(root.discriminant)))
         return;
     for (auto& planned : plan.fields) {
         if (!isInlineOffset(planned.offset))
             return;
-        if (planned.field->flags & fieldIsPinned && !(goesByDiscriminant && planned.offset == root.discriminant))
+        if (planned.field->flags & fieldIsPinned && !(dependsOnDiscriminant && planned.offset == root.discriminant))
             return;
     }
     if (plan.quickBody.size() != sizeOfCell - sizeof(JSCell)) {
-        using Move = PlanOfCoercion::QuickMove;
+        using Move = CoercionPlan::QuickMove;
         plan.quickBody.fill(0, sizeOfCell - sizeof(JSCell));
-        memcpySpan(plan.quickBody.mutableSpan().first(std::min(sizeOfBody, plan.quickBody.size())), plan.bodyBeforeStores.span().first(std::min(sizeOfBody, plan.quickBody.size())));
+        memcpySpan(plan.quickBody.mutableSpan().first(std::min(bodySize, plan.quickBody.size())), plan.initialBody.span().first(std::min(bodySize, plan.quickBody.size())));
         plan.quickMoves.shrink(0);
         for (auto& planned : plan.fields) {
             Store store = planned.field->store();
-            uint8_t kinds = planned.kindsTaken;
+            uint8_t kinds = planned.acceptedKinds;
             Move::Kind kind = Move::Kind::Any;
-            if (kinds == PlanOfCoercion::takesString && (store == Store::JSValue || store == Store::Cell))
+            if (kinds == CoercionPlan::acceptsString && (store == Store::JSValue || store == Store::Cell))
                 kind = Move::Kind::StringAsValue;
-            else if (kinds == PlanOfCoercion::takesString && store == Store::Cell32)
+            else if (kinds == CoercionPlan::acceptsString && store == Store::Cell32)
                 kind = Move::Kind::StringAsCell32;
-            else if (kinds == (PlanOfCoercion::takesInt32 | PlanOfCoercion::takesDouble) && store == Store::Int32OrElsewhere)
-                kind = Move::Kind::Int32InPlace;
-            else if (kinds == (PlanOfCoercion::takesInt32 | PlanOfCoercion::takesDouble) && store == Store::Double)
+            else if (kinds == (CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble) && store == Store::Int32OrNumberBox)
+                kind = Move::Kind::InlineInt32;
+            else if (kinds == (CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble) && store == Store::Double)
                 kind = Move::Kind::NumberAsDouble;
-            else if (kinds == (PlanOfCoercion::takesTrue | PlanOfCoercion::takesFalse) && store == Store::Boolean)
+            else if (kinds == (CoercionPlan::acceptsTrue | CoercionPlan::acceptsFalse) && store == Store::Boolean)
                 kind = Move::Kind::BooleanAsByte;
             plan.quickMoves.append({ static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(planned.offset) * sizeof(EncodedJSValue)), static_cast<uint16_t>(planned.field->offset), kind, static_cast<uint8_t>(widthOf(store)), kinds, store });
         }
@@ -12803,10 +12448,10 @@ void State::rememberQuickConversion(Structure* structure, const RuntimeType& typ
     if (!m_quickConversions)
         m_quickConversions = makeUniqueWithoutFastMallocCheck<std::array<QuickConversion, numberOfQuickConversions>>();
     uint32_t structureID = structure->id().bits();
-    if (goesByDiscriminant)
+    if (dependsOnDiscriminant)
         *quickConversion(structureID, type, 0, true) = { structureID, root.discriminant, &type, 0, nullptr, 0, 0 };
     uint64_t header = static_cast<uint64_t>(made->typeInfoBlob() & 0xffffff) << 32 | made->id().bits();
-    *quickConversion(structureID, type, goesByDiscriminant ? discriminant : 0, true) = { structureID, invalidOffset, &type, goesByDiscriminant ? discriminant : 0, &plan, header, static_cast<uint32_t>(sizeOfCell) };
+    *quickConversion(structureID, type, dependsOnDiscriminant ? discriminant : 0, true) = { structureID, invalidOffset, &type, dependsOnDiscriminant ? discriminant : 0, &plan, header, static_cast<uint32_t>(sizeOfCell) };
 }
 
 bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
@@ -12819,7 +12464,7 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     if (!entry)
         return false;
     if (entry->discriminantOffset != invalidOffset) {
-        uint64_t discriminant = wordOfDiscriminant(asObject(cell)->getDirect(entry->discriminantOffset));
+        uint64_t discriminant = discriminantWord(asObject(cell)->getDirect(entry->discriminantOffset));
         if (!discriminant)
             return false;
         entry = quickConversion(structureID, type, discriminant, false);
@@ -12828,11 +12473,11 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     }
     if (!entry->plan || vm.heap.mutatorShouldBeFenced()) [[unlikely]]
         return false;
-    using Move = PlanOfCoercion::QuickMove;
-    const PlanOfCoercion& plan = *entry->plan;
+    using Move = CoercionPlan::QuickMove;
+    const CoercionPlan& plan = *entry->plan;
     uint8_t* bytes = std::bit_cast<uint8_t*>(cell);
     std::span<const Move> moves = plan.quickMoves.span();
-    uint64_t staged[PlanOfCoercion::maxNumberOfQuickMoves];
+    uint64_t staged[CoercionPlan::maxNumberOfQuickMoves];
     for (size_t i = 0; i < moves.size(); ++i) {
         const Move& move = moves[i];
         JSValue held = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(bytes + move.from));
@@ -12847,8 +12492,8 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
                 return false;
             staged[i] = MarkedBlockCage::encode(held.asCell());
             break;
-        case Move::Kind::Int32InPlace:
-            if (!held.isInt32() || held.asInt32() < leastInt32InPlace)
+        case Move::Kind::InlineInt32:
+            if (!held.isInt32() || held.asInt32() < minInlineInt32)
                 return false;
             staged[i] = static_cast<uint32_t>(held.asInt32());
             break;
@@ -12863,13 +12508,13 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
             staged[i] = held.asBoolean();
             break;
         case Move::Kind::Any:
-            if (!(move.kindsTaken & PlanOfCoercion::kindOf(held)) && (!(move.kindsTaken & PlanOfCoercion::takesForeignObject) || !held.isObject() || compiledObject(held) || asObject(held)->classInfo() == ClassPrototype::info()))
+            if (!(move.acceptedKinds & CoercionPlan::kindOf(held)) && (!(move.acceptedKinds & CoercionPlan::takesUntypedObject) || !held.isObject() || compiledObject(held) || asObject(held)->classInfo() == ClassPrototype::info()))
                 return false;
             staged[i] = 0;
-            if (move.store != Store::Int32OrElsewhere) {
+            if (move.store != Store::Int32OrNumberBox) {
                 if (!storeAs(*this, move.store, &staged[i], held))
                     return false;
-            } else if (held.isInt32() && held.asInt32() >= leastInt32InPlace)
+            } else if (held.isInt32() && held.asInt32() >= minInlineInt32)
                 staged[i] = static_cast<uint32_t>(held.asInt32());
             else if (held.isUndefinedOrNull())
                 staged[i] = static_cast<uint32_t>(held.isUndefined() ? undefinedInt32 : nullInt32);
@@ -12879,28 +12524,28 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
         }
     }
     const uint8_t* body = plan.quickBody.span().data();
-    uint8_t* madeBody = bytes + sizeof(JSCell);
+    uint8_t* newBody = bytes + sizeof(JSCell);
     switch (entry->sizeOfCell) {
     case 32:
-        memcpy(madeBody, body, 24);
+        memcpy(newBody, body, 24);
         break;
     case 48:
-        memcpy(madeBody, body, 40);
+        memcpy(newBody, body, 40);
         break;
     case 64:
-        memcpy(madeBody, body, 56);
+        memcpy(newBody, body, 56);
         break;
     case 80:
-        memcpy(madeBody, body, 72);
+        memcpy(newBody, body, 72);
         break;
     case 96:
-        memcpy(madeBody, body, 88);
+        memcpy(newBody, body, 88);
         break;
     case 112:
-        memcpy(madeBody, body, 104);
+        memcpy(newBody, body, 104);
         break;
     case 128:
-        memcpy(madeBody, body, 120);
+        memcpy(newBody, body, 120);
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -12924,20 +12569,20 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
         }
     }
     static_assert(!JSCell::structureIDOffset() && JSCell::indexingTypeAndMiscOffset() == 4 && JSCell::typeInfoFlagsOffset() == 6 && JSCell::cellStateOffset() == 7);
-    constexpr uint64_t keptOfHeader = 0xffull << 56 | static_cast<uint64_t>(TypeInfoPerCellBit) << 48 | static_cast<uint64_t>(static_cast<uint8_t>(~AllArrayTypesAndHistory)) << 32;
+    constexpr uint64_t preservedHeaderBits = 0xffull << 56 | static_cast<uint64_t>(TypeInfoPerCellBit) << 48 | static_cast<uint64_t>(static_cast<uint8_t>(~AllArrayTypesAndHistory)) << 32;
     uint64_t* header = std::bit_cast<uint64_t*>(cell);
-    *header = (*header & keptOfHeader) | entry->header;
+    *header = (*header & preservedHeaderBits) | entry->header;
     return true;
 }
 
-void State::finishPlanOfCoercion(PlanOfCoercion& plan, const LayoutData& layout, uint32_t orderAndCount)
+void State::finishCoercionPlan(CoercionPlan& plan, const LayoutData& layout, uint32_t orderAndCount)
 {
     plan.orderAndCount = orderAndCount;
     plan.layout = &layout;
-    if (sizeWithRoomToSpecialize(layout.shape) > PlanOfCoercion::maxSizeMadeOverWhereItIs || plan.fields.containsIf([](auto& planned) { return !!(planned.field->flags & fieldIsOutOfLine); }))
+    if (sizeWithSpecializationCapacity(layout.shape) > CoercionPlan::maxInPlaceConversionSize || plan.fields.containsIf([](auto& planned) { return !!(planned.field->flags & fieldIsOutOfLine); }))
         return;
-    plan.bodyBeforeStores.fill(0, sizeWithRoomToSpecialize(layout.shape) - sizeof(JSCell));
-    uint8_t* cell = plan.bodyBeforeStores.mutableSpan().data() - sizeof(JSCell);
+    plan.initialBody.fill(0, sizeWithSpecializationCapacity(layout.shape) - sizeof(JSCell));
+    uint8_t* cell = plan.initialBody.mutableSpan().data() - sizeof(JSCell);
     for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
         if (const FieldData& field = layout.fields()[i]; !(field.flags & fieldIsOutOfLine))
             clearSlot(cell + field.offset, field.store());
@@ -12946,22 +12591,22 @@ void State::finishPlanOfCoercion(PlanOfCoercion& plan, const LayoutData& layout,
     *reinterpret_cast<uint32_t*>(cell + offsetOfShapeWord) = shapeWordOf(layout.shape);
 }
 
-const State::PlanOfCoercion* State::planFirstOfItsShape(VM& vm, JSObject* object, const RuntimeType& type)
+const State::CoercionPlan* State::firstCoercionPlanForShape(VM& vm, JSObject* object, const RuntimeType& type)
 {
-    if (data.isCompiledForAudit || type.allowsAnyObject() || type.admitsUncheckedObjects() || !takesMorePlansOfCoercions() || !isPlainData(object))
+    if (data.isCompiledForAudit || type.allowsAnyObject() || type.acceptsUncheckedObjects() || !canAddCoercionPlans() || !isPlainData(object))
         return nullptr;
-    if (type.numberOfViews() != 1 || !type.view(0).shapeOfView) {
-        Coercion planner(instance.globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasWhatIsAdded, Coercion::Explains::No);
+    if (type.numberOfSupertypes() != 1 || !type.view(0).supertypeShape) {
+        Coercion planner(instance.globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasAddedFields, Coercion::Explains::No);
         return planner.planForNearestLayout(object, type);
     }
-    const LayoutData& layout = layoutOfShape(type.view(0).shapeOfView);
+    const LayoutData& layout = layoutForShape(type.view(0).supertypeShape);
     if (layout.kind != LayoutKind::Record || layout.literalsWithoutFieldOffset() || layout.numberOfFields > 64)
         return nullptr;
     reifyLazyClosures(vm, object);
     Structure* structure = object->structure();
     if (structure->isDictionary() || structure->hasPolyProto() || hasIndexedProperties(structure->indexingType()))
         return nullptr;
-    auto plan = makeUnique<PlanOfCoercion>();
+    auto plan = makeUnique<CoercionPlan>();
     Vector<uint16_t, 16> order;
     uint64_t isPresent = 0;
     bool hasOnlyFields = true;
@@ -12971,7 +12616,7 @@ const State::PlanOfCoercion* State::planFirstOfItsShape(VM& vm, JSObject* object
             hasOnlyFields = false;
             return false;
         }
-        plan->fields.append({ entry.offset(), field, entry.key(), kindsTakenBy(ownTypeOf(*field)) });
+        plan->fields.append({ entry.offset(), field, entry.key(), kindsAcceptedBy(ownTypeOf(*field)) });
         isPresent |= 1ull << (field - layout.fields());
         order.append(field - layout.fields());
         return true;
@@ -12983,37 +12628,37 @@ const State::PlanOfCoercion* State::planFirstOfItsShape(VM& vm, JSObject* object
             return nullptr;
     }
     plan->chosen = &layout;
-    finishPlanOfCoercion(*plan, layout, orderStartingWith(layout, order.span()));
-    const PlanOfCoercion* made = plan.get();
-    addPlanOfCoercion(object, structure, type, WTF::move(plan), { });
-    return planOfCoercion(structure, type) == made ? made : nullptr;
+    finishCoercionPlan(*plan, layout, orderStartingWith(layout, order.span()));
+    const CoercionPlan* made = plan.get();
+    addCoercionPlan(object, structure, type, WTF::move(plan), { });
+    return coercionPlan(structure, type) == made ? made : nullptr;
 }
 
-Object* State::copyWhatStaysAsItIsByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayBecomeIt)
+Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayConvertInPlace)
 {
-    const PlanOfCoercion* plan = planOfCoercion(object, type);
-    if (!plan && mayBecomeIt)
-        plan = planFirstOfItsShape(vm, object, type);
+    const CoercionPlan* plan = coercionPlan(object, type);
+    if (!plan && mayConvertInPlace)
+        plan = firstCoercionPlanForShape(vm, object, type);
     if (!plan || !plan->layout)
         return nullptr;
     Structure* structureBefore = object->structure();
-    const PlanOfCoercion* root = plan;
+    const CoercionPlan* root = plan;
     uint64_t discriminant = 0;
-    bool mayBeQuick = mayBecomeIt && plan->epochOfQuickConversion != m_epochOfQuickConversions;
+    bool mayBeQuick = mayConvertInPlace && plan->quickConversionEpoch != m_quickConversionEpoch;
     if (mayBeQuick) {
-        plan->epochOfQuickConversion = m_epochOfQuickConversions;
-        root = planOfCoercion(structureBefore, type);
+        plan->quickConversionEpoch = m_quickConversionEpoch;
+        root = coercionPlan(structureBefore, type);
         if (root != plan) {
             JSValue held = object->getDirect(root->discriminant);
-            discriminant = wordOfDiscriminant(held);
+            discriminant = discriminantWord(held);
             auto child = discriminant ? root->byDiscriminant.find(asString(held)->tryGetValue()) : root->byDiscriminant.end();
             mayBeQuick = child != root->byDiscriminant.end() && child->value.get() == plan;
         }
     }
     for (auto& planned : plan->fields) {
         JSValue value = object->getDirect(planned.offset);
-        uint8_t kind = PlanOfCoercion::kindOf(value);
-        if (planned.kindsTaken & kind) [[likely]]
+        uint8_t kind = CoercionPlan::kindOf(value);
+        if (planned.acceptedKinds & kind) [[likely]]
             continue;
         const RuntimeType& ofField = ownTypeOf(*planned.field);
         if (!value.isObject()) {
@@ -13022,23 +12667,23 @@ Object* State::copyWhatStaysAsItIsByPlan(VM& vm, JSObject* object, const Runtime
             continue;
         }
         if (Object* compiled = compiledObject(value)) {
-            bool isOfType = ofField.allowsAnyObject() || admitsShape(ofField, compiled->shape());
-            if (!isOfType || (layoutOfShape(compiled->shape()).numberOfSpecializations() && !ofField.allowsAnyObject()))
+            bool isOfType = ofField.allowsAnyObject() || acceptsShape(ofField, compiled->shape());
+            if (!isOfType || (layoutForShape(compiled->shape()).numberOfSpecializations() && !ofField.allowsAnyObject()))
                 return nullptr;
             continue;
         }
-        if (asObject(value)->classInfo() == ClassPrototype::info() || (!(planned.kindsTaken & PlanOfCoercion::takesForeignObject) && !fitsAsOneOfItsOwn(ofField, asObject(value))))
+        if (asObject(value)->classInfo() == ClassPrototype::info() || (!(planned.acceptedKinds & CoercionPlan::takesUntypedObject) && !matchesTypedSubtype(ofField, asObject(value))))
             return nullptr;
     }
-    if (Object* made = tryBecomeOrCopyByPlan(vm, object, *plan, mayBecomeIt)) {
+    if (Object* made = tryConvertOrCopyByPlan(vm, object, *plan, mayConvertInPlace)) {
         if (mayBeQuick && JSValue(made) == JSValue(object))
-            rememberQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), made->cellSize());
+            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), made->cellSize());
         return made;
     }
     if (!plan->extraProperties.isEmpty())
         return nullptr;
     const LayoutData& layout = *plan->layout;
-    Object* result = Object::create(vm, structureFor(vm, layout.shape, object->getPrototypeDirect()), layout, sizeWithRoomToSpecialize(layout.shape), orderWordOf(keysAreInLayoutOrder, 0));
+    Object* result = Object::create(vm, structureFor(vm, layout.shape, object->getPrototypeDirect()), layout, sizeWithSpecializationCapacity(layout.shape), orderWordOf(keysAreInLayoutOrder, 0));
     for (auto& planned : plan->fields) {
         if (!result->store(vm, *planned.field, object->getDirect(planned.offset)))
             return nullptr;
@@ -13049,29 +12694,29 @@ Object* State::copyWhatStaysAsItIsByPlan(VM& vm, JSObject* object, const Runtime
     return result;
 }
 
-static unsigned numberOfPlansBelow(const State::PlanOfCoercion& plan)
+static unsigned nestedPlanCount(const State::CoercionPlan& plan)
 {
     unsigned number = plan.byDiscriminant.size();
     for (auto& below : plan.byDiscriminant.values())
-        number += numberOfPlansBelow(*below);
+        number += nestedPlanCount(*below);
     return number;
 }
 
-JSString* State::keyMadeOf(VM& vm, std::span<const Latin1Character> characters)
+JSString* State::cachedKeyFor(VM& vm, std::span<const Latin1Character> characters)
 {
     if (characters.size() < 2)
         return characters.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, characters[0]);
     unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-    if (JSString* key = tryFindMadeKey(characters, hash))
+    if (JSString* key = tryFindCachedKey(characters, hash))
         return key;
     return makeKey(vm, characters, hash);
 }
 
-JSString* State::textInCase(VM& vm, std::span<const Latin1Character> characters)
+JSString* State::caseConvertedString(VM& vm, std::span<const Latin1Character> characters)
 {
     ASSERT(characters.size() >= 2);
     unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-    uint64_t& entry = m_textsInCase[hash % m_textsInCase.size()];
+    uint64_t& entry = m_caseConvertedStrings[hash % m_caseConvertedStrings.size()];
     if (entry && entry >> 32 == hash) {
         auto* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(static_cast<uint32_t>(entry)));
         if (auto* impl = candidate->tryGetValueImpl(); impl->is8Bit() && CompactTable::hasCharacters<Latin1Character>(*impl, characters))
@@ -13085,12 +12730,12 @@ JSString* State::textInCase(VM& vm, std::span<const Latin1Character> characters)
 
 JSString* State::makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash)
 {
-    static constexpr size_t leastNumberOfPlaces = 1 << 8;
-    static constexpr size_t mostNumberOfPlaces = 1 << 16;
-    if (m_madeKeys.isEmpty()) [[unlikely]]
-        m_madeKeys.fill(0, leastNumberOfPlaces);
-    auto firstPlaceFor = [&](unsigned hash) {
-        return (hash & (m_madeKeys.size() - 1)) & ~static_cast<size_t>(1);
+    static constexpr size_t minTableSize = 1 << 8;
+    static constexpr size_t maxTableSize = 1 << 16;
+    if (m_cachedKeys.isEmpty()) [[unlikely]]
+        m_cachedKeys.fill(0, minTableSize);
+    auto firstIndexFor = [&](unsigned hash) {
+        return (hash & (m_cachedKeys.size() - 1)) & ~static_cast<size_t>(1);
     };
     JSString* made = jsNontrivialString(vm, String(characters));
     ASSERT(!made->tryGetValueImpl()->hasHash());
@@ -13100,47 +12745,47 @@ JSString* State::makeKey(VM& vm, std::span<const Latin1Character> characters, un
         return made;
     auto put = [&](uint64_t entry) {
         unsigned hash = entry >> 32;
-        size_t place = firstPlaceFor(hash);
-        if (m_madeKeys[place] && !m_madeKeys[place + 1])
+        size_t place = firstIndexFor(hash);
+        if (m_cachedKeys[place] && !m_cachedKeys[place + 1])
             ++place;
-        else if (m_madeKeys[place]) {
+        else if (m_cachedKeys[place]) {
             place += hash >> 23 & 1;
-            ++m_numberOfMadeKeysOverwritten;
+            ++m_cachedKeyEvictionCount;
         }
-        m_madeKeys[place] = entry;
+        m_cachedKeys[place] = entry;
     };
     put(static_cast<uint64_t>(hash) << 32 | MarkedBlockCage::encode(made));
-    if (m_numberOfMadeKeysOverwritten > m_madeKeys.size() / 4 && m_madeKeys.size() < mostNumberOfPlaces) {
-        Vector<uint64_t> former = std::exchange(m_madeKeys, { });
-        m_madeKeys.fill(0, former.size() * 2);
+    if (m_cachedKeyEvictionCount > m_cachedKeys.size() / 4 && m_cachedKeys.size() < maxTableSize) {
+        Vector<uint64_t> former = std::exchange(m_cachedKeys, { });
+        m_cachedKeys.fill(0, former.size() * 2);
         for (uint64_t entry : former) {
             if (entry)
                 put(entry);
         }
-        m_numberOfMadeKeysOverwritten = 0;
+        m_cachedKeyEvictionCount = 0;
     }
     return made;
 }
 
-void State::rememberFirstKeyByParts(const KeyByParts& taken, JSString* key)
+void State::cacheFirstKeyByParts(const KeyByParts& taken, JSString* key)
 {
-    static constexpr size_t leastNumberOfPlaces = 1 << 8;
+    static constexpr size_t minTableSize = 1 << 8;
     if (data.usesWideReferences || !MarkedBlockCage::contains(key))
         return;
-    m_keysByParts.fill({ }, leastNumberOfPlaces);
-    rememberKeyByParts(taken, key);
+    m_keysByParts.fill({ }, minTableSize);
+    cacheKeyByParts(taken, key);
 }
 
-void State::makeRoomForKeysByParts()
+void State::growKeysByParts()
 {
-    static constexpr size_t mostNumberOfPlaces = 1 << 14;
+    static constexpr size_t maxTableSize = 1 << 14;
     auto put = [&](KeyByParts entry, uint32_t hash) {
         size_t place = hash & (m_keysByParts.size() - 1) & ~static_cast<size_t>(1);
         if (m_keysByParts[place].countAndKinds && !m_keysByParts[place + 1].countAndKinds)
             ++place;
         else if (m_keysByParts[place].countAndKinds) {
             place += hash >> 31;
-            ++m_numberOfKeysByPartsOverwritten;
+            ++m_keysByPartsEvictionCount;
         }
         m_keysByParts[place] = entry;
     };
@@ -13151,7 +12796,7 @@ void State::makeRoomForKeysByParts()
             mixed = (mixed ^ entry.parts[i]) * 0x9e3779b97f4a7c15ull;
         return static_cast<uint32_t>((mixed ^ entry.countAndKinds >> 8) >> 32);
     };
-    if (m_keysByParts.size() < mostNumberOfPlaces) {
+    if (m_keysByParts.size() < maxTableSize) {
         Vector<KeyByParts> former = std::exchange(m_keysByParts, { });
         m_keysByParts.fill({ }, former.size() * 2);
         for (auto& entry : former) {
@@ -13159,10 +12804,10 @@ void State::makeRoomForKeysByParts()
                 put(entry, hashOf(entry));
         }
     }
-    m_numberOfKeysByPartsOverwritten = 0;
+    m_keysByPartsEvictionCount = 0;
 }
 
-void State::noteExtraPropertyRead(Object* object, JSObject* extra, uint32_t name, PropertyOffset offset, unsigned attributes)
+void State::cacheExtraPropertyRead(Object* object, JSObject* extra, uint32_t name, PropertyOffset offset, unsigned attributes)
 {
     Structure* structure = extra->structure();
     if (isCounting() || structure->isDictionary() || (isValidOffset(offset) && attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
@@ -13172,38 +12817,38 @@ void State::noteExtraPropertyRead(Object* object, JSObject* extra, uint32_t name
         displacement = isInlineOffset(offset) ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue)) : offsetInButterfly(offset) * static_cast<int32_t>(sizeof(EncodedJSValue));
     uint32_t structureID = structure->id().bits();
     uint32_t shapeWord = shapeWordOf(object->shape());
-    m_hasNotedExtraPropertyReads = true;
-    static_cast<PlaceOfExtraProperty*>(instance.typedPlacesOfExtraProperties)[PlaceOfExtraProperty::placeOf(structureID, name, shapeWord)] = { structureID, name, shapeWord, displacement };
+    m_hasCachedExtraPropertyReads = true;
+    static_cast<ExtraPropertyLocation*>(instance.typedExtraPropertyLocations)[ExtraPropertyLocation::placeOf(structureID, name, shapeWord)] = { structureID, name, shapeWord, displacement };
 }
 
-void State::forgetExtraPropertiesOf(Object* object)
+void State::removeExtraPropertiesOf(Object* object)
 {
     if (isCounting()) [[unlikely]]
         extraProperties.remove(object);
 }
 
-void State::forgetExtraPropertyReads()
+void State::clearExtraPropertyReads()
 {
-    if (!std::exchange(m_hasNotedExtraPropertyReads, false))
+    if (!std::exchange(m_hasCachedExtraPropertyReads, false))
         return;
-    for (auto& entry : std::span { static_cast<PlaceOfExtraProperty*>(instance.typedPlacesOfExtraProperties), static_cast<size_t>(1) << PlaceOfExtraProperty::bitsOfPlace }) {
+    for (auto& entry : std::span { static_cast<ExtraPropertyLocation*>(instance.typedExtraPropertyLocations), static_cast<size_t>(1) << ExtraPropertyLocation::indexBits }) {
         if (entry.structureID)
             entry = { };
     }
 }
 
-std::optional<uint32_t> State::orderAfterCreatingBehindExtraProperties(const Object& object, JSObject* extraProperties, uint64_t slotKeys) const
+std::optional<uint32_t> State::orderAfterLateFieldCreation(const Object& object, JSObject* extraProperties, uint64_t slotKeys) const
 {
     uint32_t structureID = extraProperties->structureID().bits();
     uint32_t shapeWord = shapeWordOf(object.shape());
     uint32_t before = object.orderWord() & orderAndCountMask;
-    auto& known = static_cast<const CreationBehindExtraProperties*>(instance.typedCreationsBehindExtraProperties)[CreationBehindExtraProperties::placeOf(structureID, shapeWord, before, slotKeys)];
-    if (known.structureIDOfExtraProperties != structureID || known.shapeWord != shapeWord || known.orderAndCountBefore != before || known.slotKeys != slotKeys)
+    auto& known = static_cast<const LateFieldCreation*>(instance.typedLateFieldCreations)[LateFieldCreation::placeOf(structureID, shapeWord, before, slotKeys)];
+    if (known.extraPropertiesStructureID != structureID || known.shapeWord != shapeWord || known.orderAndCountBefore != before || known.slotKeys != slotKeys)
         return std::nullopt;
     return known.orderAndCountAfter;
 }
 
-void State::noteCreationBehindExtraProperties(const Object& object, JSObject* extraProperties, uint32_t orderWordBefore, uint64_t slotKeys)
+void State::cacheLateFieldCreation(const Object& object, JSObject* extraProperties, uint32_t orderWordBefore, uint64_t slotKeys)
 {
     uint32_t after = object.orderWord() & orderAndCountMask;
     if (isCounting() || !slotKeys || extraProperties->structure()->isDictionary() || orderOf(orderWordBefore) == keysAreInLayoutOrder || orderOf(after) == keysAreInLayoutOrder)
@@ -13211,22 +12856,22 @@ void State::noteCreationBehindExtraProperties(const Object& object, JSObject* ex
     uint32_t structureID = extraProperties->structureID().bits();
     uint32_t shapeWord = shapeWordOf(object.shape());
     uint32_t before = orderWordBefore & orderAndCountMask;
-    m_hasNotedCreationsBehindExtraProperties = true;
-    static_cast<CreationBehindExtraProperties*>(instance.typedCreationsBehindExtraProperties)[CreationBehindExtraProperties::placeOf(structureID, shapeWord, before, slotKeys)] = { slotKeys, structureID, shapeWord, before, after };
+    m_hasCachedLateFieldCreations = true;
+    static_cast<LateFieldCreation*>(instance.typedLateFieldCreations)[LateFieldCreation::placeOf(structureID, shapeWord, before, slotKeys)] = { slotKeys, structureID, shapeWord, before, after };
 }
 
-ListingWithExtraProperties& State::placeOfListingWithExtraProperties(StructureID structureID, uint32_t shapeWord, uint32_t orderAndCount)
+CachedPropertyList& State::propertyListCacheEntry(StructureID structureID, uint32_t shapeWord, uint32_t orderAndCount)
 {
-    if (!m_listingsWithExtraProperties)
-        m_listingsWithExtraProperties = makeUniqueWithoutFastMallocCheck<std::array<ListingWithExtraProperties, numberOfListingsWithExtraProperties>>();
-    m_hasListingsWithExtraProperties = true;
-    return (*m_listingsWithExtraProperties)[((structureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfListingsWithExtraProperties];
+    if (!m_propertyListCache)
+        m_propertyListCache = makeUniqueWithoutFastMallocCheck<std::array<CachedPropertyList, propertyListCacheSize>>();
+    m_propertyListCacheIsDirty = true;
+    return (*m_propertyListCache)[((structureID.bits() >> 4) + shapeWord + orderAndCount * 31) % propertyListCacheSize];
 }
 
-Structure* State::structureOfPlainCopy(VM& vm, ListingWithExtraProperties& listing)
+Structure* State::plainCopyStructure(VM& vm, CachedPropertyList& listing)
 {
-    if (std::exchange(listing.hasLookedForStructureOfPlainCopy, true))
-        return listing.structureOfPlainCopy;
+    if (std::exchange(listing.didLookUpPlainCopyStructure, true))
+        return listing.plainCopyStructure;
     JSGlobalObject* globalObject = instance.globalObject;
     size_t size = listing.properties.size();
     Structure* structure = size <= JSFinalObject::defaultInlineCapacity ? globalObject->objectStructureForObjectConstructor()
@@ -13240,32 +12885,32 @@ Structure* State::structureOfPlainCopy(VM& vm, ListingWithExtraProperties& listi
         if (offset != expected++ || structure->isDictionary())
             structure = nullptr;
     }
-    listing.structureOfPlainCopy = structure;
+    listing.plainCopyStructure = structure;
     return structure;
 }
 
-void State::forgetListingsWithExtraProperties()
+void State::clearPropertyListCache()
 {
-    if (!std::exchange(m_hasListingsWithExtraProperties, false))
+    if (!std::exchange(m_propertyListCacheIsDirty, false))
         return;
-    for (auto& listing : *m_listingsWithExtraProperties)
+    for (auto& listing : *m_propertyListCache)
         listing = { };
 }
 
-void State::forgetCreationsBehindExtraProperties()
+void State::clearLateFieldCreations()
 {
-    if (!std::exchange(m_hasNotedCreationsBehindExtraProperties, false))
+    if (!std::exchange(m_hasCachedLateFieldCreations, false))
         return;
-    zeroSpan(std::span { static_cast<CreationBehindExtraProperties*>(instance.typedCreationsBehindExtraProperties), static_cast<size_t>(1) << CreationBehindExtraProperties::bitsOfPlace });
+    zeroSpan(std::span { static_cast<LateFieldCreation*>(instance.typedLateFieldCreations), static_cast<size_t>(1) << LateFieldCreation::indexBits });
 }
 
-void State::forgetMadeKeysThatAreDead(VM& vm)
+void State::removeDeadCachedKeys(VM& vm)
 {
-    for (uint64_t& entry : m_madeKeys) {
+    for (uint64_t& entry : m_cachedKeys) {
         if (entry && !vm.heap.isMarked(MarkedBlockCage::decode(static_cast<uint32_t>(entry))))
             entry = 0;
     }
-    for (uint64_t& entry : m_textsInCase) {
+    for (uint64_t& entry : m_caseConvertedStrings) {
         if (entry && !vm.heap.isMarked(MarkedBlockCage::decode(static_cast<uint32_t>(entry))))
             entry = 0;
     }
@@ -13282,27 +12927,27 @@ void State::forgetMadeKeysThatAreDead(VM& vm)
     }
 }
 
-void State::forgetPlansOfCoercionsOfDeadStructures(VM& vm, bool newOnly)
+void State::removeDeadCoercionPlans(VM& vm, bool newOnly)
 {
-    m_planOfCoercionLastAskedFor = { };
+    m_lastCoercionPlanLookup = { };
     if (m_quickConversions) {
         m_quickConversions->fill({ });
-        ++m_epochOfQuickConversions;
+        ++m_quickConversionEpoch;
     }
-    if (!std::exchange(m_hasAddedPlansOfCoercionsSinceLastCollection, false) && newOnly)
+    if (!std::exchange(m_hasNewCoercionPlans, false) && newOnly)
         return;
-    m_plansOfCoercions.removeIf([&](auto& entry) {
+    m_coercionPlans.removeIf([&](auto& entry) {
         if (vm.heap.isMarked(entry.key.first))
             return false;
-        m_numberOfPlansOfCoercionsByDiscriminants -= numberOfPlansBelow(*entry.value);
+        m_coercionPlansByDiscriminantCount -= nestedPlanCount(*entry.value);
         return true;
     });
 }
 
-const State::PlanOfCopy* State::planOfCopy(uint32_t shape, uint32_t orderWord, uint32_t shapeOfCopy, std::span<UniquedStringImpl* const> excluded) const
+const State::CopyPlan* State::copyPlan(uint32_t shape, uint32_t orderWord, uint32_t copyShape, std::span<UniquedStringImpl* const> excluded) const
 {
-    auto found = m_plansOfCopies.find({ shape, orderWord, shapeOfCopy });
-    if (found == m_plansOfCopies.end())
+    auto found = m_copyPlans.find({ shape, orderWord, copyShape });
+    if (found == m_copyPlans.end())
         return nullptr;
     for (auto& plan : found->value) {
         if (std::ranges::equal(plan->excluded, excluded, [](const RefPtr<UniquedStringImpl>& a, UniquedStringImpl* b) { return a.get() == b; }))
@@ -13311,20 +12956,20 @@ const State::PlanOfCopy* State::planOfCopy(uint32_t shape, uint32_t orderWord, u
     return nullptr;
 }
 
-void State::addPlanOfCopy(uint32_t shape, uint32_t orderWord, uint32_t shapeOfCopy, std::unique_ptr<PlanOfCopy>&& plan)
+void State::addCopyPlan(uint32_t shape, uint32_t orderWord, uint32_t copyShape, std::unique_ptr<CopyPlan>&& plan)
 {
-    m_plansOfCopies.add({ shape, orderWord, shapeOfCopy }, Vector<std::unique_ptr<PlanOfCopy>, 1> { }).iterator->value.append(WTF::move(plan));
+    m_copyPlans.add({ shape, orderWord, copyShape }, Vector<std::unique_ptr<CopyPlan>, 1> { }).iterator->value.append(WTF::move(plan));
 }
 
-TransitionPlan& State::planOfTransition(VM& vm, Object* object, uint32_t shape)
+TransitionPlan& State::transitionPlanFor(VM& vm, Object* object, uint32_t shape)
 {
     Structure* structure = object->structure();
-    return *m_plansOfTransitions.ensure({ structure, shape }, [&] {
+    return *m_transitionPlans.ensure({ structure, shape }, [&] {
         const LayoutData& from = *structure->compiledLayout();
-        const LayoutData& to = layoutOfShape(shape);
-        RELEASE_ASSERT(from.hasExtension == to.hasExtension && from.placeOfExtraProperties == to.placeOfExtraProperties);
+        const LayoutData& to = layoutForShape(shape);
+        RELEASE_ASSERT(from.hasExtension == to.hasExtension && from.extraPropertiesSlotIndex == to.extraPropertiesSlotIndex);
         auto plan = makeUnique<TransitionPlan>();
-        plan->structure = structureWithExtraPropertiesLike(vm, structure, shape, object->getPrototypeDirect());
+        plan->structure = structureWithExtraPropertiesMatching(vm, structure, shape, object->getPrototypeDirect());
         plan->shapeWord = shapeWordOf(shape);
         plan->size = to.size;
         plan->from = &from;
@@ -13341,13 +12986,11 @@ TransitionPlan& State::planOfTransition(VM& vm, Object* object, uint32_t shape)
             if (field(vm, from, name(vm, added.name).impl()))
                 continue;
             RELEASE_ASSERT(mayBeAbsent(added));
-            // Out of line, a slot that has never been stored to is empty, or beyond the size of the extension.
             if (!(added.flags & fieldIsOutOfLine))
                 plan->addedSlots.append({ added.offset, added.store() });
         }
-        // The address of either stands for it in the tables from here on.
         for (Structure* kept : { structure, plan->structure }) {
-            if (m_structuresOfPlans.add(kept).isNewEntry)
+            if (m_planStructures.add(kept).isNewEntry)
                 didCreate(kept);
         }
         return plan;
@@ -13378,15 +13021,15 @@ public:
     static constexpr unsigned maxLengthOfType = 80;
     static constexpr unsigned maxNumberOfCallers = 3;
     static constexpr unsigned maxLengthOfReason = 200;
-    static inline bool s_isKeptForHost;
+    static inline bool s_isRetainedForHost;
 
-    static bool isWrittenIfAsked(bool isAskedByImage)
+    static bool isEnabled(bool isRequestedByImage)
     {
-        ViolationLog* log = singletonIfAsked(isAskedByImage);
+        ViolationLog* log = singletonIfEnabled(isRequestedByImage);
         return log && log->m_file;
     }
 
-    String placesThatThrew()
+    String throwLocations()
     {
         Locker locker { lock };
         StringBuilder lines;
@@ -13409,18 +13052,18 @@ public:
         return lines.toString();
     }
 
-    static ViolationLog* singletonIfAsked(bool isAskedByImage)
+    static ViolationLog* singletonIfEnabled(bool isRequestedByImage)
     {
         static ViolationLog* log;
         static std::once_flag once;
         std::call_once(once, [&] {
             const char* where = getenv("BUN_AOT_TYPE_ERROR_LOG");
-            if ((!where || !*where) && !isAskedByImage && s_isKeptForHost) {
+            if ((!where || !*where) && !isRequestedByImage && s_isRetainedForHost) {
                 log = new ViolationLog(nullptr, false);
                 return;
             }
             if (!where || !*where)
-                where = isAskedByImage ? "stderr" : "off";
+                where = isRequestedByImage ? "stderr" : "off";
             if (!strcmp(where, "off"))
                 return;
 #if OS(WINDOWS)
@@ -13577,7 +13220,7 @@ private:
     Vector<Site*> m_sitesInOrder;
 };
 
-static JSObject* constructorOfLockedPrototype(VM& vm, JSObject* object)
+static JSObject* lockedPrototypeConstructor(VM& vm, JSObject* object)
 {
     if (!object->mayBePrototype() || object->isCallable())
         return nullptr;
@@ -13594,29 +13237,29 @@ static String nameOfLockedObject(VM& vm, JSObject* object)
         return "Function.prototype"_s;
     if (object->isCallable())
         return functionName(object);
-    if (JSObject* constructor = constructorOfLockedPrototype(vm, object))
+    if (JSObject* constructor = lockedPrototypeConstructor(vm, object))
         return makeString(functionName(constructor), ".prototype"_s);
     return object->classInfo()->className;
 }
 
-static const void* returnAddressIntoTopCompiledFrame(VM& vm, bool ofItsCaller)
+static const void* returnAddressIntoTopCompiledFrame(VM& vm, bool forCaller)
 {
     CallFrame* frame = vm.topCallFrame;
     if (!frame)
         return nullptr;
     const void* address = returnAddressForFrame(frame, __builtin_frame_address(0));
-    while (address && frame && kindOfAddress(address) == ImageAddressInfo::Stub) {
+    while (address && frame && addressKind(address) == ImageAddressInfo::Stub) {
         address = removeCodePtrTag(frame->rawReturnPC());
         frame = frame->callerFrame();
     }
-    if (ofItsCaller && address && frame && kindOfAddress(address) == ImageAddressInfo::Function)
+    if (forCaller && address && frame && addressKind(address) == ImageAddressInfo::Function)
         address = removeCodePtrTag(frame->rawReturnPC());
-    return address && kindOfAddress(address) == ImageAddressInfo::Function ? address : nullptr;
+    return address && addressKind(address) == ImageAddressInfo::Function ? address : nullptr;
 }
 
 std::optional<State::ListedSite> State::listedSite(const String& file, LineColumn position, const Violation& violation, ASCIILiteral kind) const
 {
-    std::span words { data.at<uint32_t>(data.sitesOffset), data.numberOfWordsOfSites };
+    std::span words { data.at<uint32_t>(data.sitesOffset), data.numberOfSiteWords };
     size_t at = 0;
     bool isWhole = true;
     auto word = [&] {
@@ -13640,14 +13283,14 @@ std::optional<State::ListedSite> State::listedSite(const String& file, LineColum
     Vector<ASCIILiteral, 8> reasons;
     for (uint32_t left = word(); left-- && isWhole;)
         reasons.append(literal());
-    auto pathOfFile = file.utf8();
+    auto filePath = file.utf8();
     for (uint32_t left = word(); left-- && isWhole;) {
         auto path = text();
         uint32_t numberOfRows = word();
         size_t start = at;
         at += static_cast<size_t>(numberOfRows) * 2;
         isWhole &= at <= words.size();
-        if (!isWhole || !equalSpans(byteCast<uint8_t>(pathOfFile.span()), path))
+        if (!isWhole || !equalSpans(byteCast<uint8_t>(filePath.span()), path))
             continue;
         std::optional<ListedSite> found;
         unsigned rank = 0;
@@ -13659,18 +13302,18 @@ std::optional<State::ListedSite> State::listedSite(const String& file, LineColum
             if (numberOfKind >= kinds.size())
                 continue;
             ListedSite listed { kinds[numberOfKind], words[row + 1] >> 8 & 15 };
-            bool isOfKind = listed.kind == kind || (listed.kind == "as-convert"_s && kind == "as-refuse"_s) || (listed.kind == "field-redefine"_s && kind == "field-store-untyped"_s);
-            if (kind != kindOfUnnamedViolation && !isOfKind)
+            bool hasKind = listed.kind == kind || (listed.kind == "as-convert"_s && kind == "as-refuse"_s) || (listed.kind == "field-redefine"_s && kind == "field-store-untyped"_s);
+            if (kind != defaultViolationKind && !hasKind)
                 continue;
             if (violation.parameter && listed.kind == "enter-function"_s && listed.ordinal != std::min(*violation.parameter, 15u))
                 continue;
-            unsigned rankOfRow = 1 + (numberOfReason < reasons.size() && reasons[numberOfReason] == violation.what);
-            if (rankOfRow > rank) {
-                rank = rankOfRow;
+            unsigned violationRank = 1 + (numberOfReason < reasons.size() && reasons[numberOfReason] == violation.what);
+            if (violationRank > rank) {
+                rank = violationRank;
                 found = listed;
             }
         }
-        if (found && kind != kindOfUnnamedViolation)
+        if (found && kind != defaultViolationKind)
             found->kind = kind;
         if (found && violation.parameter && found->kind == "enter-function"_s)
             found->ordinal = *violation.parameter;
@@ -13679,12 +13322,12 @@ std::optional<State::ListedSite> State::listedSite(const String& file, LineColum
     return std::nullopt;
 }
 
-void State::noteViolation(VM& vm, const Violation& violation)
+void State::recordViolation(VM& vm, const Violation& violation)
 {
-    ViolationLog* log = ViolationLog::singletonIfAsked(data.logsTypeErrors);
+    ViolationLog* log = ViolationLog::singletonIfEnabled(data.logsTypeErrors);
     if (!log) [[likely]]
         return;
-    ASCIILiteral word = violation.got ? wordForKind(violation.got, violation.expected) : ASCIILiteral();
+    ASCIILiteral word = violation.got ? kindName(violation.got, violation.expected) : ASCIILiteral();
     String name = violation.got && word.isNull() ? describe(violation.got) : String();
     const void* topAddress = returnAddressIntoTopCompiledFrame(vm, violation.isAtCaller);
     Locker locker { log->lock };
@@ -13699,13 +13342,13 @@ void State::noteViolation(VM& vm, const Violation& violation)
             word = "other"_s;
             count = ViolationLog::count(*site, word, name);
         }
-        return ViolationLog::isWrittenIfAsked(data.logsTypeErrors) && ViolationLog::isPowerOfTen(count);
+        return ViolationLog::isEnabled(data.logsTypeErrors) && ViolationLog::isPowerOfTen(count);
     };
     auto find = [&](const void* address, bool isEntry, const Invocable<std::pair<String, LineColumn>()> auto& place, const Invocable<String()> auto& function) {
         ViolationLog::Address key { address, violation.kind.characters() };
         if (auto known = log->siteAt(key))
             return *known;
-        ASCIILiteral kind = isEntry && violation.kind == kindOfUnnamedViolation ? "enter-function"_s : violation.kind;
+        ASCIILiteral kind = isEntry && violation.kind == defaultViolationKind ? "enter-function"_s : violation.kind;
         auto [file, position] = place();
         unsigned ordinal = violation.parameter.value_or(0);
         if (auto listed = listedSite(file, position, violation, kind)) {
@@ -13753,20 +13396,20 @@ void State::noteViolation(VM& vm, const Violation& violation)
     };
     Vector<String, ViolationLog::maxNumberOfCallers> callers;
     bool isAtTheTop = !violation.isAtCaller;
-    bool isBehindTheSite = false;
+    bool isAfterSite = false;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (visitor->isTailDeleted() || (visitor->aotFunction() && visitor->isHiddenAOTFrame(isAtTheTop)))
             return IterationStatus::Continue;
-        bool wasAtTheTop = std::exchange(isAtTheTop, false);
+        bool wasAtTop = std::exchange(isAtTheTop, false);
         if (!visitor->isTypedAOTFrame())
             return IterationStatus::Continue;
-        if (isBehindTheSite) {
+        if (isAfterSite) {
             auto [file, position] = placeOf(visitor);
             callers.append(makeString(file, ':', position.line));
             return callers.size() < ViolationLog::maxNumberOfCallers ? IterationStatus::Continue : IterationStatus::Done;
         }
-        isBehindTheSite = true;
-        auto parameterCheck = violation.kind == kindOfUnnamedViolation ? ProgramData::get()->parameterCheckAt(visitor->aotFunction().index, visitor->bytecodeIndex().offset()) : std::nullopt;
+        isAfterSite = true;
+        auto parameterCheck = violation.kind == defaultViolationKind ? ProgramData::get()->parameterCheckAt(visitor->aotFunction().index, visitor->bytecodeIndex().offset()) : std::nullopt;
         if (parameterCheck) {
             auto [file, position] = placeOf(visitor);
             callers.append(makeString(file, ':', position.line));
@@ -13774,7 +13417,7 @@ void State::noteViolation(VM& vm, const Violation& violation)
         if (!isCounted) {
             uint32_t function = parameterCheck ? parameterCheck->typedFunction : visitor->typedAOTFunction();
             isCounted = true;
-            isWritten = countAt(find(removeCodePtrTag(visitor->returnPC()), parameterCheck || (wasAtTheTop && typedFunctionIsHiddenInStackTraces(function)), [&] {
+            isWritten = countAt(find(removeCodePtrTag(visitor->returnPC()), parameterCheck || (wasAtTop && typedFunctionIsHiddenInStackTraces(function)), [&] {
                 return parameterCheck ? std::pair { ProgramData::get()->sourceName(parameterCheck->source), LineColumn { parameterCheck->line, parameterCheck->column } } : placeOf(visitor);
             }, [&] {
                 String name = typedFunctionCodeType(function) == ModuleCode ? "module"_str : typedFunctionName(function);
@@ -13793,7 +13436,7 @@ void State::noteViolation(VM& vm, const Violation& violation)
     if (isWritten) {
         String reason = violation.reason && !violation.reason->isEmpty() ? *violation.reason : String();
         if (reason.isNull() && violation.expected && violation.got && violation.action != ActionOnViolation::Copied) {
-            SetForScope kindsAlone(s_describesKindsAlone, true);
+            SetForScope kindsOnly(s_describesKindsOnly, true);
             reason = explainMismatch(vm, violation.got, *violation.expected);
             if (reason.isEmpty())
                 reason = String();
@@ -13806,7 +13449,7 @@ void State::noteViolation(VM& vm, const Violation& violation)
 
 static ASCIILiteral describeAssertion(uint32_t what);
 
-void State::noteCastTransition(Structure* before, uint32_t typeAndReason, uint64_t wordsBefore, Object* object, const TransitionPlan& plan)
+void State::cacheCastTransition(Structure* before, uint32_t typeAndReason, uint64_t wordsBefore, Object* object, const TransitionPlan& plan)
 {
     Structure* after = object->structure();
     if (before->typeInfo().type() != after->typeInfo().type() || before->typeInfo().inlineTypeFlags() != after->typeInfo().inlineTypeFlags() || before->indexingModeIncludingHistory() != after->indexingModeIncludingHistory())
@@ -13814,11 +13457,11 @@ void State::noteCastTransition(Structure* before, uint32_t typeAndReason, uint64
     CastTransition transition { before->id().bits(), typeAndReason, wordsBefore, object->orderAndShapeWords(), after->id().bits(), 0, nullptr, 0, 0, 0 };
     if (plan.structure) {
         using Cleared = StoreTransition::Cleared;
-        auto& cleared = *m_clearedSlotsOfPlans.ensure(&plan, [&] {
+        auto& cleared = *m_planClearedSlots.ensure(&plan, [&] {
             Vector<Cleared, 8> slots;
             for (auto& slot : plan.addedSlots) {
-                if (auto clearedSlotOfPlan = clearedSlot(slot))
-                    slots.append(*clearedSlotOfPlan);
+                if (auto planClearedSlot = clearedSlot(slot))
+                    slots.append(*planClearedSlot);
             }
             std::ranges::sort(slots, { }, &Cleared::offset);
             auto merged = makeUnique<Vector<Cleared, 4>>();
@@ -13841,37 +13484,36 @@ void State::noteCastTransition(Structure* before, uint32_t typeAndReason, uint64
     m_castTransitions[CastTransition::placeOf(transition.structureID, typeAndReason, wordsBefore)] = transition;
 }
 
-bool State::tryTransitionMadeBefore(VM& vm, JSValue value, uint32_t typeAndReason)
+bool State::tryPreviousTransition(VM& vm, JSValue value, uint32_t typeAndReason)
 {
     if (!value.isCell())
         return false;
     const RuntimeType& type = this->type(typeAndReason >> 4);
     auto reason = static_cast<Format::CastReason>(typeAndReason & 15);
     Structure* structure = value.asCell()->structure();
-    auto& made = transitionMadeBefore(structure, type, reason);
+    auto& made = previousTransition(structure, type, reason);
     if (made.structure != structure || made.type != &type || made.reason != reason)
         return false;
     Object* object = uncheckedDowncast<Object>(value.asCell());
     if (object->hasFlagsInOrderWord())
         return false;
     uint64_t wordsBefore = object->orderAndShapeWords();
-    if (made.plan->structure && !object->specializeAsBefore(vm, *made.plan))
+    if (made.plan->structure && !object->specializeWithPlan(vm, *made.plan))
         return false;
-    noteCastTransition(structure, typeAndReason, wordsBefore, object, *made.plan);
+    cacheCastTransition(structure, typeAndReason, wordsBefore, object, *made.plan);
     return true;
 }
 
-JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const RuntimeType& type, Format::CastReason reason, AuditSite site, HandsBack handsBack)
+JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const RuntimeType& type, Format::CastReason reason, AuditSite site, CoercionResult resultMode)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool hasObjects = type.allowsAnyObject() || type.allowsAnyFunction() || type.admitsForeignObjects() || type.numberOfViews() || type.numberOfJSTypes();
+    bool hasObjects = type.allowsAnyObject() || type.allowsAnyFunction() || type.acceptsUntypedObjects() || type.numberOfSupertypes() || type.numberOfJSTypes();
     bool isFreshObject = reason == Format::CastReason::AsFreshObject || reason == Format::CastReason::CoerceFreshObject;
-    bool isMadeAlsoWhereAdmitted = reason == Format::CastReason::AsFreshObject;
+    bool isConvertedEvenIfAccepted = reason == Format::CastReason::AsFreshObject;
     if (reason == Format::CastReason::AsFreshObject)
         reason = Format::CastReason::As;
-    // A coercion like any other, but for what becomes of plain data.
-    Format::CastReason asTold = reason;
+    Format::CastReason requestedReason = reason;
     if (reason == Format::CastReason::CoerceFreshObject || reason == Format::CastReason::CoerceFreshGraph)
         reason = Format::CastReason::Coerce;
     if (reason == Format::CastReason::Coerce && !(value.isObject() && hasObjects)) {
@@ -13879,20 +13521,19 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         JSValue converted = convert(globalObject, value, type, site);
         RETURN_IF_EXCEPTION(scope, { });
         if (converted != value)
-            noteViolation(vm, { .kind = "as-convert"_s, .what = "Coerce"_s, .expected = &type, .got = value, .action = ActionOnViolation::Converted });
+            recordViolation(vm, { .kind = "as-convert"_s, .what = "Coerce"_s, .expected = &type, .got = value, .action = ActionOnViolation::Converted });
         return converted;
     }
     Object* compiled = compiledObject(value);
-    // Nothing is made of an object that somebody else may hold, nor of an object of the engine or of a class that is not laid out, whatever the type: it stays what it is.
-    if (!compiled && reason == Format::CastReason::Coerce && (asTold == reason || !isPlainData(asObject(value))) && !data.isCompiledForAudit) {
+    if (!compiled && reason == Format::CastReason::Coerce && (requestedReason == reason || !isPlainData(asObject(value))) && !data.isCompiledForAudit) {
         countCoercion(value, nullptr, type, reason, "no data"_s, value);
         return value;
     }
-    if (!compiled && type.admitsForeignObjectsByNature() && !isMadeAlsoWhereAdmitted && reason != Format::CastReason::Flow && value.isObject() && entersAsItIs(asObject(value), type)) {
+    if (!compiled && type.acceptsUntypedObjectsByNature() && !isConvertedEvenIfAccepted && reason != Format::CastReason::Flow && value.isObject() && isAcceptedUnchanged(asObject(value), type)) {
         countCoercion(value, nullptr, type, reason, "admitted"_s, value);
         return value;
     }
-    if (!compiled && type.admitsForeignObjectsByNature() && !isMadeAlsoWhereAdmitted && reason != Format::CastReason::Flow && value.isObject() && !data.isCompiledForAudit && staysAsItIsBelow(vm, asObject(value), type)) {
+    if (!compiled && type.acceptsUntypedObjectsByNature() && !isConvertedEvenIfAccepted && reason != Format::CastReason::Flow && value.isObject() && !data.isCompiledForAudit && isUnchangedByCoercion(vm, asObject(value), type)) {
         countCoercion(value, nullptr, type, reason, "nothing below"_s, value);
         return value;
     }
@@ -13901,10 +13542,10 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     if (Object* object = data.isCompiledForAudit ? nullptr : compiled; object && !object->hasFlagsInOrderWord()) {
         Structure* structureBefore = object->structure();
         if (TransitionPlan* plan = transitionPlan(globalObject, object, type, reason); plan && (!plan->structure || object->specialize(vm, *this, *plan))) {
-            if (m_lastPlanWentByStructureAlone && asTold == reason && !isFreshObject && !m_counts) {
-                TransitionMadeBefore& made = transitionMadeBefore(structureBefore, type, reason);
+            if (m_lastPlanDependsOnlyOnStructure && requestedReason == reason && !isFreshObject && !m_counts) {
+                PreviousTransition& made = previousTransition(structureBefore, type, reason);
                 if (made.structure && (made.structure != structureBefore || made.type != &type || made.reason != reason))
-                    m_placesOfTransitionsMadeBefore.didReplaceEntry();
+                    m_previousTransitionIndices.didReplaceEntry();
                 made = { structureBefore, &type, plan, reason };
             }
             countCoercion(value, before, type, reason, "plan"_s, value);
@@ -13912,56 +13553,54 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         }
         way = "no-plan"_s;
     }
-    if (!compiled && !data.isCompiledForAudit && value.isCell() && value.asCell()->type() == FinalObjectType && (!type.admitsForeignObjectsByNature() || isMadeAlsoWhereAdmitted) && (asTold == Format::CastReason::As || asTold == Format::CastReason::CoerceFreshObject || asTold == Format::CastReason::CoerceFreshGraph)) {
-        bool mayBecomeIt = !isFreshObject && asTold != Format::CastReason::CoerceFreshGraph;
-        if (Object* copy = copyWhatStaysAsItIsByPlan(vm, asObject(value), type, mayBecomeIt)) {
-            bool hasBecomeIt = JSValue(copy) == value;
-            bool hasRoom = hasBecomeIt || (mayBecomeIt && hasRoomToBecome(asObject(value), copy));
-            bool copiesWhatOthersMayHold = asTold == Format::CastReason::As && !isFreshObject && !hasRoom;
-            if (!copiesWhatOthersMayHold || !refusesCopiesOfWhatOthersMayHold()) {
-                if (copiesWhatOthersMayHold)
-                    noteViolation(vm, { .kind = "copy-on-enter"_s, .what = "As"_s, .expected = &type, .got = value, .action = ActionOnViolation::Copied });
-                if (hasRoom && !hasBecomeIt)
+    if (!compiled && !data.isCompiledForAudit && value.isCell() && value.asCell()->type() == FinalObjectType && (!type.acceptsUntypedObjectsByNature() || isConvertedEvenIfAccepted) && (requestedReason == Format::CastReason::As || requestedReason == Format::CastReason::CoerceFreshObject || requestedReason == Format::CastReason::CoerceFreshGraph)) {
+        bool mayConvertInPlace = !isFreshObject && requestedReason != Format::CastReason::CoerceFreshGraph;
+        if (Object* copy = copyUnchangedByPlan(vm, asObject(value), type, mayConvertInPlace)) {
+            bool didConvertInPlace = JSValue(copy) == value;
+            bool hasRoom = didConvertInPlace || (mayConvertInPlace && hasCapacityToConvertInPlace(asObject(value), copy));
+            bool copiesSharedObject = requestedReason == Format::CastReason::As && !isFreshObject && !hasRoom;
+            if (!copiesSharedObject || !rejectsCopiesOfSharedObjects()) {
+                if (copiesSharedObject)
+                    recordViolation(vm, { .kind = "copy-on-enter"_s, .what = "As"_s, .expected = &type, .got = value, .action = ActionOnViolation::Copied });
+                if (hasRoom && !didConvertInPlace)
                     become(vm, asObject(value), copy);
                 countCoercion(value, nullptr, type, reason, "plan of a copy"_s, hasRoom ? value : JSValue(copy));
                 return hasRoom ? value : JSValue(copy);
             }
-        } else if (mayBecomeIt && tryBecomeByPlans(vm, asObject(value), type)) {
+        } else if (mayConvertInPlace && tryConvertInPlaceByPlans(vm, asObject(value), type)) {
             countCoercion(value, nullptr, type, reason, "plans of a graph"_s, value);
             return value;
         }
     }
-    Coercion attempt = coercionFor(globalObject, *this, asTold, Coercion::Explains::No);
-    if (asTold != Format::CastReason::CoerceFreshGraph)
-        attempt.allowObjectsToBecomeTheirCopies();
+    Coercion attempt = coercionFor(globalObject, *this, requestedReason, Coercion::Explains::No);
+    if (requestedReason != Format::CastReason::CoerceFreshGraph)
+        attempt.allowInPlaceConversion();
     if (isFreshObject && value.isObject())
-        attempt.noteThatNobodyElseHolds(asObject(value));
-    if (handsBack == HandsBack::WhatComesOfIt)
-        attempt.allowCopiesOfObjectsOfProgram();
+        attempt.setUnsharedObject(asObject(value));
+    if (resultMode == CoercionResult::ConvertedValue)
+        attempt.allowCopyingProgramObjects();
     JSValue result = attempt.run(value, type);
     RETURN_IF_EXCEPTION(scope, { });
     countCoercion(value, before, type, reason, way, result);
     if (result)
         return result;
-    if ((reason == Format::CastReason::Flow || ((reason == Format::CastReason::Claim || reason == Format::CastReason::Store) && type.checksForeignObjects())) && !compiled && value.isObject() && !data.isCompiledForAudit) {
-        bool hasBecomeIt = becomeWhereItIs(globalObject, asObject(value), type);
+    if ((reason == Format::CastReason::Flow || ((reason == Format::CastReason::Claim || reason == Format::CastReason::Store) && type.checksUntypedObjects())) && !compiled && value.isObject() && !data.isCompiledForAudit) {
+        bool didConvertInPlace = convertInPlace(globalObject, asObject(value), type);
         RETURN_IF_EXCEPTION(scope, { });
-        if (hasBecomeIt)
+        if (didConvertInPlace)
             return value;
     }
-    // An object that nothing can be made of stays what it is.
     if (reason == Format::CastReason::Coerce && !data.isCompiledForAudit) [[likely]]
         return value;
-    // Nothing is left of the attempt: once more, for the reason.
-    Coercion coercion = coercionFor(globalObject, *this, asTold, Coercion::Explains::Yes);
-    if (asTold != Format::CastReason::CoerceFreshGraph)
-        coercion.allowObjectsToBecomeTheirCopies();
+    Coercion coercion = coercionFor(globalObject, *this, requestedReason, Coercion::Explains::Yes);
+    if (requestedReason != Format::CastReason::CoerceFreshGraph)
+        coercion.allowInPlaceConversion();
     if (isFreshObject && value.isObject())
-        coercion.noteThatNobodyElseHolds(asObject(value));
-    if (handsBack == HandsBack::WhatComesOfIt)
-        coercion.allowCopiesOfObjectsOfProgram();
+        coercion.setUnsharedObject(asObject(value));
+    if (resultMode == CoercionResult::ConvertedValue)
+        coercion.allowCopyingProgramObjects();
     {
-        SetForScope kindsAlone(s_describesKindsAlone, ViolationLog::isWrittenIfAsked(data.logsTypeErrors));
+        SetForScope kindsOnly(s_describesKindsOnly, ViolationLog::isEnabled(data.logsTypeErrors));
         result = coercion.run(value, type);
     }
     RETURN_IF_EXCEPTION(scope, { });
@@ -13970,16 +13609,15 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         reportCoercion(site, makeString("'as "_s, describe(type), "' left "_s, describe(value), " unchanged"_s, coercion.failure().isEmpty() ? ""_s : ": "_s, coercion.failure()));
         return value;
     }
-    // Behind a cast to `undefined` or `null` alone there is no room for the value, and `undefined` in its stead would be a false trail: as in any other image.
-    bool hasRoomForNilAlone = !hasObjects && !(type.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent));
+    bool acceptsOnlyNullish = !hasObjects && !(type.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent));
     if (data.isCompiledForAudit) [[unlikely]] {
         JSValue goesOn = assertionFailed(value, type, static_cast<uint32_t>(reason), site, coercion.failure());
-        if (!hasRoomForNilAlone)
+        if (!acceptsOnlyNullish)
             return goesOn;
     }
-    bool goesOnAsStranger = type.isOpenedForLog() && value.isObject();
-    noteViolation(vm, { .kind = reason == Format::CastReason::Flow ? "narrowing"_s : kindOfUnnamedViolation, .what = describeAssertion(static_cast<uint32_t>(reason)), .expected = &type, .got = value, .reason = &coercion.failure(), .action = goesOnAsStranger ? ActionOnViolation::Continued : ActionOnViolation::Threw });
-    if (goesOnAsStranger)
+    bool continuesAsUntypedObject = type.isRelaxedForLogging() && value.isObject();
+    recordViolation(vm, { .kind = reason == Format::CastReason::Flow ? "narrowing"_s : defaultViolationKind, .what = describeAssertion(static_cast<uint32_t>(reason)), .expected = &type, .got = value, .reason = &coercion.failure(), .action = continuesAsUntypedObject ? ActionOnViolation::Continued : ActionOnViolation::Threw });
+    if (continuesAsUntypedObject)
         return value;
     throwTypeError(globalObject, scope, withAOTErrorNote(mismatchMessage(vm, value, type, coercion.failure())));
     return { };
@@ -13989,10 +13627,10 @@ bool State::accepts(JSGlobalObject* globalObject, const RuntimeType& type, JSVal
 {
     if (fits(type, value))
         return true;
-    if (!type.admitsOnlyOtherLayouts() || !compiledObject(value))
+    if (!type.acceptsOnlyOtherLayouts() || !compiledObject(value))
         return false;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue result = Coercion(globalObject, *this, Coercion::Mode::Test, Coercion::Completeness::HasWhatIsAdded, Coercion::Explains::No).run(value, type);
+    JSValue result = Coercion(globalObject, *this, Coercion::Mode::Test, Coercion::Completeness::HasAddedFields, Coercion::Explains::No).run(value, type);
     RETURN_IF_EXCEPTION(scope, true);
     return !!result;
 }
@@ -14001,65 +13639,64 @@ JSValue State::hold(JSGlobalObject* globalObject, JSValue value, const RuntimeTy
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Coercion attempt(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasWhatIsAdded, Coercion::Explains::No);
-    attempt.allowCopiesOfObjectsOfProgram();
-    if (!type.admitsForeignObjectsByNature())
-        attempt.allowObjectsToBecomeTheirCopies();
+    Coercion attempt(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasAddedFields, Coercion::Explains::No);
+    attempt.allowCopyingProgramObjects();
+    if (!type.acceptsUntypedObjectsByNature())
+        attempt.allowInPlaceConversion();
     JSValue result = attempt.run(value, type);
     RETURN_IF_EXCEPTION(scope, { });
     if (result)
         return result;
     Coercion coercion(globalObject, *this);
-    coercion.allowCopiesOfObjectsOfProgram();
-    if (!type.admitsForeignObjectsByNature())
-        coercion.allowObjectsToBecomeTheirCopies();
+    coercion.allowCopyingProgramObjects();
+    if (!type.acceptsUntypedObjectsByNature())
+        coercion.allowInPlaceConversion();
     {
-        SetForScope kindsAlone(s_describesKindsAlone, ViolationLog::isWrittenIfAsked(data.logsTypeErrors));
+        SetForScope kindsOnly(s_describesKindsOnly, ViolationLog::isEnabled(data.logsTypeErrors));
         result = coercion.run(value, type);
     }
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_ASSERT(!result);
     if (data.isCompiledForAudit) [[unlikely]]
         return assertionFailed(value, type, static_cast<uint32_t>(Format::CastReason::Store), { }, coercion.failure());
-    bool goesOnAsStranger = type.isOpenedForLog() && value.isObject();
-    noteViolation(vm, { .kind = kindOfUnnamedViolation, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure(), .action = goesOnAsStranger ? ActionOnViolation::Continued : ActionOnViolation::Threw });
-    if (goesOnAsStranger)
+    bool continuesAsUntypedObject = type.isRelaxedForLogging() && value.isObject();
+    recordViolation(vm, { .kind = defaultViolationKind, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure(), .action = continuesAsUntypedObject ? ActionOnViolation::Continued : ActionOnViolation::Threw });
+    if (continuesAsUntypedObject)
         return value;
     throwTypeError(globalObject, scope, withAOTErrorNote(mismatchMessage(vm, value, type, coercion.failure())));
     return { };
 }
 
-bool State::becomeWhereItIs(JSGlobalObject* globalObject, JSObject* object, const RuntimeType& type, String* whyNot)
+bool State::convertInPlace(JSGlobalObject* globalObject, JSObject* object, const RuntimeType& type, String* failureReason)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!data.isCompiledForAudit && object->type() == FinalObjectType && !type.admitsForeignObjectsByNature() && tryBecomeByPlans(vm, object, type)) {
+    if (!data.isCompiledForAudit && object->type() == FinalObjectType && !type.acceptsUntypedObjectsByNature() && tryConvertInPlaceByPlans(vm, object, type)) {
         countCoercion(object, nullptr, type, Format::CastReason::Claim, "plans of a graph"_s, object);
         return true;
     }
     Object* compiled = compiledObject(object);
     const LayoutData* before = compiled ? &compiled->layout() : nullptr;
-    Coercion attempt(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasWhatIsAdded, Coercion::Explains::No);
-    attempt.allowObjectsToBecomeTheirCopies();
-    attempt.refuseCopies();
+    Coercion attempt(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasAddedFields, Coercion::Explains::No);
+    attempt.allowInPlaceConversion();
+    attempt.disallowCopies();
     attempt.allowTransitionsToMembers();
     JSValue result = attempt.run(object, type);
     RETURN_IF_EXCEPTION(scope, false);
     countCoercion(object, before, type, Format::CastReason::Claim, compiled ? "held"_s : "foreign"_s, result);
     RELEASE_ASSERT(!result || result == JSValue(object));
-    if (!result && whyNot) {
-        Coercion explaining(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasWhatIsAdded, Coercion::Explains::Yes);
-        explaining.allowObjectsToBecomeTheirCopies();
-        explaining.refuseCopies();
+    if (!result && failureReason) {
+        Coercion explaining(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasAddedFields, Coercion::Explains::Yes);
+        explaining.allowInPlaceConversion();
+        explaining.disallowCopies();
         explaining.allowTransitionsToMembers();
         explaining.run(object, type);
         RETURN_IF_EXCEPTION(scope, false);
-        *whyNot = explaining.failure();
+        *failureReason = explaining.failure();
     }
     return !!result;
 }
 
-// `value as T` where the value is no object, or T has none: see Format::CastReason::Coerce.
 JSValue State::convert(JSGlobalObject* globalObject, JSValue value, const RuntimeType& type, AuditSite site)
 {
     VM& vm = globalObject->vm();
@@ -14070,23 +13707,22 @@ JSValue State::convert(JSGlobalObject* globalObject, JSValue value, const Runtim
     bool hasString = type.primitives & Primitive::String;
     bool hasBoolean = type.primitives & Primitive::Boolean;
     bool hasBigInt = type.primitives & Primitive::BigInt;
-    bool hasSeveralKinds = hasNumber + hasString + hasBoolean + hasBigInt + !!(type.primitives & Primitive::Symbol) > 1;
+    bool hasMultipleKinds = hasNumber + hasString + hasBoolean + hasBigInt + !!(type.primitives & Primitive::Symbol) > 1;
     JSValue result = value;
-    auto noteRefusal = [&] {
+    auto recordRejection = [&] {
         if (scope.exception() && vm.isTerminationException(scope.exception()))
             return;
-        noteViolation(vm, { .kind = "as-refuse"_s, .what = "Coerce"_s, .expected = &type, .got = value });
+        recordViolation(vm, { .kind = "as-refuse"_s, .what = "Coerce"_s, .expected = &type, .got = value });
     };
-    if (hasSeveralKinds) {
+    if (hasMultipleKinds) {
         result = value.toPrimitive(globalObject);
         if (scope.exception()) [[unlikely]] {
-            noteRefusal();
+            recordRejection();
             return { };
         }
         hasBigInt = false;
     }
     if (!fits(type, result)) {
-        // What the language has no conversion for, and throws.
         bool isConvertible = hasString ? !result.isSymbol() : hasNumber ? !result.isSymbol() && !result.isBigInt() : hasBoolean || result.isBoolean();
         if (!isConvertible && data.isCompiledForAudit) [[unlikely]]
             return assertionFailed(value, type, static_cast<uint32_t>(Format::CastReason::Coerce), site);
@@ -14099,15 +13735,14 @@ JSValue State::convert(JSGlobalObject* globalObject, JSValue value, const Runtim
         else if (hasBigInt)
             result = result.toBigInt(globalObject);
         if (scope.exception()) [[unlikely]] {
-            noteRefusal();
+            recordRejection();
             return { };
         }
     }
-    // There is no conversion to a symbol or to an object, and a type may have room for some numbers only, or for one boolean.
     if (!fits(type, result)) {
         if (data.isCompiledForAudit) [[unlikely]]
             return assertionFailed(value, type, static_cast<uint32_t>(Format::CastReason::Coerce), site);
-        noteRefusal();
+        recordRejection();
         throwTypeError(globalObject, scope, withAOTErrorNote(makeString("Cannot convert "_s, describe(value), " to "_s, describe(type))));
         return { };
     }
@@ -14116,28 +13751,27 @@ JSValue State::convert(JSGlobalObject* globalObject, JSValue value, const Runtim
     return result;
 }
 
-static uint64_t keyOfPlace(uint32_t what, AuditSite site)
+static uint64_t locationKey(uint32_t what, AuditSite site)
 {
     return static_cast<uint64_t>(what & 0x7f) << 56 | static_cast<uint64_t>(site.function & 0xffffff) << 32 | site.lineAndColumn;
 }
 
 void State::reportCoercion(AuditSite site, const String& what)
 {
-    if (m_reportedPlaces.add(keyOfPlace(static_cast<uint32_t>(Format::CastReason::Coerce), site)).isNewEntry)
-        dataLogLn("AOT: Coerce at ", describeSite(site), ": ", what, noteOnIgnoredRules());
+    if (m_reportedLocations.add(locationKey(static_cast<uint32_t>(Format::CastReason::Coerce), site)).isNewEntry)
+        dataLogLn("AOT: Coerce at ", describeSite(site), ": ", what, ignoredRulesNote());
 }
 
-void State::reportLackOfRoom(const LayoutData& layout, size_t cellSize, const LayoutData& wanted)
+void State::reportInsufficientCapacity(const LayoutData& layout, size_t cellSize, const LayoutData& wanted)
 {
-    if (data.isCompiledForAudit && m_reportedPlaces.add(3ULL << 62 | static_cast<uint64_t>(layout.shape) << 32 | wanted.shape).isNewEntry)
-        dataLogLn(makeString("AOT: cannot convert "_s, nameOf(layout), " to "_s, nameOf(wanted), " in place: the object has "_s, cellSize, " bytes, "_s, nameOf(wanted), " needs "_s, wanted.size, noteOnIgnoredRules()));
+    if (data.isCompiledForAudit && m_reportedLocations.add(3ULL << 62 | static_cast<uint64_t>(layout.shape) << 32 | wanted.shape).isNewEntry)
+        dataLogLn(makeString("AOT: cannot convert "_s, nameOf(layout), " to "_s, nameOf(wanted), " in place: the object has "_s, cellSize, " bytes, "_s, nameOf(wanted), " needs "_s, wanted.size, ignoredRulesNote()));
 }
 
 bool State::reportOrThrow(JSGlobalObject* globalObject, const Violation& violation, const String& message, InAudit inAudit, ASCIILiteral departure)
 {
     VM& vm = globalObject->vm();
     if (data.isCompiledForAudit) {
-        // Most come here by a function of the engine, Object.freeze() say. What matters is who called that.
         String place = "code that is not compiled"_s;
         StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
             if (!visitor->isTypedAOTFrame())
@@ -14148,12 +13782,12 @@ bool State::reportOrThrow(JSGlobalObject* globalObject, const Violation& violati
             return IterationStatus::Done;
         });
         if (m_reportedRules.add(makeString(place, ": "_s, message)).isNewEntry)
-            dataLogLn("AOT: Rule at ", place, ": ", message, inAudit == InAudit::Ignored ? "; ignored" : "; carried out", departure.isNull() ? "" : "; ", departure.isNull() ? ""_s : departure, noteOnIgnoredRules());
+            dataLogLn("AOT: Rule at ", place, ": ", message, inAudit == InAudit::Ignored ? "; ignored" : "; carried out", departure.isNull() ? "" : "; ", departure.isNull() ? ""_s : departure, ignoredRulesNote());
         m_hasIgnoredRule |= inAudit == InAudit::Ignored;
         return true;
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
-    noteViolation(vm, violation);
+    recordViolation(vm, violation);
     throwTypeError(globalObject, scope, withAOTErrorNote(message));
     return false;
 }
@@ -14177,7 +13811,6 @@ void State::countObject(Object* object)
     countFieldsOf(object);
 }
 
-// Of a new object. Where there are too many to keep their order (keysAreInLayoutOrder) a fresh allocation does not say what it is born with.
 void State::countFieldsOf(Object* object)
 {
     const LayoutData& layout = object->layout();
@@ -14223,8 +13856,7 @@ void State::countExtension(uint32_t previousSize, uint32_t size)
     ++m_counts->extensionGrowth.add({ previousSize, size }, 0).iterator->value;
 }
 
-// How the key came: compiled code boxes a number it keeps as a double as one, whatever it is.
-static ASCIILiteral describeKeyOfElement(JSValue key)
+static ASCIILiteral describeElementKey(JSValue key)
 {
     if (key.tryGetAsUint32Index())
         return key.isInt32() ? "int32"_s : "double"_s;
@@ -14244,7 +13876,7 @@ void State::countArrayGet(JSArray* array, JSValue key)
             place = *index >= storage->vectorLength() ? " map"_s : storage->m_vector[*index] ? " vector"_s : " hole"_s;
         }
     }
-    String reason = makeString("key "_s, describeKeyOfElement(key), " shape "_s, static_cast<unsigned>(array->indexingType() & IndexingShapeMask), place, array->type() != ArrayType ? " changed"_s : ""_s);
+    String reason = makeString("key "_s, describeElementKey(key), " shape "_s, static_cast<unsigned>(array->indexingType() & IndexingShapeMask), place, array->type() != ArrayType ? " changed"_s : ""_s);
     ++m_counts->arrayGets.add(reason, 0).iterator->value;
 }
 
@@ -14264,10 +13896,10 @@ void State::countCoercion(JSValue value, const LayoutData* before, const Runtime
     String key = makeString(reasons[static_cast<unsigned>(reason)], " from "_s, from, " way "_s, way, " outcome "_s, outcome, " type "_s, static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(&type) - reinterpret_cast<const uint8_t*>(&data)));
     auto added = m_counts->coercions.add(key, 0);
     if (added.isNewEntry)
-        m_counts->typesOfCoercions.add(key, describe(type));
+        m_counts->coercionTypes.add(key, describe(type));
     ++added.iterator->value;
     if (Object* made = !before && result && value.isCell() ? compiledObject(result) : nullptr)
-        ++m_counts->coercions.add(makeString("room: cell "_s, value.asCell()->cellSize(), " wanted "_s, sizeWithRoomToSpecialize(made->shape()), result == value ? " became"_s : " copied"_s, made->extraProperties() ? " superset"_s : " exact"_s, " at type "_s, static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(&type) - reinterpret_cast<const uint8_t*>(&data))), 0).iterator->value;
+        ++m_counts->coercions.add(makeString("room: cell "_s, value.asCell()->cellSize(), " wanted "_s, sizeWithSpecializationCapacity(made->shape()), result == value ? " became"_s : " copied"_s, made->extraProperties() ? " superset"_s : " exact"_s, " at type "_s, static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(&type) - reinterpret_cast<const uint8_t*>(&data))), 0).iterator->value;
 }
 
 void State::countArrayPut(JSArray* array, JSValue key, IndexingType shapeBefore, unsigned vectorLengthBefore)
@@ -14276,12 +13908,11 @@ void State::countArrayPut(JSArray* array, JSValue key, IndexingType shapeBefore,
         return;
     if (shapeBefore < ArrayStorageShape && hasAnyArrayStorage(array->indexingType())) {
         ArrayStorage* storage = array->butterfly()->arrayStorage();
-        // With the one that has just been stored.
         size_t elements = storage->m_numValuesInVector + (storage->m_sparseMap ? storage->m_sparseMap->size() : 0);
         String record = makeString("shape "_s, static_cast<unsigned>(shapeBefore), " index "_s, key.isNumber() ? String::number(key.asNumber()) : "?"_str, " vector "_s, vectorLengthBefore, " elements "_s, elements ? elements - 1 : 0);
-        ++m_counts->arraysLeft.add(record, 0).iterator->value;
+        ++m_counts->remainingArrays.add(record, 0).iterator->value;
     }
-    String reason = makeString("key "_s, describeKeyOfElement(key), " shape "_s, static_cast<unsigned>(shapeBefore), " to "_s, static_cast<unsigned>(array->indexingType() & IndexingShapeMask), array->type() != ArrayType ? " changed"_s : ""_s);
+    String reason = makeString("key "_s, describeElementKey(key), " shape "_s, static_cast<unsigned>(shapeBefore), " to "_s, static_cast<unsigned>(array->indexingType() & IndexingShapeMask), array->type() != ArrayType ? " changed"_s : ""_s);
     ++m_counts->arrayPuts.add(reason, 0).iterator->value;
 }
 
@@ -14289,7 +13920,6 @@ void State::countClosure(uint32_t function, unsigned numberOfCaptures)
 {
     if (!m_counts) [[likely]]
         return;
-    // From 1: no key is all zeros.
     ++m_counts->closures.add({ function + 1, numberOfCaptures }, 0).iterator->value;
 }
 
@@ -14298,7 +13928,6 @@ void State::countPlainAllocation(JSCell* cell, uint32_t function, uint32_t kindA
     if (!m_counts) [[likely]]
         return;
     Structure* structure = cell->structure();
-    // That is a cell of an allocation, which is counted as one.
     if (structure->compiledLayout() || !cell->isObject() || isSlimClosureType(cell->type()))
         return;
     size_t storage = 0;
@@ -14306,11 +13935,10 @@ void State::countPlainAllocation(JSCell* cell, uint32_t function, uint32_t kindA
         bool hasIndexingHeader = structure->hasIndexingHeader(cell);
         storage = Butterfly::totalSize(0, structure->outOfLineCapacity(), hasIndexingHeader, hasIndexingHeader ? butterfly->indexingHeader()->indexingPayloadSizeInBytes(structure) : 0);
     }
-    // From 1: no key is all zeros.
     std::pair<uint32_t, uint32_t> key { function + 1, kindAndValue };
     ++m_counts->plainAllocations.add(key, 0).iterator->value;
-    m_counts->bytesOfPlainCells.add(key, 0).iterator->value += cell->cellSize();
-    m_counts->bytesOfPlainStorage.add(key, 0).iterator->value += storage;
+    m_counts->plainCellBytes.add(key, 0).iterator->value += cell->cellSize();
+    m_counts->plainStorageBytes.add(key, 0).iterator->value += storage;
 }
 
 void State::countExtraPropertyTable(const LayoutData& layout)
@@ -14322,18 +13950,17 @@ void State::countExtraPropertyTable(const LayoutData& layout)
 
 void State::didBecomePrototype(const LayoutData& layout)
 {
-    if (m_shapesOfPrototypes.get(layout.shape))
+    if (m_prototypeShapes.get(layout.shape))
         return;
-    m_shapesOfPrototypes.set(layout.shape);
+    m_prototypeShapes.set(layout.shape);
     for (uint32_t shape : std::span { data.at<uint32_t>(layout.specializationsOffset()), layout.numberOfSpecializations() })
-        didBecomePrototype(layoutOfShape(shape));
+        didBecomePrototype(layoutForShape(shape));
 }
 
 void State::countExtraProperty(const LayoutData& layout, PropertyName name)
 {
     if (!m_counts) [[likely]]
         return;
-    // All indexes count as one name, and a symbol goes by its description.
     String key = parseIndex(name) ? "[index]"_str : name.isSymbol() ? makeString('[', StringView(name.uid()), ']') : String(name.uid());
     ++m_counts->extraProperties[layout.shape].add(key, 0).iterator->value;
 }
@@ -14380,7 +14007,6 @@ void State::countCollection(CollectionScope scope)
     });
     live.extraPropertyTables = extraPropertyTables.size();
     UncheckedKeyHashSet<const StringImpl*> strings;
-    // By cell size: auxiliary cells, and those of them whose owner has been seen.
     UncheckedKeyHashMap<size_t, uint64_t> auxiliaryCells;
     UncheckedKeyHashMap<size_t, uint64_t> ownedAuxiliaryCells;
     auto count = [&](LiveKind kind, const void* what, size_t cellSize) {
@@ -14389,7 +14015,6 @@ void State::countCollection(CollectionScope scope)
     auto countStorage = [&](LiveKind kind, const void* what, JSObject* object) {
         Structure* structure = object->structure();
         Butterfly* butterfly = object->butterfly();
-        // What arrays share until one of them is written to is a cell with a class.
         if (!butterfly || isCopyOnWrite(structure->indexingMode()))
             return;
         size_t cellSize = static_cast<HeapCell*>(butterfly->base(structure))->cellSize();
@@ -14409,18 +14034,18 @@ void State::countCollection(CollectionScope scope)
             ++live.staticStrings;
         else if (impl->isExternal()) {
             ++live.externalStrings;
-            live.bytesOfStrings += sizeof(StringImpl);
+            live.stringBytes += sizeof(StringImpl);
         } else if (impl->isSubString()) {
             ++live.substrings;
-            live.bytesOfStrings += sizeof(StringImpl);
+            live.stringBytes += sizeof(StringImpl);
         } else
-            live.bytesOfStrings += impl->sizeInBytes();
+            live.stringBytes += impl->sizeInBytes();
     };
-    auto sizesOfArray = [](JSArray* array) -> std::pair<uint64_t, uint64_t> {
+    auto arraySizes = [](JSArray* array) -> std::pair<uint64_t, uint64_t> {
         Butterfly* butterfly = array->butterfly();
         return { array->length(), butterfly ? butterfly->vectorLength() : 0 };
     };
-    UncheckedKeyHashMap<JSCell*, uint32_t> holdersOfArrays;
+    UncheckedKeyHashMap<JSCell*, uint32_t> arrayHolders;
     auto countSlots = [&](const LayoutData& layout, Object* object, size_t cellSize) {
         auto& slots = live.slots.add(&layout, Counts::LiveCells::Slots { }).iterator->value;
         if (isObjectLayout(layout.kind))
@@ -14430,14 +14055,14 @@ void State::countCollection(CollectionScope scope)
         if (layout.referencesOffset) {
             const uint32_t* references = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(&layout) + layout.referencesOffset);
             const uint32_t* offset = references + 3;
-            auto holdsCell = [&](uint32_t offset) {
+            auto containsCell = [&](uint32_t offset) {
                 JSValue value = JSValue::decode(object->at<EncodedJSValue>(offset));
                 return value && value.isCell();
             };
             for (uint32_t i = 0; i < references[0]; ++i)
-                slots.filledBoxed += holdsCell(*offset++);
+                slots.filledBoxed += containsCell(*offset++);
             for (uint32_t i = 0; i < references[1]; ++i)
-                slots.filledWide += holdsCell(*offset++);
+                slots.filledWide += containsCell(*offset++);
             for (uint32_t i = 0; i < references[2]; ++i)
                 slots.filledNarrow += object->at<uint32_t>(*offset++) >= minCell32;
         }
@@ -14457,12 +14082,12 @@ void State::countCollection(CollectionScope scope)
             JSCell* held = value.asCell();
             const ClassInfo* classInfo = held->classInfo();
             if (classInfo == JSArray::info()) {
-                auto [length, capacity] = sizesOfArray(uncheckedDowncast<JSArray>(held));
+                auto [length, capacity] = arraySizes(uncheckedDowncast<JSArray>(held));
                 ++counts.arrays;
                 counts.emptyArrays += !length;
                 counts.elements += length;
                 counts.capacity += capacity;
-                ++holdersOfArrays.add(held, 0).iterator->value;
+                ++arrayHolders.add(held, 0).iterator->value;
             } else if (classInfo == JSMap::info()) {
                 ++counts.maps;
                 counts.emptyMaps += !uncheckedDowncast<JSMap>(held)->size();
@@ -14474,14 +14099,12 @@ void State::countCollection(CollectionScope scope)
             ++auxiliaryCells.add(cellSize, 0).iterator->value;
             return;
         }
-        // Allocated, and the collection came before anything was written to it.
         if (heapCell->isZapped()) {
             count(LiveKind::Class, nullptr, cellSize);
             return;
         }
         JSCell* cell = static_cast<JSCell*>(heapCell);
         const ClassInfo* classInfo = cell->classInfo();
-        // An object of the program has no butterfly: the word holds its order and shape.
         if (const LayoutData* layout = cell->structure()->compiledLayoutOf(cell)) {
             count(LiveKind::Layout, layout, cellSize);
             countSlots(*layout, uncheckedDowncast<Object>(cell), cellSize);
@@ -14491,12 +14114,12 @@ void State::countCollection(CollectionScope scope)
             }
         } else if (extraPropertyTables.contains(cell)) {
             count(LiveKind::ExtraProperties, nullptr, cellSize);
-            countStorage(LiveKind::StorageOfExtraProperties, nullptr, asObject(cell));
+            countStorage(LiveKind::ExtraPropertiesStorage, nullptr, asObject(cell));
         } else {
             bool isClosure = classInfo == Closure::info() || classInfo == SlimClosure::info();
             count(isClosure ? LiveKind::Closure : LiveKind::Class, isClosure ? Closure::info() : classInfo, cellSize);
             if (classInfo == JSArray::info()) {
-                auto [length, capacity] = sizesOfArray(uncheckedDowncast<JSArray>(cell));
+                auto [length, capacity] = arraySizes(uncheckedDowncast<JSArray>(cell));
                 ++live.arrays[Counts::LiveCells::bucketOf(length)][Counts::LiveCells::bucketOf(capacity)];
             } else if (classInfo == JSMap::info())
                 ++live.maps[Counts::LiveCells::bucketOf(uncheckedDowncast<JSMap>(cell)->size())];
@@ -14504,7 +14127,7 @@ void State::countCollection(CollectionScope scope)
                 ++live.sets[Counts::LiveCells::bucketOf(uncheckedDowncast<JSSet>(cell)->size())];
             if (classInfo == SlimClosure::info()) { }
             else if (cell->isObject())
-                countStorage(LiveKind::StorageOfClass, classInfo, asObject(cell));
+                countStorage(LiveKind::ClassStorage, classInfo, asObject(cell));
             else if (cell->isString())
                 countString(static_cast<JSString*>(cell));
         }
@@ -14532,8 +14155,8 @@ void State::countCollection(CollectionScope scope)
         if (entry.value > owned)
             live.cells.add({ static_cast<uint32_t>(LiveKind::OtherAuxiliary), 0, entry.key }, entry.value - owned);
     }
-    for (auto& entry : holdersOfArrays)
-        ++(entry.value == 1 ? live.arraysHeldOnce : live.arraysHeldByMore);
+    for (auto& entry : arrayHolders)
+        ++(entry.value == 1 ? live.arraysReferencedOnce : live.arraysReferencedMoreThanOnce);
     m_counts->liveCells = WTF::move(live);
 }
 
@@ -14543,7 +14166,6 @@ void State::printCounts() const
         String name = text(string);
         return name.isEmpty() ? "-"_str : name;
     };
-    // Of a name that the running program has made up: a record is one line of words.
     auto asWord = [](StringView name) -> String {
         if (name.isEmpty())
             return "-"_str;
@@ -14563,39 +14185,38 @@ void State::printCounts() const
         std::ranges::sort(result);
         return result;
     };
-    // By guard: how many fields of the layouts of the program are pinned under it, and whether it is set.
-    std::array<uint32_t, numberOfGuardsOfPinnedFields> pinnedFields { };
+    std::array<uint32_t, numberOfPinnedFieldGuards> pinnedFields { };
     for (uint32_t shape = 1; shape < data.numberOfLayouts; ++shape) {
-        if (!hasLayoutOfShape(shape))
+        if (!hasLayoutForShape(shape))
             continue;
-        const LayoutData& layout = layoutOfShape(shape);
+        const LayoutData& layout = layoutForShape(shape);
         for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
             if (layout.fields()[i].flags & fieldIsPinned)
-                ++pinnedFields[layout.fields()[i].flags >> guardOfPinnedFieldShift];
+                ++pinnedFields[layout.fields()[i].flags >> pinnedFieldGuardShift];
         }
     }
-    for (uint32_t guard = 0; guard < numberOfGuardsOfPinnedFields; ++guard) {
+    for (uint32_t guard = 0; guard < numberOfPinnedFieldGuards; ++guard) {
         if (pinnedFields[guard])
-            dataLogLn("AOT count: guard ", guard, " pinned fields ", pinnedFields[guard], " set ", instance.typedAlteredLiterals[guard]);
+            dataLogLn("AOT count: guard ", guard, " pinned fields ", pinnedFields[guard], " set ", instance.typedModifiedLiterals[guard]);
     }
     for (uint32_t number = 0; number < m_counts->allocations.size(); ++number) {
         auto& counts = m_counts->allocations[number];
         if (!counts.objects)
             continue;
-        const LayoutData& layout = layoutOfShape(allocation(number).shape);
+        const LayoutData& layout = layoutForShape(allocation(number).shape);
         dataLogLn("AOT count: allocation ", number, " layout ", layout.index, " ", nameOrDash(layout.name), " size ", allocation(number).size, " cell ", counts.cellSize, " objects ", counts.objects);
     }
     for (auto [shape, cellSize, objects] : sorted(m_counts->objectsWithoutAllocation)) {
-        const LayoutData& layout = layoutOfShape(shape);
+        const LayoutData& layout = layoutForShape(shape);
         dataLogLn("AOT count: layout ", layout.index, " ", nameOrDash(layout.name), " cell ", cellSize, " objects ", objects);
     }
     for (auto [shape, word, times] : sorted(m_counts->orderStates)) {
-        const LayoutData& layout = layoutOfShape(shape);
+        const LayoutData& layout = layoutForShape(shape);
         dataLogLn("AOT count: order-state ", layout.index, " ", nameOrDash(layout.name), " order ", orderOf(word), " count ", countOf(word), " times ", times);
     }
     for (auto [fromShape, toShape, objects] : sorted(m_counts->transitions)) {
-        const LayoutData& from = layoutOfShape(fromShape);
-        const LayoutData& to = layoutOfShape(toShape);
+        const LayoutData& from = layoutForShape(fromShape);
+        const LayoutData& to = layoutForShape(toShape);
         dataLogLn("AOT count: transition ", from.index, " ", nameOrDash(from.name), " ", to.index, " ", nameOrDash(to.name), " objects ", objects);
     }
     for (uint32_t shape = 0; shape < m_counts->fieldCreations.size(); ++shape) {
@@ -14603,7 +14224,7 @@ void State::printCounts() const
         for (uint32_t i = 0; i < counts.size(); ++i) {
             if (!counts[i])
                 continue;
-            const LayoutData& layout = layoutOfShape(shape);
+            const LayoutData& layout = layoutForShape(shape);
             dataLogLn("AOT count: field ", layout.index, " ", nameOrDash(layout.name), " ", nameOrDash(layout.fields()[i].name), " created ", counts[i]);
         }
     }
@@ -14638,7 +14259,7 @@ void State::printCounts() const
         return codePointCompareLessThan(a.first, b.first);
     });
     for (auto& [cast, calls] : coercions)
-        dataLogLn("AOT count: coerce ", cast, " calls ", calls, " ", m_counts->typesOfCoercions.get(cast));
+        dataLogLn("AOT count: coerce ", cast, " calls ", calls, " ", m_counts->coercionTypes.get(cast));
     Vector<std::pair<String, uint64_t>> arrayPuts;
     for (auto& entry : m_counts->arrayPuts)
         arrayPuts.append({ entry.key, entry.value });
@@ -14647,27 +14268,27 @@ void State::printCounts() const
     });
     for (auto& [reason, stores] : arrayPuts)
         dataLogLn("AOT count: array-put ", reason, " stores ", stores);
-    Vector<std::pair<String, uint64_t>> arraysLeft;
-    for (auto& entry : m_counts->arraysLeft)
-        arraysLeft.append({ entry.key, entry.value });
-    std::ranges::sort(arraysLeft, [](auto& a, auto& b) {
+    Vector<std::pair<String, uint64_t>> remainingArrays;
+    for (auto& entry : m_counts->remainingArrays)
+        remainingArrays.append({ entry.key, entry.value });
+    std::ranges::sort(remainingArrays, [](auto& a, auto& b) {
         return codePointCompareLessThan(a.first, b.first);
     });
-    for (auto& [record, arrays] : arraysLeft)
+    for (auto& [record, arrays] : remainingArrays)
         dataLogLn("AOT count: array-left ", record, " arrays ", arrays);
     for (auto [function, numberOfCaptures, objects] : sorted(m_counts->closures)) {
         String name = nameOfFunction(function - 1);
-        size_t cell = MarkedSpace::optimalSizeFor(makesSlimClosures(function - 1) ? SlimClosure::allocationSize(numberOfCaptures) : Closure::allocationSize(numberOfCaptures));
+        size_t cell = MarkedSpace::optimalSizeFor(usesSlimClosures(function - 1) ? SlimClosure::allocationSize(numberOfCaptures) : Closure::allocationSize(numberOfCaptures));
         dataLogLn("AOT count: closure f", function - 1, " ", name.isEmpty() ? "-"_str : name, " words ", numberOfCaptures, " cell ", cell, " objects ", objects);
     }
     for (auto [function, kindAndValue, objects] : sorted(m_counts->plainAllocations)) {
         static constexpr ASCIILiteral kinds[] = { "object"_s, "this"_s, "array"_s, "clone"_s };
         std::pair<uint32_t, uint32_t> key { function, kindAndValue };
-        dataLogLn("AOT count: plain ", kinds[kindAndValue >> plainAllocationKindShift], " f", function - 1, " v", kindAndValue & ((1u << plainAllocationKindShift) - 1), " cell-bytes ", m_counts->bytesOfPlainCells.get(key), " storage-bytes ", m_counts->bytesOfPlainStorage.get(key), " objects ", objects);
+        dataLogLn("AOT count: plain ", kinds[kindAndValue >> plainAllocationKindShift], " f", function - 1, " v", kindAndValue & ((1u << plainAllocationKindShift) - 1), " cell-bytes ", m_counts->plainCellBytes.get(key), " storage-bytes ", m_counts->plainStorageBytes.get(key), " objects ", objects);
     }
     for (uint32_t shape = 0; shape < m_counts->extraPropertyTables.size(); ++shape) {
         if (uint64_t objects = m_counts->extraPropertyTables[shape]) {
-            const LayoutData& layout = layoutOfShape(shape);
+            const LayoutData& layout = layoutForShape(shape);
             dataLogLn("AOT count: extras ", layout.index, " ", nameOrDash(layout.name), " objects ", objects);
         }
     }
@@ -14679,19 +14300,18 @@ void State::printCounts() const
             return codePointCompareLessThan(a.first, b.first);
         });
         for (auto& [name, created] : properties) {
-            const LayoutData& layout = layoutOfShape(shape);
+            const LayoutData& layout = layoutForShape(shape);
             dataLogLn("AOT count: extra ", layout.index, " ", nameOrDash(layout.name), " ", asWord(name), " created ", created);
         }
     }
-    // The most frequent first.
     Vector<std::tuple<uint64_t, uintptr_t, uint32_t, uintptr_t, UniquedStringImpl*>> accesses;
     for (auto& entry : m_counts->accesses)
         accesses.append({ ~entry.value.count, std::get<0>(entry.key), std::get<1>(entry.key), std::get<2>(entry.key), entry.value.name.get() });
     std::ranges::sort(accesses);
-    for (auto [invertedCount, address, kindAndPlace, what, name] : accesses) {
+    for (auto [invertedCount, address, kindAndLocation, what, name] : accesses) {
         static constexpr ASCIILiteral kinds[] = { "read"_s, "write"_s, "read-extra"_s, "write-extra"_s };
         static constexpr ASCIILiteral places[] = { "field"_s, "absent-field"_s, "extra"_s, "not-own"_s, "other-receiver"_s };
-        auto place = static_cast<Counts::Place>(kindAndPlace & 0xff);
+        auto place = static_cast<Counts::Place>(kindAndLocation & 0xff);
         auto location = FunctionRef::at(&instance, std::bit_cast<const void*>(address)).locationForReturnAddress(std::bit_cast<const void*>(address), nullptr);
         String function = location.typedFunction != FunctionRef::none ? typedFunctionName(location.typedFunction) : String();
         String where = "-"_s;
@@ -14699,11 +14319,11 @@ void State::printCounts() const
             where = makeString(ProgramData::get()->sourceName(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column);
         String receiver = "- primitive"_s;
         if (place != Counts::Place::OtherReceiver) {
-            const LayoutData& layout = layoutOfShape(static_cast<uint32_t>(what));
+            const LayoutData& layout = layoutForShape(static_cast<uint32_t>(what));
             receiver = makeString(layout.index, ' ', nameOrDash(layout.name));
         } else if (what)
             receiver = makeString("- "_s, std::bit_cast<const ClassInfo*>(what)->className);
-        dataLogLn("AOT count: access ", kinds[kindAndPlace >> 8], " ", function.isEmpty() ? "-"_str : function, " ", where, " ", asWord(name), " ", receiver, " ", places[static_cast<unsigned>(place)], " ", ~invertedCount);
+        dataLogLn("AOT count: access ", kinds[kindAndLocation >> 8], " ", function.isEmpty() ? "-"_str : function, " ", where, " ", asWord(name), " ", receiver, " ", places[static_cast<unsigned>(place)], " ", ~invertedCount);
     }
 
     Locker locker { m_counts->collectionsLock };
@@ -14717,7 +14337,6 @@ void State::printCounts() const
     if (!live.collection)
         return;
     printCollection("AOT live: collection "_s, live.collection);
-    // By LiveKind, the index of the layout, what the line starts with, cell size.
     Vector<std::tuple<uint32_t, uint32_t, String, size_t, uint64_t>> lines;
     for (auto& entry : live.cells) {
         auto [kind, what, cellSize] = entry.key;
@@ -14742,13 +14361,13 @@ void State::printCounts() const
         case Counts::LiveKind::ExtraProperties:
             start = "extras"_s;
             break;
-        case Counts::LiveKind::StorageOfExtraProperties:
+        case Counts::LiveKind::ExtraPropertiesStorage:
             start = "extras-storage"_s;
             break;
         case Counts::LiveKind::Class:
             start = makeString("class "_s, className());
             break;
-        case Counts::LiveKind::StorageOfClass:
+        case Counts::LiveKind::ClassStorage:
             start = makeString("auxiliary-of "_s, className());
             break;
         case Counts::LiveKind::OtherAuxiliary:
@@ -14769,7 +14388,7 @@ void State::printCounts() const
     for (auto& [kind, index, start, cellSize, objects] : lines)
         dataLogLn("AOT live: ", start, " cell ", cellSize, " objects ", objects);
     for (auto [shape, word, objects] : sorted(live.orderStates)) {
-        const LayoutData& layout = layoutOfShape(shape);
+        const LayoutData& layout = layoutForShape(shape);
         dataLogLn("AOT live: order-state ", layout.index, " ", nameOrDash(layout.name), " order ", orderOf(word), " count ", countOf(word), " flags ", word >> 28, " objects ", objects);
     }
     Vector<const LayoutData*> layoutsWithSlots;
@@ -14805,7 +14424,7 @@ void State::printCounts() const
                 dataLogLn("AOT live: array length ", Counts::LiveCells::boundOf(length), " capacity ", Counts::LiveCells::boundOf(capacity), " arrays ", arrays);
         }
     }
-    dataLogLn("AOT live: arrays-held once ", live.arraysHeldOnce, " more ", live.arraysHeldByMore);
+    dataLogLn("AOT live: arrays-held once ", live.arraysReferencedOnce, " more ", live.arraysReferencedMoreThanOnce);
     for (unsigned size = 0; size < Counts::LiveCells::numberOfBuckets; ++size) {
         if (live.maps[size])
             dataLogLn("AOT live: map size ", Counts::LiveCells::boundOf(size), " objects ", live.maps[size]);
@@ -14815,7 +14434,7 @@ void State::printCounts() const
             dataLogLn("AOT live: set size ", Counts::LiveCells::boundOf(size), " objects ", live.sets[size]);
     }
     dataLogLn("AOT live: extras-entries ", live.extraPropertyTables);
-    dataLogLn("AOT live: strings ", live.strings, " bytes ", live.bytesOfStrings, " ropes ", live.ropes, " static ", live.staticStrings, " external ", live.externalStrings, " substrings ", live.substrings);
+    dataLogLn("AOT live: strings ", live.strings, " bytes ", live.stringBytes, " ropes ", live.ropes, " static ", live.staticStrings, " external ", live.externalStrings, " substrings ", live.substrings);
     Vector<std::tuple<size_t, String, Counts::FreeCells>> freeCells;
     for (auto& entry : live.freeCells)
         freeCells.append({ entry.key.second, String::fromLatin1(entry.key.first->name().data()), entry.value });
@@ -14835,15 +14454,14 @@ void State::printCountsAtExit()
         state->printCounts();
 }
 
-// As Reader::isReliedOn() has it, but for `never`, which nothing can be made of.
 static bool isReliedOnInAudit(const RuntimeType& type)
 {
-    if (type.allowsAnyObject() || type.allowsAnyFunction() || type.admitsForeignObjects() || type.numberOfViews() || type.numberOfJSTypes() || !type.primitives)
+    if (type.allowsAnyObject() || type.allowsAnyFunction() || type.acceptsUntypedObjects() || type.numberOfSupertypes() || type.numberOfJSTypes() || !type.primitives)
         return false;
     return !(type.primitives & ~Primitive::Boolean) || !(type.primitives & ~(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent));
 }
 
-JSValue State::nearestOf(const RuntimeType& type, JSValue value) const
+JSValue State::nearestValueOfType(const RuntimeType& type, JSValue value) const
 {
     if (!(type.primitives & (Primitive::Number | Primitive::Boolean)))
         return type.primitives & Primitive::Undefined ? jsUndefined() : jsNull();
@@ -14866,7 +14484,6 @@ JSValue State::nearestOf(const RuntimeType& type, JSValue value) const
         return jsNumber(number);
     if (std::isnan(number) && type.primitives & Primitive::Undefined)
         return jsUndefined();
-    // Adding zero makes zero of negative zero.
     double integer = std::isnan(number) ? 0 : std::trunc(number) + 0.0;
     return jsNumber(std::clamp(integer, static_cast<double>(type.minInteger()), static_cast<double>(type.maxInteger())));
 }
@@ -14881,87 +14498,81 @@ static ASCIILiteral describeAssertion(uint32_t what)
     };
     if (!(what & assertionIsOnResult))
         return what < std::size(reasons) ? reasons[what] : "Cast"_s;
-    // Of the operations that only the passes make, one is held to a type: what has taken the place of a read or a call.
     uint32_t operation = what & ~assertionIsOnResult;
     return operation < std::size(operations) ? operations[operation] : "CallBuiltin"_s;
 }
 
 JSValue State::assertionFailed(JSValue value, const RuntimeType& type, uint32_t what, AuditSite site, const String& failure, JSValue storedTo)
 {
-    // What has room for `undefined` and `null` alone: see State::coerce().
     bool isConverted = isReliedOnInAudit(type) && type.primitives & (Primitive::Number | Primitive::Boolean);
-    JSValue goesOn = isReliedOnInAudit(type) ? nearestOf(type, value) : value;
+    JSValue goesOn = isReliedOnInAudit(type) ? nearestValueOfType(type, value) : value;
     RELEASE_ASSERT(!isReliedOnInAudit(type) || fits(type, goesOn));
-    // The store that follows throws whatever the value is, as it does in JavaScript. That is no contradiction of a type.
     if (Object* object = storedTo ? compiledObject(storedTo) : nullptr; object && object->isFrozen())
         return goesOn;
-    if (!m_reportedPlaces.add(keyOfPlace(what & assertionIsOnResult ? 0x40 | what : what, site)).isNewEntry)
+    if (!m_reportedLocations.add(locationKey(what & assertionIsOnResult ? 0x40 | what : what, site)).isNewEntry)
         return goesOn;
     bool isNonNull = what == static_cast<uint32_t>(Format::CastReason::NonNull) && value.isUndefinedOrNull();
     String message = isNonNull ? nonNullMessage(value) : makeString("expected "_s, describe(type), ", got "_s, describe(value));
     String reason = failure.isEmpty() ? explainMismatch(*instance.vm, value, type) : failure;
-    dataLogLn(makeString("AOT: "_s, describeAssertion(what), " at "_s, describeSite(site), ": "_s, message, reason.isEmpty() ? ""_s : "; "_s, reason, isConverted ? "; converted to "_s : ""_s, isConverted ? describe(goesOn) : emptyString(), noteOnIgnoredRules()));
+    dataLogLn(makeString("AOT: "_s, describeAssertion(what), " at "_s, describeSite(site), ": "_s, message, reason.isEmpty() ? ""_s : "; "_s, reason, isConverted ? "; converted to "_s : ""_s, isConverted ? describe(goesOn) : emptyString(), ignoredRulesNote()));
     return goesOn;
 }
 
-JSValue State::holdToTypeOf(JSGlobalObject* globalObject, const FieldData& field, JSValue value, String& failure)
+JSValue State::coerceToFieldType(JSGlobalObject* globalObject, const FieldData& field, JSValue value, String& failure)
 {
     const RuntimeType& type = ownTypeOf(field);
-    // Every store comes this way then, also that of typed code through a view. The field takes what its views take: see Reader. What it
-    // does not take is reported and goes on, as it is if the slot has room for it.
     if (data.isCompiledForAudit && isReliedOnInAudit(type) && !fits(type, value)) [[unlikely]] {
         const RuntimeType& slot = typeOf(field);
-        JSValue held = fits(slot, value) ? value : nearestOf(slot, value);
-        if (m_reportedPlaces.add(1ULL << 63 | std::bit_cast<uintptr_t>(&field)).isNewEntry)
-            dataLogLn("AOT: Store to '", text(field.name), "': expected ", describe(type), ", got ", describe(value), held == value ? "" : "; converted to ", held == value ? String() : describe(held), noteOnIgnoredRules());
+        JSValue held = fits(slot, value) ? value : nearestValueOfType(slot, value);
+        if (m_reportedLocations.add(1ULL << 63 | std::bit_cast<uintptr_t>(&field)).isNewEntry)
+            dataLogLn("AOT: Store to '", text(field.name), "': expected ", describe(type), ", got ", describe(value), held == value ? "" : "; converted to ", held == value ? String() : describe(held), ignoredRulesNote());
         return held;
     }
-    bool slotTakesMore = field.type() != field.ownType();
+    bool slotIsWiderThanType = field.type() != field.ownType();
     if (!value.isObject())
-        return fits(type, value) || (slotTakesMore && fits(typeOf(field), value)) ? value : JSValue();
-    // Nothing is made of what enters a place whose type nobody wrote down.
-    bool onlyTests = !(field.flags & fieldIsAnnotated);
-    if (onlyTests && fitsAsOneOfItsOwn(type, asObject(value)))
+        return fits(type, value) || (slotIsWiderThanType && fits(typeOf(field), value)) ? value : JSValue();
+    bool isCheckOnlyCast = !(field.flags & fieldIsAnnotated);
+    if (isCheckOnlyCast && matchesTypedSubtype(type, asObject(value)))
         return value;
-    if (Object* record = slotTakesMore ? compiledObject(value) : nullptr; record && !admitsShape(type, record->shape()) && admitsShape(typeOf(field), record->shape()))
+    if (Object* record = slotIsWiderThanType ? compiledObject(value) : nullptr; record && !acceptsShape(type, record->shape()) && acceptsShape(typeOf(field), record->shape()))
         return value;
-    bool mayBecomeIt = !onlyTests && storesMakeOverPlainData;
-    if (mayBecomeIt && !type.admitsForeignObjectsByNature() && !data.isCompiledForAudit && value.asCell()->type() == FinalObjectType) {
+    bool mayConvertInPlace = !isCheckOnlyCast && storesConvertPlainData;
+    if (mayConvertInPlace && !type.acceptsUntypedObjectsByNature() && !data.isCompiledForAudit && value.asCell()->type() == FinalObjectType) {
         VM& vm = globalObject->vm();
-        if (Object* copy = copyWhatStaysAsItIsByPlan(vm, asObject(value), type, true)) {
-            bool hasBecomeIt = JSValue(copy) == value;
-            bool hasRoom = hasBecomeIt || hasRoomToBecome(asObject(value), copy);
-            if (hasRoom || !refusesCopiesOfWhatOthersMayHold()) {
+        if (Object* copy = copyUnchangedByPlan(vm, asObject(value), type, true)) {
+            bool didConvertInPlace = JSValue(copy) == value;
+            bool hasRoom = didConvertInPlace || hasCapacityToConvertInPlace(asObject(value), copy);
+            if (hasRoom || !rejectsCopiesOfSharedObjects()) {
                 if (!hasRoom)
-                    noteViolation(vm, { .kind = "copy-on-enter"_s, .what = "As"_s, .expected = &type, .got = value, .action = ActionOnViolation::Copied });
-                if (hasRoom && !hasBecomeIt)
+                    recordViolation(vm, { .kind = "copy-on-enter"_s, .what = "As"_s, .expected = &type, .got = value, .action = ActionOnViolation::Copied });
+                if (hasRoom && !didConvertInPlace)
                     become(vm, asObject(value), copy);
                 countCoercion(value, nullptr, type, Format::CastReason::Store, "plan of a copy"_s, hasRoom ? value : JSValue(copy));
                 return hasRoom ? value : JSValue(copy);
             }
-        } else if (tryBecomeByPlans(vm, asObject(value), type)) {
+        } else if (tryConvertInPlaceByPlans(vm, asObject(value), type)) {
             countCoercion(value, nullptr, type, Format::CastReason::Store, "plans of a graph"_s, value);
             return value;
         }
     }
     Object* compiled = compiledObject(value);
     const LayoutData* before = compiled ? &compiled->layout() : nullptr;
-    Coercion coercion(globalObject, *this, onlyTests ? Coercion::Mode::Test : Coercion::Mode::Cast);
-    coercion.allowCopiesOfObjectsOfProgram();
-    if (mayBecomeIt)
-        coercion.allowObjectsToBecomeTheirCopies();
+    Coercion coercion(globalObject, *this, isCheckOnlyCast ? Coercion::Mode::Test : Coercion::Mode::Cast);
+    coercion.allowCopyingProgramObjects();
+    if (mayConvertInPlace)
+        coercion.allowInPlaceConversion();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue result = coercion.run(value, type);
     RETURN_IF_EXCEPTION(scope, { });
     countCoercion(value, before, type, Format::CastReason::Store, compiled ? "stored"_s : "foreign"_s, result);
-    if (!result && onlyTests && !compiled && !data.isCompiledForAudit) {
-        bool hasBecomeIt = becomeWhereItIs(globalObject, asObject(value), type);
+    if (!result && isCheckOnlyCast && !compiled && !data.isCompiledForAudit) {
+        bool didConvertInPlace = convertInPlace(globalObject, asObject(value), type);
         RETURN_IF_EXCEPTION(scope, { });
-        if (hasBecomeIt)
+        if (didConvertInPlace)
             return value;
     }
-    if (!result && type.isOpenedForLog()) [[unlikely]] {
-        noteViolation(globalObject->vm(), { .kind = kindOfUnnamedViolation, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure(), .action = ActionOnViolation::Continued });
+    if (!result && type.isRelaxedForLogging()) [[unlikely]] {
+        recordViolation(globalObject->vm(), { .kind = defaultViolationKind, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure(), .action = ActionOnViolation::Continued });
         return value;
     }
     if (!result)
@@ -14969,7 +14580,7 @@ JSValue State::holdToTypeOf(JSGlobalObject* globalObject, const FieldData& field
     return result;
 }
 
-JSCell* State::closureIfMade(uint32_t function) const
+JSCell* State::closureIfCreated(uint32_t function) const
 {
     if (data.usesWideReferences)
         return static_cast<JSCell**>(instance.typedClosures)[function];
@@ -14979,8 +14590,8 @@ JSCell* State::closureIfMade(uint32_t function) const
 
 void State::didCreateClosureFor(uint32_t function, JSCell* cell)
 {
-    if (!(kindAndDeclarationOf(function) & functionIsOfBuiltinModule))
-        ensureStaticsOfProgramAreFilled();
+    if (!(kindAndDeclarationOf(function) & functionIsInBuiltinModule))
+        ensureProgramStaticsInitialized();
     if (data.usesWideReferences) {
         static_cast<JSCell**>(instance.typedClosures)[function] = cell;
         didCreate(cell);
@@ -14988,14 +14599,14 @@ void State::didCreateClosureFor(uint32_t function, JSCell* cell)
     }
     Locker locker { m_cellsLock };
     static_cast<uint32_t*>(instance.typedClosures)[function] = MarkedBlockCage::encode(cell) - 1;
-    m_closuresMadeLately.cells.append(MarkedBlockCage::encode(cell));
-    m_stretchesWithClosures.set(function >> closuresInStretchShift);
+    m_recentClosures.cells.append(MarkedBlockCage::encode(cell));
+    m_chunksWithClosures.set(function >> closuresPerChunkShift);
 }
 
-void State::makeTheOneThatConstructs(Closure* closure)
+void State::registerConstructorClosure(Closure* closure)
 {
     uint32_t function = closure->functionIndex();
-    if (closureIfMade(function) || closuresHaveCaptures(function))
+    if (closureIfCreated(function) || closuresHaveCaptures(function))
         return;
     std::span allocationsByConstructor { data.at<std::array<uint32_t, 2>>(data.allocationsByConstructorOffset), data.numberOfAllocationsByConstructor };
     auto found = std::ranges::lower_bound(allocationsByConstructor, std::array<uint32_t, 2> { function, 0 });
@@ -15006,9 +14617,9 @@ void State::makeTheOneThatConstructs(Closure* closure)
 
 JSObject* State::closureObjectFor(VM& vm, uint32_t function)
 {
-    if (!makesSlimClosures(function))
+    if (!usesSlimClosures(function))
         return closure(vm, function);
-    JSCell* cell = closureIfMade(function);
+    JSCell* cell = closureIfCreated(function);
     if (!cell) {
         cell = SlimClosure::create(vm, slimClosureStructure(vm, function), function);
         didCreateClosureFor(function, cell);
@@ -15018,22 +14629,20 @@ JSObject* State::closureObjectFor(VM& vm, uint32_t function)
 
 Closure* State::closure(VM& vm, uint32_t function)
 {
-    JSCell* cell = closureIfMade(function);
+    JSCell* cell = closureIfCreated(function);
     if (!cell) {
         const LayoutData* ofClass = classConstructedBy(function);
-        bool isMadeWhenChanged = ofClass && makesClassObjectWhenChanged(*ofClass) && hasPrototypeAheadOfClassObject(*ofClass);
-        // It may make the class objects of what the class extends.
-        Structure* structure = isMadeWhenChanged ? structureOfUnmadeClassObject(vm, *ofClass) : closureStructure(vm, function);
-        RELEASE_ASSERT(!closureIfMade(function) && !makesSlimClosures(function));
+        bool isCreatedOnChange = ofClass && createsClassObjectOnMutation(*ofClass) && createsPrototypeBeforeClassObject(*ofClass);
+        Structure* structure = isCreatedOnChange ? lazyClassObjectStructure(vm, *ofClass) : closureStructure(vm, function);
+        RELEASE_ASSERT(!closureIfCreated(function) && !usesSlimClosures(function));
         cell = Closure::create(vm, structure, function);
         didCreateClosureFor(function, cell);
-        if (isMadeWhenChanged && !mayLeaveClassObjectUnmade(structure->storedPrototypeObject(), *ofClass))
+        if (isCreatedOnChange && !canDeferClassObject(structure->storedPrototypeObject(), *ofClass))
             uncheckedDowncast<Closure>(cell)->ensureClassObject(vm);
-        // The class object of a class that extends something foreign is made at the declaration, where that is evaluated.
-        if (ofClass && !ofClass->hasForeignRoot && !isMadeWhenChanged) {
+        if (ofClass && !ofClass->hasUntypedBase && !isCreatedOnChange) {
             RELEASE_ASSERT(ofClass->isEvaluatedOnce);
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            makeClass(instance.globalObject, uncheckedDowncast<Closure>(cell), JSValue());
+            createClass(instance.globalObject, uncheckedDowncast<Closure>(cell), JSValue());
             scope.assertNoException();
         }
     }
@@ -15059,27 +14668,26 @@ void State::rememberElement(VM& vm, JSObject* array, JSValue value)
 }
 
 template<typename Visitor, typename Functor>
-bool State::MadeLately::visit(VM& vm, Visitor& visitor, const Functor& handOver)
+bool State::RecentlyCreated::visit(VM& vm, Visitor& visitor, const Functor& handOver)
 {
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion();
-        bool isFirstVisitOfCollection = version != versionOfLastVisit;
-        if (isFirstVisitOfCollection) {
-            versionOfLastVisit = version;
+        bool isFirstVisitInCollection = version != lastVisitVersion;
+        if (isFirstVisitInCollection) {
+            lastVisitVersion = version;
             earlier.append(cells.span().first(numberVisited));
             if (numberVisited == cells.size())
                 cells.clear();
             else
                 cells.removeAt(0, numberVisited);
         }
-        size_t numberHandedOverInThisCollection = isFirstVisitOfCollection ? 0 : numberVisited;
+        size_t visitedInThisCollection = isFirstVisitInCollection ? 0 : numberVisited;
         numberVisited = cells.size();
-        // A full collection is handed everything at its first visit, and what has been made since is among these.
-        if (vm.heap.collectionScope() != CollectionScope::Eden && isFirstVisitOfCollection) {
+        if (vm.heap.collectionScope() != CollectionScope::Eden && isFirstVisitInCollection) {
             for (uint32_t cell : earlier)
                 handOver(visitor, MarkedBlockCage::decode(cell));
         }
-        for (uint32_t cell : cells.span().subspan(numberHandedOverInThisCollection))
+        for (uint32_t cell : cells.span().subspan(visitedInThisCollection))
             handOver(visitor, MarkedBlockCage::decode(cell));
         return true;
     }
@@ -15090,14 +14698,14 @@ template<typename Visitor>
 void State::visitClosures(Visitor& visitor)
 {
     Locker locker { m_cellsLock };
-    if (data.usesWideReferences || m_closuresMadeLately.visit(*instance.vm, visitor, [](auto& visitor, JSCell* cell) {
+    if (data.usesWideReferences || m_recentClosures.visit(*instance.vm, visitor, [](auto& visitor, JSCell* cell) {
         visitor.appendUnbarriered(cell);
     }))
         return;
     std::span rows { static_cast<const uint32_t*>(instance.typedClosures), data.numberOfFunctions };
-    for (size_t stretch : m_stretchesWithClosures) {
-        size_t first = stretch << closuresInStretchShift;
-        for (uint32_t row : rows.subspan(first, std::min<size_t>(1 << closuresInStretchShift, rows.size() - first))) {
+    for (size_t stretch : m_chunksWithClosures) {
+        size_t first = stretch << closuresPerChunkShift;
+        for (uint32_t row : rows.subspan(first, std::min<size_t>(1 << closuresPerChunkShift, rows.size() - first))) {
             if (row)
                 visitor.appendUnbarriered(MarkedBlockCage::decode(row + 1));
         }
@@ -15112,21 +14720,21 @@ void State::visitStrings(Visitor& visitor)
         visitor.appendUnbarriered(cell);
     if (data.usesWideReferences)
         return;
-    bool wereHandedOver = m_stringsMadeLately.visit(*instance.vm, visitor, [](auto& visitor, JSCell* cell) {
+    bool didVisit = m_recentStrings.visit(*instance.vm, visitor, [](auto& visitor, JSCell* cell) {
         StringImpl* impl = uncheckedDowncast<JSString>(cell)->tryGetValueImpl();
         if (!impl) [[unlikely]] {
             visitor.appendUnbarriered(cell);
             return;
         }
         if (visitor.markLeafCell(cell))
-            visitor.reportExtraMemoryVisitedOfLeafCell(cell->vm().heap, impl->costDuringGC());
+            visitor.reportLeafCellExtraMemoryVisited(cell->vm().heap, impl->costDuringGC());
     });
-    wereHandedOver &= m_stringsBackedByStaticDataMadeLately.visit(*instance.vm, visitor, [](auto& visitor, JSCell* cell) {
+    didVisit &= m_recentStaticDataStrings.visit(*instance.vm, visitor, [](auto& visitor, JSCell* cell) {
         visitor.markLeafCell(cell);
     });
-    if (wereHandedOver)
+    if (didVisit)
         return;
-    for (uint64_t slot : std::span { instance.fieldsBelow().typedStrings, capacityOfStringTable(instance.fieldsBelow().typedStrings) }.subspan(1)) {
+    for (uint64_t slot : std::span { instance.negativeOffsetFields().typedStrings, stringTableCapacity(instance.negativeOffsetFields().typedStrings) }.subspan(1)) {
         if (slot)
             visitor.appendUnbarriered(MarkedBlockCage::decode(slot >> 32));
     }
@@ -15143,28 +14751,28 @@ void State::visitRootsWithCards(Visitor& visitor)
             visitor.appendUnbarriered(JSValue::decode(words[std::countr_zero(mask)]));
     };
     if constexpr (!std::is_same_v<Visitor, SlotVisitor>) {
-        for (uint32_t card = m_sizeOfStaticsWithoutAccess >> Instance::typedCardShift; card < data.numberOfCards; ++card)
+        for (uint32_t card = m_inaccessibleStaticsSize >> Instance::typedCardShift; card < data.numberOfCards; ++card)
             visitCard(card);
         return;
     } else {
         JSC::Heap& heap = instance.vm->heap;
         bool all = false;
-        if (heap.collectionScope() != CollectionScope::Eden && m_versionOfLastVisitOfAllCards != heap.objectSpace().markingVersion()) {
-            m_versionOfLastVisitOfAllCards = heap.objectSpace().markingVersion();
+        if (heap.collectionScope() != CollectionScope::Eden && m_lastFullCardVisitVersion != heap.objectSpace().markingVersion()) {
+            m_lastFullCardVisitVersion = heap.objectSpace().markingVersion();
             all = true;
         }
         bool worldIsStopped = heap.worldIsStopped();
         for (uint32_t first = 0; first < data.numberOfCards; first += sizeof(uint64_t)) {
-            static_assert(Instance::typedCardIsStoredTo == 1 && Instance::typedCardWasLookedAt == 2);
+            static_assert(Instance::typedCardIsDirty == 1 && Instance::typedCardWasScanned == 2);
             uint64_t states = *reinterpret_cast<const uint64_t*>(instance.typedCards + first);
             if (!(all ? states : states & 0x0101010101010101ull))
                 continue;
             for (uint32_t card = first; card < first + sizeof(uint64_t); ++card) {
                 uint8_t state = instance.typedCards[card];
-                if (state != Instance::typedCardIsStoredTo && !(all && state))
+                if (state != Instance::typedCardIsDirty && !(all && state))
                     continue;
                 if (worldIsStopped)
-                    instance.typedCards[card] = Instance::typedCardWasLookedAt;
+                    instance.typedCards[card] = Instance::typedCardWasScanned;
                 visitCard(card);
             }
         }
@@ -15179,13 +14787,12 @@ void State::visit(Visitor& visitor)
     {
         Locker locker { m_cellsLock };
         size_t first = 0;
-        // What an earlier collection has marked stays marked in a collection of the young.
         if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
-            if (HeapVersion version = instance.vm->heap.objectSpace().newlyAllocatedVersion(); version != m_versionOfLastVisit) {
-                m_versionOfLastVisit = version;
-                m_numberOfCellsMarkedBefore = m_numberOfCellsVisited;
+            if (HeapVersion version = instance.vm->heap.objectSpace().newlyAllocatedVersion(); version != m_lastVisitVersion) {
+                m_lastVisitVersion = version;
+                m_previouslyMarkedCellCount = m_numberOfCellsVisited;
                 if (instance.vm->heap.collectionScope() == CollectionScope::Eden)
-                    first = m_numberOfCellsMarkedBefore;
+                    first = m_previouslyMarkedCellCount;
             } else
                 first = m_numberOfCellsVisited;
             m_numberOfCellsVisited = m_cells.size();
@@ -15198,17 +14805,17 @@ void State::visit(Visitor& visitor)
             visitor.appendUnbarriered(cell);
     }
     instance.youngRootsCursor = m_youngRoots;
-    for (JSCell* cell : std::initializer_list<JSCell*> { moduleRecord, importMeta, m_closureStructures[0], m_closureStructures[1], m_closureStructures[2], m_closureStructures[3], m_closureStructures[4], m_liveBindingGetter, m_liveBindingAccessor, immediateStepOfAsyncGenerators }) {
+    for (JSCell* cell : std::initializer_list<JSCell*> { moduleRecord, importMeta, m_closureStructures[0], m_closureStructures[1], m_closureStructures[2], m_closureStructures[3], m_closureStructures[4], m_liveBindingGetter, m_liveBindingAccessor, asyncGeneratorImmediateStep }) {
         if (cell)
             visitor.appendUnbarriered(cell);
     }
     visitor.appendUnbarriered(newTarget);
-    for (auto& [entryPoint, import] : importsOfEntryPoints) {
+    for (auto& [entryPoint, import] : entryPointImports) {
         visitor.appendUnbarriered(entryPoint);
         visitor.appendUnbarriered(import);
     }
     const uint32_t* roots = data.at<uint32_t>(data.rootsOffset);
-    uint32_t sizeWithoutAccess = m_sizeOfStaticsWithoutAccess;
+    uint32_t sizeWithoutAccess = m_inaccessibleStaticsSize;
     WTF::loadLoadFence();
     for (uint32_t i = 0; i < data.numberOfRoots; ++i) {
         if (roots[i] >= sizeWithoutAccess)
@@ -15219,8 +14826,6 @@ void State::visit(Visitor& visitor)
 
 template void State::visit(AbstractSlotVisitor&);
 template void State::visit(SlotVisitor&);
-
-// Stack frames. See AOTFunction.h.
 
 static const Data& dataInImage()
 {
@@ -15242,13 +14847,13 @@ static uint8_t kindByteOf(uint32_t function)
     return data.at<uint8_t>(data.functionKindsOffset)[function];
 }
 
-static uint32_t ownerOfFunction(const Data& data, uint32_t function)
+static uint32_t functionOwner(const Data& data, uint32_t function)
 {
     const uint32_t* runs = data.at<uint32_t>(data.functionAliasesOffset);
-    const uint16_t* lowHalves = reinterpret_cast<const uint16_t*>(runs + 2 * data.numberOfRunsOfFunctionAliases);
+    const uint16_t* lowHalves = reinterpret_cast<const uint16_t*>(runs + 2 * data.numberOfFunctionAliasRuns);
     const uint8_t* highBytes = reinterpret_cast<const uint8_t*>(lowHalves + data.numberOfFunctionAliases);
     uint32_t begin = 0;
-    uint32_t end = data.numberOfRunsOfFunctionAliases;
+    uint32_t end = data.numberOfFunctionAliasRuns;
     while (begin < end) {
         uint32_t middle = begin + (end - begin) / 2;
         if (runs[2 * middle] <= function)
@@ -15259,11 +14864,11 @@ static uint32_t ownerOfFunction(const Data& data, uint32_t function)
     if (!begin)
         return function;
     uint32_t index = runs[2 * begin - 1] + (function - runs[2 * begin - 2]);
-    uint32_t behindRun = begin < data.numberOfRunsOfFunctionAliases ? runs[2 * begin + 1] : data.numberOfFunctionAliases;
-    return index < behindRun ? static_cast<uint32_t>(highBytes[index]) << 16 | lowHalves[index] : function;
+    uint32_t afterRun = begin < data.numberOfFunctionAliasRuns ? runs[2 * begin + 1] : data.numberOfFunctionAliases;
+    return index < afterRun ? static_cast<uint32_t>(highBytes[index]) << 16 | lowHalves[index] : function;
 }
 
-static JSString* textOfFunction(JSGlobalObject* globalObject, uint32_t function)
+static JSString* functionSourceText(JSGlobalObject* globalObject, uint32_t function)
 {
     const Data& data = dataInImage();
     if (!data.functionTextsOffset)
@@ -15278,16 +14883,15 @@ static JSString* textOfFunction(JSGlobalObject* globalObject, uint32_t function)
     VM& vm = globalObject->vm();
     if (texts.textOffset)
         return jsOwnedString(vm, StringImpl::createWithoutCopying(std::span { data.at<Latin1Character>(texts.textOffset) + (*entry)[1], (*entry)[2] - (*entry)[1] }));
-    if (!s_textOfFunctionInFile)
+    if (!s_functionSourceProvider)
         return nullptr;
     const uint32_t* path = data.at<uint32_t>(texts.pathsOffset) + 2 * (*entry)[1];
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = s_textOfFunctionInFile(globalObject, String::fromUTF8(std::span { data.at<char8_t>(path[0]), path[1] }), (*entry)[2]);
+    String text = s_functionSourceProvider(globalObject, String::fromUTF8(std::span { data.at<char8_t>(path[0]), path[1] }), (*entry)[2]);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return text.isNull() ? nullptr : jsString(vm, WTF::move(text));
 }
 
-// By the function that owns it: see Closure::defineOwnProperty(). For every thread: a frame is reported without an Instance.
 static Lock namesReportedForFramesLock;
 static std::atomic<bool> hasNamesReportedForFrames;
 static UncheckedKeyHashMap<uint32_t, String, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>& namesReportedForFrames()
@@ -15299,7 +14903,7 @@ static UncheckedKeyHashMap<uint32_t, String, IntHash<uint32_t>, WTF::UnsignedWit
 static void setNameReportedForFrames(uint32_t function, const String& name, bool isOnlyClosure)
 {
     Locker locker { namesReportedForFramesLock };
-    uint32_t owner = ownerOfFunction(dataInImage(), function);
+    uint32_t owner = functionOwner(dataInImage(), function);
     if (isOnlyClosure)
         namesReportedForFrames().set(owner, name.isolatedCopy());
     else if (auto result = namesReportedForFrames().add(owner, String()); result.isNewEntry)
@@ -15314,16 +14918,16 @@ static String nameReportedForFrames(const Data& data, uint32_t function)
     if (!hasNamesReportedForFrames.load(std::memory_order_acquire)) [[likely]]
         return String();
     Locker locker { namesReportedForFramesLock };
-    return namesReportedForFrames().get(ownerOfFunction(data, function)).isolatedCopy();
+    return namesReportedForFrames().get(functionOwner(data, function)).isolatedCopy();
 }
 
-static bool isNamedInFramesByItsProperties(JSCell* closure)
+static bool usesOwnPropertiesForStackTraceName(JSCell* closure)
 {
     DeclaredAs declared = declaredAs(closure);
     return declared == DeclaredAs::Function || declared == DeclaredAs::Class;
 }
 
-static Vector<uint32_t, 4> functionsThatBelongTo(VM& vm, const Data& data, uint32_t owner)
+static Vector<uint32_t, 4> functionsOwnedBy(VM& vm, const Data& data, uint32_t owner)
 {
     static NeverDestroyed<UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> known;
     Locker locker { namesReportedForFramesLock };
@@ -15332,7 +14936,7 @@ static Vector<uint32_t, 4> functionsThatBelongTo(VM& vm, const Data& data, uint3
         return result.iterator->value;
     result.iterator->value.append(owner);
     const uint32_t* runs = data.at<uint32_t>(data.functionAliasesOffset);
-    const uint16_t* lowHalves = reinterpret_cast<const uint16_t*>(runs + 2 * data.numberOfRunsOfFunctionAliases);
+    const uint16_t* lowHalves = reinterpret_cast<const uint16_t*>(runs + 2 * data.numberOfFunctionAliasRuns);
     const uint8_t* highBytes = reinterpret_cast<const uint8_t*>(lowHalves + data.numberOfFunctionAliases);
     uint64_t numberOfReads = 0;
     auto ownerAt = [&](uint32_t index) {
@@ -15340,7 +14944,7 @@ static Vector<uint32_t, 4> functionsThatBelongTo(VM& vm, const Data& data, uint3
         return static_cast<uint32_t>(highBytes[index]) << 16 | lowHalves[index];
     };
     uint32_t run = 0;
-    for (uint32_t end = data.numberOfRunsOfFunctionAliases; run < end;) {
+    for (uint32_t end = data.numberOfFunctionAliasRuns; run < end;) {
         uint32_t middle = run + (end - run) / 2;
         if (runs[2 * middle] <= data.firstGenericEntrypoint)
             run = middle + 1;
@@ -15349,9 +14953,9 @@ static Vector<uint32_t, 4> functionsThatBelongTo(VM& vm, const Data& data, uint3
     }
     if (run)
         --run;
-    for (; run < data.numberOfRunsOfFunctionAliases && runs[2 * run] < data.firstGenericEntrypoint + data.numberOfConsecutiveGenericEntrypoints; ++run) {
+    for (; run < data.numberOfFunctionAliasRuns && runs[2 * run] < data.firstGenericEntrypoint + data.numberOfConsecutiveGenericEntrypoints; ++run) {
         uint32_t first = runs[2 * run + 1];
-        uint32_t behind = run + 1 < data.numberOfRunsOfFunctionAliases ? runs[2 * run + 3] : data.numberOfFunctionAliases;
+        uint32_t behind = run + 1 < data.numberOfFunctionAliasRuns ? runs[2 * run + 3] : data.numberOfFunctionAliases;
         uint32_t index = first;
         for (uint32_t end = behind; index < end;) {
             uint32_t middle = index + (end - index) / 2;
@@ -15364,21 +14968,21 @@ static Vector<uint32_t, 4> functionsThatBelongTo(VM& vm, const Data& data, uint3
             result.iterator->value.append(runs[2 * run] + (index - first));
     }
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        runtimeTable(vm).countOperation("functionsThatBelongTo", "aliases-read", numberOfReads);
+        runtimeTable(vm).countOperation("functionsOwnedBy", "aliases-read", numberOfReads);
     return result.iterator->value;
 }
 
-static String displayNameOfOnlyClosure(VM& vm, const Data& data, uint32_t function)
+static String singleClosureDisplayName(VM& vm, const Data& data, uint32_t function)
 {
-    if (!someClosureWasGivenDisplayName.load(std::memory_order_relaxed)) [[likely]]
+    if (!anyClosureHasDisplayName.load(std::memory_order_relaxed)) [[likely]]
         return String();
-    auto candidates = functionsThatBelongTo(vm, data, ownerOfFunction(data, function));
+    auto candidates = functionsOwnedBy(vm, data, functionOwner(data, function));
     for (Instance* instance : vm.m_aotInstances) {
         if (!instance->typed)
             continue;
         for (uint32_t candidate : candidates) {
-            JSCell* cell = instance->typed->closureIfMade(candidate);
-            if (!cell || !isNamedInFramesByItsProperties(cell))
+            JSCell* cell = instance->typed->closureIfCreated(candidate);
+            if (!cell || !usesOwnPropertiesForStackTraceName(cell))
                 continue;
             JSObject* closure = asObject(cell);
             unsigned attributes;
@@ -15405,7 +15009,6 @@ DeclaredAs declaredAs(JSCell* cell)
         return DeclaredAs::NotCompiled;
     if (closure->kind() == Format::FunctionKind::Constructor)
         return DeclaredAs::Class;
-    // Whatever it binds.
     if (closure->kind() == Format::FunctionKind::Bound)
         return DeclaredAs::Function;
     if (closure->isDeclaredAs(functionIsGenerator))
@@ -15423,7 +15026,7 @@ void reifyClassPrototypeIfNeeded(JSObject* object)
     ClassPrototype::look(object);
 }
 
-bool tryAssignPrimitivesToFieldsOfCompiledObject(VM& vm, JSObject* target, JSObject* source)
+bool tryAssignPrimitivesToCompiledObjectFields(VM& vm, JSObject* target, JSObject* source)
 {
     const LayoutData* layout = target->structure()->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
@@ -15441,9 +15044,9 @@ bool tryAssignPrimitivesToFieldsOfCompiledObject(VM& vm, JSObject* target, JSObj
         return true;
     };
     bool isNoted = true;
-    Structure* structureOfSource = source->structure();
-    if (structureOfSource->compiledLayout()) {
-        if (!isObjectLayout(structureOfSource->compiledLayout()->kind))
+    Structure* sourceStructure = source->structure();
+    if (sourceStructure->compiledLayout()) {
+        if (!isObjectLayout(sourceStructure->compiledLayout()->kind))
             return false;
         bool isWalked = uncheckedDowncast<Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
             isNoted = note(name, value);
@@ -15452,9 +15055,9 @@ bool tryAssignPrimitivesToFieldsOfCompiledObject(VM& vm, JSObject* target, JSObj
         if (!isWalked)
             return false;
     } else {
-        if (source->type() != FinalObjectType || source->hasNonReifiedStaticProperties() || source->canHaveExistingOwnIndexedProperties() || !structureOfSource->canPerformFastPropertyEnumerationCommon())
+        if (source->type() != FinalObjectType || source->hasNonReifiedStaticProperties() || source->canHaveExistingOwnIndexedProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon())
             return false;
-        structureOfSource->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if (entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
             isNoted = note(*entry.key(), source->getDirect(entry.offset()));
@@ -15471,14 +15074,14 @@ bool tryAssignPrimitivesToFieldsOfCompiledObject(VM& vm, JSObject* target, JSObj
     return true;
 }
 
-JSValue tryGetOwnDataOfCompiledObject(VM& vm, JSCell* cell, UniquedStringImpl* name)
+JSValue tryGetCompiledObjectOwnData(VM& vm, JSCell* cell, UniquedStringImpl* name)
 {
     return Object::tryGetOwnData(vm, cell, name);
 }
 
-std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfFieldForInterpreter(JSCell* cell, UniquedStringImpl* name)
+std::optional<std::pair<uint32_t, uint32_t>> fieldOffsetAndKindForInterpreter(JSCell* cell, UniquedStringImpl* name)
 {
-    static_assert(getByIdLargestImmediateInCell32 == undefinedCell32 && getByIdShiftOfCell32 == MarkedBlockCage::shift && 1ull << getByIdBitsOfMarkedBlockCage == MarkedBlockCage::maxSize && getByIdLeastInt32InPlace == leastInt32InPlace);
+    static_assert(getByIdMaxCell32Immediate == undefinedCell32 && getByIdCell32Shift == MarkedBlockCage::shift && 1ull << getByIdMarkedBlockCageBits == MarkedBlockCage::maxSize && getByIdMinInlineInt32 == minInlineInt32);
     const LayoutData* layout = cell->structure()->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
         return std::nullopt;
@@ -15495,8 +15098,8 @@ std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfFieldForInterpreter(
         case Store::Cell32:
         case Store::OptionalCell32:
             return GetByIdCompiledFieldKind::Cell32;
-        case Store::Int32OrElsewhere:
-            return GetByIdCompiledFieldKind::Int32OrElsewhere;
+        case Store::Int32OrNumberBox:
+            return GetByIdCompiledFieldKind::Int32OrNumberBox;
         case Store::Int32:
             return GetByIdCompiledFieldKind::Int32;
         case Store::Uint8:
@@ -15529,7 +15132,7 @@ std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfFieldForInterpreter(
     return std::pair { field->offset, static_cast<uint32_t>(*kind) };
 }
 
-bool tryStorePrimitiveIntoFieldOfCompiledObject(VM& vm, JSCell* cell, UniquedStringImpl* name, JSValue value)
+bool tryStorePrimitiveToCompiledObjectField(VM& vm, JSCell* cell, UniquedStringImpl* name, JSValue value)
 {
     const LayoutData* layout = value.isObject() ? nullptr : cell->structure()->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
@@ -15542,7 +15145,7 @@ bool tryStorePrimitiveIntoFieldOfCompiledObject(VM& vm, JSCell* cell, UniquedStr
     return field && !object->isDiscriminant(*field) && object->readInline(*field) && object->write(vm, *field, value);
 }
 
-std::optional<bool> hasOwnPropertyOfCompiledObject(JSObject* object, UniquedStringImpl* name)
+std::optional<bool> compiledObjectHasOwnProperty(JSObject* object, UniquedStringImpl* name)
 {
     const LayoutData* layout = object->structure()->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
@@ -15555,7 +15158,7 @@ std::optional<bool> hasOwnPropertyOfCompiledObject(JSObject* object, UniquedStri
     return false;
 }
 
-bool forEachOwnPropertyOfCompiledObject(JSObject* object, const ScopedLambda<bool(UniquedStringImpl&, JSValue)>& functor)
+bool forEachCompiledObjectOwnProperty(JSObject* object, const ScopedLambda<bool(UniquedStringImpl&, JSValue)>& functor)
 {
     const LayoutData* layout = object->structure()->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
@@ -15581,10 +15184,10 @@ bool forEachOwnPropertyOfCompiledObject(JSObject* object, const ScopedLambda<boo
     return true;
 }
 
-bool isOfBuiltinModule(JSCell* cell)
+bool belongsToBuiltinModule(JSCell* cell)
 {
     auto* closure = dynamicDowncast<Closure>(cell);
-    return closure && closure->isDeclaredAs(functionIsOfBuiltinModule);
+    return closure && closure->isDeclaredAs(functionIsInBuiltinModule);
 }
 
 void didChangePrototypeProperty(VM& vm, JSCell* function)
@@ -15595,53 +15198,53 @@ void didChangePrototypeProperty(VM& vm, JSCell* function)
 
 } // namespace Typed
 
-String nameOfTypedClosure(const JSFunction* closure)
+String typedClosureName(const JSFunction* closure)
 {
     const Typed::Data& data = Typed::dataInImage();
-    return Typed::textOfConstant(data, data.at<uint32_t>(data.functionsOffset)[uncheckedDowncast<Typed::Closure>(closure)->functionIndex()]);
+    return Typed::constantString(data, data.at<uint32_t>(data.functionsOffset)[uncheckedDowncast<Typed::Closure>(closure)->functionIndex()]);
 }
 
-unsigned lengthOfTypedClosure(const JSFunction* closure)
+unsigned typedClosureLength(const JSFunction* closure)
 {
     const Typed::Data& data = Typed::dataInImage();
-    return data.lengthOfFunction(uncheckedDowncast<Typed::Closure>(closure)->functionIndex());
+    return data.functionLengthOf(uncheckedDowncast<Typed::Closure>(closure)->functionIndex());
 }
 
-uint64_t closureWordOfTypedFunction(std::span<const uint8_t> image, uint32_t function, uint64_t relative)
+uint64_t typedFunctionClosureWord(std::span<const uint8_t> image, uint32_t function, uint64_t relative)
 {
     auto& header = *reinterpret_cast<const ImageHeader*>(image.data());
     RELEASE_ASSERT(header.typedDataSize);
     return Typed::closureWord(*reinterpret_cast<const Typed::Data*>(image.subspan(header.typedDataOffset).data()), function, relative);
 }
 
-RangeOfClosureWords rangeOfClosureWordsIn(std::span<const uint8_t> image)
+ClosureWordRange closureWordRangeIn(std::span<const uint8_t> image)
 {
     auto& header = *reinterpret_cast<const ImageHeader*>(image.data());
     RELEASE_ASSERT(header.typedDataSize);
     auto& data = *reinterpret_cast<const Typed::Data*>(image.subspan(header.typedDataOffset).data());
-    return { data.firstFunctionClosuresGoBy, data.endOfFunctionsClosuresGoBy, data.rowsLeftOutAheadOfClosures };
+    return { data.firstClosureFunction, data.endOfClosureFunctions, data.omittedClosureWordCount };
 }
 
-static Typed::BuiltinID entryThatTypedFunctionStandsFor(uint32_t function)
+static Typed::BuiltinID builtinEntryOfTypedFunction(uint32_t function)
 {
     const Typed::Data& data = Typed::dataInImage();
     auto* functions = data.at<uint32_t>(data.preludeFunctionsOffset);
     for (unsigned which = 0; which < Typed::numberOfPreludeFunctions; ++which) {
         if (functions[which] == function)
-            return Typed::Builtins::singleton().entryCarriedOutBy(static_cast<Typed::PreludeFunction>(which));
+            return Typed::Builtins::singleton().entryImplementedBy(static_cast<Typed::PreludeFunction>(which));
     }
     return { };
 }
 
-BuiltinInTrace builtinThatTypedFunctionStandsFor(uint32_t function)
+StackTraceBuiltinKind builtinKindOfTypedFunction(uint32_t function)
 {
-    Typed::BuiltinID id = entryThatTypedFunctionStandsFor(function);
+    Typed::BuiltinID id = builtinEntryOfTypedFunction(function);
     if (!id)
-        return BuiltinInTrace::None;
+        return StackTraceBuiltinKind::None;
     auto& builtins = Typed::Builtins::singleton();
     if (builtins.isHostFunctionInEngine(id))
-        return BuiltinInTrace::HostFunction;
-    return builtins.at(id).kind == Typed::BuiltinKind::Constructor ? BuiltinInTrace::ConstructorWrittenInJavaScript : BuiltinInTrace::WrittenInJavaScript;
+        return StackTraceBuiltinKind::HostFunction;
+    return builtins.at(id).kind == Typed::BuiltinKind::Constructor ? StackTraceBuiltinKind::JSBuiltinConstructor : StackTraceBuiltinKind::JSBuiltin;
 }
 
 String typedFunctionName(uint32_t function, bool asWritten)
@@ -15654,8 +15257,7 @@ String typedFunctionName(uint32_t function, bool asWritten)
     }
     if (static_cast<Typed::Format::FunctionKind>(Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::Format::FunctionKind::Module)
         return emptyString();
-    String name = Typed::textOfConstant(data, data.at<uint32_t>(data.functionsOffset)[function]);
-    // The `name` property of an accessor says which of the two it is. A stack trace does not.
+    String name = Typed::constantString(data, data.at<uint32_t>(data.functionsOffset)[function]);
     bool isMethod = static_cast<Typed::Format::FunctionKind>(Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::Format::FunctionKind::Method;
     if (isMethod && (name.startsWith("get "_s) || name.startsWith("set "_s)))
         return name.substring(4);
@@ -15670,7 +15272,7 @@ String typedFunctionName(VM& vm, uint32_t function, bool asWritten)
         return typedFunctionName(function, true);
     if (String reported = Typed::nameReportedForFrames(data, function); !reported.isNull()) [[unlikely]]
         return reported;
-    if (String displayName = Typed::displayNameOfOnlyClosure(vm, data, function); !displayName.isNull()) [[unlikely]]
+    if (String displayName = Typed::singleClosureDisplayName(vm, data, function); !displayName.isNull()) [[unlikely]]
         return displayName;
     return typedFunctionName(function, true);
 }
@@ -15681,7 +15283,7 @@ CodeType typedFunctionCodeType(uint32_t function)
     return static_cast<Typed::Format::FunctionKind>(kindByte & Typed::functionKindMask) == Typed::Format::FunctionKind::Module && !(kindByte & Typed::moduleIsCommonJS) ? ModuleCode : FunctionCode;
 }
 
-bool isEnteredByConstruction(const Instance* instance, const CallFrame* previousTopCallFrame)
+bool wasEnteredByConstruct(const Instance* instance, const CallFrame* previousTopCallFrame)
 {
     if (!instance->typed)
         return false;
@@ -15704,7 +15306,7 @@ bool isCompiledClassObject(JSFunction* function)
 
 bool typedFunctionHasGivenName(uint32_t function)
 {
-    return (Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::functionKindOfResumeFunctionsNamedByOthers;
+    return (Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::resumeFunctionNamedByOwnerKind;
 }
 
 bool typedFunctionIsHiddenInStackTraces(uint32_t function)
@@ -15714,15 +15316,15 @@ bool typedFunctionIsHiddenInStackTraces(uint32_t function)
 
 bool typedFunctionWraps(uint32_t wrapper, uint32_t function)
 {
-    return typedFunctionIsHiddenInStackTraces(wrapper) && Typed::ownerOfFunction(Typed::dataInImage(), wrapper) == Typed::ownerOfFunction(Typed::dataInImage(), function);
+    return typedFunctionIsHiddenInStackTraces(wrapper) && Typed::functionOwner(Typed::dataInImage(), wrapper) == Typed::functionOwner(Typed::dataInImage(), function);
 }
 
-bool typedFunctionStandsForNoFunction(uint32_t function)
+bool typedFunctionIsSynthetic(uint32_t function)
 {
-    return (Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::functionKindOfBodiesOfSeveralSites;
+    return (Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::sharedBodyFunctionKind;
 }
 
-Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
+Vector<uint8_t> imageSymbols(std::span<const uint8_t> bytes)
 {
     auto sizeOfImage = aotImageSize(bytes);
     auto codeRange = aotImageCodeRange(bytes);
@@ -15734,7 +15336,7 @@ Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
         return { };
     const Typed::Data& data = *reinterpret_cast<const Typed::Data*>(bytes.data() + header.typedDataOffset);
 
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classOfMethod;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> methodClass;
     for (uint32_t shape = 1; shape < data.numberOfLayouts; ++shape) {
         if (!data.at<uint32_t>(data.layoutsOffset)[shape])
             continue;
@@ -15743,7 +15345,7 @@ Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
             continue;
         for (auto methods : { layout.methods(), layout.staticMethods() }) {
             for (auto& method : methods)
-                classOfMethod.add(Typed::ownerOfFunction(data, method.function), layout.name);
+                methodClass.add(Typed::functionOwner(data, method.function), layout.name);
         }
     }
 
@@ -15754,9 +15356,9 @@ Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
     };
     Vector<Row> rows;
     Vector<uint8_t> names;
-    UncheckedKeyHashMap<String, uint32_t> placesOfNames;
+    UncheckedKeyHashMap<String, uint32_t> nameIndices;
     auto placeOf = [&](const String& name) {
-        return placesOfNames.ensure(name, [&] {
+        return nameIndices.ensure(name, [&] {
             uint32_t place = safeCast<uint32_t>(names.size());
             names.append(byteCast<uint8_t>(name.utf8().span()));
             names.append(0);
@@ -15776,14 +15378,14 @@ Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
             rows.append({ starts[index], end - starts[index], placeOf("(compiled code)"_s) });
             continue;
         }
-        uint32_t function = program->indexAndFlagsOfFunctions()[index] >> 3;
+        uint32_t function = program->functionIndexAndFlags()[index] >> 3;
         auto kind = static_cast<Typed::Format::FunctionKind>(data.at<uint8_t>(data.functionKindsOffset)[function] & Typed::functionKindMask);
-        String name = kind == Typed::Format::FunctionKind::Module ? String("(module)"_s) : Typed::textOfConstant(data, data.at<uint32_t>(data.functionsOffset)[function]);
+        String name = kind == Typed::Format::FunctionKind::Module ? String("(module)"_s) : Typed::constantString(data, data.at<uint32_t>(data.functionsOffset)[function]);
         if (name.isEmpty())
             name = "(anonymous)"_s;
-        if (auto found = classOfMethod.find(Typed::ownerOfFunction(data, function)); found != classOfMethod.end() && data.sizeOfString(found->value))
-            name = makeString(Typed::textOfConstant(data, found->value), '.', name);
-        if (const uint8_t* at = kind == Typed::Format::FunctionKind::Module ? program->positionsOfTypedFunction(index) : nullptr) {
+        if (auto found = methodClass.find(Typed::functionOwner(data, function)); found != methodClass.end() && data.stringSize(found->value))
+            name = makeString(Typed::constantString(data, found->value), '.', name);
+        if (const uint8_t* at = kind == Typed::Format::FunctionKind::Module ? program->typedFunctionPositions(index) : nullptr) {
             auto readVarint = [&] {
                 uint64_t value = 0;
                 for (unsigned shift = 0;; shift += 7) {
@@ -15826,7 +15428,7 @@ Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
     return result;
 }
 
-std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t function)
+std::optional<FunctionRef::ReportedPosition> typedFunctionDefinition(uint32_t function)
 {
     const ProgramData* program = ProgramData::get();
     Image* image = Image::withCode();
@@ -15843,7 +15445,7 @@ std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t 
         }
         std::ranges::sort(compiled.get());
     });
-    for (uint32_t asked : { function, Typed::ownerOfFunction(Typed::dataInImage(), function) }) {
+    for (uint32_t asked : { function, Typed::functionOwner(Typed::dataInImage(), function) }) {
         auto found = std::ranges::lower_bound(compiled.get(), asked, { }, &Compiled::first);
         if (found != compiled->end() && found->first == asked)
             return FunctionRef { nullptr, found->second }.reportedPositionFor(BytecodeIndex(0));
@@ -15851,7 +15453,7 @@ std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t 
     return std::nullopt;
 }
 
-uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc)
+uint32_t typedFunctionWithInnerEntryAt(const void* pc)
 {
     if (Options::aotProfileBreakForTesting() && StringView::fromLatin1(byteCast<char>(Options::aotProfileBreakForTesting())) == "guest"_s) [[unlikely]]
         return FunctionRef::none;
@@ -15865,7 +15467,7 @@ uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc)
     std::call_once(once, [&] {
         entries.construct();
         auto* code = static_cast<const uint8_t*>(Image::withCode()->code());
-        for (uint32_t function = program->firstFunctionClosuresGoBy; function - program->rowsLeftOutAheadOfClosures < program->numberOfTypedEntries; ++function) {
+        for (uint32_t function = program->firstClosureFunction; function - program->omittedClosureWordCount < program->numberOfTypedEntries; ++function) {
             uint64_t word = program->closureWords()[function];
             if (!word)
                 continue;
@@ -15883,32 +15485,31 @@ uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc)
     return entry.first > offset - asked.offset ? entry.second : FunctionRef::none;
 }
 
-bool typedFunctionRejectsWhatItThrows(uint32_t function)
+bool typedFunctionRejectsOnThrow(uint32_t function)
 {
-    // Where the function starts and where it goes on show in stack traces. What goes wrong while the parameters of a generator are bound is thrown to the caller, of an async generator too.
-    constexpr uint8_t looksAt = Typed::functionIsAsync | Typed::functionIsGenerator | Typed::functionIsHiddenInStackTraces;
-    if ((Typed::kindByteOf(function) & looksAt) == (Typed::functionIsAsync | Typed::functionIsHiddenInStackTraces))
+    constexpr uint8_t relevantFlags = Typed::functionIsAsync | Typed::functionIsGenerator | Typed::functionIsHiddenInStackTraces;
+    if ((Typed::kindByteOf(function) & relevantFlags) == (Typed::functionIsAsync | Typed::functionIsHiddenInStackTraces))
         return true;
     return Typed::AsyncGenerator::bodyCapturesExceptions(function);
 }
 
-void keepTypeErrorsThrown()
+void startRecordingThrownTypeErrors()
 {
-    Typed::ViolationLog::s_isKeptForHost = true;
+    Typed::ViolationLog::s_isRetainedForHost = true;
 }
 
-String typeErrorsThrown()
+String recordedThrownTypeErrors()
 {
-    Typed::ViolationLog* log = Typed::ViolationLog::singletonIfAsked(false);
-    return log ? log->placesThatThrew() : String();
+    Typed::ViolationLog* log = Typed::ViolationLog::singletonIfEnabled(false);
+    return log ? log->throwLocations() : String();
 }
 
-String nameOfSlimClosure(JSObject* closure)
+String slimClosureName(JSObject* closure)
 {
     return uncheckedDowncast<Typed::SlimClosure>(closure)->nameOfFunction();
 }
 
-String writtenNameOfClosure(JSObject* object)
+String closureDeclaredName(JSObject* object)
 {
     uint32_t function;
     if (auto* slim = dynamicDowncast<Typed::SlimClosure>(object))
@@ -15920,13 +15521,13 @@ String writtenNameOfClosure(JSObject* object)
     const Typed::Data& data = Typed::dataInImage();
     if (data.at<uint8_t>(data.givenNamesOffset)[function / 8] >> function % 8 & 1)
         return emptyString();
-    String name = Typed::textOfConstant(data, data.at<uint32_t>(data.functionsOffset)[function]);
+    String name = Typed::constantString(data, data.at<uint32_t>(data.functionsOffset)[function]);
     if (static_cast<Typed::Format::FunctionKind>(Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::Format::FunctionKind::Bound)
         return name.substring("bound "_s.length());
     return name;
 }
 
-String displayNameOfClosure(JSObject* object)
+String closureDisplayName(JSObject* object)
 {
     uint32_t function;
     if (auto* slim = dynamicDowncast<Typed::SlimClosure>(object))
@@ -15936,7 +15537,7 @@ String displayNameOfClosure(JSObject* object)
     else
         return String();
     const Typed::Data& data = Typed::dataInImage();
-    String name = Typed::textOfConstant(data, data.at<uint32_t>(data.functionsOffset)[function]);
+    String name = Typed::constantString(data, data.at<uint32_t>(data.functionsOffset)[function]);
     if (static_cast<Typed::Format::FunctionKind>(Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::Format::FunctionKind::Bound)
         return name.substring("bound "_s.length());
     if (name.startsWith('[') && data.at<uint8_t>(data.givenNamesOffset)[function / 8] >> function % 8 & 1)
@@ -15957,42 +15558,42 @@ bool isSloppyPlainClosure(JSCell* cell)
     return std::ranges::binary_search(std::span { data.at<uint32_t>(data.sloppyPlainFunctionsOffset), data.numberOfSloppyPlainFunctions }, function);
 }
 
-unsigned lengthOfSlimClosure(JSObject* closure)
+unsigned slimClosureLength(JSObject* closure)
 {
     const Typed::Data& data = Typed::dataInImage();
-    return data.lengthOfFunction(uncheckedDowncast<Typed::SlimClosure>(closure)->functionIndex());
+    return data.functionLengthOf(uncheckedDowncast<Typed::SlimClosure>(closure)->functionIndex());
 }
 
-JSValue textOfSlimClosure(JSGlobalObject* globalObject, JSObject* closure)
+JSValue slimClosureSourceText(JSGlobalObject* globalObject, JSObject* closure)
 {
     return uncheckedDowncast<Typed::SlimClosure>(closure)->toString(globalObject);
 }
 
-bool isClosureOfTypedFunction(JSCell* cell, uint32_t function)
+bool isTypedFunctionClosure(JSCell* cell, uint32_t function)
 {
     const Typed::Data& data = Typed::dataInImage();
     if (auto* slim = dynamicDowncast<Typed::SlimClosure>(cell))
-        return Typed::ownerOfFunction(data, slim->functionIndex()) == Typed::ownerOfFunction(data, function);
+        return Typed::functionOwner(data, slim->functionIndex()) == Typed::functionOwner(data, function);
     auto* closure = dynamicDowncast<Typed::Closure>(cell);
     if (!closure) {
-        Typed::BuiltinID id = entryThatTypedFunctionStandsFor(function);
+        Typed::BuiltinID id = builtinEntryOfTypedFunction(function);
         JSObject* object = id ? cell->getObject() : nullptr;
         auto& builtins = Typed::Builtins::singleton();
         return object && builtins.findCell(object->realm(), builtins.hasCell(id) ? builtins.cellOf(id) : builtins.cellOf(builtins.at(id).nameName)) == cell;
     }
-    return Typed::ownerOfFunction(data, closure->functionIndex()) == Typed::ownerOfFunction(data, function);
+    return Typed::functionOwner(data, closure->functionIndex()) == Typed::functionOwner(data, function);
 }
 
 } // namespace AOT
 
-JSValue JSObject::getDirectOfCompiledObject(VM& vm, PropertyName name, unsigned* attributes) const
+JSValue JSObject::getDirectFromCompiledObject(VM& vm, PropertyName name, unsigned* attributes) const
 {
     if (!structure()->compiledLayout())
         return { };
     return uncheckedDowncast<AOT::Typed::Object>(const_cast<JSObject*>(this))->getDirectFromNativeCode(vm, name, attributes);
 }
 
-std::optional<bool> JSObject::getOwnPropertySlotOfCompiledObject(PropertyName name, PropertySlot& slot)
+std::optional<bool> JSObject::getOwnPropertySlotFromCompiledObject(PropertyName name, PropertySlot& slot)
 {
     const AOT::Typed::LayoutData* layout = structure()->compiledLayout();
     if (!layout || !AOT::Typed::isObjectLayout(layout->kind))
@@ -16052,18 +15653,18 @@ bool isWritableWithoutLock(VM& vm, UniquedStringImpl* name, JSObject* holder, JS
     return found.isNumber() && name == vm.propertyNames->length.impl() && dynamicDowncast<JSArray>(holder);
 }
 
-bool JSObject::isRefusedByLockAlone(VM& vm, UniquedStringImpl* name, JSValue& held)
+bool JSObject::isRejectedOnlyByLock(VM& vm, UniquedStringImpl* name, JSValue& held)
 {
     held = { };
     if (vm.m_aotInstances.isEmpty() ? !vm.useImmutableIntrinsics : !vm.m_aotInstances[0]->typed)
         return false;
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(this))
-        return proxy->target()->isRefusedByLockAlone(vm, name, held);
+        return proxy->target()->isRejectedOnlyByLock(vm, name, held);
     if (isGlobalObject()) {
         if (!vm.useImmutableIntrinsics || !name)
             return false;
-        unsigned attributesOfBinding;
-        PropertyOffset offset = structure()->get(vm, name, attributesOfBinding);
+        unsigned bindingAttributes;
+        PropertyOffset offset = structure()->get(vm, name, bindingAttributes);
         if (isValidOffset(offset)) {
             held = getDirect(offset);
             return held && held.isObject() && !asObject(held)->isGlobalObject() && asObject(held)->isLockedBuiltin();
@@ -16099,7 +15700,7 @@ bool JSObject::isRefusedByLockAlone(VM& vm, UniquedStringImpl* name, JSValue& he
     return isWritableWithoutLock(vm, name, slot.slotBase(), found);
 }
 
-static bool isClassOfProgram(JSObject* function)
+static bool isProgramClass(JSObject* function)
 {
     if (dynamicDowncast<AOT::Typed::Closure>(function))
         return true;
@@ -16125,9 +15726,9 @@ bool JSObject::becomeGuarded(VM& vm)
     JSGlobalObject* globalObject = from->globalObject();
     Structure* twin = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, asObject(from->storedPrototype()), from->inlineCapacity(), false, nullptr, true);
     for (auto& [name, attributes, offset] : properties) {
-        PropertyOffset offsetInTwin = invalidOffset;
-        twin = Structure::addPropertyTransition(vm, twin, name.get(), attributes, offsetInTwin);
-        if (offsetInTwin != offset || twin->isDictionary())
+        PropertyOffset offsetInAlias = invalidOffset;
+        twin = Structure::addPropertyTransition(vm, twin, name.get(), attributes, offsetInAlias);
+        if (offsetInAlias != offset || twin->isDictionary())
             return false;
     }
     if (twin->outOfLineCapacity() != from->outOfLineCapacity())
@@ -16138,11 +15739,11 @@ bool JSObject::becomeGuarded(VM& vm)
     return true;
 }
 
-void JSObject::fixAsPrototypeOfClass(JSGlobalObject* globalObject, std::span<const Identifier> replaceable, bool constructorMayBeReplaced)
+void JSObject::lockAsClassPrototype(JSGlobalObject* globalObject, std::span<const Identifier> replaceable, bool constructorMayBeReplaced)
 {
     VM& vm = globalObject->vm();
     if (replaceable.empty() && !constructorMayBeReplaced) {
-        fixAndMakePropertiesImmutable(vm);
+        lockAndMakePropertiesImmutable(vm);
         return;
     }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -16169,15 +15770,15 @@ void JSObject::fixAsPrototypeOfClass(JSGlobalObject* globalObject, std::span<con
     structure()->setInheritorsMayOverrideReadOnlyProperties(true);
 }
 
-bool JSObject::noteIfRefusedByLockAlone(VM& vm, UniquedStringImpl* name, bool isAnswered, bool isDelete)
+bool JSObject::recordIfOnlyLockRejects(VM& vm, UniquedStringImpl* name, bool failsSilently, bool isDelete)
 {
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(this))
-        return proxy->target()->noteIfRefusedByLockAlone(vm, name, isAnswered, isDelete);
+        return proxy->target()->recordIfOnlyLockRejects(vm, name, failsSilently, isDelete);
     JSValue held;
     if (!isLockedBuiltin())
         return false;
-    bool isByLockAlone = isRefusedByLockAlone(vm, name, held) && !(isDelete && name == vm.propertyNames->length.impl() && dynamicDowncast<JSArray>(this));
-    if (!isByLockAlone && isDelete && name && !isGlobalObject() && (vm.m_aotInstances.isEmpty() || vm.m_aotInstances[0]->typed) && (name != vm.propertyNames->prototype.impl() || !isCallable())) {
+    bool isRejectedOnlyByLockHere = isRejectedOnlyByLock(vm, name, held) && !(isDelete && name == vm.propertyNames->length.impl() && dynamicDowncast<JSArray>(this));
+    if (!isRejectedOnlyByLockHere && isDelete && name && !isGlobalObject() && (vm.m_aotInstances.isEmpty() || vm.m_aotInstances[0]->typed) && (name != vm.propertyNames->prototype.impl() || !isCallable())) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool isOwn = methodTable()->getOwnPropertySlot(this, globalObject(), PropertyName(name), slot);
@@ -16186,44 +15787,44 @@ bool JSObject::noteIfRefusedByLockAlone(VM& vm, UniquedStringImpl* name, bool is
             return false;
         }
         if (isOwn && name->isSymbol())
-            isByLockAlone = this != globalObject()->functionPrototype() || name != vm.propertyNames->hasInstanceSymbol.impl();
+            isRejectedOnlyByLockHere = this != globalObject()->functionPrototype() || name != vm.propertyNames->hasInstanceSymbol.impl();
         else if (isOwn && !slot.isValue())
-            isByLockAlone = true;
+            isRejectedOnlyByLockHere = true;
         else if (isOwn) {
             JSValue found = slot.getValue(globalObject(), PropertyName(name));
-            isByLockAlone = found.isCell() ? !found.isSymbol() : found.isNumber() && isCallable() && name == vm.propertyNames->length.impl();
+            isRejectedOnlyByLockHere = found.isCell() ? !found.isSymbol() : found.isNumber() && isCallable() && name == vm.propertyNames->length.impl();
         }
     }
-    if (!isByLockAlone)
+    if (!isRejectedOnlyByLockHere)
         return false;
     AOT::Typed::State* state = vm.m_aotInstances.isEmpty() ? nullptr : vm.m_aotInstances[0]->typed;
-    JSObject* constructor = isCallable() || isGlobalObject() ? nullptr : AOT::Typed::constructorOfLockedPrototype(vm, this);
-    bool isOfClassOfProgram = isClassOfProgram(constructor ? constructor : this);
-    bool isThrownInstead = isAnswered && isOfClassOfProgram && (!state || !state->data.logsTypeErrors);
-    noteRefusalByLock(vm, name, { }, isAnswered && !isThrownInstead);
-    return !isAnswered || isThrownInstead;
+    JSObject* constructor = isCallable() || isGlobalObject() ? nullptr : AOT::Typed::lockedPrototypeConstructor(vm, this);
+    bool belongsToProgramClass = isProgramClass(constructor ? constructor : this);
+    bool throwsInstead = failsSilently && belongsToProgramClass && (!state || !state->data.logsTypeErrors);
+    recordLockViolation(vm, name, { }, failsSilently && !throwsInstead);
+    return !failsSilently || throwsInstead;
 }
 
-String JSObject::wordsOfRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral otherwise)
+String JSObject::lockViolationMessage(VM& vm, UniquedStringImpl* name, ASCIILiteral otherwise)
 {
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(this))
-        return proxy->target()->wordsOfRefusalByLock(vm, name, otherwise);
+        return proxy->target()->lockViolationMessage(vm, name, otherwise);
     JSValue held;
-    if (!isRefusedByLockAlone(vm, name, held))
+    if (!isRejectedOnlyByLock(vm, name, held))
         return otherwise;
-    return AOT::wordsOfLock(vm, this, AOT::RefusedByLock::Change, name);
+    return AOT::lockedOperationErrorMessage(vm, this, AOT::LockedOperation::Change, name);
 }
 
-String AOT::wordsOfLock(VM& vm, JSObject* object, RefusedByLock refused, UniquedStringImpl* name)
+String AOT::lockedOperationErrorMessage(VM& vm, JSObject* object, LockedOperation refused, UniquedStringImpl* name)
 {
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(object))
         object = proxy->target();
-    JSObject* constructor = object->isCallable() || object->isGlobalObject() ? nullptr : Typed::constructorOfLockedPrototype(vm, object);
-    ASCIILiteral why = isClassOfProgram(constructor ? constructor : object) ? "classes are fixed in a program compiled with --aot"_s : "built-ins are locked in a program compiled with --aot"_s;
+    JSObject* constructor = object->isCallable() || object->isGlobalObject() ? nullptr : Typed::lockedPrototypeConstructor(vm, object);
+    ASCIILiteral why = isProgramClass(constructor ? constructor : object) ? "classes are fixed in a program compiled with --aot"_s : "built-ins are locked in a program compiled with --aot"_s;
     String holder = Typed::nameOfLockedObject(vm, object);
-    if (refused == RefusedByLock::ChangeOfPrototype)
+    if (refused == LockedOperation::ChangePrototype)
         return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, ": "_s, why));
-    ASCIILiteral what = refused == RefusedByLock::Delete ? "Cannot delete "_s : "Cannot change "_s;
+    ASCIILiteral what = refused == LockedOperation::Delete ? "Cannot delete "_s : "Cannot change "_s;
     if (!name || PropertyName(name).isPrivateName())
         return withAOTErrorNote(makeString(what, holder, ": "_s, why));
     if (name->isSymbol())
@@ -16231,20 +15832,20 @@ String AOT::wordsOfLock(VM& vm, JSObject* object, RefusedByLock refused, Uniqued
     return withAOTErrorNote(makeString(what, "'"_s, StringView(name), "' of "_s, holder, ": "_s, why));
 }
 
-void JSObject::noteRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral kind, bool isAnswered)
+void JSObject::recordLockViolation(VM& vm, UniquedStringImpl* name, ASCIILiteral kind, bool failsSilently)
 {
     AOT::Typed::State* state = vm.m_aotInstances.isEmpty() ? nullptr : vm.m_aotInstances[0]->typed;
     if (!state)
         return;
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(this)) {
-        proxy->target()->noteRefusalByLock(vm, name, kind, isAnswered);
+        proxy->target()->recordLockViolation(vm, name, kind, failsSilently);
         return;
     }
     if (isGlobalObject()) {
         if (!vm.useImmutableIntrinsics || !name)
             return;
-        unsigned attributesOfBinding;
-        PropertyOffset offset = structure()->get(vm, name, attributesOfBinding);
+        unsigned bindingAttributes;
+        PropertyOffset offset = structure()->get(vm, name, bindingAttributes);
         if (isValidOffset(offset)) {
             JSValue bound = getDirect(offset);
             if (!bound || !bound.isObject() || asObject(bound)->isGlobalObject() || !asObject(bound)->isLockedBuiltin())
@@ -16269,7 +15870,7 @@ void JSObject::noteRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral k
         }
     }
     if (kind.isNull()) {
-        JSObject* constructor = AOT::Typed::constructorOfLockedPrototype(vm, this);
+        JSObject* constructor = AOT::Typed::lockedPrototypeConstructor(vm, this);
         if (isGlobalObject())
             kind = "global-binding-write"_s;
         else if (!constructor)
@@ -16279,7 +15880,7 @@ void JSObject::noteRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral k
     }
     unsigned attributes;
     bool isOwn = name && !PropertyName(name).isPrivateName() && (isValidOffset(structure()->get(vm, name, attributes)) || (structure()->hasNonReifiedStaticProperties() && structure()->findPropertyHashEntry(name)));
-    state->noteViolation(vm, { .kind = kind, .onBuiltin = this, .member = isOwn ? name : nullptr, .action = isAnswered ? AOT::Typed::State::ActionOnViolation::Dropped : AOT::Typed::State::ActionOnViolation::Threw });
+    state->recordViolation(vm, { .kind = kind, .onBuiltin = this, .member = isOwn ? name : nullptr, .action = failsSilently ? AOT::Typed::State::ActionOnViolation::Dropped : AOT::Typed::State::ActionOnViolation::Threw });
 }
 
 ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName name, JSValue value, unsigned attributes)
@@ -16287,8 +15888,8 @@ ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName name, JSVa
     const auto* layout = structure()->compiledLayout();
     if (layout && uncheckedDowncast<AOT::Typed::Object>(this)->putDirectFromNativeCode(vm, name, value, attributes))
         return { };
-    if (layout && layout->mayGiveUp) {
-        uncheckedDowncast<AOT::Typed::Object>(this)->becomeOrdinary(vm);
+    if (layout && layout->mayDespecialize) {
+        uncheckedDowncast<AOT::Typed::Object>(this)->convertToOrdinaryObject(vm);
         PutPropertySlot slot(this);
         return putDirectInternal<PutModeDefineOwnProperty>(vm, name, value, attributes, slot);
     }

@@ -244,7 +244,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     BitVector emittedLatePaths;
     auto emitNearbyLatePaths = [&] {
         constexpr uint32_t maxDistance = 96;
-        if (!isX86() || !code.laysRareBlocksInGaps() || disassembler)
+        if (!isX86() || !code.placesRareBlocksInGaps() || disassembler)
             return;
         for (unsigned i = 0; i < context.nearbyLatePaths.size(); ++i) {
             auto [index, recordedOffset] = context.nearbyLatePaths[i];
@@ -356,13 +356,13 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     context.indexInBlock = UINT_MAX;
     
 #if USE(BUN_JSC_ADDITIONS)
-    if (code.notesStartOfRareCode()) [[unlikely]] {
-        CCallHelpers::Label startOfRareCode = jit.labelIgnoringWatchpoints();
+    if (code.recordsRareCodeStart()) [[unlikely]] {
+        CCallHelpers::Label rareCodeStart = jit.labelIgnoringWatchpoints();
         for (unsigned index = code.size(); index-- > code.numberOfBlocksInChains();) {
             if (BasicBlock* block = code.at(index))
-                startOfRareCode = *context.blockLabels[block];
+                rareCodeStart = *context.blockLabels[block];
         }
-        code.noteStartOfRareCode(startOfRareCode);
+        code.recordRareCodeStart(rareCodeStart);
     }
 #endif
     Vector<CCallHelpers::Label> entrypointLabels(code.numEntrypoints());

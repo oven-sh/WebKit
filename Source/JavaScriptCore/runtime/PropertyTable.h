@@ -134,7 +134,7 @@ public:
     void seal();
     void freeze();
     void fix();
-    void noteFixed();
+    void didLock();
 
     bool isSealed() const;
     bool isFrozen() const;

@@ -319,10 +319,9 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     Structure* sourceStructure = source->structure();
     if (!sourceStructure->canPerformFastPropertyEnumerationCommon()) {
 #if ENABLE(AOT)
-        // The names live as long as the program.
         if (sourceStructure->compiledLayout()) {
             EnsureStillAliveScope sourceScope(source);
-            bool isWalked = AOT::Typed::forEachOwnPropertyOfCompiledObject(source, [&](UniquedStringImpl& name, JSValue value) {
+            bool isWalked = AOT::Typed::forEachCompiledObjectOwnProperty(source, [&](UniquedStringImpl& name, JSValue value) {
                 properties.append(&name);
                 values.appendWithCrashOnOverflow(value);
                 return true;

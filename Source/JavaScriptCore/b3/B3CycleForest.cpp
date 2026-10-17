@@ -55,7 +55,7 @@ private:
 
     void decompose(const Vector<BasicBlock*>& blocks, unsigned scope)
     {
-        BasicBlock* headerOfScope = scope == none ? nullptr : m_forest.m_cycles[scope].header();
+        BasicBlock* scopeHeader = scope == none ? nullptr : m_forest.m_cycles[scope].header();
         for (BasicBlock* block : blocks)
             m_number[block] = 0;
         auto enter = [&](BasicBlock* block) {
@@ -72,7 +72,7 @@ private:
                 BasicBlock* block = m_frames.last().block;
                 if (m_frames.last().next < block->numSuccessors()) {
                     BasicBlock* successor = block->successorBlock(m_frames.last().next++);
-                    if (!isIn(scope, successor) || successor == headerOfScope)
+                    if (!isIn(scope, successor) || successor == scopeHeader)
                         continue;
                     if (!m_number[successor])
                         enter(successor);
@@ -153,7 +153,7 @@ private:
             if (!m_isPoll[member])
                 continue;
             BasicBlock* header = member;
-            bool isOfInnerLoop = false;
+            bool isInInnerLoop = false;
             while (header->numPredecessors() == 1) {
                 BasicBlock* predecessor = header->predecessor(0);
                 if (!isIn(cycle, predecessor) || predecessor->numSuccessors() != 2)
@@ -162,12 +162,12 @@ private:
                 if (other == header)
                     break;
                 if (isIn(cycle, other)) {
-                    isOfInnerLoop = header == member;
+                    isInInnerLoop = header == member;
                     break;
                 }
                 header = predecessor;
             }
-            if (isOfInnerLoop)
+            if (isInInnerLoop)
                 continue;
             BasicBlock*& best = header == member ? withoutTest : aboveLeavingTest;
             if (isBetter(header, best))

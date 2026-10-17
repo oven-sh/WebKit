@@ -90,9 +90,6 @@ public:
             return m_calleeOrInstanceToken;
         return m_form == Form::Compiled ? m_compiledCode->instanceToken : nullptr;
     }
-    // A frame of code compiled from types, which has neither a CodeBlock nor an executable. aotTypedCode: the function in the image whose
-    // code was running; bytecodeIndex is a call site of it. aotTypedFunction: the function to report, which may have been inlined
-    // into that one. See AOT::FunctionRef::Location::typedFunction.
     static constexpr uint32_t notTyped = UINT32_MAX;
     uint32_t aotTypedCode() const { return isTyped() ? m_typed.code : notTyped; }
     uint32_t aotTypedFunction() const { return isTyped() ? m_typed.function : notTyped; }
@@ -154,11 +151,11 @@ public:
     StackFrame(VM&, JSCell* owner, CodeBlock*, BytecodeIndex);
     StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken, BytecodeIndex, bool isAsyncFrame = false);
     StackFrame(VM&, JSCell* owner, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite, bool isAsyncFrame = false);
-    StackFrame(JSCell* instanceToken, const AOT::FrameInTrace& frame)
+    StackFrame(JSCell* instanceToken, const AOT::StackTraceFrame& frame)
         : m_frameData(JSFrameData { WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), frame.function, frame.typedFunction, frame.isConstructed() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, frame.callSite(), false })
     {
     }
-    static void appendTypedFrames(VM&, JSCell* owner, JSCell* instanceToken, std::span<const AOT::FrameInTrace>, Vector<StackFrame>&, bool mayBeFollowedByMore);
+    static void appendTypedFrames(VM&, JSCell* owner, JSCell* instanceToken, std::span<const AOT::StackTraceFrame>, Vector<StackFrame>&, bool mayBeFollowedByMore);
     static void appendTypedFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
     enum SuspendedTag { Suspended };
     StackFrame(SuspendedTag, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite)
@@ -173,24 +170,22 @@ public:
     bool hasLineAndColumnInfo() const
     {
         if (auto* jsFrame = jsFrameData())
-            return jsFrame->codeBlock() || jsFrame->aotExecutable() || (jsFrame->isTyped() && !standsForHostFunction());
+            return jsFrame->codeBlock() || jsFrame->aotExecutable() || (jsFrame->isTyped() && !representsHostFunction());
         return false;
     }
 
-    // Compiled from types: codeBlock() and ownerExecutable() are null though hasLineAndColumnInfo() is true.
     bool isTypedAOTFrame() const
     {
         auto* jsFrame = jsFrameData();
         return jsFrame && jsFrame->isTyped();
     }
-    // The number isClosureOfTypedFunction() takes.
     uint32_t typedAOTFunction() const { return jsFrameData()->aotTypedFunction(); }
 
     CodeBlock* codeBlock() const
     {
         if (auto* jsFrame = jsFrameData()) {
             if (jsFrame->aotExecutable()) [[unlikely]]
-                return makeCodeBlock();
+                return createCodeBlock();
             return jsFrame->codeBlock();
         }
         return nullptr;
@@ -207,7 +202,7 @@ public:
     JS_EXPORT_PRIVATE bool isConstructor() const;
     void setIsConstructed() { jsFrameData()->aotKind = CodeSpecializationKind::CodeForConstruct; }
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
-    JS_EXPORT_PRIVATE bool standsForHostFunction() const;
+    JS_EXPORT_PRIVATE bool representsHostFunction() const;
     JS_EXPORT_PRIVATE JSGlobalObject* codeGlobalObject() const;
 
     JSCell* callee() const
@@ -277,7 +272,7 @@ private:
             return jsFunctor(*jsFrame);
         return wasmFunctor(std::get<WasmFrameData>(m_frameData));
     }
-    JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const;
+    JS_EXPORT_PRIVATE CodeBlock* createCodeBlock() const;
 
     FrameData m_frameData { JSFrameData {} };
 };

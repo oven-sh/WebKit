@@ -111,9 +111,9 @@ public:
         AOT::FunctionRef unresolvedAOTFunction;
         uint32_t compiledCode { AOT::FunctionRef::none };
         uint32_t compiledFunction { AOT::FunctionRef::none };
-        uint32_t sourceOfCompiledSite { 0 };
+        uint32_t compiledSiteSource { 0 };
         bool isCompiled() const { return compiledFunction != AOT::FunctionRef::none; }
-        static constexpr SourceID firstSourceIDOfCompiledCode = 1 << 30;
+        static constexpr SourceID firstCompiledCodeSourceID = 1 << 30;
         JSObject* callee { nullptr };
         RegExp* regExp { nullptr };
 #if ENABLE(WEBASSEMBLY)

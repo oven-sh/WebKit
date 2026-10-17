@@ -53,7 +53,7 @@ class MultiArrayList final {
         return count == 1 ? found : numberOfColumns;
     }
 
-    static constexpr size_t bytesOfRowAheadOf(size_t column)
+    static constexpr size_t rowBytesBefore(size_t column)
     {
         size_t bytes = 0;
         for (size_t other = 0; other < numberOfColumns; ++other) {
@@ -64,7 +64,7 @@ class MultiArrayList final {
     }
 
 public:
-    static constexpr size_t bytesOfRow = (sizeof(FieldType<fields>) + ...);
+    static constexpr size_t rowBytes = (sizeof(FieldType<fields>) + ...);
 
     MultiArrayList() = default;
 
@@ -108,7 +108,7 @@ public:
     uint32_t size() const { return m_size; }
     uint32_t capacity() const { return m_capacity; }
     bool isEmpty() const { return !m_size; }
-    size_t sizeInBytes() const { return bytesOfRow * m_capacity; }
+    size_t sizeInBytes() const { return rowBytes * m_capacity; }
 
     template<auto field> std::span<FieldType<field>> items() LIFETIME_BOUND
     {
@@ -246,7 +246,7 @@ private:
     {
         constexpr size_t index = columnOf<field>();
         static_assert(index < numberOfColumns, "the field is one of the columns, once");
-        constexpr size_t ahead = bytesOfRowAheadOf(index);
+        constexpr size_t ahead = rowBytesBefore(index);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         return reinterpret_cast<FieldType<field>*>(bytes + ahead * capacity);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -270,7 +270,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     void setCapacity(uint32_t newCapacity)
     {
         ASSERT(newCapacity >= m_size);
-        auto* newBytes = static_cast<std::byte*>(fastMalloc(bytesOfRow * newCapacity));
+        auto* newBytes = static_cast<std::byte*>(fastMalloc(rowBytes * newCapacity));
         if (m_size)
             (memcpy(column<fields>(newBytes, newCapacity), column<fields>(m_bytes, m_capacity), sizeof(FieldType<fields>) * m_size), ...);
         fastFree(m_bytes);

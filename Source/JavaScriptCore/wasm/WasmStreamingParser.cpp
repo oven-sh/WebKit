@@ -464,11 +464,11 @@ auto StreamingParser::finalize() -> State
 
         if (m_remaining.isEmpty()) {
             if (Options::useEagerWasmModuleHashing() || mayHaveCodeInImage()) [[unlikely]] {
-                m_hasher.computeHash(m_info->digestOfSource);
-                m_info->sizeOfSource = m_totalSize.value();
-                m_info->hasDigestOfSource = true;
+                m_hasher.computeHash(m_info->sourceDigest);
+                m_info->sourceSize = m_totalSize.value();
+                m_info->hasSourceDigest = true;
                 if (Options::useEagerWasmModuleHashing())
-                    m_info->nameSection().setHash(SHA1::hexDigest(m_info->digestOfSource));
+                    m_info->nameSection().setHash(SHA1::hexDigest(m_info->sourceDigest));
             }
 
             m_info->importShouldBeHidden = FixedBitVector(m_info->imports.size());

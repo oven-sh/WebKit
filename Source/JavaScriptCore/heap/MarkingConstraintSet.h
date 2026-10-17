@@ -75,7 +75,7 @@ private:
     struct Execution {
         uint64_t mutatorExecutionVersion { 0 };
         size_t visitCountAtStartOfRound { 0 };
-        bool hasHappened { false };
+        bool didExecuteOnce { false };
     };
     
     BitVector m_unexecutedRoots;

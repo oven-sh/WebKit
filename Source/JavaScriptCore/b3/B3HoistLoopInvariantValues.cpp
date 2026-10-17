@@ -111,9 +111,6 @@ static bool isReachedWithoutTrapBarrier(const NaturalLoops& loops, const Natural
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// Ahead of time nothing says how often a loop goes around, and most go around a few times at most. So in a position-independent procedure a value is
-// hoisted only where that cannot cost anything: out of a block that is guaranteed to execute once the loop is entered, into a pre-header that leads nowhere
-// else. A load stays where the loop has a call that is not rare: across a call it would take a callee-saved register or be reloaded, which costs what the load costs.
 static constexpr unsigned maxHoistedLoadsPerLoop = 8;
 #endif
 
@@ -142,7 +139,6 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool exitsSideways { false };
         BasicBlock* preHeader { nullptr };
 #if USE(BUN_JSC_ADDITIONS)
-        // On every way around the loop that takes no rare edge.
         IndexSet<BasicBlock*> blocksGuaranteedToExecute;
         bool hasLikelyCall { false };
         unsigned numberOfHoistedLoads { 0 };
@@ -152,9 +148,9 @@ bool hoistLoopInvariantValues(Procedure& proc)
     IndexMap<NaturalLoop, LoopData> data(loops.numLoops());
     IndexSet<BasicBlock*> blockBarriers;
 #if USE(BUN_JSC_ADDITIONS)
-    constexpr unsigned maxBlocksOfLoopInOneWord = 64;
+    constexpr unsigned maxLoopBlocksPerWord = 64;
     IndexMap<BasicBlock*, unsigned> numberInLoop(proc.size(), 0u);
-    Vector<uint64_t, maxBlocksOfLoopInOneWord> onEveryWayFrom;
+    Vector<uint64_t, maxLoopBlocksPerWord> onAllPathsFrom;
 #endif
 
     for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
@@ -166,10 +162,10 @@ bool hoistLoopInvariantValues(Procedure& proc)
             data[loop].preHeader = predecessor;
         }
 #if USE(BUN_JSC_ADDITIONS)
-        if (proc.positionIndependent() && loop.size() <= maxBlocksOfLoopInOneWord) {
+        if (proc.positionIndependent() && loop.size() <= maxLoopBlocksPerWord) {
             for (unsigned i = loop.size(); i--;)
                 numberInLoop[loop.at(i)] = i;
-            onEveryWayFrom.fill(~0ull, loop.size());
+            onAllPathsFrom.fill(~0ull, loop.size());
             for (bool changed = true; changed;) {
                 changed = false;
                 for (unsigned i = 0; i < loop.size(); ++i) {
@@ -182,15 +178,15 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         if (successor.block() == loop.header() || !loops.belongsTo(successor.block(), loop))
                             common = 0;
                         else
-                            common &= onEveryWayFrom[numberInLoop[successor.block()]];
+                            common &= onAllPathsFrom[numberInLoop[successor.block()]];
                     }
                     uint64_t blocks = (goesOn ? common : 0) | 1ull << i;
-                    changed |= blocks != onEveryWayFrom[i];
-                    onEveryWayFrom[i] = blocks;
+                    changed |= blocks != onAllPathsFrom[i];
+                    onAllPathsFrom[i] = blocks;
                 }
             }
             for (unsigned i = loop.size(); i--;) {
-                if (onEveryWayFrom[numberInLoop[loop.header()]] >> i & 1)
+                if (onAllPathsFrom[numberInLoop[loop.header()]] >> i & 1)
                     data[loop].blocksGuaranteedToExecute.add(loop.at(i));
             }
         } else if (proc.positionIndependent()) {

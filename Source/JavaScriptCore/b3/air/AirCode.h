@@ -369,8 +369,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void setUnsavedCalleeSaves(const RegisterSet& registers) { m_unsavedCalleeSaves = registers; }
     const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
-    JS_EXPORT_PRIVATE void setCalleeSavesLostAtSuspensions(const RegisterSet&);
-    const RegisterSet& calleeSavesLostAtSuspensions() const { return m_calleeSavesLostAtSuspensions; }
+    JS_EXPORT_PRIVATE void setCalleeSavesClobberedAtSuspensions(const RegisterSet&);
+    const RegisterSet& calleeSavesClobberedAtSuspensions() const { return m_calleeSavesClobberedAtSuspensions; }
     void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
     struct MaskInMemory {
         int64_t mask;
@@ -379,19 +379,19 @@ public:
     };
     void setMaskInMemory(int64_t mask, GPRReg base, int32_t offset) { m_maskInMemory = MaskInMemory { mask, base, offset }; }
     const std::optional<MaskInMemory>& maskInMemory() const { return m_maskInMemory; }
-    void setLaysRareBlocksInGaps() { m_laysRareBlocksInGaps = true; }
-    bool laysRareBlocksInGaps() const { return m_laysRareBlocksInGaps; }
+    void setPlacesRareBlocksInGaps() { m_placesRareBlocksInGaps = true; }
+    bool placesRareBlocksInGaps() const { return m_placesRareBlocksInGaps; }
     void setOrdersBlocksByEdgeFrequency() { m_ordersBlocksByEdgeFrequency = true; }
     bool ordersBlocksByEdgeFrequency() const { return m_ordersBlocksByEdgeFrequency; }
     void setMayPlaceSpillsAboveFrameRecord() { m_mayPlaceSpillsAboveFrameRecord = true; }
-    void tryToPlaceSpillsAboveFrameRecord();
+    void tryPlaceSpillsAboveFrameRecord();
     bool placesSpillsAboveFrameRecord() const { return m_placesSpillsAboveFrameRecord; }
     unsigned bytesAboveFrameRecord() const { return m_bytesAboveFrameRecord; }
     unsigned bytesBelowFrameRecord() const { return m_frameSize - m_bytesAboveFrameRecord; }
-    void setMayPlaceCalleeSavesAtFootOfFrame() { m_mayPlaceCalleeSavesAtFootOfFrame = true; }
-    void tryToPlaceCalleeSavesAtFootOfFrame();
-    bool placesCalleeSavesAtFootOfFrame() const { return m_placesCalleeSavesAtFootOfFrame; }
-    void tryToPushRegistersInPrologue();
+    void setMayPlaceCalleeSavesAtFrameBottom() { m_mayPlaceCalleeSavesAtFrameBottom = true; }
+    void tryPlaceCalleeSavesAtFrameBottom();
+    bool placesCalleeSavesAtFrameBottom() const { return m_placesCalleeSavesAtFrameBottom; }
+    void tryPushRegistersInPrologue();
     const Vector<Reg, 6>& registersPushedInPrologue() const { return m_registersPushedInPrologue; }
     bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
 #endif
@@ -430,16 +430,16 @@ private:
     ScalarRegisterSet m_pinnedRegs;
 #if USE(BUN_JSC_ADDITIONS)
     RegisterSet m_unsavedCalleeSaves;
-    RegisterSet m_calleeSavesLostAtSuspensions;
+    RegisterSet m_calleeSavesClobberedAtSuspensions;
     bool m_chargesForCalleeSaves { false };
     std::optional<MaskInMemory> m_maskInMemory;
-    bool m_laysRareBlocksInGaps { false };
+    bool m_placesRareBlocksInGaps { false };
     bool m_ordersBlocksByEdgeFrequency { false };
     bool m_mayPlaceSpillsAboveFrameRecord { false };
     bool m_placesSpillsAboveFrameRecord { false };
     unsigned m_bytesAboveFrameRecord { 0 };
-    bool m_mayPlaceCalleeSavesAtFootOfFrame { false };
-    bool m_placesCalleeSavesAtFootOfFrame { false };
+    bool m_mayPlaceCalleeSavesAtFrameBottom { false };
+    bool m_placesCalleeSavesAtFrameBottom { false };
     Vector<Reg, 6> m_registersPushedInPrologue;
 #endif
     SparseCollection<StackSlot> m_stackSlots;
@@ -468,22 +468,22 @@ private:
     const Ref<PrologueGenerator> m_defaultPrologueGenerator;
     RefPtr<JSON::Array> m_ionGraphPasses;
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_notesStartOfRareCode { false };
+    bool m_recordsRareCodeStart { false };
     unsigned m_numberOfBlocksInChains { std::numeric_limits<unsigned>::max() };
-    MacroAssembler::Label m_startOfRareCode;
+    MacroAssembler::Label m_rareCodeStart;
 
 public:
-    void setNotesStartOfRareCode() { m_notesStartOfRareCode = true; }
-    bool notesStartOfRareCode() const { return m_notesStartOfRareCode; }
+    void setRecordsRareCodeStart() { m_recordsRareCodeStart = true; }
+    bool recordsRareCodeStart() const { return m_recordsRareCodeStart; }
     void setNumberOfBlocksInChains(unsigned number) { m_numberOfBlocksInChains = number; }
     unsigned numberOfBlocksInChains() const { return m_numberOfBlocksInChains; }
-    void noteStartOfRareCode(MacroAssembler::Label label) { m_startOfRareCode = label; }
-    MacroAssembler::Label startOfRareCode() const { return m_startOfRareCode; }
+    void recordRareCodeStart(MacroAssembler::Label label) { m_rareCodeStart = label; }
+    MacroAssembler::Label rareCodeStart() const { return m_rareCodeStart; }
 #endif
 #if USE(BUN_JSC_ADDITIONS)
 
 public:
-    void noteTableInCode(MacroAssembler::Label, unsigned numberOfEntries);
+    void recordTableInCode(MacroAssembler::Label, unsigned numberOfEntries);
     const Vector<std::pair<MacroAssembler::Label, unsigned>>& tablesInCode() const { return m_tablesInCode; }
 
 private:

@@ -39,18 +39,18 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeInImage);
 const uint8_t* CodeInImage::s_start;
 size_t CodeInImage::s_size;
 
-static std::array<void*, CodeInImage::numberOfOperations> operationsOfCodeInImage()
+static std::array<void*, CodeInImage::numberOfOperations> imageCodeOperations()
 {
     return { {
 #define ADDRESS_OF_OPERATION(operation) std::bit_cast<void*>(tagCFunction<OperationPtrTag>(operation)),
-        FOR_EACH_OPERATION_OF_WASM_CODE_IN_IMAGE(ADDRESS_OF_OPERATION)
+        FOR_EACH_WASM_IMAGE_CODE_OPERATION(ADDRESS_OF_OPERATION)
 #undef ADDRESS_OF_OPERATION
     } };
 }
 
 std::optional<unsigned> CodeInImage::indexOfOperation(void* operation)
 {
-    auto operations = operationsOfCodeInImage();
+    auto operations = imageCodeOperations();
     for (unsigned index = 0; index < numberOfOperations; ++index) {
         if (operations[index] == operation)
             return index;
@@ -60,17 +60,17 @@ std::optional<unsigned> CodeInImage::indexOfOperation(void* operation)
 
 unsigned CodeInImage::indexOfRTT(const ModuleInformation& info, TypeSignatureIndex type)
 {
-    return numberOfPointersOfAllModules + info.internalFunctionCount() + type.rawIndex();
+    return numberOfSharedPointers + info.internalFunctionCount() + type.rawIndex();
 }
 
-unsigned CodeInImage::indexOfCalleeOfEntryFromJavaScript(const ModuleInformation& info, unsigned entry)
+unsigned CodeInImage::indexOfJSEntrypointCallee(const ModuleInformation& info, unsigned entry)
 {
-    return numberOfPointersOfAllModules + info.internalFunctionCount() + info.typeCount() + entry;
+    return numberOfSharedPointers + info.internalFunctionCount() + info.typeCount() + entry;
 }
 
 #if ENABLE(AOT)
 
-static constexpr size_t alignmentOfCode = 16;
+static constexpr size_t codeAlignment = 16;
 
 template<typename DidLink>
 static Vector<uint8_t> link(CCallHelpers& jit, LinkBuffer::Profile profile, const DidLink& didLink)
@@ -85,7 +85,7 @@ static Vector<uint8_t> link(CCallHelpers& jit, LinkBuffer::Profile profile, cons
     return Vector<uint8_t>(std::span { start, size });
 }
 
-static Vector<uint8_t> generateStubThatThrows()
+static Vector<uint8_t> generateThrowStub()
 {
     CCallHelpers jit;
     jit.preserveReturnAddressAfterCall(GPRInfo::argumentGPR2);
@@ -94,14 +94,14 @@ static Vector<uint8_t> generateStubThatThrows()
     jit.loadPtr(CCallHelpers::Address(GPRInfo::argumentGPR3, VM::topEntryFrameOffset()), GPRInfo::argumentGPR3);
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(GPRInfo::argumentGPR3);
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
-    jit.loadPtr(CCallHelpers::Address(GPRInfo::argumentGPR0, JSWebAssemblyInstance::offsetOfPointersOfCodeInImage()), GPRInfo::nonPreservedNonArgumentGPR0);
-    jit.call(CCallHelpers::Address(GPRInfo::nonPreservedNonArgumentGPR0, CodeInImage::indexOfOperationThatThrows * sizeof(void*)), OperationPtrTag);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::argumentGPR0, JSWebAssemblyInstance::offsetOfImageCodePointers()), GPRInfo::nonPreservedNonArgumentGPR0);
+    jit.call(CCallHelpers::Address(GPRInfo::nonPreservedNonArgumentGPR0, CodeInImage::indexOfThrowOperation * sizeof(void*)), OperationPtrTag);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
     jit.breakpoint();
     return link(jit, LinkBuffer::Profile::WasmThunk, [](const uint8_t*) { });
 }
 
-static Vector<uint8_t> generateStubOfImport(const ModuleInformation& info, unsigned importIndex)
+static Vector<uint8_t> generateImportStub(const ModuleInformation& info, unsigned importIndex)
 {
     CCallHelpers jit;
     emitWasmToWasm(jit, info, importIndex);
@@ -121,11 +121,11 @@ static RegisterAtOffsetList savedRegistersFrom(const SavedRegistersInImage& save
     return list;
 }
 
-static Vector<uint8_t> generateEntryFromJavaScript(const ModuleInformation& info, const RTT& rtt, unsigned entry)
+static Vector<uint8_t> generateJSEntrypoint(const ModuleInformation& info, const RTT& rtt, unsigned entry)
 {
     CCallHelpers jit;
-    RegisterAtOffsetList registersToSpill = rtt.registersSavedByICEntrypoint();
-    bool isEmitted = rtt.emitJSToWasmICEntrypoint(jit, registersToSpill, nullptr, RTT::PointersOfICEntrypointInImage { CodeInImage::indexOfCalleeOfEntryFromJavaScript(info, entry), CodeInImage::indexOfGeneralEntryFromJavaScript });
+    RegisterAtOffsetList registersToSpill = rtt.icEntrypointSavedRegisters();
+    bool isEmitted = rtt.emitJSToWasmICEntrypoint(jit, registersToSpill, nullptr, RTT::ICEntrypointImagePointers { CodeInImage::indexOfJSEntrypointCallee(info, entry), CodeInImage::indexOfGenericJSEntrypoint });
     RELEASE_ASSERT(isEmitted);
     return link(jit, LinkBuffer::Profile::WasmThunk, [](const uint8_t*) { });
 }
@@ -133,7 +133,7 @@ static Vector<uint8_t> generateEntryFromJavaScript(const ModuleInformation& info
 struct FunctionForImage {
     Vector<uint8_t> bytes;
     Vector<std::pair<uint32_t, uint32_t>> calls;
-    Vector<uint32_t> callsToStubThatThrows;
+    Vector<uint32_t> callsToThrowStub;
     SavedRegistersInImage savedRegisters { 0, 0, 0 };
     String whyDeclined;
 };
@@ -169,7 +169,7 @@ static void compileFunction(Module& module, CalleeGroup& group, const ModuleInfo
         for (auto& call : unlinkedCalls)
             result.calls.append({ safeCast<uint32_t>(static_cast<const uint8_t*>(call.callLocation.dataLocation()) - start), safeCast<uint32_t>(info.toCodeIndex(call.functionIndexSpace).rawIndex()) });
     });
-    result.callsToStubThatThrows = WTF::move(codeForImage.callsToStubThatThrows);
+    result.callsToThrowStub = WTF::move(codeForImage.callsToThrowStub);
     auto& savedRegisters = (*compiled)->entrypoint.calleeSaveRegisters;
     for (auto& entry : savedRegisters) {
         if (entry.width() != conservativeWidthWithoutVectors(entry.reg())) {
@@ -273,26 +273,26 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
 
     ModuleForImage result;
     result.digest = digestOf(source);
-    result.sizeOfSource = safeCast<uint32_t>(source.size());
+    result.sourceSize = safeCast<uint32_t>(source.size());
     result.isForSignalingMemory = mode == MemoryMode::Signaling;
     auto place = [&](const Vector<uint8_t>& bytes) {
-        result.code.insertFill(result.code.size(), isX86() ? 0xcc : 0, WTF::roundUpToMultipleOf<alignmentOfCode>(result.code.size()) - result.code.size());
+        result.code.insertFill(result.code.size(), isX86() ? 0xcc : 0, WTF::roundUpToMultipleOf<codeAlignment>(result.code.size()) - result.code.size());
         uint32_t at = safeCast<uint32_t>(result.code.size());
         result.code.appendVector(bytes);
         return at;
     };
-    uint32_t stubThatThrows = place(generateStubThatThrows());
+    uint32_t throwStub = place(generateThrowStub());
     for (unsigned index = 0; index < info.importFunctionCount(); ++index)
-        result.stubsOfImports.append(place(generateStubOfImport(info, index)));
+        result.importStubs.append(place(generateImportStub(info, index)));
     for (auto& exported : info.exports) {
         if (exported.kind != ExternalKind::Function || exported.kindIndex < info.importFunctionCount())
             continue;
         uint32_t type = info.typeSignatureIndexFromFunctionIndexSpace(FunctionSpaceIndex(exported.kindIndex)).rawIndex();
         const RTT& rtt = info.rtt(TypeSignatureIndex(type));
-        if (!rtt.mayHaveICEntrypointInImage() || result.entriesFromJavaScript.containsIf([&](auto& entry) { return &info.rtt(TypeSignatureIndex(entry.type)) == &rtt; }))
+        if (!rtt.mayHaveICEntrypointInImage() || result.jsEntrypoints.containsIf([&](auto& entry) { return &info.rtt(TypeSignatureIndex(entry.type)) == &rtt; }))
             continue;
-        uint32_t code = place(generateEntryFromJavaScript(info, rtt, result.entriesFromJavaScript.size()));
-        result.entriesFromJavaScript.append({ type, code });
+        uint32_t code = place(generateJSEntrypoint(info, rtt, result.jsEntrypoints.size()));
+        result.jsEntrypoints.append({ type, code });
     }
     for (auto& function : functions) {
         bool functionHasVectors = info.usesSIMD(FunctionCodeIndex(result.entries.size()));
@@ -304,7 +304,7 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
             result.savedRegisters.append(function.savedRegisters);
         }
         RELEASE_ASSERT(savedRegisters < functionUsesVectors);
-        result.savedRegistersOfFunctions.append(static_cast<uint16_t>(savedRegisters | (functionHasVectors ? functionUsesVectors : 0)));
+        result.functionSavedRegisters.append(static_cast<uint16_t>(savedRegisters | (functionHasVectors ? functionUsesVectors : 0)));
     }
     result.entries.append(safeCast<uint32_t>(result.code.size()));
     if (result.code.size() > GB) {
@@ -314,8 +314,8 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
         for (auto [endOfCall, target] : functions[index].calls)
             linkCall(result.code, result.entries[index] + endOfCall, result.entries[target]);
-        for (uint32_t endOfCall : functions[index].callsToStubThatThrows)
-            linkCall(result.code, result.entries[index] + endOfCall, stubThatThrows);
+        for (uint32_t endOfCall : functions[index].callsToThrowStub)
+            linkCall(result.code, result.entries[index] + endOfCall, throwStub);
     }
     return result;
 }
@@ -324,40 +324,40 @@ std::pair<Vector<uint8_t>, Vector<uint8_t>> CodeInImage::layOut(Vector<ModuleFor
 {
     Vector<uint8_t> directory;
     Vector<uint8_t> code;
-    auto placeInDirectory = [&](std::span<const uint8_t> bytes) {
+    auto appendToDirectory = [&](std::span<const uint8_t> bytes) {
         directory.insertFill(directory.size(), 0, WTF::roundUpToMultipleOf<8>(directory.size()) - directory.size());
         uint32_t at = safeCast<uint32_t>(directory.size());
         directory.append(bytes);
         return at;
     };
     DirectoryInImage header { safeCast<uint32_t>(modules.size()), 0 };
-    placeInDirectory(asByteSpan(header));
+    appendToDirectory(asByteSpan(header));
     size_t recordsAt = directory.size();
     directory.insertFill(directory.size(), 0, modules.size() * sizeof(ModuleInImage));
     for (size_t index = 0; index < modules.size(); ++index) {
         auto& module = modules[index];
-        code.insertFill(code.size(), isX86() ? 0xcc : 0, WTF::roundUpToMultipleOf<alignmentOfCode>(code.size()) - code.size());
+        code.insertFill(code.size(), isX86() ? 0xcc : 0, WTF::roundUpToMultipleOf<codeAlignment>(code.size()) - code.size());
         uint32_t base = safeCast<uint32_t>(code.size());
         code.appendVector(module.code);
         for (uint32_t& entry : module.entries)
             entry += base;
-        for (uint32_t& stub : module.stubsOfImports)
+        for (uint32_t& stub : module.importStubs)
             stub += base;
-        for (auto& entry : module.entriesFromJavaScript)
+        for (auto& entry : module.jsEntrypoints)
             entry.code += base;
         ModuleInImage record { };
         record.digest = module.digest;
-        record.sizeOfSource = module.sizeOfSource;
+        record.sourceSize = module.sourceSize;
         record.isForSignalingMemory = module.isForSignalingMemory;
         record.usesVectors = module.usesVectors;
         record.numberOfFunctions = safeCast<uint32_t>(module.entries.size() - 1);
-        record.numberOfImportedFunctions = safeCast<uint32_t>(module.stubsOfImports.size());
-        record.entries = placeInDirectory(asBytes(module.entries.span()));
-        record.stubsOfImports = placeInDirectory(asBytes(module.stubsOfImports.span()));
-        record.numberOfEntriesFromJavaScript = safeCast<uint32_t>(module.entriesFromJavaScript.size());
-        record.entriesFromJavaScript = placeInDirectory(asBytes(module.entriesFromJavaScript.span()));
-        record.savedRegistersOfFunctions = placeInDirectory(asBytes(module.savedRegistersOfFunctions.span()));
-        record.savedRegisters = placeInDirectory(asBytes(module.savedRegisters.span()));
+        record.numberOfImportedFunctions = safeCast<uint32_t>(module.importStubs.size());
+        record.entries = appendToDirectory(asBytes(module.entries.span()));
+        record.importStubs = appendToDirectory(asBytes(module.importStubs.span()));
+        record.numberOfJSEntrypoints = safeCast<uint32_t>(module.jsEntrypoints.size());
+        record.jsEntrypoints = appendToDirectory(asBytes(module.jsEntrypoints.span()));
+        record.functionSavedRegisters = appendToDirectory(asBytes(module.functionSavedRegisters.span()));
+        record.savedRegisters = appendToDirectory(asBytes(module.savedRegisters.span()));
         memcpy(directory.mutableSpan().data() + recordsAt + index * sizeof(ModuleInImage), &record, sizeof(record));
     }
     return { WTF::move(directory), WTF::move(code) };
@@ -370,7 +370,7 @@ bool CodeInImage::isInProcess()
 
 static const ModuleInImage* find(const ModuleInformation& info)
 {
-    if (!info.hasDigestOfSource)
+    if (!info.hasSourceDigest)
         return nullptr;
     const uint8_t* directory = AOT::Image::webAssembly().first;
     if (!directory)
@@ -378,7 +378,7 @@ static const ModuleInImage* find(const ModuleInformation& info)
     auto& header = *reinterpret_cast<const DirectoryInImage*>(directory);
     std::span modules { reinterpret_cast<const ModuleInImage*>(directory + sizeof(DirectoryInImage)), header.numberOfModules };
     for (auto& module : modules) {
-        if (module.sizeOfSource != info.sizeOfSource || module.digest != info.digestOfSource)
+        if (module.sourceSize != info.sourceSize || module.digest != info.sourceDigest)
             continue;
         RELEASE_ASSERT(module.numberOfFunctions == info.internalFunctionCount() && module.numberOfImportedFunctions == info.importFunctionCount());
         return module.usesVectors && !Options::useWasmSIMD() ? nullptr : &module;
@@ -386,10 +386,10 @@ static const ModuleInImage* find(const ModuleInformation& info)
     return nullptr;
 }
 
-const uint16_t* CodeInImage::savedRegistersOfFunctionsIfFound(const ModuleInformation& info)
+const uint16_t* CodeInImage::functionSavedRegistersIfFound(const ModuleInformation& info)
 {
     const ModuleInImage* module = find(info);
-    return module ? reinterpret_cast<const uint16_t*>(AOT::Image::webAssembly().first + module->savedRegistersOfFunctions) : nullptr;
+    return module ? reinterpret_cast<const uint16_t*>(AOT::Image::webAssembly().first + module->functionSavedRegisters) : nullptr;
 }
 
 RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation& info, const IPIntCallees& ipintCallees, MemoryMode mode)
@@ -402,22 +402,22 @@ RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation& info, const 
 }
 
 CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipintCallees, const ModuleInImage& module, const uint8_t* directory, const uint8_t* code)
-    : m_pointers(numberOfPointersOfAllModules + info.internalFunctionCount() + info.typeCount() + module.numberOfEntriesFromJavaScript)
-    , m_stubsOfImports(module.numberOfImportedFunctions)
+    : m_pointers(numberOfSharedPointers + info.internalFunctionCount() + info.typeCount() + module.numberOfJSEntrypoints)
+    , m_importStubs(module.numberOfImportedFunctions)
     , m_isForSignalingMemory(module.isForSignalingMemory)
 {
-    auto operations = operationsOfCodeInImage();
+    auto operations = imageCodeOperations();
     for (unsigned index = 0; index < numberOfOperations; ++index)
         m_pointers[index] = operations[index];
-    m_pointers[indexOfGeneralEntryFromJavaScript] = LLInt::getCodePtr<JSEntryPtrTag>(js_to_wasm_wrapper_entry).taggedPtr();
+    m_pointers[indexOfGenericJSEntrypoint] = LLInt::getCodePtr<JSEntryPtrTag>(js_to_wasm_wrapper_entry).taggedPtr();
 
     auto* entries = reinterpret_cast<const uint32_t*>(directory + module.entries);
-    auto* savedRegistersOfFunctions = reinterpret_cast<const uint16_t*>(directory + module.savedRegistersOfFunctions);
+    auto* functionSavedRegisters = reinterpret_cast<const uint16_t*>(directory + module.functionSavedRegisters);
     auto* savedRegisters = reinterpret_cast<const SavedRegistersInImage*>(directory + module.savedRegisters);
     m_callees = FixedVector<Ref<OMGCallee>>::createWithSizeFromGenerator(module.numberOfFunctions, [&](size_t index) {
         FunctionSpaceIndex functionIndexSpace = info.toSpaceIndex(FunctionCodeIndex(index));
         Ref<OMGCallee> callee = OMGCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { ipintCallees.at(index).get() });
-        callee->setCodeInImage(std::span { code + entries[index], entries[index + 1] - entries[index] }, savedRegistersFrom(savedRegisters[savedRegistersOfFunctions[index] & ~functionUsesVectors]));
+        callee->setCodeInImage(std::span { code + entries[index], entries[index + 1] - entries[index] }, savedRegistersFrom(savedRegisters[functionSavedRegisters[index] & ~functionUsesVectors]));
         m_pointers[indexOfCallee(index)] = CalleeBits::boxNativeCallee(callee.ptr());
         return callee;
     });
@@ -426,33 +426,33 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     for (uint32_t type = 0; type < info.typeCount(); ++type)
         m_pointers[indexOfRTT(info, TypeSignatureIndex(type))] = const_cast<RTT*>(&info.rtt(TypeSignatureIndex(type)));
 
-    auto* entriesFromJavaScript = reinterpret_cast<const EntryFromJavaScriptInImage*>(directory + module.entriesFromJavaScript);
-    for (unsigned index = 0; index < module.numberOfEntriesFromJavaScript; ++index) {
-        const RTT& rtt = info.rtt(TypeSignatureIndex(entriesFromJavaScript[index].type));
-        Ref<JSToWasmICCallee> callee = JSToWasmICCallee::create(rtt.registersSavedByICEntrypoint());
-        callee->setEntrypoint(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(code + entriesFromJavaScript[index].code))));
-        m_pointers[indexOfCalleeOfEntryFromJavaScript(info, index)] = CalleeBits::boxNativeCallee(callee.ptr());
-        m_entriesFromJavaScript.append({ &rtt, WTF::move(callee) });
+    auto* jsEntrypoints = reinterpret_cast<const JSEntrypointInImage*>(directory + module.jsEntrypoints);
+    for (unsigned index = 0; index < module.numberOfJSEntrypoints; ++index) {
+        const RTT& rtt = info.rtt(TypeSignatureIndex(jsEntrypoints[index].type));
+        Ref<JSToWasmICCallee> callee = JSToWasmICCallee::create(rtt.icEntrypointSavedRegisters());
+        callee->setEntrypoint(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(code + jsEntrypoints[index].code))));
+        m_pointers[indexOfJSEntrypointCallee(info, index)] = CalleeBits::boxNativeCallee(callee.ptr());
+        m_jsEntrypoints.append({ &rtt, WTF::move(callee) });
     }
 
-    auto* stubsOfImports = reinterpret_cast<const uint32_t*>(directory + module.stubsOfImports);
+    auto* importStubs = reinterpret_cast<const uint32_t*>(directory + module.importStubs);
     for (unsigned index = 0; index < module.numberOfImportedFunctions; ++index)
-        m_stubsOfImports[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(code + stubsOfImports[index]));
+        m_importStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(code + importStubs[index]));
 }
 
 #else
 
 bool CodeInImage::isInProcess() { return false; }
-const uint16_t* CodeInImage::savedRegistersOfFunctionsIfFound(const ModuleInformation&) { return nullptr; }
+const uint16_t* CodeInImage::functionSavedRegistersIfFound(const ModuleInformation&) { return nullptr; }
 RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation&, const IPIntCallees&, MemoryMode) { return nullptr; }
 
 #endif // ENABLE(AOT)
 
 CodeInImage::~CodeInImage() = default;
 
-CodePtr<JSEntryPtrTag> CodeInImage::entryFromJavaScript(const RTT& rtt) const
+CodePtr<JSEntryPtrTag> CodeInImage::jsEntrypoint(const RTT& rtt) const
 {
-    for (auto& [type, callee] : m_entriesFromJavaScript) {
+    for (auto& [type, callee] : m_jsEntrypoints) {
         if (type == &rtt)
             return callee->jsToWasm();
     }

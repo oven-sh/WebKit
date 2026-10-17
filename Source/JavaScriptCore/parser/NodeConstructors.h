@@ -846,8 +846,8 @@ namespace JSC {
         , m_expr(expr)
         , m_id(id)
         , m_passes(passes)
-        , m_least(least)
-        , m_most(most)
+        , m_minimum(least)
+        , m_maximum(most)
     {
         m_position = expr->position();
         m_endOffset = expr->endOffset();

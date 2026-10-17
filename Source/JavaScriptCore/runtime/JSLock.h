@@ -170,7 +170,7 @@ private:
     VM* m_vm;
     AtomStringTable* m_entryAtomStringTable; 
     MarkedBlockCage* m_entryMarkedBlockCage { nullptr };
-    uintptr_t m_baseOfEntryMarkedBlockCage { 0 };
+    uintptr_t m_entryMarkedBlockCageBase { 0 };
 };
 
 } // namespace

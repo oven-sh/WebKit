@@ -22,9 +22,6 @@
 
 namespace JSC { namespace AOT {
 
-// The family aot/builtins/promise.def.
-
-// As JSPromise::resolveWithInternalMicrotaskForAsyncAwait(), which looks nothing up for the first two either.
 static ALWAYS_INLINE void resumeWhenSettled(JSGlobalObject* globalObject, VM& vm, JSValue awaited, InternalMicrotask task, JSCell* resumeClosure)
 {
     if (!awaited.isObject()) {
@@ -65,7 +62,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSuspendAtFirstAwait, void, (Instance* 
     auto word = [](JSCell* cell, ptrdiff_t offset) -> uint64_t& {
         return *reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(cell) + offset);
     };
-    word(frame, ResumeClosureRequest::wordOfFrameOf(request) * sizeof(uint64_t)) = 0;
+    word(frame, ResumeClosureRequest::frameWordOf(request) * sizeof(uint64_t)) = 0;
     JSCell* resumeClosure = instance->typed->allocate(vm, ClosureRequest::allocationOf(request));
     word(resumeClosure, JSObject::butterflyOffset()) = 0;
     word(resumeClosure, JSCallee::offsetOfScopeChain()) = std::bit_cast<uint64_t>(instance->globalObject);
@@ -74,7 +71,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSuspendAtFirstAwait, void, (Instance* 
     WTF::storeStoreFence();
     word(resumeClosure, Typed::Closure::offsetOfEntry()) = instance->typedFunctions[ClosureRequest::functionOf(request)] | 1ULL << ClosureWord::isNotCallableBit;
     WTF::storeStoreFence();
-    word(frame, ResumeClosureRequest::wordOfFrameOf(request) * sizeof(uint64_t)) = std::bit_cast<uint64_t>(resumeClosure);
+    word(frame, ResumeClosureRequest::frameWordOf(request) * sizeof(uint64_t)) = std::bit_cast<uint64_t>(resumeClosure);
     vm.writeBarrier(frame);
     resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, resumeClosure);
     OPERATION_RETURN(scope);
@@ -86,7 +83,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSaveFrameAndAwait, JSCell*, (Instance*
     Typed::SavedFrame* saved = Typed::SavedFrame::save(vm, *instance, std::bit_cast<uint64_t*>(frame), std::bit_cast<const uint64_t*>(bottom), std::bit_cast<void*>(resumeAddress), std::bit_cast<const uint64_t*>(extra));
     resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, saved);
     if (scope.exception()) [[unlikely]]
-        saved->willBeLaidOnStack();
+        saved->willBeRestoredToStack();
     OPERATION_RETURN(scope, saved->promise());
 }
 
@@ -98,16 +95,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwaitWithSavedFrame, JSCell*, (Instanc
         OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promise());
     resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, saved);
     if (scope.exception()) [[unlikely]]
-        uncheckedDowncast<Typed::SavedFrame>(saved)->willBeLaidOnStack();
+        uncheckedDowncast<Typed::SavedFrame>(saved)->willBeRestoredToStack();
     OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promise());
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTakeStepAtOnceOrAwait, EncodedJSValue, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStepOrAwait, EncodedJSValue, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
 {
     VM& vm = *instance->vm;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    JSObject* result = driveAsyncFromSyncIteratorAtOnceOrWithDriver(instance->globalObject, uncheckedDowncast<JSAsyncFromSyncIterator>(JSValue::decode(awaited)), asObject(saved));
+    JSObject* result = driveAsyncFromSyncIterator(instance->globalObject, uncheckedDowncast<JSAsyncFromSyncIterator>(JSValue::decode(awaited)), asObject(saved));
     return result ? JSValue::encode(result) : JSValue::encode(JSValue());
 }
 
@@ -141,7 +138,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetIteratorNext, EncodedJSValue, (Inst
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue iterator = JSValue::decode(encodedIterator);
-    if (auto* generator = dynamicDowncast<Typed::Generator>(iterator); generator && generator->iteratesAsMade(globalObject))
+    if (auto* generator = dynamicDowncast<Typed::Generator>(iterator); generator && generator->hasUnmodifiedIteration(globalObject))
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     OPERATION_RETURN(scope, JSValue::encode(iterator.get(globalObject, vm.propertyNames->next)));
 }
@@ -151,7 +148,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGeneratorResume, EncodedJSValue, (Inst
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     auto* inner = uncheckedDowncast<Typed::Generator>(generator);
     auto resumeMode = static_cast<Typed::Generator::ResumeMode>(JSValue::decode(mode).asInt32());
-    if (resumeMode != Typed::Generator::ResumeMode::Next && !inner->iteratesAsMade(globalObject))
+    if (resumeMode != Typed::Generator::ResumeMode::Next && !inner->hasUnmodifiedIteration(globalObject))
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     bool isDone;
     OPERATION_RETURN(scope, JSValue::encode(inner->resume(globalObject, resumeMode, JSValue::decode(value), isDone)));
@@ -168,7 +165,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetAsyncIteratorNext, EncodedJSValue, 
     JSValue iterator = JSValue::decode(encodedIterator);
     if (iterator.isCell() && iterator.asCell()->type() == JSAsyncFromSyncIteratorType)
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
-    if (auto* generator = dynamicDowncast<Typed::AsyncGenerator>(iterator); generator && generator->iteratesAsMade(globalObject))
+    if (auto* generator = dynamicDowncast<Typed::AsyncGenerator>(iterator); generator && generator->hasUnmodifiedIteration(globalObject))
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     JSValue next = iterator.get(globalObject, vm.propertyNames->next);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -188,7 +185,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedAsyncIteratorNext, EncodedJSValue, (In
     }
     auto* wrapper = uncheckedDowncast<JSAsyncFromSyncIterator>(iterator);
     if (!instance->awaitMustSuspend && instance->microtaskQueue->isEmpty() && Typed::SavedFrame::isEnteredByJobLoop(*instance, std::bit_cast<const uint64_t*>(callFrame->callerFrame()))) {
-        JSPromise*& immediateStep = instance->typed->immediateStepOfAsyncGenerators;
+        JSPromise*& immediateStep = instance->typed->asyncGeneratorImmediateStep;
         if (!immediateStep) [[unlikely]] {
             immediateStep = JSPromise::create(vm, globalObject->promiseStructure());
             immediateStep->fulfill(vm, createIteratorResultObject(globalObject, jsUndefined(), false));
@@ -207,10 +204,8 @@ using namespace B3;
 std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const Type> arguments)
 {
     switch (which) {
-    // A promise that is not as the realm makes them is asked for its `constructor`, any other object for `then`.
     case InlineBuiltin::PromiseResolve:
         return !arguments.empty() && arguments[0].hasObjects() ? Writes::Heap : Writes::RuntimeState;
-    // The receiver finds the constructor and the species the realm started with.
     case InlineBuiltin::PromiseThen:
     case InlineBuiltin::PromiseCatch:
         return Writes::RuntimeState;
@@ -218,7 +213,6 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
         return Writes::Nothing;
     case InlineBuiltin::AwaitedValue:
         return Writes::RuntimeState;
-    // Reading `constructor` or `then` of what is awaited runs code.
     case InlineBuiltin::SuspendAsyncFunction:
     case InlineBuiltin::AwaitBySavingFrame:
     case InlineBuiltin::GetAsyncIteratorNext:
@@ -236,11 +230,11 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
     }
 }
 
-bool Lowering::lacksThenUnlessMarked(const Type& type) const
+bool Lowering::isNotThenableWithoutExtraProperties(const Type& type) const
 {
     auto then = m_program.find(asBytes("then"_s.span8()));
-    return then && !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.views.isEmpty() && std::ranges::all_of(type.views, [&](LayoutID view) {
-        return isObjectLayout(m_program.at(view).kind) && onlyExtraPropertiesSupply(m_program, view, *then);
+    return then && !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.objectLayouts.isEmpty() && std::ranges::all_of(type.objectLayouts, [&](LayoutID view) {
+        return isObjectLayout(m_program.at(view).kind) && isOnlyInExtraProperties(m_program, view, *then);
     });
 }
 
@@ -260,8 +254,8 @@ bool Lowering::isOnlyAwaited(ValueID awaited)
     auto& callee = m_program.at(made.function());
     if (!callee.resumeFunction || (callee.declaredAs & (functionIsAsync | functionIsGenerator)) != functionIsAsync)
         return false;
-    if (!m_didFindWhatIsUsedOtherwiseThanAwaited) {
-        m_didFindWhatIsUsedOtherwiseThanAwaited = true;
+    if (!m_didFindNonAwaitUses) {
+        m_didFindNonAwaitUses = true;
         for (auto& block : m_function.blocks) {
             for (ValueID id : block.values) {
                 auto& user = m_function.at(id);
@@ -275,25 +269,25 @@ bool Lowering::isOnlyAwaited(ValueID awaited)
                 }
                 for (ValueID child : user.children) {
                     if (child)
-                        m_isUsedOtherwiseThanAwaited.set(child.index());
+                        m_hasNonAwaitUse.set(child.index());
                 }
                 for (unsigned i = 0; i < user.arguments.size(); ++i) {
                     if (i != awaitedArgument)
-                        m_isUsedOtherwiseThanAwaited.set(user.arguments[i].index());
+                        m_hasNonAwaitUse.set(user.arguments[i].index());
                 }
             }
             if (block.terminator.value)
-                m_isUsedOtherwiseThanAwaited.set(block.terminator.value.index());
+                m_hasNonAwaitUse.set(block.terminator.value.index());
             for (auto& target : block.terminator.targets) {
                 for (ValueID argument : target.arguments)
-                    m_isUsedOtherwiseThanAwaited.set(argument.index());
+                    m_hasNonAwaitUse.set(argument.index());
             }
         }
     }
-    return !m_isUsedOtherwiseThanAwaited.get(awaited.index());
+    return !m_hasNonAwaitUse.get(awaited.index());
 }
 
-CellPointer Lowering::objectAwaitedOrElse(ValueID awaited, LBasicBlock isNoObject)
+CellPointer Lowering::awaitedObjectOrElse(ValueID awaited, LBasicBlock notObject)
 {
     Operand operand = get(awaited);
     CellPointer cell;
@@ -302,13 +296,13 @@ CellPointer Lowering::objectAwaitedOrElse(ValueID awaited, LBasicBlock isNoObjec
     else {
         Boxed boxed = operand.as<Boxed>();
         LBasicBlock isCellCase = m_out.newBlock();
-        m_out.branch(isCell(boxed, typeOf(awaited)).value(), unsure(isCellCase), unsure(isNoObject));
+        m_out.branch(isCell(boxed, typeOf(awaited)).value(), unsure(isCellCase), unsure(notObject));
         m_out.appendTo(isCellCase);
         cell = asCell(boxed);
     }
     if (typeOf(awaited).primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt)) {
         LBasicBlock isObject = m_out.newBlock();
-        m_out.branch(below(typeOfCell(cell), word32(ObjectType)).value(), unsure(isNoObject), unsure(isObject));
+        m_out.branch(below(loadCellType(cell), word32(ObjectType)).value(), unsure(notObject), unsure(isObject));
         m_out.appendTo(isObject);
     }
     return cell;
@@ -319,10 +313,10 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
     static constexpr unsigned flagsShift = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
     ValueID awaited = value.arguments[0];
     Rep rep = get(awaited).rep;
-    if (!Options::validateAOTTypedFacts() && (rep == Rep::Cell || rep == Rep::JSValue) && numberOfPredecessorsOf(goesOn) == 1 && !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id)) {
+    if (!Options::validateAOTTypedFacts() && (rep == Rep::Cell || rep == Rep::JSValue) && numberOfPredecessorsOf(goesOn) == 1 && !m_isInLoop && !m_program.isHotOutsideLoops(m_id)) {
         static_assert(static_cast<unsigned>(Stub::AwaitMayContinue) + 1 == static_cast<unsigned>(Stub::LeafAwaitMayContinue));
         LValue answer = callAllocationStub(Stub::AwaitMayContinue, { { in<Boxed>(awaited).value(), GPRInfo::argumentGPR1 }, { in<Integer>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, { Writes::RuntimeState, false }, false);
-        m_valuesAwaitedInPlace.set(&m_function.at(goesOn), std::pair { awaited, answer });
+        m_inlineAwaitedValues.set(&m_function.at(goesOn), std::pair { awaited, answer });
         m_out.branch(m_out.notZero64(answer), unsure(mayContinue), unsure(mustSuspend));
         return;
     }
@@ -345,7 +339,7 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
         LBasicBlock holds = m_out.newBlock();
         m_out.branch(m_out.bitAnd(m_out.isZero32(mustSuspendByFlags), m_out.equal(queue, m_out.loadPtr(stateAt(globalObject, JSGlobalObject::offsetOfMicrotaskQueue())))), usually(holds), rarely(doesNotHold));
         m_out.appendTo(doesNotHold);
-        AOT_TYPED_OPERATION(FactDoesNotHold, undefined(), word32(m_id.index()), word32(m_currentBlock->terminator.value.index()));
+        AOT_TYPED_OPERATION(FactViolated, undefined(), word32(m_id.index()), word32(m_currentBlock->terminator.value.index()));
         m_out.jump(mustSuspend);
         m_out.appendTo(holds);
     }
@@ -353,15 +347,15 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
         m_out.jump(mayContinue);
         return;
     }
-    bool bringsValue = numberOfPredecessorsOf(goesOn) == 1;
-    LBasicBlock isNoObject = bringsValue ? m_out.newBlock() : mayContinue;
-    CellPointer promise = objectAwaitedOrElse(awaited, isNoObject);
-    if (typeOf(awaited).onlyEngineClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
+    bool carriesValue = numberOfPredecessorsOf(goesOn) == 1;
+    LBasicBlock notObject = carriesValue ? m_out.newBlock() : mayContinue;
+    CellPointer promise = awaitedObjectOrElse(awaited, notObject);
+    if (typeOf(awaited).singleEngineClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
         require(equal(loadField<Word32>(promise, m_heaps.JSCell_structureID), Word32(fixed32(Instance::offsetOfHeaderFor(Instance::InlineAllocation::Promise)))).value());
     LValue packed = m_out.load64(promise.value(), m_heaps.JSPromise_packed);
     static_assert(!static_cast<unsigned>(JSPromise::Status::Pending) && static_cast<unsigned>(JSPromise::Status::Fulfilled) == 1 && static_cast<unsigned>(JSPromise::Status::Rejected) == 2 && JSPromise::stateMask == 3);
     require(m_out.testNonZero64(packed, m_out.constInt64(static_cast<int64_t>(JSPromise::Status::Fulfilled) << flagsShift)));
-    if (!bringsValue) {
+    if (!carriesValue) {
         m_out.jump(mayContinue);
         return;
     }
@@ -369,24 +363,24 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
     didEmitWrite(Writes::RuntimeState);
     m_out.store64(m_out.bitOr(packed, m_out.constInt64(static_cast<int64_t>(JSPromise::isHandledFlag) << flagsShift)), promise.value(), m_heaps.JSPromise_packed);
     join.add(Boxed(m_out.load64(promise.value(), m_heaps.JSPromise_slot)));
-    m_out.appendTo(isNoObject);
+    m_out.appendTo(notObject);
     join.add(in<Boxed>(awaited));
-    m_valuesAwaitedInPlace.set(&m_function.at(goesOn), std::pair { awaited, join.finish().value });
+    m_inlineAwaitedValues.set(&m_function.at(goesOn), std::pair { awaited, join.finish().value });
     m_out.jump(mayContinue);
 }
 
-bool Lowering::isResumeClosureMadeByStub(size_t index)
+bool Lowering::isResumeClosureCreatedByStub(size_t index)
 {
-    if (!isResumeClosureMadeWhereItSuspends(index))
+    if (!isResumeClosureCreatedAtSuspend(index))
         return false;
     auto& values = m_currentBlock->values;
     auto& resume = m_program.at(m_function.at(values[index]).function());
     auto& store = m_function.at(values[index + 1]);
     ValueID awaited = m_function.at(values[index + 2]).arguments[1];
-    return FunctionTables::kindOfExecutable(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false) == FunctionTables::kindOfExecutable(static_cast<uint8_t>(FunctionKind::Plain), false)
-        && m_program.at(store.layout()).fields[store.field()].offset == ResumeClosureRequest::wordOfFrameForStub * sizeof(uint64_t)
-        && m_program.allocationOfClosure(1) <= ResumeClosureRequest::maxAllocationForStub
-        && !isLeftToItsFirstUse(awaited) && !isFetchedWhereNeeded(awaited);
+    return FunctionTables::executableKind(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false) == FunctionTables::executableKind(static_cast<uint8_t>(FunctionKind::Plain), false)
+        && m_program.at(store.layout()).fields[store.field()].offset == ResumeClosureRequest::stubFrameWord * sizeof(uint64_t)
+        && m_program.closureAllocation(1) <= ResumeClosureRequest::maxAllocationForStub
+        && !isAllocatedByFirstUse(awaited) && !isLazilyFetched(awaited);
 }
 
 std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID result, const Value& value, Writes)
@@ -394,9 +388,9 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     static constexpr unsigned flagsShift = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
     auto& type = typeOf(result);
     if (which == InlineBuiltin::AwaitBySavingFrame) {
-        RELEASE_ASSERT(m_function.savesItsFrame && value.arguments.size() >= 2);
+        RELEASE_ASSERT(m_function.savesFrameOnSuspend && value.arguments.size() >= 2);
         m_context.emitsCalls = true;
-        m_context.savesItsFrame = true;
+        m_context.savesFrameOnSuspend = true;
         Boxed awaited = in<Boxed>(value.arguments[0]);
         Vector<LValue, 16> kept;
         kept.append(in<CellPointer>(value.arguments[1]).value());
@@ -416,42 +410,42 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
         for (GPRReg reg : stubTemporaryGPRs)
             patchpoint->clobberLate(RegisterSet { reg });
-        patchpoint->clobberLate(m_proc.code().calleeSavesLostAtSuspensions());
+        patchpoint->clobberLate(m_proc.code().calleeSavesClobberedAtSuspensions());
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         CallSite site { nextSite() };
-        patchpoint->setGenerator([context = &m_context, site, numberKept = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        patchpoint->setGenerator([context = &m_context, site, keptCount = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             Vector<uint32_t, 8> places { 0u };
-            uint32_t placeOfPromise = 0;
-            for (unsigned i = 0; i < numberKept; ++i) {
+            uint32_t promiseLocation = 0;
+            for (unsigned i = 0; i < keptCount; ++i) {
                 const ValueRep& rep = params[2 + i];
-                uint32_t place = SavedFrame::placeInRegister;
+                uint32_t place = SavedFrame::locationInRegister;
                 if (rep.isStack())
-                    place = SavedFrame::placeInFrame(rep.offsetFromFP());
+                    place = SavedFrame::locationInFrame(rep.offsetFromFP());
                 else if (rep.isGPR()) {
                     if (rep.gpr() == GPRInfo::numberTagRegister || rep.gpr() == GPRInfo::notCellMaskRegister)
                         continue;
-                    RELEASE_ASSERT(rep.gpr() == SavedFrame::registerKept);
+                    RELEASE_ASSERT(rep.gpr() == SavedFrame::preservedRegister);
                 } else {
                     RELEASE_ASSERT(rep.isConstant() && i);
                     continue;
                 }
                 if (!i)
-                    placeOfPromise = place;
+                    promiseLocation = place;
                 while (places.size() <= 1 + place / 32)
                     places.append(0);
                 places[1 + place / 32] |= 1u << (place % 32);
             }
             places[0] = places.size() - 1;
             uint32_t row = context->plans.size();
-            for (uint32_t earlier : context->rowsOfSavedFrames) {
+            for (uint32_t earlier : context->savedFramePlanOffsets) {
                 if (equalSpans(context->plans.subspan(earlier, std::min<size_t>(places.size(), context->plans.size() - earlier)), places.span())) {
                     row = earlier;
                     break;
                 }
             }
             if (row == context->plans.size()) {
-                context->rowsOfSavedFrames.append(row);
+                context->savedFramePlanOffsets.append(row);
                 context->plans.appendVector(places);
             }
             RegisterAtOffsetList saves = params.code().calleeSaveRegisterAtOffsetList();
@@ -461,7 +455,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
                 size_t fromLast = saves.registerCount() - i;
                 RELEASE_ASSERT(saves.at(i).reg().isGPR() && static_cast<size_t>(saves.at(i).reg().gpr()) + fromLast == static_cast<size_t>(ARM64Registers::x24) + 1 && saves.at(i).offset() == -static_cast<ptrdiff_t>(fromLast * sizeof(CPURegister)));
             }
-            auto word = SavedFrame::wordOfSite(row, placeOfPromise, saves.registerCount() / 2);
+            auto word = SavedFrame::siteWord(row, promiseLocation, saves.registerCount() / 2);
 #else
             uint32_t savedRegisters = 0;
             RELEASE_ASSERT(isX86_64() || !saves.registerCount());
@@ -469,11 +463,11 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
             for (size_t i = 0; i < saves.registerCount(); ++i) {
                 RELEASE_ASSERT(saves.at(i).reg().isGPR() && saves.at(i).offset() == -static_cast<ptrdiff_t>((saves.registerCount() - i) * sizeof(CPURegister)));
                 GPRReg reg = saves.at(i).reg().gpr();
-                RELEASE_ASSERT(reg == SavedFrame::registerKept || reg == X86Registers::r15);
-                savedRegisters |= reg == SavedFrame::registerKept ? 1 : 2;
+                RELEASE_ASSERT(reg == SavedFrame::preservedRegister || reg == X86Registers::r15);
+                savedRegisters |= reg == SavedFrame::preservedRegister ? 1 : 2;
             }
 #endif
-            auto word = SavedFrame::wordOfSite(row, placeOfPromise, savedRegisters);
+            auto word = SavedFrame::siteWord(row, promiseLocation, savedRegisters);
 #endif
             RELEASE_ASSERT(word);
             if (*word >> 32)
@@ -485,17 +479,17 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         unwindToLandingPad(patchpoint, site);
         return ensure(Boxed(patchpoint), type);
     }
-    if (which == InlineBuiltin::SuspendAsyncFunction && m_currentIndexInBlock >= 2 && isResumeClosureMadeWhereItSuspends(m_currentIndexInBlock - 2)) {
+    if (which == InlineBuiltin::SuspendAsyncFunction && m_currentIndexInBlock >= 2 && isResumeClosureCreatedAtSuspend(m_currentIndexInBlock - 2)) {
         auto& made = m_function.at(value.arguments[0]);
         auto& resume = m_program.at(made.function());
         auto& store = m_function.at(m_currentBlock->values[m_currentIndexInBlock - 1]);
         auto& field = m_program.at(store.layout()).fields[store.field()];
-        unsigned executable = FunctionTables::kindOfExecutable(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false);
-        uint32_t allocation = m_program.allocationOfClosure(1);
-        if (isResumeClosureMadeByStub(m_currentIndexInBlock - 2))
-            callICStub(Stub::SuspendAtFirstAwait, Void, { { in<CellPointer>(made.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::pair { stubImmediateGPR, ResumeClosureRequest::encodeForStub(made.function().index(), allocation) }, effectsOfBuiltinCall(value));
+        unsigned executable = FunctionTables::executableKind(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false);
+        uint32_t allocation = m_program.closureAllocation(1);
+        if (isResumeClosureCreatedByStub(m_currentIndexInBlock - 2))
+            callICStub(Stub::SuspendAtFirstAwait, Void, { { in<CellPointer>(made.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::pair { stubImmediateGPR, ResumeClosureRequest::encodeForStub(made.function().index(), allocation) }, builtinCallEffects(value));
         else
-            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAtFirstAwait, effectsOfBuiltinCall(value), in<CellPointer>(made.arguments[0]), in<Boxed>(value.arguments[1]), integer(static_cast<int64_t>(ResumeClosureRequest::encode(made.function().index(), executable, allocation, field.offset / sizeof(uint64_t)))));
+            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAtFirstAwait, builtinCallEffects(value), in<CellPointer>(made.arguments[0]), in<Boxed>(value.arguments[1]), integer(static_cast<int64_t>(ResumeClosureRequest::encode(made.function().index(), executable, allocation, field.offset / sizeof(uint64_t)))));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     if (which == InlineBuiltin::SuspendAsyncFunction) {
@@ -503,25 +497,25 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         Boxed awaited = in<Boxed>(value.arguments[1]);
         if (m_environmentAwaitingBarrier && m_environmentAwaitingBarrier == m_function.at(value.arguments[0]).child(0)) {
             m_environmentAwaitingBarrier = ValueID();
-            AOT_TYPED_OPERATION_WITH_EFFECTS(ParkAsyncFunction, effectsOfBuiltinCall(value), closure, awaited);
+            AOT_TYPED_OPERATION_WITH_EFFECTS(ParkAsyncFunction, builtinCallEffects(value), closure, awaited);
         } else
-            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAsyncFunction, effectsOfBuiltinCall(value), closure, awaited);
+            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAsyncFunction, builtinCallEffects(value), closure, awaited);
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     if (which == InlineBuiltin::AsyncGeneratorYield) {
-        callICStub(Stub::AsyncGeneratorYield, Void, { { in<CellPointer>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
+        callICStub(Stub::AsyncGeneratorYield, Void, { { in<CellPointer>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, builtinCallEffects(value));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     if (which == InlineBuiltin::GetIteratorNext)
-        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetIteratorNext, effectsOfBuiltinCall(value), in<Boxed>(value.arguments[0])), type);
+        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetIteratorNext, builtinCallEffects(value), in<Boxed>(value.arguments[0])), type);
     if (which == InlineBuiltin::GeneratorResume)
-        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GeneratorResume, effectsOfBuiltinCall(value), asCell(in<Boxed>(value.arguments[0])), in<Boxed>(value.arguments[1]), in<Boxed>(value.arguments[2])), type);
+        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GeneratorResume, builtinCallEffects(value), asCell(in<Boxed>(value.arguments[0])), in<Boxed>(value.arguments[1]), in<Boxed>(value.arguments[2])), type);
     if (which == InlineBuiltin::GeneratorIsDone)
-        return yieldBoolean(AOT_TYPED_OPERATION(GeneratorIsDone, asCell(in<Boxed>(value.arguments[0]))), type);
+        return booleanResult(AOT_TYPED_OPERATION(GeneratorIsDone, asCell(in<Boxed>(value.arguments[0]))), type);
     if (which == InlineBuiltin::GetAsyncIteratorNext)
-        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetAsyncIteratorNext, effectsOfBuiltinCall(value), in<Boxed>(value.arguments[0])), type);
+        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetAsyncIteratorNext, builtinCallEffects(value), in<Boxed>(value.arguments[0])), type);
     if (which == InlineBuiltin::AsyncIteratorNext)
-        return ensure(Boxed(callICStub(Stub::AsyncIteratorNext, Int64, { { in<Boxed>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { value.arguments.size() > 1 ? in<Boxed>(value.arguments[1]).value() : m_out.int64Zero, GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value))), type);
+        return ensure(Boxed(callICStub(Stub::AsyncIteratorNext, Int64, { { in<Boxed>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { value.arguments.size() > 1 ? in<Boxed>(value.arguments[1]).value() : m_out.int64Zero, GPRInfo::argumentGPR2 } }, std::nullopt, builtinCallEffects(value))), type);
     if (which == InlineBuiltin::ClearAsyncIteratorResult) {
         Boxed next = in<Boxed>(value.arguments[0]);
         Boxed iteratorResult = in<Boxed>(value.arguments[1]);
@@ -530,7 +524,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(isCell(next).value(), unsure(isCellCase), unsure(continuation));
         m_out.appendTo(isCellCase);
-        m_out.branch(equal(typeOfCell(asCell(next)), word32(SentinelType)).value(), unsure(isDriven), unsure(continuation));
+        m_out.branch(equal(loadCellType(asCell(next)), word32(SentinelType)).value(), unsure(isDriven), unsure(continuation));
         m_out.appendTo(isDriven);
         didEmitWrite(Writes::Heap);
         m_out.store64(m_out.constInt64(JSValue::encode(jsUndefined())), m_out.address(m_heaps.properties.atAnyNumber(), asCell(iteratorResult).value(), JSObject::offsetOfInlineStorage() + iteratorResultObjectValuePropertyOffset * sizeof(EncodedJSValue)));
@@ -541,21 +535,21 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     if (which == InlineBuiltin::IsAsyncIteratorDriven) {
         Boxed next = in<Boxed>(value.arguments[0]);
         LBasicBlock isCellCase = m_out.newBlock();
-        LBasicBlock isNoCell = m_out.newBlock();
+        LBasicBlock notCell = m_out.newBlock();
         Join join(m_out, Rep::Int32, Int32);
-        m_out.branch(isCell(next).value(), unsure(isCellCase), unsure(isNoCell));
+        m_out.branch(isCell(next).value(), unsure(isCellCase), unsure(notCell));
         m_out.appendTo(isCellCase);
-        join.add(equal(typeOfCell(asCell(next)), word32(SentinelType)));
-        m_out.appendTo(isNoCell);
+        join.add(equal(loadCellType(asCell(next)), word32(SentinelType)));
+        m_out.appendTo(notCell);
         join.add(boolean(false));
-        return yieldBoolean(join.finish().as<Word32>(), type);
+        return booleanResult(join.finish().as<Word32>(), type);
     }
     auto argumentOrUndefined = [&](unsigned index) {
         return index < value.arguments.size() ? in<Boxed>(value.arguments[index]) : undefined();
     };
     Type promiseType = Type::engineClass(m_builtins.promiseClass());
     if (which == InlineBuiltin::PromiseThen) {
-        CellPointer promise = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer promise = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
         Boxed onFulfilled = argumentOrUndefined(0);
         Boxed onRejected = argumentOrUndefined(1);
         CellPointer derived = lowerNewPromise();
@@ -563,38 +557,38 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         return ensure(derived, promiseType, type);
     }
     if (which == InlineBuiltin::PromiseCatch) {
-        CellPointer promise = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer promise = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
         return ensure(AOT_TYPED_OPERATION(PromiseCatch, promise, argumentOrUndefined(0)), promiseType, type);
     }
     if (which == InlineBuiltin::PromiseResolve) {
         Boxed resolution = argumentOrUndefined(0);
         bool mayBeObject = !value.arguments.isEmpty() && typeOf(value.arguments[0]).hasObjects();
-        LBasicBlock isNoObject = m_out.newBlock();
+        LBasicBlock notObject = m_out.newBlock();
         Join join(m_out, Rep::Cell, Int64);
         if (mayBeObject) {
             LBasicBlock isCellCase = m_out.newBlock();
             LBasicBlock isObject = m_out.newBlock();
-            LBasicBlock otherwise = newBlockForGeneralCall(value);
-            m_out.branch(isCell(resolution).value(), unsure(isCellCase), unsure(isNoObject));
+            LBasicBlock otherwise = newBlockForGenericCall(value);
+            m_out.branch(isCell(resolution).value(), unsure(isCellCase), unsure(notObject));
             m_out.appendTo(isCellCase);
             CellPointer cell = asCell(resolution);
-            m_out.branch(below(typeOfCell(cell), word32(ObjectType)).value(), unsure(isNoObject), unsure(isObject));
+            m_out.branch(below(loadCellType(cell), word32(ObjectType)).value(), unsure(notObject), unsure(isObject));
             m_out.appendTo(isObject);
-            if (lacksThenUnlessMarked(typeOf(value.arguments[0])))
-                m_out.branch(lacksBits(orderWordOf(cell), orderWordHasExtraProperties).value(), usually(isNoObject), rarely(otherwise));
+            if (isNotThenableWithoutExtraProperties(typeOf(value.arguments[0])))
+                m_out.branch(hasNoBits(orderWordOf(cell), orderWordHasExtraProperties).value(), usually(notObject), rarely(otherwise));
             else {
                 LBasicBlock isOriginalPromise = m_out.newBlock();
                 m_out.branch(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(fixed32(Instance::offsetOfHeaderFor(Instance::InlineAllocation::Promise)))).value(), unsure(isOriginalPromise), rarely(otherwise));
                 m_out.appendTo(isOriginalPromise);
                 join.add(cell);
             }
-            if (!isGeneralArmOnOffer(otherwise)) {
+            if (!isSharedGenericPath(otherwise)) {
                 m_out.appendTo(otherwise);
-                join.add(asCell(callBuiltinFunction(value, effectsOfBuiltinCall(value))));
+                join.add(asCell(callBuiltinFunction(value, builtinCallEffects(value))));
             }
         } else
-            m_out.jump(isNoObject);
-        m_out.appendTo(isNoObject);
+            m_out.jump(notObject);
+        m_out.appendTo(notObject);
         CellPointer promise = lowerNewPromise();
         didEmitWrite(Writes::RuntimeState);
         storeField(promise, m_heaps.JSPromise_slot, resolution);
@@ -605,15 +599,13 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     ValueID awaited = value.arguments[0];
     Operand operand = get(awaited);
     bool mayBeCell = operand.rep == Rep::Cell || operand.rep == Rep::JSValue;
-    auto objectOrElse = [&](LBasicBlock isNoObject) {
-        return objectAwaitedOrElse(awaited, isNoObject);
+    auto objectOrElse = [&](LBasicBlock notObject) {
+        return awaitedObjectOrElse(awaited, notObject);
     };
     switch (which) {
-    // `await` enqueues one job and returns to the job loop, which has nothing else to run and nothing to do in between: the job is next.
-    // The operand is no object, or a fulfilled promise that finds what the realm started with, which is immutable.
     case InlineBuiltin::AwaitMayContinue: {
-        if (m_isCarriedOutByBranch.get(result.index()))
-            return yieldBoolean(boolean(false), type);
+        if (m_isFusedWithBranch.get(result.index()))
+            return booleanResult(boolean(false), type);
         LBasicBlock mayContinue = m_out.newBlock();
         LBasicBlock mustSuspend = m_out.newBlock();
         Join join(m_out, Rep::Int32, Int32);
@@ -631,7 +623,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         require(m_out.isZero32(m_out.load8ZeroExt32(stateAt(m_instance, Instance::offsetOfAwaitMustSuspend()))));
         if (mayBeCell) {
             CellPointer object = objectOrElse(mayContinue);
-            if (typeOf(awaited).onlyEngineClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
+            if (typeOf(awaited).singleEngineClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
                 require(equal(loadField<Word32>(object, m_heaps.JSCell_structureID), Word32(fixed32(Instance::offsetOfHeaderFor(Instance::InlineAllocation::Promise)))).value());
             LValue flags = m_out.lShr(m_out.load64(object.value(), m_heaps.JSPromise_packed), m_out.constInt32(flagsShift));
             require(m_out.equal(m_out.bitAnd(flags, m_out.constInt64(JSPromise::stateMask)), m_out.constInt64(static_cast<int64_t>(JSPromise::Status::Fulfilled))));
@@ -641,21 +633,20 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         join.add(boolean(true));
         m_out.appendTo(mustSuspend);
         join.add(boolean(false));
-        return yieldBoolean(join.finish().as<Word32>(), type);
+        return booleanResult(join.finish().as<Word32>(), type);
     }
-    // Behind AwaitMayContinue.
     case InlineBuiltin::AwaitedValue: {
         if (!mayBeCell)
-            return yieldValue(awaited, type);
-        if (auto brought = m_valuesAwaitedInPlace.take(m_currentBlock); brought.second && brought.first == awaited)
+            return valueResult(awaited, type);
+        if (auto brought = m_inlineAwaitedValues.take(m_currentBlock); brought.second && brought.first == awaited)
             return ensure(Boxed(brought.second), type);
-        LBasicBlock isNoObject = m_out.newBlock();
+        LBasicBlock notObject = m_out.newBlock();
         Join join(m_out, Rep::JSValue, Int64);
-        CellPointer promise = objectOrElse(isNoObject);
+        CellPointer promise = objectOrElse(notObject);
         didEmitWrite(Writes::RuntimeState);
         m_out.store64(m_out.bitOr(m_out.load64(promise.value(), m_heaps.JSPromise_packed), m_out.constInt64(static_cast<int64_t>(JSPromise::isHandledFlag) << flagsShift)), promise.value(), m_heaps.JSPromise_packed);
         join.add(Boxed(m_out.load64(promise.value(), m_heaps.JSPromise_slot)));
-        m_out.appendTo(isNoObject);
+        m_out.appendTo(notObject);
         join.add(in<Boxed>(awaited));
         return ensure(join.finish().as<Boxed>(), type);
     }

@@ -51,8 +51,8 @@ public:
             index(variable.module.index());
             m_out.print(": ");
             type(variable.type);
-            m_out.print(variable.startsUndefined ? " undefined" : "", variable.isNeverSeenUninitialized ? " never seen uninitialized" : "", variable.isStoredOnce ? ", stored once" : "", variable.startsZero ? " zero" : "");
-            onlyFunction(variable.onlyFunction, variable.onlyFunctionIsFact);
+            m_out.print(variable.startsUndefined ? " undefined" : "", variable.isNeverReadUninitialized ? " never read uninitialized" : "", variable.isStoredOnce ? ", stored once" : "", variable.startsZero ? " zero" : "");
+            singleFunction(variable.singleFunction, variable.singleFunctionIsProven);
             m_out.print("\n");
         }
         for (size_t i = 0; i < m_program.modules.size(); ++i) {
@@ -74,7 +74,6 @@ public:
             m_out.print(" f", function.index(), "\n");
         }
         if (!m_program.prototypePropertyNames.isEmpty()) {
-            // Sorted by their bytes, as the front end lists them.
             Vector<StringID> names;
             for (size_t index : m_program.prototypePropertyNames)
                 names.append(StringID(static_cast<uint32_t>(index)));
@@ -116,7 +115,6 @@ private:
             m_program.dump(m_out, m_program.at(id));
     }
 
-    // The type of a value, and after a tilde what is expected of it.
     void typeAndPrediction(const Value& value)
     {
         type(value.type);
@@ -149,10 +147,10 @@ private:
             m_out.print(" droppable");
     }
 
-    void onlyFunction(FunctionID function, bool isFact)
+    void singleFunction(FunctionID function, bool isProven)
     {
         if (function)
-            m_out.print(" only f", function.index(), isFact ? " fact" : "");
+            m_out.print(" only f", function.index(), isProven ? " proven" : "");
     }
 
     void quoted(StringID id)
@@ -189,9 +187,9 @@ private:
             index(layout.constructor.index());
             m_out.print(" environment ");
             index(layout.environment.index());
-            m_out.print(layout.isLaidOut ? " laid out" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasForeignRoot ? " foreign root" : "", layout.hasFixedMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasStaticMemberOfUnknownName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "");
+            m_out.print(layout.hasFixedLayout ? " fixed-layout" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasUntypedBase ? " untyped-base" : "", layout.hasImmutableMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasComputedStaticMemberName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "");
         }
-        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", layout.isOpenedForLog ? " opened-for-the-log" : "", layout.admitsOnlyOtherLayouts ? " other-layouts-only" : "", layout.mayGiveUp ? " gives-up" : "", "\n");
+        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.acceptsUntypedObjects ? " accepts-untyped" : "", layout.isRelaxedForLogging ? " relaxed-for-logging" : "", layout.acceptsOnlyOtherLayouts ? " other-layouts-only" : "", layout.mayDespecialize ? " may-despecialize" : "", "\n");
         auto layouts = [&](ASCIILiteral what, const Vector<LayoutID>& list) {
             if (list.isEmpty())
                 return;
@@ -200,16 +198,15 @@ private:
                 m_out.print(" ", other.index());
             m_out.print("\n");
         };
-        layouts("members"_s, layout.members);
-        layouts("members by fit"_s, layout.membersByFit);
+        layouts("subtypes"_s, layout.subtypes);
+        layouts("structural subtypes"_s, layout.structuralSubtypes);
         layouts("specializations"_s, layout.specializations);
         for (auto& field : layout.fields) {
             m_out.print("  field ");
             quoted(field.name);
             m_out.print(" ");
             type(field.type);
-            // As the front end numbers them.
-            m_out.print(" flags ", (field.flags & (fieldIsOptional | fieldIsImmutable)) | (field.flags & fieldIsMethod ? Format::FieldIsMethod : 0) | (field.flags & fieldIsAnnotated ? Format::FieldIsAnnotated : 0) | (field.flags & fieldIsNeverSeenUninitialized ? Format::FieldIsNeverSeenUninitialized : 0) | (field.flags & fieldIsStoredOnce ? Format::FieldIsStoredOnce : 0) | (field.flags & fieldIsNeverStored ? Format::FieldIsNeverStored : 0) | (field.flags & fieldIsExpectedInt32 ? Format::FieldIsExpectedInt32 : 0) | (field.flags & fieldIsSetAtCreation ? Format::FieldIsSetAtCreation : 0) | (field.flags & fieldMayBeSetAtCreation ? Format::FieldMayBeSetAtCreation : 0) | (field.flags & fieldIsAbsentAtBirth ? Format::FieldIsAbsentAtBirth : 0) | (field.flags & fieldIsNeverSeenAbsent ? Format::FieldIsNeverSeenAbsent : 0));
+            m_out.print(" flags ", (field.flags & (fieldIsOptional | fieldIsImmutable)) | (field.flags & fieldIsMethod ? Format::FieldIsMethod : 0) | (field.flags & fieldIsAnnotated ? Format::FieldIsAnnotated : 0) | (field.flags & fieldIsNeverReadUninitialized ? Format::FieldIsNeverReadUninitialized : 0) | (field.flags & fieldIsStoredOnce ? Format::FieldIsStoredOnce : 0) | (field.flags & fieldIsNeverStored ? Format::FieldIsNeverStored : 0) | (field.flags & fieldIsPredictedInt32 ? Format::FieldIsPredictedInt32 : 0) | (field.flags & fieldIsSetAtCreation ? Format::FieldIsSetAtCreation : 0) | (field.flags & fieldMayBeSetAtCreation ? Format::FieldMayBeSetAtCreation : 0) | (field.flags & fieldIsAbsentAtCreation ? Format::FieldIsAbsentAtCreation : 0) | (field.flags & fieldIsNeverObservedAbsent ? Format::FieldIsNeverObservedAbsent : 0));
             for (auto& literal : field.literals) {
                 if (literal.string) {
                     m_out.print(" ");
@@ -217,13 +214,13 @@ private:
                 } else
                     m_out.printf(" 0x%016llx", static_cast<unsigned long long>(std::bit_cast<uint64_t>(literal.number)));
             }
-            if (field.typeText) {
+            if (field.typeSource) {
                 m_out.print(" type ");
-                quoted(field.typeText);
+                quoted(field.typeSource);
             }
-            onlyFunction(field.onlyFunction, field.onlyFunctionIsFact);
+            singleFunction(field.singleFunction, field.singleFunctionIsProven);
             if (field.otherFunction)
-                m_out.print(" or f", field.otherFunction.index(), " fact");
+                m_out.print(" or f", field.otherFunction.index(), " proven");
             m_out.print("\n");
         }
         static constexpr ASCIILiteral methodKinds[] = { "Method"_s, "Getter"_s, "Setter"_s };
@@ -299,20 +296,20 @@ private:
             quoted(value.string());
             if (value.isOnSlowPath)
                 m_out.print(" on the slow path");
-            if (value.opcode == Opcode::GetById && value.readsMethodFor())
+            if (value.opcode == Opcode::GetById && value.methodGetByIdBuiltin())
                 m_out.print(" unless original");
             if (value.opcode == Opcode::PutById && value.isInitialStore())
                 m_out.print(" initial ", value.initialStoreIndex());
-            if (value.isAtKnownPlace())
-                m_out.print(" at place ", value.knownPlace(), value.receiverIsNeverNil() ? ", never nil" : "");
-            if (value.isStoreToObjectBornWhole() && value.isAtKnownPlace())
-                m_out.print(", born whole");
-            else if (value.isStoreToObjectBornWhole())
-                m_out.print(" born whole with place ", value.knownPlace(), ", goes by the name");
-            if (value.isStoreToObjectBornWhole() && value.birthOfFirstStore())
-                m_out.print(", row ", value.birthOfFirstStore() - 1);
+            if (value.isAtKnownSlot())
+                m_out.print(" at slot ", value.knownSlot(), value.receiverIsNeverNullish() ? ", never nullish" : "");
+            if (value.isStoreIntoInitialStructure() && value.isAtKnownSlot())
+                m_out.print(", into initial structure");
+            else if (value.isStoreIntoInitialStructure())
+                m_out.print(" into initial structure at slot ", value.knownSlot(), ", by name");
+            if (value.isStoreIntoInitialStructure() && value.initialStructureOfFirstStore())
+                m_out.print(", structure ", value.initialStructureOfFirstStore() - 1);
             if (value.isFirstStoreToThis())
-                m_out.print(value.isDefinitionInRowOfThis() ? " a definition" : "", " of the row of this, place ", value.knownPlace(), ", row ", static_cast<int>(value.birthOfFirstStore()) - 1);
+                m_out.print(value.isDefinitionInThisStructure() ? " a definition" : "", " of this structure, slot ", value.knownSlot(), ", structure ", static_cast<int>(value.initialStructureOfFirstStore()) - 1);
             break;
         case Opcode::Operation:
             m_out.print(" \"", Builtins::singleton().at(value.builtin()).name, "\"");
@@ -323,23 +320,23 @@ private:
             m_out.print(" f", value.function().index());
             break;
         case Opcode::IsClosureOf:
-            m_out.print(" f", value.function().index(), value.immediates[1] == closureIsAsMade ? " as made" : value.immediates[1] == closureEvenIfAltered ? " even if altered" : value.immediates[1] == closureIsTheOneThatConstructs ? " the one that constructs" : "");
+            m_out.print(" f", value.function().index(), value.immediates[1] == closureIsUnmodified ? " unmodified" : value.immediates[1] == closureMayBeModified ? " possibly modified" : value.immediates[1] == closureIsConstructingCallee ? " constructing callee" : "");
             break;
         case Opcode::TypeOfIs:
             m_out.print(" ", value.typeofType());
             break;
         case Opcode::GetByVal:
-            if (value.readsListedKey())
-                m_out.print(" listed");
-            if (value.readsForInList())
-                m_out.print(" of the list");
+            if (value.readsForInKey())
+                m_out.print(" for-in key");
+            if (value.readsForInKeys())
+                m_out.print(" of for-in keys");
             break;
         case Opcode::ResultAt:
             m_out.print(" ", value.resultIndex());
             break;
         case Opcode::IsBuiltinFunction:
         case Opcode::BuiltinFunction: {
-            if (BuiltinName global = value.globalComparedWith()) {
+            if (BuiltinName global = value.comparedGlobal()) {
                 m_out.print(" ", builtinNames[global.index()].text);
                 break;
             }
@@ -349,7 +346,7 @@ private:
         }
         case Opcode::GetModuleVariable:
         case Opcode::PutModuleVariable:
-            m_out.print(" variable ", value.variable().index(), value.findsVariableInitialized() ? ", initialized" : "");
+            m_out.print(" variable ", value.variable().index(), value.readsInitializedVariable() ? ", initialized" : "");
             break;
         case Opcode::GetStaticField:
         case Opcode::PutStaticField:
@@ -385,9 +382,9 @@ private:
                 m_out.print(value.freshness() == Format::Freshness::WholeGraph ? " fresh graph " : value.coercesFreshData() ? " fresh " : " ");
                 type(value.coercedType());
             }
-            if (value.castReason() == CastReason::NonNull && value.operandText()) {
+            if (value.castReason() == CastReason::NonNull && value.operandSource()) {
                 m_out.print(" ");
-                quoted(value.operandText());
+                quoted(value.operandSource());
             }
             break;
         }
@@ -397,7 +394,7 @@ private:
             if (value.builtin() == Builtins::singleton().hasOriginalStructureOperation() && value.engineClass() != Format::none)
                 m_out.print(" ", Builtins::singleton().classes()[value.engineClass()].text);
             if (value.receiverHasOriginalStructure)
-                m_out.print(" as made");
+                m_out.print(" original structure");
             break;
         }
         default:
@@ -420,10 +417,10 @@ private:
         default:
             break;
         }
-        if (value.methodAskedByStub != MethodAskedByStub::None)
-            m_out.print(" asked by stub ", static_cast<unsigned>(value.methodAskedByStub));
-        if (value.classExpectedOfReceiverPlusOne)
-            m_out.print(" expects ", Builtins::singleton().classes()[value.classExpectedOfReceiverPlusOne - 1].text);
+        if (value.speculatedMethod != SpeculatedMethod::None)
+            m_out.print(" speculated method ", static_cast<unsigned>(value.speculatedMethod));
+        if (value.predictedReceiverClassPlusOne)
+            m_out.print(" expects ", Builtins::singleton().classes()[value.predictedReceiverClassPlusOne - 1].text);
         m_out.print("\n");
     }
 
@@ -492,7 +489,7 @@ private:
         for (unsigned k = 0; k < function.captureTypes.size(); ++k) {
             m_out.print(captureComma);
             type(function.captureTypes[k]);
-            if (function.capturesOnlyCalled.get(k))
+            if (function.calledOnlyCaptures.get(k))
                 m_out.print(" only called");
         }
         m_out.print(") this ");
@@ -504,17 +501,17 @@ private:
             type(function.parameterTypes[k]);
             if (function.annotatedParameters.get(k))
                 m_out.print(" annotated");
-            if (function.parametersOnlyCalled.get(k))
+            if (function.calledOnlyParameters.get(k))
                 m_out.print(" only called");
         }
         m_out.print(") result ");
         type(function.resultType);
-        if (function.takesItsClosure)
-            m_out.print(" takes its closure");
+        if (function.takesCalleeClosure)
+            m_out.print(" takes closure");
         if (function.isUsedAsObject)
             m_out.print(" used as an object");
         if (m_program.genericEntrypoints.contains(static_cast<uint32_t>(&function - m_program.functions.span().data())))
-            m_out.print(m_program.makesSlimClosures(function) ? " slim closures" : " full closures");
+            m_out.print(m_program.usesSlimClosures(function) ? " slim closures" : " full closures");
         m_out.print("\n");
         for (size_t b = 0; b < function.blocks.size(); ++b) {
             auto& block = function.blocks[b];
@@ -537,7 +534,7 @@ private:
 
 } // anonymous namespace
 
-static uint64_t hashOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype)
+static uint64_t hashOfStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype)
 {
     uint64_t hash = inlineCapacity << 1 | hasNullPrototype;
     for (StringID name : names) {
@@ -547,30 +544,30 @@ static uint64_t hashOfRow(std::span<const StringID> names, unsigned inlineCapaci
     return hash >> 1 | 1;
 }
 
-uint32_t Program::numberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const
+uint32_t Program::findStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const
 {
-    auto found = numbersOfRowsByHash.find(hashOfRow(names, inlineCapacity, hasNullPrototype));
-    if (found == numbersOfRowsByHash.end())
+    auto found = structureDescriptorsByHash.find(hashOfStructureDescriptor(names, inlineCapacity, hasNullPrototype));
+    if (found == structureDescriptorsByHash.end())
         return Format::none;
     for (uint32_t number : found->value) {
-        auto& row = numberedRows[number];
+        auto& row = structureDescriptors[number];
         if (row.inlineCapacity == inlineCapacity && row.hasNullPrototype == hasNullPrototype && std::ranges::equal(row.names, names))
             return number;
     }
     return Format::none;
 }
 
-uint32_t Program::ensureNumberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype)
+uint32_t Program::ensureStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype)
 {
-    if (uint32_t number = numberOfRow(names, inlineCapacity, hasNullPrototype); number != Format::none)
+    if (uint32_t number = findStructureDescriptor(names, inlineCapacity, hasNullPrototype); number != Format::none)
         return number;
-    NumberedRow row;
+    StructureDescriptor row;
     row.names.append(names);
     row.inlineCapacity = inlineCapacity;
     row.hasNullPrototype = hasNullPrototype;
-    numbersOfRowsByHash.add(hashOfRow(names, inlineCapacity, hasNullPrototype), Vector<uint32_t, 1>()).iterator->value.append(numberedRows.size());
-    numberedRows.append(WTF::move(row));
-    return numberedRows.size() - 1;
+    structureDescriptorsByHash.add(hashOfStructureDescriptor(names, inlineCapacity, hasNullPrototype), Vector<uint32_t, 1>()).iterator->value.append(structureDescriptors.size());
+    structureDescriptors.append(WTF::move(row));
+    return structureDescriptors.size() - 1;
 }
 
 void Program::dump(PrintStream& out) const
@@ -609,10 +606,10 @@ void Program::dump(PrintStream& out, const Type& type) const
                 out.print(bar, "int");
             else if (type.integers == Range::int32())
                 out.print(bar, "i32");
-            else if (type.integers.least == type.integers.most)
-                out.print(bar, type.integers.least);
+            else if (type.integers.minimum == type.integers.maximum)
+                out.print(bar, type.integers.minimum);
             else
-                out.print(bar, "int[", type.integers.least, ",", type.integers.most, "]");
+                out.print(bar, "int[", type.integers.minimum, ",", type.integers.maximum, "]");
         }
         if (primitives & Primitive::Double)
             out.print(bar, "double");
@@ -631,7 +628,7 @@ void Program::dump(PrintStream& out, const Type& type) const
         out.print(bar, "object");
     else if (type.anyFunction)
         out.print(bar, "function");
-    for (LayoutID id : type.views) {
+    for (LayoutID id : type.objectLayouts) {
         out.print(bar);
         text(at(id).name);
         out.print(".", id.index());
@@ -640,7 +637,7 @@ void Program::dump(PrintStream& out, const Type& type) const
         out.print(bar, Builtins::singleton().classes()[index].text);
         if (type.elements && index == Builtins::singleton().arrayClass().index) {
             out.print("<");
-            if (at(type.elements).views.isEmpty())
+            if (at(type.elements).objectLayouts.isEmpty())
                 dump(out, at(type.elements));
             else
                 out.print("...");
@@ -651,47 +648,47 @@ void Program::dump(PrintStream& out, const Type& type) const
         out.print("never");
 }
 
-void Functions::listValuesInOrder()
+void Functions::buildValueIndex()
 {
-    m_isListed.clear();
-    listForgottenValuesInOrder();
+    m_isIndexed.clear();
+    rebuildInvalidatedValueIndex();
 }
 
-void Functions::listForgottenValuesInOrder()
+void Functions::rebuildInvalidatedValueIndex()
 {
     unsigned count = m_functions.size();
-    while (m_isListed.size() < count)
-        m_isListed.append(0);
+    while (m_isIndexed.size() < count)
+        m_isIndexed.append(0);
     Vector<uint32_t> forgotten;
     for (unsigned i = 0; i < count; ++i) {
-        if (!m_isListed[i])
+        if (!m_isIndexed[i])
             forgotten.append(i);
     }
     if (forgotten.isEmpty())
         return;
     if (forgotten.size() == count)
-        m_valuesInOrder.clear();
-    m_firstInOrder.grow(count);
-    m_numberInOrder.grow(count);
+        m_indexedValues.clear();
+    m_firstIndexedValue.grow(count);
+    m_indexedValueCount.grow(count);
     m_contents.grow(count);
     forEachIndexInParallel(forgotten.size(), [&](unsigned k) {
         uint32_t number = 0;
         for (auto& block : m_functions[forgotten[k]].blocks)
             number += block.values.size();
-        m_numberInOrder[forgotten[k]] = number;
+        m_indexedValueCount[forgotten[k]] = number;
     });
-    uint32_t end = m_valuesInOrder.size();
+    uint32_t end = m_indexedValues.size();
     for (uint32_t i : forgotten) {
-        m_firstInOrder[i] = end;
-        end += m_numberInOrder[i];
+        m_firstIndexedValue[i] = end;
+        end += m_indexedValueCount[i];
     }
-    m_valuesInOrder.growWithoutInitializing(end);
-    auto ids = m_valuesInOrder.items<&ValueInOrder::id>();
-    auto opcodes = m_valuesInOrder.items<&ValueInOrder::opcode>();
+    m_indexedValues.growWithoutInitializing(end);
+    auto ids = m_indexedValues.items<&IndexedValue::id>();
+    auto opcodes = m_indexedValues.items<&IndexedValue::opcode>();
     forEachIndexInParallel(forgotten.size(), [&](unsigned k) {
         uint32_t i = forgotten[k];
         auto& function = m_functions[i];
-        uint32_t next = m_firstInOrder[i];
+        uint32_t next = m_firstIndexedValue[i];
         Contents contents;
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
@@ -702,10 +699,10 @@ void Functions::listForgottenValuesInOrder()
         }
         for (auto& value : function.values) {
             contents.opcodes.add(value.opcode);
-            contents.holdsPredictedClosure |= !!value.predictedClosure();
+            contents.containsPredictedClosure |= !!value.predictedClosure();
         }
         m_contents[i] = contents;
-        m_isListed[i] = 1;
+        m_isIndexed[i] = 1;
     });
 }
 

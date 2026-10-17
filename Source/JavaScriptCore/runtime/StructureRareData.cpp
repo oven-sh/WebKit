@@ -150,7 +150,7 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
     }
 
 #if ENABLE(AOT)
-    bool isTypedStructureWithoutProperty = !ownStructure->hasPolyProto() && AOT::Typed::Object::absenceIsByStructure(ownStructure, uid);
+    bool isTypedStructureWithoutProperty = !ownStructure->hasPolyProto() && AOT::Typed::Object::structureGuaranteesAbsence(ownStructure, uid);
 #else
     constexpr bool isTypedStructureWithoutProperty = false;
 #endif

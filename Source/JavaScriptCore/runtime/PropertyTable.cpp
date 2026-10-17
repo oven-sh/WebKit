@@ -191,7 +191,7 @@ void PropertyTable::fix()
     });
 }
 
-void PropertyTable::noteFixed()
+void PropertyTable::didLock()
 {
     forEachPropertyMutable([&](auto& entry) {
         if (!PropertyName(entry.key()).isPrivateName())

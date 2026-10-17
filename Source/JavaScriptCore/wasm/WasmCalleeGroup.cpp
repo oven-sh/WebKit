@@ -49,7 +49,7 @@ Ref<CalleeGroup> CalleeGroup::createFromExisting(MemoryMode mode, const CalleeGr
     return adoptRef(*new CalleeGroup(mode, other, moduleInformation));
 }
 
-static void crashBecauseInterpreterIsUsed()
+static void crashOnInterpreterUse()
 {
     dataLogLn("crashIfInterpreterIsUsed: a WebAssembly function of a module that was not compiled at build time");
     CRASH();
@@ -64,14 +64,14 @@ void CalleeGroup::takeEntrypoints(const ModuleInformation& moduleInformation)
         for (unsigned i = 0; i < m_calleeCount; ++i)
             m_wasmIndirectCallEntrypoints[i] = m_codeInImage->entrypoint(i);
         for (unsigned i = 0; i < m_wasmToWasmExitStubs.size(); ++i)
-            m_wasmToWasmExitStubs[i] = MacroAssemblerCodeRef<WasmEntryPtrTag>::createSelfManagedCodeRef(m_codeInImage->stubOfImport(i));
+            m_wasmToWasmExitStubs[i] = MacroAssemblerCodeRef<WasmEntryPtrTag>::createSelfManagedCodeRef(m_codeInImage->importStub(i));
         return;
     }
 #else
     UNUSED_PARAM(moduleInformation);
 #endif
     for (unsigned i = 0; i < m_calleeCount; ++i)
-        m_wasmIndirectCallEntrypoints[i] = Options::crashIfInterpreterIsUsed() ? CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(crashBecauseInterpreterIsUsed)) : m_ipintCallees->at(i)->entrypoint();
+        m_wasmIndirectCallEntrypoints[i] = Options::crashIfInterpreterIsUsed() ? CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(crashOnInterpreterUse)) : m_ipintCallees->at(i)->entrypoint();
 }
 
 CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other, const ModuleInformation& moduleInformation)
@@ -135,18 +135,18 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
 
 CalleeGroup::~CalleeGroup() = default;
 
-CodePtr<JSEntryPtrTag> CalleeGroup::entryFromJavaScriptInImage(const RTT& rtt) const
+CodePtr<JSEntryPtrTag> CalleeGroup::jsEntrypointInImage(const RTT& rtt) const
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (m_codeInImage)
-        return m_codeInImage->entryFromJavaScript(rtt);
+        return m_codeInImage->jsEntrypoint(rtt);
 #else
     UNUSED_PARAM(rtt);
 #endif
     return nullptr;
 }
 
-void* const* CalleeGroup::pointersOfCodeInImage() const
+void* const* CalleeGroup::imageCodePointers() const
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (m_codeInImage)

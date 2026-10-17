@@ -52,24 +52,24 @@ namespace JSC { namespace B3 {
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Procedure);
 
 #if USE(BUN_JSC_ADDITIONS)
-Arena::ChunkOfThread::~ChunkOfThread()
+Arena::ThreadChunk::~ThreadChunk()
 {
     if (chunk)
         fastFree(chunk);
 }
 
-Arena::ChunkOfThread& Arena::chunkOfThread()
+Arena::ThreadChunk& Arena::threadChunk()
 {
-    static thread_local ChunkOfThread ofThread;
-    return ofThread;
+    static thread_local ThreadChunk threadLocal;
+    return threadLocal;
 }
 
 Arena::~Arena()
 {
     for (Chunk* chunk = m_chunks; chunk;) {
         Chunk* next = chunk->next;
-        if (!next && m_keepsFirstChunkForThread && chunk->size == firstChunkSize && !chunkOfThread().chunk)
-            chunkOfThread().chunk = chunk;
+        if (!next && m_keepsFirstChunkForThread && chunk->size == firstChunkSize && !threadChunk().chunk)
+            threadChunk().chunk = chunk;
         else
             fastFree(chunk);
         chunk = next;
@@ -81,7 +81,7 @@ void* Arena::allocateSlow(size_t size, size_t alignment)
     size_t needed = sizeof(Chunk) + alignment + size;
     Chunk* chunk = nullptr;
     if (!m_chunks && m_keepsFirstChunkForThread && needed <= firstChunkSize)
-        chunk = std::exchange(chunkOfThread().chunk, nullptr);
+        chunk = std::exchange(threadChunk().chunk, nullptr);
     if (!chunk) {
         size_t chunkSize = std::max(m_chunks ? std::min(m_chunks->size * 2, maxChunkSize) : firstChunkSize, needed);
         chunk = static_cast<Chunk*>(fastMalloc(chunkSize));
@@ -328,7 +328,7 @@ void Procedure::resetReachability()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void Procedure::resetReachabilityBehindContractions()
+void Procedure::resetReachabilityAfterContractions()
 {
     m_keepsDominatorsThroughReset = true;
     resetReachability();

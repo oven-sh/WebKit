@@ -499,12 +499,12 @@ bool RTT::mayHaveICEntrypointInImage() const
     return true;
 }
 
-RegisterAtOffsetList RTT::registersSavedByICEntrypoint() const
+RegisterAtOffsetList RTT::icEntrypointSavedRegisters() const
 {
     return usedCalleeSaveRegisters(*this);
 }
 
-bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList& registersToSpill, void* boxedCallee, std::optional<PointersOfICEntrypointInImage> pointersInImage) const
+bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList& registersToSpill, void* boxedCallee, std::optional<ICEntrypointImagePointers> pointersInImage) const
 {
     const Wasm::WasmCallingConvention& wasmCC = Wasm::wasmCallingConvention();
     Wasm::CallInformation wasmCallInfo = wasmCC.callInformationFor(*this);
@@ -706,7 +706,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     jit.loadPtr(MacroAssembler::Address(stackLimitGPR), stackLimitGPR);
 
     if (pointersInImage) {
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfPointersOfCodeInImage()), scratchGPR);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratchGPR);
         jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->callee * sizeof(void*))), scratchGPR);
     } else
         jit.move(CCallHelpers::TrustedImmPtr(boxedCallee), scratchGPR);
@@ -739,7 +739,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     JIT_COMMENT(jit, "Slow path start");
     if (pointersInImage) {
         RELEASE_ASSERT(exceptionChecks.empty());
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfPointersOfCodeInImage()), scratchGPR);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratchGPR);
         jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->generalEntry * sizeof(void*))), scratchGPR);
         jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
         jit.emitFunctionEpilogue();

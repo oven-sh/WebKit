@@ -159,8 +159,8 @@ inline bool JSFunction::hasReifiedName() const
 
 #if ENABLE(AOT)
 namespace AOT {
-JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
-JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
+JS_EXPORT_PRIVATE String typedClosureName(const JSFunction*);
+JS_EXPORT_PRIVATE unsigned typedClosureLength(const JSFunction*);
 }
 #endif
 
@@ -173,7 +173,7 @@ inline double JSFunction::originalLength(VM& vm)
     if (isHostFunction()) {
 #if ENABLE(AOT)
         if (uncheckedDowncast<NativeExecutable>(executable())->isSharedByAOTTypedClosures())
-            return AOT::lengthOfTypedClosure(this);
+            return AOT::typedClosureLength(this);
 #endif
         // The original length is captured in NativeExecutable at creation time.
         return uncheckedDowncast<NativeExecutable>(executable())->length();
@@ -218,7 +218,7 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
         // property has been reified or mutated.
 #if ENABLE(AOT)
         if (uncheckedDowncast<NativeExecutable>(executable())->isSharedByAOTTypedClosures()) {
-            String name = AOT::nameOfTypedClosure(this);
+            String name = AOT::typedClosureName(this);
             return name.isEmpty() ? jsEmptyString(vm) : jsString(vm, WTF::move(name));
         }
 #endif
@@ -327,7 +327,6 @@ inline CallData JSFunction::getCallDataInline(JSCell* cell)
         callData.type = CallData::Type::Native;
         callData.native.function = thisObject->nativeFunction();
 #if ENABLE(AOT)
-        // Compiled ahead of time: it takes the frame of a JavaScript function, and has no FunctionExecutable.
         if (callData.native.function == AOT::Typed::callClosure) {
             callData.type = CallData::Type::JS;
             callData.js.functionExecutable = nullptr;

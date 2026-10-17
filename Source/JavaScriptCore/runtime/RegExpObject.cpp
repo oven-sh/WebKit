@@ -252,8 +252,8 @@ RegExp* RegExpObject::tryCreateRegExpFromLongRope(VM& vm, JSString* string, Opti
             pending.append(fiber);
         pending.append(rope->fiber0());
     }
-    auto* record = AOT::Image::findRegExpWithTextInPieces(leaves.span(), string->length(), flags);
-    return record ? RegExp::createWithTextInPieces(vm, *record, flags) : nullptr;
+    auto* record = AOT::Image::findRegExpWithSourceInPieces(leaves.span(), string->length(), flags);
+    return record ? RegExp::createWithSourceInPieces(vm, *record, flags) : nullptr;
 }
 #endif
 

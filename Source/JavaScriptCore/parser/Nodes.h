@@ -1643,8 +1643,8 @@ namespace JSC {
         ExpressionNode* m_expr;
         uint32_t m_id;
         OptionSet<AuditedValueClass> m_passes;
-        int32_t m_least;
-        int32_t m_most;
+        int32_t m_minimum;
+        int32_t m_maximum;
     };
     
     class SourceElements final : public ParserArenaFreeable {

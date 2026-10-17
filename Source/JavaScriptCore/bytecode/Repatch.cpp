@@ -147,7 +147,6 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
     bool isWebAssembly = false;
 #endif
 #if ENABLE(AOT)
-    // Nor has code that was compiled ahead of time from types.
     isWebAssembly |= !callerCodeBlock;
 #endif
     bool isTailCall = callLinkInfo.isTailCall();
@@ -238,7 +237,6 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
                         arityCheck = ArityCheckMode::MustCheckArity;
 
                 }
-                // A host function may have an entrypoint of its own: see NativeExecutable::setCallEntrypoint().
                 if (variant.executable()->isHostFunction())
                     codePtr = variant.executable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
                 else

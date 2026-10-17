@@ -2688,7 +2688,7 @@ void testEarlyAndLateUseOfSameTmp()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static size_t sizeOfCodeForTwoOops(bool isPositionIndependent, bool followsPatch)
+static size_t codeSizeForTwoOops(bool isPositionIndependent, bool followsPatch)
 {
     B3::Procedure proc;
     proc.setPositionIndependent(isPositionIndependent);
@@ -2733,11 +2733,11 @@ static size_t sizeOfCodeForTwoOops(bool isPositionIndependent, bool followsPatch
 
 void testOopsTraps()
 {
-    CHECK(sizeOfCodeForTwoOops(true, false) == sizeOfCodeForTwoOops(false, false));
+    CHECK(codeSizeForTwoOops(true, false) == codeSizeForTwoOops(false, false));
     if (Options::defaultB3OptLevel())
-        CHECK(sizeOfCodeForTwoOops(true, true) < sizeOfCodeForTwoOops(false, true));
+        CHECK(codeSizeForTwoOops(true, true) < codeSizeForTwoOops(false, true));
     else
-        CHECK(sizeOfCodeForTwoOops(true, true) == sizeOfCodeForTwoOops(false, true));
+        CHECK(codeSizeForTwoOops(true, true) == codeSizeForTwoOops(false, true));
 }
 
 template<typename Functor>
@@ -2793,14 +2793,14 @@ struct BlocksAroundGap {
     explicit BlocksAroundGap(Code& code)
         : root(code.addBlock())
         , guard(code.addBlock())
-        , behindGuard(code.addBlock())
+        , afterGuard(code.addBlock())
         , otherSuccessor(code.addBlock(0.5))
         , rare(code.addBlock(0.01))
     {
         root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
         root->setSuccessors(guard, otherSuccessor);
         guard->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
-        guard->setSuccessors(FrequentedBlock(rare, B3::FrequencyClass::Rare), FrequentedBlock(behindGuard));
+        guard->setSuccessors(FrequentedBlock(rare, B3::FrequencyClass::Rare), FrequentedBlock(afterGuard));
         appendReturn(otherSuccessor, 2);
     }
 
@@ -2827,12 +2827,12 @@ struct BlocksAroundGap {
 
     BasicBlock* root;
     BasicBlock* guard;
-    BasicBlock* behindGuard;
+    BasicBlock* afterGuard;
     BasicBlock* otherSuccessor;
     BasicBlock* rare;
 };
 
-void testBlockOrderLaysRareBlocksInGaps()
+void testBlockOrderPlacesRareBlocksInGaps()
 {
     enum class Case : uint8_t { IsNotRequested, Fits, IsTooLarge, IsTooFar, HasLikelyPredecessor };
     for (Case testCase : { Case::IsNotRequested, Case::Fits, Case::IsTooLarge, Case::IsTooFar, Case::HasLikelyPredecessor }) {
@@ -2840,12 +2840,12 @@ void testBlockOrderLaysRareBlocksInGaps()
         proc.setOptLevel(2);
         Code& code = proc.code();
         if (testCase != Case::IsNotRequested)
-            code.setLaysRareBlocksInGaps();
-        code.setNotesStartOfRareCode();
+            code.setPlacesRareBlocksInGaps();
+        code.setRecordsRareCodeStart();
         BlocksAroundGap blocks(code);
         if (testCase == Case::IsTooFar)
-            BlocksAroundGap::appendAdditions(blocks.behindGuard, 30);
-        BlocksAroundGap::appendReturn(blocks.behindGuard, 1);
+            BlocksAroundGap::appendAdditions(blocks.afterGuard, 30);
+        BlocksAroundGap::appendReturn(blocks.afterGuard, 1);
         if (testCase == Case::IsTooLarge)
             BlocksAroundGap::appendAdditions(blocks.rare, 20);
         BlocksAroundGap::appendReturn(blocks.rare, 3);
@@ -2872,22 +2872,22 @@ void testBlockOrderComparesEdges()
         Code& code = proc.code();
         if (testCase != Case::IsNotRequested)
             code.setOrdersBlocksByEdgeFrequency();
-        double frequencyOfBody = testCase == Case::BodyIsUnlikely ? 0.2 : 0.5;
+        double bodyFrequency = testCase == Case::BodyIsUnlikely ? 0.2 : 0.5;
         BasicBlock* root = code.addBlock();
-        BasicBlock* body = code.addBlock(frequencyOfBody);
-        BasicBlock* oneArm = code.addBlock(frequencyOfBody / 2);
-        BasicBlock* otherArm = code.addBlock(frequencyOfBody / 2);
+        BasicBlock* body = code.addBlock(bodyFrequency);
+        BasicBlock* firstTarget = code.addBlock(bodyFrequency / 2);
+        BasicBlock* secondTarget = code.addBlock(bodyFrequency / 2);
         BasicBlock* join = code.addBlock();
         root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
         root->setSuccessors(body, join);
         body->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
-        body->setSuccessors(oneArm, otherArm);
-        oneArm->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR2));
-        oneArm->append(Jump, nullptr);
-        oneArm->setSuccessors(join);
-        otherArm->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR2));
-        otherArm->append(Jump, nullptr);
-        otherArm->setSuccessors(join);
+        body->setSuccessors(firstTarget, secondTarget);
+        firstTarget->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR2));
+        firstTarget->append(Jump, nullptr);
+        firstTarget->setSuccessors(join);
+        secondTarget->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR2));
+        secondTarget->append(Jump, nullptr);
+        secondTarget->setSuccessors(join);
         join->append(Move, nullptr, Tmp(GPRInfo::argumentGPR2), Tmp(GPRInfo::returnValueGPR));
         join->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
 
@@ -2921,7 +2921,7 @@ static B3::PatchpointValue* addCallLikePatchpoint(B3::Procedure& proc)
     return patchpoint;
 }
 
-static unsigned numberOfSavedRegistersForValueLiveAcrossCalls(bool chargesForCalleeSaves, unsigned numberOfCalls, bool noCalleeSaveIsSaved = false)
+static unsigned savedRegisterCountForValueLiveAcrossCalls(bool chargesForCalleeSaves, unsigned numberOfCalls, bool noCalleeSaveIsSaved = false)
 {
     B3::Procedure proc;
     proc.setOptLevel(2);
@@ -2952,15 +2952,15 @@ static unsigned numberOfSavedRegistersForValueLiveAcrossCalls(bool chargesForCal
 
 void testCalleeSaveCost()
 {
-    CHECK(numberOfSavedRegistersForValueLiveAcrossCalls(false, 1) == 1);
-    CHECK(numberOfSavedRegistersForValueLiveAcrossCalls(true, 1) == 0);
-    CHECK(numberOfSavedRegistersForValueLiveAcrossCalls(true, 6) == 1);
-    CHECK(numberOfSavedRegistersForValueLiveAcrossCalls(false, 6) == 1);
+    CHECK(savedRegisterCountForValueLiveAcrossCalls(false, 1) == 1);
+    CHECK(savedRegisterCountForValueLiveAcrossCalls(true, 1) == 0);
+    CHECK(savedRegisterCountForValueLiveAcrossCalls(true, 6) == 1);
+    CHECK(savedRegisterCountForValueLiveAcrossCalls(false, 6) == 1);
 }
 
 void testUnsavedCalleeSaves()
 {
-    CHECK(numberOfSavedRegistersForValueLiveAcrossCalls(false, 6, true) == 0);
+    CHECK(savedRegisterCountForValueLiveAcrossCalls(false, 6, true) == 0);
 }
 
 void testEpilogueGenerator()
@@ -3093,11 +3093,11 @@ void testPatchArgRolesAreStable()
 }
 
 #if CPU(X86_64)
-struct FrameOfManySlots {
+struct ManySlotFrame {
     static constexpr unsigned numberOfSlots = 40;
-    static constexpr unsigned timesHotSlotIsAddedAgain = 10;
+    static constexpr unsigned hotSlotExtraUseCount = 10;
 
-    FrameOfManySlots(bool isPositionIndependent, bool chargesForCalleeSaves, unsigned hotSlot = numberOfSlots - 10)
+    ManySlotFrame(bool isPositionIndependent, bool chargesForCalleeSaves, unsigned hotSlot = numberOfSlots - 10)
     {
         proc.setOptLevel(2);
         proc.setPositionIndependent(isPositionIndependent);
@@ -3116,15 +3116,15 @@ struct FrameOfManySlots {
         root->append(Move, nullptr, Arg::imm(0), sum);
         for (StackSlot* slot : slots)
             root->append(Add64, nullptr, Arg::stack(slot), sum);
-        for (unsigned i = 0; i < timesHotSlotIsAddedAgain; ++i)
+        for (unsigned i = 0; i < hotSlotExtraUseCount; ++i)
             root->append(Add64, nullptr, Arg::stack(slots[hotSlot]), sum);
         root->append(Ret64, nullptr, sum);
         auto compilation = compile(proc);
         constexpr int64_t base = 5;
-        CHECK(invoke<int64_t>(*compilation, base) == numberOfSlots * (numberOfSlots + 1) / 2 + numberOfSlots * base + timesHotSlotIsAddedAgain * (hotSlot + 1 + base));
+        CHECK(invoke<int64_t>(*compilation, base) == numberOfSlots * (numberOfSlots + 1) / 2 + numberOfSlots * base + hotSlotExtraUseCount * (hotSlot + 1 + base));
     }
 
-    unsigned numberOfAddressesFromTheStackPointer()
+    unsigned stackPointerAddressCount()
     {
         unsigned result = 0;
         for (Inst& inst : *root) {
@@ -3141,10 +3141,10 @@ struct FrameOfManySlots {
 
 void testHotStackSlotIsNearFramePointer()
 {
-    constexpr intptr_t reachOfOneByte = -128;
-    constexpr unsigned hotSlot = FrameOfManySlots::numberOfSlots - 10;
+    constexpr intptr_t oneByteRange = -128;
+    constexpr unsigned hotSlot = ManySlotFrame::numberOfSlots - 10;
     auto isNear = [](bool chargesForCalleeSaves) {
-        return FrameOfManySlots(false, chargesForCalleeSaves, hotSlot).slots[hotSlot]->offsetFromFP() >= reachOfOneByte;
+        return ManySlotFrame(false, chargesForCalleeSaves, hotSlot).slots[hotSlot]->offsetFromFP() >= oneByteRange;
     };
     CHECK(isNear(true));
     CHECK(!isNear(false));
@@ -3152,13 +3152,13 @@ void testHotStackSlotIsNearFramePointer()
 
 void testFarStackSlotsUseStackPointer()
 {
-    CHECK(FrameOfManySlots(true, false).numberOfAddressesFromTheStackPointer());
-    CHECK(!FrameOfManySlots(false, false).numberOfAddressesFromTheStackPointer());
+    CHECK(ManySlotFrame(true, false).stackPointerAddressCount());
+    CHECK(!ManySlotFrame(false, false).stackPointerAddressCount());
 }
 #endif
 
 #if CPU(ARM64)
-enum class BetweenLoads : uint8_t { Nothing, PossiblyOverlappingStore, StoreElsewhereOffSameBase, BaseIsChanged, FirstIsUsed };
+enum class BetweenLoads : uint8_t { Nothing, PossiblyOverlappingStore, StoreToOtherOffsetOfSameBase, BaseIsChanged, FirstIsUsed };
 
 static bool loadsPair(bool isPositionIndependent, BetweenLoads between, int32_t secondOffset = 8)
 {
@@ -3177,7 +3177,7 @@ static bool loadsPair(bool isPositionIndependent, BetweenLoads between, int32_t 
     case BetweenLoads::PossiblyOverlappingStore:
         root->append(Move, nullptr, first, Arg::addr(Tmp(GPRInfo::argumentGPR1), 8));
         break;
-    case BetweenLoads::StoreElsewhereOffSameBase:
+    case BetweenLoads::StoreToOtherOffsetOfSameBase:
         root->append(Move, nullptr, first, Arg::addr(base, 16));
         break;
     case BetweenLoads::BaseIsChanged:
@@ -3204,7 +3204,7 @@ static bool loadsPair(bool isPositionIndependent, BetweenLoads between, int32_t 
 void testLoadPair()
 {
     CHECK(loadsPair(true, BetweenLoads::Nothing));
-    CHECK(loadsPair(true, BetweenLoads::StoreElsewhereOffSameBase));
+    CHECK(loadsPair(true, BetweenLoads::StoreToOtherOffsetOfSameBase));
     CHECK(loadsPair(true, BetweenLoads::FirstIsUsed));
 
     CHECK(!loadsPair(false, BetweenLoads::Nothing));
@@ -4002,7 +4002,7 @@ void run(const char* filter)
 #if USE(BUN_JSC_ADDITIONS)
     RUN(testOopsTraps());
     RUN(testBlockOrderInvertsBranches());
-    RUN(testBlockOrderLaysRareBlocksInGaps());
+    RUN(testBlockOrderPlacesRareBlocksInGaps());
     RUN(testBlockOrderComparesEdges());
     RUN(testCalleeSaveCost());
     RUN(testUnsavedCalleeSaves());

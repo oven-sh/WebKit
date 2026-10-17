@@ -209,7 +209,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Call
 }
 
 #if ENABLE(AOT)
-inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor, bool leavesAdapter) const
+inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor, bool skipsAdapter) const
 #else
 inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
 #endif
@@ -231,7 +231,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
 #endif
     copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
 #if ENABLE(AOT)
-    if (CallFrame* adapter = leavesAdapter ? visitor->aotAdapterFrame() : nullptr)
+    if (CallFrame* adapter = skipsAdapter ? visitor->aotAdapterFrame() : nullptr)
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
 #endif
 }

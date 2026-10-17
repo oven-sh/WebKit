@@ -69,7 +69,7 @@ public:
 
     RegisterSet takeNamedOrClobberedRegisters()
     {
-        m_clobberedRegisters.exclude(m_code.calleeSavesLostAtSuspensions());
+        m_clobberedRegisters.exclude(m_code.calleeSavesClobberedAtSuspensions());
         for (uint64_t regs = m_namedRegs; regs; regs &= regs - 1)
             m_clobberedRegisters.add(Reg::fromIndex(std::countr_zero(regs)), IgnoreVectors);
         return WTF::move(m_clobberedRegisters);
@@ -88,7 +88,7 @@ private:
         uint64_t late;
     };
 
-    static constexpr std::array<uint8_t, 256> makeDefsOfForms()
+    static constexpr std::array<uint8_t, 256> computeFormDefs()
     {
         std::array<uint8_t, 256> result { };
         for (unsigned form = 0; form < 256; ++form) {
@@ -137,7 +137,7 @@ private:
 
     void decode()
     {
-        static constexpr std::array<uint8_t, 256> defsOfForms = makeDefsOfForms();
+        static constexpr std::array<uint8_t, 256> formDefs = computeFormDefs();
 
         struct Clobbers {
             RegisterSet set;
@@ -182,7 +182,7 @@ private:
                 if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
                     for (; argIndex < numberOfArgs; ++argIndex) {
                         Arg& arg = args[argIndex];
-                        unsigned defs = defsOfForms[forms[argIndex]];
+                        unsigned defs = formDefs[forms[argIndex]];
                         unsigned kind = arg.kind();
                         if (kind == Arg::Tmp) {
                             if (arg.isReg()) {
@@ -270,11 +270,11 @@ private:
             const uint8_t* flags = m_flags.span().data() + m_firstInstOfBlock[block];
             unsigned blockSize = block->size();
             for (m_instIndex = 0; m_instIndex < blockSize; ++m_instIndex) {
-                uint8_t flagsOfInst = flags[m_instIndex];
-                if (flagsOfInst & definesSpillSlot) [[unlikely]]
+                uint8_t instFlags = flags[m_instIndex];
+                if (instFlags & definesSpillSlot) [[unlikely]]
                     clobberDefinedSlots([](Arg::Role role) { return Arg::isAnyDef(role); });
                 m_state.clobber(definedRegs[m_instIndex].early | definedRegs[m_instIndex].late);
-                if (flagsOfInst & mayAddAlias)
+                if (instFlags & mayAddAlias)
                     addInstAliases();
             }
 
@@ -315,8 +315,8 @@ private:
             const uint8_t* flags = m_flags.span().data() + m_firstInstOfBlock[block];
             unsigned blockSize = block->size();
             for (m_instIndex = 0; m_instIndex < blockSize; ++m_instIndex) {
-                uint8_t flagsOfInst = flags[m_instIndex];
-                if (!flagsOfInst) {
+                uint8_t instFlags = flags[m_instIndex];
+                if (!instFlags) {
                     m_state.clobber(definedRegs[m_instIndex].early | definedRegs[m_instIndex].late);
                     continue;
                 }
@@ -324,13 +324,13 @@ private:
                     addInstAliases();
                     continue;
                 }
-                if (flagsOfInst & definesSpillSlot) [[unlikely]]
+                if (instFlags & definesSpillSlot) [[unlikely]]
                     clobberDefinedSlots([](Arg::Role role) { return Arg::isEarlyDef(role); });
                 m_state.clobber(definedRegs[m_instIndex].early);
                 fixInst();
                 if (!block->at(m_instIndex))
                     continue;
-                if (flagsOfInst & definesSpillSlot) [[unlikely]]
+                if (instFlags & definesSpillSlot) [[unlikely]]
                     clobberDefinedSlots([](Arg::Role role) { return Arg::isLateDef(role); });
                 m_state.clobber(definedRegs[m_instIndex].late);
                 addInstAliases();
@@ -790,8 +790,8 @@ private:
         void sort()
         {
 #if USE(BUN_JSC_ADDITIONS)
-            static constexpr size_t leastSizeToSortTheTailAlone = 64;
-            if (slotConst.size() >= leastSizeToSortTheTailAlone) {
+            static constexpr size_t minSizeToSortTailSeparately = 64;
+            if (slotConst.size() >= minSizeToSortTailSeparately) {
                 auto isLess = [](const auto& a, const auto& b) {
                     return a < b;
                 };

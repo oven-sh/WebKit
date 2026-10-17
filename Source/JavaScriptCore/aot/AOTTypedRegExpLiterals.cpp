@@ -37,21 +37,20 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr size_t maxConstantTextSize = MB;
+static constexpr size_t maxConstantStringSize = MB;
 
-static bool appendConstantText(const Program& program, const Function& function, ValueID id, Vector<uint8_t>& text)
+static bool appendConstantString(const Program& program, const Function& function, ValueID id, Vector<uint8_t>& text)
 {
     auto& value = function.at(id);
     switch (value.opcode) {
     case Opcode::String:
         text.append(program.string(value.string()));
-        return text.size() <= maxConstantTextSize;
+        return text.size() <= maxConstantStringSize;
     case Opcode::Cast:
     case Opcode::ToString:
-        return appendConstantText(program, function, value.child(0), text);
+        return appendConstantString(program, function, value.child(0), text);
     case Opcode::Add:
-        return appendConstantText(program, function, value.child(0), text) && appendConstantText(program, function, value.child(1), text);
-    // Where the text does not say hot a Strcat is a call of a function that is nothing but that: see giveConcatenationsOneBody().
+        return appendConstantString(program, function, value.child(0), text) && appendConstantString(program, function, value.child(1), text);
     case Opcode::CallDirect: {
         auto& callee = program.at(value.function());
         if (callee.blocks.size() != 1 || callee.blocks[0].values.size() != 1 || callee.blocks[0].terminator.kind != TerminatorKind::Return || callee.blocks[0].terminator.value != callee.blocks[0].values[0])
@@ -63,7 +62,7 @@ static bool appendConstantText(const Program& program, const Function& function,
     }
     case Opcode::Strcat:
         for (ValueID argument : value.arguments) {
-            if (!appendConstantText(program, function, argument, text))
+            if (!appendConstantString(program, function, argument, text))
                 return false;
         }
         return true;
@@ -74,12 +73,11 @@ static bool appendConstantText(const Program& program, const Function& function,
 
 using PossibleFlags = Vector<OptionSet<Yarr::Flags>, 4>;
 
-// `onlyFirst ? undefined : "g"`: whatever constant an edge passes. Where nothing is known: none, which is a guess.
 static void appendPossibleFlags(const Program& program, const Function& function, ValueID id, PossibleFlags& all, unsigned joinsLeft)
 {
     auto& value = function.at(id);
     Vector<uint8_t> text;
-    if (value.opcode == Opcode::Undefined || appendConstantText(program, function, id, text)) {
+    if (value.opcode == Opcode::Undefined || appendConstantString(program, function, id, text)) {
         if (auto flags = Yarr::parseFlags(StringView { byteCast<Latin1Character>(text.span()) }); flags && !all.contains(*flags))
             all.append(*flags);
         return;
@@ -104,14 +102,9 @@ static void appendPossibleFlags(const Program& program, const Function& function
         all.append(OptionSet<Yarr::Flags> { });
 }
 
-// What the code of the modules makes of the texts that are written down in it, as far as the program alone says. marked builds its 42 expressions when it is loaded:
-// `edit(/^(?:bull)/).replace(/bull/g, bullet).getRegex()`. This goes through that code with what it knows: primitives, expressions, and the closures, objects and arrays the code
-// itself has made; everything else is unknown, and so is what is made of it. Whatever RegExp comes about with a known source and known flags is handed to the image.
-// It proves nothing and changes nothing: see addRegExpLiterals(). So where it does not know which way a branch goes it guesses, it takes a call that throws for one that
-// yields something unknown, and it stops when it has done enough. It goes by the program alone: the same program, the same image.
-class EvaluatorOfTexts {
+class StringEvaluator {
 public:
-    EvaluatorOfTexts(VM& vm, std::span<const uint8_t> buffer, RegExpSourcesAndFlags& found)
+    StringEvaluator(VM& vm, std::span<const uint8_t> buffer, RegExpSourcesAndFlags& found)
         : m_vm(vm)
         , m_buffer(buffer)
         , m_found(found)
@@ -122,10 +115,10 @@ public:
     {
         if (String text = String::fromUTF8(bytes); !text.isNull())
             return text;
-        return String(decodeTextOfProgram(bytes).span());
+        return String(decodeProgramString(bytes).span());
     }
 
-    void listLiterals()
+    void collectLiterals()
     {
         if (m_buffer.size() < sizeof(Format::Header))
             return;
@@ -153,7 +146,7 @@ public:
         m_shapes = section<Format::Shape>(header.shapes);
         m_fields = section<Format::Field>(header.fields);
         m_methods = section<Format::Method>(header.methods);
-        m_variablesOfProgram = section<Format::Variable>(header.variables);
+        m_programVariables = section<Format::Variable>(header.variables);
         m_modules = section<Format::Module>(header.modules);
         m_functions = section<Format::Function>(header.functions);
         m_blocks = section<Format::Block>(header.blocks);
@@ -169,10 +162,10 @@ public:
         });
         prepareGlobalObject();
         auto declaredTypes = section<Format::DeclaredType>(header.declaredTypes);
-        m_variables.grow(m_variablesOfProgram.size());
-        m_isStored.ensureSize(m_variablesOfProgram.size());
+        m_variables.grow(m_programVariables.size());
+        m_isStored.ensureSize(m_programVariables.size());
         for (unsigned i = 0; i < m_variables.size(); ++i) {
-            auto& variable = m_variablesOfProgram[i];
+            auto& variable = m_programVariables[i];
             if (variable.initialization == Format::Initialization::Undefined) {
                 m_variables[i] = jsUndefined();
                 m_isStored.quickSet(i);
@@ -183,16 +176,16 @@ public:
         }
         for (uint32_t i = 0; i < m_shapes.size(); ++i) {
             if (m_shapes[i].kind == Format::ShapeKind::Instance && m_shapes[i].constructor < m_functions.size())
-                m_shapeOfConstructor.add(m_shapes[i].constructor, i);
+                m_constructorShapes.add(m_shapes[i].constructor, i);
         }
 
         struct Pass {
             unsigned walks { 0 };
-            unsigned walksCutShort { 0 };
+            unsigned truncatedWalks { 0 };
             uint64_t steps { 0 };
-            uint64_t stepsOfWalksCutShort { 0 };
+            uint64_t truncatedWalkSteps { 0 };
             unsigned handedOver { 0 };
-            unsigned handedOverWhereCutShort { 0 };
+            unsigned reportedInTruncatedWalks { 0 };
             Seconds time;
         };
         std::array<Pass, 2> passes;
@@ -202,31 +195,31 @@ public:
                 walk();
                 return;
             }
-            unsigned handedOverBefore = m_numberOfExpressions + m_numberOfExpressionsWithoutCode;
+            unsigned reportedBefore = m_numberOfExpressions + m_numberOfExpressionsWithoutCode;
             MonotonicTime from = MonotonicTime::now();
             walk();
             auto& current = passes[pass];
             unsigned spent = given - m_stepsLeft - m_stepsInReserve;
-            unsigned handedOver = m_numberOfExpressions + m_numberOfExpressionsWithoutCode - handedOverBefore;
+            unsigned handedOver = m_numberOfExpressions + m_numberOfExpressionsWithoutCode - reportedBefore;
             current.time += MonotonicTime::now() - from;
             ++current.walks;
             current.steps += spent;
             current.handedOver += handedOver;
             if (!m_stepsLeft) {
-                ++current.walksCutShort;
-                current.stepsOfWalksCutShort += spent;
-                current.handedOverWhereCutShort += handedOver;
+                ++current.truncatedWalks;
+                current.truncatedWalkSteps += spent;
+                current.reportedInTruncatedWalks += handedOver;
             }
         };
         constexpr unsigned stepsNearSites = maxNumberOfSteps * 4;
-        constexpr unsigned stepsOfWalk = maxNumberOfSteps / 64;
-        Vector<uint32_t> rootsOfLongTexts;
+        constexpr unsigned walkSteps = maxNumberOfSteps / 64;
+        Vector<uint32_t> longStringRoots;
         unsigned stepsLeftNearSites = stepsNearSites;
         auto enter = [&](uint32_t index, unsigned atMost) {
             unsigned reserved = std::min(stepsLeftNearSites, atMost);
-            m_stepsLeft = m_functions[index].kind == Format::FunctionKind::Module ? reserved : std::min(reserved, numberOfStepsBeforeAnyText);
+            m_stepsLeft = m_functions[index].kind == Format::FunctionKind::Module ? reserved : std::min(reserved, stepsBeforeFirstString);
             m_stepsInReserve = reserved - m_stepsLeft;
-            m_hasMadeLongText = false;
+            m_hasCreatedLongString = false;
             auto blocks = slice(m_blocks, m_functions[index].blocks);
             counted(reserved, [&] {
                 invoke(index, Vector<JSValue>(blocks.empty() ? 0 : blocks[0].parameters.count));
@@ -239,9 +232,9 @@ public:
             for (uint32_t i = 0; i < m_functions.size() && stepsLeftNearSites; ++i) {
                 if (m_distanceToSite[i] != distance || m_wasEntered.get(i))
                     continue;
-                enter(i, m_functions[i].kind == Format::FunctionKind::Module ? maxNumberOfSteps / 8 : stepsOfWalk);
-                if (!m_stepsLeft && m_hasMadeLongText)
-                    rootsOfLongTexts.append(i);
+                enter(i, m_functions[i].kind == Format::FunctionKind::Module ? maxNumberOfSteps / 8 : walkSteps);
+                if (!m_stepsLeft && m_hasCreatedLongString)
+                    longStringRoots.append(i);
             }
         }
         std::array<unsigned, maxDistanceToSite + 1> neverEntered { };
@@ -253,7 +246,7 @@ public:
         }
         stepsLeftNearSites = maxNumberOfSteps * 6;
         pass = 1;
-        for (uint32_t index : rootsOfLongTexts) {
+        for (uint32_t index : longStringRoots) {
             if (!stepsLeftNearSites)
                 break;
             enter(index, maxNumberOfSteps / 3);
@@ -262,28 +255,28 @@ public:
             static constexpr ASCIILiteral names[] = { "near the sites"_s, "the roots of long texts, again"_s };
             const unsigned budgets[] = { stepsNearSites, maxNumberOfSteps * 6 };
             for (unsigned k = 0; k < 2; ++k)
-                dataLogLn("AOT: evaluator of texts: ", names[k], ": ", passes[k].walks, " walks, ", passes[k].steps, " steps of ", budgets[k], ", ", static_cast<unsigned>(passes[k].time.milliseconds()), " ms, ", passes[k].handedOver, " expressions handed over; cut short with no steps left: ", passes[k].walksCutShort, " walks, ", passes[k].stepsOfWalksCutShort, " steps, ", passes[k].handedOverWhereCutShort, " expressions handed over");
-            dataLogLn("AOT: evaluator of texts: a walk from a function has at most ", stepsOfWalk, " steps; functions near a site that the first pass never entered, at distance 0 | 1 | 2 | 3: ", neverEntered[0], " | ", neverEntered[1], " | ", neverEntered[2], " | ", neverEntered[3], "; modules run for a variable: ", maxNumberOfSteps * 8 - m_stepsLeftForModules, " steps of ", maxNumberOfSteps * 8);
+                dataLogLn("AOT: evaluator of texts: ", names[k], ": ", passes[k].walks, " walks, ", passes[k].steps, " steps of ", budgets[k], ", ", static_cast<unsigned>(passes[k].time.milliseconds()), " ms, ", passes[k].handedOver, " expressions handed over; cut short with no steps left: ", passes[k].truncatedWalks, " walks, ", passes[k].truncatedWalkSteps, " steps, ", passes[k].reportedInTruncatedWalks, " expressions handed over");
+            dataLogLn("AOT: evaluator of texts: a walk from a function has at most ", walkSteps, " steps; functions near a site that the first pass never entered, at distance 0 | 1 | 2 | 3: ", neverEntered[0], " | ", neverEntered[1], " | ", neverEntered[2], " | ", neverEntered[3], "; modules run for a variable: ", maxNumberOfSteps * 8 - m_stepsLeftForModules, " steps of ", maxNumberOfSteps * 8);
         }
         remarkOnSites();
     }
 
 private:
     static constexpr unsigned maxDistanceToSite = 3;
-    static constexpr unsigned minLengthOfLongText = 1024;
+    static constexpr unsigned minLongStringLength = 1024;
     static constexpr unsigned maxNumberOfSteps = 3000000;
-    static constexpr unsigned numberOfStepsBeforeAnyText = 8192;
+    static constexpr unsigned stepsBeforeFirstString = 8192;
     static constexpr unsigned maxDepth = 48;
     static constexpr unsigned maxNumberOfClosures = 200000;
     static constexpr unsigned maxNumberOfGuesses = 256;
     static constexpr unsigned maxNumberOfChoices = 8;
     static constexpr unsigned maxNumberOfExpressions = 1024;
     static constexpr unsigned maxNumberOfExpressionsWithoutCode = 32;
-    static constexpr unsigned maxSizeToGoBothWays = 256;
-    static constexpr unsigned maxNumberOfBranchesGoneBothWays = 3;
-    static constexpr double maxNumberHandedToBuiltin = 1 << 24;
+    static constexpr unsigned maxSizeToFork = 256;
+    static constexpr unsigned maxForkedBranches = 3;
+    static constexpr double maxNumberPassedToBuiltin = 1 << 24;
     static constexpr unsigned maxNumberOfObjectsSized = 4096;
-    static constexpr unsigned costOfWhatIsTooLargeToSay = std::numeric_limits<unsigned>::max();
+    static constexpr unsigned oversizedValueCost = std::numeric_limits<unsigned>::max();
 
     struct Note {
         uint32_t origin { 0 };
@@ -371,7 +364,7 @@ private:
         return m_identifiers[string];
     }
 
-    Identifier nameOfField(const Format::Value& value)
+    Identifier fieldName(const Format::Value& value)
     {
         if (value.immediates[0] >= m_shapes.size())
             return { };
@@ -400,7 +393,7 @@ private:
     {
         unsigned numberOfFunctions = m_functions.size();
         m_distanceToSite.fill(std::numeric_limits<uint8_t>::max(), numberOfFunctions);
-        Vector<Vector<uint32_t>> namedBy(numberOfFunctions);
+        Vector<Vector<uint32_t>> nameOperandOf(numberOfFunctions);
         Vector<uint32_t> level;
         for (uint32_t index = 0; index < numberOfFunctions; ++index) {
             auto values = slice(m_values, m_functions[index].values);
@@ -418,7 +411,7 @@ private:
                 case Format::Opcode::NewClosureOnce:
                 case Format::Opcode::CallDirect:
                     if (value.immediates[0] < numberOfFunctions)
-                        namedBy[value.immediates[0]].append(index);
+                        nameOperandOf[value.immediates[0]].append(index);
                     break;
                 default:
                     break;
@@ -431,13 +424,13 @@ private:
                 continue;
             for (auto& method : slice(m_methods, shape.methods)) {
                 if (method.function < numberOfFunctions)
-                    namedBy[method.function].append(shape.constructor);
+                    nameOperandOf[method.function].append(shape.constructor);
             }
         }
         for (unsigned distance = 1; distance <= maxDistanceToSite; ++distance) {
             Vector<uint32_t> next;
             for (uint32_t index : level) {
-                for (uint32_t other : namedBy[index]) {
+                for (uint32_t other : nameOperandOf[index]) {
                     if (m_distanceToSite[other] <= distance)
                         continue;
                     m_distanceToSite[other] = distance;
@@ -448,9 +441,9 @@ private:
         }
     }
 
-    const BitVector& blocksLeadingToSites(const Frame& frame)
+    const BitVector& blocksReachingSites(const Frame& frame)
     {
-        return m_blocksLeadingToSites.ensure(frame.function, [&] {
+        return m_blocksReachingSites.ensure(frame.function, [&] {
             BitVector leads;
             leads.ensureSize(frame.blocks.size());
             unsigned distance = m_distanceToSite[frame.function];
@@ -487,7 +480,7 @@ private:
     void prepareGlobalObject()
     {
         m_globalObject = JSGlobalObject::create(m_vm, JSGlobalObject::createStructure(m_vm, jsNull()));
-        m_globalObject->setEvalEnabled(false, "The evaluator of texts compiles nothing"_s);
+        m_globalObject->setEvalEnabled(false, "The string evaluator compiles nothing"_s);
         m_unknown = constructEmptyObject(m_vm, m_globalObject->nullPrototypeObjectStructure());
         m_unknown->methodTable()->preventExtensions(m_unknown, m_globalObject);
         m_regExpConstructor = m_globalObject->regExpConstructor();
@@ -504,7 +497,7 @@ private:
                 return object.isObject() ? object.get(m_globalObject, Identifier::fromString(m_vm, name)) : JSValue();
             });
             if (function && function.isObject())
-                m_functionsNotToBeUsed.append(function);
+                m_disallowedFunctions.append(function);
         };
         remove("Math"_s, false, "random"_s);
         remove("String"_s, true, "localeCompare"_s);
@@ -560,7 +553,7 @@ private:
     }
 
     JSValue toStored(JSValue value) const { return value ? value : JSValue(m_unknown); }
-    JSValue fromStored(JSValue value) const { return value == JSValue(m_unknown) || (value && value.isObject() && m_functionsNotToBeUsed.contains(value)) ? JSValue() : value; }
+    JSValue fromStored(JSValue value) const { return value == JSValue(m_unknown) || (value && value.isObject() && m_disallowedFunctions.contains(value)) ? JSValue() : value; }
 
     JSValue getGlobal(uint32_t name)
     {
@@ -596,8 +589,8 @@ private:
             return JSValue::encode(toStored(callClosure(*closure, fromStored(callFrame->thisValue()), arguments.span())));
         });
         m_closureOf.add(object, closure);
-        if (auto shape = m_shapeOfConstructor.find(function); shape != m_shapeOfConstructor.end())
-            makeClassObject(object, shape->value);
+        if (auto shape = m_constructorShapes.find(function); shape != m_constructorShapes.end())
+            createClassObject(object, shape->value);
         else if (m_functions[function].kind == Format::FunctionKind::Plain && m_functions[function].flags & Format::FunctionHasThis) {
             JSObject* prototype = constructEmptyObject(m_globalObject);
             prototype->putDirect(m_vm, m_vm.propertyNames->constructor, object, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -652,12 +645,12 @@ private:
             return nullptr;
         JSObject* prototype = constructEmptyObject(m_globalObject, base);
         m_prototypes.add(shape, prototype);
-        m_prototypesOfProgram.add(prototype);
+        m_programPrototypes.add(prototype);
         defineMethods(prototype, shape, false);
         return prototype;
     }
 
-    void makeClassObject(JSObject* constructor, uint32_t shape)
+    void createClassObject(JSObject* constructor, uint32_t shape)
     {
         JSObject* prototype = prototypeOf(shape);
         if (!prototype)
@@ -740,7 +733,7 @@ private:
         return makeChoice(all.span());
     }
 
-    JSValue boundBy(JSValue callee, std::span<const JSValue> arguments)
+    JSValue clampBound(JSValue callee, std::span<const JSValue> arguments)
     {
         if (arguments.size() != 2 || (callee != m_mathMin && callee != m_mathMax))
             return { };
@@ -780,10 +773,10 @@ private:
             passed.append(i < arguments.size() ? arguments[i] : jsUndefined());
         if (hasRest)
             passed.append(newArray(arguments.size() > numberOfPlainParameters ? arguments.subspan(numberOfPlainParameters) : std::span<const JSValue>()));
-        return invokeWhateverItIs(closure.function, WTF::move(passed));
+        return invokeAnyFunctionKind(closure.function, WTF::move(passed));
     }
 
-    JSValue invokeWhateverItIs(uint32_t index, Vector<JSValue>&& passed)
+    JSValue invokeAnyFunctionKind(uint32_t index, Vector<JSValue>&& passed)
     {
         if (m_functions[index].flags & Format::FunctionIsAsync) {
             if (!(m_functions[index].flags & Format::FunctionIsGenerator) && m_distanceToSite[index] <= maxDistanceToSite)
@@ -792,10 +785,10 @@ private:
         }
         if (!(m_functions[index].flags & Format::FunctionIsGenerator))
             return invoke(index, WTF::move(passed));
-        m_yielded.append(Vector<JSValue>());
+        m_yieldedValues.append(Vector<JSValue>());
         invoke(index, WTF::move(passed));
-        auto yielded = m_yielded.takeLast();
-        JSValue array = m_stepsLeft ? newArray(yielded.span()) : JSValue();
+        auto returnedValue = m_yieldedValues.takeLast();
+        JSValue array = m_stepsLeft ? newArray(returnedValue.span()) : JSValue();
         if (!array)
             return { };
         JSValue method = attempt([&] {
@@ -804,11 +797,11 @@ private:
         return call(method, array, { });
     }
 
-    unsigned m_looked { 0 };
+    unsigned m_visitedCount { 0 };
 
-    uint64_t sizeOfWalk(JSValue value, UncheckedKeyHashMap<JSObject*, uint64_t>& known)
+    uint64_t traversalSize(JSValue value, UncheckedKeyHashMap<JSObject*, uint64_t>& known)
     {
-        constexpr uint64_t most = std::numeric_limits<uint32_t>::max();
+        constexpr uint64_t maximum = std::numeric_limits<uint32_t>::max();
         if (!value || !value.isObject())
             return 0;
         JSObject* object = asObject(value);
@@ -816,12 +809,12 @@ private:
             return 1;
         auto found = known.find(object);
         if (found != known.end())
-            return std::min(found->value, most);
+            return std::min(found->value, maximum);
         if (known.size() >= maxNumberOfObjectsSized || !m_vm.isSafeToRecurse())
-            return most;
+            return maximum;
         known.add(object, std::numeric_limits<uint64_t>::max());
         uint64_t size = 1;
-        ++m_looked;
+        ++m_visitedCount;
         Vector<PropertyOffset, 16> offsets;
         object->structure()->forEachProperty(m_vm, [&](const PropertyTableEntry& entry) -> bool {
             if (!(entry.attributes() & PropertyAttribute::DontEnum) && !entry.key()->isSymbol())
@@ -829,18 +822,18 @@ private:
             return true;
         });
         for (PropertyOffset offset : offsets) {
-            ++m_looked;
-            size = std::min(size + 1 + sizeOfWalk(object->getDirect(offset), known), most);
-            if (size == most)
-                return most;
+            ++m_visitedCount;
+            size = std::min(size + 1 + traversalSize(object->getDirect(offset), known), maximum);
+            if (size == maximum)
+                return maximum;
         }
         if (hasIndexedProperties(object->indexingType())) {
             for (unsigned i = 0, length = object->getVectorLength(); i < length; ++i) {
-                ++m_looked;
+                ++m_visitedCount;
                 if (object->canGetIndexQuickly(i))
-                    size = std::min(size + sizeOfWalk(object->getIndexQuickly(i), known), most);
-                if (size == most)
-                    return most;
+                    size = std::min(size + traversalSize(object->getIndexQuickly(i), known), maximum);
+                if (size == maximum)
+                    return maximum;
             }
         }
         known.set(object, size);
@@ -856,18 +849,18 @@ private:
         if (!value.isObject())
             return 0;
         UncheckedKeyHashMap<JSObject*, uint64_t> known;
-        uint64_t size = sizeOfWalk(value, known);
+        uint64_t size = traversalSize(value, known);
         if (size >= std::numeric_limits<uint32_t>::max())
-            return costOfWhatIsTooLargeToSay;
+            return oversizedValueCost;
         uint64_t cost = size / 64;
         if (auto* array = dynamicDowncast<JSArray>(value))
             cost += array->length() / 4;
         return static_cast<unsigned>(cost);
     }
 
-    bool refuseWhatIsTooLargeToSay()
+    bool rejectOversizedValue()
     {
-        m_stepsLeft -= std::min(m_stepsLeft, std::max(m_looked, 1u));
+        m_stepsLeft -= std::min(m_stepsLeft, std::max(m_visitedCount, 1u));
         return false;
     }
 
@@ -875,32 +868,32 @@ private:
     {
         if (!value || !value.isObject())
             return true;
-        m_looked = 0;
+        m_visitedCount = 0;
         unsigned cost = costOf(value);
-        if (cost == costOfWhatIsTooLargeToSay)
-            return refuseWhatIsTooLargeToSay();
+        if (cost == oversizedValueCost)
+            return rejectOversizedValue();
         m_stepsLeft -= std::min(m_stepsLeft, cost);
         return m_stepsLeft;
     }
 
     bool fillArguments(MarkedArgumentBuffer& list, JSValue thisValue, std::span<const JSValue> arguments)
     {
-        m_looked = 0;
+        m_visitedCount = 0;
         unsigned cost = costOf(thisValue);
-        if (cost == costOfWhatIsTooLargeToSay)
-            return refuseWhatIsTooLargeToSay();
+        if (cost == oversizedValueCost)
+            return rejectOversizedValue();
         for (JSValue argument : arguments) {
-            if (argument && argument.isNumber() && argument.asNumber() > maxNumberHandedToBuiltin && std::isfinite(argument.asNumber()))
+            if (argument && argument.isNumber() && argument.asNumber() > maxNumberPassedToBuiltin && std::isfinite(argument.asNumber()))
                 return false;
             if (argument && argument.isObject()) {
                 JSValue length = asObject(argument)->getDirect(m_vm, m_vm.propertyNames->length);
-                if (length && length.isNumber() && length.asNumber() > maxNumberHandedToBuiltin)
+                if (length && length.isNumber() && length.asNumber() > maxNumberPassedToBuiltin)
                     return false;
             }
-            unsigned costOfArgument = costOf(toStored(argument));
-            if (costOfArgument == costOfWhatIsTooLargeToSay)
-                return refuseWhatIsTooLargeToSay();
-            cost += std::min(costOfArgument, costOfWhatIsTooLargeToSay - cost);
+            unsigned argumentCost = costOf(toStored(argument));
+            if (argumentCost == oversizedValueCost)
+                return rejectOversizedValue();
+            cost += std::min(argumentCost, oversizedValueCost - cost);
             list.append(toStored(argument));
         }
         m_stepsLeft -= std::min(m_stepsLeft, cost);
@@ -915,7 +908,7 @@ private:
             return m_functions[closure->function].kind == Format::FunctionKind::Constructor ? JSValue() : callClosure(*closure, thisValue, arguments);
         if (callee == JSValue(m_regExpConstructor))
             return makeRegExp(arguments);
-        if (JSValue bounded = boundBy(callee, arguments))
+        if (JSValue bounded = clampBound(callee, arguments))
             return bounded;
         if (isChoice(thisValue) || std::ranges::any_of(arguments, [&](JSValue argument) { return isChoice(argument); }))
             return { };
@@ -933,9 +926,9 @@ private:
         if (!callee || !callee.isObject())
             return { };
         if (auto* closure = m_closureOf.get(asObject(callee))) {
-            auto shape = m_shapeOfConstructor.find(closure->function);
+            auto shape = m_constructorShapes.find(closure->function);
             JSValue object;
-            if (shape != m_shapeOfConstructor.end())
+            if (shape != m_constructorShapes.end())
                 object = newObjectWithShape(shape->value);
             else if (JSValue prototype = asObject(callee)->getDirect(m_vm, m_vm.propertyNames->prototype); prototype && m_functions[closure->function].kind == Format::FunctionKind::Plain)
                 object = constructEmptyObject(m_globalObject, prototype.isObject() ? asObject(prototype) : m_globalObject->objectPrototype());
@@ -962,7 +955,7 @@ private:
             return std::nullopt;
         if (auto* array = dynamicDowncast<JSArray>(iterable)) {
             unsigned length = array->length();
-            if (length > maxNumberHandedToBuiltin)
+            if (length > maxNumberPassedToBuiltin)
                 return std::nullopt;
             for (unsigned i = 0; i < length; ++i) {
                 JSValue element = attempt([&] {
@@ -1032,7 +1025,7 @@ private:
         JSValue string = attempt([&]() -> JSValue {
             return value.toString(m_globalObject);
         });
-        if (!string || !string.isString() || asString(string)->length() > maxConstantTextSize)
+        if (!string || !string.isString() || asString(string)->length() > maxConstantStringSize)
             return std::nullopt;
         String text;
         if (!attempt([&]() -> JSValue {
@@ -1043,13 +1036,13 @@ private:
         return text;
     }
 
-    JSValue makeRegExp(std::span<const JSValue> arguments, bool isHandedOver = true)
+    JSValue makeRegExp(std::span<const JSValue> arguments, bool isReported = true)
     {
         JSValue source = arguments.size() ? arguments[0] : jsUndefined();
         JSValue flags = arguments.size() > 1 ? arguments[1] : jsUndefined();
         if (isChoice(source)) {
             for (JSValue one : choicesOf(source))
-                makeRegExp(std::array { one, flags }, isHandedOver);
+                makeRegExp(std::array { one, flags }, isReported);
             return { };
         }
         if (isChoice(flags))
@@ -1064,11 +1057,11 @@ private:
         else if (auto known = toText(source))
             text = WTF::move(*known);
         else {
-            remarkOnUnknownText(source);
+            remarkOnUnknownString(source);
             return { };
         }
         if (!flags) {
-            if (isHandedOver)
+            if (isReported)
                 handOver(text, { });
             return { };
         }
@@ -1081,7 +1074,7 @@ private:
         auto parsed = Yarr::parseFlags(flagsText);
         if (!parsed)
             return { };
-        if (isHandedOver)
+        if (isReported)
             handOver(text, *parsed);
         RegExp* regExp = RegExp::create(m_vm, text, *parsed);
         if (!regExp->isValid())
@@ -1092,9 +1085,9 @@ private:
     void handOver(const String& source, OptionSet<Yarr::Flags> flags)
     {
         if (m_remarks) [[unlikely]]
-            m_remarkOfSite.set(m_site, std::pair { std::numeric_limits<uint32_t>::max(), makeString("known: "_s, source.length(), " characters, hash "_s, source.hash()) });
+            m_siteRemarks.set(m_site, std::pair { std::numeric_limits<uint32_t>::max(), makeString("known: "_s, source.length(), " characters, hash "_s, source.hash()) });
         unsigned& count = source.length() > ImageRegExp::maxLengthWithCode ? m_numberOfExpressionsWithoutCode : m_numberOfExpressions;
-        if (count == (source.length() > ImageRegExp::maxLengthWithCode ? maxNumberOfExpressionsWithoutCode : maxNumberOfExpressions) || !m_handedOver.add(makeString(flags.toRaw(), '/', source)).isNewEntry)
+        if (count == (source.length() > ImageRegExp::maxLengthWithCode ? maxNumberOfExpressionsWithoutCode : maxNumberOfExpressions) || !m_reportedLiterals.add(makeString(flags.toRaw(), '/', source)).isNewEntry)
             return;
         ++count;
         if (m_remarks && source.length() > 4096)
@@ -1108,7 +1101,7 @@ private:
             return { };
         if (m_isStored.quickGet(index))
             return m_variables[index];
-        uint32_t module = m_variablesOfProgram[index].module;
+        uint32_t module = m_programVariables[index].module;
         uint32_t initializer = module < m_modules.size() ? m_modules[module].initializer : Format::none;
         if (initializer < m_functions.size() && !m_wasEntered.get(initializer) && m_stepsLeftForModules) {
             unsigned stepsLeft = m_stepsLeft;
@@ -1369,7 +1362,7 @@ private:
             return newObjectWithShape(value.immediates[0]);
         case Format::Opcode::GetField:
         case Format::Opcode::GetById: {
-            Identifier name = value.opcode == Format::Opcode::GetField ? nameOfField(value) : identifierOf(value.immediates[0]);
+            Identifier name = value.opcode == Format::Opcode::GetField ? fieldName(value) : identifierOf(value.immediates[0]);
             if (!child(0) || name.isNull())
                 return { };
             return attempt([&] {
@@ -1378,7 +1371,7 @@ private:
         }
         case Format::Opcode::PutField:
         case Format::Opcode::PutById: {
-            Identifier name = value.opcode == Format::Opcode::PutField ? nameOfField(value) : identifierOf(value.immediates[0]);
+            Identifier name = value.opcode == Format::Opcode::PutField ? fieldName(value) : identifierOf(value.immediates[0]);
             if (child(0) && child(0).isObject() && !name.isNull()) {
                 attempt([&]() -> JSValue {
                     PutPropertySlot slot(child(0));
@@ -1563,10 +1556,10 @@ private:
         case Format::Opcode::IteratorClose:
             return jsUndefined();
         case Format::Opcode::Call:
-            noteSite(frame, id);
+            recordSite(frame, id);
             return call(child(0), child(1), arguments().span());
         case Format::Opcode::Construct:
-            noteSite(frame, id);
+            recordSite(frame, id);
             return construct(child(0), arguments().span());
         case Format::Opcode::CallMethod: {
             auto& name = identifierOf(value.immediates[0]);
@@ -1582,14 +1575,14 @@ private:
             passed.appendVector(arguments());
             if (value.immediates[0] >= m_functions.size())
                 return { };
-            return invokeWhateverItIs(value.immediates[0], WTF::move(passed));
+            return invokeAnyFunctionKind(value.immediates[0], WTF::move(passed));
         }
         case Format::Opcode::Cast:
             return child(0);
         case Format::Opcode::Yield:
-            if (m_yielded.isEmpty())
+            if (m_yieldedValues.isEmpty())
                 return { };
-            m_yielded.last().append(child(0));
+            m_yieldedValues.last().append(child(0));
             return jsUndefined();
         case Format::Opcode::GetResumeMode:
             return jsNumber(0);
@@ -1600,7 +1593,7 @@ private:
         }
     }
 
-    void noteSite(const Frame& frame, uint32_t id)
+    void recordSite(const Frame& frame, uint32_t id)
     {
         if (m_remarks) [[unlikely]]
             m_site = static_cast<uint64_t>(frame.function) << 32 | id;
@@ -1609,7 +1602,7 @@ private:
     ASCIILiteral describe(JSValue value)
     {
         if (!value)
-            return "something not known that nothing made: a parameter"_s;
+            return "an unknown value with no producer: a parameter"_s;
         if (value.isUndefined())
             return "undefined"_s;
         if (value.isNull())
@@ -1637,7 +1630,7 @@ private:
         return "an object"_s;
     }
 
-    uint32_t numberOfCharactersIn(JSValue value, unsigned depth = 0)
+    uint32_t characterCountOf(JSValue value, unsigned depth = 0)
     {
         if (!value || !value.isCell())
             return 0;
@@ -1650,7 +1643,7 @@ private:
         unsigned length = std::min(array->length(), 1u << 20);
         for (unsigned i = 0; i < length; ++i) {
             if (JSValue element = array->tryGetIndexQuickly(i))
-                sum += numberOfCharactersIn(element, depth + 1);
+                sum += characterCountOf(element, depth + 1);
         }
         return static_cast<uint32_t>(std::min<uint64_t>(sum, std::numeric_limits<uint32_t>::max() - 1));
     }
@@ -1666,7 +1659,7 @@ private:
             functor(argument);
     }
 
-    void takeNote(Frame& frame, uint32_t id)
+    void consumePendingNote(Frame& frame, uint32_t id)
     {
         Note note = m_pendingNote;
         auto& value = frame.values[id];
@@ -1682,7 +1675,7 @@ private:
                     note.origin = frame.notes[operand].origin;
                 sum += frame.notes[operand].length;
             } else
-                sum += numberOfCharactersIn(frame.slots[operand]);
+                sum += characterCountOf(frame.slots[operand]);
         });
         if (!note.origin) {
             String name;
@@ -1693,7 +1686,7 @@ private:
                 JSValue prototype = attempt([&]() -> JSValue {
                     return receiver.isObject() ? asObject(receiver)->getPrototype(m_globalObject) : JSValue(receiver.synthesizePrototype(m_globalObject));
                 });
-                bool isPublic = prototype && prototype.isObject() && !m_prototypesOfProgram.contains(asObject(prototype)) && attempt([&]() -> JSValue {
+                bool isPublic = prototype && prototype.isObject() && !m_programPrototypes.contains(asObject(prototype)) && attempt([&]() -> JSValue {
                     return jsBoolean(asObject(prototype)->hasProperty(m_globalObject, identifierOf(value.immediates[0])));
                 }) == jsBoolean(true);
                 if (isPublic)
@@ -1708,23 +1701,23 @@ private:
         m_pendingNote = note;
     }
 
-    void remarkOnUnknownText(JSValue source)
+    void remarkOnUnknownString(JSValue source)
     {
         if (!m_remarks)
             return;
-        Note note = m_noteOfSource;
+        Note note = m_sourceNote;
         StringPrintStream out;
         if (source)
-            out.print("it is ", describe(source), ", of which no text can be made");
+            out.print("it is ", describe(source), ", which cannot be converted to a string");
         else if (!note.origin)
-            out.print("an argument of the function the walk began with");
+            out.print("an argument of the function the walk started from");
         else {
             auto& origin = m_origins[note.origin - 1];
             auto values = slice(m_values, m_functions[origin.function].values);
             out.print(nameOf(static_cast<Opcode>(values[origin.value].opcode)), origin.name.isNull() ? "" : " ", origin.name.isNull() ? String(emptyString()) : origin.name, " in f", origin.function, ", its first operand: ", origin.operand);
         }
         out.print("; ", note.length, " characters so far");
-        auto& remark = m_remarkOfSite.add(m_site, std::pair { 0u, String() }).iterator->value;
+        auto& remark = m_siteRemarks.add(m_site, std::pair { 0u, String() }).iterator->value;
         if (remark.second.isNull() || remark.first < note.length)
             remark = { note.length, makeString("not known: "_s, out.toString()) };
     }
@@ -1732,9 +1725,9 @@ private:
     void remarkOnWalk(uint32_t from)
     {
         if (m_remarks && (!m_stepsLeft || m_ranOutOfRecords))
-            dataLogLn("AOT: evaluator of texts: the walk from f", from, " was cut short: ", !m_stepsLeft ? "no steps left" : "", !m_stepsLeft && m_ranOutOfRecords ? ", " : "", m_ranOutOfRecords ? "no closures left" : "", "; the longest text it made: ", m_longestTextOfWalk, " characters");
+            dataLogLn("AOT: evaluator of texts: the walk from f", from, " was cut short: ", !m_stepsLeft ? "no steps left" : "", !m_stepsLeft && m_ranOutOfRecords ? ", " : "", m_ranOutOfRecords ? "no closures left" : "", "; the longest text it made: ", m_longestStringInWalk, " characters");
         m_ranOutOfRecords = false;
-        m_longestTextOfWalk = 0;
+        m_longestStringInWalk = 0;
     }
 
     void remarkOnSites()
@@ -1750,8 +1743,8 @@ private:
             for (uint32_t id = 0; id < values.size(); ++id) {
                 if (!isSite(values, values[id]))
                     continue;
-                auto found = m_remarkOfSite.find(static_cast<uint64_t>(index) << 32 | id);
-                dataLogLn("AOT: evaluator of texts: site f", index, " v", id, ": ", found != m_remarkOfSite.end() ? found->value.second : String(m_wasEntered.get(index) ? "the function was entered, the site never come to"_s : "the function was never entered"_s),
+                auto found = m_siteRemarks.find(static_cast<uint64_t>(index) << 32 | id);
+                dataLogLn("AOT: evaluator of texts: site f", index, " v", id, ": ", found != m_siteRemarks.end() ? found->value.second : String(m_wasEntered.get(index) ? "the function was entered, the site never come to"_s : "the function was never entered"_s),
                     " (captures ", function.captures.count, ", parameters ", function.parameterTypes.count, function.kind == Format::FunctionKind::Constructor ? ", a constructor" : function.kind == Format::FunctionKind::Method ? ", a method" : function.kind == Format::FunctionKind::Module ? ", a module" : "", function.flags & Format::FunctionHasRestParameter ? ", a rest parameter" : "", function.flags & Format::FunctionIsAsync ? ", async" : "", function.flags & Format::FunctionIsGenerator ? ", a generator" : "", function.flags & Format::FunctionIsTyped ? "" : ", not typed", ")");
             }
         }
@@ -1786,10 +1779,10 @@ private:
         if (m_remarks)
             frame.notes.grow(function.values.count);
         pass(frame, 0, passed.span(), { });
-        return runFrom(frame, 0, function.values.count <= maxSizeToGoBothWays ? maxNumberOfBranchesGoneBothWays : 0);
+        return runFrom(frame, 0, function.values.count <= maxSizeToFork ? maxForkedBranches : 0);
     }
 
-    JSValue runFrom(Frame& frame, uint32_t at, unsigned branchesToGoBothWays)
+    JSValue runFrom(Frame& frame, uint32_t at, unsigned remainingForkedBranches)
     {
         unsigned numberOfGuesses = 0;
         for (;;) {
@@ -1805,17 +1798,17 @@ private:
                     auto& value = frame.values[id];
                     if (value.opcode == Format::Opcode::Construct || value.opcode == Format::Opcode::Call) {
                         auto arguments = slice(m_words, value.arguments);
-                        m_noteOfSource = arguments.size() && arguments[0] < frame.notes.size() ? frame.notes[arguments[0]] : Note();
+                        m_sourceNote = arguments.size() && arguments[0] < frame.notes.size() ? frame.notes[arguments[0]] : Note();
                     }
                 }
                 JSValue result = evaluate(frame, id);
                 if (result && result.isString()) {
                     unsigned length = asString(result)->length();
-                    if (length > maxConstantTextSize)
+                    if (length > maxConstantStringSize)
                         result = { };
-                    else if (length > minLengthOfLongText) {
-                        m_hasMadeLongText = true;
-                        m_longestTextOfWalk = std::max(m_longestTextOfWalk, length);
+                    else if (length > minLongStringLength) {
+                        m_hasCreatedLongString = true;
+                        m_longestStringInWalk = std::max(m_longestStringInWalk, length);
                     }
                     if (m_stepsInReserve && result && frame.values[id].opcode != Format::Opcode::String) {
                         unsigned granted = std::min(m_stepsInReserve, 64 + length);
@@ -1825,7 +1818,7 @@ private:
                 }
                 frame.slots[id] = result;
                 if (!result && m_remarks) [[unlikely]]
-                    takeNote(frame, id);
+                    consumePendingNote(frame, id);
             }
             if (!m_stepsLeft)
                 return { };
@@ -1869,14 +1862,14 @@ private:
                         return { };
                     auto kind = frame.blocks[targets[0].block].terminator;
                     taken = kind == Format::TerminatorKind::Throw || kind == Format::TerminatorKind::Unreachable;
-                    auto& leads = blocksLeadingToSites(frame);
+                    auto& leads = blocksReachingSites(frame);
                     if (targets[1].block < frame.blocks.size() && leads.quickGet(targets[0].block) != leads.quickGet(targets[1].block))
                         taken = leads.quickGet(targets[1].block);
-                    if (branchesToGoBothWays) {
-                        --branchesToGoBothWays;
+                    if (remainingForkedBranches) {
+                        --remainingForkedBranches;
                         Frame copy = frame;
                         uint32_t other = enter(!taken, copy);
-                        runFrom(copy, other, branchesToGoBothWays);
+                        runFrom(copy, other, remainingForkedBranches);
                     }
                 }
                 break;
@@ -1907,7 +1900,7 @@ private:
     std::span<const Format::Shape> m_shapes;
     std::span<const Format::Field> m_fields;
     std::span<const Format::Method> m_methods;
-    std::span<const Format::Variable> m_variablesOfProgram;
+    std::span<const Format::Variable> m_programVariables;
     std::span<const Format::Module> m_modules;
     std::span<const Format::Function> m_functions;
     std::span<const Format::Block> m_blocks;
@@ -1915,7 +1908,7 @@ private:
     std::span<const Format::Target> m_targets;
     JSGlobalObject* m_globalObject { nullptr };
     JSObject* m_unknown { nullptr };
-    Vector<JSValue, 8> m_functionsNotToBeUsed;
+    Vector<JSValue, 8> m_disallowedFunctions;
     JSObject* m_regExpConstructor { nullptr };
     JSValue m_objectAssign;
     JSValue m_objectKeys;
@@ -1931,25 +1924,25 @@ private:
     UncheckedKeyHashMap<JSObject*, Closure*> m_closureOf;
     UncheckedKeyHashMap<uint32_t, JSObject*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_references;
     UncheckedKeyHashMap<uint32_t, JSObject*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_prototypes;
-    UncheckedKeyHashSet<JSObject*> m_prototypesOfProgram;
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_shapeOfConstructor;
+    UncheckedKeyHashSet<JSObject*> m_programPrototypes;
+    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorShapes;
     Vector<Iteration> m_iterations;
-    Vector<Vector<JSValue>> m_yielded;
+    Vector<Vector<JSValue>> m_yieldedValues;
     BitVector m_wasEntered;
     Vector<uint8_t> m_distanceToSite;
-    UncheckedKeyHashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksLeadingToSites;
+    UncheckedKeyHashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksReachingSites;
     bool m_hasSites { false };
-    bool m_hasMadeLongText { false };
+    bool m_hasCreatedLongString { false };
     const bool m_remarks { Options::verboseAOTCompilation() };
     Vector<Origin> m_origins;
     Note m_pendingNote;
-    Note m_noteOfSource;
+    Note m_sourceNote;
     uint64_t m_site { 0 };
-    UncheckedKeyHashMap<uint64_t, std::pair<uint32_t, String>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_remarkOfSite;
+    UncheckedKeyHashMap<uint64_t, std::pair<uint32_t, String>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_siteRemarks;
     bool m_ranOutOfRecords { false };
-    unsigned m_longestTextOfWalk { 0 };
+    unsigned m_longestStringInWalk { 0 };
     Vector<uint32_t, 48> m_functionsEntered;
-    UncheckedKeyHashSet<String> m_handedOver;
+    UncheckedKeyHashSet<String> m_reportedLiterals;
     unsigned m_numberOfExpressions { 0 };
     unsigned m_numberOfExpressionsWithoutCode { 0 };
     unsigned m_stepsLeft { maxNumberOfSteps };
@@ -1959,7 +1952,6 @@ private:
     unsigned m_depth { 0 };
 };
 
-// RegExp::compile() finds the code by source and flags, however the RegExp was made. So nothing depends on what is found here but whether there is code to find.
 void addRegExpLiterals(VM& vm, const Program& program, ImageBuilder& builder)
 {
     auto& builtins = Builtins::singleton();
@@ -1969,15 +1961,14 @@ void addRegExpLiterals(VM& vm, const Program& program, ImageBuilder& builder)
                 auto& value = function.at(id);
                 if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty() || value.arguments.size() > 2)
                     continue;
-                // Whichever entry: in code without types nothing says that the arguments are strings.
                 auto& builtin = builtins.at(value.builtin());
                 bool isRegExpNew = builtin.implementation.kind == BuiltinImplementation::Inline && builtin.implementation.inlined == InlineBuiltin::RegExpNew;
                 if (!isRegExpNew && ((builtin.kind != BuiltinKind::Function && builtin.kind != BuiltinKind::Constructor) || builtin.name != "RegExp"_s))
                     continue;
                 Vector<uint8_t> source;
-                if (!appendConstantText(program, function, value.arguments[0], source))
+                if (!appendConstantString(program, function, value.arguments[0], source))
                     continue;
-                String pattern = source.isEmpty() ? emptyString() : EvaluatorOfTexts::decode(source.span());
+                String pattern = source.isEmpty() ? emptyString() : StringEvaluator::decode(source.span());
                 if (pattern.isNull())
                     continue;
                 PossibleFlags all;
@@ -1996,50 +1987,50 @@ void addRegExpLiterals(VM& vm, const Program& program, ImageBuilder& builder)
 
 namespace JSC { namespace AOT {
 
-RegExpsFoundAhead::RegExpsFoundAhead(std::span<const uint8_t> typedProgramAsWritten)
+DiscoveredRegExps::DiscoveredRegExps(std::span<const uint8_t> typedProgramAsWritten)
 {
-    constexpr size_t sizeOfStack = 4 * MB;
+    constexpr size_t stackSize = 4 * MB;
     m_thread = Thread::create("AOT regexps"_s, [this, typedProgramAsWritten] {
         RefPtr<VM> vm = VM::create(HeapType::Small);
-        JSLockHolder destroysVMWhileItIsLocked(*vm);
+        JSLockHolder destroysVMWhileLocked(*vm);
         vm->useImmutableIntrinsics = true;
-        MacroAssembler::useOnlyFeaturesOfBuildTarget();
+        MacroAssembler::restrictToBuildTargetFeatures();
         RegExpSourcesAndFlags literals;
-        Typed::EvaluatorOfTexts(*vm, typedProgramAsWritten, literals).listLiterals();
-        Ref compilerOfLiterals = Thread::create("AOT regexps"_s, [&] {
-            m_compiledAhead.compile(*vm, literals);
-        }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(sizeOfStack));
+        Typed::StringEvaluator(*vm, typedProgramAsWritten, literals).collectLiterals();
+        Ref literalCompiler = Thread::create("AOT regexps"_s, [&] {
+            m_precompiledRegExpSet.compile(*vm, literals);
+        }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(stackSize));
         RegExpSourcesAndFlags found;
-        Typed::EvaluatorOfTexts(*vm, typedProgramAsWritten, found).run();
+        Typed::StringEvaluator(*vm, typedProgramAsWritten, found).run();
         {
             Locker locker { m_lock };
-            m_evaluatedTexts = WTF::move(found);
+            m_evaluatedSources = WTF::move(found);
             m_isEvaluated = true;
             m_didEvaluate.notifyAll();
         }
-        m_compiledAhead.compile(*vm, m_evaluatedTexts);
-        compilerOfLiterals->waitForCompletion();
+        m_precompiledRegExpSet.compile(*vm, m_evaluatedSources);
+        literalCompiler->waitForCompletion();
         vm = nullptr;
-    }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(sizeOfStack));
+    }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(stackSize));
 }
 
-RegExpsFoundAhead::~RegExpsFoundAhead()
+DiscoveredRegExps::~DiscoveredRegExps()
 {
     m_thread->waitForCompletion();
 }
 
-bool RegExpsFoundAhead::isEvaluated()
+bool DiscoveredRegExps::isEvaluated()
 {
     Locker locker { m_lock };
     return m_isEvaluated;
 }
 
-const RegExpSourcesAndFlags& RegExpsFoundAhead::waitForEvaluatedTexts()
+const RegExpSourcesAndFlags& DiscoveredRegExps::waitForEvaluatedSources()
 {
     Locker locker { m_lock };
     while (!m_isEvaluated)
         m_didEvaluate.wait(m_lock);
-    return m_evaluatedTexts;
+    return m_evaluatedSources;
 }
 
 } } // namespace JSC::AOT

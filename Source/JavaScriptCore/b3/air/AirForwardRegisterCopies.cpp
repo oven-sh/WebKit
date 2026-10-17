@@ -38,25 +38,25 @@ struct Copies {
     void add(Reg copy, Reg source)
     {
         m_sourceOf[copy.index()] = source.index() + 1;
-        m_copies |= bit(copy);
+        m_inlinedCopies |= bit(copy);
         m_sources |= bit(source);
     }
 
     void forget(uint64_t changed)
     {
         m_zeroExtended &= ~changed;
-        for (uint64_t copies = m_copies & changed; copies; copies &= copies - 1)
+        for (uint64_t copies = m_inlinedCopies & changed; copies; copies &= copies - 1)
             m_sourceOf[WTF::ctz(copies)] = 0;
-        m_copies &= ~changed;
+        m_inlinedCopies &= ~changed;
         if (!(m_sources & changed))
             return;
         m_sources = 0;
-        for (uint64_t copies = m_copies; copies; copies &= copies - 1) {
+        for (uint64_t copies = m_inlinedCopies; copies; copies &= copies - 1) {
             unsigned copy = WTF::ctz(copies);
             uint64_t source = 1ULL << (m_sourceOf[copy] - 1);
             if (source & changed) {
                 m_sourceOf[copy] = 0;
-                m_copies &= ~(1ULL << copy);
+                m_inlinedCopies &= ~(1ULL << copy);
             } else
                 m_sources |= source;
         }
@@ -66,11 +66,11 @@ struct Copies {
     {
         m_zeroExtended &= other.m_zeroExtended;
         uint64_t sources = 0;
-        for (uint64_t copies = m_copies; copies; copies &= copies - 1) {
+        for (uint64_t copies = m_inlinedCopies; copies; copies &= copies - 1) {
             unsigned copy = WTF::ctz(copies);
             if (m_sourceOf[copy] != other.m_sourceOf[copy]) {
                 m_sourceOf[copy] = 0;
-                m_copies &= ~(1ULL << copy);
+                m_inlinedCopies &= ~(1ULL << copy);
             } else
                 sources |= 1ULL << (m_sourceOf[copy] - 1);
         }
@@ -79,12 +79,12 @@ struct Copies {
 
     bool isZeroExtended(Reg reg) const { return m_zeroExtended & bit(reg); }
     void setZeroExtended(uint64_t registers) { m_zeroExtended |= registers; }
-    uint64_t copies() const { return m_copies; }
-    uint64_t named() const { return m_copies | m_sources | m_zeroExtended; }
+    uint64_t copies() const { return m_inlinedCopies; }
+    uint64_t named() const { return m_inlinedCopies | m_sources | m_zeroExtended; }
 
 private:
     std::array<uint8_t, numberOfRegisters> m_sourceOf { };
-    uint64_t m_copies { 0 };
+    uint64_t m_inlinedCopies { 0 };
     uint64_t m_sources { 0 };
     uint64_t m_zeroExtended { 0 };
 };

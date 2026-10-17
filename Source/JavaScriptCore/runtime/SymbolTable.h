@@ -706,11 +706,11 @@ public:
 
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
-    void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
+    void retainOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
     {
-        keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });
+        retainOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });
     }
-    void keepOnly(const Invocable<bool(UniquedStringImpl*, const SymbolTableEntry&)> auto& isKept)
+    void retainOnly(const Invocable<bool(UniquedStringImpl*, const SymbolTableEntry&)> auto& isKept)
     {
         Map kept;
         unsigned count = 0;

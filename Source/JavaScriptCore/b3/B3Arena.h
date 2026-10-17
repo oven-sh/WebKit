@@ -61,12 +61,12 @@ private:
 
     JS_EXPORT_PRIVATE void* allocateSlow(size_t, size_t alignment);
 
-    struct ChunkOfThread {
-        ~ChunkOfThread();
+    struct ThreadChunk {
+        ~ThreadChunk();
 
         Chunk* chunk { nullptr };
     };
-    static ChunkOfThread& chunkOfThread();
+    static ThreadChunk& threadChunk();
 
     uintptr_t m_head { 0 };
     uintptr_t m_end { 0 };

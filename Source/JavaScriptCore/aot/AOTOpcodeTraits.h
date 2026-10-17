@@ -17,7 +17,7 @@ struct OpcodeTraits {
         ReadsArgumentList = 1 << 1,
         ReadsCalleeWithoutOperand = 1 << 2,
         NeedsOwnFrame = 1 << 3,
-        LetsScopeOut = 1 << 4,
+        EscapesScope = 1 << 4,
         LooksUpVariableByName = 1 << 5,
         ReachesVariables = 1 << 6,
         StoresToVariables = 1 << 7,
@@ -31,9 +31,9 @@ constexpr uint16_t traitsOf(OpcodeID opcode)
 {
     switch (opcode) {
     case op_call_direct_eval:
-        return OpcodeTraits::IsClassified | OpcodeTraits::ReadsCalleeWithoutOperand | OpcodeTraits::NeedsOwnFrame | OpcodeTraits::LetsScopeOut | OpcodeTraits::LooksUpVariableByName | OpcodeTraits::ReachesVariables | OpcodeTraits::MakesCalls | OpcodeTraits::ErrorMayQuoteSource;
+        return OpcodeTraits::IsClassified | OpcodeTraits::ReadsCalleeWithoutOperand | OpcodeTraits::NeedsOwnFrame | OpcodeTraits::EscapesScope | OpcodeTraits::LooksUpVariableByName | OpcodeTraits::ReachesVariables | OpcodeTraits::MakesCalls | OpcodeTraits::ErrorMayQuoteSource;
     case op_create_scoped_arguments:
-        return OpcodeTraits::IsClassified | OpcodeTraits::ReadsArgumentList | OpcodeTraits::ReadsCalleeWithoutOperand | OpcodeTraits::NeedsOwnFrame | OpcodeTraits::LetsScopeOut | OpcodeTraits::ReachesVariables;
+        return OpcodeTraits::IsClassified | OpcodeTraits::ReadsArgumentList | OpcodeTraits::ReadsCalleeWithoutOperand | OpcodeTraits::NeedsOwnFrame | OpcodeTraits::EscapesScope | OpcodeTraits::ReachesVariables;
     case op_create_direct_arguments:
     case op_create_cloned_arguments:
         return OpcodeTraits::IsClassified | OpcodeTraits::ReadsArgumentList | OpcodeTraits::ReadsCalleeWithoutOperand | OpcodeTraits::NeedsOwnFrame;
@@ -48,9 +48,9 @@ constexpr uint16_t traitsOf(OpcodeID opcode)
     case op_create_rest:
         return OpcodeTraits::IsClassified | OpcodeTraits::ReadsArgumentList | OpcodeTraits::NeedsOwnFrame;
     case op_push_with_scope:
-        return OpcodeTraits::IsClassified | OpcodeTraits::NeedsOwnFrame | OpcodeTraits::LetsScopeOut;
+        return OpcodeTraits::IsClassified | OpcodeTraits::NeedsOwnFrame | OpcodeTraits::EscapesScope;
     case op_create_generator_frame_environment:
-        return OpcodeTraits::IsClassified | OpcodeTraits::LetsScopeOut | OpcodeTraits::StoresToVariables;
+        return OpcodeTraits::IsClassified | OpcodeTraits::EscapesScope | OpcodeTraits::StoresToVariables;
     case op_get_from_scope:
         return OpcodeTraits::IsClassified | OpcodeTraits::LooksUpVariableByName | OpcodeTraits::ReachesVariables;
     case op_call_varargs:
@@ -76,7 +76,7 @@ constexpr uint16_t traitsOf(OpcodeID opcode)
     case op_new_async_func_exp:
     case op_new_async_generator_func:
     case op_new_async_generator_func_exp:
-        return OpcodeTraits::IsClassified | OpcodeTraits::LetsScopeOut;
+        return OpcodeTraits::IsClassified | OpcodeTraits::EscapesScope;
     case op_resolve_scope:
     case op_resolve_scope_for_hoisting_func_decl_in_eval:
         return OpcodeTraits::IsClassified | OpcodeTraits::LooksUpVariableByName;

@@ -262,8 +262,8 @@ public:
 
     MemoryMode mode() const { return m_mode; }
 
-    void* const* pointersOfCodeInImage() const;
-    CodePtr<JSEntryPtrTag> entryFromJavaScriptInImage(const RTT&) const;
+    void* const* imageCodePointers() const;
+    CodePtr<JSEntryPtrTag> jsEntrypointInImage(const RTT&) const;
 
     // TriState::Indeterminate means weakly referenced.
     TriState calleeIsReferenced(const AbstractLocker&, Wasm::Callee*) const WTF_REQUIRES_LOCK(m_lock);

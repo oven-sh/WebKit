@@ -80,7 +80,7 @@ const Vector<UpsilonValue*, 2>* UpsilonsByPhi::find(Value* phi) const
     return upsilons.isEmpty() ? nullptr : &upsilons;
 }
 
-static Value* lastValueHandedTo(BasicBlock* block, Value* phi)
+static Value* lastValuePassedTo(BasicBlock* block, Value* phi)
 {
     for (unsigned index = block->size(); index--;) {
         auto* upsilon = block->at(index)->as<UpsilonValue>();
@@ -109,8 +109,8 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
     result.test = result.latch->predecessor(0);
     if (result.test->last()->opcode() != Branch)
         return std::nullopt;
-    result.indexOfLatchInSuccessors = result.test->successorBlock(0) == result.latch ? 0 : 1;
-    if (loops.belongsTo(result.test->successorBlock(1 - result.indexOfLatchInSuccessors), loop))
+    result.latchSuccessorIndex = result.test->successorBlock(0) == result.latch ? 0 : 1;
+    if (loops.belongsTo(result.test->successorBlock(1 - result.latchSuccessorIndex), loop))
         return std::nullopt;
 
     Value* condition = result.test->last()->child(0);
@@ -119,7 +119,7 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
     auto inverted = invertedRelation(condition->opcode());
     if (!inverted)
         return std::nullopt;
-    result.relation = result.indexOfLatchInSuccessors ? *inverted : condition->opcode();
+    result.relation = result.latchSuccessorIndex ? *inverted : condition->opcode();
     bool boundIsFirst = isInvariant(condition->child(0));
     result.bound = condition->child(boundIsFirst ? 0 : 1);
     result.next = condition->child(boundIsFirst ? 1 : 0);
@@ -133,10 +133,10 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
         if (upsilon && upsilon->child(0) == result.next && upsilon->phi()->owner == loop.header())
             result.inductionVariable = upsilon->phi();
     }
-    if (!result.inductionVariable || lastValueHandedTo(result.latch, result.inductionVariable) != result.next)
+    if (!result.inductionVariable || lastValuePassedTo(result.latch, result.inductionVariable) != result.next)
         return std::nullopt;
-    result.start = lastValueHandedTo(result.preHeader, result.inductionVariable);
-    if (!result.start || lastValueHandedTo(loop.header(), result.inductionVariable))
+    result.start = lastValuePassedTo(result.preHeader, result.inductionVariable);
+    if (!result.start || lastValuePassedTo(loop.header(), result.inductionVariable))
         return std::nullopt;
 
     Value* increment = result.next;
@@ -165,7 +165,7 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
     return result;
 }
 
-std::optional<CountedLoop> analyzeCountedLoopTestedAtTheTop(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* preHeader, BasicBlock* test, Value* condition, const UpsilonsByPhi& upsilonsByPhi, const ScopedLambda<bool(Value*)>& isInvariant, const ScopedLambda<bool(BasicBlock*)>& isLeftOut)
+std::optional<CountedLoop> analyzeTopTestedCountedLoop(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* preHeader, BasicBlock* test, Value* condition, const UpsilonsByPhi& upsilonsByPhi, const ScopedLambda<bool(Value*)>& isInvariant, const ScopedLambda<bool(BasicBlock*)>& isLeftOut)
 {
     CountedLoop result;
     result.header = loop.header();
@@ -174,14 +174,14 @@ std::optional<CountedLoop> analyzeCountedLoopTestedAtTheTop(NaturalLoops& loops,
     bool firstStays = loops.belongsTo(test->successorBlock(0), loop);
     if (test->last()->opcode() != Branch || firstStays == loops.belongsTo(test->successorBlock(1), loop))
         return std::nullopt;
-    result.indexOfLatchInSuccessors = firstStays ? 0 : 1;
-    result.latch = test->successorBlock(result.indexOfLatchInSuccessors);
+    result.latchSuccessorIndex = firstStays ? 0 : 1;
+    result.latch = test->successorBlock(result.latchSuccessorIndex);
     if (result.latch == loop.header() || condition->numChildren() != 2 || condition->child(0)->type() != Int64)
         return std::nullopt;
     auto inverted = invertedRelation(condition->opcode());
     if (!inverted)
         return std::nullopt;
-    result.relation = result.indexOfLatchInSuccessors ? *inverted : condition->opcode();
+    result.relation = result.latchSuccessorIndex ? *inverted : condition->opcode();
     bool boundIsFirst = isInvariant(condition->child(0));
     result.bound = condition->child(boundIsFirst ? 0 : 1);
     result.inductionVariable = condition->child(boundIsFirst ? 1 : 0);
@@ -239,7 +239,7 @@ bool relationHoldsOnEntry(const CountedLoop& loop)
     return false;
 }
 
-std::optional<bool> outcomeOfComparisonWithBound(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, Value* bound)
+std::optional<bool> evaluateComparisonWithBound(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, Value* bound)
 {
     if (!invertedRelation(opcode))
         return std::nullopt;
@@ -254,7 +254,7 @@ std::optional<bool> outcomeOfComparisonWithBound(const CountedLoop& loop, Opcode
     return std::nullopt;
 }
 
-static std::optional<bool> outcomeOfComparisonWithLimit(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, bool boundIsZeroExtendedWord = false)
+static std::optional<bool> evaluateComparisonWithLimit(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, bool boundIsZeroExtendedWord = false)
 {
     static constexpr int64_t maxConstant = 1ll << 31;
     if (!invertedRelation(opcode))
@@ -279,27 +279,27 @@ static std::optional<bool> outcomeOfComparisonWithLimit(const CountedLoop& loop,
     if (!added || (limit->opcode() != ZExt32 && !(boundIsZeroExtendedWord && limit == loop.bound)) || loop.saturation)
         return std::nullopt;
     int64_t least;
-    int64_t mostLessLimit;
+    int64_t maxMinusLimit;
     if (loop.increases()) {
-        if (loop.bound != limit || loop.admitsEqual() || loop.wrapsAroundInt32 || !isSmall(loop.start))
+        if (loop.bound != limit || loop.includesEqual() || loop.wrapsAroundInt32 || !isSmall(loop.start))
             return std::nullopt;
         least = loop.start->asInt64();
-        mostLessLimit = -1;
+        maxMinusLimit = -1;
     } else {
         Value* start = loop.start;
         if (loop.isUnsigned() || !isSmall(loop.bound) || start->opcode() != Add || start->child(0) != limit || !isSmall(start->child(1)))
             return std::nullopt;
-        least = loop.bound->asInt64() + (loop.admitsEqual() ? 0 : 1);
+        least = loop.bound->asInt64() + (loop.includesEqual() ? 0 : 1);
         if (loop.wrapsAroundInt32 && least + loop.step < std::numeric_limits<int32_t>::min())
             return std::nullopt;
-        mostLessLimit = start->child(1)->asInt64();
+        maxMinusLimit = start->child(1)->asInt64();
     }
-    if (least + *added < 0 || mostLessLimit + *added >= 0)
+    if (least + *added < 0 || maxMinusLimit + *added >= 0)
         return std::nullopt;
     return opcode == LessThan || opcode == LessEqual || opcode == Below || opcode == BelowEqual;
 }
 
-static std::optional<CountedLoop> analyzeLoopWithLimitHandedRound(NaturalLoops& loops, const NaturalLoop& loop, const UpsilonsByPhi& upsilonsByPhi)
+static std::optional<CountedLoop> analyzeLoopWithCarriedLimit(NaturalLoops& loops, const NaturalLoop& loop, const UpsilonsByPhi& upsilonsByPhi)
 {
     auto result = analyzeCountedLoop(loops, loop, upsilonsByPhi, [&](Value* value) {
         return !loops.belongsTo(value->owner, loop) || value->opcode() == ZExt32;
@@ -312,12 +312,12 @@ static std::optional<CountedLoop> analyzeLoopWithLimitHandedRound(NaturalLoops& 
         if (upsilon && upsilon->child(0) == result->bound && upsilon->phi()->owner == loop.header())
             limit = upsilon->phi();
     }
-    if (!limit || lastValueHandedTo(result->latch, limit) != result->bound || lastValueHandedTo(loop.header(), limit))
+    if (!limit || lastValuePassedTo(result->latch, limit) != result->bound || lastValuePassedTo(loop.header(), limit))
         return std::nullopt;
     auto* upsilons = upsilonsByPhi.find(limit);
     if (!upsilons || upsilons->size() != 2)
         return std::nullopt;
-    Value* limitOnEntry = lastValueHandedTo(result->preHeader, limit);
+    Value* limitOnEntry = lastValuePassedTo(result->preHeader, limit);
     if (!limitOnEntry || limitOnEntry->opcode() != ZExt32)
         return std::nullopt;
     result->bound = limitOnEntry;
@@ -343,7 +343,7 @@ bool foldComparisonsWithBounds(Procedure& proc)
             return !loops.belongsTo(value->owner, loop);
         });
         if (!countedLoop) {
-            auto loopWithLimit = analyzeLoopWithLimitHandedRound(loops, loop, upsilonsByPhi);
+            auto loopWithLimit = analyzeLoopWithCarriedLimit(loops, loop, upsilonsByPhi);
             if (!loopWithLimit)
                 continue;
             for (unsigned i = loop.size(); i--;) {
@@ -352,7 +352,7 @@ bool foldComparisonsWithBounds(Procedure& proc)
                     Value* value = block->at(index);
                     if (value->numChildren() != 2)
                         continue;
-                    auto outcome = outcomeOfComparisonWithLimit(*loopWithLimit, value->opcode(), value->child(0), value->child(1), true);
+                    auto outcome = evaluateComparisonWithLimit(*loopWithLimit, value->opcode(), value->child(0), value->child(1), true);
                     if (!outcome)
                         continue;
                     value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
@@ -370,9 +370,9 @@ bool foldComparisonsWithBounds(Procedure& proc)
                 Value* value = block->at(index);
                 if (value->numChildren() != 2)
                     continue;
-                auto outcome = outcomeOfComparisonWithBound(*countedLoop, value->opcode(), value->child(0), value->child(1), countedLoop->bound);
+                auto outcome = evaluateComparisonWithBound(*countedLoop, value->opcode(), value->child(0), value->child(1), countedLoop->bound);
                 if (!outcome)
-                    outcome = outcomeOfComparisonWithLimit(*countedLoop, value->opcode(), value->child(0), value->child(1));
+                    outcome = evaluateComparisonWithLimit(*countedLoop, value->opcode(), value->child(0), value->child(1));
                 if (!outcome)
                     continue;
                 value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
@@ -384,7 +384,7 @@ bool foldComparisonsWithBounds(Procedure& proc)
     return changed;
 }
 
-Value* appendEndOfStrip(Procedure& proc, BasicBlock* block, const CountedLoop& loop, Value* from, Value* bound, bool relationMayNotHold)
+Value* appendStripEnd(Procedure& proc, BasicBlock* block, const CountedLoop& loop, Value* from, Value* bound, bool relationMayNotHold)
 {
     Origin origin = from->origin();
     bool hasTerminal = block->size() && block->last()->effects().terminal;
@@ -399,16 +399,14 @@ Value* appendEndOfStrip(Procedure& proc, BasicBlock* block, const CountedLoop& l
         return append(proc.add<Const64Value>(origin, value));
     };
     bool isIncreasing = loop.increases();
-    // Or reduceStrength() goes back to what `from` is the sum of, which then lives on beside it.
     if (!from->isConstant())
         from = append(proc.add<Value>(Opaque, origin, from));
-    // The distance has room in 64 bits as an unsigned integer.
     Value* distance = append(isIncreasing ? proc.add<Value>(Sub, origin, bound, from) : proc.add<Value>(Sub, origin, from, bound));
     Value* most = constant(maxIterationsPerStrip);
     Value* length = append(proc.add<Value>(Select, origin, append(proc.add<Value>(Below, origin, distance, most)), distance, most));
     Value* end = append(proc.add<Value>(isIncreasing ? Add : Sub, origin, from, length));
     if (loop.saturation) {
-        Value* limit = constant(*loop.saturation + (loop.admitsEqual() ? (isIncreasing ? -1 : 1) : 0));
+        Value* limit = constant(*loop.saturation + (loop.includesEqual() ? (isIncreasing ? -1 : 1) : 0));
         end = append(proc.add<Value>(Select, origin, append(proc.add<Value>(isIncreasing ? LessThan : GreaterThan, origin, end, limit)), end, limit));
     }
     if (!relationMayNotHold)

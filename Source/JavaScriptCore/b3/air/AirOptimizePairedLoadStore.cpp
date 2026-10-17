@@ -290,18 +290,18 @@ static bool tryLoadPair(Code& code, BasicBlock* block, unsigned current, Inst& i
         Inst& target = block->at(current - count);
         if (target.hasNonArgEffects())
             return false;
-        bool standsInTheWay = false;
+        bool blocksPairing = false;
         target.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width width) {
             if (arg.isMemory() && Arg::isAnyDef(role) && mayOverlap(arg, width))
-                standsInTheWay = true;
+                blocksPairing = true;
             if (arg.isTmp() && Arg::isAnyDef(role) && arg.tmp() == base)
-                standsInTheWay = true;
+                blocksPairing = true;
             arg.forEachTmpFast([&](Tmp& tmp) {
                 if (tmp == loaded)
-                    standsInTheWay = true;
+                    blocksPairing = true;
             });
         });
-        if (standsInTheWay)
+        if (blocksPairing)
             return false;
         if (target.kind != inst.kind || target.args().size() != 2 || !target.args()[0].isAddr() || !target.args()[1].isGPTmp() || target.args()[0].base() != base)
             continue;

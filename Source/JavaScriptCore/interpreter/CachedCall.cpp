@@ -41,7 +41,6 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int arg
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
 #if ENABLE(AOT)
-    // function may be an AOT::Typed::SlimClosure, which is not a JSFunction.
     , m_entryScope(m_vm, function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope()->realm() : function->realm())
     , m_functionExecutable(function->type() != JSFunctionType || uncheckedDowncast<JSFunction>(function)->isHostFunction() ? nullptr : uncheckedDowncast<JSFunction>(function)->jsExecutable())
     , m_scope(function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope() : nullptr)
@@ -77,7 +76,6 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int arg
     }
 
 #if ENABLE(AOT)
-    // See JSFunction::getCallDataInline(). The code is there, stays where it is, and takes any number of arguments.
     if (!m_functionExecutable) {
         m_addressForCall = (function->type() == JSFunctionType ? AOT::closureEntrypoint() : AOT::slimClosureEntrypoint()).taggedPtr();
         m_protoCallFrame.init(nullptr, m_entryScope.globalObject(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));

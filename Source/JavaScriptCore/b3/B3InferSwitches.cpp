@@ -130,7 +130,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         if (m_proc.positionIndependent()) {
             for (const FrequentedBlock& successor : predecessor->successors()) {
-                if (successor.block() == block && isRareForItsPlace(successor, predecessor))
+                if (successor.block() == block && isRareForChainPosition(successor, predecessor))
                     return false;
             }
         }
@@ -282,7 +282,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     std::optional<bool> tryGrowInPlace(BasicBlock* block, SwitchDescription& description, BasicBlock* predecessor, SwitchValue* grown)
     {
-        auto mayBeKept = [](int64_t value) {
+        auto isRepresentableCase = [](int64_t value) {
             return value != std::numeric_limits<int64_t>::min() && value != std::numeric_limits<int64_t>::max();
         };
         if (m_grown != grown || m_numberOfGrownCases != grown->numCaseValues()) {
@@ -290,7 +290,7 @@ private:
             m_grownValues.clear();
             m_grownTargets = IndexSet<BasicBlock*>();
             for (SwitchCase switchCase : grown->cases(predecessor)) {
-                if (!mayBeKept(switchCase.caseValue()))
+                if (!isRepresentableCase(switchCase.caseValue()))
                     return std::nullopt;
                 m_grownValues.add(switchCase.caseValue());
                 m_grownTargets.add(switchCase.targetBlock());
@@ -299,7 +299,7 @@ private:
             m_numberOfGrownCases = grown->numCaseValues();
         }
         for (SwitchCase switchCase : description.cases) {
-            if (!mayBeKept(switchCase.caseValue()))
+            if (!isRepresentableCase(switchCase.caseValue()))
                 return std::nullopt;
         }
         if (description.source != grown->child(0) || predecessor->fallThrough().block() != block)

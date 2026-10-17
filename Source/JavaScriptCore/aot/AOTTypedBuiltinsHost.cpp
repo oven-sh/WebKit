@@ -14,8 +14,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/host.def.
-
 std::optional<Writes> writesOfInlineHost(InlineBuiltin, std::span<const Type>)
 {
     RELEASE_ASSERT_NOT_REACHED();

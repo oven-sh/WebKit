@@ -1805,7 +1805,6 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// What a host's registry does: a module is evaluated when it is first asked for, and kept unless it throws.
 JSValue GlobalObject::requireBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
 {
     VM& vm = globalObject->vm();
@@ -1827,7 +1826,6 @@ JSValue GlobalObject::requireBuiltinModule(JSGlobalObject* globalObject, uint32_
         RETURN_IF_EXCEPTION(scope, { });
         return module;
     }
-    // A test may stand in for what the host has in native code, or has left out: `$builtinModule = id => ..`.
     JSValue standIn = globalObject->get(globalObject, Identifier::fromString(vm, "$builtinModule"_s));
     RETURN_IF_EXCEPTION(scope, { });
     if (standIn.isCallable()) {
@@ -1850,7 +1848,6 @@ JSValue GlobalObject::nativeBinding(JSGlobalObject* globalObject, uint32_t index
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A test may stand in for the host: `$nativeBinding = index => ..`. Undefined: it has nothing for this one.
     JSValue standIn = globalObject->get(globalObject, Identifier::fromString(vm, "$nativeBinding"_s));
     RETURN_IF_EXCEPTION(scope, { });
     if (standIn.isCallable()) {
@@ -1883,7 +1880,6 @@ JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
 
 #if ENABLE(AOT)
-    // Where a compiled program looks for the `require` of its host. A script that stands in for one puts it on the global object.
     JSValue require = globalObject->get(globalObject, Identifier::fromString(vm, "require"_s));
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (require.isCallable())
@@ -5238,7 +5234,7 @@ CommandLine::CommandLine(CommandLineForWorkersTag)
 {
 }
 
-static void reportRuleOfImmutableIntrinsics(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column)
+static void reportImmutableIntrinsicsRule(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column)
 {
     dataLogLn("[aot] type-error - ", kind, " ", sourceURL, ":", line, ":", column, " (", functionName.isEmpty() ? "<anonymous>"_str : functionName, "): ", message, "; would-refuse; count 1");
 }
@@ -5255,7 +5251,7 @@ int runJSC(const CommandLine& options, bool isWorker, NOESCAPE const Func& func)
     }
     VM& vm = VM::create(HeapType::Large).leakRef();
     if (options.m_auditsImmutableIntrinsics)
-        vm.setImmutableIntrinsicsAuditReporter(reportRuleOfImmutableIntrinsics);
+        vm.setImmutableIntrinsicsAuditReporter(reportImmutableIntrinsicsRule);
     if (!isWorker && options.m_canBlockIsFalse)
         vm.m_typedArrayController = adoptRef(new JSC::SimpleTypedArrayController(false));
 

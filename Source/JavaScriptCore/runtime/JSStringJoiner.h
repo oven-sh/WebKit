@@ -289,13 +289,11 @@ public:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Of a double that is kept boxed.
     static std::optional<int32_t> strictInt32Of(JSValue value)
     {
         return value.isDouble() ? tryConvertToStrictInt32(value.asDouble()) : std::nullopt;
     }
 
-    // Of an ArrayWithDouble. Null unless every element is an int32.
     JSString* tryJoin(JSGlobalObject* globalObject, const double* data, unsigned length)
     {
         for (size_t i = 0; i < length; ++i) {

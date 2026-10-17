@@ -1222,7 +1222,7 @@ private:
                 jit.farJump(params[0].gpr(), NoPtrTag);
                 CCallHelpers::Label tableLabel = jit.label();
 #if USE(BUN_JSC_ADDITIONS)
-                params.proc().code().noteTableInCode(tableLabel, tableSize);
+                params.proc().code().recordTableInCode(tableLabel, tableSize);
 #endif
                 jit.emitNops(tableSize * sizeof(int32_t));
                 Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
@@ -1249,9 +1249,9 @@ private:
                         adr |= (distance & 3) << 29 | (distance >> 2) << 5;
                         performJITMemcpy<jitMemcpyRepatch>(instruction, &adr, sizeof(adr));
 #elif CPU(X86_64)
-                        constexpr size_t sizeOfInstruction = 7;
-                        int32_t distance = safeCast<int32_t>(table - (instruction + sizeOfInstruction));
-                        performJITMemcpy<jitMemcpyRepatch>(instruction + sizeOfInstruction - sizeof(distance), &distance, sizeof(distance));
+                        constexpr size_t instructionSize = 7;
+                        int32_t distance = safeCast<int32_t>(table - (instruction + instructionSize));
+                        performJITMemcpy<jitMemcpyRepatch>(instruction + instructionSize - sizeof(distance), &distance, sizeof(distance));
 #else
                         UNUSED_PARAM(instruction);
 #endif
@@ -1308,20 +1308,20 @@ private:
             first = 0;
         }
 
-        unsigned costOfTree = 4;
+        unsigned treeCost = 4;
         for (unsigned remaining = size; remaining > 3; remaining = (remaining + 1) / 2)
-            costOfTree += 2;
-        unsigned costOfTests = (needsRangeCheck ? 2 : 0) + !!first;
+            treeCost += 2;
+        unsigned testsCost = (needsRangeCheck ? 2 : 0) + !!first;
         for (unsigned i = 0; i + coversAll < tests.size(); ++i) {
-            unsigned costOfMask = 1;
+            unsigned maskCost = 1;
             if (isARM64()) {
-                costOfMask = 0;
+                maskCost = 0;
                 for (unsigned shift = 0; shift < 64; shift += 16)
-                    costOfMask += !!(tests[i].mask >> shift & 0xffff);
+                    maskCost += !!(tests[i].mask >> shift & 0xffff);
             }
-            costOfTests += 2 + costOfMask;
+            testsCost += 2 + maskCost;
         }
-        if (costOfTests > costOfTree + 2)
+        if (testsCost > treeCost + 2)
             return false;
 
         Value* child = m_value->child(0);
@@ -1334,13 +1334,13 @@ private:
             before = inRange;
         }
         Value* amount = type == Int32 ? index : before->appendNew<Value>(m_proc, Trunc, m_origin, index);
-        Type typeOfMask = limit < 32 ? Int32 : Int64;
+        Type maskType = limit < 32 ? Int32 : Int64;
         for (unsigned i = 0; i < tests.size(); ++i) {
             bool isLast = i + 1 == tests.size();
             if (isLast && coversAll)
                 break;
-            Value* shifted = before->appendNew<Value>(m_proc, ZShr, m_origin, before->appendIntConstant(m_proc, m_origin, typeOfMask, static_cast<int64_t>(tests[i].mask)), amount);
-            before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, before->appendIntConstant(m_proc, m_origin, typeOfMask, 1)));
+            Value* shifted = before->appendNew<Value>(m_proc, ZShr, m_origin, before->appendIntConstant(m_proc, m_origin, maskType, static_cast<int64_t>(tests[i].mask)), amount);
+            before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, before->appendIntConstant(m_proc, m_origin, maskType, 1)));
             if (isLast) {
                 before->setSuccessors(tests[i].target, fallThrough);
                 return true;
@@ -1356,7 +1356,7 @@ private:
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-    unsigned boundaryOfWindowsNearest(unsigned medianIndex, const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end)
+    unsigned nearestWindowBoundary(unsigned medianIndex, const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end)
     {
         if (!m_proc.positionIndependent())
             return medianIndex;
@@ -1370,15 +1370,15 @@ private:
             targets.append(target);
         }
         unsigned nearest = medianIndex;
-        unsigned leastDistance = end - start;
+        unsigned minDistance = end - start;
         for (unsigned first = start; first < end;) {
             unsigned next = first;
             while (next < end && static_cast<uint64_t>(cases[next].caseValue()) - static_cast<uint64_t>(cases[first].caseValue()) < 64)
                 ++next;
             unsigned distance = next < medianIndex ? medianIndex - next : next - medianIndex;
-            if (next < end && distance < leastDistance) {
+            if (next < end && distance < minDistance) {
                 nearest = next;
-                leastDistance = distance;
+                minDistance = distance;
             }
             first = next;
         }
@@ -1525,7 +1525,7 @@ private:
 
         unsigned medianIndex = std::midpoint(start, end);
 #if USE(BUN_JSC_ADDITIONS)
-        medianIndex = boundaryOfWindowsNearest(medianIndex, cases, fallThrough, start, end);
+        medianIndex = nearestWindowBoundary(medianIndex, cases, fallThrough, start, end);
 #endif
 
         BasicBlock* left = m_blockInsertionSet.insertAfter(m_block);

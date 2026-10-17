@@ -22,9 +22,9 @@ namespace {
 
 class RotateLoops {
 public:
-    RotateLoops(Procedure& proc, const Vector<BasicBlock*>* onlyWithTheseHeaders)
+    RotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
         : m_proc(proc)
-        , m_onlyWithTheseHeaders(onlyWithTheseHeaders)
+        , m_allowedHeaders(allowedHeaders)
     {
     }
 
@@ -32,15 +32,14 @@ public:
     {
         NaturalLoops& loops = m_proc.naturalLoops();
         for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
-            if (!m_onlyWithTheseHeaders || m_onlyWithTheseHeaders->contains(loops.loop(loopIndex).header()))
+            if (!m_allowedHeaders || m_allowedHeaders->contains(loops.loop(loopIndex).header()))
                 considerLoop(loops, loops.loop(loopIndex));
         }
         if (m_rotations.isEmpty())
             return false;
 
-        // A back edge of an outer loop may start at the test of an inner one, whose copy then takes it along.
         std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
-        demoteValuesThatLeaveTestBlocks();
+        demoteValuesEscapingTestBlocks();
         for (auto& rotation : m_rotations)
             rotate(rotation);
         m_proc.resetReachability();
@@ -54,13 +53,11 @@ private:
 
     struct Rotation {
         unsigned depth { 0 };
-        // From the header to the block that ends in the test. Each but the first has the one before it for its only predecessor.
         Vector<BasicBlock*, 4> testBlocks;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
     };
 
-    // From the block on, control leaves the loop or comes back to its header, through a few blocks that nothing else of the loop is reached from.
     static bool leadsBackToHeaderOnly(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* start, BasicBlock* body)
     {
         Vector<BasicBlock*, maxNumberOfRareBlocks> region { start };
@@ -78,7 +75,7 @@ private:
         return true;
     }
 
-    static bool isTestedAtTheBottom(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* latch)
+    static bool isBottomTested(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* latch)
     {
         BasicBlock* block = latch;
         for (unsigned i = 0; i < maxNumberOfRareBlocks; ++i) {
@@ -87,7 +84,7 @@ private:
             if (block->last()->opcode() != Jump || block->numPredecessors() != 1 || block == loop.header())
                 return false;
             for (Value* value : *block) {
-                if (takesInstructions(value))
+                if (emitsInstructions(value))
                     return false;
             }
             block = block->predecessor(0);
@@ -104,9 +101,9 @@ private:
         }
         if (rotation.latches.isEmpty())
             return;
-        if (m_onlyWithTheseHeaders) {
+        if (m_allowedHeaders) {
             for (BasicBlock* latch : rotation.latches) {
-                if (isTestedAtTheBottom(loops, loop, latch))
+                if (isBottomTested(loops, loop, latch))
                     return;
             }
         }
@@ -122,7 +119,7 @@ private:
             for (Value* value : *block) {
                 if (!canCloneForLoop(value))
                     return;
-                numberOfCopiedValues += takesInstructions(value);
+                numberOfCopiedValues += emitsInstructions(value);
             }
             if (numberOfCopiedValues > maxNumberOfCopiedValues)
                 return;
@@ -160,7 +157,7 @@ private:
         }
     }
 
-    void demoteValuesThatLeaveTestBlocks()
+    void demoteValuesEscapingTestBlocks()
     {
         m_proc.resetValueOwners();
         IndexSet<Value*> valuesToDemote;
@@ -179,10 +176,10 @@ private:
 
     void rotate(const Rotation& rotation)
     {
-        double frequencyOfGuard = 0;
+        double guardFrequency = 0;
         for (BasicBlock* predecessor : rotation.testBlocks[0]->predecessors()) {
             if (!rotation.latches.contains(predecessor))
-                frequencyOfGuard += predecessor->frequency();
+                guardFrequency += predecessor->frequency();
         }
         Vector<BasicBlock*, 4> copies;
         for (BasicBlock* block : rotation.testBlocks)
@@ -204,7 +201,7 @@ private:
             copy->successors() = block->successors();
             if (i + 1 < rotation.testBlocks.size())
                 copy->replaceSuccessor(rotation.testBlocks[i + 1], copies[i + 1]);
-            block->setFrequency(std::min(block->frequency(), frequencyOfGuard));
+            block->setFrequency(std::min(block->frequency(), guardFrequency));
         }
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies[0]);
@@ -216,7 +213,7 @@ private:
     }
 
     Procedure& m_proc;
-    const Vector<BasicBlock*>* m_onlyWithTheseHeaders;
+    const Vector<BasicBlock*>* m_allowedHeaders;
     Vector<Rotation> m_rotations;
     IndexSet<BasicBlock*> m_testBlocks;
 };
@@ -241,10 +238,10 @@ bool simplifyTerminals(Procedure& proc)
     return changed;
 }
 
-bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* onlyWithTheseHeaders)
+bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
 {
     PhaseScope phaseScope(proc, "rotateLoops"_s);
-    RotateLoops rotateLoops(proc, onlyWithTheseHeaders);
+    RotateLoops rotateLoops(proc, allowedHeaders);
     return rotateLoops.run();
 }
 

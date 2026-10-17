@@ -50,7 +50,7 @@ void handleCalleeSaves(Code& code)
 #if USE(BUN_JSC_ADDITIONS)
                 RegisterSet clobbered = inst.extraClobberedRegs();
                 clobbered.merge(inst.extraEarlyClobberedRegs());
-                clobbered.exclude(code.calleeSavesLostAtSuspensions());
+                clobbered.exclude(code.calleeSavesClobberedAtSuspensions());
                 usedCalleeSaves.merge(clobbered);
 #else
                 usedCalleeSaves.merge(inst.extraClobberedRegs());
@@ -72,7 +72,7 @@ void handleCalleeSaves(Code& code, RegisterSet usedCalleeSaves)
 #if USE(BUN_JSC_ADDITIONS)
     usedCalleeSaves.exclude(code.unsavedCalleeSaves());
 #if CPU(ARM64)
-    if (!code.calleeSavesLostAtSuspensions().isEmpty()) {
+    if (!code.calleeSavesClobberedAtSuspensions().isEmpty()) {
         bool isSaved = false;
         for (auto [first, second] : { std::pair { ARM64Registers::x19, ARM64Registers::x20 }, std::pair { ARM64Registers::x21, ARM64Registers::x22 }, std::pair { ARM64Registers::x23, ARM64Registers::x24 } }) {
             isSaved |= usedCalleeSaves.contains(first, IgnoreVectors) || usedCalleeSaves.contains(second, IgnoreVectors);

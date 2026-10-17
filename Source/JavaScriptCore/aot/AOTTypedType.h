@@ -22,14 +22,11 @@ static constexpr uint16_t Undefined = 1 << 0;
 static constexpr uint16_t Null = 1 << 1;
 static constexpr uint16_t False = 1 << 2;
 static constexpr uint16_t True = 1 << 3;
-// An integral number other than -0, of magnitude at most 2^62.
 static constexpr uint16_t Int = 1 << 4;
-// Any other number.
 static constexpr uint16_t Double = 1 << 5;
 static constexpr uint16_t String = 1 << 6;
 static constexpr uint16_t Symbol = 1 << 7;
 static constexpr uint16_t BigInt = 1 << 8;
-// A field or an element that is not there. Never the value of an expression.
 static constexpr uint16_t Absent = 1 << 9;
 static constexpr uint16_t LiteralString = 1 << 10;
 
@@ -40,57 +37,49 @@ static constexpr uint16_t All = (1 << 9) - 1;
 }
 
 static constexpr int64_t maxExactInteger = 1ll << 53;
-static constexpr int64_t maxKeptInteger = 1ll << 62;
-// Added to any kept integer, an integer this small leaves the sum within maxKeptInteger once it is rounded to a double.
+static constexpr int64_t maxTrackedInteger = 1ll << 62;
 
 struct Range {
-    int64_t least { 1 };
-    int64_t most { 0 };
+    int64_t minimum { 1 };
+    int64_t maximum { 0 };
 
-    static constexpr Range full() { return { -maxKeptInteger, maxKeptInteger }; }
+    static constexpr Range full() { return { -maxTrackedInteger, maxTrackedInteger }; }
     static constexpr Range int32() { return { INT32_MIN, INT32_MAX }; }
     static constexpr Range uint32() { return { 0, UINT32_MAX }; }
-    // Of a string, and of an array the engine keeps in one piece.
     static constexpr Range length() { return { 0, INT32_MAX }; }
     static constexpr Range empty() { return { 1, 0 }; }
     static constexpr Range one(int64_t value) { return { value, value }; }
 
-    constexpr bool isEmpty() const { return least > most; }
-    constexpr bool isWithin(Range other) const { return isEmpty() || (least >= other.least && most <= other.most); }
-    constexpr bool contains(int64_t value) const { return least <= value && value <= most; }
-    constexpr Range hull(Range other) const
+    constexpr bool isEmpty() const { return minimum > maximum; }
+    constexpr bool isSubsetOf(Range other) const { return isEmpty() || (minimum >= other.minimum && maximum <= other.maximum); }
+    constexpr bool contains(int64_t value) const { return minimum <= value && value <= maximum; }
+    constexpr Range unionWith(Range other) const
     {
         if (isEmpty())
             return other;
         if (other.isEmpty())
             return *this;
-        return { std::min(least, other.least), std::max(most, other.most) };
+        return { std::min(minimum, other.minimum), std::max(maximum, other.maximum) };
     }
-    constexpr Range overlap(Range other) const { return { std::max(least, other.least), std::min(most, other.most) }; }
+    constexpr Range intersectWith(Range other) const { return { std::max(minimum, other.minimum), std::min(maximum, other.maximum) }; }
     friend constexpr bool operator==(Range, Range) = default;
 };
 
 class Program;
 
-// What a value is. It comes from the type checker, through the front end, and is a fact: nothing here finds out a type, and compiled
-// code tests nothing that a type says. Whatever makes a value sees to it that the value is of its type.
 struct Type {
     uint16_t primitives { 0 };
-    // With Primitive::Int: which.
     Range integers;
     bool anyObject { false };
     bool anyFunction { false };
-    // An object of a type of the program: its own layout is among the members of one of these. Sorted.
-    Vector<LayoutID, 1> views;
-    // An instance of a class of the engine, by EngineClass::index. Sorted.
+    Vector<LayoutID, 1> objectLayouts;
     Vector<uint16_t, 1> engineClasses;
-    // Of an array: what its elements are expected to be. Nothing keeps anyone from storing something else, so what is read is tested.
     TypeID elements;
 
     static Type never() { return { }; }
-    static Type ofPrimitives(uint16_t);
+    static Type fromPrimitives(uint16_t);
     static Type integer(Range);
-    static Type view(LayoutID);
+    static Type forLayout(LayoutID);
     static Type engineClass(const EngineClass&);
     static Type function();
     static Type object();
@@ -98,7 +87,7 @@ struct Type {
 
     bool isNever() const { return !primitives && !hasObjects(); }
     bool isAnything() const { return (primitives & Primitive::All) == Primitive::All && anyObject && anyFunction; }
-    bool hasObjects() const { return anyObject || anyFunction || !views.isEmpty() || !engineClasses.isEmpty(); }
+    bool hasObjects() const { return anyObject || anyFunction || !objectLayouts.isEmpty() || !engineClasses.isEmpty(); }
     bool hasCells() const { return hasObjects() || primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::LiteralString); }
     bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !hasObjects(); }
     bool isNumber() const { return !isNever() && hasOnlyPrimitives(Primitive::Number); }
@@ -110,20 +99,15 @@ struct Type {
     bool isUndefinedOrNull() const { return !isNever() && hasOnlyPrimitives(Primitive::UndefinedOrNull); }
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
 
-    // The one type of the program the value is looked at as, if it is an object of that, `undefined` or `null`, and nothing else.
-    LayoutID onlyView() const;
-    // Likewise the one class of the engine.
-    const EngineClass* onlyEngineClass() const;
+    LayoutID singleLayout() const;
+    const EngineClass* singleEngineClass() const;
     Type withoutPrimitives(uint16_t) const;
     Type withLiteralStringWidened() const;
     void normalizeLiteralString();
-    // Whether one of the views does: then any object is of the type. See Layout::admitsForeignObjects.
-    bool admitsForeignObjects(const Program&) const;
-    bool admitsUncheckedObjects(const Program&) const;
-    bool admitsOnlyOtherLayouts(const Program&) const;
-    // Whether every value of this type is one of the other. Without `foreignObjectsPass`: and every object of this type is one that the
-    // other type has for what it is, not because a view admits whatever comes. For whoever makes something else of the rest.
-    bool isWithin(const Type&, const Program&, bool foreignObjectsPass = true) const;
+    bool acceptsUntypedObjects(const Program&) const;
+    bool acceptsUncheckedObjects(const Program&) const;
+    bool acceptsOnlyOtherLayouts(const Program&) const;
+    bool isSubsetOf(const Type&, const Program&, bool untypedObjectsPass = true) const;
 
     friend bool operator==(const Type&, const Type&) = default;
 };
@@ -145,9 +129,7 @@ public:
     const Type& at(TypeID id) const { return m_types[id.index()]; }
     unsigned size() const { return m_types.size(); }
 
-    // From here on there are no new types: functions are compiled side by side, and what a type is numbered must not depend on that.
     void freeze() { m_isFrozen = true; }
-    // For what runs alone again: placement.
     void thaw() { m_isFrozen = false; }
 
     TypeID never;
@@ -162,7 +144,6 @@ public:
     TypeID anything;
 
 private:
-    // References handed out by at() stay valid while types are interned.
     SegmentedVector<Type, 64> m_types;
     UncheckedKeyHashMap<unsigned, Vector<TypeID, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_byHash;
     bool m_isFrozen { false };
@@ -180,9 +161,7 @@ enum class Rep : uint8_t {
     LiteralString,
 };
 
-// How a value of the type sits in a register.
 Rep repOf(const Type&);
-// How it is kept in memory.
 Store storeOf(const Type&);
 ASCIILiteral nameOf(Rep);
 ASCIILiteral nameOf(Store);

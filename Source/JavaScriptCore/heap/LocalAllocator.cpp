@@ -149,7 +149,6 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 #endif
     
 #if USE(BUN_JSC_ADDITIONS)
-    // Here, where this allocator is in the middle of nothing: the cell comes out of another one.
     if (m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
         if (void* result = static_cast<CompleteSubspace*>(m_directory->m_subspace)->tryAllocateInLargerCell(heap, *m_directory, deferralContext))
             return result;

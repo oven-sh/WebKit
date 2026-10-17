@@ -24,9 +24,9 @@ bool isTransparentCast(const Program& program, const Value& value)
         return false;
     if (value.castReason() != CastReason::As && value.castReason() != CastReason::Coerce)
         return true;
-    if (value.castReason() == CastReason::Coerce && type.anyObject && program.at(value.coercedType()).views.isEmpty())
+    if (value.castReason() == CastReason::Coerce && type.anyObject && program.at(value.coercedType()).objectLayouts.isEmpty())
         return true;
-    return !type.anyObject && type.views.isEmpty() && type.engineClasses.isEmpty();
+    return !type.anyObject && type.objectLayouts.isEmpty() && type.engineClasses.isEmpty();
 }
 
 ValueID originOf(const Program& program, const Function& function, ValueID id)
@@ -65,7 +65,7 @@ bool isUsedOnlyAsCallee(const Program& program, const Function& function, const 
     case Opcode::Call:
         return !(user.child(1) && is(user.child(1))) && !isAmong(user.arguments.span());
     case Opcode::CallMethod:
-        return function.copiesFirstArgumentOutOfFrame && !program.typeOf(function, user.child(0)).onlyView() && user.arguments.size() <= numberOfArgumentGPRs && !is(user.child(0)) && !isAmong(user.arguments.span().subspan(1));
+        return function.copiesFirstArgumentToHeap && !program.typeOf(function, user.child(0)).singleLayout() && user.arguments.size() <= numberOfArgumentGPRs && !is(user.child(0)) && !isAmong(user.arguments.span().subspan(1));
     case Opcode::CallBuiltin: {
         auto& implementation = Builtins::singleton().at(user.builtin()).implementation;
         if (implementation.kind != BuiltinImplementation::Inline || (user.child(0) && is(user.child(0))))
@@ -80,7 +80,7 @@ bool isUsedOnlyAsCallee(const Program& program, const Function& function, const 
         for (unsigned i = 0; i < user.arguments.size(); ++i) {
             if (!is(user.arguments[i]))
                 continue;
-            if (i < callee.captureTypes.size() ? !callee.capturesOnlyCalled.get(i) : i < first || !callee.parametersOnlyCalled.get(i - first))
+            if (i < callee.captureTypes.size() ? !callee.calledOnlyCaptures.get(i) : i < first || !callee.calledOnlyParameters.get(i - first))
                 return false;
         }
         return true;
@@ -92,7 +92,7 @@ bool isUsedOnlyAsCallee(const Program& program, const Function& function, const 
 
 bool canStackAllocateClosuresOf(const Program& program, const Function& callee)
 {
-    if ((callee.kind != FunctionKind::Plain && callee.kind != FunctionKind::Arrow) || callee.declaredAs || callee.takesItsClosure || callee.resumeFunction || program.isResumeFunction(callee))
+    if ((callee.kind != FunctionKind::Plain && callee.kind != FunctionKind::Arrow) || callee.declaredAs || callee.takesCalleeClosure || callee.resumeFunction || program.isResumeFunction(callee))
         return false;
     return std::ranges::none_of(callee.values, [&](const Value& value) {
         if (value.opcode == Opcode::GetMyArgumentByVal)
@@ -141,11 +141,11 @@ BitVector blocksInCycles(const Function& function)
                 lowest[visiting.last().first] = std::min(lowest[visiting.last().first], lowest[b]);
             if (lowest[b] != order[b])
                 continue;
-            bool isAlone = stack.last() == b;
+            bool isSingleton = stack.last() == b;
             for (;;) {
                 unsigned member = stack.takeLast();
                 isOnStack.quickClear(member);
-                if (!isAlone)
+                if (!isSingleton)
                     result.quickSet(member);
                 if (member == b)
                     break;
@@ -156,17 +156,17 @@ BitVector blocksInCycles(const Function& function)
 }
 
 template<typename OriginOf>
-bool mayOutliveLoopIteration(const Function& function, ValueID birth, unsigned birthBlock, const OriginOf& originOf)
+bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, unsigned allocationBlock, const OriginOf& originOf)
 {
     BitVector isAlias(function.values.size());
-    isAlias.quickSet(birth.index());
+    isAlias.quickSet(allocationSite.index());
     Vector<std::pair<ValueID, unsigned>, 4> aliases;
     for (bool changed = true; changed;) {
         changed = false;
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
-                if (!value.isClosureInFrame() || isAlias.quickGet(id.index()))
+                if (!value.isStackAllocatedClosure() || isAlias.quickGet(id.index()))
                     continue;
                 if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return isAlias.quickGet(captured.index()); })) {
                     isAlias.quickSet(id.index());
@@ -185,7 +185,7 @@ bool mayOutliveLoopIteration(const Function& function, ValueID birth, unsigned b
         }
     }
     for (auto [alias, definedIn] : aliases) {
-        if (definedIn == birthBlock)
+        if (definedIn == allocationBlock)
             return true;
         auto isUsedIn = [&, alias = alias](const Block& block) {
             bool result = false;
@@ -203,8 +203,8 @@ bool mayOutliveLoopIteration(const Function& function, ValueID birth, unsigned b
             return result;
         };
         BitVector seen(function.blocks.size());
-        Vector<unsigned> worklist { birthBlock };
-        seen.quickSet(birthBlock);
+        Vector<unsigned> worklist { allocationBlock };
+        seen.quickSet(allocationBlock);
         while (!worklist.isEmpty()) {
             auto& block = function.blocks[worklist.takeLast()];
             if (isUsedIn(block))
@@ -232,25 +232,25 @@ public:
     {
         if (!isProfitable())
             return false;
-        Vector<Place, 4> materializations;
-        Vector<std::pair<ValueID, Place>, 4> closuresInFrame;
+        Vector<Location, 4> materializations;
+        Vector<std::pair<ValueID, Location>, 4> stackAllocatedClosures;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             auto& values = m_function.blocks[b].values;
             for (size_t i = 0; i < values.size(); ++i) {
                 auto& value = m_function.at(values[i]);
                 if (values[i] == m_environment)
-                    m_birthBlock = b;
+                    m_allocationBlock = b;
                 if (requiresHeapEnvironment(value))
                     materializations.append({ b, i });
-                else if (value.isClosureInFrame() && value.arguments.contains(m_environment))
-                    closuresInFrame.append({ values[i], { b, i } });
+                else if (value.isStackAllocatedClosure() && value.arguments.contains(m_environment))
+                    stackAllocatedClosures.append({ values[i], { b, i } });
             }
         }
-        for (auto& [closure, birth] : closuresInFrame) {
+        for (auto& [closure, allocationSite] : stackAllocatedClosures) {
             BitVector isAlias = aliasesOf(closure);
-            BitVector afterBirth = blocksReachableFrom(birth.block);
+            BitVector afterAllocation = blocksReachableFrom(allocationSite.block);
             for (auto& materialization : materializations) {
-                if ((materialization.block == birth.block ? materialization.index > birth.index : false) || afterBirth.quickGet(materialization.block)) {
+                if ((materialization.block == allocationSite.block ? materialization.index > allocationSite.index : false) || afterAllocation.quickGet(materialization.block)) {
                     if (isUsedAfter(materialization, isAlias))
                         return false;
                 }
@@ -262,23 +262,23 @@ public:
     void run()
     {
         unsigned numberOfBlocks = m_function.blocks.size();
-        unsigned birthBlock = numberOfBlocks;
+        unsigned allocationBlock = numberOfBlocks;
         for (unsigned b = 0; b < numberOfBlocks; ++b) {
             if (m_function.blocks[b].values.contains(m_environment))
-                birthBlock = b;
+                allocationBlock = b;
         }
-        RELEASE_ASSERT(birthBlock < numberOfBlocks);
+        RELEASE_ASSERT(allocationBlock < numberOfBlocks);
 
         BitVector isNotDominated(numberOfBlocks);
         Vector<unsigned> worklist;
-        if (birthBlock) {
+        if (allocationBlock) {
             isNotDominated.quickSet(0);
             worklist.append(0);
         }
         while (!worklist.isEmpty()) {
             for (auto& target : m_function.blocks[worklist.takeLast()].terminator.targets) {
                 unsigned to = target.block.index();
-                if (to != birthBlock && !isNotDominated.quickSet(to))
+                if (to != allocationBlock && !isNotDominated.quickSet(to))
                     worklist.append(to);
             }
         }
@@ -305,7 +305,7 @@ public:
         while (!worklist.isEmpty()) {
             for (auto& target : m_function.blocks[worklist.takeLast()].terminator.targets) {
                 unsigned to = target.block.index();
-                if (to != birthBlock && !isNotDominated.quickGet(to) && !mayBeMaterialized.quickSet(to))
+                if (to != allocationBlock && !isNotDominated.quickGet(to) && !mayBeMaterialized.quickSet(to))
                     worklist.append(to);
             }
         }
@@ -328,12 +328,12 @@ public:
                 if (value.opcode == Opcode::MaterializeEnvironment && value.child(1) == m_environment)
                     lastMaterialization[b] = id;
             }
-            if (uses && b != birthBlock && !isLiveAtHead.quickSet(b))
+            if (uses && b != allocationBlock && !isLiveAtHead.quickSet(b))
                 worklist.append(b);
         }
         while (!worklist.isEmpty()) {
             for (unsigned from : predecessors[worklist.takeLast()]) {
-                if (from != birthBlock && !isLiveAtHead.quickSet(from))
+                if (from != allocationBlock && !isLiveAtHead.quickSet(from))
                     worklist.append(from);
             }
         }
@@ -344,7 +344,7 @@ public:
         auto outgoing = [&](unsigned b) {
             if (lastMaterialization[b])
                 return lastMaterialization[b];
-            return b != birthBlock && mayBeMaterialized.quickGet(b) ? incoming[b] : m_environment;
+            return b != allocationBlock && mayBeMaterialized.quickGet(b) ? incoming[b] : m_environment;
         };
         for (bool changed = true; changed;) {
             changed = false;
@@ -383,7 +383,7 @@ public:
             if (isNotDominated.quickGet(b))
                 continue;
             auto& block = m_function.blocks[b];
-            ValueID current = b != birthBlock && mayBeMaterialized.quickGet(b) ? incoming[b] : m_environment;
+            ValueID current = b != allocationBlock && mayBeMaterialized.quickGet(b) ? incoming[b] : m_environment;
             for (ValueID id : block.values) {
                 auto& value = m_function.at(id);
                 if (value.opcode == Opcode::MaterializeEnvironment && value.child(1) == m_environment) {
@@ -425,7 +425,7 @@ private:
                 worklist.append(b);
             }
         }
-        unsigned birthBlock = worklist[0];
+        unsigned allocationBlock = worklist[0];
         while (!worklist.isEmpty()) {
             auto& block = m_function.blocks[worklist.takeLast()];
             if (materializations(block))
@@ -433,7 +433,7 @@ private:
             if (block.terminator.kind == TerminatorKind::Return)
                 return true;
             for (auto& target : block.terminator.targets) {
-                if (target.block.index() == birthBlock)
+                if (target.block.index() == allocationBlock)
                     return true;
                 if (!seen.quickSet(target.block.index()))
                     worklist.append(target.block.index());
@@ -444,10 +444,10 @@ private:
 
     bool requiresHeapEnvironment(const Value& value) const
     {
-        return value.opcode == Opcode::NewClosure && !value.isClosureInFrame() && value.arguments.contains(m_environment);
+        return value.opcode == Opcode::NewClosure && !value.isStackAllocatedClosure() && value.arguments.contains(m_environment);
     }
 
-    struct Place {
+    struct Location {
         unsigned block;
         size_t index;
     };
@@ -477,14 +477,14 @@ private:
         Vector<unsigned> worklist { from };
         while (!worklist.isEmpty()) {
             for (auto& target : m_function.blocks[worklist.takeLast()].terminator.targets) {
-                if (target.block.index() != m_birthBlock && !result.quickSet(target.block.index()))
+                if (target.block.index() != m_allocationBlock && !result.quickSet(target.block.index()))
                     worklist.append(target.block.index());
             }
         }
         return result;
     }
 
-    bool isUsedAfter(Place place, const BitVector& isAlias) const
+    bool isUsedAfter(Location location, const BitVector& isAlias) const
     {
         auto isUsedIn = [&](const Block& block, size_t first) {
             bool result = false;
@@ -501,9 +501,9 @@ private:
             }
             return result;
         };
-        if (isUsedIn(m_function.blocks[place.block], place.index + 1))
+        if (isUsedIn(m_function.blocks[location.block], location.index + 1))
             return true;
-        for (size_t b : blocksReachableFrom(place.block)) {
+        for (size_t b : blocksReachableFrom(location.block)) {
             if (isUsedIn(m_function.blocks[b], 0))
                 return true;
         }
@@ -513,10 +513,10 @@ private:
     const Program& m_program;
     Function& m_function;
     ValueID m_environment;
-    unsigned m_birthBlock { UINT_MAX };
+    unsigned m_allocationBlock { UINT_MAX };
 };
 
-bool getsAtArgumentsPastItsOperands(const Program& program, const Function& function)
+bool readsExtraArguments(const Program& program, const Function& function)
 {
     return std::ranges::any_of(function.values, [&](const Value& value) {
         switch (value.opcode) {
@@ -536,14 +536,14 @@ bool getsAtArgumentsPastItsOperands(const Program& program, const Function& func
     });
 }
 
-uint64_t operandsNotOnlyCalled(const Program& program, const Function& function, std::span<const ValueID> operands)
+uint64_t operandsWithOtherUses(const Program& program, const Function& function, std::span<const ValueID> operands)
 {
     RELEASE_ASSERT(operands.size() <= 64);
     Vector<uint64_t> mayBe;
     mayBe.fill(0, function.values.size());
     for (size_t i = 0; i < operands.size(); ++i)
         mayBe[operands[i].index()] |= 1ull << i;
-    auto whatMayBe = [&](ValueID id) -> uint64_t {
+    auto possibleObjectsOf = [&](ValueID id) -> uint64_t {
         uint64_t result = mayBe[originOf(program, function, id).index()];
         return result && program.typeOf(function, id).hasObjects() ? result : 0;
     };
@@ -553,14 +553,14 @@ uint64_t operandsNotOnlyCalled(const Program& program, const Function& function,
             for (auto& target : block.terminator.targets) {
                 auto& parameters = function.at(target.block).parameters;
                 for (unsigned k = 0; k < target.arguments.size(); ++k) {
-                    uint64_t more = whatMayBe(target.arguments[k]) & ~mayBe[parameters[k].index()];
+                    uint64_t more = possibleObjectsOf(target.arguments[k]) & ~mayBe[parameters[k].index()];
                     mayBe[parameters[k].index()] |= more;
                     changed |= !!more;
                 }
             }
         }
     }
-    uint64_t notOnlyCalled = 0;
+    uint64_t hasOtherUses = 0;
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& user = function.at(id);
@@ -568,27 +568,27 @@ uint64_t operandsNotOnlyCalled(const Program& program, const Function& function,
                 continue;
             uint64_t used = 0;
             user.forEachChild([&](ValueID child) {
-                used |= whatMayBe(child);
+                used |= possibleObjectsOf(child);
             });
-            for (used &= ~notOnlyCalled; used; used &= used - 1) {
+            for (used &= ~hasOtherUses; used; used &= used - 1) {
                 uint64_t one = used & -used;
                 auto is = [&](ValueID child) {
-                    return !!(whatMayBe(child) & one);
+                    return !!(possibleObjectsOf(child) & one);
                 };
                 if (!isUsedOnlyAsCallee(program, function, user, is))
-                    notOnlyCalled |= one;
+                    hasOtherUses |= one;
             }
         }
         auto& terminator = block.terminator;
         if (terminator.value && (terminator.kind == TerminatorKind::Return || terminator.kind == TerminatorKind::Throw))
-            notOnlyCalled |= whatMayBe(terminator.value);
+            hasOtherUses |= possibleObjectsOf(terminator.value);
     }
-    return notOnlyCalled;
+    return hasOtherUses;
 }
 
 } // anonymous namespace
 
-void findOperandsOnlyCalled(Program& program)
+void findCalledOnlyOperands(Program& program)
 {
     if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions())
         return;
@@ -596,52 +596,52 @@ void findOperandsOnlyCalled(Program& program)
         unsigned index;
         bool isCapture;
     };
-    auto forEachOperandSaid = [](const Function& function, const auto& functor) {
+    auto forEachCalledOnlyOperand = [](const Function& function, const auto& functor) {
         auto& entryParameters = function.blocks[0].parameters;
-        for (size_t k : function.capturesOnlyCalled)
+        for (size_t k : function.calledOnlyCaptures)
             functor(entryParameters[k], Operand { static_cast<unsigned>(k), true });
         unsigned first = function.captureTypes.size() + function.has(Format::FunctionHasThis);
-        for (size_t k : function.parametersOnlyCalled)
+        for (size_t k : function.calledOnlyParameters)
             functor(entryParameters[first + k], Operand { static_cast<unsigned>(k), false });
     };
     unsigned count = program.functions.size();
     unsigned numberOfOperands = 0;
     Vector<Vector<unsigned>> callees(count);
-    Vector<uint8_t> numbersSaid(FillWith { }, count, static_cast<uint8_t>(0));
+    Vector<uint8_t> calledOnlyCounts(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
-        auto& function = program.functions.withSameValues(i);
-        function.capturesOnlyCalled.clearAll();
-        function.parametersOnlyCalled.clearAll();
+        auto& function = program.functions.atKeepingValueIndex(i);
+        function.calledOnlyCaptures.clearAll();
+        function.calledOnlyParameters.clearAll();
         if (!program.hasCode(FunctionID(i)) || function.blocks.isEmpty())
             return;
         auto& entryParameters = function.blocks[0].parameters;
         unsigned first = function.captureTypes.size() + function.has(Format::FunctionHasThis);
-        unsigned numberSaid = 0;
-        auto mayBeSaidOf = [&](size_t place) {
-            if (place >= entryParameters.size() || numberSaid == 64)
+        unsigned calledOnlyCount = 0;
+        auto canBeCalledOnly = [&](size_t location) {
+            if (location >= entryParameters.size() || calledOnlyCount == 64)
                 return false;
-            auto& type = program.typeOf(function, entryParameters[place]);
+            auto& type = program.typeOf(function, entryParameters[location]);
             if (!type.anyFunction && !type.anyObject)
                 return false;
-            ++numberSaid;
+            ++calledOnlyCount;
             return true;
         };
         for (size_t k = 0; k < function.captureTypes.size(); ++k) {
-            if (mayBeSaidOf(k))
-                function.capturesOnlyCalled.set(k);
+            if (canBeCalledOnly(k))
+                function.calledOnlyCaptures.set(k);
         }
         for (size_t k = 0; k < function.parameterTypes.size(); ++k) {
-            if (mayBeSaidOf(first + k))
-                function.parametersOnlyCalled.set(k);
+            if (canBeCalledOnly(first + k))
+                function.calledOnlyParameters.set(k);
         }
-        if (!numberSaid)
+        if (!calledOnlyCount)
             return;
-        if (getsAtArgumentsPastItsOperands(program, function)) {
-            function.capturesOnlyCalled.clearAll();
-            function.parametersOnlyCalled.clearAll();
+        if (readsExtraArguments(program, function)) {
+            function.calledOnlyCaptures.clearAll();
+            function.calledOnlyParameters.clearAll();
             return;
         }
-        numbersSaid[i] = numberSaid;
+        calledOnlyCounts[i] = calledOnlyCount;
         for (auto& value : function.values) {
             if (value.opcode == Opcode::CallDirect)
                 callees[i].append(value.function().index());
@@ -651,17 +651,17 @@ void findOperandsOnlyCalled(Program& program)
     });
     Vector<unsigned> candidates;
     for (unsigned i = 0; i < count; ++i) {
-        numberOfOperands += numbersSaid[i];
-        if (numbersSaid[i])
+        numberOfOperands += calledOnlyCounts[i];
+        if (calledOnlyCounts[i])
             candidates.append(i);
     }
     Vector<uint8_t> hasChanged;
     Vector<uint8_t> isScanned;
-    Vector<uint64_t> notOnlyCalled;
+    Vector<uint64_t> hasOtherUses;
     hasChanged.fill(0, count);
     isScanned.fill(0, count);
-    notOnlyCalled.fill(0, count);
-    unsigned numberLeft = numberOfOperands;
+    hasOtherUses.fill(0, count);
+    unsigned unchangedCount = numberOfOperands;
     unsigned numberOfRounds = 0;
     unsigned numberOfScans = 0;
     for (bool changed = true; changed;) {
@@ -669,62 +669,62 @@ void findOperandsOnlyCalled(Program& program)
         forEachIndexInParallel(candidates.size(), [&](unsigned k) {
             unsigned i = candidates[k];
             auto& function = std::as_const(program).functions[i];
-            notOnlyCalled[i] = 0;
+            hasOtherUses[i] = 0;
             isScanned[i] = 0;
-            if (function.parametersOnlyCalled.isEmpty() && function.capturesOnlyCalled.isEmpty())
+            if (function.calledOnlyParameters.isEmpty() && function.calledOnlyCaptures.isEmpty())
                 return;
             if (!isFirstRound && std::ranges::none_of(callees[i], [&](unsigned callee) { return hasChanged[callee]; }))
                 return;
             Vector<ValueID, 16> operands;
-            forEachOperandSaid(function, [&](ValueID operand, Operand) {
+            forEachCalledOnlyOperand(function, [&](ValueID operand, Operand) {
                 operands.append(operand);
             });
             isScanned[i] = 1;
-            notOnlyCalled[i] = operandsNotOnlyCalled(program, function, operands.span());
+            hasOtherUses[i] = operandsWithOtherUses(program, function, operands.span());
         });
         changed = false;
         for (unsigned i : candidates) {
             numberOfScans += isScanned[i];
-            hasChanged[i] = !!notOnlyCalled[i];
-            changed |= !!notOnlyCalled[i];
-            numberLeft -= std::popcount(notOnlyCalled[i]);
+            hasChanged[i] = !!hasOtherUses[i];
+            changed |= !!hasOtherUses[i];
+            unchangedCount -= std::popcount(hasOtherUses[i]);
         }
         forEachIndexInParallel(candidates.size(), [&](unsigned k) {
             unsigned i = candidates[k];
-            if (!notOnlyCalled[i])
+            if (!hasOtherUses[i])
                 return;
-            auto& function = program.functions.withSameValues(i);
+            auto& function = program.functions.atKeepingValueIndex(i);
             Vector<Operand, 16> said;
-            forEachOperandSaid(function, [&](ValueID, Operand operand) {
+            forEachCalledOnlyOperand(function, [&](ValueID, Operand operand) {
                 said.append(operand);
             });
-            for (uint64_t rest = notOnlyCalled[i]; rest; rest &= rest - 1) {
+            for (uint64_t rest = hasOtherUses[i]; rest; rest &= rest - 1) {
                 auto& operand = said[WTF::ctz(rest)];
-                (operand.isCapture ? function.capturesOnlyCalled : function.parametersOnlyCalled).clear(operand.index);
+                (operand.isCapture ? function.calledOnlyCaptures : function.calledOnlyParameters).clear(operand.index);
             }
         });
     }
-    destroyBeside(WTF::move(callees));
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: of ", numberOfOperands, " operands that may hold objects of any kind, or functions, ", numberLeft, " are seen to be only called, in ", numberOfRounds, " rounds and ", numberOfScans, " scans of a function");
+    destroyOnHelperThread(WTF::move(callees));
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: of ", numberOfOperands, " operands that may hold objects or functions, ", unchangedCount, " are proven to be only called, in ", numberOfRounds, " rounds and ", numberOfScans, " function scans");
 }
 
-void verifyParametersOnlyCalled(const Program& program, Vector<String>& findings)
+void verifyCalledOnlyParameters(const Program& program, Vector<String>& findings)
 {
     if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions())
         return;
     Lock lock;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = program.functions[i];
-        if (!program.hasCode(FunctionID(i)) || (function.parametersOnlyCalled.isEmpty() && function.capturesOnlyCalled.isEmpty()) || function.blocks.isEmpty())
+        if (!program.hasCode(FunctionID(i)) || (function.calledOnlyParameters.isEmpty() && function.calledOnlyCaptures.isEmpty()) || function.blocks.isEmpty())
             return;
         auto& entryParameters = function.blocks[0].parameters;
         BitVector derivesFromParameter(function.values.size());
-        for (size_t k : function.capturesOnlyCalled) {
+        for (size_t k : function.calledOnlyCaptures) {
             if (k < function.captureTypes.size() && k < entryParameters.size())
                 derivesFromParameter.quickSet(entryParameters[k].index());
         }
         unsigned first = function.captureTypes.size() + function.has(Format::FunctionHasThis);
-        for (size_t k : function.parametersOnlyCalled) {
+        for (size_t k : function.calledOnlyParameters) {
             if (first + k < entryParameters.size())
                 derivesFromParameter.quickSet(entryParameters[first + k].index());
         }
@@ -747,9 +747,9 @@ void verifyParametersOnlyCalled(const Program& program, Vector<String>& findings
             StringPrintStream out;
             ModuleID module = at.inlineFrame ? program.at(function.inlineFrames[at.inlineFrame].callee).module : function.module;
             if (module) {
-                auto place = program.lineColumnFor(module, at.position);
+                auto location = program.lineColumnFor(module, at.position);
                 auto& described = program.modules[module.index()];
-                out.print(String::fromUTF8(program.string(described.displayPath ? described.displayPath : described.path)), ":", place.line, ":", place.column, ": ");
+                out.print(String::fromUTF8(program.string(described.displayPath ? described.displayPath : described.path)), ":", location.line, ":", location.column, ": ");
             }
             out.print("f", i, " ", String::fromUTF8(program.string(function.name)), ": a parameter that is said to be only called comes to ", operation);
             Locker locker { lock };
@@ -777,30 +777,30 @@ void verifyParametersOnlyCalled(const Program& program, Vector<String>& findings
     });
 }
 
-void findClosuresInFrames(Program& program)
+void findStackAllocatedClosures(Program& program)
 {
     if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions())
         return;
-    Vector<uint8_t> mayLieInFrames(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> mayBeStackAllocatedLayouts(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     static constexpr OpcodeSet closures { Opcode::NewClosure, Opcode::NewClosureOnce };
-    Vector<uint8_t> closuresAreMadeOf(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> hasClosureAllocations(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
             return;
         auto& function = std::as_const(program).functions[i];
-        std::as_const(program).functions.forEachValueInOrder(i, closures, [&](ValueID id) {
-            WTF::atomicStore(&closuresAreMadeOf[function.at(id).function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        std::as_const(program).functions.forEachIndexedValue(i, closures, [&](ValueID id) {
+            WTF::atomicStore(&hasClosureAllocations[function.at(id).function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
         });
     });
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (closuresAreMadeOf[i])
-            mayLieInFrames[i] = canStackAllocateClosuresOf(program, std::as_const(program).functions[i]);
+        if (hasClosureAllocations[i])
+            mayBeStackAllocatedLayouts[i] = canStackAllocateClosuresOf(program, std::as_const(program).functions[i]);
     });
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
             return;
-        if (!program.functions.mayHold(i, closures)) {
-            program.functions.withSameValues(i).mayPointIntoFrame.clearAll();
+        if (!program.functions.mayContain(i, closures)) {
+            program.functions.atKeepingValueIndex(i).mayPointIntoFrame.clearAll();
             return;
         }
         auto& function = program.functions[i];
@@ -814,7 +814,7 @@ void findClosuresInFrames(Program& program)
                     value.immediates[1] = Format::none;
                 else if (value.opcode != Opcode::NewClosureOnce)
                     continue;
-                if (mayLieInFrames[value.function().index()]) {
+                if (mayBeStackAllocatedLayouts[value.function().index()]) {
                     isCandidate.quickSet(id.index());
                     candidates.append({ id, b });
                 }
@@ -887,7 +887,7 @@ void findClosuresInFrames(Program& program)
             auto& value = function.at(id);
             value.opcode = Opcode::NewClosure;
             value.children[0] = ValueID();
-            value.immediates[1] = closureIsInFrame;
+            value.immediates[1] = closureIsStackAllocated;
             isStackAllocated.quickSet(id.index());
         }
         if (isStackAllocated.isEmpty())
@@ -908,48 +908,48 @@ void findClosuresInFrames(Program& program)
     });
 }
 
-void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
+void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
 {
     if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions())
         return;
     static constexpr unsigned maxFields = 32;
     enum : uint8_t { Unknown, No, Yes };
-    Vector<uint8_t> admitsEnvironment;
-    admitsEnvironment.fill(Unknown, program.types.size());
+    Vector<uint8_t> acceptsEnvironment;
+    acceptsEnvironment.fill(Unknown, program.types.size());
     Vector<uint8_t> doesEscape(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
-    struct Birth {
+    struct AllocationSite {
         unsigned function;
         ValueID environment;
         unsigned block;
         bool isCapturedByHeapClosure;
         bool flowsThroughPhi;
     };
-    Vector<Vector<Birth>> birthsByFunction(program.functions.size());
+    Vector<Vector<AllocationSite>> allocationsByFunction(program.functions.size());
 
     auto scan = [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
             return;
-        auto& function = program.functions.withSameValues(i);
-        auto& births = birthsByFunction[i];
-        function.environmentsInFrame.clearAll();
+        auto& function = program.functions.atKeepingValueIndex(i);
+        auto& allocationSites = allocationsByFunction[i];
+        function.stackAllocatedEnvironments.clearAll();
         BitVector isCapturedByHeapClosure;
         BitVector flowsThroughPhi;
         auto markEscaped = [&](ValueID id, ASCIILiteral operation, const Value& at) {
             TypeID type = function.at(id).type;
             if (!type)
                 return;
-            uint8_t known = WTF::atomicLoad(&admitsEnvironment[type.index()], std::memory_order_relaxed);
+            uint8_t known = WTF::atomicLoad(&acceptsEnvironment[type.index()], std::memory_order_relaxed);
             if (known == Unknown) {
-                known = std::ranges::any_of(program.at(type).views, [&](LayoutID view) {
-                    return program.at(view).kind == LayoutKind::Environment;
+                known = std::ranges::any_of(program.at(type).objectLayouts, [&](LayoutID supertype) {
+                    return program.at(supertype).kind == LayoutKind::Environment;
                 }) ? Yes : No;
-                WTF::atomicStore(&admitsEnvironment[type.index()], known, std::memory_order_relaxed);
+                WTF::atomicStore(&acceptsEnvironment[type.index()], known, std::memory_order_relaxed);
             }
             if (known == No)
                 return;
-            for (LayoutID view : program.at(type).views) {
-                if (!WTF::atomicLoad(&doesEscape[view.index()], std::memory_order_relaxed) && !WTF::atomicExchange(&doesEscape[view.index()], static_cast<uint8_t>(1), std::memory_order_relaxed) && program.notesAllocations)
-                    program.whyEnvironmentsAreOnHeap.add(view.index(), Program::UseOfEnvironment { operation, FunctionID(i), at.inlineFrame, at.position });
+            for (LayoutID supertype : program.at(type).objectLayouts) {
+                if (!WTF::atomicLoad(&doesEscape[supertype.index()], std::memory_order_relaxed) && !WTF::atomicExchange(&doesEscape[supertype.index()], static_cast<uint8_t>(1), std::memory_order_relaxed) && program.recordsAllocations)
+                    program.environmentHeapReasons.add(supertype.index(), Program::EnvironmentUse { operation, FunctionID(i), at.inlineFrame, at.position });
             }
         };
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
@@ -962,7 +962,7 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
                 switch (value.opcode) {
                 case Opcode::NewObjectWithShape:
                     if (program.at(value.layout()).kind == LayoutKind::Environment)
-                        births.append({ i, id, b, false, false });
+                        allocationSites.append({ i, id, b, false, false });
                     value.forEachChild(markOperandEscaped);
                     break;
                 case Opcode::GetField:
@@ -980,11 +980,11 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
                 case Opcode::AssertNotAllocated:
                     break;
                 case Opcode::NewClosure:
-                    if (value.isClosureInFrame())
+                    if (value.isStackAllocatedClosure())
                         break;
                     for (ValueID captured : value.arguments) {
-                        auto& made = function.at(captured);
-                        if (made.opcode != Opcode::NewObjectWithShape || program.at(made.layout()).kind != LayoutKind::Environment) {
+                        auto& created = function.at(captured);
+                        if (created.opcode != Opcode::NewObjectWithShape || program.at(created.layout()).kind != LayoutKind::Environment) {
                             markOperandEscaped(captured);
                             continue;
                         }
@@ -1004,12 +1004,12 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
                     flowsThroughPhi.set(argument.index());
             }
         }
-        for (auto& birth : births) {
-            birth.isCapturedByHeapClosure = isCapturedByHeapClosure.get(birth.environment.index());
-            birth.flowsThroughPhi = flowsThroughPhi.get(birth.environment.index());
+        for (auto& allocationSite : allocationSites) {
+            allocationSite.isCapturedByHeapClosure = isCapturedByHeapClosure.get(allocationSite.environment.index());
+            allocationSite.flowsThroughPhi = flowsThroughPhi.get(allocationSite.environment.index());
         }
     };
-    if (program.notesAllocations) {
+    if (program.recordsAllocations) {
         for (unsigned i = 0; i < program.functions.size(); ++i)
             scan(i);
     } else
@@ -1020,44 +1020,44 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
             escapes.quickSet(i);
     }
 
-    Vector<uint8_t> mayBeInFrame(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
-    Vector<uint8_t> hasHeapBirth(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> mayBeStackAllocated(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> hasHeapAllocation(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
     auto say = [](Vector<uint8_t>& said, unsigned index) {
         WTF::atomicStore(&said[index], static_cast<uint8_t>(1), std::memory_order_relaxed);
     };
     Vector<Vector<ValueID>> materializedIn(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (birthsByFunction[i].isEmpty())
+        if (allocationsByFunction[i].isEmpty())
             return;
         auto& function = program.functions[i];
         std::optional<BitVector> inCycles;
-        for (auto& birth : birthsByFunction[i]) {
-            unsigned index = function.at(birth.environment).layout().index();
+        for (auto& allocationSite : allocationsByFunction[i]) {
+            unsigned index = function.at(allocationSite.environment).layout().index();
             auto& layout = program.layouts[index];
             if (escapes.quickGet(index) || layout.fields.size() > maxFields)
                 continue;
             if (!inCycles)
                 inCycles = blocksInCycles(function);
-            bool allocatesOnHeap = inCycles->quickGet(birth.block) && mayOutliveLoopIteration(function, birth.environment, birth.block, [&](ValueID operand) { return originOf(program, function, operand); });
-            if (birth.isCapturedByHeapClosure && !allocatesOnHeap) {
-                if (!birth.flowsThroughPhi && EnvironmentMaterialization(program, function, birth.environment).canRun())
-                    materializedIn[i].append(birth.environment);
+            bool allocatesOnHeap = inCycles->quickGet(allocationSite.block) && mayOutliveLoopIteration(function, allocationSite.environment, allocationSite.block, [&](ValueID operand) { return originOf(program, function, operand); });
+            if (allocationSite.isCapturedByHeapClosure && !allocatesOnHeap) {
+                if (!allocationSite.flowsThroughPhi && EnvironmentMaterialization(program, function, allocationSite.environment).canRun())
+                    materializedIn[i].append(allocationSite.environment);
                 else
                     allocatesOnHeap = true;
-                say(hasHeapBirth, index);
+                say(hasHeapAllocation, index);
             }
             if (allocatesOnHeap) {
-                say(hasHeapBirth, index);
+                say(hasHeapAllocation, index);
                 continue;
             }
-            say(mayBeInFrame, index);
-            function.environmentsInFrame.set(birth.environment.index());
+            say(mayBeStackAllocated, index);
+            function.stackAllocatedEnvironments.set(allocationSite.environment.index());
         }
     });
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         auto& layout = program.layouts[i];
-        layout.mayBeInFrame = mayBeInFrame[i];
-        layout.isInFrame = layout.mayBeInFrame && !hasHeapBirth[i];
+        layout.mayBeStackAllocated = mayBeStackAllocated[i];
+        layout.isStackAllocated = layout.mayBeStackAllocated && !hasHeapAllocation[i];
     }
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         for (ValueID environment : materializedIn[i])
@@ -1065,13 +1065,13 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
     });
     Vector<Vector<String>> findingsIn(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions.withSameValues(i);
+        auto& function = program.functions.atKeepingValueIndex(i);
         if (!materializedIn[i].isEmpty())
             verify(program, FunctionID(i), function, findingsIn[i]);
-        if (function.environmentsInFrame.isEmpty())
+        if (function.stackAllocatedEnvironments.isEmpty())
             return;
         auto& mayPointIntoFrame = function.mayPointIntoFrame;
-        mayPointIntoFrame.merge(function.environmentsInFrame);
+        mayPointIntoFrame.merge(function.stackAllocatedEnvironments);
         for (bool changed = true; changed;) {
             changed = false;
             for (auto& block : function.blocks) {
@@ -1089,8 +1089,8 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
             }
         }
     });
-    for (auto& ofFunction : findingsIn)
-        findings.appendVector(WTF::move(ofFunction));
+    for (auto& perFunction : findingsIn)
+        findings.appendVector(WTF::move(perFunction));
 }
 
 void reuseEnvironments(Program& program)
@@ -1102,7 +1102,7 @@ void reuseEnvironments(Program& program)
         if (!layout.reuseVariable)
             continue;
         hasCandidates = true;
-        if (!layout.isInFrame && !layout.mayBeInFrame && !Options::auditAOTTypedAssertions())
+        if (!layout.isStackAllocated && !layout.mayBeStackAllocated && !Options::auditAOTTypedAssertions())
             isReused[i] = 1;
     }
     if (!hasCandidates)
@@ -1113,24 +1113,24 @@ void reuseEnvironments(Program& program)
         if (program.layouts[i].reuseVariable)
             isCandidate.quickSet(i);
     }
-    BitVector hasCandidateForView(program.types.size());
+    BitVector hasCandidateForLayout(program.types.size());
     for (unsigned i = 0; i < program.types.size(); ++i) {
-        for (LayoutID view : program.at(TypeID(i)).views) {
-            if (isCandidate.quickGet(view.index()))
-                hasCandidateForView.quickSet(i);
+        for (LayoutID supertype : program.at(TypeID(i)).objectLayouts) {
+            if (isCandidate.quickGet(supertype.index()))
+                hasCandidateForLayout.quickSet(i);
         }
     }
     auto forEachCandidate = [&](const Function& function, ValueID id, const auto& functor) {
         TypeID type = function.at(id).type;
         RELEASE_ASSERT(type);
-        if (!hasCandidateForView.quickGet(type.index()))
+        if (!hasCandidateForLayout.quickGet(type.index()))
             return;
-        for (LayoutID view : program.at(type).views) {
-            if (program.at(view).reuseVariable)
-                functor(view);
+        for (LayoutID supertype : program.at(type).objectLayouts) {
+            if (program.at(supertype).reuseVariable)
+                functor(supertype);
         }
     };
-    Vector<uint8_t> holdsCandidates(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> containsCandidates(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     struct Escape {
         unsigned block;
         ValueID before;
@@ -1142,21 +1142,21 @@ void reuseEnvironments(Program& program)
         if (!program.hasCode(FunctionID(i)))
             return;
         auto& function = std::as_const(program).functions[i];
-        holdsCandidates[i] = function.values.containsIf([&](const Value& value) {
-            if (!value.type || hasCandidateForView.quickGet(value.type.index()))
+        containsCandidates[i] = function.values.containsIf([&](const Value& value) {
+            if (!value.type || hasCandidateForLayout.quickGet(value.type.index()))
                 return true;
             return (value.opcode == Opcode::PutField || value.opcode == Opcode::NewObjectWithShape) && isCandidate.get(value.layout().index());
         });
-        if (!holdsCandidates[i])
+        if (!containsCandidates[i])
             return;
         auto giveUp = [&](ValueID id) {
             forEachCandidate(function, id, [&](LayoutID layout) {
                 WTF::atomicStore(&isReused[layout.index()], static_cast<uint8_t>(0), std::memory_order_relaxed);
             });
         };
-        auto giveUpUnlessHeldAs = [&](ValueID id, TypeID holder) {
+        auto disqualifyUnlessTypedAs = [&](ValueID id, TypeID holder) {
             forEachCandidate(function, id, [&](LayoutID layout) {
-                if (!holder || !program.at(holder).views.contains(layout))
+                if (!holder || !program.at(holder).objectLayouts.contains(layout))
                     WTF::atomicStore(&isReused[layout.index()], static_cast<uint8_t>(0), std::memory_order_relaxed);
             });
         };
@@ -1165,7 +1165,7 @@ void reuseEnvironments(Program& program)
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 auto escapes = [&](ValueID operand) {
-                    LayoutID only = program.at(function.at(operand).type).onlyView();
+                    LayoutID only = program.at(function.at(operand).type).singleLayout();
                     forEachCandidate(function, operand, [&](LayoutID layout) {
                         if (layout == only)
                             escapesByFunction[i].append({ b, id, operand, layout });
@@ -1186,7 +1186,7 @@ void reuseEnvironments(Program& program)
                         giveUp(value.child(0));
                         giveUp(id);
                     } else
-                        giveUpUnlessHeldAs(value.child(0), value.type);
+                        disqualifyUnlessTypedAs(value.child(0), value.type);
                     break;
                 case Opcode::PutField:
                     escapes(value.child(1));
@@ -1201,7 +1201,7 @@ void reuseEnvironments(Program& program)
                     unsigned at = 0;
                     auto pass = [&](TypeID holder) {
                         if (at < value.arguments.size())
-                            giveUpUnlessHeldAs(value.arguments[at], holder);
+                            disqualifyUnlessTypedAs(value.arguments[at], holder);
                         ++at;
                     };
                     for (TypeID capture : callee.captureTypes)
@@ -1215,13 +1215,13 @@ void reuseEnvironments(Program& program)
                     break;
                 }
                 case Opcode::NewClosure: {
-                    if (!value.isClosureInFrame()) {
+                    if (!value.isStackAllocatedClosure()) {
                         value.forEachChild(escapes);
                         break;
                     }
                     auto& captureTypes = std::as_const(program).at(value.function()).captureTypes;
                     for (unsigned k = 0; k < value.arguments.size(); ++k)
-                        giveUpUnlessHeldAs(value.arguments[k], k < captureTypes.size() ? captureTypes[k] : TypeID());
+                        disqualifyUnlessTypedAs(value.arguments[k], k < captureTypes.size() ? captureTypes[k] : TypeID());
                     break;
                 }
                 case Opcode::NewClosureOnce:
@@ -1238,31 +1238,31 @@ void reuseEnvironments(Program& program)
             for (auto& target : block.terminator.targets) {
                 auto& parameters = function.at(target.block).parameters;
                 for (unsigned k = 0; k < target.arguments.size(); ++k)
-                    giveUpUnlessHeldAs(target.arguments[k], k < parameters.size() ? function.at(parameters[k]).type : TypeID());
+                    disqualifyUnlessTypedAs(target.arguments[k], k < parameters.size() ? function.at(parameters[k]).type : TypeID());
             }
         }
     });
 
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (!holdsCandidates[i])
+        if (!containsCandidates[i])
             return;
         auto& function = program.functions[i];
         auto isRelease = [&](ValueID id) {
             auto& value = function.at(id);
             return value.opcode == Opcode::PutField && program.at(value.layout()).reuseVariable && value.field() + 1 == program.at(value.layout()).fields.size();
         };
-        struct WhatAliasesGoBy {
-            Vector<std::pair<uint32_t, uint32_t>> valuesByView;
-            Vector<ValueID> castsAndClosuresInFrame;
+        struct AliasInputs {
+            Vector<std::pair<uint32_t, uint32_t>> valuesByLayout;
+            Vector<ValueID> castsAndStackClosures;
             Vector<std::pair<ValueID, ValueID>> argumentsAndParameters;
-            Vector<unsigned> blockOfValue;
+            Vector<unsigned> valueBlock;
         };
-        std::optional<WhatAliasesGoBy> gathered;
+        std::optional<AliasInputs> gathered;
         auto mayBeAliasByType = [&](const Value& value) {
             bool isBlockParameter = value.opcode == Opcode::Parameter && value.immediates[0];
             return value.opcode != Opcode::NewObjectWithShape && value.opcode != Opcode::Cast && !isBlockParameter;
         };
-        auto whatAliasesGoBy = [&]() -> const WhatAliasesGoBy& {
+        auto aliasInputs = [&]() -> const AliasInputs& {
             if (gathered)
                 return *gathered;
             gathered.emplace();
@@ -1271,20 +1271,20 @@ void reuseEnvironments(Program& program)
                 if (!mayBeAliasByType(value))
                     continue;
                 RELEASE_ASSERT(value.type);
-                if (!hasCandidateForView.quickGet(value.type.index()))
+                if (!hasCandidateForLayout.quickGet(value.type.index()))
                     continue;
-                for (LayoutID view : program.at(value.type).views) {
-                    if (isCandidate.quickGet(view.index()))
-                        gathered->valuesByView.append({ view.index(), v });
+                for (LayoutID supertype : program.at(value.type).objectLayouts) {
+                    if (isCandidate.quickGet(supertype.index()))
+                        gathered->valuesByLayout.append({ supertype.index(), v });
                 }
             }
-            std::ranges::sort(gathered->valuesByView);
-            gathered->blockOfValue.fill(UINT_MAX, function.values.size());
+            std::ranges::sort(gathered->valuesByLayout);
+            gathered->valueBlock.fill(UINT_MAX, function.values.size());
             for (unsigned b = 0; b < function.blocks.size(); ++b) {
                 for (ValueID id : function.blocks[b].values) {
-                    gathered->blockOfValue[id.index()] = b;
-                    if (auto& value = function.at(id); value.opcode == Opcode::Cast || value.isClosureInFrame())
-                        gathered->castsAndClosuresInFrame.append(id);
+                    gathered->valueBlock[id.index()] = b;
+                    if (auto& value = function.at(id); value.opcode == Opcode::Cast || value.isStackAllocatedClosure())
+                        gathered->castsAndStackClosures.append(id);
                 }
                 for (auto& target : function.blocks[b].terminator.targets) {
                     auto& parameters = function.at(target.block).parameters;
@@ -1294,26 +1294,26 @@ void reuseEnvironments(Program& program)
             }
             return *gathered;
         };
-        auto isUsedBehind = [&](unsigned releaseBlock, size_t releaseIndex, ValueID environment) {
+        auto isUsedAfterIndex = [&](unsigned releaseBlock, size_t releaseIndex, ValueID environment) {
             if (function.at(environment).opcode != Opcode::NewObjectWithShape)
                 return true;
             LayoutID layout = function.at(environment).layout();
-            auto& goBy = whatAliasesGoBy();
+            auto& inputs = aliasInputs();
             BitVector isAlias(function.values.size());
             isAlias.quickSet(environment.index());
             if (isCandidate.quickGet(layout.index())) {
-                for (auto found = std::ranges::lower_bound(goBy.valuesByView, std::pair { layout.index(), 0u }); found != goBy.valuesByView.end() && found->first == layout.index(); ++found)
+                for (auto found = std::ranges::lower_bound(inputs.valuesByLayout, std::pair { layout.index(), 0u }); found != inputs.valuesByLayout.end() && found->first == layout.index(); ++found)
                     isAlias.quickSet(found->second);
             } else {
                 for (unsigned v = 0; v < function.values.size(); ++v) {
-                    if (mayBeAliasByType(function.values[v]) && program.at(function.values[v].type).views.contains(layout))
+                    if (mayBeAliasByType(function.values[v]) && program.at(function.values[v].type).objectLayouts.contains(layout))
                         isAlias.quickSet(v);
                 }
             }
-            unsigned birthBlock = goBy.blockOfValue[environment.index()];
+            unsigned allocationBlock = inputs.valueBlock[environment.index()];
             for (bool changed = true; changed;) {
                 changed = false;
-                for (ValueID id : goBy.castsAndClosuresInFrame) {
+                for (ValueID id : inputs.castsAndStackClosures) {
                     if (isAlias.quickGet(id.index()))
                         continue;
                     bool holds = false;
@@ -1325,7 +1325,7 @@ void reuseEnvironments(Program& program)
                         changed = true;
                     }
                 }
-                for (auto [argument, parameter] : goBy.argumentsAndParameters) {
+                for (auto [argument, parameter] : inputs.argumentsAndParameters) {
                     if (isAlias.quickGet(argument.index()) && !isAlias.quickSet(parameter.index()))
                         changed = true;
                 }
@@ -1352,7 +1352,7 @@ void reuseEnvironments(Program& program)
             Vector<unsigned, 16> worklist;
             auto visit = [&](unsigned b) {
                 for (auto& target : function.blocks[b].terminator.targets) {
-                    if (target.block.index() != birthBlock && !seen.quickSet(target.block.index()))
+                    if (target.block.index() != allocationBlock && !seen.quickSet(target.block.index()))
                         worklist.append(target.block.index());
                 }
             };
@@ -1368,26 +1368,26 @@ void reuseEnvironments(Program& program)
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             auto& values = function.blocks[b].values;
             for (size_t k = 0; k < values.size(); ++k) {
-                if (isRelease(values[k]) && isReused[function.at(values[k]).layout().index()] && isUsedBehind(b, k, function.at(values[k]).child(0)))
+                if (isRelease(values[k]) && isReused[function.at(values[k]).layout().index()] && isUsedAfterIndex(b, k, function.at(values[k]).child(0)))
                     values.removeAt(k--);
             }
         }
     });
 
-    Vector<uint8_t> isWorthIt(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> isProfitableLayout(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (!holdsCandidates[i])
+        if (!containsCandidates[i])
             return;
         auto& function = std::as_const(program).functions[i];
-        auto isKnownWorthIt = [&](LayoutID layout) {
-            return WTF::atomicLoad(&isWorthIt[layout.index()], std::memory_order_relaxed);
+        auto isKnownProfitable = [&](LayoutID layout) {
+            return WTF::atomicLoad(&isProfitableLayout[layout.index()], std::memory_order_relaxed);
         };
         for (unsigned first = 0; first < function.blocks.size(); ++first) {
-            for (ValueID birth : function.blocks[first].values) {
-                if (function.at(birth).opcode != Opcode::NewObjectWithShape)
+            for (ValueID allocationSite : function.blocks[first].values) {
+                if (function.at(allocationSite).opcode != Opcode::NewObjectWithShape)
                     continue;
-                LayoutID layout = function.at(birth).layout();
-                if (!isReused[layout.index()] || isKnownWorthIt(layout))
+                LayoutID layout = function.at(allocationSite).layout();
+                if (!isReused[layout.index()] || isKnownProfitable(layout))
                     continue;
                 BitVector escapesIn(function.blocks.size());
                 for (auto& escape : escapesByFunction[i]) {
@@ -1397,14 +1397,14 @@ void reuseEnvironments(Program& program)
                 BitVector seen(function.blocks.size());
                 Vector<unsigned, 16> worklist { first };
                 seen.quickSet(first);
-                while (!worklist.isEmpty() && !isKnownWorthIt(layout)) {
+                while (!worklist.isEmpty() && !isKnownProfitable(layout)) {
                     unsigned b = worklist.takeLast();
                     if (escapesIn.quickGet(b))
                         continue;
                     for (ValueID id : function.blocks[b].values) {
                         auto& value = function.at(id);
                         if (value.opcode == Opcode::PutField && value.layout() == layout && value.field() + 1 == program.at(layout).fields.size())
-                            WTF::atomicStore(&isWorthIt[layout.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+                            WTF::atomicStore(&isProfitableLayout[layout.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
                     }
                     for (auto& target : function.blocks[b].terminator.targets) {
                         if (!seen.quickSet(target.block.index()))
@@ -1414,14 +1414,14 @@ void reuseEnvironments(Program& program)
             }
         }
     });
-    unsigned numberWithoutRelease = 0;
+    unsigned unreleasedCount = 0;
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
-        numberWithoutRelease += isReused[i] && !isWorthIt[i];
-        isReused[i] &= isWorthIt[i];
+        unreleasedCount += isReused[i] && !isProfitableLayout[i];
+        isReused[i] &= isProfitableLayout[i];
     }
 
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = holdsCandidates[i] ? program.functions[i] : program.functions.withSameValues(i);
+        auto& function = containsCandidates[i] ? program.functions[i] : program.functions.atKeepingValueIndex(i);
         for (auto& allocation : function.allocations) {
             auto& layout = program.at(allocation.layout);
             if (!layout.reuseVariable || isReused[allocation.layout.index()])
@@ -1429,9 +1429,9 @@ void reuseEnvironments(Program& program)
             allocation.order.removeAllMatching([&](uint16_t field) {
                 return field + 2u >= layout.fields.size();
             });
-            allocation.born = static_cast<uint16_t>(allocation.order.size());
+            allocation.initialFieldCount = static_cast<uint16_t>(allocation.order.size());
         }
-        if (!holdsCandidates[i])
+        if (!containsCandidates[i])
             return;
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             function.blocks[b].values.removeAllMatching([&](ValueID id) {
@@ -1469,22 +1469,22 @@ void reuseEnvironments(Program& program)
             values.insert(at, ValueID(function.values.size() - 2));
         }
     });
-    unsigned numberMarked = 0;
-    unsigned numberUsedAgain = 0;
-    unsigned numberInFrames = 0;
+    unsigned flaggedCount = 0;
+    unsigned reusedCount = 0;
+    unsigned stackAllocatedCount = 0;
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         auto& layout = program.layouts[i];
         if (!layout.reuseVariable)
             continue;
-        ++numberMarked;
-        numberUsedAgain += isReused[i];
-        numberInFrames += layout.isInFrame || layout.mayBeInFrame;
+        ++flaggedCount;
+        reusedCount += isReused[i];
+        stackAllocatedCount += layout.isStackAllocated || layout.mayBeStackAllocated;
         if (isReused[i])
             continue;
         layout.fields.shrink(layout.fields.size() - 2);
         layout.reuseVariable = VariableID();
     }
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: of ", numberMarked, " environments that may be used again ", numberUsedAgain, " are; ", numberInFrames, " lie in frames, ", numberWithoutRelease, " have no release that is reached without an escape, ", numberMarked - numberUsedAgain - numberInFrames - numberWithoutRelease, " are given up");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: of ", flaggedCount, " environments that may be used again ", reusedCount, " are; ", stackAllocatedCount, " lie in frames, ", unreleasedCount, " have no release that is reached without an escape, ", flaggedCount - reusedCount - stackAllocatedCount - unreleasedCount, " are given up");
 }
 
 } } } // namespace JSC::AOT::Typed

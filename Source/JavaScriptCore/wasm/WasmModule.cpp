@@ -144,13 +144,13 @@ void Module::copyInitialCalleeGroupToAllMemoryModes(MemoryMode initialMode)
 }
 
 
-void Module::makeInterpreterMetadataIfNeeded(const CalleeGroup& group)
+void Module::createInterpreterMetadataIfNeeded(const CalleeGroup& group)
 {
-    if (group.pointersOfCodeInImage() || Options::crashIfInterpreterIsUsed())
+    if (group.imageCodePointers() || Options::crashIfInterpreterIsUsed())
         return;
     ModuleInformation& info = m_moduleInformation.get();
     Locker locker { info.interpreterMetadataLock };
-    if (!info.lacksInterpreterMetadata)
+    if (!info.isMissingInterpreterMetadata)
         return;
     for (unsigned index = 0; index < info.internalFunctionCount(); ++index) {
         info.functions[index].finishedValidating = false;
@@ -158,7 +158,7 @@ void Module::makeInterpreterMetadataIfNeeded(const CalleeGroup& group)
         RELEASE_ASSERT(metadata);
         m_ipintCallees->at(index)->takeMetadata(**metadata);
     }
-    info.lacksInterpreterMetadata = false;
+    info.isMissingInterpreterMetadata = false;
 }
 
 Ref<Wasm::InstanceAnchor> Module::registerAnchor(JSWebAssemblyInstance* instance)

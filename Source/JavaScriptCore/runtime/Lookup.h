@@ -429,31 +429,29 @@ struct HashTable {
 
 JS_EXPORT_PRIVATE bool setUpStaticFunctionSlot(VM&, const ClassInfo*, const HashTableValue*, JSObject* thisObject, PropertyName, PropertySlot&);
 JS_EXPORT_PRIVATE void reifyStaticAccessor(VM&, const HashTableValue&, JSObject& thisObject, PropertyName, unsigned attributes);
-JS_EXPORT_PRIVATE void reifyFixedStaticProperty(VM&, const ClassInfo*, const PropertyName&, const HashTableValue&, JSObject& thisObject);
+JS_EXPORT_PRIVATE void reifyLockedStaticProperty(VM&, const ClassInfo*, const PropertyName&, const HashTableValue&, JSObject& thisObject);
 
-// With immutable intrinsics: an entry of the table of an object whose properties are fixed (JSObject::fixProperties()), or of the
-// global object's own table, which names the intrinsics, and console, which is the host's. It cannot be replaced or deleted, reified or not.
-inline bool isStaticPropertyOfIntrinsic(VM& vm, JSObject& object, const HashTableValue& value)
+inline bool isIntrinsicStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
 {
-    if (!vm.fixesOrNotesIntrinsics()) [[likely]]
+    if (!vm.locksOrAuditsIntrinsics()) [[likely]]
         return false;
     if (object.structure()->inheritorsMayOverrideReadOnlyProperties() || object.structure()->typeInfo().wouldHaveFixedProperties())
         return true;
     const HashTable& bindings = *JSGlobalObject::info()->staticPropHashTable;
-    return std::bit_cast<uintptr_t>(&value) - std::bit_cast<uintptr_t>(bindings.values) < static_cast<size_t>(bindings.numberOfValues) * sizeof(HashTableValue) && value.m_key != "console"_s && object.realm()->fixesOrNotesIntrinsics();
+    return std::bit_cast<uintptr_t>(&value) - std::bit_cast<uintptr_t>(bindings.values) < static_cast<size_t>(bindings.numberOfValues) * sizeof(HashTableValue) && value.m_key != "console"_s && object.realm()->locksOrAuditsIntrinsics();
 }
 
-inline bool isFixedStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
+inline bool isLockedStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
 {
     if (!vm.useImmutableIntrinsics) [[likely]]
         return false;
-    return isStaticPropertyOfIntrinsic(vm, object, value);
+    return isIntrinsicStaticProperty(vm, object, value);
 }
 
-inline unsigned attributesOfStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
+inline unsigned staticPropertyAttributes(VM& vm, JSObject& object, const HashTableValue& value)
 {
     unsigned attributes = attributesForStructure(value.attributes());
-    if (isStaticPropertyOfIntrinsic(vm, object, value)) [[unlikely]] {
+    if (isIntrinsicStaticProperty(vm, object, value)) [[unlikely]] {
         if (!vm.useImmutableIntrinsics)
             return attributes | PropertyAttribute::WouldBeFixed;
         attributes |= PropertyAttribute::DontDelete;
@@ -492,23 +490,23 @@ inline bool getStaticPropertySlotFromTable(VM& vm, const ClassInfo* classInfo, c
         return setUpStaticFunctionSlot(vm, classInfo, entry, thisObject, propertyName, slot);
 
     if (entry->attributes() & PropertyAttribute::ConstantInteger) {
-        slot.setValue(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), jsNumber(entry->constantInteger()));
+        slot.setValue(thisObject, staticPropertyAttributes(vm, *thisObject, *entry), jsNumber(entry->constantInteger()));
         return true;
     }
 
     if (entry->attributes() & PropertyAttribute::DOMJITAttribute) {
         ASSERT_WITH_MESSAGE(entry->attributes() & PropertyAttribute::ReadOnly, "DOMJITAttribute supports readonly attributes currently.");
         const DOMJIT::GetterSetter* domJIT = entry->domJIT();
-        slot.setCacheableCustom(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), domJIT->getter(), entry->domJITSetter(), DOMAttributeAnnotation { classInfo, domJIT });
+        slot.setCacheableCustom(thisObject, staticPropertyAttributes(vm, *thisObject, *entry), domJIT->getter(), entry->domJITSetter(), DOMAttributeAnnotation { classInfo, domJIT });
         return true;
     }
 
     if (entry->attributes() & PropertyAttribute::DOMAttribute) {
-        slot.setCacheableCustom(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), entry->propertyGetter(), entry->propertyPutter(), DOMAttributeAnnotation { classInfo, nullptr });
+        slot.setCacheableCustom(thisObject, staticPropertyAttributes(vm, *thisObject, *entry), entry->propertyGetter(), entry->propertyPutter(), DOMAttributeAnnotation { classInfo, nullptr });
         return true;
     }
 
-    slot.setCacheableCustom(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), entry->propertyGetter(), entry->propertyPutter());
+    slot.setCacheableCustom(thisObject, staticPropertyAttributes(vm, *thisObject, *entry), entry->propertyGetter(), entry->propertyPutter());
     return true;
 }
 
@@ -613,8 +611,8 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
 
 inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj)
 {
-    if (isStaticPropertyOfIntrinsic(vm, thisObj, value)) [[unlikely]] {
-        reifyFixedStaticProperty(vm, classInfo, propertyName, value, thisObj);
+    if (isIntrinsicStaticProperty(vm, thisObj, value)) [[unlikely]] {
+        reifyLockedStaticProperty(vm, classInfo, propertyName, value, thisObj);
         return;
     }
     reifyStaticProperty(vm, classInfo, propertyName, value, thisObj, attributesForStructure(value.attributes()));

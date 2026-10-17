@@ -40,7 +40,7 @@ namespace JSC { namespace B3 { namespace Air {
 void Inst::fillForms()
 {
     ASSERT(kind.opcode == Patch && m_size && m_size <= maxNumberOfForms + 1);
-    formsBehindSpecial()[0] = formsAreNotFixed;
+    formsAfterSpecial()[0] = formsAreNotFixed;
     if (!args()[0].special()->hasFixedForms(*this))
         return;
     std::array<uint8_t, maxNumberOfForms + 1> forms;
@@ -59,10 +59,10 @@ void Inst::fillForms()
     if (forms[0] != ENCODE_INST_FORM(Arg::Use, GP, pointerWidth()))
         return;
     if (m_size == 1) {
-        formsBehindSpecial()[0] = formsAreNone;
+        formsAfterSpecial()[0] = formsAreNone;
         return;
     }
-    memcpy(formsBehindSpecial(), forms.data() + 1, m_size - 1);
+    memcpy(formsAfterSpecial(), forms.data() + 1, m_size - 1);
 }
 
 #endif

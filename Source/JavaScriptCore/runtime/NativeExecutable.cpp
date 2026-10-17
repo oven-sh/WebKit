@@ -68,36 +68,36 @@ void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref
     m_name = name;
     m_length = length;
 #if ENABLE(AOT)
-    m_builtInServedByStubs = static_cast<uint8_t>([&] {
+    m_stubBuiltin = static_cast<uint8_t>([&] {
         switch (intrinsic()) {
         case JSMapGetIntrinsic:
-            return BuiltInServedByStubs::MapGet;
+            return StubBuiltin::MapGet;
         case JSMapHasIntrinsic:
-            return BuiltInServedByStubs::MapHas;
+            return StubBuiltin::MapHas;
         case JSMapSetIntrinsic:
-            return BuiltInServedByStubs::MapSet;
+            return StubBuiltin::MapSet;
         case JSSetHasIntrinsic:
-            return BuiltInServedByStubs::SetHas;
+            return StubBuiltin::SetHas;
         case JSSetAddIntrinsic:
-            return BuiltInServedByStubs::SetAdd;
+            return StubBuiltin::SetAdd;
         case JSWeakMapGetIntrinsic:
-            return BuiltInServedByStubs::WeakMapGet;
+            return StubBuiltin::WeakMapGet;
         case JSWeakMapHasIntrinsic:
-            return BuiltInServedByStubs::WeakMapHas;
+            return StubBuiltin::WeakMapHas;
         case JSWeakMapSetIntrinsic:
-            return BuiltInServedByStubs::WeakMapSet;
+            return StubBuiltin::WeakMapSet;
         case JSWeakSetHasIntrinsic:
-            return BuiltInServedByStubs::WeakSetHas;
+            return StubBuiltin::WeakSetHas;
         case StringPrototypeStartsWithIntrinsic:
-            return BuiltInServedByStubs::StringStartsWith;
+            return StubBuiltin::StringStartsWith;
         case StringPrototypeIndexOfIntrinsic:
-            return BuiltInServedByStubs::StringIndexOf;
+            return StubBuiltin::StringIndexOf;
         case ArrayIsArrayIntrinsic:
-            return BuiltInServedByStubs::ArrayIsArray;
+            return StubBuiltin::ArrayIsArray;
         case ArrayPushIntrinsic:
-            return BuiltInServedByStubs::ArrayPush;
+            return StubBuiltin::ArrayPush;
         default:
-            return BuiltInServedByStubs::None;
+            return StubBuiltin::None;
         }
     }());
 #endif

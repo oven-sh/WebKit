@@ -570,7 +570,7 @@ public:
     JS_EXPORT_PRIVATE void didAllocate(size_t);
     void didAllocateInBlock(size_t, const BlockDirectory&);
     void didAllocatePreciseAllocation(size_t, const Subspace&);
-    void didAllocate(size_t, const char* kind, const Subspace*, size_t cellSize, const JSCell* ownerOfExtraMemory);
+    void didAllocate(size_t, const char* kind, const Subspace*, size_t cellSize, const JSCell* extraMemoryOwner);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
@@ -758,7 +758,7 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
-    bool isCollectingYoungWhileNothingIsYoung() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
+    bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
     bool canSkipMarking() const;
 #if USE(BUN_JSC_ADDITIONS)
     // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the

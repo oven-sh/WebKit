@@ -215,9 +215,8 @@ inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset
 {
     ASSERT(isValidOffset(offset));
 #if USE(BUN_JSC_ADDITIONS)
-    // Nobody has asked whether the property keeps its value. Whoever asks from now on is told that none of them does: ensurePropertyReplacementWatchpointSet().
     if (vm.m_aotProgram && typeInfo().type() != GlobalObjectType && !propertyReplacementWatchpointSet(offset)) {
-        setIsReplacedWithoutNotice(true);
+        setIsReplacedSilently(true);
         return;
     }
 #endif
@@ -249,7 +248,7 @@ inline void Structure::cacheSpecialProperty(JSGlobalObject* globalObject, VM& vm
     rareData()->cacheSpecialProperty(globalObject, vm, this, value, key, slot);
 }
 
-inline unsigned Structure::numberOfPropertiesOfDictionary() const
+inline unsigned Structure::dictionaryPropertyCount() const
 {
     ASSERT(isDictionary());
     PropertyTable* table = m_propertyTableUnsafe.get();
@@ -305,7 +304,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     UNUSED_VARIABLE(attribute);
     auto newMaxOffset = std::max(newOffset, maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
-    forgetPropertyNameIDInSlot(newOffset);
+    clearPropertyNameIDInSlot(newOffset);
 #endif
     
     func(locker, newOffset, newMaxOffset);
@@ -469,7 +468,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     UNUSED_VARIABLE(attributes);
     auto newMaxOffset = std::max(newOffset, maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
-    forgetPropertyNameIDInSlot(newOffset);
+    clearPropertyNameIDInSlot(newOffset);
 #endif
 
     func(locker, newOffset, newMaxOffset);

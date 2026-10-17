@@ -215,7 +215,6 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
             return IterationStatus::Done;
         }
 #else
-        // Code compiled from types has no executable to ask, like Wasm below.
         if (visitor->isTypedAOTFrame())
             return IterationStatus::Done;
 #endif
@@ -451,7 +450,7 @@ bool isFromJSCode(void* returnAddress)
         return true;
 #endif
 #if ENABLE(AOT)
-    if (AOT::kindOfAddress(returnAddress) != AOT::ImageAddressInfo::NotInImage || isAOTImagePC(returnAddress))
+    if (AOT::addressKind(returnAddress) != AOT::ImageAddressInfo::NotInImage || isAOTImagePC(returnAddress))
         return true;
 #endif
 #if ENABLE(C_LOOP)

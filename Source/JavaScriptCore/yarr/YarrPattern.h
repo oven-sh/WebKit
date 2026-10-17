@@ -302,8 +302,8 @@ struct PatternTerm {
     // so the JIT generates a possessive (no-give-back) backtrack instead of the retry loop.
     bool m_possessive { false };
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_matchesWhatWasJustCaptured { false };
-    bool m_isRightBehindItsLookahead { false };
+    bool m_matchesPrecedingCapture { false };
+    bool m_immediatelyFollowsItsLookahead { false };
     bool m_isNeverBacktrackedInto { false };
 #endif
 

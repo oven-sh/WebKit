@@ -67,9 +67,9 @@ void lowerStackArgs(Code& code)
 
     code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
 #if USE(BUN_JSC_ADDITIONS)
-    code.tryToPlaceSpillsAboveFrameRecord();
-    code.tryToPlaceCalleeSavesAtFootOfFrame();
-    code.tryToPushRegistersInPrologue();
+    code.tryPlaceSpillsAboveFrameRecord();
+    code.tryPlaceCalleeSavesAtFrameBottom();
+    code.tryPushRegistersInPrologue();
 #endif
 
     // Finally, transform the code to use Addr's instead of StackSlot's. This is a lossless

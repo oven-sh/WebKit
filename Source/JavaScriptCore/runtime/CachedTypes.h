@@ -512,8 +512,6 @@ public:
     // reads it back given the payload and the entry's offset. The builtin is a module, and a function of it.
     JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp, const BytecodeOrderNames&);
     JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleIndices);
-    // A program compiled from its types. Its entry functions run in the place of the top-level code of the modules, one each, in that order.
-    // A module is named by the order of the calls that add one.
     JS_EXPORT_PRIVATE bool setTypedProgram(std::span<const uint8_t>, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings = { });
     struct PreparedTypedProgram;
     JS_EXPORT_PRIVATE static PreparedTypedProgram* readTypedProgram(std::span<const uint8_t>);

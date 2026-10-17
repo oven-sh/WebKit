@@ -25,8 +25,6 @@ namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/function.def.
-
 std::optional<Writes> writesOfInlineFunction(InlineBuiltin, std::span<const Type>)
 {
     RELEASE_ASSERT_NOT_REACHED();
@@ -43,9 +41,6 @@ BuiltinID Lowering::bindIfNamed(StringID name) const
     return m_program.builtinName(name) == bind ? m_builtins.find(BuiltinKind::Method, m_builtins.functionClass().name, bind) : BuiltinID();
 }
 
-// A closure with the structure it was allocated with has no property of its own and inherits from Function.prototype, which is immutable: it finds the built-in function, and its `name` and
-// `length` are what it was compiled with. So the bound function is made as FTL::LowerDFGToB3::compileNewBoundFunction() makes it, and works out its own two when it is asked:
-// JSBoundFunction::canSkipNameAndLengthMaterialization(). A class may declare `static bind`, which does not show in its structure.
 std::optional<Operand> Lowering::lowerBind(ValueID function, StringID name, std::optional<Boxed> method, const Arguments& arguments, const Type& type)
 {
     BuiltinID bind = bindIfNamed(name);
@@ -63,39 +58,38 @@ std::optional<Operand> Lowering::lowerBind(ValueID function, StringID name, std:
         boundArguments[i] = i < numberOfBoundArguments ? in<Boxed>(arguments[i + 1]) : boxedConstant(JSValue());
 
     Rep rep = repOf(type);
-    LBasicBlock generally = newColdBlock();
+    LBasicBlock genericPath = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     if (method)
-        orElse(equal(*method, box(builtinCell(m_builtins.cellOf(bind)))), generally);
+        orElse(equal(*method, box(builtinCell(m_builtins.cellOf(bind)))), genericPath);
     if (functionType.primitives & ~(Primitive::String | Primitive::Symbol | Primitive::BigInt))
-        orElse(isCell(callee, functionType), generally);
+        orElse(isCell(callee, functionType), genericPath);
     CellPointer target = asCell(callee);
-    const Function* definedAs = functionDefining(function);
+    const Function* definedAs = definingFunctionOf(function);
     auto hasStructureIDAt = [&](ptrdiff_t offset) {
         return equal(loadField<Word32>(target, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(offset)));
     };
-    auto isFullClosureThatIsCalledOrElse = [&] {
-        orElse(hasStructureIDAt(Instance::offsetOfTypedClosureStructureID()), generally);
+    auto checkCalledFullClosureOrElse = [&] {
+        orElse(hasStructureIDAt(Instance::offsetOfTypedClosureStructureID()), genericPath);
         if (!definedAs || definedAs->kind == FunctionKind::Constructor)
-            orElse(isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), generally);
+            orElse(isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), genericPath);
     };
-    if (definedAs && m_program.makesSlimClosures(*definedAs))
-        orElse(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)), generally);
+    if (definedAs && m_program.usesSlimClosures(*definedAs))
+        orElse(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)), genericPath);
     else if (definedAs)
-        isFullClosureThatIsCalledOrElse();
+        checkCalledFullClosureOrElse();
     else {
-        LBasicBlock isClosureThatIsCalled = m_out.newBlock();
+        LBasicBlock isCalledClosure = m_out.newBlock();
         LBasicBlock isNotSlim = m_out.newBlock();
-        m_out.branch(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)).value(), usually(isClosureThatIsCalled), rarely(isNotSlim));
+        m_out.branch(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)).value(), usually(isCalledClosure), rarely(isNotSlim));
         m_out.appendTo(isNotSlim);
-        isFullClosureThatIsCalledOrElse();
-        m_out.jump(isClosureThatIsCalled);
-        m_out.appendTo(isClosureThatIsCalled);
+        checkCalledFullClosureOrElse();
+        m_out.jump(isCalledClosure);
+        m_out.appendTo(isCalledClosure);
     }
-    // Null until the general path has been taken once.
     LValue allocator = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind)));
-    orElse(m_out.notNull(allocator), generally);
-    CellPointer bound = allocateCell(allocator, sizeof(JSBoundFunction), generally);
+    orElse(m_out.notNull(allocator), genericPath);
+    CellPointer bound = allocateCell(allocator, sizeof(JSBoundFunction), genericPath);
     m_out.store64(m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfHeaderFor(kind))), bound.value(), m_heaps.JSCell_header);
     m_out.storePtr(m_out.intPtrZero, bound.value(), m_heaps.JSObject_butterfly);
     m_out.storePtr(fixedPointer(Instance::offsetOfGlobalObject()), bound.value(), m_heaps.JSCallee_scope);
@@ -108,14 +102,13 @@ std::optional<Operand> Lowering::lowerBind(ValueID function, StringID name, std:
     m_out.storePtr(m_out.intPtrZero, bound.value(), m_heaps.JSBoundFunction_nameMayBeNull);
     m_out.store64(integer(std::bit_cast<int64_t>(PNaN)).value(), bound.value(), m_heaps.JSBoundFunction_length);
     m_out.store32(m_out.constInt32(numberOfBoundArguments), bound.value(), m_heaps.JSBoundFunction_boundArgsLength);
-    // With it: not tainted.
     m_out.store32(m_out.constInt32(static_cast<uint8_t>(TriState::Indeterminate)), bound.value(), m_heaps.JSBoundFunction_canConstruct);
     fenceAfterInitialization();
     join.add(ensure(bound, m_program.at(m_program.types.function), type));
 
-    m_out.appendTo(generally);
+    m_out.appendTo(genericPath);
     AOT_TYPED_OPERATION(PrepareBoundFunctionAllocation);
-    join.add(ensure(method ? callGenerally(*method, callee, arguments) : callMethodGenerally(callee, name, arguments), type));
+    join.add(ensure(method ? callGeneric(*method, callee, arguments) : callMethodGeneric(callee, name, arguments), type));
     return join.finish();
 }
 

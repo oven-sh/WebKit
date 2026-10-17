@@ -1455,7 +1455,7 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
                 return;
             }
 #if ENABLE(AOT)
-            if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::importOfCompiledEntryPoint(record) : nullptr) {
+            if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::compiledEntryPointImport(record) : nullptr) {
                 MarkedArgumentBuffer onlyWaits;
                 onlyWaits.append(jsNull());
                 JSValue imported = call(globalObject, import, JSC::getCallData(import), jsUndefined(), onlyWaits);
@@ -1670,7 +1670,7 @@ static void dynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, T
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
 #if ENABLE(AOT)
-        if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::importOfCompiledEntryPoint(module) : nullptr) {
+        if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::compiledEntryPointImport(module) : nullptr) {
             JSValue promise = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
             if (scope.exception()) [[unlikely]] {
                 capabilityPromise->rejectWithCaughtException(vm, scope);
@@ -2155,7 +2155,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         scope.release();
-        // Only MicrotaskQueue::drainImpl() brings a cache.
         AOT::Typed::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, !!microtaskCallCache);
         return;
     }

@@ -144,7 +144,7 @@ String InternalFunction::calculatedDisplayName(VM& vm)
     return name();
 }
 
-static ALWAYS_INLINE bool keepsInternalFunctionAllocationStructure(JSFunction* function)
+static ALWAYS_INLINE bool retainsInternalFunctionAllocationStructure(JSFunction* function)
 {
     if (function->canUseAllocationProfiles())
         return true;
@@ -166,7 +166,7 @@ Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObjec
     // newTarget may be an InternalFunction if we were called from Reflect.construct.
     JSFunction* targetFunction = dynamicDowncast<JSFunction>(newTarget);
 
-    if (!targetFunction || !keepsInternalFunctionAllocationStructure(targetFunction)) [[unlikely]] {
+    if (!targetFunction || !retainsInternalFunctionAllocationStructure(targetFunction)) [[unlikely]] {
         JSValue prototypeValue = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, nullptr);
         // .prototype getter could have triggered having a bad time so need to recheck array structures.

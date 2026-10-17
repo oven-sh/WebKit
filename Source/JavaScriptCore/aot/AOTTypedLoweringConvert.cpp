@@ -16,12 +16,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-// Toward zero. Of what does not fit: the least or the greatest integer, depending on the processor.
 Integer Lowering::truncateToInteger(Number value)
 {
-    static_assert(static_cast<int32_t>(PureFunctionOfChildren::TruncateToInteger) == keyOfTruncationToInt64 && static_cast<int32_t>(PureFunctionOfChildren::ToInt32) == keyOfConversionToInt32);
-    // The back end does not look into a patchpoint.
-    if (value.value()->hasDouble() && std::abs(value.value()->asDouble()) < static_cast<double>(maxKeptInteger))
+    static_assert(static_cast<int32_t>(PureFunctionOfChildren::TruncateToInteger) == toInt64TruncationKey && static_cast<int32_t>(PureFunctionOfChildren::ToInt32) == toInt32ConversionKey);
+    if (value.value()->hasDouble() && std::abs(value.value()->asDouble()) < static_cast<double>(maxTrackedInteger))
         return integer(static_cast<int64_t>(value.value()->asDouble()));
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     patchpoint->append(value.value(), ValueRep::SomeRegister);
@@ -68,7 +66,6 @@ static Rep plain(Rep rep)
 
 static constexpr uint16_t markerKinds[] = { Primitive::Undefined, Primitive::Null, Primitive::Absent };
 
-// What stands for each of markerKinds in a representation.
 static std::array<int64_t, 3> markersIn(Rep rep)
 {
     switch (rep) {
@@ -84,7 +81,7 @@ static std::array<int64_t, 3> markersIn(Rep rep)
     }
 }
 
-int64_t Lowering::bitsOfMarker(uint16_t kind, Rep rep)
+int64_t Lowering::markerBits(uint16_t kind, Rep rep)
 {
     for (unsigned i = 0; i < std::size(markerKinds); ++i) {
         if (markerKinds[i] == kind)
@@ -93,29 +90,25 @@ int64_t Lowering::bitsOfMarker(uint16_t kind, Rep rep)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Whether a value that may be a number is none.
 Word32 Lowering::isMarker(Operand operand)
 {
     RELEASE_ASSERT(plain(operand.rep) != operand.rep);
-    return greaterThanOrEqual(bitsOf(operand), integer(bitsOfMarker(Primitive::Undefined, operand.rep)));
+    static_assert(absentDouble > undefinedDouble && absentInteger > undefinedInteger);
+    return greaterThanOrEqual(bitsOf(beforeAbsentNormalization(operand)), integer(markerBits(Primitive::Undefined, operand.rep)));
 }
 
-// Of what was read from a place: whether the place holds nothing.
 Word32 Lowering::isAbsent(Operand raw)
 {
     if (LValue index = indexOf(raw.value))
         return Word32(m_out.isZero64(index));
-    return equal(bitsOf(raw), integer(bitsOfMarker(Primitive::Absent, raw.rep)));
+    return equal(bitsOf(raw), integer(markerBits(Primitive::Absent, raw.rep)));
 }
 
-// A double from anywhere as a double of the language. What stands for `undefined` is a double that arithmetic hands on as it is.
 Number Lowering::purified(Number value)
 {
     return select(equal(value, value), value, number(PNaN));
 }
 
-// As the engine boxes a number it has computed: as an int32 where it is one. So what is tried first on a value that is expected to be a
-// number, that it is an int32, keeps passing for what a division or a rounding has come out with.
 Boxed Lowering::boxNumber(Number value)
 {
 #if CPU(ARM64)
@@ -187,7 +180,6 @@ Boxed Lowering::boxNumber(Number value)
     }
 #endif
     Word32 low = low32(truncateToInteger(value));
-    // By the bits: negative zero is no int32, nor is what is not a number.
     return select(equal(bitsOf(toNumber(low)), bitsOf(value)), boxInt32(low), box(purified(value)));
 }
 
@@ -208,28 +200,28 @@ bool Lowering::tryTailCallBoxNumber(ValueID returned)
     return true;
 }
 
-Word32 Lowering::isWithin(Integer value, Range range)
+Word32 Lowering::isSubsetOf(Integer value, Range range)
 {
-    if (range.least > range.most)
+    if (range.minimum > range.maximum)
         return word32(0);
-    if (range.least == range.most)
-        return equal(value, integer(range.least));
-    Integer fromLeast = range.least ? Integer(m_out.sub(value.value(), integer(range.least).value())) : value;
-    return Word32(m_out.belowOrEqual(fromLeast.value(), integer(static_cast<int64_t>(static_cast<uint64_t>(range.most) - static_cast<uint64_t>(range.least))).value()));
+    if (range.minimum == range.maximum)
+        return equal(value, integer(range.minimum));
+    if (range == Range::int32())
+        return equal(signExtended(low32(value)), value);
+    Integer fromMinimum = range.minimum ? Integer(m_out.sub(value.value(), integer(range.minimum).value())) : value;
+    return Word32(m_out.belowOrEqual(fromMinimum.value(), integer(static_cast<int64_t>(static_cast<uint64_t>(range.maximum) - static_cast<uint64_t>(range.minimum))).value()));
 }
 
-// Between representations of which at least one has room for `undefined` and `null` beside a number.
 Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
 {
     Rep from = operand.rep;
     std::optional<Operand> result;
     if (type.primitives & Primitive::Number) {
-        // The number, as if it were one.
         Operand converted;
         if (from == Rep::OptionalDouble && to == Rep::JSValue)
             converted = boxNumber(assumedNumber(operand.as<OptionalNumber>()));
         else
-            converted = convert(Operand(plain(from), operand.value), type.withoutPrimitives(static_cast<uint16_t>(~Primitive::Number)), plain(to));
+            converted = convert(Operand(plain(from), (plain(to) == to && to != Rep::JSValue ? beforeAbsentNormalization(operand) : operand).value), type.withoutPrimitives(static_cast<uint16_t>(~Primitive::Number)), plain(to));
         if (from == Rep::Double && to == Rep::OptionalDouble) {
             Number number = converted.as<Number>();
             converted = either<Number>(equal(number, number), [&] {
@@ -242,10 +234,9 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
     }
     if (plain(to) == to && to != Rep::JSValue) {
         if (!result)
-            return failWith("a conversion of what is not a number to a number"_s);
+            return failWith("a conversion of a non-number to a number"_s);
         return *result;
     }
-    // A plain number has no room for what is not one, whatever the type it is converted for allows.
     bool mayBeMarker = plain(from) != from || from == Rep::JSValue;
     Integer bits;
     for (unsigned i = 0; i < std::size(markerKinds); ++i) {
@@ -264,7 +255,6 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
     }
     if (result && from == Rep::JSValue && to == Rep::OptionalDouble && m_out.m_block->size() && m_out.m_block->last() == result->value)
         m_boxedBeforeUnboxing.add(result->value, operand.value);
-    // A value of no type never comes about.
     return result ? *result : fromBits(integer(0), to);
 }
 
@@ -297,7 +287,7 @@ LiteralStringWord Lowering::literalStringOf(Operand operand, const Type& type)
         return LiteralStringWord(found->value);
     if (!(type.primitives & (Primitive::String | Primitive::LiteralString)))
         return LiteralStringWord(operand.value);
-    Boxed boxed = operand.rep == Rep::Cell ? box(operand.as<CellPointer>()) : remade(operand.as<Boxed>());
+    Boxed boxed = operand.rep == Rep::Cell ? box(operand.as<CellPointer>()) : rematerializedValue(operand.as<Boxed>());
     LiteralStringWord word(callAllocationStub(Stub::ToLiteralString, { { boxed.value(), stubTemporaryGPRs[2] } }, { Writes::Pure, false }, false));
     m_unboxedLiteralStrings.add(word.value(), boxed.value());
     return word;
@@ -307,7 +297,7 @@ Operand Lowering::convertLiteralString(Operand operand, const Type& type, Rep to
 {
     if (to == Rep::LiteralString) {
         if (operand.rep != Rep::Cell && operand.rep != Rep::JSValue)
-            return failWith("a conversion of what is no string to a string"_s);
+            return failWith("a conversion of a non-string to a string"_s);
         return literalStringOf(operand, type);
     }
     Boxed boxed = boxLiteralString(operand.as<LiteralStringWord>());
@@ -315,10 +305,9 @@ Operand Lowering::convertLiteralString(Operand operand, const Type& type, Rep to
         return boxed;
     if (to == Rep::Cell)
         return asCell(boxed);
-    return failWith("a conversion of a string to what is none"_s);
+    return failWith("a conversion of a string to a non-string"_s);
 }
 
-// The operand is of the type, in a representation that has room for every value of the type, as has the one asked for. So nothing is tested.
 Operand Lowering::convert(Operand operand, const Type& type, Rep to)
 {
     Rep from = operand.rep;
@@ -333,10 +322,8 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
     }
     if (plain(from) != from || plain(to) != to)
         return convertOptional(operand, type, to);
-    // 32 bits that are no boolean were read from a field that keeps an integer in less than a word.
     if (from == Rep::Int32 && !(type.primitives & Primitive::Boolean)) {
-        // What is not negative comes out the same either way, and a load has cleared the upper half already.
-        bool isNotNegative = type.primitives & Primitive::Int && type.integers.least >= 0;
+        bool isNotNegative = type.primitives & Primitive::Int && type.integers.minimum >= 0;
         operand = isNotNegative ? zeroExtended(operand.as<Word32>()) : signExtended(operand.as<Word32>());
         from = Rep::Int64;
         if (to == Rep::Int64)
@@ -358,14 +345,14 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
         if (to == Rep::Double) {
             Number number = toNumber(value);
             if (type.isInteger() && number.value()->opcode() == B3::IToD && number.value()->child(0) == value.value())
-                m_lastIntegerMadeNumber = { number.value(), value.value(), type.integers.least };
+                m_lastIntegerConvertedToNumber = { number.value(), value.value(), type.integers.minimum };
             return number;
         }
         if (to == Rep::JSValue) {
             Word32 low = low32(value);
-            if (type.primitives & Primitive::Int && type.integers.isWithin(Range::int32()))
+            if (type.primitives & Primitive::Int && type.integers.isSubsetOf(Range::int32()))
                 return boxInt32(low);
-            bool isNeverNegative = type.primitives & Primitive::Int && type.integers.least >= 0;
+            bool isNeverNegative = type.primitives & Primitive::Int && type.integers.minimum >= 0;
             Word32 isInt32 = isNeverNegative ? belowOrEqual(value, integer(INT32_MAX)) : equal(signExtended(low), value);
             if (m_isInLoop)
                 return select(isInt32, boxInt32(low), box(toNumber(value)));
@@ -412,7 +399,6 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
     return failWith("a conversion between these representations"_s);
 }
 
-// What `x | 0` yields.
 Word32 Lowering::toInt32(Number value)
 {
 #if CPU(ARM64)
@@ -427,7 +413,6 @@ Word32 Lowering::toInt32(Number value)
         return Word32(patchpoint);
     }
 #endif
-    // Of a number that fits in 64 bits the low half is the answer. Where it does not fit, truncation yields the least or the greatest integer.
     Integer truncated = truncateToInteger(value);
     Word32 fits = below(integer(1), add(truncated, integer(std::numeric_limits<int64_t>::min() + 1)));
     return either<Word32>(fits, [&] {
@@ -437,7 +422,6 @@ Word32 Lowering::toInt32(Number value)
     });
 }
 
-// Of a value that may be anything. Where it is no number: to the block.
 Word32 Lowering::toInt32OrElse(ValueID id, LBasicBlock otherwise)
 {
     Operand operand = get(id);
@@ -452,10 +436,8 @@ Word32 Lowering::toInt32OrElse(ValueID id, LBasicBlock otherwise)
     });
 }
 
-// Of a number, `undefined`, `null` or a boolean.
 Word32 Lowering::toInt32(ValueID id)
 {
-    // What is not a number becomes 0.
     if (typeOf(id).isUndefinedOrNull())
         return word32(0);
     Operand operand = get(id);
@@ -468,18 +450,18 @@ Word32 Lowering::toInt32(ValueID id)
         static_assert(!static_cast<uint32_t>(undefinedInteger) && !static_cast<uint32_t>(nullInteger) && !static_cast<uint32_t>(absentInteger));
         return low32(assumedInteger(operand.as<OptionalInteger>()));
     default:
-        if (auto found = m_int32sOfNumbers.find(operand.value); found != m_int32sOfNumbers.end())
+        if (auto found = m_numberToInt32.find(operand.value); found != m_numberToInt32.end())
             return Word32(found->value);
         static_assert(!static_cast<uint32_t>(INT64_MIN));
-        if (auto found = m_integersOfNumbers.find(id.index()); found != m_integersOfNumbers.end() && found->value.least && found->value.number == operand.value)
+        if (auto found = m_numbersAsIntegers.find(id.index()); found != m_numbersAsIntegers.end() && found->value.minimum && found->value.number == operand.value)
             return low32(Integer(found->value.integer));
         if (LValue phi = m_int32Phis.get(id.index()))
             return Word32(phi);
-        if (auto ofSum = toInt32OfSum(id))
+        if (auto ofSum = sumToInt32(id))
             return *ofSum;
-        if (auto ofQuotient = toInt32OfQuotient(id))
+        if (auto ofQuotient = quotientToInt32(id))
             return *ofQuotient;
-        if (isInlineBuiltin(id, InlineBuiltin::MathTrunc) && m_function.at(id).arguments.size() == 1 && hasOperandsHere(id) && isNumericOperand(typeOf(m_function.at(id).arguments[0])))
+        if (isInlineBuiltin(id, InlineBuiltin::MathTrunc) && m_function.at(id).arguments.size() == 1 && operandsAreAvailable(id) && isNumericOperand(typeOf(m_function.at(id).arguments[0])))
             return toInt32(m_function.at(id).arguments[0]);
         return toInt32(asNumericOperand(id));
     }

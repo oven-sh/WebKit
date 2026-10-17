@@ -5836,8 +5836,7 @@ struct BytecodeLinkEncoder::Impl {
 
 #if ENABLE(AOT)
     std::unique_ptr<AOT::Typed::Program> typedProgram;
-    std::unique_ptr<AOT::RegExpsFoundAhead> regExpsFoundAhead;
-    // By entry of the typed program.
+    std::unique_ptr<AOT::DiscoveredRegExps> discoveredRegExps;
     Vector<uint32_t, 1> typedModules;
 #endif
 
@@ -5874,7 +5873,7 @@ struct BytecodeLinkEncoder::Impl {
     }
 
 #if ENABLE(AOT)
-    void placeModuleEnvironments()
+    void layOutModuleEnvironments()
     {
         using Graph = PrelinkedModuleGraph;
         if (prelinkedGraph.size() < sizeof(Graph::Header))
@@ -5967,7 +5966,7 @@ struct BytecodeLinkEncoder::Impl {
 
     Vector<uint8_t> compileImage()
     {
-        MacroAssembler::useOnlyFeaturesOfBuildTarget();
+        MacroAssembler::restrictToBuildTargetFeatures();
         if (!MacroAssembler::supportsFloatingPointRounding()) {
             fail("this build targets a CPU without SSE4.1, which the ahead-of-time compiler needs"_s);
             return { };
@@ -6019,24 +6018,24 @@ struct BytecodeLinkEncoder::Impl {
         if (!isAllInTypedProgram)
             return { };
 
-        auto moduleText = [&](unsigned module) -> StringView {
+        auto moduleSource = [&](unsigned module) -> StringView {
             return modules[module].source.provider()->source();
         };
 
-        placeModuleEnvironments();
+        layOutModuleEnvironments();
         unsigned numberOfThreads = Options::numberOfAOTCompilerThreads() ? Options::numberOfAOTCompilerThreads() : WTF::numberOfProcessorCores();
         DeferGC deferGC(vm);
         MonotonicTime phaseStart = MonotonicTime::now();
         MonotonicTime stepStart = phaseStart;
         auto endPhase = [&](ASCIILiteral name) {
             MonotonicTime now = MonotonicTime::now();
-            if (AOT::Typed::saysClocks()) [[unlikely]]
+            if (AOT::Typed::shouldPrintTimings()) [[unlikely]]
                 dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
             phaseStart = now;
             stepStart = now;
         };
         auto endStep = [&](ASCIILiteral name) {
-            if (!AOT::Typed::saysClocks()) [[likely]]
+            if (!AOT::Typed::shouldPrintTimings()) [[likely]]
                 return;
             MonotonicTime now = MonotonicTime::now();
             dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
@@ -6044,8 +6043,8 @@ struct BytecodeLinkEncoder::Impl {
         };
         AOT::ImageBuilder builder;
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
-        if (regExpsFoundAhead)
-            builder.takeRegExpsCompiledAhead(regExpsFoundAhead->compiledAhead());
+        if (discoveredRegExps)
+            builder.takePrecompiledRegExps(discoveredRegExps->precompiledRegExps());
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
         auto typedEntryOf = [&](size_t index) -> AOT::Typed::FunctionID {
             if (!typedProgram)
@@ -6071,8 +6070,8 @@ struct BytecodeLinkEncoder::Impl {
                 return;
             }
             code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
-            AOT::collectConstructSites(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), 0);
-            AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), 0);
+            AOT::collectConstructSites(code.info, jobs[index].codeBlock, moduleSource(jobs[index].module), 0);
+            AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleSource(jobs[index].module), 0);
             if (auto* numbers = AOT::programIdentifierIndices()) {
                 for (auto& identifier : jobs[index].codeBlock->identifiers())
                     code.info.identifierIndices.append(numbers->get(identifier.impl()));
@@ -6086,20 +6085,25 @@ struct BytecodeLinkEncoder::Impl {
         };
         AOT::IdentifierIndices identifierIndices;
         Vector<std::pair<AOT::Typed::StringID, Identifier>> typedIdentifiers;
-        Vector<std::array<uint32_t, 4>> usesByAccessOfTypedIdentifiers;
+        Vector<std::array<uint32_t, 4>> typedIdentifierUsesByAccess;
+        AOT::IdentifierIndices firstFunctionsUsingLookupTablePlusOne;
         {
             for (auto& job : jobs) {
                 for (auto& identifier : job.codeBlock->identifiers())
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
             }
             if (typedProgram) {
-                typedProgram->findNamesThatMayBeAccessors();
-                for (auto& [name, uses, usesThatAskTheTable, usesByAccess] : typedProgram->genericAccessIdentifiersAndNumberOfUses()) {
-                    auto bytesOfName = typedProgram->string(name);
-                    Identifier identifier = AOT::Typed::isConstantSymbol(bytesOfName) || AOT::Typed::isEnginePrivateName(bytesOfName) ? Identifier::fromUid(SymbolImpl::create(*String(byteCast<Latin1Character>(bytesOfName)).impl()).get()) : Identifier::fromString(vm, String::fromUTF8(bytesOfName));
-                    identifierIndices.add(identifier.impl(), 0).iterator->value += std::min<uint32_t>(uses, INT16_MAX) + (std::min<uint32_t>(usesThatAskTheTable, INT16_MAX) << 16);
+                typedProgram->findPossibleAccessorNames();
+                for (auto& [name, uses, tableLookupUses, firstTableLookupFunction, usesByAccess] : typedProgram->genericAccessNameUses()) {
+                    auto nameBytes = typedProgram->string(name);
+                    Identifier identifier = AOT::Typed::isConstantSymbol(nameBytes) || AOT::Typed::isEnginePrivateName(nameBytes) ? Identifier::fromUid(SymbolImpl::create(*String(byteCast<Latin1Character>(nameBytes)).impl()).get()) : Identifier::fromString(vm, String::fromUTF8(nameBytes));
+                    identifierIndices.add(identifier.impl(), 0).iterator->value += std::min<uint32_t>(uses, INT16_MAX) + (std::min<uint32_t>(tableLookupUses, INT16_MAX) << 16);
+                    if (firstTableLookupFunction != UINT32_MAX) {
+                        uint32_t& first = firstFunctionsUsingLookupTablePlusOne.add(identifier.impl(), firstTableLookupFunction + 1).iterator->value;
+                        first = std::min(first, firstTableLookupFunction + 1);
+                    }
                     typedIdentifiers.append({ name, WTF::move(identifier) });
-                    usesByAccessOfTypedIdentifiers.append(usesByAccess);
+                    typedIdentifierUsesByAccess.append(usesByAccess);
                 }
             }
             Vector<std::pair<UniquedStringImpl*, uint32_t>> inOrder;
@@ -6112,23 +6116,31 @@ struct BytecodeLinkEncoder::Impl {
                     return order == std::weak_ordering::less;
                 return a.first->isSymbol() < b.first->isSymbol();
             });
+            if (constexpr size_t hotNameCount = AOT::PropertyLookupTable::numberOfHotNames - 1; inOrder.size() > hotNameCount) {
+                auto remainingNamesWithColumn = inOrder.mutableSpan().subspan(hotNameCount, std::min<size_t>(inOrder.size(), AOT::PropertyLookupTable::maxName) - hotNameCount);
+                for (auto& [uid, key] : remainingNamesWithColumn)
+                    key = firstFunctionsUsingLookupTablePlusOne.get(uid) - 1;
+                std::stable_sort(remainingNamesWithColumn.begin(), remainingNamesWithColumn.end(), [](auto& a, auto& b) {
+                    return a.second < b.second;
+                });
+            }
             for (uint32_t number = 0; number < inOrder.size(); ++number)
                 identifierIndices.set(inOrder[number].first, number + 1);
-            AOT::forgetNamesWithStubOfTheirOwn();
+            AOT::clearNamesWithDedicatedStubs();
             using AccessByName = AOT::Typed::Program::AccessByName;
-            static_assert(static_cast<unsigned>(AccessByName::Read) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Reads) && static_cast<unsigned>(AccessByName::Store) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Stores));
-            static_assert(static_cast<unsigned>(AccessByName::Definition) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Definitions) && static_cast<unsigned>(AccessByName::Call) == static_cast<unsigned>(AOT::StubOfOneNameIsFor::Calls));
+            static_assert(static_cast<unsigned>(AccessByName::Read) == static_cast<unsigned>(AOT::PerNameStubKind::Reads) && static_cast<unsigned>(AccessByName::Store) == static_cast<unsigned>(AOT::PerNameStubKind::Stores));
+            static_assert(static_cast<unsigned>(AccessByName::Definition) == static_cast<unsigned>(AOT::PerNameStubKind::Definitions) && static_cast<unsigned>(AccessByName::Call) == static_cast<unsigned>(AOT::PerNameStubKind::Calls));
             for (unsigned i = 0; i < typedIdentifiers.size(); ++i) {
-                constexpr uint32_t usesThatPayForStubsOfOneName = 512;
+                constexpr uint32_t minUsesForDedicatedStub = 512;
                 uint32_t number = identifierIndices.get(typedIdentifiers[i].second.impl());
-                for (unsigned access = 0; access < usesByAccessOfTypedIdentifiers[i].size(); ++access) {
-                    if (usesByAccessOfTypedIdentifiers[i][access] >= usesThatPayForStubsOfOneName)
-                        AOT::setHasStubOfItsOwn(static_cast<AOT::StubOfOneNameIsFor>(access), number);
+                for (unsigned access = 0; access < typedIdentifierUsesByAccess[i].size(); ++access) {
+                    if (typedIdentifierUsesByAccess[i][access] >= minUsesForDedicatedStub)
+                        AOT::setHasDedicatedStub(static_cast<AOT::PerNameStubKind>(access), number);
                 }
-                if (AOT::methodOfTablesNamed(typedProgram->string(typedIdentifiers[i].first)) != AOT::MethodOfTables::None)
-                    AOT::setHasStubOfItsOwn(AOT::StubOfOneNameIsFor::Calls, number);
+                if (AOT::collectionMethodNamed(typedProgram->string(typedIdentifiers[i].first)) != AOT::CollectionMethod::None)
+                    AOT::setHasDedicatedStub(AOT::PerNameStubKind::Calls, number);
             }
-            AOT::setTypedStringsWithWord(typedProgram ? typedProgram->keysOfStringsAskedForMost(AOT::Instance::numberOfTypedStringsWithWord) : Vector<uint32_t>());
+            AOT::setTypedStringsWithWord(typedProgram ? typedProgram->mostUsedStringKeys(AOT::Instance::numberOfTypedStringsWithWord) : Vector<uint32_t>());
             AOT::setProgramIdentifierIndices(&identifierIndices);
             builder.setProgramIdentifierIndices(&identifierIndices, inOrder.size() + 1);
             if (typedProgram) {
@@ -6209,7 +6221,6 @@ struct BytecodeLinkEncoder::Impl {
 
         endStep("numbering the constants"_s);
         if (typedProgram) {
-            // Compiled on all threads, and added in order, so that the image does not depend on who was first.
             struct TypedResult {
                 WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(TypedResult);
                 AOT::CompiledCode code;
@@ -6231,22 +6242,21 @@ struct BytecodeLinkEncoder::Impl {
             uint32_t numberOfTypedFunctions = typedProgram->functions.size();
             Vector<std::unique_ptr<TypedResult>> typedResults(numberOfTypedFunctions);
             std::atomic<uint32_t> nextTypedFunction { 0 };
-            Vector<uint64_t> sizesAndNumbers(numberOfTypedFunctions, [&](size_t index) {
+            Vector<uint64_t> sizesAndIndices(numberOfTypedFunctions, [&](size_t index) {
                 return static_cast<uint64_t>(UINT32_MAX - typedProgram->functions[index].values.size()) << 32 | index;
             });
-            AOT::Typed::sortOnPool(sizesAndNumbers.mutableSpan(), std::less<uint64_t> { });
+            AOT::Typed::sortOnPool(sizesAndIndices.mutableSpan(), std::less<uint64_t> { });
             Vector<uint32_t> largestFirst;
             largestFirst.reserveInitialCapacity(numberOfTypedFunctions);
-            for (uint64_t sizeAndNumber : sizesAndNumbers) {
+            for (uint64_t sizeAndNumber : sizesAndIndices) {
                 AOT::Typed::FunctionID id(static_cast<uint32_t>(sizeAndNumber));
-                // An entry is compiled in the place of the code of its module.
                 if (!typedProgram->isEntry(id) && typedProgram->hasCode(id))
                     largestFirst.append(id.index());
             }
             auto nameOf = [&](AOT::Typed::FunctionID id) {
                 return String::fromUTF8(typedProgram->string(typedProgram->at(id).name));
             };
-            auto giveBackRoom = [](auto& self, AOT::CompiledCode& code) -> void {
+            auto releaseMemory = [](auto& self, AOT::CompiledCode& code) -> void {
                 code.bytes.shrinkToFit();
                 code.instructions.shrinkToFit();
                 code.dataInCode.shrinkToFit();
@@ -6262,7 +6272,7 @@ struct BytecodeLinkEncoder::Impl {
                 info.plans.shrinkToFit();
                 info.quotableSites.shrinkToFit();
                 info.constructSites.shrinkToFit();
-                info.sitesThatConstruct.shrinkToFit();
+                info.constructingSites.shrinkToFit();
                 info.callSites.shrinkToFit();
                 info.identifierIndices.shrinkToFit();
                 info.typedIdentifierIndices.shrinkToFit();
@@ -6286,7 +6296,7 @@ struct BytecodeLinkEncoder::Impl {
                 result->isCompiled = AOT::Typed::compile(vm, *typedProgram, id, result->code);
                 if (result->isCompiled)
                     AOT::ImageBuilder::clearStubCalls(result->code);
-                giveBackRoom(giveBackRoom, result->code);
+                releaseMemory(releaseMemory, result->code);
                 typedResults[function] = WTF::move(result);
             };
             auto cohortSizeAt = [&](uint32_t next) -> uint32_t {
@@ -6318,27 +6328,26 @@ struct BytecodeLinkEncoder::Impl {
             };
             endStep("the entries, and the functions by size"_s);
             for (uint32_t module : typedModules)
-                typedProgram->modulesOfEntries.append(modules[module].entryOffset);
+                typedProgram->entryModules.append(modules[module].entryOffset);
             {
                 Vector<Ref<Thread>> threads;
                 for (unsigned i = 1; i < numberOfThreads; ++i)
                     threads.append(Thread::create("AOT compiler"_s, [&compileTypedFunctions] { compileTypedFunctions(); }));
-                // Neither asks anything of the code.
                 Vector<uint8_t> typedData;
                 Ref encoder = Thread::create("AOT data encoder"_s, [&] {
                     typedData = AOT::Typed::encodeData(*typedProgram);
                 });
                 endStep("starting the threads"_s);
                 AOT::Typed::addRegExpLiterals(vm, *typedProgram, builder);
-                if (!regExpsFoundAhead)
-                    regExpsFoundAhead = makeUnique<AOT::RegExpsFoundAhead>(typedProgram->buffer);
+                if (!discoveredRegExps)
+                    discoveredRegExps = makeUnique<AOT::DiscoveredRegExps>(typedProgram->buffer);
                 auto addEvaluatedRegExps = [&] {
-                    for (auto& [source, flags] : regExpsFoundAhead->waitForEvaluatedTexts())
+                    for (auto& [source, flags] : discoveredRegExps->waitForEvaluatedSources())
                         builder.requestRegExp(vm, source, flags, true);
                     builder.didRequestAllRegExps();
                 };
                 RefPtr<Thread> waitsForEvaluator;
-                if (regExpsFoundAhead->isEvaluated())
+                if (discoveredRegExps->isEvaluated())
                     addEvaluatedRegExps();
                 else
                     waitsForEvaluator = Thread::create("AOT compiler"_s, [&addEvaluatedRegExps] { addEvaluatedRegExps(); });
@@ -6353,10 +6362,10 @@ struct BytecodeLinkEncoder::Impl {
                     thread->waitForCompletion();
                 if (waitsForEvaluator)
                     waitsForEvaluator->waitForCompletion();
-                AOT::Typed::destroyBeside(WTF::move(regExpsFoundAhead));
+                AOT::Typed::destroyOnHelperThread(WTF::move(discoveredRegExps));
             }
             endStep("waiting for the other threads"_s);
-            RELEASE_ASSERT(typedProgram->sizeOfStatics == typedProgram->sizeOfStaticsAsPlaced);
+            RELEASE_ASSERT(typedProgram->sizeOfStatics == typedProgram->placedStaticsSize);
             endPhase("code generation"_s);
             if (Options::verboseAOTCompilation()) [[unlikely]] {
                 uint64_t total = 0;
@@ -6380,24 +6389,23 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
             unsigned numberOfDeclinedFunctions = 0;
-            // A general entry stands directly ahead of its function: whoever comes in by it is there at once.
-            Vector<uint64_t> placeOfTypedFunction(numberOfTypedFunctions, [](size_t function) {
+            Vector<uint64_t> typedFunctionOrder(numberOfTypedFunctions, [](size_t function) {
                 return static_cast<uint64_t>(function) << 2;
             });
             for (auto& [function, entry] : typedProgram->genericEntrypoints) {
                 if (function)
-                    placeOfTypedFunction[entry.index()] = (static_cast<uint64_t>(function) << 2) - 1;
+                    typedFunctionOrder[entry.index()] = (static_cast<uint64_t>(function) << 2) - 1;
             }
-            Vector<size_t> placesInBuilder(numberOfTypedFunctions);
+            Vector<size_t> builderIndices(numberOfTypedFunctions);
             size_t numberToAdd = 0;
-            struct PlaceInOrder {
+            struct SortKey {
                 uint64_t rank;
                 uint32_t start;
                 uint32_t kind;
                 uint32_t place;
             };
-            Vector<PlaceInOrder> placesInOrder;
-            placesInOrder.reserveInitialCapacity(numberOfTypedFunctions);
+            Vector<SortKey> orderedLocations;
+            orderedLocations.reserveInitialCapacity(numberOfTypedFunctions);
             constexpr uint32_t isNotCompiled = std::numeric_limits<uint32_t>::max();
             Vector<uint32_t> numbersAdded(numberOfTypedFunctions);
             AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
@@ -6405,56 +6413,55 @@ struct BytecodeLinkEncoder::Impl {
                 numbersAdded[function] = !result ? 0 : !result->isCompiled ? isNotCompiled : safeCast<uint32_t>(result->code.continuations.size() + 1);
             });
             for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
-                placesInBuilder[function] = numberToAdd;
+                builderIndices[function] = numberToAdd;
                 if (!numbersAdded[function])
                     continue;
                 AOT::Typed::FunctionID id(function);
                 if (numbersAdded[function] == isNotCompiled) {
                     auto& result = typedResults[function];
-                    // All of them are reported, so that one build shows everything that is missing.
                     auto& declined = typedProgram->at(id);
                     LineColumn position = typedProgram->lineColumnFor(declined.module, declined.position);
                     String path = declined.module ? String::fromUTF8(typedProgram->string(typedProgram->modules[declined.module.index()].displayPath)) : String();
-                    bool isBodyOfModule = declined.kind == AOT::Typed::Format::FunctionKind::Module || declined.has(AOT::Typed::Format::FunctionIsCodeOfModule);
-                    String what = isBodyOfModule ? String("the top-level code"_s) : makeString('`', nameOf(id), '`');
+                    bool isModuleBody = declined.kind == AOT::Typed::Format::FunctionKind::Module || declined.has(AOT::Typed::Format::FunctionIsModuleBody);
+                    String what = isModuleBody ? String("the top-level code"_s) : makeString('`', nameOf(id), '`');
                     fail(makeString(what, " cannot be compiled ahead of time: "_s, result->code.whyDeclined), WTF::move(path), position);
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
                 for (unsigned index = 0; index + 1 < numbersAdded[function]; ++index) {
-                    auto key = AOT::Typed::keyOfContinuation(id, index);
+                    auto key = AOT::Typed::continuationKey(id, index);
                     RELEASE_ASSERT(!key.module);
-                    placesInOrder.append({ isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
+                    orderedLocations.append({ isNotHot | 1ull << 61 | typedFunctionOrder[function] | 1, key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
                 }
                 auto key = AOT::Typed::keyOf(id);
                 RELEASE_ASSERT(!key.module);
-                placesInOrder.append({ isNotHot | 1ull << 61 | placeOfTypedFunction[function], key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
+                orderedLocations.append({ isNotHot | 1ull << 61 | typedFunctionOrder[function], key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
             }
             if (numberOfDeclinedFunctions)
                 return { };
-            AOT::Typed::sortOnPool(placesInOrder.mutableSpan(), [](const PlaceInOrder& a, const PlaceInOrder& b) {
+            AOT::Typed::sortOnPool(orderedLocations.mutableSpan(), [](const SortKey& a, const SortKey& b) {
                 return std::tie(a.rank, a.start, a.kind) < std::tie(b.rank, b.start, b.kind);
             });
-            Vector<uint32_t> whereItWillStand(numberToAdd);
-            for (size_t index = 0; index < placesInOrder.size(); ++index)
-                whereItWillStand[placesInOrder[index].place] = safeCast<uint32_t>(index);
-            size_t firstPlaceInBuilder = builder.growFunctions(numberToAdd);
+            Vector<uint32_t> finalIndices(numberToAdd);
+            for (size_t index = 0; index < orderedLocations.size(); ++index)
+                finalIndices[orderedLocations[index].place] = safeCast<uint32_t>(index);
+            size_t firstBuilderIndex = builder.growFunctions(numberToAdd);
             AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
                 auto result = WTF::move(typedResults[function]);
                 if (!result)
                     return;
                 AOT::Typed::FunctionID id(function);
-                size_t place = placesInBuilder[function];
+                size_t place = builderIndices[function];
                 String nameForMap = typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]);
                 auto continuations = WTF::move(result->code.continuations);
                 for (unsigned index = 0; index < continuations.size(); ++index)
-                    builder.set(firstPlaceInBuilder + whereItWillStand[place++], AOT::Typed::keyOfContinuation(id, index), isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
-                builder.set(firstPlaceInBuilder + whereItWillStand[place], AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
+                    builder.set(firstBuilderIndex + finalIndices[place++], AOT::Typed::continuationKey(id, index), isNotHot | 1ull << 61 | typedFunctionOrder[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
+                builder.set(firstBuilderIndex + finalIndices[place], AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | typedFunctionOrder[function], WTF::move(result->code), WTF::move(nameForMap));
             });
             endPhase("adding the functions to the image"_s);
             AOT::addWebAssemblyModules(vm, *typedProgram, builder);
             endPhase("WebAssembly"_s);
-            AOT::Typed::destroyBeside(WTF::move(typedProgram));
+            AOT::Typed::destroyOnHelperThread(WTF::move(typedProgram));
             endPhase("freeing the typed functions"_s);
         }
         AOT::setProgramIdentifierIndices(nullptr);
@@ -6467,8 +6474,8 @@ struct BytecodeLinkEncoder::Impl {
         }
         endPhase("regular expressions"_s);
         Vector<uint8_t> image = builder.finish();
-        if (!builder.whyFailed().isNull())
-            fail(builder.whyFailed());
+        if (!builder.failureReason().isNull())
+            fail(builder.failureReason());
         endPhase("writing the image"_s);
         reportableSites = builder.takeReportableSites();
         return image;
@@ -6564,10 +6571,10 @@ struct BytecodeLinkEncoder::PreparedTypedProgram {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PreparedTypedProgram);
 #if ENABLE(AOT)
     std::unique_ptr<AOT::Typed::Program> program;
-    std::unique_ptr<AOT::RegExpsFoundAhead> regExpsFoundAhead;
+    std::unique_ptr<AOT::DiscoveredRegExps> discoveredRegExps;
 #endif
     Vector<String> failures;
-    bool isPlaced { false };
+    bool hasPlacement { false };
 };
 
 bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings)
@@ -6581,14 +6588,14 @@ auto BytecodeLinkEncoder::readTypedProgram(std::span<const uint8_t> bytes) -> Pr
 {
     auto* prepared = new PreparedTypedProgram;
 #if ENABLE(AOT)
-    ASCIILiteral whyFailed;
+    ASCIILiteral failureReason;
     MonotonicTime start = MonotonicTime::now();
-    prepared->program = AOT::Typed::Program::tryRead(bytes, whyFailed);
+    prepared->program = AOT::Typed::Program::tryRead(bytes, failureReason);
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: reading the program took ", static_cast<unsigned>((MonotonicTime::now() - start).milliseconds()), " ms");
     if (!prepared->program)
-        prepared->failures.append(makeString("internal error: the typed program cannot be read: "_s, whyFailed));
-    else if (g_compilerHooks.newRegExpsFoundAhead)
-        prepared->regExpsFoundAhead = std::unique_ptr<AOT::RegExpsFoundAhead>(g_compilerHooks.newRegExpsFoundAhead(bytes));
+        prepared->failures.append(makeString("internal error: the typed program cannot be read: "_s, failureReason));
+    else if (g_compilerHooks.newDiscoveredRegExps)
+        prepared->discoveredRegExps = std::unique_ptr<AOT::DiscoveredRegExps>(g_compilerHooks.newDiscoveredRegExps(bytes));
 #else
     UNUSED_PARAM(bytes);
 #endif
@@ -6609,7 +6616,7 @@ bool BytecodeLinkEncoder::setTypedProgram(PreparedTypedProgram* adopted, std::sp
         m_impl->fail(WTF::move(failure));
     if (!prepared->program)
         return false;
-    if (!prepared->isPlaced) {
+    if (!prepared->hasPlacement) {
         m_impl->fail("internal error: the typed program was handed over before it was placed"_s);
         return false;
     }
@@ -6618,7 +6625,7 @@ bool BytecodeLinkEncoder::setTypedProgram(PreparedTypedProgram* adopted, std::sp
         return false;
     }
     m_impl->typedProgram = WTF::move(prepared->program);
-    m_impl->regExpsFoundAhead = WTF::move(prepared->regExpsFoundAhead);
+    m_impl->discoveredRegExps = WTF::move(prepared->discoveredRegExps);
     return true;
 #else
     UNUSED_PARAM(modules);
@@ -6631,7 +6638,6 @@ void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, s
 #if ENABLE(AOT)
     if (!prepared.program)
         return;
-    // Pairs of a string and what to put in its place, each a length in four bytes and the bytes.
     while (replacedStrings.size() >= sizeof(uint32_t)) {
         auto take = [&]() -> std::span<const uint8_t> {
             uint32_t length = 0;
@@ -6651,16 +6657,15 @@ void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, s
     for (auto& finding : findings)
         prepared.failures.append(makeString("internal error: the types of the program do not hold: "_s, finding));
     if (!findings.isEmpty()) {
-        // It has no placement. Whoever goes on after the refusal must not find it and compile it.
         prepared.program = nullptr;
         return;
     }
-    Ref readerOfNamesAndStrings = Thread::create("AOT names"_s, [&] {
-        prepared.program->readNamesAndStringsOffValues();
+    Ref namesAndStringsReader = Thread::create("AOT names"_s, [&] {
+        prepared.program->collectNamesAndStringsFromValues();
     });
     AOT::Typed::place(*prepared.program);
-    readerOfNamesAndStrings->waitForCompletion();
-    prepared.isPlaced = true;
+    namesAndStringsReader->waitForCompletion();
+    prepared.hasPlacement = true;
 #else
     UNUSED_PARAM(prepared);
     UNUSED_PARAM(replacedStrings);
@@ -6671,7 +6676,7 @@ void installImageCompiler()
 {
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
-    g_compilerHooks.newRegExpsFoundAhead = [](std::span<const uint8_t> typedProgramAsWritten) { return new AOT::RegExpsFoundAhead(typedProgramAsWritten); };
+    g_compilerHooks.newDiscoveredRegExps = [](std::span<const uint8_t> typedProgramAsWritten) { return new AOT::DiscoveredRegExps(typedProgramAsWritten); };
 #endif
 }
 
@@ -6866,20 +6871,20 @@ class CachedProgramObjects {
 public:
     void encode(Encoder& encoder, const ProgramObjects& objects)
     {
-        Vector<uint32_t> numbersOfIdentifiers;
+        Vector<uint32_t> identifierNumbers;
         Vector<UniquedStringImpl*> identifiers;
         for (size_t number = 0; number < objects.identifiers.size(); ++number) {
             if (objects.identifiers[number]) {
-                numbersOfIdentifiers.append(static_cast<uint32_t>(number));
+                identifierNumbers.append(static_cast<uint32_t>(number));
                 identifiers.append(objects.identifiers[number]);
             }
         }
-        m_identifiersAreListedByNumber = identifiers.size() * 2 < objects.identifiers.size();
-        if (!m_identifiersAreListedByNumber) {
-            numbersOfIdentifiers.clear();
+        m_identifiersAreSortedByNumber = identifiers.size() * 2 < objects.identifiers.size();
+        if (!m_identifiersAreSortedByNumber) {
+            identifierNumbers.clear();
             identifiers = Vector<UniquedStringImpl*> { objects.identifiers };
         }
-        m_numbersOfIdentifiers.encode(encoder, numbersOfIdentifiers);
+        m_identifierNumbers.encode(encoder, identifierNumbers);
         m_identifiers.encodeRange(encoder, identifiers.size(), identifiers | std::views::transform([&](UniquedStringImpl* impl) {
             return impl ? Identifier::fromUid(encoder.vm(), impl) : Identifier();
         }));
@@ -6913,12 +6918,12 @@ public:
 
     Identifier identifier(Decoder& decoder, uint32_t number) const
     {
-        auto place = placeOfIdentifier(number);
+        auto place = identifierPosition(number);
         return place ? m_identifiers.elements()[*place].decode(decoder) : Identifier();
     }
     String identifierAsPlainString(Decoder& decoder, uint32_t number) const
     {
-        auto place = placeOfIdentifier(number);
+        auto place = identifierPosition(number);
         return place ? m_identifiers.elements()[*place].decodePlainString(decoder) : String();
     }
     JSValue constant(Decoder& decoder, uint32_t number) const { return m_constants.elements()[number].decode(decoder, static_cast<CachedJSValue::Kind>(m_constantKinds.elements()[number])); }
@@ -6936,19 +6941,19 @@ public:
     }
 
 private:
-    std::optional<uint32_t> placeOfIdentifier(uint32_t number) const
+    std::optional<uint32_t> identifierPosition(uint32_t number) const
     {
-        if (!m_identifiersAreListedByNumber)
+        if (!m_identifiersAreSortedByNumber)
             return number;
-        auto numbers = m_numbersOfIdentifiers.borrow();
+        auto numbers = m_identifierNumbers.borrow();
         auto found = std::ranges::lower_bound(numbers, number);
         if (found == numbers.end() || *found != number)
             return std::nullopt;
         return static_cast<uint32_t>(found - numbers.begin());
     }
 
-    uint32_t m_identifiersAreListedByNumber;
-    CachedVector<uint32_t> m_numbersOfIdentifiers;
+    uint32_t m_identifiersAreSortedByNumber;
+    CachedVector<uint32_t> m_identifierNumbers;
     CachedVector<CachedIdentifier> m_identifiers;
     CachedVector<CachedJSValue> m_constants;
     CachedVector<uint8_t> m_constantKinds;

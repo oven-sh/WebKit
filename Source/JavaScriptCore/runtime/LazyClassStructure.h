@@ -53,7 +53,6 @@ public:
         // prototype already. This will automatically set prototype.constructor=constructor.
         void setConstructor(JSObject* constructor);
 
-        // Called when the callback has returned.
         void didInitialize();
         
         VM& vm;

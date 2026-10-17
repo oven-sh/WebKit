@@ -83,7 +83,7 @@ operation ParseJSON (any) -> anything ; MayThrow Allocates ; Operation(ParseJSON
 operation DirectEval (any, any, any) -> anything ; CallsUserCode ; Operation(DirectEval)
 operation RequireExternalModule (any) -> anything ; CallsUserCode ; Operation(RequireExternalModule)
 operation GetRequireFunction () -> anything ; MayThrow Allocates ; Operation(GetRequireFunction)
-operation NoteCommonJSEntryPoint () -> undefined ; ReadsRuntimeState WritesRuntimeState ; Operation(NoteCommonJSEntryPoint)
+operation MarkCommonJSEntryPoint () -> undefined ; ReadsRuntimeState WritesRuntimeState ; Operation(MarkCommonJSEntryPoint)
 operation GetTemplateObject (any, any) -> anything ; CallsUserCode ; Operation(GetTemplateObject)
 operation GetImportMeta (any/-?) -> anything ; MayThrow Allocates ; Operation(GetImportMeta)
 operation GetNewTarget () -> anything ; ReadsRuntimeState WritesRuntimeState ; Operation(GetNewTarget)

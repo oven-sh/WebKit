@@ -151,7 +151,7 @@ bool hasInt64Constant(Procedure& proc, int64_t constant)
     });
 }
 
-unsigned numberOfValuesInLoops(Procedure& proc, B3::Opcode opcode)
+unsigned valueCountInLoops(Procedure& proc, B3::Opcode opcode)
 {
     B3::NaturalLoops& loops = proc.naturalLoops();
     unsigned result = 0;
@@ -162,7 +162,7 @@ unsigned numberOfValuesInLoops(Procedure& proc, B3::Opcode opcode)
     return result;
 }
 
-Vector<unsigned> numberOfValuesInEachLoop(Procedure& proc, B3::Opcode opcode)
+Vector<unsigned> valueCountInEachLoop(Procedure& proc, B3::Opcode opcode)
 {
     B3::NaturalLoops& loops = proc.naturalLoops();
     Vector<unsigned> result;
@@ -177,9 +177,9 @@ Vector<unsigned> numberOfValuesInEachLoop(Procedure& proc, B3::Opcode opcode)
     return result;
 }
 
-void checkNumberOfValuesInEachLoop(Procedure& proc, B3::Opcode opcode, const Vector<unsigned>& expected)
+void checkValueCountInEachLoop(Procedure& proc, B3::Opcode opcode, const Vector<unsigned>& expected)
 {
-    Vector<unsigned> found = numberOfValuesInEachLoop(proc, opcode);
+    Vector<unsigned> found = valueCountInEachLoop(proc, opcode);
     if (found == expected)
         return;
     crashLock.lock();
@@ -210,10 +210,10 @@ struct TopTestedLoop {
         graph.ret(exit, graph.get(exit, sum));
     }
 
-    void endBody(BasicBlock* lastBlockOfBody)
+    void endBody(BasicBlock* bodyLastBlock)
     {
-        graph.increase(lastBlockOfBody, index, step);
-        graph.jump(lastBlockOfBody, header);
+        graph.increase(bodyLastBlock, index, step);
+        graph.jump(bodyLastBlock, header);
         graph.proc.resetReachability();
         fixSSA(graph.proc);
         validate(graph.proc);
@@ -245,13 +245,13 @@ int64_t run(Compilation& code, int64_t bound, int64_t* pointer = nullptr, int64_
     return invoke<int64_t>(code, bound, pointer, extra);
 }
 
-int64_t sumOfIntegersBelow(int64_t bound) { return bound <= 0 ? 0 : bound * (bound - 1) / 2; }
+int64_t sumBelow(int64_t bound) { return bound <= 0 ? 0 : bound * (bound - 1) / 2; }
 
 void checkSumsIntegersBelowBound(Procedure& proc)
 {
     auto code = compileProc(proc);
     for (int64_t bound : { -1, 0, 1, 2, 10, 1000 })
-        CHECK_EQ(run(*code, bound), sumOfIntegersBelow(bound));
+        CHECK_EQ(run(*code, bound), sumBelow(bound));
 }
 
 bool reduceStrengthOnce(Procedure& proc, bool isPositionIndependent)
@@ -267,8 +267,8 @@ bool reduceStrengthOnce(Procedure& proc, bool isPositionIndependent)
 
 bool rotateAndVersionLoops(Procedure& proc)
 {
-    Vector<BasicBlock*> headersOfVersionsTestedAtTheTop;
-    bool result = versionLoops(proc, headersOfVersionsTestedAtTheTop);
+    Vector<BasicBlock*> topTestedVersionHeaders;
+    bool result = versionLoops(proc, topTestedVersionHeaders);
     fixSSA(proc);
     validate(proc);
     return result;
@@ -367,7 +367,7 @@ static void testRotateLoopsMovesTestToBottom()
     CHECK_EQ(loops.numLoops(), 1u);
     CHECK(loops.loop(0).header() == loop.body);
     CHECK(!loops.belongsTo(loop.header, loops.loop(0)));
-    CHECK_EQ(numberOfValuesInLoops(proc, Branch), 1u);
+    CHECK_EQ(valueCountInLoops(proc, Branch), 1u);
     CHECK_EQ(numberOfValues(proc, Branch), 2u);
     checkSumsIntegersBelowBound(proc);
 }
@@ -391,7 +391,7 @@ static void testRotateLoopsBottomTestedLoop()
 
     rotateLoops(proc);
     validate(proc);
-    CHECK_EQ(numberOfValuesInLoops(proc, Branch), 1u);
+    CHECK_EQ(valueCountInLoops(proc, Branch), 1u);
     auto code = compileProc(proc);
     CHECK_EQ(invoke<int64_t>(*code, 0), 1);
     CHECK_EQ(invoke<int64_t>(*code, 1), 1);
@@ -581,14 +581,14 @@ static void testFoldComparisonsWithBounds()
 
     CHECK(foldComparisonsWithBounds(proc));
     validate(proc);
-    CHECK_EQ(numberOfValuesInLoops(proc, LessThan), 1u);
-    CHECK_EQ(numberOfValuesInLoops(proc, GreaterEqual), 0u);
-    CHECK_EQ(numberOfValuesInLoops(proc, GreaterThan), 0u);
+    CHECK_EQ(valueCountInLoops(proc, LessThan), 1u);
+    CHECK_EQ(valueCountInLoops(proc, GreaterEqual), 0u);
+    CHECK_EQ(valueCountInLoops(proc, GreaterThan), 0u);
     reduceStrengthOnce(proc, false);
     CHECK(!hasInt64Constant(proc, 1000));
     CHECK(!hasInt64Constant(proc, 2000));
     CHECK(!hasInt64Constant(proc, 3000));
-    CHECK_EQ(numberOfValuesInLoops(proc, Branch), 1u);
+    CHECK_EQ(valueCountInLoops(proc, Branch), 1u);
     auto code = compileProc(proc);
     for (int64_t bound : { -1, 0, 1, 7 })
         CHECK_EQ(run(*code, bound), std::max<int64_t>(bound, 0) * 111);
@@ -612,7 +612,7 @@ static void testFoldComparisonsWithBoundsKeepsUnrelatedComparisons()
     CHECK_EQ(run(*code, 3, nullptr, 2), (1 + 10 + 100 + 10000) + (1 + 10 + 100 + 10000) + (1000 + 10 + 3000 + 10000));
 }
 
-static void checkLoopThatCountsDown(int64_t startLessLimit, B3::Opcode relation, int64_t bound, int64_t step, bool limitIsWord, bool isFolded)
+static void checkCountdownLoop(int64_t startMinusLimit, B3::Opcode relation, int64_t bound, int64_t step, bool limitIsWord, bool isFolded)
 {
     Procedure proc;
     Graph graph { proc };
@@ -625,7 +625,7 @@ static void checkLoopThatCountsDown(int64_t startLessLimit, B3::Opcode relation,
     Value* argument = cCallArgumentValues<int64_t>(proc, root)[0];
     Value* limit = limitIsWord ? graph.make(root, ZExt32, graph.make(root, Trunc, argument)) : argument;
     Value* boundValue = graph.int64(root, bound);
-    graph.set(root, index, graph.make(root, Add, limit, graph.int64(root, startLessLimit)));
+    graph.set(root, index, graph.make(root, Add, limit, graph.int64(root, startMinusLimit)));
     graph.set(root, sum, graph.int64(root, 0));
     graph.jump(root, header);
     graph.branch(header, graph.make(header, relation, graph.get(header, index), boundValue), body, exit);
@@ -646,16 +646,16 @@ static void checkLoopThatCountsDown(int64_t startLessLimit, B3::Opcode relation,
 
     CHECK_EQ(foldComparisonsWithBounds(proc), isFolded);
     validate(proc);
-    CHECK_EQ(numberOfValuesInLoops(proc, Below), isFolded ? 0u : 1u);
-    CHECK_EQ(numberOfValuesInLoops(proc, AboveEqual), isFolded ? 0u : 1u);
-    CHECK_EQ(numberOfValuesInLoops(proc, Above), isFolded ? 0u : 1u);
+    CHECK_EQ(valueCountInLoops(proc, Below), isFolded ? 0u : 1u);
+    CHECK_EQ(valueCountInLoops(proc, AboveEqual), isFolded ? 0u : 1u);
+    CHECK_EQ(valueCountInLoops(proc, Above), isFolded ? 0u : 1u);
     auto code = compileProc(proc);
     for (int64_t given : { static_cast<int64_t>(-3), static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2), static_cast<int64_t>(7), static_cast<int64_t>(100) }) {
         int64_t limitAtRunTime = limitIsWord ? static_cast<int64_t>(static_cast<uint32_t>(given)) : given;
         if (limitAtRunTime > 1000)
             continue;
         int64_t expected = 0;
-        for (int64_t i = limitAtRunTime + startLessLimit; holds(relation, i, bound); i += step) {
+        for (int64_t i = limitAtRunTime + startMinusLimit; holds(relation, i, bound); i += step) {
             expected += holds(Below, i, limitAtRunTime) ? 1 : 1000;
             expected += holds(AboveEqual, i, limitAtRunTime) ? 2000 : 10;
             expected += holds(Above, limitAtRunTime, i) ? 100 : 3000;
@@ -665,7 +665,7 @@ static void checkLoopThatCountsDown(int64_t startLessLimit, B3::Opcode relation,
     }
 }
 
-static void checkNeighbourInLoop(bool countsUp, int64_t start, int64_t bound, int64_t added, bool isFolded)
+static void checkNeighborInLoop(bool countsUp, int64_t start, int64_t bound, int64_t added, bool isFolded)
 {
     Procedure proc;
     Graph graph { proc };
@@ -697,8 +697,8 @@ static void checkNeighbourInLoop(bool countsUp, int64_t start, int64_t bound, in
 
     CHECK_EQ(foldComparisonsWithBounds(proc), isFolded);
     validate(proc);
-    CHECK_EQ(numberOfValuesInLoops(proc, Below), isFolded ? 0u : 1u);
-    CHECK_EQ(numberOfValuesInLoops(proc, BelowEqual), isFolded ? 0u : 1u);
+    CHECK_EQ(valueCountInLoops(proc, Below), isFolded ? 0u : 1u);
+    CHECK_EQ(valueCountInLoops(proc, BelowEqual), isFolded ? 0u : 1u);
     auto code = compileProc(proc);
     for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2), static_cast<int64_t>(3), static_cast<int64_t>(9), static_cast<int64_t>(100) }) {
         int64_t expected = 0;
@@ -710,7 +710,7 @@ static void checkNeighbourInLoop(bool countsUp, int64_t start, int64_t bound, in
     }
 }
 
-static void checkNeighbourInLoopThatLoadsItsLimit(int64_t start, int64_t added, bool isFolded)
+static void checkNeighborInLoopWithLoadedLimit(int64_t start, int64_t added, bool isFolded)
 {
     Procedure proc;
     Graph graph { proc };
@@ -745,7 +745,7 @@ static void checkNeighbourInLoopThatLoadsItsLimit(int64_t start, int64_t added, 
 
     CHECK_EQ(foldComparisonsWithBounds(proc), isFolded);
     validate(proc);
-    CHECK_EQ(numberOfValuesInLoops(proc, Below), isFolded ? 0u : 1u);
+    CHECK_EQ(valueCountInLoops(proc, Below), isFolded ? 0u : 1u);
     auto code = compileProc(proc);
     for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2), static_cast<int64_t>(3), static_cast<int64_t>(9), static_cast<int64_t>(100) }) {
         int64_t memory[2] = { given, 0 };
@@ -761,53 +761,53 @@ static void checkNeighbourInLoopThatLoadsItsLimit(int64_t start, int64_t added, 
     }
 }
 
-static void testFoldComparisonsOfNeighbourWithLimitLoadedAtLoopTest()
+static void testFoldComparisonsOfNeighborWithLimitLoadedAtLoopTest()
 {
-    checkNeighbourInLoopThatLoadsItsLimit(1, -1, true);
-    checkNeighbourInLoopThatLoadsItsLimit(2, -2, true);
-    checkNeighbourInLoopThatLoadsItsLimit(2, -1, true);
-    checkNeighbourInLoopThatLoadsItsLimit(0, -1, false);
-    checkNeighbourInLoopThatLoadsItsLimit(0, 1, false);
-    checkNeighbourInLoopThatLoadsItsLimit(1, -2, false);
+    checkNeighborInLoopWithLoadedLimit(1, -1, true);
+    checkNeighborInLoopWithLoadedLimit(2, -2, true);
+    checkNeighborInLoopWithLoadedLimit(2, -1, true);
+    checkNeighborInLoopWithLoadedLimit(0, -1, false);
+    checkNeighborInLoopWithLoadedLimit(0, 1, false);
+    checkNeighborInLoopWithLoadedLimit(1, -2, false);
 }
 
-static void testFoldComparisonsOfNeighbourOfLoopVariableWithLimit()
+static void testFoldComparisonsOfLoopVariableNeighborWithLimit()
 {
-    checkNeighbourInLoop(true, 1, 0, -1, true);
-    checkNeighbourInLoop(true, 2, 0, -1, true);
-    checkNeighbourInLoop(true, 2, 0, -2, true);
-    checkNeighbourInLoop(true, 0, 0, 0, true);
-    checkNeighbourInLoop(false, -2, 0, 1, true);
-    checkNeighbourInLoop(false, -1, 1, -1, true);
-    checkNeighbourInLoop(false, -3, 0, 2, true);
+    checkNeighborInLoop(true, 1, 0, -1, true);
+    checkNeighborInLoop(true, 2, 0, -1, true);
+    checkNeighborInLoop(true, 2, 0, -2, true);
+    checkNeighborInLoop(true, 0, 0, 0, true);
+    checkNeighborInLoop(false, -2, 0, 1, true);
+    checkNeighborInLoop(false, -1, 1, -1, true);
+    checkNeighborInLoop(false, -3, 0, 2, true);
 }
 
-static void testFoldComparisonsKeepsNeighbourThatMayBeOutside()
+static void testFoldComparisonsKeepsPossiblyOutOfRangeNeighbor()
 {
-    checkNeighbourInLoop(true, 0, 0, -1, false);
-    checkNeighbourInLoop(true, 1, 0, -2, false);
-    checkNeighbourInLoop(true, 0, 0, 1, false);
-    checkNeighbourInLoop(true, -1, 0, 0, false);
-    checkNeighbourInLoop(false, -1, 0, 1, false);
-    checkNeighbourInLoop(false, -1, 0, -1, false);
-    checkNeighbourInLoop(false, -2, 0, 2, false);
+    checkNeighborInLoop(true, 0, 0, -1, false);
+    checkNeighborInLoop(true, 1, 0, -2, false);
+    checkNeighborInLoop(true, 0, 0, 1, false);
+    checkNeighborInLoop(true, -1, 0, 0, false);
+    checkNeighborInLoop(false, -1, 0, 1, false);
+    checkNeighborInLoop(false, -1, 0, -1, false);
+    checkNeighborInLoop(false, -2, 0, 2, false);
 }
 
-static void testFoldComparisonsWithWhatLoopThatCountsDownStartsBelow()
+static void testFoldComparisonsWithCountdownLoopStartBound()
 {
-    checkLoopThatCountsDown(-1, GreaterEqual, 0, -1, true, true);
-    checkLoopThatCountsDown(-1, GreaterThan, -1, -1, true, true);
-    checkLoopThatCountsDown(-2, GreaterEqual, 1, -1, true, true);
-    checkLoopThatCountsDown(-1, GreaterThan, 0, -3, true, true);
+    checkCountdownLoop(-1, GreaterEqual, 0, -1, true, true);
+    checkCountdownLoop(-1, GreaterThan, -1, -1, true, true);
+    checkCountdownLoop(-2, GreaterEqual, 1, -1, true, true);
+    checkCountdownLoop(-1, GreaterThan, 0, -3, true, true);
 }
 
-static void testFoldComparisonsKeepsWhatLoopThatCountsDownMayNotBeBelow()
+static void testFoldComparisonsKeepsUnprovenBoundOfCountdownLoop()
 {
-    checkLoopThatCountsDown(0, GreaterEqual, 0, -1, true, false);
-    checkLoopThatCountsDown(1, GreaterEqual, 0, -1, true, false);
-    checkLoopThatCountsDown(-1, GreaterEqual, -1, -1, true, false);
-    checkLoopThatCountsDown(-1, GreaterThan, -2, -1, true, false);
-    checkLoopThatCountsDown(-1, GreaterEqual, 0, -1, false, false);
+    checkCountdownLoop(0, GreaterEqual, 0, -1, true, false);
+    checkCountdownLoop(1, GreaterEqual, 0, -1, true, false);
+    checkCountdownLoop(-1, GreaterEqual, -1, -1, true, false);
+    checkCountdownLoop(-1, GreaterThan, -2, -1, true, false);
+    checkCountdownLoop(-1, GreaterEqual, 0, -1, false, false);
 }
 
 static void testFoldComparisonsWithBoundsRequiresRelationOnEntry()
@@ -891,20 +891,20 @@ static void testEliminateRedundantPhiCycles()
         BasicBlock* join = proc.addBlock();
         BasicBlock* exit = proc.addBlock();
         auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
-        Value* handedAround = arguments[0];
+        Value* carriedValue = arguments[0];
         Value* other = arguments[1];
         Value* bound = arguments[2];
 
         Value* atHeader = graph.phi(header, Int64);
         Value* index = graph.phi(header, Int64);
         Value* atJoin = graph.phi(join, Int64);
-        graph.upsilon(root, handedAround, atHeader);
+        graph.upsilon(root, carriedValue, atHeader);
         graph.upsilon(root, graph.int64(root, 0), index);
         graph.jump(root, header);
         graph.branch(header, graph.make(header, BitAnd, index, graph.int64(header, 1)), left, right);
         graph.upsilon(left, atHeader, atJoin);
         graph.jump(left, join);
-        graph.upsilon(right, isRedundant ? handedAround : other, atJoin);
+        graph.upsilon(right, isRedundant ? carriedValue : other, atJoin);
         graph.jump(right, join);
         Value* next = graph.make(join, Add, index, graph.int64(join, 1));
         graph.upsilon(join, atJoin, atHeader);
@@ -946,7 +946,7 @@ static bool narrowsPhiOf(const MakeLeft& makeLeft, const MakeRight& makeRight, i
     graph.ret(join, phi);
     proc.resetReachability();
 
-    bool result = narrowPhisOfExtendedWords(proc);
+    bool result = narrowExtendedWordPhis(proc);
     validate(proc);
     CHECK_EQ(numberOfValues(proc, [](Value* value) {
         return value->opcode() == Phi && value->type() == Int32;
@@ -957,7 +957,7 @@ static bool narrowsPhiOf(const MakeLeft& makeLeft, const MakeRight& makeRight, i
     return result;
 }
 
-static void testNarrowPhisOfExtendedWords()
+static void testNarrowExtendedWordPhis()
 {
     auto signExtended = [](Graph& graph, BasicBlock* block, Value* word, Value*) {
         return graph.make(block, SExt32, word);
@@ -989,6 +989,53 @@ static void testNarrowPhisOfExtendedWords()
     CHECK(!narrowsPhiOf(constant(1), constant(2), 1, 2));
 }
 
+static void testNarrowExtendedWordPhisThroughPhiInRareBlock()
+{
+    for (bool innerPhiIsInRareBlock : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        double innerPathFrequency = innerPhiIsInRareBlock ? 0.01 : 1;
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* direct = proc.addBlock();
+        BasicBlock* split = proc.addBlock(innerPathFrequency);
+        BasicBlock* left = proc.addBlock(innerPathFrequency);
+        BasicBlock* right = proc.addBlock(innerPathFrequency);
+        BasicBlock* innerJoin = proc.addBlock(innerPathFrequency);
+        BasicBlock* join = proc.addBlock();
+        auto arguments = cCallArgumentValues<int32_t, int32_t, int32_t>(proc, root);
+        Value* way = arguments[0];
+        Value* word = arguments[1];
+        Value* otherWord = arguments[2];
+        Value* innerPhi = graph.phi(innerJoin, Int64);
+        Value* phi = graph.phi(join, Int64);
+        graph.branch(root, graph.make(root, Equal, way, root->appendNew<Const32Value>(proc, Origin(), 0)), direct, split);
+        graph.upsilon(direct, graph.make(direct, SExt32, word), phi);
+        graph.jump(direct, join);
+        graph.branch(split, graph.make(split, Equal, way, split->appendNew<Const32Value>(proc, Origin(), 1)), left, right);
+        graph.upsilon(left, graph.make(left, SExt32, otherWord), innerPhi);
+        graph.jump(left, innerJoin);
+        graph.upsilon(right, graph.int64(right, -9), innerPhi);
+        graph.jump(right, innerJoin);
+        graph.upsilon(innerJoin, innerPhi, phi);
+        graph.jump(innerJoin, join);
+        graph.ret(join, phi);
+        proc.resetReachability();
+
+        CHECK(narrowExtendedWordPhis(proc));
+        validate(proc);
+        CHECK_EQ(numberOfValues(proc, [](Value* value) {
+            return value->opcode() == Phi && value->type() == Int32;
+        }), innerPhiIsInRareBlock ? 2u : 1u);
+        CHECK_EQ(numberOfValues(proc, [](Value* value) {
+            return value->opcode() == Phi && value->type() == Int64;
+        }), innerPhiIsInRareBlock ? 0u : 1u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 0, -2, -3), -2);
+        CHECK_EQ(invoke<int64_t>(*code, 1, -2, -3), -3);
+        CHECK_EQ(invoke<int64_t>(*code, 2, -2, -3), -9);
+    }
+}
+
 static bool foldsComparisonWithConstant(B3::Opcode comparison, B3::Opcode extension, int64_t constant, bool constantIsFirst)
 {
     Procedure proc;
@@ -999,7 +1046,7 @@ static bool foldsComparisonWithConstant(B3::Opcode comparison, B3::Opcode extens
     graph.ret(root, constantIsFirst ? graph.make(root, comparison, other, extended) : graph.make(root, comparison, extended, other));
     proc.resetReachability();
 
-    bool result = foldComparisonsWithWhatIsOutOfRange(proc);
+    bool result = foldOutOfRangeComparisons(proc);
     validate(proc);
     auto code = compileProc(proc);
     for (int32_t word : { 0, 1, -1, 5, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() }) {
@@ -1009,7 +1056,7 @@ static bool foldsComparisonWithConstant(B3::Opcode comparison, B3::Opcode extens
     return result;
 }
 
-static void testFoldComparisonsWithWhatIsOutOfRange()
+static void testFoldOutOfRangeComparisons()
 {
     for (B3::Opcode comparison : { Equal, NotEqual }) {
         for (bool constantIsFirst : { false, true }) {
@@ -1061,15 +1108,15 @@ static void testVersionLoopsHoistsLoadAndGuard()
     Graph graph { proc };
     TopTestedLoop loop(graph);
     buildRotatedLoopWithInvariantGuard(graph, loop, [](BasicBlock*) { });
-    checkNumberOfValuesInEachLoop(proc, Load, { 1 });
+    checkValueCountInEachLoop(proc, Load, { 1 });
 
     CHECK(rotateAndVersionLoops(proc));
-    checkNumberOfValuesInEachLoop(proc, Load, { 0, 1 });
-    checkNumberOfValuesInEachLoop(proc, Branch, { 1, 2 });
+    checkValueCountInEachLoop(proc, Load, { 0, 1 });
+    checkValueCountInEachLoop(proc, Branch, { 1, 2 });
     checkLoopWithInvariantGuard(proc);
 }
 
-static void testVersionLoopsHoistsGuardOnWhatStandsAheadOfLoop()
+static void testVersionLoopsHoistsGuardOnValueBeforeLoop()
 {
     Procedure proc;
     Graph graph { proc };
@@ -1082,10 +1129,10 @@ static void testVersionLoopsHoistsGuardOnWhatStandsAheadOfLoop()
     graph.increase(hot, loop.sum, 7);
     loop.endBody(hot);
     loop.rotate();
-    checkNumberOfValuesInEachLoop(proc, Branch, { 2 });
+    checkValueCountInEachLoop(proc, Branch, { 2 });
 
     CHECK(rotateAndVersionLoops(proc));
-    checkNumberOfValuesInEachLoop(proc, Branch, { 1, 2 });
+    checkValueCountInEachLoop(proc, Branch, { 1, 2 });
     auto code = compileProc(proc);
     for (int64_t bound : { -1, 0, 1, 2, 9 }) {
         int64_t turns = std::max<int64_t>(bound, 0);
@@ -1094,7 +1141,7 @@ static void testVersionLoopsHoistsGuardOnWhatStandsAheadOfLoop()
     }
 }
 
-static void testVersionLoopsSkipsLoopWithOneValueToHoistThatIsNoGuard()
+static void testVersionLoopsSkipsLoopWithSingleNonGuardHoist()
 {
     Procedure proc;
     Graph graph { proc };
@@ -1120,8 +1167,8 @@ static void testVersionLoopsHoistsLoadPastStoreToDisjointHeap()
     });
 
     CHECK(rotateAndVersionLoops(proc));
-    checkNumberOfValuesInEachLoop(proc, Load, { 0, 1 });
-    checkNumberOfValuesInEachLoop(proc, Store, { 1, 1 });
+    checkValueCountInEachLoop(proc, Load, { 0, 1 });
+    checkValueCountInEachLoop(proc, Store, { 1, 1 });
     checkLoopWithInvariantGuard(proc);
 }
 
@@ -1169,7 +1216,7 @@ static void testVersionLoopsSkipsLargeLoop()
     }
 }
 
-static void testVersionLoopsKeepsDeepArmOfChainInFastVersion()
+static void testVersionLoopsKeepsDeepChainTargetInFastVersion()
 {
     Procedure proc;
     Graph graph { proc };
@@ -1186,19 +1233,19 @@ static void testVersionLoopsKeepsDeepArmOfChainInFastVersion()
     double frequency = 1;
     for (unsigned arm = 0; arm < 6; ++arm) {
         frequency /= 2;
-        BasicBlock* armBlock = proc.addBlock(frequency);
+        BasicBlock* targetBlock = proc.addBlock(frequency);
         BasicBlock* next = arm < 5 ? proc.addBlock(frequency) : join;
-        graph.branch(test, graph.make(test, Equal, graph.make(test, BitAnd, graph.get(test, loop.index), graph.int64(test, 7)), graph.int64(test, arm)), armBlock, next);
-        graph.store(armBlock, graph.get(armBlock, loop.index), loop.pointer, 8, secondHeap);
-        graph.jump(armBlock, join);
+        graph.branch(test, graph.make(test, Equal, graph.make(test, BitAnd, graph.get(test, loop.index), graph.int64(test, 7)), graph.int64(test, arm)), targetBlock, next);
+        graph.store(targetBlock, graph.get(targetBlock, loop.index), loop.pointer, 8, secondHeap);
+        graph.jump(targetBlock, join);
         test = next;
     }
     loop.endBody(join);
     loop.rotate();
 
     CHECK(rotateAndVersionLoops(proc));
-    checkNumberOfValuesInEachLoop(proc, Store, { 6, 6 });
-    checkNumberOfValuesInEachLoop(proc, Load, { 0, 1 });
+    checkValueCountInEachLoop(proc, Store, { 6, 6 });
+    checkValueCountInEachLoop(proc, Load, { 0, 1 });
     checkLoopWithInvariantGuard(proc);
 }
 
@@ -1240,10 +1287,10 @@ static void testVersionLoopsOnlyInnermostLoops()
     CHECK_EQ(run(*compileProc(proc), 3, memory, 2), 30);
 }
 
-static void testVersionLoopsRareEdgeContinuesInOriginalLoopWhereItsWayCannotBeCloned()
+static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
 {
-    enum class RareWay : uint8_t { Calls, StoresToWhatWasHoisted };
-    for (RareWay rareWay : { RareWay::Calls, RareWay::StoresToWhatWasHoisted }) {
+    enum class RarePath : uint8_t { Calls, StoresToHoistedLocation };
+    for (RarePath rarePath : { RarePath::Calls, RarePath::StoresToHoistedLocation }) {
         Procedure proc;
         Graph graph { proc };
         TopTestedLoop loop(graph);
@@ -1252,7 +1299,7 @@ static void testVersionLoopsRareEdgeContinuesInOriginalLoopWhereItsWayCannotBeCl
         Value* increment = graph.make(loop.body, Add, graph.load(loop.body, Int64, loop.pointer, 0, firstHeap), graph.int64(loop.body, 1));
         graph.branch(loop.body, graph.make(loop.body, Equal, graph.get(loop.body, loop.index), loop.extra), rarely(special), FrequentedBlock(hot));
         graph.increase(special, loop.sum, 1000);
-        if (rareWay == RareWay::Calls)
+        if (rarePath == RarePath::Calls)
             graph.callLikePatchpoint(special);
         else
             graph.store(special, graph.int64(special, 8), loop.pointer, 0, firstHeap);
@@ -1262,20 +1309,20 @@ static void testVersionLoopsRareEdgeContinuesInOriginalLoopWhereItsWayCannotBeCl
         loop.rotate();
 
         CHECK(rotateAndVersionLoops(proc));
-        CHECK_EQ(numberOfValuesInEachLoop(proc, Load).first(), 0u);
+        CHECK_EQ(valueCountInEachLoop(proc, Load).first(), 0u);
         CHECK_EQ(numberOfValues(proc, Load), 2u);
         CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 1u);
         auto code = compileProc(proc);
         for (int64_t special : { -1, 0, 4, 9, 10 }) {
             int64_t memory[1] = { 5 };
             bool isMet = special >= 0 && special < 10;
-            int64_t turnsBehind = isMet && rareWay == RareWay::StoresToWhatWasHoisted ? 9 - special : 0;
-            CHECK_EQ(run(*code, 10, memory, special), 60 + (isMet ? 1000 : 0) + 3 * turnsBehind);
+            int64_t iterationsAfter = isMet && rarePath == RarePath::StoresToHoistedLocation ? 9 - special : 0;
+            CHECK_EQ(run(*code, 10, memory, special), 60 + (isMet ? 1000 : 0) + 3 * iterationsAfter);
         }
     }
 }
 
-static void testVersionLoopsRareWayThatCanBeClonedComesBackAheadOfFastVersion()
+static void testVersionLoopsCloneableRarePathReturnsToFastVersion()
 {
     Procedure proc;
     Graph graph { proc };
@@ -1294,37 +1341,14 @@ static void testVersionLoopsRareWayThatCanBeClonedComesBackAheadOfFastVersion()
     graph.increase(hot, loop.sum, graph.make(hot, Mul, loaded, graph.get(hot, loop.index)));
     loop.endBody(hot);
     loop.rotate();
-    checkNumberOfValuesInEachLoop(proc, Mul, { 1 });
+    checkValueCountInEachLoop(proc, Mul, { 1 });
 
     CHECK(rotateAndVersionLoops(proc));
     CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 2u);
     CHECK_EQ(numberOfValues(proc, Mul), 3u);
     CHECK_EQ(numberOfValues(proc, Load), 2u);
-    B3::NaturalLoops& loops = proc.naturalLoops();
-    unsigned numberOfFastVersions = 0;
-    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
-        const B3::NaturalLoop& fastVersion = loops.loop(loopIndex);
-        const B3::NaturalLoop* outer = loops.innerMostOuterLoop(fastVersion);
-        if (!outer)
-            continue;
-        ++numberOfFastVersions;
-        unsigned numberOfLatches = 0;
-        for (BasicBlock* predecessor : fastVersion.header()->predecessors())
-            numberOfLatches += loops.belongsTo(predecessor, fastVersion);
-        CHECK_EQ(numberOfLatches, 1u);
-        CHECK_EQ(fastVersion.header()->numPredecessors(), 2u);
-        unsigned numberOfProductsInFastVersion = 0;
-        unsigned numberOfProductsAroundIt = 0;
-        unsigned numberOfLoads = 0;
-        for (unsigned i = 0; i < outer->size(); ++i) {
-            (loops.belongsTo(outer->at(i), fastVersion) ? numberOfProductsInFastVersion : numberOfProductsAroundIt) += numberOfValues(outer->at(i), Mul);
-            numberOfLoads += numberOfValues(outer->at(i), Load);
-        }
-        CHECK_EQ(numberOfProductsInFastVersion, 1u);
-        CHECK_EQ(numberOfProductsAroundIt, 1u);
-        CHECK_EQ(numberOfLoads, 0u);
-    }
-    CHECK_EQ(numberOfFastVersions, 1u);
+    checkValueCountInEachLoop(proc, Mul, { 1, 2 });
+    checkValueCountInEachLoop(proc, Load, { 0, 1 });
 
     auto code = compileProc(proc);
     for (int64_t bound : { -1, 0, 1, 2, 5, 40 }) {
@@ -1340,7 +1364,51 @@ static void testVersionLoopsRareWayThatCanBeClonedComesBackAheadOfFastVersion()
     }
 }
 
-static void testVersionLoopsPhiWithOneInputInFastVersionIsReadAnewInExcursion()
+static void testVersionLoopsSkipsLoopWithInvariantBackEdgeTest()
+{
+    for (bool testChanges : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* unexpected = proc.addBlock();
+        BasicBlock* hot = proc.addBlock();
+        BasicBlock* latch = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+        Value* bound = arguments[0];
+        Value* pointer = arguments[1];
+        Value* extra = arguments[2];
+        BasicBlock* preHeader = proc.addBlock();
+        graph.set(root, index, graph.int64(root, 0));
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.jump(root, preHeader);
+        graph.jump(preHeader, body);
+        Value* loaded = graph.load(body, Int64, pointer, 0, firstHeap);
+        graph.branch(body, graph.make(body, Below, loaded, graph.int64(body, 100)), FrequentedBlock(hot), rarely(unexpected));
+        graph.callLikePatchpoint(unexpected);
+        graph.jump(unexpected, hot);
+        graph.increase(hot, sum, loaded);
+        graph.increase(hot, index, 1);
+        graph.branch(hot, testChanges ? graph.make(hot, AboveEqual, graph.get(hot, index), bound) : extra, exit, latch);
+        graph.jump(latch, body);
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+        validate(proc);
+
+        CHECK_EQ(rotateAndVersionLoops(proc), testChanges);
+        auto code = compileProc(proc);
+        for (int64_t factor : { 7, 200 }) {
+            int64_t memory[1] = { factor };
+            CHECK_EQ(run(*code, 3, memory, 1), testChanges ? 3 * factor : factor);
+        }
+    }
+}
+
+static void testVersionLoopsReloadsSingleInputPhiInExcursion()
 {
     Procedure proc;
     Graph graph { proc };
@@ -1383,10 +1451,10 @@ static void testVersionLoopsPhiWithOneInputInFastVersionIsReadAnewInExcursion()
     }
 }
 
-static void testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop()
+static void testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop()
 {
-    enum class LoadAhead : uint8_t { IsImmutable, IsMutable, IsMutableAndWrittenToSince };
-    for (LoadAhead loadAhead : { LoadAhead::IsImmutable, LoadAhead::IsMutable, LoadAhead::IsMutableAndWrittenToSince }) {
+    enum class LoadBeforeLoop : uint8_t { IsImmutable, IsMutable, IsMutableAndOverwritten };
+    for (LoadBeforeLoop loadBeforeLoop : { LoadBeforeLoop::IsImmutable, LoadBeforeLoop::IsMutable, LoadBeforeLoop::IsMutableAndOverwritten }) {
         Procedure proc;
         Graph graph { proc };
         TopTestedLoop loop(graph);
@@ -1395,9 +1463,9 @@ static void testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop()
         BasicBlock* unexpected = proc.addBlock();
         BasicBlock* hot = proc.addBlock();
         MemoryValue* ahead = proc.add<MemoryValue>(Load, Int64, Origin(), loop.pointer, 0, firstHeap);
-        ahead->setReadsMutability(loadAhead == LoadAhead::IsImmutable ? Mutability::Immutable : Mutability::Mutable);
+        ahead->setReadsMutability(loadBeforeLoop == LoadBeforeLoop::IsImmutable ? Mutability::Immutable : Mutability::Mutable);
         loop.root->appendNonTerminal(ahead);
-        if (loadAhead == LoadAhead::IsMutableAndWrittenToSince)
+        if (loadBeforeLoop == LoadBeforeLoop::IsMutableAndOverwritten)
             loop.root->appendNonTerminal(proc.add<MemoryValue>(Store, Origin(), ahead, loop.pointer, 0, firstHeap));
         graph.branch(loop.body, graph.make(loop.body, Equal, graph.get(loop.body, loop.index), ahead), rarely(special), FrequentedBlock(guarded));
         graph.increase(special, loop.sum, 1000);
@@ -1410,7 +1478,7 @@ static void testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop()
         loop.endBody(hot);
         loop.rotate();
 
-        CHECK_EQ(rotateAndVersionLoops(proc), loadAhead != LoadAhead::IsMutableAndWrittenToSince);
+        CHECK_EQ(rotateAndVersionLoops(proc), loadBeforeLoop != LoadBeforeLoop::IsMutableAndOverwritten);
         auto code = compileProc(proc);
         int64_t memory[1] = { 4 };
         CHECK_EQ(run(*code, 10, memory, 4), 1040);
@@ -1420,7 +1488,7 @@ static void testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop()
     }
 }
 
-static void testVersionLoopsSeesPhiWithOneInputInFastVersionOfLoopThatIsNotCounted()
+static void testVersionLoopsResolvesSingleInputPhiInUncountedLoop()
 {
     for (bool keyHasOneInput : { true, false }) {
         Procedure proc;
@@ -1468,13 +1536,13 @@ static void testVersionLoopsSeesPhiWithOneInputInFastVersionOfLoopThatIsNotCount
         proc.resetReachability();
         fixSSA(proc);
         validate(proc);
-        checkNumberOfValuesInEachLoop(proc, Load, { 2 });
+        checkValueCountInEachLoop(proc, Load, { 2 });
 
         CHECK_EQ(rotateAndVersionLoops(proc), keyHasOneInput);
         if (keyHasOneInput)
-            checkNumberOfValuesInEachLoop(proc, Load, { 0, 2 });
+            checkValueCountInEachLoop(proc, Load, { 0, 2 });
         else
-            checkNumberOfValuesInEachLoop(proc, Load, { 2 });
+            checkValueCountInEachLoop(proc, Load, { 2 });
         auto code = compileProc(proc);
         for (int64_t limit : { -1, 0, 1, 2, 3, 9 }) {
             for (int64_t handed : { 0, 4, 5 }) {
@@ -1510,10 +1578,10 @@ static void testVersionLoopsUnswitchesInvariantBranch()
     loop.rotate();
 
     CHECK(rotateAndVersionLoops(proc));
-    checkNumberOfValuesInEachLoop(proc, Branch, { 1, 1, 2 });
+    checkValueCountInEachLoop(proc, Branch, { 1, 1, 2 });
     auto code = compileProc(proc);
     for (int64_t bound : { 0, 1, 10 }) {
-        CHECK_EQ(run(*code, bound, nullptr, 3), sumOfIntegersBelow(bound));
+        CHECK_EQ(run(*code, bound, nullptr, 3), sumBelow(bound));
         CHECK_EQ(run(*code, bound, nullptr, 4), bound);
     }
 }
@@ -1582,7 +1650,7 @@ static void testVersionLoopsStripMinesPollInFastVersion()
     CHECK_EQ(state.numberOfPolls, 1 + turns - maxIterationsPerStrip);
 }
 
-static void testVersionLoopsTurnsThatEndInExcursionCountTowardsStrip()
+static void testVersionLoopsExcursionIterationsCountTowardStrip()
 {
     Procedure proc;
     Graph graph { proc };
@@ -1613,22 +1681,75 @@ static void testVersionLoopsTurnsThatEndInExcursionCountTowardsStrip()
     CHECK_EQ(run(*code, turns, memory, 0), turns * 7);
     CHECK_EQ(state.numberOfPolls, 3);
 
-    for (int64_t numberOfRareTurnsInFour : { 1, 4 }) {
+    for (int64_t rareIterationsPerFour : { 1, 4 }) {
         state = { };
-        CHECK_EQ(run(*code, turns, memory, numberOfRareTurnsInFour), turns * 7 + turns / 4 * numberOfRareTurnsInFour * 1000);
+        CHECK_EQ(run(*code, turns, memory, rareIterationsPerFour), turns * 7 + turns / 4 * rareIterationsPerFour * 1000);
         CHECK_EQ(state.numberOfPolls, 3);
         CHECK_EQ(state.numberOfStops, 0);
 
         state = { };
-        CHECK_EQ(run(*code, 400, memory, numberOfRareTurnsInFour), 400 * 7 + 100 * numberOfRareTurnsInFour * 1000);
+        CHECK_EQ(run(*code, 400, memory, rareIterationsPerFour), 400 * 7 + 100 * rareIterationsPerFour * 1000);
         CHECK_EQ(state.numberOfPolls, 0);
 
         state = { };
         state.limit = -1;
-        CHECK_EQ(run(*code, turns, memory, numberOfRareTurnsInFour), turns * 7 + turns / 4 * numberOfRareTurnsInFour * 1000);
+        CHECK_EQ(run(*code, turns, memory, rareIterationsPerFour), turns * 7 + turns / 4 * rareIterationsPerFour * 1000);
         CHECK_EQ(state.numberOfStops, 1);
         CHECK_EQ(state.limit, 0);
         CHECK_EQ(state.numberOfPolls, 1 + turns - maxIterationsPerStrip);
+    }
+}
+
+static void testVersionLoopsCountsLoopWithBoundLoadedBeforeAndAtBottom()
+{
+    Procedure proc;
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+    Value* pointer = arguments[1];
+    Value* extra = arguments[2];
+    graph.set(root, index, graph.int64(root, 0));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, header);
+    Value* storage = graph.load(header, Int64, pointer, 0, firstHeap);
+    graph.branch(header, graph.make(header, LessThan, graph.get(header, index), graph.load(header, Int64, storage, 8, secondHeap)), body, exit);
+    BasicBlock* block = appendPoll(graph, body, state);
+    graph.branch(block, graph.make(block, Equal, graph.get(block, index), extra), rarely(special), FrequentedBlock(hot));
+    graph.callLikePatchpoint(special);
+    graph.increase(special, sum, 1000);
+    graph.jump(special, hot);
+    graph.increase(hot, sum, graph.get(hot, index));
+    graph.increase(hot, index, 1);
+    graph.jump(hot, header);
+    graph.ret(exit, graph.get(exit, sum));
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+    CHECK(rotateLoops(proc));
+    fixSSA(proc);
+    validate(proc);
+
+    CHECK(rotateAndVersionLoops(proc));
+    CHECK(!stripMineLoops(proc));
+    auto code = compileProc(proc);
+    constexpr int64_t turns = 2 * maxIterationsPerStrip + 100;
+    for (int64_t bound : { static_cast<int64_t>(-1), static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(9), turns }) {
+        int64_t inner[2] = { 0, bound };
+        int64_t outer[1] = { reinterpret_cast<int64_t>(inner) };
+        state = { };
+        CHECK_EQ(run(*code, 0, outer, -1), sumBelow(bound));
+        CHECK_EQ(state.numberOfPolls, bound / maxIterationsPerStrip);
+        state = { };
+        CHECK_EQ(run(*code, 0, outer, 5), sumBelow(bound) + (bound > 5 ? 1000 : 0));
+        CHECK_EQ(state.numberOfPolls, bound > 5 ? bound - 6 : 0);
     }
 }
 
@@ -1658,19 +1779,19 @@ static void testStripMineLoopsPollsOncePerStrip()
     };
     for (Case testCase : { Case { -1, 0 }, Case { 0, 0 }, Case { 1, 0 }, Case { 100, 0 }, Case { maxIterationsPerStrip, 0 }, Case { maxIterationsPerStrip + 1, 1 }, Case { 3 * maxIterationsPerStrip + 100, 3 } }) {
         state = { };
-        CHECK_EQ(run(*code, testCase.bound), sumOfIntegersBelow(testCase.bound));
+        CHECK_EQ(run(*code, testCase.bound), sumBelow(testCase.bound));
         CHECK_EQ(state.numberOfPolls, testCase.numberOfPolls);
         CHECK_EQ(state.numberOfStops, 0);
     }
 
     state = { };
     state.limit = -1;
-    CHECK_EQ(run(*code, 3 * maxIterationsPerStrip + 100), sumOfIntegersBelow(3 * maxIterationsPerStrip + 100));
+    CHECK_EQ(run(*code, 3 * maxIterationsPerStrip + 100), sumBelow(3 * maxIterationsPerStrip + 100));
     CHECK_EQ(state.numberOfPolls, 3);
     CHECK_EQ(state.numberOfStops, 1);
 }
 
-static void checkEndOfFirstStrip(B3::Opcode relation, bool boundIsZeroExtended, int64_t start, unsigned numberOfSelects)
+static void checkFirstStripEnd(B3::Opcode relation, bool boundIsZeroExtended, int64_t start, unsigned numberOfSelects)
 {
     Procedure proc;
     Graph graph { proc };
@@ -1680,7 +1801,7 @@ static void checkEndOfFirstStrip(B3::Opcode relation, bool boundIsZeroExtended, 
     CountedLoop loop;
     loop.relation = relation;
     loop.step = 1;
-    graph.ret(root, appendEndOfStrip(proc, root, loop, graph.int64(root, start), bound, true));
+    graph.ret(root, appendStripEnd(proc, root, loop, graph.int64(root, start), bound, true));
     CHECK_EQ(numberOfValues(proc, Select), numberOfSelects);
     auto code = compileProc(proc);
     for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(5), maxIterationsPerStrip - 1, maxIterationsPerStrip, maxIterationsPerStrip + 1, 20 * maxIterationsPerStrip }) {
@@ -1692,14 +1813,14 @@ static void checkEndOfFirstStrip(B3::Opcode relation, bool boundIsZeroExtended, 
     }
 }
 
-static void testEndOfFirstStripFromZeroToZeroExtendedBound()
+static void testFirstStripEndFromZeroToZeroExtendedBound()
 {
-    checkEndOfFirstStrip(LessThan, true, 0, 1);
-    checkEndOfFirstStrip(Below, true, 0, 1);
-    checkEndOfFirstStrip(LessThan, true, -3, 1);
-    checkEndOfFirstStrip(LessThan, true, 1, 2);
-    checkEndOfFirstStrip(Below, true, 1, 2);
-    checkEndOfFirstStrip(LessThan, false, 0, 2);
+    checkFirstStripEnd(LessThan, true, 0, 1);
+    checkFirstStripEnd(Below, true, 0, 1);
+    checkFirstStripEnd(LessThan, true, -3, 1);
+    checkFirstStripEnd(LessThan, true, 1, 2);
+    checkFirstStripEnd(Below, true, 1, 2);
+    checkFirstStripEnd(LessThan, false, 0, 2);
 }
 
 static void testStripMineLoopsAllRelationsAndSteps()
@@ -1826,11 +1947,11 @@ static void testStripMineLoopsSkipsPollWithSharedLimit()
 }
 
 struct BranchToRareBlocks {
-    explicit BranchToRareBlocks(Graph& graph, double frequencyOfRareBlocks = 0.01)
+    explicit BranchToRareBlocks(Graph& graph, double rareBlockFrequency = 0.01)
         : root(graph.proc.addBlock())
-        , firstRare(graph.proc.addBlock(frequencyOfRareBlocks))
+        , firstRare(graph.proc.addBlock(rareBlockFrequency))
         , next(graph.proc.addBlock())
-        , secondRare(graph.proc.addBlock(frequencyOfRareBlocks))
+        , secondRare(graph.proc.addBlock(rareBlockFrequency))
         , hot(graph.proc.addBlock())
     {
         auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(graph.proc, root);
@@ -1901,7 +2022,7 @@ static void testSinkValuesClonesValueForTwoRareUsers()
     CHECK_EQ(invoke<int64_t>(*code, 3, 5, nullptr), 5);
 }
 
-static void testSinkValuesClonesPatchpointForTwoRareUsersOnlyIfItIsPureFunctionOfKey()
+static void testSinkValuesClonesOnlyPureKeyedPatchpointForTwoRareUsers()
 {
     for (uint64_t key : { 7, 0 }) {
         Procedure proc;
@@ -1937,7 +2058,7 @@ static void testSinkValuesKeepsValueUsedOnHotPath()
     CHECK_EQ(numberOfValues(proc, Mul), 1u);
 }
 
-static void testSinkValuesKeepsValueWhoseUserIsAsFrequent()
+static void testSinkValuesKeepsValueWithEquallyFrequentUser()
 {
     Procedure proc;
     Graph graph { proc };
@@ -2047,8 +2168,8 @@ static void testSinkValuesDoesNotSinkFromPreHeaderIntoLoop()
     CHECK_EQ(numberOfValues(root, Mul), 1u);
 }
 
-struct CountedCycleWithTwoEntries {
-    CountedCycleWithTwoEntries(Graph& graph, BasicBlock* from)
+struct CountedIrreducibleCycle {
+    CountedIrreducibleCycle(Graph& graph, BasicBlock* from)
         : from(from)
         , first(graph.proc.addBlock(0.1))
         , second(graph.proc.addBlock(0.1))
@@ -2077,9 +2198,9 @@ struct CountedCycleWithTwoEntries {
     Value* left { nullptr };
 };
 
-static void testSinkValuesSinksBehindAndBetweenCyclesWithTwoEntries()
+static void testSinkValuesSinksAfterAndBetweenIrreducibleCycles()
 {
-    for (bool hasCycleBehindRareBlock : { false, true }) {
+    for (bool hasCycleAfterRareBlock : { false, true }) {
         Procedure proc;
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
@@ -2089,14 +2210,14 @@ static void testSinkValuesSinksBehindAndBetweenCyclesWithTwoEntries()
         Value* turns = arguments[2];
         Value* product = graph.make(root, Mul, operand, operand);
         Value* entersAtFirst = graph.make(root, Equal, selector, graph.int64(root, 1));
-        CountedCycleWithTwoEntries cycle(graph, root);
+        CountedIrreducibleCycle cycle(graph, root);
         cycle.finish(graph, entersAtFirst, turns, graph.int64(cycle.first, 1));
         BasicBlock* rare = proc.addBlock(0.01);
         BasicBlock* hot = proc.addBlock();
         graph.branch(cycle.behind, graph.make(cycle.behind, Equal, selector, graph.int64(cycle.behind, 2)), rarely(rare), FrequentedBlock(hot));
         Value* sum = graph.make(rare, Add, product, selector);
-        if (hasCycleBehindRareBlock) {
-            CountedCycleWithTwoEntries next(graph, rare);
+        if (hasCycleAfterRareBlock) {
+            CountedIrreducibleCycle next(graph, rare);
             next.finish(graph, entersAtFirst, turns, graph.int64(next.first, 1));
             graph.ret(next.behind, sum);
         } else
@@ -2116,14 +2237,14 @@ static void testSinkValuesSinksBehindAndBetweenCyclesWithTwoEntries()
     }
 }
 
-static void testSinkValuesDoesNotSinkIntoCycleWithTwoEntries()
+static void testSinkValuesDoesNotSinkIntoIrreducibleCycle()
 {
     Procedure proc;
     Graph graph { proc };
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
     Value* product = graph.make(root, Mul, arguments[1], arguments[1]);
-    CountedCycleWithTwoEntries cycle(graph, root);
+    CountedIrreducibleCycle cycle(graph, root);
     cycle.finish(graph, graph.make(root, Equal, arguments[0], graph.int64(root, 1)), arguments[2], product);
     graph.ret(cycle.behind, cycle.left);
     proc.resetReachability();
@@ -2222,15 +2343,15 @@ static void testCycleForestAcyclic()
     CHECK(forest.blocksInPostOrder().last() == root);
 }
 
-struct CycleWithTwoEntries {
-    CycleWithTwoEntries(Graph& graph, FrequencyClass frequencyOfFirstEntry)
+struct IrreducibleCycle {
+    IrreducibleCycle(Graph& graph, FrequencyClass firstEntryFrequency)
         : root(graph.proc.addBlock())
         , first(graph.proc.addBlock())
         , second(graph.proc.addBlock())
         , exit(graph.proc.addBlock())
     {
         condition = cCallArgumentValues<int32_t>(graph.proc, root)[0];
-        graph.branch(root, condition, FrequentedBlock(first, frequencyOfFirstEntry), FrequentedBlock(second));
+        graph.branch(root, condition, FrequentedBlock(first, firstEntryFrequency), FrequentedBlock(second));
     }
 
     void finish(Graph& graph)
@@ -2250,10 +2371,10 @@ struct CycleWithTwoEntries {
 
 static void testCycleForestIrreducibleCycle()
 {
-    for (FrequencyClass frequencyOfFirstEntry : { FrequencyClass::Normal, FrequencyClass::Rare }) {
+    for (FrequencyClass firstEntryFrequency : { FrequencyClass::Normal, FrequencyClass::Rare }) {
         Procedure proc;
         Graph graph { proc };
-        CycleWithTwoEntries blocks(graph, frequencyOfFirstEntry);
+        IrreducibleCycle blocks(graph, firstEntryFrequency);
         blocks.finish(graph);
         CHECK(!proc.naturalLoops().numLoops());
 
@@ -2262,7 +2383,7 @@ static void testCycleForestIrreducibleCycle()
         CHECK(!forest[0].isReducible());
         CHECK_EQ(forest[0].entries.size(), 2u);
         CHECK(forest[0].entries.contains(blocks.first) && forest[0].entries.contains(blocks.second));
-        CHECK(forest[0].header() == (frequencyOfFirstEntry == FrequencyClass::Normal ? blocks.first : blocks.second));
+        CHECK(forest[0].header() == (firstEntryFrequency == FrequencyClass::Normal ? blocks.first : blocks.second));
         CHECK_EQ(forest.innermost(blocks.first), 0u);
         CHECK_EQ(forest.innermost(blocks.second), 0u);
         CHECK_EQ(forest.innermost(blocks.root), CycleForest::none);
@@ -2276,7 +2397,7 @@ static void testCycleForestPrefersPollingEntryAsHeader()
     Procedure proc;
     Graph graph { proc };
     PollState state;
-    CycleWithTwoEntries blocks(graph, FrequencyClass::Normal);
+    IrreducibleCycle blocks(graph, FrequencyClass::Normal);
     appendPollLimit(graph, blocks.second, state);
     blocks.finish(graph);
 
@@ -2305,7 +2426,7 @@ struct TwoLoads {
         return result;
     }
 
-    unsigned numberOfLoadsLeft(BasicBlock* block, bool isPositionIndependent = true)
+    unsigned remainingLoadCount(BasicBlock* block, bool isPositionIndependent = true)
     {
         graph.ret(block, graph.make(block, Add, first, graph.make(block, Mul, load(block), graph.int64(block, 100))));
         reduceStrengthOnce(proc, isPositionIndependent);
@@ -2331,7 +2452,7 @@ static void testMemoryNumberingEliminatesRedundantLoad()
 {
     for (bool isPositionIndependent : { true, false }) {
         TwoLoads loads;
-        CHECK_EQ(loads.numberOfLoadsLeft(loads.root, isPositionIndependent), isPositionIndependent ? 1u : 2u);
+        CHECK_EQ(loads.remainingLoadCount(loads.root, isPositionIndependent), isPositionIndependent ? 1u : 2u);
         int64_t memory[1] = { 3 };
         CHECK_EQ(loads.run(memory, memory, 0), 303);
     }
@@ -2342,7 +2463,7 @@ static void testMemoryNumberingKeepsLoadAfterAliasingStore()
     for (int32_t offset : { 0, 8 }) {
         TwoLoads loads;
         loads.graph.store(loads.root, loads.operand, loads.otherPointer, offset, firstHeap);
-        CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 2u);
+        CHECK_EQ(loads.remainingLoadCount(loads.root), 2u);
         int64_t memory[2] = { 3, 4 };
         CHECK_EQ(loads.run(memory, memory, 5), offset ? 303 : 503);
     }
@@ -2352,7 +2473,7 @@ static void testMemoryNumberingEliminatesLoadAfterDisjointStore()
 {
     TwoLoads loads;
     loads.graph.store(loads.root, loads.operand, loads.otherPointer, 0, secondHeap);
-    CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 1u);
+    CHECK_EQ(loads.remainingLoadCount(loads.root), 1u);
     int64_t memory[1] = { 3 };
     int64_t otherMemory[1] = { 4 };
     CHECK_EQ(loads.run(memory, otherMemory, 5), 303);
@@ -2363,7 +2484,7 @@ static void testMemoryNumberingForwardsStoreToLoad()
 {
     TwoLoads loads;
     loads.graph.store(loads.root, loads.operand, loads.pointer, 0, firstHeap);
-    CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 1u);
+    CHECK_EQ(loads.remainingLoadCount(loads.root), 1u);
     int64_t memory[1] = { 3 };
     CHECK_EQ(loads.run(memory, memory, 5), 503);
     CHECK_EQ(memory[0], 5);
@@ -2373,7 +2494,7 @@ static void testMemoryNumberingDoesNotForwardNarrowStore()
 {
     TwoLoads loads;
     loads.root->appendNew<MemoryValue>(loads.proc, Store8, Origin(), loads.graph.make(loads.root, Trunc, loads.operand), loads.pointer, 0, firstHeap);
-    CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 2u);
+    CHECK_EQ(loads.remainingLoadCount(loads.root), 2u);
     int64_t memory[1] = { 0x300 };
     CHECK_EQ(loads.run(memory, memory, 5), 0x300 + 0x305 * 100);
 }
@@ -2382,12 +2503,12 @@ static void testMemoryNumberingHeapRangeWrites()
 {
     struct Case {
         HeapRange writes;
-        unsigned numberOfLoadsLeft;
+        unsigned remainingLoadCount;
     };
     for (Case testCase : { Case { bothHeaps, 2 }, Case { HeapRange(0, 11), 2 }, Case { HeapRange::top(), 2 }, Case { HeapRange(11, 30), 1 }, Case { HeapRange(0, 10), 1 } }) {
         TwoLoads loads;
         loads.graph.emptyPatchpoint(loads.root)->effects.writes = testCase.writes;
-        CHECK_EQ(loads.numberOfLoadsLeft(loads.root), testCase.numberOfLoadsLeft);
+        CHECK_EQ(loads.remainingLoadCount(loads.root), testCase.remainingLoadCount);
     }
 }
 
@@ -2395,7 +2516,7 @@ static void testMemoryNumberingKeepsLoadAfterFence()
 {
     TwoLoads loads;
     loads.root->appendNew<FenceValue>(loads.proc, Origin());
-    CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 2u);
+    CHECK_EQ(loads.remainingLoadCount(loads.root), 2u);
 }
 
 static void testMemoryNumberingImmutableLoads()
@@ -2403,20 +2524,20 @@ static void testMemoryNumberingImmutableLoads()
     {
         TwoLoads loads(Mutability::Immutable);
         loads.graph.emptyPatchpoint(loads.root)->effects.writes = HeapRange::top();
-        CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 1u);
+        CHECK_EQ(loads.remainingLoadCount(loads.root), 1u);
     }
     {
         TwoLoads loads(Mutability::Immutable);
         loads.graph.callLikePatchpoint(loads.root);
-        CHECK_EQ(loads.numberOfLoadsLeft(loads.root), 2u);
+        CHECK_EQ(loads.remainingLoadCount(loads.root), 2u);
     }
 }
 
 static void testMemoryNumberingAcrossDiamond()
 {
     struct Case {
-        std::optional<HeapRange> writesOnOneArm;
-        unsigned numberOfLoadsLeft;
+        std::optional<HeapRange> writesOnOnePath;
+        unsigned remainingLoadCount;
     };
     for (Case testCase : { Case { std::nullopt, 1 }, Case { secondHeap, 1 }, Case { firstHeap, 2 }, Case { bothHeaps, 2 } }) {
         TwoLoads loads;
@@ -2425,16 +2546,16 @@ static void testMemoryNumberingAcrossDiamond()
         BasicBlock* right = loads.proc.addBlock();
         BasicBlock* join = loads.proc.addBlock();
         graph.branch(loads.root, loads.operand, left, right);
-        if (testCase.writesOnOneArm)
-            graph.store(left, loads.operand, loads.otherPointer, 0, *testCase.writesOnOneArm);
+        if (testCase.writesOnOnePath)
+            graph.store(left, loads.operand, loads.otherPointer, 0, *testCase.writesOnOnePath);
         graph.store(left, loads.operand, loads.otherPointer, 8, HeapRange(20, 21));
         graph.jump(left, join);
         graph.store(right, loads.operand, loads.otherPointer, 16, HeapRange(21, 22));
         graph.jump(right, join);
-        CHECK_EQ(loads.numberOfLoadsLeft(join), testCase.numberOfLoadsLeft);
+        CHECK_EQ(loads.remainingLoadCount(join), testCase.remainingLoadCount);
         int64_t memory[3] = { 3, 0, 0 };
-        bool overwrites = testCase.writesOnOneArm && testCase.writesOnOneArm->overlaps(firstHeap);
-        if (!testCase.writesOnOneArm || overwrites)
+        bool overwrites = testCase.writesOnOnePath && testCase.writesOnOnePath->overlaps(firstHeap);
+        if (!testCase.writesOnOnePath || overwrites)
             CHECK_EQ(loads.run(memory, memory, 5), overwrites ? 503 : 303);
         memory[0] = 3;
         CHECK_EQ(loads.run(memory, memory, 0), 303);
@@ -2455,7 +2576,7 @@ static void testMemoryNumberingAcrossLoops()
         graph.store(loop, next, loads.otherPointer, 0, loopOverwrites ? firstHeap : secondHeap);
         graph.upsilon(loop, next, index);
         graph.branch(loop, graph.make(loop, LessThan, next, loads.operand), loop, exit);
-        CHECK_EQ(loads.numberOfLoadsLeft(exit), loopOverwrites ? 3u : 1u);
+        CHECK_EQ(loads.remainingLoadCount(exit), loopOverwrites ? 3u : 1u);
         int64_t memory[1] = { 3 };
         int64_t otherMemory[1] = { 0 };
         CHECK_EQ(loads.run(memory, otherMemory, 7), 303);
@@ -2466,7 +2587,7 @@ static void testMemoryNumberingAcrossLoops()
 }
 
 template<typename Functor>
-static unsigned numberOfOperationsLeft(B3::Opcode opcode, bool isPositionIndependent, const Functor& between)
+static unsigned remainingOperationCount(B3::Opcode opcode, bool isPositionIndependent, const Functor& between)
 {
     Procedure proc;
     Graph graph { proc };
@@ -2490,14 +2611,14 @@ static void testValueNumberingRecomputesCheapValuesAfterCalls()
     auto call = [](Graph& graph, BasicBlock* block) {
         graph.callLikePatchpoint(block);
     };
-    CHECK_EQ(numberOfOperationsLeft(Add, true, nothing), 1u);
-    CHECK_EQ(numberOfOperationsLeft(Add, true, call), 2u);
-    CHECK_EQ(numberOfOperationsLeft(Add, false, call), 1u);
-    CHECK_EQ(numberOfOperationsLeft(Clz, true, nothing), 1u);
-    CHECK_EQ(numberOfOperationsLeft(Clz, true, call), 1u);
+    CHECK_EQ(remainingOperationCount(Add, true, nothing), 1u);
+    CHECK_EQ(remainingOperationCount(Add, true, call), 2u);
+    CHECK_EQ(remainingOperationCount(Add, false, call), 1u);
+    CHECK_EQ(remainingOperationCount(Clz, true, nothing), 1u);
+    CHECK_EQ(remainingOperationCount(Clz, true, call), 1u);
 }
 
-static unsigned numberOfBranchesLeftAfterDominatingBranch(bool isPositionIndependent, bool meetsAgain)
+static unsigned remainingBranchesAfterDominatingBranch(bool isPositionIndependent, bool rejoins)
 {
     Procedure proc;
     Graph graph { proc };
@@ -2521,7 +2642,7 @@ static unsigned numberOfBranchesLeftAfterDominatingBranch(bool isPositionIndepen
     graph.branch(root, isFive(root), taken, notTaken);
     graph.store(taken, operand, pointer, 0, firstHeap);
     graph.store(notTaken, operand, pointer, 8, firstHeap);
-    if (meetsAgain) {
+    if (rejoins) {
         graph.jump(taken, join);
         graph.jump(notTaken, join);
         returnOneOf(join, 1, 4);
@@ -2543,12 +2664,12 @@ static unsigned numberOfBranchesLeftAfterDominatingBranch(bool isPositionIndepen
 
 static void testBranchDominatedByBranchOnSameConditionIsFolded()
 {
-    CHECK_EQ(numberOfBranchesLeftAfterDominatingBranch(true, false), 1u);
-    CHECK_EQ(numberOfBranchesLeftAfterDominatingBranch(false, false), 3u);
-    CHECK_EQ(numberOfBranchesLeftAfterDominatingBranch(true, true), 2u);
+    CHECK_EQ(remainingBranchesAfterDominatingBranch(true, false), 1u);
+    CHECK_EQ(remainingBranchesAfterDominatingBranch(false, false), 3u);
+    CHECK_EQ(remainingBranchesAfterDominatingBranch(true, true), 2u);
 }
 
-static unsigned numberOfDoublesLeft(Procedure& proc)
+static unsigned remainingDoubleCount(Procedure& proc)
 {
     return numberOfValues(proc, [](Value* value) {
         return value->type() == Double;
@@ -2567,7 +2688,7 @@ static void testDoubleComparisonsOfConvertedIntegersBecomeIntegerComparisons()
             Value* right = graph.make(root, Mul, graph.make(root, IToD, arguments[1]), graph.number(root, 2));
             graph.ret(root, graph.make(root, comparison, left, right));
             reduceStrengthOnce(proc, isPositionIndependent);
-            CHECK_EQ(!numberOfDoublesLeft(proc), isPositionIndependent);
+            CHECK_EQ(!remainingDoubleCount(proc), isPositionIndependent);
             auto code = compileProc(proc);
             for (int32_t a : { 0, 1, -1, 5, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() }) {
                 for (int32_t b : { 0, 1, -1, 3, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() }) {
@@ -2591,7 +2712,7 @@ static bool keepsDoublesInComparisonWith(const Functor& makeRight)
     Value* word = arguments[0];
     graph.ret(root, graph.make(root, LessThan, graph.make(root, IToD, word), makeRight(graph, root, arguments[1], arguments[2])));
     reduceStrengthOnce(proc, true);
-    return numberOfDoublesLeft(proc);
+    return remainingDoubleCount(proc);
 }
 
 static void testDoubleComparisonsOfNonIntegersAreKept()
@@ -2638,7 +2759,7 @@ static void testBitwiseDoubleComparisonsRespectNegativeZero()
         Value* right = graph.make(root, IToD, arguments[2]);
         graph.ret(root, graph.make(root, Equal, graph.make(root, BitwiseCast, left), graph.make(root, BitwiseCast, right)));
         reduceStrengthOnce(proc, true);
-        CHECK_EQ(!numberOfDoublesLeft(proc), operation == Add);
+        CHECK_EQ(!remainingDoubleCount(proc), operation == Add);
         auto code = compileProc(proc);
         CHECK_EQ(invoke<int32_t>(*code, 2, 3, operation == Add ? 5 : 6), 1);
         CHECK_EQ(invoke<int32_t>(*code, 2, 3, 7), 0);
@@ -2648,7 +2769,7 @@ static void testBitwiseDoubleComparisonsRespectNegativeZero()
 }
 
 template<typename Functor>
-static std::optional<bool> answerOfComparison(B3::Opcode comparison, int64_t constant, bool constantIsFirst, const Functor& makeOperand)
+static std::optional<bool> comparisonResult(B3::Opcode comparison, int64_t constant, bool constantIsFirst, const Functor& makeOperand)
 {
     Procedure proc;
     Graph graph { proc };
@@ -2682,37 +2803,37 @@ static void testComparisonsFoldedByIntegerRange()
         return wide;
     };
 
-    CHECK(answerOfComparison(LessThan, 16, false, lowFourBits) == true);
-    CHECK(answerOfComparison(LessThan, 0, false, lowFourBits) == false);
-    CHECK(answerOfComparison(LessEqual, 15, false, lowFourBits) == true);
-    CHECK(answerOfComparison(GreaterThan, 15, false, lowFourBits) == false);
-    CHECK(answerOfComparison(GreaterThan, -1, false, lowFourBits) == true);
-    CHECK(answerOfComparison(GreaterEqual, 0, false, lowFourBits) == true);
-    CHECK(answerOfComparison(GreaterEqual, 16, false, lowFourBits) == false);
-    CHECK(answerOfComparison(Equal, 16, false, lowFourBits) == false);
-    CHECK(answerOfComparison(NotEqual, -1, false, lowFourBits) == true);
-    CHECK(answerOfComparison(Below, 1ll << 32, false, zeroExtended) == true);
-    CHECK(answerOfComparison(AboveEqual, 1ll << 32, false, zeroExtended) == false);
-    CHECK(answerOfComparison(Above, 4, false, zeroExtendedPlusFive) == true);
-    CHECK(answerOfComparison(BelowEqual, 4, false, zeroExtendedPlusFive) == false);
-    CHECK(answerOfComparison(Below, 4, true, zeroExtendedPlusFive) == true);
-    CHECK(answerOfComparison(AboveEqual, 1ll << 33, true, zeroExtendedPlusFive) == true);
+    CHECK(comparisonResult(LessThan, 16, false, lowFourBits) == true);
+    CHECK(comparisonResult(LessThan, 0, false, lowFourBits) == false);
+    CHECK(comparisonResult(LessEqual, 15, false, lowFourBits) == true);
+    CHECK(comparisonResult(GreaterThan, 15, false, lowFourBits) == false);
+    CHECK(comparisonResult(GreaterThan, -1, false, lowFourBits) == true);
+    CHECK(comparisonResult(GreaterEqual, 0, false, lowFourBits) == true);
+    CHECK(comparisonResult(GreaterEqual, 16, false, lowFourBits) == false);
+    CHECK(comparisonResult(Equal, 16, false, lowFourBits) == false);
+    CHECK(comparisonResult(NotEqual, -1, false, lowFourBits) == true);
+    CHECK(comparisonResult(Below, 1ll << 32, false, zeroExtended) == true);
+    CHECK(comparisonResult(AboveEqual, 1ll << 32, false, zeroExtended) == false);
+    CHECK(comparisonResult(Above, 4, false, zeroExtendedPlusFive) == true);
+    CHECK(comparisonResult(BelowEqual, 4, false, zeroExtendedPlusFive) == false);
+    CHECK(comparisonResult(Below, 4, true, zeroExtendedPlusFive) == true);
+    CHECK(comparisonResult(AboveEqual, 1ll << 33, true, zeroExtendedPlusFive) == true);
 
-    CHECK(!answerOfComparison(LessThan, 15, false, lowFourBits));
-    CHECK(!answerOfComparison(LessEqual, 14, false, lowFourBits));
-    CHECK(!answerOfComparison(GreaterThan, 0, false, lowFourBits));
-    CHECK(!answerOfComparison(GreaterEqual, 1, false, lowFourBits));
-    CHECK(!answerOfComparison(Equal, 15, false, lowFourBits));
-    CHECK(!answerOfComparison(NotEqual, 0, false, lowFourBits));
-    CHECK(!answerOfComparison(Below, 0xffffffffll, false, zeroExtended));
-    CHECK(!answerOfComparison(Above, 5, false, zeroExtendedPlusFive));
-    CHECK(!answerOfComparison(Below, 1ll << 40, false, signExtendedMinusOne));
-    CHECK(!answerOfComparison(LessThan, 16, false, anything));
-    CHECK(!answerOfComparison(Below, 16, false, anything));
+    CHECK(!comparisonResult(LessThan, 15, false, lowFourBits));
+    CHECK(!comparisonResult(LessEqual, 14, false, lowFourBits));
+    CHECK(!comparisonResult(GreaterThan, 0, false, lowFourBits));
+    CHECK(!comparisonResult(GreaterEqual, 1, false, lowFourBits));
+    CHECK(!comparisonResult(Equal, 15, false, lowFourBits));
+    CHECK(!comparisonResult(NotEqual, 0, false, lowFourBits));
+    CHECK(!comparisonResult(Below, 0xffffffffll, false, zeroExtended));
+    CHECK(!comparisonResult(Above, 5, false, zeroExtendedPlusFive));
+    CHECK(!comparisonResult(Below, 1ll << 40, false, signExtendedMinusOne));
+    CHECK(!comparisonResult(LessThan, 16, false, anything));
+    CHECK(!comparisonResult(Below, 16, false, anything));
 }
 
 template<typename T>
-static void testRangeOfShiftByAnyAmount(B3::Opcode opcode, int32_t amount, bool isPositionIndependent)
+static void testVariableShiftRange(B3::Opcode opcode, int32_t amount, bool isPositionIndependent)
 {
     using UnsignedT = std::make_unsigned_t<T>;
     constexpr bool is32 = sizeof(T) == 4;
@@ -2744,19 +2865,19 @@ static void testRangeOfShiftByAnyAmount(B3::Opcode opcode, int32_t amount, bool 
     }
 }
 
-static void testRangesOfShiftsByAnyAmount()
+static void testVariableShiftRanges()
 {
     for (B3::Opcode opcode : { Shl, SShr, ZShr }) {
         for (int32_t amount : { 0, 1, 31, 32, 33, 63, 64, 65, 96, 128, -1, -32, -64, -128 }) {
             for (bool isPositionIndependent : { true, false }) {
-                testRangeOfShiftByAnyAmount<int32_t>(opcode, amount, isPositionIndependent);
-                testRangeOfShiftByAnyAmount<int64_t>(opcode, amount, isPositionIndependent);
+                testVariableShiftRange<int32_t>(opcode, amount, isPositionIndependent);
+                testVariableShiftRange<int64_t>(opcode, amount, isPositionIndependent);
             }
         }
     }
 }
 
-static void testTruncOfWordShiftedLeftAndBackByAnyAmount()
+static void testTruncOfVariableShiftLeftAndBack()
 {
     for (int32_t amount : { 0, 1, 12, 30, 31, 32, 33, 60, 63, 64, 76, -1, -4, -33, -52, -60, -64 }) {
         Procedure proc;
@@ -2775,11 +2896,11 @@ static void testTruncOfWordShiftedLeftAndBackByAnyAmount()
     }
 }
 
-struct NumberKeptAsWord {
-    explicit NumberKeptAsWord(Graph& graph, double frequencyOfOtherPath = 0.001)
+struct NumberStoredAsWord {
+    explicit NumberStoredAsWord(Graph& graph, double otherPathFrequency = 0.001)
         : root(graph.proc.addBlock())
         , integerPath(graph.proc.addBlock())
-        , otherPath(graph.proc.addBlock(frequencyOfOtherPath))
+        , otherPath(graph.proc.addBlock(otherPathFrequency))
         , join(graph.proc.addBlock())
     {
         auto arguments = cCallArgumentValues<int32_t, double, int64_t*>(graph.proc, root);
@@ -2787,7 +2908,7 @@ struct NumberKeptAsWord {
         other = arguments[1];
         pointer = arguments[2];
         Value* isOther = graph.make(root, LessThan, word, graph.int32(root, -1000));
-        if (frequencyOfOtherPath < 0.5)
+        if (otherPathFrequency < 0.5)
             graph.branch(root, isOther, rarely(otherPath), FrequentedBlock(integerPath));
         else
             graph.branch(root, isOther, otherPath, integerPath);
@@ -2802,7 +2923,7 @@ struct NumberKeptAsWord {
     {
         PatchpointValue* result = block->appendNew<PatchpointValue>(graph.proc, Int64, Origin());
         result->effects = Effects::none();
-        result->pureFunctionOfChildrenKey = keyOfTruncationToInt64;
+        result->pureFunctionOfChildrenKey = toInt64TruncationKey;
         result->appendSomeRegister(value);
         result->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
             jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
@@ -2822,7 +2943,7 @@ struct NumberKeptAsWord {
         return result;
     }
 
-    unsigned numberOfDoublesOnLikelyPaths(Graph& graph)
+    unsigned doubleCountOnLikelyPaths(Graph& graph)
     {
         unsigned result = 0;
         for (BasicBlock* block : graph.proc) {
@@ -2848,17 +2969,17 @@ static void testSeparateIntegerPathsFoldsConversionBackToInteger()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph);
+    NumberStoredAsWord blocks(graph);
     BasicBlock* isWhole = proc.addBlock();
-    BasicBlock* isNotWhole = proc.addBlock(0.001);
+    BasicBlock* isNotIntegral = proc.addBlock(0.001);
     Value* truncated = blocks.truncate(graph, blocks.join, blocks.number);
-    graph.branch(blocks.join, graph.make(blocks.join, Equal, graph.make(blocks.join, IToD, truncated), blocks.number), FrequentedBlock(isWhole), rarely(isNotWhole));
+    graph.branch(blocks.join, graph.make(blocks.join, Equal, graph.make(blocks.join, IToD, truncated), blocks.number), FrequentedBlock(isWhole), rarely(isNotIntegral));
     graph.ret(isWhole, truncated);
-    graph.ret(isNotWhole, graph.int64(isNotWhole, -1));
+    graph.ret(isNotIntegral, graph.int64(isNotIntegral, -1));
 
     CHECK(blocks.separate(graph));
     CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
-    CHECK_EQ(blocks.numberOfDoublesOnLikelyPaths(graph), 0u);
+    CHECK_EQ(blocks.doubleCountOnLikelyPaths(graph), 0u);
     auto code = compileProc(proc);
     CHECK_EQ(invoke<int64_t>(*code, 7, 0.5, nullptr), 7);
     CHECK_EQ(invoke<int64_t>(*code, -1000, 0.5, nullptr), -1000);
@@ -2871,7 +2992,7 @@ static void testSeparateIntegerPathsFollowsSumsIntoLaterBlocks()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph);
+    NumberStoredAsWord blocks(graph);
     BasicBlock* next = proc.addBlock();
     BasicBlock* isSmall = proc.addBlock();
     BasicBlock* isLarge = proc.addBlock();
@@ -2882,7 +3003,7 @@ static void testSeparateIntegerPathsFollowsSumsIntoLaterBlocks()
     graph.ret(isLarge, graph.int64(isLarge, 2));
 
     CHECK(blocks.separate(graph));
-    CHECK_EQ(blocks.numberOfDoublesOnLikelyPaths(graph), 0u);
+    CHECK_EQ(blocks.doubleCountOnLikelyPaths(graph), 0u);
     auto code = compileProc(proc);
     CHECK_EQ(invoke<int64_t>(*code, 8, 0.0, nullptr), 1);
     CHECK_EQ(invoke<int64_t>(*code, 9, 0.0, nullptr), 2);
@@ -2891,11 +3012,11 @@ static void testSeparateIntegerPathsFollowsSumsIntoLaterBlocks()
     CHECK_EQ(invoke<int64_t>(*code, -1001, std::numeric_limits<double>::quiet_NaN(), nullptr), 2);
 }
 
-static void testSeparateIntegerPathsCopiesNothingBehindLastUse()
+static void testSeparateIntegerPathsCopiesNothingAfterLastUse()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph);
+    NumberStoredAsWord blocks(graph);
     Value* truncated = blocks.truncate(graph, blocks.join, blocks.number);
     graph.store(blocks.join, truncated, blocks.pointer, 0, firstHeap);
     graph.store(blocks.join, graph.int64(blocks.join, 5), blocks.pointer, 8, firstHeap);
@@ -2918,7 +3039,7 @@ static void testSeparateIntegerPathsStopsAtCallSite()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph);
+    NumberStoredAsWord blocks(graph);
     graph.callLikePatchpoint(blocks.join)->effects.writes = HeapRange::top();
     graph.ret(blocks.join, blocks.truncate(graph, blocks.join, blocks.number));
 
@@ -2933,7 +3054,7 @@ static void testSeparateIntegerPathsKeepsJoinOfLikelyPaths()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph, 8);
+    NumberStoredAsWord blocks(graph, 8);
     graph.ret(blocks.join, blocks.truncate(graph, blocks.join, blocks.number));
 
     CHECK(!blocks.separate(graph));
@@ -2944,14 +3065,14 @@ static void testSeparateIntegerPathsKeepsNumberThatStaysDouble()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph);
+    NumberStoredAsWord blocks(graph);
     graph.ret(blocks.join, graph.make(blocks.join, BitwiseCast, graph.make(blocks.join, Sqrt, blocks.number)));
 
     CHECK(!blocks.separate(graph));
     CHECK_EQ(numberOfValues(proc, Phi), 1u);
 }
 
-static void testSeparateIntegerPathsLeavesJoinOfOnePath()
+static void testSeparateIntegerPathsKeepsSinglePathJoin()
 {
     Procedure proc;
     Graph graph { proc };
@@ -2962,7 +3083,7 @@ static void testSeparateIntegerPathsLeavesJoinOfOnePath()
     graph.jump(root, join);
     PatchpointValue* truncated = join->appendNew<PatchpointValue>(proc, Int64, Origin());
     truncated->effects = Effects::none();
-    truncated->pureFunctionOfChildrenKey = keyOfTruncationToInt64;
+    truncated->pureFunctionOfChildrenKey = toInt64TruncationKey;
     truncated->appendSomeRegister(number);
     truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
@@ -2976,12 +3097,12 @@ static void testSeparateIntegerPathsLeavesJoinOfOnePath()
     CHECK_EQ(numberOfBlocks(proc), 2u);
 }
 
-static void testSeparateIntegerPathsOfNumberAskedWhetherItIsTruthy()
+static void testSeparateIntegerPathsOfTruthinessTest()
 {
     for (bool usesAbsoluteValue : { false, true }) {
         Procedure proc;
         Graph graph { proc };
-        NumberKeptAsWord blocks(graph);
+        NumberStoredAsWord blocks(graph);
         BasicBlock* isTruthy = proc.addBlock();
         BasicBlock* isFalsy = proc.addBlock();
         if (usesAbsoluteValue)
@@ -2992,7 +3113,7 @@ static void testSeparateIntegerPathsOfNumberAskedWhetherItIsTruthy()
         graph.ret(isFalsy, graph.int64(isFalsy, 0));
 
         CHECK(blocks.separate(graph));
-        CHECK_EQ(blocks.numberOfDoublesOnLikelyPaths(graph), 0u);
+        CHECK_EQ(blocks.doubleCountOnLikelyPaths(graph), 0u);
         auto code = compileProc(proc);
         CHECK_EQ(invoke<int64_t>(*code, 0, 1.5, nullptr), 0);
         CHECK_EQ(invoke<int64_t>(*code, 5, 0.0, nullptr), 1);
@@ -3004,11 +3125,11 @@ static void testSeparateIntegerPathsOfNumberAskedWhetherItIsTruthy()
     }
 }
 
-static void testSeparateIntegerPathsOfTwoNumbersReadOneBehindTheOther()
+static void testSeparateIntegerPathsOfTwoConsecutiveReads()
 {
     Procedure proc;
     Graph graph { proc };
-    NumberKeptAsWord blocks(graph);
+    NumberStoredAsWord blocks(graph);
     BasicBlock* secondIntegerPath = proc.addBlock();
     BasicBlock* secondOtherPath = proc.addBlock(0.001);
     BasicBlock* secondJoin = proc.addBlock();
@@ -3026,14 +3147,14 @@ static void testSeparateIntegerPathsOfTwoNumbersReadOneBehindTheOther()
     graph.ret(isNotLess, graph.int64(isNotLess, 2));
 
     CHECK(blocks.separate(graph));
-    unsigned numberOfComparisonsOfDoublesOnLikelyPaths = 0;
+    unsigned doubleComparisonCountOnLikelyPaths = 0;
     for (BasicBlock* block : proc) {
         if (block->frequency() < 0.5)
             continue;
         for (Value* value : *block)
-            numberOfComparisonsOfDoublesOnLikelyPaths += value->opcode() == LessThan && value->child(0)->type() == Double;
+            doubleComparisonCountOnLikelyPaths += value->opcode() == LessThan && value->child(0)->type() == Double;
     }
-    CHECK_EQ(numberOfComparisonsOfDoublesOnLikelyPaths, 0u);
+    CHECK_EQ(doubleComparisonCountOnLikelyPaths, 0u);
     auto code = compileProc(proc);
     struct {
         int64_t word;
@@ -3084,7 +3205,7 @@ static void testSeparateIntegerPathsInsideLoop()
     graph.jump(otherPath, join);
     PatchpointValue* truncated = join->appendNew<PatchpointValue>(proc, Int64, Origin());
     truncated->effects = Effects::none();
-    truncated->pureFunctionOfChildrenKey = keyOfTruncationToInt64;
+    truncated->pureFunctionOfChildrenKey = toInt64TruncationKey;
     truncated->appendSomeRegister(number);
     truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
@@ -3135,33 +3256,33 @@ static void testComparisonsOfConvertedIntegersWithUnorderedResults()
 
 static void testDoubleToIntegerConversionsOfConvertedIntegers()
 {
-    for (int32_t key : { keyOfTruncationToInt64, keyOfConversionToInt32, 0 }) {
-        for (bool isWholeNumber : { true, false }) {
+    for (int32_t key : { toInt64TruncationKey, toInt32ConversionKey, 0 }) {
+        for (bool isIntegralNumber : { true, false }) {
             Procedure proc;
             Graph graph { proc };
             BasicBlock* root = proc.addBlock();
             auto arguments = cCallArgumentValues<int32_t, double>(proc, root);
-            Value* number = graph.make(root, Add, isWholeNumber ? graph.make(root, IToD, arguments[0]) : arguments[1], graph.number(root, 1));
-            PatchpointValue* conversion = root->appendNew<PatchpointValue>(proc, key == keyOfConversionToInt32 ? Int32 : Int64, Origin());
+            Value* number = graph.make(root, Add, isIntegralNumber ? graph.make(root, IToD, arguments[0]) : arguments[1], graph.number(root, 1));
+            PatchpointValue* conversion = root->appendNew<PatchpointValue>(proc, key == toInt32ConversionKey ? Int32 : Int64, Origin());
             conversion->effects = Effects::none();
             conversion->pureFunctionOfChildrenKey = key;
             conversion->appendSomeRegister(number);
             conversion->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
             });
-            graph.ret(root, key == keyOfConversionToInt32 ? graph.make(root, SExt32, conversion) : conversion);
+            graph.ret(root, key == toInt32ConversionKey ? graph.make(root, SExt32, conversion) : conversion);
             reduceStrengthOnce(proc, true);
-            CHECK_EQ(numberOfValues(proc, Patchpoint), key && isWholeNumber ? 0u : 1u);
+            CHECK_EQ(numberOfValues(proc, Patchpoint), key && isIntegralNumber ? 0u : 1u);
             auto code = compileProc(proc);
             CHECK_EQ(invoke<int64_t>(*code, 41, 41.0), 42);
             CHECK_EQ(invoke<int64_t>(*code, -1, -1.0), 0);
-            if (key != keyOfConversionToInt32)
+            if (key != toInt32ConversionKey)
                 CHECK_EQ(invoke<int64_t>(*code, std::numeric_limits<int32_t>::max(), 2147483647.0), 2147483648ll);
         }
     }
 }
 
-static unsigned numberOfPatchpointsLeft(bool isPositionIndependent, uint64_t firstKey, uint64_t secondKey)
+static unsigned remainingPatchpointCount(bool isPositionIndependent, uint64_t firstKey, uint64_t secondKey)
 {
     Procedure proc;
     Graph graph { proc };
@@ -3177,7 +3298,7 @@ static unsigned numberOfPatchpointsLeft(bool isPositionIndependent, uint64_t fir
     return result;
 }
 
-static unsigned numberOfPatchpointsOfChildrenLeft(int32_t firstKey, int32_t secondKey, bool haveSameChild)
+static unsigned remainingChildPatchpointCount(int32_t firstKey, int32_t secondKey, bool haveSameChild)
 {
     Procedure proc;
     Graph graph { proc };
@@ -3199,17 +3320,17 @@ static unsigned numberOfPatchpointsOfChildrenLeft(int32_t firstKey, int32_t seco
 static void testPurePatchpointsAreValueNumbered()
 {
     for (bool isPositionIndependent : { true, false }) {
-        CHECK_EQ(numberOfPatchpointsLeft(isPositionIndependent, 7, 7), 1u);
-        CHECK_EQ(numberOfPatchpointsLeft(isPositionIndependent, 7, 8), 2u);
-        CHECK_EQ(numberOfPatchpointsLeft(isPositionIndependent, 0, 0), 2u);
+        CHECK_EQ(remainingPatchpointCount(isPositionIndependent, 7, 7), 1u);
+        CHECK_EQ(remainingPatchpointCount(isPositionIndependent, 7, 8), 2u);
+        CHECK_EQ(remainingPatchpointCount(isPositionIndependent, 0, 0), 2u);
     }
-    CHECK_EQ(numberOfPatchpointsOfChildrenLeft(100, 100, true), 1u);
-    CHECK_EQ(numberOfPatchpointsOfChildrenLeft(100, 100, false), 2u);
-    CHECK_EQ(numberOfPatchpointsOfChildrenLeft(100, 101, true), 2u);
-    CHECK_EQ(numberOfPatchpointsOfChildrenLeft(0, 0, true), 2u);
+    CHECK_EQ(remainingChildPatchpointCount(100, 100, true), 1u);
+    CHECK_EQ(remainingChildPatchpointCount(100, 100, false), 2u);
+    CHECK_EQ(remainingChildPatchpointCount(100, 101, true), 2u);
+    CHECK_EQ(remainingChildPatchpointCount(0, 0, true), 2u);
 }
 
-static void testConversionToDoubleTakesWordThatWasSignExtended()
+static void testConversionToDoubleUsesSignExtendedWord()
 {
     for (B3::Opcode extension : { SExt32, ZExt32 }) {
         Procedure proc;
@@ -3375,7 +3496,7 @@ static void testShiftsAndSwitchesOfExtendedWordsAreNarrowed()
     }
 }
 
-static void testReduceStrengthKnowsRangeOfWhatNarrowLoadYields()
+static void testReduceStrengthKnowsNarrowLoadRange()
 {
     for (B3::Opcode opcode : { Load8Z, Load8S, Load16Z, Load16S, Load }) {
         Procedure proc;
@@ -3400,7 +3521,7 @@ static void testReduceStrengthKnowsRangeOfWhatNarrowLoadYields()
     }
 }
 
-static void testReduceStrengthAnswersWhetherWholeNumberMadeOfNarrowLoadFitsInt32()
+static void testReduceStrengthFoldsInt32CheckOfIntegralNarrowLoad()
 {
     for (B3::Opcode opcode : { Load8Z, Load16S, Load }) {
         Procedure proc;
@@ -3412,7 +3533,7 @@ static void testReduceStrengthAnswersWhetherWholeNumberMadeOfNarrowLoadFitsInt32
         Value* number = graph.make(root, Sub, graph.make(root, IToD, wide), graph.number(root, 48));
         PatchpointValue* conversion = root->appendNew<PatchpointValue>(proc, Int32, Origin());
         conversion->effects = Effects::none();
-        conversion->pureFunctionOfChildrenKey = keyOfConversionToInt32;
+        conversion->pureFunctionOfChildrenKey = toInt32ConversionKey;
         conversion->appendSomeRegister(number);
         conversion->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
             jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
@@ -3461,7 +3582,7 @@ static void testReduceStrengthMergesBlockChain()
 
 static void testReduceStrengthEliminatesSingleValuePhi()
 {
-    for (bool isOneValue : { true, false }) {
+    for (bool isSingleValue : { true, false }) {
         Procedure proc;
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
@@ -3478,15 +3599,15 @@ static void testReduceStrengthEliminatesSingleValuePhi()
         graph.upsilon(left, second, phi);
         graph.jump(left, join);
         graph.store(right, second, pointer, 0, firstHeap);
-        graph.upsilon(right, isOneValue ? second : first, phi);
+        graph.upsilon(right, isSingleValue ? second : first, phi);
         graph.jump(right, join);
         graph.ret(join, phi);
         reduceStrengthOnce(proc, false);
-        CHECK_EQ(numberOfValues(proc, Phi), isOneValue ? 0u : 1u);
+        CHECK_EQ(numberOfValues(proc, Phi), isSingleValue ? 0u : 1u);
         int64_t memory[1];
         auto code = compileProc(proc);
         CHECK_EQ(invoke<int64_t>(*code, 1, 2, memory), 2);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), isOneValue ? 2 : 0);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), isSingleValue ? 2 : 0);
     }
 }
 
@@ -3536,18 +3657,18 @@ static void testMemoryNumberingWhenEdgeIntoJoinIsRemoved()
     proc.setPositionIndependent(false);
 
     auto code = compileProc(proc);
-    for (int32_t alsoElsewhere : { 0, 1 }) {
+    for (int32_t isAlsoUsedElsewhere : { 0, 1 }) {
         int32_t memory[2] = { 1, 2 };
-        CHECK_EQ(invoke<int32_t>(*code, memory, 1, alsoElsewhere), 105);
+        CHECK_EQ(invoke<int32_t>(*code, memory, 1, isAlsoUsedElsewhere), 105);
         CHECK_EQ(memory[0], 5);
-        CHECK_EQ(memory[1], alsoElsewhere ? 1 : 2);
+        CHECK_EQ(memory[1], isAlsoUsedElsewhere ? 1 : 2);
     }
     int32_t memory[2] = { 1, 2 };
     CHECK_EQ(invoke<int32_t>(*code, memory, 0, 1), 0);
     CHECK_EQ(memory[0], 1);
 }
 
-static unsigned numberOfInt64Constants(BasicBlock* block, int64_t constant)
+static unsigned int64ConstantCount(BasicBlock* block, int64_t constant)
 {
     unsigned result = 0;
     for (Value* value : *block)
@@ -3560,13 +3681,13 @@ static void testMoveConstantsMaterializesByFrequency()
     constexpr int64_t large = 0x123456789abcll;
     struct Case {
         bool byFrequency;
-        double frequencyOfUsers;
+        double userFrequency;
         bool isMaterializedAtUsers;
     };
     for (Case testCase : { Case { true, 0.01, true }, Case { false, 0.01, false }, Case { true, 0.75, false } }) {
         Procedure proc;
         Graph graph { proc };
-        BranchToRareBlocks blocks(graph, testCase.frequencyOfUsers);
+        BranchToRareBlocks blocks(graph, testCase.userFrequency);
         Value* inFirstRare = graph.make(blocks.firstRare, Add, blocks.operand, graph.int64(blocks.firstRare, large));
         Value* inSecondRare = graph.make(blocks.secondRare, Mul, blocks.operand, graph.int64(blocks.secondRare, large));
         blocks.finish(graph, inFirstRare, inSecondRare, blocks.operand);
@@ -3575,9 +3696,9 @@ static void testMoveConstantsMaterializesByFrequency()
 
         moveConstants(proc);
         validate(proc);
-        CHECK_EQ(numberOfInt64Constants(blocks.root, large), testCase.isMaterializedAtUsers ? 0u : 1u);
-        CHECK_EQ(numberOfInt64Constants(blocks.firstRare, large), testCase.isMaterializedAtUsers ? 1u : 0u);
-        CHECK_EQ(numberOfInt64Constants(blocks.secondRare, large), testCase.isMaterializedAtUsers ? 1u : 0u);
+        CHECK_EQ(int64ConstantCount(blocks.root, large), testCase.isMaterializedAtUsers ? 0u : 1u);
+        CHECK_EQ(int64ConstantCount(blocks.firstRare, large), testCase.isMaterializedAtUsers ? 1u : 0u);
+        CHECK_EQ(int64ConstantCount(blocks.secondRare, large), testCase.isMaterializedAtUsers ? 1u : 0u);
         auto code = compileProc(proc);
         CHECK_EQ(invoke<int64_t>(*code, 1, 5, nullptr), large + 5);
         CHECK_EQ(invoke<int64_t>(*code, 2, 5, nullptr), large * 5);
@@ -3599,8 +3720,8 @@ static void testMoveConstantsByFrequencyHoistsOutOfLoop()
 
     moveConstants(proc);
     validate(proc);
-    CHECK_EQ(numberOfInt64Constants(loop.root, large), 1u);
-    CHECK_EQ(numberOfInt64Constants(loop.body, large), 0u);
+    CHECK_EQ(int64ConstantCount(loop.root, large), 1u);
+    CHECK_EQ(int64ConstantCount(loop.body, large), 0u);
     CHECK_EQ(run(*compileProc(proc), 3), 3 * large);
 }
 
@@ -3698,25 +3819,25 @@ static void testDuplicateTailsThreadsJumpOnConstantPhi()
 
 static void testDuplicateTailsThreadsJumpDecidedByDominatingBranch()
 {
-    for (bool testsTheOpposite : { false, true }) {
+    for (bool testsOpposite : { false, true }) {
         Procedure proc;
         Graph graph { proc };
         TailWithTwoPredecessors blocks(graph);
         graph.branch(blocks.root, graph.make(blocks.root, Equal, blocks.first, graph.int64(blocks.root, 5)), blocks.left, blocks.right);
-        graph.branch(blocks.tail, graph.make(blocks.tail, testsTheOpposite ? NotEqual : Equal, blocks.first, graph.int64(blocks.tail, 5)), blocks.taken, blocks.notTaken);
+        graph.branch(blocks.tail, graph.make(blocks.tail, testsOpposite ? NotEqual : Equal, blocks.first, graph.int64(blocks.tail, 5)), blocks.taken, blocks.notTaken);
         blocks.duplicate(graph);
 
-        CHECK(blocks.left->successorBlock(0) == (testsTheOpposite ? blocks.notTaken : blocks.taken));
-        CHECK(blocks.right->successorBlock(0) == (testsTheOpposite ? blocks.taken : blocks.notTaken));
+        CHECK(blocks.left->successorBlock(0) == (testsOpposite ? blocks.notTaken : blocks.taken));
+        CHECK(blocks.right->successorBlock(0) == (testsOpposite ? blocks.taken : blocks.notTaken));
         CHECK_EQ(numberOfValues(proc, Branch), 1u);
         auto code = compileProc(proc);
         int64_t memory[1];
-        CHECK_EQ(invoke<int64_t>(*code, 5, 0, memory), testsTheOpposite ? 20 : 10);
-        CHECK_EQ(invoke<int64_t>(*code, 6, 0, memory), testsTheOpposite ? 10 : 20);
+        CHECK_EQ(invoke<int64_t>(*code, 5, 0, memory), testsOpposite ? 20 : 10);
+        CHECK_EQ(invoke<int64_t>(*code, 6, 0, memory), testsOpposite ? 10 : 20);
     }
 }
 
-static void testDuplicateTailsFollowsTestsOfOneValue()
+static void testDuplicateTailsFollowsTestsOfSameValue()
 {
     for (bool onlyDecidedTests : { false, true }) {
         Procedure proc;
@@ -3745,7 +3866,7 @@ static void testDuplicateTailsFollowsTestsOfOneValue()
     }
 }
 
-static void testDuplicateTailsFollowsTestsThroughPhisOnThePath()
+static void testDuplicateTailsFollowsTestsThroughPhisOnPath()
 {
     Procedure proc;
     Graph graph { proc };
@@ -3803,9 +3924,9 @@ static void testDuplicateTailsThreadsJumpOnVariableSetOnPath()
     }
 }
 
-static void testDuplicateTailsReadsVariableAsLastSetAheadOfGet()
+static void testDuplicateTailsReadsLastSetBeforeGet()
 {
-    for (bool setsAheadOfGet : { false, true }) {
+    for (bool setsBeforeGet : { false, true }) {
         Procedure proc;
         Graph graph { proc };
         TailWithTwoPredecessors blocks(graph);
@@ -3815,9 +3936,9 @@ static void testDuplicateTailsReadsVariableAsLastSetAheadOfGet()
         graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
         graph.set(blocks.left, flag, graph.int64(blocks.left, 1));
         graph.set(blocks.right, flag, blocks.second);
-        Value* read = setsAheadOfGet ? nullptr : graph.get(blocks.tail, flag);
+        Value* read = setsBeforeGet ? nullptr : graph.get(blocks.tail, flag);
         graph.set(blocks.tail, flag, graph.int64(blocks.tail, 0));
-        if (setsAheadOfGet)
+        if (setsBeforeGet)
             read = graph.get(blocks.tail, flag);
         graph.branch(blocks.tail, read, secondTest, blocks.notTaken);
         graph.branch(secondTest, graph.get(secondTest, flag), stillSet, blocks.taken);
@@ -3825,11 +3946,11 @@ static void testDuplicateTailsReadsVariableAsLastSetAheadOfGet()
         blocks.duplicate(graph);
 
         CHECK(blocks.left->last()->opcode() == Jump);
-        CHECK(blocks.left->successorBlock(0) == (setsAheadOfGet ? blocks.notTaken : blocks.taken));
+        CHECK(blocks.left->successorBlock(0) == (setsBeforeGet ? blocks.notTaken : blocks.taken));
         auto code = compileProc(proc);
         int64_t memory[1];
-        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), setsAheadOfGet ? 20 : 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 7, memory), setsAheadOfGet ? 20 : 10);
+        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), setsBeforeGet ? 20 : 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 7, memory), setsBeforeGet ? 20 : 10);
         CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
     }
 }
@@ -3858,7 +3979,7 @@ static void testDuplicateTailsKeepsTestOfVariableNotSetOnPath()
     CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
 }
 
-static void testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps()
+static void testDuplicateTailsFollowsTestsAfterJumpOnlyJoin()
 {
     Procedure proc;
     Graph graph { proc };
@@ -3878,7 +3999,7 @@ static void testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps()
     CHECK_EQ(invoke<int64_t>(*code, 6, 0, memory), 20);
 }
 
-static void testDuplicateTailsFollowsPhiHandedOnByBlockThatJumps()
+static void testDuplicateTailsFollowsPhiForwardedByJumpBlock()
 {
     Procedure proc;
     Graph graph { proc };
@@ -3935,7 +4056,7 @@ static void testDuplicateTailsStopsFollowingAtUndecidedTest()
     CHECK_EQ(invoke<int64_t>(*code, 0, 6, memory), 10);
 }
 
-static void testDuplicateTailsFollowsTestsBehindTestCopiedUndecided()
+static void testDuplicateTailsFollowsTestsAfterUndecidedCopiedTest()
 {
     for (bool onlyDecidedTests : { false, true }) {
         Procedure proc;
@@ -3955,7 +4076,7 @@ static void testDuplicateTailsFollowsTestsBehindTestCopiedUndecided()
         graph.ret(other, graph.int64(other, 30));
         blocks.duplicate(graph, onlyDecidedTests);
 
-        auto behindJumps = [](BasicBlock* block) {
+        auto resolveJumps = [](BasicBlock* block) {
             while (block->size() == 1 && block->last()->opcode() == Jump)
                 block = block->successorBlock(0);
             return block;
@@ -3965,11 +4086,11 @@ static void testDuplicateTailsFollowsTestsBehindTestCopiedUndecided()
             CHECK(blocks.right->successorBlock(0) == blocks.tail);
         } else {
             CHECK(blocks.left->last()->opcode() == Branch);
-            CHECK(behindJumps(blocks.left->successorBlock(0)) == blocks.taken);
-            CHECK(behindJumps(blocks.left->successorBlock(1)) == blocks.notTaken);
+            CHECK(resolveJumps(blocks.left->successorBlock(0)) == blocks.taken);
+            CHECK(resolveJumps(blocks.left->successorBlock(1)) == blocks.notTaken);
             CHECK(blocks.right->last()->opcode() == Branch);
-            CHECK(behindJumps(blocks.right->successorBlock(0)) == repeated);
-            CHECK(behindJumps(blocks.right->successorBlock(1)) == other);
+            CHECK(resolveJumps(blocks.right->successorBlock(0)) == repeated);
+            CHECK(resolveJumps(blocks.right->successorBlock(1)) == other);
             CHECK_EQ(numberOfValues(proc, Branch), 4u);
         }
         auto code = compileProc(proc);
@@ -3982,7 +4103,7 @@ static void testDuplicateTailsFollowsTestsBehindTestCopiedUndecided()
     }
 }
 
-static void testDuplicateTailsFollowsTestsBehindDecidedAndCopiedTests()
+static void testDuplicateTailsFollowsTestsAfterDecidedAndCopiedTests()
 {
     Procedure proc;
     Graph graph { proc };
@@ -4035,7 +4156,7 @@ static bool duplicateTailsMakesVariables(Graph& graph, TailWithTwoPredecessors& 
     return result;
 }
 
-static void testDuplicateTailsKeepsPhiThatOnlyItsBlockUses()
+static void testDuplicateTailsKeepsBlockLocalPhi()
 {
     Procedure proc;
     Graph graph { proc };
@@ -4059,7 +4180,7 @@ static void testDuplicateTailsKeepsPhiThatOnlyItsBlockUses()
     CHECK_EQ(invoke<int64_t>(*code, 0, 200, memory), 10);
 }
 
-static void testDuplicateTailsDemotesPhiThatAnotherBlockUses()
+static void testDuplicateTailsDemotesPhiUsedByAnotherBlock()
 {
     Procedure proc;
     Graph graph { proc };
@@ -4081,7 +4202,7 @@ static void testDuplicateTailsDemotesPhiThatAnotherBlockUses()
     CHECK_EQ(invoke<int64_t>(*code, 0, -1ll, memory), 20);
 }
 
-static void testDuplicateTailsDemotesPhiWhoseUpsilonStandsAheadOfBranch()
+static void testDuplicateTailsDemotesPhiWithUpsilonBeforeBranch()
 {
     Procedure proc;
     Graph graph { proc };
@@ -4197,7 +4318,7 @@ static void testFoldPathConstantsFoldsSelect()
     }
 }
 
-static void testEstimateFrequenciesTakesWayThatReturnsForUnlikely()
+static void testEstimateFrequenciesTreatsReturningPathAsUnlikely()
 {
     for (bool returnsAreUnlikely : { true, false }) {
         Procedure proc;
@@ -4206,15 +4327,15 @@ static void testEstimateFrequenciesTakesWayThatReturnsForUnlikely()
         BasicBlock* returnsEarly = proc.addBlock();
         BasicBlock* goesOn = proc.addBlock();
         BasicBlock* returnsRarely = proc.addBlock(0);
-        BasicBlock* goesOnFurther = proc.addBlock();
+        BasicBlock* continuesFurther = proc.addBlock();
         BasicBlock* returnsOne = proc.addBlock();
         BasicBlock* returnsOther = proc.addBlock();
         auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
         graph.branch(root, arguments[0], FrequentedBlock(returnsEarly), FrequentedBlock(goesOn));
         graph.ret(returnsEarly, graph.int64(returnsEarly, 1));
-        graph.branch(goesOn, arguments[1], FrequentedBlock(returnsRarely), FrequentedBlock(goesOnFurther));
+        graph.branch(goesOn, arguments[1], FrequentedBlock(returnsRarely), FrequentedBlock(continuesFurther));
         graph.ret(returnsRarely, graph.int64(returnsRarely, 2));
-        graph.branch(goesOnFurther, arguments[2], FrequentedBlock(returnsOne), FrequentedBlock(returnsOther));
+        graph.branch(continuesFurther, arguments[2], FrequentedBlock(returnsOne), FrequentedBlock(returnsOther));
         graph.ret(returnsOne, graph.int64(returnsOne, 3));
         graph.ret(returnsOther, graph.int64(returnsOther, 4));
 
@@ -4222,14 +4343,14 @@ static void testEstimateFrequenciesTakesWayThatReturnsForUnlikely()
         auto isNear = [](double frequency, double expected) {
             return std::abs(frequency - expected) < expected / 1000;
         };
-        double shareThatGoesOn = returnsAreUnlikely ? 0.8 : 0.5;
+        double continuingShare = returnsAreUnlikely ? 0.8 : 0.5;
         CHECK(isNear(root->frequency(), 1));
-        CHECK(isNear(returnsEarly->frequency(), 1 - shareThatGoesOn));
-        CHECK(isNear(goesOn->frequency(), shareThatGoesOn));
-        CHECK(isNear(returnsRarely->frequency(), shareThatGoesOn / 1025));
-        CHECK(isNear(goesOnFurther->frequency(), shareThatGoesOn * 1024 / 1025));
-        CHECK(isNear(returnsOne->frequency(), goesOnFurther->frequency() / 2));
-        CHECK(isNear(returnsOther->frequency(), goesOnFurther->frequency() / 2));
+        CHECK(isNear(returnsEarly->frequency(), 1 - continuingShare));
+        CHECK(isNear(goesOn->frequency(), continuingShare));
+        CHECK(isNear(returnsRarely->frequency(), continuingShare / 1025));
+        CHECK(isNear(continuesFurther->frequency(), continuingShare * 1024 / 1025));
+        CHECK(isNear(returnsOne->frequency(), continuesFurther->frequency() / 2));
+        CHECK(isNear(returnsOther->frequency(), continuesFurther->frequency() / 2));
     }
 }
 
@@ -4358,10 +4479,10 @@ static void testInferSwitchesManyCases()
 
 static void testInferSwitchesStopsAtRareEdge()
 {
-    enum class ThirdTest : uint8_t { IsAsLikelyAsItsPlaceInChain, IsReachedByRareEdge, IsCold };
+    enum class ThirdTest : uint8_t { IsAsLikelyAsChainPosition, IsReachedByRareEdge, IsCold };
     constexpr unsigned degree = 8;
     for (bool isPositionIndependent : { false, true }) {
-        for (ThirdTest thirdTest : { ThirdTest::IsAsLikelyAsItsPlaceInChain, ThirdTest::IsReachedByRareEdge, ThirdTest::IsCold }) {
+        for (ThirdTest thirdTest : { ThirdTest::IsAsLikelyAsChainPosition, ThirdTest::IsReachedByRareEdge, ThirdTest::IsCold }) {
             Procedure proc;
             Graph graph { proc };
             double frequency = 1;
@@ -4385,7 +4506,7 @@ static void testInferSwitchesStopsAtRareEdge()
             CHECK(inferSwitches(proc));
             proc.setPositionIndependent(false);
             validate(proc);
-            bool stops = isPositionIndependent && thirdTest != ThirdTest::IsAsLikelyAsItsPlaceInChain;
+            bool stops = isPositionIndependent && thirdTest != ThirdTest::IsAsLikelyAsChainPosition;
             CHECK_EQ(numberOfValues(proc, Branch), 0u);
             CHECK_EQ(numberOfValues(proc, Switch), stops ? 2u : 1u);
             CHECK_EQ(proc.at(0)->last()->as<SwitchValue>()->numCaseValues(), stops ? 2u : degree);
@@ -4418,13 +4539,13 @@ static void testInferSwitchesIgnoresTestOfOtherValue()
     CHECK_EQ(invoke<int64_t>(*code, 250, 150), -1);
 }
 
-struct LoopWithArms {
-    explicit LoopWithArms(Graph& graph)
+struct LoopWithBranches {
+    explicit LoopWithBranches(Graph& graph)
         : graph(graph)
         , root(graph.proc.addBlock())
         , header(graph.proc.addBlock())
         , arm(graph.proc.addBlock())
-        , rareArm(graph.proc.addBlock(0.01))
+        , rareTarget(graph.proc.addBlock(0.01))
         , latch(graph.proc.addBlock())
         , exit(graph.proc.addBlock())
         , index(graph.proc.addVariable(Int64))
@@ -4444,8 +4565,8 @@ struct LoopWithArms {
         BasicBlock* next = graph.proc.addBlock();
         graph.branch(header, graph.make(header, BitAnd, graph.get(header, index), graph.int64(header, 1)), arm, next);
         graph.jump(arm, next);
-        graph.branch(next, graph.make(next, Equal, graph.get(next, index), graph.int64(next, 1000)), rarely(rareArm), FrequentedBlock(latch));
-        graph.jump(rareArm, latch);
+        graph.branch(next, graph.make(next, Equal, graph.get(next, index), graph.int64(next, 1000)), rarely(rareTarget), FrequentedBlock(latch));
+        graph.jump(rareTarget, latch);
         graph.increase(latch, index, 1);
         graph.branch(latch, graph.make(latch, LessThan, graph.get(latch, index), bound), header, exit);
         graph.ret(exit, graph.get(exit, sum));
@@ -4462,7 +4583,7 @@ struct LoopWithArms {
     BasicBlock* root;
     BasicBlock* header;
     BasicBlock* arm;
-    BasicBlock* rareArm;
+    BasicBlock* rareTarget;
     BasicBlock* latch;
     BasicBlock* exit;
     Variable* index;
@@ -4477,15 +4598,15 @@ static void testHoistLoopInvariantValuesOnlyFromGuaranteedBlocks()
     for (bool isPositionIndependent : { true, false }) {
         Procedure proc;
         Graph graph { proc };
-        LoopWithArms loop(graph);
+        LoopWithBranches loop(graph);
         graph.increase(loop.header, loop.sum, graph.make(loop.header, Mul, loop.operand, loop.operand));
         graph.increase(loop.arm, loop.sum, graph.make(loop.arm, BitOr, loop.operand, loop.bound));
         graph.increase(loop.latch, loop.sum, graph.make(loop.latch, BitXor, loop.operand, loop.bound));
 
         CHECK(loop.hoist(isPositionIndependent));
-        CHECK_EQ(numberOfValuesInLoops(proc, Mul), 0u);
-        CHECK_EQ(numberOfValuesInLoops(proc, BitXor), 0u);
-        CHECK_EQ(numberOfValuesInLoops(proc, BitOr), isPositionIndependent ? 1u : 0u);
+        CHECK_EQ(valueCountInLoops(proc, Mul), 0u);
+        CHECK_EQ(valueCountInLoops(proc, BitXor), 0u);
+        CHECK_EQ(valueCountInLoops(proc, BitOr), isPositionIndependent ? 1u : 0u);
         CHECK_EQ(run(*compileProc(proc), 4, nullptr, 9), 4 * 81 + 2 * (9 | 4) + 4 * (9 ^ 4));
     }
 }
@@ -4500,12 +4621,12 @@ static void testHoistLoopInvariantValuesKeepsLoadsInLoopsWithCalls()
     for (Case testCase : { Case { true, false, false }, Case { true, true, true }, Case { false, false, true } }) {
         Procedure proc;
         Graph graph { proc };
-        LoopWithArms loop(graph);
+        LoopWithBranches loop(graph);
         graph.increase(loop.header, loop.sum, graph.load(loop.header, Int64, loop.pointer, 0, firstHeap));
-        graph.callLikePatchpoint(testCase.callIsRare ? loop.rareArm : loop.latch);
+        graph.callLikePatchpoint(testCase.callIsRare ? loop.rareTarget : loop.latch);
 
         loop.hoist(testCase.isPositionIndependent);
-        CHECK_EQ(numberOfValuesInLoops(proc, Load), testCase.isHoisted ? 0u : 1u);
+        CHECK_EQ(valueCountInLoops(proc, Load), testCase.isHoisted ? 0u : 1u);
         int64_t memory[1] = { 6 };
         CHECK_EQ(run(*compileProc(proc), 4, memory), 24);
     }
@@ -4516,13 +4637,13 @@ static void testHoistLoopInvariantValuesLimitsHoistedLoads()
     for (bool isPositionIndependent : { true, false }) {
         Procedure proc;
         Graph graph { proc };
-        LoopWithArms loop(graph);
+        LoopWithBranches loop(graph);
         constexpr unsigned numberOfLoads = 10;
         for (unsigned i = 0; i < numberOfLoads; ++i)
             graph.increase(loop.header, loop.sum, graph.load(loop.header, Int64, loop.pointer, i * 8, firstHeap));
 
         CHECK(loop.hoist(isPositionIndependent));
-        CHECK_EQ(numberOfValuesInLoops(proc, Load), isPositionIndependent ? 2u : 0u);
+        CHECK_EQ(valueCountInLoops(proc, Load), isPositionIndependent ? 2u : 0u);
         int64_t memory[numberOfLoads] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
         CHECK_EQ(run(*compileProc(proc), 2, memory), 110);
     }
@@ -4534,14 +4655,14 @@ static void testHoistLoopInvariantValuesHoistsImmutableLoadPastStores()
         for (bool isPositionIndependent : { true, false }) {
             Procedure proc;
             Graph graph { proc };
-            LoopWithArms loop(graph);
+            LoopWithBranches loop(graph);
             MemoryValue* loaded = graph.load(loop.header, Int64, loop.pointer, 0, firstHeap);
             loaded->setReadsMutability(mutability);
             graph.increase(loop.header, loop.sum, loaded);
             graph.store(loop.latch, loop.operand, loop.pointer, 8, firstHeap);
 
             loop.hoist(isPositionIndependent);
-            CHECK_EQ(numberOfValuesInLoops(proc, Load), mutability == Mutability::Immutable ? 0u : 1u);
+            CHECK_EQ(valueCountInLoops(proc, Load), mutability == Mutability::Immutable ? 0u : 1u);
             int64_t memory[2] = { 6, 0 };
             CHECK_EQ(run(*compileProc(proc), 4, memory, 3), 24);
             CHECK_EQ(memory[1], 3);
@@ -4785,7 +4906,7 @@ static void testUseCountsDuplicateChild()
 }
 
 template<typename Functor>
-static unsigned numberOfMove32ForZeroExtensionOf(bool isPositionIndependent, const Functor& makeWord)
+static unsigned zeroExtensionMove32Count(bool isPositionIndependent, const Functor& makeWord)
 {
     Procedure proc;
     Graph graph { proc };
@@ -4821,20 +4942,20 @@ static void testRedundantZeroExtension()
         return graph.make(block, Trunc, graph.make(block, Add, wide, wide));
     };
     for (B3::Opcode opcode : { Add, Sub, Mul, BitAnd, BitOr, BitXor, Equal, LessThan, Below }) {
-        CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, binary(opcode)), 0u);
-        CHECK_EQ(numberOfMove32ForZeroExtensionOf(false, binary(opcode)), 1u);
+        CHECK_EQ(zeroExtensionMove32Count(true, binary(opcode)), 0u);
+        CHECK_EQ(zeroExtensionMove32Count(false, binary(opcode)), 1u);
     }
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, shift(Shl, 3)), 0u);
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, shift(ZShr, 31)), 0u);
+    CHECK_EQ(zeroExtensionMove32Count(true, shift(Shl, 3)), 0u);
+    CHECK_EQ(zeroExtensionMove32Count(true, shift(ZShr, 31)), 0u);
 
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, shift(Shl, 0)), 1u);
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, shift(Shl, 32)), 1u);
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, shift(SShr, 3)), 1u);
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, binary(Shl)), 1u);
-    CHECK_EQ(numberOfMove32ForZeroExtensionOf(true, truncation), 1u);
+    CHECK_EQ(zeroExtensionMove32Count(true, shift(Shl, 0)), 1u);
+    CHECK_EQ(zeroExtensionMove32Count(true, shift(Shl, 32)), 1u);
+    CHECK_EQ(zeroExtensionMove32Count(true, shift(SShr, 3)), 1u);
+    CHECK_EQ(zeroExtensionMove32Count(true, binary(Shl)), 1u);
+    CHECK_EQ(zeroExtensionMove32Count(true, truncation), 1u);
 }
 
-static void testBranchOnWhetherExactSumIsInt32()
+static void testBranchOnExactSumFitsInt32()
 {
     enum class Right : uint8_t { IsWord, IsConstant, IsWideConstant };
     struct Case {
@@ -4845,7 +4966,7 @@ static void testBranchOnWhetherExactSumIsInt32()
     };
     constexpr int64_t constant = 100;
     constexpr int64_t wideConstant = 1ll << 31;
-    constexpr int64_t markOfOverflow = 1ll << 40;
+    constexpr int64_t overflowMarker = 1ll << 40;
     auto build = [&](Procedure& proc, Case testCase, bool isPositionIndependent) {
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
@@ -4863,7 +4984,7 @@ static void testBranchOnWhetherExactSumIsInt32()
         else
             graph.branch(root, isInt32, rarely(overflows), FrequentedBlock(fits));
         graph.ret(fits, wanted ? wanted : graph.make(fits, ZExt32, low));
-        graph.ret(overflows, graph.make(overflows, Add, wanted ? wanted : graph.make(overflows, ZExt32, low), graph.int64(overflows, markOfOverflow)));
+        graph.ret(overflows, graph.make(overflows, Add, wanted ? wanted : graph.make(overflows, ZExt32, low), graph.int64(overflows, overflowMarker)));
         proc.resetReachability();
         proc.setPositionIndependent(isPositionIndependent);
     };
@@ -4891,7 +5012,7 @@ static void testBranchOnWhetherExactSumIsInt32()
                                 int64_t x = static_cast<int32_t>(a);
                                 int64_t y = right == Right::IsWord ? static_cast<int64_t>(static_cast<int32_t>(b)) : right == Right::IsConstant ? constant : wideConstant;
                                 int64_t sum = opcode == Add ? x + y : x - y;
-                                int64_t expected = static_cast<int64_t>(static_cast<uint32_t>(sum)) + (sum == static_cast<int32_t>(sum) ? 0 : markOfOverflow);
+                                int64_t expected = static_cast<int64_t>(static_cast<uint32_t>(sum)) + (sum == static_cast<int32_t>(sum) ? 0 : overflowMarker);
                                 CHECK_EQ(invoke<int64_t>(*code, a, b), expected);
                             }
                         }
@@ -5059,7 +5180,7 @@ static void checkReadStaysBelowNullCheck(const Functor& appendRead)
     CHECK_EQ(invoke<int64_t>(*code, words, 3), 2);
 }
 
-static void testHoistableLoadStaysBelowNullCheckOfItsBase()
+static void testHoistableLoadStaysBelowBaseNullCheck()
 {
     for (bool addsOffset : { false, true }) {
         checkReadStaysBelowNullCheck([&](Graph& graph, BasicBlock* block, Value* pointer) -> Value* {
@@ -5071,7 +5192,7 @@ static void testHoistableLoadStaysBelowNullCheckOfItsBase()
     }
 }
 
-static void testHoistablePatchpointStaysBelowNullCheckOfItsOperand()
+static void testHoistablePatchpointStaysBelowOperandNullCheck()
 {
     checkReadStaysBelowNullCheck([](Graph& graph, BasicBlock* block, Value* pointer) -> Value* {
         PatchpointValue* patchpoint = graph.emptyPatchpoint(block, Int64);
@@ -5184,7 +5305,7 @@ static void testLoopPhasesArraySum()
 
     Vector<unsigned> numberOfLoads;
     auto code = compileWithLoopPhases(proc, [&](Procedure& optimized) {
-        numberOfLoads = numberOfValuesInEachLoop(optimized, Load);
+        numberOfLoads = valueCountInEachLoop(optimized, Load);
     });
     CHECK(numberOfLoads.size() >= 2);
     CHECK_EQ(numberOfLoads.first(), 1u);
@@ -5221,13 +5342,13 @@ static void testLoopPhasesFoldTestsImpliedByLoopCondition()
     loop.endBody(block);
 
     unsigned numberOfBranchesInLoops = 0;
-    bool hasDeadArms = true;
+    bool hasDeadTargets = true;
     auto code = compileWithLoopPhases(proc, [&](Procedure& optimized) {
-        numberOfBranchesInLoops = numberOfValuesInLoops(optimized, Branch);
-        hasDeadArms = hasInt64Constant(optimized, 1000) || hasInt64Constant(optimized, 2000);
+        numberOfBranchesInLoops = valueCountInLoops(optimized, Branch);
+        hasDeadTargets = hasInt64Constant(optimized, 1000) || hasInt64Constant(optimized, 2000);
     });
     CHECK_EQ(numberOfBranchesInLoops, 1u);
-    CHECK(!hasDeadArms);
+    CHECK(!hasDeadTargets);
     for (int64_t bound : { -1, 0, 1, 7 })
         CHECK_EQ(run(*code, bound), std::max<int64_t>(bound, 0) * 11);
 }
@@ -5522,9 +5643,9 @@ private:
             case 0:
                 return make(BitwiseCast, result);
             case 1:
-                return make(SExt32, convertToInteger(result, Int32, keyOfConversionToInt32));
+                return make(SExt32, convertToInteger(result, Int32, toInt32ConversionKey));
             case 2:
-                return convertToInteger(result, Int64, keyOfTruncationToInt64);
+                return convertToInteger(result, Int64, toInt64TruncationKey);
             default:
                 return convertToInteger(result, Int64, 0);
             }
@@ -5826,14 +5947,14 @@ private:
             if (!isTerminal)
                 return;
             CCallHelpers::Jump toRareSuccessor = jit.branchTest64(CCallHelpers::NonZero, twice, CCallHelpers::TrustedImm32(1));
-            CCallHelpers::Jump toUsualSuccessor;
+            CCallHelpers::Jump toLikelySuccessor;
             if (!params.fallsThroughToSuccessor(0))
-                toUsualSuccessor = jit.jump();
+                toLikelySuccessor = jit.jump();
             Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
             params.addLatePath([=](CCallHelpers& jit) {
                 toRareSuccessor.linkTo(*labels[1], &jit);
-                if (toUsualSuccessor.isSet())
-                    toUsualSuccessor.linkTo(*labels[0], &jit);
+                if (toLikelySuccessor.isSet())
+                    toLikelySuccessor.linkTo(*labels[0], &jit);
             });
         });
         if (hasTwoSuccessors) {
@@ -6110,7 +6231,7 @@ private:
         m_block = newBlock();
     }
 
-    void branchArm(BasicBlock* block, double scale, unsigned depth, BasicBlock* join)
+    void branchTarget(BasicBlock* block, double scale, unsigned depth, BasicBlock* join)
     {
         SetForScope frequency(m_frequency, m_frequency * scale);
         size_t availableValueCount = m_available.size();
@@ -6132,15 +6253,15 @@ private:
         bool thenIsRare = shape < 25;
         bool hasElse = chance(50);
         bool elseIsRare = hasElse && shape >= 25 && shape < 35;
-        double scaleOfThen = thenIsRare ? rareFrequencyScale : 0.5;
-        double scaleOfElse = elseIsRare ? rareFrequencyScale : 0.5;
-        BasicBlock* thenBlock = newBlock(scaleOfThen);
+        double thenScale = thenIsRare ? rareFrequencyScale : 0.5;
+        double elseScale = elseIsRare ? rareFrequencyScale : 0.5;
+        BasicBlock* thenBlock = newBlock(thenScale);
         BasicBlock* join = newBlock();
-        BasicBlock* elseBlock = hasElse ? newBlock(scaleOfElse) : join;
+        BasicBlock* elseBlock = hasElse ? newBlock(elseScale) : join;
         branch(predicate, FrequentedBlock(thenBlock, thenIsRare ? FrequencyClass::Rare : FrequencyClass::Normal), FrequentedBlock(elseBlock, elseIsRare ? FrequencyClass::Rare : FrequencyClass::Normal));
-        branchArm(thenBlock, scaleOfThen, depth, join);
+        branchTarget(thenBlock, thenScale, depth, join);
         if (hasElse)
-            branchArm(elseBlock, scaleOfElse, depth, join);
+            branchTarget(elseBlock, elseScale, depth, join);
         m_block = join;
     }
 
@@ -6188,7 +6309,7 @@ private:
             begin = end;
         }
         for (BasicBlock* block : arms)
-            branchArm(block, scale, std::min(depth, 1u), join);
+            branchTarget(block, scale, std::min(depth, 1u), join);
         m_block = join;
     }
 
@@ -6218,7 +6339,7 @@ private:
             m_block = next;
         }
         for (BasicBlock* block : arms)
-            branchArm(block, 0.2, 0, join);
+            branchTarget(block, 0.2, 0, join);
         m_block = join;
     }
 
@@ -6664,7 +6785,7 @@ private:
         if (chance(20))
             predicate = make(Equal, predicate, predicate->type() == Int32 ? int32(0) : int64(0));
         branch(predicate, FrequentedBlock(taken), FrequentedBlock(after));
-        branchArm(taken, 0.5, depth, after);
+        branchTarget(taken, 0.5, depth, after);
         m_block = after;
     }
 
@@ -7130,14 +7251,14 @@ public:
 
         Version versions[5];
         for (auto& version : std::span(versions).first(4)) {
-            RandomProgram(version.proc, m_seed, version.state, m_hasCallShapes, !compilesAsDriverDoes, &version == &versions[2]);
+            RandomProgram(version.proc, m_seed, version.state, m_hasCallShapes, !compilesLikeDriver, &version == &versions[2]);
             version.proc.setPositionIndependent();
             version.proc.setMaterializesConstantsByFrequency();
             version.proc.setRotatesLoops();
             if (chance(70)) {
                 version.proc.code().setChargesForCalleeSaves();
-                version.proc.code().setLaysRareBlocksInGaps();
-                version.proc.code().setNotesStartOfRareCode();
+                version.proc.code().setPlacesRareBlocksInGaps();
+                version.proc.code().setRecordsRareCodeStart();
             }
             if (chance(50)) {
                 version.proc.pinRegister(GPRInfo::numberTagRegister);
@@ -7148,15 +7269,15 @@ public:
             }));
         }
         versions[0].name = "at level 2"_s;
-        versions[0].code = compileAsDriverDoes(versions[0].proc, 2);
+        versions[0].code = compileLikeDriver(versions[0].proc, 2);
         versions[1].name = "at level 1"_s;
-        versions[1].code = compileAsDriverDoes(versions[1].proc, 1);
+        versions[1].code = compileLikeDriver(versions[1].proc, 1);
         versions[2].name = "after a random subset of the phases, then at level 0"_s;
         runRandomPhases(versions[2].proc, versions[2].name);
-        versions[2].code = compileAsDriverDoes(versions[2].proc, 0);
+        versions[2].code = compileLikeDriver(versions[2].proc, 0);
         versions[3].name = "after a random subset of the phases, then at level 2"_s;
         runRandomPhases(versions[3].proc, versions[3].name);
-        versions[3].code = compileAsDriverDoes(versions[3].proc, 2);
+        versions[3].code = compileLikeDriver(versions[3].proc, 2);
         versions[4].name = "at level 2, not position-independent"_s;
         RandomProgram(versions[4].proc, m_seed, versions[4].state, m_hasCallShapes, true, false);
         versions[4].code = compileProc(versions[4].proc, 2);
@@ -7190,23 +7311,23 @@ public:
 
 private:
 #if ENABLE(AOT)
-    static constexpr bool compilesAsDriverDoes = true;
+    static constexpr bool compilesLikeDriver = true;
 #else
-    static constexpr bool compilesAsDriverDoes = false;
+    static constexpr bool compilesLikeDriver = false;
 #endif
 
-    std::unique_ptr<Compilation> compileAsDriverDoes(Procedure& proc, unsigned level)
+    std::unique_ptr<Compilation> compileLikeDriver(Procedure& proc, unsigned level)
     {
 #if ENABLE(AOT)
         proc.setOptLevel(level);
         generateToAir(proc);
-        AOT::Typed::placeResultsOfInvokes(proc.code());
+        AOT::Typed::placeInvokeResults(proc.code());
         Air::prepareForGeneration(proc.code());
         if (level) {
             AOT::Typed::resequenceMovesBeforePatches(proc.code());
             AOT::Typed::mergeIdenticalBlocks(proc.code());
             if (chance(50))
-                AOT::Typed::returnInPlaceOfJumpingToAReturn(proc.code());
+                AOT::Typed::duplicateReturnsIntoJumps(proc.code());
         }
         CCallHelpers jit;
         generate(proc, jit);
@@ -7437,14 +7558,14 @@ private:
             sometimes(runSimplifyTerminals);
             sometimes(runEliminateDeadCode);
         }
-        Vector<BasicBlock*> headersOfVersionsTestedAtTheTop;
-        if (often([&] { return versionLoops(proc, headersOfVersionsTestedAtTheTop); })) {
+        Vector<BasicBlock*> topTestedVersionHeaders;
+        if (often([&] { return versionLoops(proc, topTestedVersionHeaders); })) {
             always(runFixSSA);
             sometimes(runEliminatePhiCycles);
-            sometimes([&] { return narrowPhisOfExtendedWords(proc); });
-            sometimes([&] { return foldComparisonsWithWhatIsOutOfRange(proc); });
+            sometimes([&] { return narrowExtendedWordPhis(proc); });
+            sometimes([&] { return foldOutOfRangeComparisons(proc); });
             sometimes(runEliminateDeadCode);
-            if (!headersOfVersionsTestedAtTheTop.isEmpty() && often([&] { return rotateLoops(proc, &headersOfVersionsTestedAtTheTop); })) {
+            if (!topTestedVersionHeaders.isEmpty() && often([&] { return rotateLoops(proc, &topTestedVersionHeaders); })) {
                 always(runFixSSA);
                 sometimes(runFoldPathConstants);
                 sometimes(runSimplifyTerminals);
@@ -7478,7 +7599,7 @@ static void testRandomPrograms(unsigned part)
         RandomProgramChecker(firstSeed + i).run();
 }
 
-static void testRandomProgramsThatOnceFailed()
+static void testRandomProgramRegressions()
 {
     for (unsigned seed : { 198695u, 209039u, 343103u, 371708u, 471095u, 537269u, 835893u, 872292u, 1108466u, 1306836u, 1516518u, 1694723u, 1931155u, 2322767u, 2531676u, 3410061u, 3489678u }) {
         RandomProgramChecker(seed, false).run();
@@ -7500,36 +7621,39 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testFoldComparisonsWithBounds());
     RUN(testFoldComparisonsWithBoundsKeepsUnrelatedComparisons());
     RUN(testFoldComparisonsWithBoundsRequiresRelationOnEntry());
-    RUN(testFoldComparisonsWithWhatLoopThatCountsDownStartsBelow());
-    RUN(testFoldComparisonsOfNeighbourOfLoopVariableWithLimit());
-    RUN(testFoldComparisonsOfNeighbourWithLimitLoadedAtLoopTest());
-    RUN(testFoldComparisonsKeepsNeighbourThatMayBeOutside());
-    RUN(testFoldComparisonsKeepsWhatLoopThatCountsDownMayNotBeBelow());
+    RUN(testFoldComparisonsWithCountdownLoopStartBound());
+    RUN(testFoldComparisonsOfLoopVariableNeighborWithLimit());
+    RUN(testFoldComparisonsOfNeighborWithLimitLoadedAtLoopTest());
+    RUN(testFoldComparisonsKeepsPossiblyOutOfRangeNeighbor());
+    RUN(testFoldComparisonsKeepsUnprovenBoundOfCountdownLoop());
     RUN(testAnalyzeCountedLoop());
     RUN(testEliminateRedundantPhiCycles());
-    RUN(testNarrowPhisOfExtendedWords());
-    RUN(testFoldComparisonsWithWhatIsOutOfRange());
+    RUN(testNarrowExtendedWordPhis());
+    RUN(testNarrowExtendedWordPhisThroughPhiInRareBlock());
+    RUN(testFoldOutOfRangeComparisons());
     RUN(testVersionLoopsHoistsLoadAndGuard());
-    RUN(testVersionLoopsHoistsGuardOnWhatStandsAheadOfLoop());
-    RUN(testVersionLoopsSkipsLoopWithOneValueToHoistThatIsNoGuard());
+    RUN(testVersionLoopsHoistsGuardOnValueBeforeLoop());
+    RUN(testVersionLoopsSkipsLoopWithSingleNonGuardHoist());
     RUN(testVersionLoopsHoistsLoadPastStoreToDisjointHeap());
     RUN(testVersionLoopsKeepsLoadClobberedByLoop());
     RUN(testVersionLoopsSkipsLoopWithCall());
     RUN(testVersionLoopsSkipsLargeLoop());
-    RUN(testVersionLoopsKeepsDeepArmOfChainInFastVersion());
+    RUN(testVersionLoopsKeepsDeepChainTargetInFastVersion());
     RUN(testVersionLoopsSkipsLoopWithNothingToHoist());
     RUN(testVersionLoopsOnlyInnermostLoops());
-    RUN(testVersionLoopsRareEdgeContinuesInOriginalLoopWhereItsWayCannotBeCloned());
-    RUN(testVersionLoopsRareWayThatCanBeClonedComesBackAheadOfFastVersion());
-    RUN(testVersionLoopsPhiWithOneInputInFastVersionIsReadAnewInExcursion());
-    RUN(testVersionLoopsTurnsThatEndInExcursionCountTowardsStrip());
-    RUN(testVersionLoopsHoistsLoadThatRepeatsLoadAheadOfLoop());
-    RUN(testVersionLoopsSeesPhiWithOneInputInFastVersionOfLoopThatIsNotCounted());
+    RUN(testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop());
+    RUN(testVersionLoopsCloneableRarePathReturnsToFastVersion());
+    RUN(testVersionLoopsSkipsLoopWithInvariantBackEdgeTest());
+    RUN(testVersionLoopsReloadsSingleInputPhiInExcursion());
+    RUN(testVersionLoopsExcursionIterationsCountTowardStrip());
+    RUN(testVersionLoopsCountsLoopWithBoundLoadedBeforeAndAtBottom());
+    RUN(testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop());
+    RUN(testVersionLoopsResolvesSingleInputPhiInUncountedLoop());
     RUN(testVersionLoopsUnswitchesInvariantBranch());
     RUN(testVersionLoopsKeepsVariantBranch());
     RUN(testVersionLoopsStripMinesPollInFastVersion());
     RUN(testStripMineLoopsPollsOncePerStrip());
-    RUN(testEndOfFirstStripFromZeroToZeroExtendedBound());
+    RUN(testFirstStripEndFromZeroToZeroExtendedBound());
     RUN(testStripMineLoopsAllRelationsAndSteps());
     RUN(testStripMineLoopsRequiresPollGenerator());
     RUN(testStripMineLoopsSkipsLoopWithTwoPolls());
@@ -7537,16 +7661,16 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testStripMineLoopsSkipsPollWithSharedLimit());
     RUN(testSinkValuesMovesValueIntoRareUser());
     RUN(testSinkValuesClonesValueForTwoRareUsers());
-    RUN(testSinkValuesClonesPatchpointForTwoRareUsersOnlyIfItIsPureFunctionOfKey());
+    RUN(testSinkValuesClonesOnlyPureKeyedPatchpointForTwoRareUsers());
     RUN(testSinkValuesKeepsValueUsedOnHotPath());
-    RUN(testSinkValuesKeepsValueWhoseUserIsAsFrequent());
+    RUN(testSinkValuesKeepsValueWithEquallyFrequentUser());
     RUN(testSinkValuesKeepsValueUsedInSameBlock());
     RUN(testSinkValuesKeepsLoads());
     RUN(testSinkValuesKeepsOpaque());
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
-    RUN(testSinkValuesSinksBehindAndBetweenCyclesWithTwoEntries());
-    RUN(testSinkValuesDoesNotSinkIntoCycleWithTwoEntries());
+    RUN(testSinkValuesSinksAfterAndBetweenIrreducibleCycles());
+    RUN(testSinkValuesDoesNotSinkIntoIrreducibleCycle());
     RUN(testCycleForestNestedLoops());
     RUN(testCycleForestAcyclic());
     RUN(testCycleForestIrreducibleCycle());
@@ -7567,27 +7691,27 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testDoubleComparisonsOfNonIntegersAreKept());
     RUN(testBitwiseDoubleComparisonsRespectNegativeZero());
     RUN(testComparisonsFoldedByIntegerRange());
-    RUN(testRangesOfShiftsByAnyAmount());
-    RUN(testTruncOfWordShiftedLeftAndBackByAnyAmount());
+    RUN(testVariableShiftRanges());
+    RUN(testTruncOfVariableShiftLeftAndBack());
     RUN(testDoubleToIntegerConversionsOfConvertedIntegers());
     RUN(testSeparateIntegerPathsFoldsConversionBackToInteger());
     RUN(testSeparateIntegerPathsFollowsSumsIntoLaterBlocks());
-    RUN(testSeparateIntegerPathsCopiesNothingBehindLastUse());
+    RUN(testSeparateIntegerPathsCopiesNothingAfterLastUse());
     RUN(testSeparateIntegerPathsStopsAtCallSite());
     RUN(testSeparateIntegerPathsKeepsJoinOfLikelyPaths());
     RUN(testSeparateIntegerPathsKeepsNumberThatStaysDouble());
-    RUN(testSeparateIntegerPathsLeavesJoinOfOnePath());
-    RUN(testSeparateIntegerPathsOfNumberAskedWhetherItIsTruthy());
-    RUN(testSeparateIntegerPathsOfTwoNumbersReadOneBehindTheOther());
+    RUN(testSeparateIntegerPathsKeepsSinglePathJoin());
+    RUN(testSeparateIntegerPathsOfTruthinessTest());
+    RUN(testSeparateIntegerPathsOfTwoConsecutiveReads());
     RUN(testSeparateIntegerPathsInsideLoop());
     RUN(testComparisonsOfConvertedIntegersWithUnorderedResults());
     RUN(testPurePatchpointsAreValueNumbered());
-    RUN(testConversionToDoubleTakesWordThatWasSignExtended());
+    RUN(testConversionToDoubleUsesSignExtendedWord());
     RUN(testBitwiseOperationsOnSignExtendedWordsAreNarrowed());
     RUN(testEqualityOfExtendedWordsIsNarrowed());
     RUN(testShiftsAndSwitchesOfExtendedWordsAreNarrowed());
-    RUN(testReduceStrengthKnowsRangeOfWhatNarrowLoadYields());
-    RUN(testReduceStrengthAnswersWhetherWholeNumberMadeOfNarrowLoadFitsInt32());
+    RUN(testReduceStrengthKnowsNarrowLoadRange());
+    RUN(testReduceStrengthFoldsInt32CheckOfIntegralNarrowLoad());
     RUN(testReduceStrengthMergesBlockChain());
     RUN(testReduceStrengthEliminatesSingleValuePhi());
     RUN(testMemoryNumberingWhenEdgeIntoJoinIsRemoved());
@@ -7596,24 +7720,24 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testMoveConstantsPositionIndependentDoubles());
     RUN(testDuplicateTailsThreadsJumpOnConstantPhi());
     RUN(testDuplicateTailsThreadsJumpDecidedByDominatingBranch());
-    RUN(testDuplicateTailsFollowsTestsOfOneValue());
-    RUN(testDuplicateTailsFollowsTestsThroughPhisOnThePath());
+    RUN(testDuplicateTailsFollowsTestsOfSameValue());
+    RUN(testDuplicateTailsFollowsTestsThroughPhisOnPath());
     RUN(testDuplicateTailsThreadsJumpOnVariableSetOnPath());
-    RUN(testDuplicateTailsReadsVariableAsLastSetAheadOfGet());
+    RUN(testDuplicateTailsReadsLastSetBeforeGet());
     RUN(testDuplicateTailsKeepsTestOfVariableNotSetOnPath());
-    RUN(testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps());
-    RUN(testDuplicateTailsFollowsPhiHandedOnByBlockThatJumps());
+    RUN(testDuplicateTailsFollowsTestsAfterJumpOnlyJoin());
+    RUN(testDuplicateTailsFollowsPhiForwardedByJumpBlock());
     RUN(testDuplicateTailsStopsFollowingAtUndecidedTest());
-    RUN(testDuplicateTailsFollowsTestsBehindTestCopiedUndecided());
-    RUN(testDuplicateTailsFollowsTestsBehindDecidedAndCopiedTests());
-    RUN(testDuplicateTailsKeepsPhiThatOnlyItsBlockUses());
-    RUN(testDuplicateTailsDemotesPhiThatAnotherBlockUses());
-    RUN(testDuplicateTailsDemotesPhiWhoseUpsilonStandsAheadOfBranch());
+    RUN(testDuplicateTailsFollowsTestsAfterUndecidedCopiedTest());
+    RUN(testDuplicateTailsFollowsTestsAfterDecidedAndCopiedTests());
+    RUN(testDuplicateTailsKeepsBlockLocalPhi());
+    RUN(testDuplicateTailsDemotesPhiUsedByAnotherBlock());
+    RUN(testDuplicateTailsDemotesPhiWithUpsilonBeforeBranch());
     RUN(testDuplicateTailsKeepsUndecidedTest());
     RUN(testDuplicateTailsSkipsTailWithPatchpoint());
     RUN(testDuplicateTailsSkipsLoopHeader());
     RUN(testFoldPathConstantsFoldsSelect());
-    RUN(testEstimateFrequenciesTakesWayThatReturnsForUnlikely());
+    RUN(testEstimateFrequenciesTreatsReturningPathAsUnlikely());
     RUN(testSwitchInPositionIndependentCode());
     RUN(testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction());
     RUN(testInferSwitchesManyCases());
@@ -7633,12 +7757,12 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testCompilationCohortCompilesProcedures());
     RUN(testUseCountsDuplicateChild());
     RUN(testRedundantZeroExtension());
-    RUN(testBranchOnWhetherExactSumIsInt32());
+    RUN(testBranchOnExactSumFitsInt32());
     RUN(testZeroExtensionClearsUpperHalfInPositionIndependentCode());
     RUN(testSignExtendingLoad32());
     RUN(testDominatorsAfterLoopHeaderBecomesJump());
-    RUN(testHoistableLoadStaysBelowNullCheckOfItsBase());
-    RUN(testHoistablePatchpointStaysBelowNullCheckOfItsOperand());
+    RUN(testHoistableLoadStaysBelowBaseNullCheck());
+    RUN(testHoistablePatchpointStaysBelowOperandNullCheck());
     RUN(testLow32BitsOfLoad64WithScaledIndex());
     RUN(testSelectOnInt64WithZeroLowHalf());
     RUN(testDeclaredWidthsOf64BitSources());
@@ -7662,7 +7786,7 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testRandomPrograms(13));
     RUN(testRandomPrograms(14));
     RUN(testRandomPrograms(15));
-    RUN(testRandomProgramsThatOnceFailed());
+    RUN(testRandomProgramRegressions());
 }
 
 #endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)

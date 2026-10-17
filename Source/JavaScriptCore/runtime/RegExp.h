@@ -73,8 +73,8 @@ public:
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     static RegExp* tryCreateFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>);
-    static RegExp* createWithTextInPieces(VM&, const AOT::ImageRegExp&, OptionSet<Yarr::Flags>);
-    void setIsLiteralOfCompiledProgram() { m_isLiteralOfCompiledProgram = true; }
+    static RegExp* createWithSourceInPieces(VM&, const AOT::ImageRegExp&, OptionSet<Yarr::Flags>);
+    void setIsCompiledProgramLiteral() { m_isCompiledProgramLiteral = true; }
 #endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
@@ -110,7 +110,7 @@ public:
         ensurePattern();
         return m_patternString;
     }
-    bool hasTextInPieces() const { return m_patternString.isNull(); }
+    bool hasSourceInPieces() const { return m_patternString.isNull(); }
 
     bool isValid() const { return !Yarr::hasError(m_constructionErrorCode); }
     ASCIILiteral errorMessage() const { return Yarr::errorMessage(m_constructionErrorCode); }
@@ -260,7 +260,7 @@ private:
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     bool takeCodeFromImage(VM&);
-    void crashIfLiteralOfCompiledProgramIsInterpreted() const;
+    void crashIfCompiledProgramLiteralIsInterpreted() const;
 #endif
 
     enum RegExpState : uint8_t {
@@ -299,18 +299,18 @@ private:
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
         WriteBarrierStructureID m_cachedGroupsStructureID;
-        const AOT::ImageRegExp* m_recordOfTextInPieces { nullptr };
+        const AOT::ImageRegExp* m_recordWithSourceInPieces { nullptr };
     };
 
     void ensurePattern() const
     {
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-        if (hasTextInPieces()) [[unlikely]]
-            makePatternOfPieces();
+        if (hasSourceInPieces()) [[unlikely]]
+            materializePatternFromPieces();
 #endif
     }
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    JS_EXPORT_PRIVATE void makePatternOfPieces() const;
+    JS_EXPORT_PRIVATE void materializePatternFromPieces() const;
 #endif
 
     mutable String m_patternString;
@@ -319,7 +319,7 @@ private:
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     Yarr::SpecificPattern m_specificPattern : 6 { Yarr::SpecificPattern::None };
     bool m_sourceIsPattern : 1 { false };
-    bool m_isLiteralOfCompiledProgram : 1 { false };
+    bool m_isCompiledProgramLiteral : 1 { false };
 #else
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
 #endif

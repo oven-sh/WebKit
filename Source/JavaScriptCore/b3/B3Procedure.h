@@ -164,7 +164,7 @@ public:
     void LEGACY_NODELETE resetValueOwners();
     JS_EXPORT_PRIVATE void resetReachability();
 #if USE(BUN_JSC_ADDITIONS)
-    void resetReachabilityBehindContractions();
+    void resetReachabilityAfterContractions();
 #endif
 
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you

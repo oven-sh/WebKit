@@ -15,10 +15,10 @@ class Code;
 
 namespace AOT { namespace Typed {
 
-void placeResultsOfInvokes(B3::Air::Code&);
+void placeInvokeResults(B3::Air::Code&);
 void resequenceMovesBeforePatches(B3::Air::Code&);
 void mergeIdenticalBlocks(B3::Air::Code&);
-void returnInPlaceOfJumpingToAReturn(B3::Air::Code&);
+void duplicateReturnsIntoJumps(B3::Air::Code&);
 
 } } } // namespace JSC::AOT::Typed
 

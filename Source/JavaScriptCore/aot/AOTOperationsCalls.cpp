@@ -70,14 +70,14 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* instance, uint32_t index))
 {
     countOperationNamed(instance, __func__);
-    instance->ensureDataIfThereIsRoom(index);
+    instance->tryEnsureData(index);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilledSlots, void, (Data* data))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidFillSlots, void, (Data* data))
 {
     countOperationNamed(data->instance, __func__);
     if (!data->hasBeenFilledSinceLastCollection)
-        data->noteFilled();
+        data->didFill();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance))

@@ -106,7 +106,7 @@ public:
     static constexpr ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(GCSegmentedArray, m_top); }
     static constexpr ptrdiff_t offsetOfDataInSegment() { return sizeof(GCArraySegment<T>); }
     static constexpr size_t segmentCapacity() { return s_segmentCapacity; }
-    bool headSegmentIsAtItsOffset() const { return *std::bit_cast<GCArraySegment<T>* const*>(std::bit_cast<const char*>(this) + offsetOfHeadSegment()) == m_segments.head(); }
+    bool headSegmentOffsetIsValid() const { return *std::bit_cast<GCArraySegment<T>* const*>(std::bit_cast<const char*>(this) + offsetOfHeadSegment()) == m_segments.head(); }
 
 protected:
     template <size_t size> struct CapacityFromSize {

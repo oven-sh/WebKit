@@ -27,7 +27,7 @@ runtime ArrayGrow : Heap size_t (JSCell* array, uint32_t length) noexcept
 runtime AllocateStorage : RuntimeState void* (uint64_t size) noexcept
 runtime ArrayUnshift : Heap EncodedJSValue (JSCell* array, EncodedJSValue item)
 runtime ArrayJoin : RuntimeState JSCell* (JSCell* array, JSCell* separator)
-runtime NewEntriesOfArray : RuntimeState JSCell* (JSCell* array)
+runtime NewArrayEntries : RuntimeState JSCell* (JSCell* array)
 runtime ArrayFromTypedArray : RuntimeState JSCell* (JSCell* view, uint32_t indexingType)
 runtime ArrayIndexOfDouble : Nothing size_t (JSCell* array, double searched) noexcept
 runtime ArrayIndexOfInt32 : Nothing size_t (JSCell* array, EncodedJSValue searched) noexcept
@@ -35,7 +35,8 @@ runtime NewArrayBufferFromData : RuntimeState JSCell* (uint32_t offset, uint32_t
 runtime UpdateVectorLengthHint : RuntimeState void (JSCell* array, uint32_t offset) noexcept
 runtime ReviewVectorLengthHint : RuntimeState void (uint32_t offset) noexcept
 runtime NewArrayWithIndexingType : RuntimeState JSCell* (uint32_t count, const EncodedJSValue* values, uint32_t indexingType)
-runtime NewArrayOfConstants : RuntimeState JSCell* (uint32_t literal, uint32_t indexingType)
+runtime NewArrayFromDoubles : RuntimeState JSCell* (uint32_t countAndNumberMask, double, double, double, double)
+runtime NewConstantArray : RuntimeState JSCell* (uint32_t literal, uint32_t indexingType)
 
 construct Array () -> new Array/N ; Allocates ; Inline(ArrayOf)
 construct Array (number!) -> new Array/N ; MayThrow Allocates ; Inline(ArrayWithLength)

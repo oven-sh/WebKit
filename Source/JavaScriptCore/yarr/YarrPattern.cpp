@@ -1267,10 +1267,10 @@ class YarrPatternConstructor {
 
 public:
 #if USE(BUN_JSC_ADDITIONS)
-    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags, StackCheck* stackCheckOfCaller)
+    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags, StackCheck* callerStackCheck)
         : m_pattern(pattern)
         , m_baseCharacterClassConstructor(pattern.ignoreCase(), pattern.compileMode())
-        , m_stackCheckOfCaller(stackCheckOfCaller)
+        , m_callerStackCheck(callerStackCheck)
         , m_initialFlags(flags)
     {
 #else
@@ -2456,7 +2456,7 @@ public:
     //     Instead we fixup the offsets, if needed, at the top of the next alternative's
     //     matching JIT code.
 #if USE(BUN_JSC_ADDITIONS)
-    void markLastTermOfAssertion(PatternAlternative& alternative)
+    void markAssertionLastTerm(PatternAlternative& alternative)
     {
         if (alternative.m_terms.isEmpty())
             return;
@@ -2468,39 +2468,39 @@ public:
             return;
         }
         if (last.type == PatternTerm::Type::ParenthesesSubpattern && last.quantityType == QuantifierType::FixedCount && last.quantityMinCount == 1 && last.quantityMaxCount == 1 && last.parentheses.disjunction->m_alternatives.size() == 1)
-            markLastTermOfAssertion(*last.parentheses.disjunction->m_alternatives[0]);
+            markAssertionLastTerm(*last.parentheses.disjunction->m_alternatives[0]);
     }
 
-    struct PlaceInPattern {
+    struct PatternPosition {
         const PatternAlternative* alternative;
-        size_t numberOfTermsAhead;
-        const PlaceInPattern* placeOfGroup;
+        size_t precedingTermCount;
+        const PatternPosition* groupPosition;
     };
 
-    static bool isTakenOnce(const PatternTerm& term)
+    static bool isMatchedExactlyOnce(const PatternTerm& term)
     {
         return term.quantityType == QuantifierType::FixedCount && term.quantityMinCount == 1 && term.quantityMaxCount == 1;
     }
 
     static bool isLookaheadThatCaptures(const PatternTerm& term, unsigned subpatternId)
     {
-        if (term.type != PatternTerm::Type::ParentheticalAssertion || term.invert() || term.matchDirection() != Forward || !isTakenOnce(term) || term.parentheses.disjunction->m_alternatives.size() != 1)
+        if (term.type != PatternTerm::Type::ParentheticalAssertion || term.invert() || term.matchDirection() != Forward || !isMatchedExactlyOnce(term) || term.parentheses.disjunction->m_alternatives.size() != 1)
             return false;
         auto& inner = term.parentheses.disjunction->m_alternatives[0]->m_terms;
-        return inner.size() == 1 && inner[0].type == PatternTerm::Type::ParenthesesSubpattern && inner[0].capture() && inner[0].parentheses.subpatternId == subpatternId && isTakenOnce(inner[0]);
+        return inner.size() == 1 && inner[0].type == PatternTerm::Type::ParenthesesSubpattern && inner[0].capture() && inner[0].parentheses.subpatternId == subpatternId && isMatchedExactlyOnce(inner[0]);
     }
 
-    static bool wasJustCaptured(PlaceInPattern place, unsigned subpatternId, unsigned depth)
+    static bool wasJustCaptured(PatternPosition place, unsigned subpatternId, unsigned depth)
     {
         for (;;) {
-            if (!place.numberOfTermsAhead) {
-                if (!place.placeOfGroup)
+            if (!place.precedingTermCount) {
+                if (!place.groupPosition)
                     return false;
-                place = *place.placeOfGroup;
+                place = *place.groupPosition;
                 continue;
             }
-            auto& previous = place.alternative->m_terms[place.numberOfTermsAhead - 1];
-            --place.numberOfTermsAhead;
+            auto& previous = place.alternative->m_terms[place.precedingTermCount - 1];
+            --place.precedingTermCount;
             switch (previous.type) {
             case PatternTerm::Type::AssertionBOL:
             case PatternTerm::Type::AssertionEOL:
@@ -2513,7 +2513,7 @@ public:
                     return false;
                 continue;
             case PatternTerm::Type::ParenthesesSubpattern: {
-                if (!depth || !isTakenOnce(previous) || previous.matchDirection() != Forward || previous.parentheses.disjunction->m_alternatives.size() != 1)
+                if (!depth || !isMatchedExactlyOnce(previous) || previous.matchDirection() != Forward || previous.parentheses.disjunction->m_alternatives.size() != 1)
                     return false;
                 auto& inner = *previous.parentheses.disjunction->m_alternatives[0];
                 return wasJustCaptured({ &inner, inner.m_terms.size(), &place }, subpatternId, depth - 1);
@@ -2524,27 +2524,27 @@ public:
         }
     }
 
-    void findBackReferencesToWhatWasJustCaptured(PatternDisjunction* disjunction, const PlaceInPattern* placeOfGroup = nullptr)
+    void findBackReferencesToPrecedingCapture(PatternDisjunction* disjunction, const PatternPosition* groupPosition = nullptr)
     {
         for (auto& alternative : disjunction->m_alternatives) {
             auto& terms = alternative->m_terms;
             for (size_t i = 0; i < terms.size(); ++i) {
                 auto& term = terms[i];
-                PlaceInPattern place { alternative.get(), i, placeOfGroup };
+                PatternPosition place { alternative.get(), i, groupPosition };
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) {
-                    findBackReferencesToWhatWasJustCaptured(term.parentheses.disjunction, isTakenOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward ? &place : nullptr);
+                    findBackReferencesToPrecedingCapture(term.parentheses.disjunction, isMatchedExactlyOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward ? &place : nullptr);
                     if (term.type == PatternTerm::Type::ParentheticalAssertion && term.matchDirection() == Forward) {
                         for (auto& inner : term.parentheses.disjunction->m_alternatives)
-                            markLastTermOfAssertion(*inner);
+                            markAssertionLastTerm(*inner);
                     }
                     continue;
                 }
                 if (term.type != PatternTerm::Type::NumberedBackReference && term.type != PatternTerm::Type::NamedBackReference)
                     continue;
-                bool mayBeKnown = isTakenOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward && !m_pattern.m_numDuplicateNamedCaptureGroups;
+                bool mayBeKnown = isMatchedExactlyOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward && !m_pattern.m_numDuplicateNamedCaptureGroups;
                 bool isKnown = mayBeKnown && wasJustCaptured(place, term.backReferenceSubpatternId, 8);
-                term.m_matchesWhatWasJustCaptured = isKnown;
-                term.m_isRightBehindItsLookahead = mayBeKnown && i && isLookaheadThatCaptures(terms[i - 1], term.backReferenceSubpatternId);
+                term.m_matchesPrecedingCapture = isKnown;
+                term.m_immediatelyFollowsItsLookahead = mayBeKnown && i && isLookaheadThatCaptures(terms[i - 1], term.backReferenceSubpatternId);
                 m_pattern.m_comparesBackreferences |= !isKnown;
             }
         }
@@ -3061,7 +3061,7 @@ public:
         return collectFirstCharacters(*continuation->alternative, continuation->nextTermIndex, continuation->outer, passedAssertion, budget, result);
     }
 
-    bool collectFirstCharactersOfGroup(const PatternTerm& group, FirstCharacterSet& result)
+    bool collectGroupFirstCharacters(const PatternTerm& group, FirstCharacterSet& result)
     {
         unsigned budget = firstCharacterBudget;
         Continuation endOfGroup { nullptr, 0, nullptr, nullptr };
@@ -3080,7 +3080,7 @@ public:
         unsigned index = 0;
         unsigned otherIndex = 0;
         unsigned taken = 0;
-        unsigned otherTaken = 0;
+        unsigned otherCount = 0;
         for (unsigned position = 0; position < maxFixedPrefixCompared; ++position) {
             while (index < one.m_terms.size() && isAssertion(one.m_terms[index]))
                 ++index;
@@ -3102,15 +3102,15 @@ public:
                 ++index;
                 taken = 0;
             }
-            if (otherTerm.quantityMaxCount == ++otherTaken) {
+            if (otherTerm.quantityMaxCount == ++otherCount) {
                 ++otherIndex;
-                otherTaken = 0;
+                otherCount = 0;
             }
         }
         return false;
     }
 
-    static std::optional<unsigned> fixedSizeOfAlternative(const PatternAlternative& alternative)
+    static std::optional<unsigned> alternativeFixedSize(const PatternAlternative& alternative)
     {
         unsigned size = 0;
         for (auto& term : alternative.m_terms) {
@@ -3148,7 +3148,7 @@ public:
                 firstCharacters.append(WTF::move(first));
             else
                 firstCharacters.append(std::nullopt);
-            fixedSizes.append(fixedSizeOfAlternative(*nested));
+            fixedSizes.append(alternativeFixedSize(*nested));
         }
 
         auto continuationRejects = [&](const PatternTerm& next, const PatternTerm* previous) {
@@ -3243,7 +3243,7 @@ public:
                 return false;
         }
         std::stable_sort(alternatives.begin(), alternatives.end(), [](auto& one, auto& other) {
-            return *fixedSizeOfAlternative(*one) > *fixedSizeOfAlternative(*other);
+            return *alternativeFixedSize(*one) > *alternativeFixedSize(*other);
         });
         for (auto& nested : alternatives)
             nested->m_isLastAlternative = false;
@@ -3260,7 +3260,7 @@ public:
         auto& terms = alternative.m_terms;
         for (unsigned i = 0; i < terms.size(); ++i) {
             PatternTerm& term = terms[i];
-            auto startsUnlikeWhatFollows = [&](const FirstCharacterSet& first) {
+            auto isDisjointFromFollowSet = [&](const FirstCharacterSet& first) {
                 FirstCharacterSet following;
                 following.wordClassWithNoBoundaryHere = first.wordClassWithNoBoundaryHere;
                 unsigned budget = firstCharacterBudget;
@@ -3281,7 +3281,7 @@ public:
                     if (index != unknownCharacterSpans) {
                         own.spanIndexes.append(index);
                         own.wordClassWithNoBoundaryHere = i ? wordClassWithNoBoundaryBetween(terms[i - 1], term) : nullptr;
-                        term.m_possessive = startsUnlikeWhatFollows(own);
+                        term.m_possessive = isDisjointFromFollowSet(own);
                     }
                 }
                 isDeterministic &= term.m_possessive;
@@ -3300,7 +3300,7 @@ public:
                     groupIsDeterministic = alternativesNeverNeedRetry(*term.parentheses.disjunction, afterGroup, i && term.quantityMaxCount == 1 ? &terms[i - 1] : nullptr);
                 if (groupIsDeterministic && term.quantityType != QuantifierType::FixedCount) {
                     FirstCharacterSet first;
-                    groupIsDeterministic = term.quantityType == QuantifierType::Greedy && collectFirstCharactersOfGroup(term, first) && startsUnlikeWhatFollows(first);
+                    groupIsDeterministic = term.quantityType == QuantifierType::Greedy && collectGroupFirstCharacters(term, first) && isDisjointFromFollowSet(first);
                 }
                 if (groupIsDeterministic
                     && term.quantityType == QuantifierType::Greedy
@@ -4513,7 +4513,7 @@ private:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    inline bool isSafeToRecurse() { return m_stackCheckOfCaller ? m_stackCheckOfCaller->isSafeToRecurse() : m_stackCheck.isSafeToRecurse(); }
+    inline bool isSafeToRecurse() { return m_callerStackCheck ? m_callerStackCheck->isSafeToRecurse() : m_stackCheck.isSafeToRecurse(); }
 #else
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 #endif
@@ -4552,7 +4552,7 @@ private:
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
 #if USE(BUN_JSC_ADDITIONS)
-    StackCheck* m_stackCheckOfCaller;
+    StackCheck* m_callerStackCheck;
 #endif
     ErrorCode m_error { ErrorCode::NoError };
     bool m_invertCharacterClass;
@@ -4564,9 +4564,9 @@ private:
 static_assert(YarrSyntaxCheckable<YarrPatternConstructor>);
 
 #if USE(BUN_JSC_ADDITIONS)
-ErrorCode YarrPattern::compile(StringView patternString, StackCheck* stackCheckOfCaller)
+ErrorCode YarrPattern::compile(StringView patternString, StackCheck* callerStackCheck)
 {
-    YarrPatternConstructor constructor(*this, m_flags, stackCheckOfCaller);
+    YarrPatternConstructor constructor(*this, m_flags, callerStackCheck);
 #else
 ErrorCode YarrPattern::compile(StringView patternString)
 {
@@ -4590,7 +4590,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     constructor.optimizePossessiveQuantifiers();
 #if USE(BUN_JSC_ADDITIONS)
     if (m_containsBackreferences)
-        constructor.findBackReferencesToWhatWasJustCaptured(m_body);
+        constructor.findBackReferencesToPrecedingCapture(m_body);
 #endif
 
     if (hasError(constructor.error()))
@@ -4614,7 +4614,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, StackCheck* stackCheckOfCaller)
+YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, StackCheck* callerStackCheck)
 #else
 YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode)
 #endif
@@ -4631,7 +4631,7 @@ YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& 
 {
     ASSERT(m_flags != Flags::DeletedValue);
 #if USE(BUN_JSC_ADDITIONS)
-    error = compile(pattern, stackCheckOfCaller);
+    error = compile(pattern, callerStackCheck);
 #else
     error = compile(pattern);
 #endif

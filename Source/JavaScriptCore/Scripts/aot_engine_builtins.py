@@ -58,7 +58,7 @@ def functions(javascriptcore):
     return [(function.object.object_name, function.function_name, BuiltinsGenerator.mangledNameForFunction(function) + 'Code', index) for index, function in enumerate(collection.all_functions())]
 
 
-def end_of_argument(text, start):
+def argument_end(text, start):
     """Where the argument that starts there ends: at a `,` or `)` of its own level."""
     depth, position = 0, start
     while True:
@@ -77,8 +77,8 @@ def expand_if_abrupt_close_iterator(text):
     call = '$ifAbruptCloseIterator('
     while call in text:
         start = text.index(call)
-        comma = end_of_argument(text, start + len(call))
-        end = end_of_argument(text, comma + 1)
+        comma = argument_end(text, start + len(call))
+        end = argument_end(text, comma + 1)
         if text[comma] != ',' or text[end:end + 2] != ');' or text[text.rindex('\n', 0, start) + 1:start].strip():
             sys.exit('aot_engine_builtins.py: @ifAbruptCloseIterator(iterator, expression); is not a statement of its own: %s' % text[start:start + 80])
         text = (text[:start] + '{ let __iterator = ' + text[start + len(call):comma].strip() + ', __completion = 0; try { ' + text[comma + 1:end].lstrip(' ')
@@ -91,7 +91,7 @@ def expand_to_string(text):
     call = '$toString('
     while call in text:
         start = text.index(call)
-        end = end_of_argument(text, start + len(call))
+        end = argument_end(text, start + len(call))
         if text[end] != ')':
             sys.exit('aot_engine_builtins.py: @toString(x) takes one argument: %s' % text[start:start + 80])
         text = text[:start] + '`${' + text[start + len(call):end] + '}`' + text[end + 1:]
@@ -118,11 +118,11 @@ def exported_name(name):
     return name + '_' if name in RESERVED else name
 
 
-def derive(text, left_out):
-    """The text in the syntax of <bun>/src/js/builtins, without the functions named in `left_out`, each of which goes with what is in front of it: annotations and comments."""
+def derive(text, excluded_functions):
+    """The text in the syntax of <bun>/src/js/builtins, without the functions named in `excluded_functions`, each of which goes with what is in front of it: annotations and comments."""
     heads = list(HEAD.finditer(text))
     for index in reversed(range(len(heads))):
-        if heads[index].group(2) not in left_out:
+        if heads[index].group(2) not in excluded_functions:
             continue
         end = text.index('\n}\n', heads[index].end()) + 3
         start = text.rindex('\n}\n', 0, heads[index].start()) + 3 if index else text.index('*/') + 3

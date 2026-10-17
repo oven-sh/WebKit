@@ -501,7 +501,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
     }
 #if ENABLE(AOT)
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::noteGuest(globalObject, "eval", { }, programSource);
+        AOT::recordSample(globalObject, "eval", { }, programSource);
 #endif
 
     if (SourceProfiler::g_profilerHook) [[unlikely]] {
@@ -832,7 +832,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
         return rejectWithCaughtException();
 #if ENABLE(AOT)
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::noteGuest(globalObject, "import", { }, specifier->tryGetValue().data);
+        AOT::recordSample(globalObject, "import", { }, specifier->tryGetValue().data);
 #endif
 
     // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
@@ -1052,12 +1052,11 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     RETURN_IF_EXCEPTION(scope, { });
 
 #if ENABLE(AOT)
-    // As objectAssignFast(): its fields are enumerable data properties with string keys, and reading them runs nothing. The names live as long as the program.
     if (sourceStructure->compiledLayout() && !target->structure()->compiledLayout()) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer values;
         EnsureStillAliveScope sourceScope(source);
-        bool isWalked = AOT::Typed::forEachOwnPropertyOfCompiledObject(source, [&](UniquedStringImpl& name, JSValue value) {
+        bool isWalked = AOT::Typed::forEachCompiledObjectOwnProperty(source, [&](UniquedStringImpl& name, JSValue value) {
             properties.append(&name);
             values.appendWithCrashOnOverflow(value);
             return true;

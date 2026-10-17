@@ -157,7 +157,7 @@ private:
     bool anyMutatorHasConnWithLock() WTF_REQUIRES_LOCK(*m_threadLock);
     void assertConn(GCConductor);
 
-    bool isAtRest() const { return m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed); }
+    bool isNotRunning() const { return m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed); }
 
     bool shouldCollectInCollectorThread() WTF_REQUIRES_LOCK(*m_threadLock);
     CollectionScope decideCollectionScope();

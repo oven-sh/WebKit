@@ -25,7 +25,7 @@ inline DataViewSetFloat64
 inline DataViewSetBigInt64
 inline DataViewSetBigUint64
 
-runtime LookForBufferAccessor : Heap void (JSCell* receiver, uint32_t row) noexcept
+runtime FindBufferAccessor : Heap void (JSCell* receiver, uint32_t row) noexcept
 runtime NewBigInt64 : RuntimeState JSCell* (uint64_t bits, uint32_t isSigned)
 
 # Of Bun's Buffer.prototype: src/jsc/bindings/JSBuffer.cpp, registerBufferAccessorsWithJSC().

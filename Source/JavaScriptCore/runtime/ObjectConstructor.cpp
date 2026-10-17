@@ -281,7 +281,7 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (target->type() == ObjectType && AOT::Typed::tryAssignPrimitivesToFieldsOfCompiledObject(vm, target, source))
+    if (target->type() == ObjectType && AOT::Typed::tryAssignPrimitivesToCompiledObjectFields(vm, target, source))
         return;
 #endif
 
@@ -457,12 +457,12 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
             }
         }
 #if ENABLE(AOT)
-        JSCellButterfly* keysOfTypedObject = nullptr;
+        JSCellButterfly* typedObjectKeys = nullptr;
         if (!canUseFastPath && target->structure()->compiledLayout()) {
             auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
-            keysOfTypedObject = typedObject->keys(vm);
-            if (!keysOfTypedObject)
-                keysOfTypedObject = typedObject->keysWithExtraProperties(vm);
+            typedObjectKeys = typedObject->keys(vm);
+            if (!typedObjectKeys)
+                typedObjectKeys = typedObject->keysWithExtraProperties(vm);
             auto collect = [&](UniquedStringImpl& name, JSValue value) {
                 properties.append(&name);
                 values.appendWithCrashOnOverflow(value);
@@ -490,8 +490,8 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                         cachedButterfly = butterfly;
                 }
 #if ENABLE(AOT)
-                else if (keysOfTypedObject && keysOfTypedObject->length() == properties.size())
-                    cachedButterfly = keysOfTypedObject;
+                else if (typedObjectKeys && typedObjectKeys->length() == properties.size())
+                    cachedButterfly = typedObjectKeys;
 #endif
             }
 
@@ -629,7 +629,6 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                 };
                 auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
                 if (typedObject->forEachFieldAsProperty(collect) || typedObject->forEachFieldAndExtraProperty(collect)) {
-                    // As below. (constructArray() without a profile starts from an array of undecided shape, which each new kind of value converts.)
                     JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), fields.size());
                     if (!result) [[unlikely]] {
                         throwOutOfMemoryError(globalObject, scope);
@@ -1405,12 +1404,11 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
 #if ENABLE(AOT)
-        // Without extra properties all its keys are strings, and all its properties are enumerable.
         if (!Inherit && propertyNameMode != PropertyNameMode::Symbols && object->structure()->compiledLayout()) [[unlikely]] {
             auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(object);
             if (auto* keys = typedObject->keys(vm))
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
-            if (JSArray* keys = typedObject->tryListKeysWithExtraProperties(globalObject))
+            if (JSArray* keys = typedObject->tryCreateKeysArrayWithExtraProperties(globalObject))
                 return keys;
         }
 #endif

@@ -85,7 +85,7 @@ struct Inst {
             m_size = static_cast<unsigned>(arguments.size());
 #if USE(BUN_JSC_ADDITIONS)
             m_storage.outOfLine.args = arguments.releaseBuffer().leakSpan().data();
-            m_storage.outOfLine.forms[0] = formsAreNotAsked;
+            m_storage.outOfLine.forms[0] = formsNotComputed;
 #else
             m_storage.outOfLineArgs = arguments.releaseBuffer().leakSpan().data();
 #endif
@@ -278,18 +278,18 @@ private:
     const Arg* argsData() const { return m_size > inlineCapacity ? m_storage.outOfLine.args : m_storage.inlineArgs.data(); }
 
     static constexpr unsigned maxNumberOfForms = 40;
-    static constexpr uint8_t formsAreNotAsked = 0;
+    static constexpr uint8_t formsNotComputed = 0;
     static constexpr uint8_t formsAreNotFixed = 0xff;
     static constexpr uint8_t formsAreNone = 1;
 
-    ALWAYS_INLINE uint8_t* formsBehindSpecial() { return m_size > inlineCapacity ? m_storage.outOfLine.forms.data() : m_formsInLine.data(); }
+    ALWAYS_INLINE uint8_t* formsAfterSpecial() { return m_size > inlineCapacity ? m_storage.outOfLine.forms.data() : m_inlineForms.data(); }
 
-    ALWAYS_INLINE const uint8_t* formsOfPatch()
+    ALWAYS_INLINE const uint8_t* patchForms()
     {
         if (m_size > maxNumberOfForms + 1) [[unlikely]]
             return nullptr;
-        uint8_t* forms = formsBehindSpecial();
-        if (forms[0] == formsAreNotAsked) [[unlikely]]
+        uint8_t* forms = formsAfterSpecial();
+        if (forms[0] == formsNotComputed) [[unlikely]]
             fillForms();
         return forms[0] == formsAreNotFixed ? nullptr : forms;
     }
@@ -320,9 +320,9 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         if (m_size > inlineCapacity) {
             m_storage.outOfLine.args = static_cast<Arg*>(ArgMalloc::malloc(m_size * sizeof(Arg)));
-            m_storage.outOfLine.forms[0] = formsAreNotAsked;
+            m_storage.outOfLine.forms[0] = formsNotComputed;
         }
-        m_formsInLine[0] = formsAreNotAsked;
+        m_inlineForms[0] = formsNotComputed;
 #else
         if (m_size > inlineCapacity)
             m_storage.outOfLineArgs = static_cast<Arg*>(ArgMalloc::malloc(m_size * sizeof(Arg)));
@@ -335,7 +335,7 @@ private:
     {
         m_size = other.m_size;
 #if USE(BUN_JSC_ADDITIONS)
-        m_formsInLine = other.m_formsInLine;
+        m_inlineForms = other.m_inlineForms;
         if (other.m_size > inlineCapacity) {
             m_storage.outOfLine = other.m_storage.outOfLine;
             other.m_storage.outOfLine.args = nullptr;
@@ -364,7 +364,7 @@ public:
     Kind kind;
 private:
 #if USE(BUN_JSC_ADDITIONS)
-    std::array<uint8_t, 2> m_formsInLine { };
+    std::array<uint8_t, 2> m_inlineForms { };
 #endif
     unsigned m_size { 0 };
 public:

@@ -100,11 +100,11 @@ namespace JSC { namespace B3 {
 #if B3_COMPILATION_COHORT_INTERLEAVES_MEMBERS
 
 #if CPU(X86_64)
-static constexpr unsigned numberOfWordsInSwitchFrame = 8;
-static constexpr unsigned indexOfReturnAddressInSwitchFrame = 6;
+static constexpr unsigned switchFrameWordCount = 8;
+static constexpr unsigned switchFrameReturnAddressIndex = 6;
 #elif CPU(ARM64)
-static constexpr unsigned numberOfWordsInSwitchFrame = 20;
-static constexpr unsigned indexOfReturnAddressInSwitchFrame = 11;
+static constexpr unsigned switchFrameWordCount = 20;
+static constexpr unsigned switchFrameReturnAddressIndex = 11;
 #endif
 
 static constexpr unsigned numberOfGuardPages = 1;
@@ -127,9 +127,9 @@ void CompilationCohort::prepareStack(unsigned member)
 {
     if (!m_stacks[member])
         m_stacks[member] = OSAllocator::reserveAndCommit(stackSize, OSAllocator::UnknownUsage, nullptr, true, false, false, numberOfGuardPages);
-    std::span frame { reinterpret_cast<void**>(static_cast<char*>(m_stacks[member]) + stackSize) - numberOfWordsInSwitchFrame, numberOfWordsInSwitchFrame };
+    std::span frame { reinterpret_cast<void**>(static_cast<char*>(m_stacks[member]) + stackSize) - switchFrameWordCount, switchFrameWordCount };
     std::ranges::fill(frame, nullptr);
-    frame[indexOfReturnAddressInSwitchFrame] = reinterpret_cast<void*>(runMember);
+    frame[switchFrameReturnAddressIndex] = reinterpret_cast<void*>(runMember);
     m_stackPointers[member] = frame.data();
 }
 
@@ -148,7 +148,7 @@ void CompilationCohort::run(unsigned size, const ScopedLambda<void(unsigned)>& c
     m_phase = start;
     m_runningMember = 0;
     current() = this;
-    b3SwitchStacks(&m_stackPointerOfCaller, m_stackPointers[0]);
+    b3SwitchStacks(&m_callerStackPointer, m_stackPointers[0]);
     current() = nullptr;
 }
 
@@ -165,7 +165,7 @@ void CompilationCohort::finish()
     if (--m_numberOfUnfinishedMembers)
         switchTo(pickNextMember());
     else
-        b3SwitchStacks(&m_stackPointers[m_runningMember], m_stackPointerOfCaller);
+        b3SwitchStacks(&m_stackPointers[m_runningMember], m_callerStackPointer);
     RELEASE_ASSERT_NOT_REACHED();
 }
 
@@ -192,10 +192,10 @@ unsigned CompilationCohort::pickNextMember()
             return member;
     }
     unsigned result = 0;
-    unsigned leastNumberOfYields = std::numeric_limits<unsigned>::max();
+    unsigned minYieldCount = std::numeric_limits<unsigned>::max();
     for (unsigned member = 0; member < m_size; ++member) {
-        if (m_nextPhases[member] && m_numberOfYields[member] < leastNumberOfYields) {
-            leastNumberOfYields = m_numberOfYields[member];
+        if (m_nextPhases[member] && m_numberOfYields[member] < minYieldCount) {
+            minYieldCount = m_numberOfYields[member];
             result = member;
         }
     }

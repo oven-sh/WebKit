@@ -26,15 +26,15 @@ namespace JSC { namespace AOT {
 
 using Typed::CompactTable;
 
-static JSArray* arrayWithValuesInPlace(JSValue value, unsigned leastLength)
+static JSArray* asContiguousArray(JSValue value, unsigned minLength)
 {
     JSArray* array = value.isCell() ? dynamicDowncast<JSArray>(value.asCell()) : nullptr;
-    if (!array || (array->indexingType() & IndexingShapeMask) != ContiguousShape || array->butterfly()->publicLength() < leastLength)
+    if (!array || (array->indexingType() & IndexingShapeMask) != ContiguousShape || array->butterfly()->publicLength() < minLength)
         return nullptr;
     return array;
 }
 
-static JSCell* tryNewSetOfWhatIsWalkedWithoutCode(JSGlobalObject* globalObject, Structure* structure, JSValue given)
+static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject, Structure* structure, JSValue given)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -69,10 +69,10 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
     constexpr bool isMap = std::is_same_v<Table, JSMap>;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* list = arrayWithValuesInPlace(given, 1);
+    JSArray* list = asContiguousArray(given, 1);
     if constexpr (!isMap) {
         if (!list)
-            RELEASE_AND_RETURN(scope, tryNewSetOfWhatIsWalkedWithoutCode(globalObject, structure, given));
+            RELEASE_AND_RETURN(scope, tryNewSetFromSideEffectFreeIterable(globalObject, structure, given));
     }
     if (!list || !list->isIteratorProtocolFastAndNonObservable())
         return nullptr;
@@ -83,7 +83,7 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
         JSValue element = list->butterfly()->contiguous().at(list, i).get();
         if constexpr (!isMap)
             return { element, JSValue() };
-        JSArray* pair = element ? arrayWithValuesInPlace(element, 2) : nullptr;
+        JSArray* pair = element ? asContiguousArray(element, 2) : nullptr;
         if (!pair || !globalObject->isOriginalArrayStructure(pair->structure()))
             return { };
         return { pair->butterfly()->contiguous().at(pair, 0).get(), pair->butterfly()->contiguous().at(pair, 1).get() };
@@ -104,7 +104,7 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
     return table;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewSetOfStrings, JSCell*, (Instance* instance, EncodedJSValue list))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewStringSet, JSCell*, (Instance* instance, EncodedJSValue list))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     OPERATION_RETURN(scope, tryNewTableWithStringKeys<JSSet>(globalObject, globalObject->setStructure(), JSValue::decode(list)));
@@ -124,9 +124,8 @@ static size_t nextEntry(Instance* instance, JSCell* collection, EncodedJSValue e
     return position.table ? position.entry : UINT32_MAX;
 }
 
-// The entry is alive, in the table the collection has.
 template<typename Traits>
-static EncodedJSValue partOfEntry(JSCell* collection, uint32_t entry, bool isKey)
+static EncodedJSValue entryPart(JSCell* collection, uint32_t entry, bool isKey)
 {
     using Helper = JSOrderedHashTableHelper<Traits>;
     auto* owner = uncheckedDowncast<JSOrderedHashTable<Traits>>(collection);
@@ -141,7 +140,6 @@ static EncodedJSValue partOfEntry(JSCell* collection, uint32_t entry, bool isKey
     return JSValue::encode(Helper::getKey(owner->storageRef(), entry));
 }
 
-// For the stubs, where they do not remove the entry themselves.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedMapDelete, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -185,7 +183,6 @@ static ALWAYS_INLINE unsigned lengthAsDecimal(uint32_t value)
     return approximate - (value < powersOfTen[approximate]) + 1;
 }
 
-// Backwards: the last digit comes to stand right ahead of `end`.
 static ALWAYS_INLINE void writeAsDecimal(uint32_t value, Latin1Character* end)
 {
     static constexpr char pairs[] = "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849"
@@ -228,12 +225,12 @@ static ALWAYS_INLINE void copyCharacters(Latin1Character* to, const Latin1Charac
     }
 }
 
-struct PiecesOfKey {
+struct KeyPieces {
     unsigned count { 0 };
     JSString* lastString { nullptr };
 };
 
-static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer, PiecesOfKey& pieces)
+static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer, KeyPieces& pieces)
 {
     Latin1Character* cursor = buffer.data();
     size_t room = buffer.size();
@@ -269,7 +266,7 @@ static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyP
 
 static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer)
 {
-    PiecesOfKey pieces;
+    KeyPieces pieces;
     return flattenKeyParts(count, parts, buffer, pieces);
 }
 
@@ -305,7 +302,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryGetByValWithKeyParts, Enco
     return encodedJSValue();
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts, EncodedJSValue, (Instance*, JSCell* collection, uint32_t yieldsValue, uint32_t count, const EncodedJSValue* parts))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts, EncodedJSValue, (Instance*, JSCell* collection, uint32_t returnsValue, uint32_t count, const EncodedJSValue* parts))
 {
     JSCell* table = collection->type() == JSMapType ? uncheckedDowncast<JSMap>(collection)->m_compactTable.get() : uncheckedDowncast<JSSet>(collection)->m_compactTable.get();
     if (!table)
@@ -315,16 +312,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts
     if (!text)
         return encodedJSValue();
     auto entry = uncheckedDowncast<CompactTable>(table)->find(*text);
-    if (!yieldsValue)
+    if (!returnsValue)
         return JSValue::encode(jsBoolean(!!entry));
     return JSValue::encode(entry ? uncheckedDowncast<CompactTable>(table)->valueAt(*entry) : jsUndefined());
 }
 
-// The parts are strings and integers: `a.id + "," + b.id`, the key of a Map more often than not. Where the result is short it is made in
-// one piece, and hashed: no string for each integer, no rope, nothing left to do when it is looked up.
-static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGenerally(Instance*, uint32_t count, const EncodedJSValue* parts);
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGeneric(Instance*, uint32_t count, const EncodedJSValue* parts);
 
-static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByText(Instance*, uint32_t count, const EncodedJSValue* parts);
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByContents(Instance*, uint32_t count, const EncodedJSValue* parts);
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateWithIntegers, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts))
 {
@@ -332,10 +327,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateWithIntegers, JSCell*, (Ins
     if (!Options::useAOTOperationCounters() && byParts.tryTake(count, parts)) [[likely]] {
         if (JSString* key = instance->typed->tryFindKeyByParts(byParts)) [[likely]]
             return { key, nullptr };
-        instance->typed->partsAskedForLast = byParts;
+        instance->typed->lastKeyPartsLookup = byParts;
     } else
-        instance->typed->partsAskedForLast.countAndKinds = 0;
-    [[clang::musttail]] return concatenateByText(instance, count, parts);
+        instance->typed->lastKeyPartsLookup.countAndKinds = 0;
+    [[clang::musttail]] return concatenateByContents(instance, count, parts);
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> makeKey(Instance* instance, CallFrame* callFrame, std::span<const Latin1Character> characters, unsigned hash)
@@ -345,25 +340,25 @@ static NEVER_INLINE OperationReturnType<JSCell*> makeKey(Instance* instance, Cal
     return { instance->typed->makeKey(vm, characters, hash), nullptr };
 }
 
-static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByText(Instance* instance, uint32_t count, const EncodedJSValue* parts)
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByContents(Instance* instance, uint32_t count, const EncodedJSValue* parts)
 {
-    std::array<Latin1Character, Typed::State::maxLengthOfMadeKey> characters;
-    PiecesOfKey pieces;
+    std::array<Latin1Character, Typed::State::maxCachedKeyLength> characters;
+    KeyPieces pieces;
     if (auto text = flattenKeyParts(count, parts, characters, pieces); text && text->size() >= 2 && !Options::useAOTOperationCounters()) [[likely]] {
         if (pieces.count == 1 && pieces.lastString)
             return { pieces.lastString, nullptr };
         unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(*text);
-        JSString* key = instance->typed->tryFindMadeKey(*text, hash);
+        JSString* key = instance->typed->tryFindCachedKey(*text, hash);
         if (!key)
             key = uncheckedDowncast<JSString>(makeKey(instance, DECLARE_CALL_FRAME(*instance->vm), *text, hash).value);
-        if (instance->typed->partsAskedForLast.countAndKinds)
-            instance->typed->rememberKeyByParts(instance->typed->partsAskedForLast, key);
+        if (instance->typed->lastKeyPartsLookup.countAndKinds)
+            instance->typed->cacheKeyByParts(instance->typed->lastKeyPartsLookup, key);
         return { key, nullptr };
     }
-    [[clang::musttail]] return concatenateWithIntegersGenerally(instance, count, parts);
+    [[clang::musttail]] return concatenateWithIntegersGeneric(instance, count, parts);
 }
 
-static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGenerally(Instance* instance, uint32_t count, const EncodedJSValue* parts)
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGeneric(Instance* instance, uint32_t count, const EncodedJSValue* parts)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
@@ -371,12 +366,12 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithInte
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     countOperationNamed(instance, "operationAOTTypedConcatenateWithIntegers");
     auto scope = DECLARE_THROW_SCOPE(vm);
-    std::array<Latin1Character, Typed::State::maxLengthOfMadeKey> characters;
-    PiecesOfKey pieces;
+    std::array<Latin1Character, Typed::State::maxCachedKeyLength> characters;
+    KeyPieces pieces;
     if (auto text = flattenKeyParts(count, parts, characters, pieces)) [[likely]] {
         if (pieces.count == 1 && pieces.lastString)
             OPERATION_RETURN(scope, pieces.lastString);
-        OPERATION_RETURN(scope, instance->typed->keyMadeOf(vm, *text));
+        OPERATION_RETURN(scope, instance->typed->cachedKeyFor(vm, *text));
     }
 
     JSString* result = jsEmptyString(vm);
@@ -401,24 +396,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedSetNext, size_t, (Instance* i
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedMapKeyAt, EncodedJSValue, (Instance*, JSCell* map, uint32_t entry))
 {
-    return partOfEntry<MapTraits>(map, entry, true);
+    return entryPart<MapTraits>(map, entry, true);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedMapValueAt, EncodedJSValue, (Instance*, JSCell* map, uint32_t entry))
 {
-    return partOfEntry<MapTraits>(map, entry, false);
+    return entryPart<MapTraits>(map, entry, false);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedSetKeyAt, EncodedJSValue, (Instance*, JSCell* set, uint32_t entry))
 {
-    return partOfEntry<SetTraits>(set, entry, true);
+    return entryPart<SetTraits>(set, entry, true);
 }
 
 namespace Typed {
 
 using namespace B3;
-
-// The family aot/builtins/map-set.def.
 
 std::optional<Writes> writesOfInlineMapSet(InlineBuiltin which, std::span<const Type> arguments)
 {
@@ -445,7 +438,6 @@ std::optional<Writes> writesOfInlineMapSet(InlineBuiltin which, std::span<const 
     case InlineBuiltin::MapIterator:
     case InlineBuiltin::SetIterator:
         return Writes::RuntimeState;
-    // Hashing a string flattens a rope.
     case InlineBuiltin::MapGet:
     case InlineBuiltin::MapHas:
     case InlineBuiltin::SetHas:
@@ -455,11 +447,10 @@ std::optional<Writes> writesOfInlineMapSet(InlineBuiltin which, std::span<const 
     }
 }
 
-std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID result, const Value& value, Writes inPlace)
+std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
 {
     auto& type = typeOf(result);
     auto& arguments = value.arguments;
-    // Of the prelude, which hands over its receiver. Where that has been inlined, code that is never reached may have anything here by its type.
     auto collection = [&] {
         Operand operand = get(arguments[0]);
         return operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(in<Boxed>(arguments[0]));
@@ -467,8 +458,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     auto entry = [&](unsigned argument) {
         return low32(in<Integer>(arguments[argument]));
     };
-    // What follows reads a CompactTable in place, see there. With wide references its keys are pointers: left to the operations.
-    bool readsInPlace = !Options::useAOTWideReferences();
+    bool readsInline = !Options::useAOTWideReferences();
     auto fieldOf = [&](LValue table, ptrdiff_t offset) {
         return m_out.address(m_heaps.AOTTyped_runtimeState, table, offset);
     };
@@ -482,7 +472,6 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     auto at = [&](LValue base, LValue index, unsigned shift) {
         return fieldOf(m_out.add(base, m_out.shl(index, m_out.constInt32(shift))), 0);
     };
-    // The engine's own table, see JSOrderedHashTableHelper. What is no key or value in there is a count or an index, boxed as an int32.
     static_assert(JSMap::Helper::capacityIndex() == JSSet::Helper::capacityIndex() && JSMap::Helper::hashTableStartIndex() == JSSet::Helper::hashTableStartIndex());
     static_assert(JSMap::Helper::aliveEntryCountIndex() == JSSet::Helper::aliveEntryCountIndex() && JSMap::Helper::deletedEntryCountIndex() == JSSet::Helper::deletedEntryCountIndex());
     auto dataAt = [&](LValue base, ptrdiff_t index) {
@@ -498,7 +487,6 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     auto entryAt = [&](LValue entries, LValue number, bool isMap) {
         return m_out.add(entries, m_out.mul(number, m_out.constIntPtr((isMap ? JSMap::Helper::EntrySize : JSSet::Helper::EntrySize) * sizeof(EncodedJSValue))));
     };
-    // Opaque, and the table alive until here: as Lowering::load() of a Store::Cell32.
     auto decoded = [&](LValue index, LValue table) {
         LValue cell = m_out.opaque(decodeCell32(index));
         ensureStillAliveHere(CellPointer(table));
@@ -508,12 +496,12 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         CellPointer owner = collection();
         Boxed from = in<Boxed>(arguments[1]);
         Integer start = in<Integer>(arguments[2]);
-        auto generally = [&] {
+        auto genericPath = [&] {
             return signExtended(isMap ? AOT_TYPED_OPERATION(MapNext, owner, from, low32(start)) : AOT_TYPED_OPERATION(SetNext, owner, from, low32(start)));
         };
         Type guarantee = Type::integer(Range { -1, INT32_MAX });
-        if (!readsInPlace)
-            return ensure(generally(), guarantee, type);
+        if (!readsInline)
+            return ensure(genericPath(), guarantee, type);
         LBasicBlock isUnchanged = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock isUsed = m_out.newBlock();
@@ -528,7 +516,6 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         LBasicBlock isAliveInStorage = m_out.newBlock();
         LBasicBlock otherwise = newColdBlock();
         Join join(m_out, Rep::Int64, Int64);
-        // The table the iteration is at is the one the collection has: then it is neither replaced nor cleared.
         LValue table = compactTableOf(owner);
         m_out.branch(m_out.bitAnd(m_out.notNull(table), m_out.equal(table, from.value())), unsure(isUnchanged), unsure(isNotCompact));
 
@@ -582,15 +569,14 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         join.add(integer(-1));
 
         m_out.appendTo(otherwise);
-        join.add(generally());
+        join.add(genericPath());
         Operand result = join.finish();
         ensureStillAliveHere(owner);
         return ensure(result, guarantee, type);
     };
-    // The entry is alive, in the table the collection has.
-    auto partOfEntry = [&](bool isKey, auto generally) {
-        if (!readsInPlace)
-            return ensure(generally(), type);
+    auto entryPart = [&](bool isKey, auto genericPath) {
+        if (!readsInline)
+            return ensure(genericPath(), type);
         CellPointer owner = collection();
         LValue number = in<Integer>(arguments[1]).value();
         LBasicBlock isCompact = m_out.newBlock();
@@ -625,48 +611,46 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     switch (which) {
     case InlineBuiltin::MapDelete:
     case InlineBuiltin::SetDelete: {
-        CellPointer owner = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
         Vector<std::pair<LValue, GPRReg>, 4> operands { { owner.value(), thisGPR }, { mapKey(arguments[0]).value(), argumentGPR(0) } };
-        Boxed isRemoved(callICStub(which == InlineBuiltin::MapDelete ? Stub::MapDelete : Stub::SetDelete, Int64, operands, std::nullopt, OperationEffects { inPlace, true }));
-        return yieldBoolean(unboxedBoolean(isRemoved), type);
+        Boxed isRemoved(callICStub(which == InlineBuiltin::MapDelete ? Stub::MapDelete : Stub::SetDelete, Int64, operands, std::nullopt, OperationEffects { inlinePath, true }));
+        return booleanResult(unboxedBoolean(isRemoved), type);
     }
     case InlineBuiltin::MapIterator:
     case InlineBuiltin::SetIterator: {
         bool isMap = which == InlineBuiltin::MapIterator;
         auto& builtin = m_builtins.at(value.builtin());
-        CellPointer owner = nonNil(value.child(0), m_program.stringOf(builtin.nameName));
+        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
         IterationKind kind = builtin.name == "entries"_s || (isMap && builtin.name == "@@iterator"_s) ? IterationKind::Entries : isMap && builtin.name == "keys"_s ? IterationKind::Keys : IterationKind::Values;
         Word32 encodedKind = word32(static_cast<int32_t>(kind));
         return ensure(isMap ? AOT_TYPED_OPERATION(NewMapIterator, owner, encodedKind) : AOT_TYPED_OPERATION(NewSetIterator, owner, encodedKind), Type::engineClass(m_builtins.classes()[value.engineClass()]), type);
     }
     case InlineBuiltin::MapClear:
     case InlineBuiltin::SetClear: {
-        // What has no table has no entries.
         bool isMap = which == InlineBuiltin::MapClear;
-        CellPointer owner = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
         LValue storage = m_out.loadPtr(owner.value(), isMap ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
         LValue compactTable = m_out.loadPtr(owner.value(), isMap ? m_heaps.JSMap_compactTable : m_heaps.JSSet_compactTable);
         LBasicBlock hasTable = m_out.newBlock();
         LBasicBlock hasNone = newUnlikelyBlock();
         LBasicBlock isCompact = m_out.newBlock();
         LBasicBlock isReset = m_out.newBlock();
-        LBasicBlock generally = m_out.newBlock();
+        LBasicBlock genericPath = m_out.newBlock();
         Join join(m_out, Rep::Void, Void);
         m_out.branch(m_out.notZero64(m_out.bitOr(storage, compactTable)), unsure(hasTable), unsure(hasNone));
         m_out.appendTo(hasTable);
-        m_out.branch(m_out.notNull(compactTable), usually(isCompact), rarely(generally));
-        // As CompactTable::clear(): it has tags, and no iteration has been at it.
+        m_out.branch(m_out.notNull(compactTable), usually(isCompact), rarely(genericPath));
         m_out.appendTo(isCompact);
         static_assert(CompactTable::offsetOfState() == CompactTable::offsetOfIndexBits() + 3 && !static_cast<uint8_t>(CompactTable::State::Live));
         LValue kinds = m_out.load32(fieldOf(compactTable, CompactTable::offsetOfIndexBits()));
-        m_out.branch(m_out.testIsZero32(kinds, m_out.constInt32(static_cast<int32_t>(0xff0000ff))), usually(isReset), rarely(generally));
+        m_out.branch(m_out.testIsZero32(kinds, m_out.constInt32(static_cast<int32_t>(0xff0000ff))), usually(isReset), rarely(genericPath));
         m_out.appendTo(isReset);
         didEmitWrite(Writes::RuntimeState);
         static_assert(CompactTable::offsetOfAlive() == CompactTable::offsetOfUsed() + 4 && !(CompactTable::offsetOfUsed() % 8));
         m_out.store64(m_out.int64Zero, compactTable, m_heaps.AOTTypedCompactTable_used);
         m_out.store64(m_out.int64Zero, fieldOf(compactTable, CompactTable::offsetOfIndex()));
         join.add({ });
-        m_out.appendTo(generally);
+        m_out.appendTo(genericPath);
         if (isMap)
             AOT_TYPED_OPERATION(MapClear, owner);
         else
@@ -699,24 +683,24 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     case InlineBuiltin::SetNext:
         return next(false);
     case InlineBuiltin::MapKeyAt:
-        return partOfEntry(true, [&] { return AOT_TYPED_OPERATION(MapKeyAt, collection(), entry(1)); });
+        return entryPart(true, [&] { return AOT_TYPED_OPERATION(MapKeyAt, collection(), entry(1)); });
     case InlineBuiltin::MapValueAt:
-        return partOfEntry(false, [&] { return AOT_TYPED_OPERATION(MapValueAt, collection(), entry(1)); });
+        return entryPart(false, [&] { return AOT_TYPED_OPERATION(MapValueAt, collection(), entry(1)); });
     case InlineBuiltin::SetKeyAt:
-        return partOfEntry(true, [&] { return AOT_TYPED_OPERATION(SetKeyAt, collection(), entry(1)); });
+        return entryPart(true, [&] { return AOT_TYPED_OPERATION(SetKeyAt, collection(), entry(1)); });
     case InlineBuiltin::WeakMapGet:
     case InlineBuiltin::WeakMapHas:
     case InlineBuiltin::WeakSetHas: {
-        using BucketOfMap = WeakMapBucket<WeakMapBucketDataKeyValue>;
-        using BucketOfSet = WeakMapBucket<WeakMapBucketDataKey>;
-        static_assert(hasOneBitSet(sizeof(BucketOfMap)) && hasOneBitSet(sizeof(BucketOfSet)));
+        using MapBucket = WeakMapBucket<WeakMapBucketDataKeyValue>;
+        using SetBucket = WeakMapBucket<WeakMapBucketDataKey>;
+        static_assert(hasOneBitSet(sizeof(MapBucket)) && hasOneBitSet(sizeof(SetBucket)));
         static_assert(JSWeakMap::offsetOfBuffer() == JSWeakSet::offsetOfBuffer() && JSWeakMap::offsetOfCapacity() == JSWeakSet::offsetOfCapacity());
-        static_assert(BucketOfMap::offsetOfKey() == BucketOfSet::offsetOfKey());
+        static_assert(MapBucket::offsetOfKey() == SetBucket::offsetOfKey());
         bool isMap = which != InlineBuiltin::WeakSetHas;
-        auto asTheCollectorLeftIt = [&](LValue base, ptrdiff_t offset) {
+        auto withoutReadBarrier = [&](LValue base, ptrdiff_t offset) {
             return m_out.address(m_heaps.AOTTyped_collectorState, base, offset);
         };
-        CellPointer table = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer table = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
         Boxed given = in<Boxed>(arguments[0]);
         LBasicBlock mayBeKey = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
@@ -728,20 +712,20 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
 
         m_out.appendTo(mayBeKey);
         CellPointer key = asCell(given);
-        ValueFromBlock first = m_out.anchor(hashOfMapKey(box(key)).value());
-        LValue buffer = m_out.loadPtr(asTheCollectorLeftIt(table.value(), JSWeakMap::offsetOfBuffer()));
-        LValue mask = m_out.sub(m_out.load32(asTheCollectorLeftIt(table.value(), JSWeakMap::offsetOfCapacity())), m_out.int32One);
+        ValueFromBlock first = m_out.anchor(mapKeyHash(box(key)).value());
+        LValue buffer = m_out.loadPtr(withoutReadBarrier(table.value(), JSWeakMap::offsetOfBuffer()));
+        LValue mask = m_out.sub(m_out.load32(withoutReadBarrier(table.value(), JSWeakMap::offsetOfCapacity())), m_out.int32One);
         m_out.jump(loop);
 
         m_out.appendTo(loop);
         LValue unmasked = m_out.phi(Int32, first);
         LValue index = m_out.bitAnd(unmasked, mask);
-        LValue bucket = m_out.add(buffer, m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(getLSBSet(isMap ? sizeof(BucketOfMap) : sizeof(BucketOfSet)))));
-        LValue keyOfBucket = m_out.loadPtr(asTheCollectorLeftIt(bucket, BucketOfMap::offsetOfKey()));
-        m_out.branch(m_out.equal(keyOfBucket, key.value()), unsure(found), unsure(isAnother));
+        LValue bucket = m_out.add(buffer, m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(getLSBSet(isMap ? sizeof(MapBucket) : sizeof(SetBucket)))));
+        LValue bucketKey = m_out.loadPtr(withoutReadBarrier(bucket, MapBucket::offsetOfKey()));
+        m_out.branch(m_out.equal(bucketKey, key.value()), unsure(found), unsure(isAnother));
 
         m_out.appendTo(isAnother);
-        m_out.branch(m_out.isNull(keyOfBucket), unsure(absent), unsure(next));
+        m_out.branch(m_out.isNull(bucketKey), unsure(absent), unsure(next));
 
         m_out.appendTo(next);
         m_out.addIncomingToPhi(unmasked, m_out.anchor(m_out.add(index, m_out.int32One)));
@@ -751,7 +735,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         if (which == InlineBuiltin::WeakMapGet) {
             Rep rep = repOf(type);
             Join join(m_out, rep, b3TypeOf(rep));
-            join.add(ensure(Boxed(m_out.load64(asTheCollectorLeftIt(bucket, BucketOfMap::offsetOfValue()))), type));
+            join.add(ensure(Boxed(m_out.load64(withoutReadBarrier(bucket, MapBucket::offsetOfValue()))), type));
             m_out.appendTo(absent);
             join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
             Operand held = join.finish();
@@ -767,7 +751,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         return ensure(has, m_program.at(m_program.types.boolean), type);
     }
     default:
-        return lowerMapOrSetBuiltin(which, result, value, inPlace);
+        return lowerMapOrSetBuiltin(which, result, value, inlinePath);
     }
 }
 

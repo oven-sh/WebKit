@@ -127,18 +127,18 @@ public:
 
     void didFinishCollection()
     {
-        m_placesWrittenSinceLastCollection.shrink(0);
-        m_hasWrittenTooManyPlaces = false;
+        m_slotsWrittenSinceLastCollection.shrink(0);
+        m_hasWrittenTooManySlots = false;
     }
 
     template<typename Visitor>
-    void visitPlacesWrittenSinceLastCollection(Visitor& visitor)
+    void visitSlotsWrittenSinceLastCollection(Visitor& visitor)
     {
-        if (m_hasWrittenTooManyPlaces) {
+        if (m_hasWrittenTooManySlots) {
             visitAggregate(visitor);
             return;
         }
-        for (JSString** place : m_placesWrittenSinceLastCollection)
+        for (JSString** place : m_slotsWrittenSinceLastCollection)
             visitor.appendUnbarriered(*place);
     }
 
@@ -184,10 +184,10 @@ private:
     JSString* put(JSString*& place, JSString* cell)
     {
         place = cell;
-        if (m_placesWrittenSinceLastCollection.size() < 2 * cacheSize + doubleCacheSize)
-            m_placesWrittenSinceLastCollection.append(&place);
+        if (m_slotsWrittenSinceLastCollection.size() < 2 * cacheSize + doubleCacheSize)
+            m_slotsWrittenSinceLastCollection.append(&place);
         else
-            m_hasWrittenTooManyPlaces = true;
+            m_hasWrittenTooManySlots = true;
         return cell;
     }
 
@@ -195,8 +195,8 @@ private:
     std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };
     std::array<CacheEntry<unsigned>, cacheSize> m_unsignedCache { };
     std::unique_ptr<DoubleCache> m_doubleCache;
-    Vector<JSString**> m_placesWrittenSinceLastCollection;
-    bool m_hasWrittenTooManyPlaces { false };
+    Vector<JSString**> m_slotsWrittenSinceLastCollection;
+    bool m_hasWrittenTooManySlots { false };
 };
 
 } // namespace JSC

@@ -46,22 +46,22 @@ struct FunctionMetadata;
 struct FunctionInfo;
 struct ProgramData;
 struct ImageFunction;
-class InlineFramesRead;
+class InlineFrameReader;
 struct Instance;
 struct Slot;
 
 using Compress = size_t (*)(const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t capacity);
 using Decompress = bool (*)(const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t size);
 JS_EXPORT_PRIVATE void setCodec(Compress, Decompress);
-using TextOfFunctionInFile = String (*)(JSGlobalObject*, const String& path, uint32_t place);
-JS_EXPORT_PRIVATE void setTextOfFunctionInFile(TextOfFunctionInFile);
+using FunctionSourceProvider = String (*)(JSGlobalObject*, const String& path, uint32_t place);
+JS_EXPORT_PRIVATE void setFunctionSourceProvider(FunctionSourceProvider);
 
 struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
     struct Location;
-    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress, const void* frame, InlineFramesRead* = nullptr) const;
+    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress, const void* frame, InlineFrameReader* = nullptr) const;
     JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress, const void* frame) const;
-    JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame, InlineFramesRead&) const;
+    JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame, InlineFrameReader&) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*);
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, ScriptExecutable*, JSCell* instanceToken);
     explicit operator bool() const { return index != none; }
@@ -79,7 +79,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
-    JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset, UnlinkedHandlerInfo& madeHere) const;
+    JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset, UnlinkedHandlerInfo& scratchHandler) const;
     JS_EXPORT_PRIVATE void* catchEntrypointAddress(unsigned bytecodeOffset) const;
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
@@ -112,163 +112,141 @@ struct FunctionRef::Location {
     bool isTailDeleted { false };
     bool isTailCall { false };
     bool isConstructed { false };
-    // With FunctionInfo::isTyped: the function to report, by its number in Typed::Data. `function` stays the one whose code is running,
-    // also for an inlined frame: positions and handlers are its own.
     uint32_t typedFunction { FunctionRef::none };
 };
 
-// Functions compiled from types have no executable. Stack frames report them from Typed::Data, which lives in the image: no cells, no
-// Instance, usable on any thread.
 JS_EXPORT_PRIVATE String typedFunctionName(uint32_t function, bool asWritten = false);
 JS_EXPORT_PRIVATE String typedFunctionName(VM&, uint32_t function, bool asWritten = false);
 JS_EXPORT_PRIVATE CodeType typedFunctionCodeType(uint32_t function);
 JS_EXPORT_PRIVATE bool typedFunctionIsConstructor(uint32_t function);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
 JS_EXPORT_PRIVATE bool typedFunctionHasGivenName(uint32_t function);
-// Generic entrypoints and coroutine ramps: another frame of the same name stands next to them.
 JS_EXPORT_PRIVATE bool typedFunctionIsHiddenInStackTraces(uint32_t function);
 JS_EXPORT_PRIVATE bool typedFunctionWraps(uint32_t wrapper, uint32_t function);
-JS_EXPORT_PRIVATE bool typedFunctionStandsForNoFunction(uint32_t function);
-JS_EXPORT_PRIVATE bool isEnteredByConstruction(const Instance*, const CallFrame* previousTopCallFrame);
-enum class BuiltinInTrace : uint8_t { None, WrittenInJavaScript, ConstructorWrittenInJavaScript, HostFunction };
-JS_EXPORT_PRIVATE BuiltinInTrace builtinThatTypedFunctionStandsFor(uint32_t function);
-// The general entry or the ramp of an async function, or what is bound to one: see UnwindFunctor::rejectsInFrame().
-JS_EXPORT_PRIVATE bool typedFunctionRejectsWhatItThrows(uint32_t function);
-// Of a closure, whose executable is NativeExecutable::isSharedByAOTTypedClosures(): what the executable of any other host function has.
-JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
-JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
-JS_EXPORT_PRIVATE String nameOfSlimClosure(JSObject*);
-JS_EXPORT_PRIVATE String writtenNameOfClosure(JSObject*);
-JS_EXPORT_PRIVATE String displayNameOfClosure(JSObject*);
-JS_EXPORT_PRIVATE void keepTypeErrorsThrown();
-JS_EXPORT_PRIVATE String typeErrorsThrown();
+JS_EXPORT_PRIVATE bool typedFunctionIsSynthetic(uint32_t function);
+JS_EXPORT_PRIVATE bool wasEnteredByConstruct(const Instance*, const CallFrame* previousTopCallFrame);
+enum class StackTraceBuiltinKind : uint8_t { None, JSBuiltin, JSBuiltinConstructor, HostFunction };
+JS_EXPORT_PRIVATE StackTraceBuiltinKind builtinKindOfTypedFunction(uint32_t function);
+JS_EXPORT_PRIVATE bool typedFunctionRejectsOnThrow(uint32_t function);
+JS_EXPORT_PRIVATE String typedClosureName(const JSFunction*);
+JS_EXPORT_PRIVATE unsigned typedClosureLength(const JSFunction*);
+JS_EXPORT_PRIVATE String slimClosureName(JSObject*);
+JS_EXPORT_PRIVATE String closureDeclaredName(JSObject*);
+JS_EXPORT_PRIVATE String closureDisplayName(JSObject*);
+JS_EXPORT_PRIVATE void startRecordingThrownTypeErrors();
+JS_EXPORT_PRIVATE String recordedThrownTypeErrors();
 JS_EXPORT_PRIVATE bool isSloppyPlainClosure(JSCell*);
-JS_EXPORT_PRIVATE unsigned lengthOfSlimClosure(JSObject*);
+JS_EXPORT_PRIVATE unsigned slimClosureLength(JSObject*);
 JS_EXPORT_PRIVATE Structure* cachedBoundFunctionStructure(JSObject*);
 JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(JSObject*, Structure*);
 JS_EXPORT_PRIVATE void* taggedSlimClosureEntrypoint();
-JS_EXPORT_PRIVATE JSValue textOfSlimClosure(JSGlobalObject*, JSObject*);
-// The ClosureWord of the function. `relative`: the EntryWord of its code, with the distance from the start of the code for an address.
-uint64_t closureWordOfTypedFunction(std::span<const uint8_t> image, uint32_t function, uint64_t relative);
-struct RangeOfClosureWords {
-    uint32_t firstFunctionClosuresGoBy;
-    uint32_t endOfFunctionsClosuresGoBy;
-    uint32_t rowsLeftOutAheadOfClosures;
+JS_EXPORT_PRIVATE JSValue slimClosureSourceText(JSGlobalObject*, JSObject*);
+uint64_t typedFunctionClosureWord(std::span<const uint8_t> image, uint32_t function, uint64_t relative);
+struct ClosureWordRange {
+    uint32_t firstClosureFunction;
+    uint32_t endOfClosureFunctions;
+    uint32_t omittedClosureWordCount;
 };
-RangeOfClosureWords rangeOfClosureWordsIn(std::span<const uint8_t> image);
-// Whether the cell is a closure of the function, whichever of its entrypoints each of the two goes by.
-JS_EXPORT_PRIVATE bool isClosureOfTypedFunction(JSCell*, uint32_t function);
-JS_EXPORT_PRIVATE JSObject* withEveryPropertyInLine(JSGlobalObject*, JSObject*);
+ClosureWordRange closureWordRangeIn(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE bool isTypedFunctionClosure(JSCell*, uint32_t function);
+JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
 namespace Typed {
 
-// Whether an entry function of a program that was compiled from types runs in the place of the top-level code of the module, which is named
-// as the program data names it (ProgramModule::entryOffset: SourceProvider::aotModuleID() less one). False where there is no image.
 JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
 JS_EXPORT_PRIVATE JSValue requireCompiledEntryPoint(JSGlobalObject*, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE void detachModuleNamespace(JSGlobalObject*, JSObject*);
-Identifier tryMakeIdentifier(VM&, uint32_t identifier);
-// For the host's registry of its own modules. Whether the image has the module of this number: false where there is no image.
+Identifier tryCreateIdentifier(VM&, uint32_t identifier);
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t id);
-// Runs the module, which the image has, and yields what it exports. Empty: it has thrown. Its top level is code that runs once: asked again,
-// this yields the same, or throws the same, without running anything, as for a module of the language.
 JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t id);
-JS_EXPORT_PRIVATE void willAskProgramForFile(JSGlobalObject*, const String& path);
-// For whoever makes the functions that the engine or the host implements in JavaScript. Whether the image has the function of this number.
+JS_EXPORT_PRIVATE void willRequestFileFromProgram(JSGlobalObject*, const String& path);
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
-// A new function object for it, which the image has. With another prototype than its kind of function has, if one is given. It can be made
-// while the global object is being created: until that is done it may be stored, and stored to with putDirect(), and nothing else.
 JS_EXPORT_PRIVATE JSFunction* builtinFunction(JSGlobalObject*, uint32_t id, JSObject* prototype = nullptr);
-// The global object is complete.
 void didFinishCreation(JSGlobalObject*);
-// A function that is compiled from types is a JSFunction with a NativeExecutable, which says nothing of what it was written as.
 enum class DeclaredAs : uint8_t { NotCompiled, Function, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, Class };
 JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
-// Whether it is such a function, and was written in one of the host's own modules.
-JS_EXPORT_PRIVATE bool isOfBuiltinModule(JSCell*);
-// What a compiled generator function or async generator function returns. It is no JSGenerator.
+JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
 JS_EXPORT_PRIVATE void reifyClassPrototypeIfNeeded(JSObject*);
-JS_EXPORT_PRIVATE bool forEachOwnPropertyOfCompiledObject(JSObject*, const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&);
-std::optional<bool> hasOwnPropertyOfCompiledObject(JSObject*, UniquedStringImpl*);
-JSValue tryGetOwnDataOfCompiledObject(VM&, JSCell*, UniquedStringImpl*);
-std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfFieldForInterpreter(JSCell*, UniquedStringImpl*);
-bool isFieldThatReadsAsUndefinedWhereAbsent(JSGlobalObject*, JSCell*, UniquedStringImpl*);
-bool isNameThatReadsAsUndefinedByStructure(JSGlobalObject*, JSCell*, UniquedStringImpl*);
-bool isAbsentFromCompiledObjectByStructure(Structure*, UniquedStringImpl*);
+JS_EXPORT_PRIVATE bool forEachCompiledObjectOwnProperty(JSObject*, const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&);
+std::optional<bool> compiledObjectHasOwnProperty(JSObject*, UniquedStringImpl*);
+JSValue tryGetCompiledObjectOwnData(VM&, JSCell*, UniquedStringImpl*);
+std::optional<std::pair<uint32_t, uint32_t>> fieldOffsetAndKindForInterpreter(JSCell*, UniquedStringImpl*);
+bool absentFieldReadsAsUndefined(JSGlobalObject*, JSCell*, UniquedStringImpl*);
+bool structureGuaranteesUndefinedRead(JSGlobalObject*, JSCell*, UniquedStringImpl*);
+bool compiledObjectStructureGuaranteesAbsence(Structure*, UniquedStringImpl*);
 void countIfCompiledObject(VM&, JSValue, const char* operation);
-bool tryStorePrimitiveIntoFieldOfCompiledObject(VM&, JSCell*, UniquedStringImpl*, JSValue);
-std::optional<std::pair<uint32_t, uint32_t>> offsetAndKindOfStoreForInterpreter(VM&, JSCell*, const Identifier&);
-bool storeExtraPropertyOfCompiledObject(JSCell*, int offset, JSValue);
-JSValue extraPropertyOfCompiledObject(JSCell*, int offset);
-std::optional<std::pair<uint16_t, uint16_t>> placeOfExtraPropertyForInterpreter(VM&, JSCell*, const Identifier&);
-bool tryAssignPrimitivesToFieldsOfCompiledObject(VM&, JSObject* target, JSObject* source);
-// After `prototype` has been stored to a function with putDirect(), which goes past the function's own methods. Any cell will do.
+bool tryStorePrimitiveToCompiledObjectField(VM&, JSCell*, UniquedStringImpl*, JSValue);
+std::optional<std::pair<uint32_t, uint32_t>> fieldStoreOffsetAndKindForInterpreter(VM&, JSCell*, const Identifier&);
+bool storeCompiledObjectExtraProperty(JSCell*, int offset, JSValue);
+JSValue compiledObjectExtraProperty(JSCell*, int offset);
+std::optional<std::pair<uint16_t, uint16_t>> extraPropertyLocationForInterpreter(VM&, JSCell*, const Identifier&);
+bool tryAssignPrimitivesToCompiledObjectFields(VM&, JSObject* target, JSObject* source);
 JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
-// For the host, right after it has made a global object that the built-ins table calls replaceable, before anything else sees it.
 JS_EXPORT_PRIVATE void didCreateReplaceableGlobal(JSGlobalObject*, ASCIILiteral name, JSObject*);
-struct CachedGetterOfHostClass {
+struct HostClassCachedGetter {
     GetValueFunc::Ptr getter;
     uint32_t offsetOfCachedValue;
 };
-JS_EXPORT_PRIVATE void setCachedGettersOfHostClasses(std::span<const CachedGetterOfHostClass>);
+JS_EXPORT_PRIVATE void setHostClassCachedGetters(std::span<const HostClassCachedGetter>);
 static constexpr unsigned maxNumberOfHostClasses = 128;
-JS_EXPORT_PRIVATE void didCreateStructureOfHostClass(JSGlobalObject*, unsigned number, Structure*);
+JS_EXPORT_PRIVATE void didCreateHostClassStructure(JSGlobalObject*, unsigned number, Structure*);
 
 } // namespace Typed
 
 void destroyJSONBuffers(Instance&);
 void destroyJSONSource(Instance&);
+void releaseLargeJSONSource(Instance&);
 String takePreparedJSON(Instance&, JSValue);
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
-JS_EXPORT_PRIVATE void noteAsyncLocalStorage(JSGlobalObject*, JSObject* storage, JSObject* frame, JSCell* getStore);
+JS_EXPORT_PRIVATE void registerAsyncLocalStorage(JSGlobalObject*, JSObject* storage, JSObject* frame, JSCell* getStore);
 
-struct FrameInTrace {
+struct StackTraceFrame {
     uint32_t function;
     uint32_t typedFunction;
-    uint64_t callSiteAndRootOfConstructed;
-    static FrameInTrace create(uint32_t function, uint32_t typedFunction, BytecodeIndex callSite, bool isConstructed = false)
+    uint64_t callSiteAndConstructedRoot;
+    static StackTraceFrame create(uint32_t function, uint32_t typedFunction, BytecodeIndex callSite, bool isConstructed = false)
     {
         return { function, typedFunction, callSite.asBits() | static_cast<uint64_t>(isConstructed ? typedFunction + 1 : 0) << 32 };
     }
-    BytecodeIndex callSite() const { return BytecodeIndex::fromBits(static_cast<uint32_t>(callSiteAndRootOfConstructed)); }
-    void setRootOfConstructed(uint32_t root)
+    BytecodeIndex callSite() const { return BytecodeIndex::fromBits(static_cast<uint32_t>(callSiteAndConstructedRoot)); }
+    void setConstructedRoot(uint32_t root)
     {
-        if (!(callSiteAndRootOfConstructed >> 32))
-            callSiteAndRootOfConstructed |= static_cast<uint64_t>(root + 1) << 32;
+        if (!(callSiteAndConstructedRoot >> 32))
+            callSiteAndConstructedRoot |= static_cast<uint64_t>(root + 1) << 32;
     }
     bool isConstructed() const
     {
-        uint32_t root = callSiteAndRootOfConstructed >> 32;
+        uint32_t root = callSiteAndConstructedRoot >> 32;
         return root && (root - 1 == typedFunction || typedFunctionWraps(root - 1, typedFunction));
     }
 };
-JS_EXPORT_PRIVATE void appendFramesInProfile(uint32_t function, uint32_t site, bool& nothingIsShownYet, Vector<FrameInTrace, 4>&);
+JS_EXPORT_PRIVATE void appendProfileFrames(uint32_t function, uint32_t site, bool& noFrameShownYet, Vector<StackTraceFrame, 4>&);
 JS_EXPORT_PRIVATE String describeCodeAddresses(std::span<const void* const>);
-JS_EXPORT_PRIVATE std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t typedFunction);
-JS_EXPORT_PRIVATE Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> imageAndProgramData);
-JS_EXPORT_PRIVATE uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc);
+JS_EXPORT_PRIVATE std::optional<FunctionRef::ReportedPosition> typedFunctionDefinition(uint32_t typedFunction);
+JS_EXPORT_PRIVATE Vector<uint8_t> imageSymbols(std::span<const uint8_t> imageAndProgramData);
+JS_EXPORT_PRIVATE uint32_t typedFunctionWithInnerEntryAt(const void* pc);
 
 struct ReturnAddressTrace {
     WTF_ALLOW_STRUCT_COMPACT_POINTERS;
     Instance* instance;
-    static constexpr unsigned numberOfBitsOfLimit = 24;
-    static constexpr unsigned maxNumberOfFramesLeftOut = 255;
-    uint32_t limit : numberOfBitsOfLimit;
-    uint32_t numberOfFramesLeftOut : 8;
+    static constexpr unsigned limitBits = 24;
+    static constexpr unsigned maxOmittedFrames = 255;
+    uint32_t limit : limitBits;
+    uint32_t omittedFrameCount : 8;
     uint32_t numberOfReturnAddresses : 30;
-    uint32_t topIsAtSiteOfItsItem : 1;
-    uint32_t hasFrameOfHostFunctionOnTop : 1;
+    uint32_t topIsAtStackTraceItemSite : 1;
+    uint32_t hasHostFunctionFrameOnTop : 1;
     static size_t allocationSize(size_t numberOfReturnAddresses) { return sizeof(ReturnAddressTrace) + numberOfReturnAddresses * sizeof(uint32_t); }
     size_t sizeInBytes() const { return allocationSize(numberOfReturnAddresses); }
     std::span<uint32_t> returnAddresses() { return { reinterpret_cast<uint32_t*>(this + 1), numberOfReturnAddresses }; }
     std::span<const uint32_t> returnAddresses() const { return { reinterpret_cast<const uint32_t*>(this + 1), numberOfReturnAddresses }; }
-    static constexpr uint32_t isOfConstructed = 1u << 31;
-    static uint32_t keep(const void* address, uintptr_t startOfImageCode) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(address) - startOfImageCode); }
-    static const void* addressOf(uint32_t kept, uintptr_t startOfImageCode) { return std::bit_cast<const void*>(startOfImageCode + (kept & ~isOfConstructed)); }
+    static constexpr uint32_t isConstructedRoot = 1u << 31;
+    static uint32_t keep(const void* address, uintptr_t imageCodeStart) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(address) - imageCodeStart); }
+    static const void* addressOf(uint32_t kept, uintptr_t imageCodeStart) { return std::bit_cast<const void*>(imageCodeStart + (kept & ~isConstructedRoot)); }
 };
-JS_EXPORT_PRIVATE uintptr_t startOfImageCode();
+JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
 void writePerfMap();
 
 struct ImageAddressInfo {
@@ -278,13 +256,13 @@ struct ImageAddressInfo {
         Stub,
         Adapter,
     };
-    static constexpr uint32_t frameMayBeOfHostFunction = 1;
+    static constexpr uint32_t frameMayBeHostFunction = 1;
     Kind kind { NotInImage };
     uint32_t index { 0 };
     uint32_t offset { 0 };
 };
 JS_EXPORT_PRIVATE ImageAddressInfo classifyAddress(const void* address);
-JS_EXPORT_PRIVATE ImageAddressInfo::Kind kindOfAddress(const void* address);
+JS_EXPORT_PRIVATE ImageAddressInfo::Kind addressKind(const void* address);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE void* returnAddressForFrame(const void* frame, const void* startingFrom);
 struct FrameAndPC {
@@ -292,9 +270,8 @@ struct FrameAndPC {
     void* pc { nullptr };
 };
 JS_EXPORT_PRIVATE std::optional<FrameAndPC> innermostFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* topCallFrame, const StackBounds&);
-JS_EXPORT_PRIVATE void* returnAddressOfTopWithoutFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* machineStackPointer, const StackBounds&);
+JS_EXPORT_PRIVATE void* returnAddressOfFramelessTop(void* machineFrame, void* machinePC, void* machineLinkRegister, void* machineStackPointer, const StackBounds&);
 JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
-// What calleeSaveRegistersOf() says, without a list: by Reg::index(); they are saved in that order, a word each, the first that many words from the frame pointer.
 struct SavedRegisters {
     uint64_t mask;
     ptrdiff_t first;
@@ -312,7 +289,7 @@ struct ImageInlineFrame {
     bool isConstruction() const { return flags & 2; }
 };
 JS_EXPORT_PRIVATE ImageInlineFrame inlineFrameOf(const ImageFunction&, unsigned frame);
-class InlineFramesRead {
+class InlineFrameReader {
 public:
     const ImageInlineFrame& at(const ImageFunction& function, unsigned frame)
     {
@@ -327,18 +304,16 @@ private:
     const ImageFunction* m_function { nullptr };
     Vector<ImageInlineFrame, 32> m_frames;
 };
-// Of a function whose sites are numbered in the order of the code: the inline frame of number 1, 2, .. A number without code: a call that was
-// inlined is in the frame it stands in; whatever else has a number of that kind is in the function itself.
-class FramesOfSites {
+class SiteFrames {
 public:
-    explicit FramesOfSites(const ImageFunction&);
+    explicit SiteFrames(const ImageFunction&);
     unsigned next();
     void skip(uint64_t numberOfSites);
 
 private:
     const uint8_t* m_inlineFrames { nullptr };
     const uint8_t* m_sites { nullptr };
-    uint64_t m_inFunctionItself { 0 };
+    uint64_t m_sitesInFunction { 0 };
     uint64_t m_inlinedCalls { 0 };
     uint64_t m_withCode { 0 };
     unsigned m_frame { 0 };
@@ -368,7 +343,7 @@ JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE JSCell* callerOwnerCell(const CallFrame*);
 void countAwait(VM&, const char* where, JSValue operand);
 void countJobCall(VM&);
-void noteGuest(JSGlobalObject*, const char* kind, StringView group, StringView text);
+void recordSample(JSGlobalObject*, const char* kind, StringView group, StringView text);
 
 } } // namespace JSC::AOT
 

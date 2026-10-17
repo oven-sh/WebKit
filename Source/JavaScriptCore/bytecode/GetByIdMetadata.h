@@ -43,7 +43,7 @@ enum class GetByIdMode : uint8_t {
 enum class GetByIdCompiledFieldKind : uint32_t {
     JSValue,
     Cell32,
-    Int32OrElsewhere,
+    Int32OrNumberBox,
     Int32,
     Boolean,
     Double,
@@ -62,17 +62,17 @@ enum class InByIdKind : uint32_t {
     ByStructure,
     JSValue,
     Cell32,
-    Int32OrElsewhere,
+    Int32OrNumberBox,
     Double,
     AlwaysThere,
 };
-static constexpr uint32_t getByIdLargestImmediateInCell32 = 10;
-static constexpr unsigned getByIdShiftOfCell32 = 3;
-static constexpr unsigned getByIdBitsOfMarkedBlockCage = 35;
-static constexpr int32_t getByIdLeastInt32InPlace = -(1 << 30);
+static constexpr uint32_t getByIdMaxCell32Immediate = 10;
+static constexpr unsigned getByIdCell32Shift = 3;
+static constexpr unsigned getByIdMarkedBlockCageBits = 35;
+static constexpr int32_t getByIdMinInlineInt32 = -(1 << 30);
 static constexpr int32_t getByIdAbsentInt32 = INT32_MIN + 1;
 enum class PutByIdCompiledFieldKind : uint32_t {
-    Int32OrElsewhere,
+    Int32OrNumberBox,
     Double,
     OptionalDouble,
     Int32,
@@ -81,8 +81,8 @@ enum class PutByIdCompiledFieldKind : uint32_t {
     StringInCell32,
     ExtraProperty,
 };
-static constexpr unsigned putByIdShiftOfCompiledFieldKind = 16;
-static constexpr unsigned putByIdShiftOfOffsetOfExtraProperty = 20;
+static constexpr unsigned putByIdCompiledFieldKindShift = 16;
+static constexpr unsigned putByIdExtraPropertyOffsetShift = 20;
 static constexpr uint32_t putByIdOffsetOfOrderWord = 8;
 static constexpr uint32_t putByIdOrderWordIsFrozen = 1u << 29;
 static constexpr uint64_t putByIdAbsentDouble = 0x7ffcull << 48;
@@ -126,7 +126,7 @@ struct GetByIdModeMetadataProtoLoad {
 static_assert(sizeof(GetByIdModeMetadataProtoLoad) == 16);
 
 struct GetByIdModeMetadataCustomAccessor {
-    static constexpr unsigned bitsOfHolder = 48;
+    static constexpr unsigned holderBits = 48;
 
     StructureID structureID;
     PropertyOffset cachedOffset;
@@ -198,13 +198,13 @@ inline void GetByIdModeMetadata::setCompiledFieldMode(Structure* structure, uint
 
 inline bool GetByIdModeMetadata::trySetCustomAccessorMode(Structure* structure, PropertyOffset offset, JSObject* holder)
 {
-    static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, mode) == OBJECT_OFFSETOF(GetByIdModeMetadataCustomAccessor, holderAndMode) + GetByIdModeMetadataCustomAccessor::bitsOfHolder / 8);
+    static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, mode) == OBJECT_OFFSETOF(GetByIdModeMetadataCustomAccessor, holderAndMode) + GetByIdModeMetadataCustomAccessor::holderBits / 8);
     uint64_t bits = static_cast<uint64_t>(std::bit_cast<uintptr_t>(holder));
-    if (bits >> GetByIdModeMetadataCustomAccessor::bitsOfHolder)
+    if (bits >> GetByIdModeMetadataCustomAccessor::holderBits)
         return false;
     customAccessorMode.structureID = structure->id();
     customAccessorMode.cachedOffset = offset;
-    customAccessorMode.holderAndMode = bits | static_cast<uint64_t>(GetByIdMode::CustomAccessor) << GetByIdModeMetadataCustomAccessor::bitsOfHolder;
+    customAccessorMode.holderAndMode = bits | static_cast<uint64_t>(GetByIdMode::CustomAccessor) << GetByIdModeMetadataCustomAccessor::holderBits;
     ASSERT(mode == GetByIdMode::CustomAccessor);
     ASSERT(!hitCountForLLIntCaching);
     return true;
@@ -213,7 +213,7 @@ inline bool GetByIdModeMetadata::trySetCustomAccessorMode(Structure* structure, 
 inline JSObject* GetByIdModeMetadata::customAccessorHolder() const
 {
     ASSERT(mode == GetByIdMode::CustomAccessor);
-    return std::bit_cast<JSObject*>(static_cast<uintptr_t>(customAccessorMode.holderAndMode & ((1ull << GetByIdModeMetadataCustomAccessor::bitsOfHolder) - 1)));
+    return std::bit_cast<JSObject*>(static_cast<uintptr_t>(customAccessorMode.holderAndMode & ((1ull << GetByIdModeMetadataCustomAccessor::holderBits) - 1)));
 }
 
 inline void GetByIdModeMetadata::setArrayLengthMode()

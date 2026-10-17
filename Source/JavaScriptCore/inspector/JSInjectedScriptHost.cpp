@@ -869,11 +869,11 @@ static JSObject* cloneArrayIteratorObject(JSGlobalObject* globalObject, VM& vm, 
     return clone;
 }
 
-static JSValue copyOfPosition(VM& vm, JSValue entry)
+static JSValue copyPosition(VM& vm, JSValue entry)
 {
 #if ENABLE(AOT)
     if (entry.isCell())
-        return AOT::Typed::CompactTable::copyOfPosition(vm, entry.asCell());
+        return AOT::Typed::CompactTable::copyPosition(vm, entry.asCell());
 #else
     UNUSED_PARAM(vm);
 #endif
@@ -883,14 +883,14 @@ static JSValue copyOfPosition(VM& vm, JSValue entry)
 static JSObject* cloneMapIteratorObject(JSGlobalObject* globalObject, VM& vm, JSMapIterator* iteratorObject)
 {
     JSMapIterator* clone = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), iteratorObject->iteratedObject(), iteratorObject->kind());
-    clone->internalField(JSMapIterator::Field::Entry).set(vm, clone, copyOfPosition(vm, iteratorObject->internalField(JSMapIterator::Field::Entry).get()));
+    clone->internalField(JSMapIterator::Field::Entry).set(vm, clone, copyPosition(vm, iteratorObject->internalField(JSMapIterator::Field::Entry).get()));
     return clone;
 }
 
 static JSObject* cloneSetIteratorObject(JSGlobalObject* globalObject, VM& vm, JSSetIterator* iteratorObject)
 {
     JSSetIterator* clone = JSSetIterator::create(vm, globalObject->setIteratorStructure(), iteratorObject->iteratedObject(), iteratorObject->kind());
-    clone->internalField(JSSetIterator::Field::Entry).set(vm, clone, copyOfPosition(vm, iteratorObject->internalField(JSSetIterator::Field::Entry).get()));
+    clone->internalField(JSSetIterator::Field::Entry).set(vm, clone, copyPosition(vm, iteratorObject->internalField(JSSetIterator::Field::Entry).get()));
     return clone;
 }
 

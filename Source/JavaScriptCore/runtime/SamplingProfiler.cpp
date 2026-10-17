@@ -77,37 +77,37 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SamplingProfiler);
 extern "C" char __executable_start;
 extern "C" char etext;
 
-SUPPRESS_ASAN static void* returnAddressOfNativeWithoutFrame(VM& vm, void* machinePC, void* machineFrame, void* machineStackPointer, const StackBounds& stack)
+SUPPRESS_ASAN static void* returnAddressOfFramelessNative(VM& vm, void* machinePC, void* machineFrame, void* machineStackPointer, const StackBounds& stack)
 {
     constexpr size_t maxNumberOfSlots = 64;
-    constexpr uint32_t maxLengthOfCall = 7;
-    auto isInTextOfHost = [](const void* address) {
+    constexpr uint32_t maxCallInstructionLength = 7;
+    auto isInHostTextSegment = [](const void* address) {
         return address >= static_cast<const void*>(&__executable_start) && address < static_cast<const void*>(&etext);
     };
     auto* slot = static_cast<void* const*>(machineStackPointer);
     auto* record = static_cast<void* const*>(machineFrame);
-    if (isInTextOfHost(machinePC) || !stack.contains(machineStackPointer) || !stack.contains(machineFrame) || std::bit_cast<uintptr_t>(slot) % sizeof(void*) || std::bit_cast<uintptr_t>(record) % sizeof(void*) || slot >= record)
+    if (isInHostTextSegment(machinePC) || !stack.contains(machineStackPointer) || !stack.contains(machineFrame) || std::bit_cast<uintptr_t>(slot) % sizeof(void*) || std::bit_cast<uintptr_t>(record) % sizeof(void*) || slot >= record)
         return nullptr;
     AOT::ImageAddressInfo returnsTo = AOT::classifyAddress(record[1]);
     if (returnsTo.kind == AOT::ImageAddressInfo::NotInImage)
         return nullptr;
     for (auto* end = std::min(record, slot + maxNumberOfSlots); slot < end; ++slot) {
-        if (isInTextOfHost(*slot))
+        if (isInHostTextSegment(*slot))
             return nullptr;
         AOT::ImageAddressInfo info = AOT::classifyAddress(*slot);
-        if (info.kind != AOT::ImageAddressInfo::Function || info.offset < maxLengthOfCall)
+        if (info.kind != AOT::ImageAddressInfo::Function || info.offset < maxCallInstructionLength)
             continue;
         AOT::FunctionRef function { vm.m_aotInstances[0], info.index };
         if (AOT::tryCallSiteAt(*function.info().function(), info.offset))
             continue;
         auto* pc = static_cast<const uint8_t*>(*slot);
-        bool isBehindCall = pc[-5] == 0xe8
+        bool isAfterCall = pc[-5] == 0xe8
             || (pc[-2] == 0xff && ((pc[-1] & 0xf8) == 0xd0 || (pc[-1] & 0xf8) == 0x10))
             || (pc[-6] == 0xff && (pc[-5] == 0x15 || (pc[-5] & 0xf8) == 0x90))
             || (pc[-3] == 0xff && (pc[-2] & 0xf8) == 0x50)
             || (pc[-4] == 0xff && pc[-3] == 0x54 && pc[-2] == 0x24)
             || (pc[-7] == 0xff && pc[-6] == 0x94 && pc[-5] == 0x24);
-        if (!isBehindCall)
+        if (!isAfterCall)
             continue;
         return returnsTo.kind == AOT::ImageAddressInfo::Function && returnsTo.index == info.index ? nullptr : *slot;
     }
@@ -159,7 +159,7 @@ public:
         return !m_bailingOut;
     }
 
-    void setCallerPCOfTopWithoutFrame(void* pc) { m_callerPCOfTopWithoutFrame = pc; }
+    void setFramelessTopCallerPC(void* pc) { m_framelessTopCallerPC = pc; }
 
 protected:
 
@@ -234,7 +234,7 @@ protected:
     void advanceToParentFrame()
     {
 #if ENABLE(AOT)
-        if (void* callerPC = std::exchange(m_callerPCOfTopWithoutFrame, nullptr)) {
+        if (void* callerPC = std::exchange(m_framelessTopCallerPC, nullptr)) {
             m_pc = callerPC;
             return;
         }
@@ -317,7 +317,7 @@ protected:
     VM& m_vm;
     CallFrame* m_callFrame;
     void* m_pc;
-    void* m_callerPCOfTopWithoutFrame { nullptr };
+    void* m_framelessTopCallerPC { nullptr };
 #if ENABLE(AOT)
     AOT::ImageAddressInfo m_pcInfo { };
 #endif
@@ -542,14 +542,14 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 
             void* framePC = machinePC;
 #if ENABLE(AOT)
-            void* leftByCallOfNative = nullptr;
+            void* nativeCallReturnAddress = nullptr;
 #if CPU(X86_64) && OS(LINUX)
-            if (AOT::hasCode() && !Options::useJIT() && !topFrameIsLLInt && AOT::kindOfAddress(machinePC) == AOT::ImageAddressInfo::NotInImage)
-                leftByCallOfNative = returnAddressOfNativeWithoutFrame(m_vm, machinePC, machineFrame, machineStackPointer, m_jscExecutionThread->stack());
+            if (AOT::hasCode() && !Options::useJIT() && !topFrameIsLLInt && AOT::addressKind(machinePC) == AOT::ImageAddressInfo::NotInImage)
+                nativeCallReturnAddress = returnAddressOfFramelessNative(m_vm, machinePC, machineFrame, machineStackPointer, m_jscExecutionThread->stack());
 #endif
-            if (leftByCallOfNative) {
+            if (nativeCallReturnAddress) {
                 callFrame = static_cast<CallFrame*>(machineFrame);
-                framePC = leftByCallOfNative;
+                framePC = nativeCallReturnAddress;
             } else if (AOT::hasCode() && (callFrame != machineFrame || AOT::classifyAddress(machinePC).kind == AOT::ImageAddressInfo::NotInImage)) {
                 if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
                     callFrame = static_cast<CallFrame*>(innermost->frame);
@@ -557,11 +557,11 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 } else if (callFrame)
                     framePC = m_jscExecutionThread->stack().contains(machineFrame) ? AOT::returnAddressForFrame(callFrame, machineFrame) : nullptr;
             }
-            void* callerPCOfTopWithoutFrame = nullptr;
+            void* framelessTopCallerPC = nullptr;
             if (!losesCallerForTesting && AOT::hasCode() && callFrame == machineFrame && framePC == machinePC) {
-                if (void* callerPC = AOT::returnAddressOfTopWithoutFrame(machineFrame, machinePC, machineLinkRegister, machineStackPointer, m_jscExecutionThread->stack())) {
-                    if (AOT::kindOfAddress(machinePC) == AOT::ImageAddressInfo::Function)
-                        callerPCOfTopWithoutFrame = callerPC;
+                if (void* callerPC = AOT::returnAddressOfFramelessTop(machineFrame, machinePC, machineLinkRegister, machineStackPointer, m_jscExecutionThread->stack())) {
+                    if (AOT::addressKind(machinePC) == AOT::ImageAddressInfo::Function)
+                        framelessTopCallerPC = callerPC;
                     else
                         framePC = callerPC;
                 }
@@ -580,7 +580,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             } else {
                 FrameWalker walker(m_vm, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
 #if ENABLE(AOT)
-                walker.setCallerPCOfTopWithoutFrame(callerPCOfTopWithoutFrame);
+                walker.setFramelessTopCallerPC(framelessTopCallerPC);
 #endif
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
@@ -669,7 +669,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 
     TinyBloomFilter<uintptr_t> filter = m_vm.heap.objectSpace().blocks().filter();
 #if ENABLE(AOT)
-    UncheckedKeyHashMap<uint64_t, AOT::FunctionRef::ReportedPosition> positionsOfCompiledSites;
+    UncheckedKeyHashMap<uint64_t, AOT::FunctionRef::ReportedPosition> compiledSitePositions;
 #endif
 
     for (UnprocessedStackTrace& unprocessedStackTrace : m_unprocessedStackTraces) {
@@ -868,7 +868,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 #endif
 
 #if ENABLE(AOT)
-        bool nothingCompiledIsShownYet = true;
+        bool noCompiledFrameShownYet = true;
 #endif
         for (size_t i = startIndex; i < unprocessedStackTrace.frames.size(); i++) {
             UnprocessedStackFrame& unprocessedStackFrame = unprocessedStackTrace.frames[i];
@@ -903,12 +903,12 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 else
                     m_hasUnresolvedAOTFrames = true;
             } else if (function && m_vm.m_aotInstances.contains(function.instance) && function.info().isTyped) {
-                Vector<AOT::FrameInTrace, 4> compiledFrames;
-                if (uint32_t entered = i ? AOT::FunctionRef::none : AOT::typedFunctionEnteredInsideFunctionAt(unprocessedStackTrace.topPC); entered != AOT::FunctionRef::none) {
-                    nothingCompiledIsShownYet = false;
-                    compiledFrames.append(AOT::FrameInTrace::create(function.index, entered, BytecodeIndex(0)));
+                Vector<AOT::StackTraceFrame, 4> compiledFrames;
+                if (uint32_t entered = i ? AOT::FunctionRef::none : AOT::typedFunctionWithInnerEntryAt(unprocessedStackTrace.topPC); entered != AOT::FunctionRef::none) {
+                    noCompiledFrameShownYet = false;
+                    compiledFrames.append(AOT::StackTraceFrame::create(function.index, entered, BytecodeIndex(0)));
                 } else
-                    AOT::appendFramesInProfile(function.index, unprocessedStackFrame.callSiteIndex.bits(), nothingCompiledIsShownYet, compiledFrames);
+                    AOT::appendProfileFrames(function.index, unprocessedStackFrame.callSiteIndex.bits(), noCompiledFrameShownYet, compiledFrames);
                 for (auto& compiledFrame : compiledFrames) {
                     stackTrace.frames.append(StackFrame());
                     StackFrame& frame = stackTrace.frames.last();
@@ -917,12 +917,12 @@ void SamplingProfiler::processUnverifiedStackTraces()
                     frame.semanticLocation.jitType = JITType::AOTJIT;
                     if (!compiledFrame.callSite().offset())
                         continue;
-                    auto position = positionsOfCompiledSites.ensure((static_cast<uint64_t>(compiledFrame.function) << 32 | compiledFrame.callSite().asBits()) + 1, [&] {
+                    auto position = compiledSitePositions.ensure((static_cast<uint64_t>(compiledFrame.function) << 32 | compiledFrame.callSite().asBits()) + 1, [&] {
                         auto reported = AOT::FunctionRef { nullptr, compiledFrame.function }.reportedPositionFor(compiledFrame.callSite());
                         return reported ? *reported : AOT::FunctionRef::ReportedPosition { frame.semanticLocation.lineColumn, 0 };
                     });
                     frame.semanticLocation.lineColumn = position.iterator->value.lineColumn;
-                    frame.sourceOfCompiledSite = position.iterator->value.source;
+                    frame.compiledSiteSource = position.iterator->value.source;
                 }
                 continue;
 #endif
@@ -1111,7 +1111,7 @@ int SamplingProfiler::StackFrame::functionStartLine()
 {
 #if ENABLE(AOT)
     if (isCompiled()) {
-        auto definition = AOT::definitionOfTypedFunction(compiledFunction);
+        auto definition = AOT::typedFunctionDefinition(compiledFunction);
         return definition ? static_cast<int>(definition->lineColumn.line) : -1;
     }
 #endif
@@ -1136,7 +1136,7 @@ unsigned SamplingProfiler::StackFrame::functionStartColumn()
 {
 #if ENABLE(AOT)
     if (isCompiled()) {
-        auto definition = AOT::definitionOfTypedFunction(compiledFunction);
+        auto definition = AOT::typedFunctionDefinition(compiledFunction);
         return definition ? definition->lineColumn.column : std::numeric_limits<unsigned>::max();
     }
 #endif
@@ -1162,9 +1162,9 @@ std::tuple<SourceProvider*, SourceID> SamplingProfiler::StackFrame::sourceProvid
 {
 #if ENABLE(AOT)
     if (isCompiled()) {
-        auto definition = AOT::definitionOfTypedFunction(compiledFunction);
-        uint32_t source = definition && definition->source ? definition->source : sourceOfCompiledSite;
-        return { nullptr, source ? firstSourceIDOfCompiledCode + source : internalSourceID };
+        auto definition = AOT::typedFunctionDefinition(compiledFunction);
+        uint32_t source = definition && definition->source ? definition->source : compiledSiteSource;
+        return { nullptr, source ? firstCompiledCodeSourceID + source : internalSourceID };
     }
 #endif
     switch (frameType) {
@@ -1191,8 +1191,8 @@ String SamplingProfiler::StackFrame::url()
 {
 #if ENABLE(AOT)
     if (isCompiled()) {
-        auto definition = AOT::definitionOfTypedFunction(compiledFunction);
-        uint32_t source = definition && definition->source ? definition->source : sourceOfCompiledSite;
+        auto definition = AOT::typedFunctionDefinition(compiledFunction);
+        uint32_t source = definition && definition->source ? definition->source : compiledSiteSource;
         return source ? AOT::ProgramData::get()->sourceName(source) : emptyString();
     }
 #endif

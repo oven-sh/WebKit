@@ -36,15 +36,15 @@ runtime StringUTF8Length8 : Pure size_t (const Latin1Character* characters, uint
 runtime StringFind8 : Pure size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) noexcept
 runtime StringReverseFindCharacter8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) noexcept
 runtime StringReverseFind8 : Pure size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position) noexcept
-runtime StringIsText : Nothing size_t (JSCell* string, uint32_t text) noexcept
-runtime StringStartsWithText : RuntimeState size_t (JSCell* string, uint32_t text)
-runtime StringEndsWithText : RuntimeState size_t (JSCell* string, uint32_t text)
-runtime StringIndexOfText : RuntimeState size_t (JSCell* string, uint32_t text, int32_t position)
-runtime StringLastIndexOfText : RuntimeState size_t (JSCell* string, uint32_t text, int32_t position)
-runtime StringFindText8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) noexcept
-runtime StringReverseFindText8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) noexcept
+runtime StringEqualsLiteral : Nothing size_t (JSCell* string, uint32_t text) noexcept
+runtime StringStartsWithLiteral : RuntimeState size_t (JSCell* string, uint32_t text)
+runtime StringEndsWithLiteral : RuntimeState size_t (JSCell* string, uint32_t text)
+runtime StringIndexOfLiteral : RuntimeState size_t (JSCell* string, uint32_t text, int32_t position)
+runtime StringLastIndexOfLiteral : RuntimeState size_t (JSCell* string, uint32_t text, int32_t position)
+runtime StringFindLiteral8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) noexcept
+runtime StringReverseFindLiteral8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) noexcept
 runtime StringsAreEqual : Nothing size_t (JSCell* first, JSCell* second) noexcept
-runtime CharactersToCompareWithTexts : Nothing void* (JSCell* string) noexcept
+runtime CharactersToCompareWithLiterals : Nothing void* (JSCell* string) noexcept
 runtime StringPart : RuntimeState JSCell* (JSCell* string, uint64_t startAndCount)
 runtime StringTrim : RuntimeState JSCell* (JSCell* string, uint32_t ends)
 runtime StringLastIndexOf : RuntimeState size_t (JSCell* string, JSCell* other, int32_t position)

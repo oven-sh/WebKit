@@ -2268,7 +2268,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTPromisesSettledBehind);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTPromisesSettledAfter);
 static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache);
 static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
@@ -2331,7 +2331,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionIsAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
 #if ENABLE(AOT)
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAOTTypedProgram);
-static JSC_DECLARE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram);
+static JSC_DECLARE_HOST_FUNCTION(functionBuildAOTImageFromTypedProgram);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTCompactTable);
 static JSC_DECLARE_HOST_FUNCTION(functionSetOnEachMicrotaskTick);
@@ -3306,7 +3306,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globa
     JSObject* object = callFrame->argument(0).getObject();
     if (!object)
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable expects an object"_s);
-    if (!(callFrame->argument(1).toBoolean(globalObject) ? object->fixAndMakePropertiesImmutable(vm) : object->makePropertiesImmutable(vm)))
+    if (!(callFrame->argument(1).toBoolean(globalObject) ? object->lockAndMakePropertiesImmutable(vm) : object->makePropertiesImmutable(vm)))
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable: objects of this class do not support it"_s);
     return JSValue::encode(object);
 }
@@ -4094,7 +4094,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle, (JSGlobalObject* g
     return changeDebuggerModeWhenIdle(globalObject, { });
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionAOTPromisesSettledBehind, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionAOTPromisesSettledAfter, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
@@ -4102,7 +4102,7 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTPromisesSettledBehind, (JSGlobalObject* glob
     MarkedArgumentBuffer promises;
 #if ENABLE(AOT)
     if (auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0))) {
-        for (JSPromise* settled : AOT::Typed::promisesSettledBehind(promise))
+        for (JSPromise* settled : AOT::Typed::promisesSettledAfter(promise))
             promises.append(settled);
     }
 #else
@@ -4965,7 +4965,6 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAtomString, (JSGlobalObject*, CallFrame* call
 }
 
 #if ENABLE(AOT)
-// dumpAOTTypedProgram(bytes: Uint8Array, stage: string): what the ahead-of-time compiler makes of the front end's program.
 JSC_DEFINE_HOST_FUNCTION(functionDumpAOTTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4982,10 +4981,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDumpAOTTypedProgram, (JSGlobalObject* globalObj
     return JSValue::encode(jsString(vm, out.toString()));
 }
 
-// buildAOTImageOfTypedProgram(modules: string | string[], bytes: Uint8Array, otherModules?: string[]): the image of modules in the place of
-// whose code the entry functions of the front end's program run, one each, for aotImagePath. Null: it could not be compiled.
-// otherModules are in the link too, in front of them.
-JSC_DEFINE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionBuildAOTImageFromTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
@@ -5028,7 +5024,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram, (JSGlobalObject* g
     return JSValue::encode(result);
 }
 
-// aotTypedBuiltinMismatches(): an array of strings. See AOT::Typed::Builtins::mismatches().
 JSC_DEFINE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -5077,8 +5072,6 @@ static EncodedJSValue aotCompactTable(JSGlobalObject* globalObject, CallFrame* c
     return throwVMTypeError(globalObject, scope, "No such operation"_s);
 }
 
-// aotCompactTable(operation, mapOrSet, ..), see AOT::Typed::CompactTable. "kind": "none", "storage", or "compact" with the widths of a key
-// and a value; "capacity"; "bytes"; "table": what an iteration starts at; "next", table or null, entry: null, or table, entry, key, value.
 JSC_DEFINE_HOST_FUNCTION(functionAOTCompactTable, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5131,7 +5124,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetHasOwnMicrotaskQueue, (JSGlobalObject* globa
     return JSValue::encode(jsUndefined());
 }
 
-// requireBuiltinModule(id): what compiled code of the host's own modules gets for `require` of the module of this number.
 JSC_DEFINE_HOST_FUNCTION(functionRequireBuiltinModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5145,7 +5137,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireBuiltinModule, (JSGlobalObject* globalOb
     RELEASE_AND_RETURN(scope, JSValue::encode(require(globalObject, id)));
 }
 
-// putPrivateGlobal(name, value): a property of the global object under the private name `@name`, which only builtin code can spell.
 JSC_DEFINE_HOST_FUNCTION(functionPutPrivateGlobal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5157,7 +5148,6 @@ JSC_DEFINE_HOST_FUNCTION(functionPutPrivateGlobal, (JSGlobalObject* globalObject
     return JSValue::encode(jsUndefined());
 }
 
-// putDirect(object, name, value, attributes = 0): as native code stores past the method table. A name that starts with "@" is a private one.
 static Identifier nameForDirectAccess(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -5183,7 +5173,6 @@ JSC_DEFINE_HOST_FUNCTION(functionPutDirect, (JSGlobalObject* globalObject, CallF
     return JSValue::encode(jsUndefined());
 }
 
-// getDirect(object, name): [value, attributes], or undefined.
 JSC_DEFINE_HOST_FUNCTION(functionGetDirect, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6359,7 +6348,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
-    addFunction(vm, alwaysAllow, "aotPromisesSettledBehind"_s, functionAOTPromisesSettledBehind, 1);
+    addFunction(vm, alwaysAllow, "aotPromisesSettledBehind"_s, functionAOTPromisesSettledAfter, 1);
     addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
     addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
     addFunction(vm, alwaysAllow, "isGeneratorBodyCodeInBytecodeCache"_s, functionIsGeneratorBodyCodeInBytecodeCache, 1);
@@ -6434,7 +6423,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "dumpAndResetPasDebugSpectrum"_s, functionDumpAndResetPasDebugSpectrum, 0);
 #if ENABLE(AOT)
     addFunction(vm, allowIfNotFuzz, "dumpAOTTypedProgram"_s, functionDumpAOTTypedProgram, 2);
-    addFunction(vm, allowIfNotFuzz, "buildAOTImageOfTypedProgram"_s, functionBuildAOTImageOfTypedProgram, 2);
+    addFunction(vm, allowIfNotFuzz, "buildAOTImageOfTypedProgram"_s, functionBuildAOTImageFromTypedProgram, 2);
     addFunction(vm, allowIfNotFuzz, "aotTypedBuiltinMismatches"_s, functionAOTTypedBuiltinMismatches, 0);
     addFunction(vm, allowIfNotFuzz, "aotCompactTable"_s, functionAOTCompactTable, 2);
     addFunction(vm, allowIfNotFuzz, "setOnEachMicrotaskTick"_s, functionSetOnEachMicrotaskTick, 1);

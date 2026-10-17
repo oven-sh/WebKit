@@ -56,14 +56,12 @@ private:
     uint32_t* m_flag { nullptr };
 };
 
-// On the Structure of an object that no other object has: it fires when the object makes a transition, by whatever path. It is on no list by then.
 class TransitionWatchpoint final : public Watchpoint {
 public:
     using Callback = void (*)(VM&, void* context);
 
     TransitionWatchpoint();
 
-    // False: a transition has been made from the Structure before, so the next one would not be told.
     bool install(JSObject*, Callback, void* context);
     void fireInternal(VM&, const FireDetail&);
 
@@ -72,7 +70,6 @@ private:
     void* m_context { nullptr };
 };
 
-// The holder has the function under the name: see Instance::bufferAccessors.
 class BufferAccessorWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
 public:
     void watch(VM&, const ObjectPropertyCondition&, Instance&, unsigned row);

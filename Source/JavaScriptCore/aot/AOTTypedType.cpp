@@ -12,7 +12,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Type Type::ofPrimitives(uint16_t primitives)
+Type Type::fromPrimitives(uint16_t primitives)
 {
     Type type;
     type.primitives = primitives;
@@ -31,10 +31,10 @@ Type Type::integer(Range range)
     return type;
 }
 
-Type Type::view(LayoutID layout)
+Type Type::forLayout(LayoutID layout)
 {
     Type type;
-    type.views.append(layout);
+    type.objectLayouts.append(layout);
     return type;
 }
 
@@ -62,22 +62,22 @@ Type Type::object()
 
 Type Type::anything()
 {
-    Type type = ofPrimitives(Primitive::All);
+    Type type = fromPrimitives(Primitive::All);
     type.anyObject = true;
     type.anyFunction = true;
     return type;
 }
 
-LayoutID Type::onlyView() const
+LayoutID Type::singleLayout() const
 {
-    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !engineClasses.isEmpty() || views.size() != 1)
+    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !engineClasses.isEmpty() || objectLayouts.size() != 1)
         return { };
-    return views[0];
+    return objectLayouts[0];
 }
 
-const EngineClass* Type::onlyEngineClass() const
+const EngineClass* Type::singleEngineClass() const
 {
-    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !views.isEmpty() || engineClasses.size() != 1)
+    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !objectLayouts.isEmpty() || engineClasses.size() != 1)
         return nullptr;
     return &Builtins::singleton().classes()[engineClasses[0]];
 }
@@ -105,45 +105,45 @@ void Type::normalizeLiteralString()
         primitives = (primitives & ~Primitive::LiteralString) | Primitive::String;
 }
 
-bool Type::admitsForeignObjects(const Program& program) const
+bool Type::acceptsUntypedObjects(const Program& program) const
 {
-    for (LayoutID view : views) {
-        if (program.at(view).admitsForeignObjects)
+    for (LayoutID supertype : objectLayouts) {
+        if (program.at(supertype).acceptsUntypedObjects)
             return true;
     }
     return false;
 }
 
-bool Type::admitsUncheckedObjects(const Program& program) const
+bool Type::acceptsUncheckedObjects(const Program& program) const
 {
-    for (LayoutID view : views) {
-        if (program.at(view).admitsUncheckedObjects())
+    for (LayoutID supertype : objectLayouts) {
+        if (program.at(supertype).acceptsUncheckedObjects())
             return true;
     }
     return false;
 }
 
-bool Type::admitsOnlyOtherLayouts(const Program& program) const
+bool Type::acceptsOnlyOtherLayouts(const Program& program) const
 {
-    bool admitsThem = false;
-    for (LayoutID view : views) {
-        if (program.at(view).admitsForeignObjects && !program.at(view).admitsOnlyOtherLayouts)
+    bool acceptsThem = false;
+    for (LayoutID supertype : objectLayouts) {
+        if (program.at(supertype).acceptsUntypedObjects && !program.at(supertype).acceptsOnlyOtherLayouts)
             return false;
-        admitsThem |= program.at(view).admitsOnlyOtherLayouts;
+        acceptsThem |= program.at(supertype).acceptsOnlyOtherLayouts;
     }
-    return admitsThem;
+    return acceptsThem;
 }
 
-bool Type::isWithin(const Type& other, const Program& program, bool foreignObjectsPass) const
+bool Type::isSubsetOf(const Type& other, const Program& program, bool untypedObjectsPass) const
 {
-    uint16_t lacked = primitives & ~other.primitives;
+    uint16_t missingFields = primitives & ~other.primitives;
     if (other.primitives & Primitive::String)
-        lacked &= ~Primitive::LiteralString;
-    if (lacked)
+        missingFields &= ~Primitive::LiteralString;
+    if (missingFields)
         return false;
-    if (primitives & Primitive::Int && !integers.isWithin(other.integers))
+    if (primitives & Primitive::Int && !integers.isSubsetOf(other.integers))
         return false;
-    if (other.anyObject || (foreignObjectsPass && other.admitsUncheckedObjects(program)))
+    if (other.anyObject || (untypedObjectsPass && other.acceptsUncheckedObjects(program)))
         return true;
     if (anyObject || (anyFunction && !other.anyFunction))
         return false;
@@ -151,17 +151,15 @@ bool Type::isWithin(const Type& other, const Program& program, bool foreignObjec
         if (!other.engineClasses.contains(engineClass))
             return false;
     }
-    for (LayoutID view : views) {
-        // It stands for any object.
-        if (program.at(view).admitsUncheckedObjects())
+    for (LayoutID supertype : objectLayouts) {
+        if (program.at(supertype).acceptsUncheckedObjects())
             return false;
-        bool holdsOtherLayouts = program.at(view).admitsOnlyOtherLayouts;
-        // The members say which objects there are of a view of objects. An environment is of its own layout and no other.
-        bool goesByMembers = isObjectLayout(program.at(view).kind);
-        bool isWithinOne = false;
-        for (LayoutID otherView : other.views)
-            isWithinOne |= view == otherView || (goesByMembers && std::ranges::includes(program.at(otherView).members, program.at(view).members) && (!holdsOtherLayouts || program.at(otherView).admitsOnlyOtherLayouts));
-        if (!isWithinOne)
+        bool containsOtherLayouts = program.at(supertype).acceptsOnlyOtherLayouts;
+        bool comparesSubtypes = isObjectLayout(program.at(supertype).kind);
+        bool isSubsetOfOne = false;
+        for (LayoutID otherSupertype : other.objectLayouts)
+            isSubsetOfOne |= supertype == otherSupertype || (comparesSubtypes && std::ranges::includes(program.at(otherSupertype).subtypes, program.at(supertype).subtypes) && (!containsOtherLayouts || program.at(otherSupertype).acceptsOnlyOtherLayouts));
+        if (!isSubsetOfOne)
             return false;
     }
     return true;
@@ -169,9 +167,9 @@ bool Type::isWithin(const Type& other, const Program& program, bool foreignObjec
 
 void add(Hasher& hasher, const Type& type)
 {
-    add(hasher, type.primitives, type.integers.least, type.integers.most, type.anyObject, type.anyFunction, type.elements);
-    for (LayoutID view : type.views)
-        add(hasher, view);
+    add(hasher, type.primitives, type.integers.minimum, type.integers.maximum, type.anyObject, type.anyFunction, type.elements);
+    for (LayoutID supertype : type.objectLayouts)
+        add(hasher, supertype);
     for (uint16_t engineClass : type.engineClasses)
         add(hasher, engineClass);
 }
@@ -222,8 +220,8 @@ Store storeOf(const Type& type)
     case Rep::Int32:
         return Store::Boolean;
     case Rep::Int64: {
-        auto fits = [&](int64_t least, int64_t most) {
-            return type.integers.isWithin({ least, most });
+        auto fits = [&](int64_t minimum, int64_t maximum) {
+            return type.integers.isSubsetOf({ minimum, maximum });
         };
         if (fits(0, UINT8_MAX))
             return Store::Uint8;
@@ -312,7 +310,7 @@ ASCIILiteral nameOf(Store store)
         return "f64?"_s;
     case Store::Boolean:
         return "bool"_s;
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
         return "i32|"_s;
     case Store::Cell32:
         return "ref32"_s;
@@ -342,7 +340,7 @@ unsigned sizeOf(Store store)
     case Store::Int32:
     case Store::Uint32:
     case Store::Float:
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
     case Store::Cell32:
     case Store::OptionalCell32:
     case Store::LiteralString32:
@@ -368,8 +366,7 @@ Rep repOf(Store store)
     case Store::Int16:
     case Store::Int32:
     case Store::Boolean:
-    // The word as it is. What it stands for takes the object: Lowering::readInt32OrElsewhere().
-    case Store::Int32OrElsewhere:
+    case Store::Int32OrNumberBox:
         return Rep::Int32;
     case Store::Uint32:
     case Store::Int64:

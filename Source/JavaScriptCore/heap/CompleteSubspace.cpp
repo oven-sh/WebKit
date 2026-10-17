@@ -103,7 +103,6 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// The size class that the first cells of this one are taken from, or 0.
 static size_t sizeOfLargerCells(size_t cellSize)
 {
     constexpr size_t largest = 2 * KB;
@@ -114,7 +113,6 @@ static size_t sizeOfLargerCells(size_t cellSize)
         return MarkedSpace::s_sizeClassForSizeStep[MarkedSpace::sizeClassToIndex(size)];
     };
     size_t power = roundUpToPowerOfTwo(cellSize);
-    // A class that lends does not borrow.
     if (sizeClassFor(power) == cellSize || sizeClassFor(power / 2) == cellSize)
         return 0;
     return sizeClassFor(power);

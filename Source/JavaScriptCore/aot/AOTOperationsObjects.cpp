@@ -90,24 +90,24 @@ bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObjec
     return true;
 }
 
-bool tryCopyDataPropertiesOfRecord(Instance* instance, VM& vm, JSObject* target, JSObject* object, const char* operation)
+bool tryCopyRecordDataProperties(Instance* instance, VM& vm, JSObject* target, JSObject* object, const char* operation)
 {
     const Typed::LayoutData* layout = object->structure()->compiledLayout();
     if (!layout || !Typed::isObjectLayout(layout->kind))
         return false;
     auto* record = uncheckedDowncast<Typed::Object>(object);
-    Structure* ofPlainCopy = record->structureOfPlainCopy(instance->globalObject);
+    Structure* plainCopyStructureOrNull = record->plainCopyStructure(instance->globalObject);
     Structure* targetStructure = target->structure();
-    if (!ofPlainCopy || ofPlainCopy->hasUnderscoreProtoPropertyExcludingOriginalProto() || targetStructure->hasImmutableShape() || targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto())
+    if (!plainCopyStructureOrNull || plainCopyStructureOrNull->hasUnderscoreProtoPropertyExcludingOriginalProto() || targetStructure->hasImmutableShape() || targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto())
         return false;
 
     DeferGC deferGC(vm);
-    auto& copied = instance->copiedProperties(targetStructure, ofPlainCopy, nullptr);
+    auto& copied = instance->copiedProperties(targetStructure, plainCopyStructureOrNull, nullptr);
     Structure* last = copied.last;
     if (!last)
         return false;
     Vector<JSValue, 16> values;
-    if (!record->appendValuesOfPlainCopy(vm, values))
+    if (!record->appendPlainCopyValues(vm, values))
         return false;
     countOperationNamed(instance, operation, "copied-from-a-record");
     size_t oldCapacity = targetStructure->outOfLineCapacity();
@@ -123,13 +123,13 @@ bool tryCopyDataPropertiesOfRecord(Instance* instance, VM& vm, JSObject* target,
     return true;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, uint32_t indexOfPlace))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectFromDescriptor, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, uint32_t slotIndex))
 {
     AOT_OPERATION_BEGIN(instance);
-    OPERATION_RETURN(scope, newObjectOfRow(instance, globalObject, vm, indexOfPlace - Instance::numberOfPlacesOfNoRow, values, count));
+    OPERATION_RETURN(scope, newObjectFromDescriptor(instance, globalObject, vm, slotIndex - Instance::numberOfReservedDescriptorIndices, values, count));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfFilledRow, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* row))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectFromFilledDescriptor, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* row))
 {
     AOT_OPERATION_BEGIN(instance);
     StructureID structureID = row->structureID;
@@ -183,7 +183,7 @@ JSCell* spread(JSGlobalObject* globalObject, JSValue iterable)
     RELEASE_AND_RETURN(scope, JSCellButterfly::createFromArray(globalObject, vm, uncheckedDowncast<JSArray>(arrayResult)));
 }
 
-static NEVER_INLINE void cacheInstanceOfWhereLeftSideIsNoObject(Instance* instance, CallFrame* callFrame, JSGlobalObject* globalObject, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance)
+static NEVER_INLINE void cacheInstanceOfForNonObject(Instance* instance, CallFrame* callFrame, JSGlobalObject* globalObject, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance)
 {
     if (SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask) {
         countOperationNamed(instance, "operationAOTInstanceofAndCache", "left-side-is-no-object:the-slot-takes-nothing");
@@ -227,7 +227,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceofAndCache, size_t, (Instance* inst
         OPERATION_RETURN(scope, constructorObject->hasInstance(globalObject, value, hasInstance));
     }
     if (!value.isObject()) {
-        cacheInstanceOfWhereLeftSideIsNoObject(instance, callFrame, globalObject, cache, constructorObject, structureBefore, hasInstanceSlot);
+        cacheInstanceOfForNonObject(instance, callFrame, globalObject, cache, constructorObject, structureBefore, hasInstanceSlot);
         OPERATION_RETURN(scope, false);
     }
     PropertySlot prototypeSlot(constructorObject, PropertySlot::InternalMethodType::Get);

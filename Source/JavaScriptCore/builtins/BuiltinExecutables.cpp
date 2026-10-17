@@ -323,11 +323,11 @@ std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* 
 std::span<const Latin1Character> BuiltinExecutables::textOf(unsigned index)
 {
     switch (static_cast<BuiltinCodeIndex>(index)) {
-#define TEXT_OF(name, functionName, overriddenName, length) \
+#define SOURCE_OF(name, functionName, overriddenName, length) \
     case BuiltinCodeIndex::name: \
         return { std::bit_cast<const Latin1Character*>(s_##name), static_cast<size_t>(length) };
-    JSC_FOREACH_BUILTIN_CODE(TEXT_OF)
-#undef TEXT_OF
+    JSC_FOREACH_BUILTIN_CODE(SOURCE_OF)
+#undef SOURCE_OF
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

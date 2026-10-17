@@ -99,7 +99,7 @@ struct Config {
     uintptr_t startOfStructureHeap;
     uintptr_t structureIDBase;
     uintptr_t sizeOfStructureHeap;
-    uintptr_t sizeOfMarkedBlockCage;
+    uintptr_t markedBlockCageSize;
     void* defaultCallThunk;
     void* arityFixupThunk;
 

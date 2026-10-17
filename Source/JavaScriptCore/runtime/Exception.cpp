@@ -40,7 +40,7 @@ namespace JSC {
 
 const ClassInfo Exception::s_info = { "Exception"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(Exception) };
 
-static bool keepsReturnAddresses()
+static bool retainsReturnAddresses()
 {
 #if ENABLE(AOT)
     return Options::useImmutableIntrinsics();
@@ -114,7 +114,7 @@ Exception::Exception(VM& vm, JSValue thrownValue)
 Exception::~Exception() = default;
 
 #if ENABLE(AOT)
-NEVER_INLINE bool Exception::tryKeepReturnAddresses(VM& vm)
+NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm)
 {
     std::unique_ptr<Vector<StackFrame>> otherFrames;
     auto* returnAddresses = vm.interpreter.tryGetStackTraceAsReturnAddresses(this, Options::exceptionStackTraceLimit(), otherFrames);
@@ -137,11 +137,11 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     Base::finishCreation(vm);
 
 #if ENABLE(AOT)
-    if (keepsReturnAddresses() && action == StackCaptureAction::CaptureStackUnlessCaughtByCompiledCode && vm.interpreter.tryDeferStackCapture(this)) {
+    if (retainsReturnAddresses() && action == StackCaptureAction::CaptureStackUnlessCaughtByCompiledCode && vm.interpreter.tryDeferStackCapture(this)) {
         m_returnAddressesAndFlags.setType(stackCaptureIsDeferredFlag);
         return;
     }
-    if (keepsReturnAddresses() && action != StackCaptureAction::DoNotCaptureStack && tryKeepReturnAddresses(vm))
+    if (retainsReturnAddresses() && action != StackCaptureAction::DoNotCaptureStack && tryRetainReturnAddresses(vm))
         return;
 #endif
     Vector<StackFrame> stackTrace;
@@ -152,13 +152,13 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
-void Exception::noteThatTopFrameIsAtSiteOfItsItem()
+void Exception::setTopFrameIsAtStackTraceItemSite()
 {
 #if ENABLE(AOT)
     if (stackCaptureIsDeferred())
         vm().finishDeferredStackCapture();
     if (auto* returnAddresses = m_returnAddressesAndFlags.pointer())
-        returnAddresses->topIsAtSiteOfItsItem = true;
+        returnAddresses->topIsAtStackTraceItemSite = true;
 #endif
 }
 
@@ -200,7 +200,7 @@ void Exception::materializeStack()
     if (!returnAddresses)
         return;
     Vector<StackFrame> stack;
-    unsigned onTop = returnAddresses->hasFrameOfHostFunctionOnTop;
+    unsigned onTop = returnAddresses->hasHostFunctionFrameOnTop;
     stack.append(m_stack.span().first(onTop));
     StackFrame::appendTypedFrames(*returnAddresses, stack);
     stack.append(m_stack.span().subspan(onTop));

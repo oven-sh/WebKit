@@ -37,12 +37,10 @@ class UnlinkedFunctionExecutable;
 class VM;
 struct UnlinkedStringJumpTable;
 
-// Where a call site of a function compiled from types is in the source. `source` indexes the function's own list of source names.
 struct TypedSitePosition {
     uint32_t line;
     uint32_t column;
     uint32_t source;
-    // The inline frame it is in. Of a call that was inlined: the frame the call stands in.
     uint32_t frame;
 };
 
@@ -66,9 +64,8 @@ struct FunctionReportableSites {
     Vector<String> typedIdentifierNames;
     static constexpr uint32_t handlerTakesException = 1u << 31;
     static constexpr uint32_t handlerIgnoresValue = 1u << 30;
-    static constexpr uint32_t flagsOfHandler = handlerTakesException | handlerIgnoresValue;
+    static constexpr uint32_t handlerFlags = handlerTakesException | handlerIgnoresValue;
     Vector<std::pair<uint32_t, uint32_t>> typedCatchEntrypointsForCallSites;
-    // Of a function compiled from types: its number in Typed::Data, and its positions by call-site number. Entry 0 is the function's start.
     uint32_t typedFunction { notTyped };
     uint32_t stateNumber { 0 };
     Vector<TypedSitePosition> typedPositions;
@@ -131,10 +128,10 @@ struct ProgramData {
     const ProgramModule* moduleWithEntryOffset(uint32_t) const;
     std::span<const uint32_t> functionDeclarationSlots(const ProgramModule& module) const { return spanAt<uint32_t>(module.functionDeclarationSlotsOffset, module.numberOfFunctionDeclarationSlots); }
     inline const FunctionInfo* infos() const;
-    const uint32_t* indexAndFlagsOfFunctions() const { return at<uint32_t>(indexAndFlagsOfFunctionsOffset); }
+    const uint32_t* functionIndexAndFlags() const { return at<uint32_t>(functionIndexAndFlagsOffset); }
     const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
-    std::span<const uint8_t> handlersOfTypedFunction(uint32_t functionIndex) const;
-    const uint8_t* positionsOfTypedFunction(uint32_t functionIndex) const;
+    std::span<const uint8_t> typedFunctionHandlers(uint32_t functionIndex) const;
+    const uint8_t* typedFunctionPositions(uint32_t functionIndex) const;
     struct ParameterCheck {
         uint32_t typedFunction;
         uint32_t source;
@@ -142,9 +139,8 @@ struct ProgramData {
         uint32_t column;
     };
     std::optional<ParameterCheck> parameterCheckAt(uint32_t functionIndex, uint32_t site) const;
-    // By function of the program that was compiled from types: its ClosureWord. Zero: it has no code. Only from firstFunctionClosuresGoBy on; ahead of those stand the rows of the first functions of the program, which Stub::CallModuleFunction calls by their number plus rowsLeftOutAheadOfClosures. There is nothing at an index under rowsLeftOutAheadOfClosures.
-    const uint64_t* closureWords() const { return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(at<uint64_t>(typedEntriesOffset)) - rowsLeftOutAheadOfClosures * sizeof(uint64_t)); }
-    uint64_t closureWordOf(uint32_t function) const { return function >= firstFunctionClosuresGoBy && function - rowsLeftOutAheadOfClosures < numberOfTypedEntries ? closureWords()[function] : 0; }
+    const uint64_t* closureWords() const { return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(at<uint64_t>(typedEntriesOffset)) - omittedClosureWordCount * sizeof(uint64_t)); }
+    uint64_t closureWordOf(uint32_t function) const { return function >= firstClosureFunction && function - omittedClosureWordCount < numberOfTypedEntries ? closureWords()[function] : 0; }
     JS_EXPORT_PRIVATE String sourceName(uint32_t) const;
     JS_EXPORT_PRIVATE bool isSourceNameEmpty(uint32_t) const;
     JS_EXPORT_PRIVATE Vector<uint32_t> moduleEntryOffsets() const;
@@ -160,14 +156,14 @@ struct ProgramData {
     uint32_t modulesOffset;
     uint32_t numberOfModules;
     uint32_t infosOffset;
-    uint32_t indexAndFlagsOfFunctionsOffset;
+    uint32_t functionIndexAndFlagsOffset;
     uint32_t numberOfFunctions;
     uint32_t numberOfStates;
     uint32_t functionMetadataTableOffset;
     uint32_t typedEntriesOffset;
     uint32_t numberOfTypedEntries;
-    uint32_t firstFunctionClosuresGoBy;
-    uint32_t rowsLeftOutAheadOfClosures;
+    uint32_t firstClosureFunction;
+    uint32_t omittedClosureWordCount;
     uint32_t numberOfIdentifiers;
     uint32_t numberOfConstants;
     uint32_t numberOfTopLevelCodes;
@@ -188,11 +184,10 @@ public:
     ~VMProgram();
 
     const ProgramData& data() const { return m_data; }
-    // Made when first asked for: see Typed::FunctionTables::of().
     Typed::FunctionTables* typedFunctionTables { nullptr };
 
     UniquedStringImpl* const* identifiers() const { return m_identifiers; }
-    const uint16_t* identifierPlaces() const { return m_identifierPlaces; }
+    const uint16_t* identifierPositions() const { return m_identifierPositions; }
     static constexpr uint32_t constantHashMultiplier = 2654435761u;
     static constexpr unsigned constantHashShift = 15;
     static uint32_t constantHash(uint32_t index)
@@ -205,7 +200,7 @@ public:
     ALWAYS_INLINE UniquedStringImpl* identifier(uint32_t index)
     {
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-        if (uint16_t place = m_identifierPlaces[index]; isPlaceOfIdentifier(place)) [[likely]]
+        if (uint16_t place = m_identifierPositions[index]; isIdentifierPosition(place)) [[likely]]
             return m_identifiers[place];
         return identifierSlow(index);
     }
@@ -215,19 +210,19 @@ public:
         if (!index) [[unlikely]]
             return *reinterpret_cast<const Identifier*>(&m_identifiers[0]);
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-        if (uint16_t place = m_identifierPlaces[index]; isPlaceOfIdentifier(place)) [[likely]]
+        if (uint16_t place = m_identifierPositions[index]; isIdentifierPosition(place)) [[likely]]
             return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
         return identifierAsIdentifierSlow(index);
     }
-    ALWAYS_INLINE const Identifier* identifierIfMade(uint32_t index) const
+    ALWAYS_INLINE const Identifier* identifierIfCreated(uint32_t index) const
     {
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-        uint16_t place = m_identifierPlaces[index];
-        return isPlaceOfIdentifier(place) ? reinterpret_cast<const Identifier*>(&m_identifiers[place]) : nullptr;
+        uint16_t place = m_identifierPositions[index];
+        return isIdentifierPosition(place) ? reinterpret_cast<const Identifier*>(&m_identifiers[place]) : nullptr;
     }
     const Identifier* tryGetIdentifierConcurrently(uint32_t index) const;
-    bool isIdentifierKept(uint32_t index) const { return m_identifierPlaces[index]; }
-    JS_EXPORT_PRIVATE const Identifier& keepIdentifier(uint32_t index, Identifier&&);
+    bool isIdentifierRetained(uint32_t index) const { return m_identifierPositions[index]; }
+    JS_EXPORT_PRIVATE const Identifier& retainIdentifier(uint32_t index, Identifier&&);
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* topLevelCodeFor(const SourceCodeKey&);
     JS_EXPORT_PRIVATE const ProgramModule* moduleFor(SourceProvider&);
     UnlinkedCodeBlock* topLevelCode(uint32_t index);
@@ -253,12 +248,12 @@ private:
     uint32_t m_constantMask { 0 };
     uint32_t m_numberOfMaterializedConstants { 0 };
     UniquedStringImpl** m_identifiers;
-    uint16_t* m_identifierPlaces;
-    static constexpr uint16_t placeOfIdentifiersKeptElsewhere = UINT16_MAX;
-    static constexpr bool isPlaceOfIdentifier(uint16_t place) { return static_cast<uint16_t>(place - 1) < placeOfIdentifiersKeptElsewhere - 1; }
+    uint16_t* m_identifierPositions;
+    static constexpr uint16_t identifierStoredElsewhere = UINT16_MAX;
+    static constexpr bool isIdentifierPosition(uint16_t place) { return static_cast<uint16_t>(place - 1) < identifierStoredElsewhere - 1; }
     JS_EXPORT_PRIVATE UniquedStringImpl* identifierSlow(uint32_t index);
     JS_EXPORT_PRIVATE const Identifier& identifierAsIdentifierSlow(uint32_t index);
-    uint32_t m_numberOfIdentifiersInPlaces { 0 };
+    uint32_t m_positionedIdentifierCount { 0 };
     std::unique_ptr<Impl> m_impl;
 };
 

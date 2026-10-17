@@ -209,7 +209,6 @@ public:
         return *m_storage.get();
     }
 
-    // For what works on a Storage only: an AOT::Typed::CompactTable is replaced by one.
     ALWAYS_INLINE bool hasStorage()
     {
         if (m_storage) [[likely]]
@@ -225,14 +224,12 @@ public:
 
     WriteBarrier<Storage> m_storage;
 #if ENABLE(AOT)
-    // At most one of the two is set.
     WriteBarrier<JSCell> m_compactTable;
 
     JS_EXPORT_PRIVATE void convertCompactTable();
     JS_EXPORT_PRIVATE void copyCompactTableOf(VM&, JSOrderedHashTable*);
     JS_EXPORT_PRIVATE uint32_t sizeOfCompactTable();
     JS_EXPORT_PRIVATE void clearCompactTable();
-    // The value of the entry, or the key in a set. Empty: there is none.
     JS_EXPORT_PRIVATE JSValue findInCompactTable(JSGlobalObject*, JSValue key);
     JS_EXPORT_PRIVATE bool removeFromCompactTable(JSGlobalObject*, JSValue key);
     JS_EXPORT_PRIVATE bool tryAddToCompactTable(JSGlobalObject*, JSValue key, JSValue);

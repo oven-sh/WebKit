@@ -17,25 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The table of a Map or a Set all of whose keys are strings, in a realm that runs a program compiled ahead of time:
-// JSOrderedHashTable::m_compactTable. It is made when the first key is added. Lookups, additions, removals, clear() and the size work on it.
-// Whatever needs the engine's own storage (an iterator, a key that is no string) replaces it by that first: JSOrderedHashTable::hasStorage().
-//
-//      0  JSCell
-//      8  used: entries written, alive or deleted      12  deleted
-//     16  capacity, in entries                         20  log2 of the number of index slots, width of a key, of a value, state
-//     24  index
-//         keys[capacity]       the string: Cell32, or a pointer. 0: deleted
-//         values[capacity]     a JSValue, or its low half if that is at most undefinedCell32, else a Cell32. A Set has none
-//
-// Entries are in insertion order. Up to maxCapacityWithTags entries the index is a byte of the hash for each entry, in the order of the
-// entries. Beyond, it is open-addressed: a slot holds bits of the hash above the number of an entry, all ones if it is free. The capacity
-// is even and the size of the index a multiple of 8, so keys and values are aligned. AOTStubs.cpp knows all this.
-//
-// A table with tags that no iteration has been at is cleared in place: nobody holds the number of an entry of it.
-// A table that is replaced (it has grown, was rehashed, was converted) or cleared otherwise stays as it is for whoever iterates over it, but for:
-//      8  the successor: a CompactTable or a JSCellButterfly. None if it was cleared: then whatever the owner has now, from its start
-//     16  the number of entries that were deleted      24  their numbers, ascending, 32 bits each
 class CompactTable final : public JSCell {
 public:
     using Base = JSCell;
@@ -45,7 +26,6 @@ public:
     template<typename CellType, SubspaceAccess>
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
-    // In bytes.
     enum class Width : uint8_t {
         None = 0,
         Narrow = 4,
@@ -54,15 +34,14 @@ public:
 
     enum class State : uint8_t {
         Live,
-        // Live, and an iteration may be at it or at a table it has replaced.
         Iterated,
         Replaced,
         Cleared,
     };
 
     static constexpr uint32_t initialCapacity = 4;
-    static constexpr uint32_t maxEntriesOfKnownGrowth = 64;
-    static constexpr unsigned shiftOfSizeStepInKnownGrowth = 56;
+    static constexpr uint32_t maxKnownGrowthEntries = 64;
+    static constexpr unsigned knownGrowthSizeStepShift = 56;
     static std::atomic<uint64_t>* knownGrowths();
     static constexpr uint32_t maxCapacityWithTags = 8;
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
@@ -71,14 +50,13 @@ public:
     static constexpr uint8_t keysShiftWithTags = 2;
     static_assert(2u << keysShiftWithTags == maxCapacityWithTags);
     static constexpr uint32_t maxCapacity = (1 << 20) - 2;
-    static constexpr unsigned entryBitsOfShortSlot = 8;
-    static constexpr unsigned entryBitsOfLongSlot = 20;
-    // A hash has 24 bits. A slot is chosen by the low ones.
-    static constexpr unsigned shiftOfShortTag = 16;
-    static constexpr unsigned shiftOfLongTag = 12;
+    static constexpr unsigned shortSlotEntryBits = 8;
+    static constexpr unsigned longSlotEntryBits = 20;
+    static constexpr unsigned shortTagShift = 16;
+    static constexpr unsigned longTagShift = 12;
 
     static Structure* createStructure(VM&);
-    static CompactTable* create(VM&, Structure*, Width key, Width value, uint32_t leastCapacity);
+    static CompactTable* create(VM&, Structure*, Width key, Width value, uint32_t minCapacity);
 
     uint32_t size() const { return m_alive; }
     uint32_t used() const { return m_used; }
@@ -87,15 +65,12 @@ public:
     Width valueWidth() const { return m_valueWidth; }
     State state() const { return m_state; }
     bool isLive() const { return m_state <= State::Iterated; }
-    // Whoever keeps a Position does this first. next() does not.
     void markAsIterated()
     {
         ASSERT(isLive());
         m_state = State::Iterated;
     }
 
-    // The number of the entry. A rope is resolved, which may throw, but for a part of another string, as `slice` yields it: that is looked
-    // for by its characters where they are, and comes to share those of the key that is found.
     std::optional<uint32_t> find(JSGlobalObject*, JSValue key) const;
     std::optional<uint32_t> find(std::span<const Latin1Character>) const;
     JSString* keyAt(uint32_t entry) const;
@@ -148,7 +123,7 @@ public:
         return !length || *a == *b;
     }
     template<typename CharacterType>
-    static ALWAYS_INLINE bool isText(const StringImpl& impl, std::span<const CharacterType> characters)
+    static ALWAYS_INLINE bool equalsCharacters(const StringImpl& impl, std::span<const CharacterType> characters)
     {
         if (impl.is8Bit() == (sizeof(CharacterType) == 1))
             return hasCharacters(impl, characters);
@@ -175,12 +150,12 @@ public:
             if (!candidate)
                 return false;
             const StringImpl& impl = *uncheckedDowncast<JSString>(MarkedBlockCage::decode(candidate))->tryGetValueImpl();
-            return impl.existingHash() == hash && isText(impl, characters);
+            return impl.existingHash() == hash && equalsCharacters(impl, characters);
         };
         if (hasTags()) {
             constexpr uint64_t ones = 0x0101010101010101ull;
             const uint32_t* keys = at<uint32_t>(offsetOfIndex() + maxCapacityWithTags);
-            uint64_t difference = *at<uint64_t>(offsetOfIndex()) ^ (hash >> shiftOfShortTag) * ones;
+            uint64_t difference = *at<uint64_t>(offsetOfIndex()) ^ (hash >> shortTagShift) * ones;
             uint32_t used = m_used;
             for (uint64_t flags = (difference - ones) & ~difference & ones << 7; flags; flags &= flags - 1) {
                 found = WTF::ctz(flags) / 8;
@@ -195,24 +170,24 @@ public:
         uint32_t mask = (1u << m_indexBits) - 1;
         if (hasShortSlots()) {
             const uint16_t* slots = at<uint16_t>(offsetOfIndex());
-            uint32_t tag = hash >> shiftOfShortTag << entryBitsOfShortSlot;
+            uint32_t tag = hash >> shortTagShift << shortSlotEntryBits;
             for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
                 uint32_t slot = slots[i];
                 if (slot == UINT16_MAX)
                     return Quickly::Absent;
                 found = slot ^ tag;
-                if (found < 1u << entryBitsOfShortSlot && isAt(keys, found))
+                if (found < 1u << shortSlotEntryBits && isAt(keys, found))
                     return Quickly::Found;
             }
         }
         const uint32_t* slots = at<uint32_t>(offsetOfIndex());
-        uint32_t tag = hash >> shiftOfLongTag << entryBitsOfLongSlot;
+        uint32_t tag = hash >> longTagShift << longSlotEntryBits;
         for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
             uint32_t slot = slots[i];
             if (slot == UINT32_MAX)
                 return Quickly::Absent;
             found = slot ^ tag;
-            if (found < 1u << entryBitsOfLongSlot && isAt(keys, found))
+            if (found < 1u << longSlotEntryBits && isAt(keys, found))
                 return Quickly::Found;
         }
     }
@@ -237,7 +212,7 @@ public:
                 return Quickly::Found;
             return other->existingHash() == hash ? Quickly::Unknown : Quickly::Absent;
         };
-        uint8_t tag = hash >> shiftOfShortTag;
+        uint8_t tag = hash >> shortTagShift;
         if (hasTags()) {
             if (!tag)
                 return Quickly::Unknown;
@@ -269,35 +244,29 @@ public:
             uint16_t slot = slots[i];
             if (slot == UINT16_MAX)
                 return Quickly::Absent;
-            if (slot >> entryBitsOfShortSlot != tag)
+            if (slot >> shortSlotEntryBits != tag)
                 continue;
-            found = slot & ((1 << entryBitsOfShortSlot) - 1);
+            found = slot & ((1 << shortSlotEntryBits) - 1);
             if (Quickly next = compare(keys, found); next != Quickly::Absent)
                 return next;
         }
     }
 
     enum class CreateIfNeeded : bool { No, Yes };
-    template<typename Traits> static bool tryAdd(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key, JSValue, CreateIfNeeded = CreateIfNeeded::No, uint32_t leastCapacity = initialCapacity);
-    // The owner has a table.
+    template<typename Traits> static bool tryAdd(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key, JSValue, CreateIfNeeded = CreateIfNeeded::No, uint32_t minCapacity = initialCapacity);
     template<typename Traits> static bool remove(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key);
     template<typename Traits> static void clear(VM&, JSOrderedHashTable<Traits>*);
     template<typename Traits> static void convert(VM&, JSOrderedHashTable<Traits>*);
 
-    // An iteration is at a table and the number of an entry. No table: at the start of whatever the owner has.
     struct Position {
-        // None: the iteration is over.
         JSCell* table { nullptr };
         uint32_t entry { 0 };
         JSValue key;
         JSValue value;
     };
-    // The first entry that is alive from there on. The table may have been replaced, any number of times, also by the engine's storage.
     template<typename Traits> static Position next(VM&, JSOrderedHashTable<Traits>*, JSCell* table, uint32_t entry);
-    // Of a JSMapIterator or a JSSetIterator that isAtCompactTable(). While it is at such a table it has no storage, and from its first step
-    // on its Field::Entry holds a cell with the table and the number of the entry to go on from.
     template<typename Traits, typename Iterator> static Position stepIterator(VM&, Iterator*);
-    static JSCell* copyOfPosition(VM&, JSCell*);
+    static JSCell* copyPosition(VM&, JSCell*);
 
     static constexpr ptrdiff_t offsetOfUsed() { return OBJECT_OFFSETOF(CompactTable, m_used); }
     static constexpr ptrdiff_t offsetOfAlive() { return OBJECT_OFFSETOF(CompactTable, m_alive); }
@@ -306,9 +275,8 @@ public:
     static constexpr ptrdiff_t offsetOfKeysShift() { return OBJECT_OFFSETOF(CompactTable, m_keysShift); }
     static constexpr ptrdiff_t offsetOfValueWidth() { return OBJECT_OFFSETOF(CompactTable, m_valueWidth); }
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(CompactTable, m_state); }
-    // Of a table as compiled code makes it for a first entry: initialCapacity, tags, narrow keys. The second: the eight bytes from the capacity on.
-    static constexpr size_t sizeAtBirth(Width value) { return sizeof(CompactTable) + maxCapacityWithTags + initialCapacity * (static_cast<size_t>(Width::Narrow) + static_cast<size_t>(value)); }
-    static constexpr uint64_t capacityAndKindsAtBirth(Width value) { return initialCapacity | static_cast<uint64_t>(keysShiftWithTags) << 40 | static_cast<uint64_t>(value) << 48; }
+    static constexpr size_t initialSize(Width value) { return sizeof(CompactTable) + maxCapacityWithTags + initialCapacity * (static_cast<size_t>(Width::Narrow) + static_cast<size_t>(value)); }
+    static constexpr uint64_t initialCapacityAndKinds(Width value) { return initialCapacity | static_cast<uint64_t>(keysShiftWithTags) << 40 | static_cast<uint64_t>(value) << 48; }
     static constexpr ptrdiff_t offsetOfIndex() { return sizeof(CompactTable); }
 
     DECLARE_INFO;
@@ -338,12 +306,9 @@ private:
     template<typename Matches> std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches&) const;
     template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
     void addToIndex(uint32_t entry, unsigned hash);
-    // Of a table that has no entries yet, but for the keys of that many, none of them deleted.
     void fillIndex(uint32_t count);
-    // Behind all entries. There is room.
     void append(VM&, JSString* key, unsigned hash, JSValue);
-    // A table with the entries of this one that are alive, and room for one more at least. None: that would be too many.
-    CompactTable* copyWithRoom(VM&, Width value) const;
+    CompactTable* copyWithCapacity(VM&, Width value) const;
     void becomeObsolete(VM&, State, JSCell* successor);
 
     JSCell*& successor() { return *at<JSCell*>(OBJECT_OFFSETOF(CompactTable, m_used)); }
@@ -391,15 +356,11 @@ CompactTable::Position CompactTable::stepIterator(VM& vm, Iterator* iterator)
 
 } // namespace Typed
 struct Instance;
-// All of operationAOTTypedIterHasInFrame.
-OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stepIterationInFrameGenerally(Instance*, EncodedJSValue* words);
+OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stepIterationInFrameGeneric(Instance*, EncodedJSValue* words);
 namespace Typed {
 
-// A `for..of` in compiled code over a Map, a Set, one of their iterators, an iterator of an array or a generator of the program, where nothing
-// can observe how it is done. No iterator is made, and no result objects. The record is what operationAOTTypedIterOpen() yields, with an int32 for the `next` method.
 class CollectionIteration {
 public:
-    // None: the value is no such thing.
     static JSCellButterfly* tryOpen(JSGlobalObject*, JSValue iterable);
     static bool isOne(JSCellButterfly* record) { return record->get(1).isInt32(); }
     static constexpr unsigned numberOfWords = 5;
@@ -412,28 +373,18 @@ public:
     static bool tryOpen(JSGlobalObject*, JSValue iterable, InFrame*);
     static bool isOne(InFrame* record) { return record->get(1).isInt32(); }
     static bool step(JSGlobalObject*, InFrame*);
-    // What operationAOTTypedIterHasInFrame does where mayStepQuickly() says so: a step that calls nothing and allocates nothing, or else stepIterationInFrameGenerally().
     static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stepQuickly(Instance*, EncodedJSValue* words);
-    // A bit of the mode, word 1: it goes over a Set, or through an iterator of a Map or a Set that does not yield pairs. Where word 1 is no mode but a `next` method the bit says nothing, and stepQuickly()
-    // sees that.
     static constexpr int32_t mayBeSteppedQuickly = 1024;
-    // What it is opened with in the place of that: the first step, which finds the table, is a general one, and sets the other.
-    static constexpr int32_t mayBeSteppedQuicklyOnceBegun = 2048;
+    static constexpr int32_t hasFastStepAfterStart = 2048;
     static bool mayStepQuickly(const EncodedJSValue* words)
     {
         static_assert(std::endian::native == std::endian::little && mayBeSteppedQuickly >> 8 && mayBeSteppedQuickly >> 8 <= UINT8_MAX);
         return reinterpret_cast<const uint8_t*>(words + 1)[1] & mayBeSteppedQuickly >> 8;
     }
     static void close(JSGlobalObject*, InFrame*);
-    // The mode, word 1, of a record of two words that compiled code makes in the place of `array.entries()` and steps through by itself: word 0 is the array. step() never sees one; there is nothing
-    // to close. See Lowering::findEntriesOfArrays().
-    static constexpr int32_t isOfEntriesOfArrayByIndex = 256;
-    // False: it is over, or an exception was thrown. Else the record has the value where every record has it.
+    static constexpr int32_t iteratesArrayEntriesByIndex = 256;
     static bool step(JSGlobalObject*, JSCellButterfly* record);
-    // The loop is left before it is over: what `return` of the iterator does. It may throw.
     static void close(JSGlobalObject*, JSCellButterfly* record);
-    // `[...iterable]`: all that the iteration yields goes behind what the array has, where nothing can observe how that is done: a Set, a Map, one of their
-    // iterators, a string. False: nothing was done.
     static bool tryAppendTo(JSGlobalObject*, JSArray*, JSValue iterable);
 };
 

@@ -81,8 +81,8 @@ void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)
         materializeLazySymbolTablesForHeapAnalysis(m_vm);
 #if ENABLE(AOT)
         for (AOT::Instance* instance : m_vm.m_aotInstances) {
-            if (instance->typed && instance->typed->isOfLockedRealm)
-                instance->typed->makeNamesForHeapAnalysis(m_vm);
+            if (instance->typed && instance->typed->realmIsLocked)
+                instance->typed->createNamesForHeapAnalysis(m_vm);
         }
 #endif
     }

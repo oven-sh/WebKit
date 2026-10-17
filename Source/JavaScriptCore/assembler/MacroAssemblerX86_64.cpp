@@ -564,7 +564,7 @@ void MacroAssemblerX86_64::collectCPUFeatures()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void MacroAssemblerX86_64::useOnlyFeaturesOfBuildTarget()
+void MacroAssemblerX86_64::restrictToBuildTargetFeatures()
 {
     collectCPUFeatures();
 #if !defined(__SSE3__)
@@ -603,7 +603,7 @@ bool MacroAssemblerX86_64::setSupportsAVX(bool supportsAVX)
     return supportedAVX;
 }
 
-unsigned MacroAssemblerX86_64::featuresOfBuildTarget()
+unsigned MacroAssemblerX86_64::buildTargetFeatures()
 {
     unsigned features = 0;
 #if defined(__SSE3__)

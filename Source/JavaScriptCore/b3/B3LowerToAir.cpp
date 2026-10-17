@@ -194,7 +194,7 @@ public:
                 Value* word = value->child(0);
                 if (!m_procedure.positionIndependent() || word->opcode() != Load || word->type() != Int32 || word->as<MemoryValue>()->hasFence() || m_useCounts.numUses(word) < 2)
                     break;
-                auto& extensions = m_extensionsOfSharedLoads.add(word, 0).iterator->value;
+                auto& extensions = m_sharedLoadExtensions.add(word, 0).iterator->value;
                 extensions |= value->opcode() == SExt32 ? 1 : 2;
                 break;
             }
@@ -244,7 +244,7 @@ public:
                 if (B3LowerToAirInternal::verbose)
                     dataLog("Lowering ", deepDump(m_procedure, m_value), ":\n");
 #if USE(BUN_JSC_ADDITIONS)
-                lowerAndNoteIfTmpIsUnrequested();
+                lowerAndRecordUnrequestedTmp();
 #else
                 lower();
 #endif
@@ -263,7 +263,7 @@ public:
         for (Inst& inst : m_prologue)
             insertionSet.insertInst(0, WTF::move(inst));
 #if USE(BUN_JSC_ADDITIONS)
-        replaceDefinitionsOfUnrequestedTmpsWithPadding();
+        replaceUnrequestedTmpDefinitionsWithPadding();
 #endif
         insertionSet.execute(m_code[0]);
     }
@@ -277,23 +277,23 @@ private:
         Value* requested;
     };
 
-    struct DefinitionOfUnrequestedTmp {
+    struct UnrequestedTmpDefinition {
         Value* value;
         Air::BasicBlock* block;
         unsigned begin;
         unsigned end;
     };
 
-    ALWAYS_INLINE void noteTmpRequest(Value* value)
+    ALWAYS_INLINE void recordTmpRequest(Value* value)
     {
         if (m_tentativeRequester) [[unlikely]] {
-            noteTentativeTmpRequest(value);
+            recordTentativeTmpRequest(value);
             return;
         }
         m_tmpRequests[value] = TmpRequest::Firm;
     }
 
-    NEVER_INLINE void noteTentativeTmpRequest(Value* value)
+    NEVER_INLINE void recordTentativeTmpRequest(Value* value)
     {
         if (value == m_tentativeRequester) {
             m_didRequestOwnTmp = true;
@@ -338,7 +338,7 @@ private:
         }
     }
 
-    void lowerAndNoteIfTmpIsUnrequested()
+    void lowerAndRecordUnrequestedTmp()
     {
         TmpRequest requestBeforeLowering = m_tmpRequests[m_value];
         if (requestBeforeLowering == TmpRequest::Firm) {
@@ -378,7 +378,7 @@ private:
         return result;
     }
 
-    bool isNamedByWhatStays(const DefinitionOfUnrequestedTmp& definition, Tmp tmp)
+    bool isUsedByRemainingValue(const UnrequestedTmpDefinition& definition, Tmp tmp)
     {
         bool result = false;
         for (unsigned index = definition.begin; index < definition.end; ++index) {
@@ -392,7 +392,7 @@ private:
         return result;
     }
 
-    void replaceDefinitionsOfUnrequestedTmpsWithPadding()
+    void replaceUnrequestedTmpDefinitionsWithPadding()
     {
         if (!m_tentativeRequests.isEmpty()) {
             for (auto& definition : m_definitions) {
@@ -428,14 +428,14 @@ private:
                     if (inst.kind.opcode == Air::Patch || inst.args().size() != 2 || !inst.args()[1].isTmp())
                         continue;
                     size_t component = tmps.find(inst.args()[1].tmp());
-                    if (component < 63 && !(extracted >> component & 1) && !isNamedByWhatStays(definition, tmps[component]) && definesOnly(inst, tmps[component]))
+                    if (component < 63 && !(extracted >> component & 1) && !isUsedByRemainingValue(definition, tmps[component]) && definesOnly(inst, tmps[component]))
                         inst = Inst(Air::Padding, inst.origin);
                 }
                 continue;
             }
             Tmp tmp = m_valueToTmp[definition.value];
             bool isConstant = definition.value->opcode() == Const64 || definition.value->opcode() == Const32;
-            if (!isConstant && isNamedByWhatStays(definition, tmp))
+            if (!isConstant && isUsedByRemainingValue(definition, tmp))
                 continue;
             for (unsigned index = definition.begin; index < definition.end; ++index) {
                 Inst& inst = definition.block->at(index);
@@ -638,7 +638,7 @@ private:
     Tmp tmp(Value* value)
     {
 #if USE(BUN_JSC_ADDITIONS)
-        noteTmpRequest(value);
+        recordTmpRequest(value);
 #endif
         Tmp& tmp = m_valueToTmp[value];
         if (!tmp) {
@@ -6159,14 +6159,14 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
             if (m_procedure.positionIndependent()) {
                 Value* child = m_value->child(0);
-                bool isZeroExtendedAlready = false;
+                bool isAlreadyZeroExtended = false;
                 switch (child->opcode()) {
                 case Load:
                 case Load8Z:
                 case Load8S:
                 case Load16Z:
                 case Load16S:
-                    isZeroExtendedAlready = child->type() == Int32 && m_useCounts.numUses(child) > 1;
+                    isAlreadyZeroExtended = child->type() == Int32 && m_useCounts.numUses(child) > 1;
                     break;
                 case Add:
                 case Sub:
@@ -6186,18 +6186,18 @@ private:
                 case Below:
                 case AboveEqual:
                 case BelowEqual:
-                    isZeroExtendedAlready = child->type() == Int32;
+                    isAlreadyZeroExtended = child->type() == Int32;
                     break;
                 case Shl:
                 case ZShr:
                 case RotR:
                 case RotL:
-                    isZeroExtendedAlready = child->type() == Int32 && child->child(1)->hasInt32() && (child->child(1)->asInt32() & 31);
+                    isAlreadyZeroExtended = child->type() == Int32 && child->child(1)->hasInt32() && (child->child(1)->asInt32() & 31);
                     break;
                 default:
                     break;
                 }
-                if (isZeroExtendedAlready) {
+                if (isAlreadyZeroExtended) {
                     append(Move, tmp(child), tmp(m_value));
                     return;
                 }
@@ -7193,11 +7193,11 @@ private:
     bool m_didRequestOwnTmp { false };
     unsigned m_numberOfFlushes { 0 };
     Vector<TentativeRequest> m_tentativeRequests;
-    Vector<DefinitionOfUnrequestedTmp> m_definitionsBeingAppended;
-    Vector<DefinitionOfUnrequestedTmp> m_definitions;
+    Vector<UnrequestedTmpDefinition> m_definitionsBeingAppended;
+    Vector<UnrequestedTmpDefinition> m_definitions;
     UncheckedKeyHashMap<Value*, uint64_t> m_extractedComponents;
-    UncheckedKeyHashMap<Value*, uint8_t> m_extensionsOfSharedLoads;
-    bool isLoadedSignExtended(Value* value) const { return m_extensionsOfSharedLoads.get(value) == 1; }
+    UncheckedKeyHashMap<Value*, uint8_t> m_sharedLoadExtensions;
+    bool isLoadedSignExtended(Value* value) const { return m_sharedLoadExtensions.get(value) == 1; }
 #endif
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.

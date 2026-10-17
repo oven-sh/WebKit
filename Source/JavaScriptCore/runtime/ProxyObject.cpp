@@ -157,7 +157,7 @@ static ALWAYS_INLINE JSValue keyForTrap(VM& vm, PropertyName propertyName)
 {
 #if ENABLE(AOT)
     if (!vm.m_aotInstances.isEmpty() && !propertyName.isSymbol())
-        return vm.m_aotInstances[0]->keyHandedToTraps(vm, propertyName.uid());
+        return vm.m_aotInstances[0]->proxyTrapKey(vm, propertyName.uid());
 #endif
     return identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid()));
 }

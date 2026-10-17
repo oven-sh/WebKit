@@ -107,7 +107,7 @@ struct FPDefDistance {
             distance[index] = static_cast<unsigned char>(registerDistance);
     }
 
-    bool LEGACY_NODELETE saysNothing() const
+    bool LEGACY_NODELETE hasNoInformation() const
     {
         static_assert(!(sizeof(distance) % sizeof(uint64_t)));
         for (unsigned i = 0; i < sizeof(distance); i += sizeof(uint64_t)) {
@@ -121,7 +121,7 @@ struct FPDefDistance {
 
     bool LEGACY_NODELETE updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
     {
-        if (precessorDistance.saysNothing())
+        if (precessorDistance.hasNoInformation())
             return false;
         bool changed = false;
         for (unsigned i = 0; i < MacroAssembler::numberOfFPRegisters(); ++i) {

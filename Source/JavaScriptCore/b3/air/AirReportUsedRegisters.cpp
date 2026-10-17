@@ -61,7 +61,7 @@ public:
     }
 
 private:
-    static constexpr uint8_t standsForPadding = 1;
+    static constexpr uint8_t representsPadding = 1;
     static constexpr uint8_t mayBeDeleted = 2;
     static constexpr uint8_t isPatch = 4;
 
@@ -111,7 +111,7 @@ private:
         return 0;
     }
 
-    static constexpr std::array<uint8_t, 256> makeTimingsOfForms()
+    static constexpr std::array<uint8_t, 256> computeFormTimings()
     {
         std::array<uint8_t, 256> result { };
         for (unsigned form = 0; form < 256; ++form) {
@@ -126,8 +126,8 @@ private:
     struct MentionDecodedSlowly {
         Arg* arg;
         Tmp tmp;
-        uint8_t timingOfArg;
-        uint8_t timingOfTmp;
+        uint8_t argTiming;
+        uint8_t tmpTiming;
     };
 
     NEVER_INLINE static void decodeSlowly(Inst& inst, Vector<MentionDecodedSlowly, 16>& mentions)
@@ -147,7 +147,7 @@ private:
 
     bool decode()
     {
-        static constexpr std::array<uint8_t, 256> timingsOfForms = makeTimingsOfForms();
+        static constexpr std::array<uint8_t, 256> formTimings = computeFormTimings();
         constexpr unsigned kindsWithBase = 1u << Arg::SimpleAddr | 1u << Arg::Addr | 1u << Arg::ExtendedOffsetAddr | 1u << Arg::Index | 1u << Arg::PreIndex | 1u << Arg::PostIndex;
 
         size_t numberOfInsts = 0;
@@ -155,10 +155,10 @@ private:
             numberOfInsts += block->size();
         m_sets.grow(m_code.size());
         m_boundaries.grow(numberOfInsts * 2 + m_code.size() + 1);
-        m_lateDefsOfArgs.grow(numberOfInsts * 2 + 1);
+        m_argLateDefs.grow(numberOfInsts * 2 + 1);
         m_flags.grow(numberOfInsts * 2 + 1);
         Boundary* boundaries = m_boundaries.mutableSpan().data();
-        uint64_t* lateDefsOfArgs = m_lateDefsOfArgs.mutableSpan().data();
+        uint64_t* argLateDefs = m_argLateDefs.mutableSpan().data();
         uint8_t* flags = m_flags.mutableSpan().data();
         unsigned slot = 0;
         unsigned boundary = 0;
@@ -177,16 +177,16 @@ private:
                 Arg* args = inst.args().data();
                 const unsigned numberOfArgs = inst.args().size();
                 std::array<uint64_t, 4> regs { };
-                unsigned timingsOfArgs = 0;
-                unsigned timingsOfTmps = 0;
-                uint64_t lateDefsOfRegArgs = 0;
-                bool definesWhatIsNoReg = false;
+                unsigned argTimings = 0;
+                unsigned tmpTimings = 0;
+                uint64_t regArgLateDefs = 0;
+                bool definesNonRegister = false;
 
                 auto note = [&](Tmp tmp, unsigned timing) ALWAYS_INLINE_LAMBDA {
                     if (!tmp.isReg())
                         return;
                     uint64_t bit = static_cast<uint64_t>(1) << tmp.reg().index();
-                    timingsOfTmps |= tmp.isGP() ? timing & ~isWide : timing;
+                    tmpTimings |= tmp.isGP() ? timing & ~isWide : timing;
                     regs[0] |= timing & earlyUse ? bit : 0;
                     regs[1] |= timing & lateUse ? bit : 0;
                     regs[2] |= timing & earlyDef ? bit : 0;
@@ -197,50 +197,50 @@ private:
                 if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
                     for (; argIndex < numberOfArgs; ++argIndex) {
                         Arg& arg = args[argIndex];
-                        unsigned timing = timingsOfForms[forms[argIndex]];
-                        timingsOfArgs |= timing;
+                        unsigned timing = formTimings[forms[argIndex]];
+                        argTimings |= timing;
                         unsigned kind = arg.kind();
                         if (kind == Arg::Tmp) {
                             note(arg.tmp(), timing);
                             if (timing & lateDef) {
                                 if (arg.isReg())
-                                    lateDefsOfRegArgs |= static_cast<uint64_t>(1) << arg.reg().index();
+                                    regArgLateDefs |= static_cast<uint64_t>(1) << arg.reg().index();
                                 else
-                                    definesWhatIsNoReg = true;
+                                    definesNonRegister = true;
                             }
                             continue;
                         }
-                        definesWhatIsNoReg |= timing & lateDef;
+                        definesNonRegister |= timing & lateDef;
                         if (!(kindsWithBase >> kind & 1))
                             continue;
-                        unsigned timingOfTmp = kind == Arg::PreIndex || kind == Arg::PostIndex ? earlyUse | lateDef : earlyUse;
-                        note(arg.base(), timingOfTmp);
+                        unsigned tmpTiming = kind == Arg::PreIndex || kind == Arg::PostIndex ? earlyUse | lateDef : earlyUse;
+                        note(arg.base(), tmpTiming);
                         if (kind == Arg::Index)
-                            note(arg.index(), timingOfTmp);
+                            note(arg.index(), tmpTiming);
                     }
                 } else {
                     mentionsDecodedSlowly.shrink(0);
                     decodeSlowly(inst, mentionsDecodedSlowly);
                     for (auto& mention : mentionsDecodedSlowly) {
-                        timingsOfArgs |= mention.timingOfArg;
+                        argTimings |= mention.argTiming;
                         if (mention.tmp)
-                            note(mention.tmp, mention.timingOfTmp);
-                        if (mention.timingOfArg & lateDef) {
+                            note(mention.tmp, mention.tmpTiming);
+                        if (mention.argTiming & lateDef) {
                             if (mention.arg->isReg())
-                                lateDefsOfRegArgs |= static_cast<uint64_t>(1) << mention.arg->reg().index();
+                                regArgLateDefs |= static_cast<uint64_t>(1) << mention.arg->reg().index();
                             else
-                                definesWhatIsNoReg = true;
+                                definesNonRegister = true;
                         }
                     }
                 }
-                if (timingsOfTmps & isWide) [[unlikely]]
+                if (tmpTimings & isWide) [[unlikely]]
                     return false;
 
-                bool hasEarlyDef = timingsOfArgs & earlyDef;
-                bool hasLateUseOrDef = timingsOfArgs & (lateUse | lateDef);
-                uint8_t flagsOfInst = 0;
+                bool hasEarlyDef = argTimings & earlyDef;
+                bool hasLateUseOrDef = argTimings & (lateUse | lateDef);
+                uint8_t instFlags = 0;
                 if (inst.kind.opcode == Patch) [[unlikely]] {
-                    flagsOfInst = isPatch;
+                    instFlags = isPatch;
                     hasEarlyDef |= !inst.extraEarlyClobberedRegs().isEmpty();
                     hasLateUseOrDef |= !inst.extraClobberedRegs().isEmpty();
                 }
@@ -249,20 +249,20 @@ private:
                     kill |= boundaries[boundary].def;
                     gen |= boundaries[boundary].use & ~kill;
                     boundaries[++boundary] = { 0, 0 };
-                    flags[slot++] = standsForPadding;
+                    flags[slot++] = representsPadding;
                 }
                 previousHasLateUseOrDef = hasLateUseOrDef;
 
-                if (!(timingsOfArgs & earlyDef) && !definesWhatIsNoReg && !inst.hasNonArgEffects())
-                    flagsOfInst |= mayBeDeleted;
+                if (!(argTimings & earlyDef) && !definesNonRegister && !inst.hasNonArgEffects())
+                    instFlags |= mayBeDeleted;
 
                 boundaries[boundary].use |= regs[0];
                 boundaries[boundary].def |= regs[2];
                 kill |= boundaries[boundary].def;
                 gen |= boundaries[boundary].use & ~kill;
                 boundaries[++boundary] = { regs[1], regs[3] };
-                lateDefsOfArgs[slot] = lateDefsOfRegArgs;
-                flags[slot++] = flagsOfInst;
+                argLateDefs[slot] = regArgLateDefs;
+                flags[slot++] = instFlags;
             }
             sets.gen = gen;
             sets.kill = kill | boundaries[boundary].def;
@@ -308,7 +308,7 @@ private:
     bool report()
     {
         const Boundary* boundaries = m_boundaries.span().data();
-        const uint64_t* lateDefsOfArgs = m_lateDefsOfArgs.span().data();
+        const uint64_t* argLateDefs = m_argLateDefs.span().data();
         const uint8_t* flags = m_flags.span().data();
         uint64_t reported = 0;
         RegisterSet reportedSet;
@@ -323,16 +323,16 @@ private:
             uint64_t live = sets.tail;
             unsigned instIndex = block->size();
             unsigned removed = 0;
-            const Boundary* boundariesOfBlock = boundaries + sets.firstBoundary;
+            const Boundary* blockBoundaries = boundaries + sets.firstBoundary;
             for (unsigned slot = endOfSlots; slot-- > sets.firstSlot;) {
-                uint8_t flagsOfInst = flags[slot];
+                uint8_t instFlags = flags[slot];
                 unsigned slotInBlock = slot - sets.firstSlot;
-                if (!(flagsOfInst & standsForPadding)) {
+                if (!(instFlags & representsPadding)) {
                     --instIndex;
-                    if ((flagsOfInst & mayBeDeleted) && !(live & lateDefsOfArgs[slot])) {
+                    if ((instFlags & mayBeDeleted) && !(live & argLateDefs[slot])) {
                         block->at(instIndex) = Inst();
                         ++removed;
-                    } else if (flagsOfInst & isPatch) {
+                    } else if (instFlags & isPatch) {
                         if (live != reported) {
                             reported = live;
                             reportedSet = { };
@@ -342,7 +342,7 @@ private:
                         block->at(instIndex).reportUsedRegisters(reportedSet);
                     }
                 }
-                live = (live & ~boundariesOfBlock[slotInBlock + 1].def) | boundariesOfBlock[slotInBlock].use;
+                live = (live & ~blockBoundaries[slotInBlock + 1].def) | blockBoundaries[slotInBlock].use;
             }
             ASSERT(!instIndex);
             endOfSlots = sets.firstSlot;
@@ -363,7 +363,7 @@ private:
     Code& m_code;
     Vector<Sets> m_sets;
     Vector<Boundary> m_boundaries;
-    Vector<uint64_t> m_lateDefsOfArgs;
+    Vector<uint64_t> m_argLateDefs;
     Vector<uint8_t> m_flags;
     unsigned m_numberOfSlots { 0 };
 };

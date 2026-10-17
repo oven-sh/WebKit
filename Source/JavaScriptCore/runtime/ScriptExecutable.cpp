@@ -463,7 +463,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     if (Options::useAOTOperationCounters() && !installedUnlinkedBaselineCode) [[unlikely]] {
         static constexpr const char* kinds[] = { "ran-global", "ran-eval", "ran-function", "ran-module" };
         String name = codeBlock->codeType() == FunctionCode ? uncheckedDowncast<FunctionExecutable>(this)->ecmaName().string() : String();
-        AOT::noteGuest(codeBlock->globalObject(), kinds[codeBlock->codeType()], !sourceURL().isEmpty() ? StringView { sourceURL() } : name.isEmpty() ? StringView { "(no URL)"_s } : StringView { name }, source().view());
+        AOT::recordSample(codeBlock->globalObject(), kinds[codeBlock->codeType()], !sourceURL().isEmpty() ? StringView { sourceURL() } : name.isEmpty() ? StringView { "(no URL)"_s } : StringView { name }, source().view());
     }
 #endif
 

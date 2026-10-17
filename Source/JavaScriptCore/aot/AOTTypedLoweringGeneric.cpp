@@ -21,14 +21,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-// Values of which nothing is known go through the stubs of code compiled from bytecode. A cache is a slot in a block the function gets once it has missed often enough; until then it uses one all functions share, whose slots stay empty.
-
-// The block as of now: the function may get its own while it runs. One that was found earlier stays valid.
 LValue Lowering::loadICData()
 {
     PatchpointValue* data = m_out.patchpoint(Int64);
     data->effects = Effects::none();
-    // Any operation may give the function slots of its own.
     m_heaps.decoratePatchpointRead(&m_heaps.AOTTyped_collectorState, data);
     if (!m_context.slotBlockFetchGenerator) {
         m_context.slotBlockFetchGenerator = createSharedTask<StackmapGeneratorFunction>([indexReferences = &m_context.indexReferences](CCallHelpers& jit, const StackmapGenerationParams& params) {
@@ -130,16 +126,16 @@ private:
                     cut = block;
             }
             bool hasFetch = false;
-            bool hasFetchAheadOfCut = false;
+            bool hasFetchBeforeCut = false;
             for (unsigned j = loop.size(); j--;) {
                 if (!fetchAt[loop.at(j)])
                     continue;
                 hasFetch = true;
-                hasFetchAheadOfCut |= !dominators.dominates(cut, loop.at(j));
+                hasFetchBeforeCut |= !dominators.dominates(cut, loop.at(j));
             }
             if (!hasFetch)
                 continue;
-            if (!hasFetchAheadOfCut)
+            if (!hasFetchBeforeCut)
                 cut = header;
             cutAt(cut);
             if (cut != header)
@@ -188,11 +184,11 @@ private:
                 lowest[frames.last().block] = std::min(lowest[frames.last().block], lowest[block]);
             if (lowest[block] != number[block])
                 continue;
-            bool isAlone = openComponents.last() == block;
+            bool isSingleton = openComponents.last() == block;
             for (;;) {
                 BasicBlock* member = openComponents.takeLast();
                 m_component[member] = number[block];
-                if (!isAlone)
+                if (!isSingleton)
                     m_isOnCycle[member] = true;
                 if (member == block)
                     break;
@@ -246,36 +242,36 @@ static void placeSlotBlockFetchesOnCycles(Procedure& proc, const StackmapGenerat
         bool isOnCycle;
     };
     IndexMap<BasicBlock*, Vector<Candidate, 1>> candidatesAt(proc.size());
-    IndexMap<BasicBlock*, bool> isPlace(proc.size(), false);
+    IndexMap<BasicBlock*, bool> isFetchLocation(proc.size(), false);
     for (BasicBlock* block : deepestFirst) {
         auto candidates = std::exchange(candidatesAt[block], { });
         double cost = 0;
-        bool standsForCycle = graph.isOnCycle(block);
+        bool representsCycle = graph.isOnCycle(block);
         candidates.removeAllMatching([&](const Candidate& candidate) {
             if (!candidate.isOnCycle || block != proc[0]) {
                 cost += candidate.cost;
-                standsForCycle |= candidate.isOnCycle;
+                representsCycle |= candidate.isOnCycle;
                 return false;
             }
-            isPlace[candidate.block] = true;
+            isFetchLocation[candidate.block] = true;
             return true;
         });
         if (needsFetch[block] || cost > block->frequency()) {
             candidates.shrink(0);
-            candidates.append(Candidate { block, block->frequency(), standsForCycle });
+            candidates.append(Candidate { block, block->frequency(), representsCycle });
         }
         if (BasicBlock* parent = dominators.idom(block)) {
             candidatesAt[parent].appendVector(candidates);
             continue;
         }
         for (auto& candidate : candidates)
-            isPlace[candidate.block] = true;
+            isFetchLocation[candidate.block] = true;
     }
 
     B3::Variable* variable = proc.addVariable(Int64);
     InsertionSet insertionSet(proc);
     for (BasicBlock* block : proc) {
-        if (isPlace[block] && !fetchAt[block]) {
+        if (isFetchLocation[block] && !fetchAt[block]) {
             fetchAt[block] = proc.clone(someFetch);
             block->appendNonTerminal(fetchAt[block]);
         }
@@ -285,7 +281,7 @@ static void placeSlotBlockFetchesOnCycles(Procedure& proc, const StackmapGenerat
             auto* fetch = block->at(index)->as<PatchpointValue>();
             if (!fetch || fetch->generator() != generator)
                 continue;
-            if (isPlace[block] && fetch == fetchAt[block])
+            if (isFetchLocation[block] && fetch == fetchAt[block])
                 insertionSet.insert<VariableValue>(index + 1, B3::Set, fetch->origin(), variable, fetch);
             else
                 fetch->replaceWithIdentity(insertionSet.insert<VariableValue>(index, B3::Get, fetch->origin(), variable));
@@ -352,7 +348,7 @@ void placeSlotBlockFetches(Procedure& proc, LoweringContext& context)
         double cost;
     };
     IndexMap<BasicBlock*, Vector<Candidate, 1>> candidatesAt(proc.size());
-    IndexMap<BasicBlock*, bool> isPlace(proc.size(), false);
+    IndexMap<BasicBlock*, bool> isFetchLocation(proc.size(), false);
     for (BasicBlock* block : proc.blocksInPostOrder()) {
         auto candidates = std::exchange(candidatesAt[block], { });
         double cost = 0;
@@ -367,16 +363,16 @@ void placeSlotBlockFetches(Procedure& proc, LoweringContext& context)
             continue;
         }
         for (auto& candidate : candidates)
-            isPlace[candidate.block] = true;
+            isFetchLocation[candidate.block] = true;
     }
 
-    IndexMap<BasicBlock*, BasicBlock*> placeFor(proc.size(), nullptr);
+    IndexMap<BasicBlock*, BasicBlock*> fetchLocationFor(proc.size(), nullptr);
     for (BasicBlock* block : proc.blocksInPreOrder()) {
         BasicBlock* parent = dominators.idom(block);
-        placeFor[block] = isPlace[block] || !parent ? block : placeFor[parent];
+        fetchLocationFor[block] = isFetchLocation[block] || !parent ? block : fetchLocationFor[parent];
     }
     for (BasicBlock* block : proc) {
-        BasicBlock* place = placeFor[block];
+        BasicBlock* place = fetchLocationFor[block];
         if (!place)
             continue;
         for (unsigned index = 0; index < block->size(); ++index) {
@@ -395,7 +391,6 @@ void placeSlotBlockFetches(Procedure& proc, LoweringContext& context)
     }
 }
 
-// Nothing: the function has as many as it can have, the name has no number, or the code runs once.
 std::optional<unsigned> Lowering::allocateSite(StringID name, unsigned extra)
 {
     if (m_program.runsOnce(m_id) && !m_isInLoop)
@@ -411,11 +406,10 @@ std::optional<unsigned> Lowering::allocateSite(StringID name, unsigned extra)
     return m_context.sites.size() - 1;
 }
 
-// A hit addresses the slot from the block. The sum is for a stub: where that is called off the usual path the sum is made there, of what the back end does not know to be the same address.
-Pointer Lowering::slotAddress(unsigned slot, SlotAddressIsFor use)
+Pointer Lowering::slotAddress(unsigned slot, SlotAddressUse use)
 {
     LValue data = loadICData();
-    if (use == SlotAddressIsFor::ColdBlock)
+    if (use == SlotAddressUse::ColdBlock)
         data = m_out.opaque(data);
     return Pointer(m_out.add(data, m_out.constIntPtr(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + slot * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias)));
 }
@@ -426,12 +420,12 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     LValue data = slot ? loadICData() : nullptr;
     PatchpointValue* patchpoint = m_out.patchpoint(type);
     applyEffects(patchpoint, effects);
-    bool takesReceiverWhereItLies = hasFormsThatTakeReceiverInOtherRegisters(stub) && type != Void && operands.size() == 1 && operands[0].second == firstStubOperandGPR && immediate && immediate->first == stubImmediateGPR && !thunkFor(stub, immediate->second) && !slot && !number;
+    bool takesReceiverInCurrentRegister = hasReceiverGPRVariants(stub) && type != Void && operands.size() == 1 && operands[0].second == firstStubOperandGPR && immediate && immediate->first == stubImmediateGPR && !thunkFor(stub, immediate->second) && !slot && !number;
     for (auto& [value, reg] : operands)
-        patchpoint->append(ConstrainedValue(value, takesReceiverWhereItLies ? ValueRep::SomeRegister : ValueRep::reg(reg)));
-    if (takesReceiverWhereItLies)
+        patchpoint->append(ConstrainedValue(value, takesReceiverInCurrentRegister ? ValueRep::SomeRegister : ValueRep::reg(reg)));
+    if (takesReceiverInCurrentRegister)
         patchpoint->clobberEarly(RegisterSet { stubTemporaryGPRs[0], stubTemporaryGPRs[2], stubTemporaryGPRs[4], GPRInfo::argumentGPR1 });
-    unsigned indexOfData = (type != Void) + operands.size();
+    unsigned dataIndex = (type != Void) + operands.size();
     int32_t offsetOfSlot = 0;
     GPRReg slotGPR = InvalidGPRReg;
     if (slot) {
@@ -444,7 +438,7 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
         patchpoint->append(ConstrainedValue(number, ValueRep::reg(FPRInfo::fpRegT0)));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-    if (auto declared = registersChangedBy(stub)) {
+    if (auto declared = registersClobberedBy(stub)) {
         declared->add(GPRInfo::returnValueGPR, IgnoreVectors);
         if (immediate)
             declared->add(immediate->first, IgnoreVectors);
@@ -458,32 +452,32 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     }
     if (type != Void)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    bool mayThrow = stub != Stub::ToBoolean && stub != Stub::TryGetByNameAndRow && stub != Stub::TryPutByNameAndRow && stub != Stub::PutPropertiesWithStorage;
+    bool mayThrow = stub != Stub::ToBoolean && stub != Stub::TryGetByNameAndStructure && stub != Stub::TryPutByNameAndStructure && stub != Stub::PutPropertiesWithStorage;
     CallSite site;
     if (mayThrow)
         site.bits = nextSite();
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site, indexOfData, offsetOfSlot, slotGPR, takesReceiverWhereItLies, yieldsValue = type != Void](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site, dataIndex, offsetOfSlot, slotGPR, takesReceiverInCurrentRegister, returnsValue = type != Void](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (slotGPR != InvalidGPRReg)
-            jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[indexOfData].gpr(), slotGPR);
+            jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[dataIndex].gpr(), slotGPR);
         if (immediate && immediate->first == stubImmediateGPR) {
             RegisterSet live = RegisterSet::registersToSaveForCCall(params.usedRegisters());
-            if (yieldsValue)
+            if (returnsValue)
                 live.remove(GPRInfo::returnValueGPR);
-            Stub called = formOfStubThatKeeps(stub, live);
-            if (takesReceiverWhereItLies) {
-                called = formOfStubForName(called, immediate->second);
-                Stub head = formOfStubThatTakesReceiverIn(called, params[1].gpr());
+            Stub called = stubVariantPreserving(stub, live);
+            if (takesReceiverInCurrentRegister) {
+                called = stubVariantForName(called, immediate->second);
+                Stub head = stubVariantForReceiverGPR(called, params[1].gpr());
                 if (head == called) {
                     jit.move(params[1].gpr(), firstStubOperandGPR);
-                    head = formOfStubThatTakesReceiverIn(called, firstStubOperandGPR);
+                    head = stubVariantForReceiverGPR(called, firstStubOperandGPR);
                 }
                 jit.move(CCallHelpers::TrustedImm32(immediate->second), GPRInfo::argumentGPR1);
                 stubCalls->call(jit, head, site);
                 return;
             }
             if (!thunkFor(called, immediate->second))
-                called = formOfStubForName(called, immediate->second);
+                called = stubVariantForName(called, immediate->second);
             stubCalls->call(jit, called, immediate->second, site);
             return;
         }
@@ -496,10 +490,9 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     return patchpoint;
 }
 
-// The length of an array, a string or a typed array is no property that a slot could say the place of.
 Boxed Lowering::emitGetLength(Boxed base)
 {
-    if (auto number = numberForTableOf(m_length))
+    if (auto number = tableIndexOfName(m_length))
         return Boxed(callICStub(Stub::GetLengthByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
     if (m_context.sites.size() >= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
         return AOT_TYPED_OPERATION(GetByName, base, word32(m_length.index()));
@@ -509,15 +502,15 @@ Boxed Lowering::emitGetLength(Boxed base)
     return Boxed(callICStub(Stub::GetLength, Int64, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { static_cast<unsigned>(m_context.sites.size() - 1), GPRInfo::argumentGPR1 }));
 }
 
-TypedPointer Lowering::knownPlaceIn(CellPointer cell, const Value& access)
+TypedPointer Lowering::knownSlotIn(CellPointer cell, const Value& access)
 {
-    static_assert(Value::numberOfKnownPlaces == JSFinalObject::maxInlineCapacity);
-    return TypedPointer(m_heaps.JSCellHeaderAndNamedProperties, m_out.add(cell.value(), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + access.knownPlace() * sizeof(EncodedJSValue))));
+    static_assert(Value::numberOfKnownSlots == JSFinalObject::maxInlineCapacity);
+    return TypedPointer(m_heaps.JSCellHeaderAndNamedProperties, m_out.add(cell.value(), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + access.knownSlot() * sizeof(EncodedJSValue))));
 }
 
-CellPointer Lowering::receiverAtKnownPlace(const Value& access, Boxed base)
+CellPointer Lowering::receiverAtKnownSlot(const Value& access, Boxed base)
 {
-    if (access.receiverIsNeverNil())
+    if (access.receiverIsNeverNullish())
         return asCell(base);
     Type receiver = Type::object();
     receiver.primitives = Primitive::UndefinedOrNull;
@@ -530,70 +523,70 @@ CellPointer Lowering::receiverAtKnownPlace(const Value& access, Boxed base)
     return asCell(base);
 }
 
-LValue Lowering::checkedKnownPlace(const Value& access, Boxed base)
+LValue Lowering::checkedKnownSlot(const Value& access, Boxed base)
 {
-    uint32_t placeAndFlags = access.knownPlace() | (access.receiverIsNeverNil() ? 0x100 : 0) | (access.opcode == Opcode::PutById ? 0x200 : 0) | (access.isStoreToObjectBornWhole() ? 0x400 : 0);
-    LValue holds = AOT_TYPED_OPERATION(CheckKnownPlace, base, word32(access.string().index()), word32(placeAndFlags), word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index())).value();
+    uint32_t placeAndFlags = access.knownSlot() | (access.receiverIsNeverNullish() ? 0x100 : 0) | (access.opcode == Opcode::PutById ? 0x200 : 0) | (access.isStoreIntoInitialStructure() ? 0x400 : 0);
+    LValue holds = AOT_TYPED_OPERATION(CheckKnownSlot, base, word32(access.string().index()), word32(placeAndFlags), word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index())).value();
     LBasicBlock loads = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     ValueFromBlock nothing = m_out.anchor(m_out.constInt64(0));
     m_out.branch(m_out.notZero32(holds), unsure(loads), unsure(continuation));
     m_out.appendTo(loads);
-    ValueFromBlock loaded = m_out.anchor(m_out.load64(knownPlaceIn(asCell(base), access)));
+    ValueFromBlock loaded = m_out.anchor(m_out.load64(knownSlotIn(asCell(base), access)));
     m_out.jump(continuation);
     m_out.appendTo(continuation);
     return m_out.phi(Int64, nothing, loaded);
 }
 
-void Lowering::reportUnlessAtKnownPlace(LValue found, LValue expected, Boxed base)
+void Lowering::reportUnlessAtKnownSlot(LValue found, LValue expected, Boxed base)
 {
     LBasicBlock doesNotHold = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     m_out.branch(m_out.bitOr(m_out.isZero64(found), m_out.equal(found, expected)), usually(continuation), rarely(doesNotHold));
     m_out.appendTo(doesNotHold);
-    AOT_TYPED_OPERATION(FactDoesNotHold, base, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+    AOT_TYPED_OPERATION(FactViolated, base, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
 
-Boxed Lowering::getAtKnownPlace(const Value& access, Boxed base)
+Boxed Lowering::getAtKnownSlot(const Value& access, Boxed base)
 {
     if (!Options::validateAOTTypedFacts()) [[likely]]
-        return Boxed(m_out.load64(knownPlaceIn(receiverAtKnownPlace(access, base), access)));
-    LValue found = checkedKnownPlace(access, base);
+        return Boxed(m_out.load64(knownSlotIn(receiverAtKnownSlot(access, base), access)));
+    LValue found = checkedKnownSlot(access, base);
     Boxed general = emitGetById(base, access.string());
-    reportUnlessAtKnownPlace(found, general.value(), base);
+    reportUnlessAtKnownSlot(found, general.value(), base);
     return general;
 }
 
-bool Lowering::isStillAsBorn(const Value& store)
+bool Lowering::hasInitialStructureStill(const Value& store)
 {
-    if (!store.isStoreToObjectBornWhole())
+    if (!store.isStoreIntoInitialStructure())
         return false;
-    if (m_onlyPredecessors.isEmpty()) {
-        m_onlyPredecessors.fill(UINT32_MAX, m_function.blocks.size());
+    if (m_singlePredecessors.isEmpty()) {
+        m_singlePredecessors.fill(UINT32_MAX, m_function.blocks.size());
         for (uint32_t i = 0; i < m_function.blocks.size(); ++i) {
             for (auto& target : m_function.blocks[i].terminator.targets) {
-                uint32_t& only = m_onlyPredecessors[target.block.index()];
+                uint32_t& only = m_singlePredecessors[target.block.index()];
                 only = only == UINT32_MAX ? i : UINT32_MAX - 1;
             }
         }
     }
-    uint32_t row = store.birthOfFirstStore() - 1;
+    uint32_t row = store.initialStructureOfFirstStore() - 1;
     const Block* block = m_currentBlock;
     size_t index = m_currentIndexInBlock;
     for (unsigned blocks = 0; blocks < 64; ++blocks) {
         while (index--) {
             auto& earlier = m_function.at(block->values[index]);
-            if (earlier.hasRowOfBirth() && earlier.rowOfBirth() == row)
+            if (earlier.hasInitialStructure() && earlier.initialStructure() == row)
                 return true;
             bool callsNothing = earlier.opcode == Opcode::Undefined || earlier.opcode == Opcode::Null || earlier.opcode == Opcode::Boolean || earlier.opcode == Opcode::Integer || earlier.opcode == Opcode::Double
                 || (earlier.opcode == Opcode::Cast && earlier.castReason() == CastReason::Upcast)
-                || (earlier.isStoreToObjectBornWhole() && earlier.isAtKnownPlace() && m_program.rowsOfBirths[earlier.birthOfFirstStore() - 1].isWhole);
+                || (earlier.isStoreIntoInitialStructure() && earlier.isAtKnownSlot() && m_program.initialStructures[earlier.initialStructureOfFirstStore() - 1].isWhole);
             if (!callsNothing)
                 return false;
         }
-        uint32_t previous = m_onlyPredecessors[block - m_function.blocks.span().data()];
+        uint32_t previous = m_singlePredecessors[block - m_function.blocks.span().data()];
         if (previous >= UINT32_MAX - 1)
             return false;
         block = &m_function.blocks[previous];
@@ -602,14 +595,14 @@ bool Lowering::isStillAsBorn(const Value& store)
     return false;
 }
 
-void Lowering::giveThisItsRow(const Value& store, Boxed self)
+void Lowering::assignThisStructure(const Value& store, Boxed self)
 {
-    auto& row = m_program.rowsOfBirths[store.birthOfFirstStore() - 1];
+    auto& row = m_program.initialStructures[store.initialStructureOfFirstStore() - 1];
     Word32 count = word32(row.names.size());
     Word32 names = word32(rowOfNames(row.names.span()));
     bool hasSlot = !(m_program.runsOnce(m_id) && !m_isInLoop) && m_context.sites.size() < std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots);
     if (!hasSlot) {
-        AOT_TYPED_OPERATION(GiveThisItsRow, Pointer(m_out.constIntPtr(0)), self, count, names, word32(row.number + 1));
+        AOT_TYPED_OPERATION(AssignThisStructure, Pointer(m_out.constIntPtr(0)), self, count, names, word32(row.number + 1));
         return;
     }
     m_context.sites.append(Site { });
@@ -630,34 +623,34 @@ void Lowering::giveThisItsRow(const Value& store, Boxed self)
     m_out.store32(m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, newStructureID))), cell.value(), m_heaps.JSCell_structureID);
     m_out.jump(continuation);
     m_out.appendTo(asks);
-    AOT_TYPED_OPERATION(GiveThisItsRow, cache, self, count, names, word32(row.number + 1));
+    AOT_TYPED_OPERATION(AssignThisStructure, cache, self, count, names, word32(row.number + 1));
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
 
-void Lowering::putAtKnownPlace(const Value& access, Boxed base, Boxed value)
+void Lowering::putAtKnownSlot(const Value& access, Boxed base, Boxed value)
 {
-    if (Options::validateAOTTypedFacts() && access.isStoreToObjectBornWhole()) [[unlikely]] {
+    if (Options::validateAOTTypedFacts() && access.isStoreIntoInitialStructure()) [[unlikely]] {
         emitPutById(base, access.string(), value);
-        reportUnlessAtKnownPlace(checkedKnownPlace(access, base), value.value(), base);
+        reportUnlessAtKnownSlot(checkedKnownSlot(access, base), value.value(), base);
         return;
     }
     if (Options::validateAOTTypedFacts()) [[unlikely]] {
-        LValue found = checkedKnownPlace(access, base);
+        LValue found = checkedKnownSlot(access, base);
         emitPutById(base, access.string(), value);
         LBasicBlock loads = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(m_out.notZero64(found), unsure(loads), unsure(continuation));
         m_out.appendTo(loads);
-        reportUnlessAtKnownPlace(m_out.load64(knownPlaceIn(asCell(base), access)), value.value(), base);
+        reportUnlessAtKnownSlot(m_out.load64(knownSlotIn(asCell(base), access)), value.value(), base);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return;
     }
-    CellPointer cell = receiverAtKnownPlace(access, base);
+    CellPointer cell = receiverAtKnownSlot(access, base);
     didEmitWrite(Writes::Heap);
-    m_out.store64(value.value(), knownPlaceIn(cell, access));
-    if (!typeOf(access.child(1)).hasCells() || isStillAsBorn(access))
+    m_out.store64(value.value(), knownSlotIn(cell, access));
+    if (!typeOf(access.child(1)).hasCells() || hasInitialStructureStill(access))
         return;
     LBasicBlock storesCell = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -683,31 +676,31 @@ Boxed Lowering::emitGetById(Boxed base, StringID name, bool isCalled, const Func
     return emitCachedGetById(base, name, isCalled);
 }
 
-const Lowering::RunOfAccesses* Lowering::runOfCurrentAccess(StringID name)
+const Lowering::AccessRun* Lowering::currentAccessRun(StringID name)
 {
-    if (m_runsOfAccesses.isEmpty() || m_currentIndexInBlock >= m_currentBlock->values.size() || !m_out.m_block->frequency())
+    if (m_accessRuns.isEmpty() || m_currentIndexInBlock >= m_currentBlock->values.size() || !m_out.m_block->frequency())
         return nullptr;
     auto& current = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
     if ((current.opcode != Opcode::GetById && current.opcode != Opcode::PutById) || current.string() != name)
         return nullptr;
-    auto found = m_runsOfAccesses.find(current.child(0).index());
-    if (found == m_runsOfAccesses.end() || !found->value.names.contains(name))
+    auto found = m_accessRuns.find(current.child(0).index());
+    if (found == m_accessRuns.end() || !found->value.names.contains(name))
         return nullptr;
     return &found->value;
 }
 
-LValue Lowering::placeByRun(const RunOfAccesses& run, Boxed base, StringID name, LBasicBlock own)
+LValue Lowering::slotFromAccessRun(const AccessRun& run, Boxed base, StringID name, LBasicBlock own)
 {
     unsigned index = run.names.find(name);
-    uint64_t key = keyOfAccessInRun(m_currentBlockID, m_currentIndexInBlock);
-    bool follows = m_accessesThatFollowAnother.contains(key);
-    bool learns = !m_accessesThatAnotherDominates.contains(key);
-    auto blockOfTest = [&] {
+    uint64_t key = accessRunKey(m_currentBlockID, m_currentIndexInBlock);
+    bool follows = m_followingAccesses.contains(key);
+    bool learns = !m_dominatedAccesses.contains(key);
+    auto testBlock = [&] {
         return follows ? newColdBlock() : m_out.newBlock();
     };
-    LBasicBlock tests = blockOfTest();
-    LBasicBlock testsCell = blockOfTest();
-    LBasicBlock hasPassed = blockOfTest();
+    LBasicBlock tests = testBlock();
+    LBasicBlock testsCell = testBlock();
+    LBasicBlock hasPassed = testBlock();
     LBasicBlock isKnown = m_out.newBlock();
     LBasicBlock isCovered = m_out.newBlock();
     LValue verdict = m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), run.verdict);
@@ -718,10 +711,10 @@ LValue Lowering::placeByRun(const RunOfAccesses& run, Boxed base, StringID name,
     m_out.appendTo(tests);
     m_out.branch(isCell(base).value(), usually(testsCell), rarely(own));
     m_out.appendTo(testsCell);
-    if (run.numberOfRow != Format::none) {
-        LValue placeOfRow = m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::displacementOfRows() + static_cast<ptrdiff_t>(Instance::numberOfPlacesOfNoRow + run.numberOfRow) * sizeof(uint32_t)));
-        LValue structureIDOfRow = m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, m_out.add(m_instance, m_out.zeroExtPtr(placeOfRow)), Instance::displacementOfRows() + OBJECT_OFFSETOF(AOT::Slot, structureID)));
-        m_out.branch(m_out.equal(structureIDOfRow, m_out.load32(TypedPointer(m_heaps.root, m_out.add(base.value(), m_out.constIntPtr(JSCell::structureIDOffset()))))), usually(hasPassed), rarely(own));
+    if (run.findStructureDescriptor != Format::none) {
+        LValue descriptorSlotIndex = m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::structureDescriptorsDisplacement() + static_cast<ptrdiff_t>(Instance::numberOfReservedDescriptorIndices + run.findStructureDescriptor) * sizeof(uint32_t)));
+        LValue descriptorStructureID = m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, m_out.add(m_instance, m_out.zeroExtPtr(descriptorSlotIndex)), Instance::structureDescriptorsDisplacement() + OBJECT_OFFSETOF(AOT::Slot, structureID)));
+        m_out.branch(m_out.equal(descriptorStructureID, m_out.load32(TypedPointer(m_heaps.root, m_out.add(base.value(), m_out.constIntPtr(JSCell::structureIDOffset()))))), usually(hasPassed), rarely(own));
         m_out.appendTo(hasPassed);
         m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), run.verdict, m_out.int32One);
         m_out.jump(isKnown);
@@ -730,7 +723,7 @@ LValue Lowering::placeByRun(const RunOfAccesses& run, Boxed base, StringID name,
         m_out.appendTo(isCovered);
         return m_out.add(base.value(), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + run.places[index] * sizeof(EncodedJSValue)));
     }
-    Pointer header = slotAddress(run.header, follows ? SlotAddressIsFor::ColdBlock : SlotAddressIsFor::UsualPath);
+    Pointer header = slotAddress(run.header, follows ? SlotAddressUse::ColdBlock : SlotAddressUse::FastPath);
     LValue learned = m_out.load32(TypedPointer(m_heaps.root, m_out.add(header.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, structureID)))));
     LValue structureID = m_out.load32(TypedPointer(m_heaps.root, m_out.add(base.value(), m_out.constIntPtr(JSCell::structureIDOffset()))));
     LBasicBlock isAnother = learns ? newColdBlock() : own;
@@ -738,7 +731,7 @@ LValue Lowering::placeByRun(const RunOfAccesses& run, Boxed base, StringID name,
     if (learns) {
         LBasicBlock asks = newColdBlock();
         m_out.appendTo(isAnother);
-        Pointer headerAgain = slotAddress(run.header, SlotAddressIsFor::ColdBlock);
+        Pointer headerAgain = slotAddress(run.header, SlotAddressUse::ColdBlock);
         LValue attempts = m_out.bitAnd(m_out.load32(TypedPointer(m_heaps.root, m_out.add(headerAgain.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, offset))))), m_out.constInt32(AOT::Slot::attemptsMask));
         m_out.branch(m_out.equal(attempts, m_out.constInt32(AOT::Slot::attemptsMask)), unsure(own), unsure(asks));
         m_out.appendTo(asks);
@@ -747,94 +740,94 @@ LValue Lowering::placeByRun(const RunOfAccesses& run, Boxed base, StringID name,
             uint64_t number = i < run.names.size() && run.names[i].index() < 0x1fffff ? run.names[i].index() : 0x1fffff;
             numbers[i / 3] |= number << (i % 3 * 21);
         }
-        Word32 hasLearned = AOT_TYPED_OPERATION(LearnRun, headerAgain, base, word32((run.names.size() + 7) / 8 << 24 | (run.stored & 0xffffff)), integer(static_cast<int64_t>(numbers[0])), integer(static_cast<int64_t>(numbers[1])));
-        m_out.branch(hasLearned.value(), unsure(hasPassed), unsure(own));
+        Word32 cacheIsPopulated = AOT_TYPED_OPERATION(CachePropertyRun, headerAgain, base, word32((run.names.size() + 7) / 8 << 24 | (run.stored & 0xffffff)), integer(static_cast<int64_t>(numbers[0])), integer(static_cast<int64_t>(numbers[1])));
+        m_out.branch(cacheIsPopulated.value(), unsure(hasPassed), unsure(own));
     }
     m_out.appendTo(hasPassed);
     m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), run.verdict, m_out.int32One);
     m_out.jump(isKnown);
     m_out.appendTo(isKnown);
     if (Options::validateAOTTypedFacts()) [[unlikely]] {
-        Boxed asOfNow(m_out.opaque(base.value()));
+        Boxed currentValueOf(m_out.opaque(base.value()));
         LBasicBlock isCellNow = m_out.newBlock();
-        LBasicBlock isLost = newColdBlock();
+        LBasicBlock isNoLongerCell = newColdBlock();
         LBasicBlock holds = m_out.newBlock();
-        m_out.branch(isCell(asOfNow).value(), usually(isCellNow), rarely(isLost));
+        m_out.branch(isCell(currentValueOf).value(), usually(isCellNow), rarely(isNoLongerCell));
         m_out.appendTo(isCellNow);
-        LValue learnedNow = m_out.load32(TypedPointer(m_heaps.root, m_out.add(slotAddress(run.header, SlotAddressIsFor::ColdBlock).value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, structureID)))));
-        LValue structureNow = m_out.load32(TypedPointer(m_heaps.root, m_out.add(asOfNow.value(), m_out.constIntPtr(JSCell::structureIDOffset()))));
-        m_out.branch(m_out.bitOr(m_out.equal(learnedNow, structureNow), m_out.isZero32(learnedNow)), usually(holds), rarely(isLost));
-        m_out.appendTo(isLost);
-        AOT_TYPED_OPERATION(FactDoesNotHold, base, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+        LValue populatedNow = m_out.load32(TypedPointer(m_heaps.root, m_out.add(slotAddress(run.header, SlotAddressUse::ColdBlock).value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, structureID)))));
+        LValue structureNow = m_out.load32(TypedPointer(m_heaps.root, m_out.add(currentValueOf.value(), m_out.constIntPtr(JSCell::structureIDOffset()))));
+        m_out.branch(m_out.bitOr(m_out.equal(populatedNow, structureNow), m_out.isZero32(populatedNow)), usually(holds), rarely(isNoLongerCell));
+        m_out.appendTo(isNoLongerCell);
+        AOT_TYPED_OPERATION(FactViolated, base, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
         m_out.jump(holds);
         m_out.appendTo(holds);
     }
-    LValue placeKnown = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(slotAddress(run.header + index / 8).value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, pointer) + index % 8))));
-    LBasicBlock hasNoPlace = newColdBlock();
-    LBasicBlock asksForPlace = newColdBlock();
-    ValueFromBlock known = m_out.anchor(placeKnown);
-    m_out.branch(placeKnown, usually(isCovered), rarely(hasNoPlace));
-    m_out.appendTo(hasNoPlace);
-    Pointer headerOfPlaces = slotAddress(run.header, SlotAddressIsFor::ColdBlock);
-    LValue asked = m_out.bitAnd(m_out.load32(TypedPointer(m_heaps.root, m_out.add(headerOfPlaces.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, offset))))), m_out.constInt32(1u << index));
-    m_out.branch(asked, unsure(own), unsure(asksForPlace));
-    m_out.appendTo(asksForPlace);
-    Word32 placeLearned = AOT_TYPED_OPERATION(LearnPlace, headerOfPlaces, base, word32(index | (run.stored >> index & 1) << 8), word32(name.index()));
-    ValueFromBlock learnedNow = m_out.anchor(placeLearned.value());
-    m_out.branch(placeLearned.value(), unsure(isCovered), unsure(own));
+    LValue knownSlotValue = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(slotAddress(run.header + index / 8).value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, pointer) + index % 8))));
+    LBasicBlock hasNoSlot = newColdBlock();
+    LBasicBlock requestsSlot = newColdBlock();
+    ValueFromBlock known = m_out.anchor(knownSlotValue);
+    m_out.branch(knownSlotValue, usually(isCovered), rarely(hasNoSlot));
+    m_out.appendTo(hasNoSlot);
+    Pointer slotsHeader = slotAddress(run.header, SlotAddressUse::ColdBlock);
+    LValue asked = m_out.bitAnd(m_out.load32(TypedPointer(m_heaps.root, m_out.add(slotsHeader.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, offset))))), m_out.constInt32(1u << index));
+    m_out.branch(asked, unsure(own), unsure(requestsSlot));
+    m_out.appendTo(requestsSlot);
+    Word32 cachedSlot = AOT_TYPED_OPERATION(CachePropertyLocation, slotsHeader, base, word32(index | (run.stored >> index & 1) << 8), word32(name.index()));
+    ValueFromBlock populatedNow = m_out.anchor(cachedSlot.value());
+    m_out.branch(cachedSlot.value(), unsure(isCovered), unsure(own));
     m_out.appendTo(isCovered);
-    LValue place = m_out.phi(Int32, known, learnedNow);
+    LValue place = m_out.phi(Int32, known, populatedNow);
     return m_out.add(base.value(), m_out.shl(m_out.zeroExtPtr(place), m_out.constInt32(3)));
 }
 
 Boxed Lowering::emitCachedGetById(Boxed base, StringID name, bool isCalled)
 {
-    auto* run = isCalled ? nullptr : runOfCurrentAccess(name);
+    auto* run = isCalled ? nullptr : currentAccessRun(name);
     if (!run)
-        return emitCachedGetByIdOnItsOwn(base, name);
+        return emitStandaloneCachedGetById(base, name);
     LBasicBlock own = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    ValueFromBlock fast = m_out.anchor(m_out.load64(TypedPointer(m_heaps.root, placeByRun(*run, base, name, own))));
+    ValueFromBlock fast = m_out.anchor(m_out.load64(TypedPointer(m_heaps.root, slotFromAccessRun(*run, base, name, own))));
     m_out.jump(continuation);
     ValueFromBlock slow;
     inColdBlock(own, [&] {
-        slow = m_out.anchor(emitCachedGetByIdOnItsOwn(base, name, true).value());
+        slow = m_out.anchor(emitStandaloneCachedGetById(base, name, true).value());
         m_out.jump(continuation);
     });
     m_out.appendTo(continuation);
     return Boxed(m_out.phi(Int64, fast, slow));
 }
 
-std::optional<uint32_t> Lowering::numberForTableOf(StringID name)
+std::optional<uint32_t> Lowering::tableIndexOfName(StringID name)
 {
     uint32_t identifier = name.index() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[name.index()] : 0;
-    if (!identifier || identifier > PlaceTable::maxName || (m_program.runsOnce(m_id) && !m_isInLoop))
+    if (!identifier || identifier > PropertyLookupTable::maxName || (m_program.runsOnce(m_id) && !m_isInLoop))
         return std::nullopt;
     if (!m_context.identifiers.contains(name))
         m_context.identifiers.append(name);
-    return PlaceTable::nameOfIdentifierNumbered(identifier);
+    return PropertyLookupTable::nameForIdentifierIndex(identifier);
 }
 
-Boxed Lowering::emitCachedGetByIdOnItsOwn(Boxed base, StringID name, bool isInRun)
+Boxed Lowering::emitStandaloneCachedGetById(Boxed base, StringID name, bool isInRun)
 {
-    if (auto number = isInRun ? std::nullopt : numberForTableOf(name))
+    if (auto number = isInRun ? std::nullopt : tableIndexOfName(name))
         return Boxed(callICStub(Stub::GetByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
     auto slot = allocateSite(name, 0);
     if (!slot && !isInRun && name.index() < m_program.identifierNumbers.size() && m_program.identifierNumbers[name.index()])
         return Boxed(callICStub(Stub::GetByNameUncached, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { GPRInfo::argumentGPR1, name.index() }));
     if (uint32_t identifier = !slot && name.index() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[name.index()] : 0) {
-        LValue found = callICStub(Stub::TryGetByNameAndRow, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { GPRInfo::argumentGPR1, identifier }, { Writes::Nothing, false });
+        LValue found = callICStub(Stub::TryGetByNameAndStructure, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { GPRInfo::argumentGPR1, identifier }, { Writes::Nothing, false });
         constexpr bool mayThrow = OperationSignature<std::remove_pointer_t<decltype(operationAOTTypedGetByName)>>::mayThrow;
         if (Vector<LValue, 8> arguments { base.value(), word32(name.index()).value() }; canCallOnLatePath(Entry::operationAOTTypedGetByName, mayThrow, arguments)) {
-            return Boxed(callOnLatePath(Entry::operationAOTTypedGetByName, mayThrow, effectsOfOperation<operationAOTTypedGetByName>(), arguments, { }, createSharedTask<CCallHelpers::JumpList(CCallHelpers&, GPRReg, std::span<const GPRReg>)>([](CCallHelpers& jit, GPRReg result, std::span<const GPRReg>) {
+            return Boxed(callOnLatePath(Entry::operationAOTTypedGetByName, mayThrow, effectsForOperation<operationAOTTypedGetByName>(), arguments, { }, createSharedTask<CCallHelpers::JumpList(CCallHelpers&, GPRReg, std::span<const GPRReg>)>([](CCallHelpers& jit, GPRReg result, std::span<const GPRReg>) {
                 return CCallHelpers::JumpList(jit.branchTest64(CCallHelpers::Zero, result));
             }), found));
         }
-        LBasicBlock generally = newColdBlock();
+        LBasicBlock genericPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         ValueFromBlock fast = m_out.anchor(found);
-        m_out.branch(m_out.notZero64(found), usually(continuation), rarely(generally));
-        m_out.appendTo(generally);
+        m_out.branch(m_out.notZero64(found), usually(continuation), rarely(genericPath));
+        m_out.appendTo(genericPath);
         ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(GetByName, base, word32(name.index())).value());
         m_out.jump(continuation);
         m_out.appendTo(continuation);
@@ -845,11 +838,11 @@ Boxed Lowering::emitCachedGetByIdOnItsOwn(Boxed base, StringID name, bool isInRu
     return Boxed(callICStub(Stub::GetById, Int64, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR1 }));
 }
 
-std::optional<Stub> Lowering::stubThatReadsByNameAs(const Type& type) const
+std::optional<Stub> Lowering::getByNameStubForType(const Type& type) const
 {
-    static_assert(static_cast<unsigned>(Stub::GetByIdAsDouble) + 1 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsDouble) + 2 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrNull) && static_cast<unsigned>(Stub::GetByIdAsDouble) + 3 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrNil));
-    static_assert(static_cast<unsigned>(Stub::GetByIdAsString) + 1 == static_cast<unsigned>(Stub::GetByIdAsStringOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsString) + 2 == static_cast<unsigned>(Stub::GetByIdAsStringOrNull) && static_cast<unsigned>(Stub::GetByIdAsString) + 3 == static_cast<unsigned>(Stub::GetByIdAsStringOrNil));
-    static_assert(static_cast<unsigned>(Stub::GetByIdAsBoolean) + 1 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsBoolean) + 2 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrNull) && static_cast<unsigned>(Stub::GetByIdAsBoolean) + 3 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrNil));
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsDouble) + 1 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsDouble) + 2 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrNull) && static_cast<unsigned>(Stub::GetByIdAsDouble) + 3 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrNullish));
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsString) + 1 == static_cast<unsigned>(Stub::GetByIdAsStringOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsString) + 2 == static_cast<unsigned>(Stub::GetByIdAsStringOrNull) && static_cast<unsigned>(Stub::GetByIdAsString) + 3 == static_cast<unsigned>(Stub::GetByIdAsStringOrNullish));
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsBoolean) + 1 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsBoolean) + 2 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrNull) && static_cast<unsigned>(Stub::GetByIdAsBoolean) + 3 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrNullish));
     unsigned variant = (type.primitives & Primitive::Undefined ? 1 : 0) | (type.primitives & Primitive::Null ? 2 : 0);
     Type rest = type.withoutPrimitives(Primitive::UndefinedOrNull);
     if (rest == m_program.at(m_program.types.number))
@@ -858,46 +851,46 @@ std::optional<Stub> Lowering::stubThatReadsByNameAs(const Type& type) const
         return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsString) + variant);
     if (rest == m_program.at(m_program.types.boolean))
         return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsBoolean) + variant);
-    static_assert(static_cast<unsigned>(Stub::GetByIdAsArray) + 1 == static_cast<unsigned>(Stub::GetByIdAsArrayOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsArray) + 2 == static_cast<unsigned>(Stub::GetByIdAsArrayOrNull) && static_cast<unsigned>(Stub::GetByIdAsArray) + 3 == static_cast<unsigned>(Stub::GetByIdAsArrayOrNil));
-    if (auto* engineClass = rest.primitives ? nullptr : rest.onlyEngineClass(); engineClass && engineClass->type == ArrayType)
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsArray) + 1 == static_cast<unsigned>(Stub::GetByIdAsArrayOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsArray) + 2 == static_cast<unsigned>(Stub::GetByIdAsArrayOrNull) && static_cast<unsigned>(Stub::GetByIdAsArray) + 3 == static_cast<unsigned>(Stub::GetByIdAsArrayOrNullish));
+    if (auto* engineClass = rest.primitives ? nullptr : rest.singleEngineClass(); engineClass && engineClass->type == ArrayType)
         return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsArray) + variant);
     return std::nullopt;
 }
 
-std::optional<Operand> Lowering::getByIdHeldTo(Boxed base, StringID name, TypeID held, std::optional<size_t> indexOfCast)
+std::optional<Operand> Lowering::getByIdWithTypeCheck(Boxed base, StringID name, TypeID held, std::optional<size_t> castIndex)
 {
     auto& type = m_program.at(held);
-    auto stub = stubThatReadsByNameAs(type);
+    auto stub = getByNameStubForType(type);
     if (stub && type.hasObjects()) {
-        SetForScope currentIndex(m_currentIndexInBlock, indexOfCast.value_or(m_currentIndexInBlock));
-        if (resultBecomesItsType(m_program.at(m_program.types.anything), type))
+        SetForScope currentIndex(m_currentIndexInBlock, castIndex.value_or(m_currentIndexInBlock));
+        if (resultMayInstantiateType(m_program.at(m_program.types.anything), type))
             return std::nullopt;
     }
-    if (!stub || m_fusedCasts || m_watchingHandler || handlerEnteredByBranch() || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+    if (!stub || m_fusedCasts || m_activeHandler || handlerEnteredByBranch() || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
         return std::nullopt;
-    if (name == m_length || m_builtins.callOrApply(m_program.builtinName(name)) || bindIfNamed(name) || bufferAccessorNamed(name) || isNamedLastIndex(name) || runOfCurrentAccess(name))
+    if (name == m_length || m_builtins.callOrApply(m_program.builtinName(name)) || bindIfNamed(name) || bufferAccessorNamed(name) || isNamedLastIndex(name) || currentAccessRun(name))
         return std::nullopt;
     Rep rep = repOf(type);
-    if (auto number = numberForTableOf(name)) {
+    if (auto number = tableIndexOfName(name)) {
         m_context.emitsCalls = true;
-        static_assert(static_cast<unsigned>(Stub::GetByNameAsArrayOrNil) - static_cast<unsigned>(Stub::GetByNameAsDouble) == 2 * (static_cast<unsigned>(Stub::GetByIdAsArrayOrNil) - static_cast<unsigned>(Stub::GetByIdAsDouble)));
+        static_assert(static_cast<unsigned>(Stub::GetByNameAsArrayOrNullish) - static_cast<unsigned>(Stub::GetByNameAsDouble) == 2 * (static_cast<unsigned>(Stub::GetByIdAsArrayOrNullish) - static_cast<unsigned>(Stub::GetByIdAsDouble)));
         Stub byTable = static_cast<Stub>(static_cast<unsigned>(Stub::GetByNameAsDouble) + 2 * (static_cast<unsigned>(*stub) - static_cast<unsigned>(Stub::GetByIdAsDouble)));
         PatchpointValue* patchpoint = m_out.patchpoint(b3TypeOf(rep));
         applyEffects(patchpoint, OperationEffects { });
         patchpoint->append(ConstrainedValue(base.value(), ValueRep::reg(firstStubOperandGPR)));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-        RegisterSet changed = *registersChangedBy(Stub::GetByName);
+        RegisterSet changed = *registersClobberedBy(Stub::GetByName);
         changed.add(GPRInfo::returnValueGPR, IgnoreVectors);
         changed.add(stubImmediateGPR, IgnoreVectors);
         patchpoint->clobberLate(changed);
         patchpoint->resultConstraints = { b3TypeOf(rep) == Double ? ValueRep::reg(FPRInfo::fpRegT0) : ValueRep::reg(GPRInfo::returnValueGPR) };
-        CallSite site { nextSiteWithCastAsItsItem(indexOfCast) };
+        CallSite site { nextSiteWithCastItem(castIndex) };
         patchpoint->setGenerator([context = &m_context, byTable, number = *number, site, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), held.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            bool keepsTwoIntegers = formOfStubThatKeeps(Stub::GetByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::GetByName;
+            bool keepsTwoIntegers = stubVariantPreserving(Stub::GetByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::GetByName;
             jit.move(CCallHelpers::TrustedImm32(number), stubImmediateGPR);
-            context->throwSitesAtCalls.append({ jit.labelIgnoringWatchpoints(), words });
+            context->callThrowSites.append({ jit.labelIgnoringWatchpoints(), words });
             context->stubCalls.call(jit, static_cast<Stub>(static_cast<unsigned>(byTable) + keepsTwoIntegers), site);
         });
         unwindToLandingPad(patchpoint, site);
@@ -922,12 +915,12 @@ std::optional<Operand> Lowering::getByIdHeldTo(Boxed base, StringID name, TypeID
         patchpoint->clobberLate(RegisterSet { reg });
 #endif
     patchpoint->resultConstraints = { b3TypeOf(rep) == Double ? ValueRep::reg(FPRInfo::fpRegT0) : ValueRep::reg(GPRInfo::returnValueGPR) };
-    CallSite site { nextSiteWithCastAsItsItem(indexOfCast) };
+    CallSite site { nextSiteWithCastItem(castIndex) };
     int32_t offsetOfSlot = static_cast<int32_t>(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + *slot * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias);
     patchpoint->setGenerator([context = &m_context, stub = *stub, site, offsetOfSlot, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), held.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[2].gpr(), GPRInfo::argumentGPR1);
-        context->throwSitesAtCalls.append({ jit.labelIgnoringWatchpoints(), words });
+        context->callThrowSites.append({ jit.labelIgnoringWatchpoints(), words });
         context->stubCalls.call(jit, stub, site);
     });
     unwindToLandingPad(patchpoint, site);
@@ -936,30 +929,30 @@ std::optional<Operand> Lowering::getByIdHeldTo(Boxed base, StringID name, TypeID
     return Operand(rep, patchpoint);
 }
 
-Operand Lowering::getByIdAndHold(Boxed base, StringID name, const Type& type, const Function* definedAs)
+Operand Lowering::getByIdAndCheckType(Boxed base, StringID name, const Type& type, const Function* definedAs)
 {
     if (TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type; given && &m_program.at(given) == &type) {
-        if (auto held = getByIdHeldTo(base, name, given))
+        if (auto held = getByIdWithTypeCheck(base, name, given))
             return *held;
     }
     return ensure(emitGetById(base, name, false, definedAs), type);
 }
 
-std::optional<Operand> Lowering::readByNameForCastBehind(ValueID result, const Value& read)
+std::optional<Operand> Lowering::getByNameForFollowingCast(ValueID result, const Value& read)
 {
     auto& values = m_currentBlock->values;
     size_t next = m_currentIndexInBlock + 1;
-    if (m_fusedCasts || next >= values.size() || read.rep != Rep::JSValue || read.readsMethodFor() || numberOfUsesOf(result) != 1 || m_function.at(read.child(0)).opcode == Opcode::GetGlobal)
+    if (m_fusedCasts || next >= values.size() || read.rep != Rep::JSValue || read.methodGetByIdBuiltin() || useCountOf(result) != 1 || m_function.at(read.child(0)).opcode == Opcode::GetGlobal)
         return std::nullopt;
     auto& cast = m_function.at(values[next]);
-    if (cast.opcode != Opcode::Cast || cast.child(0) != result || cast.string() || typeOf(result).isWithin(m_program.at(cast.type), m_program))
+    if (cast.opcode != Opcode::Cast || cast.child(0) != result || cast.string() || typeOf(result).isSubsetOf(m_program.at(cast.type), m_program))
         return std::nullopt;
     if (cast.castReason() != CastReason::As && cast.castReason() != CastReason::Claim && cast.castReason() != CastReason::Store && cast.castReason() != CastReason::Flow)
         return std::nullopt;
-    auto held = getByIdHeldTo(in<Boxed>(read.child(0)), read.string(), cast.type, next);
+    auto held = getByIdWithTypeCheck(in<Boxed>(read.child(0)), read.string(), cast.type, next);
     if (!held)
         return std::nullopt;
-    m_castCarriedOutByRead = CastCarriedOutByRead { m_currentBlock, next, *held };
+    m_castFusedIntoRead = CastFusedIntoRead { m_currentBlock, next, *held };
     return placeholder(read.rep);
 }
 
@@ -972,15 +965,15 @@ void Lowering::emitPutById(Boxed base, StringID name, Boxed value)
 
 void Lowering::emitCachedPutById(Boxed base, StringID name, Boxed value)
 {
-    auto* run = runOfCurrentAccess(name);
+    auto* run = currentAccessRun(name);
     if (!run) {
-        emitCachedPutByIdOnItsOwn(base, name, value);
+        emitStandaloneCachedPutById(base, name, value);
         return;
     }
     LBasicBlock own = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_storesThatKeepStructures.add(m_out.store64(value.value(), TypedPointer(m_heaps.root, placeByRun(*run, base, name, own))));
-    if (!m_valueStoredByNameIsNoCell) {
+    m_structurePreservingStores.add(m_out.store64(value.value(), TypedPointer(m_heaps.root, slotFromAccessRun(*run, base, name, own))));
+    if (!m_namedStoreValueIsNotCell) {
         LBasicBlock storesCell = m_out.newBlock();
         m_out.branch(isCell(value).value(), unsure(storesCell), unsure(continuation));
         m_out.appendTo(storesCell);
@@ -988,7 +981,7 @@ void Lowering::emitCachedPutById(Boxed base, StringID name, Boxed value)
     }
     m_out.jump(continuation);
     inColdBlock(own, [&] {
-        emitCachedPutByIdOnItsOwn(base, name, value, true);
+        emitStandaloneCachedPutById(base, name, value, true);
         m_out.jump(continuation);
     });
     m_out.appendTo(continuation);
@@ -997,8 +990,8 @@ void Lowering::emitCachedPutById(Boxed base, StringID name, Boxed value)
 bool Lowering::isInSloppyCode() const
 {
     auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
-    auto& writtenIn = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
-    return writtenIn.has(Format::FunctionIsSloppy);
+    auto& sourceFunction = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+    return sourceFunction.has(Format::FunctionIsSloppy);
 }
 
 void Lowering::setByName(Boxed base, StringID name, Boxed value)
@@ -1014,19 +1007,19 @@ void Lowering::emitPutByNameThroughTable(Stub stub, Boxed base, uint32_t identif
     callICStub(stub, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::pair { stubImmediateGPR, identifier });
 }
 
-void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value, bool onlyThroughStub, unsigned flagsOfSite)
+void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed value, bool onlyThroughStub, unsigned siteFlags)
 {
     bool isSloppy = isInSloppyCode();
-    auto* boxingOfValue = value.value()->as<PatchpointValue>();
-    bool storesNumberJustBoxed = boxingOfValue && boxingOfValue->generator() == m_context.numberBoxingGenerator.get();
-    if (auto number = flagsOfSite || onlyThroughStub || storesNumberJustBoxed ? std::nullopt : numberForTableOf(name)) {
+    auto* valueBoxing = value.value()->as<PatchpointValue>();
+    bool storesNumberJustBoxed = valueBoxing && valueBoxing->generator() == m_context.numberBoxingGenerator.get();
+    if (auto number = siteFlags || onlyThroughStub || storesNumberJustBoxed ? std::nullopt : tableIndexOfName(name)) {
         emitPutByNameThroughTable(isSloppy ? Stub::PutByNameSloppy : Stub::PutByName, base, *number, value);
         return;
     }
     unsigned isStrict = isSloppy ? 0 : 2;
-    auto slot = allocateSite(name, isStrict | flagsOfSite);
-    if (!slot && flagsOfSite && !isSloppy) {
-        AOT_TYPED_OPERATION(SetByNameInRowOfThis, base, word32(name.index()), value);
+    auto slot = allocateSite(name, isStrict | siteFlags);
+    if (!slot && siteFlags && !isSloppy) {
+        AOT_TYPED_OPERATION(SetByNameInThisStructure, base, word32(name.index()), value);
         return;
     }
     if (!slot && name.index() < m_program.identifierNumbers.size() && m_program.identifierNumbers[name.index()]) {
@@ -1037,21 +1030,19 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
         setByName(base, name, value);
         return;
     }
-    auto throughStub = [&](SlotAddressIsFor) {
+    auto callStubPath = [&](SlotAddressUse) {
         if (auto* boxing = value.value()->as<PatchpointValue>(); boxing && boxing->generator() == m_context.numberBoxingGenerator.get()) {
-            callICStub(Stub::PutByIdOfDouble, Void, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 }, boxing->child(0));
+            callICStub(Stub::PutByIdDouble, Void, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 }, boxing->child(0));
             return;
         }
         callICStub(Stub::PutById, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 });
     };
-    if (onlyThroughStub || (!m_isInLoop && (m_function.isTyped() || !m_program.isHotOutsideItsLoops(m_id)))) {
-        throughStub(SlotAddressIsFor::UsualPath);
+    if (onlyThroughStub || (!m_isInLoop && (m_function.isTyped() || !m_program.isHotOutsideLoops(m_id)))) {
+        callStubPath(SlotAddressUse::FastPath);
         return;
     }
     Pointer address = slotAddress(*slot);
 
-    // The usual hit is tested for in place, as generatePutById() tests for it: the object has the structure the slot was filled for and keeps it, nothing is asked of what is
-    // stored, and the property is in the object itself.
     LBasicBlock isCellCase = m_out.newBlock();
     LBasicBlock hit = m_out.newBlock();
     LBasicBlock miss = newColdBlock();
@@ -1059,8 +1050,6 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
     m_out.branch(isCell(base).value(), usually(isCellCase), rarely(miss));
     m_out.appendTo(isCellCase);
     CellPointer cell = asCell(base);
-    // The slot and the structure ID are read as any memory: whatever is written, by whatever call, they are read again behind it. Only Writes::Heap is said to reach their own heaps, and a collection
-    // clears slots, a coercion gives an object another structure.
     Integer word(m_out.load64(TypedPointer(m_heaps.root, address.value())));
     static_assert(OBJECT_OFFSETOF(AOT::Slot, newStructureID) == sizeof(uint64_t) && OBJECT_OFFSETOF(AOT::Slot, fieldType) == sizeof(uint64_t) + sizeof(uint32_t));
     LBasicBlock hasStructureCase = m_out.newBlock();
@@ -1072,12 +1061,12 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
     m_out.branch(isZero(newStructureAndFieldType).value(), usually(keepsStructureCase), rarely(miss));
     m_out.appendTo(keepsStructureCase);
     constexpr uint64_t offsetIsNegative = 1ull << (32 + AOT::Slot::offsetBits - 1);
-    Word32 isInObject = isZero(Integer(m_out.bitAnd(word.value(), m_out.constInt64(static_cast<int64_t>(offsetIsNegative)))));
-    m_out.branch(isInObject.value(), usually(hit), rarely(miss));
+    Word32 isInlineEntry = isZero(Integer(m_out.bitAnd(word.value(), m_out.constInt64(static_cast<int64_t>(offsetIsNegative)))));
+    m_out.branch(isInlineEntry.value(), usually(hit), rarely(miss));
     m_out.appendTo(hit);
     LValue location = m_out.bitAnd(m_out.lShr(word.value(), m_out.constInt32(32)), m_out.constInt64(AOT::Slot::offsetMask));
-    m_storesThatKeepStructures.add(m_out.store64(value.value(), TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.shl(location, m_out.constInt32(3))))));
-    if (!m_valueStoredByNameIsNoCell) {
+    m_structurePreservingStores.add(m_out.store64(value.value(), TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.shl(location, m_out.constInt32(3))))));
+    if (!m_namedStoreValueIsNotCell) {
         LBasicBlock storesCell = m_out.newBlock();
         m_out.branch(isCell(value).value(), unsure(storesCell), unsure(continuation));
         m_out.appendTo(storesCell);
@@ -1085,13 +1074,12 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
     }
     m_out.jump(continuation);
     inColdBlock(miss, [&] {
-        throughStub(SlotAddressIsFor::ColdBlock);
+        callStubPath(SlotAddressUse::ColdBlock);
         m_out.jump(continuation);
     });
     m_out.appendTo(continuation);
 }
 
-// Nothing: the function has as many sites as it can have.
 std::optional<Word32> Lowering::emitDeleteByVal(Boxed base, Boxed key)
 {
     if (m_context.sites.size() + 2 > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
@@ -1111,7 +1099,7 @@ bool Lowering::emitDefineByName(Boxed object, StringID name, Boxed value)
         return isASCIIDigit(character);
     });
     constexpr unsigned isDirectAndStrict = 3;
-    if (auto number = mayBeIndex ? std::nullopt : numberForTableOf(name)) {
+    if (auto number = mayBeIndex ? std::nullopt : tableIndexOfName(name)) {
         emitPutByNameThroughTable(Stub::DefineByName, object, *number, value);
         return true;
     }
@@ -1119,7 +1107,7 @@ bool Lowering::emitDefineByName(Boxed object, StringID name, Boxed value)
     if (!slot)
         return false;
     if (auto* boxing = value.value()->as<PatchpointValue>(); boxing && boxing->generator() == m_context.numberBoxingGenerator.get()) {
-        callICStub(Stub::PutByIdOfDouble, Void, { { object.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 }, boxing->child(0));
+        callICStub(Stub::PutByIdDouble, Void, { { object.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 }, boxing->child(0));
         return true;
     }
     callICStub(Stub::PutById, Void, { { object.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 });
@@ -1141,71 +1129,54 @@ void Lowering::emitPutByVal(Boxed base, Boxed key, Boxed value, bool mayBeName)
     callICStub(Stub::PutByVal, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } }, std::pair { GPRInfo::argumentGPR3, isStrict });
 }
 
-static Stub behindInt32Test(Stub stub)
+static Stub stubAfterInt32Test(Stub stub)
 {
     switch (stub) {
     case Stub::Add:
-        return Stub::AddBehindInt32Test;
+        return Stub::AddAfterInt32Check;
     case Stub::Sub:
-        return Stub::SubBehindInt32Test;
+        return Stub::SubAfterInt32Check;
     case Stub::Mul:
-        return Stub::MulBehindInt32Test;
+        return Stub::MulAfterInt32Check;
     case Stub::BitAnd:
-        return Stub::BitAndBehindInt32Test;
+        return Stub::BitAndAfterInt32Check;
     case Stub::BitOr:
-        return Stub::BitOrBehindInt32Test;
+        return Stub::BitOrAfterInt32Check;
     case Stub::BitXor:
-        return Stub::BitXorBehindInt32Test;
+        return Stub::BitXorAfterInt32Check;
     case Stub::LShift:
-        return Stub::LShiftBehindInt32Test;
+        return Stub::LShiftAfterInt32Check;
     case Stub::RShift:
-        return Stub::RShiftBehindInt32Test;
+        return Stub::RShiftAfterInt32Check;
     case Stub::URShift:
-        return Stub::URShiftBehindInt32Test;
+        return Stub::URShiftAfterInt32Check;
     case Stub::Less:
-        return Stub::LessBehindInt32Test;
+        return Stub::LessAfterInt32Check;
     case Stub::LessEq:
-        return Stub::LessEqBehindInt32Test;
+        return Stub::LessEqAfterInt32Check;
     case Stub::Greater:
-        return Stub::GreaterBehindInt32Test;
+        return Stub::GreaterAfterInt32Check;
     case Stub::GreaterEq:
-        return Stub::GreaterEqBehindInt32Test;
+        return Stub::GreaterEqAfterInt32Check;
     default:
         return stub;
     }
 }
 
-// The stubs do numbers themselves and call the engine for the rest.
 Boxed Lowering::emitGenericArithmetic(Stub stub, Boxed a, Boxed b, OperationEffects effects)
 {
     if (m_hasFailedInt32Test)
-        stub = behindInt32Test(stub);
+        stub = stubAfterInt32Test(stub);
     return Boxed(callICStub(stub, Int64, { { a.value(), firstStubOperandGPR }, { b.value(), GPRInfo::argumentGPR1 } }, std::nullopt, effects));
 }
 
 Word32 Lowering::emitGenericCompare(Stub stub, Boxed a, Boxed b, OperationEffects effects)
 {
     if (m_hasFailedInt32Test)
-        stub = behindInt32Test(stub);
+        stub = stubAfterInt32Test(stub);
     return Word32(callICStub(stub, Int32, { { a.value(), firstStubOperandGPR }, { b.value(), GPRInfo::argumentGPR1 } }, std::nullopt, effects));
 }
 
-// Predictions.
-//
-// In code written in JavaScript every value is anything, and the checker says what it expects it to be: Value::prediction. That may be
-// wrong, so nothing is taken from it but the order in which things are tried. An operation that would be carried out the general way
-// looks at what is expected of its own operands and tests for that. Where the tests pass the operands ARE of those types, and the
-// operation is lowered the way it is for operands whose types say so. Where one fails, the general way is taken. Then both go on together.
-//
-// What is done in place is what the language says, in every case that gets there. The lowering for typed operands has cases where it
-// goes by a rule of its own (a hole in an array, an accessor among the elements, a field that is absent, a method that is not looked up
-// in the receiver). None of those is reached from here: each such function takes a block to go to instead, which is the general way.
-//
-// To the summaries and to whoever asks what may throw, the operation is what it is without predictions. What is emitted in place
-// changes no more than the general way may, and tells the back end what it changes itself.
-
-// Without the primitives: `undefined` and `null` pass for a reference in every description, and what is tested for is the rest.
-// Nothing: nothing is expected, a test has settled it where this code runs, or the type says as much.
 std::optional<Type> Lowering::predictionOf(ValueID id, uint16_t without) const
 {
     if (isCompact())
@@ -1218,55 +1189,49 @@ std::optional<Type> Lowering::predictionOf(ValueID id, uint16_t without) const
     if (!prediction)
         return std::nullopt;
     Type expected = m_program.at(prediction).withoutPrimitives(without);
-    // Which integers are expected is more than there is to test for: whether the value is boxed as an int32, or is a number at all.
     if (expected.primitives & Primitive::Int && !(expected.primitives & Primitive::Double)) {
-        if (!expected.integers.isWithin(Range::int32()))
+        if (!expected.integers.isSubsetOf(Range::int32()))
             expected.primitives |= Primitive::Double;
         expected.integers = expected.primitives & Primitive::Double ? Range::full() : Range::int32();
     }
     auto& type = typeOf(id);
-    if (expected.isNever() || !expected.isWithin(type, m_program) || type.isWithin(expected, m_program))
+    if (expected.isNever() || !expected.isSubsetOf(type, m_program) || type.isSubsetOf(expected, m_program))
         return std::nullopt;
     return expected;
 }
 
-// What a way to carry out an operation is chosen by.
-Type Lowering::expectedTypeOf(ValueID id) const
+Type Lowering::predictedTypeOf(ValueID id) const
 {
     if (auto prediction = predictionOf(id))
         return *prediction;
     return typeOf(id);
 }
 
-// Goes on where the value is what is expected, and yields it in the representation of that type.
-Operand Lowering::expectOrElse(const Expectation& expectation, LBasicBlock otherwise)
+Operand Lowering::speculateOrElse(const Expectation& expectation, LBasicBlock otherwise)
 {
     Operand operand = get(expectation.value);
     auto& type = *expectation.type;
-    if (m_asksOperandsAnew && operand.rep == Rep::JSValue)
+    if (m_retestsOperands && operand.rep == Rep::JSValue)
         operand = Boxed(m_out.opaque(operand.as<Boxed>().value()));
     if (operand.rep == Rep::JSValue) {
         Boxed boxed = operand.as<Boxed>();
-        // The engine boxes an int32 as one. An integral number that it keeps as a double is for whoever takes numbers.
         if (type.isInteger() && type.integers == Range::int32()) {
             orElse(isInt32(boxed), otherwise);
             return signExtended(low32(boxed));
         }
-        // Only an instance has that structure.
-        if (expectation.hasOriginalStructure && type.onlyEngineClass()) {
+        if (expectation.hasOriginalStructure && type.singleEngineClass()) {
             orElse(isCell(boxed), otherwise);
-            orElse(hasOriginalStructure(asCell(boxed), *type.onlyEngineClass()), otherwise);
+            orElse(hasOriginalStructure(asCell(boxed), *type.singleEngineClass()), otherwise);
             return asCell(boxed);
         }
     }
-    Operand fitted = fitOrElse(operand, typeOf(expectation.value), type, otherwise);
-    if (expectation.hasOriginalStructure && type.onlyEngineClass())
-        orElse(hasOriginalStructure(fitted.as<CellPointer>(), *type.onlyEngineClass()), otherwise);
+    Operand fitted = narrowOrElse(operand, typeOf(expectation.value), type, otherwise);
+    if (expectation.hasOriginalStructure && type.singleEngineClass())
+        orElse(hasOriginalStructure(fitted.as<CellPointer>(), *type.singleEngineClass()), otherwise);
     return fitted;
 }
 
-// Whether the operation is only carried out the general way because of operands that are expected to be numbers.
-bool Lowering::areExpectedToBeNumbers(std::initializer_list<ValueID> operands) const
+bool Lowering::arePredictedNumbers(std::initializer_list<ValueID> operands) const
 {
     bool isExpected = false;
     for (ValueID id : operands) {

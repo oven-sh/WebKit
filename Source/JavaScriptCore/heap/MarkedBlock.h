@@ -288,7 +288,6 @@ public:
 
         static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Header, m_vm); }
 #if USE(BUN_JSC_ADDITIONS)
-        // The reference, which is the member ahead of m_vm.
         static constexpr ptrdiff_t offsetOfHandle() { return offsetOfVM() - static_cast<ptrdiff_t>(sizeof(void*)); }
 #endif
 

@@ -13,9 +13,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// Puts the body of a function in the place of a call of it. What is copied is the body as the program has it, whatever has become of
-// that function's own copy by now: so the outcome does not depend on which function is worked on first. The calls that come along are
-// looked at in turn, down to a depth. A call that closes a cycle stays a call.
 class Inlining {
 public:
     Inlining(const Program& program, FunctionID id, Function& caller)
@@ -30,54 +27,54 @@ public:
         unsigned count = program.functions.size();
         Vector<unsigned> sizes(count);
         Vector<BitVector> neverReturn(count);
-        Vector<Program::FactsForInlining> facts(count);
-        Vector<uint32_t> onlyMakers(FillWith { }, count, Program::hasNoMakerOfClosures);
+        Vector<Program::InliningFacts> facts(count);
+        Vector<uint32_t> singleCreators(FillWith { }, count, Program::hasNoClosureCreator);
         forEachIndexInParallel(count, [&](unsigned i) {
             Function none;
             Inlining inlining(program, FunctionID(i), none);
             sizes[i] = inlining.sizeOf(std::as_const(program).functions[i], UINT_MAX);
-            neverReturn[i] = inlining.neverReturnsIn(FunctionID(i));
+            neverReturn[i] = inlining.noReturnBlocksOf(FunctionID(i));
             for (auto& value : std::as_const(program).functions[i].values) {
                 if (value.opcode != Opcode::NewClosure && value.opcode != Opcode::NewClosureOnce && value.opcode != Opcode::FunctionReference)
                     continue;
-                uint32_t* maker = &onlyMakers[value.function().index()];
-                uint32_t previous = WTF::atomicCompareExchangeStrong(maker, Program::hasNoMakerOfClosures, i, std::memory_order_relaxed);
-                if (previous != Program::hasNoMakerOfClosures && previous != i)
-                    WTF::atomicStore(maker, Program::hasSeveralMakersOfClosures, std::memory_order_relaxed);
+                uint32_t* maker = &singleCreators[value.function().index()];
+                uint32_t previous = WTF::atomicCompareExchangeStrong(maker, Program::hasNoClosureCreator, i, std::memory_order_relaxed);
+                if (previous != Program::hasNoClosureCreator && previous != i)
+                    WTF::atomicStore(maker, Program::hasMultipleClosureCreators, std::memory_order_relaxed);
             }
             if (!std::as_const(program).functions[i].blocks.isEmpty())
-                facts[i] = { inlining.isAccessor(FunctionID(i)), inlining.returnsMethodTable(FunctionID(i)), inlining.parametersCalledBy(FunctionID(i)), inlining.parametersCalledInLoopsBy(FunctionID(i)) };
+                facts[i] = { inlining.isAccessor(FunctionID(i)), inlining.returnsMethodTable(FunctionID(i)), inlining.calledParametersOf(FunctionID(i)), inlining.parametersCalledInLoopsOf(FunctionID(i)) };
         });
-        program.onlyMakersOfClosures = WTF::move(onlyMakers);
-        program.factsForInlining = WTF::move(facts);
+        program.singleClosureCreators = WTF::move(singleCreators);
+        program.inliningFacts = WTF::move(facts);
         program.sizesForInlining = WTF::move(sizes);
-        program.blocksThatNeverReturn = WTF::move(neverReturn);
+        program.noReturnBlocks = WTF::move(neverReturn);
     }
 
     unsigned run(CleanUpTiming timing)
     {
-        bool hasCallToLookAt = m_caller.blocks.containsIf([&](auto& block) {
+        bool hasCandidateCall = m_caller.blocks.containsIf([&](auto& block) {
             return block.values.containsIf([&](ValueID id) {
                 auto& value = m_caller.at(id);
-                return value.opcode == Opcode::CallDirect && value.immediates[1] != behindItsHead && !value.isCallWhoseCopyWasDeclined();
+                return value.opcode == Opcode::CallDirect && value.immediates[1] != afterHead && !value.isCallWithDeclinedInlining();
             });
         });
-        if (!hasCallToLookAt)
+        if (!hasCandidateCall)
             return 0;
         unsigned replaced = 0;
         unsigned size = sizeOf(m_caller, UINT_MAX);
-        m_copiedFrom.fill(none, m_caller.blocks.size());
-        m_neverReturns = blocksThatNeverReturn(m_caller, [&](FunctionID callee) {
-            return neverReturnsIn(callee).get(0);
+        m_inlinedFrom.fill(none, m_caller.blocks.size());
+        m_neverReturns = noReturnBlocks(m_caller, [&](FunctionID callee) {
+            return noReturnBlocksOf(callee).get(0);
         });
-        if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller) || m_program.isHotOnlyInItsLoops(m_id))
+        if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller) || m_program.isHotOnlyInLoops(m_id))
             m_isInLoop = blocksInLoops(m_caller);
-        m_isInLoopOfCaller = blocksInLoops(m_caller);
-        BitVector takesMisfits;
-        if ((m_caller.has(Format::FunctionIsHiddenInStackTraces) && !m_caller.isGenericEntrypoint()) || m_caller.has(FunctionLogsMisfits)) {
+        m_isInCallerLoop = blocksInLoops(m_caller);
+        BitVector acceptsTypeMismatches;
+        if ((m_caller.has(Format::FunctionIsHiddenInStackTraces) && !m_caller.isGenericEntrypoint()) || m_caller.has(FunctionLogsTypeMismatches)) {
             for (auto& block : m_caller.blocks) {
                 if (block.terminator.kind == TerminatorKind::Invoke)
-                    takesMisfits.set(block.terminator.targets[1].block.index());
+                    acceptsTypeMismatches.set(block.terminator.targets[1].block.index());
             }
         }
         Vector<BlockID> worklist;
@@ -85,29 +82,27 @@ public:
             worklist.append(BlockID(b));
         while (!worklist.isEmpty()) {
             BlockID block = worklist.takeLast();
-            if (m_neverReturns.get(block.index()) || takesMisfits.get(block.index()))
+            if (m_neverReturns.get(block.index()) || acceptsTypeMismatches.get(block.index()))
                 continue;
             m_currentBlockIsInLoop = m_isInLoop.get(block.index());
-            m_currentBlockIsInLoopOfCaller = m_isInLoopOfCaller.get(block.index());
+            m_currentBlockIsInCallerLoop = m_isInCallerLoop.get(block.index());
             for (unsigned k = 0; k < m_caller.at(block).values.size(); ++k) {
                 ValueID call = m_caller.at(block).values[k];
-                if (m_caller.at(call).opcode != Opcode::CallDirect || m_caller.at(call).immediates[1] == behindItsHead || m_caller.at(call).isCallWhoseCopyWasDeclined())
+                if (m_caller.at(call).opcode != Opcode::CallDirect || m_caller.at(call).immediates[1] == afterHead || m_caller.at(call).isCallWithDeclinedInlining())
                     continue;
                 FunctionID callee = m_caller.at(call).function();
-                // One level more where the copy makes a call of a value a call of a function.
-                uint32_t depthThatIsTooDeep = maxDepth + (isHandedFunctionItCalls(callee, m_caller.at(call)) || isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call)));
-                bool isTooDeep = depthOf(m_caller.at(call)) >= depthThatIsTooDeep;
-                bool isShallowerByLevels = isTooDeep && depthOf(m_caller.at(call), Copies::ThatAreLevels) < depthThatIsTooDeep;
-                // The call is one of the worker from here on: it is looked at again.
-                if (m_program.at(callee).nilOfResults && takeApartResultOrNil(m_program, m_caller, call)) {
+                uint32_t maxInliningDepth = maxDepth + (isPassedCalledFunction(callee, m_caller.at(call)) || isPassedIteratedGenerator(m_program.at(callee), m_caller.at(call)));
+                bool isTooDeep = depthOf(m_caller.at(call)) >= maxInliningDepth;
+                bool isShallowerByNesting = isTooDeep && depthOf(m_caller.at(call), Copies::OnlyNestingLevels) < maxInliningDepth;
+                if (m_program.at(callee).nullishResultKind && scalarizeNullableResult(m_program, m_caller, call)) {
                     didChangeCaller();
-                    m_numberOfValuesSearchedForResults = 0;
-                    m_readsOfResults.clear();
+                    m_resultSearchValueCount = 0;
+                    m_resultReads.clear();
                     ++replaced;
                     --k;
                     continue;
                 }
-                if (m_program.at(callee).resumeFunction || (m_caller.isGenericEntrypoint() && m_program.genericEntrypoints.get(callee.index()) == m_id) || m_caller.functionOfValueEntry == callee)
+                if (m_program.at(callee).resumeFunction || (m_caller.isGenericEntrypoint() && m_program.genericEntrypoints.get(callee.index()) == m_id) || m_caller.valueEntryTarget == callee)
                     continue;
                 if (m_caller.resumeFunction == callee && !(m_caller.declaredAs & functionIsGenerator))
                     continue;
@@ -115,43 +110,41 @@ public:
                     m_caller.at(call).immediates[1] = maxDepth;
                     continue;
                 }
-                if (!mayBeCopied(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
+                if (!canInline(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
                     continue;
-                bool callerIsHot = m_program.isHotByText(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInItsLoops(m_id));
-                if (m_program.at(callee).worker && !isMerelyRead(call))
+                bool callerIsHot = m_program.isStaticallyHot(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInLoops(m_id));
+                if (m_program.at(callee).worker && !isOnlyRead(call))
                     continue;
-                if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinyWhereNotHot + 1) > tinyWhereNotHot)
+                if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinySizeInColdCode + 1) > tinySizeInColdCode)
                     continue;
-                // Its first stores are lowered together, in one block. What is copied in the place of a call that a handler watches is split at whatever may throw.
                 if (k + 1 == m_caller.at(block).values.size() && m_caller.at(block).terminator.kind == TerminatorKind::Invoke && !initialStoresOf(m_program.at(callee)).empty() && !initialStoresCannotThrowAt(block, k, m_program.at(callee)))
                     continue;
-                // A wrapper is a call and a birth, where a call stood.
                 bool isBuiltin = m_program.at(callee).worker || isOwnWorker(callee) || (callerIsHot && m_program.at(callee).has(Format::FunctionIsBuiltin));
                 bool isMoved = !isTooDeep && isOnlyCall(callee, m_caller.at(call));
-                bool takesNothingInCopies = !m_currentBlockIsInLoopOfCaller && !constructsForDerivedClass(callee, m_caller.at(call));
-                unsigned limit = depthOf(m_caller.at(call)) ? (takesNothingInCopies ? 0 : smallInCopy) : smallSize;
-                unsigned limitWithoutLicence = limit;
+                bool disablesNestedInlining = !m_currentBlockIsInCallerLoop && !constructsForDerivedClass(callee, m_caller.at(call));
+                unsigned limit = depthOf(m_caller.at(call)) ? (disablesNestedInlining ? 0 : smallInCopy) : smallSize;
+                unsigned defaultSizeLimit = limit;
                 char licence = depthOf(m_caller.at(call)) ? 'c' : 's';
-                bool isBornAsCast = handsBackWhatIsCast(callee, block, k);
-                bool isFactory = !isBornAsCast && !isTooDeep && returnsMethodTable(callee) && isUsedOnlyAsReceiver(m_caller, call);
-                if (isBornAsCast) {
-                    limit = smallWhereMoreIsGained;
+                bool isAllocatedAsCastType = returnsAllocationThatIsCast(callee, block, k);
+                bool isFactory = !isAllocatedAsCastType && !isTooDeep && returnsMethodTable(callee) && isUsedOnlyAsReceiver(m_caller, call);
+                if (isAllocatedAsCastType) {
+                    limit = smallSizeWithExtraBenefit;
                     licence = 'b';
-                } else if (onlyStoresToThis(m_program.at(callee)) || isAccessor(callee) || isHandedFunctionItCalls(callee, m_caller.at(call)) || isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call))) {
-                    limit = smallWhereMoreIsGained;
+                } else if (onlyStoresToThis(m_program.at(callee)) || isAccessor(callee) || isPassedCalledFunction(callee, m_caller.at(call)) || isPassedIteratedGenerator(m_program.at(callee), m_caller.at(call))) {
+                    limit = smallSizeWithExtraBenefit;
                     licence = isAccessor(callee) ? 'a' : onlyStoresToThis(m_program.at(callee)) ? 't' : 'h';
-                } else if (m_currentBlockIsInLoopOfCaller && !depthOf(m_caller.at(call)) && m_program.numberOfDirectCalls[callee.index()] <= fewCalls) {
-                    limit = smallWhereMoreIsGained;
+                } else if (m_currentBlockIsInCallerLoop && !depthOf(m_caller.at(call)) && m_program.numberOfDirectCalls[callee.index()] <= fewCalls) {
+                    limit = smallSizeWithExtraBenefit;
                     licence = 'f';
                 }
-                if (!callerIsHot && !onlyStoresToThis(m_program.at(callee)) && !isBornAsCast && !isFactory && !isHandedFunctionItCalls(callee, m_caller.at(call), true) && !isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call)))
-                    limit = limitWithoutLicence = takesNothingInCopies && depthOf(m_caller.at(call)) ? 0 : tinyWhereNotHot;
-                if (!isTooDeep && limit < maxHandedLiteral && isHandedArrayLiteral(m_caller.at(call))) {
-                    limit = maxHandedLiteral;
+                if (!callerIsHot && !onlyStoresToThis(m_program.at(callee)) && !isAllocatedAsCastType && !isFactory && !isPassedCalledFunction(callee, m_caller.at(call), true) && !isPassedIteratedGenerator(m_program.at(callee), m_caller.at(call)))
+                    limit = defaultSizeLimit = disablesNestedInlining && depthOf(m_caller.at(call)) ? 0 : tinySizeInColdCode;
+                if (!isTooDeep && limit < maxPassedLiteralSize && isPassedArrayLiteral(m_caller.at(call))) {
+                    limit = maxPassedLiteralSize;
                     licence = 'h';
                 }
-                if (!isTooDeep && limit < smallWhereMoreIsGained && ((callerSuspends() && isHandedObjectItOnlyReads(m_caller.at(call))) || isHandedObjectItDestructures(m_caller.at(call)))) {
-                    limit = smallWhereMoreIsGained;
+                if (!isTooDeep && limit < smallSizeWithExtraBenefit && ((callerSuspends() && isPassedReadOnlyObject(m_caller.at(call))) || isPassedDestructuredObject(m_caller.at(call)))) {
+                    limit = smallSizeWithExtraBenefit;
                     licence = 'h';
                 }
                 if (isFactory) {
@@ -159,21 +152,19 @@ public:
                     licence = 'r';
                 }
                 unsigned growsBy = sizeOf(m_program.at(callee), isBuiltin || isMoved ? UINT_MAX : limit + 1);
-                if (growsBy <= limitWithoutLicence)
+                if (growsBy <= defaultSizeLimit)
                     licence = depthOf(m_caller.at(call)) ? 'c' : 's';
-                // Over the limit as a whole. What is left of it at this call counts where that is no more than half: a copy that the
-                // constants of the call make another function of, not one that is a little too large.
                 if (!isTooDeep && !isBuiltin && !isMoved && growsBy > limit) {
-                    unsigned left = sizeAtCall(m_program.at(callee), m_caller.at(call), smallWhereMoreIsGained + 1);
-                    if (left <= (m_currentBlockIsInLoopOfCaller ? smallWhereMoreIsGained : mostLeftByConstants) && sizeOf(m_program.at(callee), 2 * left) >= 2 * left) {
+                    unsigned left = sizeAtCall(m_program.at(callee), m_caller.at(call), smallSizeWithExtraBenefit + 1);
+                    if (left <= (m_currentBlockIsInCallerLoop ? smallSizeWithExtraBenefit : maxSizeAfterConstantFolding) && sizeOf(m_program.at(callee), 2 * left) >= 2 * left) {
                         growsBy = left;
-                        limit = smallWhereMoreIsGained;
+                        limit = smallSizeWithExtraBenefit;
                         licence = 'k';
                     }
                 }
                 const BitVector* head = nullptr;
-                if ((isTooDeep && !isShallowerByLevels) || (!isBuiltin && !isMoved && growsBy > limit)) {
-                    if (!callerIsHot || runsOnceOrWaits())
+                if ((isTooDeep && !isShallowerByNesting) || (!isBuiltin && !isMoved && growsBy > limit)) {
+                    if (!callerIsHot || runsOnceOrSuspends())
                         continue;
                     auto& found = headOf(callee);
                     if (!found.size)
@@ -185,17 +176,17 @@ public:
                 }
                 if (size + growsBy > maxGrownTo && !m_program.at(callee).worker && !isOwnWorker(callee))
                     continue;
-                uint8_t given = licenceForMap(head ? 'e' : m_program.at(callee).worker ? 'w' : isOwnWorker(callee) ? 'o' : isBuiltin ? 'p' : isMoved ? 'm' : licence);
-                if (m_program.takesNoCopy(m_id, given) && m_program.at(m_id).startFunction != callee) {
-                    m_caller.at(call).immediates[1] = Value::copyWasDeclined - given;
+                uint8_t given = inlineReasonForLetter(head ? 'e' : m_program.at(callee).worker ? 'w' : isOwnWorker(callee) ? 'o' : isBuiltin ? 'p' : isMoved ? 'm' : licence);
+                if (m_program.isInliningDisabled(m_id, given) && m_program.at(m_id).startFunction != callee) {
+                    m_caller.at(call).immediates[1] = Value::inliningWasDeclined - given;
                     continue;
                 }
                 unsigned first = m_caller.blocks.size();
                 copyIn(block, k, callee, head);
                 didChangeCaller();
-                m_caller.inlineFrames[m_frameOfLastCopy].licence = given;
+                m_caller.inlineFrames[m_lastInlineFrame].licence = given;
                 if (isMoved)
-                    m_movedFrames.set(m_frameOfLastCopy);
+                    m_movedFrames.set(m_lastInlineFrame);
                 for (unsigned b = m_caller.blocks.size(); b-- > first;)
                     worklist.append(BlockID(b));
                 size += growsBy;
@@ -208,8 +199,7 @@ public:
         return replaced;
     }
 
-    // The caller is a general entry that has done nothing yet but call its function.
-    bool takeOwnBody()
+    bool inlineOwnBody()
     {
         auto& values = m_caller.blocks[0].values;
         size_t k = values.findIf([&](ValueID id) {
@@ -219,15 +209,14 @@ public:
             return false;
         FunctionID callee = m_caller.at(values[k]).function();
         auto& function = m_program.at(callee);
-        m_isTakingOwnBody = true;
-        if (m_program.genericEntrypoints.get(callee.index()) != m_id || function.resumeFunction || (function.kind == FunctionKind::Constructor && !handsRestParameterToSuperclass(function)) || !mayBeCopied(function, m_caller.at(values[k])))
+        m_isInliningOwnBody = true;
+        if (m_program.genericEntrypoints.get(callee.index()) != m_id || function.resumeFunction || (function.kind == FunctionKind::Constructor && !forwardsRestParameterToSuperclass(function)) || !canInline(function, m_caller.at(values[k])))
             return false;
-        m_copiedFrom.fill(none, m_caller.blocks.size());
+        m_inlinedFrom.fill(none, m_caller.blocks.size());
         copyIn(BlockID(0u), k, callee);
-        m_caller.inlineFrames[m_frameOfLastCopy].licence = licenceForMap('o');
+        m_caller.inlineFrames[m_lastInlineFrame].licence = inlineReasonForLetter('o');
         cleanUp(m_program, m_caller);
-        // `f.apply(thisArg, arguments)` is told from a call that keeps what it is passed.
-        if (resolveCalls(m_program, m_caller, m_program.isWarmByText(m_id)))
+        if (resolveCalls(m_program, m_caller, m_program.isStaticallyWarm(m_id)))
             cleanUp(m_program, m_caller);
         return true;
     }
@@ -243,11 +232,11 @@ private:
         return call.inlineFrame && m_program.at(m_caller.inlineFrames[call.inlineFrame].callee).kind == FunctionKind::Constructor;
     }
 
-    bool handsRestParameterToSuperclass(const Function& constructor) const
+    bool forwardsRestParameterToSuperclass(const Function& constructor) const
     {
         if (!constructor.has(Format::FunctionHasRestParameter) || constructor.blocks.isEmpty() || constructor.blocks[0].parameters.isEmpty())
             return false;
-        if (constructor.constructedClass && m_program.at(constructor.constructedClass).isDeclaredToExtendGlobal)
+        if (constructor.constructedClass && m_program.at(constructor.constructedClass).extendsGlobalClass)
             return false;
         ValueID rest = constructor.blocks[0].parameters.last();
         for (auto& block : constructor.blocks) {
@@ -275,37 +264,23 @@ private:
         return false;
     }
 
-    // A function this small is copied to every call that stands in the caller as it was written.
     static constexpr unsigned smallSize = 13;
-    // And one this small to a call that came along with a copy.
     static constexpr unsigned smallInCopy = 12;
-    // In a caller that the text does not say is hot nothing larger than this is copied, but to its only call: a copy buys time only where time is spent.
-    static constexpr unsigned tinyWhereNotHot = 7;
-    // One this small wherever the copy does away with more than the call: a constructor of stores (the object is born as what it is cast to,
-    // with its fields), a function that calls a function made at the call (no closure is made, and the call of it is a direct one).
-    static constexpr unsigned smallWhereMoreIsGained = 40;
-    static constexpr unsigned mostLeftByConstants = 10;
-    // What only tests what it is handed, and what reads memory besides, is copied wherever its call stands, up to these: see isAccessor().
+    static constexpr unsigned tinySizeInColdCode = 7;
+    static constexpr unsigned smallSizeWithExtraBenefit = 40;
+    static constexpr unsigned maxSizeAfterConstantFolding = 10;
     static constexpr unsigned maxPredicate = 40;
     static constexpr unsigned maxAccessor = 20;
-    // As much at a call as written of a function that this few calls in the whole program name: there is little to copy to.
     static constexpr unsigned fewCalls = 3;
-    // A function this small is no larger than the call of it.
     static constexpr unsigned maxForwarder = 2;
-    // The head of a function is at most this: see headOf().
     static constexpr unsigned maxHead = 6;
-    // In the place of the depth of a call: its head stands in front of it, and it stays a call, in this round and in those to come.
-    static constexpr uint32_t behindItsHead = Format::none - 1;
-    // One this small goes to its only call.
+    static constexpr uint32_t afterHead = Format::none - 1;
     static constexpr unsigned maxMoved = 200;
     static constexpr unsigned maxFactorySize = 400;
-    static constexpr unsigned maxHandedLiteral = 120;
+    static constexpr unsigned maxPassedLiteralSize = 120;
     static constexpr unsigned minFactoryMethods = 8;
-    // A function this large takes in no more.
     static constexpr unsigned maxGrownTo = 4000;
     static constexpr uint32_t none = UINT32_MAX;
-    // A call that came along with a body that came along with a body, and so on this many times, stays a call.
-    // More than that makes the code larger and no faster.
     static constexpr uint32_t maxDepth = 2;
 
     using EdgesIntoBlocks = Vector<Vector<const Target*, 2>>;
@@ -320,10 +295,9 @@ private:
         return result;
     }
 
-    // Behind casts, and behind block parameters: what a loop uses comes through its header, and through the block where its ways back meet. The one value that gets into the web of block parameters from outside, if it is one.
     static ValueID originOf(const Function& function, ValueID value, EdgesIntoBlocks& edges)
     {
-        auto behindCasts = [&](ValueID id) {
+        auto skipCasts = [&](ValueID id) {
             while (function.at(id).opcode == Opcode::Cast)
                 id = function.at(id).child(0);
             return id;
@@ -331,7 +305,7 @@ private:
         auto isBlockParameter = [&](ValueID id) {
             return function.at(id).opcode == Opcode::Parameter && function.at(id).immediates[0];
         };
-        value = behindCasts(value);
+        value = skipCasts(value);
         if (!isBlockParameter(value))
             return value;
         if (edges.isEmpty())
@@ -346,7 +320,7 @@ private:
             for (const Target* target : edges[parameter.immediates[0]]) {
                 if (parameter.immediates[1] >= target->arguments.size())
                     return value;
-                ValueID handed = behindCasts(target->arguments[parameter.immediates[1]]);
+                ValueID handed = skipCasts(target->arguments[parameter.immediates[1]]);
                 if (isBlockParameter(handed)) {
                     if (web.contains(handed))
                         continue;
@@ -363,17 +337,16 @@ private:
         return only ? only : value;
     }
 
-    // By parameter, as the entry block takes them: the function calls it.
-    const Program::FactsForInlining* factsOf(FunctionID id) const
+    const Program::InliningFacts* factsOf(FunctionID id) const
     {
-        return m_program.factsForInlining.isEmpty() || m_program.at(id).blocks.isEmpty() ? nullptr : &m_program.factsForInlining[id.index()];
+        return m_program.inliningFacts.isEmpty() || m_program.at(id).blocks.isEmpty() ? nullptr : &m_program.inliningFacts[id.index()];
     }
 
-    const BitVector& parametersCalledBy(FunctionID id)
+    const BitVector& calledParametersOf(FunctionID id)
     {
         if (auto* facts = factsOf(id))
             return facts->parametersCalled;
-        return m_parametersCalledBy.ensure(id.index(), [&] {
+        return m_calledParameters.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             BitVector result;
             EdgesIntoBlocks edges;
@@ -387,12 +360,11 @@ private:
         }).iterator->value;
     }
 
-    // Likewise: it calls it in a loop.
-    const BitVector& parametersCalledInLoopsBy(FunctionID id)
+    const BitVector& parametersCalledInLoopsOf(FunctionID id)
     {
         if (auto* facts = factsOf(id))
             return facts->parametersCalledInLoops;
-        return m_parametersCalledInLoopsBy.ensure(id.index(), [&] {
+        return m_parametersCalledInLoops.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             BitVector result;
             EdgesIntoBlocks edges;
@@ -402,8 +374,8 @@ private:
                     if (function.at(value).opcode != Opcode::Call)
                         continue;
                     if (cycles.isEmpty())
-                        cycles = cycleOfEachBlock(function);
-                    if (cycles[b] == isInNoCycle)
+                        cycles = computeBlockCycles(function);
+                    if (cycles[b] == notInCycle)
                         break;
                     if (size_t index = function.blocks[0].parameters.find(originOf(function, function.at(value).child(0), edges)); index != notFound)
                         result.set(index);
@@ -413,15 +385,15 @@ private:
         }).iterator->value;
     }
 
-    bool isHandedGeneratorItIterates(const Function& callee, const Value& call) const
+    bool isPassedIteratedGenerator(const Function& callee, const Value& call) const
     {
         BitVector generators;
         for (unsigned index = 0; index < call.arguments.size(); ++index) {
             ValueID argument = call.arguments[index];
             while (m_caller.at(argument).opcode == Opcode::Cast)
                 argument = m_caller.at(argument).child(0);
-            auto& made = m_caller.at(argument);
-            if (made.opcode == Opcode::CallDirect && !made.isJumpToContinuation() && m_program.at(made.function()).resumeFunction && (m_program.at(made.function()).declaredAs & (functionIsAsync | functionIsGenerator)) == functionIsGenerator)
+            auto& created = m_caller.at(argument);
+            if (created.opcode == Opcode::CallDirect && !created.isJumpToContinuation() && m_program.at(created.function()).resumeFunction && (m_program.at(created.function()).declaredAs & (functionIsAsync | functionIsGenerator)) == functionIsGenerator)
                 generators.set(index);
         }
         if (generators.isEmpty() || callee.blocks.isEmpty())
@@ -463,9 +435,9 @@ private:
         return false;
     }
 
-    bool isHandedFunctionItCalls(FunctionID callee, const Value& call, bool inLoop = false)
+    bool isPassedCalledFunction(FunctionID callee, const Value& call, bool inLoop = false)
     {
-        for (unsigned index : inLoop ? parametersCalledInLoopsBy(callee) : parametersCalledBy(callee)) {
+        for (unsigned index : inLoop ? parametersCalledInLoopsOf(callee) : calledParametersOf(callee)) {
             if (index >= call.arguments.size())
                 continue;
             ValueID argument = call.arguments[index];
@@ -490,9 +462,9 @@ private:
                     auto& value = callee.at(id);
                     if (isAlias.get(id.index()))
                         continue;
-                    bool yieldsIt = (value.opcode == Opcode::Cast && isAlias.get(value.child(0).index()))
+                    bool returnsIt = (value.opcode == Opcode::Cast && isAlias.get(value.child(0).index()))
                         || (value.opcode == Opcode::GetField && heldIn.contains(static_cast<uint64_t>(value.layout().index()) << 32 | value.field()));
-                    if (yieldsIt) {
+                    if (returnsIt) {
                         isAlias.set(id.index());
                         changed = true;
                     }
@@ -543,7 +515,7 @@ private:
         return true;
     }
 
-    bool isHandedArrayLiteral(const Value& call) const
+    bool isPassedArrayLiteral(const Value& call) const
     {
         auto& callee = m_program.at(call.function());
         if (callee.blocks.isEmpty() || callee.blocks[0].parameters.size() != call.arguments.size())
@@ -609,10 +581,10 @@ private:
 
     bool callerSuspends() const
     {
-        return m_caller.savesItsFrame || m_caller.declaredAs & (functionIsAsync | functionIsGenerator) || m_program.isResumeFunction(m_caller);
+        return m_caller.savesFrameOnSuspend || m_caller.declaredAs & (functionIsAsync | functionIsGenerator) || m_program.isResumeFunction(m_caller);
     }
 
-    bool isUsedBehindSuspension(ValueID object) const
+    bool isUsedAfterSuspension(ValueID object) const
     {
         auto suspends = [&](const Value& value) {
             if (value.opcode == Opcode::Await || value.opcode == Opcode::Yield)
@@ -625,34 +597,34 @@ private:
             return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::AwaitBySavingFrame;
         };
         unsigned numberOfBlocks = m_caller.blocks.size();
-        unsigned birthBlock = numberOfBlocks;
+        unsigned allocationBlock = numberOfBlocks;
         BitVector isAlias(m_caller.values.size());
         isAlias.set(object.index());
         for (unsigned b = 0; b < numberOfBlocks; ++b) {
             for (ValueID id : m_caller.blocks[b].values) {
                 if (id == object)
-                    birthBlock = b;
+                    allocationBlock = b;
                 else if (m_caller.at(id).opcode == Opcode::Cast && isAlias.get(m_caller.at(id).child(0).index()))
                     isAlias.set(id.index());
             }
         }
-        if (birthBlock == numberOfBlocks)
+        if (allocationBlock == numberOfBlocks)
             return false;
         BitVector isReached(numberOfBlocks);
-        BitVector isReachedBehindSuspension(numberOfBlocks);
+        BitVector isReachedAfterSuspension(numberOfBlocks);
         Vector<std::pair<unsigned, bool>, 16> worklist;
-        worklist.append({ birthBlock, false });
+        worklist.append({ allocationBlock, false });
         while (!worklist.isEmpty()) {
-            auto [b, isBehind] = worklist.takeLast();
+            auto [b, comesAfter] = worklist.takeLast();
             auto& block = m_caller.blocks[b];
-            bool isBorn = b != birthBlock;
+            bool wasAllocated = b != allocationBlock;
             for (ValueID id : block.values) {
-                if (!isBorn) {
-                    isBorn = id == object;
+                if (!wasAllocated) {
+                    wasAllocated = id == object;
                     continue;
                 }
                 auto& value = m_caller.at(id);
-                if (isBehind) {
+                if (comesAfter) {
                     bool uses = false;
                     value.forEachChild([&](ValueID child) {
                         uses |= isAlias.get(child.index());
@@ -660,26 +632,26 @@ private:
                     if (uses)
                         return true;
                 }
-                isBehind |= suspends(value);
+                comesAfter |= suspends(value);
             }
-            if (isBehind && block.terminator.value && isAlias.get(block.terminator.value.index()))
+            if (comesAfter && block.terminator.value && isAlias.get(block.terminator.value.index()))
                 return true;
             for (auto& target : block.terminator.targets) {
-                if (isBehind) {
+                if (comesAfter) {
                     for (ValueID argument : target.arguments) {
                         if (isAlias.get(argument.index()))
                             return true;
                     }
                 }
                 unsigned next = target.block.index();
-                if (next != birthBlock && !(isBehind ? isReachedBehindSuspension : isReached).set(next))
-                    worklist.append({ next, isBehind });
+                if (next != allocationBlock && !(comesAfter ? isReachedAfterSuspension : isReached).set(next))
+                    worklist.append({ next, comesAfter });
             }
         }
         return false;
     }
 
-    bool isHandedObjectItOnlyReads(const Value& call) const
+    bool isPassedReadOnlyObject(const Value& call) const
     {
         auto& callee = m_program.at(call.function());
         if (callee.blocks.isEmpty() || callee.blocks[0].parameters.size() != call.arguments.size())
@@ -688,13 +660,13 @@ private:
             ValueID argument = call.arguments[i];
             while (m_caller.at(argument).opcode == Opcode::Cast)
                 argument = m_caller.at(argument).child(0);
-            if (m_caller.at(argument).opcode == Opcode::NewObjectWithShape && isUsedBehindSuspension(argument) && onlyReadsFieldsOfParameter(callee, i))
+            if (m_caller.at(argument).opcode == Opcode::NewObjectWithShape && isUsedAfterSuspension(argument) && onlyReadsFieldsOfParameter(callee, i))
                 return true;
         }
         return false;
     }
 
-    bool isHandedObjectItDestructures(const Value& call) const
+    bool isPassedDestructuredObject(const Value& call) const
     {
         auto& callee = m_program.at(call.function());
         if (!callee.onlyDestructuresParameter || callee.blocks.isEmpty() || callee.blocks[0].parameters.size() != call.arguments.size())
@@ -714,10 +686,10 @@ private:
         if (auto* facts = factsOf(id))
             return facts->returnsMethodTable;
         auto& function = m_program.at(id);
-        LayoutID resultLayout = m_program.at(resultTypeOf(function)).onlyView();
+        LayoutID resultLayout = m_program.at(resultTypeOf(function)).singleLayout();
         if (!resultLayout || m_program.at(resultLayout).kind != LayoutKind::Record || m_program.at(resultLayout).fields.size() < minFactoryMethods)
             return false;
-        ValueID made;
+        ValueID created;
         for (auto& block : function.blocks) {
             if (block.terminator.kind != TerminatorKind::Return)
                 continue;
@@ -742,41 +714,41 @@ private:
                 }
                 value = only;
             }
-            if (!value || function.at(value).opcode != Opcode::NewObjectWithShape || (made && made != value))
+            if (!value || function.at(value).opcode != Opcode::NewObjectWithShape || (created && created != value))
                 return false;
-            made = value;
+            created = value;
         }
-        if (!made)
+        if (!created)
             return false;
         unsigned methods = 0;
         for (auto& value : function.values)
-            methods += value.opcode == Opcode::PutField && value.child(0) == made && function.at(value.child(1)).opcode == Opcode::NewClosure;
+            methods += value.opcode == Opcode::PutField && value.child(0) == created && function.at(value.child(1)).opcode == Opcode::NewClosure;
         return methods >= minFactoryMethods;
     }
 
-    enum class UseOfObject : uint8_t { Reads, IsAlias, IsAnother };
+    enum class ObjectUse : uint8_t { Reads, IsAlias, IsOtherUse };
 
-    static UseOfObject useOfObject(const Function& caller, const Value& value, ValueID object)
+    static ObjectUse classifyObjectUse(const Function& caller, const Value& value, ValueID object)
     {
         switch (value.opcode) {
         case Opcode::GetField:
         case Opcode::IsUndefinedOrNull:
         case Opcode::IteratorOpen:
-            return UseOfObject::Reads;
+            return ObjectUse::Reads;
         case Opcode::GetById:
-            return value.readsMethodFor() ? UseOfObject::IsAnother : UseOfObject::Reads;
+            return value.methodGetByIdBuiltin() ? ObjectUse::IsOtherUse : ObjectUse::Reads;
         case Opcode::GetByVal:
-            return value.child(0) != object || value.child(1) == object || caller.at(value.child(1)).opcode != Opcode::Integer ? UseOfObject::IsAnother : UseOfObject::Reads;
+            return value.child(0) != object || value.child(1) == object || caller.at(value.child(1)).opcode != Opcode::Integer ? ObjectUse::IsOtherUse : ObjectUse::Reads;
         case Opcode::Cast:
-            return value.castReason() != CastReason::Upcast && value.castReason() != CastReason::Flow && value.castReason() != CastReason::NonNull ? UseOfObject::IsAnother : UseOfObject::IsAlias;
+            return value.castReason() != CastReason::Upcast && value.castReason() != CastReason::Flow && value.castReason() != CastReason::NonNull ? ObjectUse::IsOtherUse : ObjectUse::IsAlias;
         default:
-            return UseOfObject::IsAnother;
+            return ObjectUse::IsOtherUse;
         }
     }
 
     void didChangeCaller()
     {
-        m_timesAskedSinceCallerChanged = 0;
+        m_queriesSinceCallerChanged = 0;
         m_firstUser.shrink(0);
     }
 
@@ -819,10 +791,10 @@ private:
         m_firstUser[0] = 0;
     }
 
-    bool isMerelyRead(ValueID result)
+    bool isOnlyRead(ValueID result)
     {
-        static constexpr unsigned timesAskedWithoutUsers = 2;
-        bool knowsUsers = m_timesAskedSinceCallerChanged++ >= timesAskedWithoutUsers;
+        static constexpr unsigned maxQueriesWithoutUsers = 2;
+        bool knowsUsers = m_queriesSinceCallerChanged++ >= maxQueriesWithoutUsers;
         if (knowsUsers && m_firstUser.isEmpty())
             findUsers();
         Vector<ValueID, 4> aliases { result };
@@ -832,10 +804,10 @@ private:
                 if (m_isUsedByTerminator.quickGet(object.index()))
                     return false;
                 for (ValueID user : m_users.span().subspan(m_firstUser[object.index()], m_firstUser[object.index() + 1] - m_firstUser[object.index()])) {
-                    UseOfObject use = useOfObject(m_caller, m_caller.at(user), object);
-                    if (use == UseOfObject::IsAnother)
+                    ObjectUse use = classifyObjectUse(m_caller, m_caller.at(user), object);
+                    if (use == ObjectUse::IsOtherUse)
                         return false;
-                    if (use == UseOfObject::IsAlias)
+                    if (use == ObjectUse::IsAlias)
                         aliases.append(user);
                 }
                 continue;
@@ -855,10 +827,10 @@ private:
                     });
                     if (!uses)
                         continue;
-                    UseOfObject use = useOfObject(m_caller, value, object);
-                    if (use == UseOfObject::IsAnother)
+                    ObjectUse use = classifyObjectUse(m_caller, value, object);
+                    if (use == ObjectUse::IsOtherUse)
                         return false;
-                    if (use == UseOfObject::IsAlias)
+                    if (use == ObjectUse::IsAlias)
                         aliases.append(user);
                 }
             }
@@ -950,25 +922,21 @@ private:
     }
     UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_consumesFactoryResult;
 
-    // Nothing else calls the function, and it is no value. The caller is too large to be copied anywhere itself. So the body is not copied: it
-    // moves, see dropFunctionsWithoutCalls(). A call that resolveCalls() finds later makes it a copy after all.
     bool isOnlyCall(FunctionID callee, const Value& call) const
     {
         if (m_caller.isGenericEntrypoint() || (call.inlineFrame && !m_movedFrames.get(call.inlineFrame)))
             return false;
         if (m_program.numberOfDirectCalls[callee.index()] != 1 || m_program.genericEntrypoints.contains(callee.index()))
             return false;
-        // A ramp is copied nowhere either.
-        return (m_program.at(m_id).resumeFunction || m_program.at(m_id).startFunction || m_currentBlockIsInLoopOfCaller || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
+        return (m_program.at(m_id).resumeFunction || m_program.at(m_id).startFunction || m_currentBlockIsInCallerLoop || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
     }
 
-    // Whatever it returns is an object that it has made, or that a function it calls has.
-    bool handsBackWhatItMakes(FunctionID id, unsigned depth = 0) const
+    bool returnsOwnAllocation(FunctionID id, unsigned depth = 0) const
     {
         static constexpr unsigned maxDepth = 3;
         if (depth > maxDepth)
             return false;
-        if (auto found = m_handsBackWhatItMakes.find(id.index()); found != m_handsBackWhatItMakes.end())
+        if (auto found = m_returnsOwnAllocation.find(id.index()); found != m_returnsOwnAllocation.end())
             return found->value;
         auto& function = m_program.at(id);
         auto origin = [&](ValueID value) {
@@ -1004,22 +972,20 @@ private:
                 break;
             }
             if (called && called != id)
-                result = handsBackWhatItMakes(called, depth + 1);
+                result = returnsOwnAllocation(called, depth + 1);
             if (!result)
                 break;
         }
-        // What was cut short by the depth is not remembered: from another function it may be reached.
         if (result || !depth)
-            m_handsBackWhatItMakes.add(id.index(), result);
+            m_returnsOwnAllocation.add(id.index(), result);
         return result;
     }
 
-    // The callee hands back an object it has made, and the first thing the caller does with it is to cast it to a layout that it could have been born as: copied, it is: CastSimplification::specializeAllocationFor().
-    bool handsBackWhatIsCast(FunctionID callee, BlockID block, unsigned k) const
+    bool returnsAllocationThatIsCast(FunctionID callee, BlockID block, unsigned k) const
     {
         auto& values = m_caller.at(block).values;
-        LayoutID made = m_program.at(m_caller.at(values[k]).type).onlyView();
-        if (!made || m_program.at(made).specializations.isEmpty())
+        LayoutID created = m_program.at(m_caller.at(values[k]).type).singleLayout();
+        if (!created || m_program.at(created).specializations.isEmpty())
             return false;
         Vector<ValueID, 2> names { values[k] };
         for (unsigned i = k + 1; i < values.size(); ++i) {
@@ -1038,14 +1004,12 @@ private:
             }
             if (user.castReason() != CastReason::As && user.castReason() != CastReason::Coerce)
                 return false;
-            LayoutID target = m_program.at(user.castReason() == CastReason::Coerce ? user.coercedType() : user.type).onlyView();
-            return target && std::ranges::binary_search(m_program.at(made).specializations, target) && handsBackWhatItMakes(callee);
+            LayoutID target = m_program.at(user.castReason() == CastReason::Coerce ? user.coercedType() : user.type).singleLayout();
+            return target && std::ranges::binary_search(m_program.at(created).specializations, target) && returnsOwnAllocation(callee);
         }
         return false;
     }
 
-    // How a call got here is forgotten from one round to the next, and a call by name becomes a direct call in between. So the depth
-    // is kept in the second immediate of CallDirect, CallMethod and Call, which nothing else uses. resolveCalls() hands it on.
     bool onlyStoresToThis(const Function& function) const
     {
         if (!function.has(Format::FunctionHasThis) || function.blocks.size() != 1 || function.blocks[0].terminator.kind != TerminatorKind::Return)
@@ -1074,13 +1038,11 @@ private:
         return stores;
     }
 
-    // A copy pays by being run often. The top-level code of a module runs once, and a coroutine waits between its parts.
-    bool runsOnceOrWaits() const
+    bool runsOnceOrSuspends() const
     {
         return !m_currentBlockIsInLoop && (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller));
     }
 
-    // Plain stores into an object that was made right before the call and that nobody has seen.
     bool initialStoresCannotThrowAt(BlockID block, unsigned k, const Function& callee) const
     {
         auto withoutUpcasts = [&](ValueID value) {
@@ -1091,43 +1053,42 @@ private:
         auto& values = m_caller.at(block).values;
         if (!callee.has(Format::FunctionHasThis))
             return false;
-        unsigned indexOfThis = callee.captureTypes.size();
-        ValueID object = withoutUpcasts(m_caller.at(values[k]).arguments[indexOfThis]);
+        unsigned thisIndex = callee.captureTypes.size();
+        ValueID object = withoutUpcasts(m_caller.at(values[k]).arguments[thisIndex]);
         if (m_caller.at(object).opcode != Opcode::NewObjectWithShape)
             return false;
-        size_t birth = values.find(object);
-        if (birth == notFound || birth >= k)
+        size_t allocationSite = values.find(object);
+        if (allocationSite == notFound || allocationSite >= k)
             return false;
-        for (size_t i = birth + 1; i < k; ++i) {
+        for (size_t i = allocationSite + 1; i < k; ++i) {
             if (withoutUpcasts(values[i]) == object)
                 continue;
-            bool usesIt = false;
+            bool usesValue = false;
             m_caller.at(values[i]).forEachChild([&](ValueID child) {
-                usesIt |= withoutUpcasts(child) == object;
+                usesValue |= withoutUpcasts(child) == object;
             });
-            if (usesIt)
+            if (usesValue)
                 return false;
         }
-        LayoutID made = m_caller.at(object).layout();
-        auto& layout = m_program.at(made);
+        LayoutID created = m_caller.at(object).layout();
+        auto& layout = m_program.at(created);
         if (!isObjectLayout(layout.kind) || (layout.kind == LayoutKind::Record && layout.mayHaveOtherPrototype))
             return false;
-        ValueID thisValue = callee.blocks[0].parameters[indexOfThis];
+        ValueID thisValue = callee.blocks[0].parameters[thisIndex];
         for (ValueID id : initialStoresOf(callee)) {
             auto& store = callee.at(id);
             auto field = layout.fieldNamed(store.string());
             if (store.child(0) != thisValue || store.child(1) == thisValue || !field)
                 return false;
-            if ((m_program.prototypePropertyNames.get(store.string().index()) && layout.kind != LayoutKind::Record) || inheritsByItsLayout(m_program, made, store.string()))
+            if ((m_program.prototypePropertyNames.get(store.string().index()) && layout.kind != LayoutKind::Record) || inheritsThroughLayoutPrototype(m_program, created, store.string()))
                 return false;
             TypeID type = layout.fields[*field].type;
-            if (type && !m_program.typeOf(callee, store.child(1)).isWithin(m_program.at(type), m_program))
+            if (type && !m_program.typeOf(callee, store.child(1)).isSubsetOf(m_program.at(type), m_program))
                 return false;
         }
         return true;
     }
 
-    // It reads and tests, and that is all.
     bool isAccessor(FunctionID id) const
     {
         if (auto* facts = factsOf(id))
@@ -1139,17 +1100,16 @@ private:
         }).iterator->value;
     }
 
-    // What it comes to once the accessors it calls are copied into it.
     std::optional<unsigned> sizeAsAccessor(const Function& function, bool& reads, unsigned nesting) const
     {
         unsigned size = 0;
-        BitVector isInChainOfIntegerTests;
+        BitVector isInIntegerTestChain;
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             auto& block = function.blocks[b];
             if (runsInitializer(function, block))
                 continue;
-            size += takeChainOfIntegerTests(function, b, isInChainOfIntegerTests);
-            bool isInChain = isInChainOfIntegerTests.get(b);
+            size += collectIntegerTestChain(function, b, isInIntegerTestChain);
+            bool isInChain = isInIntegerTestChain.get(b);
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 if (isInChain && id == block.terminator.value)
@@ -1157,10 +1117,10 @@ private:
                 if (value.opcode == Opcode::CallDirect) {
                     if (nesting == 2)
                         return std::nullopt;
-                    auto sizeOfCallee = sizeAsAccessor(m_program.at(value.function()), reads, nesting + 1);
-                    if (!sizeOfCallee)
+                    auto calleeSize = sizeAsAccessor(m_program.at(value.function()), reads, nesting + 1);
+                    if (!calleeSize)
                         return std::nullopt;
-                    size += *sizeOfCallee;
+                    size += *calleeSize;
                 } else if (readsMemory(value.opcode))
                     reads = true;
                 else if (!isTest(value.opcode))
@@ -1168,7 +1128,7 @@ private:
                 if (value.opcode != Opcode::CallDirect)
                     size += countsForSize(value.opcode);
             }
-            if (!endsInTest(block))
+            if (!endsWithTest(block))
                 return std::nullopt;
             size += !isInChain && (block.terminator.kind == TerminatorKind::Branch || block.terminator.kind == TerminatorKind::Switch);
             if (size > maxPredicate)
@@ -1213,7 +1173,7 @@ private:
         return opcode == Opcode::GetById || opcode == Opcode::GetField || opcode == Opcode::GetModuleVariable;
     }
 
-    static bool endsInTest(const Block& block)
+    static bool endsWithTest(const Block& block)
     {
         switch (block.terminator.kind) {
         case TerminatorKind::Jump:
@@ -1227,8 +1187,6 @@ private:
         }
     }
 
-    // Which target of a Branch is not expected to be taken, where the test itself says so: `===` holds, undefined or null is found, a bit
-    // that is tested for is set, what was read or handed is falsy.
     static std::optional<unsigned> unlikelyTarget(const Function& function, const Block& block)
     {
         if (block.terminator.kind != TerminatorKind::Branch)
@@ -1262,41 +1220,38 @@ private:
         unsigned size { 0 };
     };
 
-    bool isOpenReadOfField(const Function& function, const Value& value) const
+    bool isUncheckedFieldRead(const Function& function, const Value& value) const
     {
         if (value.opcode != Opcode::GetById)
             return false;
         auto& receiver = m_program.typeOf(function, value.child(0));
-        LayoutID view = receiver.onlyView();
-        if (!view || !m_program.at(view).admitsForeignObjects || m_program.at(view).members.isEmpty())
+        LayoutID supertype = receiver.singleLayout();
+        if (!supertype || !m_program.at(supertype).acceptsUntypedObjects || m_program.at(supertype).subtypes.isEmpty())
             return false;
         auto access = fieldOf(m_program, receiver, value.string());
-        if (!access || !onlyFieldsSupplyToMembers(m_program, access->layout, value.string()))
+        if (!access || !prototypeChainLacksPropertyForSubtypes(m_program, access->layout, value.string()))
             return false;
-        return std::ranges::all_of(m_program.at(view).members, [&](LayoutID member) {
-            return !!m_program.at(member).fieldNamed(value.string());
+        return std::ranges::all_of(m_program.at(supertype).subtypes, [&](LayoutID subtype) {
+            return !!m_program.at(subtype).fieldNamed(value.string());
         });
     }
 
-    // The blocks next to the entry that test and read and may come to return without leaving them. They are copied in the place of a call
-    // of a function that is not: what leaves them calls it, and it starts over. Nobody can tell that such a value was carried out twice.
-    // Without a size there is none.
     const Head& headOf(FunctionID id)
     {
         return m_heads.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             if (!function.resultTypes.isEmpty())
                 return Head { };
-            auto sizeOfBlock = [&](const Block& block) -> std::optional<unsigned> {
-                if (!endsInTest(block) || block.terminator.kind == TerminatorKind::Unreachable)
+            auto blockSize = [&](const Block& block) -> std::optional<unsigned> {
+                if (!endsWithTest(block) || block.terminator.kind == TerminatorKind::Unreachable)
                     return std::nullopt;
                 unsigned size = block.terminator.kind == TerminatorKind::Branch || block.terminator.kind == TerminatorKind::Switch;
                 for (size_t i = 0; i < block.values.size(); ++i) {
                     auto& value = function.at(block.values[i]);
                     if (!isTest(value.opcode) && !readsMemory(value.opcode))
                         return std::nullopt;
-                    bool isOpenRead = isOpenReadOfField(function, value);
-                    if (!isOpenRead && (writesOf(m_program, function, block, i) > Writes::RuntimeState || (value.opcode == Opcode::Cast && castWritesShapeWords(m_program, function, value))))
+                    bool isUncheckedRead = isUncheckedFieldRead(function, value);
+                    if (!isUncheckedRead && (writesOf(m_program, function, block, i) > Writes::RuntimeState || (value.opcode == Opcode::Cast && castWritesShapeWords(m_program, function, value))))
                         return std::nullopt;
                     size += countsForSize(value.opcode);
                 }
@@ -1310,7 +1265,7 @@ private:
                 if (seen.get(b))
                     continue;
                 seen.set(b);
-                auto size = sizeOfBlock(function.blocks[b]);
+                auto size = blockSize(function.blocks[b]);
                 if (!size || head.size + *size > maxHead)
                     continue;
                 head.blocks.set(b);
@@ -1332,7 +1287,7 @@ private:
                     if (terminator.targets.containsIf([&](auto& target) { return head.blocks.get(target.block.index()); }))
                         continue;
                     head.blocks.clear(b);
-                    head.size -= *sizeOfBlock(function.blocks[b]);
+                    head.size -= *blockSize(function.blocks[b]);
                     changed = true;
                 }
             } while (changed);
@@ -1345,50 +1300,47 @@ private:
         }).iterator->value;
     }
 
-    // A constructor that does nothing but store to `this` is smaller than the call of it, wherever the call stands. So is an accessor.
     bool isOwnWorker(FunctionID callee) const { return m_program.at(m_id).worker == callee; }
 
-    enum class Copies : bool { All, ThatAreLevels };
+    enum class Copies : bool { All, OnlyNestingLevels };
     uint32_t depthOf(const Value& call, Copies counted = Copies::All) const
     {
-        // A wrapper is taken in wherever its call stands. How deep that is, the frames say to the call of the worker.
         if (m_program.at(call.function()).worker || isOwnWorker(call.function()))
             return 0;
         if (onlyStoresToThis(m_program.at(call.function())))
             return 0;
-        if (runsOnceOrWaits())
+        if (runsOnceOrSuspends())
             return maxDepth;
         if (isAccessor(call.function()) || sizeOf(m_program.at(call.function()), maxForwarder + 1) <= maxForwarder)
             return 0;
         uint32_t depth = call.immediates[1] == Format::none ? 0 : call.immediates[1];
         uint32_t frames = 0;
         uint32_t innermostFrame = call.inlineFrame;
-        uint32_t maker = call.function().index() < m_program.onlyMakersOfClosures.size() ? m_program.onlyMakersOfClosures[call.function().index()] : Program::hasNoMakerOfClosures;
-        if (counted == Copies::ThatAreLevels && innermostFrame && maker < Program::hasSeveralMakersOfClosures && m_caller.inlineFrames[innermostFrame].callee.index() != maker) {
-            uint32_t frameOfMaker = innermostFrame;
-            bool standsInCopyOfItself = false;
-            while (frameOfMaker && m_caller.inlineFrames[frameOfMaker].callee.index() != maker) {
-                standsInCopyOfItself |= m_caller.inlineFrames[frameOfMaker].callee == call.function();
-                frameOfMaker = m_caller.inlineFrames[frameOfMaker].parent;
+        uint32_t maker = call.function().index() < m_program.singleClosureCreators.size() ? m_program.singleClosureCreators[call.function().index()] : Program::hasNoClosureCreator;
+        if (counted == Copies::OnlyNestingLevels && innermostFrame && maker < Program::hasMultipleClosureCreators && m_caller.inlineFrames[innermostFrame].callee.index() != maker) {
+            uint32_t creatorFrame = innermostFrame;
+            bool isInOwnInlinedCopy = false;
+            while (creatorFrame && m_caller.inlineFrames[creatorFrame].callee.index() != maker) {
+                isInOwnInlinedCopy |= m_caller.inlineFrames[creatorFrame].callee == call.function();
+                creatorFrame = m_caller.inlineFrames[creatorFrame].parent;
             }
-            if (!standsInCopyOfItself && (frameOfMaker || maker == m_id.index())) {
-                innermostFrame = frameOfMaker;
+            if (!isInOwnInlinedCopy && (creatorFrame || maker == m_id.index())) {
+                innermostFrame = creatorFrame;
                 depth = 0;
             }
         }
-        bool isInInnermostBuiltins = counted == Copies::ThatAreLevels;
+        bool isInInnermostBuiltins = counted == Copies::OnlyNestingLevels;
         for (uint32_t frame = innermostFrame; frame; frame = m_caller.inlineFrames[frame].parent) {
             isInInnermostBuiltins = isInInnermostBuiltins && m_program.at(m_caller.inlineFrames[frame].callee).has(Format::FunctionIsBuiltin);
             frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker && !isInInnermostBuiltins;
         }
-        // The body of its own function is not a copy that came along with anything.
         if (frames && m_caller.isGenericEntrypoint())
             --frames;
         return std::max(depth, frames);
     }
 
     template<typename NeverReturns>
-    static BitVector blocksThatNeverReturn(const Function& function, NOESCAPE const NeverReturns& neverReturns)
+    static BitVector noReturnBlocks(const Function& function, NOESCAPE const NeverReturns& neverReturns)
     {
         unsigned numberOfBlocks = function.blocks.size();
         Vector<Vector<unsigned, 2>> predecessors(numberOfBlocks);
@@ -1422,12 +1374,12 @@ private:
         return result;
     }
 
-    const BitVector& neverReturnsIn(FunctionID id)
+    const BitVector& noReturnBlocksOf(FunctionID id)
     {
-        if (!m_program.blocksThatNeverReturn.isEmpty())
-            return m_program.blocksThatNeverReturn[id.index()];
-        return m_neverReturnsIn.ensure(id.index(), [&] {
-            return blocksThatNeverReturn(m_program.at(id), [&](FunctionID callee) {
+        if (!m_program.noReturnBlocks.isEmpty())
+            return m_program.noReturnBlocks[id.index()];
+        return m_noReturnBlocksCache.ensure(id.index(), [&] {
+            return noReturnBlocks(m_program.at(id), [&](FunctionID callee) {
                 return !m_program.at(callee).blocks.containsIf([](auto& block) {
                     return block.terminator.kind == TerminatorKind::Return;
                 });
@@ -1435,13 +1387,12 @@ private:
         }).iterator->value;
     }
 
-    // A function that was copied in, and what the call of it was copied in with.
     struct Copy {
         FunctionID function;
         uint32_t outer;
     };
 
-    static std::optional<std::pair<ValueID, int64_t>> integerTestAtEndOf(const Function& function, const Block& block)
+    static std::optional<std::pair<ValueID, int64_t>> trailingIntegerTest(const Function& function, const Block& block)
     {
         if (block.terminator.kind != TerminatorKind::Branch || block.values.isEmpty() || block.values.last() != block.terminator.value)
             return std::nullopt;
@@ -1455,15 +1406,15 @@ private:
         return std::nullopt;
     }
 
-    static unsigned takeChainOfIntegerTests(const Function& function, unsigned first, BitVector& isInChain)
+    static unsigned collectIntegerTestChain(const Function& function, unsigned first, BitVector& isInChain)
     {
-        static constexpr unsigned fewestTests = 4;
-        static constexpr unsigned mostPlaces = 3;
+        static constexpr unsigned minTests = 4;
+        static constexpr unsigned maxTargets = 3;
         static constexpr int64_t valuesInWindow = 64;
         static constexpr unsigned instructionsInUnit = 3;
         if (isInChain.get(first))
             return 0;
-        auto tested = integerTestAtEndOf(function, function.blocks[first]);
+        auto tested = trailingIntegerTest(function, function.blocks[first]);
         if (!tested)
             return 0;
         auto placeOf = [&](const Target& target) {
@@ -1483,7 +1434,7 @@ private:
             auto& other = function.at(b);
             return one.opcode == other.opcode && (one.opcode == Opcode::Boolean || one.opcode == Opcode::Integer) && one.immediates == other.immediates;
         };
-        auto isSamePlace = [&](const Target* a, const Target* b) {
+        auto isSameTarget = [&](const Target* a, const Target* b) {
             if (a->block != b->block || a->arguments.size() != b->arguments.size())
                 return false;
             for (unsigned i = 0; i < a->arguments.size(); ++i) {
@@ -1494,20 +1445,20 @@ private:
         };
         Vector<unsigned, 32> links;
         Vector<int64_t, 32> integers;
-        Vector<const Target*, mostPlaces> places;
+        Vector<const Target*, maxTargets> places;
         for (unsigned at = first; !isInChain.get(at) && !links.contains(at);) {
             auto& block = function.blocks[at];
-            auto test = integerTestAtEndOf(function, block);
+            auto test = trailingIntegerTest(function, block);
             if (!test || test->first != tested->first)
                 break;
-            bool onlyTests = at == first || std::ranges::all_of(block.values, [&](ValueID id) {
+            bool isCheckOnlyCast = at == first || std::ranges::all_of(block.values, [&](ValueID id) {
                 return id == block.terminator.value || function.at(id).opcode == Opcode::Integer;
             });
-            if (!onlyTests || (at != first && !block.parameters.isEmpty()))
+            if (!isCheckOnlyCast || (at != first && !block.parameters.isEmpty()))
                 break;
             const Target* place = placeOf(block.terminator.targets[0]);
-            if (!places.containsIf([&](const Target* known) { return isSamePlace(known, place); })) {
-                if (places.size() == mostPlaces)
+            if (!places.containsIf([&](const Target* known) { return isSameTarget(known, place); })) {
+                if (places.size() == maxTargets)
                     break;
                 places.append(place);
             }
@@ -1517,7 +1468,7 @@ private:
                 break;
             at = block.terminator.targets[1].block.index();
         }
-        if (links.size() < fewestTests)
+        if (links.size() < minTests)
             return 0;
         std::ranges::sort(integers);
         unsigned windows = 0;
@@ -1555,7 +1506,6 @@ private:
         }
     }
 
-    // It calls the initializer of a lazy variable, or the body of a module: it runs once, and is cold code.
     bool runsInitializer(const Function& function, const Block& block) const
     {
         return block.values.containsIf([&](ValueID id) {
@@ -1563,28 +1513,26 @@ private:
         });
     }
 
-    // The test that leads there and the branch on it are one operation on the way that is taken.
-    bool isGuardOfInitializer(const Function& function, const Block& block) const
+    bool guardsInitializer(const Function& function, const Block& block) const
     {
         return block.terminator.kind == TerminatorKind::Branch && (runsInitializer(function, function.at(block.terminator.targets[0].block)) || runsInitializer(function, function.at(block.terminator.targets[1].block)));
     }
 
-    // No further than the limit.
     unsigned sizeOf(const Function& function, unsigned limit) const
     {
         if (!m_program.sizesForInlining.isEmpty() && &function >= m_program.functions.begin() && &function < m_program.functions.end())
             return std::min(m_program.sizesForInlining[&function - m_program.functions.begin()], std::max(limit, 1u));
         unsigned size = 0;
-        BitVector isInChainOfIntegerTests;
+        BitVector isInIntegerTestChain;
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             auto& block = function.blocks[b];
             if (runsInitializer(function, block))
                 continue;
-            size += takeChainOfIntegerTests(function, b, isInChainOfIntegerTests);
+            size += collectIntegerTestChain(function, b, isInIntegerTestChain);
             if (size >= limit)
                 return size;
-            bool isInChain = isInChainOfIntegerTests.get(b);
-            ValueID tested = isInChain || isGuardOfInitializer(function, block) ? block.terminator.value : ValueID();
+            bool isInChain = isInIntegerTestChain.get(b);
+            ValueID tested = isInChain || guardsInitializer(function, block) ? block.terminator.value : ValueID();
             for (ValueID id : block.values) {
                 if (countsForSize(function.at(id).opcode) && id != tested && ++size >= limit)
                     return size;
@@ -1595,25 +1543,20 @@ private:
         return size;
     }
 
-    // What a value of the callee is at the call, where that is a constant: a constant, a parameter that is passed one, the length of a
-    // parameter that is passed an array literal (the rest parameter).
-    struct ConstantsAtCall {
+    struct CallSiteConstants {
         const Inlining& inlining;
         const Function& callee;
         const Value& call;
         StringID length;
         Vector<std::unique_ptr<Value>, 2> lengths { };
-        // By the number of a block parameter that is only ever given itself and one other value: that value. The front end hands every
-        // local that lives across a loop through the header, those that are never assigned too. Found when first asked for.
-        Vector<ValueID> onlyGiven { };
+        Vector<ValueID> onlyPassed { };
 
-        // As Cleanup::removeTrivialParameters() finds them once the body is copied.
         void findTrivialParameters()
         {
-            onlyGiven.fill(ValueID(), callee.values.size());
+            onlyPassed.fill(ValueID(), callee.values.size());
             auto resolve = [&](ValueID value) {
-                while (onlyGiven[value.index()])
-                    value = onlyGiven[value.index()];
+                while (onlyPassed[value.index()])
+                    value = onlyPassed[value.index()];
                 return value;
             };
             Vector<Vector<Vector<ValueID, 2>>> given;
@@ -1632,7 +1575,7 @@ private:
                     auto& parameters = callee.blocks[b].parameters;
                     for (unsigned i = 0; i < parameters.size(); ++i) {
                         ValueID parameter = parameters[i];
-                        if (onlyGiven[parameter.index()])
+                        if (onlyPassed[parameter.index()])
                             continue;
                         ValueID only;
                         bool isTrivial = true;
@@ -1647,7 +1590,7 @@ private:
                             only = argument;
                         }
                         if (isTrivial && only) {
-                            onlyGiven[parameter.index()] = only;
+                            onlyPassed[parameter.index()] = only;
                             changed = true;
                         }
                     }
@@ -1655,21 +1598,21 @@ private:
             } while (changed);
         }
 
-        ValueID definitionOf(ValueID id, bool throughTests)
+        ValueID definitionOf(ValueID id, bool throughChecks)
         {
             for (;;) {
                 auto& value = callee.at(id);
-                if (value.opcode == Opcode::Cast && (throughTests ? value.castReason() != CastReason::As && value.castReason() != CastReason::Coerce : value.castReason() == CastReason::Upcast)) {
+                if (value.opcode == Opcode::Cast && (throughChecks ? value.castReason() != CastReason::As && value.castReason() != CastReason::Coerce : value.castReason() == CastReason::Upcast)) {
                     id = value.child(0);
                     continue;
                 }
                 if (value.opcode != Opcode::Parameter || callee.blocks[0].parameters.contains(id))
                     return id;
-                if (onlyGiven.isEmpty())
+                if (onlyPassed.isEmpty())
                     findTrivialParameters();
-                if (!onlyGiven[id.index()])
+                if (!onlyPassed[id.index()])
                     return id;
-                id = onlyGiven[id.index()];
+                id = onlyPassed[id.index()];
             }
         }
 
@@ -1718,7 +1661,6 @@ private:
                 lengths.last()->setBits(array->arguments.size());
                 return lengths.last().get();
             }
-            // Of an object made at the call: what its layout has not got and does not inherit is `undefined`, and whether it has a property is known.
             if (value.opcode == Opcode::GetById || value.opcode == Opcode::InById) {
                 auto* object = argumentFor(value.child(0));
                 if (!object || object->opcode != Opcode::NewObjectWithShape || !isObjectLayout(inlining.m_program.at(object->layout()).kind) || mayInherit(inlining.m_program, object->layout(), value.string()))
@@ -1737,7 +1679,6 @@ private:
             return argument && isConstant(*argument) ? argument : nullptr;
         }
 
-        // The value itself comes to a constant or to an argument.
         bool folds(ValueID id)
         {
             auto& value = callee.at(id);
@@ -1798,30 +1739,27 @@ private:
         }
     };
 
-    // The size of what is left of the callee at this call: what a branch on constants of the call does not lead to goes once the body is
-    // copied (Cleanup::foldConstantConditions(), ArrayEscapeAnalysis), so it is not counted. `emit("x", 1)`: `type === "error"`, and all arms
-    // but one of `switch (args.length)`.
     unsigned sizeAtCall(const Function& callee, const Value& call, unsigned limit) const
     {
         if (call.arguments.size() != callee.blocks[0].parameters.size())
             return sizeOf(callee, limit);
-        ConstantsAtCall constants { *this, callee, call, m_program.find(asBytes("length"_s.span8())).value_or(StringID()) };
+        CallSiteConstants constants { *this, callee, call, m_program.find(asBytes("length"_s.span8())).value_or(StringID()) };
         unsigned size = 0;
         BitVector seen(callee.blocks.size());
         seen.set(0);
         Vector<unsigned, 16> worklist { 0u };
-        BitVector isInChainOfIntegerTests;
+        BitVector isInIntegerTestChain;
         while (!worklist.isEmpty()) {
             unsigned b = worklist.takeLast();
             auto& block = callee.blocks[b];
             bool isCounted = !runsInitializer(callee, block);
             if (isCounted && !(block.terminator.kind == TerminatorKind::Branch && constants.decide(block.terminator.value))) {
-                size += takeChainOfIntegerTests(callee, b, isInChainOfIntegerTests);
+                size += collectIntegerTestChain(callee, b, isInIntegerTestChain);
                 if (size >= limit)
                     return size;
             }
-            bool isInChain = isInChainOfIntegerTests.get(b);
-            ValueID tested = isInChain || isGuardOfInitializer(callee, block) ? block.terminator.value : ValueID();
+            bool isInChain = isInIntegerTestChain.get(b);
+            ValueID tested = isInChain || guardsInitializer(callee, block) ? block.terminator.value : ValueID();
             for (ValueID id : block.values) {
                 if (isCounted && countsForSize(callee.at(id).opcode) && id != tested && !constants.folds(id) && ++size >= limit)
                     return size;
@@ -1849,8 +1787,8 @@ private:
     {
         if (callee == m_id)
             return true;
-        for (uint32_t at = m_copiedFrom[block.index()]; at != none; at = m_copies[at].outer) {
-            if (m_copies[at].function == callee)
+        for (uint32_t at = m_inlinedFrom[block.index()]; at != none; at = m_inlinedCopies[at].outer) {
+            if (m_inlinedCopies[at].function == callee)
                 return true;
         }
         return false;
@@ -1865,9 +1803,9 @@ private:
         });
     }
 
-    bool saysCallNoInline(FunctionID id) const
+    bool containsCallNoInline(FunctionID id) const
     {
-        return m_saysCallNoInline.ensure(id.index(), [&] {
+        return m_containsCallNoInline.ensure(id.index(), [&] {
             for (auto& value : m_program.at(id).values) {
                 if (m_program.operationOf(value) == Operations::CallNoInline)
                     return true;
@@ -1875,47 +1813,45 @@ private:
             return false;
         }).iterator->value;
     }
-    mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_saysCallNoInline;
+    mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_containsCallNoInline;
 
-    bool mayBeCopied(const Function& callee, const Value& call) const
+    bool canInline(const Function& callee, const Value& call) const
     {
-        if (callee.blocks.isEmpty() || callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer | FunctionLogsMisfits))
+        if (callee.blocks.isEmpty() || callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer | FunctionLogsTypeMismatches))
             return false;
         if (m_program.logsTypeErrors && callee.has(Format::FunctionIsHiddenInStackTraces) && !callee.has(Format::FunctionIsBuiltin) && hasHandlers(callee))
             return false;
-        if (m_caller.inlineFrames.size() > maxInlineFrames || callee.readsMemberOfHostObject || callee.readsAsyncLocalStorage)
+        if (m_caller.inlineFrames.size() > maxInlineFrames || callee.readsHostObjectMember || callee.readsAsyncLocalStorage)
             return false;
-        if (callee.savesItsFrame && m_program.at(m_id).startFunction != call.function())
+        if (callee.savesFrameOnSuspend && m_program.at(m_id).startFunction != call.function())
             return false;
         if (m_caller.has(Format::FunctionIsGenerator) && (callee.resumeFunction || m_program.isResumeFunction(callee)))
             return false;
-        if (callee.has(Format::FunctionIsBuiltin) && !m_program.standsForBuiltin(callee) && saysCallNoInline(call.function()))
+        if (callee.has(Format::FunctionIsBuiltin) && !m_program.implementsBuiltin(callee) && containsCallNoInline(call.function()))
             return false;
-        // Whatever is live into a handler is kept in memory, and that is every variable of a loop the handler goes back into.
-        if (!m_isTakingOwnBody && !isOwnWorker(call.function()) && m_program.at(m_id).startFunction != call.function() && hasHandlers(callee) && !hasHandlers(m_caller) && !isHandedGeneratorItIterates(callee, call))
+        if (!m_isInliningOwnBody && !isOwnWorker(call.function()) && m_program.at(m_id).startFunction != call.function() && hasHandlers(callee) && !hasHandlers(m_caller) && !isPassedIteratedGenerator(callee, call))
             return false;
         if (call.arguments.size() != callee.blocks[0].parameters.size())
             return false;
         auto& result = m_program.at(resultTypeOf(callee));
-        if (!result.isWithin(m_program.at(call.type), m_program))
+        if (!result.isSubsetOf(m_program.at(call.type), m_program))
             return false;
-        bool yieldsUndefined = m_program.at(m_program.types.undefined).isWithin(result, m_program);
+        bool returnsUndefined = m_program.at(m_program.types.undefined).isSubsetOf(result, m_program);
         for (auto& block : callee.blocks) {
-            if (block.terminator.kind == TerminatorKind::Return && !block.terminator.value && !yieldsUndefined)
+            if (block.terminator.kind == TerminatorKind::Return && !block.terminator.value && !returnsUndefined)
                 return false;
         }
         return true;
     }
 
-    BlockID addBlock(uint32_t copiedFrom)
+    BlockID addBlock(uint32_t inlinedFrom)
     {
         m_caller.blocks.append(Block { });
-        m_copiedFrom.append(copiedFrom);
-        // It takes the place of part of the block that is being looked at.
+        m_inlinedFrom.append(inlinedFrom);
         if (m_currentBlockIsInLoop)
             m_isInLoop.set(m_caller.blocks.size() - 1);
-        if (m_currentBlockIsInLoopOfCaller)
-            m_isInLoopOfCaller.set(m_caller.blocks.size() - 1);
+        if (m_currentBlockIsInCallerLoop)
+            m_isInCallerLoop.set(m_caller.blocks.size() - 1);
         return BlockID(m_caller.blocks.size() - 1);
     }
 
@@ -1925,15 +1861,14 @@ private:
         return ValueID(m_caller.values.size() - 1);
     }
 
-    // Replaces the value at `k` of the block, a direct call, with the body of the function, or with its head and a call for the rest.
     void copyIn(BlockID block, unsigned k, FunctionID calleeID, const BitVector* head = nullptr)
     {
         auto& callee = m_program.at(calleeID);
         ValueID call = m_caller.at(block).values[k];
-        Value callOfRest(m_caller.at(call));
+        Value restCall(m_caller.at(call));
         Arguments arguments = m_caller.at(call).arguments;
         uint32_t position = m_caller.at(call).position;
-        uint32_t depth = m_isTakingOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::ThatAreLevels) + !callee.has(Format::FunctionIsBuiltin);
+        uint32_t depth = m_isInliningOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::OnlyNestingLevels) + !callee.has(Format::FunctionIsBuiltin);
         uint32_t outerFrame = m_caller.at(call).inlineFrame;
         if (m_caller.inlineFrames.isEmpty())
             m_caller.inlineFrames.append(InlineFrame { });
@@ -1941,7 +1876,7 @@ private:
         m_caller.inlineFrames.append(InlineFrame { calleeID, position, outerFrame });
         m_caller.inlineFrames.last().isTailCall = m_caller.at(call).isInTailPosition;
         m_caller.inlineFrames.last().isConstruction = m_caller.at(call).constructs;
-        m_frameOfLastCopy = inlineFrame;
+        m_lastInlineFrame = inlineFrame;
         for (unsigned i = 1; i < callee.inlineFrames.size(); ++i) {
             InlineFrame frame = callee.inlineFrames[i];
             frame.parent += inlineFrame;
@@ -1949,7 +1884,7 @@ private:
         }
         bool isWatched = m_caller.at(block).terminator.kind == TerminatorKind::Invoke && k + 1 == m_caller.at(block).values.size();
 
-        BlockID after = addBlock(m_copiedFrom[block.index()]);
+        BlockID after = addBlock(m_inlinedFrom[block.index()]);
         {
             auto& from = m_caller.at(block);
             m_caller.at(after).values.append(from.values.subspan(k + 1));
@@ -1963,35 +1898,32 @@ private:
             invoke.kind = TerminatorKind::Jump;
             invoke.targets.shrink(1);
         }
-        // What the call yielded is what the function is declared to yield. Its users were written, and held to their types, for a value of the type of the call, which in untyped text is anything. Whether they may as well go by the
-        // type of the function, which says more, is for simplifyCasts() to find out.
         {
             Value result;
             result.opcode = Opcode::Parameter;
             result.position = position;
             result.inlineFrame = outerFrame;
             result.type = resultTypeOf(callee);
-            result.takePredictionOf(m_caller.at(call));
+            result.copyPredictionFrom(m_caller.at(call));
             result.rep = repOf(m_program.at(result.type));
             result.immediates = { after.index(), 0 };
             if (!callee.resultTypes.isEmpty()) {
-                // One parameter a result; whatever looked at a result of the call looks at that.
-                Arguments yielded;
+                Arguments returnedValue;
                 for (unsigned i = 0; i < callee.resultTypes.size(); ++i) {
                     Value parameter(result);
-                    parameter.takePredictionOf(Value { });
+                    parameter.copyPredictionFrom(Value { });
                     parameter.type = callee.resultTypes[i];
                     parameter.rep = repOf(m_program.at(parameter.type));
                     parameter.immediates = { after.index(), i };
-                    yielded.append(addValue(WTF::move(parameter)));
-                    m_caller.at(after).parameters.append(yielded.last());
+                    returnedValue.append(addValue(WTF::move(parameter)));
+                    m_caller.at(after).parameters.append(returnedValue.last());
                 }
-                for (; m_numberOfValuesSearchedForResults < m_caller.values.size(); ++m_numberOfValuesSearchedForResults) {
-                    auto& user = m_caller.values[m_numberOfValuesSearchedForResults];
+                for (; m_resultSearchValueCount < m_caller.values.size(); ++m_resultSearchValueCount) {
+                    auto& user = m_caller.values[m_resultSearchValueCount];
                     if (user.opcode == Opcode::ResultAt)
-                        m_readsOfResults.add(user.child(0).index(), Vector<uint32_t, 2> { }).iterator->value.append(m_numberOfValuesSearchedForResults);
+                        m_resultReads.add(user.child(0).index(), Vector<uint32_t, 2> { }).iterator->value.append(m_resultSearchValueCount);
                 }
-                for (uint32_t index : m_readsOfResults.take(call.index())) {
+                for (uint32_t index : m_resultReads.take(call.index())) {
                     auto& user = m_caller.values[index];
                     if (user.opcode != Opcode::ResultAt || user.child(0) != call)
                         continue;
@@ -2002,7 +1934,7 @@ private:
                     upcast.type = user.type;
                     upcast.rep = user.rep;
                     upcast.immediates[1] = static_cast<uint32_t>(CastReason::Upcast);
-                    upcast.children[0] = yielded[user.resultIndex()];
+                    upcast.children[0] = returnedValue[user.resultIndex()];
                     user = WTF::move(upcast);
                 }
                 Value nothing;
@@ -2021,7 +1953,7 @@ private:
                 upcast.position = position;
                 upcast.inlineFrame = outerFrame;
                 upcast.type = m_caller.at(call).type;
-                upcast.takePredictionOf(m_caller.at(call));
+                upcast.copyPredictionFrom(m_caller.at(call));
                 upcast.rep = m_caller.at(call).rep;
                 upcast.immediates[1] = static_cast<uint32_t>(CastReason::Upcast);
                 upcast.children[0] = addValue(WTF::move(result));
@@ -2031,28 +1963,28 @@ private:
             }
         }
 
-        m_copies.append(Copy { calleeID, m_copiedFrom[block.index()] });
-        uint32_t copiedFrom = m_copies.size() - 1;
+        m_inlinedCopies.append(Copy { calleeID, m_inlinedFrom[block.index()] });
+        uint32_t inlinedFrom = m_inlinedCopies.size() - 1;
         unsigned first = m_caller.blocks.size();
-        auto& neverReturnsInCallee = neverReturnsIn(calleeID);
-        auto isCopied = [&](unsigned i) {
+        auto& calleeNoReturnBlocks = noReturnBlocksOf(calleeID);
+        auto isInlinedBlock = [&](unsigned i) {
             return !head || head->get(i);
         };
         Vector<BlockID, 16> madeFor(callee.blocks.size());
         for (unsigned i = 0; i < callee.blocks.size(); ++i) {
-            if (!isCopied(i))
+            if (!isInlinedBlock(i))
                 continue;
-            madeFor[i] = addBlock(copiedFrom);
-            if (neverReturnsInCallee.get(i))
+            madeFor[i] = addBlock(inlinedFrom);
+            if (calleeNoReturnBlocks.get(i))
                 m_neverReturns.set(madeFor[i].index());
         }
         BlockID rest;
         if (head) {
-            rest = addBlock(copiedFrom);
-            callOfRest.type = resultTypeOf(callee);
-            callOfRest.rep = repOf(m_program.at(callOfRest.type));
-            callOfRest.immediates[1] = behindItsHead;
-            ValueID result = addValue(WTF::move(callOfRest));
+            rest = addBlock(inlinedFrom);
+            restCall.type = resultTypeOf(callee);
+            restCall.rep = repOf(m_program.at(restCall.type));
+            restCall.immediates[1] = afterHead;
+            ValueID result = addValue(WTF::move(restCall));
             m_caller.at(rest).values.append(result);
             m_caller.at(rest).terminator.kind = TerminatorKind::Jump;
             m_caller.at(rest).terminator.targets.append(Target { after, Arguments { result } });
@@ -2061,16 +1993,14 @@ private:
         for (unsigned i = 0; i < arguments.size(); ++i) {
             ValueID parameter = callee.blocks[0].parameters[i];
             ValueID argument = arguments[i];
-            // The body was written, and held to its types, for a value of the type of the parameter. Whether it may as well go by the type
-            // of the argument, which says more, is for simplifyCasts() to find out.
             TypeID type = callee.at(parameter).type;
-            if (type != m_caller.at(argument).type || callee.at(parameter).hasPredictionUnlike(m_caller.at(argument))) {
+            if (type != m_caller.at(argument).type || callee.at(parameter).hasDifferentPredictionThan(m_caller.at(argument))) {
                 Value upcast;
                 upcast.opcode = Opcode::Cast;
                 upcast.position = position;
                 upcast.inlineFrame = outerFrame;
                 upcast.type = type;
-                upcast.takePredictionOf(callee.at(parameter));
+                upcast.copyPredictionFrom(callee.at(parameter));
                 upcast.rep = callee.at(parameter).rep;
                 upcast.children[0] = argument;
                 upcast.immediates[1] = static_cast<uint32_t>(CastReason::Upcast);
@@ -2085,7 +2015,7 @@ private:
             map[value.index()] = addValue(WTF::move(copied));
         };
         for (unsigned i = 0; i < callee.blocks.size(); ++i) {
-            if (!isCopied(i))
+            if (!isInlinedBlock(i))
                 continue;
             if (i) {
                 for (ValueID parameter : callee.blocks[i].parameters)
@@ -2098,18 +2028,17 @@ private:
             value = map[value.index()];
         };
         for (unsigned i = 0; i < callee.blocks.size(); ++i) {
-            if (!isCopied(i))
+            if (!isInlinedBlock(i))
                 continue;
-            BlockID made = madeFor[i];
+            BlockID created = madeFor[i];
             if (i) {
                 for (ValueID parameter : callee.blocks[i].parameters) {
-                    m_caller.at(map[parameter.index()]).immediates[0] = made.index();
-                    m_caller.at(made).parameters.append(map[parameter.index()]);
+                    m_caller.at(map[parameter.index()]).immediates[0] = created.index();
+                    m_caller.at(created).parameters.append(map[parameter.index()]);
                 }
             }
             for (ValueID value : callee.blocks[i].values) {
                 auto& copied = m_caller.at(map[value.index()]);
-                // What it yields goes to the block behind the call.
                 if (copied.opcode == Opcode::Results) {
                     copied = Value { };
                     copied.type = m_program.types.undefined;
@@ -2117,7 +2046,7 @@ private:
                     continue;
                 }
                 copied.forEachChild(mapped);
-                if (head && isOpenReadOfField(callee, callee.at(value))) {
+                if (head && isUncheckedFieldRead(callee, callee.at(value))) {
                     Value test;
                     test.opcode = Opcode::HasShapeOf;
                     test.position = copied.position;
@@ -2125,25 +2054,25 @@ private:
                     test.type = m_program.types.boolean;
                     test.rep = repOf(m_program.at(test.type));
                     test.children[0] = copied.child(0);
-                    test.immediates = { m_program.typeOf(callee, callee.at(value).child(0)).onlyView().index(), m_program.mayRunInSeveralInstances ? shapeTestIsForThisInstance : 0u };
-                    ValueID isMember = addValue(WTF::move(test));
-                    BlockID behindTest = addBlock(copiedFrom);
-                    if (neverReturnsInCallee.get(i))
-                        m_neverReturns.set(behindTest.index());
-                    m_caller.at(made).values.append(isMember);
-                    auto& branch = m_caller.at(made).terminator;
+                    test.immediates = { m_program.typeOf(callee, callee.at(value).child(0)).singleLayout().index(), m_program.mayRunInMultipleInstances ? shapeTestIsForThisInstance : 0u };
+                    ValueID isSubtype = addValue(WTF::move(test));
+                    BlockID afterTest = addBlock(inlinedFrom);
+                    if (calleeNoReturnBlocks.get(i))
+                        m_neverReturns.set(afterTest.index());
+                    m_caller.at(created).values.append(isSubtype);
+                    auto& branch = m_caller.at(created).terminator;
                     branch.kind = TerminatorKind::Branch;
-                    branch.value = isMember;
-                    branch.targets.append(Target { behindTest, { } });
+                    branch.value = isSubtype;
+                    branch.targets.append(Target { afterTest, { } });
                     branch.targets.append(Target { rest, { } });
-                    made = behindTest;
-                    m_caller.at(made).values.append(map[value.index()]);
+                    created = afterTest;
+                    m_caller.at(created).values.append(map[value.index()]);
                     auto access = fieldOf(m_program, m_program.typeOf(callee, callee.at(value).child(0)), callee.at(value).string());
                     auto& read = m_caller.at(map[value.index()]);
-                    if (TypeID declared = m_program.at(access->layout).fields[access->field].type; declared && declared != read.type && m_program.at(declared).isWithin(m_program.at(read.type), m_program) && membersHoldOnlyDeclaredType(m_program, access->layout, access->field)) {
+                    if (TypeID declared = m_program.at(access->layout).fields[access->field].type; declared && declared != read.type && m_program.at(declared).isSubsetOf(m_program.at(read.type), m_program) && subtypesStoreOnlyDeclaredType(m_program, access->layout, access->field)) {
                         read.type = declared;
                         read.rep = repOf(m_program.at(declared));
-                        read.takePredictionOf(Value { });
+                        read.copyPredictionFrom(Value { });
                     }
                     continue;
                 }
@@ -2151,7 +2080,7 @@ private:
                     copied.immediates[1] = m_caller.allocationOf(Allocation(callee.allocations[copied.allocation()]));
                 else if (copied.opcode == Opcode::CallDirect || copied.opcode == Opcode::CallMethod || copied.opcode == Opcode::Call || copied.opcode == Opcode::Operation)
                     copied.immediates[1] = depth;
-                m_caller.at(made).values.append(map[value.index()]);
+                m_caller.at(created).values.append(map[value.index()]);
             }
             Terminator terminator = callee.blocks[i].terminator;
             if (terminator.kind == TerminatorKind::Return) {
@@ -2165,7 +2094,7 @@ private:
                     undefined.type = m_program.types.undefined;
                     undefined.rep = repOf(m_program.at(undefined.type));
                     result = addValue(WTF::move(undefined));
-                    m_caller.at(made).values.append(result);
+                    m_caller.at(created).values.append(result);
                 }
                 terminator = Terminator { };
                 terminator.kind = TerminatorKind::Jump;
@@ -2173,12 +2102,12 @@ private:
                 if (!callee.resultTypes.isEmpty()) {
                     auto& arguments = terminator.targets[0].arguments;
                     arguments.clear();
-                    for (ValueID yielded : callee.at(callee.blocks[i].terminator.value).arguments)
-                        arguments.append(map[yielded.index()]);
+                    for (ValueID returnedValue : callee.at(callee.blocks[i].terminator.value).arguments)
+                        arguments.append(map[returnedValue.index()]);
                 }
             } else {
                 for (auto& target : terminator.targets) {
-                    if (isCopied(target.block.index()))
+                    if (isInlinedBlock(target.block.index()))
                         target.block = madeFor[target.block.index()];
                     else
                         target = Target { rest, { } };
@@ -2190,32 +2119,28 @@ private:
                     terminator.cases.append(inlineFrame + frameInCallee);
                 }
             }
-            m_caller.at(made).terminator = WTF::move(terminator);
+            m_caller.at(created).terminator = WTF::move(terminator);
         }
         auto& jump = m_caller.at(block).terminator;
         jump.kind = TerminatorKind::Jump;
         jump.targets.append(Target { BlockID(first), { } });
         if (isWatched)
-            watch(first, m_caller.blocks.size(), copiedFrom, handler);
+            watch(first, m_caller.blocks.size(), inlinedFrom, handler);
     }
 
-    // What was copied in the place of a call that a handler watches is watched by it: whatever may throw ends its block, and what is
-    // thrown and not caught goes there.
-    void watch(unsigned begin, unsigned end, uint32_t copiedFrom, const Target& handler)
+    void watch(unsigned begin, unsigned end, uint32_t inlinedFrom, const Target& handler)
     {
         for (unsigned b = begin; b < end; ++b) {
             BlockID block(b);
             if (m_caller.at(block).terminator.kind == TerminatorKind::Throw && m_caller.at(block).terminator.targets.isEmpty())
                 m_caller.at(block).terminator.targets.append(handler);
             for (unsigned i = 0; i < m_caller.at(block).values.size(); ++i) {
-                // Its last value is watched by a handler of what was copied.
                 if (i + 1 == m_caller.at(block).values.size() && m_caller.at(block).terminator.kind == TerminatorKind::Invoke)
                     break;
-                // A store to an object nobody has seen stays with the allocation. The first stores of a constructor are such: it would not have been copied in otherwise.
                 auto& value = m_caller.at(m_caller.at(block).values[i]);
                 if (!mayThrow(m_program, m_caller, value) || isInitializingStore(m_program, m_caller, m_caller.at(block), i) || (value.opcode == Opcode::PutById && value.isInitialStore()))
                     continue;
-                BlockID rest = addBlock(copiedFrom);
+                BlockID rest = addBlock(inlinedFrom);
                 auto& from = m_caller.at(block);
                 m_caller.at(rest).values.append(from.values.subspan(i + 1));
                 from.values.shrink(i + 1);
@@ -2232,49 +2157,42 @@ private:
     const Program& m_program;
     FunctionID m_id;
     Function& m_caller;
-    Vector<Copy> m_copies;
-    // By block: the copy it is part of, among m_copies.
-    Vector<uint32_t> m_copiedFrom;
+    Vector<Copy> m_inlinedCopies;
+    Vector<uint32_t> m_inlinedFrom;
     BitVector m_neverReturns;
-    // Of the top-level code of a module and of a resume function.
     BitVector m_isInLoop;
-    // By inline frame: the body was moved in.
     BitVector m_movedFrames;
-    uint32_t m_frameOfLastCopy { 0 };
-    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersCalledBy;
+    uint32_t m_lastInlineFrame { 0 };
+    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_calledParameters;
     bool m_currentBlockIsInLoop { false };
-    BitVector m_isInLoopOfCaller;
-    bool m_currentBlockIsInLoopOfCaller { false };
-    bool m_isTakingOwnBody { false };
-    unsigned m_timesAskedSinceCallerChanged { 0 };
+    BitVector m_isInCallerLoop;
+    bool m_currentBlockIsInCallerLoop { false };
+    bool m_isInliningOwnBody { false };
+    unsigned m_queriesSinceCallerChanged { 0 };
     Vector<uint32_t> m_firstUser;
     Vector<ValueID> m_users;
     BitVector m_isUsedByTerminator;
-    unsigned m_numberOfValuesSearchedForResults { 0 };
-    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_readsOfResults;
-    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_neverReturnsIn;
+    unsigned m_resultSearchValueCount { 0 };
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_resultReads;
+    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_noReturnBlocksCache;
     UncheckedKeyHashMap<uint32_t, Head, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_heads;
-    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersCalledInLoopsBy;
+    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersCalledInLoops;
     mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_isAccessor;
-    mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_handsBackWhatItMakes;
+    mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_returnsOwnAllocation;
 };
 
 } // anonymous namespace
 
 unsigned inlineCalls(const Program& program, FunctionID id, Function& function, CleanUpTiming timing)
 {
-    // An entry is compiled in the place of a module's code, where inline frames name functions in another way. It runs once.
     if (program.isEntry(id))
         return 0;
-    // The general entry of a function with a rest parameter has the arguments in memory. With the body of the function in it, whatever its
-    // size, what the body reads from the array it reads from there: see ArrayEscapeAnalysis. That is tried, and kept if the array is no
-    // longer made on the way in.
     if (function.isGenericEntrypoint() && function.blocks.size() == 1 && function.blocks[0].values.containsIf([&](ValueID value) { return function.at(value).opcode == Opcode::CreateRest; })) {
         Function withBody = function;
-        bool makesArrayOnEntry = !Inlining(program, id, withBody).takeOwnBody() || withBody.blocks[0].values.containsIf([&](ValueID value) {
+        bool allocatesArrayOnEntry = !Inlining(program, id, withBody).inlineOwnBody() || withBody.blocks[0].values.containsIf([&](ValueID value) {
             return withBody.at(value).opcode == Opcode::CreateRest;
         });
-        if (!makesArrayOnEntry) {
+        if (!allocatesArrayOnEntry) {
             function = WTF::move(withBody);
             return 1 + Inlining(program, id, function).run(timing);
         }

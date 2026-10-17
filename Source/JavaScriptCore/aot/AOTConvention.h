@@ -31,10 +31,11 @@ static constexpr GPRReg thisGPR = ARM64Registers::x8;
 static constexpr GPRReg countGPR = ARM64Registers::x9;
 static constexpr GPRReg calleeGPR = ARM64Registers::x10;
 static constexpr GPRReg callMarkerGPR = ARM64Registers::lr;
-static constexpr bool hasStubsForFunctionsWithoutFrame = true;
+static constexpr bool hasFramelessFunctionStubs = true;
 static constexpr GPRReg stubTemporaryGPRs[] = { ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15 };
-static constexpr GPRReg offsetOfLastCopiedChunksGPR = ARM64Registers::x14;
-static constexpr GPRReg keyOfLazyConstantGPR = ARM64Registers::x9;
+static constexpr GPRReg argumentListGPR = ARM64Registers::x13;
+static constexpr GPRReg copyEndOffsetGPR = ARM64Registers::x14;
+static constexpr GPRReg lazyConstantKeyGPR = ARM64Registers::x9;
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #elif CPU(X86_64)
@@ -43,10 +44,11 @@ static constexpr GPRReg thisGPR = X86Registers::eax;
 static constexpr GPRReg countGPR = X86Registers::r10;
 static constexpr GPRReg calleeGPR = X86Registers::r8;
 static constexpr GPRReg callMarkerGPR = X86Registers::ebp;
-static constexpr bool hasStubsForFunctionsWithoutFrame = false;
+static constexpr bool hasFramelessFunctionStubs = false;
 static constexpr GPRReg stubTemporaryGPRs[] = { X86Registers::r10, X86Registers::r8, X86Registers::r9, X86Registers::edi, X86Registers::r12 };
-static constexpr GPRReg offsetOfLastCopiedChunksGPR = X86Registers::r8;
-static constexpr GPRReg keyOfLazyConstantGPR = X86Registers::eax;
+static constexpr GPRReg argumentListGPR = X86Registers::r12;
+static constexpr GPRReg copyEndOffsetGPR = X86Registers::r8;
+static constexpr GPRReg lazyConstantKeyGPR = X86Registers::eax;
 static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::r12;
 static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::ebx;
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters + 2;
@@ -62,10 +64,11 @@ static constexpr GPRReg thisGPR = InvalidGPRReg;
 static constexpr GPRReg countGPR = InvalidGPRReg;
 static constexpr GPRReg calleeGPR = InvalidGPRReg;
 static constexpr GPRReg callMarkerGPR = InvalidGPRReg;
-static constexpr bool hasStubsForFunctionsWithoutFrame = false;
+static constexpr bool hasFramelessFunctionStubs = false;
 static constexpr GPRReg stubTemporaryGPRs[] = { InvalidGPRReg };
-static constexpr GPRReg offsetOfLastCopiedChunksGPR = InvalidGPRReg;
-static constexpr GPRReg keyOfLazyConstantGPR = InvalidGPRReg;
+static constexpr GPRReg argumentListGPR = InvalidGPRReg;
+static constexpr GPRReg copyEndOffsetGPR = InvalidGPRReg;
+static constexpr GPRReg lazyConstantKeyGPR = InvalidGPRReg;
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #endif
@@ -86,15 +89,12 @@ static constexpr GPRReg firstStubOperandGPR = GPRInfo::returnValueGPR;
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
 static constexpr unsigned maxLiteralPropertiesInRegisters = GPRInfo::numberOfArgumentRegisters - 2;
 static constexpr unsigned maxArrayElementsInRegisters = 4;
-// The room an array literal of so many elements is born with: in the stubs, in place, and in the operation behind both. ONE formula: where the operation takes another size class than the
-// code it stands behind, the free list that has run out there is never filled again. With the header the butterfly is a multiple of 16 bytes.
-static constexpr unsigned vectorLengthOfArrayLiteral(unsigned count) { return (count ? count : 5) | 1; }
-// operationAOTTypedNewArray is told the room of an empty literal that is born with another above the count.
+static constexpr unsigned arrayLiteralVectorLength(unsigned count) { return (count ? count : 5) | 1; }
 static constexpr unsigned capacityShiftInArrayLiteralCount = 27;
 static constexpr unsigned maxFrameSizeWithoutStackCheck = 240;
-static constexpr unsigned maxFunctionsWithoutStackCheckOnEachOther = 8;
-static constexpr unsigned maxStackTakenWithoutCheck = 4096;
-static_assert(maxFunctionsWithoutStackCheckOnEachOther * (maxFrameSizeWithoutStackCheck + 2 * sizeof(void*)) <= maxStackTakenWithoutCheck / 2);
+static constexpr unsigned maxNestedFunctionsWithoutStackCheck = 8;
+static constexpr unsigned maxStackUsedWithoutCheck = 4096;
+static_assert(maxNestedFunctionsWithoutStackCheck * (maxFrameSizeWithoutStackCheck + 2 * sizeof(void*)) <= maxStackUsedWithoutCheck / 2);
 
 enum class Signature : uint8_t {
     Registers,
@@ -110,14 +110,10 @@ JS_EXPORT_PRIVATE Convention conventionOf(UnlinkedCodeBlock*);
 
 struct EntryWord {
     static constexpr unsigned numberOfAddressBits = 48;
-    // Of a closure of the typed compiler: [[Construct]] makes an ordinary object that inherits from its `prototype`, calls it with that for
-    // `this` and the arguments as they are, and yields what it returns if that is an object, else the object. Below the number of
-    // parameters: a call does not look at it.
     static constexpr unsigned constructsOrdinaryObjectBit = numberOfAddressBits;
     static constexpr unsigned numberOfParametersShift = constructsOrdinaryObjectBit + 1;
     static constexpr unsigned numberOfParametersBits = 4;
     static constexpr unsigned isListBit = numberOfParametersShift + numberOfParametersBits;
-    // [[Call]] throws: a class constructor.
     static constexpr unsigned isNotCallableBit = isListBit + 1;
     static constexpr uint64_t addressMask = (1ULL << numberOfAddressBits) - 1;
     static_assert(numberOfArgumentGPRs < (1u << numberOfParametersBits));
@@ -132,17 +128,8 @@ struct EntryWord {
     }
 };
 
-// What a closure of the typed compiler has of its function (Typed::Closure::m_entry). It does not depend on where the image is loaded, so
-// it is a constant of the build: ProgramData::closureWords() has it by function, read-only.
-//   0 to 31   where the code is that takes its arguments as the engine passes them: in units of offsetUnit bytes from the start of the image's code
-//   32 to 53  the number of the function, by which the image has its name, its `length`, what it is declared as, how many captures
-//   54        saysWhatItYieldsBit
-//   55        saysWhatItAnswersBit
-//   56        isDerivedConstructorBit
-//   57 to 63  as in EntryWord. On top: a call tells by one comparison that the closure takes the arguments it has, in registers, and may be called
 struct ClosureWord {
     static constexpr unsigned numberOfOffsetBits = 32;
-    // What every function starts at a multiple of.
 #if CPU(ARM64)
     static constexpr unsigned offsetUnit = 4;
 #else
@@ -150,27 +137,20 @@ struct ClosureWord {
 #endif
     static constexpr unsigned functionShift = numberOfOffsetBits;
     static constexpr unsigned numberOfFunctionBits = 22;
-    static constexpr unsigned saysWhatItYieldsBit = functionShift + numberOfFunctionBits;
-    static constexpr unsigned saysWhatItAnswersBit = saysWhatItYieldsBit + 1;
-    // [[Construct]] makes nothing: it calls it with `undefined` for `this` and new.target ahead of the arguments, and yields what it returns:
-    // a class that extends something, which makes the object.
-    static constexpr unsigned isDerivedConstructorBit = saysWhatItAnswersBit + 1;
-    // [[Construct]] makes an ordinary object that inherits from its `prototype`, calls it with `this` and the arguments as they are, and
-    // yields what it returns if that is an object, else the object. Below the number of parameters: a call does not look at it.
+    static constexpr unsigned hasCompatibleResultsMaskBit = functionShift + numberOfFunctionBits;
+    static constexpr unsigned hasValueEntryBit = hasCompatibleResultsMaskBit + 1;
+    static constexpr unsigned isDerivedConstructorBit = hasValueEntryBit + 1;
     static constexpr unsigned constructsOrdinaryObjectBit = isDerivedConstructorBit + 1;
     static constexpr unsigned numberOfParametersShift = constructsOrdinaryObjectBit + 1;
     static constexpr unsigned numberOfParametersBits = EntryWord::numberOfParametersBits;
     static constexpr unsigned isListBit = numberOfParametersShift + numberOfParametersBits;
-    // [[Call]] throws: a class constructor. Or nothing can call it: the resume closure of a coroutine.
     static constexpr unsigned isNotCallableBit = isListBit + 1;
     static_assert(isNotCallableBit == 63);
     static constexpr uint64_t offsetMask = (1ULL << numberOfOffsetBits) - 1;
     static constexpr uint32_t functionMask = (1u << numberOfFunctionBits) - 1;
-    // No function of a program has one of these numbers: for closures that the run time has kinds of its own for.
     static constexpr uint32_t firstReservedFunction = (functionMask >> 1) + 1 - 16;
     static constexpr uint64_t maxSizeOfCode = (offsetMask + 1) * offsetUnit;
 
-    // `relative`: an EntryWord whose address is the distance from the start of the code.
     static uint64_t encode(uint64_t relative, uint32_t function)
     {
         uint64_t distance = relative & EntryWord::addressMask;
@@ -185,25 +165,19 @@ struct ClosureWord {
     static constexpr uintptr_t addressOf(uint64_t word, uintptr_t code) { return code + (word & offsetMask) * offsetUnit; }
 };
 
-// What Stub::NewTypedClosure0 and the like are asked for.
-//   0 to 23   the number of the function that closures go by: ClosureWord::functionOf()
-//   24 to 30  which executable: Typed::FunctionTables::kindOfExecutable(); 31: a slim closure, and 24 to 30 its kind
-//   32 to 55  the number of the allocation
-//   56 to 63  only for the operation behind the stub: how many captures
 struct ClosureRequest {
     static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits + 2;
     static constexpr unsigned allocationShift = 32;
     static constexpr unsigned countShift = 56;
     static constexpr unsigned variableIsCell32Bit = 61;
-    static constexpr unsigned isMadeOnceBit = 62;
+    static constexpr unsigned isCreatedOnceBit = 62;
     static constexpr unsigned isSlimBit = 31;
 #if CPU(ARM64)
     static constexpr unsigned maxNumberOfCaptures = 4;
 #else
-    // The fifth and the sixth argument register are temporaries of the stubs there.
     static constexpr unsigned maxNumberOfCaptures = 2;
 #endif
-    static constexpr unsigned maxNumberOfCapturesOfSlimClosure = 4;
+    static constexpr unsigned maxSlimClosureCaptures = 4;
     static uint64_t encode(uint32_t function, unsigned executable, uint32_t allocation)
     {
         RELEASE_ASSERT(function <= ClosureWord::functionMask && executable < 1u << (isSlimBit - executableShift) && allocation < 1u << (countShift - allocationShift));
@@ -214,22 +188,22 @@ struct ClosureRequest {
     static constexpr uint32_t allocationOf(uint64_t request) { return request >> allocationShift & ((1u << (countShift - allocationShift)) - 1); }
     static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x1f; }
     static constexpr bool variableIsCell32(uint64_t request) { return request >> variableIsCell32Bit & 1; }
-    static constexpr bool isMadeOnce(uint64_t request) { return request >> isMadeOnceBit & 1; }
+    static constexpr bool isCreatedOnce(uint64_t request) { return request >> isCreatedOnceBit & 1; }
     static constexpr bool isSlim(uint64_t request) { return request >> isSlimBit & 1; }
 };
 
 struct ResumeClosureRequest {
-    static constexpr unsigned wordOfFrameShift = ClosureRequest::executableShift + 3;
-    static constexpr unsigned maxExecutable = (1u << (wordOfFrameShift - ClosureRequest::executableShift)) - 1;
-    static constexpr unsigned maxWordOfFrame = (1u << (ClosureRequest::isSlimBit - wordOfFrameShift)) - 1;
-    static uint64_t encode(uint32_t function, unsigned executable, uint32_t allocation, unsigned wordOfFrame)
+    static constexpr unsigned frameWordShift = ClosureRequest::executableShift + 3;
+    static constexpr unsigned maxExecutable = (1u << (frameWordShift - ClosureRequest::executableShift)) - 1;
+    static constexpr unsigned maxFrameWord = (1u << (ClosureRequest::isSlimBit - frameWordShift)) - 1;
+    static uint64_t encode(uint32_t function, unsigned executable, uint32_t allocation, unsigned frameWord)
     {
-        RELEASE_ASSERT(executable <= maxExecutable && wordOfFrame <= maxWordOfFrame);
-        return ClosureRequest::encode(function, executable, allocation) | static_cast<uint64_t>(wordOfFrame) << wordOfFrameShift;
+        RELEASE_ASSERT(executable <= maxExecutable && frameWord <= maxFrameWord);
+        return ClosureRequest::encode(function, executable, allocation) | static_cast<uint64_t>(frameWord) << frameWordShift;
     }
     static constexpr unsigned executableOf(uint64_t request) { return request >> ClosureRequest::executableShift & maxExecutable; }
-    static constexpr unsigned wordOfFrameOf(uint64_t request) { return request >> wordOfFrameShift & maxWordOfFrame; }
-    static constexpr unsigned wordOfFrameForStub = 2;
+    static constexpr unsigned frameWordOf(uint64_t request) { return request >> frameWordShift & maxFrameWord; }
+    static constexpr unsigned stubFrameWord = 2;
     static constexpr unsigned allocationShiftForStub = ClosureRequest::executableShift;
     static constexpr uint32_t maxAllocationForStub = (1u << (32 - allocationShiftForStub)) - 1;
     static constexpr uint32_t encodeForStub(uint32_t function, uint32_t allocation) { return function | allocation << allocationShiftForStub; }

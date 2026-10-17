@@ -486,7 +486,7 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
 
 #if ENABLE(AOT)
         if (isSlimClosureType(cell->type())) {
-            String displayName = AOT::nameOfSlimClosure(object);
+            String displayName = AOT::slimClosureName(object);
             if (!displayName.isEmpty())
                 return displayName;
         }

@@ -72,7 +72,7 @@ struct SourceQuote {
     String text;
     bool isExact { true };
 };
-std::optional<SourceQuote> quoteSourceWithoutText(VM&, CallFrame*);
+std::optional<SourceQuote> quoteSourceWithoutSourceText(VM&, CallFrame*);
 bool getLineColumnAndSource(VM&, Vector<StackFrame>* stackTrace, LineColumn&, String& sourceURL);
 bool addErrorInfo(VM&, Vector<StackFrame>*, JSObject*);
 JS_EXPORT_PRIVATE void addErrorInfo(JSGlobalObject*, JSObject*, bool);

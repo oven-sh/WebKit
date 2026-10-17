@@ -25,9 +25,6 @@
 
 namespace JSC { namespace AOT {
 
-// A key that is a part of another string, as `slice` yields it, and has not been made a string of its own, which takes an allocation and a
-// copy. It is looked for by its characters where they are. If the table has the key, this one comes to share the characters of that one, and
-// is found by comparing pointers from then on. Nothing: it is no such key. InvalidTableIndex: the table does not have it.
 template<typename Table>
 static std::optional<typename Table::TableIndex> findSubstring(JSGlobalObject* globalObject, Table* table, JSValue key)
 {
@@ -79,8 +76,8 @@ static ALWAYS_INLINE Typed::CompactTable::Quickly tryFindSubstringQuickly(Instan
     size_t length = WTF::unalignedLoad<uint32_t>(words + JSRopeString::offsetOfLength());
     size_t offset = WTF::unalignedLoad<uint64_t>(words + JSRopeString::offsetOfFiber2()) >> 16;
     auto* whole = std::bit_cast<JSString*>(static_cast<uintptr_t>(WTF::unalignedLoad<uint32_t>(words + JSRopeString::offsetOfFiber1Lower())) | static_cast<uintptr_t>(WTF::unalignedLoad<uint16_t>(words + JSRopeString::offsetOfFiber2())) << 32);
-    const StringImpl* charactersOfWhole = whole->tryGetValueImpl();
-    auto takeCharactersOf = [&](const StringImpl& impl) ALWAYS_INLINE_LAMBDA {
+    const StringImpl* wholeCharacters = whole->tryGetValueImpl();
+    auto useCharactersOf = [&](const StringImpl& impl) ALWAYS_INLINE_LAMBDA {
         if (impl.is8Bit() || !asString(key)->is8Bit())
             uncheckedDowncast<JSRopeString>(asString(key))->resolveSubstringBySharing(const_cast<StringImpl&>(impl));
     };
@@ -94,7 +91,7 @@ static ALWAYS_INLINE Typed::CompactTable::Quickly tryFindSubstringQuickly(Instan
             Quickly answer = compactTable->tryFindCharactersQuickly(text, hash, entry);
             if (answer == Quickly::Found) {
                 value = compactTable->valueAt(entry);
-                takeCharactersOf(*compactTable->keyAt(entry)->tryGetValueImpl());
+                useCharactersOf(*compactTable->keyAt(entry)->tryGetValueImpl());
             }
             return answer;
         }
@@ -108,21 +105,21 @@ static ALWAYS_INLINE Typed::CompactTable::Quickly tryFindSubstringQuickly(Instan
             const StringImpl* impl = asString(entryKey)->tryGetValueImpl();
             if (!impl || !impl->hasHash())
                 return Quickly::Unknown;
-            if (impl->existingHash() != hash || !Typed::CompactTable::isText(*impl, text))
+            if (impl->existingHash() != hash || !Typed::CompactTable::equalsCharacters(*impl, text))
                 continue;
             if constexpr (std::is_same_v<Table, JSMap>)
                 value = Helper::get(storage, index + 1);
-            takeCharactersOf(*impl);
+            useCharactersOf(*impl);
             return Quickly::Found;
         }
         return Quickly::Absent;
     };
-    return charactersOfWhole->is8Bit() ? find(std::span { charactersOfWhole->span8().data() + offset, length }) : find(std::span { charactersOfWhole->span16().data() + offset, length });
+    return wholeCharacters->is8Bit() ? find(std::span { wholeCharacters->span8().data() + offset, length }) : find(std::span { wholeCharacters->span16().data() + offset, length });
 }
 
-static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGenerally(Instance*, JSCell*, EncodedJSValue);
-static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGenerally(Instance*, JSCell*, EncodedJSValue);
-static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGenerally(Instance*, JSCell*, EncodedJSValue);
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGeneric(Instance*, JSCell*, EncodedJSValue);
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGeneric(Instance*, JSCell*, EncodedJSValue);
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGeneric(Instance*, JSCell*, EncodedJSValue);
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
@@ -135,7 +132,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance
     case Typed::CompactTable::Quickly::Unknown:
         break;
     }
-    [[clang::musttail]] return mapGetGenerally(instance, map, key);
+    [[clang::musttail]] return mapGetGeneric(instance, map, key);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
@@ -143,7 +140,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance
     JSValue value;
     if (auto answer = tryFindSubstringQuickly(instance, uncheckedDowncast<JSMap>(map), JSValue::decode(key), value); answer != Typed::CompactTable::Quickly::Unknown)
         return { JSValue::encode(jsBoolean(answer == Typed::CompactTable::Quickly::Found)), nullptr };
-    [[clang::musttail]] return mapHasGenerally(instance, map, key);
+    [[clang::musttail]] return mapHasGeneric(instance, map, key);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
@@ -151,7 +148,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance
     JSValue value;
     if (auto answer = tryFindSubstringQuickly(instance, uncheckedDowncast<JSSet>(set), JSValue::decode(key), value); answer != Typed::CompactTable::Quickly::Unknown)
         return { JSValue::encode(jsBoolean(answer == Typed::CompactTable::Quickly::Found)), nullptr };
-    [[clang::musttail]] return setHasGenerally(instance, set, key);
+    [[clang::musttail]] return setHasGeneric(instance, set, key);
 }
 
 #define AOT_OPERATION_BEGIN_AS(instance, name) \
@@ -162,7 +159,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance
     countOperationNamed(instance, name); \
     auto scope = DECLARE_THROW_SCOPE(vm)
 
-static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGenerally(Instance* instance, JSCell* map, EncodedJSValue key)
+static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGeneric(Instance* instance, JSCell* map, EncodedJSValue key)
 {
     AOT_OPERATION_BEGIN_AS(instance, "operationAOTMapGet");
     JSMap* table = uncheckedDowncast<JSMap>(map);
@@ -177,7 +174,7 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapGetGenera
     OPERATION_RETURN(scope, JSValue::encode(table->get(globalObject, JSValue::decode(key))));
 }
 
-static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGenerally(Instance* instance, JSCell* map, EncodedJSValue key)
+static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGeneric(Instance* instance, JSCell* map, EncodedJSValue key)
 {
     AOT_OPERATION_BEGIN_AS(instance, "operationAOTMapHas");
     JSMap* table = uncheckedDowncast<JSMap>(map);
@@ -191,7 +188,7 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGenera
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(table->has(globalObject, JSValue::decode(key)))));
 }
 
-static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGenerally(Instance* instance, JSCell* set, EncodedJSValue key)
+static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGeneric(Instance* instance, JSCell* set, EncodedJSValue key)
 {
     AOT_OPERATION_BEGIN_AS(instance, "operationAOTSetHas");
     JSSet* table = uncheckedDowncast<JSSet>(set);
@@ -205,7 +202,7 @@ static OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGenera
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(table->has(globalObject, JSValue::decode(key)))));
 }
 
-static ALWAYS_INLINE void mapSetGenerally(JSGlobalObject* globalObject, VM& vm, JSMap* table, JSValue key, JSValue value)
+static ALWAYS_INLINE void mapSetGeneric(JSGlobalObject* globalObject, VM& vm, JSMap* table, JSValue key, JSValue value)
 {
     if (auto found = findSubstring(globalObject, table, key); found && JSMap::Helper::isValidTableIndex(*found)) {
         JSMap::Helper::setKeyOrValueData(vm, table->storageRef(), *found + 1, value);
@@ -214,7 +211,7 @@ static ALWAYS_INLINE void mapSetGenerally(JSGlobalObject* globalObject, VM& vm, 
     table->set(globalObject, key, value);
 }
 
-static ALWAYS_INLINE void setAddGenerally(JSGlobalObject* globalObject, JSSet* table, JSValue key)
+static ALWAYS_INLINE void setAddGeneric(JSGlobalObject* globalObject, JSSet* table, JSValue key)
 {
     if (auto found = findSubstring(globalObject, table, key); found && JSSet::Helper::isValidTableIndex(*found))
         return;
@@ -224,14 +221,14 @@ static ALWAYS_INLINE void setAddGenerally(JSGlobalObject* globalObject, JSSet* t
 JSC_DEFINE_JIT_OPERATION(operationAOTMapSetGeneric, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    mapSetGenerally(globalObject, vm, uncheckedDowncast<JSMap>(map), JSValue::decode(key), JSValue::decode(value));
+    mapSetGeneric(globalObject, vm, uncheckedDowncast<JSMap>(map), JSValue::decode(key), JSValue::decode(value));
     OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetAddGeneric, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    setAddGenerally(globalObject, uncheckedDowncast<JSSet>(set), JSValue::decode(key));
+    setAddGeneric(globalObject, uncheckedDowncast<JSSet>(set), JSValue::decode(key));
     OPERATION_RETURN(scope, JSValue::encode(set));
 }
 
@@ -245,7 +242,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapSetWithStringKey, EncodedJSValue, (Insta
         if (isAdded)
             OPERATION_RETURN(scope, JSValue::encode(map));
     }
-    mapSetGenerally(globalObject, vm, table, JSValue::decode(key), JSValue::decode(value));
+    mapSetGeneric(globalObject, vm, table, JSValue::decode(key), JSValue::decode(value));
     OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
@@ -259,7 +256,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetAddWithStringKey, EncodedJSValue, (Insta
         if (isAdded)
             OPERATION_RETURN(scope, JSValue::encode(set));
     }
-    setAddGenerally(globalObject, table, JSValue::decode(key));
+    setAddGeneric(globalObject, table, JSValue::decode(key));
     OPERATION_RETURN(scope, JSValue::encode(set));
 }
 

@@ -77,7 +77,7 @@ class LargePredecessorLists {
 public:
     bool add(BasicBlock* block, BasicBlock* predecessor)
     {
-        Places* places = placesIn(block);
+        Places* places = indicesIn(block);
         if (!places)
             return addPredecessor(block, predecessor);
         auto& predecessors = block->predecessors();
@@ -89,7 +89,7 @@ public:
 
     bool remove(BasicBlock* block, BasicBlock* predecessor)
     {
-        Places* places = placesIn(block);
+        Places* places = indicesIn(block);
         if (!places)
             return removePredecessor(block, predecessor);
         auto found = places->find(predecessor);
@@ -118,10 +118,10 @@ private:
     using Places = UncheckedKeyHashMap<BasicBlock*, unsigned>;
     struct List {
         Places places;
-        bool holdsABlockTwice { false };
+        bool hasDuplicateBlock { false };
     };
 
-    Places* placesIn(BasicBlock* block)
+    Places* indicesIn(BasicBlock* block)
     {
         bool hasFew = block->numPredecessors() < fewPredecessors;
         if (hasFew && m_lists.isEmpty())
@@ -133,9 +133,9 @@ private:
             found = m_lists.add(block, List { }).iterator;
             auto& predecessors = block->predecessors();
             for (unsigned i = 0; i < predecessors.size(); ++i)
-                found->value.holdsABlockTwice |= !found->value.places.add(predecessors[i], i).isNewEntry;
+                found->value.hasDuplicateBlock |= !found->value.places.add(predecessors[i], i).isNewEntry;
         }
-        return found->value.holdsABlockTwice ? nullptr : &found->value.places;
+        return found->value.hasDuplicateBlock ? nullptr : &found->value.places;
     }
 
     UncheckedKeyHashMap<BasicBlock*, List> m_lists;

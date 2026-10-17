@@ -143,14 +143,14 @@ void generateToAir(Procedure& procedure)
                 simplifyTerminals(procedure);
                 eliminateDeadCode(procedure);
             }
-            Vector<BasicBlock*> headersOfVersionsTestedAtTheTop;
-            if (hoists && versionLoops(procedure, headersOfVersionsTestedAtTheTop)) {
+            Vector<BasicBlock*> topTestedVersionHeaders;
+            if (hoists && versionLoops(procedure, topTestedVersionHeaders)) {
                 fixSSA(procedure);
                 eliminateRedundantPhiCycles(procedure);
-                narrowPhisOfExtendedWords(procedure);
-                foldComparisonsWithWhatIsOutOfRange(procedure);
+                narrowExtendedWordPhis(procedure);
+                foldOutOfRangeComparisons(procedure);
                 eliminateDeadCode(procedure);
-                if (!headersOfVersionsTestedAtTheTop.isEmpty() && rotateLoops(procedure, &headersOfVersionsTestedAtTheTop)) {
+                if (!topTestedVersionHeaders.isEmpty() && rotateLoops(procedure, &topTestedVersionHeaders)) {
                     fixSSA(procedure);
                     foldPathConstants(procedure);
                     simplifyTerminals(procedure);

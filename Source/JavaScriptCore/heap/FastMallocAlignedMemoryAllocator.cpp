@@ -234,7 +234,6 @@ private:
         void threadIsStopping(const AbstractLocker&) final
         {
             assertIsHeld(*m_provider.m_lock);
-            // Freeing does not reach back into this lock, so it is safe to do with it held.
             if (m_provider.m_phase != Phase::Ended)
                 m_provider.m_phase = Phase::Stopped;
             m_provider.m_requestsBeforeRestart = Options::warmUpMarkedBlockStartAfterBlocks();

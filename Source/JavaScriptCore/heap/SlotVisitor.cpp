@@ -378,7 +378,7 @@ bool SlotVisitor::markLeafCell(JSCell* cell)
     return true;
 }
 
-void SlotVisitor::reportExtraMemoryVisitedOfLeafCell(JSC::Heap& heap, size_t size)
+void SlotVisitor::reportLeafCellExtraMemoryVisited(JSC::Heap& heap, size_t size)
 {
     if (&heap != m_extraMemoryHeap) [[unlikely]] {
         flushExtraMemoryVisited();
@@ -486,14 +486,13 @@ class CompiledLayoutVisitor {
         case StructureType:
         case GetterSetterType:
         case JSCellButterflyType:
-            return visitBesideLoop(visitor, cell);
+            return visitOutsideLoop(visitor, cell);
         default:
             return visitor.visitChildrenOfBlackCell(cell);
         }
     }
     static NEVER_INLINE void expand(MarkStackArray& stack) { stack.expand(); }
 
-    // What drain() appends with, for a visit beside the loop. The loop has stored the top of the collector's stack ahead of the call and loads it again behind it.
     class Appender {
     public:
         ALWAYS_INLINE Appender(SlotVisitor& visitor)
@@ -509,7 +508,6 @@ class CompiledLayoutVisitor {
 
         uint8_t markingStamp() const { return m_markingStamp; }
 
-        // The cell is in a MarkedBlock.
         ALWAYS_INLINE void appendCell(JSCell* cell)
         {
             using Word = uint64_t;
@@ -546,7 +544,6 @@ class CompiledLayoutVisitor {
             *m_nextSlot++ = cell;
         }
 
-        // A hole reads as no cell at all.
         ALWAYS_INLINE void appendValue(JSValue value)
         {
             if ((std::rotr(static_cast<uint64_t>(JSValue::encode(value)), 3) - 1) >> 45)
@@ -559,7 +556,6 @@ class CompiledLayoutVisitor {
                 appendCell(value.asCell());
         }
 
-        // Of a cell whose Structure is not one of objects with extra properties.
         ALWAYS_INLINE void appendStructure(Structure* structure)
         {
             uint8_t& stampAndFlags = structure->markingStampAndFlags();
@@ -594,14 +590,13 @@ class CompiledLayoutVisitor {
         const uint8_t m_markingStamp;
     };
 
-    static NEVER_INLINE void visitBesideLoop(SlotVisitor& visitor, const JSCell* cell)
+    static NEVER_INLINE void visitOutsideLoop(SlotVisitor& visitor, const JSCell* cell)
     {
-        if (!tryVisitBesideLoop(visitor, cell)) [[unlikely]]
+        if (!tryVisitOutsideLoop(visitor, cell)) [[unlikely]]
             visitor.visitChildrenOfBlackCell(cell);
     }
 
-    // False: nothing has been done: the cell is for SlotVisitor::visitChildrenOfBlackCell().
-    static ALWAYS_INLINE bool tryVisitBesideLoop(SlotVisitor& visitor, const JSCell* cell)
+    static ALWAYS_INLINE bool tryVisitOutsideLoop(SlotVisitor& visitor, const JSCell* cell)
     {
         using namespace AOT::Typed;
         const uint8_t* bytes = reinterpret_cast<const uint8_t*>(cell);
@@ -715,13 +710,11 @@ public:
             endOfSlots = firstSlot + MarkStackArray::s_segmentCapacity;
         };
 
-        // The cell is in a MarkedBlock.
         auto appendCell = [&](JSCell* cell) ALWAYS_INLINE_LAMBDA {
             MarkedBlock& block = cell->markedBlock();
             HeapVersion version = block.markingVersion();
             uintptr_t dependency = 0;
 #if CPU(ARM64)
-            // As Dependency::loadAndFence(): the marks are read after the version.
             __asm__ volatile("eor %w[dependency], %w[version], %w[version]" : [dependency] "=r"(dependency), [version] "+r"(version));
 #else
             WTF::loadLoadFence();
@@ -753,7 +746,6 @@ public:
             *nextSlot++ = cell;
         };
 
-        // A hole reads as no cell at all.
         auto appendValue = [&](JSValue value) ALWAYS_INLINE_LAMBDA {
             static_assert(!(JSValue::NotCellMask & 0x0001fffffffffff8ull) && (JSValue::NotCellMask & 7) && !JSValue::ValueEmpty);
             if ((std::rotr(static_cast<uint64_t>(JSValue::encode(value)), 3) - 1) >> 45)
@@ -774,7 +766,7 @@ public:
         auto appendStructure = [&](Structure* structure) ALWAYS_INLINE_LAMBDA -> bool {
             uint8_t& stampAndFlags = structure->markingStampAndFlags();
             if (stampAndFlags != markingStamp) [[unlikely]] {
-                if (stampAndFlags & Structure::isOfObjectsWithExtraProperties)
+                if (stampAndFlags & Structure::isStructureWithExtraProperties)
                     return false;
                 appendCell(structure);
                 stampAndFlags = markingStamp;
@@ -813,7 +805,6 @@ public:
                 appendNarrowReference(*reinterpret_cast<const uint32_t*>(extension + *offset));
         };
 
-        // As JSObjectWithButterfly::visitChildrenImpl(), for an array without array storage or a butterfly it shares.
         auto tryVisitArray = [&](const JSCell* cell) ALWAYS_INLINE_LAMBDA -> bool {
             auto* array = static_cast<JSObjectWithButterfly*>(const_cast<JSCell*>(cell));
             StructureID structureID = cell->structureID();
@@ -871,7 +862,7 @@ public:
             if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer)) {
                 if constexpr (drainsCollectorStack) {
                     if (!AOT::Image::isBackedByStaticData(*impl)) [[likely]]
-                        visitor.reportExtraMemoryVisitedOfLeafCell(cell->vm().heap, impl->costDuringGC());
+                        visitor.reportLeafCellExtraMemoryVisited(cell->vm().heap, impl->costDuringGC());
                 }
             }
             return true;
@@ -939,11 +930,10 @@ public:
             return true;
         };
 
-        // As AOT::Typed::Object::visitChildrenImpl(). False: the cell is for SlotVisitor::visitChildren().
         auto tryVisit = [&](const JSCell* cell) ALWAYS_INLINE_LAMBDA -> bool {
             Structure* structure = std::bit_cast<Structure*>(structureBase + cell->structureID().decontaminate().bits());
             auto& aotFields = structure->existingAOTFields();
-            if (!aotFields.isOfCompiledCells()) {
+            if (!aotFields.isCompiledCellStructure()) {
                 JSType type = cell->type();
                 if (type == ArrayType)
                     return tryVisitArray(cell);
@@ -959,7 +949,7 @@ public:
             }
             const LayoutData* layout = aotFields.compiledLayout();
             if (!layout)
-                layout = &layoutOfEnvironment(*aotFields.dataOfCompiledEnvironments(), structure->firstShapeOfCompiledEnvironments(), cell);
+                layout = &environmentLayout(*aotFields.compiledEnvironmentData(), structure->firstCompiledEnvironmentShape(), cell);
             const uint8_t* fields = reinterpret_cast<const uint8_t*>(cell);
             if (!appendStructure(structure)) [[unlikely]] {
                 uint32_t offsetOfExtraProperties = layout->offsetOfExtraProperties();
@@ -1081,8 +1071,8 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     if (from.size() < 2)
         return;
 
-    constexpr size_t fewestCellsWorthAHelper = 512;
-    if (from.size() < fewestCellsWorthAHelper && !collector().hasStartedHelpers())
+    constexpr size_t minCellsPerHelper = 512;
+    if (from.size() < minCellsPerHelper && !collector().hasStartedHelpers())
         return;
 
     // If there's already some shared work queued up, be conservative and assume

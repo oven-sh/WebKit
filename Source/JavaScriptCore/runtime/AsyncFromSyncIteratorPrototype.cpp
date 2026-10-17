@@ -322,7 +322,7 @@ void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject* globalObject, JSAsyncF
 }
 
 #if ENABLE(AOT)
-JSObject* driveAsyncFromSyncIteratorAtOnceOrWithDriver(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSObject* driver)
+JSObject* driveAsyncFromSyncIterator(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSObject* driver)
 {
     VM& vm = globalObject->vm();
     JSValue value = jsUndefined();

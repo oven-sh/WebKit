@@ -247,7 +247,7 @@ public:
     ALWAYS_INLINE bool equalInline(JSGlobalObject*, JSString* other) const;
     inline bool equal(JSGlobalObject*, JSString* other) const;
 #if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE bool equalMakingRopesFlat(JSString* other) const;
+    JS_EXPORT_PRIVATE bool equalResolvingRopes(JSString* other) const;
 #endif
     GCOwnedDataScope<const String&> value(JSGlobalObject*) const;
     inline GCOwnedDataScope<const String&> tryGetValue(bool allocationAllowed = true) const;
@@ -674,7 +674,6 @@ public:
     JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
     JS_EXPORT_PRIVATE const String& resolveRopeWithoutGC() const;
 #if ENABLE(AOT)
-    // Of a substring. The StringImpl has the same characters, and is 8-bit if this is: ropes made of this were sized by that.
     void resolveSubstringBySharing(StringImpl&) const;
 #endif
 

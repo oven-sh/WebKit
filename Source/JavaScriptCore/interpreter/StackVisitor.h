@@ -88,7 +88,7 @@ public:
         CodeBlock* codeBlock() const
         {
             if (m_aotFunction && !m_codeBlock) [[unlikely]]
-                return makeCodeBlock();
+                return createCodeBlock();
             return m_codeBlock;
         }
         bool hasCode() const { return m_codeBlock || m_aotFunction; }
@@ -96,11 +96,8 @@ public:
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
         CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
         bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
-        // Code compiled from types: no CodeBlock and no executable, ever. aotFunction() is the function whose code is running, also for an
-        // inlined frame, and this is the function to report: see AOT::FunctionRef::Location::typedFunction.
         bool isTypedAOTFrame() const { return m_aotFunction && m_typedAOTFunction != UINT32_MAX; }
         uint32_t typedAOTFunction() const { return m_typedAOTFunction; }
-        // A frame that only exists because of how the code was compiled. Stack traces leave it out.
         JS_EXPORT_PRIVATE bool isHiddenAOTFrame(bool isAtTheTop = false) const;
         bool isTailDeleted() const { return m_isTailDeleted; }
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
@@ -141,7 +138,6 @@ public:
 #if ENABLE(ASSEMBLER)
         const RegisterAtOffsetList* calleeSaveRegistersForUnwinding();
 #if ENABLE(AOT)
-        // Of a frame of compiled code, in the place of the list.
         const AOT::ImageFunction* compiledFunctionForUnwinding() const;
 #endif
 #endif
@@ -160,7 +156,7 @@ public:
         ~Frame() { }
 
         void LEGACY_NODELETE setToEnd();
-        JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const;
+        JS_EXPORT_PRIVATE CodeBlock* createCodeBlock() const;
 
 #if ENABLE(DFG_JIT)
         InlineCallFrame* m_inlineDFGCallFrame { nullptr };
@@ -218,7 +214,7 @@ public:
 
 #if ENABLE(AOT)
     template <StackVisitorFunctor Functor>
-    static void visitCallersOfCompiledFrame(VM& vm, CallFrame* compiledFrame, void* returnPC, NOESCAPE const Functor& functor)
+    static void visitCompiledFrameCallers(VM& vm, CallFrame* compiledFrame, void* returnPC, NOESCAPE const Functor& functor)
     {
         StackVisitor visitor(vm, compiledFrame, returnPC);
         while (visitor->callFrame()) {
@@ -233,16 +229,15 @@ public:
     Frame& operator*() { return m_frame; }
     ALWAYS_INLINE Frame* operator->() { return &m_frame; }
 #if ENABLE(AOT)
-    JS_EXPORT_PRIVATE unsigned gotoLastOfPlainCompiledCallers(std::span<AOT::FrameInTrace>);
+    JS_EXPORT_PRIVATE unsigned gotoLastPlainCompiledCaller(std::span<AOT::StackTraceFrame>);
     JS_EXPORT_PRIVATE bool isAtConstructedCompiledFrame();
-    JS_EXPORT_PRIVATE bool gotoLastOfCompiledCallersWithoutHandlers(CPURegister* calleeSaveRegistersBuffer, std::span<const int8_t> bufferSlotsByRegIndex);
+    JS_EXPORT_PRIVATE bool gotoLastCompiledCallerWithoutHandlers(CPURegister* calleeSaveRegistersBuffer, std::span<const int8_t> bufferSlotsByRegIndex);
 #endif
     void unwindToMachineCodeBlockFrame();
 
     bool topEntryFrameIsEmpty() const { return m_topEntryFrameIsEmpty; }
 
 private:
-    // wantsOnlyHandlers: of a frame of AOT::FunctionInfo::hasNoHandlers only the function, the call frame and the caller are found out.
     JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame, bool wantsOnlyHandlers = false);
 #if ENABLE(AOT)
     JS_EXPORT_PRIVATE StackVisitor(VM&, CallFrame* compiledFrame, void* returnPC);
@@ -262,8 +257,8 @@ private:
     void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
     bool isAtConstructedInlineFrame();
     bool isCalledByConstruction();
-    bool isCalledByConstructionOrConstructedWrapper();
-    bool isEnteredByConstruction();
+    bool isCalledByConstructOrConstructedWrapper();
+    bool wasEnteredByConstruct();
     AOT::ImageAddressInfo classify(const void* address);
     bool gotoNextAOTFrame();
     void gotoNextFrameInCompiledProgram();
@@ -276,7 +271,7 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
-    AOT::InlineFramesRead m_inlineFramesRead;
+    AOT::InlineFrameReader m_inlineFramesRead;
     const void* m_classifiedAddress { nullptr };
     AOT::ImageAddressInfo m_classification;
     AOT::Instance* m_aotInstance { nullptr };

@@ -67,7 +67,7 @@ private:
     ptrdiff_t m_offset { 0 };
 };
 
-class IntegersThatLookLikeAddresses {
+class AddressLikeIntegers {
 public:
     static bool isOne(uint64_t bits) { return bits >= 4 * GB && bits < (1ULL << 47); }
     void add(int64_t value)
@@ -102,7 +102,6 @@ public:
     void dropNextGuardForTesting() { m_dropsNextGuard = true; }
     void forceNextGuardForTesting() { m_forcesNextGuard = true; }
 
-    // What is made off the usual path is off it: whoever asks how often a block runs (Typed::Lowering::callEntry()) is told so behind a test or a join in a cold arm too.
     LBasicBlock newBlock()
     {
         LBasicBlock block = FTL::Output::newBlock();
@@ -169,11 +168,11 @@ public:
     void storePtr(LValue value, LValue base, const B3::AbstractHeap& field) { storePtr(value, address(base, field)); }
     void storeDouble(LValue value, LValue base, const B3::AbstractHeap& field) { storeDouble(value, address(base, field)); }
 
-    void noteFoldedConstantsIn(IntegersThatLookLikeAddresses& integers) { m_foldedConstants = &integers; }
-    LValue add(LValue left, LValue right) { return noteIfFolded(FTL::Output::add(left, right), left, right); }
-    LValue shl(LValue value, LValue amount) { return noteIfFolded(FTL::Output::shl(value, amount), value, amount); }
-    LValue aShr(LValue value, LValue amount) { return noteIfFolded(FTL::Output::aShr(value, amount), value, amount); }
-    LValue lShr(LValue value, LValue amount) { return noteIfFolded(FTL::Output::lShr(value, amount), value, amount); }
+    void recordFoldedConstantsIn(AddressLikeIntegers& integers) { m_foldedConstants = &integers; }
+    LValue add(LValue left, LValue right) { return recordIfFolded(FTL::Output::add(left, right), left, right); }
+    LValue shl(LValue value, LValue amount) { return recordIfFolded(FTL::Output::shl(value, amount), value, amount); }
+    LValue aShr(LValue value, LValue amount) { return recordIfFolded(FTL::Output::aShr(value, amount), value, amount); }
+    LValue lShr(LValue value, LValue amount) { return recordIfFolded(FTL::Output::lShr(value, amount), value, amount); }
 
 private:
     template<typename Key>
@@ -220,7 +219,7 @@ private:
         return store;
     }
 
-    LValue noteIfFolded(LValue result, LValue left, LValue right)
+    LValue recordIfFolded(LValue result, LValue left, LValue right)
     {
         if (m_foldedConstants && result->hasInt64() && left->hasInt() && right->hasInt())
             m_foldedConstants->add(result->asInt64());
@@ -230,7 +229,7 @@ private:
     ConstantsAtHead<int32_t> m_int32sAtHead;
     ConstantsAtHead<int64_t> m_int64sAtHead;
     ConstantsAtHead<int64_t> m_doublesAtHead;
-    IntegersThatLookLikeAddresses* m_foldedConstants { nullptr };
+    AddressLikeIntegers* m_foldedConstants { nullptr };
     bool m_dropsNextGuard { false };
     bool m_forcesNextGuard { false };
 };
@@ -240,26 +239,25 @@ class Emitter {
 protected:
     explicit Emitter(B3::Procedure& proc)
         : m_proc(proc)
-        , m_heapsOfThread(B3::AbstractHeapRepository::takeFromThread())
-        , m_heaps(*m_heapsOfThread)
+        , m_threadHeaps(B3::AbstractHeapRepository::takeFromThread())
+        , m_heaps(*m_threadHeaps)
         , m_out(proc)
     {
     }
 
     ~Emitter()
     {
-        giveBackHeapsToThread();
+        returnHeapsToThread();
     }
 
-    void giveBackHeapsToThread()
+    void returnHeapsToThread()
     {
-        if (m_heapsOfThread)
-            B3::AbstractHeapRepository::giveBackToThread(WTF::move(m_heapsOfThread));
+        if (m_threadHeaps)
+            B3::AbstractHeapRepository::giveBackToThread(WTF::move(m_threadHeaps));
     }
 
     void findPinnedRegisters();
 
-    // The tags are in registers, which the back end cannot look into. So what is asked of a constant is answered here.
     LValue isInt32(LValue v) { return v->hasInt64() ? m_out.constBool(static_cast<uint64_t>(v->asInt64()) >= static_cast<uint64_t>(JSValue::NumberTag)) : m_out.aboveOrEqual(v, m_numberTag); }
     LValue isNumber(LValue v) { return v->hasInt64() ? m_out.constBool(v->asInt64() & JSValue::NumberTag) : m_out.testNonZero64(v, m_numberTag); }
     LValue isCell(LValue v) { return v->hasInt64() ? m_out.constBool(!(v->asInt64() & JSValue::NotCellMask)) : m_out.testIsZero64(v, m_notCellMask); }
@@ -338,7 +336,7 @@ protected:
     LValue isOriginalArray(LValue cell);
 
     B3::Procedure& m_proc;
-    std::unique_ptr<B3::AbstractHeapRepository> m_heapsOfThread;
+    std::unique_ptr<B3::AbstractHeapRepository> m_threadHeaps;
     B3::AbstractHeapRepository& m_heaps;
     Output m_out;
     LValue m_instance { nullptr };
@@ -346,7 +344,7 @@ protected:
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
     LValue m_cellCageBase { nullptr };
-    bool m_leavesNextIntervalToSlowPath { false };
+    bool m_refillsIntervalOnSlowPath { false };
 };
 
 void pinRegisters(B3::Procedure&);

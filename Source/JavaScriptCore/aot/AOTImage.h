@@ -35,8 +35,8 @@ static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
 static constexpr unsigned numberOfAdapters = 9;
-static constexpr unsigned numberOfStubsThatFindTargets = 3;
-static constexpr unsigned maxReturnsIntoFramesOfHostFunctions = numberOfStubsThatFindTargets + 1;
+static constexpr unsigned numberOfTargetFindingStubs = 3;
+static constexpr unsigned maxReturnsIntoHostFunctionFrames = numberOfTargetFindingStubs + 1;
 
 struct ImageHeader {
     uint64_t magic;
@@ -56,22 +56,21 @@ struct ImageHeader {
     uint32_t numberOfEnvironments;
     uint32_t intrinsicHash;
     uint32_t quotesOffset;
-    uint32_t quotesTextOffset;
-    uint32_t quoteTextBlockSize;
+    uint32_t quoteStringsOffset;
+    uint32_t quoteStringBlockSize;
     uint32_t quoteBlockSize;
     uint32_t numberOfProgramIdentifiers;
     uint32_t numberOfProgramConstants;
     uint32_t regExpsOffset;
     uint32_t numberOfRegExps;
-    uint32_t regExpTextOffset;
+    uint32_t regExpSourceOffset;
     uint32_t functionStartsOffset;
     uint32_t codeGranulesOffset;
     uint32_t callSitesOffset;
-    // The offsets in the code, ascending, with FaultingAccessInImage::hasNoFrameBit; as many ThrowSite words; then (index, name) for each word with ThrowSite::hasWideA whose name is not ThrowSite::none.
     uint32_t faultingAccessesOffset;
     uint32_t numberOfFaultingAccesses;
     uint32_t numberOfFaultingAccessesWithWideName;
-    uint32_t numberOfThrowSitesOfFaultingAccesses;
+    uint32_t numberOfFaultingAccessThrowSites;
     uint32_t numberOfTrapsAtThrowSites;
     uint32_t framesOffset;
     uint32_t typedDataOffset;
@@ -81,7 +80,7 @@ struct ImageHeader {
     uint32_t numberOfStubCopies;
     uint32_t stubCopies[maxStubCopiesPerImage];
     uint32_t returnsIntoAdapters[numberOfAdapters];
-    uint32_t returnsFromFindingTargets[maxReturnsIntoFramesOfHostFunctions];
+    uint32_t returnsFromFindingTargets[maxReturnsIntoHostFunctionFrames];
     uint32_t stubOffsets[numberOfStubs];
     uint32_t codeGranuleShift;
     uint32_t webAssemblyDirectoryOffset;
@@ -99,18 +98,17 @@ struct ImageRegExp {
     uint32_t flags;
     uint32_t codeFor8Bit;
     uint32_t codeFor16Bit;
-    // What a RegExp keeps of its Yarr::YarrPattern, so that none is made at run time. keepsMoreOfPattern: that is not all of it.
     uint32_t numSubpatterns;
     uint32_t minimumSize;
     uint8_t specificPattern;
-    uint8_t keepsMoreOfPattern;
+    uint8_t retainsPatternDetails;
     uint8_t hasNoCode : 1;
-    uint8_t textIsInPieces : 1;
-    uint8_t textIsDigest : 1;
+    uint8_t sourceIsInPieces : 1;
+    uint8_t sourceIsDigest : 1;
     uint8_t sourceIsPattern;
 
     static constexpr unsigned maxLengthWithCode = 65536;
-    static constexpr unsigned minLengthKeptAsTextOfImage = 4096;
+    static constexpr unsigned minLengthStoredAsImageString = 4096;
     static constexpr unsigned maxParenthesesDepthWithoutPattern = 64;
 };
 
@@ -129,19 +127,17 @@ struct CompiledCode {
     Vector<uint8_t> bytes;
     Vector<uint8_t> instructions;
     Vector<DataInCode> dataInCode;
-    uint32_t startOfGuests { std::numeric_limits<uint32_t>::max() };
+    uint32_t appendedEntriesStart { std::numeric_limits<uint32_t>::max() };
     CompiledFunctionInfo info;
     String whyDeclined;
-    // For the map of the image: kinds of operations and the bytes of code that come from each, separated by tabs.
     String bytesByOperation;
     bool mayBeDumped { true };
     bool isRewritten { false };
-    bool hasNotes { false };
+    bool hasCodeAnnotations { false };
     bool stubCallsAreCleared { false };
     bool rareCodeMayBeOutlined { false };
     bool allCodeMayBeOutlined { false };
-    uint32_t startOfRareCode { std::numeric_limits<uint32_t>::max() };
-    // See Typed::SplitFunction.
+    uint32_t rareCodeStart { std::numeric_limits<uint32_t>::max() };
     Vector<CompiledCode> continuations;
 };
 
@@ -172,14 +168,14 @@ public:
         m_webAssemblyDirectory = WTF::move(directory);
         m_webAssemblyCode = WTF::move(code);
     }
-    class RegExpsCompiledAhead;
-    void takeRegExpsCompiledAhead(RegExpsCompiledAhead&);
+    class PrecompiledRegExps;
+    void takePrecompiledRegExps(PrecompiledRegExps&);
     void requestRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>, bool isFoundByEvaluator = false);
     bool compileOneRequestedRegExp();
     void didRequestAllRegExps();
     void compileRegExpsUntilAllAreRequested();
     Vector<uint8_t> finish();
-    const String& whyFailed() const { return m_whyFailed; }
+    const String& failureReason() const { return m_failureReason; }
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
 
 private:
@@ -229,7 +225,7 @@ private:
         size_t m_capacity { 0 };
     };
     Lock m_lock;
-    String m_whyFailed;
+    String m_failureReason;
     Functions m_functions;
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
@@ -242,7 +238,7 @@ private:
         unsigned numSubpatterns { 0 };
         unsigned minimumSize { 0 };
         Yarr::SpecificPattern specificPattern { Yarr::SpecificPattern::None };
-        bool keepsMoreOfPattern { false };
+        bool retainsPatternDetails { false };
         bool hasNoCode { false };
         bool sourceIsPattern { false };
         bool isFoundByEvaluator { false };
@@ -255,13 +251,13 @@ private:
     struct RegExpOutcome {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RegExpOutcome);
         std::optional<RegExpCode> code;
-        bool isLeftToInterpreter { false };
+        bool fallsBackToInterpreter { false };
     };
     using RegExpOutcomes = UncheckedKeyHashMap<String, std::unique_ptr<RegExpOutcome>>;
     static String flagsAndPattern(OptionSet<Yarr::Flags>, const String& pattern);
-    static std::optional<RegExpCode> compileRegExp(VM&, const RegExpRequest&, bool& isLeftToInterpreter);
+    static std::optional<RegExpCode> compileRegExp(VM&, const RegExpRequest&, bool& fallsBackToInterpreter);
     bool takeAndCompileOneRegExp();
-    void compileRegExpsThatAreLeft();
+    void compileRemainingRegExps();
     uint32_t m_numberOfProgramIdentifiers { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
@@ -269,7 +265,7 @@ private:
     Vector<uint8_t> m_webAssemblyDirectory;
     Vector<uint8_t> m_webAssemblyCode;
     Vector<RegExpCode> m_regExps;
-    RegExpOutcomes m_regExpsCompiledAhead;
+    RegExpOutcomes m_precompiledRegExps;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
     UncheckedKeyHashSet<String> m_requestedRegExps;
     Vector<RegExpRequest> m_regExpRequests;
@@ -277,42 +273,42 @@ private:
     std::atomic<size_t> m_numberOfRegExpsWaiting { 0 };
     bool m_didRequestAllRegExps { false };
     Condition m_regExpIsRequested;
-    VM* m_vmOfRegExps { nullptr };
+    VM* m_regExpVM { nullptr };
     Seconds m_timeInRegExpCompiler;
-    UncheckedKeyHashSet<const Thread*> m_threadsThatCompiledRegExps;
+    UncheckedKeyHashSet<const Thread*> m_regExpCompilerThreads;
 };
 
 using RegExpSourcesAndFlags = Vector<std::pair<String, OptionSet<Yarr::Flags>>>;
 
-class ImageBuilder::RegExpsCompiledAhead {
-    WTF_MAKE_NONCOPYABLE(RegExpsCompiledAhead);
+class ImageBuilder::PrecompiledRegExps {
+    WTF_MAKE_NONCOPYABLE(PrecompiledRegExps);
 public:
-    RegExpsCompiledAhead() = default;
+    PrecompiledRegExps() = default;
     void compile(VM&, const RegExpSourcesAndFlags&);
 
 private:
     friend class ImageBuilder;
     Lock m_lock;
-    bool m_isTaken { false };
+    bool m_isClaimed { false };
     RegExpOutcomes m_outcomes;
 };
 
-class RegExpsFoundAhead {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RegExpsFoundAhead);
-    WTF_MAKE_NONCOPYABLE(RegExpsFoundAhead);
+class DiscoveredRegExps {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DiscoveredRegExps);
+    WTF_MAKE_NONCOPYABLE(DiscoveredRegExps);
 public:
-    explicit RegExpsFoundAhead(std::span<const uint8_t> typedProgramAsWritten);
-    ~RegExpsFoundAhead();
+    explicit DiscoveredRegExps(std::span<const uint8_t> typedProgramAsWritten);
+    ~DiscoveredRegExps();
     bool isEvaluated();
-    const RegExpSourcesAndFlags& waitForEvaluatedTexts();
-    ImageBuilder::RegExpsCompiledAhead& compiledAhead() { return m_compiledAhead; }
+    const RegExpSourcesAndFlags& waitForEvaluatedSources();
+    ImageBuilder::PrecompiledRegExps& precompiledRegExps() { return m_precompiledRegExpSet; }
 
 private:
-    ImageBuilder::RegExpsCompiledAhead m_compiledAhead;
+    ImageBuilder::PrecompiledRegExps m_precompiledRegExpSet;
     Lock m_lock;
     Condition m_didEvaluate;
     bool m_isEvaluated { false };
-    RegExpSourcesAndFlags m_evaluatedTexts;
+    RegExpSourcesAndFlags m_evaluatedSources;
     RefPtr<Thread> m_thread;
 };
 
@@ -342,7 +338,6 @@ public:
     }
     static Image* withCode();
     JS_EXPORT_PRIVATE static std::pair<const uint8_t*, const uint8_t*> webAssembly();
-    // Whether a realm has to have its intrinsics numbered: see ImageHeader::intrinsicHash. Also where there is no image: the compiler.
     JS_EXPORT_PRIVATE static bool usesNumberedIntrinsics();
     const void* code() const { return m_code; }
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
@@ -358,22 +353,22 @@ public:
         unsigned numSubpatterns;
         unsigned minimumSize;
         Yarr::SpecificPattern specificPattern;
-        bool keepsMoreOfPattern;
+        bool retainsPatternDetails;
         bool hasCode;
         bool sourceIsPattern;
         StringView text;
-        const ImageRegExp* recordOfTextInPieces;
+        const ImageRegExp* recordWithSourceInPieces;
         bool wasFoundByDigest { false };
     };
     JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>, bool wasFoundBefore = false);
-    JS_EXPORT_PRIVATE static CodeForRegExp codeOfRegExp(const ImageRegExp&);
-    JS_EXPORT_PRIVATE static const ImageRegExp* findRegExpWithTextInPieces(std::span<const StringView> leaves, unsigned length, OptionSet<Yarr::Flags>);
-    JS_EXPORT_PRIVATE static String textOfRegExp(const ImageRegExp&);
+    JS_EXPORT_PRIVATE static CodeForRegExp codeForRegExpRecord(const ImageRegExp&);
+    JS_EXPORT_PRIVATE static const ImageRegExp* findRegExpWithSourceInPieces(std::span<const StringView> leaves, unsigned length, OptionSet<Yarr::Flags>);
+    JS_EXPORT_PRIVATE static String regExpSource(const ImageRegExp&);
 
     static Image& of(const ImageFunction&);
     static Image& ofRegExp(const ImageRegExp&);
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
-    String quoteText(uint64_t start, size_t length) const;
+    String quoteString(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
 
@@ -409,8 +404,8 @@ public:
         bool startsCold;
         bool hasSiteConstants;
         bool hasInlineFrames;
-        bool saysWhatItAnswers;
-        bool saysWhatItYields;
+        bool hasValueEntry;
+        bool hasCompatibleResultsMask;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
@@ -443,16 +438,13 @@ struct ImageCode {
     explicit operator bool() const { return !!function; }
 };
 struct FaultingAccessInImage {
-    // Offsets are multiples of 4 wherever a function can be without a frame.
-    static constexpr uint32_t hasNoFrameBit = hasStubsForFunctionsWithoutFrame ? 1 : isX86_64() ? 1u << 31 : 0;
-    // How far from zero, or from the base of the cage, an address is taken for an access through `undefined` or `null`.
+    static constexpr uint32_t hasNoFrameBit = hasFramelessFunctionStubs ? 1 : isX86_64() ? 1u << 31 : 0;
     static constexpr uintptr_t reach = 16 * KB;
 
     std::array<uint32_t, 2> throwSite;
     bool hasNoFrame;
 };
 std::optional<FaultingAccessInImage> faultingAccessAt(const void* instruction);
-// Before the configuration is frozen.
 void prepareFaultingAccesses();
 JS_EXPORT_PRIVATE void collectQuotes(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text, unsigned sourceOffset);
 JS_EXPORT_PRIVATE void collectConstructSites(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text = { }, unsigned sourceOffset = 0);

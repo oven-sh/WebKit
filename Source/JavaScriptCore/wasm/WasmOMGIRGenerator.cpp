@@ -945,10 +945,10 @@ private:
         return block->appendNew<CCallValue>(m_proc, resultType, origin(), operationValue, std::forward<Args>(args)...);
     }
 
-    Value* pointerOfCodeInImage(BasicBlock*, unsigned index);
+    Value* imageCodePointer(BasicBlock*, unsigned index);
     Value* addressOfOperation(BasicBlock*, void* operation);
     Value* addressOfRTT(const RTT&);
-    void emitCallToStubThatThrows(CCallHelpers&);
+    void emitCallToThrowStub(CCallHelpers&);
 
     void emitExceptionCheck(CCallHelpers&, Origin, ExceptionType);
 
@@ -1413,7 +1413,7 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
         code.emitDefaultPrologue(jit, context);
         GPRReg scratchGPR = wasmCallingConvention().prologueScratchGPRs[0];
         if (m_context.codeForImage) {
-            jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfPointersOfCodeInImage()), scratchGPR);
+            jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratchGPR);
             jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(CodeInImage::indexOfCallee(m_functionIndex) * sizeof(void*))), scratchGPR);
         } else
             jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(m_callee)), scratchGPR);
@@ -1450,7 +1450,7 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
                             ASSERT(static_cast<unsigned>(stackSpace) < Options::softReservedZoneSize());
                             jit.addPtr(CCallHelpers::TrustedImm32(-stackSpace), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
                             jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(ExceptionType::StackOverflow)), GPRInfo::argumentGPR1);
-                            emitCallToStubThatThrows(jit);
+                            emitCallToThrowStub(jit);
                         });
                 }
             }
@@ -1520,9 +1520,9 @@ void OMGIRGenerator::reloadMemoryRegistersFromInstance(const MemoryInformation& 
     }
 }
 
-Value* OMGIRGenerator::pointerOfCodeInImage(BasicBlock* block, unsigned index)
+Value* OMGIRGenerator::imageCodePointer(BasicBlock* block, unsigned index)
 {
-    auto* pointers = block->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfPointersOfCodeInImage()));
+    auto* pointers = block->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfImageCodePointers()));
     pointers->setReadsMutability(B3::Mutability::Immutable);
     pointers->setControlDependent(false);
     auto* pointer = block->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), pointers, safeCast<int32_t>(index * sizeof(void*)));
@@ -1535,7 +1535,7 @@ Value* OMGIRGenerator::addressOfOperation(BasicBlock* block, void* operation)
 {
     if (m_context.codeForImage) {
         if (auto index = CodeInImage::indexOfOperation(operation))
-            return pointerOfCodeInImage(block, *index);
+            return imageCodePointer(block, *index);
         m_context.codeForImage->whyDeclined = "it calls an operation that code in an image cannot"_s;
     }
     return block->appendNew<ConstPtrValue>(m_proc, origin(), operation);
@@ -1546,19 +1546,19 @@ Value* OMGIRGenerator::addressOfRTT(const RTT& rtt)
     if (m_context.codeForImage) {
         for (uint32_t index = 0; index < m_info.typeCount(); ++index) {
             if (&m_info.rtt(TypeSignatureIndex(index)) == &rtt)
-                return pointerOfCodeInImage(m_currentBlock, CodeInImage::indexOfRTT(m_info, TypeSignatureIndex(index)));
+                return imageCodePointer(m_currentBlock, CodeInImage::indexOfRTT(m_info, TypeSignatureIndex(index)));
         }
         m_context.codeForImage->whyDeclined = "it names a type that is not one of its module"_s;
     }
     return constant(pointerType(), std::bit_cast<uintptr_t>(&rtt));
 }
 
-void OMGIRGenerator::emitCallToStubThatThrows(CCallHelpers& jit)
+void OMGIRGenerator::emitCallToThrowStub(CCallHelpers& jit)
 {
     if (auto* codeForImage = m_context.codeForImage) {
         auto call = jit.nearCall();
         jit.addLinkTask([codeForImage, call](LinkBuffer& linkBuffer) {
-            codeForImage->callsToStubThatThrows.append(safeCast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOfNearCall<NoPtrTag>(call).dataLocation()) - static_cast<uint8_t*>(linkBuffer.entrypoint<NoPtrTag>().untaggedPtr())));
+            codeForImage->callsToThrowStub.append(safeCast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOfNearCall<NoPtrTag>(call).dataLocation()) - static_cast<uint8_t*>(linkBuffer.entrypoint<NoPtrTag>().untaggedPtr())));
         });
         return;
     }
@@ -1568,7 +1568,7 @@ void OMGIRGenerator::emitCallToStubThatThrows(CCallHelpers& jit)
 void OMGIRGenerator::emitExceptionCheck(CCallHelpers& jit, Origin, ExceptionType type)
 {
     jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(type)), GPRInfo::argumentGPR1);
-    emitCallToStubThatThrows(jit);
+    emitCallToThrowStub(jit);
 }
 
 Value* OMGIRGenerator::constant(B3::Type type, uint64_t bits, std::optional<Origin> maybeOrigin)
@@ -6609,8 +6609,8 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
 
     B3::Type returnType = toB3ResultType(&signature);
     Value* jumpDestination = nullptr;
-    Value* functionInfoOfImport = nullptr;
-    Value* boxedCalleeOfImport = nullptr;
+    Value* importFunctionInfo = nullptr;
+    Value* importBoxedCallee = nullptr;
 
     m_makesCalls = true;
     if (callType == CallType::TailCall)
@@ -6622,9 +6622,9 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
         auto emitCallToImport = [&, this](PatchpointValue* patchpoint, RefPtr<PatchpointExceptionHandle> handle, RefPtr<B3::StackmapGenerator> prepareForCall) -> void {
             unsigned patchArgsIndex = patchpoint->reps().size();
             patchpoint->append(jumpDestination, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0));
-            if (functionInfoOfImport) {
-                patchpoint->append(functionInfoOfImport, ValueRep::SomeRegister);
-                patchpoint->append(boxedCalleeOfImport, ValueRep::SomeRegister);
+            if (importFunctionInfo) {
+                patchpoint->append(importFunctionInfo, ValueRep::SomeRegister);
+                patchpoint->append(importBoxedCallee, ValueRep::SomeRegister);
             }
             // We need to clobber all potential pinned registers since we might be leaving the instance.
             // We pessimistically assume we could be calling to something that is bounds checking.
@@ -6679,8 +6679,8 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
         jumpDestination = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfImportFunctionStub(m_module.moduleInformation(), functionIndexSpace)));
         m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_importFunctionStubs[functionIndexSpace], jumpDestination);
         if (m_context.codeForImage) {
-            functionInfoOfImport = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), instanceValue(), constant(pointerType(), JSWebAssemblyInstance::offsetOfImportFunctionInfo(m_info, functionIndexSpace)));
-            boxedCalleeOfImport = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfBoxedCallee(m_info, functionIndexSpace)));
+            importFunctionInfo = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), instanceValue(), constant(pointerType(), JSWebAssemblyInstance::offsetOfImportFunctionInfo(m_info, functionIndexSpace)));
+            importBoxedCallee = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfBoxedCallee(m_info, functionIndexSpace)));
         }
 
         if (isTailCallRootCaller) {

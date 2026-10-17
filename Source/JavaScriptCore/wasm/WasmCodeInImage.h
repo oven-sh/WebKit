@@ -25,7 +25,7 @@ namespace Wasm {
 
 struct ModuleInformation;
 
-#define FOR_EACH_OPERATION_OF_WASM_CODE_IN_IMAGE(macro) \
+#define FOR_EACH_WASM_IMAGE_CODE_OPERATION(macro) \
     macro(operationThrowExceptionFromOMG) \
     macro(operationGrowMemory) \
     macro(operationWasmMemorySizeInPages) \
@@ -57,21 +57,21 @@ struct DirectoryInImage {
 
 struct ModuleInImage {
     std::array<uint8_t, 20> digest;
-    uint32_t sizeOfSource;
+    uint32_t sourceSize;
     uint32_t numberOfFunctions;
     uint32_t numberOfImportedFunctions;
     uint32_t entries;
-    uint32_t stubsOfImports;
-    uint32_t savedRegistersOfFunctions;
+    uint32_t importStubs;
+    uint32_t functionSavedRegisters;
     uint32_t savedRegisters;
     uint32_t isForSignalingMemory;
-    uint32_t numberOfEntriesFromJavaScript;
-    uint32_t entriesFromJavaScript;
+    uint32_t numberOfJSEntrypoints;
+    uint32_t jsEntrypoints;
     uint32_t usesVectors;
 };
 static_assert(sizeof(ModuleInImage) == 64);
 
-struct EntryFromJavaScriptInImage {
+struct JSEntrypointInImage {
     uint32_t type;
     uint32_t code;
 };
@@ -86,14 +86,14 @@ struct SavedRegistersInImage {
 
 struct ModuleForImage {
     std::array<uint8_t, 20> digest;
-    uint32_t sizeOfSource { 0 };
+    uint32_t sourceSize { 0 };
     bool isForSignalingMemory { false };
     bool usesVectors { false };
     Vector<uint8_t> code;
     Vector<uint32_t> entries;
-    Vector<uint32_t> stubsOfImports;
-    Vector<EntryFromJavaScriptInImage> entriesFromJavaScript;
-    Vector<uint16_t> savedRegistersOfFunctions;
+    Vector<uint32_t> importStubs;
+    Vector<JSEntrypointInImage> jsEntrypoints;
+    Vector<uint16_t> functionSavedRegisters;
     Vector<SavedRegistersInImage> savedRegisters;
 };
 
@@ -101,16 +101,16 @@ class CodeInImage final : public ThreadSafeRefCounted<CodeInImage> {
     WTF_MAKE_TZONE_ALLOCATED(CodeInImage);
 public:
 #define COUNT_OPERATION(operation) + 1
-    static constexpr unsigned numberOfOperations = 0 FOR_EACH_OPERATION_OF_WASM_CODE_IN_IMAGE(COUNT_OPERATION);
+    static constexpr unsigned numberOfOperations = 0 FOR_EACH_WASM_IMAGE_CODE_OPERATION(COUNT_OPERATION);
 #undef COUNT_OPERATION
-    static constexpr unsigned indexOfOperationThatThrows = 0;
-    static constexpr unsigned indexOfGeneralEntryFromJavaScript = numberOfOperations;
-    static constexpr unsigned numberOfPointersOfAllModules = numberOfOperations + 1;
+    static constexpr unsigned indexOfThrowOperation = 0;
+    static constexpr unsigned indexOfGenericJSEntrypoint = numberOfOperations;
+    static constexpr unsigned numberOfSharedPointers = numberOfOperations + 1;
 
     static std::optional<unsigned> indexOfOperation(void*);
-    static unsigned indexOfCallee(size_t functionCodeIndex) { return numberOfPointersOfAllModules + functionCodeIndex; }
+    static unsigned indexOfCallee(size_t functionCodeIndex) { return numberOfSharedPointers + functionCodeIndex; }
     static unsigned indexOfRTT(const ModuleInformation&, TypeSignatureIndex);
-    static unsigned indexOfCalleeOfEntryFromJavaScript(const ModuleInformation&, unsigned entry);
+    static unsigned indexOfJSEntrypointCallee(const ModuleInformation&, unsigned entry);
 
 #if ENABLE(AOT)
     JS_EXPORT_PRIVATE static std::array<uint8_t, 20> digestOf(std::span<const uint8_t> source);
@@ -125,7 +125,7 @@ public:
         s_start = start;
         s_size = size;
     }
-    static const uint16_t* savedRegistersOfFunctionsIfFound(const ModuleInformation&);
+    static const uint16_t* functionSavedRegistersIfFound(const ModuleInformation&);
     static RefPtr<CodeInImage> tryCreate(const ModuleInformation&, const IPIntCallees&, MemoryMode);
     bool isSafeToRun(MemoryMode mode) const { return !m_isForSignalingMemory || mode == MemoryMode::Signaling; }
     ~CodeInImage();
@@ -133,16 +133,16 @@ public:
     void* const* pointers() const { return m_pointers.span().data(); }
     CodePtr<WasmEntryPtrTag> entrypoint(size_t functionCodeIndex) const { return m_callees[functionCodeIndex]->entrypoint(); }
     bool holds(const Callee* callee, size_t functionCodeIndex) const { return m_callees[functionCodeIndex].ptr() == callee; }
-    CodePtr<WasmEntryPtrTag> stubOfImport(size_t index) const { return m_stubsOfImports[index]; }
-    CodePtr<JSEntryPtrTag> entryFromJavaScript(const RTT&) const;
+    CodePtr<WasmEntryPtrTag> importStub(size_t index) const { return m_importStubs[index]; }
+    CodePtr<JSEntryPtrTag> jsEntrypoint(const RTT&) const;
 
 private:
     CodeInImage(const ModuleInformation&, const IPIntCallees&, const ModuleInImage&, const uint8_t* directory, const uint8_t* code);
 
     FixedVector<void*> m_pointers;
     FixedVector<Ref<OMGCallee>> m_callees;
-    FixedVector<CodePtr<WasmEntryPtrTag>> m_stubsOfImports;
-    Vector<std::pair<const RTT*, Ref<JSToWasmICCallee>>> m_entriesFromJavaScript;
+    FixedVector<CodePtr<WasmEntryPtrTag>> m_importStubs;
+    Vector<std::pair<const RTT*, Ref<JSToWasmICCallee>>> m_jsEntrypoints;
     bool m_isForSignalingMemory { false };
     static const uint8_t* s_start;
     static size_t s_size;

@@ -1491,7 +1491,7 @@ op :llint_predecoded_get_by_id_custom_accessor
 op :llint_predecoded_get_by_id_prototype_inline
 op :llint_predecoded_get_by_id_prototype_out_of_line
 op :llint_predecoded_get_by_id_cell32
-op :llint_predecoded_get_by_id_int32_or_elsewhere
+op :llint_predecoded_get_by_id_int32_or_number_box
 op :llint_predecoded_get_by_id_js_value
 op :llint_predecoded_get_by_id_double
 op :llint_predecoded_get_by_id_boolean

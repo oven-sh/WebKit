@@ -34,11 +34,11 @@ const ClassInfo CompactTable::s_info = { "CompactTable"_s, nullptr, nullptr, nul
 static constexpr uint16_t freeShortSlot = UINT16_MAX;
 static constexpr uint32_t freeLongSlot = UINT32_MAX;
 
-static uint8_t shortTagOf(unsigned hash) { return hash >> CompactTable::shiftOfShortTag; }
-static uint32_t longTagOf(unsigned hash) { return hash >> CompactTable::shiftOfLongTag; }
-static_assert(StringImpl::s_flagCount == 8 && CompactTable::shiftOfShortTag + 8 == 24 && CompactTable::shiftOfLongTag + 32 - CompactTable::entryBitsOfLongSlot == 24);
+static uint8_t shortTagOf(unsigned hash) { return hash >> CompactTable::shortTagShift; }
+static uint32_t longTagOf(unsigned hash) { return hash >> CompactTable::longTagShift; }
+static_assert(StringImpl::s_flagCount == 8 && CompactTable::shortTagShift + 8 == 24 && CompactTable::longTagShift + 32 - CompactTable::longSlotEntryBits == 24);
 
-static std::atomic<uint64_t> s_knownGrowths[3][CompactTable::maxEntriesOfKnownGrowth / 2];
+static std::atomic<uint64_t> s_knownGrowths[3][CompactTable::maxKnownGrowthEntries / 2];
 
 std::atomic<uint64_t>* CompactTable::knownGrowths()
 {
@@ -79,10 +79,10 @@ size_t CompactTable::allocationSize(uint32_t capacity, Width key, Width value)
     return offsetOfKeys(capacity) + static_cast<size_t>(capacity) * (static_cast<size_t>(key) + static_cast<size_t>(value));
 }
 
-CompactTable* CompactTable::create(VM& vm, Structure* structure, Width key, Width value, uint32_t leastCapacity)
+CompactTable* CompactTable::create(VM& vm, Structure* structure, Width key, Width value, uint32_t minCapacity)
 {
-    RELEASE_ASSERT(key != Width::None && leastCapacity <= maxCapacity);
-    uint32_t capacity = roundUpToMultipleOf<2>(std::max<uint32_t>(leastCapacity, 2));
+    RELEASE_ASSERT(key != Width::None && minCapacity <= maxCapacity);
+    uint32_t capacity = roundUpToMultipleOf<2>(std::max<uint32_t>(minCapacity, 2));
     size_t size = MarkedSpace::optimalSizeFor(allocationSize(capacity, key, value));
     while (capacity < maxCapacity && allocationSize(capacity + 2, key, value) <= size)
         capacity += 2;
@@ -160,8 +160,8 @@ std::optional<uint32_t> CompactTable::findWithHash(unsigned hash, NOESCAPE const
             uint16_t slot = slots[i];
             if (slot == freeShortSlot)
                 return std::nullopt;
-            if (slot >> entryBitsOfShortSlot == shortTagOf(hash) && matches(slot & ((1 << entryBitsOfShortSlot) - 1)))
-                return slot & ((1 << entryBitsOfShortSlot) - 1);
+            if (slot >> shortSlotEntryBits == shortTagOf(hash) && matches(slot & ((1 << shortSlotEntryBits) - 1)))
+                return slot & ((1 << shortSlotEntryBits) - 1);
         }
     }
     const uint32_t* slots = at<uint32_t>(offsetOfIndex());
@@ -169,8 +169,8 @@ std::optional<uint32_t> CompactTable::findWithHash(unsigned hash, NOESCAPE const
         uint32_t slot = slots[i];
         if (slot == freeLongSlot)
             return std::nullopt;
-        if (slot >> entryBitsOfLongSlot == longTagOf(hash) && matches(slot & ((1 << entryBitsOfLongSlot) - 1)))
-            return slot & ((1 << entryBitsOfLongSlot) - 1);
+        if (slot >> longSlotEntryBits == longTagOf(hash) && matches(slot & ((1 << longSlotEntryBits) - 1)))
+            return slot & ((1 << longSlotEntryBits) - 1);
     }
 }
 
@@ -248,13 +248,13 @@ void CompactTable::addToIndex(uint32_t entry, unsigned hash)
         uint16_t* slots = at<uint16_t>(offsetOfIndex());
         while (slots[i] != freeShortSlot)
             i = (i + 1) & mask;
-        slots[i] = shortTagOf(hash) << entryBitsOfShortSlot | entry;
+        slots[i] = shortTagOf(hash) << shortSlotEntryBits | entry;
         return;
     }
     uint32_t* slots = at<uint32_t>(offsetOfIndex());
     while (slots[i] != freeLongSlot)
         i = (i + 1) & mask;
-    slots[i] = longTagOf(hash) << entryBitsOfLongSlot | entry;
+    slots[i] = longTagOf(hash) << longSlotEntryBits | entry;
 }
 
 void CompactTable::fillIndex(uint32_t count)
@@ -284,7 +284,7 @@ void CompactTable::fillIndex(uint32_t count)
             uint32_t i = hash & mask;
             while (slots[i] != freeShortSlot)
                 i = (i + 1) & mask;
-            slots[i] = shortTagOf(hash) << entryBitsOfShortSlot | entry;
+            slots[i] = shortTagOf(hash) << shortSlotEntryBits | entry;
         });
         return;
     }
@@ -293,7 +293,7 @@ void CompactTable::fillIndex(uint32_t count)
         uint32_t i = hash & mask;
         while (slots[i] != freeLongSlot)
             i = (i + 1) & mask;
-        slots[i] = longTagOf(hash) << entryBitsOfLongSlot | entry;
+        slots[i] = longTagOf(hash) << longSlotEntryBits | entry;
     });
 }
 
@@ -304,39 +304,37 @@ void CompactTable::append(VM& vm, JSString* key, unsigned hash, JSValue value)
     setKey(entry, key);
     setValue(entry, value);
     addToIndex(entry, hash);
-    // The collector goes up to `used`.
     WTF::storeStoreFence();
     m_used = entry + 1;
     ++m_alive;
     vm.writeBarrier(this);
 }
 
-CompactTable* CompactTable::copyWithRoom(VM& vm, Width value) const
+CompactTable* CompactTable::copyWithCapacity(VM& vm, Width value) const
 {
     uint64_t alive = size();
     if (alive >= maxCapacity)
         return nullptr;
-    uint64_t leastCapacity = std::min<uint64_t>(deleted() >= m_used / 2 ? alive + 1 : alive < 64 ? alive + alive / 2 + 1 : alive * 2, maxCapacity);
-    CompactTable* copy = create(vm, structure(), keyWidth(), value, leastCapacity);
-    // The collector goes up to `used`, which is zero until all is written.
+    uint64_t minCapacity = std::min<uint64_t>(deleted() >= m_used / 2 ? alive + 1 : alive < 64 ? alive + alive / 2 + 1 : alive * 2, maxCapacity);
+    CompactTable* copy = create(vm, structure(), keyWidth(), value, minCapacity);
     size_t keyWidth = static_cast<size_t>(this->keyWidth());
     size_t valueWidth = static_cast<size_t>(m_valueWidth);
     const uint8_t* keys = at<uint8_t>(offsetOfKeys());
     const uint8_t* values = at<uint8_t>(offsetOfValues());
-    uint8_t* keysOfCopy = copy->at<uint8_t>(copy->offsetOfKeys());
-    uint8_t* valuesOfCopy = copy->at<uint8_t>(copy->offsetOfValues());
+    uint8_t* copyKeys = copy->at<uint8_t>(copy->offsetOfKeys());
+    uint8_t* copyValues = copy->at<uint8_t>(copy->offsetOfValues());
     uint32_t count = 0;
     if (!deleted() && value == m_valueWidth) {
         count = m_used;
-        memcpy(keysOfCopy, keys, count * keyWidth);
-        memcpy(valuesOfCopy, values, count * valueWidth);
+        memcpy(copyKeys, keys, count * keyWidth);
+        memcpy(copyValues, values, count * valueWidth);
     } else {
         for (uint32_t entry = 0; entry < m_used; ++entry) {
             if (!keyAt(entry))
                 continue;
-            memcpy(keysOfCopy + count * keyWidth, keys + entry * keyWidth, keyWidth);
+            memcpy(copyKeys + count * keyWidth, keys + entry * keyWidth, keyWidth);
             if (value == m_valueWidth)
-                memcpy(valuesOfCopy + count * valueWidth, values + entry * valueWidth, valueWidth);
+                memcpy(copyValues + count * valueWidth, values + entry * valueWidth, valueWidth);
             else
                 copy->setValue(count, valueAt(entry));
             ++count;
@@ -380,7 +378,6 @@ void CompactTable::becomeObsolete(VM& vm, State state, JSCell* next)
         Locker locker { cellLock() };
         uint32_t count = 0;
         if (state == State::Replaced && deleted()) {
-            // What is written lies at or before what is read next.
             for (uint32_t entry = 0; entry < m_used; ++entry) {
                 if (!keyAt(entry))
                     deletedEntries()[count++] = entry;
@@ -400,7 +397,7 @@ static Typed::State* stateOf(JSGlobalObject* globalObject)
 }
 
 template<typename Traits>
-bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Traits>* owner, JSValue key, JSValue value, CreateIfNeeded createIfNeeded, uint32_t leastCapacity)
+bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Traits>* owner, JSValue key, JSValue value, CreateIfNeeded createIfNeeded, uint32_t minCapacity)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -421,7 +418,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     };
 
     uint32_t found;
-    if (uint32_t count = table ? table->m_used : 0; count && count == table->m_capacity && count == table->m_alive && count < maxEntriesOfKnownGrowth
+    if (uint32_t count = table ? table->m_used : 0; count && count == table->m_capacity && count == table->m_alive && count < maxKnownGrowthEntries
         && table->tryFindQuickly(key, found) == Quickly::Absent && canHold(table->m_valueWidth, value) && canHold(Width::Narrow, string) && !(state && state->isCounting())) {
         Width valueWidth = table->m_valueWidth;
         if (uint64_t known = s_knownGrowths[static_cast<unsigned>(valueWidth) / 4][count / 2].load(std::memory_order_relaxed)) [[likely]] {
@@ -464,27 +461,27 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
                 fillWords(to, std::numeric_limits<uint64_t>::max(), (keys - offsetOfIndex()) / sizeof(uint64_t));
             else
                 *to++ = *table->template at<uint64_t>(offsetOfIndex()) | static_cast<uint64_t>(shortTagOf(hash)) << (count * 8);
-            uint32_t* keysOfLarger = reinterpret_cast<uint32_t*>(to);
+            uint32_t* largerKeys = reinterpret_cast<uint32_t*>(to);
             copyWords(to, from, count / 2);
             fillWords(to, 0, (capacity - count) / 2);
-            uint64_t* valuesOfLarger = to;
+            uint64_t* largerValues = to;
             copyWords(to, from + count / 2, count * static_cast<size_t>(valueWidth) / sizeof(uint64_t));
             fillWords(to, 0, larger->at<uint64_t>(size) - to);
             larger->finishCreation(vm);
-            keysOfLarger[count] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(string) >> MarkedBlockCage::shift);
+            largerKeys[count] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(string) >> MarkedBlockCage::shift);
             if (valueWidth == Width::Wide)
-                valuesOfLarger[count] = JSValue::encode(value);
+                largerValues[count] = JSValue::encode(value);
             else if (valueWidth == Width::Narrow)
-                reinterpret_cast<uint32_t*>(valuesOfLarger)[count] = value.isCell() ? static_cast<uint32_t>(std::bit_cast<uintptr_t>(value.asCell()) >> MarkedBlockCage::shift) : static_cast<uint32_t>(JSValue::encode(value));
+                reinterpret_cast<uint32_t*>(largerValues)[count] = value.isCell() ? static_cast<uint32_t>(std::bit_cast<uintptr_t>(value.asCell()) >> MarkedBlockCage::shift) : static_cast<uint32_t>(JSValue::encode(value));
             if (indexBits) {
                 uint32_t mask = (1u << indexBits) - 1;
                 uint16_t* slots = larger->at<uint16_t>(offsetOfIndex());
                 for (uint32_t entry = 0; entry <= count; ++entry) {
-                    unsigned hashOfEntry = entry == count ? hash : uncheckedDowncast<JSString>(MarkedBlockCage::decode(keysOfLarger[entry]))->tryGetValueImpl()->existingHash();
-                    uint32_t i = hashOfEntry & mask;
+                    unsigned entryHash = entry == count ? hash : uncheckedDowncast<JSString>(MarkedBlockCage::decode(largerKeys[entry]))->tryGetValueImpl()->existingHash();
+                    uint32_t i = entryHash & mask;
                     while (slots[i] != freeShortSlot)
                         i = (i + 1) & mask;
-                    slots[i] = shortTagOf(hashOfEntry) << entryBitsOfShortSlot | entry;
+                    slots[i] = shortTagOf(entryHash) << shortSlotEntryBits | entry;
                 }
             }
             WTF::storeStoreFence();
@@ -492,10 +489,10 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
             larger->m_alive = count + 1;
             vm.writeBarrier(larger);
             if (Options::validateAOTTypedFacts()) [[unlikely]] {
-                CompactTable* byTheOldWay = table->copyWithRoom(vm, valueWidth);
-                RELEASE_ASSERT(byTheOldWay);
-                byTheOldWay->append(vm, string, hash, value);
-                RELEASE_ASSERT(!memcmp(byTheOldWay->at<uint8_t>(sizeof(JSCell)), larger->at<uint8_t>(sizeof(JSCell)), size - sizeof(JSCell)));
+                CompactTable* fallbackCopy = table->copyWithCapacity(vm, valueWidth);
+                RELEASE_ASSERT(fallbackCopy);
+                fallbackCopy->append(vm, string, hash, value);
+                RELEASE_ASSERT(!memcmp(fallbackCopy->at<uint8_t>(sizeof(JSCell)), larger->at<uint8_t>(sizeof(JSCell)), size - sizeof(JSCell)));
             }
             larger->m_state = table->m_state;
             if (table->m_state != State::Live)
@@ -513,7 +510,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
                 uint32_t before = 0;
                 for (uint32_t i = 0; i < *entry; ++i)
                     before += !table->keyAt(i);
-                CompactTable* wider = table->copyWithRoom(vm, Width::Wide);
+                CompactTable* wider = table->copyWithCapacity(vm, Width::Wide);
                 if (!wider)
                     return false;
                 replaceBy(wider, "widened"_s);
@@ -530,10 +527,9 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     RETURN_IF_EXCEPTION(scope, false);
     if (!table) {
         bool isNarrow = !state->data.usesWideReferences;
-        // AOTStubs.cpp goes by this.
         Width keyWidth = isNarrow ? Width::Narrow : Width::Wide;
         Width valueWidth = !Traits::hasValueData ? Width::None : isNarrow && canHold(Width::Narrow, value) ? Width::Narrow : Width::Wide;
-        table = create(vm, state->compactTableStructure(), keyWidth, valueWidth, leastCapacity);
+        table = create(vm, state->compactTableStructure(), keyWidth, valueWidth, minCapacity);
         globalObject->aotInstance()->compactTableStructureID = table->structureID().bits();
         owner->m_compactTable.set(vm, owner, table);
         if (state->isCounting()) [[unlikely]]
@@ -541,18 +537,18 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     }
     if (!canHold(table->keyWidth(), string)) [[unlikely]]
         return false;
-    bool holdsValue = canHold(table->m_valueWidth, value);
+    bool canStoreValue = canHold(table->m_valueWidth, value);
     std::atomic<uint64_t>* knownGrowth = nullptr;
-    if (uint32_t count = table->m_used; count == table->m_capacity && holdsValue && count == table->m_alive && count < maxEntriesOfKnownGrowth && table->keyWidth() == Width::Narrow)
+    if (uint32_t count = table->m_used; count == table->m_capacity && canStoreValue && count == table->m_alive && count < maxKnownGrowthEntries && table->keyWidth() == Width::Narrow)
         knownGrowth = &s_knownGrowths[static_cast<unsigned>(table->m_valueWidth) / 4][count / 2];
-    if (table->m_used == table->m_capacity || !holdsValue) {
-        CompactTable* larger = table->copyWithRoom(vm, holdsValue ? table->m_valueWidth : Width::Wide);
+    if (table->m_used == table->m_capacity || !canStoreValue) {
+        CompactTable* larger = table->copyWithCapacity(vm, canStoreValue ? table->m_valueWidth : Width::Wide);
         if (!larger)
             return false;
         if (knownGrowth && larger->m_capacity <= maxCapacityWithShortSlots)
             knownGrowth->store(larger->m_capacity | static_cast<uint64_t>(larger->m_indexBits) << 32 | static_cast<uint64_t>(larger->m_keysShift) << 40 | static_cast<uint64_t>(larger->m_valueWidth) << 48
-                | static_cast<uint64_t>(MarkedSpace::sizeClassToIndex(MarkedSpace::optimalSizeFor(allocationSize(larger->m_capacity, Width::Narrow, larger->m_valueWidth)))) << shiftOfSizeStepInKnownGrowth, std::memory_order_relaxed);
-        replaceBy(larger, holdsValue ? "grown"_s : "widened"_s);
+                | static_cast<uint64_t>(MarkedSpace::sizeClassToIndex(MarkedSpace::optimalSizeFor(allocationSize(larger->m_capacity, Width::Narrow, larger->m_valueWidth)))) << knownGrowthSizeStepShift, std::memory_order_relaxed);
+        replaceBy(larger, canStoreValue ? "grown"_s : "widened"_s);
     }
     table->append(vm, string, hashOf(string), value);
     return true;
@@ -575,7 +571,6 @@ template<typename Traits>
 void CompactTable::clear(VM& vm, JSOrderedHashTable<Traits>* owner)
 {
     auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
-    // The collector goes up to `used` as it has read it: what is there stays valid until it is written anew.
     if (table->m_state == State::Live && table->hasTags()) {
         table->m_used = 0;
         table->m_alive = 0;
@@ -595,7 +590,6 @@ void CompactTable::convert(VM& vm, JSOrderedHashTable<Traits>* owner)
     auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
     RELEASE_ASSERT(!owner->m_storage);
     if (Typed::State* state = stateOf(globalObject); state && state->isCounting()) [[unlikely]] {
-        // Who wants the storage: behind this function and JSOrderedHashTable::convertCompactTable().
         StringPrintStream callers;
         auto trace = StackTrace::captureStackTrace(5, 2);
         for (void* returnAddress : trace->stack())
@@ -661,7 +655,7 @@ CompactTable::Position CompactTable::next(VM& vm, JSOrderedHashTable<Traits>* ow
     }
 }
 
-JSCell* CompactTable::copyOfPosition(VM& vm, JSCell* position)
+JSCell* CompactTable::copyPosition(VM& vm, JSCell* position)
 {
     auto* record = uncheckedDowncast<JSCellButterfly>(position);
     JSCellButterfly* copy = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, 2);
@@ -670,16 +664,15 @@ JSCell* CompactTable::copyOfPosition(VM& vm, JSCell* position)
     return copy;
 }
 
-// The record: 0 the collection, or the iterator; 1 the mode; 2 the value; 3 the table, or null; 4 the number of the entry to go on from.
 static constexpr int32_t iterationKindMask = 3;
-static constexpr int32_t iterationIsOfSet = 4;
-static constexpr int32_t iterationGoesThroughIterator = 8;
-static constexpr int32_t iterationIsOfGenerator = 16;
-static constexpr int32_t iterationIsOfArray = 32;
-static constexpr int32_t iterationIsOfString = 64;
-static constexpr int32_t iterationIsOfMatches = 128;
-static constexpr int32_t iterationIsOfTypedArray = 512;
-static_assert(CollectionIteration::mayBeSteppedQuickly == 1024 && CollectionIteration::mayBeSteppedQuicklyOnceBegun == 2048 && CollectionIteration::isOfEntriesOfArrayByIndex == 256);
+static constexpr int32_t iteratesSet = 4;
+static constexpr int32_t iteratesThroughIterator = 8;
+static constexpr int32_t iteratesGenerator = 16;
+static constexpr int32_t iteratesArray = 32;
+static constexpr int32_t iteratesString = 64;
+static constexpr int32_t iteratesMatches = 128;
+static constexpr int32_t iteratesTypedArray = 512;
+static_assert(CollectionIteration::mayBeSteppedQuickly == 1024 && CollectionIteration::hasFastStepAfterStart == 2048 && CollectionIteration::iteratesArrayEntriesByIndex == 256);
 
 static bool arrayIteratorProtocolIsFastAndNonObservable(VM& vm, JSArrayIterator* iterator)
 {
@@ -692,7 +685,6 @@ static bool arrayIteratorProtocolIsFastAndNonObservable(VM& vm, JSArrayIterator*
             || iterator->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
             return false;
     }
-    // JSArrayIterator::next() is for arrays that keep their length where JSArray does.
     JSValue iterated = iterator->internalField(JSArrayIterator::Field::IteratedObject).get();
     return iterated.isCell() && iterated.asCell()->classInfo() == JSArray::info();
 }
@@ -703,14 +695,13 @@ static ALWAYS_INLINE auto tryOpenWith(JSGlobalObject* globalObject, JSValue iter
     VM& vm = globalObject->vm();
     if (!iterable.isCell())
         return nullptr;
-    // In this realm no prototype of an iterator can be given a `return` method.
     JSCell* cell = iterable.asCell();
     int32_t mode;
     switch (cell->type()) {
     case StringType:
         if (!globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable())
             return nullptr;
-        mode = iterationIsOfString;
+        mode = iteratesString;
         break;
     case JSMapType:
         if (uncheckedDowncast<JSMap>(cell)->realm() != globalObject || !uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable())
@@ -720,34 +711,33 @@ static ALWAYS_INLINE auto tryOpenWith(JSGlobalObject* globalObject, JSValue iter
     case JSSetType:
         if (uncheckedDowncast<JSSet>(cell)->realm() != globalObject || !uncheckedDowncast<JSSet>(cell)->isIteratorProtocolFastAndNonObservable())
             return nullptr;
-        mode = static_cast<int32_t>(IterationKind::Values) | iterationIsOfSet | CollectionIteration::mayBeSteppedQuicklyOnceBegun;
+        mode = static_cast<int32_t>(IterationKind::Values) | iteratesSet | CollectionIteration::hasFastStepAfterStart;
         break;
     case JSMapIteratorType:
         if (uncheckedDowncast<JSMapIterator>(cell)->realm() != globalObject || !mapIteratorProtocolIsFastAndNonObservable(vm, uncheckedDowncast<JSMapIterator>(cell)))
             return nullptr;
-        mode = iterationGoesThroughIterator | (uncheckedDowncast<JSMapIterator>(cell)->kind() != IterationKind::Entries ? CollectionIteration::mayBeSteppedQuicklyOnceBegun : 0);
+        mode = iteratesThroughIterator | (uncheckedDowncast<JSMapIterator>(cell)->kind() != IterationKind::Entries ? CollectionIteration::hasFastStepAfterStart : 0);
         break;
     case JSSetIteratorType:
         if (uncheckedDowncast<JSSetIterator>(cell)->realm() != globalObject || !setIteratorProtocolIsFastAndNonObservable(vm, uncheckedDowncast<JSSetIterator>(cell)))
             return nullptr;
-        mode = iterationGoesThroughIterator | iterationIsOfSet | (uncheckedDowncast<JSSetIterator>(cell)->kind() != IterationKind::Entries ? CollectionIteration::mayBeSteppedQuicklyOnceBegun : 0);
+        mode = iteratesThroughIterator | iteratesSet | (uncheckedDowncast<JSSetIterator>(cell)->kind() != IterationKind::Entries ? CollectionIteration::hasFastStepAfterStart : 0);
         break;
     case JSArrayIteratorType:
         if (uncheckedDowncast<JSArrayIterator>(cell)->realm() != globalObject || !arrayIteratorProtocolIsFastAndNonObservable(vm, uncheckedDowncast<JSArrayIterator>(cell)))
             return nullptr;
-        mode = iterationGoesThroughIterator | iterationIsOfArray;
+        mode = iteratesThroughIterator | iteratesArray;
         break;
-    // What matchAll() makes, as it was made: nothing of its own, and the prototype it was given, which stays what it is: JSGlobalObject::makeIntrinsicsImmutable().
     case JSRegExpStringIteratorType:
         if (cell->structure() != globalObject->regExpStringIteratorStructure())
             return nullptr;
-        mode = iterationGoesThroughIterator | iterationIsOfMatches;
+        mode = iteratesThroughIterator | iteratesMatches;
         break;
     case ObjectType: {
         auto* generator = dynamicDowncast<Generator>(cell);
-        if (!generator || generator->realm() != globalObject || !generator->iteratesAsMade(globalObject))
+        if (!generator || generator->realm() != globalObject || !generator->hasUnmodifiedIteration(globalObject))
             return nullptr;
-        mode = iterationIsOfGenerator;
+        mode = iteratesGenerator;
         break;
     }
     default: {
@@ -756,7 +746,7 @@ static ALWAYS_INLINE auto tryOpenWith(JSGlobalObject* globalObject, JSValue iter
         auto* view = uncheckedDowncast<JSArrayBufferView>(cell);
         if (view->realm() != globalObject || !view->isIteratorProtocolFastAndNonObservable() || view->isOutOfBounds())
             return nullptr;
-        mode = iterationIsOfMatches | iterationIsOfTypedArray;
+        mode = iteratesMatches | iteratesTypedArray;
         break;
     }
     }
@@ -790,14 +780,13 @@ bool CollectionIteration::tryOpen(JSGlobalObject* globalObject, JSValue iterable
     });
 }
 
-// In place, however large the function around it grows. A record holds values, never doubles.
-static ALWAYS_INLINE void storeWordOfRecord(VM& vm, JSCellButterfly* record, unsigned word, JSValue value)
+static ALWAYS_INLINE void storeRecordWord(VM& vm, JSCellButterfly* record, unsigned word, JSValue value)
 {
     ASSERT(hasContiguous(record->indexingType()));
     record->toButterfly()->contiguous().atUnsafe(word).set(vm, record, value);
 }
 
-static ALWAYS_INLINE void storeWordOfRecord(VM& vm, CollectionIteration::InFrame* record, unsigned word, JSValue value)
+static ALWAYS_INLINE void storeRecordWord(VM& vm, CollectionIteration::InFrame* record, unsigned word, JSValue value)
 {
     record->setIndex(vm, word, value);
 }
@@ -808,39 +797,37 @@ static ALWAYS_INLINE bool stepThrough(JSGlobalObject* globalObject, Record* reco
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int32_t mode = record->get(1).asInt32();
-    // Compiled code steps through those by itself. They have two words.
-    RELEASE_ASSERT(!(mode & CollectionIteration::isOfEntriesOfArrayByIndex));
+    RELEASE_ASSERT(!(mode & CollectionIteration::iteratesArrayEntriesByIndex));
     JSCell* cell = record->get(0).asCell();
     JSValue value;
-    if (mode & iterationIsOfGenerator) {
+    if (mode & iteratesGenerator) {
         bool isDone;
         value = uncheckedDowncast<Generator>(cell)->resume(globalObject, Generator::ResumeMode::Next, jsUndefined(), isDone);
         RETURN_IF_EXCEPTION(scope, false);
         if (isDone)
             return false;
-    } else if (mode & iterationIsOfString) {
+    } else if (mode & iteratesString) {
         auto [next, position] = JSStringIterator::advance(globalObject, vm, uncheckedDowncast<JSString>(cell), record->get(4).asInt32());
         RETURN_IF_EXCEPTION(scope, false);
         if (!next)
             return false;
-        storeWordOfRecord(vm, record, 4, jsNumber(position));
+        storeRecordWord(vm, record, 4, jsNumber(position));
         value = next;
-    } else if (mode & iterationIsOfMatches && mode & iterationIsOfTypedArray) {
+    } else if (mode & iteratesMatches && mode & iteratesTypedArray) {
         auto* view = uncheckedDowncast<JSArrayBufferView>(cell);
         validateTypedArray(globalObject, view);
         RETURN_IF_EXCEPTION(scope, false);
         size_t index = static_cast<size_t>(record->get(4).asNumber());
         if (index >= view->length())
             return false;
-        storeWordOfRecord(vm, record, 4, jsNumber(static_cast<double>(index + 1)));
+        storeRecordWord(vm, record, 4, jsNumber(static_cast<double>(index + 1)));
         if (index <= std::numeric_limits<unsigned>::max() && view->canGetIndexQuicklyForTypedArray(static_cast<unsigned>(index)))
             value = view->getIndexQuicklyForTypedArray(static_cast<unsigned>(index));
         else {
             value = view->get(globalObject, static_cast<uint64_t>(index));
             RETURN_IF_EXCEPTION(scope, false);
         }
-    } else if (mode & iterationIsOfMatches) {
-        // As JSRegExpStringIterator::next().
+    } else if (mode & iteratesMatches) {
         auto* iterator = uncheckedDowncast<JSRegExpStringIterator>(cell);
         if (iterator->isDone())
             return false;
@@ -848,35 +835,35 @@ static ALWAYS_INLINE bool stepThrough(JSGlobalObject* globalObject, Record* reco
         RETURN_IF_EXCEPTION(scope, false);
         if (value.isNull())
             return false;
-    } else if (mode & iterationGoesThroughIterator) {
-        bool hasNext = mode & iterationIsOfArray ? uncheckedDowncast<JSArrayIterator>(cell)->next(globalObject, value)
-            : mode & iterationIsOfSet ? uncheckedDowncast<JSSetIterator>(cell)->next(globalObject, value)
+    } else if (mode & iteratesThroughIterator) {
+        bool hasNext = mode & iteratesArray ? uncheckedDowncast<JSArrayIterator>(cell)->next(globalObject, value)
+            : mode & iteratesSet ? uncheckedDowncast<JSSetIterator>(cell)->next(globalObject, value)
             : uncheckedDowncast<JSMapIterator>(cell)->next(globalObject, value);
         RETURN_IF_EXCEPTION(scope, false);
         if (!hasNext)
             return false;
-        if (mode & CollectionIteration::mayBeSteppedQuicklyOnceBegun)
-            storeWordOfRecord(vm, record, 1, jsNumber(mode ^ (CollectionIteration::mayBeSteppedQuicklyOnceBegun | CollectionIteration::mayBeSteppedQuickly)));
+        if (mode & CollectionIteration::hasFastStepAfterStart)
+            storeRecordWord(vm, record, 1, jsNumber(mode ^ (CollectionIteration::hasFastStepAfterStart | CollectionIteration::mayBeSteppedQuickly)));
     } else {
         JSCell* table = record->get(3).isCell() ? record->get(3).asCell() : nullptr;
         uint32_t entry = record->get(4).asUInt32();
-        CompactTable::Position position = mode & iterationIsOfSet
+        CompactTable::Position position = mode & iteratesSet
             ? CompactTable::next<SetTraits>(vm, uncheckedDowncast<JSSet>(cell), table, entry)
             : CompactTable::next<MapTraits>(vm, uncheckedDowncast<JSMap>(cell), table, entry);
         if (!position.table)
             return false;
         if (auto* compact = dynamicDowncast<CompactTable>(position.table))
             compact->markAsIterated();
-        storeWordOfRecord(vm, record, 3, position.table);
-        storeWordOfRecord(vm, record, 4, jsNumber(position.entry + 1));
+        storeRecordWord(vm, record, 3, position.table);
+        storeRecordWord(vm, record, 4, jsNumber(position.entry + 1));
         value = position.key;
         if (static_cast<IterationKind>(mode & iterationKindMask) == IterationKind::Entries) {
             value = constructArrayPair(globalObject, position.key, position.value);
             RETURN_IF_EXCEPTION(scope, false);
-        } else if (mode & CollectionIteration::mayBeSteppedQuicklyOnceBegun)
-            storeWordOfRecord(vm, record, 1, jsNumber(mode ^ (CollectionIteration::mayBeSteppedQuicklyOnceBegun | CollectionIteration::mayBeSteppedQuickly)));
+        } else if (mode & CollectionIteration::hasFastStepAfterStart)
+            storeRecordWord(vm, record, 1, jsNumber(mode ^ (CollectionIteration::hasFastStepAfterStart | CollectionIteration::mayBeSteppedQuickly)));
     }
-    storeWordOfRecord(vm, record, 2, value);
+    storeRecordWord(vm, record, 2, value);
     return true;
 }
 
@@ -890,20 +877,19 @@ bool CollectionIteration::step(JSGlobalObject* globalObject, InFrame* record)
     return stepThrough(globalObject, record);
 }
 
-// The number of the first entry from there on that has a key, which it yields. None: the key stays null.
 static ALWAYS_INLINE uint32_t nextEntryWithKey(CompactTable* compact, uint32_t number, JSString*& key)
 {
     for (uint32_t used = compact->used(); number < used && !(key = compact->keyAt(number)); ++number) { }
     return number;
 }
 
-using StepOfIteration = OperationReturnType<size_t>;
+using IterationStep = OperationReturnType<size_t>;
 
-static NEVER_INLINE StepOfIteration JIT_OPERATION_ATTRIBUTES stepThroughSetQuickly(Instance* instance, EncodedJSValue* words)
+static NEVER_INLINE IterationStep JIT_OPERATION_ATTRIBUTES stepThroughSetQuickly(Instance* instance, EncodedJSValue* words)
 {
     JSValue table = JSValue::decode(words[3]);
     if (!table.isCell())
-        [[clang::musttail]] return stepIterationInFrameGenerally(instance, words);
+        [[clang::musttail]] return stepIterationInFrameGeneric(instance, words);
     uint32_t entry = JSValue::decode(words[4]).asUInt32();
     if (table.asCell()->classInfo() != CompactTable::info()) {
         auto found = JSOrderedHashTableHelper<SetTraits>::transitAndNext(*instance->vm, *uncheckedDowncast<JSCellButterfly>(table.asCell()), entry);
@@ -916,7 +902,7 @@ static NEVER_INLINE StepOfIteration JIT_OPERATION_ATTRIBUTES stepThroughSetQuick
     }
     auto* compact = uncheckedDowncast<CompactTable>(table.asCell());
     if (!compact->isLive())
-        [[clang::musttail]] return stepIterationInFrameGenerally(instance, words);
+        [[clang::musttail]] return stepIterationInFrameGeneric(instance, words);
     JSString* key = nullptr;
     entry = nextEntryWithKey(compact, entry, key);
     if (!key)
@@ -927,9 +913,8 @@ static NEVER_INLINE StepOfIteration JIT_OPERATION_ATTRIBUTES stepThroughSetQuick
     return { true, nullptr };
 }
 
-// 0: it is over. 1: the value is in the record. 2: it is left to the general step.
 template<typename Iterator, typename ValueOf>
-static ALWAYS_INLINE unsigned stepThroughIteratorQuickly(VM& vm, EncodedJSValue* words, Iterator* iterator, bool yieldsValueOfTable, const ValueOf& valueOf)
+static ALWAYS_INLINE unsigned stepThroughIteratorQuickly(VM& vm, EncodedJSValue* words, Iterator* iterator, bool returnsTableValue, const ValueOf& valueOf)
 {
     using Field = typename Iterator::Field;
     if (iterator->tryGetStorage()) {
@@ -957,41 +942,41 @@ static ALWAYS_INLINE unsigned stepThroughIteratorQuickly(VM& vm, EncodedJSValue*
     }
     compact->markAsIterated();
     position->toButterfly()->contiguous().atUnsafe(1).setWithoutWriteBarrier(jsNumber(entry + 1));
-    words[2] = JSValue::encode(yieldsValueOfTable ? compact->valueAt(entry) : JSValue(key));
+    words[2] = JSValue::encode(returnsTableValue ? compact->valueAt(entry) : JSValue(key));
     return 1;
 }
 
-static NEVER_INLINE StepOfIteration JIT_OPERATION_ATTRIBUTES stepThroughSetIteratorQuickly(Instance* instance, EncodedJSValue* words)
+static NEVER_INLINE IterationStep JIT_OPERATION_ATTRIBUTES stepThroughSetIteratorQuickly(Instance* instance, EncodedJSValue* words)
 {
     unsigned outcome = stepThroughIteratorQuickly(*instance->vm, words, uncheckedDowncast<JSSetIterator>(JSValue::decode(words[0]).asCell()), false, [](JSValue key) ALWAYS_INLINE_LAMBDA {
         return key;
     });
     if (outcome == 2)
-        [[clang::musttail]] return stepIterationInFrameGenerally(instance, words);
+        [[clang::musttail]] return stepIterationInFrameGeneric(instance, words);
     return { outcome, nullptr };
 }
 
-static NEVER_INLINE StepOfIteration JIT_OPERATION_ATTRIBUTES stepThroughMapIteratorQuickly(Instance* instance, EncodedJSValue* words)
+static NEVER_INLINE IterationStep JIT_OPERATION_ATTRIBUTES stepThroughMapIteratorQuickly(Instance* instance, EncodedJSValue* words)
 {
     auto* iterator = uncheckedDowncast<JSMapIterator>(JSValue::decode(words[0]).asCell());
-    bool yieldsValue = iterator->kind() == IterationKind::Values;
-    unsigned outcome = stepThroughIteratorQuickly(*instance->vm, words, iterator, yieldsValue, [&](const JSMapIterator::NextResult& result) ALWAYS_INLINE_LAMBDA {
-        return yieldsValue && result.key ? result.value : result.key;
+    bool returnsValue = iterator->kind() == IterationKind::Values;
+    unsigned outcome = stepThroughIteratorQuickly(*instance->vm, words, iterator, returnsValue, [&](const JSMapIterator::NextResult& result) ALWAYS_INLINE_LAMBDA {
+        return returnsValue && result.key ? result.value : result.key;
     });
     if (outcome == 2)
-        [[clang::musttail]] return stepIterationInFrameGenerally(instance, words);
+        [[clang::musttail]] return stepIterationInFrameGeneric(instance, words);
     return { outcome, nullptr };
 }
 
-StepOfIteration JIT_OPERATION_ATTRIBUTES CollectionIteration::stepQuickly(Instance* instance, EncodedJSValue* words)
+IterationStep JIT_OPERATION_ATTRIBUTES CollectionIteration::stepQuickly(Instance* instance, EncodedJSValue* words)
 {
     JSValue encodedMode = JSValue::decode(words[1]);
     if (!encodedMode.isInt32()) [[unlikely]]
-        [[clang::musttail]] return stepIterationInFrameGenerally(instance, words);
+        [[clang::musttail]] return stepIterationInFrameGeneric(instance, words);
     int32_t mode = encodedMode.asInt32();
-    if (!(mode & iterationGoesThroughIterator))
+    if (!(mode & iteratesThroughIterator))
         [[clang::musttail]] return stepThroughSetQuickly(instance, words);
-    if (mode & iterationIsOfSet)
+    if (mode & iteratesSet)
         [[clang::musttail]] return stepThroughSetIteratorQuickly(instance, words);
     [[clang::musttail]] return stepThroughMapIteratorQuickly(instance, words);
 }
@@ -1000,16 +985,15 @@ template<typename Record>
 static ALWAYS_INLINE void closeRecord(JSGlobalObject* globalObject, Record* record)
 {
     int32_t mode = record->get(1).asInt32();
-    if (mode & iterationGoesThroughIterator) {
+    if (mode & iteratesThroughIterator) {
         if (JSObject* iterator = asObject(record->get(0)); iterator->hasCustomProperties())
             iteratorClose(globalObject, iterator);
         return;
     }
-    if (!(mode & iterationIsOfGenerator))
+    if (!(mode & iteratesGenerator))
         return;
     auto* generator = uncheckedDowncast<Generator>(record->get(0).asCell());
-    // `next` was read when the loop was opened. `return` is looked up now: the body of the loop may have put another in its way.
-    if (!generator->iteratesAsMade(globalObject)) {
+    if (!generator->hasUnmodifiedIteration(globalObject)) {
         iteratorClose(globalObject, generator);
         return;
     }
@@ -1027,12 +1011,10 @@ void CollectionIteration::close(JSGlobalObject* globalObject, InFrame* record)
     closeRecord(globalObject, record);
 }
 
-// Room for so many more elements, which are holes until they are stored. None: the array is left as it was.
 static WriteBarrier<Unknown>* tryGrow(JSGlobalObject* globalObject, JSArray* array, unsigned count)
 {
     VM& vm = globalObject->vm();
     unsigned length = array->length();
-    // Beyond, an array that is mostly holes gets other storage.
     if (count >= MIN_SPARSE_ARRAY_INDEX - std::min(length, MIN_SPARSE_ARRAY_INDEX) || !array->tryMakeWritableContiguous(vm).data())
         return nullptr;
     if (!array->setLength(globalObject, length + count))
@@ -1041,7 +1023,6 @@ static WriteBarrier<Unknown>* tryGrow(JSGlobalObject* globalObject, JSArray* arr
     return array->butterfly()->contiguous().data() + length;
 }
 
-// From the first entry on. Nothing of the program runs meanwhile.
 template<typename Traits>
 static bool tryAppendEntries(JSGlobalObject* globalObject, JSArray* target, JSOrderedHashTable<Traits>* owner, IterationKind kind)
 {
@@ -1114,7 +1095,6 @@ static void appendRestOf(JSGlobalObject* globalObject, JSArray* target, Iterator
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // One that has not taken a step is at the start of whatever the collection has.
     JSValue entry = iterator->internalField(Iterator::Field::Entry).get();
     JSCell* storage = iterator->tryGetStorage();
     auto* owner = iterator->iteratedObject();

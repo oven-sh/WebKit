@@ -294,7 +294,7 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
 #if ENABLE(AOT)
-        } else if (std::optional<bool> isFound = object->type() == ObjectType ? object->getOwnPropertySlotOfCompiledObject(propertyName, slot) : std::nullopt) {
+        } else if (std::optional<bool> isFound = object->type() == ObjectType ? object->getOwnPropertySlotFromCompiledObject(propertyName, slot) : std::nullopt) {
             if (*isFound)
                 return true;
 #endif
@@ -473,12 +473,12 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
             RELEASE_AND_RETURN(scope, false);
 #endif
         JSValue held;
-        bool isByLockAlone = isLockedBuiltin() && isRefusedByLockAlone(vm, propertyName.uid(), held);
-        if (isByLockAlone && held == value)
+        bool isRejectedOnlyByLockHere = isLockedBuiltin() && isRejectedOnlyByLock(vm, propertyName.uid(), held);
+        if (isRejectedOnlyByLockHere && held == value)
             return true;
-        if ((slot.isStrictMode() && isLockedBuiltin()) || (isByLockAlone && slot.context() != PutPropertySlot::ReflectSet)) {
-            noteRefusalByLock(vm, propertyName.uid());
-            return typeError(globalObject, scope, true, wordsOfRefusalByLock(vm, propertyName.uid(), error));
+        if ((slot.isStrictMode() && isLockedBuiltin()) || (isRejectedOnlyByLockHere && slot.context() != PutPropertySlot::ReflectSet)) {
+            recordLockViolation(vm, propertyName.uid());
+            return typeError(globalObject, scope, true, lockViolationMessage(vm, propertyName.uid(), error));
         }
         return typeError(globalObject, scope, slot.isStrictMode(), error);
     }

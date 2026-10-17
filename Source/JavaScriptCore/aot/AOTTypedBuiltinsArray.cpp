@@ -19,9 +19,6 @@
 
 namespace JSC { namespace AOT {
 
-// These do what takes no code of the program, on an array as the engine made it. None, or no value: nothing was done, and the engine's function has to be called.
-
-// Where nobody looks at what was removed no array is made of it, and some array is yielded.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySplice, EncodedJSValue, (Instance* instance, JSCell* cell, int32_t start, int32_t deleteCount, uint32_t count, const EncodedJSValue* items, uint32_t isUsed))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -57,8 +54,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayFromTypedArray, JSCell*, (Instanc
     OPERATION_RETURN(scope, array);
 }
 
-// A vector with room for so many elements, as JSObject::ensureLengthSlow() makes it, for a short array that keeps its elements in place, may write to them, and has no named property
-// out of line. The length stays. `expected`: how many elements it is expected to come to, or zero. False: nothing was done.
 static bool growVector(VM& vm, JSArray* array, unsigned length, unsigned expected = 0)
 {
     static constexpr unsigned maxLength = 1024;
@@ -71,7 +66,6 @@ static bool growVector(VM& vm, JSArray* array, unsigned length, unsigned expecte
     void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, newVectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
     if (!base) [[unlikely]]
         return false;
-    // Nobody has it yet.
     memcpy(base, butterfly->base(0, 0), Butterfly::totalSize(0, 0, true, oldVectorLength * sizeof(EncodedJSValue)));
     Butterfly* grown = Butterfly::fromBase(base, 0, 0);
     uint64_t hole = hasDouble(array->indexingType()) ? std::bit_cast<uint64_t>(PNaN) : JSValue::encode(JSValue());
@@ -82,7 +76,6 @@ static bool growVector(VM& vm, JSArray* array, unsigned length, unsigned expecte
     return true;
 }
 
-// See Lowering::allocateStorage(). Null: there is no memory.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedAllocateStorage, void*, (Instance* instance, uint64_t size))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -95,8 +88,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayGrow, size_t, (Instance*
     return growVector(vm, uncheckedDowncast<JSArray>(cell), length);
 }
 
-// `array.push(value)` where the vector is full, which is what brings most pushes out of compiled code. `expected`: how many more are expected to be pushed, this one among them, or zero.
-// The new length, or zero: nothing was done.
 unsigned pushToFullVector(VM& vm, JSArray* array, JSValue value, unsigned expected)
 {
     IndexingType mode = array->indexingMode();
@@ -115,17 +106,15 @@ unsigned pushToFullVector(VM& vm, JSArray* array, JSValue value, unsigned expect
     return length + 1;
 }
 
-// See Typed::CollectionIteration::isOfEntriesOfArrayByIndex.
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewEntriesOfArray, JSCell*, (Instance* instance, JSCell* array))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayEntries, JSCell*, (Instance* instance, JSCell* array))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSCellButterfly* record = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, 2);
     record->setIndex(vm, 0, array);
-    record->setIndex(vm, 1, jsNumber(Typed::CollectionIteration::isOfEntriesOfArrayByIndex));
+    record->setIndex(vm, 1, jsNumber(Typed::CollectionIteration::iteratesArrayEntriesByIndex));
     OPERATION_RETURN(scope, record);
 }
 
-// The array has its elements in place. No separator: a comma. Done where every element is a string or an int32, however that is kept.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayJoin, JSCell*, (Instance* instance, JSCell* cell, JSCell* separator))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -168,18 +157,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayJoin, JSCell*, (Instance* instanc
     }
 }
 
-static JSValue constantOfArrayLiteral(VM& vm, Typed::State& state, uint64_t encoded)
+static JSValue arrayLiteralConstant(VM& vm, Typed::State& state, uint64_t encoded)
 {
     JSValue value = JSValue::decode(encoded);
     if (!value.isCell())
         return value;
     if (encoded & Typed::Data::encodedStringIsSmall)
         return encoded >> 3 ? vm.smallStrings.singleCharacterString(static_cast<unsigned char>(encoded >> 3)) : vm.smallStrings.emptyString();
-    uint32_t string = Typed::Data::stringOfEncodedConstant(encoded);
-    return encoded & Typed::Data::encodedStringIsMadeOnce ? state.makeStringConstant(vm, string) : state.string(vm, string);
+    uint32_t string = Typed::Data::decodeStringConstant(encoded);
+    return encoded & Typed::Data::encodedStringIsCached ? state.createStringConstant(vm, string) : state.string(vm, string);
 }
 
-// See Placement::placeArraySites(). The first time, or where the array cannot be allocated in place.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayBufferFromData, JSCell*, (Instance* instance, uint32_t offset, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -195,8 +183,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayBufferFromData, JSCell*, (Inst
             OPERATION_RETURN(scope, nullptr);
         }
         for (uint32_t i = 0; i < count; ++i)
-            elements->setIndex(vm, i, constantOfArrayLiteral(vm, *instance->typed, values[i]));
-        // The collector may read the statics while this runs.
+            elements->setIndex(vm, i, arrayLiteralConstant(vm, *instance->typed, values[i]));
         vm.mutatorFence();
         shared = elements;
         instance->didStoreRootInStatics(offset);
@@ -204,44 +191,35 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayBufferFromData, JSCell*, (Inst
     OPERATION_RETURN(scope, CommonSlowPaths::allocateNewArrayBuffer(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(mode), shared));
 }
 
-// What an empty array literal keeps in the statics: see Placement::placeArraySites(). The arrays made there are born with room for `capacity()` elements, which follows what they come to.
-// More: once over half of those born with it have outgrown it. Less: that is tried from time to time, for as many arrays as lie between two reviews, and kept unless more than one in eight
-// of them would have had room with what the site had before.
 struct ArraySite {
-    static constexpr unsigned bornShift = arraySiteBornShift;
-    static constexpr uint32_t capacityMask = (1 << bornShift) - 1;
-    // So many arrays are made between two reviews.
+    static constexpr unsigned allocationCountShift = arraySiteAllocationCountShift;
+    static constexpr uint32_t capacityMask = (1 << allocationCountShift) - 1;
     static constexpr uint32_t interval = arraySiteInterval;
-    // So many reviews pass after less has been tried in vain.
-    static constexpr uint8_t patience = 16;
+    static constexpr uint8_t initialReviewsToWait = 16;
     static_assert(BASE_CONTIGUOUS_VECTOR_LEN_MAX <= capacityMask && interval <= UINT8_MAX);
 
-    unsigned capacity() const { return capacityAndBorn & capacityMask ? capacityAndBorn & capacityMask : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY; }
-    unsigned bornSinceReview() const { return capacityAndBorn >> bornShift & (interval - 1); }
+    unsigned capacity() const { return capacityAndAllocationCount & capacityMask ? capacityAndAllocationCount & capacityMask : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY; }
+    unsigned allocationsSinceReview() const { return capacityAndAllocationCount >> allocationCountShift & (interval - 1); }
     void change(unsigned capacity)
     {
-        capacityAndBorn = capacity;
+        capacityAndAllocationCount = capacity;
         outgrown = 0;
     }
     void goBack()
     {
         change(capacityBefore);
         capacityBefore = 0;
-        reviewsToWait = patience;
+        reviewsToWait = initialReviewsToWait;
     }
 
-    // In the low byte the capacity, zero for that of any empty literal. Above it how many arrays have been made, which compiled code counts.
-    uint32_t capacityAndBorn;
-    // Since the last review.
+    uint32_t capacityAndAllocationCount;
     uint8_t outgrown;
-    // While less is being tried: what the site had before, and how many had outgrown that between two reviews. Else zero.
     uint8_t capacityBefore;
     uint8_t outgrownBefore;
     uint8_t reviewsToWait;
 };
-static_assert(sizeof(ArraySite) == 2 * sizeof(uint32_t) && !OBJECT_OFFSETOF(ArraySite, capacityAndBorn));
+static_assert(sizeof(ArraySite) == 2 * sizeof(uint32_t) && !OBJECT_OFFSETOF(ArraySite, capacityAndAllocationCount));
 
-// Before a push that may have found no room.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedUpdateVectorLengthHint, void, (Instance* instance, JSCell* cell, uint32_t offset))
 {
     IndexingType type = cell->indexingType();
@@ -250,10 +228,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedUpdateVectorLengthHint, void,
     auto& site = *reinterpret_cast<ArraySite*>(instance->typedStatics + offset);
     Butterfly* butterfly = uncheckedDowncast<JSArray>(cell)->butterfly();
     unsigned capacity = butterfly->vectorLength();
-    // Full for the first time.
     if (butterfly->publicLength() != capacity || capacity != site.capacity() || capacity >= BASE_CONTIGUOUS_VECTOR_LEN_MAX || site.outgrown == UINT8_MAX)
         return;
-    if (++site.outgrown < 2 || site.outgrown * 2u <= site.bornSinceReview())
+    if (++site.outgrown < 2 || site.outgrown * 2u <= site.allocationsSinceReview())
         return;
     if (site.capacityBefore)
         site.goBack();
@@ -284,7 +261,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedReviewVectorLengthHint, void,
     site.change(capacity <= 9 ? capacity - 2 : (capacity * 3 / 4) | 1);
 }
 
-// Of a long array, several elements at a time. -1: there is none.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayIndexOfDouble, size_t, (Instance*, JSCell* array, double searched))
 {
     Butterfly& butterfly = *uncheckedDowncast<JSArray>(array)->butterfly();
@@ -293,7 +269,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayIndexOfDouble, size_t, (
     return found ? found - data : static_cast<size_t>(-1);
 }
 
-// Among int32s, where only the same bits are the same number.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayIndexOfInt32, size_t, (Instance*, JSCell* array, EncodedJSValue searched))
 {
     Butterfly& butterfly = *uncheckedDowncast<JSArray>(array)->butterfly();
@@ -306,7 +281,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayUnshift, EncodedJSValue, (Instanc
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSArray* array = uncheckedDowncast<JSArray>(cell);
-    // Neither the array nor what it inherits from answers an index with code of the program.
     if (shouldUseSlowPut(array->indexingType()) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
     uint64_t length = array->length();
@@ -321,7 +295,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayUnshift, EncodedJSValue, (Instanc
 
 static constexpr uint32_t valuesAreRawNumbers = 1u << 8;
 
-// The values are boxed, or raw numbers and what stands for `undefined` and `null` among them. One that the indexing type has no room for makes the array one that keeps values.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithIndexingType, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -355,16 +328,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithIndexingType, JSCell*, (In
     OPERATION_RETURN(scope, array);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayOfDoubles, JSCell*, (Instance* instance, uint32_t countAndWhichAreNumbers, double first, double second, double third, double fourth))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayFromDoubles, JSCell*, (Instance* instance, uint32_t countAndNumberMask, double first, double second, double third, double fourth))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     double given[] = { first, second, third, fourth };
-    unsigned count = countAndWhichAreNumbers & ((1u << shiftOfNumbersInArrayLiteralOfDoubles) - 1);
+    unsigned count = countAndNumberMask & ((1u << arrayLiteralWithDoubleIsNumberMaskShift) - 1);
     bool fit = true;
     for (unsigned i = 0; i < count; ++i)
         fit &= given[i] == given[i];
     if (fit && !globalObject->isHavingABadTime()) {
-        unsigned capacity = vectorLengthOfArrayLiteral(count);
+        unsigned capacity = arrayLiteralVectorLength(count);
         void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
         if (!storage) {
             throwOutOfMemoryError(globalObject, scope);
@@ -386,21 +359,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayOfDoubles, JSCell*, (Instance*
     IndexingType made = array->indexingType();
     for (unsigned i = 0; i < count; ++i) {
         uint64_t bits = std::bit_cast<uint64_t>(given[i]);
-        bool isNumber = countAndWhichAreNumbers >> (shiftOfNumbersInArrayLiteralOfDoubles + i) & 1;
+        bool isNumber = countAndNumberMask >> (arrayLiteralWithDoubleIsNumberMaskShift + i) & 1;
         JSValue value = !isNumber && bits == Typed::nullDouble ? jsNull() : !isNumber && (bits == Typed::undefinedDouble || bits == Typed::absentDouble) ? jsUndefined() : jsNumber(purifyNaN(given[i]));
         array->initializeIndex(initializationScope, i, value, made);
     }
     OPERATION_RETURN(scope, array);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayOfConstants, JSCell*, (Instance* instance, uint32_t literal, uint32_t indexingType))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewConstantArray, JSCell*, (Instance* instance, uint32_t literal, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     auto& data = instance->typed->data;
     auto [valuesOffset, count] = data.at<std::array<uint32_t, 2>>(data.arrayLiteralsOffset)[literal];
     const uint64_t* values = data.at<uint64_t>(valuesOffset);
     auto valueAt = [&](uint32_t i) {
-        return constantOfArrayLiteral(vm, *instance->typed, values[i]);
+        return arrayLiteralConstant(vm, *instance->typed, values[i]);
     };
     for (uint32_t i = 0; i < count; ++i) {
         JSValue value = valueAt(i);
@@ -424,11 +397,8 @@ namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/array.def.
-
-static constexpr unsigned minLengthToSearchOutOfLine = 32;
-// The engine copies many at a time, which pays for the call from here on.
-static constexpr unsigned maxLengthToCopyOneByOne = 64;
+static constexpr unsigned minLengthForOutOfLineSearch = 32;
+static constexpr unsigned maxLengthForElementwiseCopy = 64;
 
 void sinkEmptyArrayLiterals(Function& function)
 {
@@ -461,13 +431,10 @@ void sinkEmptyArrayLiterals(Function& function)
 
 static bool isInt32Type(const Type& type)
 {
-    return type.isInteger() && type.integers.isWithin(Range::int32());
+    return type.isInteger() && type.integers.isSubsetOf(Range::int32());
 }
 
-// How an array that is made as the type keeps its elements. That says what is expected of its future: whatever is stored later that does not fit converts it.
-// What the array that is being made is expected to hold. Nothing vouches for the elements of an array, so every array type is within every other, whatever their elements, and
-// predictionOf() has nothing to say of one. It decides how the array keeps its elements from its birth, and nothing else.
-Type Lowering::arrayTypeAtBirth(ValueID id) const
+Type Lowering::arrayTypeAtCreation(ValueID id) const
 {
     if (TypeID prediction = m_function.at(id).prediction(); prediction && m_program.at(prediction).elements)
         return m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull);
@@ -481,7 +448,7 @@ Type Lowering::arrayTypeAtBirth(ValueID id) const
     return typeOf(id);
 }
 
-IndexingType Lowering::indexingTypeAtBirth(const Type& array) const
+IndexingType Lowering::indexingTypeAtCreation(const Type& array) const
 {
     if (!array.elements)
         return ArrayWithContiguous;
@@ -501,17 +468,14 @@ const AbstractHeap& Lowering::elementsOf(IndexingType indexingType)
     return indexingType == ArrayWithDouble ? m_heaps.indexedDoubleProperties.atAnyIndex() : m_heaps.indexedContiguousProperties.atAnyIndex();
 }
 
-// So many bytes for the elements of an array, with nothing in them. Where the free list of the size has run out the run time finds the next one, which may collect, and all goes on here:
-// whoever has read a pointer out of an object before keeps the object alive. To the block for a size that is not allocated in place, or where there is no memory.
 LValue Lowering::allocateStorage(LValue size, LBasicBlock slowPath)
 {
     LBasicBlock hasRunOut = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    // A length of -1, which stands for one that is none, comes to no bytes at all.
     orElse(m_out.notZero64(size), slowPath);
     LValue storage = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfAuxiliarySpace()), size, slowPath), hasRunOut);
     applyEffects(storage->as<PatchpointValue>(), { Writes::RuntimeState, false });
-    ValueFromBlock inPlace = m_out.anchor(storage);
+    ValueFromBlock inlinePath = m_out.anchor(storage);
     m_out.jump(continuation);
     m_out.appendTo(hasRunOut);
     Pointer found = AOT_TYPED_OPERATION(AllocateStorage, Integer(size));
@@ -519,30 +483,27 @@ LValue Lowering::allocateStorage(LValue size, LBasicBlock slowPath)
     ValueFromBlock outOfLine = m_out.anchor(found.value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-    return m_out.phi(pointerType(), inPlace, outOfLine);
+    return m_out.phi(pointerType(), inlinePath, outOfLine);
 }
 
-// Nothing but holes, up to the capacity. To the block for a length that is none, or too large to be allocated in place.
-CellPointer Lowering::allocateArrayWithHoles(Integer length, IndexingType indexingType, LBasicBlock slowPath, bool isInTheMaking)
+CellPointer Lowering::allocateArrayWithHoles(Integer length, IndexingType indexingType, LBasicBlock slowPath, bool isUnderConstruction)
 {
-    if (isInTheMaking) {
-        static_assert(static_cast<unsigned>(Stub::ArrayInTheMakingOfValues) + 1 == static_cast<unsigned>(Stub::LeafArrayInTheMakingOfValues) && static_cast<unsigned>(Stub::ArrayInTheMakingOfDoubles) + 1 == static_cast<unsigned>(Stub::LeafArrayInTheMakingOfDoubles) && static_cast<unsigned>(Stub::ArrayInTheMakingOfInt32s) + 1 == static_cast<unsigned>(Stub::LeafArrayInTheMakingOfInt32s));
-        Stub stub = indexingType == ArrayWithDouble ? Stub::ArrayInTheMakingOfDoubles : indexingType == ArrayWithInt32 ? Stub::ArrayInTheMakingOfInt32s : Stub::ArrayInTheMakingOfValues;
+    if (isUnderConstruction) {
+        static_assert(static_cast<unsigned>(Stub::NewArrayUnderConstructionWithContiguous) + 1 == static_cast<unsigned>(Stub::LeafNewArrayUnderConstructionWithContiguous) && static_cast<unsigned>(Stub::NewArrayUnderConstructionWithDouble) + 1 == static_cast<unsigned>(Stub::LeafNewArrayUnderConstructionWithDouble) && static_cast<unsigned>(Stub::NewArrayUnderConstructionWithInt32) + 1 == static_cast<unsigned>(Stub::LeafNewArrayUnderConstructionWithInt32));
+        Stub stub = indexingType == ArrayWithDouble ? Stub::NewArrayUnderConstructionWithDouble : indexingType == ArrayWithInt32 ? Stub::NewArrayUnderConstructionWithInt32 : Stub::NewArrayUnderConstructionWithContiguous;
 #if CPU(ARM64)
         constexpr GPRReg lengthGPR = stubTemporaryGPRs[5];
 #else
         constexpr GPRReg lengthGPR = GPRInfo::argumentGPR3;
 #endif
-        LValue array = callAllocationStub(stub, { { length.value(), lengthGPR } }, effectsOfOperation<operationAOTTypedNewArrayOfNumbers>(), true);
+        LValue array = callAllocationStub(stub, { { length.value(), lengthGPR } }, effectsForOperation<operationAOTTypedNewNumberArray>(), true);
         orElse(m_out.notZero64(array), slowPath);
         return CellPointer(array);
     }
     LBasicBlock fill = m_out.newBlock();
     LBasicBlock filled = m_out.newBlock();
-    // Zero once arrays are no longer allocated with their original structures.
     LValue header = changing64(Instance::offsetOfNewArrayHeader(indexingType));
     orElse(m_out.notZero64(header), slowPath);
-    // With the header the butterfly is a multiple of 16 bytes.
     LValue vectorLength = m_out.bitOr(length.value(), m_out.constInt64(1));
     LValue size = m_out.add(m_out.shl(vectorLength, m_out.constInt32(3)), m_out.constIntPtr(sizeof(IndexingHeader)));
     LValue storage = allocateStorage(size, slowPath);
@@ -571,9 +532,9 @@ CellPointer Lowering::allocateArrayWithHoles(Integer length, IndexingType indexi
     return CellPointer(array);
 }
 
-IndexingType Lowering::indexingTypeOfLiteral(const Arguments& elements, const Type& type) const
+IndexingType Lowering::literalIndexingType(const Arguments& elements, const Type& type) const
 {
-    IndexingType indexingType = indexingTypeAtBirth(type);
+    IndexingType indexingType = indexingTypeAtCreation(type);
     for (ValueID element : elements) {
         if (indexingType == ArrayWithInt32 ? !isInt32Type(typeOf(element)) : indexingType == ArrayWithDouble && !typeOf(element).isNumber())
             return ArrayWithContiguous;
@@ -581,28 +542,27 @@ IndexingType Lowering::indexingTypeOfLiteral(const Arguments& elements, const Ty
     return indexingType;
 }
 
-// See Stub::ArrayOfDoubles. Nothing: the empty literal.
-LValue Lowering::allocateArrayOfNumbers(IndexingType indexingType, LValue lengthAndCapacity, LBasicBlock slowPath)
+LValue Lowering::allocateNumberArray(IndexingType indexingType, LValue lengthAndCapacity, LBasicBlock slowPath)
 {
-    static_assert(static_cast<unsigned>(Stub::ArrayOfDoubles) + 1 == static_cast<unsigned>(Stub::LeafArrayOfDoubles) && static_cast<unsigned>(Stub::ArrayOfInt32s) + 1 == static_cast<unsigned>(Stub::LeafArrayOfInt32s));
-    static_assert(static_cast<unsigned>(Stub::EmptyArrayOfDoubles) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayOfDoubles) && static_cast<unsigned>(Stub::EmptyArrayOfInt32s) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayOfInt32s));
+    static_assert(static_cast<unsigned>(Stub::NewArrayWithDouble) + 1 == static_cast<unsigned>(Stub::LeafNewArrayWithDouble) && static_cast<unsigned>(Stub::NewArrayWithInt32) + 1 == static_cast<unsigned>(Stub::LeafNewArrayWithInt32));
+    static_assert(static_cast<unsigned>(Stub::NewEmptyArrayWithDouble) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayWithDouble) && static_cast<unsigned>(Stub::NewEmptyArrayWithInt32) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayWithInt32));
     RELEASE_ASSERT(indexingType == ArrayWithDouble || indexingType == ArrayWithInt32);
     bool areDoubles = indexingType == ArrayWithDouble;
-    OperationEffects effects = effectsOfOperation<operationAOTTypedNewArrayOfNumbers>();
+    OperationEffects effects = effectsForOperation<operationAOTTypedNewNumberArray>();
     LValue array = lengthAndCapacity
-        ? callAllocationStub(areDoubles ? Stub::ArrayOfDoubles : Stub::ArrayOfInt32s, { { lengthAndCapacity, stubTemporaryGPRs[0] } }, effects, true)
-        : callAllocationStub(areDoubles ? Stub::EmptyArrayOfDoubles : Stub::EmptyArrayOfInt32s, { }, effects, true);
-    orElse(m_out.notZero64(array), slowPath);
+        ? callAllocationStub(areDoubles ? Stub::NewArrayWithDouble : Stub::NewArrayWithInt32, { { lengthAndCapacity, stubTemporaryGPRs[0] } }, effects, true)
+        : callAllocationStub(areDoubles ? Stub::NewEmptyArrayWithDouble : Stub::NewEmptyArrayWithInt32, { }, effects, true);
+    if (lengthAndCapacity || !areDoubles)
+        orElse(m_out.notZero64(array), slowPath);
     return array;
 }
 
-// An array literal, made as the type says.
-CellPointer Lowering::newArrayOfType(const Arguments& elements, const Type& type)
+CellPointer Lowering::newArrayWithType(const Arguments& elements, const Type& type)
 {
-    constexpr unsigned maxInlineLength = Program::maxLengthOfArrayLiteralMadeInline;
+    constexpr unsigned maxInlineLength = Program::maxInlineArrayLiteralLength;
     unsigned length = elements.size();
-    IndexingType indexingType = indexingTypeOfLiteral(elements, type);
-    bool areNumbersOrMarkers = indexingTypeAtBirth(type) == ArrayWithDouble && std::ranges::all_of(elements, [&](ValueID element) {
+    IndexingType indexingType = literalIndexingType(elements, type);
+    bool areNumbersOrMarkers = indexingTypeAtCreation(type) == ArrayWithDouble && std::ranges::all_of(elements, [&](ValueID element) {
         return typeOf(element).isNumber() || get(element).rep == Rep::OptionalDouble;
     });
     if (areNumbersOrMarkers)
@@ -630,13 +590,15 @@ CellPointer Lowering::newArrayOfType(const Arguments& elements, const Type& type
         return outOfLine();
     if (indexingType == ArrayWithDouble && length && length <= maxArrayElementsInRegisters) {
         Vector<LValue, 4> numbers;
-        uint32_t countAndWhichAreNumbers = length;
+        uint32_t countAndNumberMask = length;
         for (unsigned i = 0; i < length; ++i) {
             numbers.append(numberOrMarker(elements[i]).value());
-            countAndWhichAreNumbers |= static_cast<uint32_t>(get(elements[i]).rep != Rep::OptionalDouble) << (shiftOfNumbersInArrayLiteralOfDoubles + i);
+            countAndNumberMask |= static_cast<uint32_t>(get(elements[i]).rep != Rep::OptionalDouble) << (arrayLiteralWithDoubleIsNumberMaskShift + i);
         }
-        return CellPointer(callAllocationStub(arrayLiteralOfDoublesStub(length), { { m_out.constInt64(countAndWhichAreNumbers), stubTemporaryGPRs[4] } }, effectsOfOperation<operationAOTTypedNewArrayOfDoubles>(), true, false, false, numbers[0], std::nullopt, Stub::TypedString, 0, numbers.span().subspan(1)));
+        return CellPointer(callAllocationStub(doubleArrayLiteralStub(length), { { m_out.constInt64(countAndNumberMask), stubTemporaryGPRs[4] } }, effectsForOperation<operationAOTTypedNewArrayFromDoubles>(), true, false, false, numbers[0], std::nullopt, Stub::TypedString, 0, numbers.span().subspan(1)));
     }
+    if (indexingType == ArrayWithDouble && !length)
+        return CellPointer(allocateNumberArray(indexingType, nullptr, nullptr));
 
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -647,12 +609,11 @@ CellPointer Lowering::newArrayOfType(const Arguments& elements, const Type& type
             continue;
         }
         Number number = numberOrMarker(element);
-        // Among doubles it would read as a hole.
         if (!typeOf(element).isInteger())
             orElse(equal(number, number), slowPath);
         stored.append(number.value());
     }
-    LValue array = allocateArrayOfNumbers(indexingType, length ? m_out.constInt64(length | vectorLengthOfArrayLiteral(length) << capacityShiftInArrayOfNumbers) : nullptr, slowPath);
+    LValue array = allocateNumberArray(indexingType, length ? m_out.constInt64(length | arrayLiteralVectorLength(length) << numberArrayCapacityShift) : nullptr, slowPath);
     if (length) {
         LValue butterfly = m_out.loadPtr(array, m_heaps.JSObject_butterfly);
         for (unsigned i = 0; i < length; ++i) {
@@ -752,7 +713,7 @@ Integer Lowering::arrayLengthOrBail(ValueID array, LBasicBlock otherwise)
 std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID literal)
 {
     auto isAvailableArray = [&](ValueID id) {
-        auto* engineClass = typeOf(id).onlyEngineClass();
+        auto* engineClass = typeOf(id).singleEngineClass();
         return engineClass && engineClass->type == ArrayType && isAvailableAtCurrentValue(id) && get(id).value;
     };
     auto isAppendSpread = [&](const Value& value) {
@@ -823,7 +784,7 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
         bool isUnconditional = !pushBlocks.containsIf([&](BlockID block) {
             return block != m_currentBlockID;
         });
-        if (isUnconditional ? pushedCount > maxCapacityOfArrayOfNumbers : pushedCount > 1)
+        if (isUnconditional ? pushedCount > maxNumberArrayCapacity : pushedCount > 1)
             return std::nullopt;
         room.constant = pushedCount;
         return room;
@@ -864,8 +825,8 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
         ValueID bound = originOf(counted->bound);
         if (isInlineBuiltin(bound, InlineBuiltin::ArrayLength))
             iteratedArray = m_function.at(bound).child(0);
-        else if (Range range = typeOf(bound).integers; range.least == range.most && range.least >= 0 && range.least <= maxCapacityOfArrayOfNumbers) {
-            room.constant += range.least;
+        else if (Range range = typeOf(bound).integers; range.minimum == range.maximum && range.minimum >= 0 && range.minimum <= maxNumberArrayCapacity) {
+            room.constant += range.minimum;
             return room;
         } else if (isAvailableAtCurrentValue(bound) && get(bound).value && get(bound).rep == Rep::Int64) {
             room.count = bound;
@@ -879,7 +840,6 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
     return room;
 }
 
-// A NewArray. See Placement::placeArraySites().
 CellPointer Lowering::newArrayLiteral(ValueID id)
 {
     std::optional<InitialCapacity> inferred;
@@ -893,50 +853,41 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
         auto& implementation = m_builtins.at(value.builtin()).implementation;
         return implementation.kind == BuiltinImplementation::Operation && implementation.operation == LanguageOperation::AppendSpread;
     };
-    static_assert(static_cast<unsigned>(Stub::EmptyArrayWithRoom) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayWithRoom));
-    static_assert(static_cast<unsigned>(Stub::EmptyArrayWithRoomFor1) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayWithRoomFor1));
-    static_assert(static_cast<unsigned>(Stub::EmptyArrayWithRoomFor3) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayWithRoomFor3));
-    IndexingType indexingType = indexingTypeAtBirth(arrayTypeAtBirth(id));
+    static_assert(static_cast<unsigned>(Stub::NewEmptyArrayWithCapacity) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayWithCapacity));
+    static_assert(static_cast<unsigned>(Stub::NewEmptyArrayCapacity1) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayCapacity1));
+    static_assert(static_cast<unsigned>(Stub::NewEmptyArrayCapacity3) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayCapacity3));
+    IndexingType indexingType = indexingTypeAtCreation(arrayTypeAtCreation(id));
     unsigned constantCapacity = !inferred->count && inferred->arrays.isEmpty() ? inferred->constant | 1 : 0;
-    if (constantCapacity == vectorLengthOfArrayLiteral(0))
-        return newArrayOfType(m_function.at(id).arguments, arrayTypeAtBirth(id));
+    if (constantCapacity == arrayLiteralVectorLength(0))
+        return newArrayWithType(m_function.at(id).arguments, arrayTypeAtCreation(id));
     if (indexingType == ArrayWithContiguous && (constantCapacity == 1 || constantCapacity == 3))
-        return CellPointer(callAllocationStub(constantCapacity == 1 ? Stub::EmptyArrayWithRoomFor1 : Stub::EmptyArrayWithRoomFor3, { }, effectsOfOperation<operationAOTTypedNewArray>(), true));
+        return CellPointer(callAllocationStub(constantCapacity == 1 ? Stub::NewEmptyArrayCapacity1 : Stub::NewEmptyArrayCapacity3, { }, effectsForOperation<operationAOTTypedNewArray>(), true));
+    if (indexingType == ArrayWithDouble && (constantCapacity == 1 || constantCapacity == 3))
+        return CellPointer(callAllocationStub(constantCapacity == 1 ? Stub::NewEmptyArrayWithDoubleCapacity1 : Stub::NewEmptyArrayWithDoubleCapacity3, { }, effectsForOperation<operationAOTTypedNewNumberArray>(), true));
     LBasicBlock fallback = newUnlikelyBlock();
     LBasicBlock continuation = m_out.newBlock();
-    if (indexingType == ArrayWithDouble && (constantCapacity == 1 || constantCapacity == 3)) {
-        LValue made = callAllocationStub(constantCapacity == 1 ? Stub::EmptyArrayOfDoublesWithRoomFor1 : Stub::EmptyArrayOfDoublesWithRoomFor3, { }, effectsOfOperation<operationAOTTypedNewArrayOfNumbers>(), true);
-        orElse(m_out.notZero64(made), fallback);
-        ValueFromBlock sized = m_out.anchor(made);
-        m_out.jump(continuation);
-        m_out.appendTo(fallback);
-        ValueFromBlock usual = m_out.anchor(newArrayOfType(m_function.at(id).arguments, arrayTypeAtBirth(id)).value());
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        return CellPointer(m_out.phi(Int64, sized, usual));
-    }
-    unsigned numberOfSpreadsAtBirth = 0;
+    unsigned numberOfSpreadsAtCreation = 0;
     if ((indexingType == ArrayWithContiguous || indexingType == ArrayWithDouble) && !inferred->count) {
         ValueID target = id;
-        for (size_t next = m_currentIndexInBlock + 1; next < m_currentBlock->values.size() && numberOfSpreadsAtBirth < inferred->arrays.size(); ++next) {
+        for (size_t next = m_currentIndexInBlock + 1; next < m_currentBlock->values.size() && numberOfSpreadsAtCreation < inferred->arrays.size(); ++next) {
             auto& spread = m_function.at(m_currentBlock->values[next]);
-            if (!isAppendSpread(spread) || originOf(spread.arguments[0]) != target || spread.arguments[1] != inferred->arrays[numberOfSpreadsAtBirth])
+            if (!isAppendSpread(spread) || originOf(spread.arguments[0]) != target || spread.arguments[1] != inferred->arrays[numberOfSpreadsAtCreation])
                 break;
             target = m_currentBlock->values[next];
-            ++numberOfSpreadsAtBirth;
+            ++numberOfSpreadsAtCreation;
             if (indexingType == ArrayWithDouble)
                 break;
         }
     }
-    if (numberOfSpreadsAtBirth) {
-        static_assert(static_cast<unsigned>(Stub::ArrayOfValues) + 1 == static_cast<unsigned>(Stub::LeafArrayOfValues));
+    if (numberOfSpreadsAtCreation) {
+        static_assert(static_cast<unsigned>(Stub::NewArrayWithContiguous) + 1 == static_cast<unsigned>(Stub::LeafNewArrayWithContiguous));
         Vector<Integer, 4> counts;
         Integer length = integer(0);
         Integer room = integer(inferred->constant);
         for (size_t i = 0; i < inferred->arrays.size(); ++i) {
             Integer count = arrayLengthOrBail(inferred->arrays[i], fallback);
             room = add(room, count);
-            if (i >= numberOfSpreadsAtBirth)
+            if (i >= numberOfSpreadsAtCreation)
                 continue;
             Operand operand = get(inferred->arrays[i]);
             Word32 shape = indexingModeOf(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()), IndexingShapeMask);
@@ -944,37 +895,37 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
                 orElse(equal(shape, word32(DoubleShape)), fallback);
             else
                 orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), fallback);
-            orElse(belowOrEqual(count, integer(maxLengthToCopyOneByOne)), fallback);
+            orElse(belowOrEqual(count, integer(maxLengthForElementwiseCopy)), fallback);
             counts.append(count);
             length = i ? add(length, count) : count;
         }
-        orElse(belowOrEqual(room, integer(maxCapacityOfArrayOfNumbers)), fallback);
-        LValue lengthAndCapacity = m_out.bitOr(m_out.shl(m_out.bitOr(room.value(), m_out.constInt64(1)), m_out.constInt32(capacityShiftInArrayOfNumbers)), length.value());
+        orElse(belowOrEqual(room, integer(maxNumberArrayCapacity)), fallback);
+        LValue lengthAndCapacity = m_out.bitOr(m_out.shl(m_out.bitOr(room.value(), m_out.constInt64(1)), m_out.constInt32(numberArrayCapacityShift)), length.value());
         LValue made;
         if (indexingType == ArrayWithDouble)
-            made = allocateArrayOfNumbers(indexingType, lengthAndCapacity, fallback);
+            made = allocateNumberArray(indexingType, lengthAndCapacity, fallback);
         else {
             LBasicBlock isShort = m_out.newBlock();
             LBasicBlock isLong = m_out.newBlock();
             LBasicBlock isMade = m_out.newBlock();
-            m_out.branch(belowOrEqual(room, integer(vectorLengthOfArrayLiteral(0))).value(), unsure(isShort), unsure(isLong));
+            m_out.branch(belowOrEqual(room, integer(arrayLiteralVectorLength(0))).value(), unsure(isShort), unsure(isLong));
             m_out.appendTo(isShort);
-            LValue madeShort = callAllocationStub(Stub::EmptyArrayWithRoom, { { room.value(), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArray>(), true);
-            m_out.store32(m_out.castToInt32(length.value()), butterflyOf(CellPointer(madeShort)).value(), m_heaps.Butterfly_publicLength);
-            ValueFromBlock shortOne = m_out.anchor(madeShort);
+            LValue shortArray = callAllocationStub(Stub::NewEmptyArrayWithCapacity, { { room.value(), stubTemporaryGPRs[0] } }, effectsForOperation<operationAOTTypedNewArray>(), true);
+            m_out.store32(m_out.castToInt32(length.value()), butterflyOf(CellPointer(shortArray)).value(), m_heaps.Butterfly_publicLength);
+            ValueFromBlock shortArrayValue = m_out.anchor(shortArray);
             m_out.jump(isMade);
             m_out.appendTo(isLong);
-            LValue madeLong = callAllocationStub(Stub::ArrayOfValues, { { lengthAndCapacity, stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArrayOfNumbers>(), true);
-            orElse(m_out.notZero64(madeLong), fallback);
-            ValueFromBlock longOne = m_out.anchor(madeLong);
+            LValue longArray = callAllocationStub(Stub::NewArrayWithContiguous, { { lengthAndCapacity, stubTemporaryGPRs[0] } }, effectsForOperation<operationAOTTypedNewNumberArray>(), true);
+            orElse(m_out.notZero64(longArray), fallback);
+            ValueFromBlock longArrayValue = m_out.anchor(longArray);
             m_out.jump(isMade);
             m_out.appendTo(isMade);
-            made = m_out.phi(Int64, shortOne, longOne);
+            made = m_out.phi(Int64, shortArrayValue, longArrayValue);
         }
-        m_isFillingArrayAtBirth = true;
+        m_isFillingArrayAtCreation = true;
         auto& elements = indexingType == ArrayWithDouble ? m_heaps.indexedDoubleProperties : m_heaps.indexedContiguousProperties;
         LValue to = butterflyOf(CellPointer(made)).value();
-        for (unsigned i = 0; i < numberOfSpreadsAtBirth; ++i) {
+        for (unsigned i = 0; i < numberOfSpreadsAtCreation; ++i) {
             Operand operand = get(inferred->arrays[i]);
             CellPointer source = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
             Pointer from = butterflyOf(source);
@@ -997,23 +948,23 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
             m_out.jump(copyLoop);
             m_out.appendTo(copied);
             ensureStillAliveHere(source);
-            if (i + 1 < numberOfSpreadsAtBirth)
+            if (i + 1 < numberOfSpreadsAtCreation)
                 to = m_out.add(to, m_out.shl(counts[i].value(), m_out.constInt32(3)));
         }
         if (indexingType != ArrayWithDouble)
             fenceAfterInitialization();
-        m_isFillingArrayAtBirth = false;
+        m_isFillingArrayAtCreation = false;
         ValueFromBlock sized = m_out.anchor(made);
         ValueFromBlock isSized = m_out.anchor(m_out.int32One);
         m_out.jump(continuation);
         m_out.appendTo(fallback);
-        ValueFromBlock usual = m_out.anchor(newArrayOfType(m_function.at(id).arguments, arrayTypeAtBirth(id)).value());
-        ValueFromBlock isUsual = m_out.anchor(m_out.int32Zero);
+        ValueFromBlock usual = m_out.anchor(newArrayWithType(m_function.at(id).arguments, arrayTypeAtCreation(id)).value());
+        ValueFromBlock defaultCase = m_out.anchor(m_out.int32Zero);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        LValue isBornForThem = m_out.phi(Int32, isSized, isUsual);
-        for (unsigned i = 0; i < numberOfSpreadsAtBirth; ++i)
-            m_spreadsCarriedOutAtBirth.add(m_currentBlock->values[m_currentIndexInBlock + 1 + i].index(), isBornForThem);
+        LValue isPresizedForSpreads = m_out.phi(Int32, isSized, defaultCase);
+        for (unsigned i = 0; i < numberOfSpreadsAtCreation; ++i)
+            m_spreadsDoneAtCreation.add(m_currentBlock->values[m_currentIndexInBlock + 1 + i].index(), isPresizedForSpreads);
         return CellPointer(m_out.phi(Int64, sized, usual));
     }
     Integer room = inferred->count ? add(in<Integer>(inferred->count), integer(inferred->constant)) : integer(inferred->constant);
@@ -1021,15 +972,15 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
         room = add(room, arrayLengthOrBail(array, fallback));
     LValue made;
     if (indexingType == ArrayWithContiguous)
-        made = callAllocationStub(Stub::EmptyArrayWithRoom, { { room.value(), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArray>(), true);
+        made = callAllocationStub(Stub::NewEmptyArrayWithCapacity, { { room.value(), stubTemporaryGPRs[0] } }, effectsForOperation<operationAOTTypedNewArray>(), true);
     else {
-        orElse(belowOrEqual(room, integer(maxCapacityOfArrayOfNumbers)), fallback);
-        made = allocateArrayOfNumbers(indexingType, m_out.shl(m_out.bitOr(room.value(), m_out.constInt64(1)), m_out.constInt32(capacityShiftInArrayOfNumbers)), fallback);
+        orElse(belowOrEqual(room, integer(maxNumberArrayCapacity)), fallback);
+        made = allocateNumberArray(indexingType, m_out.shl(m_out.bitOr(room.value(), m_out.constInt64(1)), m_out.constInt32(numberArrayCapacityShift)), fallback);
     }
     ValueFromBlock sized = m_out.anchor(made);
     m_out.jump(continuation);
     m_out.appendTo(fallback);
-    ValueFromBlock usual = m_out.anchor(newArrayOfType(m_function.at(id).arguments, arrayTypeAtBirth(id)).value());
+    ValueFromBlock usual = m_out.anchor(newArrayWithType(m_function.at(id).arguments, arrayTypeAtCreation(id)).value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
     return CellPointer(m_out.phi(Int64, sized, usual));
@@ -1038,22 +989,20 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
 CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
 {
     auto& value = m_function.at(id);
-    Type type = arrayTypeAtBirth(id);
-    LValue statics = startOfStatics();
+    Type type = arrayTypeAtCreation(id);
+    LValue statics = staticsBase();
     if (value.copyOnWriteButterflyOffset() != Format::none) {
-        IndexingType indexingType = indexingTypeOfLiteral(value.arguments, type);
-        // Among doubles it would read as a hole.
+        IndexingType indexingType = literalIndexingType(value.arguments, type);
         for (ValueID element : value.arguments) {
             if (indexingType == ArrayWithDouble && m_function.at(element).opcode == Opcode::Double && std::isnan(std::bit_cast<double>(m_function.at(element).bits())))
                 indexingType = ArrayWithContiguous;
         }
-        if (m_program.isRareByText(m_id) && !m_isInLoop)
+        if (m_program.isStaticallyRare(m_id) && !m_isInLoop)
             return AOT_TYPED_OPERATION(NewArrayBufferFromData, word32(value.copyOnWriteButterflyOffset()), word32(indexingType));
         LBasicBlock slowPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         LValue shared = m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, statics, value.copyOnWriteButterflyOffset()));
         orElse(m_out.notZero64(shared), slowPath);
-        // Zero once arrays are no longer allocated with their original structures.
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
         LValue header = changing64(Instance::offsetOfNewCopyOnWriteArrayHeader(indexingType));
         orElse(m_out.notZero64(header), slowPath);
@@ -1070,90 +1019,87 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
         m_out.appendTo(continuation);
         return CellPointer(m_out.phi(Int64, fast, slow));
     }
-    if (value.unsharedLiteralOfConstants() != Format::none)
-        return AOT_TYPED_OPERATION(NewArrayOfConstants, word32(value.unsharedLiteralOfConstants()), word32(indexingTypeOfLiteral(value.arguments, type)));
+    if (value.unsharedConstantLiteral() != Format::none)
+        return AOT_TYPED_OPERATION(NewConstantArray, word32(value.unsharedConstantLiteral()), word32(literalIndexingType(value.arguments, type)));
     if (value.vectorLengthHintOffset() == Format::none)
-        return newArrayOfType(value.arguments, type);
-    static_assert(static_cast<unsigned>(Stub::EmptyArrayAtSite) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayAtSite));
-    bool hasStubs = indexingTypeAtBirth(type) == ArrayWithContiguous;
-    auto entries = mostPushedInLoopOverCollection(id);
+        return newArrayWithType(value.arguments, type);
+    static_assert(static_cast<unsigned>(Stub::NewEmptyArrayAtSite) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayAtSite));
+    bool hasStubs = indexingTypeAtCreation(type) == ArrayWithContiguous;
+    auto entries = maxPushesInCollectionLoop(id);
     if (hasStubs && !entries) {
-        ++m_context.numberOfEmptyArrayLiteralsMadeByStub;
-        return CellPointer(callAllocationStub(Stub::EmptyArrayAtSite, { { m_out.constInt64(value.vectorLengthHintOffset()), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArray>(), true));
+        ++m_context.numberOfStubEmptyArrayLiterals;
+        return CellPointer(callAllocationStub(Stub::NewEmptyArrayAtSite, { { m_out.constInt64(value.vectorLengthHintOffset()), stubTemporaryGPRs[0] } }, effectsForOperation<operationAOTTypedNewArray>(), true));
     }
-    m_context.numberOfEmptyArrayLiteralsMadeInPlace += hasStubs;
+    m_context.numberOfInlineEmptyArrayLiterals += hasStubs;
 
     LBasicBlock isDueForReview = newColdBlock();
     LBasicBlock isCounted = m_out.newBlock();
-    LBasicBlock hasCapacityOfItsOwn = m_out.newBlock();
-    LBasicBlock asUsual = m_out.newBlock();
+    LBasicBlock hasOwnCapacity = m_out.newBlock();
+    LBasicBlock defaultPath = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
-    TypedPointer site = m_out.address(m_heaps.AOTTyped_collectorState, statics, value.vectorLengthHintOffset() + OBJECT_OFFSETOF(ArraySite, capacityAndBorn));
-    LValue counted = m_out.add(m_out.load32(site), m_out.constInt32(1 << ArraySite::bornShift));
+    TypedPointer site = m_out.address(m_heaps.AOTTyped_collectorState, statics, value.vectorLengthHintOffset() + OBJECT_OFFSETOF(ArraySite, capacityAndAllocationCount));
+    LValue counted = m_out.add(m_out.load32(site), m_out.constInt32(1 << ArraySite::allocationCountShift));
     m_out.store32(counted, site);
-    ValueFromBlock asItWas = m_out.anchor(counted);
-    m_out.branch(m_out.testIsZero32(counted, m_out.constInt32((ArraySite::interval - 1) << ArraySite::bornShift)), rarely(isDueForReview), usually(isCounted));
+    ValueFromBlock unchangedCount = m_out.anchor(counted);
+    m_out.branch(m_out.testIsZero32(counted, m_out.constInt32((ArraySite::interval - 1) << ArraySite::allocationCountShift)), rarely(isDueForReview), usually(isCounted));
     m_out.appendTo(isDueForReview);
     AOT_TYPED_OPERATION(ReviewVectorLengthHint, word32(value.vectorLengthHintOffset()));
     ValueFromBlock reviewed = m_out.anchor(m_out.load32(site));
     m_out.jump(isCounted);
     m_out.appendTo(isCounted);
-    LValue capacity = m_out.bitAnd(m_out.phi(Int32, asItWas, reviewed), m_out.constInt32(ArraySite::capacityMask));
+    LValue capacity = m_out.bitAnd(m_out.phi(Int32, unchangedCount, reviewed), m_out.constInt32(ArraySite::capacityMask));
     if (entries) {
-        LValue room = m_out.select(m_out.isZero32(capacity), m_out.constInt32(vectorLengthOfArrayLiteral(0)), capacity);
+        LValue room = m_out.select(m_out.isZero32(capacity), m_out.constInt32(arrayLiteralVectorLength(0)), capacity);
         LValue bound = m_out.bitOr(entries->value(), m_out.int32One);
         capacity = m_out.select(m_out.below(bound, room), bound, room);
     }
-    Vector<ValueFromBlock, 2> madeSmall;
+    Vector<ValueFromBlock, 2> smallArrays;
     if (hasStubs) {
-        for (auto [room, stub] : { std::pair { 1, Stub::EmptyArrayWithRoomFor1 }, std::pair { 3, Stub::EmptyArrayWithRoomFor3 } }) {
-            LBasicBlock isThat = m_out.newBlock();
+        for (auto [room, stub] : { std::pair { 1, Stub::NewEmptyArrayCapacity1 }, std::pair { 3, Stub::NewEmptyArrayCapacity3 } }) {
+            LBasicBlock matchesCapacity = m_out.newBlock();
             LBasicBlock isNot = m_out.newBlock();
-            m_out.branch(m_out.equal(capacity, m_out.constInt32(room)), unsure(isThat), unsure(isNot));
-            m_out.appendTo(isThat);
-            madeSmall.append(m_out.anchor(callAllocationStub(stub, { }, effectsOfOperation<operationAOTTypedNewArray>(), true)));
+            m_out.branch(m_out.equal(capacity, m_out.constInt32(room)), unsure(matchesCapacity), unsure(isNot));
+            m_out.appendTo(matchesCapacity);
+            smallArrays.append(m_out.anchor(callAllocationStub(stub, { }, effectsForOperation<operationAOTTypedNewArray>(), true)));
             m_out.jump(continuation);
             m_out.appendTo(isNot);
         }
-    } else if (indexingTypeAtBirth(type) == ArrayWithDouble) {
-        static_assert(static_cast<unsigned>(Stub::EmptyArrayOfDoublesWithRoomFor1) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayOfDoublesWithRoomFor1));
-        static_assert(static_cast<unsigned>(Stub::EmptyArrayOfDoublesWithRoomFor3) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayOfDoublesWithRoomFor3));
-        for (auto [room, stub] : { std::pair { 1, Stub::EmptyArrayOfDoublesWithRoomFor1 }, std::pair { 3, Stub::EmptyArrayOfDoublesWithRoomFor3 } }) {
-            LBasicBlock isThat = m_out.newBlock();
+    } else if (indexingTypeAtCreation(type) == ArrayWithDouble) {
+        static_assert(static_cast<unsigned>(Stub::NewEmptyArrayWithDoubleCapacity1) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayWithDoubleCapacity1));
+        static_assert(static_cast<unsigned>(Stub::NewEmptyArrayWithDoubleCapacity3) + 1 == static_cast<unsigned>(Stub::LeafNewEmptyArrayWithDoubleCapacity3));
+        for (auto [room, stub] : { std::pair { 1, Stub::NewEmptyArrayWithDoubleCapacity1 }, std::pair { 3, Stub::NewEmptyArrayWithDoubleCapacity3 } }) {
+            LBasicBlock matchesCapacity = m_out.newBlock();
             LBasicBlock isNot = m_out.newBlock();
-            m_out.branch(m_out.equal(capacity, m_out.constInt32(room)), unsure(isThat), unsure(isNot));
-            m_out.appendTo(isThat);
-            LValue made = callAllocationStub(stub, { }, effectsOfOperation<operationAOTTypedNewArrayOfNumbers>(), true);
-            orElse(m_out.notZero64(made), asUsual);
-            madeSmall.append(m_out.anchor(made));
+            m_out.branch(m_out.equal(capacity, m_out.constInt32(room)), unsure(matchesCapacity), unsure(isNot));
+            m_out.appendTo(matchesCapacity);
+            LValue made = callAllocationStub(stub, { }, effectsForOperation<operationAOTTypedNewNumberArray>(), true);
+            smallArrays.append(m_out.anchor(made));
             m_out.jump(continuation);
             m_out.appendTo(isNot);
         }
     }
-    static_assert(vectorLengthOfArrayLiteral(0) == 5);
-    m_out.branch(hasStubs ? m_out.above(capacity, m_out.constInt32(vectorLengthOfArrayLiteral(0))) : m_out.notZero32(capacity), unsure(hasCapacityOfItsOwn), unsure(asUsual));
-    m_out.appendTo(hasCapacityOfItsOwn);
+    static_assert(arrayLiteralVectorLength(0) == 5);
+    m_out.branch(hasStubs ? m_out.above(capacity, m_out.constInt32(arrayLiteralVectorLength(0))) : m_out.notZero32(capacity), unsure(hasOwnCapacity), unsure(defaultPath));
+    m_out.appendTo(hasOwnCapacity);
     ValueFromBlock hinted = [&] {
         if (!hasStubs)
-            return m_out.anchor(allocateArrayOfNumbers(indexingTypeAtBirth(type), m_out.shl(m_out.zeroExtPtr(m_out.bitOr(capacity, m_out.int32One)), m_out.constInt32(capacityShiftInArrayOfNumbers)), asUsual));
-        CellPointer roomy = allocateArrayWithHoles(Integer(m_out.zeroExtPtr(capacity)), ArrayWithContiguous, asUsual);
-        storeField(butterflyOf(roomy), m_heaps.Butterfly_publicLength, word32(0));
-        return m_out.anchor(roomy.value());
+            return m_out.anchor(allocateNumberArray(indexingTypeAtCreation(type), m_out.shl(m_out.zeroExtPtr(m_out.bitOr(capacity, m_out.int32One)), m_out.constInt32(numberArrayCapacityShift)), defaultPath));
+        CellPointer presizedArray = allocateArrayWithHoles(Integer(m_out.zeroExtPtr(capacity)), ArrayWithContiguous, defaultPath);
+        storeField(butterflyOf(presizedArray), m_heaps.Butterfly_publicLength, word32(0));
+        return m_out.anchor(presizedArray.value());
     }();
     m_out.jump(continuation);
-    m_out.appendTo(asUsual);
-    ValueFromBlock usual = m_out.anchor(newArrayOfType(value.arguments, type).value());
+    m_out.appendTo(defaultPath);
+    ValueFromBlock usual = m_out.anchor(newArrayWithType(value.arguments, type).value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
     LValue made = m_out.phi(Int64, hinted, usual);
-    for (ValueFromBlock& one : madeSmall)
+    for (ValueFromBlock& one : smallArrays)
         m_out.addIncomingToPhi(made, one);
     return CellPointer(made);
 }
 
-// Before a push that may have found no room is carried out.
-// The literal that the receiver of a push is, or may be where ways meet: `c ? [] : a.slice(0, i)`. None where more than one may come along.
-ValueID Lowering::emptyLiteralBehind(ValueID receiver)
+ValueID Lowering::emptyLiteralSourceOf(ValueID receiver)
 {
     ValueID origin = originOf(receiver);
     if (m_function.at(origin).opcode == Opcode::NewArray)
@@ -1162,7 +1108,7 @@ ValueID Lowering::emptyLiteralBehind(ValueID receiver)
     size_t position = m_function.at(meeting).parameters.find(origin);
     if (position == notFound)
         return ValueID();
-    return m_emptyLiteralsBehindParameters.ensure(origin.index(), [&] {
+    return m_emptyLiteralSourcesOfParameters.ensure(origin.index(), [&] {
         ValueID found;
         for (auto& block : m_function.blocks) {
             for (auto& target : block.terminator.targets) {
@@ -1182,10 +1128,9 @@ ValueID Lowering::emptyLiteralBehind(ValueID receiver)
 
 void Lowering::updateVectorLengthHint(CellPointer array, ValueID receiver)
 {
-    ValueID literal = emptyLiteralBehind(receiver);
+    ValueID literal = emptyLiteralSourceOf(receiver);
     if (!literal || m_function.at(literal).vectorLengthHintOffset() == Format::none)
         return;
-    // The arm is also come to by what is not stored in place for another reason. The room is only at fault where there is none left.
     LBasicBlock isFull = newColdBlock();
     LBasicBlock continuation = newColdBlock();
     Pointer butterfly = butterflyOf(array);
@@ -1196,33 +1141,31 @@ void Lowering::updateVectorLengthHint(CellPointer array, ValueID receiver)
     m_out.appendTo(continuation);
 }
 
-// How many turns of the innermost loop are left, this one among them, where what is being lowered is run once a turn and the loop counts up by one to a bound: `for (; i < n; i++)`, left
-// nowhere else. Zero: that is not known. It decides how much room is made for what the loop pushes, and nothing else.
-Word32 Lowering::turnsLeftInLoop()
+Word32 Lowering::remainingLoopIterations()
 {
     static constexpr int64_t maxTurns = 1 << 20;
     auto counted = countedLoopContaining(m_currentBlockID);
     if (!counted)
         return word32(0);
-    ValueID sourceOfBound = counted->iteratedArray ? m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0) : counted->bound;
-    if (!isAvailableAtCurrentValue(sourceOfBound) || !get(sourceOfBound).value)
+    ValueID boundSource = counted->iteratedArray ? m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0) : counted->bound;
+    if (!isAvailableAtCurrentValue(boundSource) || !get(boundSource).value)
         return word32(0);
     Integer bound = counted->iteratedArray ? arrayLength(asCell(in<Boxed>(m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0)))) : in<Integer>(counted->bound);
     Integer turns = sub(bound, in<Integer>(counted->counter));
     return low32(select(below(turns, integer(maxTurns)), turns, integer(0)));
 }
 
-LValue Lowering::whatIsExpectedOfArrayStoredTo(ValueID receiver, ValueID key, bool isNumberAmongNumbers)
+LValue Lowering::expectedIndexingOfStoredArray(ValueID receiver, ValueID key, bool isNumberAmongNumbers)
 {
-    ValueID literal = emptyLiteralBehind(receiver);
+    ValueID literal = emptyLiteralSourceOf(receiver);
     bool hasSite = literal && m_function.at(literal).vectorLengthHintOffset() != Format::none;
     auto counted = countedLoopContaining(m_currentBlockID);
-    auto isLengthOfReceiver = [&](ValueID id) {
+    auto isReceiverLength = [&](ValueID id) {
         return id && isInlineBuiltin(originOf(id), InlineBuiltin::ArrayLength) && originOf(m_function.at(originOf(id)).child(0)) == originOf(receiver);
     };
-    bool staysWithinLength = counted && (isLengthOfReceiver(counted->bound) || (counted->iteratedArray && originOf(counted->iteratedArray) == originOf(receiver)));
-    bool fillsAsTheLoopGoes = counted && !staysWithinLength && (originOf(key) == originOf(counted->counter) || isLengthOfReceiver(key));
-    Word32 turns = fillsAsTheLoopGoes ? turnsLeftInLoop() : word32(0);
+    bool staysWithinLength = counted && (isReceiverLength(counted->bound) || (counted->iteratedArray && originOf(counted->iteratedArray) == originOf(receiver)));
+    bool appendsInLoopOrder = counted && !staysWithinLength && (originOf(key) == originOf(counted->counter) || isReceiverLength(key));
+    Word32 turns = appendsInLoopOrder ? remainingLoopIterations() : word32(0);
     if (!hasSite && turns.value()->isInt32(0))
         return nullptr;
     LValue expectedAndSite = m_out.shl(m_out.zeroExtPtr(turns.value()), m_out.constInt32(32));
@@ -1231,7 +1174,7 @@ LValue Lowering::whatIsExpectedOfArrayStoredTo(ValueID receiver, ValueID key, bo
     return isNumberAmongNumbers ? m_out.bitOr(expectedAndSite, m_out.constInt64(1)) : expectedAndSite;
 }
 
-std::optional<Word32> Lowering::mostPushedInLoopOverCollection(ValueID literal)
+std::optional<Word32> Lowering::maxPushesInCollectionLoop(ValueID literal)
 {
     unsigned index = m_innermostLoop[m_currentBlockID.index()];
     if (index == noLoop)
@@ -1254,7 +1197,7 @@ std::optional<Word32> Lowering::mostPushedInLoopOverCollection(ValueID literal)
     unsigned pushedInTurn = 0;
     for (unsigned block = 0; block < m_function.blocks.size(); ++block) {
         for (ValueID id : m_function.blocks[block].values) {
-            if (!isInlineBuiltin(id, InlineBuiltin::ArrayPush) || emptyLiteralBehind(m_function.at(id).child(0)) != literal)
+            if (!isInlineBuiltin(id, InlineBuiltin::ArrayPush) || emptyLiteralSourceOf(m_function.at(id).child(0)) != literal)
                 continue;
             if (m_innermostLoop[block] != index)
                 return std::nullopt;
@@ -1267,8 +1210,8 @@ std::optional<Word32> Lowering::mostPushedInLoopOverCollection(ValueID literal)
         return word32(std::numeric_limits<int32_t>::max());
     };
     auto ofCell = [&](CellPointer cell) {
-        return either<Word32>(equal(typeOfCell(cell), word32(isMap ? JSMapType : JSSetType)), [&] {
-            return low32(mul(sizeOfMapOrSet(cell, isMap, false), integer(pushedInTurn)));
+        return either<Word32>(equal(loadCellType(cell), word32(isMap ? JSMapType : JSSetType)), [&] {
+            return low32(mul(mapOrSetSize(cell, isMap, false), integer(pushedInTurn)));
         }, unknown);
     };
     Operand operand = get(collection);
@@ -1280,7 +1223,6 @@ std::optional<Word32> Lowering::mostPushedInLoopOverCollection(ValueID literal)
     }, unknown);
 }
 
-// By the text of the function: `[...a, x, y]`: two to what the spread yields.
 unsigned Lowering::numberOfElementsPushedTo(ValueID array)
 {
     unsigned count = 0;
@@ -1290,20 +1232,17 @@ unsigned Lowering::numberOfElementsPushedTo(ValueID array)
             if (value.opcode != Opcode::CallBuiltin)
                 continue;
             auto& builtin = m_builtins.at(value.builtin());
-            if (builtin.takesReceiver() && value.child(0) && builtin.implementation.kind == BuiltinImplementation::Inline && builtin.implementation.inlined == InlineBuiltin::ArrayPush && originOf(value.child(0)) == array)
+            if (builtin.hasReceiver() && value.child(0) && builtin.implementation.kind == BuiltinImplementation::Inline && builtin.implementation.inlined == InlineBuiltin::ArrayPush && originOf(value.child(0)) == array)
                 count += value.arguments.size();
         }
     }
     return count;
 }
 
-// `[.., ...iterable]`: AppendSpread target, iterable. The target is an array literal that nobody has seen. Done here where the other is an array with its elements in place,
-// kept the way the literal keeps its own: nobody can tell that it was not iterated. The iteration yields `undefined` for a hole, which only values can hold.
-// Null: there is no code for this one. Else the block that all else goes to, with the target as it was.
 LBasicBlock Lowering::appendSpread(const Value& value)
 {
-    if (auto* engineClass = typeOf(value.arguments[1]).onlyEngineClass(); engineClass && engineClass->typedArrayType != NotTypedArray)
-        return appendSpreadOfTypedArray(value);
+    if (auto* engineClass = typeOf(value.arguments[1]).singleEngineClass(); engineClass && engineClass->typedArrayType != NotTypedArray)
+        return appendTypedArraySpread(value);
     ValueID literal = originOf(value.arguments[0]);
     while (m_function.at(literal).opcode == Opcode::CallBuiltin && m_function.at(literal).builtin() == value.builtin())
         literal = originOf(m_function.at(literal).arguments[0]);
@@ -1311,24 +1250,22 @@ LBasicBlock Lowering::appendSpread(const Value& value)
     if (!holdsCells(iterable.rep) || !typeOf(value.arguments[1]).hasObjects())
         return nullptr;
     LBasicBlock otherwise = newUnlikelyBlock();
-    if (auto isBornForIt = m_spreadsCarriedOutAtBirth.getOptional(m_currentBlock->values[m_currentIndexInBlock].index()); isBornForIt && m_function.at(literal).opcode == Opcode::NewArray) {
-        orElse(Word32(*isBornForIt), otherwise);
-        didEmitWrite(effectsOfBuiltinCall(value).writes);
-        m_spreadIsLeftToStub = true;
+    if (auto presizedSpread = m_spreadsDoneAtCreation.getOptional(m_currentBlock->values[m_currentIndexInBlock].index()); presizedSpread && m_function.at(literal).opcode == Opcode::NewArray) {
+        orElse(Word32(*presizedSpread), otherwise);
+        didEmitWrite(builtinCallEffects(value).writes);
+        m_spreadUsesStub = true;
         return otherwise;
     }
     if (iterable.rep != Rep::Cell)
         orElse(isCell(iterable.as<Boxed>(), typeOf(value.arguments[1])), otherwise);
     CellPointer array = iterable.rep == Rep::Cell ? iterable.as<CellPointer>() : asCell(iterable.as<Boxed>());
-    orElse(equal(typeOfCell(array), word32(ArrayType)), otherwise);
+    orElse(equal(loadCellType(array), word32(ArrayType)), otherwise);
     orElse(isZero(publicLength(butterflyOf(array))), otherwise);
-    didEmitWrite(effectsOfBuiltinCall(value).writes);
-    m_spreadIsLeftToStub = true;
+    didEmitWrite(builtinCallEffects(value).writes);
+    m_spreadUsesStub = true;
     return otherwise;
 }
 
-// An element of an array of values that is read as a type that is kept as a double. One test for the usual case: where it is a number, that is what is read. Goes on where it
-// is none, which a hole is not either. As the engine keeps it, a number is none of what stands for `undefined` or `null`.
 void Lowering::addIfNumber(Join& join, Boxed element, const Type& type)
 {
     Rep rep = repOf(type);
@@ -1342,8 +1279,7 @@ void Lowering::addIfNumber(Join& join, Boxed element, const Type& type)
     m_out.appendTo(isOther);
 }
 
-// It was compared with itself: it is no hole, so it is a number.
-Operand Lowering::elementOfDoubles(Number element, const Type& type)
+Operand Lowering::doubleArrayElement(Number element, const Type& type)
 {
     Rep rep = repOf(type);
     if (rep == Rep::Double || rep == Rep::OptionalDouble)
@@ -1351,21 +1287,20 @@ Operand Lowering::elementOfDoubles(Number element, const Type& type)
     return ensure(element, m_program.at(m_program.types.number), type);
 }
 
-// With its elements in place the array is as it was made, and finds the engine's function under the name. Any other is asked by name.
 Boxed Lowering::callArrayMethodOnSlowPath(const Value& value, CellPointer array)
 {
-    if (m_expectedMethodThatWasRead == value.builtin())
+    if (m_predictedMethodAlreadyRead == value.builtin())
         return callBuiltinFunction(value, { }, box(array));
-    return callMethodGenerally(box(array), m_program.stringOf(m_builtins.at(value.builtin()).nameName), value.arguments);
+    return callMethodGeneric(box(array), m_program.stringOf(m_builtins.at(value.builtin()).nameName), value.arguments);
 }
 
 Operand Lowering::lowerArrayAt(const Value& value, const Type& type)
 {
     StringID name = m_program.stringOf(m_builtins.at(value.builtin()).nameName);
-    CellPointer array = nonNil(value.child(0), name);
+    CellPointer array = nonNullish(value.child(0), name);
     Rep rep = repOf(type);
-    bool mayYieldNumber = type.primitives & Primitive::Number;
-    LBasicBlock doubles = mayYieldNumber ? m_out.newBlock() : nullptr;
+    bool mayReturnNumber = type.primitives & Primitive::Number;
+    LBasicBlock doubles = mayReturnNumber ? m_out.newBlock() : nullptr;
     LBasicBlock notDoubles = m_out.newBlock();
     LBasicBlock absent = m_out.newBlock();
     LBasicBlock slowPath = newColdBlock();
@@ -1375,19 +1310,19 @@ Operand Lowering::lowerArrayAt(const Value& value, const Type& type)
     Pointer butterfly = butterflyOf(array);
     Integer length = publicLength(butterfly);
     Integer index = select(lessThan(given, integer(0)), add(given, length), given);
-    if (mayYieldNumber) {
+    if (mayReturnNumber) {
         m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(doubles), unsure(notDoubles));
 
         m_out.appendTo(doubles);
         orElse(below(index, length), absent);
         Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), index.value())));
         orElse(equal(asDouble, asDouble), absent);
-        join.add(elementOfDoubles(asDouble, type));
+        join.add(doubleArrayElement(asDouble, type));
     } else
         m_out.jump(notDoubles);
 
     m_out.appendTo(notDoubles);
-    orElse(mayYieldNumber ? logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))) : equal(shape, word32(ContiguousShape)), slowPath);
+    orElse(mayReturnNumber ? logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))) : equal(shape, word32(ContiguousShape)), slowPath);
     orElse(below(index, length), absent);
     Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
     addIfNumber(join, element, type);
@@ -1402,11 +1337,10 @@ Operand Lowering::lowerArrayAt(const Value& value, const Type& type)
     return join.finish();
 }
 
-// Likewise. toString() finds the engine's join().
 Operand Lowering::lowerArrayJoin(const Value& value, const Type& type, ValueID separator)
 {
     StringID name = m_program.stringOf(m_builtins.at(value.builtin()).nameName);
-    CellPointer array = nonNil(value.child(0), name);
+    CellPointer array = nonNullish(value.child(0), name);
     LBasicBlock slowPath = newUnlikelyBlock();
     Join join(m_out, repOf(type), b3TypeOf(repOf(type)));
     static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
@@ -1420,15 +1354,12 @@ Operand Lowering::lowerArrayJoin(const Value& value, const Type& type, ValueID s
     return join.finish();
 }
 
-// Of arrays that have their original structures and keep their elements the same way: none has a property of its own but its elements, so each is spread, and the result is an
-// array of this realm that keeps them that way too. Holes are copied as holes. What is no object is an element.
 Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
 {
     StringID name = m_program.stringOf(m_builtins.at(value.builtin()).nameName);
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    // Null: the argument itself is the element.
-    Vector<CellPointer, 4> arrays { nonNil(value.child(0), name) };
+    Vector<CellPointer, 4> arrays { nonNullish(value.child(0), name) };
     bool areElementsNumbers = true;
     bool areElementsInt32 = true;
     for (ValueID argument : value.arguments) {
@@ -1444,7 +1375,7 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
         arrays.append(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()));
     }
     static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-    Word32 shape = indexingModeOfAnyArray(arrays[0], IndexingShapeMask);
+    Word32 shape = anyArrayIndexingMode(arrays[0], IndexingShapeMask);
     orElse(belowOrEqual(binary<Word32>(&Output::sub, shape, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), slowPath);
     static_assert(Instance::arrayKindShift == 1);
     auto originalStructureID = [&](Word32 mode) {
@@ -1460,14 +1391,14 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
             length = add(length, integer(1));
             continue;
         }
-        Word32 mode = indexingModeOfAnyArray(array, IndexingShapeMask | CopyOnWrite);
+        Word32 mode = anyArrayIndexingMode(array, IndexingShapeMask | CopyOnWrite);
         orElse(equal(binary<Word32>(&Output::bitAnd, mode, word32(IndexingShapeMask)), shape), slowPath);
         orElse(equal(loadField<Word32>(array, m_heaps.JSCell_structureID), originalStructureID(mode)), slowPath);
         butterflies.append(butterflyOf(array));
         lengths.append(publicLength(butterflies.last()));
         length = add(length, lengths.last());
     }
-    orElse(belowOrEqual(length, integer(maxLengthToCopyOneByOne)), slowPath);
+    orElse(belowOrEqual(length, integer(maxLengthForElementwiseCopy)), slowPath);
 
     orElse(m_out.notZero32(changing32(Instance::offsetOfNewArrayWithContiguousStructureID())), slowPath);
     LValue capacity = m_out.bitOr(length.value(), m_out.constInt64(1));
@@ -1477,7 +1408,6 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
     m_out.store32(m_out.castToInt32(length.value()), made, m_heaps.Butterfly_publicLength);
     m_out.store32(m_out.castToInt32(capacity), made, m_heaps.Butterfly_vectorLength);
     LBasicBlock copied = m_out.newBlock();
-    // The last slot is beyond the length if that is even.
     auto copyElements = [&](IndexingType indexingType) {
         auto& elements = elementsOf(indexingType);
         m_out.store64(m_out.constInt64(holeIn(indexingType)), TypedPointer(elements, m_out.add(storage, m_out.shl(capacity, m_out.constInt32(3)))));
@@ -1489,7 +1419,6 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
                     m_out.store64(in<Boxed>(element).value(), TypedPointer(elements, to));
                 else {
                     Number number = in<Number>(element);
-                    // Among doubles it would read as a hole.
                     if (!typeOf(element).isInteger())
                         orElse(equal(number, number), slowPath);
                     m_out.storeDouble(number.value(), TypedPointer(elements, to));
@@ -1548,12 +1477,11 @@ Operand Lowering::lowerArrayConcat(const Value& value, const Type& type)
     return ensure(Boxed(m_out.phi(Int64, fast, slow)), type);
 }
 
-// Of a short array with its elements in place, which it may write to. The others move down one by one, holes as holes. The engine has better ways for a long one.
 Operand Lowering::lowerArrayShift(const Value& value, const Type& type)
 {
-    constexpr unsigned maxLengthToMoveOneByOne = 32;
+    constexpr unsigned maxLengthForElementwiseMove = 32;
     StringID name = m_program.stringOf(m_builtins.at(value.builtin()).nameName);
-    CellPointer array = nonNil(value.child(0), name);
+    CellPointer array = nonNullish(value.child(0), name);
     Rep rep = repOf(type);
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock absent = m_out.newBlock();
@@ -1564,7 +1492,7 @@ Operand Lowering::lowerArrayShift(const Value& value, const Type& type)
     orElse(belowOrEqual(binary<Word32>(&Output::sub, mode, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), slowPath);
     Pointer butterfly = butterflyOf(array);
     Integer length = publicLength(butterfly);
-    orElse(belowOrEqual(sub(length, integer(1)), integer(maxLengthToMoveOneByOne - 1)), slowPath);
+    orElse(belowOrEqual(sub(length, integer(1)), integer(maxLengthForElementwiseMove - 1)), slowPath);
     Integer last = sub(length, integer(1));
     auto shift = [&](IndexingType indexingType) {
         auto& elements = elementsOf(indexingType);
@@ -1585,7 +1513,6 @@ Operand Lowering::lowerArrayShift(const Value& value, const Type& type)
         m_out.appendTo(moved);
         m_out.store64(m_out.constInt64(holeIn(indexingType)), m_out.baseIndex(elements, butterfly.value(), last.value(), FTL::ScaleEight));
         storeField(butterfly, m_heaps.Butterfly_publicLength, low32(last));
-        // What has moved may have passed the collector by.
         if (indexingType != ArrayWithDouble)
             barrier(array);
         orElse(m_out.notEqual(first, m_out.constInt64(holeIn(indexingType))), absent);
@@ -1595,7 +1522,7 @@ Operand Lowering::lowerArrayShift(const Value& value, const Type& type)
     LBasicBlock values = m_out.newBlock();
     m_out.branch(equal(mode, word32(DoubleShape)).value(), unsure(doubles), unsure(values));
     m_out.appendTo(doubles);
-    join.add(elementOfDoubles(Number(m_out.bitCast(shift(ArrayWithDouble), Double)), type));
+    join.add(doubleArrayElement(Number(m_out.bitCast(shift(ArrayWithDouble), Double)), type));
     m_out.appendTo(values);
     Boxed first(shift(ArrayWithContiguous));
     addIfNumber(join, first, type);
@@ -1609,26 +1536,25 @@ Operand Lowering::lowerArrayShift(const Value& value, const Type& type)
     return join.finish();
 }
 
-// The receiver has its original structure, so the result is an array of this realm that keeps its elements the same way. Holes are copied as holes.
 Operand Lowering::lowerArraySlice(const Value& value, const Type& type)
 {
     auto& arguments = value.arguments;
-    CellPointer array = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
-    LBasicBlock slowPath = newBlockForGeneralCall(value);
+    CellPointer array = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    LBasicBlock slowPath = newBlockForGenericCall(value);
     LBasicBlock continuation = m_out.newBlock();
     static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
     m_context.emitsCalls = true;
     ValueFromBlock byStub;
     if (arguments.isEmpty())
-        byStub = m_out.anchor(callAllocationStub(Stub::ArrayCopy, { { array.value(), GPRInfo::toArgumentRegister(1) } }, effectsOfOperation<operationAOTTypedArrayCopy>(), true));
+        byStub = m_out.anchor(callAllocationStub(Stub::ArrayCopy, { { array.value(), GPRInfo::toArgumentRegister(1) } }, effectsForOperation<operationAOTTypedArrayCopy>(), true));
     else {
         Integer first = indexOrElse(arguments[0], slowPath);
-        Integer behindLast = arguments.size() > 1 ? indexOrElse(arguments[1], slowPath) : integer(static_cast<int64_t>(1) << 32);
-        byStub = m_out.anchor(callAllocationStub(Stub::ArraySlice, { { array.value(), GPRInfo::toArgumentRegister(1) }, { first.value(), GPRInfo::toArgumentRegister(2) }, { behindLast.value(), GPRInfo::toArgumentRegister(3) } }, effectsOfOperation<operationAOTTypedArraySlice>(), true));
+        Integer afterLast = arguments.size() > 1 ? indexOrElse(arguments[1], slowPath) : integer(static_cast<int64_t>(1) << 32);
+        byStub = m_out.anchor(callAllocationStub(Stub::ArraySlice, { { array.value(), GPRInfo::toArgumentRegister(1) }, { first.value(), GPRInfo::toArgumentRegister(2) }, { afterLast.value(), GPRInfo::toArgumentRegister(3) } }, effectsForOperation<operationAOTTypedArraySlice>(), true));
     }
     Vector<ValueFromBlock, 2> made { byStub };
     m_out.jump(continuation);
-    if (!isGeneralArmOnOffer(slowPath)) {
+    if (!isSharedGenericPath(slowPath)) {
         m_out.appendTo(slowPath);
         made.append(m_out.anchor(callBuiltinFunction(value, OperationEffects { Writes::Heap, true }).value()));
         m_out.jump(continuation);
@@ -1637,31 +1563,28 @@ Operand Lowering::lowerArraySlice(const Value& value, const Type& type)
     return ensure(Boxed(m_out.phi(Int64, made)), Type::engineClass(m_builtins.classes()[value.engineClass()]), type);
 }
 
-// `array.splice(start, removed, items..)`. The receiver has its original structure. In place where `removed` is a small constant, nobody looks at what was removed, and the array keeps its
-// elements in place and may write to them: what comes after moves one by one, holes as holes. The engine has better ways for a long tail.
 Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Type& type)
 {
-    constexpr unsigned maxLengthToMoveOneByOne = 32;
+    constexpr unsigned maxLengthForElementwiseMove = 32;
     constexpr unsigned maxItems = 2;
     constexpr int64_t maxRemoved = 2;
     auto& arguments = value.arguments;
-    CellPointer array = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    CellPointer array = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
     Type newArrayType = Type::engineClass(m_builtins.classes()[value.engineClass()]);
-    bool isUsed = numberOfUsesOf(result);
+    bool isUsed = useCountOf(result);
     Arguments items;
     if (arguments.size() > 2)
         items.append(arguments.span().subspan(2));
     Rep rep = repOf(type);
     Join join(m_out, rep, b3TypeOf(rep));
-    // A number that the type does not say is an int32 mostly is one. All else is for the engine's function.
-    LBasicBlock isNot = newBlockForGeneralCall(value);
+    LBasicBlock isNot = newBlockForGenericCall(value);
     Integer start = indexOrElse(arguments[0], isNot);
     if (!isInt32Type(typeOf(arguments[0])))
         orElse(equal(signExtended(low32(start)), start), isNot);
 
     Range given = arguments.size() > 1 ? typeOf(arguments[1]).integers : Range::full();
-    if (given.least == given.most && given.least >= 0 && given.least <= maxRemoved && items.size() <= maxItems && (!isUsed || !given.least)) {
-        int64_t removed = given.least;
+    if (given.minimum == given.maximum && given.minimum >= 0 && given.minimum <= maxRemoved && items.size() <= maxItems && (!isUsed || !given.minimum)) {
+        int64_t removed = given.minimum;
         int64_t added = items.size();
         bool areNumbers = true;
         bool areInt32 = true;
@@ -1672,28 +1595,26 @@ Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Typ
         LBasicBlock slowPath = newColdBlock();
         didEmitWrite(Writes::Heap);
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-        // Not what is shared until it is written to.
         Word32 mode = indexingModeOf(array, IndexingShapeAndWritabilityMask);
         orElse(belowOrEqual(binary<Word32>(&Output::sub, mode, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), slowPath);
         Pointer butterfly = butterflyOf(array);
         Integer length = publicLength(butterfly);
         Integer fromEnd = add(start, length);
         Integer from = select(lessThan(start, integer(0)), select(lessThan(fromEnd, integer(0)), integer(0), fromEnd), select(lessThan(start, length), start, length));
-        // Negative: there is less to remove.
         Integer tail = sub(length, add(from, integer(removed)));
-        orElse(belowOrEqual(tail, integer(maxLengthToMoveOneByOne)), slowPath);
+        orElse(belowOrEqual(tail, integer(maxLengthForElementwiseMove)), slowPath);
         Integer newLength = add(length, integer(added - removed));
         if (added > removed) {
             LBasicBlock hasRoom = m_out.newBlock();
             LBasicBlock isFull = newColdBlock();
-            ValueFromBlock asItIs = m_out.anchor(butterfly.value());
+            ValueFromBlock unchanged = m_out.anchor(butterfly.value());
             m_out.branch(belowOrEqual(newLength, vectorLength(butterfly)).value(), usually(hasRoom), rarely(isFull));
             m_out.appendTo(isFull);
             orElse(logicalNot(isZero(AOT_TYPED_OPERATION(ArrayGrow, array, low32(newLength)))), slowPath);
             ValueFromBlock grown = m_out.anchor(butterflyOf(array).value());
             m_out.jump(hasRoom);
             m_out.appendTo(hasRoom);
-            butterfly = Pointer(m_out.phi(pointerType(), asItIs, grown));
+            butterfly = Pointer(m_out.phi(pointerType(), unchanged, grown));
         }
         auto splice = [&](IndexingType indexingType) {
             auto& elements = elementsOf(indexingType);
@@ -1704,7 +1625,6 @@ Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Typ
                     continue;
                 }
                 Number number = in<Number>(item);
-                // Among doubles it would read as a hole.
                 if (!typeOf(item).isInteger())
                     orElse(equal(number, number), slowPath);
                 stored.append(m_out.bitCast(number.value(), Int64));
@@ -1719,7 +1639,6 @@ Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Typ
                 LBasicBlock loop = m_out.newBlock();
                 LBasicBlock element = m_out.newBlock();
                 LBasicBlock moved = m_out.newBlock();
-                // From the far end, so that nothing is overwritten before it has moved.
                 ValueFromBlock first = m_out.anchor(movesUp ? tail.value() : m_out.int64Zero);
                 m_out.jump(loop);
                 m_out.appendTo(loop);
@@ -1731,7 +1650,6 @@ Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Typ
                 m_out.addIncomingToPhi(index, m_out.anchor(movesUp ? place : m_out.add(index, m_out.constInt64(1))));
                 m_out.jump(loop);
                 m_out.appendTo(moved);
-                // What is between the length and the capacity is kept clear.
                 for (int64_t i = 0; i < removed - added; ++i)
                     m_out.store64(m_out.constInt64(holeIn(indexingType)), TypedPointer(elements, addressOf(add(newLength, integer(i)))));
             }
@@ -1739,7 +1657,6 @@ Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Typ
                 m_out.store64(stored[i], TypedPointer(elements, addressOf(add(from, integer(i)))));
             if (added != removed)
                 storeField(butterfly, m_heaps.Butterfly_publicLength, low32(newLength));
-            // What has moved may have passed the collector by.
             if (indexingType != ArrayWithDouble)
                 barrier(array);
             join.add(ensure(isUsed ? newArray(Arguments { }) : array, newArrayType, type));
@@ -1766,50 +1683,49 @@ Operand Lowering::lowerArraySplice(ValueID result, const Value& value, const Typ
     m_out.branch(m_out.notZero64(done), usually(isDone), rarely(isNot));
     m_out.appendTo(isDone);
     join.add(ensure(Boxed(done), newArrayType, type));
-    if (!isGeneralArmOnOffer(isNot)) {
+    if (!isSharedGenericPath(isNot)) {
         m_out.appendTo(isNot);
         join.add(ensure(callBuiltinFunction(value, OperationEffects { Writes::Heap, true }), newArrayType, type));
     }
     return join.finish();
 }
 
-std::optional<Operand> Lowering::lowerArraySearchAsOneCall(ValueID result, const Value& value)
+std::optional<Operand> Lowering::lowerArraySearchAsSingleCall(ValueID result, const Value& value)
 {
     auto& builtin = m_builtins.at(value.builtin());
     if (builtin.implementation.kind != BuiltinImplementation::Inline || (builtin.implementation.inlined != InlineBuiltin::ArrayIndexOf && builtin.implementation.inlined != InlineBuiltin::ArrayIncludes))
         return std::nullopt;
-    if (value.arguments.size() != 1 || typeOf(value.arguments[0]).isNumber() || typeOf(value.child(0)).onlyEngineClass() != &m_builtins.arrayClass())
+    if (value.arguments.size() != 1 || typeOf(value.arguments[0]).isNumber() || typeOf(value.child(0)).singleEngineClass() != &m_builtins.arrayClass())
         return std::nullopt;
     bool isIndexOf = builtin.implementation.inlined == InlineBuiltin::ArrayIndexOf;
     auto& type = typeOf(result);
     Rep rep = repOf(type);
-    CellPointer array = nonNil(value.child(0), m_program.stringOf(builtin.nameName));
-    LBasicBlock isValueOfCall = newColdBlock();
+    CellPointer array = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
+    LBasicBlock isCallResult = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     Vector<std::pair<LValue, GPRReg>, 4> operands { { array.value(), GPRInfo::argumentGPR1 }, { mapKey(value.arguments[0]).value(), GPRInfo::argumentGPR2 } };
-    if (value.methodRead())
-        operands.append({ in<Boxed>(value.methodRead()).value(), GPRInfo::argumentGPR3 });
-    Stub stub = value.methodRead() ? (isIndexOf ? Stub::ArrayIndexOfOrCallMethodRead : Stub::ArrayIncludesOrCallMethodRead) : (isIndexOf ? Stub::ArrayIndexOfOrCall : Stub::ArrayIncludesOrCall);
+    if (value.methodGetById())
+        operands.append({ in<Boxed>(value.methodGetById()).value(), GPRInfo::argumentGPR3 });
+    Stub stub = value.methodGetById() ? (isIndexOf ? Stub::ArrayIndexOfOrCallMethodRead : Stub::ArrayIncludesOrCallMethodRead) : (isIndexOf ? Stub::ArrayIndexOfOrCall : Stub::ArrayIncludesOrCall);
     LValue answer = callICStub(stub, Int64, operands, std::nullopt, OperationEffects { Writes::Heap, true });
     ensureStillAliveHere(array);
-    orElse(Word32(isIndexOf ? m_out.isZero64(m_out.lShr(answer, m_out.constInt32(32))) : m_out.belowOrEqual(answer, m_out.constInt64(1))), isValueOfCall);
+    orElse(Word32(isIndexOf ? m_out.isZero64(m_out.lShr(answer, m_out.constInt32(32))) : m_out.belowOrEqual(answer, m_out.constInt64(1))), isCallResult);
     Word32 found(m_out.castToInt32(answer));
     if (isIndexOf)
         join.add(ensure(signExtended(found), Type::integer({ -1, INT32_MAX }), type));
     else
-        join.add(yieldBoolean(found, type));
-    m_out.appendTo(isValueOfCall);
+        join.add(booleanResult(found, type));
+    m_out.appendTo(isCallResult);
     LValue yielded = answer;
     if (isIndexOf) {
-        static_assert(!(arraySearchIsHandedBack & JSValue::NumberTag) && arraySearchIsHandedBack >> 32);
-        LValue handedBack = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfVM()), VM::offsetOfEncodedHostCallReturnValue()));
-        yielded = m_out.select(m_out.equal(answer, m_out.constInt64(arraySearchIsHandedBack)), handedBack, answer);
+        static_assert(!(arraySearchDeclined & JSValue::NumberTag) && arraySearchDeclined >> 32);
+        LValue returnedValue = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfVM()), VM::offsetOfEncodedHostCallReturnValue()));
+        yielded = m_out.select(m_out.equal(answer, m_out.constInt64(arraySearchDeclined)), returnedValue, answer);
     }
     join.add(ensure(Boxed(yielded), type));
     return join.finish();
 }
 
-// Among doubles. -1: there is none. What is not a number is equal to none, and none of them is that.
 Integer Lowering::indexOfNumber(CellPointer array, Number searched)
 {
     LBasicBlock isLong = newUnlikelyBlock();
@@ -1820,7 +1736,7 @@ Integer Lowering::indexOfNumber(CellPointer array, Number searched)
     Pointer butterfly = butterflyOf(array);
     Integer length = publicLength(butterfly);
     ValueFromBlock start = m_out.anchor(m_out.int64Zero);
-    m_out.branch(below(length, integer(minLengthToSearchOutOfLine)).value(), usually(loop), rarely(isLong));
+    m_out.branch(below(length, integer(minLengthForOutOfLineSearch)).value(), usually(loop), rarely(isLong));
     m_out.appendTo(isLong);
     ValueFromBlock outOfLine = m_out.anchor(signExtended(AOT_TYPED_OPERATION(ArrayIndexOfDouble, array, searched)).value());
     m_out.jump(continuation);
@@ -1839,9 +1755,9 @@ Integer Lowering::indexOfNumber(CellPointer array, Number searched)
     return Integer(m_out.phi(Int64, none, found, outOfLine));
 }
 
-static bool isTypedArrayWithElementsReadInPlace(const Type& type)
+static bool isTypedArrayWithInlineElementReads(const Type& type)
 {
-    auto* engineClass = type.onlyEngineClass();
+    auto* engineClass = type.singleEngineClass();
     if (!engineClass)
         return false;
     switch (engineClass->typedArrayType) {
@@ -1864,7 +1780,7 @@ std::optional<Writes> writesOfInlineArray(InlineBuiltin which, std::span<const T
 {
     switch (which) {
     case InlineBuiltin::ArrayFrom:
-        return writesIf(isTypedArrayWithElementsReadInPlace(arguments[0]), Writes::RuntimeState);
+        return writesIf(isTypedArrayWithInlineElementReads(arguments[0]), Writes::RuntimeState);
     case InlineBuiltin::ArrayLength:
         return Writes::Nothing;
     case InlineBuiltin::ArrayEntries:
@@ -1883,11 +1799,10 @@ std::optional<Writes> writesOfInlineArray(InlineBuiltin which, std::span<const T
         return Writes::Heap;
     case InlineBuiltin::ArrayConcat:
         return writesIf(!arguments.empty() && arguments.size() <= 3 && std::ranges::all_of(arguments, [](auto& argument) {
-            return !argument.hasObjects() || argument.onlyEngineClass() == &Builtins::singleton().arrayClass();
+            return !argument.hasObjects() || argument.singleEngineClass() == &Builtins::singleton().arrayClass();
         }), Writes::Heap);
     case InlineBuiltin::ArrayUnshift:
         return writesIf(arguments.size() == 1, Writes::Heap);
-    // To compare it with another may flatten a rope.
     case InlineBuiltin::ArrayIndexOf:
     case InlineBuiltin::ArrayIncludes:
         return writesIf(arguments.size() == 1, Writes::RuntimeState);
@@ -1900,7 +1815,6 @@ std::optional<Writes> writesOfInlineArray(InlineBuiltin which, std::span<const T
     case InlineBuiltin::ArrayWithLength:
     case InlineBuiltin::ArrayOf:
         return Writes::RuntimeState;
-    // What a proxy stands for is asked of the engine, which runs no code of the program for it.
     case InlineBuiltin::ArrayIsArray:
         return arguments[0].hasObjects() ? Writes::RuntimeState : Writes::Pure;
     default:
@@ -1908,37 +1822,35 @@ std::optional<Writes> writesOfInlineArray(InlineBuiltin which, std::span<const T
     }
 }
 
-std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID result, const Value& value, Writes inPlace)
+std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
 {
     auto& type = typeOf(result);
     auto& arguments = value.arguments;
     auto receiver = [&] {
-        return nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        return nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
     };
-    auto generally = [&] {
+    auto genericPath = [&] {
         return callBuiltinFunction(value, OperationEffects { Writes::Heap, true });
     };
-    // What the operation yields, or what the engine's function yields where it has done nothing.
-    auto orGenerally = [&](LValue done, const Type& guarantee) {
+    auto orGeneric = [&](LValue done, const Type& guarantee) {
         LBasicBlock isDone = m_out.newBlock();
-        LBasicBlock isNot = newBlockForGeneralCall(value);
+        LBasicBlock isNot = newBlockForGenericCall(value);
         Join join(m_out, Rep::JSValue, Int64);
         m_out.branch(m_out.notZero64(done), usually(isDone), rarely(isNot));
         m_out.appendTo(isDone);
         join.add(Boxed(done));
-        if (!isGeneralArmOnOffer(isNot)) {
+        if (!isSharedGenericPath(isNot)) {
             m_out.appendTo(isNot);
-            join.add(generally());
+            join.add(genericPath());
         }
         return ensure(join.finish(), guarantee, type);
     };
 
     switch (which) {
-    // What only a loop that takes the pairs apart gets hold of is no iterator: see findEntriesOfArrays(). It is no object either, and nothing asks.
     case InlineBuiltin::ArrayEntries:
-        if (!m_entriesMadeAsRecords.get(result.index()))
-            return ensure(generally(), type);
-        return convert(AOT_TYPED_OPERATION(NewEntriesOfArray, receiver()), Type::engineClass(m_builtins.arrayClass()), repOf(type));
+        if (!m_entriesCreatedAsRecords.get(result.index()))
+            return ensure(genericPath(), type);
+        return convert(AOT_TYPED_OPERATION(NewArrayEntries, receiver()), Type::engineClass(m_builtins.arrayClass()), repOf(type));
     case InlineBuiltin::ArrayFrom:
         return lowerArrayFromTypedArray(result, value, type);
     case InlineBuiltin::ArrayAt:
@@ -1956,29 +1868,27 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         Rep rep = repOf(type);
         LBasicBlock hasElements = m_out.newBlock();
         LBasicBlock hasNone = m_out.newBlock();
-        bool mayYieldNumber = type.primitives & Primitive::Number;
+        bool mayReturnNumber = type.primitives & Primitive::Number;
         LBasicBlock values = m_out.newBlock();
-        LBasicBlock doubles = mayYieldNumber ? m_out.newBlock() : nullptr;
+        LBasicBlock doubles = mayReturnNumber ? m_out.newBlock() : nullptr;
         LBasicBlock slowPath = newColdBlock();
         Join join(m_out, rep, b3TypeOf(rep));
         didEmitWrite(Writes::Heap);
-        // Not what is shared until it is written to.
         Word32 mode = indexingModeOf(array, IndexingShapeAndWritabilityMask);
         Word32 isDouble = equal(mode, word32(DoubleShape));
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-        orElse(mayYieldNumber ? belowOrEqual(binary<Word32>(&Output::sub, mode, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)) : equal(mode, word32(ContiguousShape)), slowPath);
+        orElse(mayReturnNumber ? belowOrEqual(binary<Word32>(&Output::sub, mode, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)) : equal(mode, word32(ContiguousShape)), slowPath);
         Pointer butterfly = butterflyOf(array);
         Integer length = publicLength(butterfly);
         m_out.branch(isZero(length).value(), rarely(hasNone), usually(hasElements));
 
         m_out.appendTo(hasElements);
         Integer last = add(length, integer(-1));
-        if (mayYieldNumber)
+        if (mayReturnNumber)
             m_out.branch(isDouble.value(), unsure(doubles), unsure(values));
         else
             m_out.jump(values);
 
-        // For a hole the array is asked the general way. What is between the length and the capacity is kept clear.
         m_out.appendTo(values);
         TypedPointer slot = m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), last.value());
         Boxed element(m_out.load64(slot));
@@ -1988,35 +1898,33 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         addIfNumber(join, element, type);
         join.add(ensure(element, type));
 
-        if (mayYieldNumber) {
+        if (mayReturnNumber) {
             m_out.appendTo(doubles);
-            TypedPointer slotOfDouble = m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), last.value());
-            Number asDouble(m_out.loadDouble(slotOfDouble));
+            TypedPointer doubleSlot = m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), last.value());
+            Number asDouble(m_out.loadDouble(doubleSlot));
             orElse(equal(asDouble, asDouble), slowPath);
             storeField(butterfly, m_heaps.Butterfly_publicLength, low32(last));
-            m_out.storeDouble(m_out.constDouble(PNaN), slotOfDouble);
-            join.add(elementOfDoubles(asDouble, type));
+            m_out.storeDouble(m_out.constDouble(PNaN), doubleSlot);
+            join.add(doubleArrayElement(asDouble, type));
         }
 
         m_out.appendTo(hasNone);
         join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
 
         m_out.appendTo(slowPath);
-        join.add(ensure(generally(), type));
+        join.add(ensure(genericPath(), type));
         return join.finish();
     }
     case InlineBuiltin::ArraySlice:
         return lowerArraySlice(value, type);
     case InlineBuiltin::ArraySplice:
         return lowerArraySplice(result, value, type);
-    // Stub::ArrayIndexOf and Stub::ArrayIncludes go through boxed elements: by identity, or as strings; what takes more they leave to the engine's
-    // operation. A hole is no element to the one, and `undefined` to the other, which is left to the operation too.
     case InlineBuiltin::ArrayIndexOf:
     case InlineBuiltin::ArrayIncludes: {
         bool isIndexOf = which == InlineBuiltin::ArrayIndexOf;
         CellPointer array = receiver();
         Rep rep = repOf(type);
-        LBasicBlock slowPath = newBlockForGeneralCall(value);
+        LBasicBlock slowPath = newBlockForGenericCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
         Word32 shape = indexingModeOf(array, IndexingShapeMask);
         if (typeOf(arguments[0]).isNumber()) {
@@ -2024,20 +1932,20 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
             LBasicBlock notDoubles = m_out.newBlock();
             m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(doubles), unsure(notDoubles));
             m_out.appendTo(doubles);
-            auto yieldIndex = [&](Integer index) {
+            auto returnIndex = [&](Integer index) {
                 if (isIndexOf)
                     join.add(ensure(index, Type::integer({ -1, INT32_MAX }), type));
                 else
-                    join.add(yieldBoolean(greaterThanOrEqual(index, integer(0)), type));
+                    join.add(booleanResult(greaterThanOrEqual(index, integer(0)), type));
             };
-            yieldIndex(indexOfNumber(array, in<Number>(arguments[0])));
+            returnIndex(indexOfNumber(array, in<Number>(arguments[0])));
             m_out.appendTo(notDoubles);
             LBasicBlock longInt32s = newUnlikelyBlock();
             LBasicBlock others = m_out.newBlock();
-            Word32 isLong = aboveOrEqual(publicLength(butterflyOf(array)), integer(minLengthToSearchOutOfLine));
+            Word32 isLong = aboveOrEqual(publicLength(butterflyOf(array)), integer(minLengthForOutOfLineSearch));
             m_out.branch(logicalAnd(equal(shape, word32(Int32Shape)), isLong).value(), rarely(longInt32s), usually(others));
             m_out.appendTo(longInt32s);
-            yieldIndex(signExtended(AOT_TYPED_OPERATION(ArrayIndexOfInt32, array, mapKey(arguments[0]))));
+            returnIndex(signExtended(AOT_TYPED_OPERATION(ArrayIndexOfInt32, array, mapKey(arguments[0]))));
             m_out.appendTo(others);
         }
         orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), slowPath);
@@ -2047,17 +1955,17 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         if (isIndexOf)
             join.add(ensure(signExtended(found), Type::integer({ -1, INT32_MAX }), type));
         else
-            join.add(yieldBoolean(logicalNot(isZero(found)), type));
-        if (!isGeneralArmOnOffer(slowPath)) {
+            join.add(booleanResult(logicalNot(isZero(found)), type));
+        if (!isSharedGenericPath(slowPath)) {
             m_out.appendTo(slowPath);
             join.add(ensure(callBuiltinFunction(value, OperationEffects { Writes::RuntimeState, true }), type));
         }
         return join.finish();
     }
     case InlineBuiltin::ArrayUnshift:
-        return orGenerally(AOT_TYPED_OPERATION(ArrayUnshift, receiver(), in<Boxed>(arguments[0])).value(), m_program.at(m_program.types.anything));
+        return orGeneric(AOT_TYPED_OPERATION(ArrayUnshift, receiver(), in<Boxed>(arguments[0])).value(), m_program.at(m_program.types.anything));
     default:
-        return lowerContainerBuiltin(which, result, value, inPlace);
+        return lowerContainerBuiltin(which, result, value, inlinePath);
     }
 }
 

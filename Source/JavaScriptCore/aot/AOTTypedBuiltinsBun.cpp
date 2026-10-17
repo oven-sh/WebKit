@@ -37,13 +37,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRequireBuiltinModule, EncodedJSValue, 
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNativeBinding, EncodedJSValue, (Instance* instance, uint32_t index))
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    countOperationNamed(instance, __func__);
     auto* nativeBinding = globalObject->globalObjectMethodTable()->nativeBinding;
+    JSValue result = nativeBinding ? nativeBinding(globalObject, index) : JSValue();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!nativeBinding) [[unlikely]] {
         throwTypeError(globalObject, scope, withAOTErrorNote("This realm has no native bindings"_s));
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    JSValue result = nativeBinding(globalObject, index);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
@@ -53,7 +58,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLinkTimeConstant, JSCell*, (I
     return instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
 }
 
-// As globalFuncToLength().
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedToLength, EncodedJSValue, (Instance* instance, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -62,7 +66,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedToLength, EncodedJSValue, (Instance* i
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(length)));
 }
 
-// As operationGetByIdDirectGaveUp().
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetOwnProperty, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t name))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -74,7 +77,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetOwnProperty, EncodedJSValue, (Insta
     OPERATION_RETURN(scope, JSValue::encode(found ? slot.getValue(globalObject, key) : jsUndefined()));
 }
 
-// As directPutByVal() of the JIT's operations, in strict code: every file of src/js is.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByValDirect, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedKey, EncodedJSValue encodedValue))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -85,7 +87,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByValDirect, void, (Instance* insta
         object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexShouldThrow);
         OPERATION_RETURN(scope);
     }
-    bool isNameAlready = key.isSymbol() || (key.isString() && asString(key)->tryGetValueImpl() && asString(key)->tryGetValueImpl()->isAtom());
+    bool isAlreadyPropertyName = key.isSymbol() || (key.isString() && asString(key)->tryGetValueImpl() && asString(key)->tryGetValueImpl()->isAtom());
     auto property = key.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (std::optional<uint32_t> index = parseIndex(property)) {
@@ -96,12 +98,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByValDirect, void, (Instance* insta
     PutPropertySlot slot(object, true);
     CommonSlowPaths::putDirectWithReify(vm, globalObject, object, property, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (isNameAlready)
+    if (isAlreadyPropertyName)
         cacheKeyedDefinition(instance, vm, before, object->structure(), key.asCell(), property.impl());
     OPERATION_RETURN(scope);
 }
 
-// As operationPutByIdDirectStrictGaveUp().
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByIdDirect, void, (Instance* instance, JSCell* cell, uint32_t name, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -115,10 +116,6 @@ namespace Typed {
 
 using namespace B3;
 
-// The family aot/builtins/bun.def: what the front end emits for the files of Bun's src/js. In such a file nothing has a type: every
-// operand is anything, with a prediction at best. The code in place is the FTL's for the same bytecode.
-
-// By the numbers the front end has for them.
 static constexpr JSType jsTypes[] = {
 #define AOT_TYPED_JS_TYPE(name) name,
     FOR_EACH_AOT_TYPED_JS_TYPE_NAME(AOT_TYPED_JS_TYPE)
@@ -129,9 +126,7 @@ static constexpr JSType jsTypes[] = {
 FOR_EACH_AOT_TYPED_BUN_CONSTANT(AOT_TYPED_CHECK_CONSTANT)
 #undef AOT_TYPED_CHECK_CONSTANT
 
-// `$isTypedArrayView`: isTypedArrayType().
 static_assert(Int8ArrayType == FirstTypedArrayType && BigUint64ArrayType == LastTypedArrayTypeExcludingDataView);
-// `$isJSArray`: where an image is loaded, an array of a subclass or with another prototype is of the second.
 static_assert(ArrayType + 1 == DerivedArrayType);
 
 static constexpr LinkTimeConstant linkTimeConstants[] = {
@@ -143,21 +138,18 @@ static constexpr LinkTimeConstant linkTimeConstants[] = {
 std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Type>)
 {
     switch (which) {
-    // The type of a cell never changes.
     case InlineBuiltin::IsObject:
     case InlineBuiltin::HasJSType:
         return Writes::Pure;
     case InlineBuiltin::IsCallable:
     case InlineBuiltin::GetInternalField:
-    case InlineBuiltin::HasCachedValueOfHostObject:
-    case InlineBuiltin::CachedValueOfHostObject:
+    case InlineBuiltin::HasHostObjectCachedValue:
+    case InlineBuiltin::HostObjectCachedValue:
         return Writes::Nothing;
-    // It is made the first time it is asked for.
     case InlineBuiltin::LinkTimeConstant:
         return Writes::RuntimeState;
     case InlineBuiltin::PutInternalField:
     case InlineBuiltin::PutByValDirect:
-    // Code of the program runs: the top level of a module, `valueOf`, a getter.
     case InlineBuiltin::RequireBuiltinModule:
     case InlineBuiltin::NativeBinding:
     case InlineBuiltin::ToLength:
@@ -168,15 +160,15 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     }
 }
 
-bool Lowering::isTestOfCachedValueOfHostObject(const Value& value) const
+bool Lowering::isHostObjectCacheTest(const Value& value) const
 {
     if (value.opcode != Opcode::CallBuiltin)
         return false;
     auto& implementation = m_builtins.at(value.builtin()).implementation;
-    return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::HasCachedValueOfHostObject;
+    return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::HasHostObjectCachedValue;
 }
 
-void Lowering::branchOnCachedValueOfHostObject(const Value& value, LBasicBlock isCached, LBasicBlock isNot)
+void Lowering::branchOnHostObjectCache(const Value& value, LBasicBlock isCached, LBasicBlock isNot)
 {
     auto integer32 = [&](unsigned index) {
         ValueID id = value.arguments[index];
@@ -192,7 +184,7 @@ void Lowering::branchOnCachedValueOfHostObject(const Value& value, LBasicBlock i
     Boxed receiver = in<Boxed>(value.arguments[0]);
     orElse(isCell(receiver), isNot);
     CellPointer cell = asCell(receiver);
-    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfStructureIDOfHostClass(integer32(1))))), isNot);
+    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfHostClassStructureID(integer32(1))))), isNot);
     Boxed cached(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, cell.value(), sizeof(JSDestructibleObject) + integer32(2))));
     m_out.branch(isNotEmpty(cached).value(), unsure(isCached), unsure(isNot));
 }
@@ -201,7 +193,6 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
 {
     auto& arguments = value.arguments;
     auto& type = typeOf(result);
-    // The front end writes these operands as constants.
     auto constant = [&](unsigned index) -> const Value& {
         ValueID id = arguments[index];
         while (m_function.at(id).opcode == Opcode::Cast)
@@ -218,7 +209,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     };
     auto ofCell = [&](const auto& test) {
         Boxed operand = in<Boxed>(arguments[0]);
-        return yieldBoolean(either<Word32>(isCell(operand), [&] {
+        return booleanResult(either<Word32>(isCell(operand), [&] {
             return test(asCell(operand));
         }, [&] {
             return boolean(false);
@@ -231,7 +222,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     switch (which) {
     case InlineBuiltin::IsObject:
         return ofCell([&](CellPointer cell) {
-            return aboveOrEqual(typeOfCell(cell), word32(ObjectType));
+            return aboveOrEqual(loadCellType(cell), word32(ObjectType));
         });
     case InlineBuiltin::HasJSType: {
         RELEASE_ASSERT(integer32(1) < std::size(jsTypes) && integer32(2) < std::size(jsTypes));
@@ -240,11 +231,10 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         RELEASE_ASSERT(first <= last);
         return ofCell([&](CellPointer cell) {
             if (first == last)
-                return equal(typeOfCell(cell), word32(first));
-            return below(binary<Word32>(&Output::sub, typeOfCell(cell), word32(first)), word32(last - first + 1));
+                return equal(loadCellType(cell), word32(first));
+            return below(binary<Word32>(&Output::sub, loadCellType(cell), word32(first)), word32(last - first + 1));
         });
     }
-    // What is no function of the engine and does not say for itself whether it can be called cannot. A function of the program says so.
     case InlineBuiltin::IsCallable:
         return ofCell([&](CellPointer cell) {
             return either<Word32>(hasTypeOfFunctionFlag(cell), [&] {
@@ -258,7 +248,6 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
                 });
             });
         });
-    // The cell is of a class with that many internal fields: nothing looks, here or in the engine.
     case InlineBuiltin::GetInternalField:
         return ensure(Boxed(m_out.load64(internalField())), type);
     case InlineBuiltin::PutInternalField: {
@@ -266,7 +255,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         didEmitWrite(writes);
         m_out.store64(stored.value(), internalField());
         barrier(asCell(in<Boxed>(arguments[0])));
-        return yieldValue(arguments[2], type);
+        return valueResult(arguments[2], type);
     }
     case InlineBuiltin::ToLength: {
         Boxed operand = in<Boxed>(arguments[0]);
@@ -283,41 +272,40 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         ValueID stored = arguments[2];
         if (constant(1).opcode == Opcode::String) {
             AOT_TYPED_OPERATION(PutByIdDirect, asCell(in<Boxed>(object)), name(1), in<Boxed>(stored));
-            return yieldValue(stored, type);
+            return valueResult(stored, type);
         }
-        auto generally = [&]() -> Operand {
-            callICStub(Stub::PutByValDirectCached, Void, { { in<Boxed>(object).value(), firstStubOperandGPR }, { in<Boxed>(key).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
+        auto genericPath = [&]() -> Operand {
+            callICStub(Stub::PutByValDirectCached, Void, { { in<Boxed>(object).value(), firstStubOperandGPR }, { in<Boxed>(key).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR2 } }, std::nullopt, builtinCallEffects(value));
             return { };
         };
         if (!mayBeIndex(key)) {
-            generally();
-            return yieldValue(stored, type);
+            genericPath();
+            return valueResult(stored, type);
         }
-        // Where an element of an array is written in place, nothing but the array has a say: a store and a definition are the same.
         Type array = Type::engineClass(m_builtins.arrayClass());
         didEmitWrite(writes);
-        ifAsExpected({ { object, &array } }, Rep::Void, [&](LBasicBlock otherwise) -> Operand {
+        ifPredictionHolds({ { object, &array } }, Rep::Void, [&](LBasicBlock otherwise) -> Operand {
             putArrayElement(get(object).as<CellPointer>(), key, stored, otherwise);
             return { };
-        }, generally);
-        return yieldValue(stored, type);
+        }, genericPath);
+        return valueResult(stored, type);
     }
     case InlineBuiltin::GetOwnProperty:
         return ensure(AOT_TYPED_OPERATION(GetOwnProperty, in<Boxed>(arguments[0]), name(1)), type);
-    case InlineBuiltin::HasCachedValueOfHostObject: {
-        if (m_isCarriedOutByBranch.get(result.index()))
-            return yieldBoolean(boolean(false), type);
+    case InlineBuiltin::HasHostObjectCachedValue: {
+        if (m_isFusedWithBranch.get(result.index()))
+            return booleanResult(boolean(false), type);
         LBasicBlock isCached = m_out.newBlock();
         LBasicBlock isNot = m_out.newBlock();
         Join join(m_out, Rep::Int32, Int32);
-        branchOnCachedValueOfHostObject(value, isCached, isNot);
+        branchOnHostObjectCache(value, isCached, isNot);
         m_out.appendTo(isCached);
         join.add(boolean(true));
         m_out.appendTo(isNot);
         join.add(boolean(false));
-        return yieldBoolean(join.finish().as<Word32>(), type);
+        return booleanResult(join.finish().as<Word32>(), type);
     }
-    case InlineBuiltin::CachedValueOfHostObject:
+    case InlineBuiltin::HostObjectCachedValue:
         return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);
     case InlineBuiltin::LinkTimeConstant:
         RELEASE_ASSERT(integer32(0) < std::size(linkTimeConstants));

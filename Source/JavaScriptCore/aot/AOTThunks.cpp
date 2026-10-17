@@ -155,7 +155,7 @@ void branchIfNotObjectValue(CCallHelpers& jit, GPRReg value, JumpList& slowCases
 
 void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 {
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifierPlaces()), result);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifierPositions()), result);
     jit.zeroExtend32ToWord(index, scratch4);
     jit.load16(BaseIndex(result, scratch4, CCallHelpers::TimesTwo), scratch4);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifiers()), result);
@@ -432,7 +432,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
     AOT_INSTALL_FRONT_END(PutByVal)
     AOT_INSTALL_FRONT_END(NewObjectLiteral)
 #define AOT_INSTALL_HELPER(name, operation) install(Entry::operation, Entry::name##SlowPath, Stub::name##WithFastPath);
-    FOR_EACH_AOT_OPERATION_BEHIND_HELPER(AOT_INSTALL_HELPER)
+    FOR_EACH_AOT_OPERATION_WITH_HELPER(AOT_INSTALL_HELPER)
 #undef AOT_INSTALL_HELPER
     AOT_INSTALL_FRONT_END(CompareStrictEq)
     AOT_INSTALL_FRONT_END(CompareEq)
@@ -440,9 +440,10 @@ void installOperationFrontEnds(VM& vm, void** entries)
     install(Entry::operationAOTTypedGetExtra, Entry::RawTypedGetExtra, Stub::FrontEndTypedGetExtra);
     install(Entry::operationAOTTypedConstruct, Entry::RawTypedConstruct, Stub::FrontEndTypedConstruct);
     install(Entry::operationAOTTypedCloneObject, Entry::RawTypedCloneObject, Stub::FrontEndTypedCloneObject);
-    install(Entry::operationAOTTypedCloneObjectForMore, Entry::RawTypedCloneObjectForMore, Stub::FrontEndTypedCloneObjectForMore);
+    install(Entry::operationAOTTypedCloneObjectAndExtend, Entry::RawTypedCloneObjectAndExtend, Stub::FrontEndTypedCloneObjectAndExtend);
+    install(Entry::operationAOTTypedCloneObjectWithSubtypeCheck, Entry::RawTypedCloneObjectWithSubtypeCheck, Stub::FrontEndTypedCloneObjectWithSubtypeCheck);
     install(Entry::operationAOTTypedConstructSuper, Entry::RawTypedConstructSuper, Stub::FrontEndTypedConstructSuper);
-    entries[static_cast<unsigned>(Entry::HostFunctionThatIsNoConstructor)] = std::bit_cast<void*>(&callHostFunctionAsConstructor);
+    entries[static_cast<unsigned>(Entry::NonConstructorHostFunction)] = std::bit_cast<void*>(&callHostFunctionAsConstructor);
 #undef AOT_INSTALL_FRONT_END
 }
 

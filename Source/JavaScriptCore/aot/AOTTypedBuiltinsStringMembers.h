@@ -3,24 +3,20 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Members of class Lowering: included in its body.
-
     Word32 hasStringAt(const Characters&, Integer place, const Characters& other);
     Word32 lowerStartsOrEndsWith(bool isAtEnd, const StringReceiver&, ValueID other, std::optional<ValueID> position);
     Word32 lowerStringSearch(InlineBuiltin, const StringReceiver&, const Arguments&);
     Operand lowerStringBuiltin(InlineBuiltin, ValueID result, const Value&);
-    // By the value a string is defined by: its length, and the block that read it. It holds wherever that block dominates.
-    struct LengthOfString {
+    struct KnownStringLength {
         BlockID block;
         LValue length;
     };
-    UncheckedKeyHashMap<uint32_t, Vector<LengthOfString, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lengthsOfStrings;
+    UncheckedKeyHashMap<uint32_t, Vector<KnownStringLength, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stringLengths;
     ValueID stringDefinedBy(ValueID) const;
     std::optional<Integer> lengthReadBefore(ValueID string) const;
     void didReadLength(ValueID string, Integer);
-    // By the last Add or Strcat of a concatenation that has numbers among its parts and is looked up by: the parts. See findConcatenationsWithNumbers().
-    using PartsOfConcatenation = Vector<ValueID, 8>;
-    UncheckedKeyHashMap<uint32_t, PartsOfConcatenation, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partsOfConcatenations;
+    using ConcatenationParts = Vector<ValueID, 8>;
+    UncheckedKeyHashMap<uint32_t, ConcatenationParts, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_concatenationParts;
     struct StackStringBuilder {
         B3::Variable* length;
         B3::Variable* prefix;
@@ -45,154 +41,137 @@
     void appendConstantToStringBuilder(const StackStringBuilder&, std::span<const uint8_t>);
     void appendNumberToStringBuilder(const StackStringBuilder&, ValueID);
     void appendStringToStringBuilder(const StackStringBuilder&, CellPointer);
-    void appendStringOrNilToStringBuilder(const StackStringBuilder&, Boxed);
+    void appendStringOrNullishToStringBuilder(const StackStringBuilder&, Boxed);
     void copyLatin1Characters(Pointer destination, Pointer source, Integer length);
     void appendToStringBuilder(const StackStringBuilder&, std::span<const ValueID> operands, bool isFinal);
-    CellPointer finishStringBuilder(const StackStringBuilder&, bool mayBeEmpty, bool goesOnLiving = false);
+    CellPointer finishStringBuilder(const StackStringBuilder&, bool mayBeEmpty, bool staysLive = false);
     void initializeStringBuildersOnEdge(const Target&);
     void materializeFinalStringBuilderStates(const Block&);
     std::optional<Operand> tryLowerWithStringBuilder(ValueID, const Value&);
     bool isConcatenation(const Value&) const;
-    bool collectPartsOfConcatenation(const BitVector& isInBlock, ValueID, bool isLast, PartsOfConcatenation& parts, PartsOfConcatenation& lookedThrough);
+    bool collectConcatenationParts(const BitVector& isInBlock, ValueID, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough);
     void findConcatenationsWithNumbers();
-    std::optional<Operand> lowerAsPartOfConcatenation(ValueID, const Value&);
-    CellPointer concatenateInOnePiece(const PartsOfConcatenation&);
+    std::optional<Operand> lowerAsConcatenationPart(ValueID, const Value&);
+    CellPointer concatenateInOnePiece(const ConcatenationParts&);
     BitVector m_sunkKeyConcatenations;
     ValueID m_keyBeingMaterialized;
     std::optional<Operand> tryLookupWithSunkKey(ValueID key, const Type&, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath);
     CellPointer concatenateAsRopes(std::span<const ValueID> parts);
     CellPointer concatenateByStub(std::span<const ValueID> parts);
     CellPointer concatenateByStub(CellPointer, CellPointer);
-    CellPointer concatenateWhereNeeded(const Value&);
+    CellPointer concatenateIfNeeded(const Value&);
     bool isNamedLastIndex(StringID) const;
-    // Goes on where the value is a RegExp object, which it yields.
     CellPointer regExpObjectOrElse(Boxed, LBasicBlock otherwise);
     Boxed getLastIndex(Boxed base, StringID name, bool isCalled);
     void putLastIndex(Boxed base, StringID name, Boxed value);
     void emitCachedPutById(Boxed base, StringID name, Boxed value);
-    void emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value, bool onlyThroughStub = false, unsigned flagsOfSite = 0);
-    // A string that is defined outside a loop and read in it: what its StringImpl had when the loop was entered. See findStringsReadInLoops().
+    void emitStandaloneCachedPutById(Boxed base, StringID name, Boxed value, bool onlyThroughStub = false, unsigned siteFlags = 0);
     struct OpenedString {
         ValueID string;
         B3::Variable* data;
         B3::Variable* length;
         B3::Variable* flags;
-        // The loop reads its characters. Else only its length, and only that is there: a rope is not made flat to be asked how long it is, and a function that asks no more changes nothing.
         bool isOpened { false };
-        B3::Variable* cellOfCapturedVariable { nullptr };
+        B3::Variable* capturedVariableCell { nullptr };
     };
-    // By loop, as m_loops.
-    Vector<Vector<OpenedString, 2>> m_stringsOpenedInFrontOfLoops;
+    Vector<Vector<OpenedString, 2>> m_stringsOpenedBeforeLoops;
     void findStringsReadInLoops();
-    BitVector m_readsOfOpenedCapturedVariables;
+    BitVector m_openedCapturedVariableReads;
     UncheckedKeyHashMap<uint32_t, Vector<std::pair<unsigned, unsigned>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stringsOpenedAgainAfter;
-    bool isReadOfCapturedStringVariable(ValueID) const;
+    bool isCapturedStringVariableRead(ValueID) const;
     bool mayStoreToCapturedVariable(const Block&, size_t index, const Value& read) const;
     bool findStoresToCapturedVariableInLoop(const Loop&, const Value& read, Vector<ValueID, 4>& stores) const;
     void open(const OpenedString&);
     void openStringsAgainAfter(ValueID);
-    void openStringsInFrontOfLoopsEnteredBy(const Terminator&);
+    void openStringsBeforeLoopsEnteredBy(const Terminator&);
     const OpenedString* openedString(ValueID) const;
-    // What slice(), substring() or substr() yielded earlier in the function: the characters of the base from the one place to the other: none, if they are the wrong way round.
-    struct PartOfString {
+    struct Substring {
         StringReceiver base;
         Integer lengthOfBase;
         Integer from;
         Integer to;
     };
-    UncheckedKeyHashMap<uint32_t, PartOfString, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partsOfStrings;
-    // Nothing in the function does more with them than ask for the length, for a character, or whether it is a text.
-    BitVector m_partsOfStringsThatAreOnlyLookedAt;
-    void findPartsOfStringsThatAreOnlyLookedAt();
-    const PartOfString* partOfStringMadeBy(ValueID) const;
-    Integer lengthOf(const PartOfString&);
-    std::optional<Characters> charactersOfOpenedString(const StringReceiver&);
-    // `s === "text"` that nothing uses but the Branch of its block: see lowerBranchOnText().
-    struct ComparisonWithText {
+    UncheckedKeyHashMap<uint32_t, Substring, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_substrings;
+    BitVector m_substringsOnlyInspected;
+    void findSubstringsOnlyInspected();
+    const Substring* substringCreatedBy(ValueID) const;
+    Integer lengthOf(const Substring&);
+    std::optional<Characters> openedStringCharacters(const StringReceiver&);
+    struct ComparisonWithLiteral {
         ValueID subject;
         ValueID constant;
         std::span<const uint8_t> text;
     };
-    std::optional<ComparisonWithText> comparisonWithTextBranchedOn(const Block&);
-    std::optional<Operand> deferToBranchOnText(ValueID, const Value&);
-    // Outside loops: see Stub::StringIsText.
-    static constexpr size_t maxLengthOfTextComparedAtEverySite = 32;
-    Word32 isTextOfLengthByStub(const StringReceiver&, ValueID constant, std::span<const uint8_t> text);
-    Word32 isTextByStub(CellPointer string, ValueID constant);
-    static constexpr unsigned maxNumberOfTextsComparedByOneCallEach = 2;
-    void branchOnTextByOneCall(ValueID subject, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
-    void branchOnTextByOneCall(LValue, bool isString, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
-    Characters charactersOfStringOfLength(const StringReceiver&, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise);
-    void lowerBranchOnText();
+    std::optional<ComparisonWithLiteral> comparisonWithLiteralBranchedOn(const Block&);
+    std::optional<Operand> deferToBranchOnLiteral(ValueID, const Value&);
+    static constexpr size_t maxInlineComparedLiteralLength = 32;
+    Word32 equalsLiteralOfLengthByStub(const StringReceiver&, ValueID constant, std::span<const uint8_t> text);
+    Word32 equalsLiteralByStub(CellPointer string, ValueID constant);
+    static constexpr unsigned maxLiteralsComparedByCalls = 2;
+    void branchOnLiteralByOneCall(ValueID subject, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
+    void branchOnLiteralByOneCall(LValue, bool isString, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
+    Characters charactersOfStringWithLength(const StringReceiver&, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise);
+    void lowerBranchOnLiteral();
     unsigned numberOfPredecessorsOf(BlockID);
     Vector<unsigned> m_numberOfPredecessors;
-    BitVector m_blocksTakenIntoBranchOnText;
-    bool looksForConstantWithoutItsCell(const Value&) const;
-    // By the IteratorOpen of a string that stands for its own iterator: see findIterationsOfStrings().
-    struct IterationOfString {
-        // Where the iteration is, in code units.
+    BitVector m_blocksTakenIntoBranchOnLiteral;
+    bool searchesForConstantWithoutCell(const Value&) const;
+    struct StringIteration {
         B3::Variable* position;
-        // Of the StringImpl the string had when the iteration was opened.
         B3::Variable* data;
         B3::Variable* length;
         B3::Variable* flags;
-        // The type says that it is a string. Otherwise it is expected to be one, and the iterator is looked at.
         bool isCertain;
     };
-    UncheckedKeyHashMap<uint32_t, IterationOfString, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_iterationsOfStrings;
-    void findIterationsOfStrings();
-    BitVector valuesUsedOtherwiseThanAsIteratorsOfSteps() const;
+    UncheckedKeyHashMap<uint32_t, StringIteration, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stringIterations;
+    void findStringIterations();
+    BitVector valuesUsedOtherThanAsStepIterators() const;
     UncheckedKeyHashMap<uint32_t, B3::Air::StackSlot*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_iterationsInFrame;
     void findIterationsInFrame();
-    bool m_spreadIsLeftToStub { false };
-    struct ElementsTakenAtOnce {
+    bool m_spreadUsesStub { false };
+    struct BatchedElements {
         B3::Air::StackSlot* slot;
         unsigned count;
     };
-    UncheckedKeyHashMap<uint32_t, ElementsTakenAtOnce, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsTakenAtOnce;
-    void findElementsTakenAtOnce();
-    const ElementsTakenAtOnce* elementsTakenAtOnce(ValueID iterator) const;
+    UncheckedKeyHashMap<uint32_t, BatchedElements, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_batchedElements;
+    void findElementsPerStep();
+    const BatchedElements* elementsPerStep(ValueID iterator) const;
     std::optional<Pointer> recordInFrameOf(ValueID iterator);
-    const IterationOfString* iterationOfString(ValueID iterator) const;
-    Word32 isStringStandingForItsIterator(ValueID iterator);
-    Integer positionIn(const IterationOfString&);
-    void setPositionIn(const IterationOfString&, Integer);
-    Characters charactersOfIteratedString(const IterationOfString&, CellPointer);
-    std::optional<Operand> castOfIteratedCharacter(const Value&);
-    bool isKeptByNothing(ValueID literal, bool isGlobal);
-    // `for (const [i, x] of array.entries())`: see findEntriesOfArrays().
-    struct PairOfEntries {
-        // The IteratorOpen of the loop, and the IteratorValue that stands for the pair.
+    const StringIteration* stringIteration(ValueID iterator) const;
+    Word32 isStringUsedAsIterator(ValueID iterator);
+    Integer positionIn(const StringIteration&);
+    void setPositionIn(const StringIteration&, Integer);
+    Characters iteratedStringCharacters(const StringIteration&, CellPointer);
+    std::optional<Operand> iteratedCharacterCast(const Value&);
+    bool isUnreferenced(ValueID literal, bool isGlobal);
+    struct EntryPair {
         ValueID iterator;
         ValueID pair;
     };
-    using PairsOfEntries = UncheckedKeyHashMap<uint32_t, PairOfEntries, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    // By the call of `entries`; by the IteratorOpen of the loop.
-    BitVector m_entriesMadeAsRecords;
-    BitVector m_iterationsOfEntries;
-    // By the IteratorValue of the loop, by the casts of that, by the IteratorOpen of the pattern.
-    PairsOfEntries m_pairsOfEntries;
-    void findEntriesOfArrays();
-    TypedPointer wordOfIterationRecord(CellPointer record, unsigned word);
-    Word32 iteratesEntriesOfArray(ValueID iterator);
-    CellPointer arrayOfEntries(ValueID iterator);
-    std::optional<Operand> partOfEntriesOfArray(ValueID, const Value&);
-    Operand openIterationOfString(const IterationOfString&, ValueID result, ValueID iterable);
-    Word32 iteratedStringHasNext(const IterationOfString&, ValueID iterator);
-    CellPointer nextOfIteratedString(const IterationOfString&, ValueID iterator, Word32& codePoint);
-    // By the value: a string of one character that was made of a code unit, or what an access outside the string yields: the B3 value it stands for, and the code unit or the marker.
-    struct CodeUnitOfString {
+    using EntryPairs = UncheckedKeyHashMap<uint32_t, EntryPair, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    BitVector m_entriesCreatedAsRecords;
+    BitVector m_entryIterations;
+    EntryPairs m_entryPairs;
+    void findArrayEntries();
+    TypedPointer iterationRecordWord(CellPointer record, unsigned word);
+    Word32 iteratesArrayEntries(ValueID iterator);
+    CellPointer entriesArray(ValueID iterator);
+    std::optional<Operand> arrayEntriesPart(ValueID, const Value&);
+    Operand openStringIteration(const StringIteration&, ValueID result, ValueID iterable);
+    Word32 iteratedStringHasNext(const StringIteration&, ValueID iterator);
+    CellPointer nextIteratedStringCharacter(const StringIteration&, ValueID iterator, Word32& codePoint);
+    struct StringCodeUnit {
         LValue string;
         LValue codeUnit;
-        bool mayBeNotKept { false };
+        bool mayBeUntracked { false };
     };
-    static constexpr int64_t codeUnitOfUndefined = INT64_MIN;
-    static constexpr int64_t codeUnitOfEmptyString = INT64_MIN + 1;
-    static constexpr int64_t codeUnitIsNotKept = INT64_MIN + 2;
-    UncheckedKeyHashMap<uint32_t, CodeUnitOfString, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_codeUnitsOfStrings;
-    void didMakeStringOfCodeUnit(ValueID, Operand string, const Vector<ValueFromBlock, 2>& codeUnits);
+    static constexpr int64_t undefinedCodeUnit = INT64_MIN;
+    static constexpr int64_t emptyStringCodeUnit = INT64_MIN + 1;
+    static constexpr int64_t codeUnitIsUntracked = INT64_MIN + 2;
+    UncheckedKeyHashMap<uint32_t, StringCodeUnit, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stringCodeUnits;
+    void didCreateStringFromCodeUnit(ValueID, Operand string, const Vector<ValueFromBlock, 2>& codeUnits);
     Operand valueOfArrayOrRecord(ValueID result, const Value&);
-    std::optional<Integer> codeUnitOfString(ValueID, bool mayBeNotKept = false);
+    std::optional<Integer> stringCodeUnit(ValueID, bool mayBeUntracked = false);
     ValueID stringConstantOf(ValueID) const;
     std::optional<char16_t> constantCodeUnit(ValueID) const;
-    std::optional<Word32> areKeptCodeUnitsEqual(ValueID, ValueID);
+    std::optional<Word32> areTrackedCodeUnitsEqual(ValueID, ValueID);

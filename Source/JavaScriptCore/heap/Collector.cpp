@@ -128,7 +128,6 @@ Collector::Collector()
     , m_threadLock(Box<Lock>::create())
     , m_threadCondition(AutomaticThreadCondition::create())
 {
-    // The pool may grow at any collection, of this heap or of another: a visitor for each thread it can ever have.
     for (unsigned i = 0, numberOfParallelThreads = std::max(heapHelperPool().numberOfThreads(), Options::numberOfGCMarkers() - 1); i < numberOfParallelThreads; ++i) {
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         m_availableParallelSlotVisitors.append(visitor.get());

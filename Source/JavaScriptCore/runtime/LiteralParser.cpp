@@ -1639,7 +1639,7 @@ static JSObject* finishedObject(VM& vm, JSGlobalObject* globalObject, JSONCache&
     if (!vm.m_aotProgram)
         return object;
     Structure* structure = object->structure();
-    if (jsonCache.isStructureOfFinishedObject(structure->id(), JSONCache::nameIndex(structure->id())))
+    if (jsonCache.isFinishedObjectStructure(structure->id(), JSONCache::nameIndex(structure->id())))
         return object;
     Structure* finishedStructure = jsonCache.getStructureForFinishedObject(structure);
     if (!finishedStructure)
@@ -2065,7 +2065,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             m_lexer.nextAfterValue();
 #if ENABLE(AOT)
             if constexpr (createsObjectsAtEnd) {
-                if (!jsonCache.isStructureOfFinishedObject(structure->id(), structureNameIndex)) [[unlikely]]
+                if (!jsonCache.isFinishedObjectStructure(structure->id(), structureNameIndex)) [[unlikely]]
                     return finishObjectWithPendingValues(object, structure, pendingValues);
             }
 #endif

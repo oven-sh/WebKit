@@ -53,7 +53,7 @@ std::optional<AllocationKind> allocationKindOf(const Program& program, const Val
     }
 }
 
-AllocationNote& noteFor(Function& function, AllocationKind kind, const Value& site)
+AllocationNote& remarkFor(Function& function, AllocationKind kind, const Value& site)
 {
     uint64_t key = static_cast<uint64_t>(kind) << 56 | static_cast<uint64_t>(site.inlineFrame) << 32 | site.position;
     auto result = function.allocationNoteIndices.add(key, function.allocationNotes.size());
@@ -74,12 +74,12 @@ void describeSite(AllocationNote& note, const Value& site)
     note.closureOf = site.opcode == Opcode::NewClosure || site.opcode == Opcode::NewClosureOnce ? site.function() : FunctionID();
 }
 
-bool standsForOperand(const Value& value)
+bool aliasesOperand(const Value& value)
 {
     return value.opcode == Opcode::Cast && value.castReason() != CastReason::As && value.castReason() != CastReason::Coerce;
 }
 
-static ValueID operandThatIsResult(const Value& value)
+static ValueID returnedOperand(const Value& value)
 {
     if (value.opcode != Opcode::CallBuiltin)
         return { };
@@ -96,9 +96,9 @@ ValueID originOf(const Function& function, ValueID id)
 {
     for (;;) {
         auto& value = function.at(id);
-        if (standsForOperand(value))
+        if (aliasesOperand(value))
             id = value.child(0);
-        else if (ValueID operand = operandThatIsResult(value))
+        else if (ValueID operand = returnedOperand(value))
             id = operand;
         else
             return id;
@@ -148,7 +148,7 @@ static bool isUsed(const Function& function, ValueID id)
     return false;
 }
 
-Need needOf(const Program& program, const Function& function, const Value& user, ValueID object)
+Need needFor(const Program& program, const Function& function, const Value& user, ValueID object)
 {
     auto is = [&](ValueID child) {
         return child && originOf(function, child) == object;
@@ -157,7 +157,7 @@ Need needOf(const Program& program, const Function& function, const Value& user,
     case Opcode::AssertNotAllocated:
         return Need::None;
     case Opcode::Cast:
-        return standsForOperand(user) ? Need::None : Need::Object;
+        return aliasesOperand(user) ? Need::None : Need::Object;
     case Opcode::PutField:
     case Opcode::PutById:
         return is(user.child(1)) ? Need::Object : Need::Store;
@@ -170,16 +170,16 @@ Need needOf(const Program& program, const Function& function, const Value& user,
         if (!entry)
             return Need::Object;
         auto& builtin = builtins.at(entry);
-        uint16_t uses = builtin.takesReceiver() && is(user.child(0)) ? builtin.usesOfThis : 0;
+        uint16_t uses = builtin.hasReceiver() && is(user.child(0)) ? builtin.thisUses : 0;
         for (unsigned i = 0; i < user.arguments.size(); ++i) {
             if (is(user.arguments[i]))
-                uses |= builtin.usesOfArgument(i);
+                uses |= builtin.argumentUses(i);
         }
-        if (uses & OperandUse::MayBeResult && ((operandThatIsResult(user) && is(operandThatIsResult(user))) || !isUsed(function, ValueID(static_cast<unsigned>(&user - function.values.begin())))))
+        if (uses & OperandUse::MayBeResult && ((returnedOperand(user) && is(returnedOperand(user))) || !isUsed(function, ValueID(static_cast<unsigned>(&user - function.values.begin())))))
             uses &= ~OperandUse::MayBeResult;
-        if (uses & (OperandUse::Keeps | OperandUse::Calls | OperandUse::MayBeResult | OperandUse::HandsToUserCode))
+        if (uses & (OperandUse::Keeps | OperandUse::Calls | OperandUse::MayBeResult | OperandUse::EscapesToUserCode))
             return Need::Object;
-        if (uses & (OperandUse::WritesProperties | OperandUse::WritesContents) && !(uses & OperandUse::KeepsWhatItHolds))
+        if (uses & (OperandUse::WritesProperties | OperandUse::WritesContents) && !(uses & OperandUse::RetainsContents))
             return Need::Store;
         return Need::Read;
     }
@@ -208,35 +208,34 @@ Need needOf(const Program& program, const Function& function, const Value& user,
     }
 }
 
-static ValueID operandThatHolds(const Function& function, const Value& call, ValueID object)
+static ValueID retainingOperand(const Function& function, const Value& call, ValueID object)
 {
     auto& builtin = Builtins::singleton().at(call.builtin());
-    uint16_t usesOfObject = 0;
+    uint16_t objectUses = 0;
     ValueID holder;
-    unsigned numberWritten = 0;
+    unsigned writtenCount = 0;
     auto look = [&](ValueID operand, uint16_t uses) {
         if (!operand)
             return;
         ValueID origin = originOf(function, operand);
         if (origin == object) {
-            usesOfObject |= uses;
+            objectUses |= uses;
             return;
         }
         if (uses == OperandUse::Everything || !(uses & (OperandUse::WritesProperties | OperandUse::WritesContents)))
             return;
         holder = origin;
-        ++numberWritten;
+        ++writtenCount;
     };
-    if (builtin.takesReceiver())
-        look(call.child(0), builtin.usesOfThis);
+    if (builtin.hasReceiver())
+        look(call.child(0), builtin.thisUses);
     for (unsigned i = 0; i < call.arguments.size(); ++i)
-        look(call.arguments[i], builtin.usesOfArgument(i));
-    if (numberWritten != 1 || !(usesOfObject & OperandUse::Keeps) || usesOfObject & (OperandUse::Calls | OperandUse::MayBeResult | OperandUse::HandsToUserCode))
+        look(call.arguments[i], builtin.argumentUses(i));
+    if (writtenCount != 1 || !(objectUses & OperandUse::Keeps) || objectUses & (OperandUse::Calls | OperandUse::MayBeResult | OperandUse::EscapesToUserCode))
         return { };
     return holder;
 }
 
-// The operation on account of which the object is there: one that takes the object itself, else a read of it, else a store to it.
 std::optional<Use> forcingUseOf(const Program& program, const Function& function, ValueID object)
 {
     Need greatest = Need::None;
@@ -252,7 +251,7 @@ std::optional<Use> forcingUseOf(const Program& program, const Function& function
             });
             if (!uses)
                 continue;
-            Need need = needOf(program, function, user, object);
+            Need need = needFor(program, function, user, object);
             if (need > greatest) {
                 greatest = need;
                 found = { Typed::nameOf(user.opcode), user.inlineFrame, user.position, { } };
@@ -275,17 +274,17 @@ std::optional<Use> forcingUseOf(const Program& program, const Function& function
             found = { nameOf(kind), last->inlineFrame, last->position, { } };
         }
     };
-    const Block* birth = nullptr;
+    const Block* allocationSite = nullptr;
     for (auto& block : function.blocks) {
         if (block.values.contains(object))
-            birth = &block;
+            allocationSite = &block;
     }
-    if (birth)
-        look(*birth);
+    if (allocationSite)
+        look(*allocationSite);
     if (greatest == Need::Object)
-        found.why = "in the block of its birth"_s;
+        found.why = "in its allocation block"_s;
     for (auto& block : function.blocks) {
-        if (&block != birth)
+        if (&block != allocationSite)
             look(block);
     }
     if (greatest == Need::Store)
@@ -400,7 +399,7 @@ void reportAllocationAssertions(const Program& program, Vector<String>& findings
                 out.print(" at ");
                 printPlace(out, program, function, site.inlineFrame, site.position);
                 if (!allocationKindOf(program, site))
-                    out.print(" is not seen to be made here");
+                    out.print(" has no visible allocation here");
                 else {
                     out.print(" is allocated");
                     if (auto use = forcingUseOf(program, function, object)) {
@@ -418,14 +417,14 @@ void reportAllocationAssertions(const Program& program, Vector<String>& findings
     }
 }
 
-void noteAllocation(const Program& program, Function& function, const Value& site, AllocationOutcome outcome, unsigned, const Value* forcedBy, ASCIILiteral why)
+void recordAllocation(const Program& program, Function& function, const Value& site, AllocationOutcome outcome, unsigned, const Value* forcedBy, ASCIILiteral why)
 {
-    if (!program.notesAllocations)
+    if (!program.recordsAllocations)
         return;
     auto kind = allocationKindOf(program, site);
     if (!kind)
         return;
-    auto& note = noteFor(function, *kind, site);
+    auto& note = remarkFor(function, *kind, site);
     note.outcome = outcome;
     note.why = why;
     note.forcedBy = { };
@@ -436,32 +435,31 @@ void noteAllocation(const Program& program, Function& function, const Value& sit
     }
 }
 
-void noteAllocationSites(const Program& program, Function& function)
+void recordAllocationSites(const Program& program, Function& function)
 {
-    if (!program.notesAllocations)
+    if (!program.recordsAllocations)
         return;
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& value = function.at(id);
             if (auto kind = allocationKindOf(program, value))
-                describeSite(noteFor(function, *kind, value), value);
+                describeSite(remarkFor(function, *kind, value), value);
         }
     }
 }
 
-void concludeAllocationNotes(const Program& program, Function& function)
+void finalizeAllocationNotes(const Program& program, Function& function)
 {
-    if (!program.notesAllocations)
+    if (!program.recordsAllocations)
         return;
-    noteAllocationSites(program, function);
+    recordAllocationSites(program, function);
 
-    // Of a site that is left, the first allocation of it: what needs the object most, in the block of its birth and elsewhere. As forcingUseOf(), for all of them at once.
     struct Candidate {
         unsigned note;
-        unsigned birth;
-        Need inBirthBlock { Need::None };
+        unsigned allocationSite;
+        Need inAllocationBlock { Need::None };
         Need elsewhere { Need::None };
-        Use useInBirthBlock;
+        Use useInAllocationBlock;
         Use useElsewhere;
         Vector<ValueID, 2> holders;
     };
@@ -475,7 +473,7 @@ void concludeAllocationNotes(const Program& program, Function& function)
             auto kind = allocationKindOf(program, value);
             if (!kind)
                 continue;
-            auto& note = noteFor(function, *kind, value);
+            auto& note = remarkFor(function, *kind, value);
             note.left.append(id);
             if (note.left.size() > 1 || note.forcedBy)
                 continue;
@@ -487,11 +485,11 @@ void concludeAllocationNotes(const Program& program, Function& function)
         auto& block = function.blocks[b];
         auto see = [&](ValueID operand, Need need, const Use& use) {
             auto& candidate = candidates[candidateOf[operand.index()]];
-            Need& greatest = candidate.birth == b ? candidate.inBirthBlock : candidate.elsewhere;
+            Need& greatest = candidate.allocationSite == b ? candidate.inAllocationBlock : candidate.elsewhere;
             if (need <= greatest)
                 return;
             greatest = need;
-            (candidate.birth == b ? candidate.useInBirthBlock : candidate.useElsewhere) = use;
+            (candidate.allocationSite == b ? candidate.useInAllocationBlock : candidate.useElsewhere) = use;
         };
         for (ValueID id : block.values) {
             auto& user = function.at(id);
@@ -502,7 +500,7 @@ void concludeAllocationNotes(const Program& program, Function& function)
                 Use use { Typed::nameOf(user.opcode), user.inlineFrame, user.position, { }, { }, { }, 0, { } };
                 if (user.opcode == Opcode::CallBuiltin) {
                     use.builtin = user.builtin();
-                    use.into = operandThatHolds(function, user, object);
+                    use.into = retainingOperand(function, user, object);
                 } else if (user.opcode == Opcode::PutField || user.opcode == Opcode::PutById || user.opcode == Opcode::PutByVal) {
                     if (originOf(function, user.child(0)) != object)
                         use.into = originOf(function, user.child(0));
@@ -512,7 +510,7 @@ void concludeAllocationNotes(const Program& program, Function& function)
                     use.callee = user.function();
                     use.argument = user.arguments.find(child);
                 }
-                Need need = needOf(program, function, user, object);
+                Need need = needFor(program, function, user, object);
                 if (need == Need::Object && use.into && candidateOf[use.into.index()] != none) {
                     need = Need::Held;
                     auto& holders = candidates[candidateOf[object.index()]].holders;
@@ -538,11 +536,11 @@ void concludeAllocationNotes(const Program& program, Function& function)
         }
     }
     for (auto& candidate : candidates) {
-        Need greatest = std::max(candidate.inBirthBlock, candidate.elsewhere);
+        Need greatest = std::max(candidate.inAllocationBlock, candidate.elsewhere);
         if (greatest == Need::None)
             continue;
-        bool isInBirthBlock = candidate.inBirthBlock == greatest;
-        auto& use = isInBirthBlock ? candidate.useInBirthBlock : candidate.useElsewhere;
+        bool isInAllocationBlock = candidate.inAllocationBlock == greatest;
+        auto& use = isInAllocationBlock ? candidate.useInAllocationBlock : candidate.useElsewhere;
         auto& note = function.allocationNotes[candidate.note];
         note.forcedBy = use.operation;
         note.forcedByInlineFrame = use.inlineFrame;
@@ -550,11 +548,11 @@ void concludeAllocationNotes(const Program& program, Function& function)
         note.forcedByBuiltin = use.builtin;
         note.forcedByCallee = use.callee;
         note.forcedByArgument = use.argument;
-        note.forcedByInto = use.into;
+        note.forcedIntoValue = use.into;
         if (greatest == Need::Held)
-            note.heldBy = candidate.holders;
+            note.referencedBy = candidate.holders;
         if (note.why.isNull())
-            note.why = greatest == Need::Store ? "only stored to"_s : greatest == Need::Read ? "only read"_s : isInBirthBlock ? "in the block of its birth"_s : ASCIILiteral();
+            note.why = greatest == Need::Store ? "only stored to"_s : greatest == Need::Read ? "only read"_s : isInAllocationBlock ? "in its allocation block"_s : ASCIILiteral();
     }
 
     function.allocationNoteIndices.clear();
@@ -577,7 +575,7 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
                 out.print(": removed");
             else {
                 size_t inFrame = std::ranges::count_if(note.left, [&](ValueID id) {
-                    return function.at(id).isClosureInFrame() || function.environmentsInFrame.get(id.index());
+                    return function.at(id).isStackAllocatedClosure() || function.stackAllocatedEnvironments.get(id.index());
                 });
                 if (inFrame == note.left.size())
                     out.print(": frame");
@@ -593,24 +591,24 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
                         out.print(" (of ", builtin.holder, builtin.holder.isEmpty() ? "" : ".", builtin.name, ")");
                     } else if (note.forcedByCallee)
                         out.print(" (to f", note.forcedByCallee.index(), " #", note.forcedByArgument, ")");
-                    if (!note.heldBy.isEmpty()) {
-                        out.print(" (held only by");
-                        for (ValueID holder : note.heldBy)
+                    if (!note.referencedBy.isEmpty()) {
+                        out.print(" (referenced only by");
+                        for (ValueID holder : note.referencedBy)
                             out.print(" v", holder.index());
                         out.print(")");
-                    } else if (note.forcedByInto) {
-                        auto& holder = function.at(note.forcedByInto);
-                        out.print(" (into v", note.forcedByInto.index(), " ", holder.opcode == Opcode::Parameter && holder.immediates[0] ? "BlockParameter"_s : Typed::nameOf(holder.opcode), ")");
+                    } else if (note.forcedIntoValue) {
+                        auto& holder = function.at(note.forcedIntoValue);
+                        out.print(" (into v", note.forcedIntoValue.index(), " ", holder.opcode == Opcode::Parameter && holder.immediates[0] ? "BlockParameter"_s : Typed::nameOf(holder.opcode), ")");
                     }
                 }
                 if (inFrame && note.layout && std::ranges::any_of(function.values, [&](auto& value) { return value.opcode == Opcode::MaterializeEnvironment && note.left.contains(value.child(1)); }))
-                    out.print(" (moves to the heap in an arm)");
+                    out.print(" (moves to the heap on one path)");
                 if (inFrame && inFrame < note.left.size())
                     out.print(" (", inFrame, " in the frame)");
                 if (note.outcome != AllocationOutcome::BuiltLate && note.left.size() > 1)
                     out.print(" (", note.left.size(), " copies)");
             }
-            if (auto use = program.whyEnvironmentsAreOnHeap.find(note.layout ? note.layout.index() : UINT32_MAX - 2); use != program.whyEnvironmentsAreOnHeap.end() && !note.left.isEmpty()) {
+            if (auto use = program.environmentHeapReasons.find(note.layout ? note.layout.index() : UINT32_MAX - 2); use != program.environmentHeapReasons.end() && !note.left.isEmpty()) {
                 auto& user = program.at(use->value.function);
                 out.print(" (not in the frame: ", use->value.operation, " at ");
                 printPlace(out, program, user, use->value.inlineFrame, use->value.position);
@@ -636,48 +634,48 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
 
 namespace {
 
-namespace UseOfAllocation {
-static constexpr uint16_t IsKept = 1 << 0;
+namespace AllocationUse {
+static constexpr uint16_t IsRetained = 1 << 0;
 static constexpr uint16_t IsRead = 1 << 1;
 static constexpr uint16_t IsReadByName = 1 << 2;
 static constexpr uint16_t IsWritten = 1 << 3;
 static constexpr uint16_t IsWrittenByName = 1 << 4;
 static constexpr uint16_t IsIterated = 1 << 5;
-static constexpr uint16_t IsGivenToInlineBuiltin = 1 << 6;
-static constexpr uint16_t IsGivenToBuiltin = 1 << 7;
+static constexpr uint16_t IsPassedToInlineBuiltin = 1 << 6;
+static constexpr uint16_t IsPassedToBuiltin = 1 << 7;
 static constexpr uint16_t IsWrittenByBuiltin = 1 << 8;
 static constexpr uint16_t IsCompared = 1 << 9;
-static constexpr uint16_t IsHandedOn = 1 << 10;
+static constexpr uint16_t IsForwarded = 1 << 10;
 static constexpr uint16_t IsReturned = 1 << 11;
 static constexpr ASCIILiteral letters = "KrnwmibBgecR"_s;
-static constexpr uint16_t isTouchedByCallee = IsRead | IsReadByName | IsWritten | IsWrittenByName | IsIterated | IsGivenToInlineBuiltin | IsGivenToBuiltin | IsWrittenByBuiltin;
-static constexpr uint16_t leavesCompiledCode = IsWrittenByName | IsReadByName | IsGivenToBuiltin | IsWrittenByBuiltin;
+static constexpr uint16_t isTouchedByCallee = IsRead | IsReadByName | IsWritten | IsWrittenByName | IsIterated | IsPassedToInlineBuiltin | IsPassedToBuiltin | IsWrittenByBuiltin;
+static constexpr uint16_t leavesCompiledCode = IsWrittenByName | IsReadByName | IsPassedToBuiltin | IsWrittenByBuiltin;
 }
 
-namespace ResultOfFunction {
+namespace FunctionResult {
 static constexpr uint8_t MayBeFresh = 1 << 0;
 static constexpr uint8_t MayBeOperand = 1 << 1;
 static constexpr uint8_t MayBeAnything = 1 << 2;
 }
 
-struct UsesOfAllocation {
+struct AllocationUses {
     uint16_t own { 0 };
-    uint16_t ofCallees { 0 };
-    std::optional<Use> keptBy;
+    uint16_t inCallees { 0 };
+    std::optional<Use> retainedBy;
     std::optional<Use> returnedBy;
 
-    uint16_t all() const { return own | ofCallees; }
-    bool isKept() const { return own & UseOfAllocation::IsKept; }
-    bool isLetGo() const { return !(own & (UseOfAllocation::IsKept | UseOfAllocation::IsReturned)); }
-    bool mayLieInFrame(bool mayGrowByStore) const { return isLetGo() && !(ofCallees & UseOfAllocation::isTouchedByCallee) && !(own & (UseOfAllocation::leavesCompiledCode | (mayGrowByStore ? UseOfAllocation::IsWritten : 0))); }
+    uint16_t all() const { return own | inCallees; }
+    bool isKept() const { return own & AllocationUse::IsRetained; }
+    bool isNotRetained() const { return !(own & (AllocationUse::IsRetained | AllocationUse::IsReturned)); }
+    bool canBeStackAllocated(bool mayGrowByStore) const { return isNotRetained() && !(inCallees & AllocationUse::isTouchedByCallee) && !(own & (AllocationUse::leavesCompiledCode | (mayGrowByStore ? AllocationUse::IsWritten : 0))); }
 };
 
-struct SummariesOfFunctions {
+struct FunctionSummaries {
     Vector<Vector<uint16_t>> operands;
     Vector<uint8_t> results;
 };
 
-bool reachesArgumentsOtherwise(const Program& program, const Function& function)
+bool accessesArgumentsIndirectly(const Program& program, const Function& function)
 {
     return std::ranges::any_of(function.values, [&](const Value& value) {
         switch (value.opcode) {
@@ -704,9 +702,9 @@ bool isPlainCallDirect(const Value& value)
 
 uint16_t lettersOf(const Program& program, const Function& function, const Value& user, ValueID object, Need need)
 {
-    using namespace UseOfAllocation;
+    using namespace AllocationUse;
     if (need == Need::Object || need == Need::Held)
-        return IsKept;
+        return IsRetained;
     switch (user.opcode) {
     case Opcode::PutField:
     case Opcode::PutByVal:
@@ -730,7 +728,7 @@ uint16_t lettersOf(const Program& program, const Function& function, const Value
     case Opcode::CallBuiltin: {
         auto& builtins = Builtins::singleton();
         BuiltinID entry = program.operationOf(user);
-        uint16_t result = entry && builtins.at(entry).implementation.kind == BuiltinImplementation::Inline ? IsGivenToInlineBuiltin : IsGivenToBuiltin;
+        uint16_t result = entry && builtins.at(entry).implementation.kind == BuiltinImplementation::Inline ? IsPassedToInlineBuiltin : IsPassedToBuiltin;
         if (need == Need::Store)
             result |= IsWrittenByBuiltin;
         return result;
@@ -740,16 +738,16 @@ uint16_t lettersOf(const Program& program, const Function& function, const Value
     }
 }
 
-Vector<UsesOfAllocation> usesOf(const Program& program, const Function& function, std::span<const ValueID> objects, const SummariesOfFunctions& summaries)
+Vector<AllocationUses> usesOf(const Program& program, const Function& function, std::span<const ValueID> objects, const FunctionSummaries& summaries)
 {
-    using namespace UseOfAllocation;
+    using namespace AllocationUse;
     RELEASE_ASSERT(objects.size() <= 64);
-    Vector<UsesOfAllocation> result(objects.size());
+    Vector<AllocationUses> result(objects.size());
     Vector<uint64_t> mayBe;
     mayBe.fill(0, function.values.size());
     for (unsigned i = 0; i < objects.size(); ++i)
         mayBe[objects[i].index()] |= 1ull << i;
-    auto whatMayBe = [&](ValueID id) {
+    auto possibleObjectsOf = [&](ValueID id) {
         return id ? mayBe[originOf(function, id).index()] : 0;
     };
     auto add = [&](ValueID to, uint64_t more) {
@@ -763,29 +761,29 @@ Vector<UsesOfAllocation> usesOf(const Program& program, const Function& function
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::Cast || value.opcode == Opcode::IteratorOpen)
-                    changed |= add(id, whatMayBe(value.child(0)));
+                    changed |= add(id, possibleObjectsOf(value.child(0)));
                 if (!isPlainCallDirect(value))
                     continue;
-                auto& ofCallee = summaries.operands[value.function().index()];
-                for (unsigned i = 0; i < value.arguments.size() && i < ofCallee.size(); ++i) {
-                    if (ofCallee[i] & IsReturned)
-                        changed |= add(id, whatMayBe(value.arguments[i]));
+                auto& calleeOperands = summaries.operands[value.function().index()];
+                for (unsigned i = 0; i < value.arguments.size() && i < calleeOperands.size(); ++i) {
+                    if (calleeOperands[i] & IsReturned)
+                        changed |= add(id, possibleObjectsOf(value.arguments[i]));
                 }
             }
             for (auto& target : block.terminator.targets) {
                 auto& parameters = function.at(target.block).parameters;
                 for (size_t i = 0; i < parameters.size() && i < target.arguments.size(); ++i)
-                    changed |= add(parameters[i], whatMayBe(target.arguments[i]));
+                    changed |= add(parameters[i], possibleObjectsOf(target.arguments[i]));
             }
         }
     }
-    auto note = [&](uint64_t which, uint16_t own, uint16_t ofCallees, const Use& use) {
+    auto note = [&](uint64_t which, uint16_t own, uint16_t inCallees, const Use& use) {
         for (; which; which &= which - 1) {
             auto& uses = result[WTF::ctz(which)];
             uses.own |= own;
-            uses.ofCallees |= ofCallees;
-            if (own & IsKept && !uses.keptBy)
-                uses.keptBy = use;
+            uses.inCallees |= inCallees;
+            if (own & IsRetained && !uses.retainedBy)
+                uses.retainedBy = use;
             if (own & IsReturned && !uses.returnedBy)
                 uses.returnedBy = use;
         }
@@ -802,28 +800,28 @@ Vector<UsesOfAllocation> usesOf(const Program& program, const Function& function
             use.inlineFrame = user.inlineFrame;
             use.position = user.position;
             if (isPlainCallDirect(user)) {
-                auto& ofCallee = summaries.operands[user.function().index()];
+                auto& calleeOperands = summaries.operands[user.function().index()];
                 for (ValueID child : user.children)
-                    note(whatMayBe(child), IsKept, 0, use);
+                    note(possibleObjectsOf(child), IsRetained, 0, use);
                 for (unsigned i = 0; i < user.arguments.size(); ++i) {
-                    uint64_t which = whatMayBe(user.arguments[i]);
+                    uint64_t which = possibleObjectsOf(user.arguments[i]);
                     if (!which)
                         continue;
-                    uint16_t summary = i < ofCallee.size() ? ofCallee[i] : IsKept;
+                    uint16_t summary = i < calleeOperands.size() ? calleeOperands[i] : IsRetained;
                     use.callee = user.function();
                     use.argument = i;
-                    note(which, IsHandedOn | (summary & IsKept), summary & ~(IsKept | IsHandedOn | IsReturned), use);
+                    note(which, IsForwarded | (summary & IsRetained), summary & ~(IsRetained | IsForwarded | IsReturned), use);
                 }
                 continue;
             }
             user.forEachChild([&](ValueID child) {
-                uint64_t which = whatMayBe(child);
+                uint64_t which = possibleObjectsOf(child);
                 if (!which)
                     return;
                 ValueID object = originOf(function, child);
                 if (user.opcode == Opcode::CallBuiltin)
                     use.builtin = user.builtin();
-                note(which, lettersOf(program, function, user, object, needOf(program, function, user, object)), 0, use);
+                note(which, lettersOf(program, function, user, object, needFor(program, function, user, object)), 0, use);
             });
         }
         auto& terminator = block.terminator;
@@ -833,7 +831,7 @@ Vector<UsesOfAllocation> usesOf(const Program& program, const Function& function
             use.operation = nameOf(terminator.kind);
             use.inlineFrame = at.inlineFrame;
             use.position = at.position;
-            note(whatMayBe(terminator.value), terminator.kind == TerminatorKind::Return ? IsReturned : IsKept, 0, use);
+            note(possibleObjectsOf(terminator.value), terminator.kind == TerminatorKind::Return ? IsReturned : IsRetained, 0, use);
         }
     }
     return result;
@@ -846,38 +844,38 @@ void forEachGroupOf64(std::span<const ValueID> objects, const Functor& functor)
         functor(first, objects.subspan(first, std::min<size_t>(64, objects.size() - first)));
 }
 
-bool yieldsFreshObject(const Value& value, const SummariesOfFunctions& summaries)
+bool callReturnsFreshObject(const Value& value, const FunctionSummaries& summaries)
 {
-    using namespace ResultOfFunction;
+    using namespace FunctionResult;
     if (!isPlainCallDirect(value))
         return false;
     uint8_t result = summaries.results[value.function().index()];
     return result & MayBeFresh && !(result & MayBeAnything);
 }
 
-Vector<ValueID> sitesOf(const Program& program, const Function& function, const SummariesOfFunctions& summaries)
+Vector<ValueID> allocationSitesOf(const Program& program, const Function& function, const FunctionSummaries& summaries)
 {
     Vector<ValueID> sites;
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& value = function.at(id);
             auto kind = allocationKindOf(program, value);
-            if ((kind && (*kind == AllocationKind::Array || *kind == AllocationKind::Object || *kind == AllocationKind::Rest)) || yieldsFreshObject(value, summaries))
+            if ((kind && (*kind == AllocationKind::Array || *kind == AllocationKind::Object || *kind == AllocationKind::Rest)) || callReturnsFreshObject(value, summaries))
                 sites.append(id);
         }
     }
     return sites;
 }
 
-uint8_t resultOf(const Program& program, const Function& function, const SummariesOfFunctions& summaries)
+uint8_t resultOf(const Program& program, const Function& function, const FunctionSummaries& summaries)
 {
-    using namespace ResultOfFunction;
+    using namespace FunctionResult;
     Vector<uint8_t> mayBe;
     mayBe.fill(0, function.values.size());
     BitVector isSettled(function.values.size());
     for (ValueID operand : function.blocks[0].parameters)
         mayBe[operand.index()] = MayBeOperand;
-    Vector<ValueID> sites = sitesOf(program, function, summaries);
+    Vector<ValueID> sites = allocationSitesOf(program, function, summaries);
     forEachGroupOf64(sites.span(), [&](size_t, std::span<const ValueID> group) {
         auto uses = usesOf(program, function, group, summaries);
         for (size_t k = 0; k < group.size(); ++k) {
@@ -886,7 +884,7 @@ uint8_t resultOf(const Program& program, const Function& function, const Summari
                 isSettled.quickSet(group[k].index());
         }
     });
-    auto whatMayBe = [&](ValueID id) {
+    auto possibleObjectsOf = [&](ValueID id) {
         return mayBe[originOf(function, id).index()];
     };
     for (auto& block : function.blocks) {
@@ -908,19 +906,19 @@ uint8_t resultOf(const Program& program, const Function& function, const Summari
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::Cast && value.child(0))
-                    add(id, whatMayBe(value.child(0)));
+                    add(id, possibleObjectsOf(value.child(0)));
                 if (!isPlainCallDirect(value))
                     continue;
-                auto& ofCallee = summaries.operands[value.function().index()];
-                for (unsigned i = 0; i < value.arguments.size() && i < ofCallee.size(); ++i) {
-                    if (ofCallee[i] & UseOfAllocation::IsReturned)
-                        add(id, whatMayBe(value.arguments[i]));
+                auto& calleeOperands = summaries.operands[value.function().index()];
+                for (unsigned i = 0; i < value.arguments.size() && i < calleeOperands.size(); ++i) {
+                    if (calleeOperands[i] & AllocationUse::IsReturned)
+                        add(id, possibleObjectsOf(value.arguments[i]));
                 }
             }
             for (auto& target : block.terminator.targets) {
                 auto& parameters = function.at(target.block).parameters;
                 for (size_t i = 0; i < parameters.size() && i < target.arguments.size(); ++i)
-                    add(parameters[i], whatMayBe(target.arguments[i]));
+                    add(parameters[i], possibleObjectsOf(target.arguments[i]));
             }
         }
     }
@@ -928,31 +926,31 @@ uint8_t resultOf(const Program& program, const Function& function, const Summari
     for (auto& block : function.blocks) {
         auto& terminator = block.terminator;
         if (terminator.kind == TerminatorKind::Return && terminator.value && program.typeOf(function, terminator.value).hasObjects())
-            result |= whatMayBe(terminator.value);
+            result |= possibleObjectsOf(terminator.value);
     }
     return result;
 }
 
-SummariesOfFunctions summarizeFunctions(const Program& program, unsigned& numberOfRounds)
+FunctionSummaries summarizeFunctions(const Program& program, unsigned& numberOfRounds)
 {
-    using namespace UseOfAllocation;
+    using namespace AllocationUse;
     unsigned count = program.functions.size();
-    SummariesOfFunctions summaries;
+    FunctionSummaries summaries;
     summaries.operands.grow(count);
     summaries.results.fill(0, count);
-    BitVector isLost(count);
+    BitVector isDiscarded(count);
     BitVector isLeftOut(count);
     Vector<Vector<unsigned>> callees(count);
     for (unsigned i = 0; i < count; ++i) {
         auto& function = program.functions[i];
         if (!program.hasCode(FunctionID(i)) || function.blocks.isEmpty()) {
             isLeftOut.quickSet(i);
-            summaries.results[i] = ResultOfFunction::MayBeAnything;
+            summaries.results[i] = FunctionResult::MayBeAnything;
             continue;
         }
-        if (reachesArgumentsOtherwise(program, function))
-            isLost.quickSet(i);
-        summaries.operands[i].fill(isLost.quickGet(i) ? IsKept : 0, function.blocks[0].parameters.size());
+        if (accessesArgumentsIndirectly(program, function))
+            isDiscarded.quickSet(i);
+        summaries.operands[i].fill(isDiscarded.quickGet(i) ? IsRetained : 0, function.blocks[0].parameters.size());
         for (auto& value : function.values) {
             if (isPlainCallDirect(value))
                 callees[i].append(value.function().index());
@@ -965,16 +963,16 @@ SummariesOfFunctions summarizeFunctions(const Program& program, unsigned& number
     numberOfRounds = 0;
     for (bool changed = true; changed;) {
         bool isFirstRound = !numberOfRounds++;
-        SummariesOfFunctions next = summaries;
-        Vector<uint8_t> changesNow;
-        changesNow.fill(0, count);
+        FunctionSummaries next = summaries;
+        Vector<uint8_t> changedThisRound;
+        changedThisRound.fill(0, count);
         forEachIndexInParallel(count, [&](unsigned i) {
             if (isLeftOut.quickGet(i))
                 return;
             if (!isFirstRound && std::ranges::none_of(callees[i], [&](unsigned callee) { return hasChanged[callee]; }))
                 return;
             auto& function = program.functions[i];
-            if (!isLost.quickGet(i)) {
+            if (!isDiscarded.quickGet(i)) {
                 forEachGroupOf64(function.blocks[0].parameters.span(), [&](size_t first, std::span<const ValueID> group) {
                     auto uses = usesOf(program, function, group, summaries);
                     for (size_t k = 0; k < group.size(); ++k) {
@@ -983,11 +981,11 @@ SummariesOfFunctions summarizeFunctions(const Program& program, unsigned& number
                     }
                 });
             }
-            next.results[i] |= isLost.quickGet(i) ? ResultOfFunction::MayBeAnything : resultOf(program, function, summaries);
-            changesNow[i] = next.operands[i] != summaries.operands[i] || next.results[i] != summaries.results[i];
+            next.results[i] |= isDiscarded.quickGet(i) ? FunctionResult::MayBeAnything : resultOf(program, function, summaries);
+            changedThisRound[i] = next.operands[i] != summaries.operands[i] || next.results[i] != summaries.results[i];
         });
-        changed = std::ranges::any_of(changesNow, [](uint8_t value) { return value; });
-        hasChanged = WTF::move(changesNow);
+        changed = std::ranges::any_of(changedThisRound, [](uint8_t value) { return value; });
+        hasChanged = WTF::move(changedThisRound);
         summaries = WTF::move(next);
     }
     return summaries;
@@ -999,9 +997,9 @@ void printLetters(PrintStream& out, uint16_t uses)
         out.print("-");
         return;
     }
-    for (unsigned i = 0; i < UseOfAllocation::letters.length(); ++i) {
+    for (unsigned i = 0; i < AllocationUse::letters.length(); ++i) {
         if (uses & 1 << i)
-            out.print(UseOfAllocation::letters[i]);
+            out.print(AllocationUse::letters[i]);
     }
 }
 
@@ -1017,15 +1015,15 @@ void printUse(PrintStream& out, const Program& program, const Function& function
     }
 }
 
-void printVerdict(PrintStream& out, const Program& program, const Function& function, const UsesOfAllocation& uses)
+void printVerdict(PrintStream& out, const Program& program, const Function& function, const AllocationUses& uses)
 {
     out.print(" own ");
     printLetters(out, uses.own);
     out.print(" callees ");
-    printLetters(out, uses.ofCallees);
-    if (uses.keptBy) {
+    printLetters(out, uses.inCallees);
+    if (uses.retainedBy) {
         out.print(": kept: ");
-        printUse(out, program, function, *uses.keptBy);
+        printUse(out, program, function, *uses.retainedBy);
     } else if (uses.returnedBy) {
         out.print(": returned: ");
         printUse(out, program, function, *uses.returnedBy);
@@ -1035,26 +1033,26 @@ void printVerdict(PrintStream& out, const Program& program, const Function& func
 
 } // anonymous namespace
 
-void printUsesOfAllocations(const Program& program, PrintStream& out)
+void printAllocationUses(const Program& program, PrintStream& out)
 {
-    using namespace UseOfAllocation;
-    using namespace ResultOfFunction;
+    using namespace AllocationUse;
+    using namespace FunctionResult;
     unsigned numberOfRounds = 0;
-    SummariesOfFunctions summaries = summarizeFunctions(program, numberOfRounds);
+    FunctionSummaries summaries = summarizeFunctions(program, numberOfRounds);
     struct Calls {
-        unsigned letGo { 0 };
+        unsigned notRetained { 0 };
         unsigned returned { 0 };
         unsigned kept { 0 };
     };
     Vector<Calls> callsOf(program.functions.size());
     unsigned numberOfOperands = 0;
-    unsigned numberLetGo = 0;
-    unsigned numberReturned = 0;
+    unsigned notRetainedCount = 0;
+    unsigned returnedCount = 0;
     for (unsigned i = 0; i < program.functions.size(); ++i) {
         if (!program.hasCode(FunctionID(i)) || program.functions[i].blocks.isEmpty())
             continue;
         auto& function = program.functions[i];
-        bool isLost = reachesArgumentsOtherwise(program, function);
+        bool isDiscarded = accessesArgumentsIndirectly(program, function);
         forEachGroupOf64(function.blocks[0].parameters.span(), [&](size_t first, std::span<const ValueID> group) {
             auto uses = usesOf(program, function, group, summaries);
             for (size_t k = 0; k < group.size(); ++k) {
@@ -1062,11 +1060,11 @@ void printUsesOfAllocations(const Program& program, PrintStream& out)
                     continue;
                 ++numberOfOperands;
                 out.print("operand f", i, " #", first + k);
-                if (isLost)
+                if (isDiscarded)
                     out.print(" own K callees -: kept: reaches its arguments otherwise");
                 else {
-                    numberLetGo += uses[k].isLetGo();
-                    numberReturned += !uses[k].isKept() && !uses[k].isLetGo();
+                    notRetainedCount += uses[k].isNotRetained();
+                    returnedCount += !uses[k].isKept() && !uses[k].isNotRetained();
                     printVerdict(out, program, function, uses[k]);
                 }
                 out.print(" in ");
@@ -1074,7 +1072,7 @@ void printUsesOfAllocations(const Program& program, PrintStream& out)
                 out.print("\n");
             }
         });
-        Vector<ValueID> sites = sitesOf(program, function, summaries);
+        Vector<ValueID> sites = allocationSitesOf(program, function, summaries);
         forEachGroupOf64(sites.span(), [&](size_t, std::span<const ValueID> group) {
             auto uses = usesOf(program, function, group, summaries);
             for (size_t k = 0; k < group.size(); ++k) {
@@ -1084,7 +1082,7 @@ void printUsesOfAllocations(const Program& program, PrintStream& out)
                 if (!kind) {
                     out.print(" call f", site.function().index(), summaries.results[site.function().index()] & MayBeOperand ? " fresh or an operand" : " fresh");
                     auto& calls = callsOf[site.function().index()];
-                    ++(uses[k].isKept() ? calls.kept : uses[k].isLetGo() ? calls.letGo : calls.returned);
+                    ++(uses[k].isKept() ? calls.kept : uses[k].isNotRetained() ? calls.notRetained : calls.returned);
                 } else {
                     out.print(*kind == AllocationKind::Array ? " array " : *kind == AllocationKind::Rest ? " rest " : " object ");
                     printSite(out, program, site.opcode, site.opcode == Opcode::NewObjectWithShape ? site.layout() : LayoutID(), FunctionID());
@@ -1092,7 +1090,7 @@ void printUsesOfAllocations(const Program& program, PrintStream& out)
                         out.print(" of ", site.arguments.size());
                 }
                 printVerdict(out, program, function, uses[k]);
-                out.print(kind && uses[k].mayLieInFrame(*kind != AllocationKind::Object) ? " | frame yes | " : " | frame no | ");
+                out.print(kind && uses[k].canBeStackAllocated(*kind != AllocationKind::Object) ? " | frame yes | " : " | frame no | ");
                 printPlace(out, program, function, site.inlineFrame, site.position);
                 out.print(" in ");
                 printName(out, program, function.name);
@@ -1112,11 +1110,11 @@ void printUsesOfAllocations(const Program& program, PrintStream& out)
         auto& function = program.functions[i];
         numberOfFunctionsWithFreshResult += result & MayBeFresh && !(result & MayBeAnything);
         out.print("result f", i, result & MayBeFresh ? " fresh" : "", result & MayBeOperand ? " operand" : "", result & MayBeAnything ? " anything" : "");
-        out.print(" | direct calls whose result is let go ", callsOf[i].letGo, ", returned ", callsOf[i].returned, ", kept ", callsOf[i].kept, function.has(Format::FunctionIsUsedAsValue) ? " | is used as a value" : " | is no value", " | kind ", static_cast<unsigned>(function.kind), " in ");
+        out.print(" | direct calls whose result is let go ", callsOf[i].notRetained, ", returned ", callsOf[i].returned, ", kept ", callsOf[i].kept, function.has(Format::FunctionIsUsedAsValue) ? " | is used as a value" : " | is no value", " | kind ", static_cast<unsigned>(function.kind), " in ");
         printName(out, program, function.name);
         out.print("\n");
     }
-    out.print("operands that may hold objects: ", numberOfOperands, "; that are let go: ", numberLetGo, "; that are only returned: ", numberReturned, "; functions whose every result is fresh or an operand, and some fresh: ", numberOfFunctionsWithFreshResult, "; rounds: ", numberOfRounds, "\n");
+    out.print("operands that may hold objects: ", numberOfOperands, "; that are let go: ", notRetainedCount, "; that are only returned: ", returnedCount, "; functions whose every result is fresh or an operand, and some fresh: ", numberOfFunctionsWithFreshResult, "; rounds: ", numberOfRounds, "\n");
 }
 
 } } } // namespace JSC::AOT::Typed

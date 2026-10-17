@@ -37,10 +37,10 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(VMProgram);
 
-static constexpr uint32_t sourceNamesBetweenWholeOnes = 16;
+static constexpr uint32_t sourceNameRestartInterval = 16;
 
-struct HeadOfSourceName {
-    uint16_t distanceOfBytesOfFirst;
+struct SourceNameHeader {
+    uint16_t firstBytesDistance;
     uint16_t shared;
     uint16_t restAndIsASCII;
 };
@@ -56,7 +56,6 @@ void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
     bytes.append(static_cast<uint8_t>(value));
 }
 
-// The positions of FunctionMetadata::ExpressionInfo, each relative to the one before. FunctionRef::reportedPositionFor() reads them.
 class PositionEncoder {
 public:
     explicit PositionEncoder(Vector<uint8_t>& stream)
@@ -82,7 +81,6 @@ public:
         m_source = source;
     }
 
-    // What the next position is relative to.
     struct State {
         int64_t line { 0 };
         int64_t column { 0 };
@@ -157,7 +155,7 @@ public:
 
     uint32_t appendOnce(std::span<const uint8_t> bytes, size_t alignment, uint64_t hash)
     {
-        auto& withHash = m_copies.add(hash | 1, Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
+        auto& withHash = m_inlinedCopies.add(hash | 1, Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
         for (auto [offset, size] : withHash) {
             if (size == bytes.size() && !(offset % alignment) && equalSpans(m_out.span().subspan(offset, size), bytes))
                 return offset;
@@ -177,7 +175,6 @@ public:
         }).iterator->value;
     }
 
-    // From 1: 0 stands for the module's own source.
     uint32_t numberOfSource(const UTF8CString& name)
     {
         return m_sources.ensure(name, [&] {
@@ -197,30 +194,27 @@ public:
         static void translate(UTF8CString& location, const SourceWithHash& source, unsigned) { location = source.name; }
     };
 
-    // The same stream for a function compiled from types, without the steps: the offsets are call-site numbers, and every one of them has an entry.
-    // Each is relative to the last one of the same inline frame: the sites stand in the order of the code, where copied bodies lie interleaved.
-    // Which frame a number is in is not written again: see FramesOfSites, which has nothing to go by if no site has code.
-    static Vector<uint8_t> typedPositionsOf(const FunctionReportableSites& sites, std::span<const uint32_t> numbersOfSources)
+    static Vector<uint8_t> typedPositionsOf(const FunctionReportableSites& sites, std::span<const uint32_t> sourceNumbers)
     {
         RELEASE_ASSERT(!sites.typedPositions.isEmpty());
         Vector<uint8_t> stream;
         appendVarint(stream, sites.typedPositions[0].line);
         appendVarint(stream, sites.typedPositions[0].column);
         appendVarint(stream, sites.typedPositions.size());
-        PositionEncoder::State start { sites.typedPositions[0].line, sites.typedPositions[0].column, numbersOfSources[sites.typedPositions[0].source] };
+        PositionEncoder::State start { sites.typedPositions[0].line, sites.typedPositions[0].column, sourceNumbers[sites.typedPositions[0].source] };
         appendVarint(stream, start.source);
         Vector<uint8_t> positions;
-        size_t endOfLastStretch = 0;
+        size_t lastRunEnd = 0;
         PositionEncoder encoder(positions);
         bool hasSitesWithCode = sites.typedPositions.size() > 1 + sites.numberOfSitesWithoutCode;
         Vector<PositionEncoder::State, 8> states { start };
         for (unsigned site = 1; site < sites.typedPositions.size(); ++site) {
             if (!(site % FunctionMetadata::sitesBetweenPositionCheckpoints)) {
-                size_t bytesSinceLast = positions.size() - endOfLastStretch;
+                size_t bytesSinceLast = positions.size() - lastRunEnd;
                 RELEASE_ASSERT(bytesSinceLast <= std::numeric_limits<uint16_t>::max());
                 stream.append(static_cast<uint8_t>(bytesSinceLast));
                 stream.append(static_cast<uint8_t>(bytesSinceLast >> 8));
-                endOfLastStretch = positions.size();
+                lastRunEnd = positions.size();
                 states.fill(start);
             }
             auto& position = sites.typedPositions[site];
@@ -228,15 +222,14 @@ public:
             while (frame >= states.size())
                 states.append(start);
             encoder.setState(states[frame]);
-            encoder.append({ position.line, position.column }, numbersOfSources[position.source]);
+            encoder.append({ position.line, position.column }, sourceNumbers[position.source]);
             states[frame] = encoder.state();
         }
         stream.appendVector(positions);
         return stream;
     }
 
-    // They are listed in the order the positions of the function first name them.
-    Vector<unsigned, 2> hashesOfSourcesOf(uint32_t function) const
+    Vector<unsigned, 2> sourceHashesFor(uint32_t function) const
     {
         return WTF::map<2>(m_reportableSites[function].typedSourceNames, [&](const UTF8CString& name) {
             return name.hash();
@@ -304,12 +297,11 @@ public:
         return append(stream.span(), 2);
     }
 
-    // The handlers of what was compiled from types: the calls stand for places in the code, the number of a handler for where it starts.
     Vector<UnlinkedHandlerInfo> typedExceptionHandlers(uint32_t index) const
     {
         Vector<UnlinkedHandlerInfo> handlers;
         for (auto& [siteAndFlag, handler] : m_reportableSites[index].typedCatchEntrypointsForCallSites) {
-            uint32_t site = siteAndFlag & ~FunctionReportableSites::flagsOfHandler;
+            uint32_t site = siteAndFlag & ~FunctionReportableSites::handlerFlags;
             if (!handlers.isEmpty() && handlers.last().end == site && handlers.last().target == handler) {
                 handlers.last().end = site + 1;
                 continue;
@@ -445,13 +437,13 @@ public:
         fillMetadata(function.index, codeBlock, lineStarts);
     }
 
-    void noteTypedIdentifiers()
+    void recordTypedIdentifiers()
     {
-        BitVector isNoted(m_identifiers.size());
+        BitVector isRecorded(m_identifiers.size());
         for (auto& sites : m_reportableSites) {
             RELEASE_ASSERT(sites.typedIdentifierIndices.size() == sites.typedIdentifierNames.size());
             for (unsigned i = 0; i < sites.typedIdentifierIndices.size(); ++i) {
-                if (isNoted.set(sites.typedIdentifierIndices[i]) || sites.typedIdentifierNames[i].isNull())
+                if (isRecorded.set(sites.typedIdentifierIndices[i]) || sites.typedIdentifierNames[i].isNull())
                     continue;
                 AtomString name(sites.typedIdentifierNames[i]);
                 m_typedIdentifiers.append(name);
@@ -463,13 +455,13 @@ public:
         }
     }
 
-    struct TypedInfoMadeAhead {
+    struct PrecomputedTypedInfo {
         uint64_t hash { 0 };
         uint64_t closureWord { 0 };
         Vector<uint8_t> handlersAndPositions;
     };
 
-    void makeTypedInfoAhead(const ImageView::Function& function, const Vector<uint8_t>& positions, TypedInfoMadeAhead& ahead)
+    void precomputeTypedInfo(const ImageView::Function& function, const Vector<uint8_t>& positions, PrecomputedTypedInfo& ahead)
     {
         auto& sites = m_reportableSites[function.index];
         FunctionInfo& info = m_infos[function.index];
@@ -497,52 +489,52 @@ public:
         bool someHandlerIgnoresValue = handlers.containsIf([](auto& handler) {
             return handler.type() == HandlerType::SynthesizedCatch;
         });
-        Vector<uint8_t> rowOfHandlers { static_cast<uint8_t>(width | (someHandlerIgnoresValue ? FunctionMetadata::someHandlerIgnoresValue : 0)) };
+        Vector<uint8_t> handlerBytes { static_cast<uint8_t>(width | (someHandlerIgnoresValue ? FunctionMetadata::someHandlerIgnoresValue : 0)) };
         for (auto& handler : handlers) {
             bool takesException = handler.type() == HandlerType::Finally;
             for (uint32_t number : { takesException ? handler.end : handler.start, takesException ? handler.start : handler.end, handler.target }) {
                 for (unsigned i = 0; i < width; ++i)
-                    rowOfHandlers.append(static_cast<uint8_t>(number >> 8 * i));
+                    handlerBytes.append(static_cast<uint8_t>(number >> 8 * i));
             }
         }
         if (someHandlerIgnoresValue) {
-            size_t startOfBits = rowOfHandlers.size();
-            rowOfHandlers.grow(startOfBits + (handlers.size() + 7) / 8);
-            zeroSpan(rowOfHandlers.mutableSpan().subspan(startOfBits));
+            size_t startOfBits = handlerBytes.size();
+            handlerBytes.grow(startOfBits + (handlers.size() + 7) / 8);
+            zeroSpan(handlerBytes.mutableSpan().subspan(startOfBits));
             for (size_t i = 0; i < handlers.size(); ++i) {
                 if (handlers[i].type() == HandlerType::SynthesizedCatch)
-                    rowOfHandlers[startOfBits + i / 8] |= 1 << i % 8;
+                    handlerBytes[startOfBits + i / 8] |= 1 << i % 8;
             }
         }
-        appendVarint(ahead.handlersAndPositions, rowOfHandlers.size());
-        ahead.handlersAndPositions.appendVector(rowOfHandlers);
+        appendVarint(ahead.handlersAndPositions, handlerBytes.size());
+        ahead.handlersAndPositions.appendVector(handlerBytes);
         ahead.handlersAndPositions.appendVector(positions);
         ahead.hash = hashForAppendOnce(ahead.handlersAndPositions.span());
     }
 
-    void fillTypedInfos(std::span<const std::optional<ImageView::Function>> functions, std::span<const Vector<uint8_t>> positions, std::span<const TypedInfoMadeAhead> madeAhead)
+    void fillTypedInfos(std::span<const std::optional<ImageView::Function>> functions, std::span<const Vector<uint8_t>> positions, std::span<const PrecomputedTypedInfo> precomputed)
     {
         struct Row {
             uint64_t hash { 0 };
             uint32_t number { 0 };
         };
         auto bytesOf = [&](uint32_t number) {
-            return madeAhead[number].handlersAndPositions.isEmpty() ? positions[number].span() : madeAhead[number].handlersAndPositions.span();
+            return precomputed[number].handlersAndPositions.isEmpty() ? positions[number].span() : precomputed[number].handlersAndPositions.span();
         };
         Vector<Row> rows;
         rows.reserveInitialCapacity(functions.size());
         for (uint32_t number = 0; number < functions.size(); ++number) {
             if (functions[number])
-                rows.append(Row { madeAhead[number].hash, number });
+                rows.append(Row { precomputed[number].hash, number });
         }
         Typed::sortOnPool(rows.mutableSpan(), [](const Row& a, const Row& b) {
             return a.hash != b.hash ? a.hash < b.hash : a.number < b.number;
         });
         Vector<uint32_t> firstWithBytesOf;
-        Vector<uint32_t> sizesOfNewBytes;
+        Vector<uint32_t> newByteSizes;
         Vector<uint32_t> offsets;
         firstWithBytesOf.fill(0, functions.size());
-        sizesOfNewBytes.fill(0, functions.size());
+        newByteSizes.fill(0, functions.size());
         offsets.fill(0, functions.size());
         constexpr size_t rowsInChunk = 4096;
         Typed::forEachIndexInParallel((rows.size() + rowsInChunk - 1) / rowsInChunk, [&](unsigned chunk) {
@@ -553,7 +545,7 @@ public:
             Vector<uint32_t, 4> firsts;
             while (at < end) {
                 uint64_t hash = rows[at].hash;
-                auto writtenBefore = m_copies.find(hash | 1);
+                auto writtenBefore = m_inlinedCopies.find(hash | 1);
                 firsts.shrink(0);
                 for (; at < rows.size() && rows[at].hash == hash; ++at) {
                     uint32_t number = rows[at].number;
@@ -561,7 +553,7 @@ public:
                     RELEASE_ASSERT(!bytes.empty());
                     firstWithBytesOf[number] = number;
                     bool isWritten = false;
-                    if (writtenBefore != m_copies.end()) {
+                    if (writtenBefore != m_inlinedCopies.end()) {
                         for (auto [offset, size] : writtenBefore->value) {
                             if (size == bytes.size() && equalSpans(m_out.span().subspan(offset, size), bytes)) {
                                 offsets[number] = offset;
@@ -580,31 +572,31 @@ public:
                         continue;
                     }
                     firsts.append(number);
-                    sizesOfNewBytes[number] = safeCast<uint32_t>(bytes.size());
+                    newByteSizes[number] = safeCast<uint32_t>(bytes.size());
                 }
             }
         });
         size_t sizeOfOutput = m_out.size();
         for (uint32_t number = 0; number < functions.size(); ++number) {
-            if (!sizesOfNewBytes[number])
+            if (!newByteSizes[number])
                 continue;
             offsets[number] = safeCast<uint32_t>(sizeOfOutput);
-            sizeOfOutput += sizesOfNewBytes[number];
+            sizeOfOutput += newByteSizes[number];
         }
         m_out.grow(sizeOfOutput);
         Typed::forEachIndexInParallel(functions.size(), [&](unsigned number) {
             if (!functions[number])
                 return;
             uint32_t offset = offsets[firstWithBytesOf[number]];
-            if (sizesOfNewBytes[number])
-                memcpySpan(m_out.mutableSpan().subspan(offset, sizesOfNewBytes[number]), bytesOf(number));
-            if (madeAhead[number].handlersAndPositions.isEmpty()) {
+            if (newByteSizes[number])
+                memcpySpan(m_out.mutableSpan().subspan(offset, newByteSizes[number]), bytesOf(number));
+            if (precomputed[number].handlersAndPositions.isEmpty()) {
                 RELEASE_ASSERT(!(offset >> 31));
-                m_functionMetadataOffsets[functions[number]->index] = offset << 1 | FunctionMetadata::isPositionsOfTypedFunction;
+                m_functionMetadataOffsets[functions[number]->index] = offset << 1 | FunctionMetadata::isTypedFunctionPositions;
                 return;
             }
             RELEASE_ASSERT(!(offset >> 30));
-            m_functionMetadataOffsets[functions[number]->index] = offset << 2 | FunctionMetadata::isHandlersAndPositionsOfTypedFunction;
+            m_functionMetadataOffsets[functions[number]->index] = offset << 2 | FunctionMetadata::isTypedFunctionHandlersAndPositions;
         });
     }
 
@@ -650,7 +642,7 @@ public:
             UncheckedKeyHashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> exported;
             for (uint32_t offset : *exportedByModule)
                 exported.add(offset);
-            moduleValue->keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry& entry) {
+            moduleValue->retainOnly([&](UniquedStringImpl* name, const SymbolTableEntry& entry) {
                 return name->isSymbol() || own.names.contains(name) || (entry.varOffset().isScope() && exported.contains(entry.scopeOffset().offset()));
             });
         }
@@ -660,7 +652,7 @@ public:
                 continue;
             RELEASE_ASSERT(m_processedSymbolTables.add(table).isNewEntry);
             if (!own.mayBeAnything)
-                table->keepOnlyNames(own.names);
+                table->retainOnlyNames(own.names);
         }
         lookedUp.mayBeAnything |= own.mayBeAnything;
         for (auto* name : own.names)
@@ -686,7 +678,7 @@ public:
     uint32_t m_moduleEntryOffset { 0 };
 
     Vector<uint8_t> m_out;
-    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_copies;
+    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_inlinedCopies;
     Vector<FunctionInfo> m_infos;
     Vector<uint32_t> m_indexAndFlags;
     Vector<uint32_t> m_functionMetadataOffsets;
@@ -739,7 +731,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
 {
     MonotonicTime stepStart = MonotonicTime::now();
     auto endStep = [&](ASCIILiteral name) {
-        if (!Typed::saysClocks()) [[likely]]
+        if (!Typed::shouldPrintTimings()) [[likely]]
             return;
         MonotonicTime now = MonotonicTime::now();
         dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
@@ -832,9 +824,9 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     endStep("the modules"_s);
     builder.mergeSymbolTables();
     endStep("mergeSymbolTables"_s);
-    builder.noteTypedIdentifiers();
+    builder.recordTypedIdentifiers();
 
-    endStep("noteTypedIdentifiers"_s);
+    endStep("recordTypedIdentifiers"_s);
     ProgramData header { };
     header.magic = expectedMagic;
     header.stamp = imageStamp();
@@ -856,16 +848,16 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     Vector<uint64_t> typedEntries;
     auto keys = image->keys();
     Vector<std::optional<ImageView::Function>> typedFunctions(keys.size());
-    Vector<Vector<unsigned, 2>> hashesOfSources(keys.size());
+    Vector<Vector<unsigned, 2>> sourceHashes(keys.size());
     Typed::forEachIndexInParallel(keys.size(), [&](unsigned i) {
         auto& key = keys[i];
         if (key.record && !(key.record & ImageKey::isEntryInsideFunction) && key.kind != std::numeric_limits<uint32_t>::max() && key.kind & ImageKey::typedFunction)
             typedFunctions[i] = image->find(key);
         if (typedFunctions[i])
-            hashesOfSources[i] = builder.hashesOfSourcesOf(typedFunctions[i]->index);
+            sourceHashes[i] = builder.sourceHashesFor(typedFunctions[i]->index);
     });
     endStep("looking up the typed functions"_s);
-    Vector<Vector<uint32_t, 2>> numbersOfSources(keys.size());
+    Vector<Vector<uint32_t, 2>> sourceNumbers(keys.size());
     {
         constexpr size_t keysInChunk = 2048;
         unsigned numberOfChunks = (keys.size() + keysInChunk - 1) / keysInChunk;
@@ -876,35 +868,35 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                     functor(i);
             }
         };
-        Vector<Vector<std::pair<const UTF8CString*, unsigned>>> namesOfChunk(numberOfChunks);
+        Vector<Vector<std::pair<const UTF8CString*, unsigned>>> chunkNames(numberOfChunks);
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
-            auto& namesMet = namesOfChunk[chunk];
+            auto& namesMet = chunkNames[chunk];
             UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> ordinalsWithHash;
             forEachTypedFunctionIn(chunk, [&](size_t i) {
                 auto& names = builder.reportableSitesOf(typedFunctions[i]->index).typedSourceNames;
-                RELEASE_ASSERT(hashesOfSources[i].size() == names.size());
-                numbersOfSources[i] = Vector<uint32_t, 2>(names.size(), [&](size_t index) {
-                    auto& ordinals = ordinalsWithHash.add(hashesOfSources[i][index], Vector<uint32_t, 1> { }).iterator->value;
+                RELEASE_ASSERT(sourceHashes[i].size() == names.size());
+                sourceNumbers[i] = Vector<uint32_t, 2>(names.size(), [&](size_t index) {
+                    auto& ordinals = ordinalsWithHash.add(sourceHashes[i][index], Vector<uint32_t, 1> { }).iterator->value;
                     for (uint32_t ordinal : ordinals) {
                         if (*namesMet[ordinal].first == names[index])
                             return ordinal;
                     }
                     ordinals.append(namesMet.size());
-                    namesMet.append({ &names[index], hashesOfSources[i][index] });
+                    namesMet.append({ &names[index], sourceHashes[i][index] });
                     return ordinals.last();
                 });
             });
         });
-        Vector<Vector<uint32_t>> numbersOfChunk(numberOfChunks);
+        Vector<Vector<uint32_t>> chunkNumbers(numberOfChunks);
         for (unsigned chunk = 0; chunk < numberOfChunks; ++chunk) {
-            numbersOfChunk[chunk] = WTF::map(namesOfChunk[chunk], [&](auto& name) {
+            chunkNumbers[chunk] = WTF::map(chunkNames[chunk], [&](auto& name) {
                 return builder.numberOfSource(*name.first, name.second);
             });
         }
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
             forEachTypedFunctionIn(chunk, [&](size_t i) {
-                for (uint32_t& number : numbersOfSources[i])
-                    number = numbersOfChunk[chunk][number];
+                for (uint32_t& number : sourceNumbers[i])
+                    number = chunkNumbers[chunk][number];
             });
         });
     }
@@ -912,28 +904,28 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     Vector<Vector<uint8_t>> typedPositions(keys.size());
     Typed::forEachIndexInParallel(keys.size(), [&](unsigned i) {
         if (typedFunctions[i])
-            typedPositions[i] = Builder::typedPositionsOf(builder.reportableSitesOf(typedFunctions[i]->index), numbersOfSources[i].span());
+            typedPositions[i] = Builder::typedPositionsOf(builder.reportableSitesOf(typedFunctions[i]->index), sourceNumbers[i].span());
     });
     endStep("the typed positions"_s);
-    Vector<Builder::TypedInfoMadeAhead> madeAhead(keys.size());
+    Vector<Builder::PrecomputedTypedInfo> precomputed(keys.size());
     Typed::forEachIndexInParallel(keys.size(), [&](unsigned i) {
         auto& key = keys[i];
         if (key.record & ImageKey::isEntryInsideFunction) {
-            madeAhead[i].closureWord = closureWordOfTypedFunction(codeImage, key.start, EntryWord::encode(static_cast<uint64_t>(key.record & ~ImageKey::isEntryInsideFunction), Convention { key.module >> 8 & 1 ? Signature::List : Signature::Registers, static_cast<uint8_t>(key.module), true })) | static_cast<uint64_t>(key.module >> 9 & 1) << ClosureWord::saysWhatItYieldsBit;
+            precomputed[i].closureWord = typedFunctionClosureWord(codeImage, key.start, EntryWord::encode(static_cast<uint64_t>(key.record & ~ImageKey::isEntryInsideFunction), Convention { key.module >> 8 & 1 ? Signature::List : Signature::Registers, static_cast<uint8_t>(key.module), true })) | static_cast<uint64_t>(key.module >> 9 & 1) << ClosureWord::hasCompatibleResultsMaskBit;
             return;
         }
         if (auto& function = typedFunctions[i]) {
-            builder.makeTypedInfoAhead(*function, typedPositions[i], madeAhead[i]);
+            builder.precomputeTypedInfo(*function, typedPositions[i], precomputed[i]);
             if (key.kind == ImageKey::typedFunction)
-                madeAhead[i].closureWord = closureWordOfTypedFunction(codeImage, key.start, function->entry) | static_cast<uint64_t>(function->saysWhatItAnswers) << ClosureWord::saysWhatItAnswersBit | static_cast<uint64_t>(function->saysWhatItYields) << ClosureWord::saysWhatItYieldsBit;
+                precomputed[i].closureWord = typedFunctionClosureWord(codeImage, key.start, function->entry) | static_cast<uint64_t>(function->hasValueEntry) << ClosureWord::hasValueEntryBit | static_cast<uint64_t>(function->hasCompatibleResultsMask) << ClosureWord::hasCompatibleResultsMaskBit;
         }
     });
     endStep("the typed infos made ahead"_s);
     Vector<uint8_t> parameterChecks;
     uint32_t numberOfParameterChecks = 0;
-    Vector<uint32_t> placesOfSourceNames;
-    Vector<uint8_t> textOfSourceNames;
-    Ref besideTypedInfos = Thread::create("AOT image"_s, [&] {
+    Vector<uint32_t> sourceNameOffsets;
+    Vector<uint8_t> sourceNameBytes;
+    Ref sourceNameThread = Thread::create("AOT image"_s, [&] {
         {
             using Definition = std::array<uint32_t, 4>;
             Vector<std::tuple<uint32_t, uint32_t, Definition>> rows;
@@ -942,7 +934,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
                 if (!typedFunctions[i] || keys[i].record & ImageKey::isEntryInsideFunction)
                     continue;
                 for (auto& check : builder.reportableSitesOf(typedFunctions[i]->index).parameterCheckSites) {
-                    definitions.append({ check.typedFunction, numbersOfSources[i][check.definition.source], check.definition.line, check.definition.column });
+                    definitions.append({ check.typedFunction, sourceNumbers[i][check.definition.source], check.definition.line, check.definition.column });
                     rows.append({ typedFunctions[i]->index, check.site, definitions.last() });
                 }
             }
@@ -982,65 +974,64 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             std::ranges::sort(sorted, [&](uint32_t a, uint32_t b) {
                 return std::ranges::lexicographical_compare(builder.m_sourceNames[a].span(), builder.m_sourceNames[b].span());
             });
-            placesOfSourceNames.fill(0, sorted.size());
-            size_t placeOfBytesOfFirst = 0;
-            size_t rankOfFirst = 0;
+            sourceNameOffsets.fill(0, sorted.size());
+            size_t firstBytesOffset = 0;
+            size_t firstRank = 0;
             for (size_t rank = 0; rank < sorted.size(); ++rank) {
-                placesOfSourceNames[sorted[rank]] = textOfSourceNames.size();
+                sourceNameOffsets[sorted[rank]] = sourceNameBytes.size();
                 auto name = builder.m_sourceNames[sorted[rank]].span();
                 RELEASE_ASSERT(name.size() < 0x8000);
                 size_t shared = 0;
-                if (rank && rank - rankOfFirst < sourceNamesBetweenWholeOnes && textOfSourceNames.size() - placeOfBytesOfFirst < 60000) {
-                    auto first = builder.m_sourceNames[sorted[rankOfFirst]].span();
+                if (rank && rank - firstRank < sourceNameRestartInterval && sourceNameBytes.size() - firstBytesOffset < 60000) {
+                    auto first = builder.m_sourceNames[sorted[firstRank]].span();
                     shared = std::ranges::mismatch(name, first).in1 - name.begin();
                 } else {
-                    rankOfFirst = rank;
-                    placeOfBytesOfFirst = textOfSourceNames.size() + sizeof(HeadOfSourceName);
+                    firstRank = rank;
+                    firstBytesOffset = sourceNameBytes.size() + sizeof(SourceNameHeader);
                 }
-                HeadOfSourceName head { static_cast<uint16_t>(shared ? textOfSourceNames.size() - placeOfBytesOfFirst : 0), static_cast<uint16_t>(shared), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
-                textOfSourceNames.append(asBytes(singleElementSpan(head)));
-                textOfSourceNames.append(name.subspan(shared));
+                SourceNameHeader head { static_cast<uint16_t>(shared ? sourceNameBytes.size() - firstBytesOffset : 0), static_cast<uint16_t>(shared), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
+                sourceNameBytes.append(asBytes(singleElementSpan(head)));
+                sourceNameBytes.append(name.subspan(shared));
             }
         }
     });
-    builder.fillTypedInfos(typedFunctions.span(), typedPositions.span(), madeAhead.span());
+    builder.fillTypedInfos(typedFunctions.span(), typedPositions.span(), precomputed.span());
     for (size_t i = 0; i < keys.size(); ++i) {
         auto& key = keys[i];
         if (key.record & ImageKey::isEntryInsideFunction) {
             while (typedEntries.size() <= key.start)
                 typedEntries.append(0);
-            typedEntries[key.start] = madeAhead[i].closureWord;
+            typedEntries[key.start] = precomputed[i].closureWord;
             continue;
         }
         if (typedFunctions[i]) {
-            // A continuation: only its function enters it.
             if (key.kind != ImageKey::typedFunction)
                 continue;
             while (typedEntries.size() <= key.start)
                 typedEntries.append(0);
-            typedEntries[key.start] = madeAhead[i].closureWord;
+            typedEntries[key.start] = precomputed[i].closureWord;
         }
     }
-    besideTypedInfos->waitForCompletion();
+    sourceNameThread->waitForCompletion();
     endStep("the typed infos and entries"_s);
     while (builder.m_out.size() % sizeof(uint64_t))
         builder.m_out.append(0);
     if (!typedEntries.isEmpty()) {
-        auto range = rangeOfClosureWordsIn(codeImage);
-        RELEASE_ASSERT(range.rowsLeftOutAheadOfClosures <= range.firstFunctionClosuresGoBy && range.firstFunctionClosuresGoBy <= range.endOfFunctionsClosuresGoBy);
-        while (typedEntries.size() < range.endOfFunctionsClosuresGoBy)
+        auto range = closureWordRangeIn(codeImage);
+        RELEASE_ASSERT(range.omittedClosureWordCount <= range.firstClosureFunction && range.firstClosureFunction <= range.endOfClosureFunctions);
+        while (typedEntries.size() < range.endOfClosureFunctions)
             typedEntries.append(0);
-        typedEntries.shrink(range.endOfFunctionsClosuresGoBy);
-        typedEntries.removeAt(range.firstFunctionClosuresGoBy - range.rowsLeftOutAheadOfClosures, range.rowsLeftOutAheadOfClosures);
-        header.firstFunctionClosuresGoBy = range.firstFunctionClosuresGoBy;
-        header.rowsLeftOutAheadOfClosures = range.rowsLeftOutAheadOfClosures;
+        typedEntries.shrink(range.endOfClosureFunctions);
+        typedEntries.removeAt(range.firstClosureFunction - range.omittedClosureWordCount, range.omittedClosureWordCount);
+        header.firstClosureFunction = range.firstClosureFunction;
+        header.omittedClosureWordCount = range.omittedClosureWordCount;
     }
     header.typedEntriesOffset = builder.append(typedEntries);
     header.parameterChecksOffset = builder.append(parameterChecks);
     header.numberOfParameterChecks = numberOfParameterChecks;
     header.numberOfTypedEntries = typedEntries.size();
     header.infosOffset = builder.append(builder.m_infos);
-    header.indexAndFlagsOfFunctionsOffset = builder.append(builder.m_indexAndFlags);
+    header.functionIndexAndFlagsOffset = builder.append(builder.m_indexAndFlags);
     header.numberOfFunctions = builder.m_infos.size();
     header.numberOfStates = 1;
     for (auto& info : builder.m_infos)
@@ -1061,13 +1052,12 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     header.numberOfIdentifiers = builder.m_identifiers.size();
     header.numberOfConstants = builder.m_constants.size();
     header.numberOfTopLevelCodes = builder.m_topLevelCodes.size();
-    header.sourceNamesOffset = builder.append(placesOfSourceNames);
-    builder.m_out.appendVector(textOfSourceNames);
+    header.sourceNamesOffset = builder.append(sourceNameOffsets);
+    builder.m_out.appendVector(sourceNameBytes);
     header.numberOfSources = builder.m_sourceNames.size();
     endStep("infos and metadata"_s);
     if (image->keysAreOmitted()) {
         auto isLookedUp = [&](const ImageKey& key) {
-            // What is compiled from types is reached by its number: see imageKeyFor().
             return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !(key.kind & (ImageKey::typedBody | ImageKey::typedFunction));
         };
         size_t count = 0;
@@ -1129,10 +1119,10 @@ String ProgramData::sourceName(uint32_t source) const
     RELEASE_ASSERT(source && source <= numberOfSources);
     auto* places = at<uint32_t>(sourceNamesOffset);
     auto* record = reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1];
-    HeadOfSourceName head;
+    SourceNameHeader head;
     memcpy(&head, record, sizeof(head));
     size_t rest = head.restAndIsASCII & 0x7fff;
-    std::span shared { record - head.distanceOfBytesOfFirst, static_cast<size_t>(head.shared) };
+    std::span shared { record - head.firstBytesDistance, static_cast<size_t>(head.shared) };
     std::span own { record + sizeof(head), rest };
     if (head.restAndIsASCII & 0x8000) [[likely]] {
         std::span<Latin1Character> characters;
@@ -1151,15 +1141,15 @@ bool ProgramData::isSourceNameEmpty(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
     auto* places = at<uint32_t>(sourceNamesOffset);
-    HeadOfSourceName head;
+    SourceNameHeader head;
     memcpy(&head, reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1], sizeof(head));
     return !head.shared && !(head.restAndIsASCII & 0x7fff);
 }
 
-std::span<const uint8_t> ProgramData::handlersOfTypedFunction(uint32_t functionIndex) const
+std::span<const uint8_t> ProgramData::typedFunctionHandlers(uint32_t functionIndex) const
 {
     uint32_t word = functionMetadataOffsets()[functionIndex];
-    if (!FunctionMetadata::isOfTypedFunctionWithHandlers(word))
+    if (!FunctionMetadata::isTypedFunctionWithHandlers(word))
         return { };
     const uint8_t* bytes = at<uint8_t>(word >> 2);
     size_t size = 0;
@@ -1171,14 +1161,14 @@ std::span<const uint8_t> ProgramData::handlersOfTypedFunction(uint32_t functionI
     }
 }
 
-const uint8_t* ProgramData::positionsOfTypedFunction(uint32_t functionIndex) const
+const uint8_t* ProgramData::typedFunctionPositions(uint32_t functionIndex) const
 {
     uint32_t word = functionMetadataOffsets()[functionIndex];
-    if (word & FunctionMetadata::isPositionsOfTypedFunction)
+    if (word & FunctionMetadata::isTypedFunctionPositions)
         return at<uint8_t>(word >> 1);
-    if (!FunctionMetadata::isOfTypedFunctionWithHandlers(word))
+    if (!FunctionMetadata::isTypedFunctionWithHandlers(word))
         return nullptr;
-    auto handlers = handlersOfTypedFunction(functionIndex);
+    auto handlers = typedFunctionHandlers(functionIndex);
     return handlers.data() + handlers.size();
 }
 
@@ -1246,8 +1236,8 @@ struct VMProgram::Impl {
     std::unique_ptr<ProgramObjectsDecoder> decoder;
     Vector<JSCell*> createdSinceLastCollection;
     bool hasVisitedEverythingInThisCollection { false };
-    SegmentedVector<Identifier, 64> identifiersKeptElsewhere;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionsOfIdentifiersKeptElsewhere;
+    SegmentedVector<Identifier, 64> overflowIdentifiers;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> overflowIdentifierPositions;
     Vector<RefPtr<SourceProvider>> providers;
     UncheckedKeyHashMap<uint32_t, FixedVector<UnlinkedStringJumpTable>> stringSwitchJumpTables;
     UncheckedKeyHashMap<uint32_t, FixedVector<IdentifierSet>> identifierSets;
@@ -1263,7 +1253,7 @@ template<typename T> static void freeTable(T* table, size_t count)
     OSAllocator::decommitAndRelease(table, roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(count, 1) * sizeof(T)));
 }
 
-static size_t capacityOfIdentifiers(const ProgramData& data)
+static size_t identifierCapacity(const ProgramData& data)
 {
     return std::min<size_t>(data.numberOfIdentifiers, UINT16_MAX) + 1;
 }
@@ -1278,8 +1268,8 @@ VMProgram* VMProgram::of(VM& vm)
 VMProgram::VMProgram(VM& vm)
     : m_vm(vm)
     , m_data(*ProgramData::get())
-    , m_identifiers(zeroedTable<UniquedStringImpl*>(capacityOfIdentifiers(m_data)))
-    , m_identifierPlaces(zeroedTable<uint16_t>(m_data.numberOfIdentifiers))
+    , m_identifiers(zeroedTable<UniquedStringImpl*>(identifierCapacity(m_data)))
+    , m_identifierPositions(zeroedTable<uint16_t>(m_data.numberOfIdentifiers))
     , m_impl(makeUnique<Impl>())
 {
     m_impl->providers.grow(m_data.numberOfModules);
@@ -1292,12 +1282,12 @@ VMProgram::VMProgram(VM& vm)
 VMProgram::~VMProgram()
 {
     Typed::destroy(typedFunctionTables);
-    for (uint32_t place = 1; place <= m_numberOfIdentifiersInPlaces; ++place)
+    for (uint32_t place = 1; place <= m_positionedIdentifierCount; ++place)
         m_identifiers[place]->deref();
     fastFree(m_constantValues);
     fastFree(m_constantKeys);
-    freeTable(m_identifiers, capacityOfIdentifiers(m_data));
-    freeTable(m_identifierPlaces, m_data.numberOfIdentifiers);
+    freeTable(m_identifiers, identifierCapacity(m_data));
+    freeTable(m_identifierPositions, m_data.numberOfIdentifiers);
 }
 
 DecoderStringTable& VMProgram::strings()
@@ -1372,39 +1362,39 @@ void VMProgram::addConstant(uint32_t index, JSValue value)
 
 NEVER_INLINE UniquedStringImpl* VMProgram::identifierSlow(uint32_t index)
 {
-    uint16_t place = m_identifierPlaces[index];
-    if (place == placeOfIdentifiersKeptElsewhere) [[unlikely]]
-        return m_impl->identifiersKeptElsewhere[m_impl->positionsOfIdentifiersKeptElsewhere.get(index)].impl();
+    uint16_t place = m_identifierPositions[index];
+    if (place == identifierStoredElsewhere) [[unlikely]]
+        return m_impl->overflowIdentifiers[m_impl->overflowIdentifierPositions.get(index)].impl();
     if (place)
         return m_identifiers[place];
-    Identifier identifier = Typed::tryMakeIdentifier(m_vm, index);
+    Identifier identifier = Typed::tryCreateIdentifier(m_vm, index);
     if (identifier.isNull())
         identifier = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).identifier(index);
     RELEASE_ASSERT(!identifier.isNull());
-    return keepIdentifier(index, WTF::move(identifier)).impl();
+    return retainIdentifier(index, WTF::move(identifier)).impl();
 }
 
-const Identifier& VMProgram::keepIdentifier(uint32_t index, Identifier&& identifier)
+const Identifier& VMProgram::retainIdentifier(uint32_t index, Identifier&& identifier)
 {
-    ASSERT(!m_identifierPlaces[index]);
-    if (m_numberOfIdentifiersInPlaces + 1 == placeOfIdentifiersKeptElsewhere) [[unlikely]] {
-        m_impl->positionsOfIdentifiersKeptElsewhere.add(index, m_impl->identifiersKeptElsewhere.size());
-        m_impl->identifiersKeptElsewhere.append(WTF::move(identifier));
-        m_identifierPlaces[index] = placeOfIdentifiersKeptElsewhere;
-        return m_impl->identifiersKeptElsewhere.last();
+    ASSERT(!m_identifierPositions[index]);
+    if (m_positionedIdentifierCount + 1 == identifierStoredElsewhere) [[unlikely]] {
+        m_impl->overflowIdentifierPositions.add(index, m_impl->overflowIdentifiers.size());
+        m_impl->overflowIdentifiers.append(WTF::move(identifier));
+        m_identifierPositions[index] = identifierStoredElsewhere;
+        return m_impl->overflowIdentifiers.last();
     }
-    uint16_t place = ++m_numberOfIdentifiersInPlaces;
+    uint16_t place = ++m_positionedIdentifierCount;
     m_identifiers[place] = &Ref { *identifier.impl() }.leakRef();
     WTF::storeStoreFence();
-    m_identifierPlaces[index] = place;
+    m_identifierPositions[index] = place;
     return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
 }
 
 const Identifier* VMProgram::tryGetIdentifierConcurrently(uint32_t index) const
 {
     RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-    uint16_t place = m_identifierPlaces[index];
-    if (index && (!place || place == placeOfIdentifiersKeptElsewhere))
+    uint16_t place = m_identifierPositions[index];
+    if (index && (!place || place == identifierStoredElsewhere))
         return nullptr;
     WTF::loadLoadFence();
     return reinterpret_cast<const Identifier*>(&m_identifiers[place]);
@@ -1413,9 +1403,9 @@ const Identifier* VMProgram::tryGetIdentifierConcurrently(uint32_t index) const
 NEVER_INLINE const Identifier& VMProgram::identifierAsIdentifierSlow(uint32_t index)
 {
     identifierSlow(index);
-    uint16_t place = m_identifierPlaces[index];
-    if (place == placeOfIdentifiersKeptElsewhere) [[unlikely]]
-        return m_impl->identifiersKeptElsewhere[m_impl->positionsOfIdentifiersKeptElsewhere.get(index)];
+    uint16_t place = m_identifierPositions[index];
+    if (place == identifierStoredElsewhere) [[unlikely]]
+        return m_impl->overflowIdentifiers[m_impl->overflowIdentifierPositions.get(index)];
     return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
 }
 
@@ -1545,7 +1535,7 @@ void VMProgram::didFinishCollection()
             if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
                 count(value.asCell());
         }
-        dataLog("AOT: made so far: ", m_numberOfIdentifiersInPlaces + m_impl->identifiersKeptElsewhere.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants:");
+        dataLog("AOT: made so far: ", m_positionedIdentifierCount + m_impl->overflowIdentifiers.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants:");
         for (auto& [info, entry] : byClass)
             dataLog(" ", info->className, " ", entry.first, " (", entry.second, " bytes)");
         dataLogLn("; ", m_impl->stringSwitchJumpTables.size(), " + ", m_impl->identifierSets.size(), " tables of functions");

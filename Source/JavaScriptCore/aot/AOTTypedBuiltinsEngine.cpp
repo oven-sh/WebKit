@@ -8,7 +8,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTLockWords.h"
+#include "AOTLockedOperation.h"
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
 #include "AOTTypedObject.h"
@@ -32,7 +32,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedIsConstructor, size_t, (Insta
     return JSValue::decode(value).isConstructor();
 }
 
-// As slow_path_new_array_with_species.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySpeciesCreate, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLength, JSCell* array))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -48,7 +47,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySpeciesCreate, EncodedJSValue, (I
     OPERATION_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length))));
 }
 
-// As del_by_val of sloppy code.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByValSloppy, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -58,14 +56,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByValSloppy, size_t, (Instance* 
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     bool isDeleted = JSCell::deleteProperty(object, globalObject, property);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
-    if (!isDeleted && object->noteIfRefusedByLockAlone(vm, property.impl(), true, true)) {
-        throwTypeError(globalObject, scope, AOT::wordsOfLock(vm, object, AOT::RefusedByLock::Delete, property.impl()));
+    if (!isDeleted && object->recordIfOnlyLockRejects(vm, property.impl(), true, true)) {
+        throwTypeError(globalObject, scope, AOT::lockedOperationErrorMessage(vm, object, AOT::LockedOperation::Delete, property.impl()));
         OPERATION_RETURN(scope, 0);
     }
     OPERATION_RETURN(scope, isDeleted);
 }
 
-// As slow_path_get_by_val_with_this.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByValWithThis, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue thisValue, EncodedJSValue encodedKey))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -85,7 +82,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByValWithThis, EncodedJSValue, (Ins
     OPERATION_RETURN(scope, JSValue::encode(base.get(globalObject, property, slot)));
 }
 
-// As slow_path_to_object.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedToObject, JSCell*, (Instance* instance, EncodedJSValue encodedValue, uint32_t message))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -99,7 +95,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedToObject, JSCell*, (Instance* instance
     OPERATION_RETURN(scope, value.toObject(globalObject));
 }
 
-// OrdinaryCallBindThis of a function that is not strict, for what is no object.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedSloppyThis, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -115,8 +110,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedToPropertyKey, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(value).toPropertyKeyValue(globalObject)));
 }
 
-// `next`, `return`, `throw` and `generatorResume` of builtins/GeneratorPrototype.js, for the generators that text evaluated at run time makes.
-static JSValue resumeGeneratorOfBytecode(JSGlobalObject* globalObject, VM& vm, JSGenerator* generator, JSGenerator::ResumeMode mode, JSValue value)
+static JSValue resumeBytecodeGenerator(JSGlobalObject* globalObject, VM& vm, JSGenerator* generator, JSGenerator::ResumeMode mode, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto field = [&](JSGenerator::Field which) -> WriteBarrier<Unknown>& {
@@ -168,7 +162,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedResumeGenerator, EncodedJSValue, (Inst
         OPERATION_RETURN(scope, JSValue::encode(compiled->resume(globalObject, mode == JSGenerator::ResumeMode::NormalMode ? ResumeMode::Next : mode == JSGenerator::ResumeMode::ReturnMode ? ResumeMode::Return : ResumeMode::Throw, value)));
     }
     if (auto* ofBytecode = dynamicDowncast<JSGenerator>(generator))
-        OPERATION_RETURN(scope, JSValue::encode(resumeGeneratorOfBytecode(globalObject, vm, ofBytecode, mode, value)));
+        OPERATION_RETURN(scope, JSValue::encode(resumeBytecodeGenerator(globalObject, vm, ofBytecode, mode, value)));
     throwTypeError(globalObject, scope, "|this| should be a generator"_s);
     OPERATION_RETURN(scope, encodedJSValue());
 }
@@ -181,8 +175,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedIsGeneratorSuspendedAtStart, 
 namespace Typed {
 
 using namespace B3;
-
-// The family aot/builtins/engine.def: the engine's own builtins that are written in JavaScript.
 
 #define ASSERT_NUMBER(code, number) static_assert(static_cast<unsigned>(BuiltinCodeIndex::code) == number);
 FOR_EACH_AOT_TYPED_ENGINE_BUILTIN_FUNCTION(ASSERT_NUMBER)
@@ -243,35 +235,35 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
 
     switch (which) {
     case InlineBuiltin::IsConstructor:
-        return yieldBoolean(AOT_TYPED_OPERATION(IsConstructor, in<Boxed>(arguments[0])), type);
+        return booleanResult(AOT_TYPED_OPERATION(IsConstructor, in<Boxed>(arguments[0])), type);
     case InlineBuiltin::ArraySpeciesCreate:
         return ensure(AOT_TYPED_OPERATION(ArraySpeciesCreate, in<Boxed>(arguments[0]), asCell(in<Boxed>(arguments[1]))), type);
     case InlineBuiltin::DeleteByValSloppy:
-        return yieldBoolean(AOT_TYPED_OPERATION(DeleteByValSloppy, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), type);
+        return booleanResult(AOT_TYPED_OPERATION(DeleteByValSloppy, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), type);
     case InlineBuiltin::GetByValWithThis:
         return ensure(AOT_TYPED_OPERATION(GetByValWithThis, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), in<Boxed>(arguments[2])), type);
     case InlineBuiltin::ToObject: {
         RELEASE_ASSERT(constant(1).opcode == Opcode::String);
         Boxed operand = in<Boxed>(arguments[0]);
-        auto generally = [&] {
+        auto genericPath = [&] {
             return box(AOT_TYPED_OPERATION(ToObject, operand, word32(constant(1).string().index())));
         };
         return ensure(either<Boxed>(isCell(operand), [&] {
-            return either<Boxed>(aboveOrEqual(typeOfCell(asCell(operand)), word32(ObjectType)), [&] {
+            return either<Boxed>(aboveOrEqual(loadCellType(asCell(operand)), word32(ObjectType)), [&] {
                 return operand;
-            }, generally);
-        }, generally), type);
+            }, genericPath);
+        }, genericPath), type);
     }
     case InlineBuiltin::SloppyThis: {
         Boxed operand = in<Boxed>(arguments[0]);
-        auto generally = [&] {
+        auto genericPath = [&] {
             return AOT_TYPED_OPERATION(SloppyThis, operand);
         };
         return ensure(either<Boxed>(isCell(operand), [&] {
-            return either<Boxed>(aboveOrEqual(typeOfCell(asCell(operand)), word32(ObjectType)), [&] {
+            return either<Boxed>(aboveOrEqual(loadCellType(asCell(operand)), word32(ObjectType)), [&] {
                 return operand;
-            }, generally);
-        }, generally), type);
+            }, genericPath);
+        }, genericPath), type);
     }
     case InlineBuiltin::ToPropertyKey:
         return ensure(AOT_TYPED_OPERATION(ToPropertyKey, in<Boxed>(arguments[0])), type);
@@ -279,7 +271,7 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
         RELEASE_ASSERT(constant(1).opcode == Opcode::Integer);
         return ensure(AOT_TYPED_OPERATION(ResumeGenerator, in<Boxed>(arguments[0]), word32(static_cast<uint32_t>(constant(1).integer())), in<Boxed>(arguments[2])), type);
     case InlineBuiltin::IsGeneratorSuspendedAtStart:
-        return yieldBoolean(AOT_TYPED_OPERATION(IsGeneratorSuspendedAtStart, asCell(in<Boxed>(arguments[0]))), type);
+        return booleanResult(AOT_TYPED_OPERATION(IsGeneratorSuspendedAtStart, asCell(in<Boxed>(arguments[0]))), type);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

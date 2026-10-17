@@ -703,7 +703,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
 
 #if ENABLE(AOT)
-    if (!isCollectingYoungWhileNothingIsYoung() || Options::validateAOTTypedFacts() || Options::useAOTOperationCounters()) {
+    if (!isEdenCollectionWithEmptyEden() || Options::validateAOTTypedFacts() || Options::useAOTOperationCounters()) {
         vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
             if (!isMarked(instance->loader()))
                 return true;
@@ -715,7 +715,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         });
         for (AOT::Instance* instance : vm().m_aotInstances)
             instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
-        if (AOT::PlaceTable* table = vm().m_aotPlaceTable)
+        if (AOT::PropertyLookupTable* table = vm().m_aotPropertyLookupTable)
             table->finalizeUnconditionally(vm(), collectionScope == CollectionScope::Eden);
         if (auto* program = vm().m_aotProgram.get())
             program->didFinishCollection();
@@ -974,7 +974,7 @@ void Heap::verifyHeapAfterMarking()
 
 bool Heap::canSkipMarking() const
 {
-    return Options::useAOT() && isCollectingYoungWhileNothingIsYoung() && !m_verifier && !Options::verifyGC() && !Options::validateAOTTypedFacts() && !Options::useAOTOperationCounters();
+    return Options::useAOT() && isEdenCollectionWithEmptyEden() && !m_verifier && !Options::verifyGC() && !Options::validateAOTTypedFacts() && !Options::useAOTOperationCounters();
 }
 
 void Heap::pruneDeadReferences()
@@ -1019,7 +1019,7 @@ void Heap::prepareForAllocation()
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(!m_objectSpace.isMarking());
 
-    if (!isCollectingYoungWhileNothingIsYoung())
+    if (!isEdenCollectionWithEmptyEden())
         m_sweeper->startSweeping(*this);
 
     m_objectSpace.prepareForAllocation();
@@ -2074,7 +2074,7 @@ bool Heap::stopIfNecessarySlow(unsigned oldState)
     // prevent us from polling this so much. Ideally, stopIfNecessary would ignore the mutatorHasConnBit
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
-    if ((oldState & mutatorHasConnBit) && !m_collector->isAtRest())
+    if ((oldState & mutatorHasConnBit) && !m_collector->isNotRunning())
         collectInMutatorThread();
     
     return false;
@@ -2289,7 +2289,7 @@ void Heap::sweepAndClearCachesInEpilogue()
     if (auto* cache = vm().megamorphicCache()) {
 #if ENABLE(AOT)
         if (!vm().m_aotInstances.isEmpty())
-            cache->takeOutDead(*this, m_lastCollectionScope.value_or(CollectionScope::Full));
+            cache->removeDeadEntries(*this, m_lastCollectionScope.value_or(CollectionScope::Full));
         else
 #endif
             cache->age(m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? CollectionScope::Full : CollectionScope::Eden);
@@ -2656,16 +2656,16 @@ void Heap::didAllocatePreciseAllocation(size_t bytes, const Subspace& subspace)
 }
 
 constexpr size_t oversizedAllocationThreshold = 64 * KB;
-void Heap::didAllocate(size_t bytes, const char* kind, const Subspace* subspace, size_t cellSize, const JSCell* ownerOfExtraMemory)
+void Heap::didAllocate(size_t bytes, const char* kind, const Subspace* subspace, size_t cellSize, const JSCell* extraMemoryOwner)
 {
 #if ENABLE(AOT)
     if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::countAllocatedBytes(vm(), kind, subspace, cellSize, ownerOfExtraMemory, bytes);
+        AOT::countAllocatedBytes(vm(), kind, subspace, cellSize, extraMemoryOwner, bytes);
 #else
     UNUSED_PARAM(kind);
     UNUSED_PARAM(subspace);
     UNUSED_PARAM(cellSize);
-    UNUSED_PARAM(ownerOfExtraMemory);
+    UNUSED_PARAM(extraMemoryOwner);
 #endif
 
     if (bytes >= oversizedAllocationThreshold) {
@@ -3186,7 +3186,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             "Ao"_s, "Instances of Statically Compiled Code"_s,
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
                 if constexpr (std::is_same_v<decltype(visitor), SlotVisitor&>) {
-                    if (isCollectingYoungWhileNothingIsYoung())
+                    if (isEdenCollectionWithEmptyEden())
                         return;
                 }
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
@@ -3196,7 +3196,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                 for (AOT::Instance* instance : vm().m_aotInstances) {
                     if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))) {
                         instance->visit(visitor, newOnly);
-                        if (instance->typed && (!instance->typed->isOfLockedRealm || instance->globalObject->aotInstance() != instance))
+                        if (instance->typed && (!instance->typed->realmIsLocked || instance->globalObject->aotInstance() != instance))
                             instance->typed->visit(visitor);
                     }
                 }
@@ -3208,13 +3208,13 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             "At"_s, "Static Variables of Compiled Code"_s,
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
                 if constexpr (std::is_same_v<decltype(visitor), SlotVisitor&>) {
-                    if (isCollectingYoungWhileNothingIsYoung())
+                    if (isEdenCollectionWithEmptyEden())
                         return;
                 }
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
                 for (AOT::Instance* instance : vm().m_aotInstances) {
-                    instance->visitWhatCompiledCodeLeaves(visitor);
-                    if (!instance->typed || !instance->typed->isOfLockedRealm)
+                    instance->visitCompiledCodeRoots(visitor);
+                    if (!instance->typed || !instance->typed->realmIsLocked)
                         continue;
                     if (instance->globalObject->aotInstance() == instance || (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))))
                         instance->typed->visit(visitor);
