@@ -155,6 +155,13 @@ public:
     bool schedulePauseForSpecialBreakpoint(JSC::Breakpoint&, DebuggerFrontendDispatcher::Reason, RefPtr<JSON::Object>&& data = nullptr);
     bool cancelPauseForSpecialBreakpoint(JSC::Breakpoint&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // JSC::Debugger::schedulePauseAtEntry(). Returns false, and schedules nothing, when the
+    // frontend did not enable the debugger or did not activate breakpoints.
+    bool schedulePauseAtEntry(const String& url, bool programCode);
+    void cancelPauseAtEntry();
+#endif
+
     void breakProgram(DebuggerFrontendDispatcher::Reason, RefPtr<JSON::Object>&& data = nullptr, RefPtr<JSC::Breakpoint>&& specialBreakpoint = nullptr);
     void scriptExecutionBlockedByCSP(const String& directiveText);
 

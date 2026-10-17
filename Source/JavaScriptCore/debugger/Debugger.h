@@ -120,6 +120,9 @@ public:
         PausedForDebuggerStatement,
         PausedAfterBlackboxedScript,
         PausedAfterAwait,
+#if USE(BUN_JSC_ADDITIONS)
+        PausedAtEntry,
+#endif
     };
     ReasonForPause reasonForPause() const { return m_reasonForPause; }
     BreakpointID pausingBreakpointID() const { return m_pausingBreakpointID; }
@@ -128,6 +131,16 @@ public:
     void LEGACY_NODELETE cancelPauseAtNextOpportunity();
     bool schedulePauseForSpecialBreakpoint(Breakpoint&);
     bool cancelPauseForSpecialBreakpoint(Breakpoint&);
+#if USE(BUN_JSC_ADDITIONS)
+    // A one-time request to pause when the script at `url` starts to run: at the start of its
+    // module code, or at the call of the function that its program code makes (the wrapper of a
+    // CommonJS module), or, with `programCode`, at the start of its program code. No other code
+    // takes the request. It stays pending until that code starts to run, or it is cancelled. It
+    // needs active breakpoints at that time: with none, the request ends and nothing pauses.
+    // The pause has the reason PausedAtEntry, also when a breakpoint is there.
+    void schedulePauseAtEntry(const String& url, bool programCode);
+    void cancelPauseAtEntry();
+#endif
     void breakProgram(RefPtr<Breakpoint>&& specialBreakpoint = nullptr);
     void continueProgram();
     void stepNextExpression();
@@ -316,6 +329,12 @@ private:
     void updateCallFrame(JSC::JSGlobalObject*, JSC::CallFrame*, CallFrameUpdateAction);
     void updateCallFrameInternal(JSC::CallFrame*);
     void pauseIfNeeded(JSC::JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    bool isPauseAtEntryTarget(CodeBlock*);
+    void registerCodeBlockForPauseAtEntry(CodeBlock*);
+    bool takePauseAtEntry(CallFrame*);
+    void pauseAtEntry(CallFrame*);
+#endif
     void resetImmediatePauseState();
     void LEGACY_NODELETE resetEventualPauseState();
     void resetAsyncPauseState();
@@ -397,6 +416,21 @@ private:
 
     Client* m_client { nullptr };
     ProfilingClient* m_profilingClient { nullptr };
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The pending request of schedulePauseAtEntry(). A null url means none.
+    String m_pauseAtEntryURL;
+    SourceID m_pauseAtEntrySourceID { noSourceID };
+    bool m_pauseAtEntryProgramCode { false };
+    bool m_pauseAtEntrySawProgramCode { false };
+    bool m_isPausingAtEntry { false };
+
+    // Where the entry pause stopped. The first statement of a program has the position of the
+    // program, so the next hook of that frame does not stop there a second time.
+    CallFrame* m_entryPauseCallFrame { nullptr };
+    SourceID m_entryPauseSourceID { noSourceID };
+    TextPosition m_entryPausePosition;
+#endif
 
     Debugger* m_prev; // Required by DoublyLinkedListNode.
     Debugger* m_next; // Required by DoublyLinkedListNode.
