@@ -1,6 +1,7 @@
 //@ runDefault("--useDollarVM=1")
 //@ runDefault("--useDollarVM=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeAfterWarmUp=200")
 //@ runBytecodeCache("--useDollarVM=1")
+//@ runDefault("--useDollarVM=1", "--useBytecodeOptimizer=1")
 
 // Two realms of one VM share the unlinked executable of a function: both ask the CodeCache for the same source while
 // neither has a debugger, so both get the same one. A debugger then attaches to one of them. From then on that realm's

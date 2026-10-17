@@ -272,14 +272,14 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         }
 #endif
     }
-    // The mode code is generated with decides what that code is: for a debugger every variable is captured in the
-    // scope and the debug hooks are emitted, and each profiler adds its own (BytecodeGenerator::shouldEmitDebugHooks
-    // and the two beside it). One unlinked executable is shared by every global object that links it, and a debugger
-    // is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode), so the code held here
-    // is the code of whoever asked for it first: it is only given to the ones that ask for the mode it has.
+    // Code for a debugger has the debug hooks and keeps every variable in the scope for them
+    // (BytecodeGenerator::shouldEmitDebugHooks). That is the one part of the mode that differs between the global
+    // objects of a VM: a debugger is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode),
+    // and an unlinked executable is shared by every global object that links it. So the code held here is only given
+    // to the callers that ask for the same. (The profilers are the VM's: whoever turns one on decides whether the code
+    // that exists is generated again.)
     WriteBarrier<UnlinkedFunctionCodeBlock>& slot = specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct;
-    UnlinkedFunctionCodeBlock* held = slot.get();
-    if (held && held->codeGenerationMode() == codeGenerationMode)
+    if (UnlinkedFunctionCodeBlock* held = slot.get(); held && held->wasCompiledWithDebuggingOpcodes() == codeGenerationMode.contains(CodeGenerationMode::Debugger))
         return held;
 
     UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
@@ -290,12 +290,11 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     if (error.isValid())
         return nullptr;
 
-    // Code for another mode than the code held. What was generated here gives way to it, and is generated again, the
-    // same, for whoever asks for its mode next. What was decoded from a bytecode cache stays, as it does for as long as
-    // the executable lives (codeBlockEdgeMayBeWeak): it cannot be generated again the same, the payload's code being
-    // the bytecode optimizer's, and the body of a generator or an async function that is suspended in it only finds
-    // its registers again in that very code. The caller's CodeBlock is then all that keeps the new code.
-    if (held && m_isGeneratedFromCache)
+    // The code held stays where it is, and the caller's CodeBlock is all that keeps the new code. The body of a
+    // generator or an async function that is suspended in the held code has to find it again: what was decoded from a
+    // bytecode cache or made by the bytecode optimizer is not what generating it again gives. And the new code is not
+    // this executable's: it is not counted as generated code to clear, and the source provider is not told of it.
+    if (slot)
         return result;
 
     slot.set(vm, this, result);
