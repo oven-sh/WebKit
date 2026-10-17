@@ -79,7 +79,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     RefPtr<DeclaredNamesLink> parentDeclaredNames = executable->takeParentDeclaredNames();
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
     const PrivateNameEnvironment* parentPrivateNameEnvironment = executable->parentPrivateNameEnvironment();
-    error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
+    error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, executable->generatorOrAsyncWrapperFunctionBindsArguments(), parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
 
     if (error.isValid())
         return nullptr;
@@ -117,6 +117,7 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_evalContextType(static_cast<unsigned>(evalContextType))
     , m_hasName(!node->ident().isNull())
     , m_isClass(false)
+    , m_generatorOrAsyncWrapperFunctionBindsArguments(false)
     , m_nameIsDeferred(false)
     , m_membersAreDeferred(false)
     , m_scalarsAreDeferred(false)

@@ -170,6 +170,16 @@ public:
     void setHasTailCalls() { m_hasTailCalls = true; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
+    // True for the body function of a generator or async function, whose wrapper function holds the parameters and
+    // `arguments`, and for the code of a direct eval in code that has this. No other function is in between, so a
+    // sloppy direct eval here declares its vars and functions for that generator or async function.
+    bool isInGeneratorOrAsyncFunctionBody() const { return m_isEvalInGeneratorOrAsyncFunctionBody || isGeneratorOrAsyncFunctionBodyParseMode(parseMode()); }
+    void setIsEvalInGeneratorOrAsyncFunctionBody()
+    {
+        ASSERT(codeType() == EvalCode);
+        m_isEvalInGeneratorOrAsyncFunctionBody = true;
+    }
+
     // Decoded on first use when the block came from a persistent bytecode cache.
     // Any thread, including the collector's end phase (ErrorInstance::computeErrorInfo): the first call takes m_lock
     // around a read of the cache payload and one fastMalloc; no GC allocation, no safepoint.
@@ -454,6 +464,7 @@ private:
     bool m_hasCheckpoints : 1;
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
+    bool m_isEvalInGeneratorOrAsyncFunctionBody : 1 { false }; // Only a direct eval sets it, and no bytecode cache holds the code of one.
     unsigned m_numberOfArrayProfiles { 0 };
 
 public:

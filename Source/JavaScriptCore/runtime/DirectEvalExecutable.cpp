@@ -35,7 +35,7 @@
 
 namespace JSC {
 
-DirectEvalExecutable* DirectEvalExecutable::create(JSGlobalObject* globalObject, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment* privateNameEnvironment)
+DirectEvalExecutable* DirectEvalExecutable::create(JSGlobalObject* globalObject, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, bool isInGeneratorOrAsyncFunctionBody, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment* privateNameEnvironment)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -53,7 +53,7 @@ DirectEvalExecutable* DirectEvalExecutable::create(JSGlobalObject* globalObject,
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
 
     // We don't bother with CodeCache here because direct eval uses a specialized DirectEvalCodeCache.
-    UnlinkedEvalCodeBlock* unlinkedEvalCode = generateUnlinkedCodeBlockForDirectEval(vm, executable, executable->source(), JSParserScriptMode::Classic, codeGenerationMode, error, evalContextType, variablesUnderTDZ, privateNameEnvironment);
+    UnlinkedEvalCodeBlock* unlinkedEvalCode = generateUnlinkedCodeBlockForDirectEval(vm, executable, executable->source(), JSParserScriptMode::Classic, codeGenerationMode, error, evalContextType, isInGeneratorOrAsyncFunctionBody, variablesUnderTDZ, privateNameEnvironment);
 
     if (globalObject->hasDebugger())
         globalObject->debugger()->sourceParsed(globalObject, executable->source().provider(), error.line(), error.message());

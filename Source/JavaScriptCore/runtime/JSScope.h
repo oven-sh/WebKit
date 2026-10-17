@@ -75,6 +75,11 @@ public:
 
     bool LEGACY_NODELETE isNestedLexicalScope();
 
+    // For the var scope of a generator or async function body: the var scope of the wrapper function, which holds the
+    // parameters and `arguments`. The two are the variable environment of the function as written. Null for any other
+    // scope, and when the wrapper has no var scope on the scope chain.
+    JSScope* NODELETE wrapperVarScopeOfGeneratorOrAsyncBody();
+
     ScopeChainIterator begin();
     ScopeChainIterator end();
     JSScope* next();

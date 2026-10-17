@@ -152,7 +152,13 @@ public:
 
     int createSourceElements() { return SourceElementsResult; }
     ExpressionType makeStaticBlockFunctionCallNode(const JSTokenLocation&, ExpressionType, int, int, int) { return CallExpr; }
-    ExpressionType makeFunctionCallNode(const JSTokenLocation&, ExpressionType, bool, int, int, int, int, size_t, bool) { return CallExpr; }
+    ExpressionType makeFunctionCallNode(const JSTokenLocation&, ExpressionType func, bool, int, int, int, int, size_t, bool isOptionalCall)
+    {
+        // The call that ASTBuilder::makeFunctionCallNode() makes an EvalFunctionCallNode for.
+        if (func == ResolveEvalExpr && !isOptionalCall)
+            m_hasDirectEval = true;
+        return CallExpr;
+    }
     ExpressionType createCommaExpr(const JSTokenLocation&, ExpressionType) { return CommaExpr; }
     ExpressionType appendToCommaExpr(const JSTokenLocation&, ExpressionType, ExpressionType) { return CommaExpr; }
     ExpressionType makeAssignNode(const JSTokenLocation&, ExpressionType, Operator, ExpressionType, bool, bool, int, int, int) { return AssignmentExpr; }
@@ -174,7 +180,7 @@ public:
     ALWAYS_INLINE bool isMetaProperty(ExpressionType type) { return type & MetaPropertyBit; }
     ALWAYS_INLINE bool isNewTarget(ExpressionType type) { return type == NewTargetExpr; }
     ALWAYS_INLINE bool isImportMeta(ExpressionType type) { return type == ImportMetaExpr; }
-    ExpressionType createResolve(const JSTokenLocation&, const Identifier&, int, int, const bool = true) { return ResolveExpr; }
+    ExpressionType createResolve(const JSTokenLocation&, const Identifier&, int, int, const bool = true, bool isEval = false) { return isEval ? ResolveEvalExpr : ResolveExpr; }
     ExpressionType createPrivateIdentifierNode(const JSTokenLocation&, const Identifier&) { return PrivateIdentifier; }
     ExpressionType createObjectLiteral(const JSTokenLocation&) { return ObjectLiteralExpr; }
     ExpressionType createObjectLiteral(const JSTokenLocation&, int) { return ObjectLiteralExpr; }
@@ -410,7 +416,7 @@ public:
 
     bool isLocation(ExpressionType type)
     {
-        return type == ResolveExpr || type == DotExpr || type == PrivateDotExpr || type == BracketExpr;
+        return isResolve(type) || type == DotExpr || type == PrivateDotExpr || type == BracketExpr;
     }
 
     bool isPrivateLocation(ExpressionType type)
@@ -455,10 +461,14 @@ public:
 
     bool hasArgumentsFeature() const { return true; }
 
+    // A direct eval in the code this checker parsed. A nested function has a checker of its own.
+    bool hasDirectEval() const { return m_hasDirectEval; }
+
 private:
     VM& m_vm;
     int m_topBinaryExpr;
     int m_topUnaryToken;
+    bool m_hasDirectEval { false };
 };
 
 } // namespace JSC
