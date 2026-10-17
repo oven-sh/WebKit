@@ -315,10 +315,9 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
     // We continue using the same CodeGenerationMode for Generators because live generator objects can
     // keep the state which is only valid with the CodeBlock compiled with the same CodeGenerationMode.
-    if (isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode())) {
+    bool isResumableBody = isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode());
+    if (isResumableBody)
         codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
-        pinCodeGenerationModeForResumableBody();
-    }
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 
@@ -333,6 +332,12 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
     }
+    // The mode is kept from here on, where there is code for the body to run in: a body whose code could not be
+    // generated has not run in any mode.
+    if (isResumableBody)
+        pinCodeGenerationModeForResumableBody();
+    ASSERT(unlinkedCodeBlock->codeGenerationMode() == codeGenerationMode
+        || (unlinkedCodeBlock->codeGenerationMode() == (codeGenerationMode | CodeGenerationMode::Debugger) && executable->isPrivateBuiltinFunction() && !isResumableBody));
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
 }
 

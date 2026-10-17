@@ -83,6 +83,9 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     if (error.isValid())
         return nullptr;
+#if !USE(BUN_JSC_ADDITIONS)
+    vm.codeCache()->updateCache(executable, source, kind, result);
+#endif
     return result;
 }
 
@@ -272,15 +275,27 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         }
 #endif
     }
-    // Code for a debugger has the debug hooks and keeps every variable in the scope for them
-    // (BytecodeGenerator::shouldEmitDebugHooks). That is the one part of the mode that differs between the global
-    // objects of a VM: a debugger is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode),
-    // and an unlinked executable is shared by every global object that links it. So the code held here is only given
-    // to the callers that ask for the same. (The profilers are the VM's: whoever turns one on decides whether the code
-    // that exists is generated again.)
+#if USE(BUN_JSC_ADDITIONS)
+    // The mode code was generated with is part of what it is: for a debugger it has the debug hooks and keeps every
+    // variable in the scope, and each profiler adds its own instructions. One unlinked executable is shared by every
+    // linked one made from it, and those do not all ask for the same mode: a debugger is attached to one global object
+    // at a time (JSGlobalObject::defaultCodeGenerationMode), and the body of a generator or an async function keeps
+    // the mode it first ran in (ScriptExecutable::codeGenerationModeForResumableBody). So the code held here is only
+    // given to the callers that ask for its mode.
     WriteBarrier<UnlinkedFunctionCodeBlock>& slot = specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct;
-    if (UnlinkedFunctionCodeBlock* held = slot.get(); held && held->wasCompiledWithDebuggingOpcodes() == codeGenerationMode.contains(CodeGenerationMode::Debugger))
-        return held;
+    if (UnlinkedFunctionCodeBlock* held = slot.get()) {
+        if (held->codeGenerationMode() == codeGenerationMode)
+            return held;
+        // A private builtin gets no debug hooks. Generated for a debugger, its code differs from the rest in one
+        // thing: it is marked, so that its scope register counts as used everywhere and the optimizing tiers keep
+        // the scope where a debugger reads it and inline nothing (DFG::Graph::hasDebuggerEnabled). Marked code
+        // runs right for a global object without a debugger too, so that one shares it. The other way round a
+        // global object with a debugger gets its own. A body that suspends is never shared across the two: what
+        // it saves at a yield follows from what counts as used.
+        if (held->codeGenerationMode() == (codeGenerationMode | CodeGenerationMode::Debugger)
+            && isPrivateBuiltinFunction(isBuiltinFunction(), source) && !isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
+            return held;
+    }
 
     UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
         vm, this, source, specializationKind, codeGenerationMode, 
@@ -299,6 +314,35 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
 
     slot.set(vm, this, result);
     vm.codeCache()->updateCache(this, source, specializationKind, result);
+#else
+    switch (specializationKind) {
+    case CodeSpecializationKind::CodeForCall:
+        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())
+            return codeBlock;
+        break;
+    case CodeSpecializationKind::CodeForConstruct:
+        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForConstruct.get())
+            return codeBlock;
+        break;
+    }
+
+    UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
+        vm, this, source, specializationKind, codeGenerationMode, 
+        isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, 
+        error, parseMode, optimize);
+    
+    if (error.isValid())
+        return nullptr;
+
+    switch (specializationKind) {
+    case CodeSpecializationKind::CodeForCall:
+        m_unlinkedCodeBlockForCall.set(vm, this, result);
+        break;
+    case CodeSpecializationKind::CodeForConstruct:
+        m_unlinkedCodeBlockForConstruct.set(vm, this, result);
+        break;
+    }
+#endif
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
     vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;

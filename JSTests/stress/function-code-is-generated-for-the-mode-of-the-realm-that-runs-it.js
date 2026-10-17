@@ -48,6 +48,26 @@ setTimeout(() => {
     check("debuggedCounter(3)", debuggedCounter(3), 6);
     check("debuggedCounter has debug hooks", $vm.wasCompiledWithDebuggerHooks(debuggedCounter), true);
 
+    // A private builtin (Array.prototype.map and Iterator.prototype.map are written in JavaScript) gets no debug hooks,
+    // but its code is still marked as generated for a debugger: the optimizing tiers then keep the scope where a
+    // debugger reads it and inline none of the callbacks. Marked code runs right without a debugger, so the realm
+    // without one shares what the debugged realm generated first. Each callback below reports that mark for its three
+    // callers: Array.prototype.map (shared), the callback of the iterator helper (the realm's own code), and the
+    // generator body of the helper. That body suspends, and what it saves at a yield follows from the mark, so it is
+    // never shared between the two.
+    const callerMarks = "(function (tag) { return [1, 2].values().map(x => tag + x + ':' + [1, 2, 3].map(frame => $vm.wasCompiledWithDebuggerHooks($vm.codeBlockForFrame(frame))).join()); })";
+    const debuggedHelper = (0, eval)(callerMarks)("d");
+    const plainHelper = otherRealm.eval(callerMarks)("p");
+    check("debuggedHelper.next()", debuggedHelper.next().value, "d1:true,true,true"); // generates all of it first
+    check("plainHelper.next()", plainHelper.next().value, "p1:true,false,false");
+    check("debuggedHelper.next() again", debuggedHelper.next().value, "d2:true,true,true");
+    check("plainHelper.next() again", plainHelper.next().value, "p2:true,false,false");
+    // The other way around the debugged realm gets code of its own: it never runs code without the mark.
+    check("filter in the plain realm", otherRealm.eval("[1, 2].filter(x => x > 1).join()"), "2"); // generates filter first
+    check("filter in the debugged realm", [1, 2].filter(x => x > 1).join(), "2");
+    check("the plain realm's filter has no mark", $vm.wasCompiledWithDebuggerHooks(otherRealm.Array.prototype.filter), false);
+    check("the debugged realm's filter has the mark", $vm.wasCompiledWithDebuggerHooks(Array.prototype.filter), true);
+
     $vm.disableDebuggerModeWhenIdle(); // deletes all code again, and this realm asks for no debug hooks from now on
 
     setTimeout(() => {

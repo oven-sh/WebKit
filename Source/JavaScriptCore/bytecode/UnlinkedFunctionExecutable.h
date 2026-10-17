@@ -205,6 +205,18 @@ public:
 
     ImplementationVisibility implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
+    // One of the engine's own builtins, as opposed to an embedder's, whose source has a URL. It is hidden from stack
+    // traces and gets no debug hooks (BytecodeGenerator::shouldEmitDebugHooks), so its code is the same with and
+    // without a debugger.
+    static bool isPrivateBuiltinFunction(bool isBuiltinFunction, const SourceCode& source)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        return isBuiltinFunction && (!source.provider() || !source.provider()->sourceURL());
+#else
+        UNUSED_PARAM(source);
+        return isBuiltinFunction;
+#endif
+    }
     // The code blocks are still (or again) in the bytecode cache this was decoded from.
     bool isCached() const { return m_isCached; }
 #if USE(BUN_JSC_ADDITIONS)

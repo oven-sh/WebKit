@@ -468,7 +468,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     , m_derivedContextType(codeBlock->derivedContextType())
 {
 #if USE(BUN_JSC_ADDITIONS)
-    m_isPrivateBuiltinFunction = m_isBuiltinFunction && (!m_scopeNode->source().provider() || !m_scopeNode->source().provider()->sourceURL());
+    m_isPrivateBuiltinFunction = UnlinkedFunctionExecutable::isPrivateBuiltinFunction(m_isBuiltinFunction, m_scopeNode->source());
 #endif
     ECMAMode ecmaMode = m_ecmaMode;
     pushPrivateAccessNames(parentPrivateNameEnvironment);
