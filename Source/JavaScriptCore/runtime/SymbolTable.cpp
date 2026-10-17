@@ -344,7 +344,7 @@ GlobalVariableID SymbolTable::uniqueIDForVariable(const ConcurrentJSLocker&, Uni
 
     GlobalVariableID id = iter->value;
     if (id == TypeProfilerNeedsUniqueIDGeneration) {
-        id = vm.typeProfiler()->getNextUniqueVariableID();
+        id = vm.typeProfilerForInstrumentedCode()->getNextUniqueVariableID();
         m_rareData->m_uniqueIDMap.set(key, id);
         m_rareData->m_uniqueTypeSetMap.set(key, TypeSet::create()); // Make a new global typeset for this corresponding ID.
     }

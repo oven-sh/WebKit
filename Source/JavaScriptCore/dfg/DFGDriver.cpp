@@ -143,7 +143,7 @@ static CompilationResult compileImpl(
     
     dataLogLnIf(logCompilationChanges(mode), "DFG(Driver) compiling ", *codeBlock, " with ", mode, ", instructions size = ", codeBlock->instructionsSize());
     
-    if (vm.typeProfiler())
+    if (vm.typeProfilerForInstrumentedCode())
         vm.typeProfilerLog()->processLogEntries(vm, "Preparing for DFG compilation."_s);
 
     prepareLazyStateOfInlineCandidates(vm, codeBlock, profiledDFGCodeBlock, mode);

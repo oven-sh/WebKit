@@ -952,8 +952,8 @@ void Heap::pruneDeadReferences()
         Thread::currentSingleton().setCurrentAtomStringTable(previous);
     });
 
-    if (vm().typeProfiler())
-        vm().typeProfiler()->invalidateTypeSetCache(vm());
+    if (auto* typeProfiler = vm().typeProfilerForInstrumentedCode())
+        typeProfiler->invalidateTypeSetCache(vm());
 
     cancelDeferredWorkIfNeeded();
     reapWeakHandles();
@@ -3098,7 +3098,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             if constexpr (samplingProfilerSupported)
                 visitSamplingProfiler(vm, visitor);
 
-            if (vm.typeProfiler())
+            if (vm.typeProfilerForInstrumentedCode())
                 vm.typeProfilerLog()->visit(visitor);
             
             if (auto* shadowChicken = vm.shadowChicken())

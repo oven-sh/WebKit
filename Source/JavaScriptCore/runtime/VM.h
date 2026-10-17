@@ -1128,12 +1128,21 @@ public:
     bool enableTypeProfiler();
     bool disableTypeProfiler();
     TypeProfilerLog* typeProfilerLog() LIFETIME_BOUND { return m_typeProfilerLog.get(); }
-    TypeProfiler* typeProfiler() LIFETIME_BOUND { return m_typeProfiler.get(); }
+    // A profiler is made the first time it is turned on and then kept for the life of the VM. Code that was generated
+    // for it can run after it is turned off: the body of a generator or an async function keeps its mode once it has
+    // run (ScriptExecutable::codeGenerationModeForResumableBody), and such code is linked against the profiler, writes
+    // into it and is traced through it. What links, compiles or traces that code asks for the profiler
+    // ...ForInstrumentedCode(). typeProfiler() and controlFlowProfiler() are the profiler while it is on, as before.
+    bool isTypeProfilerEnabled() const { return m_typeProfilerEnabledCount; }
+    bool isControlFlowProfilerEnabled() const { return m_controlFlowProfilerEnabledCount; }
+    TypeProfiler* typeProfiler() LIFETIME_BOUND { return isTypeProfilerEnabled() ? m_typeProfiler.get() : nullptr; }
+    TypeProfiler* typeProfilerForInstrumentedCode() LIFETIME_BOUND { return m_typeProfiler.get(); }
     JS_EXPORT_PRIVATE void dumpTypeProfilerData();
 
     FunctionHasExecutedCache* functionHasExecutedCache() LIFETIME_BOUND { return &m_functionHasExecutedCache; }
 
-    ControlFlowProfiler* controlFlowProfiler() LIFETIME_BOUND { return m_controlFlowProfiler.get(); }
+    ControlFlowProfiler* controlFlowProfiler() LIFETIME_BOUND { return isControlFlowProfilerEnabled() ? m_controlFlowProfiler.get() : nullptr; }
+    ControlFlowProfiler* controlFlowProfilerForInstrumentedCode() LIFETIME_BOUND { return m_controlFlowProfiler.get(); }
     bool enableControlFlowProfiler();
     bool disableControlFlowProfiler();
 

@@ -42,8 +42,8 @@ std::pair<TypeLocation*, bool> TypeLocationCache::getTypeLocation(GlobalVariable
     key.m_end = end;
 
     auto result = m_locationMap.ensure(key, [&]{
-        ASSERT(vm->typeProfiler());
-        auto* location = vm->typeProfiler()->nextTypeLocation();
+        ASSERT(vm->typeProfilerForInstrumentedCode());
+        auto* location = vm->typeProfilerForInstrumentedCode()->nextTypeLocation();
         location->m_globalVariableID = globalVariableID;
         location->m_sourceID = sourceID;
         location->m_divotStart = start;

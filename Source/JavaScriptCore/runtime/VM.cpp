@@ -1628,6 +1628,9 @@ static bool disableProfilerWithRespectToCount(unsigned& counter, NOESCAPE const 
 bool VM::enableTypeProfiler()
 {
     auto enableTypeProfiler = [this] () {
+        // Kept since the first time it was on: see VM::typeProfilerForInstrumentedCode().
+        if (this->m_typeProfiler)
+            return;
         this->m_typeProfiler = makeUnique<TypeProfiler>();
         this->m_typeProfilerLog = makeUnique<TypeProfilerLog>(*this);
     };
@@ -1637,17 +1640,16 @@ bool VM::enableTypeProfiler()
 
 bool VM::disableTypeProfiler()
 {
-    auto disableTypeProfiler = [this] () {
-        this->m_typeProfiler.reset(nullptr);
-        this->m_typeProfilerLog.reset(nullptr);
-    };
-
-    return disableProfilerWithRespectToCount(m_typeProfilerEnabledCount, disableTypeProfiler);
+    // The profiler stays for the code that was generated for it: see VM::typeProfilerForInstrumentedCode().
+    return disableProfilerWithRespectToCount(m_typeProfilerEnabledCount, [] { });
 }
 
 bool VM::enableControlFlowProfiler()
 {
     auto enableControlFlowProfiler = [this] () {
+        // Kept since the first time it was on: see VM::typeProfilerForInstrumentedCode().
+        if (this->m_controlFlowProfiler)
+            return;
         this->m_controlFlowProfiler = makeUnique<ControlFlowProfiler>();
     };
 
@@ -1656,11 +1658,8 @@ bool VM::enableControlFlowProfiler()
 
 bool VM::disableControlFlowProfiler()
 {
-    auto disableControlFlowProfiler = [this] () {
-        this->m_controlFlowProfiler.reset(nullptr);
-    };
-
-    return disableProfilerWithRespectToCount(m_controlFlowProfilerEnabledCount, disableControlFlowProfiler);
+    // The profiler stays for the code that was generated for it: see VM::typeProfilerForInstrumentedCode().
+    return disableProfilerWithRespectToCount(m_controlFlowProfilerEnabledCount, [] { });
 }
 
 void VM::dumpTypeProfilerData()
