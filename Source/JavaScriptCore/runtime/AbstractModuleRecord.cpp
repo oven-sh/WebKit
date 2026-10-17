@@ -1763,8 +1763,18 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         return invalid;
     }
     // 3. If module.[[Status]] is EVALUATING, return index.
-    if (module->status() == Status::Evaluating)
+    if (module->status() == Status::Evaluating) {
+#if USE(BUN_JSC_ADDITIONS)
+        // A job that ran inside a walk rejected the module while it is on the stack of that walk
+        // (CyclicModuleRecord::asyncExecutionRejected). That walk throws the error when it returns to the module. A
+        // module that imports it before that, in that walk or in one that a job started, fails with the error too.
+        if (JSValue evaluationError = module->evaluationError()) {
+            scope.throwException(globalObject, evaluationError);
+            return invalid;
+        }
+#endif
         RELEASE_AND_RETURN(scope, index);
+    }
     // 4. Assert: module.[[Status]] is LINKED.
     ASSERT(module->status() == Status::Linked);
     // 5. Set module.[[Status]] to EVALUATING.
@@ -1871,6 +1881,13 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
 #endif
         }
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // A job that ran inside this walk rejected a module that this one waits for.
+    if (JSValue error = module->evaluationError()) {
+        scope.throwException(globalObject, error);
+        return invalid;
+    }
+#endif
     // 12. If module.[[PendingAsyncDependencies]] > 0 or module.[[HasTLA]] is true, then
     if (module->pendingAsyncDependencies() > 0 || module->hasTLA()) {
         // 12.a. Assert: module.[[AsyncEvaluationOrder]] is UNSET.
@@ -1905,9 +1922,15 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 16.b.iii. Assert: requiredModule is a Cyclic Module Record.
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule); // cyclic is a downcasted alias of requiredModule.
             // 16.b.iv. Assert: requiredModule.[[AsyncEvaluationOrder]] is either an integer or UNSET.
+#if USE(BUN_JSC_ADDITIONS)
+            // Or DONE: the module finished in a job that ran inside this walk (CyclicModuleRecord::asyncExecutionFulfilled).
+            bool isFinished = !cyclic->asyncEvaluationOrder().hasOrder();
+#else
             ASSERT(cyclic->asyncEvaluationOrder().hasOrder() || cyclic->asyncEvaluationOrder().isUnset());
+            bool isFinished = cyclic->asyncEvaluationOrder().isUnset();
+#endif
             // 16.b.v. If requiredModule.[[AsyncEvaluationOrder]] is UNSET, set requiredModule.[[Status]] to EVALUATED.
-            if (cyclic->asyncEvaluationOrder().isUnset()) {
+            if (isFinished) {
                 cyclic->setStatus(Status::Evaluated);
             // 16.b.vi. Otherwise, set requiredModule.[[Status]] to EVALUATING-ASYNC.
             } else
