@@ -832,6 +832,8 @@ private:
         case Opcode::LogicalNot:
         case Opcode::IsUndefinedOrNull:
         case Opcode::HasShapeOf:
+        case Opcode::IsPlainRecord:
+        case Opcode::GetPlainRecordField:
         case Opcode::IsClassObjectUnmodified:
         case Opcode::IsClosureOf:
         case Opcode::Results:

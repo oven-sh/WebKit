@@ -279,6 +279,8 @@ bool guaranteesResultType(const Program& program, const Function& function, cons
     case Opcode::GetRestLength:
     case Opcode::CreateThis:
     case Opcode::HasShapeOf:
+    case Opcode::IsPlainRecord:
+    case Opcode::GetPlainRecordField:
     case Opcode::IsClassObjectUnmodified:
     case Opcode::IsClosureOf:
     case Opcode::IsBuiltinFunction:

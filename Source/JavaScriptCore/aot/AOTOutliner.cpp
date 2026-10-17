@@ -393,7 +393,7 @@ private:
                 RELEASE_ASSERT(call.offset == instruction.offset && instruction.length == sizeOfNearCall);
                 if (call.stub == Stub::PollAtPrologue)
                     pollAtPrologue = instruction.offset;
-                if (!isGathered || call.isTailCall || (isARM64() && call.function != StubCall::noFunction))
+                if (!isGathered || call.isTailCall || (isARM64() && (call.function != StubCall::noFunction || call.firstReadSite != StubCall::noCallSite)))
                     break;
                 m_flags[unit] = MayBeInWindow | IsCall;
                 m_sums[unit + 1] = numberOf(info, call);

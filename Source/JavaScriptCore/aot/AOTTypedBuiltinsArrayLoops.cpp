@@ -98,16 +98,33 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
     unsigned length = array->length();
-    Vector<WithNumber> numbers;
+    Vector<WithNumber, 32> numbers;
     Vector<WithString> strings;
     Structure* lastStructure = nullptr;
     PropertyOffset lastOffset = invalidOffset;
+    const Typed::LayoutData* lastLayout = nullptr;
+    const Typed::FieldData* lastField = nullptr;
+    bool isInOrder = true;
+    bool isFalling = true;
+    unsigned numberCount = 0;
+    double lastKey = 0;
+    auto appendNumber = [&](double number, EncodedJSValue element) ALWAYS_INLINE_LAMBDA {
+        double key = isDescending ? -number : number;
+        if (!numberCount)
+            numbers.grow(length);
+        else {
+            isInOrder &= !(key < lastKey);
+            isFalling &= key < lastKey;
+        }
+        lastKey = key;
+        numbers[numberCount++] = WithNumber { key, element };
+    };
     for (unsigned i = 0; i < length; ++i) {
         if (shape == DoubleShape) {
             double number = array->butterfly()->contiguousDouble().at(array, i);
             if (number != number)
                 OPERATION_RETURN(scope, declined);
-            numbers.append(WithNumber { isDescending ? -number : number, std::bit_cast<EncodedJSValue>(number) });
+            appendNumber(number, std::bit_cast<EncodedJSValue>(number));
             continue;
         }
         JSValue element = array->butterfly()->contiguous().at(array, i).get();
@@ -115,6 +132,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
             OPERATION_RETURN(scope, declined);
         if (element.isUndefined())
             continue;
+        isInOrder &= numberCount == i;
         JSValue keyValue = element;
         if (!ident.isNull()) {
             if (!element.isObject())
@@ -122,9 +140,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
             JSObject* object = asObject(element);
             Structure* structure = object->structure();
             const Typed::LayoutData* layout = structure->compiledLayout();
-            if (layout && Typed::isObjectLayout(layout->kind))
-                keyValue = Typed::Object::tryGetOwnData(vm, object, ident);
-            else {
+            if (layout && Typed::isObjectLayout(layout->kind)) {
+                auto* typedObject = uncheckedDowncast<Typed::Object>(object);
+                if (layout != lastLayout) {
+                    lastLayout = layout;
+                    lastField = typedObject->fieldNamed(typedObject->state(), ident);
+                }
+                keyValue = lastField ? typedObject->readInline(*lastField) : JSValue();
+                if (!keyValue)
+                    keyValue = Typed::Object::tryGetOwnData(vm, object, ident);
+            } else {
                 if (structure != lastStructure) {
                     unsigned attributes = 0;
                     PropertyOffset offset = layout || object->type() != FinalObjectType || structure->isUncacheableDictionary() ? invalidOffset : structure->get(vm, ident, attributes);
@@ -142,15 +167,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
             double number = keyValue.asNumber();
             if (number != number)
                 OPERATION_RETURN(scope, declined);
-            numbers.append(WithNumber { isDescending ? -number : number, JSValue::encode(element) });
+            appendNumber(number, JSValue::encode(element));
             continue;
         }
-        if (!keyValue.isString() || !numbers.isEmpty() || !(flags & (Typed::sortKeysMayBeStrings | Typed::sortComparesByLocale)))
+        if (!keyValue.isString() || numberCount || !(flags & (Typed::sortKeysMayBeStrings | Typed::sortComparesByLocale)))
             OPERATION_RETURN(scope, declined);
         auto view = asString(keyValue)->view(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         strings.append(WithString { view, JSValue::encode(element) });
     }
+    if (isInOrder && strings.isEmpty() && !(flags & Typed::sortMakesCopy))
+        OPERATION_RETURN(scope, JSValue::encode(array));
+    numbers.shrink(numberCount);
     if (flags & Typed::sortComparesByLocale) {
         IntlCollator* collator = globalObject->defaultCollator();
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -171,9 +199,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
             return isDescending ? codePointCompareLessThan(b.key, a.key) : codePointCompareLessThan(a.key, b.key);
         });
     }
-    std::stable_sort(numbers.begin(), numbers.end(), [](const WithNumber& a, const WithNumber& b) {
-        return a.key < b.key;
-    });
+    constexpr unsigned maxSizeForInsertionSort = 16;
+    if (isFalling)
+        numbers.reverse();
+    else if (numbers.size() <= maxSizeForInsertionSort) {
+        for (unsigned i = 1; i < numbers.size(); ++i) {
+            WithNumber inserted = numbers[i];
+            unsigned at = i;
+            for (; at && inserted.key < numbers[at - 1].key; --at)
+                numbers[at] = numbers[at - 1];
+            numbers[at] = inserted;
+        }
+    } else if (!isInOrder) {
+        std::stable_sort(numbers.begin(), numbers.end(), [](const WithNumber& a, const WithNumber& b) {
+            return a.key < b.key;
+        });
+    }
     JSArray* sorted = array;
     if (flags & Typed::sortMakesCopy) {
         sorted = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(IsArray | shape), length);

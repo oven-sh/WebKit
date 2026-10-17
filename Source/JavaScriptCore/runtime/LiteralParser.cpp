@@ -2565,6 +2565,16 @@ template class LiteralParser<char16_t, JSONReviverMode::Enabled>;
 template class LiteralParser<Latin1Character, JSONReviverMode::Disabled>;
 template class LiteralParser<char16_t, JSONReviverMode::Disabled>;
 
+NEVER_INLINE JSValue tryEvalAsJSON(JSGlobalObject* globalObject, StringView source, CodeBlock* nullOrCodeBlock)
+{
+    if (source.is8Bit()) {
+        LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, source.span8(), SloppyJSON, nullOrCodeBlock);
+        return preparser.tryEval();
+    }
+    LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, source.span16(), SloppyJSON, nullOrCodeBlock);
+    return preparser.tryEval();
+}
+
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

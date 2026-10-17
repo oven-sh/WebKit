@@ -74,7 +74,7 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
 #if ENABLE(JIT)
     dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "JIT memory start: ", RawPointer(startOfFixedExecutableMemoryPool()), " end: ", RawPointer(endOfFixedExecutableMemoryPool()));
 #endif
-    dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "WasmIPInt memory start: ", RawPointer(untagCodePtr<void*, CFunctionPtrTag>(LLInt::wasmIPIntPCRangeStart)), " end: ", RawPointer(untagCodePtr<void*, CFunctionPtrTag>(LLInt::wasmIPIntPCRangeEnd)));
+    dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "WasmIPInt memory start: ", RawPointer(std::bit_cast<void*>(g_opcodeConfig.wasmIPIntPCRangeStart)), " end: ", RawPointer(std::bit_cast<void*>(g_opcodeConfig.wasmIPIntPCRangeEnd)));
     // First we need to make sure we are in JIT code or Wasm IPInt code before we can aquire any locks. Otherwise,
     // we might have crashed in code that is already holding one of the locks we want to aquire.
     assertIsNotTagged(faultingInstruction);

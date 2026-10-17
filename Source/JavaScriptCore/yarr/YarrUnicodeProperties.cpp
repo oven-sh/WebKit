@@ -110,7 +110,7 @@ std::optional<BuiltInCharacterClassID> unicodeMatchProperty(WTF::String unicodeP
 
 static std::array<std::atomic<CharacterClass*>, std::size(createCharacterClassFunctions)> sharedUnicodeCharacterClasses;
 
-CharacterClass* sharedUnicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
+NEVER_INLINE CharacterClass* sharedUnicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
 {
     ASSERT(unicodeClassID >= BuiltInCharacterClassID::BaseUnicodePropertyID);
     unsigned unicodePropertyIndex = static_cast<unsigned>(unicodeClassID) - static_cast<unsigned>(BuiltInCharacterClassID::BaseUnicodePropertyID);

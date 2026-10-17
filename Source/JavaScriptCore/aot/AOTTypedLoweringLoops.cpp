@@ -87,6 +87,83 @@ bool Lowering::willHoistComputationOn(ValueID operand) const
     return isLoopInvariant(m_loops[index], operand) && isGuaranteedToExecute(m_loops[index]);
 }
 
+void Lowering::findCalleesCalledInLoops()
+{
+    if (m_loops.isEmpty())
+        return;
+    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+        if (m_innermostLoop[b] == noLoop)
+            continue;
+        for (ValueID id : m_function.blocks[b].values) {
+            auto& value = m_function.at(id);
+            if (value.opcode != Opcode::Call || value.arguments.size() > numberOfArgumentGPRs || value.speculatedMethod != SpeculatedMethod::None || value.isSignatureCall)
+                continue;
+            ValueID callee = value.child(0);
+            if (m_function.at(callee).predictedClosure())
+                continue;
+            while (m_function.at(callee).opcode == Opcode::Cast)
+                callee = m_function.at(callee).child(0);
+            if (m_function.at(callee).predictedClosure() || repOf(typeOf(callee)) != Rep::JSValue)
+                continue;
+            for (unsigned i = 0; i < m_loops.size(); ++i) {
+                auto& loop = m_loops[i];
+                if (!loop.blocks.get(b) || !loop.header.index() || !isLoopInvariant(loop, callee))
+                    continue;
+                if (m_calleesResolvedBeforeLoops.isEmpty())
+                    m_calleesResolvedBeforeLoops.grow(m_loops.size());
+                auto& resolvedBeforeLoop = m_calleesResolvedBeforeLoops[i];
+                unsigned numberOfArguments = value.arguments.size();
+                size_t index = resolvedBeforeLoop.findIf([&](auto& resolved) {
+                    return resolved.callee == callee && resolved.numberOfArguments == numberOfArguments;
+                });
+                if (index == notFound) {
+                    index = resolvedBeforeLoop.size();
+                    resolvedBeforeLoop.append({ callee, numberOfArguments, m_proc.addVariable(Int64) });
+                }
+                m_callsOfResolvedCallees.add(id.index(), resolvedBeforeLoop[index]);
+                break;
+            }
+        }
+    }
+}
+
+void Lowering::resolveCalleesBeforeLoops(const Terminator& terminator)
+{
+    if (m_calleesResolvedBeforeLoops.isEmpty())
+        return;
+    for (auto& target : successorsOf(terminator)) {
+        for (unsigned i = 0; i < m_loops.size(); ++i) {
+            if (m_loops[i].header != target.block || m_loops[i].blocks.get(m_currentBlockID.index()))
+                continue;
+            for (auto& resolved : m_calleesResolvedBeforeLoops[i]) {
+                m_context.emitsCalls = true;
+                PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+                applyEffects(patchpoint, { Writes::Nothing, false });
+                patchpoint->append(ConstrainedValue(in<Boxed>(resolved.callee).value(), ValueRep::reg(calleeGPR)));
+                patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+                patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+                for (GPRReg reg : stubTemporaryGPRs)
+                    patchpoint->clobberLate(RegisterSet { reg });
+                patchpoint->resultConstraints = { ValueRep::reg(stubTemporaryGPRs[2]) };
+                patchpoint->setGenerator([stubCalls = &m_context.stubCalls, count = resolved.numberOfArguments](CCallHelpers& jit, const StackmapGenerationParams&) {
+                    AllowMacroScratchRegisterUsage allowScratch(jit);
+                    stubCalls->call(jit, Stub::ResolveCallValue, count, CallSite { });
+                });
+                m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), resolved.target, patchpoint);
+            }
+        }
+    }
+}
+
+std::optional<Lowering::ResolvedCall> Lowering::resolvedCallAt(ValueID call)
+{
+    auto found = m_callsOfResolvedCallees.find(call.index());
+    if (found == m_callsOfResolvedCallees.end())
+        return std::nullopt;
+    LValue target = m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), found->value.target);
+    return ResolvedCall { in<Boxed>(found->value.callee).value(), target, found->value.numberOfArguments };
+}
+
 Integer Lowering::integerBound(Opcode opcode, Number number)
 {
     bool roundsUp = opcode == Opcode::Less || opcode == Opcode::GreaterEq;

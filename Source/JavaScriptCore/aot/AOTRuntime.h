@@ -1895,6 +1895,16 @@ struct Instance {
     static constexpr unsigned numberOfHostClasses = Typed::maxNumberOfHostClasses;
     uint32_t hostClassStructureIDs[numberOfHostClasses];
     static constexpr ptrdiff_t offsetOfHostClassStructureID(unsigned number) { return OBJECT_OFFSETOF(Instance, hostClassStructureIDs) + number * sizeof(uint32_t); }
+    struct PlainRecordShape {
+        static constexpr unsigned maxNumberOfFields = 24;
+        uint32_t structureID;
+        uint32_t layout;
+        uint8_t locations[maxNumberOfFields];
+    };
+    static constexpr unsigned numberOfPlainRecordShapes = 64;
+    static constexpr unsigned indexOfPlainRecordShape(uint32_t layout) { return layout % numberOfPlainRecordShapes; }
+    PlainRecordShape* plainRecordShapes;
+    static constexpr ptrdiff_t offsetOfPlainRecordShapes() { return OBJECT_OFFSETOF(Instance, plainRecordShapes); }
     BiasedDataPointer linkedFunctionsSharedData;
     BiasedDataPointer ownData[maxNumberOfOwnData];
     struct StructureOfThis {

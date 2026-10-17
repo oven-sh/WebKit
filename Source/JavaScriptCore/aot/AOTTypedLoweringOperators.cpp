@@ -1610,7 +1610,10 @@ Word32 Lowering::genericToBoolean(ValueID id)
     Boxed value = in<Boxed>(id);
     auto callStubPath = [&] {
         if (successors) {
-            branchOnTruthinessWithStub(value, successors->first, successors->second);
+            if (std::exchange(m_readDeferredToBranch, ValueID()) == id)
+                branchOnTruthinessOfRead(m_function.at(id), successors->first, successors->second);
+            else
+                branchOnTruthinessWithStub(value, successors->first, successors->second);
             return Word32();
         }
         return Word32(callICStub(Stub::ToBoolean, Int32, { { value.value(), firstStubOperandGPR } }, std::nullopt, { Writes::RuntimeState, false }));

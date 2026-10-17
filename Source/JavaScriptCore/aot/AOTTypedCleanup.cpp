@@ -4981,6 +4981,8 @@ private:
         case Opcode::LogicalNot:
         case Opcode::IsUndefinedOrNull:
         case Opcode::HasShapeOf:
+        case Opcode::IsPlainRecord:
+        case Opcode::GetPlainRecordField:
         case Opcode::IsClassObjectUnmodified:
         case Opcode::IsClosureOf:
         case Opcode::IsBuiltinFunction:
@@ -5631,6 +5633,8 @@ bool mayThrow(const Program& program, const Function& function, const Value& val
     case Opcode::TypeOf:
     case Opcode::IsUndefinedOrNull:
     case Opcode::HasShapeOf:
+    case Opcode::IsPlainRecord:
+    case Opcode::GetPlainRecordField:
     case Opcode::IsClassObjectUnmodified:
     case Opcode::IsClosureOf:
     case Opcode::IsBuiltinFunction:

@@ -885,7 +885,7 @@ bool Lowering::isLastCallOfGenericEntrypoint(FunctionID function) const
         return false;
     Rep rep = resultRepOf(m_program, function);
     for (ValueID argument : m_function.at(terminator.value).arguments) {
-        if (LayoutID supertype = typeOf(argument).singleLayout(); (supertype && m_program.at(supertype).mayBeStackAllocated) || m_function.mayPointIntoFrame.get(originOf(argument).index()))
+        if (LayoutID supertype = typeOf(argument).singleLayout(); (supertype && m_program.at(supertype).mayBeStackAllocated && m_function.at(originOf(argument)).opcode != Opcode::GetCapture) || m_function.mayPointIntoFrame.get(originOf(argument).index()))
             return false;
     }
     Rep own = resultRepOf(m_program, m_id);
@@ -1164,6 +1164,27 @@ Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, Operatio
     if (methodName)
         stub = Stub::CallValueNamed;
     bool isTailCall = method == SpeculatedMethod::None && stub == Stub::CallValue && canTailCallValue();
+    if (m_resolvedCall && m_resolvedCall->callee == operands[0] && m_resolvedCall->numberOfArguments == count && method == SpeculatedMethod::None && stub == Stub::CallValue && !isTailCall && !m_dropsDroppableCallerFrame && !nameForCallableCheck) {
+        PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+        applyEffects(patchpoint, effects);
+        patchpoint->append(ConstrainedValue(operands[0], ValueRep::reg(calleeGPR)));
+        patchpoint->append(ConstrainedValue(operands[1], ValueRep::reg(thisGPR)));
+        for (unsigned i = 0; i < count; ++i)
+            patchpoint->append(ConstrainedValue(operands[i + 2], ValueRep::reg(argumentGPR(i))));
+        patchpoint->append(ConstrainedValue(m_resolvedCall->target, ValueRep::reg(stubTemporaryGPRs[2])));
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+        patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+        patchpoint->clobberLate(registersClobberedByCalls());
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+        CallSite site { nextSite() };
+        patchpoint->setGenerator([stubCalls = &m_context.stubCalls, site](CCallHelpers& jit, const StackmapGenerationParams&) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            stubCalls->call(jit, Stub::CallResolvedValue, site);
+        });
+        unwindToLandingPad(patchpoint, site);
+        return Boxed(patchpoint);
+    }
     if (method == SpeculatedMethod::None && stub == Stub::CallValue && operands[1]->hasInt64() && operands[1]->asInt64() == static_cast<int64_t>(JSValue::encode(jsUndefined())))
         stub = Stub::CallValueWithoutThis;
     CallSite callableCheckSite;
@@ -2940,6 +2961,7 @@ Operand Lowering::lowerCallBySignature(ValueID result, const Value& value, Strin
 
 Operand Lowering::lowerCall(ValueID result, const Value& value)
 {
+    SetForScope resolvedCall(m_resolvedCall, resolvedCallAt(result));
     ValueID callee = value.child(0);
     ValueID thisValue = value.child(1);
     auto& type = typeOf(result);

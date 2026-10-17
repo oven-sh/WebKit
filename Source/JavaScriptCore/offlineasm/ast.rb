@@ -999,6 +999,8 @@ class Instruction < Node
                 end
             end
             $asm.puts "#{str}"
+        when "section"
+            $asm.putsSection(operands[0].value)
         when "tagCodePtr", "tagReturnAddress", "untagReturnAddress", "removeCodePtrTag", "untagArrayPtr", "removeArrayPtrTag"
         else
             raise "Unhandled opcode #{opcode} at #{codeOriginString}"
@@ -1086,6 +1088,8 @@ $labelMapping = {}
 $referencedExternLabels = Array.new
 
 class Label < Node
+    attr_accessor :section
+
     def initialize(codeOrigin, name, definedInFile = false)
         super(codeOrigin)
         @name = name

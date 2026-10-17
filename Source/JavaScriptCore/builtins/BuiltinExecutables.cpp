@@ -29,6 +29,7 @@
 
 #include "BuiltinNames.h"
 #include "JSCJSValueInlines.h"
+#include "JSFunction.h"
 #include "Parser.h"
 #include "SourceCharacters.h"
 #include "AOTFunction.h"
@@ -43,9 +44,18 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuiltinExecutables);
 
+static NEVER_INLINE const char* textOfBuiltinFunctions()
+{
+    const char* text = s_JSCCombinedCode;
+#if !OS(WINDOWS)
+    asm volatile("" : "+r"(text));
+#endif
+    return text;
+}
+
 BuiltinExecutables::BuiltinExecutables(VM& vm)
     : m_vm(vm)
-    , m_combinedSourceProvider(BuiltinsSourceProvider::create(StringImpl::createWithoutCopying({ s_JSCCombinedCode, s_JSCCombinedCodeLength }), s_JSCBuiltinSourceStarts))
+    , m_combinedSourceProvider(BuiltinsSourceProvider::create(StringImpl::createWithoutCopying({ textOfBuiltinFunctions(), s_JSCCombinedCodeLength }), s_JSCBuiltinSourceStarts))
 {
 }
 
@@ -294,7 +304,8 @@ void BuiltinExecutables::clear()
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overrideName, length) \
 SourceCode BuiltinExecutables::name##Source() \
 {\
-    return SourceCode { m_combinedSourceProvider.copyRef(), static_cast<int>(s_##name - s_JSCCombinedCode), static_cast<int>((s_##name - s_JSCCombinedCode) + length) };\
+    int start = s_JSCBuiltinSourceStarts[static_cast<unsigned>(BuiltinCodeIndex::name)];\
+    return SourceCode { m_combinedSourceProvider.copyRef(), start, start + length };\
 }\
 \
 UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
@@ -341,6 +352,33 @@ bool BuiltinExecutables::hasCompiledFunction(BuiltinCodeIndex index)
     UNUSED_PARAM(index);
     return false;
 #endif
+}
+
+UnlinkedFunctionExecutable* BuiltinExecutables::executableFor(BuiltinCodeIndex index)
+{
+    switch (index) {
+#define EXECUTABLE_FOR(name, functionName, overriddenName, length) \
+    case BuiltinCodeIndex::name: \
+        return name##Executable();
+    JSC_FOREACH_BUILTIN_CODE(EXECUTABLE_FOR)
+#undef EXECUTABLE_FOR
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+NEVER_INLINE FunctionExecutable* BuiltinExecutables::linkFromText(BuiltinCodeIndex index, Intrinsic intrinsic)
+{
+    int start = s_JSCBuiltinSourceStarts[static_cast<unsigned>(index)];
+    int length = s_JSCBuiltinSourceMetadata[static_cast<unsigned>(index)].sourceLength;
+    return executableFor(index)->link(m_vm, nullptr, SourceCode { m_combinedSourceProvider.copyRef(), start, start + length }, std::nullopt, intrinsic);
+}
+
+BuiltinCode BuiltinExecutables::codeFor(BuiltinCodeIndex index, Intrinsic intrinsic)
+{
+    if (hasCompiledFunction(index))
+        return { nullptr, static_cast<uint32_t>(index) };
+    return { linkFromText(index, intrinsic), 0 };
 }
 
 }

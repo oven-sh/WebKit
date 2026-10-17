@@ -469,6 +469,63 @@ Word32 Lowering::lowerHasShapeOf(const Value& value)
     });
 }
 
+LValue Lowering::plainRecordProperty(CellPointer object, LayoutID record, uint32_t field)
+{
+    using Shape = Instance::PlainRecordShape;
+    static_assert(Shape::maxNumberOfFields == maxNumberOfPlainRecordFields);
+    auto& fields = m_program.at(record).fields;
+    unsigned number = 0;
+    for (uint32_t i = 0; i < field; ++i)
+        number += !(fields[i].flags & fieldIsNeverStored);
+    LValue location = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfPlainRecordShapes()), Instance::indexOfPlainRecordShape(record.index()) * sizeof(Shape) + OBJECT_OFFSETOF(Shape, locations) + number));
+    return m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object.value(), m_out.shl(m_out.zeroExtPtr(location), m_out.constInt32(3)))));
+}
+
+void Lowering::branchOnPlainRecord(const Value& value, LBasicBlock isOne, LBasicBlock isNone)
+{
+    using Shape = Instance::PlainRecordShape;
+    LayoutID record = value.layout();
+    Operand operand = get(value.child(0));
+    if (operand.rep == Rep::JSValue)
+        orElse(isCell(operand.as<Boxed>()), isNone);
+    CellPointer object = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
+    LValue shapes = fixedPointer(Instance::offsetOfPlainRecordShapes());
+    ptrdiff_t shape = Instance::indexOfPlainRecordShape(record.index()) * sizeof(Shape);
+    orElse(equal(loadField<Word32>(object, m_heaps.JSCell_structureID), Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, shapes, shape + OBJECT_OFFSETOF(Shape, structureID))))), isNone);
+    orElse(equal(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, shapes, shape + OBJECT_OFFSETOF(Shape, layout)))), word32(record.index())), isNone);
+    orElse(Word32(m_out.above(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, object.value(), JSCell::cellStateOffset())), m_out.constInt32(blackThreshold))), isNone);
+    SetForScope rejectsUntypedObjects(m_rejectsUntypedObjects, true);
+    auto& fields = m_program.at(record).fields;
+    for (uint32_t field = 0; field < fields.size(); ++field) {
+        if (!(fields[field].flags & fieldIsNeverStored))
+            narrowOrElse(Boxed(plainRecordProperty(object, record, field)), m_program.at(m_program.types.anything), m_program.at(fields[field].type), isNone);
+    }
+    m_out.jump(isOne);
+}
+
+Word32 Lowering::lowerIsPlainRecord(ValueID result, const Value& value)
+{
+    if (m_isFusedWithBranch.get(result.index()))
+        return boolean(false);
+    LBasicBlock isOne = m_out.newBlock();
+    LBasicBlock isNone = m_out.newBlock();
+    Join join(m_out, Rep::Int32, Int32);
+    branchOnPlainRecord(value, isOne, isNone);
+    m_out.appendTo(isOne);
+    join.add(boolean(true));
+    m_out.appendTo(isNone);
+    join.add(boolean(false));
+    return join.finish().as<Word32>();
+}
+
+Operand Lowering::lowerGetPlainRecordField(ValueID result, const Value& value)
+{
+    auto& type = typeOf(result);
+    Operand operand = get(value.child(0));
+    CellPointer object = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
+    return convert(Boxed(plainRecordProperty(object, value.layout(), value.field())), type, repOf(type));
+}
+
 Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeUnmodified, bool allowsModified)
 {
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
@@ -618,7 +675,7 @@ void Lowering::findClosureTestsFusedWithBranches()
         bool isRelational = condition.opcode == Opcode::Less || condition.opcode == Opcode::LessEq || condition.opcode == Opcode::Greater || condition.opcode == Opcode::GreaterEq;
         if (isRelational && ((isNumericOperand(typeOf(condition.child(0))) && isNumericOperand(typeOf(condition.child(1)))) || successorsOf(block.terminator).size() != 2))
             isRelational = false;
-        if (isRelational || condition.opcode == Opcode::IsClosureOf || isAwaitMayContinue(condition) || isReceiverGuard(condition) || isForInStampCheck(condition) || isHostObjectCacheTest(condition) || isJSONParserTest(condition))
+        if (isRelational || condition.opcode == Opcode::IsClosureOf || condition.opcode == Opcode::IsPlainRecord || isAwaitMayContinue(condition) || isReceiverGuard(condition) || isForInStampCheck(condition) || isHostObjectCacheTest(condition) || isJSONParserTest(condition))
             m_isFusedWithBranch.set(block.terminator.value.index());
         if (condition.opcode == Opcode::ToBoolean && successorsOf(block.terminator).size() == 2 && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts())
             m_isTruthinessOnlyBranchedOn.set(block.terminator.value.index());
@@ -3018,7 +3075,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, s
     bool onlyCellsReachHere = operand.rep == Rep::JSValue && withoutCells(from).isSubsetOf(withoutCells(to), m_program);
     Boxed passed = onlyCellsReachHere ? Boxed(partsOf(operand.as<Boxed>()).cell) : operand.rep == Rep::JSValue ? rematerializedValue(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
     if (!from.anyObject && !from.acceptsUntypedObjects(m_program) && !Options::auditAOTTypedAssertions()) {
-        AOT_TYPED_OPERATION_WITH_EFFECTS(CoerceInPlace, effects, passed, typeAndReason(cast.type, cast.castReason()));
+        AOT_TYPED_OPERATION_WITH_EFFECTS(CoerceInPlace, effects, passed, typeAndReason(cast.type, cast.keepsUnconvertibleObjects() ? runtimeAnnotationCastReason(cast) : cast.castReason()));
         join.add(convert(convert(operand, from, repOf(from)), to, rep));
         return join.finish();
     }

@@ -9748,6 +9748,227 @@ static void generateGetByNameWithDirectColumn(CCallHelpers& jit, Preserves prese
 #endif
 }
 static void generateGetByNameWithDirectColumn(CCallHelpers& jit) { generateGetByNameWithDirectColumn(jit, Preserves::Nothing); }
+
+enum class SecondReceiver : uint8_t { FirstResult, FirstReceiver, Other };
+
+static void generateTwoReadsByName(CCallHelpers& jit, SecondReceiver secondReceiver, bool returnsBoth, Preserves preserves, bool testsTruthiness = false)
+{
+    using Kind = PropertyLookupTable::Kind;
+    static_assert(PropertyLookupTable::maxName < 1u << 16 && PropertyLookupTable::numberOfColumns > PropertyLookupTable::maxName);
+    static_assert(secondReceiverGPR == preservedIntegerGPRs[0] && firstOfTwoResultsGPR == preservedIntegerGPRs[1]);
+    RELEASE_ASSERT(!returnsBoth || preserves == Preserves::TwoIntegers);
+    RELEASE_ASSERT(returnsBoth || secondReceiver == SecondReceiver::FirstResult);
+    constexpr GPRReg names = pairedNamesGPR;
+    constexpr GPRReg row = T13;
+    constexpr GPRReg entry = readEntryGPR;
+#if CPU(X86_64)
+    constexpr GPRReg name = T9;
+    static_assert(name == entry && noOverlap(names, name, row, T11, T12, R0, secondReceiverGPR, firstOfTwoResultsGPR));
+#else
+    constexpr GPRReg name = T10;
+    static_assert(names == entry && noOverlap(names, name, row, T11, nameCellGPR, nameDifferenceGPR, R0) && noOverlap(names, name, row, T11, secondReceiverGPR, firstOfTwoResultsGPR));
+#endif
+    const GPRReg first = returnsBoth ? firstOfTwoResultsGPR : R0;
+    const GPRReg second = secondReceiver == SecondReceiver::Other ? secondReceiverGPR : secondReceiver == SecondReceiver::FirstResult ? first : R0;
+    const bool readsSameReceiver = secondReceiver == SecondReceiver::FirstReceiver;
+    constexpr int32_t lastKindImplyingAbsent = static_cast<int32_t>(Kind::AbsentAndStoreAddsInNewStorage);
+    static_assert(PropertyLookupTable::impliesAbsent(static_cast<Kind>(lastKindImplyingAbsent)) && !PropertyLookupTable::impliesAbsent(static_cast<Kind>(lastKindImplyingAbsent + 1)));
+    auto inRow = [&](GPRReg column, int32_t offset) {
+        return CCallHelpers::BaseIndex(row, column, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset);
+    };
+    auto handlerAt = [&](GPRReg kind, Preserves form) {
+        return CCallHelpers::BaseIndex(instanceGPR, kind, CCallHelpers::TimesEight, static_cast<int32_t>(Instance::offsetOfGetByNameHandlers(static_cast<unsigned>(form))));
+    };
+
+    auto readSecond = [&](bool rowIsLoaded) {
+        if (testsTruthiness) {
+            s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::ValueIsTruthy });
+            return;
+        }
+        jit.urshift32(TrustedImm32(16), names);
+        CCallHelpers::JumpList isGeneric;
+        if (!rowIsLoaded) {
+            isGeneric.append(jit.branchIfNotCell(second));
+            loadRowByName(jit, second, row, T11);
+        }
+#if CPU(X86_64)
+        jit.m_assembler.cmpw_rm(names, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, names, CCallHelpers::TimesEight);
+        Jump isNotInline = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
+        jit.load32(inRow(names, PropertyLookupTable::offsetOfReadOffsetInEntry), T11);
+        jit.load64(CCallHelpers::BaseIndex(second, T11, CCallHelpers::TimesEight), R0);
+        jit.ret();
+        isNotInline.link(&jit);
+        jit.add32(TrustedImm32(PropertyLookupTable::hasKindAndCode), names, T11);
+        jit.m_assembler.cmpw_rm(T11, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, names, CCallHelpers::TimesEight);
+        isGeneric.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE)));
+        jit.getEffectiveAddress(inRow(names, 0), entry);
+        jit.move(second, R0);
+        jumpToEntryHandler(jit, entry, T11, Instance::offsetOfGetByNameHandlers(static_cast<unsigned>(preserves)));
+        isGeneric.link(&jit);
+        jit.move(names, T9);
+        jit.move(second, R0);
+        jit.jump().linkTo(getByNameContinuations(preserves).genericPath, &jit);
+#else
+        jit.load64(inRow(names, 0), nameCellGPR);
+        Jump isNotInline = branchIfCellNameDiffers(jit, names);
+        jit.m_assembler.ldr<64>(R0, second, nameCellGPR, ARM64Assembler::UXTW, 3);
+        jit.ret();
+        isNotInline.link(&jit);
+        jit.move(second, R0);
+        jit.jump().linkTo(getByNameContinuations(preserves).notInlineEntry, &jit);
+        if (!isGeneric.empty()) {
+            isGeneric.link(&jit);
+            jit.move(second, R0);
+            jit.jump().linkTo(getByNameContinuations(preserves).genericPath, &jit);
+        }
+#endif
+    };
+
+    Vector<GPRReg, 4> saved;
+    if (!testsTruthiness)
+        saved.append(names);
+    if (readsSameReceiver)
+        saved.append(R0);
+    if (preserves == Preserves::TwoIntegers) {
+        saved.append(preservedIntegerGPRs[0]);
+        if (!returnsBoth)
+            saved.append(preservedIntegerGPRs[1]);
+    }
+    const bool hasPadding = saved.size() & 1;
+    auto enterFrame = [&] {
+        if (!testsTruthiness) {
+#if CPU(X86_64)
+            jit.sub64(TrustedImm32(codeOffsetUnit), Address(CCallHelpers::stackPointerRegister));
+#else
+            jit.sub64(TrustedImm32(codeOffsetUnit), ARM64Registers::lr);
+#endif
+        }
+        jit.emitFunctionPrologue();
+#if CPU(X86_64)
+        for (GPRReg reg : saved)
+            jit.push(reg);
+        if (hasPadding)
+            jit.push(saved.last());
+#else
+        for (size_t i = 0; i < saved.size(); i += 2)
+            jit.pushPair(saved[i], saved[std::min(i + 1, saved.size() - 1)]);
+#endif
+    };
+    auto leaveFrame = [&] {
+        jit.move(R0, first);
+#if CPU(X86_64)
+        if (hasPadding)
+            jit.pop(T11);
+        for (size_t i = saved.size(); i--;)
+            jit.pop(saved[i]);
+#else
+        for (size_t i = (saved.size() + 1) & ~static_cast<size_t>(1); i; i -= 2)
+            jit.popPair(saved[i - 2], i - 1 < saved.size() ? saved[i - 1] : T11);
+#endif
+        jit.emitFunctionEpilogueWithEmptyFrame();
+        if (!testsTruthiness) {
+#if CPU(X86_64)
+            jit.add64(TrustedImm32(codeOffsetUnit), Address(CCallHelpers::stackPointerRegister));
+#else
+            jit.add64(TrustedImm32(codeOffsetUnit), ARM64Registers::lr);
+#endif
+        }
+    };
+
+    CCallHelpers::JumpList isGeneric;
+    jit.zeroExtend16To32(names, name);
+    isGeneric.append(jit.branchIfNotCell(R0));
+    loadRowByName(jit, R0, row, T11);
+#if CPU(X86_64)
+    jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
+    Jump isNotInline = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
+    jit.load32(inRow(name, PropertyLookupTable::offsetOfReadOffsetInEntry), T11);
+    jit.load64(CCallHelpers::BaseIndex(R0, T11, CCallHelpers::TimesEight), first);
+    readSecond(readsSameReceiver);
+
+    isNotInline.link(&jit);
+    jit.add32(TrustedImm32(PropertyLookupTable::hasKindAndCode), name, T11);
+    jit.m_assembler.cmpw_rm(T11, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
+    isGeneric.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE)));
+    jit.load8(inRow(name, PropertyLookupTable::offsetOfKindInEntry), T11);
+    Jump isAbsent = jit.branch32(CCallHelpers::BelowOrEqual, T11, TrustedImm32(lastKindImplyingAbsent));
+    jit.getEffectiveAddress(inRow(name, 0), entry);
+    constexpr uint32_t kindsReadWithoutFrame = 1u << static_cast<unsigned>(Kind::OutOfLine) | 1u << static_cast<unsigned>(Kind::OutOfLineAndWritten) | 1u << static_cast<unsigned>(Kind::InheritedInline) | 1u << static_cast<unsigned>(Kind::InheritedOutOfLine);
+    jit.move(TrustedImm32(kindsReadWithoutFrame), T12);
+    Jump needsFrame = jit.branchTestBit32(CCallHelpers::Zero, T12, T11);
+    if (readsSameReceiver)
+        jit.move(R0, first);
+    jit.loadPtr(handlerAt(T11, Preserves::Nothing), T11);
+    jit.call(T11, JITThunkPtrTag);
+    if (readsSameReceiver)
+        jit.swap(R0, first);
+    else
+        jit.move(R0, first);
+    CCallHelpers::Label readSecondAfterCall = jit.label();
+    readSecond(false);
+#else
+    jit.load64(inRow(name, 0), nameCellGPR);
+    Jump isNotInline = branchIfCellNameDiffers(jit, name);
+    static_assert(!PropertyLookupTable::offsetOfReadOffsetInEntry);
+    jit.m_assembler.ldr<64>(first, R0, nameCellGPR, ARM64Assembler::UXTW, 3);
+    readSecond(readsSameReceiver);
+
+    isNotInline.link(&jit);
+    isGeneric.append(branchIfCellHasNoEntry(jit));
+    Jump holderIsInPayload = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(PropertyLookupTable::holderIsInPayload) << kindInCellShift));
+    Jump valueIsInOwnStorage = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(PropertyLookupTable::valueIsInStorage) << kindInCellShift));
+    extractBits(jit, nameCellGPR, kindInCellShift, PropertyLookupTable::bitsOfKind, T11);
+    Jump isAbsent = jit.branch32(CCallHelpers::BelowOrEqual, T11, TrustedImm32(lastKindImplyingAbsent));
+    Jump needsFrame = jit.jump();
+    holderIsInPayload.link(&jit);
+    jit.m_assembler.add<64>(name, cellCageBaseGPR, nameCellGPR, ARM64Assembler::UXTW, Typed::cell32Shift);
+    Jump holderHasInline = jit.branchTest64(CCallHelpers::Zero, nameCellGPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(PropertyLookupTable::valueIsInStorage) << kindInCellShift));
+    jit.loadPtr(Address(name, JSObject::butterflyOffset()), name);
+    holderHasInline.link(&jit);
+    jit.extractSignedBitfield64(nameCellGPR, TrustedImm32(codeInCellShift), TrustedImm32(8), T11);
+    jit.load64(CCallHelpers::BaseIndex(name, T11, CCallHelpers::TimesEight), first);
+    CCallHelpers::Label readSecondAfterLoad = jit.label();
+    readSecond(readsSameReceiver);
+    valueIsInOwnStorage.link(&jit);
+    jit.loadPtr(Address(R0, JSObject::butterflyOffset()), name);
+    jit.m_assembler.ldr<64>(first, name, nameCellGPR, ARM64Assembler::SXTW, 0);
+    jit.jump().linkTo(readSecondAfterLoad, &jit);
+#endif
+
+    isAbsent.link(&jit);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), first);
+    readSecond(readsSameReceiver);
+
+    needsFrame.link(&jit);
+    enterFrame();
+#if CPU(ARM64)
+    jit.getEffectiveAddress(inRow(name, 0), entry);
+#endif
+    jit.loadPtr(handlerAt(T11, Preserves::NothingWithinFrame), T11);
+    jit.call(T11, JITThunkPtrTag);
+    Jump didRead = jit.jump();
+
+    isGeneric.link(&jit);
+    enterFrame();
+#if CPU(ARM64)
+    jit.move(name, T9);
+#endif
+    callStubFromStub(jit, Stub::GetByNameWithinFrameAfterFirstProbe);
+    didRead.link(&jit);
+    leaveFrame();
+#if CPU(X86_64)
+    jit.jump().linkTo(readSecondAfterCall, &jit);
+#else
+    readSecond(false);
+#endif
+}
+static void generateGetByNameChain(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::Nothing); }
+static void generateGetByNameChainPreservingTwo(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers); }
+static void generateGetByNameChainReturningBoth(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, true, Preserves::TwoIntegers); }
+static void generateGetTwoByName(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstReceiver, true, Preserves::TwoIntegers); }
+static void generateGetByNameFromTwo(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::Other, true, Preserves::TwoIntegers); }
+static void generateGetByNameIsTruthy(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::Nothing, true); }
+static void generateGetByNameIsTruthyPreservingTwo(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true); }
 static void generateGetByNameWithDirectColumnPreservingTwo(CCallHelpers& jit) { generateGetByNameWithDirectColumn(jit, Preserves::TwoIntegers); }
 
 #if CPU(X86_64)
@@ -16464,6 +16685,34 @@ static Jump enterClosureWithStructure(CCallHelpers& jit, unsigned count, CCallHe
 #endif
 }
 
+static void resolveCallValue(CCallHelpers& jit, unsigned count, CCallHelpers::Label callValue, CCallHelpers::Label callHostFunction)
+{
+    static_assert(noOverlap(T11, T13, calleeGPR, instanceGPR));
+    CCallHelpers::JumpList isResolvedAtEachCall;
+    isResolvedAtEachCall.append(jit.branchIfNotCell(calleeGPR));
+    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T11);
+    auto [isSlim, isNeither] = branchIfNotClosureStructure(jit, T11, T13);
+    jit.loadPtr(Address(calleeGPR, Typed::Closure::offsetOfEntry()), T11);
+    Jump hasWord = jit.jump();
+    isSlim.link(&jit);
+    jit.loadPtr(Address(calleeGPR, Typed::SlimClosure::offsetOfWord()), T11);
+    hasWord.link(&jit);
+    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(count + 1) << ClosureWord::numberOfParametersShift), T13);
+    isResolvedAtEachCall.append(jit.branch64(CCallHelpers::AboveOrEqual, T11, T13));
+    isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, Address(instanceGPR, Instance::offsetOfTrapAwareSoftStackLimit())));
+    toCodeAddress(jit, T11, T13, StackIsTested::Yes);
+    jit.ret();
+
+    isNeither.link(&jit);
+    isResolvedAtEachCall.append(jit.branch32(CCallHelpers::NotEqual, T11, Address(instanceGPR, Instance::offsetOfHostFunctionStructureID())));
+    loadLabelAddress(jit, callHostFunction, T11);
+    jit.ret();
+
+    isResolvedAtEachCall.link(&jit);
+    loadLabelAddress(jit, callValue, T11);
+    jit.ret();
+}
+
 static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::optional<unsigned> count)
 {
     if (kind == CodeSpecializationKind::CodeForCall && !count)
@@ -16723,6 +16972,8 @@ static void jumpToValueEntry(CCallHelpers& jit, uint32_t signatureIndex, CCallHe
     jit.farJump(addressOfEntryGPR, JSEntryPtrTag);
 }
 static void generateCallValueNamed(CCallHelpers& jit) { jit.breakpoint(); }
+static void generateResolveCallValue(CCallHelpers& jit) { jit.breakpoint(); }
+static void generateCallResolvedValue(CCallHelpers& jit) { jit.farJump(T11, JSEntryPtrTag); }
 static void generateCallMethod(CCallHelpers& jit) { jit.breakpoint(); }
 static void generateCallMethodByName(CCallHelpers& jit) { jit.breakpoint(); }
 static void generateCallMethodReadThroughGetter(CCallHelpers&) { static_assert(static_cast<unsigned>(Stub::CallMethodReadThroughGetter) + 2 == static_cast<unsigned>(Stub::CallMethodRead)); }
@@ -23948,7 +24199,7 @@ static constexpr Stub operationCallStubs[] = {
     Stub::ColdOperationVoidWithoutFPRs, Stub::LeafColdOperationVoidWithoutFPRs, Stub::ColdOperationValueWithoutFPRs, Stub::LeafColdOperationValueWithoutFPRs,
     Stub::ColdPlainOperationWithoutFPRs, Stub::LeafColdPlainOperationWithoutFPRs,
 };
-static constexpr Stub functionCallStubs[] = { Stub::Call, Stub::CallHostFunction, Stub::CallInternalFunction, Stub::ConstructInternalFunction, Stub::CallValue, Stub::CallValueWithoutThis, Stub::ConstructClosure, Stub::CallMethod, Stub::CallValueNamed, Stub::CallMethodByName };
+static constexpr Stub functionCallStubs[] = { Stub::Call, Stub::CallHostFunction, Stub::CallInternalFunction, Stub::ConstructInternalFunction, Stub::CallValue, Stub::CallValueWithoutThis, Stub::ConstructClosure, Stub::CallMethod, Stub::CallValueNamed, Stub::CallMethodByName, Stub::ResolveCallValue };
 static constexpr unsigned numberOfCountsWithThunk = numberOfArgumentGPRs + 1;
 static constexpr unsigned firstCallThunk = std::size(operationCallStubs) * numberOfEntries;
 static constexpr unsigned firstCallThunkOf(Stub stub)
@@ -25382,6 +25633,10 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
                         generateCallMethodByName(jit, count, cellLabelsInCallValue[count]);
                         continue;
                     }
+                    if (stub == Stub::ResolveCallValue) {
+                        resolveCallValue(jit, count, thunkLabels[firstCallThunkOf(Stub::CallValue) + count], thunkLabels[firstCallThunkOf(Stub::CallHostFunction) + count]);
+                        continue;
+                    }
                     generateCallTo(jit, CodeSpecializationKind::CodeForCall, count);
                 }
             }
@@ -25532,6 +25787,12 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
 void StubCalls::call(CCallHelpers& jit, Stub stub, CallSite site)
 {
     m_pending.append({ jit.nearCall(), stub, false, site.bits });
+}
+
+void StubCalls::callForTwoReads(CCallHelpers& jit, Stub stub, CallSite firstRead, CallSite secondRead)
+{
+    m_pending.append({ jit.nearCall(), stub, false, secondRead.bits });
+    m_pending.last().firstReadSite = firstRead.bits;
 }
 
 void StubCalls::call(CCallHelpers& jit, Stub stub, uint32_t t9Value, CallSite site)
@@ -26062,7 +26323,7 @@ Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)
 #else
         size_t sizeBeforeLocation = pending.isTailCall ? 0 : sizeOfNearCall;
 #endif
-        result.append({ static_cast<uint32_t>(location - start - sizeBeforeLocation), pending.stub, pending.isTailCall, pending.thunk, pending.function, pending.callSite, pending.argumentMoves, 0, pending.firstOmittedGPR, pending.endOfOmittedGPRs });
+        result.append({ static_cast<uint32_t>(location - start - sizeBeforeLocation), pending.stub, pending.isTailCall, pending.thunk, pending.function, pending.callSite, pending.argumentMoves, 0, pending.firstOmittedGPR, pending.endOfOmittedGPRs, pending.firstReadSite });
     }
     return result;
 }
@@ -26120,6 +26381,22 @@ void writeVeneer(uint8_t* base, size_t veneer, size_t target)
     UNUSED_PARAM(base);
     UNUSED_PARAM(veneer);
     UNUSED_PARAM(target);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+void writeCallOfResolvedValue(uint8_t* base, size_t instruction)
+{
+#if CPU(ARM64)
+    uint32_t encoded = 0xd63f0000u | static_cast<uint32_t>(T11) << 5;
+    memcpy(base + instruction, &encoded, sizeof(encoded));
+#elif CPU(X86_64)
+    static_assert(T11 == X86Registers::r9);
+    constexpr std::array<uint8_t, sizeOfNearCall> encoded { 0x2e, 0x2e, 0x41, 0xff, 0xd1 };
+    memcpy(base + instruction, encoded.data(), encoded.size());
+#else
+    UNUSED_PARAM(base);
+    UNUSED_PARAM(instruction);
     RELEASE_ASSERT_NOT_REACHED();
 #endif
 }

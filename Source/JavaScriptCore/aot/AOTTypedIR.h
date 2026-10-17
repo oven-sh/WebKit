@@ -37,6 +37,8 @@ namespace JSC { namespace AOT { namespace Typed {
     v(ConstructSuperForwardVarargs) \
     v(CallBuiltin) \
     v(HasShapeOf) \
+    v(IsPlainRecord) \
+    v(GetPlainRecordField) \
     v(IsClassObjectUnmodified) \
     v(GetStaticField) \
     v(PutStaticField) \
@@ -321,6 +323,8 @@ static constexpr uint32_t closureIsStackAllocated = 1;
 static constexpr uint32_t shapeTestIsExact = 1;
 static constexpr uint32_t shapeTestIsForThisInstance = 2;
 static constexpr uint32_t shapeTestGuardsFastPath = 3;
+
+static constexpr unsigned maxNumberOfPlainRecordFields = 24;
 
 enum class SpeculatedMethod : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest, StringMatch };
 

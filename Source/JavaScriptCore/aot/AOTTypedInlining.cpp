@@ -91,12 +91,6 @@ public:
                 if (m_caller.at(call).opcode != Opcode::CallDirect || m_caller.at(call).immediates[1] == afterHead || m_caller.at(call).isCallWithDeclinedInlining())
                     continue;
                 FunctionID callee = m_caller.at(call).function();
-                if (FunctionID sort = sortThatCallsComparator(callee); sort && (m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id))) {
-                    Value& byKey = m_caller.at(call);
-                    byKey.immediates[0] = sort.index();
-                    byKey.arguments.shrink(byKey.arguments.size() - 2);
-                    callee = sort;
-                }
                 uint32_t maxInliningDepth = maxDepth + (isPassedCalledFunction(callee, m_caller.at(call)) || isPassedIteratedGenerator(m_program.at(callee), m_caller.at(call)));
                 bool isTooDeep = depthOf(m_caller.at(call)) >= maxInliningDepth;
                 bool isShallowerByNesting = isTooDeep && depthOf(m_caller.at(call), Copies::OnlyNestingLevels) < maxInliningDepth;
@@ -1832,18 +1826,6 @@ private:
         }).iterator->value;
     }
     mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_containsCallNoInline;
-
-    FunctionID sortThatCallsComparator(FunctionID callee) const
-    {
-        auto prelude = [&](PreludeFunction which) { return m_program.preludeFunctions[static_cast<unsigned>(which)]; };
-        if (!callee)
-            return { };
-        if (callee == prelude(PreludeFunction::ArraySortByKey))
-            return prelude(PreludeFunction::ArraySort);
-        if (callee == prelude(PreludeFunction::ArrayToSortedByKey))
-            return prelude(PreludeFunction::ArrayToSorted);
-        return { };
-    }
 
     bool canInline(const Function& callee, const Value& call) const
     {

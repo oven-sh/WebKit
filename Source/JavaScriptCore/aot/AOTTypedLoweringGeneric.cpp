@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTTypedLoweringInternal.h"
+#include "B3ExtractValue.h"
 
 #if ENABLE(AOT)
 
@@ -1120,6 +1121,152 @@ std::optional<Operand> Lowering::getByNameForFollowingCast(ValueID result, const
         return std::nullopt;
     m_castFusedIntoRead = CastFusedIntoRead { m_currentBlock, next, *held };
     return placeholder(read.rep);
+}
+
+bool Lowering::isPlainReadByName(size_t index)
+{
+    ValueID id = m_currentBlock->values[index];
+    auto& read = m_function.at(id);
+    if (read.opcode != Opcode::GetById || read.methodGetByIdBuiltin() || read.rep != Rep::JSValue || read.isAtKnownSlot() || read.isOnSlowPath || isLazilyFetched(id) || isLazilyFetched(read.child(0)))
+        return false;
+    auto& anything = m_program.at(m_program.types.anything);
+    if (typeOf(id) != anything || typeOf(read.child(0)) != anything || m_function.at(read.child(0)).rep != Rep::JSValue || m_function.at(read.child(0)).opcode == Opcode::GetGlobal)
+        return false;
+    if (predictionOf(read.child(0), Primitive::All) || predictionOf(read.child(0)) || m_accessRuns.contains(read.child(0).index()) || fusedCastCount(index) || fusedUseIndex(index, 0))
+        return false;
+    if (index + 1 < m_currentBlock->values.size() && m_function.at(m_currentBlock->values[index + 1]).opcode == Opcode::Cast && m_function.at(m_currentBlock->values[index + 1]).child(0) == id)
+        return false;
+    StringID name = read.string();
+    if (name == m_length || m_builtins.callOrApply(m_program.builtinName(name)) || bindIfNamed(name) || bufferAccessorNamed(name) || isNamedLastIndex(name) || iteratorResultSlot(read.child(0), name))
+        return false;
+    if (m_program.possibleAccessorNames.get(name.index()) || usesSiteCaches(name))
+        return false;
+    return !!tableIndexOfName(name);
+}
+
+std::optional<Operand> Lowering::getByNameWithFollowingRead(ValueID result, const Value& read)
+{
+    auto& values = m_currentBlock->values;
+    size_t next = m_currentIndexInBlock + 1;
+    if (m_fusedCasts || m_activeHandler || handlerEnteredByBranch() || next >= values.size() || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return std::nullopt;
+    auto& second = m_function.at(values[next]);
+    if (second.opcode != Opcode::GetById || second.inlineFrame != read.inlineFrame || !isPlainReadByName(m_currentIndexInBlock) || !isPlainReadByName(next))
+        return std::nullopt;
+    bool isChain = second.child(0) == result;
+    bool returnsBoth = !isChain || useCountOf(result) != 1;
+    bool hasSameReceiver = second.child(0) == read.child(0);
+    uint32_t names = *tableIndexOfName(read.string()) | *tableIndexOfName(second.string()) << 16;
+    m_context.emitsCalls = true;
+    PatchpointValue* patchpoint = m_out.patchpoint(returnsBoth ? m_proc.addTuple({ Int64, Int64 }) : Int64);
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->append(ConstrainedValue(in<Boxed>(read.child(0)).value(), ValueRep::reg(firstStubOperandGPR)));
+    if (!isChain && !hasSameReceiver)
+        patchpoint->append(ConstrainedValue(in<Boxed>(second.child(0)).value(), ValueRep::reg(secondReceiverGPR)));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    RegisterSet changed = *registersClobberedBy(Stub::GetByName);
+    changed.add(GPRInfo::returnValueGPR, IgnoreVectors);
+    changed.add(stubImmediateGPR, IgnoreVectors);
+    changed.add(pairedNamesGPR, IgnoreVectors);
+    if (returnsBoth)
+        changed.add(firstOfTwoResultsGPR, IgnoreVectors);
+    patchpoint->clobberLate(changed);
+    if (returnsBoth)
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR), ValueRep::reg(firstOfTwoResultsGPR) };
+    else
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    CallSite firstSite;
+    firstSite.bits = nextSite();
+    CallSite site;
+    {
+        SetForScope currentIndex(m_currentIndexInBlock, next);
+        site.bits = nextSite();
+    }
+    Stub stub = !returnsBoth ? Stub::GetByNameChain : isChain ? Stub::GetByNameChainReturningBoth : hasSameReceiver ? Stub::GetTwoByName : Stub::GetByNameFromTwo;
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, names, firstSite, site, stub](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        Stub called = stub;
+        if (stub == Stub::GetByNameChain) {
+            RegisterSet live = RegisterSet::registersToSaveForCCall(params.usedRegisters());
+            live.remove(GPRInfo::returnValueGPR);
+            if (stubVariantPreserving(Stub::GetByName, live) != Stub::GetByName)
+                called = Stub::GetByNameChainPreservingTwo;
+        }
+        jit.move(CCallHelpers::TrustedImm32(names), pairedNamesGPR);
+        stubCalls->callForTwoReads(jit, called, firstSite, site);
+    });
+    if (!returnsBoth) {
+        m_readFusedIntoRead = CastFusedIntoRead { m_currentBlock, next, Operand(Boxed(patchpoint)) };
+        return placeholder(read.rep);
+    }
+    auto resultAt = [&](int32_t index) {
+        return Operand(Boxed(m_out.m_block->appendNew<B3::ExtractValue>(m_proc, m_out.origin(), Int64, patchpoint, index)));
+    };
+    m_readFusedIntoRead = CastFusedIntoRead { m_currentBlock, next, resultAt(0) };
+    return resultAt(1);
+}
+
+std::optional<Operand> Lowering::getByNameForFollowingBranch(ValueID result, const Value& read)
+{
+    auto& values = m_currentBlock->values;
+    size_t next = m_currentIndexInBlock + 1;
+    if (m_fusedCasts || m_activeHandler || handlerEnteredByBranch() || next + 1 != values.size() || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return std::nullopt;
+    auto& test = m_function.at(values[next]);
+    auto& terminator = m_currentBlock->terminator;
+    if (test.opcode != Opcode::ToBoolean || test.child(0) != result || useCountOf(result) != 1 || terminator.kind != TerminatorKind::Branch || terminator.value != values[next])
+        return std::nullopt;
+    if (!m_isTruthinessOnlyBranchedOn.get(values[next].index()) || isLazilyFetched(values[next]) || m_isFusedWithBranch.get(values[next].index()) || fusedUseIndex(next, 0) || !(prefersGenericPathInColdCode() || isCompact()))
+        return std::nullopt;
+    if (!isPlainReadByName(m_currentIndexInBlock) || !toBooleanNeedsStub(typeOf(result)))
+        return std::nullopt;
+    m_readDeferredToBranch = result;
+    return placeholder(read.rep);
+}
+
+void Lowering::branchOnTruthinessOfRead(const Value& read, FTL::WeightedTarget isTruthy, FTL::WeightedTarget isFalsy)
+{
+    m_context.emitsCalls = true;
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->effects.terminal = true;
+    patchpoint->append(ConstrainedValue(in<Boxed>(read.child(0)).value(), ValueRep::reg(firstStubOperandGPR)));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    RegisterSet changed = *registersClobberedBy(Stub::GetByName);
+    changed.add(GPRInfo::returnValueGPR, IgnoreVectors);
+    changed.add(stubImmediateGPR, IgnoreVectors);
+    changed.add(pairedNamesGPR, IgnoreVectors);
+    patchpoint->clobberLate(changed);
+    m_out.appendSuccessor(isFalsy);
+    m_out.appendSuccessor(isTruthy);
+    CallSite site;
+    {
+        SetForScope currentIndex(m_currentIndexInBlock, m_currentBlock->values.size() - 2);
+        site.bits = nextSite();
+    }
+    patchpoint->setGenerator([context = &m_context, name = *tableIndexOfName(read.string()), site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        bool preservesTwo = stubVariantPreserving(Stub::GetByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::GetByName;
+        jit.move(CCallHelpers::TrustedImm32(name), pairedNamesGPR);
+        context->stubCalls.call(jit, preservesTwo ? Stub::GetByNameIsTruthyPreservingTwo : Stub::GetByNameIsTruthy, site);
+        bool leavesIfTruthy = params.fallsThroughToSuccessor(0);
+#if CPU(X86_64)
+        CCallHelpers::Jump leaves = CCallHelpers::Jump(jit.m_assembler.jCC(leavesIfTruthy ? X86Assembler::ConditionNE : X86Assembler::ConditionE));
+#else
+        CCallHelpers::Jump leaves = jit.branchOnFlags(leavesIfTruthy ? CCallHelpers::NotEqual : CCallHelpers::Equal);
+#endif
+        CCallHelpers::Jump isTruthy;
+        if (!leavesIfTruthy && !params.fallsThroughToSuccessor(1))
+            isTruthy = jit.jump();
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        params.addLatePath([=](CCallHelpers& jit) {
+            leaves.linkTo(*labels[leavesIfTruthy], &jit);
+            if (isTruthy.isSet())
+                isTruthy.linkTo(*labels[1], &jit);
+        });
+    });
 }
 
 void Lowering::emitPutById(Boxed base, StringID name, Boxed value)

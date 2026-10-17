@@ -1965,7 +1965,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     return;
                 }
                 const StubCall* call = instruction.kind == Kind::StubCall && outlinesCalls && !isNotOutlinableHere ? &info.stubCalls[instruction.target] : nullptr;
-                if (call && (call->isTailCall || call->body || (isARM64() && call->function != StubCall::noFunction)))
+                if (call && (call->isTailCall || call->body || (isARM64() && (call->function != StubCall::noFunction || call->firstReadSite != StubCall::noCallSite))))
                     call = nullptr;
                 flush(call);
             });
@@ -2193,6 +2193,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 if (auto* place = placeWith(places, call.offset, call.offset + sizeOfNearCall - 1)) {
                     RELEASE_ASSERT(outlining.bodies[place->body].endsInCall && !call.isTailCall && !call.body && call.offset + sizeOfNearCall == place->offset + place->length);
                     calls[place - places.begin()].callSite = breaks("site") ? StubCall::noCallSite : call.callSite;
+                    calls[place - places.begin()].firstReadSite = call.firstReadSite;
                     continue;
                 }
                 StubCall kept = call;
@@ -2548,6 +2549,8 @@ Vector<uint8_t> ImageBuilder::finish()
                 constructs.set(number);
             for (auto& call : function.code.info.stubCalls) {
                 if (call.callSite != StubCall::noCallSite && !call.isTailCall) {
+                    if (call.firstReadSite != StubCall::noCallSite)
+                        all.append({ call.offset + static_cast<uint32_t>(sizeOfNearCall - codeOffsetUnit), call.firstReadSite });
                     all.append({ call.offset + static_cast<uint32_t>(sizeOfNearCall), call.callSite });
                     if ((call.stub == Stub::ConstructClosure || call.stub == Stub::ConstructClosureList) && function.code.info.typedFunction != FunctionReportableSites::notTyped)
                         constructs.set(CallSiteIndex(PackedSite::bits(call.callSite)).bytecodeIndex().offset());
@@ -3517,6 +3520,10 @@ Vector<uint8_t> ImageBuilder::finish()
             if (call.body) {
                 uint32_t indexWithinKind = bodyIndexWithinKind[call.body - 1];
                 retargetStubCall(code, codeAt + call.offset, outlining.bodies[call.body - 1].singleCaller == Outlining::none ? stubsForFunction + sharedBodiesAt + sharedBodies.offsets[indexWithinKind] : ownBodyOffsets[indexWithinKind], false);
+                continue;
+            }
+            if (call.stub == Stub::CallResolvedValue && !call.isTailCall) {
+                writeCallOfResolvedValue(code, codeAt + call.offset);
                 continue;
             }
             RELEASE_ASSERT(!isGeneratedOnlyIfCalled(call.stub) || calledStubs.get(static_cast<unsigned>(call.stub)));

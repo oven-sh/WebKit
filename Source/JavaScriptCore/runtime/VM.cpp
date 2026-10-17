@@ -521,8 +521,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // won't use this.
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
 
-    m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
-
     if (Options::useTypeProfiler())
         enableTypeProfiler();
     if (Options::useControlFlowProfiler())
@@ -957,6 +955,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> VM::getCTIStub(CommonJITThunkID thunkID)
 
 #endif // ENABLE(JIT)
 
+void VM::createBytecodeIntrinsicRegistry()
+{
+    m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
+}
+
 NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVisibility implementationVisibility, NativeFunction constructor, unsigned length, const String& name)
 {
     return getHostFunction(function, implementationVisibility, NoIntrinsic, constructor, nullptr, length, name);
@@ -1007,15 +1010,21 @@ static Ref<NativeJITCode> jitCodeForConstructTrampoline()
     return result.get();
 }
 
+#if ENABLE(JIT)
+static NEVER_INLINE NativeExecutable* hostFunctionStubWithThunk(VM& vm, NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
+{
+    return vm.jitStubs->hostFunctionStub(
+        vm, toTagged(function), toTagged(constructor),
+        intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
+        implementationVisibility, intrinsic, signature, length, name);
+}
+#endif // ENABLE(JIT)
+
 NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
 {
 #if ENABLE(JIT)
-    if (Options::useJIT()) {
-        return jitStubs->hostFunctionStub(
-            *this, toTagged(function), toTagged(constructor),
-            intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
-            implementationVisibility, intrinsic, signature, length, name);
-    }
+    if (Options::useJIT())
+        return hostFunctionStubWithThunk(*this, function, implementationVisibility, intrinsic, constructor, signature, length, name);
 #endif // ENABLE(JIT)
     UNUSED_PARAM(intrinsic);
     UNUSED_PARAM(signature);

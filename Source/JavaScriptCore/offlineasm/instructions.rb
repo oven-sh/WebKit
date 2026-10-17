@@ -31,6 +31,7 @@ require "set"
 MACRO_INSTRUCTIONS =
     [
      "emit",
+     "section",
      "addi",
      "andi",
      "andf",

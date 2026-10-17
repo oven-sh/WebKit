@@ -256,7 +256,7 @@ MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointEntrypoint(OpcodeSize siz
     return { };
 }
 
-void setEntrypoint(CodeBlock* codeBlock)
+NEVER_INLINE void setEntrypoint(CodeBlock* codeBlock)
 {
     if (Options::crashIfInterpreterIsUsed()) [[unlikely]] {
         auto* executable = codeBlock->ownerExecutable();

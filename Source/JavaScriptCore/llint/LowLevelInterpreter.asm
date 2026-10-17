@@ -2264,10 +2264,28 @@ end
 
 # Entry point for the llint to initialize.
 entry(llint, macro()
+    macro trampolineEntries(setEntries) setEntries() end
+    macro bytecodeEntries(setEntries) end
+    macro webAssemblyEntries(setEntries) end
     include InitBytecodes
 end)
 
 end // not C_LOOP
+
+section "bytecode"
+
+global _llintBytecodePCRangeStart
+_llintBytecodePCRangeStart:
+    break
+
+if not C_LOOP
+entry(llint_bytecode, macro()
+    macro trampolineEntries(setEntries) end
+    macro bytecodeEntries(setEntries) setEntries() end
+    macro webAssemblyEntries(setEntries) end
+    include InitBytecodes
+end)
+end
 
 _llint_op_wide16:
     nextInstructionWide16()
@@ -2790,6 +2808,8 @@ llintOp(op_super_sampler_end, OpSuperSamplerEnd, macro (unused, unused, dispatch
     dispatch()
 end)
 
+section "trampolines"
+
 op(llint_native_call_trampoline, macro ()
     nativeCallTrampoline(NativeExecutable::m_function)
 end)
@@ -2981,6 +3001,8 @@ op(llint_polymorphic_closure_call_trampoline, macro ()
     linkFor(_llint_polymorphic_call)
 end)
 
+section "bytecode"
+
 if JIT
     macro loadBaselineJITConstantPool()
         # Baseline uses LLInt's PB register for its JIT constant pool.
@@ -3096,6 +3118,10 @@ op(array_sort_comparator_return_trampoline, macro ()
     end
 end)
 
+global _llintBytecodePCRangeEnd
+_llintBytecodePCRangeEnd:
+    break
+
 # Lastly, make sure that we can link even though we don't support all opcodes.
 # These opcodes should never arise when using LLInt or either JIT. We assert
 # as much.
@@ -3130,6 +3156,8 @@ macro updateBinaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
     loadp UnlinkedCodeBlock::m_binaryArithProfiles + BinaryArithProfileFixedVector::m_storage[scratch2], scratch2
     orh type, (constexpr (BinaryArithProfileFixedVector::Storage::offsetOfData())) + BinaryArithProfile::m_bits[scratch2, scratch1, 2]
 end
+
+section "webassembly"
 
 if WEBASSEMBLY
 
@@ -3213,6 +3241,17 @@ _wasm_ipint_call_return_location_wide32:
     crash()
 
 end # WEBASSEMBLY
+
+if not C_LOOP
+entry(llint_webassembly, macro()
+    macro trampolineEntries(setEntries) end
+    macro bytecodeEntries(setEntries) end
+    macro webAssemblyEntries(setEntries) setEntries() end
+    include InitBytecodes
+end)
+end
+
+section "trampolines"
 
 include? LowLevelInterpreterAdditions
 

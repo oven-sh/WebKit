@@ -1676,6 +1676,7 @@ struct State {
     void cacheConversionWithExtraProperties(VM&, Structure*, const RuntimeType&, const CoercionPlan&, Object* made, size_t sizeOfCell, uint32_t typeAndReason);
     std::unique_ptr<ConversionPlan> createConversionPlan(const CoercionPlan&, size_t sizeOfCell, uint64_t header, void* allocator, PropertyOffset discriminant = invalidOffset, const Object* converted = nullptr);
     void cacheConversion(uint32_t structureID, uint32_t typeAndReason, const ConversionPlan&);
+    void cachePlainRecordShape(Structure*, const CoercionPlan&);
     bool m_hasCachedConversions { false };
     static uint64_t discriminantWord(JSValue);
     QuickConversion* quickConversion(uint32_t structureID, const RuntimeType&, uint64_t discriminant, bool evictsIfFull);

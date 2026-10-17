@@ -83,6 +83,19 @@ constexpr GPRReg directArgumentGPR(unsigned index) { return argumentGPR(index); 
 #endif
 static constexpr GPRReg stubImmediateGPR = countGPR;
 static constexpr GPRReg firstStubOperandGPR = GPRInfo::returnValueGPR;
+#if CPU(X86_64)
+static constexpr GPRReg pairedNamesGPR = GPRInfo::argumentGPR1;
+static constexpr GPRReg secondReceiverGPR = X86Registers::ecx;
+static constexpr GPRReg firstOfTwoResultsGPR = X86Registers::edx;
+#elif CPU(ARM64)
+static constexpr GPRReg pairedNamesGPR = stubImmediateGPR;
+static constexpr GPRReg secondReceiverGPR = ARM64Registers::x1;
+static constexpr GPRReg firstOfTwoResultsGPR = ARM64Registers::x2;
+#else
+static constexpr GPRReg pairedNamesGPR = InvalidGPRReg;
+static constexpr GPRReg secondReceiverGPR = InvalidGPRReg;
+static constexpr GPRReg firstOfTwoResultsGPR = InvalidGPRReg;
+#endif
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
 static constexpr unsigned maxLiteralPropertiesInRegisters = GPRInfo::numberOfArgumentRegisters - 2;
 static constexpr unsigned maxArrayElementsInRegisters = 4;

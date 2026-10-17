@@ -1275,7 +1275,12 @@ public:
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
 
-    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
+    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry()
+    {
+        if (!m_bytecodeIntrinsicRegistry) [[unlikely]]
+            createBytecodeIntrinsicRegistry();
+        return *m_bytecodeIntrinsicRegistry;
+    }
     
     ShadowChicken* shadowChicken() { return m_shadowChicken.getIfExists(); }
     ShadowChicken& ensureShadowChicken() { return m_shadowChicken.get(*this); }
@@ -1541,6 +1546,7 @@ private:
 #endif
     std::unique_ptr<FuzzerAgent> m_fuzzerAgent;
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
+    void createBytecodeIntrinsicRegistry();
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
 

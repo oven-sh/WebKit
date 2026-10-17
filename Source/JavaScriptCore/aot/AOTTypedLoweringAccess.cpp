@@ -2369,6 +2369,8 @@ std::optional<unsigned> Lowering::iteratorResultSlot(ValueID object, StringID na
 
 Operand Lowering::lowerGetById(ValueID result, const Value& value)
 {
+    if (m_readFusedIntoRead && m_readFusedIntoRead->block == m_currentBlock && m_readFusedIntoRead->index == m_currentIndexInBlock)
+        return std::exchange(m_readFusedIntoRead, std::nullopt)->operand;
     ValueID object = value.child(0);
     StringID name = value.string();
     auto& receiver = typeOf(object);
@@ -2464,6 +2466,10 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         auto expected = predictionOf(object);
         if (!expected) {
             if (auto read = getByNameForFollowingCast(result, value))
+                return *read;
+            if (auto read = getByNameWithFollowingRead(result, value))
+                return *read;
+            if (auto read = getByNameForFollowingBranch(result, value))
                 return *read;
             return genericPath();
         }

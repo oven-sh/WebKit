@@ -168,6 +168,7 @@ private:
 #if !PLATFORM(COCOA)
     static bool overrideAliasedOptionWithHeuristic(const char* name);
 #endif
+    static void overrideOptionsFromEnvironment();
 
     static void setAllJITCodeValidations(bool);
 

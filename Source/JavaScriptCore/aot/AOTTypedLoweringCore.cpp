@@ -340,6 +340,7 @@ void Lowering::lowerTerminator(const Terminator& terminator)
     forgetValuesFoundByPresenceTests(false);
     openStringsBeforeLoopsEnteredBy(terminator);
     hoistTypedArrayFieldsBeforeLoops(terminator);
+    resolveCalleesBeforeLoops(terminator);
     convertNumberArraysBeforeLoops(terminator, false);
     switch (terminator.kind) {
     case TerminatorKind::Unreachable:
@@ -379,6 +380,8 @@ void Lowering::lowerTerminator(const Terminator& terminator)
                 branchOnHostObjectCache(m_function.at(terminator.value), isOne, isNone);
             else if (isJSONParserTest(m_function.at(terminator.value)))
                 branchOnJSONParserTest(m_function.at(terminator.value), isOne, isNone);
+            else if (m_function.at(terminator.value).opcode == Opcode::IsPlainRecord)
+                branchOnPlainRecord(m_function.at(terminator.value), isOne, isNone);
             else if (m_function.at(terminator.value).opcode != Opcode::IsClosureOf)
                 branchOnRelational(m_function.at(terminator.value), isOne, isNone);
             else
@@ -1390,6 +1393,7 @@ bool Lowering::run()
     findStringsReadInLoops();
     findNumberArraysUsedInLoops();
     findTypedArraysAccessedInLoops();
+    findCalleesCalledInLoops();
     if (opensIterators)
         findStringIterations();
     if (callsBuiltins)
@@ -2858,6 +2862,10 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return lowerIsInstanceOfClass(value);
     case Opcode::HasShapeOf:
         return lowerHasShapeOf(value);
+    case Opcode::IsPlainRecord:
+        return lowerIsPlainRecord(id, value);
+    case Opcode::GetPlainRecordField:
+        return lowerGetPlainRecordField(id, value);
     case Opcode::IsClassObjectUnmodified:
         return lowerIsClassObjectUnmodified(value);
     case Opcode::GetStaticField:
@@ -3975,14 +3983,17 @@ static bool emitCode(const Program& program, FunctionID id, const Function& func
         info.numberOfSitesWithoutCode = numberOfSitesWithoutCode;
         Vector<std::pair<uint32_t, uint32_t*>> returns;
         for (auto& call : info.stubCalls) {
-            if (call.callSite != StubCall::noCallSite && !call.isTailCall)
+            if (call.callSite != StubCall::noCallSite && !call.isTailCall) {
+                if (call.firstReadSite != StubCall::noCallSite)
+                    returns.append({ call.offset, &call.firstReadSite });
                 returns.append({ call.offset, &call.callSite });
+            }
         }
         for (auto& access : info.faultingAccesses) {
             if (access.callSite != StubCall::noCallSite)
                 returns.append({ access.codeOffset, &access.callSite });
         }
-        std::ranges::sort(returns, { }, [](auto& entry) {
+        std::ranges::stable_sort(returns, { }, [](auto& entry) {
             return entry.first;
         });
         constexpr uint32_t none = std::numeric_limits<uint32_t>::max();

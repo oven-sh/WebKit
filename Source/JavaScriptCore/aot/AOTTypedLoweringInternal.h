@@ -690,6 +690,10 @@ private:
     bool isAwaitMayContinue(const Value&) const;
     bool isOnlyAwaited(ValueID);
     bool isReceiverGuard(const Value&) const;
+    LValue plainRecordProperty(CellPointer, LayoutID, uint32_t field);
+    void branchOnPlainRecord(const Value&, LBasicBlock isOne, LBasicBlock isNone);
+    Word32 lowerIsPlainRecord(ValueID, const Value&);
+    Operand lowerGetPlainRecordField(ValueID, const Value&);
     bool isHostObjectCacheTest(const Value&) const;
     void branchOnHostObjectCache(const Value&, LBasicBlock isCached, LBasicBlock isNot);
     ValueID receiverWithoutCasts(ValueID) const;
@@ -1526,6 +1530,10 @@ private:
     std::optional<Operand> getByIdWithTypeCheck(Boxed base, StringID, TypeID held, std::optional<size_t> castIndex = std::nullopt);
     Operand getByIdAndCheckType(Boxed base, StringID, const Type&, const Function* definedAs = nullptr);
     std::optional<Operand> getByNameForFollowingCast(ValueID result, const Value&);
+    bool isPlainReadByName(size_t index);
+    std::optional<Operand> getByNameWithFollowingRead(ValueID result, const Value&);
+    std::optional<Operand> getByNameForFollowingBranch(ValueID result, const Value&);
+    void branchOnTruthinessOfRead(const Value& read, FTL::WeightedTarget isTruthy, FTL::WeightedTarget isFalsy);
     enum class SlotAddressUse : bool { FastPath, ColdBlock };
     Pointer slotAddress(unsigned slot, SlotAddressUse = SlotAddressUse::FastPath);
     LValue callICStub(Stub, LType, const Vector<std::pair<LValue, GPRReg>, 4>& operands, std::optional<std::pair<GPRReg, uint32_t>> immediate = std::nullopt, OperationEffects = { }, std::optional<std::pair<unsigned, GPRReg>> slot = std::nullopt, LValue number = nullptr);
@@ -1637,6 +1645,22 @@ private:
     void findTypedArraysAccessedInLoops();
     bool mayChangeTypedArrayFields(const Loop&) const;
     void hoistTypedArrayFieldsBeforeLoops(const Terminator&);
+    struct CalleeResolvedBeforeLoop {
+        ValueID callee;
+        unsigned numberOfArguments;
+        B3::Variable* target;
+    };
+    struct ResolvedCall {
+        LValue callee;
+        LValue target;
+        unsigned numberOfArguments;
+    };
+    Vector<Vector<CalleeResolvedBeforeLoop, 1>> m_calleesResolvedBeforeLoops;
+    UncheckedKeyHashMap<uint32_t, CalleeResolvedBeforeLoop, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_callsOfResolvedCallees;
+    std::optional<ResolvedCall> m_resolvedCall;
+    void findCalleesCalledInLoops();
+    void resolveCalleesBeforeLoops(const Terminator&);
+    std::optional<ResolvedCall> resolvedCallAt(ValueID);
     TypedArrayReceiver typedArrayElementReceiver(ValueID, bool isBeforeLoop = false);
     TypedArrayReceiver typedArrayReceiver(ValueID);
     TypedArrayReceiver typedArrayReceiver(CellPointer);
@@ -1802,6 +1826,8 @@ private:
         Operand operand;
     };
     std::optional<CastFusedIntoRead> m_castFusedIntoRead;
+    std::optional<CastFusedIntoRead> m_readFusedIntoRead;
+    ValueID m_readDeferredToBranch;
     UncheckedKeyHashMap<uint32_t, B3::Variable*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsKnownPresent;
     bool m_indexIsKnownInBounds { false };
     bool m_needsPoll { false };

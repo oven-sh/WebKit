@@ -511,14 +511,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         SourceProfiler::profile(SourceProfiler::Type::Eval, source);
     }
 
-    JSValue parsedValue;
-    if (programSource.is8Bit()) {
-        LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, programSource.span8(), SloppyJSON, nullptr);
-        parsedValue = preparser.tryEval();
-    } else {
-        LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, programSource.span16(), SloppyJSON, nullptr);
-        parsedValue = preparser.tryEval();
-    }
+    JSValue parsedValue = tryEvalAsJSON(globalObject, programSource, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
     if (parsedValue)
         return JSValue::encode(parsedValue);

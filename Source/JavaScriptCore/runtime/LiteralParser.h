@@ -349,6 +349,8 @@ private:
     Vector<JSONRanges::Entry, 8> m_rangesStack;
 };
 
+JSValue tryEvalAsJSON(JSGlobalObject*, StringView, CodeBlock*);
+
 } // namespace JSC
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

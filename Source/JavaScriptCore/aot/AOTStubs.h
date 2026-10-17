@@ -371,6 +371,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(StepIfUnmodifiedGenerator) \
     v(IterHasInFrame) \
     v(CallValueWithoutArguments) \
+    v(ResolveCallValue) \
+    v(CallResolvedValue) \
     v(IterOpenInFrame) \
     v(IterOpenPairsInFrame) \
     v(IterOpenTableInFrame) \
@@ -647,6 +649,13 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInR15) \
     v(GetByNameAndFillSiteCache) \
     v(GetByNameAndFillSiteCachePreservingTwo) \
+    v(GetByNameChain) \
+    v(GetByNameChainPreservingTwo) \
+    v(GetByNameChainReturningBoth) \
+    v(GetTwoByName) \
+    v(GetByNameFromTwo) \
+    v(GetByNameIsTruthy) \
+    v(GetByNameIsTruthyPreservingTwo) \
     v(GetLengthByName) \
     v(GetLengthByNamePreservingTwo) \
     v(GetParentDataByName) \
@@ -981,6 +990,7 @@ struct StubCall {
     uint32_t body { 0 };
     uint8_t firstOmittedGPR { 0 };
     uint8_t endOfOmittedGPRs { 0 };
+    uint32_t firstReadSite { noCallSite };
 
     static constexpr uint8_t firstOmittedGPRForPreambleWithThis = 0xfd;
     static constexpr uint8_t firstOmittedGPRForPreamble = 0xfe;
@@ -1162,6 +1172,7 @@ void loadFunctionIndexAt(CCallHelpers&, GPRReg pc);
 class StubCalls {
 public:
     void call(CCallHelpers&, Stub, CallSite);
+    void callForTwoReads(CCallHelpers&, Stub, CallSite firstRead, CallSite secondRead);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite);
     void callMethodWithDedicatedStub(CCallHelpers&, unsigned count, uint32_t name, CallSite);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite, const ArgumentMoves&);
@@ -1184,12 +1195,14 @@ private:
         uint32_t argumentMoves { StubCall::noArgumentMoves };
         uint8_t firstOmittedGPR { 0 };
         uint8_t endOfOmittedGPRs { 0 };
+        uint32_t firstReadSite { StubCall::noCallSite };
     };
     Vector<Pending, 8> m_pending;
     Vector<ArgumentMoves> m_argumentMoves;
 };
 
 void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isTailCall);
+void writeCallOfResolvedValue(uint8_t* base, size_t instruction);
 #if CPU(X86_64)
 static constexpr size_t sizeOfJump = 5;
 static constexpr size_t sizeOfNearCall = 5;

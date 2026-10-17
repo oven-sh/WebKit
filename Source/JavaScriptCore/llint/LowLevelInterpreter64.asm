@@ -435,6 +435,8 @@ macro doVMEntry(makeCall)
     ret
 end
 
+section "trampolines"
+
 _llint_throw_stack_overflow_error_from_vm_entry:
     const entry = a0
     const vm = a1
@@ -524,6 +526,8 @@ op(llint_get_host_call_return_value, macro ()
     functionEpilogue()
     ret
 end)
+
+section "bytecode"
 
 macro prepareStateForCCall()
     addp PB, PC
@@ -3811,6 +3815,8 @@ commonOp(llint_op_catch, macro () end, macro (size)
     dispatchOp(size, op_catch)
 end)
 
+section "trampolines"
+
 op(llint_throw_from_slow_path_trampoline, macro ()
     getVMFromCallFrame(t1, t2)
     copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(t1, t2)
@@ -3836,6 +3842,7 @@ op(llint_throw_during_call_trampoline, macro ()
     jmp _llint_throw_from_slow_path_trampoline
 end)
 
+section "bytecode"
 
 macro clearStackForHostCall()
     if ASSERT_ENABLED and not C_LOOP
