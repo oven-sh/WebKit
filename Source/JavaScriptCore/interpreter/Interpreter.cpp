@@ -571,6 +571,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
                 } else
                     results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+#if USE(BUN_JSC_ADDITIONS)
+                results.last().setThisValue(vm, owner, currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::This)).get());
+#endif
             }
         }
         currentGenerator = getParentGenerator(currentGenerator);
@@ -624,6 +627,42 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                     return;
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The receiver of a function frame, for the host to print as V8 does (`at Type.method`). A construct
+    // call keeps new.target in the this slot, so it gets none. An inlined frame's this is in the slot its
+    // recovery names: the parser flushes every argument of an inlined frame at each terminal.
+    auto thisValueForFrame = [&](StackVisitor& visitor) -> JSValue {
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())
+            return { };
+#if ENABLE(DFG_JIT)
+        // An inlined frame has no slot that holds its this at every point of the callee: the
+        // argument recoveries of an InlineCallFrame describe the stack at an OSR exit, and read
+        // elsewhere they name a slot that can hold another value. Such a frame gets no receiver.
+        if (visitor->inlineCallFrame())
+            return { };
+#endif
+        // The this slot of a machine frame holds a JSValue: the caller stores one, and the DFG
+        // and FTL check the slot against the flush format at entry and store back in a form that
+        // reads as the same JSValue.
+        JSValue thisValue = visitor->callFrame()->thisValue();
+        if (!thisValue)
+            return { };
+        // A function that never reads `this` emits no op_to_this, so its slot still holds what the
+        // call put there: the scope that a call like `f()` resolved `f` in, or undefined. Do the part
+        // of JSValue::toThis that allocates nothing. A sloppy primitive receiver stays a primitive.
+        bool isStrict = codeBlock->ownerExecutable()->isInStrictContext();
+        if (thisValue.isObject()) {
+            if (asObject(thisValue)->inherits<JSScope>())
+                return isStrict ? jsUndefined() : JSValue(codeBlock->globalObject()->globalThis());
+            return thisValue;
+        }
+        if (!isStrict && thisValue.isUndefinedOrNull())
+            return codeBlock->globalObject()->globalThis();
+        return thisValue;
+    };
+#endif
 
     bool foundCaller = !caller;
     JSAsyncFunctionGenerator* asyncStackTraceOriginGenerator = nullptr;
@@ -680,8 +719,12 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 #else
             } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
 #endif
+            {
                 results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
-            else
+#if USE(BUN_JSC_ADDITIONS)
+                results.last().setThisValue(vm, owner, thisValueForFrame(visitor));
+#endif
+            } else
                 results.append(StackFrame(vm, owner, visitor->callee().asCell()));
 
             previousEntryFrame = currentEntryFrame;
