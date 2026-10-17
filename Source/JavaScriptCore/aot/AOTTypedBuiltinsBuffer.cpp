@@ -139,8 +139,55 @@ static DataViewAccess dataViewAccessFor(InlineBuiltin which)
     }
 }
 
+static std::optional<unsigned> numberOfAtomicsOperands(InlineBuiltin which)
+{
+    switch (which) {
+    case InlineBuiltin::AtomicsLoad:
+        return 0;
+    case InlineBuiltin::AtomicsAdd:
+    case InlineBuiltin::AtomicsAnd:
+    case InlineBuiltin::AtomicsExchange:
+    case InlineBuiltin::AtomicsOr:
+    case InlineBuiltin::AtomicsStore:
+    case InlineBuiltin::AtomicsSub:
+    case InlineBuiltin::AtomicsXor:
+        return 1;
+    case InlineBuiltin::AtomicsCompareExchange:
+        return 2;
+    default:
+        return std::nullopt;
+    }
+}
+
+static std::optional<TypedArrayType> elementsForAtomics(const Type& array)
+{
+    const EngineClass* engineClass = array.withoutPrimitives(Primitive::UndefinedOrNull).singleEngineClass();
+    if (!engineClass)
+        return std::nullopt;
+    switch (engineClass->typedArrayType) {
+    case TypeInt8:
+    case TypeUint8:
+    case TypeInt16:
+    case TypeUint16:
+    case TypeInt32:
+    case TypeUint32:
+        return engineClass->typedArrayType;
+    default:
+        return std::nullopt;
+    }
+}
+
 std::optional<Writes> writesOfInlineBuffer(InlineBuiltin which, std::span<const Type> arguments)
 {
+    if (auto numberOfOperands = numberOfAtomicsOperands(which)) {
+        if (arguments.size() != 2 + *numberOfOperands || !elementsForAtomics(arguments[0]))
+            return std::nullopt;
+        for (auto& argument : arguments.subspan(1)) {
+            if (!argument.isNumber())
+                return std::nullopt;
+        }
+        return Writes::TypedArrayProperties;
+    }
     auto [isWrite, elements] = dataViewAccessFor(which);
     unsigned numberOfOperands = 1 + isWrite;
     if (arguments.size() < numberOfOperands || !arguments[0].isNumber())
@@ -152,8 +199,92 @@ std::optional<Writes> writesOfInlineBuffer(InlineBuiltin which, std::span<const 
     return Writes::RuntimeState;
 }
 
+std::optional<Operand> Lowering::lowerAtomics(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
+{
+    auto& arguments = value.arguments;
+    auto& type = typeOf(result);
+    auto& arrayType = typeOf(arguments[0]);
+    TypedArrayType elements = *elementsForAtomics(arrayType);
+    Type elementType = elementTypeOf(elements);
+    Width width = widthForBytes(elementSize(elements));
+    Rep rep = repOf(type);
+    LBasicBlock slowPath = newColdBlock();
+    Join join(m_out, rep, b3TypeOf(rep));
+
+    Operand array = get(arguments[0]);
+    if (array.rep != Rep::Cell)
+        orElse(isCell(array.as<Boxed>(), arrayType), slowPath);
+    CellPointer view = array.rep == Rep::Cell ? array.as<CellPointer>() : asCell(array.as<Boxed>());
+    Integer index = indexOrElse(arguments[1], slowPath);
+    Integer stored;
+    std::array<LValue, 2> operands { };
+    if (which == InlineBuiltin::AtomicsStore) {
+        stored = indexOrElse(arguments[2], slowPath);
+        operands[0] = low32(stored).value();
+    } else {
+        for (unsigned i = 2; i < arguments.size(); ++i)
+            operands[i - 2] = toInt32(arguments[i]).value();
+    }
+    Pointer vector = findTypedArrayElement(typedArrayReceiver(view), index, slowPath, slowPath);
+    LValue address = offsetBy(vector, index, logElementSize(elements)).value();
+    TypedPointer pointer(m_heaps.TypedArrayProperties, address);
+    FTL::TypedPointer cell(m_heaps.TypedArrayProperties, address);
+
+    LValue access = nullptr;
+    switch (which) {
+    case InlineBuiltin::AtomicsAdd:
+        access = m_out.atomicXchgAdd(operands[0], cell, width);
+        break;
+    case InlineBuiltin::AtomicsAnd:
+        access = m_out.atomicXchgAnd(operands[0], cell, width);
+        break;
+    case InlineBuiltin::AtomicsCompareExchange:
+        access = m_out.atomicStrongCAS(operands[0], operands[1], cell, width);
+        break;
+    case InlineBuiltin::AtomicsExchange:
+        access = m_out.atomicXchg(operands[0], cell, width);
+        break;
+    case InlineBuiltin::AtomicsLoad:
+        access = width == Width8 ? m_out.load8SignExt32(pointer) : width == Width16 ? m_out.load16SignExt32(pointer) : m_out.load32(pointer);
+        break;
+    case InlineBuiltin::AtomicsOr:
+        access = m_out.atomicXchgOr(operands[0], cell, width);
+        break;
+    case InlineBuiltin::AtomicsStore:
+        access = width == Width8 ? m_out.store32As8(operands[0], pointer) : width == Width16 ? m_out.store32As16(operands[0], pointer) : m_out.store32(operands[0], pointer);
+        break;
+    case InlineBuiltin::AtomicsSub:
+        access = m_out.atomicXchgSub(operands[0], cell, width);
+        break;
+    case InlineBuiltin::AtomicsXor:
+        access = m_out.atomicXchgXor(operands[0], cell, width);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    m_heaps.decorateFencedAccess(&m_heaps.TypedArrayProperties, access);
+    ensureStillAliveHere(view);
+    didEmitWrite(inlinePath);
+    if (which == InlineBuiltin::AtomicsStore)
+        join.add(convertToDeclaredResult(stored, Type::integer(Range::full()), value, type));
+    else {
+        LValue bits = access;
+        if (elements == TypeUint8)
+            bits = m_out.bitAnd(bits, m_out.constInt32(0xff));
+        else if (elements == TypeUint16)
+            bits = m_out.bitAnd(bits, m_out.constInt32(0xffff));
+        Operand element = elements == TypeUint32 ? Operand(zeroExtended(Word32(bits))) : Operand(Word32(bits));
+        join.add(convertToDeclaredResult(convert(element, elementType, repOf(elementType)), elementType, value, type));
+    }
+    m_out.appendTo(slowPath);
+    join.add(convertToDeclaredResult(callBuiltinFunction(value, OperationEffects { std::max(inlinePath, builtinCallEffects(value).writes), true }), m_program.at(m_program.types.anything), value, type));
+    return join.finish();
+}
+
 std::optional<Operand> Lowering::lowerInlineBuffer(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
 {
+    if (numberOfAtomicsOperands(which))
+        return lowerAtomics(which, result, value, inlinePath);
     auto [isWrite, elements] = dataViewAccessFor(which);
     auto& arguments = value.arguments;
     auto& type = typeOf(result);

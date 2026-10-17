@@ -31,6 +31,7 @@
 #include "AirGenerate.h"
 #include "B3CanonicalizePrePostIncrements.h"
 #include "B3Common.h"
+#include "B3ConvertBranchesToSelects.h"
 #include "B3DuplicateTails.h"
 #include "B3EliminateCommonSubexpressions.h"
 #include "B3EliminateDeadCode.h"
@@ -187,8 +188,10 @@ void generateToAir(Procedure& procedure)
         optimizeAssociativeExpressionTrees(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Final);
 #if USE(BUN_JSC_ADDITIONS)
-        if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops())
+        if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops()) {
             eliminateRedundantPhiCycles(procedure);
+            convertBranchesToSelects(procedure);
+        }
 #endif
 
         // FIXME: Add more optimizations here.

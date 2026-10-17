@@ -48,12 +48,36 @@
     void initializeStringBuildersOnEdge(const Target&);
     void materializeFinalStringBuilderStates(const Block&);
     std::optional<Operand> tryLowerWithStringBuilder(ValueID, const Value&);
-    bool isConcatenation(const Value&) const;
-    bool collectConcatenationParts(const BitVector& isInBlock, ValueID, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough);
+    bool isConcatenation(const Value&, bool mayHoldNullishStrings) const;
+    bool collectConcatenationParts(const BitVector& isInBlock, ValueID, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough, bool looksThroughStrings);
     void findConcatenationsWithNumbers();
     std::optional<Operand> lowerAsConcatenationPart(ValueID, const Value&);
     CellPointer concatenateInOnePiece(const ConcatenationParts&);
+    struct StringOrder {
+        BlockID block;
+        LValue order;
+    };
+    UncheckedKeyHashMap<uint64_t, Vector<StringOrder, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_stringOrders;
+    std::optional<UncheckedKeyHashMap<uint64_t, unsigned, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_stringComparisonCounts;
+    bool areComparedMoreThanOnce(ValueID, ValueID);
+    LValue stringOrderFoundEarlier(ValueID, ValueID) const;
+    Word32 lowerStringRelational(const Value&);
+    struct TableEntry {
+        LValue entry { nullptr };
+        LValue key { nullptr };
+    };
+    UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_earlierTableLookups;
+    BitVector m_tableLookupsRepeatedLater;
+    UncheckedKeyHashMap<uint32_t, TableEntry, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_tableEntries;
+    TableEntry m_lastTableEntry;
+    bool mayChangeTables(const Block&, size_t index) const;
+    void findRepeatedTableLookups(const Vector<BlockID>& order);
+    const TableEntry* entryFoundByEarlierLookup(ValueID) const;
+    Operand didLookUpInTable(ValueID, Operand);
     BitVector m_sunkKeyConcatenations;
+    BitVector m_keysMadeByLookups;
+    LValue storeKeyParts(const ConcatenationParts&);
+    std::optional<Operand> tryFindMakingKey(InlineBuiltin, ValueID result, const Value&, CellPointer table, const Type&);
     ValueID m_keyBeingMaterialized;
     std::optional<Operand> tryLookupWithSunkKey(ValueID key, const Type&, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath);
     CellPointer concatenateAsRopes(std::span<const ValueID> parts);
@@ -191,6 +215,20 @@
     Characters iteratedStringCharacters(const StringIteration&, CellPointer);
     std::optional<Operand> iteratedCharacterCast(const Value&);
     bool isUnreferenced(ValueID literal, bool isGlobal);
+    struct CharacterReplacement {
+        std::array<uint64_t, 4> set;
+        bool repeats;
+        bool isLastOfPattern;
+        std::span<const uint8_t> inserted;
+    };
+    static constexpr unsigned maxReplacementsInOnePass = ReplacementSteps::maxCount;
+    using ReplacementChain = Vector<ValueID, 4>;
+    UncheckedKeyHashMap<uint32_t, ReplacementChain, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_replacementChains;
+    BitVector m_isDoneByLastReplacement;
+    bool m_isLoweringReplacementsOneByOne { false };
+    std::optional<CharacterReplacement> characterReplacementBy(ValueID);
+    void findReplacementChains();
+    std::optional<Operand> tryLowerReplacementChain(ValueID, const Value&);
     struct EntryPair {
         ValueID iterator;
         ValueID pair;

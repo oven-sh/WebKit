@@ -4486,6 +4486,59 @@ public:
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    template<int dataSize>
+    void compareWithImmediate(RegisterID left, TrustedImm32 right)
+    {
+        if (auto tuple = tryExtractShiftedImm(right.m_value)) {
+            auto [u12, shift, inverted] = tuple.value();
+            if (!inverted)
+                m_assembler.cmp<dataSize>(left, u12, shift);
+            else
+                m_assembler.cmn<dataSize>(left, u12, shift);
+            return;
+        }
+        moveToCachedReg(right, dataMemoryTempRegister());
+        m_assembler.cmp<dataSize>(left, dataTempRegister);
+    }
+
+    void moveConditionallyIncremented32(RelationalCondition cond, RegisterID left, RegisterID right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        m_assembler.cmp<32>(left, right);
+        m_assembler.csinc<64>(dest, elseCase, thenCase, Assembler::invert(ARM64Condition(cond)));
+    }
+
+    void moveConditionallyIncremented32(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        compareWithImmediate<32>(left, right);
+        m_assembler.csinc<64>(dest, elseCase, thenCase, Assembler::invert(ARM64Condition(cond)));
+    }
+
+    void moveConditionallyIncremented64(RelationalCondition cond, RegisterID left, RegisterID right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        m_assembler.cmp<64>(left, right);
+        m_assembler.csinc<64>(dest, elseCase, thenCase, Assembler::invert(ARM64Condition(cond)));
+    }
+
+    void moveConditionallyIncremented64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        compareWithImmediate<64>(left, right);
+        m_assembler.csinc<64>(dest, elseCase, thenCase, Assembler::invert(ARM64Condition(cond)));
+    }
+
+    void moveConditionallyIncrementedTest32(ResultCondition cond, RegisterID left, RegisterID right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        m_assembler.tst<32>(left, right);
+        m_assembler.csinc<64>(dest, elseCase, thenCase, Assembler::invert(ARM64Condition(cond)));
+    }
+
+    void moveConditionallyIncrementedTest64(ResultCondition cond, RegisterID left, RegisterID right, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        m_assembler.tst<64>(left, right);
+        m_assembler.csinc<64>(dest, elseCase, thenCase, Assembler::invert(ARM64Condition(cond)));
+    }
+#endif
+
     void moveConditionally64(RelationalCondition cond, RegisterID left, RegisterID right, RegisterID src, RegisterID dest)
     {
         m_assembler.cmp<64>(left, right);

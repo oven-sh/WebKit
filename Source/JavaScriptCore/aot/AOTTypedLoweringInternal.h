@@ -1534,6 +1534,9 @@ private:
     std::optional<Operand> getByNameWithFollowingRead(ValueID result, const Value&);
     std::optional<Operand> getByNameForFollowingBranch(ValueID result, const Value&);
     void branchOnTruthinessOfRead(const Value& read, FTL::WeightedTarget isTruthy, FTL::WeightedTarget isFalsy);
+    std::optional<Operand> getByNameForFollowingComparison(ValueID result, const Value&);
+    std::optional<Operand> getByNameForFollowingCall(ValueID result, const Value&);
+    void branchOnLiteralOfRead(const Value& read, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
     enum class SlotAddressUse : bool { FastPath, ColdBlock };
     Pointer slotAddress(unsigned slot, SlotAddressUse = SlotAddressUse::FastPath);
     LValue callICStub(Stub, LType, const Vector<std::pair<LValue, GPRReg>, 4>& operands, std::optional<std::pair<GPRReg, uint32_t>> immediate = std::nullopt, OperationEffects = { }, std::optional<std::pair<unsigned, GPRReg>> slot = std::nullopt, LValue number = nullptr);
@@ -1661,6 +1664,10 @@ private:
     void findCalleesCalledInLoops();
     void resolveCalleesBeforeLoops(const Terminator&);
     std::optional<ResolvedCall> resolvedCallAt(ValueID);
+    UncheckedKeyHashMap<uint32_t, SpeculatedMethod, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsReadAheadOfArguments;
+    UncheckedKeyHashMap<uint32_t, SpeculatedMethod, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_callsOfMethodsReadAheadOfArguments;
+    SpeculatedMethod m_methodBeingReadAheadOfArguments { SpeculatedMethod::None };
+    void findMethodsReadAheadOfArguments();
     TypedArrayReceiver typedArrayElementReceiver(ValueID, bool isBeforeLoop = false);
     TypedArrayReceiver typedArrayReceiver(ValueID);
     TypedArrayReceiver typedArrayReceiver(CellPointer);
@@ -1736,7 +1743,7 @@ private:
     Word32 areStringsEqual(ValueID, ValueID);
     Boxed mapKey(ValueID);
     Word32 mapKeyHash(Boxed);
-    Pointer findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word32 hash, LBasicBlock absent);
+    Pointer findInMapOrSet(CellPointer table, bool isMap, Boxed key, bool keyMayBeNumber, LBasicBlock absent);
     Integer mapOrSetSize(CellPointer, bool isMap, bool hasStringKeysByType);
     bool tableStubChecksReceiver(ValueID result, const Value&);
     Operand lowerMapOrSetBuiltin(InlineBuiltin, ValueID result, const Value&, Writes inlinePath);
@@ -1828,6 +1835,9 @@ private:
     std::optional<CastFusedIntoRead> m_castFusedIntoRead;
     std::optional<CastFusedIntoRead> m_readFusedIntoRead;
     ValueID m_readDeferredToBranch;
+    ValueID m_readDeferredToComparison;
+    ValueID m_readDeferredToCall;
+    size_t m_indexOfReadDeferredToComparison { 0 };
     UncheckedKeyHashMap<uint32_t, B3::Variable*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsKnownPresent;
     bool m_indexIsKnownInBounds { false };
     bool m_needsPoll { false };

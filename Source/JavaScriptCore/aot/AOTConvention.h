@@ -82,19 +82,31 @@ static constexpr unsigned numberOfDirectArgumentGPRs = numberOfArgumentGPRs;
 constexpr GPRReg directArgumentGPR(unsigned index) { return argumentGPR(index); }
 #endif
 static constexpr GPRReg stubImmediateGPR = countGPR;
+#if CPU(ARM64)
+static constexpr GPRReg readSiteCacheGPR = ARM64Registers::x15;
+static constexpr GPRReg storeSiteCacheGPR = ARM64Registers::x15;
+static constexpr GPRReg methodSiteCacheGPR = ARM64Registers::x15;
+#else
+static constexpr GPRReg readSiteCacheGPR = GPRInfo::argumentGPR1;
+static constexpr GPRReg storeSiteCacheGPR = stubTemporaryGPRs[sizeof(stubTemporaryGPRs) / sizeof(GPRReg) > 3 ? 3 : 0];
+static constexpr GPRReg methodSiteCacheGPR = stubTemporaryGPRs[0];
+#endif
 static constexpr GPRReg firstStubOperandGPR = GPRInfo::returnValueGPR;
 #if CPU(X86_64)
 static constexpr GPRReg pairedNamesGPR = GPRInfo::argumentGPR1;
 static constexpr GPRReg secondReceiverGPR = X86Registers::ecx;
 static constexpr GPRReg firstOfTwoResultsGPR = X86Registers::edx;
+static constexpr GPRReg literalOfComparedReadGPR = secondReceiverGPR;
 #elif CPU(ARM64)
 static constexpr GPRReg pairedNamesGPR = stubImmediateGPR;
 static constexpr GPRReg secondReceiverGPR = ARM64Registers::x1;
 static constexpr GPRReg firstOfTwoResultsGPR = ARM64Registers::x2;
+static constexpr GPRReg literalOfComparedReadGPR = secondReceiverGPR;
 #else
 static constexpr GPRReg pairedNamesGPR = InvalidGPRReg;
 static constexpr GPRReg secondReceiverGPR = InvalidGPRReg;
 static constexpr GPRReg firstOfTwoResultsGPR = InvalidGPRReg;
+static constexpr GPRReg literalOfComparedReadGPR = secondReceiverGPR;
 #endif
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
 static constexpr unsigned maxLiteralPropertiesInRegisters = GPRInfo::numberOfArgumentRegisters - 2;

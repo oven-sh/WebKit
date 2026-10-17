@@ -9569,6 +9569,59 @@ static void findComparedBuiltinCells(Program& program)
     });
 }
 
+static void nameMethodsWithConstantKeys(Program& program)
+{
+    if (!program.usesOperation(Operations::SetFunctionName))
+        return;
+    struct Naming {
+        ValueID operation;
+        FunctionID function;
+        StringID name;
+    };
+    unsigned count = program.functions.size();
+    Vector<uint32_t> numberOfCreations(FillWith { }, count, 0u);
+    Vector<Vector<Naming>> found(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = std::as_const(program).functions[i];
+        static constexpr OpcodeSet creations { Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::FunctionReference };
+        std::as_const(program).functions.forEachValue(i, creations, [&](ValueID id) {
+            WTF::atomicExchangeAdd(&numberOfCreations[function.at(id).function().index()], 1u, std::memory_order_relaxed);
+        });
+        static constexpr OpcodeSet operations { Opcode::Operation };
+        std::as_const(program).functions.forEachValue(i, operations, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (program.operationOf(value) != Operations::SetFunctionName || value.arguments.size() != 3)
+                return;
+            ValueID key = value.arguments[1];
+            if (function.at(key).opcode == Opcode::ToPropertyKey)
+                key = function.at(key).child(0);
+            auto& closure = function.at(value.arguments[0]);
+            auto& kind = function.at(value.arguments[2]);
+            if (closure.opcode != Opcode::NewClosure || function.at(key).opcode != Opcode::String || kind.opcode != Opcode::Integer || kind.integer() != static_cast<int64_t>(Format::MethodKind::Method))
+                return;
+            found[i].append({ id, closure.function(), function.at(key).string() });
+        });
+    });
+    unsigned numberNamed = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto& naming : found[i]) {
+            auto& named = std::as_const(program).at(naming.function);
+            if (numberOfCreations[naming.function.index()] != 1 || !program.string(named.name).empty() || named.kind == FunctionKind::Constructor)
+                continue;
+            program.functions.atKeepingValueIndex(naming.function.index()).name = naming.name;
+            auto& operation = program.functions[i].at(naming.operation);
+            operation.opcode = Opcode::Undefined;
+            operation.children = { };
+            operation.arguments = { };
+            operation.immediates = { Format::none, Format::none };
+            operation.type = program.types.undefined;
+            operation.rep = repOf(program.at(operation.type));
+            ++numberNamed;
+        }
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberNamed, " methods with computed keys have their names at the build");
+}
+
 static void findFunctionsWithClosureProperties(Program& program)
 {
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
@@ -10107,6 +10160,95 @@ static void markCallsInTailPosition(Program& program)
     });
 }
 
+static void turnSelfTailCallsIntoLoops(Program& program)
+{
+    static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+    unsigned count = program.functions.size();
+    Vector<std::unique_ptr<Function>> changed(count);
+    Vector<unsigned> numberOfCallsRemoved(FillWith { }, count, 0u);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (!program.functions.mayContain(i, directCalls) || !program.functions.mayEndWith(i, TerminatorKind::Return))
+            return;
+        auto& function = std::as_const(program).functions[i];
+        bool isPlain = function.kind == FunctionKind::Plain || function.kind == FunctionKind::Arrow || function.kind == FunctionKind::Method;
+        if (!isPlain || function.blocks.isEmpty() || !function.isTyped() || function.declaredAs & (functionIsAsync | functionIsGenerator) || function.resumeFunction || function.startFunction || function.savesFrameOnSuspend || function.worker || !function.resultTypes.isEmpty())
+            return;
+        if (function.isGenericEntrypoint() || function.isValueEntry || function.takesCalleeClosure || function.takesCapturesFromClosure || function.rampForClosures || function.isRampForClosures || program.isResumeFunction(function))
+            return;
+        if (function.has(FunctionUsesArgumentBuffer) || function.has(Format::FunctionHasRestParameter) || function.has(Format::FunctionIsBuiltin) || !function.inlineFrames.isEmpty())
+            return;
+        auto isOnlyReturned = [&](const Block& block, ValueID value) {
+            if (block.terminator.kind == TerminatorKind::Return)
+                return block.terminator.value == value;
+            if (block.terminator.kind != TerminatorKind::Jump)
+                return false;
+            auto& target = block.terminator.targets[0];
+            auto& join = function.at(target.block);
+            size_t index = target.arguments.find(value);
+            return index != notFound && index < join.parameters.size() && join.values.isEmpty() && join.terminator.kind == TerminatorKind::Return && join.terminator.value == join.parameters[index] && std::ranges::count(target.arguments, value) == 1;
+        };
+        Vector<unsigned, 2> sites;
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto& block = function.blocks[b];
+            if (block.values.isEmpty() || !isOnlyReturned(block, block.values.last()))
+                continue;
+            auto& call = function.at(block.values.last());
+            if (call.opcode == Opcode::CallDirect && call.isInTailPosition && !call.isJumpToContinuation() && call.function().index() == i && call.arguments.size() == function.blocks[0].parameters.size())
+                sites.append(b);
+        }
+        if (sites.isEmpty())
+            return;
+        auto loop = makeUniqueWithoutFastMallocCheck<Function>(function);
+        unsigned header = loop->blocks.size();
+        loop->blocks.append(Block { });
+        loop->blocks[header].values = std::exchange(loop->blocks[0].values, { });
+        loop->blocks[header].terminator = std::exchange(loop->blocks[0].terminator, Terminator { });
+        Vector<ValueID> joinedFor(loop->values.size());
+        Arguments passedOnEntry;
+        for (unsigned k = 0; k < loop->blocks[0].parameters.size(); ++k) {
+            ValueID parameter = loop->blocks[0].parameters[k];
+            Value joined(loop->at(parameter));
+            joined.immediates = { header, k };
+            joinedFor[parameter.index()] = ValueID(loop->values.size());
+            loop->blocks[header].parameters.append(joinedFor[parameter.index()]);
+            loop->values.append(WTF::move(joined));
+            passedOnEntry.append(parameter);
+        }
+        auto useJoined = [&](ValueID& id) {
+            if (id && id.index() < joinedFor.size() && joinedFor[id.index()])
+                id = joinedFor[id.index()];
+        };
+        for (auto& block : loop->blocks) {
+            for (ValueID id : block.values)
+                loop->at(id).forEachChild(useJoined);
+            block.terminator.forEachChild(useJoined);
+        }
+        loop->blocks[0].terminator.kind = TerminatorKind::Jump;
+        loop->blocks[0].terminator.targets.append(Target { BlockID(header), WTF::move(passedOnEntry) });
+        for (unsigned b : sites) {
+            auto& block = loop->blocks[b ? b : header];
+            auto& call = loop->at(block.values.last());
+            Value hint;
+            hint.opcode = Opcode::LoopHint;
+            hint.position = call.position;
+            hint.type = program.types.undefined;
+            hint.rep = repOf(program.at(hint.type));
+            block.terminator = Terminator { };
+            block.terminator.kind = TerminatorKind::Jump;
+            block.terminator.targets.append(Target { BlockID(header), std::exchange(call.arguments, { }) });
+            call = WTF::move(hint);
+        }
+        numberOfCallsRemoved[i] = sites.size();
+        changed[i] = WTF::move(loop);
+    });
+    for (unsigned i = 0; i < count; ++i) {
+        if (!changed[i])
+            continue;
+        program.functions[i] = WTF::move(*changed[i]);
+        program.numberOfDirectCalls[i] -= numberOfCallsRemoved[i];
+    }
+}
+
 static constexpr OpcodeSet concatenations { Opcode::Add, Opcode::Strcat };
 
 static void fuseConcatenations(Program& program, FunctionID functionID)
@@ -10634,6 +10776,352 @@ static void collectTailCallSites(const Program& program, FunctionID id, const Fu
         }
         sites.append(WTF::move(site));
     }
+}
+
+static void leaveResultsOfTailCallsToReceivers(Program& program)
+{
+    if (Options::auditAOTTypedAssertions())
+        return;
+    const Program& constProgram = program;
+    unsigned count = program.functions.size();
+    auto hasCheckingCast = [&](const Function& function, const TailCallSite& site) {
+        auto& values = function.at(site.block).values;
+        for (unsigned k = 0; k < site.numberOfCasts; ++k) {
+            auto& cast = function.at(values[values.size() - 1 - k]);
+            if (cast.castReason() != CastReason::Upcast && cast.castReason() != CastReason::Member && !constProgram.castIsRedundant(constProgram.typeOf(function, cast.child(0)), constProgram.at(cast.type), cast))
+                return true;
+        }
+        return false;
+    };
+    using Callees = Vector<FunctionID, 2>;
+    auto findCertainMethods = [&](const Function& function, const Value& call, Callees& methods) {
+        LayoutID supertype = constProgram.typeOf(function, call.child(0)).singleLayout();
+        if (!supertype || !isObjectLayout(constProgram.at(supertype).kind) || constProgram.at(supertype).acceptsUntypedObjects || constProgram.mayRunInMultipleInstances)
+            return;
+        StringID name = call.string();
+        bool isOnTheInstance = isPrivateName(constProgram.string(name));
+        auto isFirstOnPrototypeChain = [&](LayoutID subtype, FunctionID method) {
+            for (LayoutID at = subtype; at; at = constProgram.at(at).base) {
+                if (constProgram.at(at).hasComputedMethodName)
+                    return false;
+                if (constProgram.at(at).methods.containsIf([&](auto& candidate) { return candidate.function == method; }))
+                    return true;
+            }
+            return false;
+        };
+        for (LayoutID subtype : constProgram.at(supertype).subtypes) {
+            auto& layout = constProgram.at(subtype);
+            if (layout.hasNoOwnInstances && !layout.mayHaveOtherPrototype)
+                continue;
+            FunctionID method = layout.kind == LayoutKind::Instance && !layout.fieldNamed(name) && !hasMethodField(constProgram, subtype, name) ? findMethod(constProgram, subtype, name, MethodKind::Method) : FunctionID();
+            if (!method || (!isOnTheInstance && (layout.mayHaveOtherPrototype || !isFirstOnPrototypeChain(subtype, method)))) {
+                methods.clear();
+                return;
+            }
+            if (!methods.contains(method))
+                methods.append(method);
+        }
+    };
+    auto certainCalleeOf = [&](const Function& function, const Value& call) -> FunctionID {
+        auto& definition = function.at(constProgram.originOf(function, call.child(0)));
+        switch (definition.opcode) {
+        case Opcode::FunctionReference:
+        case Opcode::NewClosure:
+        case Opcode::NewClosureOnce:
+            return definition.function();
+        case Opcode::GetModuleVariable: {
+            auto& variable = constProgram.variables[definition.variable().index()];
+            return variable.singleFunctionIsProven || variable.singleFunctionOrNullish ? variable.singleFunction : FunctionID();
+        }
+        case Opcode::GetField: {
+            auto& field = constProgram.at(definition.layout()).fields[definition.field()];
+            return field.singleFunctionIsProven || field.singleFunctionOrNullish ? field.singleFunction : FunctionID();
+        }
+        default:
+            return { };
+        }
+    };
+    Vector<Vector<TailCallSite>> sites(count);
+    Vector<Vector<Callees>> certainCallees(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (!constProgram.hasCode(FunctionID(i)))
+            return;
+        auto& function = constProgram.functions[i];
+        collectTailCallSites(constProgram, FunctionID(i), function, sites[i]);
+        auto isGlobal = [&](ValueID id) {
+            return function.at(constProgram.originOf(function, id)).opcode == Opcode::GetGlobal;
+        };
+        sites[i].removeAllMatching([&](auto& site) {
+            auto& call = function.at(site.call);
+            if (call.opcode == Opcode::Call) {
+                auto& callee = function.at(constProgram.originOf(function, call.child(0)));
+                if (callee.opcode != Opcode::GetGlobal && (callee.opcode != Opcode::GetById || !isGlobal(callee.child(0))))
+                    return false;
+            } else if (call.opcode == Opcode::CallMethod) {
+                auto& receiver = constProgram.typeOf(function, call.child(0));
+                if (!isGlobal(call.child(0)) && (receiver.anyObject || receiver.anyFunction || !receiver.objectLayouts.isEmpty()))
+                    return false;
+            } else
+                return false;
+            if (hasCheckingCast(function, site))
+                program.functions.atKeepingValueIndex(i).at(site.call).isInTailPosition = false;
+            return true;
+        });
+        certainCallees[i].grow(sites[i].size());
+        for (unsigned s = 0; s < sites[i].size(); ++s) {
+            if (sites[i][s].callee)
+                certainCallees[i][s].append(sites[i][s].callee);
+            else if (function.at(sites[i][s].call).opcode == Opcode::CallMethod)
+                findCertainMethods(function, function.at(sites[i][s].call), certainCallees[i][s]);
+            else if (FunctionID callee = function.at(sites[i][s].call).opcode == Opcode::Call ? certainCalleeOf(function, function.at(sites[i][s].call)) : FunctionID())
+                certainCallees[i][s].append(callee);
+        }
+    });
+    auto resultTypeOf = [&](FunctionID id) -> const Type& {
+        auto& function = constProgram.at(id);
+        return constProgram.at(function.resultType ? function.resultType : constProgram.types.anything);
+    };
+    auto isChecked = [&](const Function& function, const TailCallSite& site, const Callees& callees) {
+        if (hasCheckingCast(function, site))
+            return true;
+        auto& type = constProgram.at(function.at(site.call).type);
+        if (callees.isEmpty())
+            return !type.isAnything();
+        return callees.containsIf([&](FunctionID callee) { return !resultTypeOf(callee).isSubsetOf(type, constProgram); });
+    };
+    Vector<unsigned> worklist;
+    Vector<uint8_t> isReceivedAsAnyValue(FillWith { }, count, static_cast<uint8_t>(0));
+    for (auto& layout : constProgram.layouts) {
+        for (auto* methods : { &layout.methods, &layout.staticMethods }) {
+            for (auto& method : *methods) {
+                if (method.function)
+                    isReceivedAsAnyValue[method.function.index()] = 1;
+            }
+        }
+    }
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = constProgram.functions[i];
+        if (function.has(Format::FunctionIsUsedAsValue | Format::FunctionIsDeclaredGenericEntrypoint))
+            WTF::atomicStore(&isReceivedAsAnyValue[i], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        static constexpr OpcodeSet uses { Opcode::CallDirect, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::FunctionReference };
+        constProgram.functions.forEachValue(i, uses, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.opcode != Opcode::CallDirect || (!value.isJumpToContinuation() && constProgram.at(value.type).isAnything()))
+                WTF::atomicStore(&isReceivedAsAnyValue[value.function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
+    });
+    for (unsigned i = 0; i < count; ++i) {
+        if (isReceivedAsAnyValue[i])
+            worklist.append(i);
+    }
+    while (!worklist.isEmpty()) {
+        unsigned caller = worklist.takeLast();
+        for (unsigned s = 0; s < sites[caller].size(); ++s) {
+            if (sites[caller][s].returnsArgument)
+                continue;
+            for (FunctionID callee : certainCallees[caller][s]) {
+                if (!std::exchange(isReceivedAsAnyValue[callee.index()], static_cast<uint8_t>(1)))
+                    worklist.append(callee.index());
+            }
+        }
+    }
+    Vector<Vector<unsigned, 2>> tailCallers(count);
+    BitVector returnsAnyValue(count);
+    for (unsigned i = 0; i < count; ++i) {
+        for (unsigned s = 0; s < sites[i].size(); ++s) {
+            if (sites[i][s].returnsArgument)
+                continue;
+            for (FunctionID callee : certainCallees[i][s])
+                tailCallers[callee.index()].append(i);
+            if (isReceivedAsAnyValue[i] && isChecked(constProgram.functions[i], sites[i][s], certainCallees[i][s]) && !returnsAnyValue.set(i))
+                worklist.append(i);
+        }
+    }
+    while (!worklist.isEmpty()) {
+        unsigned member = worklist.takeLast();
+        if (resultTypeOf(FunctionID(member)).isAnything())
+            continue;
+        for (unsigned caller : tailCallers[member]) {
+            if (!returnsAnyValue.set(caller))
+                worklist.append(caller);
+        }
+    }
+    if (returnsAnyValue.isEmpty())
+        return;
+    BitVector hadResultType(count);
+    for (size_t member : returnsAnyValue) {
+        if (!resultTypeOf(FunctionID(member)).isAnything())
+            hadResultType.set(member);
+    }
+    struct LeftToReceivers {
+        Vector<Value> casts;
+        TypeID typeBeforeCasts;
+        bool isCoerced { false };
+    };
+    Vector<LeftToReceivers> leftBy(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (!returnsAnyValue.get(i))
+            return;
+        auto& function = program.functions.atKeepingValueIndex(i);
+        program.functions.invalidateValueIndex(i);
+        auto retype = [&](ValueID id) {
+            function.at(id).type = program.types.anything;
+            function.at(id).rep = Rep::JSValue;
+        };
+        for (unsigned s = 0; s < sites[i].size(); ++s) {
+            auto& site = sites[i][s];
+            auto& callees = certainCallees[i][s];
+            if (site.returnsArgument || (!callees.isEmpty() && !callees.containsIf([&](FunctionID callee) { return hadResultType.get(callee.index()); }) && !isChecked(function, site, callees)))
+                continue;
+            auto& block = function.at(site.block);
+            ValueID returned = block.values.last();
+            bool converts = false;
+            for (unsigned k = 0; k < site.numberOfCasts; ++k) {
+                CastReason reason = function.at(block.values[block.values.size() - 1 - k]).castReason();
+                leftBy[i].isCoerced |= reason == CastReason::As;
+                converts |= reason == CastReason::Coerce;
+            }
+            if (converts && leftBy[i].casts.isEmpty()) {
+                leftBy[i].typeBeforeCasts = function.at(site.call).type;
+                for (unsigned k = site.numberOfCasts; k; --k)
+                    leftBy[i].casts.append(function.at(block.values[block.values.size() - k]));
+            }
+            block.values.shrink(block.values.size() - site.numberOfCasts);
+            block.terminator.forEachChild([&](ValueID& child) {
+                if (child == returned)
+                    child = site.call;
+            });
+            retype(site.call);
+            for (auto [forwardedTo, parameter] : site.forwardedThrough)
+                retype(function.at(forwardedTo).parameters[parameter]);
+        }
+    });
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesOfMethodsThatLeftCasts;
+    auto leftCasts = [&](FunctionID id) {
+        return hadResultType.get(id.index()) && (!leftBy[id.index()].casts.isEmpty() || leftBy[id.index()].isCoerced);
+    };
+    for (auto& layout : constProgram.layouts) {
+        for (auto& method : layout.methods) {
+            if (method.function && leftCasts(method.function))
+                namesOfMethodsThatLeftCasts.add(method.name.index());
+        }
+    }
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (!constProgram.hasCode(FunctionID(i)))
+            return;
+        auto calleeOf = [&](const Function& function, const Value& call) -> FunctionID {
+            if (constProgram.at(call.type).isAnything())
+                return { };
+            if (call.opcode == Opcode::CallDirect)
+                return !call.isJumpToContinuation() && hadResultType.get(call.function().index()) ? call.function() : FunctionID();
+            if (call.opcode != Opcode::CallMethod || !namesOfMethodsThatLeftCasts.contains(call.string().index()))
+                return { };
+            LayoutID supertype = constProgram.typeOf(function, call.child(0)).singleLayout();
+            if (!supertype)
+                return { };
+            FunctionID found;
+            for (LayoutID subtype : constProgram.at(supertype).subtypes) {
+                FunctionID method = constProgram.at(subtype).kind == LayoutKind::Instance ? findMethod(constProgram, subtype, call.string(), MethodKind::Method) : FunctionID();
+                if (!method || !leftCasts(method))
+                    continue;
+                if (found && found != method)
+                    return { };
+                found = method;
+            }
+            if (found && !leftBy[found.index()].casts.isEmpty() && !constProgram.at(call.type).isSubsetOf(constProgram.at(leftBy[found.index()].typeBeforeCasts), constProgram))
+                return { };
+            return found;
+        };
+        static constexpr OpcodeSet calls { Opcode::CallDirect, Opcode::CallMethod };
+        bool receives = false;
+        constProgram.functions.forEachValue(i, calls, [&](ValueID id) {
+            receives = receives || calleeOf(constProgram.functions[i], constProgram.functions[i].at(id));
+        });
+        if (!receives)
+            return;
+        auto& function = program.functions.atKeepingValueIndex(i);
+        program.functions.invalidateValueIndex(i);
+        auto returnsArgument = [&](ValueID call) {
+            return sites[i].containsIf([&](auto& site) { return site.returnsArgument && site.call == call; });
+        };
+        for (unsigned b = 0, end = function.blocks.size(); b < end; ++b) {
+            for (unsigned k = 0; k < function.blocks[b].values.size(); ++k) {
+                ValueID id = function.blocks[b].values[k];
+                FunctionID callee = calleeOf(function, function.at(id));
+                if (!callee || returnsArgument(id))
+                    continue;
+                auto& left = leftBy[callee.index()];
+                Value call(function.at(id));
+                call.type = program.types.anything;
+                call.rep = Rep::JSValue;
+                call.isInTailPosition = false;
+                Value last;
+                last.opcode = Opcode::Cast;
+                last.position = call.position;
+                last.inlineFrame = call.inlineFrame;
+                last.type = function.at(id).type;
+                last.rep = function.at(id).rep;
+                last.copyPredictionFrom(function.at(id));
+                last.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+                Vector<ValueID, 4> behind;
+                auto add = [&](Value&& value) {
+                    function.values.append(WTF::move(value));
+                    return ValueID(function.values.size() - 1);
+                };
+                ValueID held = add(Value(call));
+                function.blocks[b].values[k] = held;
+                if (!left.casts.isEmpty() && !constProgram.at(left.typeBeforeCasts).isAnything()) {
+                    Value cast(last);
+                    cast.copyPredictionFrom(Value { });
+                    cast.type = left.typeBeforeCasts;
+                    cast.rep = repOf(constProgram.at(cast.type));
+                    cast.children[0] = held;
+                    held = add(WTF::move(cast));
+                    behind.append(held);
+                }
+                for (auto& written : left.casts) {
+                    Value cast(written);
+                    cast.position = call.position;
+                    cast.inlineFrame = call.inlineFrame;
+                    cast.children[0] = held;
+                    if (cast.castReason() == CastReason::Upcast || cast.castReason() == CastReason::Member)
+                        cast.setCastReason(CastReason::Claim);
+                    held = add(WTF::move(cast));
+                    behind.append(held);
+                }
+                if (left.casts.isEmpty() && left.isCoerced) {
+                    Value cast(last);
+                    cast.type = constProgram.at(callee).resultType;
+                    cast.rep = repOf(constProgram.at(cast.type));
+                    cast.immediates[1] = static_cast<uint32_t>(CastReason::As);
+                    cast.children[0] = held;
+                    held = add(WTF::move(cast));
+                    behind.append(held);
+                }
+                last.children[0] = held;
+                function.at(id) = WTF::move(last);
+                behind.append(id);
+                if (function.blocks[b].terminator.kind == TerminatorKind::Invoke && k + 1 == function.blocks[b].values.size()) {
+                    Terminator terminator = function.blocks[b].terminator;
+                    unsigned from = b;
+                    for (ValueID cast : behind) {
+                        function.blocks.append(Block { });
+                        function.blocks.last().values.append(cast);
+                        function.blocks[from].terminator = terminator;
+                        function.blocks[from].terminator.targets[0] = Target { BlockID(function.blocks.size() - 1), { } };
+                        from = function.blocks.size() - 1;
+                    }
+                    function.blocks[from].terminator = WTF::move(terminator);
+                    break;
+                }
+                for (ValueID cast : behind)
+                    function.blocks[b].values.insert(++k, cast);
+            }
+        }
+    });
+    for (size_t member : hadResultType)
+        program.functions.atKeepingValueIndex(member).resultType = TypeID();
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: tail calls: ", hadResultType.bitCount(), " functions leave the check of their result to who receives it");
 }
 
 namespace {
@@ -13059,24 +13547,30 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
     ValueID cast = function.at(test).child(0);
     if (function.blocks[castBlock].values[function.blocks[castBlock].values.size() - 2] != cast)
         return false;
-    if (function.at(cast).opcode != Opcode::Cast || function.at(cast).castReason() != CastReason::As || function.at(cast).coercesFreshData() || function.at(cast).string())
+    if (function.at(cast).opcode != Opcode::Cast || function.at(cast).castReason() != CastReason::As || function.at(cast).string())
         return false;
     ValueID object = function.at(cast).child(0);
     LayoutID record = program.at(function.at(cast).type).singleLayout();
     if (!record || record != function.at(test).layout() || (function.at(object).rep != Rep::JSValue && function.at(object).rep != Rep::Cell) || !program.typeOf(function, object).anyObject)
         return false;
     auto& layout = program.at(record);
-    if (layout.kind != LayoutKind::Record || !layout.acceptsUntypedObjects || layout.isRelaxedForLogging || layout.subtypes.size() != 1 || layout.subtypes[0] != record)
-        return false;
-    unsigned numberOfFields = 0;
-    for (auto& field : layout.fields) {
-        if (field.flags & fieldIsNeverStored)
-            continue;
-        if (!field.type || !field.literals.isEmpty() || field.isPinned || field.isPinnedToFunction || field.isOutOfLine || field.flags & (fieldIsPlaceholder | fieldMayExistWithoutStorage | fieldHoldsLazyClosure | fieldIsMethod))
+    auto mayStayPlain = [&](LayoutID id, bool& hasLiterals) {
+        auto& candidate = program.at(id);
+        if (candidate.kind != LayoutKind::Record || !candidate.acceptsUntypedObjects || candidate.isRelaxedForLogging || candidate.subtypes.size() != 1 || candidate.subtypes[0] != id)
             return false;
-        ++numberOfFields;
-    }
-    if (!numberOfFields || numberOfFields > maxNumberOfPlainRecordFields)
+        unsigned numberOfFields = 0;
+        for (auto& field : candidate.fields) {
+            if (field.flags & fieldIsNeverStored)
+                continue;
+            if (!field.type || field.isPinned || field.isPinnedToFunction || field.isOutOfLine || field.flags & (fieldIsPlaceholder | fieldMayExistWithoutStorage | fieldHoldsLazyClosure | fieldIsMethod))
+                return false;
+            hasLiterals |= !field.literals.isEmpty();
+            ++numberOfFields;
+        }
+        return numberOfFields && numberOfFields <= maxNumberOfPlainRecordFields;
+    };
+    bool mustFitStatically = false;
+    if (!mayStayPlain(record, mustFitStatically))
         return false;
 
     unsigned numberOfBlocks = function.blocks.size();
@@ -13142,27 +13636,143 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
         }
     }
 
+    auto isOneOfLiterals = [&](auto& self, ValueID id, const Field& field, bool isArgument) -> bool {
+        auto& value = function.at(id);
+        if (value.opcode == Opcode::String) {
+            return field.literals.containsIf([&](auto& literal) {
+                return literal.string && equalSpans(program.string(literal.string), program.string(value.string()));
+            });
+        }
+        if (value.opcode != Opcode::Parameter || isArgument || !value.parameterBlock().index())
+            return false;
+        bool isPassed = false;
+        for (auto& block : function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                if (target.block != value.parameterBlock())
+                    continue;
+                if (value.parameterIndex() >= target.arguments.size() || !self(self, target.arguments[value.parameterIndex()], field, true))
+                    return false;
+                isPassed = true;
+            }
+        }
+        return isPassed;
+    };
+    struct BuiltRecord {
+        LayoutID layout;
+        Vector<ValueID, 8> stored;
+        Vector<uint32_t, 8> children;
+    };
+    struct NamedStore {
+        ValueID object;
+        StringID name;
+        ValueID stored;
+    };
+    Vector<BuiltRecord, 4> built;
+    size_t castIndex = function.blocks[castBlock].values.size() - 2;
+    auto birthOf = [&](ValueID id) {
+        return function.at(id).opcode == Opcode::NewObject ? function.blocks[castBlock].values.find(id) : notFound;
+    };
+    auto storeAt = [&](size_t index) -> std::optional<NamedStore> {
+        auto& value = function.at(function.blocks[castBlock].values[index]);
+        if (value.opcode == Opcode::PutById)
+            return NamedStore { value.child(0), value.string(), value.child(1) };
+        if (value.opcode == Opcode::CallBuiltin && value.arguments.size() == 3 && languageOperationOf(program, value) == LanguageOperation::DefineField && function.at(value.arguments[1]).opcode == Opcode::String)
+            return NamedStore { value.arguments[0], function.at(value.arguments[1]).string(), value.arguments[2] };
+        return std::nullopt;
+    };
+    size_t firstQuietIndex = castIndex;
+    while (firstQuietIndex) {
+        size_t index = firstQuietIndex - 1;
+        if (auto store = storeAt(index)) {
+            if (birthOf(store->object) == notFound || equalSpans(program.string(store->name), asBytes("__proto__"_span)))
+                break;
+        } else if (auto& value = function.at(function.blocks[castBlock].values[index]); value.opcode == Opcode::CallDirect || suspendsFunction(value) || (value.opcode != Opcode::PutModuleVariable && writesOf(program, function, function.blocks[castBlock], index) > Writes::RuntimeState))
+            break;
+        --firstQuietIndex;
+    }
+    for (size_t index = firstQuietIndex; index < castIndex; ++index) {
+        if (auto store = storeAt(index); store && birthOf(store->object) < firstQuietIndex) {
+            firstQuietIndex = index + 1;
+            index = firstQuietIndex - 1;
+        }
+    }
+    auto describe = [&](auto& self, ValueID id, LayoutID builtAs, unsigned depth) -> uint32_t {
+        static constexpr unsigned maxDepth = 3;
+        size_t birth = birthOf(id);
+        bool hasLiterals = false;
+        if (birth == notFound || birth < firstQuietIndex || depth > maxDepth || !mayStayPlain(builtAs, hasLiterals))
+            return none;
+        auto& fields = program.at(builtAs).fields;
+        BuiltRecord described { builtAs, Vector<ValueID, 8>(FillWith { }, fields.size(), ValueID()), Vector<uint32_t, 8>(FillWith { }, fields.size(), none) };
+        for (size_t index = birth + 1; index < castIndex; ++index) {
+            auto store = storeAt(index);
+            if (!store || store->object != id)
+                continue;
+            if (auto field = program.at(builtAs).fieldNamed(store->name))
+                described.stored[*field] = store->stored;
+        }
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            auto& field = fields[i];
+            if (field.flags & fieldIsNeverStored)
+                continue;
+            ValueID stored = described.stored[i];
+            if (!field.literals.isEmpty()) {
+                if (!stored || !isOneOfLiterals(isOneOfLiterals, stored, field, false))
+                    return none;
+            } else if (!stored) {
+                if (!(field.flags & fieldIsOptional) || !(program.at(field.type).primitives & Primitive::Undefined))
+                    return none;
+            } else if (!program.typeOf(function, stored).isSubsetOf(program.at(field.type), program, false)) {
+                LayoutID child = program.at(field.type).singleLayout();
+                described.children[i] = child ? self(self, stored, child, depth + 1) : none;
+                if (described.children[i] == none)
+                    return none;
+            }
+        }
+        built.append(WTF::move(described));
+        return built.size() - 1;
+    };
+    uint32_t builtObject = describe(describe, object, record, 0);
+    bool fitsStatically = builtObject != none;
+    if (mustFitStatically && !fitsStatically)
+        return false;
+
     BitVector isGuard(function.values.size());
     BitVector isFieldRead(function.values.size());
+    BitVector isFoldedTest(function.values.size());
+    Vector<uint32_t> recordRead(FillWith { }, function.values.size(), none);
+    Vector<uint32_t> childGiven(FillWith { }, function.values.size(), none);
     for (unsigned b : cloned) {
         auto& block = function.blocks[b];
         for (size_t index = 0; index < block.values.size(); ++index) {
             ValueID id = block.values[index];
             auto& value = function.at(id);
-            if (value.opcode == Opcode::Cast && value.castReason() == CastReason::Member && value.child(0) == cast) {
+            if (value.opcode == Opcode::Cast && value.castReason() == CastReason::Member && (value.child(0) == cast || childGiven[value.child(0).index()] != none)) {
                 isGuard.set(id.index());
+                recordRead[id.index()] = value.child(0) == cast ? builtObject : childGiven[value.child(0).index()];
+                continue;
+            }
+            if (value.opcode == Opcode::HasShapeOf && childGiven[value.child(0).index()] != none) {
+                if (block.terminator.kind != TerminatorKind::Branch || block.terminator.value != id || index + 1 != block.values.size() || value.immediates[1] != shapeTestGuardsFastPath)
+                    return false;
+                isFoldedTest.set(id.index());
                 continue;
             }
             if (value.opcode == Opcode::CallDirect || suspendsFunction(value) || !canExecuteTwice(value, writesOf(program, function, block, index)))
                 return false;
             if (value.opcode != Opcode::GetById || !isGuard.get(value.child(0).index()))
                 continue;
-            auto field = layout.fieldNamed(value.string());
-            if (!field || layout.fields[*field].flags & fieldIsNeverStored || value.hasKnownSlotWord() || value.immediates[1] != Format::none || !value.type)
+            uint32_t from = recordRead[value.child(0).index()];
+            auto& readLayout = from == none ? layout : program.at(built[from].layout);
+            auto field = readLayout.fieldNamed(value.string());
+            if (!field || readLayout.fields[*field].flags & fieldIsNeverStored || value.hasKnownSlotWord() || value.immediates[1] != Format::none || !value.type)
                 return false;
-            if (!program.at(layout.fields[*field].type).isSubsetOf(program.at(value.type), program))
+            if (!program.at(readLayout.fields[*field].type).isSubsetOf(program.at(value.type), program))
                 return false;
             isFieldRead.set(id.index());
+            recordRead[id.index()] = from;
+            if (from != none)
+                childGiven[id.index()] = built[from].children[*field];
         }
     }
     bool isOnlyRead = true;
@@ -13175,6 +13785,10 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
                 return user == test || (user && isGuard.get(user.index())) || (!isCloned.get(b) && !isReachedAfterwards.get(b) && b != castBlock);
             if (isGuard.get(child.index()))
                 return user && isFieldRead.get(user.index()) && isFirstChild;
+            if (isFoldedTest.get(child.index()))
+                return !user;
+            if (child.index() < childGiven.size() && childGiven[child.index()] != none)
+                return user && (isGuard.get(user.index()) || isFoldedTest.get(user.index()));
             return true;
         };
         for (ValueID id : block.values) {
@@ -13227,13 +13841,34 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
         }
         for (unsigned i = 0; i < function.blocks[b].values.size(); ++i) {
             ValueID id = function.blocks[b].values[i];
-            if (isGuard.get(id.index()))
+            if (isGuard.get(id.index()) || isFoldedTest.get(id.index()))
                 continue;
             Value value(function.at(id));
             if (isFieldRead.get(id.index())) {
-                value.opcode = Opcode::GetPlainRecordField;
-                value.immediates = { record.index(), *layout.fieldNamed(value.string()) };
-                value.children[0] = object;
+                uint32_t from = recordRead[id.index()];
+                auto& readLayout = from == none ? layout : program.at(built[from].layout);
+                uint32_t field = *readLayout.fieldNamed(value.string());
+                if (fitsStatically) {
+                    ValueID stored = built[from].stored[field];
+                    if (!stored) {
+                        Value absent;
+                        absent.opcode = Opcode::Undefined;
+                        absent.position = value.position;
+                        absent.inlineFrame = value.inlineFrame;
+                        absent.type = program.types.undefined;
+                        absent.rep = repOf(program.at(program.types.undefined));
+                        stored = add(WTF::move(absent));
+                        function.blocks[plainBlock].values.append(stored);
+                    }
+                    value.opcode = Opcode::Cast;
+                    value.immediates = { Format::none, static_cast<uint32_t>(readLayout.fields[field].literals.isEmpty() && built[from].children[field] == none ? CastReason::Upcast : CastReason::Member) };
+                    value.children[0] = stored;
+                    value.expectation = UINT32_MAX;
+                } else {
+                    value.opcode = Opcode::GetPlainRecordField;
+                    value.immediates = { record.index(), field };
+                    value.children[0] = object;
+                }
                 value.isOnSlowPath = false;
                 ValueID copy = add(WTF::move(value));
                 cloneOfValue[id.index()] = copy.index();
@@ -13254,6 +13889,11 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
         for (ValueID id : clone.values)
             function.at(id).forEachChild(inClone);
         clone.terminator = function.blocks[b].terminator;
+        if (clone.terminator.value && isFoldedTest.get(clone.terminator.value.index())) {
+            clone.terminator.kind = TerminatorKind::Jump;
+            clone.terminator.value = ValueID();
+            clone.terminator.targets.shrink(1);
+        }
         clone.terminator.forEachChild(inClone);
         for (auto& target : clone.terminator.targets) {
             if (target.block.index() == slow)
@@ -13318,9 +13958,15 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
     };
     auto& first = function.blocks[castBlock];
     first.values.shrink(first.values.size() - 2);
-    first.values.append(typedObject);
-    first.values.append(isTyped);
-    branch(first, isTyped, Target { BlockID(fast), { typedObject } }, Target { BlockID(untypedBlock), { } });
+    if (fitsStatically) {
+        first.terminator = Terminator();
+        first.terminator.kind = TerminatorKind::Jump;
+        first.terminator.targets.append(Target { BlockID(plainBlock), { } });
+    } else {
+        first.values.append(typedObject);
+        first.values.append(isTyped);
+        branch(first, isTyped, Target { BlockID(fast), { typedObject } }, Target { BlockID(untypedBlock), { } });
+    }
     auto& untyped = function.blocks[untypedBlock];
     untyped.values.append(plainTest);
     branch(untyped, plainTest, Target { BlockID(plainBlock), { } }, Target { BlockID(convertingBlock), { } });
@@ -13541,6 +14187,8 @@ Vector<String> optimize(Program& program)
     didFinish("- findInternalModuleExports"_s);
     for (unsigned round = 0; round < 3 && findFunctionsInModuleVariables(program); ++round) { }
     didFinish("- findFunctionsInModuleVariables"_s);
+    nameMethodsWithConstantKeys(program);
+    didFinish("- nameMethodsWithConstantKeys"_s);
     findFunctionsWithClosureProperties(program);
     didFinish("- findFunctionsWithClosureProperties"_s);
     expandDisposableStacks(program);
@@ -13563,6 +14211,7 @@ Vector<String> optimize(Program& program)
     for (auto& table : program.storeMayTransitionCache)
         table.answers.clear();
     didFinish("indexing fields"_s);
+    leaveResultsOfTailCallsToReceivers(program);
     createGenericEntrypoints(program);
     createValueEntrypoints(program);
     createResultAdapters(program);
@@ -13621,6 +14270,7 @@ Vector<String> optimize(Program& program)
     markCallsInTailPosition(program);
     didFinish("- markCallsInTailPosition"_s);
     if (!Options::auditAOTTypedAssertions()) {
+        turnSelfTailCallsIntoLoops(program);
         outlineDestructuredParameterReads(program);
         splitOffWorkers(program);
         outlineHostObjectReads(program);
@@ -13688,6 +14338,9 @@ Vector<String> optimize(Program& program)
         function.blocks.shrinkToFit();
     });
     indexLayoutSupertypes(program);
+    if (!Options::auditAOTTypedAssertions())
+        fuseArrayMethodChains(program);
+    didFinish("- fuseArrayMethodChains"_s);
     prepareForInlining(program);
     didFinish("- prepareForInlining"_s);
     unsigned count = program.functions.size();
@@ -13777,7 +14430,9 @@ Vector<String> optimize(Program& program)
         }
         if (!Options::auditAOTTypedAssertions() && threadForInOwnKeys(program, function))
             cleanUp(program, function);
-        for (unsigned round = 0; round < 8 && !Options::auditAOTTypedAssertions() && sinkObjectAllocations(program, function, AllocationSinkingPolicy::AllowMaterialization); ++round) {
+        for (unsigned round = 0; round < 8 && !Options::auditAOTTypedAssertions(); ++round) {
+            if (!sinkObjectAllocations(program, function, AllocationSinkingPolicy::AllowMaterialization) && !(round && readJoinedResultsOnEdges(program, function)))
+                break;
             cleanUp(program, function);
             function.didRemoveAllocation = true;
         }

@@ -61,6 +61,34 @@ namespace JSC { namespace AOT {
 using Jump = CCallHelpers::Jump;
 using Address = CCallHelpers::Address;
 using TrustedImm32 = CCallHelpers::TrustedImm32;
+using EntrySet = WTF::BitSet<numberOfEntries>;
+
+using LanguageOperationSet = WTF::BitSet<Typed::numberOfLanguageOperations>;
+
+static EntrySet s_entriesUsedByFunctions;
+static thread_local EntrySet* t_entriesUsedByStub;
+static LanguageOperationSet s_languageOperationsUsedByFunctions;
+static thread_local LanguageOperationSet* t_languageOperationsUsedByStub;
+
+int32_t Typed::numberInCode(Typed::LanguageOperation operation)
+{
+    unsigned index = static_cast<unsigned>(operation);
+    if (t_languageOperationsUsedByStub)
+        t_languageOperationsUsedByStub->set(index);
+    else if (!s_languageOperationsUsedByFunctions.get(index))
+        s_languageOperationsUsedByFunctions.concurrentTestAndSet(index);
+    return static_cast<int32_t>(index);
+}
+
+uint32_t offsetInTable(Entry entry)
+{
+    unsigned index = static_cast<unsigned>(entry);
+    if (t_entriesUsedByStub)
+        t_entriesUsedByStub->set(index);
+    else if (!s_entriesUsedByFunctions.get(index))
+        s_entriesUsedByFunctions.concurrentTestAndSet(index);
+    return index * sizeof(void*);
+}
 
 #if CPU(ARM64) || CPU(X86_64)
 
@@ -106,7 +134,7 @@ static void testStackBeforeEntering(CCallHelpers& jit)
 static void jumpToEntry(CCallHelpers& jit, GPRReg data, Entry entry)
 {
     jit.loadPtr(Address(data, Instance::offsetOfRuntimeTable()), data);
-    jit.loadPtr(Address(data, static_cast<unsigned>(entry) * sizeof(void*)), data);
+    jit.loadPtr(Address(data, offsetInTable(entry)), data);
     jit.farJump(data, JITThunkPtrTag);
 }
 
@@ -375,7 +403,7 @@ static void countSlotMiss(CCallHelpers& jit, GPRReg data, bool preservesAllRegis
             jit.move(instance, A0);
             jit.move(function, A1);
             jit.loadPtr(Address(instance, Instance::offsetOfRuntimeTable()), T13);
-            jit.loadPtr(Address(T13, static_cast<unsigned>(Entry::operationAOTEnsureData) * sizeof(void*)), T13);
+            jit.loadPtr(Address(T13, offsetInTable(Entry::operationAOTEnsureData)), T13);
             jit.call(T13, OperationPtrTag);
         };
         if (preservesAllRegisters) {
@@ -409,7 +437,7 @@ static void countSlotMiss(CCallHelpers& jit, GPRReg data, bool preservesAllRegis
     jit.move(instance, A0);
     jit.move(T11, A1);
     jit.loadPtr(Address(instance, Instance::offsetOfRuntimeTable()), T12);
-    jit.loadPtr(Address(T12, static_cast<unsigned>(Entry::operationAOTEnsureData) * sizeof(void*)), T12);
+    jit.loadPtr(Address(T12, offsetInTable(Entry::operationAOTEnsureData)), T12);
     jit.call(T12, OperationPtrTag);
     jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(0), R0, A1);
     jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(16), A2, A3);
@@ -603,7 +631,7 @@ static void generateColdOperationPlacingArguments(CCallHelpers& jit, Entry opera
     setUpArguments();
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(operation) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(operation)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     jit.move(GPRInfo::returnValueGPR2, scratch);
@@ -815,7 +843,7 @@ static void generateThrowAtSite(CCallHelpers& jit, bool isLeaf, bool isFault = f
     jit.move(instanceGPR, A0);
     jit.move(TrustedImm32(isByWord ? ThrowSite::wordIsInRegister : isTrap), A3);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTTypedThrowAtSite) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::operationAOTTypedThrowAtSite)), T9);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(T9, OperationPtrTag);
     if (!isLeaf) {
@@ -922,7 +950,7 @@ static void flattenSubject(CCallHelpers& jit, GPRReg string, std::initializer_li
     jit.move(string, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedFlatten) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedFlatten)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     jit.move(GPRInfo::returnValueGPR2, exception);
@@ -1057,12 +1085,12 @@ static void generateStringReplaceRegExpStringMayNotMatch(CCallHelpers& jit)
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
     Jump isOneCharacter = jit.branch32(CCallHelpers::Equal, A4, TrustedImm32(1));
     jit.move(TrustedImm32(0), A5);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedStringFind8) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedStringFind8)), operationGPR);
     Jump isReadyToSearch = jit.jump();
     isOneCharacter.link(&jit);
     jit.load8(Address(A3), A3);
     jit.move(TrustedImm32(0), A4);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedStringFindCharacter8) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedStringFindCharacter8)), operationGPR);
     isReadyToSearch.link(&jit);
     jit.move(instanceGPR, A0);
     prepareCallOperation(jit, assertionScratchGPR);
@@ -1080,7 +1108,7 @@ static void generateStringReplaceRegExpStringMayNotMatch(CCallHelpers& jit)
     jit.emitFunctionEpilogue();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStringReplaceRegExpString) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStringReplaceRegExpString)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance);
 }
 
@@ -1380,7 +1408,7 @@ static void generateRegExpMatchWithFastPath(CCallHelpers& jit, Entry general, En
         createMatchArrayAndReturn(jit, slowCasesAfterMatch, false);
         slowCasesAfterMatch.link(&jit);
     }
-    jit.move(TrustedImm32(static_cast<unsigned>(found) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(found)), T9);
     Jump isFound = jit.jump();
 
     is16Bit.link(&jit);
@@ -1504,12 +1532,12 @@ static void generateRegExpMatchWithFastPath(CCallHelpers& jit, Entry general, En
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
     Jump isOneCharacter = jit.branch32(CCallHelpers::Equal, A4, TrustedImm32(1));
     jit.move(TrustedImm32(0), A5);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedStringFind8) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedStringFind8)), operationGPR);
     Jump isReadyToSearch = jit.jump();
     isOneCharacter.link(&jit);
     jit.load8(Address(A3), A3);
     jit.move(TrustedImm32(0), A4);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedStringFindCharacter8) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedStringFindCharacter8)), operationGPR);
     isReadyToSearch.link(&jit);
     jit.move(instanceGPR, A0);
     prepareCallOperation(jit, assertionScratchGPR);
@@ -1534,7 +1562,7 @@ static void generateRegExpMatchWithFastPath(CCallHelpers& jit, Entry general, En
     jit.jump().linkTo(hasFound, &jit);
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(general) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(general)), T9);
     isFound.link(&jit);
     generateOperation(jit, Returns::Value, Supplies::Instance);
 }
@@ -1566,7 +1594,7 @@ static void generateStringMatchRegExpWithFastPath(CCallHelpers& jit)
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::RegExpExecWithFastPath)], &jit);
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStringMatchRegExp) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStringMatchRegExp)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance);
 }
 
@@ -1605,7 +1633,7 @@ static void generateNewRegExpLiteral(CCallHelpers& jit, bool checksException)
     jit.ret();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewRegExpLiteral) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewRegExpLiteral)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance, GPRInfo::returnValueGPR, checksException);
 }
 static void generateNewRegExpLiteral(CCallHelpers& jit) { generateNewRegExpLiteral(jit, true); }
@@ -1630,7 +1658,7 @@ static void generateNewMap(CCallHelpers& jit)
     jit.ret();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewMap) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewMap)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::PlainOperationWithInstance)], &jit);
 }
 static void generateUncheckedNewRegExpLiteral(CCallHelpers& jit) { generateNewRegExpLiteral(jit, false); }
@@ -1731,7 +1759,7 @@ static void generateStringInCase(CCallHelpers& jit, bool isUpper, bool checksExc
         jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
     jit.ret();
     isNotRemembered.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(isUpper ? Entry::operationAOTTypedStringToUpperCase : Entry::operationAOTTypedStringToLowerCase) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(isUpper ? Entry::operationAOTTypedStringToUpperCase : Entry::operationAOTTypedStringToLowerCase)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance, GPRInfo::returnValueGPR, checksException);
 }
 static void generateStringToLowerCase(CCallHelpers& jit) { generateStringInCase(jit, false, true); }
@@ -1773,7 +1801,7 @@ static void generateDigitsToNumber(CCallHelpers& jit, Entry operation, bool hasR
     jit.ret();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateOperation(jit, Returns::Double, Supplies::Instance);
 }
 static void generateStringToNumber8(CCallHelpers& jit) { generateDigitsToNumber(jit, Entry::operationAOTTypedStringToNumber8, false); }
@@ -1837,7 +1865,7 @@ static void generateNewTypedArray(CCallHelpers& jit, bool checksException)
     jit.ret();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewTypedArray) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewTypedArray)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance, GPRInfo::returnValueGPR, checksException);
 }
 static void generateNewTypedArray(CCallHelpers& jit) { generateNewTypedArray(jit, true); }
@@ -2050,7 +2078,7 @@ static void generateDidCreateTypedField(CCallHelpers& jit, bool isLeaf, bool ens
             returnToSite();
     };
     auto tailCallOperation = [&](Entry operation) {
-        jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(operation)), T9);
 #if CPU(ARM64)
         if (isLeaf)
             jit.popToRestore(T10);
@@ -2208,7 +2236,7 @@ static void generateDidCreateTypedField(CCallHelpers& jit, bool isLeaf, bool ens
     countSlotMiss(jit, T10, true);
     hasOwnSlot.link(&jit);
     hasNoSlotToFill.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(ensuresStorage ? Entry::operationAOTTypedDidCreateFieldOutOfLineAt : Entry::operationAOTTypedDidCreateFieldAt) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(ensuresStorage ? Entry::operationAOTTypedDidCreateFieldOutOfLineAt : Entry::operationAOTTypedDidCreateFieldAt)), T9);
 #if CPU(ARM64)
     if (isLeaf)
         jit.popToRestore(T10);
@@ -2348,7 +2376,7 @@ static void generateDidCreateTypedFieldRun(CCallHelpers& jit, bool isLeaf)
 #endif
         jit.ret();
     isNotKnown.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedDidCreateFieldsAt) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedDidCreateFieldsAt)), T9);
 #if CPU(ARM64)
     if (isLeaf)
         jit.popToRestore(T10);
@@ -2516,7 +2544,7 @@ static bool generateBarrierPreservingRegisters(CCallHelpers& jit, Stub stub)
     jit.pushPair(isLeaf ? framelessCallerLink : T9, link);
     if (isLeaf)
         jit.move(framelessCallerLink, T10);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedBarrierSlowPreservingRegisters) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedBarrierSlowPreservingRegisters)), T9);
     s_callsBetweenStubs->append({ jit.nearCall(), stub });
     jit.popPair(isLeaf ? framelessCallerLink : T9, isLeaf ? formerArgument : link);
     if (isLeaf) {
@@ -2710,7 +2738,7 @@ static void generateRememberElement(CCallHelpers& jit, bool isLeaf)
 #if CPU(ARM64)
     jit.move(T9, T12);
     jit.move(T11, T13);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedRememberElement) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedRememberElement)), T9);
     generateColdOperation(jit, isLeaf, false, false, true, false, true, std::nullopt, T12, T13);
 #else
     preservingCallerRegisters(jit, false, [&](unsigned) {
@@ -2718,7 +2746,7 @@ static void generateRememberElement(CCallHelpers& jit, bool isLeaf)
         jit.move(T11, A2);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedRememberElement) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedRememberElement)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -2915,7 +2943,7 @@ static void generateAllocateTyped(CCallHelpers& jit, bool isLeaf, TypedCellInit 
     };
 #if CPU(ARM64)
     jit.move(T9, T12);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedAllocSlow) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedAllocSlow)), T9);
     if (init == TypedCellInit::FromObject)
         generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T12, InvalidGPRReg, InvalidGPRReg, [&] { initializeCopy(); });
     else
@@ -2925,7 +2953,7 @@ static void generateAllocateTyped(CCallHelpers& jit, bool isLeaf, TypedCellInit 
         jit.move(T9, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedAllocSlow) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedAllocSlow)), T11);
         jit.call(T11, OperationPtrTag);
     });
     if (init == TypedCellInit::FromObject)
@@ -2955,7 +2983,7 @@ static void makeLazyConstant(CCallHelpers& jit, bool isLeaf, Entry fill, GPRReg 
 #if CPU(ARM64)
     ASSERT_UNUSED(key, key == T9);
     jit.move(T9, T12);
-    jit.move(TrustedImm32(static_cast<unsigned>(fill) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(fill)), T9);
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T12);
 #else
     UNUSED_PARAM(isLeaf);
@@ -2963,7 +2991,7 @@ static void makeLazyConstant(CCallHelpers& jit, bool isLeaf, Entry fill, GPRReg 
         jit.move(key, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(fill) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(fill)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -3326,7 +3354,7 @@ static void generateRopeCodeUnit(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     notSubstring.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedRopeCodeUnit) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedRopeCodeUnit)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generateRopeCodeUnit(CCallHelpers& jit) { generateRopeCodeUnit(jit, false); }
@@ -3371,7 +3399,7 @@ static void generateRopeCharacters(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     notSubstring.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedFlatten) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedFlatten)), T9);
 #if CPU(ARM64)
     generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, string, InvalidGPRReg, fiber, [&] { loadImplCharacters(); });
 #else
@@ -3501,7 +3529,7 @@ static void generateStringEqualsLiteral(CCallHelpers& jit, bool isLeaf)
     slowCases.link(&jit);
 #if CPU(ARM64)
     jit.move(T9, T12);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStringEqualsLiteral) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStringEqualsLiteral)), T9);
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T11, T12);
 #else
     preservingCallerRegisters(jit, true, [&](unsigned) {
@@ -3510,7 +3538,7 @@ static void generateStringEqualsLiteral(CCallHelpers& jit, bool isLeaf)
         jit.move(T9, A2);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedStringEqualsLiteral) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedStringEqualsLiteral)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -3523,7 +3551,7 @@ static void generateStringEqualsLiteral(CCallHelpers& jit) { generateStringEqual
 static void callLiteralStringOperation(CCallHelpers& jit, bool isLeaf, Entry operation)
 {
 #if CPU(ARM64)
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T11);
 #else
     UNUSED_PARAM(isLeaf);
@@ -3532,7 +3560,7 @@ static void callLiteralStringOperation(CCallHelpers& jit, bool isLeaf, Entry ope
         jit.move(T11, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -3751,7 +3779,7 @@ static void generateEqualsLiteralOfLength(CCallHelpers& jit, bool isLeaf, unsign
     slowCases.link(&jit);
 #if CPU(ARM64)
     jit.move(T9, T12);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStringEqualsLiteralInRegister) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStringEqualsLiteralInRegister)), T9);
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T11, T12, T12, [&] {
         jit.m_assembler.cmp<32>(T12, UInt12(1));
     });
@@ -3766,7 +3794,7 @@ static void generateEqualsLiteralOfLength(CCallHelpers& jit, bool isLeaf, unsign
         jit.move(T9, A2);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedStringEqualsLiteralInRegister) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedStringEqualsLiteralInRegister)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.m_assembler.cmpl_ir(1, result);
@@ -3849,13 +3877,13 @@ static void generateStringHasLiteralAtOneEnd(CCallHelpers& jit, bool isLeaf, boo
     Entry operation = isAtEnd ? Entry::operationAOTTypedStringEndsWithLiteral : Entry::operationAOTTypedStringStartsWithLiteral;
 #if CPU(ARM64)
     jit.move(T9, T12);
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, T11, T12);
 #else
     static_assert(noOverlap(T9, T11, A1) && noOverlap(T9, A2));
     jit.move(T11, A1);
     jit.move(T9, A2);
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateColdOperation(jit, false, true);
 #endif
 }
@@ -3932,7 +3960,7 @@ static void generateStringsAreEqual(CCallHelpers& jit, bool isLeaf)
 
     slowCases.link(&jit);
 #if CPU(ARM64)
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStringsAreEqual) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStringsAreEqual)), T9);
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T11, T12);
 #else
     preservingCallerRegisters(jit, true, [&](unsigned) {
@@ -3941,7 +3969,7 @@ static void generateStringsAreEqual(CCallHelpers& jit, bool isLeaf)
         jit.move(T11, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedStringsAreEqual) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedStringsAreEqual)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -3954,6 +3982,100 @@ static void generateLeafFlatStringsAreEqual(CCallHelpers&) { }
 static void generateLeafStringsAreEqual(CCallHelpers& jit) { generateStringsAreEqual(jit, true); }
 #else
 static void generateLeafStringsAreEqual(CCallHelpers& jit) { jit.breakpoint(); }
+#endif
+
+static void generateCompareStrings(CCallHelpers& jit, bool isLeaf)
+{
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
+    static_assert(noOverlap(result, T9, T10, T11, T12, T13, T14));
+    CCallHelpers::JumpList slowCases;
+    CCallHelpers::JumpList differ;
+    Jump isSameCell = jit.branchPtr(CCallHelpers::Equal, T11, T12);
+    jit.loadPtr(Address(T11, JSString::offsetOfValue()), T13);
+    jit.loadPtr(Address(T12, JSString::offsetOfValue()), T14);
+    jit.or64(T13, T14, T9);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, T9, TrustedImm32(JSString::isRopeInPointer)));
+    jit.load32(Address(T13, StringImpl::flagsOffset()), T9);
+    jit.and32(Address(T14, StringImpl::flagsOffset()), T9);
+    slowCases.append(jit.branchTest32(CCallHelpers::Zero, T9, TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.load32(Address(T13, StringImpl::lengthMemoryOffset()), result);
+    jit.load32(Address(T14, StringImpl::lengthMemoryOffset()), T9);
+    jit.loadPtr(Address(T13, StringImpl::dataOffset()), T13);
+    jit.loadPtr(Address(T14, StringImpl::dataOffset()), T14);
+    jit.sub32(result, T9, T12);
+    jit.moveConditionally32(CCallHelpers::Above, result, T9, T9, result);
+
+    auto advance = [&](int32_t bytes) {
+        jit.addPtr(TrustedImm32(bytes), T13);
+        jit.addPtr(TrustedImm32(bytes), T14);
+        jit.sub32(TrustedImm32(bytes), result);
+    };
+    auto nextWord = jit.label();
+    Jump isBelow8 = jit.branch32(CCallHelpers::Below, result, TrustedImm32(8));
+    jit.load64(Address(T13), T9);
+    jit.load64(Address(T14), T11);
+    Jump wordsDiffer = jit.branch64(CCallHelpers::NotEqual, T9, T11);
+    advance(8);
+    jit.jump().linkTo(nextWord, &jit);
+
+    isBelow8.link(&jit);
+    Jump isBelow4 = jit.branch32(CCallHelpers::Below, result, TrustedImm32(4));
+    jit.load32(Address(T13), T9);
+    jit.load32(Address(T14), T11);
+    Jump halvesDiffer = jit.branch32(CCallHelpers::NotEqual, T9, T11);
+    advance(4);
+
+    isBelow4.link(&jit);
+    auto nextByte = jit.label();
+    Jump isAtEnd = jit.branchTest32(CCallHelpers::Zero, result);
+    jit.load8(Address(T13), T9);
+    jit.load8(Address(T14), T11);
+    differ.append(jit.branch32(CCallHelpers::NotEqual, T9, T11));
+    advance(1);
+    jit.jump().linkTo(nextByte, &jit);
+
+    isAtEnd.link(&jit);
+    jit.compare32(CCallHelpers::GreaterThan, T12, TrustedImm32(0), result);
+    jit.rshift32(TrustedImm32(31), T12);
+    jit.or32(T12, result);
+    returnToTypedCaller(jit, isLeaf);
+
+    halvesDiffer.link(&jit);
+    jit.byteSwap32(T9);
+    jit.byteSwap32(T11);
+    differ.append(jit.jump());
+
+    wordsDiffer.link(&jit);
+    jit.byteSwap64(T9);
+    jit.byteSwap64(T11);
+
+    differ.link(&jit);
+    jit.compare64(CCallHelpers::Above, T9, T11, result);
+    jit.compare64(CCallHelpers::Below, T9, T11, T9);
+    jit.sub32(T9, result);
+    returnToTypedCaller(jit, isLeaf);
+
+    isSameCell.link(&jit);
+    jit.move(TrustedImm32(0), result);
+    returnToTypedCaller(jit, isLeaf);
+
+    slowCases.link(&jit);
+#if CPU(ARM64)
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedCompareStrings)), T9);
+    generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, T11, T12);
+#else
+    generateColdOperationPlacingArguments(jit, Entry::operationAOTTypedCompareStrings, 0, [&] {
+        static_assert(noOverlap(T11, T12, A1, A2));
+        jit.move(T12, A2);
+        jit.move(T11, A1);
+    });
+#endif
+}
+static void generateCompareStrings(CCallHelpers& jit) { generateCompareStrings(jit, false); }
+#if CPU(ARM64)
+static void generateLeafCompareStrings(CCallHelpers& jit) { generateCompareStrings(jit, true); }
+#else
+static void generateLeafCompareStrings(CCallHelpers& jit) { jit.breakpoint(); }
 #endif
 
 static void makeSubstringOfFlatStringAndReturn(CCallHelpers& jit, bool isLeaf, CCallHelpers::JumpList& slowCases, CCallHelpers::Label& allocate, bool isKnownToBe8Bit = false)
@@ -4114,7 +4236,7 @@ static void generateCoerceToType(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedCoerceToType) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedCoerceToType)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, true);
 }
 static void generateCoerceToType(CCallHelpers& jit) { generateCoerceToType(jit, false); }
@@ -4192,13 +4314,13 @@ static void generateCastInRegister(CCallHelpers& jit, bool isLeaf)
     jit.zeroExtend32ToWord(word, A2);
     jit.urshift64(TrustedImm32(CastInRegister::operationShift), operation);
     jit.and32(TrustedImm32(0xffff), operation);
-    Jump isOtherOperation = jit.branch32(CCallHelpers::NotEqual, operation, TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedCoerce) * sizeof(void*)));
+    Jump isOtherOperation = jit.branch32(CCallHelpers::NotEqual, operation, TrustedImm32(offsetInTable(Entry::operationAOTTypedCoerce)));
     s_callsBetweenStubs->append({ jit.nearCall(), Stub::ConvertByPlan });
     Jump isNotConverted = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
     Jump isConverted = jit.jump();
     isNotConverted.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::RawTypedCoerce) * sizeof(void*)), operation);
+    jit.move(TrustedImm32(offsetInTable(Entry::RawTypedCoerce)), operation);
     isOtherOperation.link(&jit);
     saveFPRs();
     jit.addPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operation);
@@ -4268,11 +4390,11 @@ static void generateLeafCastInRegister(CCallHelpers& jit) { generateCastInRegist
 static void tailCallStringOperation(CCallHelpers& jit, bool isLeaf, Entry operation)
 {
 #if CPU(ARM64)
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, false, std::nullopt, T11, T12);
 #else
     UNUSED_PARAM(isLeaf);
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     static_assert(T12 == A0 && noOverlap(T11, T12, A1, A2));
     jit.move(T12, A2);
     jit.move(T11, A1);
@@ -4616,14 +4738,14 @@ static void generateNewTypedClosure(CCallHelpers& jit, bool isLeaf, unsigned num
         mutatorIsNotFenced.link(&jit);
         isBlack.link(&jit);
 #if CPU(ARM64)
-        jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedBarrierSlow) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedBarrierSlow)), T9);
         generateColdOperation(jit, isLeaf, false, false, true, false, true, std::nullopt, A2);
 #else
         preservingCallerRegisters(jit, false, [&](unsigned) {
             jit.move(A2, A1);
             jit.move(instanceGPR, A0);
             jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-            jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedBarrierSlow) * sizeof(void*)), T11);
+            jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedBarrierSlow)), T11);
             jit.call(T11, OperationPtrTag);
         });
         jit.ret();
@@ -4638,7 +4760,7 @@ static void generateNewTypedClosure(CCallHelpers& jit, bool isLeaf, unsigned num
     jit.move(T9, T12);
     if (count)
         jit.or64(CCallHelpers::TrustedImm64(static_cast<int64_t>(count)), T12);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewClosureSlow) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewClosureSlow)), T9);
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, T12);
 #else
     preservingCallerRegisters(jit, true, [&](unsigned) {
@@ -4649,7 +4771,7 @@ static void generateNewTypedClosure(CCallHelpers& jit, bool isLeaf, unsigned num
         }
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), cell);
-        jit.loadPtr(Address(cell, static_cast<unsigned>(Entry::operationAOTTypedNewClosureSlow) * sizeof(void*)), cell);
+        jit.loadPtr(Address(cell, offsetInTable(Entry::operationAOTTypedNewClosureSlow)), cell);
         jit.call(cell, OperationPtrTag);
     });
     jit.ret();
@@ -4780,7 +4902,7 @@ static void generateMaterializeEnvironment(CCallHelpers& jit)
 #if CPU(ARM64)
     jit.zeroExtend32ToWord(T9, T12);
     jit.move(source, T13);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedMaterializeEnvironment) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedMaterializeEnvironment)), T9);
     generateColdOperation(jit, false, true, false, true, false, true, std::nullopt, T12, T13);
 #else
     preservingCallerRegisters(jit, true, [&](unsigned) {
@@ -4788,7 +4910,7 @@ static void generateMaterializeEnvironment(CCallHelpers& jit)
         jit.zeroExtend32ToWord(T9, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedMaterializeEnvironment) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedMaterializeEnvironment)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -4952,7 +5074,7 @@ static void generateAllocateTypedExtension(CCallHelpers& jit, unsigned size)
         jit.move(T11, A2);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedEnsureStorageOfSize) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedEnsureStorageOfSize)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.ret();
@@ -4986,7 +5108,7 @@ static void callPreservingRegistersAndReturn(CCallHelpers& jit, Entry operation,
         loadCallerReturnAddress(jit, bytes, T11);
         setUp();
         jit.loadPtr(Address(T10, Instance::offsetOfRuntimeTable()), T10);
-        jit.loadPtr(Address(T10, static_cast<unsigned>(operation) * sizeof(void*)), T10);
+        jit.loadPtr(Address(T10, offsetInTable(operation)), T10);
         jit.call(T10, OperationPtrTag);
     });
     jit.ret();
@@ -5042,7 +5164,7 @@ static CCallHelpers::Label returnAfterStoring(CCallHelpers& jit, GPRReg value)
     jit.move(R0, A1);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::operationAOTWriteBarrier)), T9);
     jit.farJump(T9, OperationPtrTag);
     return storedCell;
 }
@@ -5200,7 +5322,7 @@ static void generateValueIsTruthy(CCallHelpers& jit)
         jit.move(T9, A1);
         loadInstance(jit, A0);
         jit.loadPtr(Address(A0, Instance::offsetOfRuntimeTable()), T10);
-        jit.loadPtr(Address(T10, static_cast<unsigned>(Entry::operationAOTToBoolean) * sizeof(void*)), T10);
+        jit.loadPtr(Address(T10, offsetInTable(Entry::operationAOTToBoolean)), T10);
         jit.call(T10, OperationPtrTag);
     });
     compareBits32(GPRInfo::returnValueGPR);
@@ -5357,7 +5479,7 @@ static void generateEqual(CCallHelpers& jit, Entry operation, EqualityExits exit
         jit.move(R0, A1);
         jit.move(T11, A0);
         jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedStringsAreEqual) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedStringsAreEqual)), T11);
         callAndCheckException(jit, T11, Returns::Value, GPRInfo::returnValueGPR, preservesRegisters, false);
 
         isFalse.link(&jit);
@@ -5375,7 +5497,7 @@ static void generateEqual(CCallHelpers& jit, Entry operation, EqualityExits exit
     jit.move(R0, A1);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     callAndCheckException(jit, T11, Returns::Value, GPRInfo::returnValueGPR, preservesRegisters);
 }
 
@@ -5391,7 +5513,7 @@ static void callBinaryOperation(CCallHelpers& jit, Entry operation)
     jit.move(R0, A1);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
 
@@ -5571,7 +5693,7 @@ static void generateConcatenate(CCallHelpers& jit, bool isLeaf, bool hasThird)
     slow.link(&jit);
     Entry operation = hasThird ? Entry::operationAOTTypedConcatThree : Entry::operationAOTTypedConcat;
 #if CPU(ARM64)
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, first, second);
 #else
     generateColdOperationPlacingArguments(jit, operation, 0, [&] {
@@ -5642,7 +5764,7 @@ static void generateInt32ToString(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     slow.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedIntToString) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedIntToString)), T9);
 #if CPU(ARM64)
     generateColdOperation(jit, isLeaf, true, false, true, false, true, std::nullopt, value);
 #else
@@ -6189,7 +6311,7 @@ static void generateBinaryDoubleAsDouble(CCallHelpers& jit, Binary kind, bool nu
     loadInstance(jit, T11);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     callAndCheckException(jit, T11, Returns::Double);
 }
 static void generateAddDoubleAsDouble(CCallHelpers& jit) { generateBinaryDoubleAsDouble(jit, Binary::Add, false, Entry::operationAOTTypedAddNumberAndValueAsNumber); }
@@ -6416,7 +6538,7 @@ static void generateAppendSpread(CCallHelpers& jit)
     jit.add64(TrustedImm32(sizeof(IndexingHeader)), A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedAllocateStorage) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedAllocateStorage)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     jit.load64(Address(sp, 0), target);
@@ -6463,11 +6585,11 @@ static void generateAppendSpread(CCallHelpers& jit)
     jit.store64(target, Address(sp, 0));
     jit.store64(source, Address(sp, sizeof(EncodedJSValue)));
     jit.move(instanceGPR, A0);
-    jit.move(TrustedImm32(static_cast<int32_t>(Typed::LanguageOperation::AppendSpread)), A1);
+    jit.move(TrustedImm32(numberInCode(Typed::LanguageOperation::AppendSpread)), A1);
     jit.move(TrustedImm32(2), A2);
     jit.move(sp, A3);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedLanguageOperation) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedLanguageOperation)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     jit.emitFunctionEpilogue();
@@ -6542,7 +6664,7 @@ static void generateReadBatchedElements(CCallHelpers& jit)
     slowCases.link(&jit);
     jit.move(taken, A3);
     jit.move(R0, A1);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedReadBatchedElements) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedReadBatchedElements)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
 }
 
@@ -6606,11 +6728,11 @@ static void generateSuspendAtFirstAwait(CCallHelpers& jit)
     jit.load8(Address(frame, JSCell::cellStateOffset()), T12);
     jit.move(closure, A1);
     Jump isWithinThreshold = jit.branch32(CCallHelpers::BelowOrEqual, T12, Address(instanceGPR, Instance::offsetOfBarrierThreshold()));
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedSuspendAsyncFunction) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedSuspendAsyncFunction)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
 
     isWithinThreshold.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedParkAsyncFunction) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedParkAsyncFunction)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
 
 #if CPU(X86_64)
@@ -6635,7 +6757,7 @@ static void generateSuspendAtFirstAwait(CCallHelpers& jit)
     jit.urshift32(T9, TrustedImm32(ResumeClosureRequest::allocationShiftForStub), T12);
     jit.lshift64(TrustedImm32(ClosureRequest::allocationShift), T12);
     jit.or64(T12, A3);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedSuspendAtFirstAwait) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedSuspendAtFirstAwait)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
 }
 
@@ -6992,7 +7114,7 @@ static void generatePutByVal(CCallHelpers& jit, bool isStrict)
     jit.move(R0, A1);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPutByVal) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTPutByVal)), T11);
     callAndCheckException(jit, T11, Returns::Void);
 }
 
@@ -7095,7 +7217,7 @@ static void prepareMissAtSite(CCallHelpers& jit, Entry operation, unsigned numbe
     jit.urshift32(T12, TrustedImm32(Site::identifierBits), extra);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(operation)), T9);
 }
 
 static void missAtSite(CCallHelpers& jit, Entry operation, unsigned numberOfOperands, Returns returns, CCallHelpers::JumpList* hasCallerIndex = nullptr, bool callerIsThunk = false)
@@ -7219,7 +7341,7 @@ static void generateInstanceOfCached(CCallHelpers& jit)
     jit.move(R0, A1);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTDefaultHasInstance) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTDefaultHasInstance)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 
     doesNotUsePrototype.link(&jit);
@@ -7311,7 +7433,7 @@ static void generateInstanceOfEngineClass(CCallHelpers& jit)
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedInstanceOfEngineClass) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedInstanceOfEngineClass)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
 
@@ -7379,7 +7501,7 @@ static void generateInstanceOfClass(CCallHelpers& jit, bool isLeaf, bool instanc
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
-    jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::operationAOTTypedInstanceOfClass) * sizeof(void*)), scratch);
+    jit.loadPtr(Address(scratch, offsetInTable(Entry::operationAOTTypedInstanceOfClass)), scratch);
     callAndCheckException(jit, scratch, Returns::Value);
 }
 static void generateInstanceOfClass(CCallHelpers& jit) { generateInstanceOfClass(jit, false, false); }
@@ -7412,7 +7534,7 @@ static void generateInstanceOfClassByChain(CCallHelpers& jit)
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedInstanceOfClass) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedInstanceOfClass)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
 
@@ -7596,7 +7718,7 @@ static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers:
             Jump isPresent = jit.branchTestPtr(CCallHelpers::NonZero, pointer);
             loadInstance(jit, pointer);
             jit.loadPtr(Address(pointer, Instance::offsetOfRuntimeTable()), pointer);
-            jit.loadPtr(Address(pointer, static_cast<unsigned>(AOT::Entry::UndefinedHolder) * sizeof(void*)), pointer);
+            jit.loadPtr(Address(pointer, offsetInTable(AOT::Entry::UndefinedHolder)), pointer);
             jit.move(TrustedImm32(firstInlineLocation | Slot::isIndirect | Slot::pointerIsNotCell), location);
             isReady.append(jit.jump());
 
@@ -7631,7 +7753,7 @@ static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers:
 #endif
             jit.addPtr(TrustedImm32(-BiasedDataPointer::bias), untriedSlotData, A0);
             jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-            jit.loadPtr(Address(T11, static_cast<unsigned>(AOT::Entry::operationAOTDidFillSlots) * sizeof(void*)), T11);
+            jit.loadPtr(Address(T11, offsetInTable(AOT::Entry::operationAOTDidFillSlots)), T11);
             jit.call(T11, OperationPtrTag);
 #if CPU(ARM64)
             jit.popPair(R0, A1);
@@ -7646,7 +7768,7 @@ static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers:
         isNone.link(&jit);
     };
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), cache);
-    jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
+    jit.loadPtr(Address(cache, offsetInTable(Entry::MegamorphicCache)), cache);
     notFound.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
     CCallHelpers::JumpList notValue = jit.loadMegamorphicProperty(CCallHelpers::MegamorphicCacheLocation(cache), R0, uid, nullptr, result, T11, T12, T13);
     fillSlot();
@@ -7675,7 +7797,7 @@ static void callLookUpAtSite(CCallHelpers& jit, Entry operation, GPRReg base, GP
     jit.move(third, A2);
     jit.move(R0, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     jit.call(T11, OperationPtrTag);
 #if CPU(ARM64)
     jit.popPair(base, A1);
@@ -7707,7 +7829,7 @@ static void lookUpInMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers
     constexpr GPRReg result = GPRInfo::argumentGPR6;
 #endif
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), cache);
-    jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
+    jit.loadPtr(Address(cache, offsetInTable(Entry::MegamorphicCache)), cache);
     hasNoPair.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
     hasNoPair.append(jit.loadMegamorphicProperty(CCallHelpers::MegamorphicCacheLocation(cache), R0, uid, nullptr, result, T11, T12, T13));
     hasPair.append(jit.jump());
@@ -7809,7 +7931,7 @@ static void generateGetByNameUncached(CCallHelpers& jit)
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedGetByName) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedGetByName)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
 
@@ -7849,7 +7971,7 @@ static void generatePutByNameUncached(CCallHelpers& jit, Entry operation)
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     callAndCheckException(jit, T11, Returns::Void);
 }
 static void generatePutByNameUncached(CCallHelpers& jit) { generatePutByNameUncached(jit, Entry::operationAOTTypedSetByName); }
@@ -7885,7 +8007,7 @@ static void returnFromRead(CCallHelpers& jit)
         jit.ret();
 }
 
-static void readCompiledField(CCallHelpers& jit, CCallHelpers::JumpList& rare, CCallHelpers::JumpList* isNotField = nullptr)
+static void readCompiledField(CCallHelpers& jit, CCallHelpers::JumpList& rare, CCallHelpers::JumpList* isNotField = nullptr, bool absentFieldIsRare = false)
 {
     using FieldRead = Slot::FieldRead;
     constexpr GPRReg address = T11;
@@ -8110,7 +8232,10 @@ static void readCompiledField(CCallHelpers& jit, CCallHelpers::JumpList& rare, C
     jit.jump().linkTo(hasAddress, &jit);
 
     isAbsent.link(&jit);
-    rare.append(jit.branchTest64(CCallHelpers::Zero, T12, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::absentFieldIsUndefined))));
+    if (absentFieldIsRare)
+        rare.append(jit.jump());
+    else
+        rare.append(jit.branchTest64(CCallHelpers::Zero, T12, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::absentFieldIsUndefined))));
     isUndefined.link(&jit);
     jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), R0);
     returnFromRead(jit);
@@ -8681,7 +8806,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation, bool isCalle
         jit.move(R0, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-        jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawGetById) * sizeof(void*)), T9);
+        jit.loadPtr(Address(T9, offsetInTable(Entry::RawGetById)), T9);
         notProxy.link(&jit);
     }
     callAndCheckException(jit, T9, Returns::Value, GPRInfo::returnValueGPR, isCalledByThunk);
@@ -8934,7 +9059,7 @@ static void callProxyGetTrap(CCallHelpers& jit, GPRReg name, CCallHelpers::JumpL
     jit.move(instanceGPR, A0);
     jit.addPtr(TrustedImm32(trap), sp, A3);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPrepareProxyGet) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTPrepareProxyGet)), T11);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(T11, OperationPtrTag);
     Jump isNotPrepared = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
@@ -8959,7 +9084,7 @@ static void callProxyGetTrap(CCallHelpers& jit, GPRReg name, CCallHelpers::JumpL
     jit.move(instanceGPR, A0);
     leave();
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTValidateProxyGet) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTValidateProxyGet)), T11);
     callAndCheckException(jit, T11, Returns::Value, GPRInfo::returnValueGPR, isWithinFrame);
 
     isNotPrepared.link(&jit);
@@ -9072,7 +9197,7 @@ static void generateGetByNameGeneric(CCallHelpers& jit)
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTGetByNameAndCache) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTGetByNameAndCache)), T11);
     callAndCheckException(jit, T11, Returns::Value, GPRInfo::returnValueGPR, callerIsThunk);
 }
 
@@ -9751,8 +9876,9 @@ static void generateGetByNameWithDirectColumn(CCallHelpers& jit) { generateGetBy
 
 enum class SecondReceiver : uint8_t { FirstResult, FirstReceiver, Other };
 
-static void generateTwoReadsByName(CCallHelpers& jit, SecondReceiver secondReceiver, bool returnsBoth, Preserves preserves, bool testsTruthiness = false)
+static void generateTwoReadsByName(CCallHelpers& jit, SecondReceiver secondReceiver, bool returnsBoth, Preserves preserves, bool testsTruthiness = false, unsigned lengthOfLiteral = 0)
 {
+    RELEASE_ASSERT(!lengthOfLiteral || (testsTruthiness && preserves == Preserves::TwoIntegers));
     using Kind = PropertyLookupTable::Kind;
     static_assert(PropertyLookupTable::maxName < 1u << 16 && PropertyLookupTable::numberOfColumns > PropertyLookupTable::maxName);
     static_assert(secondReceiverGPR == preservedIntegerGPRs[0] && firstOfTwoResultsGPR == preservedIntegerGPRs[1]);
@@ -9781,6 +9907,12 @@ static void generateTwoReadsByName(CCallHelpers& jit, SecondReceiver secondRecei
     };
 
     auto readSecond = [&](bool rowIsLoaded) {
+        if (lengthOfLiteral) {
+            jit.move(R0, stubTemporaryGPRs[2]);
+            jit.move(literalOfComparedReadGPR, stubTemporaryGPRs[0]);
+            s_callsBetweenStubs->append({ jit.nearTailCall(), static_cast<Stub>(static_cast<unsigned>(Stub::ValueEqualsLiteralOfLength1) + 4 * (lengthOfLiteral - 1)) });
+            return;
+        }
         if (testsTruthiness) {
             s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::ValueIsTruthy });
             return;
@@ -9969,11 +10101,31 @@ static void generateGetTwoByName(CCallHelpers& jit) { generateTwoReadsByName(jit
 static void generateGetByNameFromTwo(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::Other, true, Preserves::TwoIntegers); }
 static void generateGetByNameIsTruthy(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::Nothing, true); }
 static void generateGetByNameIsTruthyPreservingTwo(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true); }
+static void generateGetByNameEqualsLiteralOfLength1(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 1); }
+static void generateGetByNameEqualsLiteralOfLength2(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 2); }
+static void generateGetByNameEqualsLiteralOfLength3(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 3); }
+static void generateGetByNameEqualsLiteralOfLength4(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 4); }
+static void generateGetByNameEqualsLiteralOfLength5(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 5); }
+static void generateGetByNameEqualsLiteralOfLength6(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 6); }
+static void generateGetByNameEqualsLiteralOfLength7(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 7); }
+static void generateGetByNameEqualsLiteralOfLength8(CCallHelpers& jit) { generateTwoReadsByName(jit, SecondReceiver::FirstResult, false, Preserves::TwoIntegers, true, 8); }
 static void generateGetByNameWithDirectColumnPreservingTwo(CCallHelpers& jit) { generateGetByNameWithDirectColumn(jit, Preserves::TwoIntegers); }
 
-#if CPU(X86_64)
 static void fillSiteCache(CCallHelpers& jit, GPRReg cell, GPRReg payload, GPRReg word, GPRReg cacheAndScratch)
 {
+    constexpr int32_t fromPageToItsByte = static_cast<int32_t>(SiteCaches::offsetOfTouchedPages - (SiteCaches::offsetOfWords >> SiteCaches::pageShift));
+#if CPU(ARM64)
+    jit.load32(Address(cell, JSCell::structureIDOffset()), word);
+    jit.m_assembler.orr<64>(word, word, payload, ARM64Assembler::LSL, SiteCaches::offsetShift);
+    jit.store64(word, Address(cacheAndScratch));
+    jit.sub64(instanceGPR, cacheAndScratch);
+    jit.m_assembler.add<64>(cacheAndScratch, instanceGPR, cacheAndScratch, ARM64Assembler::LSR, SiteCaches::pageShift);
+    jit.addPtr(TrustedImm32(fromPageToItsByte), cacheAndScratch);
+    jit.move(TrustedImm32(1), word);
+    jit.store8(word, Address(cacheAndScratch));
+    loadRowByName(jit, cell, cacheAndScratch, word);
+    jit.or32(TrustedImm32(static_cast<int32_t>(PropertyLookupTable::rowIsInSiteCaches)), Address(cacheAndScratch, PropertyLookupTable::offsetOfRowNumber));
+#else
     jit.move(payload, word);
     jit.lshift64(TrustedImm32(SiteCaches::offsetShift), word);
     jit.store64(word, Address(cacheAndScratch));
@@ -9981,7 +10133,11 @@ static void fillSiteCache(CCallHelpers& jit, GPRReg cell, GPRReg payload, GPRReg
     jit.store32(word, Address(cacheAndScratch));
     jit.sub64(instanceGPR, cacheAndScratch);
     jit.urshift64(TrustedImm32(SiteCaches::pageShift), cacheAndScratch);
-    jit.store8(TrustedImm32(1), CCallHelpers::BaseIndex(instanceGPR, cacheAndScratch, CCallHelpers::TimesOne, static_cast<int32_t>(SiteCaches::offsetOfTouchedPages - (SiteCaches::offsetOfWords >> SiteCaches::pageShift))));
+    jit.store8(TrustedImm32(1), CCallHelpers::BaseIndex(instanceGPR, cacheAndScratch, CCallHelpers::TimesOne, fromPageToItsByte));
+    structureWithID(jit, word);
+    jit.loadPtr(Address(word, Structure::offsetOfLookupTableRow()), word);
+    jit.or32(TrustedImm32(static_cast<int32_t>(PropertyLookupTable::rowIsInSiteCaches)), Address(word, PropertyLookupTable::offsetOfRowNumber));
+#endif
 }
 
 static void keepFilledSiteCacheMostly(CCallHelpers& jit, Address word, CCallHelpers::Label withoutCache)
@@ -9992,16 +10148,15 @@ static void keepFilledSiteCacheMostly(CCallHelpers& jit, Address word, CCallHelp
     jit.branchTest32(CCallHelpers::NonZero, Address(instanceGPR, Instance::offsetOfSiteCacheMisses()), TrustedImm32(SiteCaches::missesBetweenReplacements - 1)).linkTo(withoutCache, &jit);
     isEmpty.link(&jit);
 }
-#endif
 
 static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves preserves)
 {
-#if CPU(X86_64)
     using Kind = PropertyLookupTable::Kind;
     constexpr GPRReg name = T9;
     constexpr GPRReg row = T13;
-    constexpr GPRReg cache = A1;
+    constexpr GPRReg cache = readSiteCacheGPR;
     static_assert(noOverlap(R0, name, row, cache, T11, T12));
+    static_assert(noOverlap(cache, preservedIntegerGPRs[0], preservedIntegerGPRs[1]));
     auto inRow = [&](int32_t offset) { return CCallHelpers::BaseIndex(row, name, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
     CCallHelpers::Label withoutCache = stubLabels()[static_cast<unsigned>(preserves == Preserves::TwoIntegers ? Stub::GetByNameWithDirectColumnPreservingTwo : Stub::GetByNameWithDirectColumn)];
     jit.branchIfNotCell(R0).linkTo(withoutCache, &jit);
@@ -10009,6 +10164,53 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     Address holderInCache { cache, sizeof(uint64_t) };
 
     loadRowByName(jit, R0, row, T11);
+#if CPU(ARM64)
+    constexpr GPRReg payload = T10;
+    static_assert(noOverlap(R0, name, row, cache, payload, T11, nameCellGPR, nameDifferenceGPR));
+    auto hasFlag = [&](uint8_t flag) { return CCallHelpers::TrustedImm64(static_cast<int64_t>(flag) << kindInCellShift); };
+    jit.load64(inRow(0), nameCellGPR);
+    Jump notInlineEntry = branchIfCellNameDiffers(jit, name);
+    jit.lshift32(nameCellGPR, TrustedImm32(1), payload);
+    jit.store64(TrustedImm32(0), holderInCache);
+    fillSiteCache(jit, R0, payload, T11, cache);
+    readInlineByCell(jit);
+
+    notInlineEntry.link(&jit);
+    branchIfCellHasNoEntry(jit).linkTo(withoutCache, &jit);
+    Jump holderIsInPayload = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(PropertyLookupTable::holderIsInPayload));
+    Jump valueIsInOwnStorage = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(PropertyLookupTable::valueIsInStorage));
+    static_assert(PropertyLookupTable::impliesAbsent(Kind::AbsentAndStoreAddsInNewStorage) && !PropertyLookupTable::impliesAbsent(Kind::DefineAddsInline));
+    extractBits(jit, nameCellGPR, kindInCellShift, PropertyLookupTable::bitsOfKind, T11);
+    jit.branch32(CCallHelpers::Above, T11, TrustedImm32(static_cast<int32_t>(Kind::AbsentAndStoreAddsInNewStorage))).linkTo(withoutCache, &jit);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfHolderOfUndefined()), T13);
+    jit.store64(T13, holderInCache);
+    jit.move(TrustedImm32(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) * 2), payload);
+    fillSiteCache(jit, R0, payload, T11, cache);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), R0);
+    jit.ret();
+
+    valueIsInOwnStorage.link(&jit);
+    jit.rshift32(nameCellGPR, TrustedImm32(2), payload);
+    jit.or32(TrustedImm32(SiteCaches::isOutOfLine), payload);
+    jit.store64(TrustedImm32(0), holderInCache);
+    fillSiteCache(jit, R0, payload, T11, cache);
+    jit.loadPtr(Address(R0, JSObject::butterflyOffset()), T13);
+    jit.m_assembler.ldr<64>(R0, T13, nameCellGPR, ARM64Assembler::SXTW, 0);
+    jit.ret();
+
+    holderIsInPayload.link(&jit);
+    jit.m_assembler.add<64>(T13, cellCageBaseGPR, nameCellGPR, ARM64Assembler::UXTW, Typed::cell32Shift);
+    jit.store64(T13, holderInCache);
+    jit.extractSignedBitfield64(nameCellGPR, TrustedImm32(codeInCellShift), TrustedImm32(8), nameDifferenceGPR);
+    jit.lshift32(nameDifferenceGPR, TrustedImm32(1), payload);
+    Jump holderHasInline = jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(PropertyLookupTable::valueIsInStorage));
+    jit.or32(TrustedImm32(SiteCaches::isOutOfLine), payload);
+    jit.loadPtr(Address(T13, JSObject::butterflyOffset()), T13);
+    holderHasInline.link(&jit);
+    fillSiteCache(jit, R0, payload, T11, cache);
+    jit.load64(CCallHelpers::BaseIndex(T13, nameDifferenceGPR, CCallHelpers::TimesEight), R0);
+    jit.ret();
+#else
     jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
     Jump notInlineEntry = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
     jit.load32(inRow(PropertyLookupTable::offsetOfReadOffsetInEntry), T11);
@@ -10070,9 +10272,6 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     jit.loadPtr(Address(T13, JSObject::butterflyOffset()), T13);
     jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesFour, -4 * static_cast<int32_t>(SiteCaches::isOutOfLine)), R0);
     jit.ret();
-#else
-    UNUSED_PARAM(preserves);
-    jit.breakpoint();
 #endif
 }
 static void generateGetByNameAndFillSiteCache(CCallHelpers& jit) { generateGetByNameAndFillSiteCache(jit, Preserves::Nothing); }
@@ -10680,7 +10879,7 @@ static void generateFrontEndTypedPutExtra(CCallHelpers& jit)
     static_assert(sizeof(Known) == 16);
     auto callOperation = [&] {
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-        jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedPutExtra) * sizeof(void*)), T9);
+        jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedPutExtra)), T9);
         jit.farJump(T9, OperationPtrTag);
     };
     auto leave = [&] {
@@ -10764,7 +10963,7 @@ static void generateFrontEndTypedConstruct(CCallHelpers& jit)
     jit.loadPtr(Address(callee, InternalFunction::offsetOfGlobalObject()), globalObject);
     hasFunction.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
-    genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, Address(scratch, static_cast<unsigned>(Entry::NonConstructorHostFunction) * sizeof(void*))));
+    genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, Address(scratch, offsetInTable(Entry::NonConstructorHostFunction))));
 
     jit.emitFunctionPrologue();
     static_assert(stackAlignmentRegisters() == 2);
@@ -10808,7 +11007,7 @@ static void generateFrontEndTypedConstruct(CCallHelpers& jit)
     genericPath.link(&jit);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedConstruct) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedConstruct)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -10882,12 +11081,12 @@ static void generateFrontEndTypedConstructSuper(CCallHelpers& jit)
     Jump hasFunction = jit.jump();
     isInternalFunction.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
-    genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, Address(scratch, static_cast<unsigned>(Entry::ErrorConstructorClassInfo) * sizeof(void*))));
+    genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, Address(scratch, offsetInTable(Entry::ErrorConstructorClassInfo))));
     jit.loadPtr(Address(callee, InternalFunction::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForConstruct)), function);
     jit.loadPtr(Address(callee, InternalFunction::offsetOfGlobalObject()), globalObject);
     hasFunction.link(&jit);
     isDerivedClosure.link(&jit);
-    genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, Address(scratch, static_cast<unsigned>(Entry::NonConstructorHostFunction) * sizeof(void*))));
+    genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, Address(scratch, offsetInTable(Entry::NonConstructorHostFunction))));
 
     genericPath.append(jit.branchIfNotCell(list));
     genericPath.append(jit.branchIfNotType(list, ArrayType));
@@ -10965,7 +11164,7 @@ static void generateFrontEndTypedConstructSuper(CCallHelpers& jit)
     jit.emitFunctionEpilogue();
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedConstructSuper) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedConstructSuper)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -11145,7 +11344,7 @@ static void generateFrontEndTypedCloneObjectImpl(CCallHelpers& jit, bool extends
     genericPath.link(&jit);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(extendsClone ? Entry::RawTypedCloneObjectAndExtend : Entry::RawTypedCloneObject) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(extendsClone ? Entry::RawTypedCloneObjectAndExtend : Entry::RawTypedCloneObject)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 static void generateFrontEndTypedCloneObject(CCallHelpers& jit) { generateFrontEndTypedCloneObjectImpl(jit, false); }
@@ -11202,7 +11401,7 @@ static void generateFrontEndTypedCloneObjectWithSubtypeCheck(CCallHelpers& jit)
     jit.add32(lastSubtypeShape, distanceFromLastShape);
     Jump isSubtype = jit.branch32(CCallHelpers::Below, distanceFromLastShape, subtypeShapeCount);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedCloneObjectWithSubtypeCheck) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedCloneObjectWithSubtypeCheck)), T9);
     jit.farJump(T9, OperationPtrTag);
     isSubtype.link(&jit);
     jit.move(TrustedImm32(1), keepsLayout);
@@ -11329,7 +11528,7 @@ static void generateFrontEndTypedCloneObjectAs(CCallHelpers& jit)
     asksRuntime.link(&jit);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedCloneObjectAs) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedCloneObjectAs)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -11809,7 +12008,7 @@ static void generateFrontEndTypedCoerce(CCallHelpers& jit)
     isNotConverted.link(&jit);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedCoerce) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedCoerce)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -11903,7 +12102,7 @@ static void generateFrontEndTypedGetExtra(CCallHelpers& jit)
 
     isNotKnown.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedGetExtra) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedGetExtra)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -12025,7 +12224,7 @@ static void generateFrontEndTypedGetByNameChecked(CCallHelpers& jit, Entry raw, 
 
     isNotKnown.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(raw) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(raw)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -12264,7 +12463,7 @@ static void callPutByNameOperation(CCallHelpers& jit, GPRReg name, uint32_t flag
     jit.move(instanceGPR, A0);
     jit.move(TrustedImm32(flagBits), A4);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPutByNameAndCache) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTPutByNameAndCache)), T11);
     callAndCheckException(jit, T11, Returns::Void, GPRInfo::returnValueGPR, callerIsThunk);
 }
 
@@ -12992,18 +13191,47 @@ static void generateDefineByNameWithDirectColumnPreservingTwo(CCallHelpers& jit)
 
 static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCache)
 {
-#if CPU(X86_64)
-    using Kind = PropertyLookupTable::Kind;
     constexpr GPRReg name = T9;
     constexpr GPRReg row = T13;
-    constexpr GPRReg cache = T12;
+    constexpr GPRReg cache = storeSiteCacheGPR;
     static_assert(noOverlap(R0, A1, name, row, cache, T10, T11));
+    static_assert(noOverlap(cache, preservedIntegerGPRs[0], preservedIntegerGPRs[1]));
     auto inRow = [&](int32_t offset) { return CCallHelpers::BaseIndex(row, name, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
     Address structureAfterStoreInCache { cache, sizeof(uint64_t) };
     CCallHelpers::Label general = stubLabels()[static_cast<unsigned>(withoutCache)];
     jit.branchIfNotCell(R0).linkTo(general, &jit);
     keepFilledSiteCacheMostly(jit, Address(cache), general);
     loadRowByName(jit, R0, row, T11);
+#if CPU(ARM64)
+    static_assert(noOverlap(R0, A1, name, row, cache, T10, T11, nameCellGPR, nameDifferenceGPR));
+    auto hasFlag = [&](unsigned shift, uint8_t flag) { return CCallHelpers::TrustedImm64(static_cast<int64_t>(flag) << shift); };
+    jit.load64(inRow(0), nameCellGPR);
+    Jump notInlineEntry = branchIfCellNameDiffers(jit, name);
+    extractBits(jit, nameCellGPR, kindInCellShift, 8, T10);
+    jit.branchTest32(CCallHelpers::Zero, T10).linkTo(general, &jit);
+    jit.lshift32(TrustedImm32(3), T10);
+    jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
+    jit.store64(T11, structureAfterStoreInCache);
+    fillSiteCache(jit, R0, T10, T11, cache);
+    jit.store64(A1, CCallHelpers::BaseIndex(R0, T10, CCallHelpers::TimesOne));
+    jit.branchIfCell(A1).linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
+    jit.ret();
+
+    notInlineEntry.link(&jit);
+    branchIfCellHasNoEntry(jit).linkTo(general, &jit);
+    jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(kindInCellShift, PropertyLookupTable::storeNeedsNoHandler)).linkTo(general, &jit);
+    jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(kindInCellShift, PropertyLookupTable::valueIsInStorage)).linkTo(general, &jit);
+    jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(codeInCellShift, PropertyLookupTable::storesAlsoAdd)).linkTo(general, &jit);
+    extractBits(jit, nameCellGPR, codeInCellShift, 7, T10);
+    jit.lshift32(TrustedImm32(3), T10);
+    jit.zeroExtend32ToWord(nameCellGPR, row);
+    jit.store64(row, structureAfterStoreInCache);
+    fillSiteCache(jit, R0, T10, T11, cache);
+    jit.store64(A1, CCallHelpers::BaseIndex(R0, T10, CCallHelpers::TimesOne));
+    jit.store32(row, Address(R0, JSCell::structureIDOffset()));
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
+#else
+    using Kind = PropertyLookupTable::Kind;
     jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
     Jump notInlineEntry = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
     jit.load8(inRow(PropertyLookupTable::offsetOfStoreOffsetInEntry), T10);
@@ -13032,9 +13260,6 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
     jit.store64(A1, CCallHelpers::BaseIndex(R0, T10, CCallHelpers::TimesOne));
     jit.store32(row, Address(R0, JSCell::structureIDOffset()));
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
-#else
-    UNUSED_PARAM(withoutCache);
-    jit.breakpoint();
 #endif
 }
 static void generatePutByNameAndFillSiteCache(CCallHelpers& jit) { generatePutByNameAndFillSiteCache(jit, Stub::PutByNameWithDirectColumn); }
@@ -13145,7 +13370,7 @@ static void generatePutById(CCallHelpers& jit)
             jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A3);
             notFound.append(jit.branchTestPtr(CCallHelpers::Zero, A3));
             jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), cache);
-            jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
+            jit.loadPtr(Address(cache, offsetInTable(Entry::MegamorphicCache)), cache);
             notFound.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
         };
         Jump isNotDirect = jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(1u << Site::identifierBits));
@@ -13379,7 +13604,7 @@ static void callLookUp(CCallHelpers& jit, Entry operation, GPRReg base, GPRReg n
         jit.move(name, A1);
     jit.move(R0, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     jit.call(T11, OperationPtrTag);
 #if CPU(ARM64)
     jit.popPair(base, A1);
@@ -13402,7 +13627,7 @@ static void callLookUpByKey(CCallHelpers& jit, Entry operation, GPRReg base)
     jit.move(instanceGPR, A2);
     jit.move(R0, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     jit.call(T11, OperationPtrTag);
 #if CPU(ARM64)
     jit.popPair(base, A1);
@@ -13563,6 +13788,31 @@ static void generateGetOwnByValIfCached(CCallHelpers& jit)
     jit.ret();
 }
 
+static void generateGetOwnFieldByKeyIfCached(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList isNotKnown;
+    CCallHelpers::JumpList notInlineEntry;
+    isNotKnown.append(jit.branchIfNotCell(A1));
+    isNotKnown.append(jit.branchIfNotCell(R0));
+    isNotKnown.append(jit.branch8(CCallHelpers::NotEqual, Address(R0, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
+    isNotKnown.append(jit.branch32(CCallHelpers::GreaterThanOrEqual, Address(R0, Typed::offsetOfShapeWord), TrustedImm32(0)));
+    isNotKnown.append(jit.branchTest32(CCallHelpers::NonZero, Address(R0, Typed::offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(Typed::orderWordIsFrozen | Typed::orderWordIsSealed | Typed::orderWordIsNotExtensible))));
+    findInKeyedTable(jit, Instance::offsetOfKeyedReads(), Instance::numberOfKeyedReads, A2, isNotKnown, notInlineEntry, sizeof(Instance::KeyedRead));
+    isNotKnown.append(jit.jump());
+
+    notInlineEntry.link(&jit);
+    static_assert(Instance::keyIsCompiledField == (Slot::isGetter | Slot::isIndirect));
+    isNotKnown.append(branchIfSlotHas<Slot::pointerIsCell>(jit, T11));
+    isNotKnown.append(branchUnlessSlotHas<Slot::isIndirect>(jit, T11));
+    isNotKnown.append(branchIfSlotHas<Slot::pointerIsNotCell>(jit, T11));
+    jit.loadPtr(Address(A2, OBJECT_OFFSETOF(Instance::KeyedRead, holder)), T12);
+    readCompiledField(jit, isNotKnown, nullptr, true);
+
+    isNotKnown.link(&jit);
+    jit.move(TrustedImm32(0), R0);
+    jit.ret();
+}
+
 static void callOperationOnThree(CCallHelpers& jit, Entry operation)
 {
     loadInstance(jit, T11);
@@ -13571,7 +13821,7 @@ static void callOperationOnThree(CCallHelpers& jit, Entry operation)
     jit.move(R0, A1);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     callAndCheckException(jit, T11, Returns::Void);
 }
 
@@ -13650,14 +13900,14 @@ static void generateFrontEndTypedHasOwnPropertyByName(CCallHelpers& jit)
 
     isNotKnown.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedHasOwnPropertyByName) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::RawTypedHasOwnPropertyByName)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
 static void jumpToRawOperation(CCallHelpers& jit, Entry raw)
 {
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(raw) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(raw)), T9);
     jit.farJump(T9, OperationPtrTag);
 }
 
@@ -13843,7 +14093,7 @@ static void generatePrivateGetAtSite(CCallHelpers& jit)
     jit.move(R0, A2);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedPrivateGetAtSite) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedPrivateGetAtSite)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
 
@@ -13860,7 +14110,7 @@ static void generatePrivateSetAtSite(CCallHelpers& jit)
     jit.move(T9, A1);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedPrivateSetAtSite) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedPrivateSetAtSite)), T11);
     callAndCheckException(jit, T11, Returns::Void);
 }
 
@@ -14147,7 +14397,7 @@ static void callStoreByKey(CCallHelpers& jit, Entry operation, GPRReg base)
     jit.move(instanceGPR, A3);
     jit.move(R0, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(operation)), T11);
     jit.call(T11, OperationPtrTag);
 #if CPU(ARM64)
     jit.popPair(A2, A3);
@@ -14761,7 +15011,7 @@ static void generateHandleException(CCallHelpers& jit)
     loadInstance(jit, T9);
     jit.loadPtr(Address(T9, Instance::offsetOfVM()), T10);
     jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::LookupExceptionHandler) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::LookupExceptionHandler)), T11);
     unwind(jit, T10, T11, true);
 }
 
@@ -14790,7 +15040,7 @@ static void generateHandleExceptionPreservingRegisters(CCallHelpers& jit)
     }
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), T10);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::LookupExceptionHandler) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::LookupExceptionHandler)), T11);
     prepareCallOperationWithVM(jit, T10);
     jit.move(T10, GPRInfo::regT1);
     jit.copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(GPRInfo::regT1);
@@ -14818,7 +15068,7 @@ static void throwStackOverflow(CCallHelpers& jit)
     jit.emitFunctionPrologue();
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::ThrowStackOverflowError) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::ThrowStackOverflowError)), T9);
     jit.call(T9, OperationPtrTag);
     jit.emitFunctionEpilogue();
     generateHandleException(jit);
@@ -14837,7 +15087,7 @@ static void generatePollAtPrologue(CCallHelpers& jit)
         loadCallerReturnAddress(jit, bytes, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedPollAtPrologue) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedPollAtPrologue)), T11);
         jit.call(T11, OperationPtrTag);
 #if CPU(X86_64)
         jit.storePtr(GPRInfo::returnValueGPR, Address(CCallHelpers::stackPointerRegister, bytes));
@@ -14861,7 +15111,7 @@ static void generatePollAtLoop(CCallHelpers& jit)
 {
 #if CPU(X86_64)
     constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedPollSlow) * sizeof(void*)), scratch);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedPollSlow)), scratch);
     generateColdOperation(jit, false, false, true, true, false, true, scratch);
 #else
     jit.breakpoint();
@@ -14872,7 +15122,7 @@ static void generateLeafPollAtLoop(CCallHelpers& jit)
 {
 #if CPU(X86_64)
     constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedPollSlow) * sizeof(void*)), scratch);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedPollSlow)), scratch);
     generateColdOperation(jit, false, false, true, true, false, true, scratch, InvalidGPRReg, InvalidGPRReg, [&] {
         jit.pop(scratch);
         jit.pop(GPRInfo::callFrameRegister);
@@ -14901,7 +15151,7 @@ static void generatePollBeforeEntering(CCallHelpers& jit)
     preservingCallerRegisters(jit, false, [&](unsigned) {
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedPollSlow) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedPollSlow)), T11);
         jit.call(T11, OperationPtrTag);
     });
 #if CPU(X86_64)
@@ -14983,7 +15233,7 @@ static void generateRejectInFrame(CCallHelpers& jit)
     jit.move(instanceGPR, A0);
     jit.move(GPRInfo::callFrameRegister, A1);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTTypedRejectWithException) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::operationAOTTypedRejectWithException)), T9);
     jit.call(T9, OperationPtrTag);
     jit.emitFunctionEpilogue();
     jit.ret();
@@ -15341,7 +15591,7 @@ static void adapt(CCallHelpers& jit, GPRReg word, GPRReg instance, AdapterPasses
             jit.add64(Address(instanceGPR, Instance::offsetOfStructureIDBase()), scratch);
             jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
             jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), other);
-            leaveGeneratorToCaller.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(other, static_cast<unsigned>(Entry::AsyncGeneratorClassInfo) * sizeof(void*))));
+            leaveGeneratorToCaller.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(other, offsetInTable(Entry::AsyncGeneratorClassInfo))));
             checkCanEnter(driver, leaveGeneratorToCaller);
             driverIsSavedFrame.link(&jit);
             setAsyncContext(leaveGeneratorToCaller, [&](GPRReg context) {
@@ -15814,7 +16064,7 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
         isSlimClosure = jit.branchIfType(BaselineJITRegisters::Call::calleeGPR, slimClosureTypes);
     slow.append(jit.branchIfNotType(BaselineJITRegisters::Call::calleeGPR, InternalFunctionType));
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T12);
-    jit.loadPtr(Address(T12, static_cast<unsigned>(isCall(kind) ? Entry::InternalFunctionCallTrampoline : Entry::InternalFunctionConstructTrampoline) * sizeof(void*)), T12);
+    jit.loadPtr(Address(T12, offsetInTable(isCall(kind) ? Entry::InternalFunctionCallTrampoline : Entry::InternalFunctionConstructTrampoline)), T12);
     jit.farJump(T12, JSEntryPtrTag);
 
     if (isCall(kind)) {
@@ -16159,7 +16409,7 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     jit.emitFunctionEpilogue();
     static_assert(!RuntimeTable::offsetOfEntries());
     jit.loadPtr(Address(vm, VM::offsetOfAOTRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::NativeCallTrampoline) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::NativeCallTrampoline)), T11);
     jit.farJump(T11, JSEntryPtrTag);
 }
 
@@ -16183,7 +16433,7 @@ static void callWithEngineConvention(CCallHelpers& jit, CodeSpecializationKind k
 {
     jit.move(calleeGPR, BaselineJITRegisters::Call::calleeGPR);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(kind == CodeSpecializationKind::CodeForCall ? Entry::CallLinkInfoForCall : Entry::CallLinkInfoForConstruct) * sizeof(void*)), BaselineJITRegisters::Call::callLinkInfoGPR);
+    jit.loadPtr(Address(T11, offsetInTable(kind == CodeSpecializationKind::CodeForCall ? Entry::CallLinkInfoForCall : Entry::CallLinkInfoForConstruct)), BaselineJITRegisters::Call::callLinkInfoGPR);
     callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::VirtualCall : Stub::VirtualConstruct);
     jit.emitFunctionEpilogue();
     jit.ret();
@@ -16288,7 +16538,7 @@ static void callThroughTrampoline(CCallHelpers& jit, unsigned count, Entry tramp
     for (unsigned i = 0; i < count; ++i)
         jit.store64(argumentGPR(i), outgoingFrameSlot(CallFrameSlot::thisArgument, (i + 1) * sizeof(Register)));
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(trampoline) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(trampoline)), T11);
     jit.call(T11, JSEntryPtrTag);
     jit.emitFunctionEpilogue();
     jit.ret();
@@ -16525,7 +16775,7 @@ static void callProxyTrap(CCallHelpers& jit, unsigned count, CCallHelpers::JumpL
         jit.store64(argumentGPR(i), inHostFrame(CallFrameSlot::thisArgument, (i + 1) * sizeof(Register)));
     prepareCallOperation(jit, T13);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTTypedPrepareProxyCall) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::operationAOTTypedPrepareProxyCall)), T9);
     jit.move(instanceGPR, A0);
     jit.move(sp, A1);
     jit.move(TrustedImm32(count), A2);
@@ -17104,11 +17354,11 @@ static void generateCallWithArray(CCallHelpers& jit, Typed::LanguageOperation op
     jit.store64(thisGPR, Address(sp, sizeof(EncodedJSValue)));
     jit.store64(preservedList, Address(sp, 2 * sizeof(EncodedJSValue)));
     jit.move(instanceGPR, A0);
-    jit.move(TrustedImm32(static_cast<int32_t>(operation)), A1);
+    jit.move(TrustedImm32(numberInCode(operation)), A1);
     jit.move(TrustedImm32(3), A2);
     jit.move(sp, A3);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedLanguageOperation) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedLanguageOperation)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     jit.emitFunctionEpilogue();
@@ -17145,7 +17395,7 @@ static void generateCheckCallable(CCallHelpers& jit, bool isNamed)
     jit.move(calleeGPR, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedThrowUnlessCallable) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedThrowUnlessCallable)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR);
@@ -17162,25 +17412,33 @@ static void generateCheckCallable(CCallHelpers& jit, bool isNamed)
 }
 static void generateCheckCallable(CCallHelpers& jit) { generateCheckCallable(jit, false); }
 static void generateCheckCallableNamed(CCallHelpers& jit) { generateCheckCallable(jit, true); }
-#if CPU(X86_64)
 static void generateFindMethodByName(CCallHelpers& jit, bool requiresCallable)
 {
-    using Kind = PropertyLookupTable::Kind;
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     constexpr GPRReg name = calleeGPR;
     constexpr GPRReg word = T11;
     constexpr GPRReg entry = T13;
-    constexpr GPRReg column = T9;
-    static_assert(noOverlap(thisGPR, name, word, entry, column));
+    static_assert(noOverlap(thisGPR, name, word, entry));
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
-        RELEASE_ASSERT(noOverlap(argumentGPR(i), thisGPR, name, word, entry, column));
-    constexpr int32_t fromSignedCode = -256 * static_cast<int32_t>(sizeof(EncodedJSValue));
-    auto inEntry = [&](int32_t offset) { return CCallHelpers::BaseIndex(entry, column, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
+        RELEASE_ASSERT(noOverlap(argumentGPR(i), thisGPR, name, word, entry));
 
     CCallHelpers::JumpList otherwise;
     CCallHelpers::JumpList isRead;
     otherwise.append(jit.branchIfNotCell(thisGPR));
     loadRowByName(jit, thisGPR, entry, word);
+#if CPU(ARM64)
+    jit.and32(TrustedImm32(PropertyLookupTable::numberOfColumns - 1), name, word);
+    jit.load64(CCallHelpers::BaseIndex(entry, word, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn), nameCellGPR);
+    static_assert(name == calleeGPR);
+    readMethodByCell(jit, word, entry, otherwise);
+#else
+    using Kind = PropertyLookupTable::Kind;
+    constexpr GPRReg column = T9;
+    static_assert(noOverlap(thisGPR, name, word, entry, column));
+    for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
+        RELEASE_ASSERT(argumentGPR(i) != column);
+    constexpr int32_t fromSignedCode = -256 * static_cast<int32_t>(sizeof(EncodedJSValue));
+    auto inEntry = [&](int32_t offset) { return CCallHelpers::BaseIndex(entry, column, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
     jit.and32(TrustedImm32(PropertyLookupTable::numberOfColumns - 1), name, column);
     jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, entry, column, CCallHelpers::TimesEight);
     Jump hasNoKindEntry = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
@@ -17226,6 +17484,7 @@ static void generateFindMethodByName(CCallHelpers& jit, bool requiresCallable)
     otherwise.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(PropertyLookupTable::hasKindAndCode)));
     jit.load32(inEntry(PropertyLookupTable::offsetOfReadOffsetInEntry), word);
     jit.load64(CCallHelpers::BaseIndex(thisGPR, word, CCallHelpers::TimesEight), word);
+#endif
 
     isRead.link(&jit);
     otherwise.append(jit.branchIfNotCell(word));
@@ -17268,7 +17527,7 @@ static void generateFindMethodByName(CCallHelpers& jit, bool requiresCallable)
         jit.load64(Address(sp), A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-        jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedThrowUnlessMethodIsCallable) * sizeof(void*)), operationGPR);
+        jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedThrowUnlessMethodIsCallable)), operationGPR);
         prepareCallOperation(jit, assertionScratchGPR);
         jit.call(operationGPR, OperationPtrTag);
         Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR);
@@ -17308,7 +17567,7 @@ static void generateFindMethodByName(CCallHelpers& jit, bool requiresCallable)
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTTypedThrowMethodIsNotAFunction) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::operationAOTTypedThrowMethodIsNotAFunction)), T9);
     callAndCheckException(jit, T9, Returns::Void);
 }
 static void generateFindMethodByName(CCallHelpers& jit) { generateFindMethodByName(jit, true); }
@@ -17319,9 +17578,8 @@ static void keepFilledSiteCacheMostly(CCallHelpers&, Address word, CCallHelpers:
 
 static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
 {
-    using Kind = PropertyLookupTable::Kind;
     constexpr GPRReg name = calleeGPR;
-    constexpr GPRReg cache = T9;
+    constexpr GPRReg cache = methodSiteCacheGPR;
     constexpr GPRReg word = T11;
     constexpr GPRReg entry = T13;
     static_assert(noOverlap(thisGPR, name, cache, word, entry));
@@ -17332,6 +17590,43 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     keepFilledSiteCacheMostly(jit, Address(cache), withoutCache);
     loadRowByName(jit, thisGPR, entry, word);
     jit.and32(TrustedImm32(PropertyLookupTable::numberOfColumns - 1), name, word);
+#if CPU(ARM64)
+    constexpr GPRReg method = T9;
+    static_assert(noOverlap(method, thisGPR, name, cache, word, entry, nameCellGPR, nameDifferenceGPR));
+    for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
+        RELEASE_ASSERT(noOverlap(argumentGPR(i), method, nameCellGPR, nameDifferenceGPR));
+    auto hasFlag = [&](uint8_t flag) { return CCallHelpers::TrustedImm64(static_cast<int64_t>(flag) << kindInCellShift); };
+    Address holderInCache { cache, sizeof(uint64_t) };
+    jit.load64(CCallHelpers::BaseIndex(entry, word, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn), nameCellGPR);
+    Jump hasNoKindEntry = branchIfCellNameDiffers(jit, name);
+    jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(PropertyLookupTable::holderIsInPayload)).linkTo(withoutCache, &jit);
+    jit.m_assembler.add<64>(entry, cellCageBaseGPR, nameCellGPR, ARM64Assembler::UXTW, Typed::cell32Shift);
+    jit.extractSignedBitfield64(nameCellGPR, TrustedImm32(codeInCellShift), TrustedImm32(8), nameDifferenceGPR);
+    jit.lshift32(nameDifferenceGPR, TrustedImm32(1), word);
+    jit.move(entry, method);
+    Jump holderHasInline = jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(PropertyLookupTable::valueIsInStorage));
+    jit.or32(TrustedImm32(SiteCaches::isOutOfLine), word);
+    jit.loadPtr(Address(entry, JSObject::butterflyOffset()), method);
+    holderHasInline.link(&jit);
+    jit.load64(CCallHelpers::BaseIndex(method, nameDifferenceGPR, CCallHelpers::TimesEight), method);
+    jit.branchIfNotCell(method).linkTo(withoutCache, &jit);
+    jit.store64(entry, holderInCache);
+    Jump isInherited = jit.jump();
+
+    hasNoKindEntry.link(&jit);
+    jit.m_assembler.sub<64>(nameDifferenceGPR, nameDifferenceGPR, UInt12(PropertyLookupTable::hasKindAndCode >> 12), 12);
+    jit.branchTest64(CCallHelpers::NonZero, nameDifferenceGPR).linkTo(withoutCache, &jit);
+    jit.m_assembler.ldr<64>(method, thisGPR, nameCellGPR, ARM64Assembler::UXTW, 3);
+    jit.branchIfNotCell(method).linkTo(withoutCache, &jit);
+    jit.store64(TrustedImm32(0), holderInCache);
+    jit.lshift32(nameCellGPR, TrustedImm32(1), word);
+
+    isInherited.link(&jit);
+    fillSiteCache(jit, thisGPR, word, entry, cache);
+    jit.move(method, calleeGPR);
+    jit.ret();
+#else
+    using Kind = PropertyLookupTable::Kind;
     jit.getEffectiveAddress(CCallHelpers::BaseIndex(entry, word, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn), entry);
     jit.load16(Address(entry, PropertyLookupTable::offsetOfNameInEntry), word);
     jit.xor32(name, word);
@@ -17376,12 +17671,8 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     fillSiteCache(jit, thisGPR, word, entry, cache);
     jit.move(method, calleeGPR);
     jit.ret();
-}
-#else
-static void generateFindMethodByName(CCallHelpers& jit) { jit.breakpoint(); }
-static void generateFindMethodCellByName(CCallHelpers& jit) { jit.breakpoint(); }
-static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit) { jit.breakpoint(); }
 #endif
+}
 static void generateSpreadArray(CCallHelpers& jit) { generateCallWithArray(jit, Typed::LanguageOperation::CallWithSpread); }
 static void generateConstructClosure(CCallHelpers& jit) { jit.breakpoint(); }
 static void generateCallHostFunction(CCallHelpers& jit) { jit.breakpoint(); }
@@ -17583,6 +17874,19 @@ struct MissesInCompactTable {
     CCallHelpers::JumpList withShortSlots;
     CCallHelpers::JumpList withLongSlots;
 };
+
+static void placeInBuckets(CCallHelpers& jit, GPRReg key, GPRReg hash, GPRReg capacityAndPlace)
+{
+    CCallHelpers::JumpList isPlacedByHash;
+    isPlacedByHash.append(jit.branchIfNotInt32(key));
+    isPlacedByHash.append(jit.branch32(CCallHelpers::AboveOrEqual, key, capacityAndPlace));
+    jit.zeroExtend32ToWord(key, capacityAndPlace);
+    Jump isPlaced = jit.jump();
+    isPlacedByHash.link(&jit);
+    jit.sub32(TrustedImm32(1), capacityAndPlace);
+    jit.and32(hash, capacityAndPlace);
+    isPlaced.link(&jit);
+}
 
 static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, MissesInCompactTable& misses, CCallHelpers::JumpList& found, bool needsEntry, bool needsMisses, CCallHelpers::JumpList* sameCellByTags, CCallHelpers::JumpList* foundInImage)
 {
@@ -18050,8 +18354,7 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     absentCases.append(jit.branchTestPtr(CCallHelpers::Zero, data));
     jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), data);
     jit.load32(Address(data, Helper::capacityIndex() * sizeof(uint64_t)), scratch);
-    jit.sub32(TrustedImm32(1), scratch);
-    jit.and32(hash, scratch);
+    placeInBuckets(jit, key, hash, scratch);
     jit.add32(TrustedImm32(Helper::hashTableStartIndex()), scratch);
     jit.load64(CCallHelpers::BaseIndex(data, scratch, CCallHelpers::TimesEight), count);
 
@@ -18137,7 +18440,7 @@ static void generateMapOrSetOperation(CCallHelpers& jit, MapOrSetOperation opera
             Lookup::loadHash(jit, hasValue ? A4 : A3);
         Lookup::loadReceiver(jit, A1);
         Lookup::leave(jit);
-        jit.move(TrustedImm32(static_cast<unsigned>(function) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(function)), T9);
         jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
     };
     auto storeValue = [&] {
@@ -18451,8 +18754,8 @@ static void generateMapOrSetOperation(CCallHelpers& jit, MapOrSetOperation opera
         jit.add32(capacity, place);
         jit.add32(TrustedImm32(Helper::hashTableStartIndex()), place);
         Lookup::loadHash(jit, bucket);
-        jit.sub32(TrustedImm32(1), capacity);
-        jit.and32(capacity, bucket);
+        placeInBuckets(jit, Lookup::key, bucket, capacity);
+        jit.move(capacity, bucket);
         jit.load64(BaseIndex(data, bucket, CCallHelpers::TimesEight, Helper::hashTableStartIndex() * sizeof(EncodedJSValue)), chain);
         jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), scratch);
         jit.or64(place, scratch);
@@ -19449,7 +19752,7 @@ static void generateTableStub(CCallHelpers& jit, Stub stub, MapOrSetOperation op
     jit.move(TrustedImm32(static_cast<int32_t>(method)), A2);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedCollectionMethod) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedCollectionMethod)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
     jit.move(GPRInfo::returnValueGPR, found);
@@ -19465,7 +19768,7 @@ static void generateTableStub(CCallHelpers& jit, Stub stub, MapOrSetOperation op
         jit.move(found, A3);
         jit.move(key, A2);
         jit.move(receiver, A1);
-        jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedHasByName) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedHasByName)), T9);
         jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
     } else
         jumpsFromStubsToCallValue().append({ jit.jump(), operation == MapOrSetOperation::MapSet ? 2u : 1u });
@@ -19534,7 +19837,7 @@ static void generateLookupByBits(CCallHelpers& jit, MapOrSetOperation operation)
         jit.ret();
     };
     auto tailCallTo = [&](Entry function) {
-        jit.move(TrustedImm32(static_cast<unsigned>(function) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(function)), T9);
         jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
     };
 
@@ -19557,8 +19860,7 @@ static void generateLookupByBits(CCallHelpers& jit, MapOrSetOperation operation)
     absent.append(jit.branchTestPtr(CCallHelpers::Zero, storage));
     jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), storage, data);
     jit.load32(Address(data, JSMap::Helper::capacityIndex() * sizeof(EncodedJSValue)), index);
-    jit.sub32(TrustedImm32(1), index);
-    jit.and32(hash, index);
+    placeInBuckets(jit, key, hash, index);
     jit.add32(TrustedImm32(JSMap::Helper::hashTableStartIndex()), index);
     jit.load64(BaseIndex(data, index, CCallHelpers::TimesEight), index);
     absent.append(jit.branchTest64(CCallHelpers::Zero, index));
@@ -19706,7 +20008,7 @@ static void generateWeakMapSet(CCallHelpers& jit)
     jit.move(IntrinsicRegisters::second, A3);
     jit.move(IntrinsicRegisters::first, A2);
     jit.move(IntrinsicRegisters::receiver, A1);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTWeakMapSet) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTWeakMapSet)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 }
 
@@ -19715,7 +20017,7 @@ static void generateOperationOnTwoStrings(CCallHelpers& jit, Entry operation)
     static_assert(A2 != IntrinsicRegisters::receiver);
     jit.move(IntrinsicRegisters::first, A2);
     jit.move(IntrinsicRegisters::receiver, A1);
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 }
 static void generateStringStartsWith(CCallHelpers& jit) { generateOperationOnTwoStrings(jit, Entry::operationAOTStringStartsWith); }
@@ -19740,7 +20042,7 @@ static void generateStringFind(CCallHelpers& jit, Needle needle)
     };
     auto search = [&] {
         Entry operation = needle == Needle::Character ? Entry::operationAOTTypedStringFindCharacter8 : needle == Needle::Literal ? Entry::operationAOTTypedStringFindLiteral8 : Entry::operationAOTTypedStringFind8;
-        jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(operation)), T9);
         generatePlain(jit, std::nullopt, true);
     };
     jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
@@ -19789,7 +20091,7 @@ static void generateStringFind(CCallHelpers& jit, Needle needle)
     jit.move(other, A2);
     jit.move(needle == Needle::String ? A5 : A4, A3);
     Entry operation = needle == Needle::Character ? Entry::operationAOTTypedStringIndexOfCharacter : needle == Needle::Literal ? Entry::operationAOTTypedStringIndexOfLiteral : Entry::operationAOTTypedStringIndexOf;
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance);
 }
 static void generateStringFindCharacter(CCallHelpers& jit) { generateStringFind(jit, Needle::Character); }
@@ -19950,7 +20252,7 @@ static void generateArraySearch(CCallHelpers& jit, ArraySearch search, SearchedI
         jit.move(index, A3);
     else
         jit.move(TrustedImm32(0), A3);
-    jit.move(TrustedImm32(static_cast<unsigned>(search == ArraySearch::Includes ? Entry::operationArrayIncludesValueInt32OrContiguous : Entry::operationArrayIndexOfValueInt32OrContiguous) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(search == ArraySearch::Includes ? Entry::operationArrayIncludesValueInt32OrContiguous : Entry::operationArrayIndexOfValueInt32OrContiguous)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithGlobalObject)], &jit);
 
     if (searchedIn == SearchedIn::Storage)
@@ -19998,7 +20300,7 @@ static void generateArraySearch(CCallHelpers& jit, ArraySearch search, SearchedI
     if (searchedIn == SearchedIn::Array)
         jit.move(TrustedImm32(0), A3);
     jit.move(TrustedImm32(search == ArraySearch::IndexOf), A4);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedArraySearchByCall) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedArraySearchByCall)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 }
 
@@ -20112,7 +20414,7 @@ static void generateNewEmptyArrayAtSite(CCallHelpers& jit, bool isLeaf)
         jit.move(T9, A1);
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedReviewVectorLengthHint) * sizeof(void*)), T11);
+        jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedReviewVectorLengthHint)), T11);
         jit.call(T11, OperationPtrTag);
     });
     jit.load32(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T12);
@@ -20144,7 +20446,7 @@ static void callWithValuesOnStack(CCallHelpers& jit, Entry operation, unsigned f
     jit.move(TrustedImm32(count), A2);
     loadInstance(jit, A0);
     jit.loadPtr(Address(A0, Instance::offsetOfRuntimeTable()), operationGPR);
-    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(operation) * sizeof(void*)), operationGPR);
+    jit.loadPtr(Address(operationGPR, offsetInTable(operation)), operationGPR);
     prepareCallOperation(jit, assertionScratchGPR);
     jit.call(operationGPR, OperationPtrTag);
 #if CPU(X86_64)
@@ -20391,7 +20693,7 @@ static void generateArrayLiteral(CCallHelpers& jit, unsigned count, bool isLeaf,
         return;
     }
 #if CPU(ARM64)
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewArray) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewArray)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, true, countAndCapacity);
 #else
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -20435,7 +20737,7 @@ AOT_GENERATE_ARRAY_LITERAL_OF_DOUBLES(4)
 static void generateArrayLiteralWithDoubleSlow(CCallHelpers& jit, bool isLeaf)
 {
 #if CPU(ARM64)
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewArrayFromDoubles) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewArrayFromDoubles)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, T13);
 #else
     UNUSED_PARAM(isLeaf);
@@ -20508,7 +20810,7 @@ static void generateElementOrEmpty(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     genericPath.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedElementOrEmpty) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedElementOrEmpty)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generateElementOrEmpty(CCallHelpers& jit) { generateElementOrEmpty(jit, false); }
@@ -20544,7 +20846,7 @@ static void generateTypedNewPromise(CCallHelpers& jit, bool isLeaf)
 
     refillAllocationIntervals(jit, slowCases);
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewPromise) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewPromise)), T9);
     generateColdOperation(jit, isLeaf, true, false);
 }
 static void generateTypedNewPromise(CCallHelpers& jit) { generateTypedNewPromise(jit, false); }
@@ -20845,7 +21147,7 @@ static void generateResolvePromiseAfterAwait(CCallHelpers& jit, bool mayHaveNoPr
     }
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(mayHaveNoPromise ? Entry::operationAOTTypedResolvePromiseOrReturnResult : Entry::operationAOTTypedResolvePromise) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(mayHaveNoPromise ? Entry::operationAOTTypedResolvePromiseOrReturnResult : Entry::operationAOTTypedResolvePromise)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(mayHaveNoPromise ? Stub::OperationValueWithInstance : Stub::OperationVoidWithInstance)], &jit);
 #else
     UNUSED_PARAM(mayHaveNoPromise);
@@ -20925,7 +21227,7 @@ static void generateAsyncGeneratorYield(CCallHelpers& jit)
     jit.ret();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedAsyncGeneratorYield) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedAsyncGeneratorYield)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
 #else
     jit.breakpoint();
@@ -20965,7 +21267,7 @@ static void generateAsyncIteratorNext(CCallHelpers& jit)
         jit.loadPtr(Address(fp, CallFrame::returnPCOffset()), scratch);
         Jump wasRestoredToStack = jit.branchPtr(CCallHelpers::Equal, scratch, Address(instanceGPR, Instance::offsetOfSavedFrameReturnAddress()));
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), target);
-        Jump wasEnteredThroughAdapter = jit.branchPtr(CCallHelpers::Equal, scratch, Address(target, static_cast<unsigned>(Entry::ResumeFunctionReturnAddress) * sizeof(void*)));
+        Jump wasEnteredThroughAdapter = jit.branchPtr(CCallHelpers::Equal, scratch, Address(target, offsetInTable(Entry::ResumeFunctionReturnAddress)));
         Jump wasEnteredByJobLoopAdapter = jit.branch32(CCallHelpers::Equal, Address(scratch), TrustedImm32(static_cast<int32_t>(AsyncGenerator::markerAfterBodyCallInJobLoop)));
         driverMustSuspend.append(jit.branch32(CCallHelpers::NotEqual, Address(scratch), TrustedImm32(static_cast<int32_t>(AsyncGenerator::markerAfterBodyCall))));
         driverMustSuspend.append(jit.branchTest32(CCallHelpers::Zero, Address(other, offsetOfMode), TrustedImm32(Typed::CoroutineFrame::isEnteredByJobLoop)));
@@ -21112,7 +21414,7 @@ static void generateAsyncIteratorNext(CCallHelpers& jit)
 
     finishInOperation.link(&jit);
     jit.move(result, A2);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedFinishStepForDriver) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedFinishStepForDriver)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 
     isAsyncFromSyncIterator.link(&jit);
@@ -21126,7 +21428,7 @@ static void generateAsyncIteratorNext(CCallHelpers& jit)
     jit.ret();
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedAsyncIteratorNext) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedAsyncIteratorNext)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 #else
     jit.breakpoint();
@@ -21178,7 +21480,7 @@ static void generateStepGenerator(CCallHelpers& jit, Typed::Generator::StepCheck
         structureWithID(jit, scratch);
         jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), closure);
-        isNotStepped.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(closure, static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*))));
+        isNotStepped.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(closure, offsetInTable(Entry::GeneratorClassInfo))));
     }
     if (check == Generator::StepCheck::IsUnmodifiedGenerator || check == Generator::StepCheck::IsUnmodified)
         requireUnmodified();
@@ -21249,7 +21551,7 @@ static void generateIterOpenInFrame(CCallHelpers& jit)
         jit.load32(Address(generator, JSCell::structureIDOffset()), structure);
         structureWithID(jit, structure);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
-        jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*)), scratch);
+        jit.loadPtr(Address(scratch, offsetInTable(Entry::GeneratorClassInfo)), scratch);
         isNotGenerator.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::classInfoOffset())));
         isChanged.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfHasOtherPrototype())));
         isChanged.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(generator, JSObject::butterflyOffset())));
@@ -21336,7 +21638,7 @@ static void generateIterOpenInFrame(CCallHelpers& jit)
     finishesInOperation.link(&jit);
     jit.move(result, A1);
     finishesWithIteratorMoved.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedFinishIterOpenInFrame) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedFinishIterOpenInFrame)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 
     callsInOperation.link(&jit);
@@ -21344,11 +21646,11 @@ static void generateIterOpenInFrame(CCallHelpers& jit)
     jit.loadPtr(Address(fp, offsetOfIterable), A1);
     jit.loadPtr(Address(fp, offsetOfWords), A2);
     jit.emitFunctionEpilogue();
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedIterOpenInFrameWithMethod) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedIterOpenInFrameWithMethod)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedIterOpenInFrame) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedIterOpenInFrame)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 }
 
@@ -21672,7 +21974,7 @@ static void generateIterationStub(CCallHelpers& jit, IterationStub which)
         jit.store8(TrustedImm32(0), Address(scratch, Generator::offsetOfIsRunning()));
         jit.ret();
         slowCases.link(&jit);
-        jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedIterCloseInFrame) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedIterCloseInFrame)), T9);
         jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
         return;
     }
@@ -21758,7 +22060,7 @@ static void generateIterationStub(CCallHelpers& jit, IterationStub which)
         });
         isFinishedInOperation.link(&jit);
         jit.move(result, A2);
-        jit.move(TrustedImm32(static_cast<unsigned>(recordIsInFrame ? Entry::operationAOTTypedFinishIterStepInFrame : Entry::operationAOTTypedFinishIterStep) * sizeof(void*)), T9);
+        jit.move(TrustedImm32(offsetInTable(recordIsInFrame ? Entry::operationAOTTypedFinishIterStepInFrame : Entry::operationAOTTypedFinishIterStep)), T9);
         jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 
         hasNoMethod.link(&jit);
@@ -21767,7 +22069,7 @@ static void generateIterationStub(CCallHelpers& jit, IterationStub which)
     }
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(recordIsInFrame ? Entry::operationAOTTypedIterHasInFrame : Entry::operationAOTTypedIterHas) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(recordIsInFrame ? Entry::operationAOTTypedIterHasInFrame : Entry::operationAOTTypedIterHas)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 }
 
@@ -21878,7 +22180,7 @@ static void generateAwaitInAsyncGenerator(CCallHelpers& jit)
     jit.add64(Address(instanceGPR, Instance::offsetOfStructureIDBase()), scratch);
     jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), packed);
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(packed, static_cast<unsigned>(Entry::AsyncGeneratorClassInfo) * sizeof(void*))));
+    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(packed, offsetInTable(Entry::AsyncGeneratorClassInfo))));
     jit.load64(Address(awaited, AsyncGenerator::offsetOfTarget()), packed);
     jit.move(bits(AsyncGenerator::pointerInTarget | AsyncGenerator::isDrainingBeforeDriverInTarget), scratch);
     jit.and64(packed, scratch);
@@ -21906,7 +22208,7 @@ static void generateAwaitInAsyncGenerator(CCallHelpers& jit)
 
     slowCases.link(&jit);
     jit.move(TrustedImm32(0), A3);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedAwait) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedAwait)), T9);
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationVoidWithInstance)], &jit);
 #else
     jit.breakpoint();
@@ -21990,7 +22292,7 @@ static void generateAwaitBySavingFrame(CCallHelpers& jit, bool awaitsCallWithout
 #endif
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-        jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedStepOrAwait) * sizeof(void*)), operationGPR);
+        jit.loadPtr(Address(operationGPR, offsetInTable(Entry::operationAOTTypedStepOrAwait)), operationGPR);
         prepareCallOperation(jit, assertionScratchGPR);
         jit.call(operationGPR, OperationPtrTag);
         jit.load32(Address(sp), word);
@@ -22197,7 +22499,7 @@ static void generateAwaitBySavingFrame(CCallHelpers& jit, bool awaitsCallWithout
         jit.add64(Address(instanceGPR, Instance::offsetOfStructureIDBase()), scratch);
         jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), packed);
-        isRegisteredByOperation.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(packed, static_cast<unsigned>(Entry::AsyncGeneratorClassInfo) * sizeof(void*))));
+        isRegisteredByOperation.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(packed, offsetInTable(Entry::AsyncGeneratorClassInfo))));
         jit.load8(Address(awaited, JSCell::cellStateOffset()), scratch);
         isRegisteredByOperation.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, Address(instanceGPR, Instance::offsetOfBarrierThreshold())));
         jit.load8(Address(saved, JSCell::cellStateOffset()), scratch);
@@ -22282,7 +22584,7 @@ static void generateAwaitBySavingFrame(CCallHelpers& jit, bool awaitsCallWithout
     auto callAndLeaveFunction = [&](Entry operation) {
         jit.move(instanceGPR, A0);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
-        jit.loadPtr(Address(operationGPR, static_cast<unsigned>(operation) * sizeof(void*)), operationGPR);
+        jit.loadPtr(Address(operationGPR, offsetInTable(operation)), operationGPR);
         prepareCallOperation(jit, assertionScratchGPR);
         jit.call(operationGPR, OperationPtrTag);
         jit.load32(Address(sp), word);
@@ -22478,7 +22780,7 @@ static void generateNumberArray(CCallHelpers& jit, IndexingType indexingType, bo
         jit.or32(length, lengthAndCapacity);
     }
     jit.move(TrustedImm32(indexingType | (isUnderConstruction ? numberArrayIsUnderConstruction : 0)), kept);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedNewNumberArray) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedNewNumberArray)), T9);
     generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, lengthAndCapacity, kept);
 #else
     generateColdOperationPlacingArguments(jit, Entry::operationAOTTypedNewNumberArray, 0, [&] {
@@ -22678,7 +22980,7 @@ static void generateArraySlice(CCallHelpers& jit, bool isWhole)
     jit.jump().linkTo(hasStorage, &jit);
 
     fails.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(isWhole ? Entry::operationAOTTypedArrayCopy : Entry::operationAOTTypedArraySlice) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(isWhole ? Entry::operationAOTTypedArrayCopy : Entry::operationAOTTypedArraySlice)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generateArraySlice(CCallHelpers& jit) { generateArraySlice(jit, false); }
@@ -22766,7 +23068,7 @@ static void generateCreateArguments(CCallHelpers& jit)
     returnToTypedCaller(jit, isLeaf);
 
     fails.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedCreateArguments) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedCreateArguments)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generateLeafCreateArguments(CCallHelpers& jit) { jit.breakpoint(); }
@@ -22957,7 +23259,7 @@ static void generatePushToFullVector(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     slowCases.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedArrayPush) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedArrayPush)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generatePushToFullVector(CCallHelpers& jit) { generatePushToFullVector(jit, false); }
@@ -23005,6 +23307,97 @@ static void generateSetHasOrCallValue(CCallHelpers& jit) { generateMethodOfTable
 static void generateSetAddOrCallMethod(CCallHelpers& jit) { generateMethodOfTableOrCall(jit, Receiver::Set, 1, Stub::SetAdd, jumpsFromStubsToCallMethod()); }
 static void generateSetAddOrCallValue(CCallHelpers& jit) { generateMethodOfTableOrCall(jit, Receiver::Set, 1, Stub::SetAdd, jumpsFromStubsToCallValue()); }
 
+static Vector<std::pair<Receiver, Stub>, 4> collectionsWhoseMethodIsKnownWhenRead(CollectionMethod method)
+{
+    switch (method) {
+    case CollectionMethod::Get:
+        return { { Receiver::Map, Stub::MapGet }, { Receiver::WeakMap, Stub::WeakMapGet } };
+    case CollectionMethod::Has:
+        return { { Receiver::Map, Stub::MapHas }, { Receiver::Set, Stub::SetHas }, { Receiver::WeakMap, Stub::WeakMapHas }, { Receiver::WeakSet, Stub::WeakSetHas } };
+    case CollectionMethod::Set:
+        return { { Receiver::Map, Stub::MapSet } };
+    case CollectionMethod::Add:
+        return { { Receiver::Set, Stub::SetAdd } };
+    case CollectionMethod::None:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static constexpr int32_t markerOfCollectionMethod(unsigned index) { return (index + 1) << 4; }
+static_assert(markerOfCollectionMethod(3) == greatestMarkerOfMethodReadAhead);
+
+static void generateGetCollectionMethodByName(CCallHelpers& jit, CollectionMethod method, Stub genericStub)
+{
+    constexpr GPRReg structureID = T11;
+    static_assert(noOverlap(structureID, R0, stubImmediateGPR, preservedIntegerGPRs[0], preservedIntegerGPRs[1]));
+    auto served = collectionsWhoseMethodIsKnownWhenRead(method);
+    Vector<Jump, 4> isServed;
+    Jump isNotCell = jit.branchIfNotCell(R0);
+    jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
+    for (auto [receiver, stub] : served)
+        isServed.append(jit.branch32(CCallHelpers::Equal, structureID, Address(instanceGPR, Instance::offsetOfReceiverStructureID(receiver))));
+    isNotCell.link(&jit);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(genericStub)], &jit);
+    for (unsigned i = 0; i < isServed.size(); ++i) {
+        isServed[i].link(&jit);
+        jit.move(TrustedImm32(markerOfCollectionMethod(i)), R0);
+        jit.ret();
+    }
+}
+static void generateGetCollectionGetByName(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Get, Stub::GetByNameWithDirectColumn); }
+static void generateGetCollectionGetByNamePreservingTwo(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Get, Stub::GetByNameWithDirectColumnPreservingTwo); }
+static void generateGetCollectionHasByName(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Has, Stub::GetByNameWithDirectColumn); }
+static void generateGetCollectionHasByNamePreservingTwo(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Has, Stub::GetByNameWithDirectColumnPreservingTwo); }
+static void generateGetCollectionSetByName(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Set, Stub::GetByNameWithDirectColumn); }
+static void generateGetCollectionSetByNamePreservingTwo(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Set, Stub::GetByNameWithDirectColumnPreservingTwo); }
+static void generateGetCollectionAddByName(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Add, Stub::GetByNameWithDirectColumn); }
+static void generateGetCollectionAddByNamePreservingTwo(CCallHelpers& jit) { generateGetCollectionMethodByName(jit, CollectionMethod::Add, Stub::GetByNameWithDirectColumnPreservingTwo); }
+
+static void generateCollectionMethodOrCallValue(CCallHelpers& jit, CollectionMethod method, unsigned count)
+{
+    auto served = collectionsWhoseMethodIsKnownWhenRead(method);
+    jumpsFromStubsToCallValue().append({ jit.branch64(CCallHelpers::Above, calleeGPR, TrustedImm32(markerOfCollectionMethod(served.size() - 1))), count });
+    for (unsigned i = 0; i + 1 < served.size(); ++i)
+        jit.branch32(CCallHelpers::Equal, calleeGPR, TrustedImm32(markerOfCollectionMethod(i))).linkTo(stubLabels()[static_cast<unsigned>(served[i].second)], &jit);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(served.last().second)], &jit);
+}
+static void generateCollectionGetOrCallValue(CCallHelpers& jit) { generateCollectionMethodOrCallValue(jit, CollectionMethod::Get, 1); }
+static void generateCollectionHasOrCallValue(CCallHelpers& jit) { generateCollectionMethodOrCallValue(jit, CollectionMethod::Has, 1); }
+static void generateCollectionSetOrCallValue(CCallHelpers& jit) { generateCollectionMethodOrCallValue(jit, CollectionMethod::Set, 2); }
+static void generateCollectionAddOrCallValue(CCallHelpers& jit) { generateCollectionMethodOrCallValue(jit, CollectionMethod::Add, 1); }
+
+static void generateGetArrayPushByName(CCallHelpers& jit, Stub genericStub)
+{
+    constexpr GPRReg expected = T11;
+    static_assert(noOverlap(expected, R0, stubImmediateGPR, preservedIntegerGPRs[0], preservedIntegerGPRs[1]));
+    Jump isNotCell = jit.branchIfNotCell(R0);
+    jit.load8(Address(R0, JSCell::indexingTypeAndMiscOffset()), expected);
+    jit.urshift32(TrustedImm32(Instance::arrayKindShift), expected);
+    jit.and32(TrustedImm32(Instance::numberOfArrayKinds - 1), expected);
+    jit.load32(CCallHelpers::BaseIndex(instanceGPR, expected, CCallHelpers::TimesFour, Instance::offsetOfOriginalArrayStructureIDs()), expected);
+    Jump isOriginal = jit.branch32(CCallHelpers::Equal, expected, Address(R0, JSCell::structureIDOffset()));
+    isNotCell.link(&jit);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(genericStub)], &jit);
+    isOriginal.link(&jit);
+    jit.move(TrustedImm32(markerOfCollectionMethod(0)), R0);
+    jit.ret();
+}
+static void generateGetArrayPushByName(CCallHelpers& jit) { generateGetArrayPushByName(jit, Stub::GetByNameWithDirectColumn); }
+static void generateGetArrayPushByNamePreservingTwo(CCallHelpers& jit) { generateGetArrayPushByName(jit, Stub::GetByNameWithDirectColumnPreservingTwo); }
+
+static void generateArrayPushReadAheadOrCallValue(CCallHelpers& jit)
+{
+    static_assert(noOverlap(A2, thisGPR) && noOverlap(A1, A2, A3, kindInPushToFullVector));
+    jit.branch64(CCallHelpers::NotEqual, calleeGPR, TrustedImm32(markerOfCollectionMethod(0))).linkTo(stubLabels()[static_cast<unsigned>(Stub::ArrayPushOrCallValue)], &jit);
+    jit.move(argumentGPR(0), A2);
+    jit.move(thisGPR, A1);
+    jit.move(TrustedImm32(1), A3);
+    jit.load8(Address(A1, JSCell::indexingTypeAndMiscOffset()), kindInPushToFullVector);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kindInPushToFullVector);
+    jit.jump().linkTo(pushToKnownKindArrayLabel(), &jit);
+}
+
 static void generateRegExpMatchOrCall(CCallHelpers& jit, Stub stub, Vector<std::pair<Jump, unsigned>>& genericCall)
 {
     constexpr GPRReg structureID = T11;
@@ -23051,7 +23444,7 @@ static void generateStringMatchOrCall(CCallHelpers& jit, Vector<std::pair<Jump, 
     isGlobal.link(&jit);
     jit.move(argumentGPR(0), A2);
     jit.move(thisGPR, A1);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStringMatchRegExp) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStringMatchRegExp)), T9);
     generateOperation(jit, Returns::Value, Supplies::Instance);
 }
 static void generateStringMatchOrCallMethod(CCallHelpers& jit) { generateStringMatchOrCall(jit, jumpsFromStubsToCallMethod()); }
@@ -23150,7 +23543,7 @@ static void generateSubstring(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     fails.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedSubstring) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedSubstring)), T9);
 #if CPU(X86_64)
     generateColdOperation(jit, isLeaf, true, true, true, false, false, T9, InvalidGPRReg, InvalidGPRReg, nullptr, false);
 #else
@@ -23193,7 +23586,7 @@ static void generatePushDoubleToFullVector(CCallHelpers& jit, bool isLeaf)
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(isLeaf ? Stub::LeafPushToFullVector : Stub::PushToFullVector)], &jit);
 
     isInt32ShapeList.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedArrayPushNumber) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedArrayPushNumber)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generatePushDoubleToFullVector(CCallHelpers& jit) { generatePushDoubleToFullVector(jit, false); }
@@ -23267,7 +23660,7 @@ static void generateStoreElement(CCallHelpers& jit, bool isLeaf)
     genericWithRestoredNumber.link(&jit);
     jit.move64ToDouble(savedNumber, number);
     genericPath.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStoreElement) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStoreElement)), T9);
     generateColdOperation(jit, isLeaf);
 }
 static void generateStoreElement(CCallHelpers& jit) { generateStoreElement(jit, false); }
@@ -23325,7 +23718,7 @@ static void generateLoadElement(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     genericPath.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedArrayGetAtIndex) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedArrayGetAtIndex)), T9);
     generateColdOperation(jit, isLeaf, true);
 }
 static void generateLoadElement(CCallHelpers& jit) { generateLoadElement(jit, false); }
@@ -23378,7 +23771,7 @@ static void generateLoadElementAsDoubleOrNullish(CCallHelpers& jit, bool isLeaf)
     returnToTypedCaller(jit, isLeaf);
 
     genericPath.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedArrayGetAtIndexAsNumber) * sizeof(void*)), numberOfColdOperationGPR());
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedArrayGetAtIndexAsNumber)), numberOfColdOperationGPR());
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(isLeaf ? Stub::LeafColdOperationDouble : Stub::ColdOperationDouble)], &jit);
 }
 static void generateLoadElementAsDoubleOrNullish(CCallHelpers& jit) { generateLoadElementAsDoubleOrNullish(jit, false); }
@@ -23409,7 +23802,7 @@ static void generateToNumberAsDouble(CCallHelpers& jit, bool isLeaf)
     jit.convertInt32ToDouble(T11, result);
     returnToTypedCaller(jit, isLeaf);
     notBoolean.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedToNumber) * sizeof(void*)), numberOfColdOperationGPR());
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedToNumber)), numberOfColdOperationGPR());
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(isLeaf ? Stub::LeafColdOperationDouble : Stub::ColdOperationDouble)], &jit);
 }
 static void generateToNumberAsDouble(CCallHelpers& jit) { generateToNumberAsDouble(jit, false); }
@@ -23422,10 +23815,10 @@ static void generateElementStubFallback(CCallHelpers& jit, bool isLeaf, Entry op
 {
 #if CPU(X86_64)
     constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), scratch);
+    jit.move(TrustedImm32(offsetInTable(operation)), scratch);
     generateColdOperation(jit, isLeaf, true, true, true, false, true, scratch);
 #else
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(operation)), T9);
     generateColdOperation(jit, isLeaf, true);
 #endif
 }
@@ -23638,7 +24031,7 @@ static void generateAbsentFieldOfFlaggedObject(CCallHelpers& jit, bool isLeaf, E
         generateElementStubFallback(jit, isLeaf, operation);
         return;
     }
-    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), scratch);
+    jit.move(TrustedImm32(offsetInTable(operation)), scratch);
 #if CPU(X86_64)
     generateColdOperation(jit, isLeaf, false, true, true, true, true, scratch);
 #else
@@ -23728,7 +24121,7 @@ static void generateStoreDoubleElement(CCallHelpers& jit, bool isLeaf)
     jit.jump().linkTo(general, &jit);
 
     isInt32ShapeList.link(&jit);
-    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedStoreNumberElement) * sizeof(void*)), T9);
+    jit.move(TrustedImm32(offsetInTable(Entry::operationAOTTypedStoreNumberElement)), T9);
     generateColdOperation(jit, isLeaf);
 }
 static void generateStoreDoubleElement(CCallHelpers& jit) { generateStoreDoubleElement(jit, false); }
@@ -23819,7 +24212,7 @@ static void generateCreateThisByNewTarget(CCallHelpers& jit)
     }
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedCreateThisAt) * sizeof(void*)), T11);
+    jit.loadPtr(Address(T11, offsetInTable(Entry::operationAOTTypedCreateThisAt)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
 
@@ -24385,6 +24778,16 @@ static std::optional<Stub> variantPreservingTwoIntegers(Stub stub)
         return Stub::GetByNamePreservingTwo;
     case Stub::GetLengthByName:
         return Stub::GetLengthByNamePreservingTwo;
+    case Stub::GetCollectionGetByName:
+        return Stub::GetCollectionGetByNamePreservingTwo;
+    case Stub::GetCollectionHasByName:
+        return Stub::GetCollectionHasByNamePreservingTwo;
+    case Stub::GetCollectionSetByName:
+        return Stub::GetCollectionSetByNamePreservingTwo;
+    case Stub::GetCollectionAddByName:
+        return Stub::GetCollectionAddByNamePreservingTwo;
+    case Stub::GetArrayPushByName:
+        return Stub::GetArrayPushByNamePreservingTwo;
     case Stub::PutByName:
         return Stub::PutByNamePreservingTwo;
     case Stub::PutByNameSloppy:
@@ -24588,6 +24991,7 @@ static std::optional<RegisterSet> registersNamedByGenerator(Stub stub)
             return changes({ T12 });
         case Stub::FlatStringsAreEqual:
         case Stub::StringsAreEqual:
+        case Stub::CompareStrings:
         case Stub::LoadElement:
             return changes({ T9, T11, T12, T13, T14 });
         case Stub::LoadElementAsDoubleOrNullish:
@@ -24810,6 +25214,8 @@ static std::optional<RegisterSet> registersNamedByGenerator(Stub stub)
     case Stub::LeafFlatStringsAreEqual:
     case Stub::StringsAreEqual:
     case Stub::LeafStringsAreEqual:
+    case Stub::CompareStrings:
+    case Stub::LeafCompareStrings:
     case Stub::ConcatenateTwo:
     case Stub::LeafConcatenateTwo:
     case Stub::ConcatenateThree:
@@ -25011,7 +25417,7 @@ static Stub stubVariantForReceiverInFirstOperandGPR(Stub stub)
 static std::optional<RegisterSet> registersClobberedByNameStubVariant(Stub stub)
 {
     stub = stubVariantForReceiverInFirstOperandGPR(stub);
-    constexpr Stub stubsByName[] = { Stub::GetByName, Stub::GetLengthByName, Stub::PutByName, Stub::PutByNameSloppy, Stub::DefineByName };
+    constexpr Stub stubsByName[] = { Stub::GetByName, Stub::GetLengthByName, Stub::GetCollectionGetByName, Stub::GetCollectionHasByName, Stub::GetCollectionSetByName, Stub::GetCollectionAddByName, Stub::GetArrayPushByName, Stub::PutByName, Stub::PutByNameSloppy, Stub::DefineByName };
     for (Stub nonPreservingStub : stubsByName) {
         Stub preservingTwo = *variantPreservingTwoIntegers(nonPreservingStub);
         bool preservesNothing = stub == nonPreservingStub || stub == stubVariantForName(nonPreservingStub, 1);
@@ -25314,7 +25720,7 @@ static void generateCallMethodByName(CCallHelpers& jit, unsigned count, CCallHel
     jit.move(R0, A1);
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
-    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTTypedThrowMethodIsNotAFunction) * sizeof(void*)), T9);
+    jit.loadPtr(Address(T9, offsetInTable(Entry::operationAOTTypedThrowMethodIsNotAFunction)), T9);
     callAndCheckException(jit, T9, Returns::Void);
 }
 
@@ -25417,13 +25823,93 @@ static void padForAnotherLayout(CCallHelpers& jit, WeakRandom& random, unsigned 
         jit.breakpoint();
 }
 
-std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, bool mayRunInMultipleInstances, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly)
+#if CPU(ARM64) || CPU(X86_64)
+struct PartOfStubBlob {
+    size_t start;
+    EntrySet entriesUsed;
+    LanguageOperationSet languageOperationsUsed;
+    Vector<unsigned, 4> partsReferredTo;
+    bool holdsReturnAddressKnownToRuntime { false };
+    bool isEmpty { false };
+};
+
+template<typename Functor>
+static void forEachStubEnteredByRuntime(const Functor& functor)
+{
+    for (Stub stub : { Stub::Enter, Stub::EnterFunctionForCall, Stub::EnterFunctionForConstruct, Stub::EnterModule, Stub::EnterClosure, Stub::EnterSlimClosure, Stub::EnterResume, Stub::EnterAsyncGenerator, Stub::EnterSavedFrame, Stub::RestoreSavedFrameToStack,
+        Stub::Catch, Stub::RejectInFrame, Stub::HandleException, Stub::VirtualCall, Stub::VirtualConstruct, Stub::VirtualTailCall, Stub::CallBoundFunction,
+        Stub::ThrowAtTrap, Stub::LeafThrowAtTrap, Stub::ThrowAtFault, Stub::LeafThrowAtFault, Stub::PollAtPrologue, Stub::PollAtLoop, Stub::LeafPollAtLoop })
+        functor(stub);
+    for (unsigned kind = 0; kind < PropertyLookupTable::numberOfKinds; ++kind) {
+        for (unsigned form = 0; form < std::extent_v<decltype(Instance::getByNameHandlers)>; ++form)
+            functor(getByNameHandler(form, static_cast<PropertyLookupTable::Kind>(kind)));
+        for (unsigned variant = 0; variant < std::extent_v<decltype(Instance::putByNameHandlers)>; ++variant)
+            functor(putByNameHandler(variant, static_cast<PropertyLookupTable::Kind>(kind)));
+    }
+}
+
+static void findWhatIsReached(const Vector<PartOfStubBlob>& parts, const Vector<unsigned>& partHoldingStub, const BitVector& calledStubs, bool allStubsAreGenerated, StubBlob& blob)
+{
+    EntrySet used = s_entriesUsedByFunctions;
+    LanguageOperationSet languageOperationsUsed = s_languageOperationsUsedByFunctions;
+    BitVector isReached(parts.size());
+    Vector<unsigned> worklist;
+    auto reach = [&](unsigned part) {
+        do {
+            if (!isReached.set(part))
+                worklist.append(part);
+        } while (part && parts[--part].isEmpty);
+    };
+    for (unsigned stub : calledStubs)
+        reach(partHoldingStub[stub]);
+    forEachStubEnteredByRuntime([&](Stub stub) {
+        reach(partHoldingStub[static_cast<unsigned>(stub)]);
+    });
+    reach(numberOfStubs);
+    for (unsigned part = 0; part < parts.size(); ++part) {
+        if (parts[part].holdsReturnAddressKnownToRuntime)
+            reach(part);
+    }
+    while (!worklist.isEmpty()) {
+        while (!worklist.isEmpty()) {
+            auto& part = parts[worklist.takeLast()];
+            used.merge(part.entriesUsed);
+            languageOperationsUsed.merge(part.languageOperationsUsed);
+            for (unsigned other : part.partsReferredTo)
+                reach(other);
+        }
+        forEachOperationFrontEnd([&](Entry entry, Entry, Stub stub) {
+            if (used.get(static_cast<unsigned>(entry)))
+                reach(partHoldingStub[static_cast<unsigned>(stub)]);
+        });
+    }
+    if (Options::verboseAOTCompilation() && allStubsAreGenerated) [[unlikely]] {
+        size_t bytesNotReached = 0;
+        for (unsigned stub = 0; stub < numberOfStubs; ++stub) {
+            if (!isReached.get(stub))
+                bytesNotReached += parts[stub + 1].start - parts[stub].start;
+        }
+        dataLogLn("AOT: ", isReached.bitCount(), " of ", parts.size(), " parts of the stubs are reached; ", bytesNotReached, " bytes of stubs are not; ", used.count(), " of ", numberOfEntries, " entries of the runtime table are used");
+        for (size_t entry : used)
+            dataLogLn("AOT: uses ", nameOf(static_cast<Entry>(entry)));
+    }
+    for (size_t entry : used)
+        blob.entriesUsed.set(entry);
+    for (size_t operation : languageOperationsUsed)
+        blob.languageOperationsUsed.set(operation);
+    for (unsigned stub = 0; stub < numberOfStubs; ++stub) {
+        if (isReached.get(stub))
+            blob.stubsGenerated.set(stub);
+        if (isReached.get(partHoldingStub[stub]))
+            blob.stubsReached.set(stub);
+    }
+}
+#endif
+
+static std::unique_ptr<StubBlob> generateStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, bool mayRunInMultipleInstances, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly, const BitVector* stubsToGenerate)
 {
     UNUSED_PARAM(imageHasWebAssembly);
-    RELEASE_ASSERT(codeGranuleShift >= minCodeGranuleShift && codeGranuleShift <= maxCodeGranuleShift);
     auto blob = makeUniqueWithoutFastMallocCheck<StubBlob>();
-    static Lock lock;
-    Locker locker { lock };
     {
         s_codeGranuleShift = codeGranuleShift;
         s_functionLengthsAreBytes = functionLengthsAreBytes;
@@ -25431,6 +25917,8 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
         CCallHelpers jit;
         readTagsFromInstance(jit);
 #if CPU(ARM64) || CPU(X86_64)
+        RELEASE_ASSERT(!jit.m_assembler.codeSize());
+        CCallHelpers::Label startOfBlob = jit.label();
         CCallHelpers::Label* labels = stubLabels();
         Vector<std::pair<CCallHelpers::Call, Stub>> callsBetweenStubs;
         s_callsBetweenStubs = &callsBetweenStubs;
@@ -25462,16 +25950,43 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
             size_t here = jit.m_assembler.codeSize();
             return here == startOfLastStub || here == s_endOfStubThatFallsThrough;
         };
+#if CPU(ARM64) || CPU(X86_64)
+        Vector<PartOfStubBlob> parts;
+        size_t numberOfReturnAddressesKnownToRuntime = 0;
+        auto beginPart = [&] {
+            size_t returnAddresses = returnsIntoAdapters.size() + returnsFromFindingTargets.size();
+            if (!parts.isEmpty()) {
+                if (lastStubRunsOnIntoWhatFollows())
+                    parts.last().partsReferredTo.append(parts.size());
+                parts.last().holdsReturnAddressKnownToRuntime = returnAddresses != numberOfReturnAddressesKnownToRuntime;
+                parts.last().isEmpty = jit.m_assembler.codeSize() == startOfLastStub;
+            }
+            numberOfReturnAddressesKnownToRuntime = returnAddresses;
+            parts.append(PartOfStubBlob { jit.m_assembler.codeSize(), { }, { }, { } });
+            t_entriesUsedByStub = &parts.last().entriesUsed;
+            t_languageOperationsUsedByStub = &parts.last().languageOperationsUsed;
+        };
+#else
+        auto beginPart = [] { };
+#endif
         for (unsigned i = 0; i < numberOfStubs; ++i) {
+            beginPart();
             if (layoutSeed && !layout.getUint32(64) && !lastStubRunsOnIntoWhatFollows()) [[unlikely]]
                 padForAnotherLayout(jit, layout, 16, 4);
-            jit.align();
+            bool isLeftOut = stubsToGenerate && !stubsToGenerate->get(i);
+            if (!isLeftOut)
+                jit.align();
             labels[i] = jit.label();
             startOfLastStub = jit.m_assembler.codeSize();
             if (isGeneratedOnlyIfCalled(static_cast<Stub>(i)) && !calledStubs.get(i))
                 continue;
+            if (isLeftOut) {
+                jit.breakpoint();
+                continue;
+            }
             generateStub(jit, static_cast<Stub>(i));
         }
+        beginPart();
         if (layoutSeed && !lastStubRunsOnIntoWhatFollows()) [[unlikely]]
             padForAnotherLayout(jit, layout, 16, 64);
 
@@ -25498,7 +26013,7 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
                     if (entry == static_cast<unsigned>(Entry::operationAOTTypedEnforceTypeOrConvert))
                         returnFromCastIfConversionIsPlanned(jit, stub, true);
                     unsigned calledEntry = entry == static_cast<unsigned>(Entry::operationAOTTypedCoerce) && returnFromCastIfConversionIsPlanned(jit, stub) ? static_cast<unsigned>(Entry::RawTypedCoerce) : entry;
-                    jit.move(CCallHelpers::TrustedImm32(calledEntry * sizeof(void*)), isColdOperationWithThunk(stub) ? numberOfColdOperationGPR() : T9);
+                    jit.move(CCallHelpers::TrustedImm32(offsetInTable(static_cast<Entry>(calledEntry))), isColdOperationWithThunk(stub) ? numberOfColdOperationGPR() : T9);
                     jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
                 }
             }
@@ -25558,7 +26073,7 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
                         isBoundFunction.append(jit.branchPtr(CCallHelpers::Equal, T13, Address(instanceGPR, Instance::offsetOfBoundFunctionClassInfo())));
                         if (imageHasWebAssembly) {
                             jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
-                            jit.branchPtr(CCallHelpers::Equal, T13, Address(T11, static_cast<unsigned>(Entry::WebAssemblyFunctionClassInfo) * sizeof(void*))).linkTo(callNotClosureLabel(count), &jit);
+                            jit.branchPtr(CCallHelpers::Equal, T13, Address(T11, offsetInTable(Entry::WebAssemblyFunctionClassInfo))).linkTo(callNotClosureLabel(count), &jit);
                         }
                         jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), T13);
                         Jump isTagged = jit.branchTestPtr(CCallHelpers::NonZero, T13, TrustedImm32(JSFunction::rareDataTag));
@@ -25675,6 +26190,7 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
             }
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
             for (auto& test : stackTestsBeforeEntering) {
+                beginPart();
                 test.doesNotFit.link(&jit);
 #if CPU(ARM64)
                 jit.move(CCallHelpers::linkRegister, ARM64Registers::x16);
@@ -25682,7 +26198,47 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
                 callStubFromStub(jit, Stub::PollBeforeEntering);
                 jit.jump().linkTo(test.behind, &jit);
             }
+            t_entriesUsedByStub = nullptr;
+            t_languageOperationsUsedByStub = nullptr;
+            auto partAt = [&](size_t offset) {
+                return static_cast<unsigned>(std::ranges::upper_bound(parts, offset, { }, &PartOfStubBlob::start) - parts.begin()) - 1;
+            };
+            auto addReference = [&](size_t withinInstruction, size_t to) {
+                unsigned source = partAt(withinInstruction);
+                unsigned target = partAt(to);
+                if (source != target && !parts[source].partsReferredTo.contains(target))
+                    parts[source].partsReferredTo.append(target);
+            };
+            auto offsetOf = [&](auto label) {
+                return static_cast<size_t>(CCallHelpers::differenceBetween(startOfBlob, label));
+            };
+#if CPU(X86_64)
+            for (auto& jump : jit.m_assembler.linkedJumps())
+                addReference(jump.from - 1, jump.to);
+#else
+            for (auto& jump : jit.m_assembler.jumpsToLink())
+                addReference(jump.from(), jump.to(&jit.m_assembler));
+#endif
+            for (auto& [call, stub] : callsBetweenStubs) {
+                bool labelIsBehindInstruction = isX86_64() || !call.isFlagSet(CCallHelpers::Call::Tail);
+                addReference(offsetOf(call) - labelIsBehindInstruction, offsetOf(labels[static_cast<unsigned>(stub)]));
+            }
+            for (auto& address : labelAddresses)
+                addReference(offsetOf(address.instruction), offsetOf(address.target));
+            Vector<unsigned> partHoldingStub(numberOfStubs, [&](size_t stub) {
+                return partAt(offsetOf(labels[stub]));
+            });
+            findWhatIsReached(parts, partHoldingStub, calledStubs, !stubsToGenerate, *blob);
+            for (unsigned i = 0; stubsToGenerate && i < numberOfStubs; ++i) {
+                if (!blob->stubsGenerated.get(i) || stubsToGenerate->get(i))
+                    continue;
+                dataLogLn("AOT: the stub ", nameOf(static_cast<Stub>(i)), " was left out of the image, and what is in the image refers to it.");
+                RELEASE_ASSERT_NOT_REACHED();
+            }
         }
+#else
+        for (unsigned i = 0; i < numberOfStubs; ++i)
+            blob->stubsReached.set(i);
 #endif
 
         if (layoutSeed) [[unlikely]]
@@ -25690,6 +26246,12 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
         jit.padBeforePatch();
 #if CPU(X86_64)
         RELEASE_ASSERT(exhaustedIntervals().isEmpty());
+#endif
+#if CPU(ARM64) || CPU(X86_64)
+        if (!stubsToGenerate)
+            return blob;
+#endif
+#if CPU(X86_64)
         jit.m_assembler.shortenLinkedJumps();
 #endif
         Vector<uint32_t> storage(WTF::roundUpToMultipleOf<sizeof(uint32_t)>(jit.m_assembler.codeSize()) / sizeof(uint32_t));
@@ -25780,6 +26342,22 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
         }
     }
     return blob;
+}
+
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, bool mayRunInMultipleInstances, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly)
+{
+    RELEASE_ASSERT(codeGranuleShift >= minCodeGranuleShift && codeGranuleShift <= maxCodeGranuleShift);
+    static Lock lock;
+    Locker locker { lock };
+    auto generate = [&](const BitVector* stubsToGenerate) {
+        return generateStubBlob(codeGranuleShift, functionLengthsAreBytes, mayRunInMultipleInstances, calledThunks, calledStubs, imageHasWebAssembly, stubsToGenerate);
+    };
+#if CPU(ARM64) || CPU(X86_64)
+    BitVector stubsToGenerate = generate(nullptr)->stubsGenerated;
+    return generate(&stubsToGenerate);
+#else
+    return generate(nullptr);
+#endif
 }
 
 #if CPU(ARM64) || CPU(X86_64)
@@ -26241,11 +26819,30 @@ void IndexReferences::loadSiteCacheWord(CCallHelpers& jit, GPRReg dest, unsigned
 #endif
 }
 
+CCallHelpers::Jump IndexReferences::loadSiteCacheUnlessStructureDiffers(CCallHelpers& jit, GPRReg cell, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction)
+{
+    static_assert(SiteCaches::wordsOfLocation == 2);
+#if CPU(ARM64)
+    getAddressOfSiteCacheWord(jit, secondWord, wordInFunction);
+    jit.loadPair64(secondWord, firstWord, secondWord);
+    return jit.branch32(CCallHelpers::NotEqual, firstWord, CCallHelpers::Address(cell, JSCell::structureIDOffset()));
+#else
+    loadSiteCacheWord(jit, firstWord, wordInFunction);
+    CCallHelpers::Jump differs = jit.branch32(CCallHelpers::NotEqual, firstWord, CCallHelpers::Address(cell, JSCell::structureIDOffset()));
+    loadSiteCacheWord(jit, secondWord, wordInFunction + 1);
+    return differs;
+#endif
+}
+
 void IndexReferences::getAddressOfSiteCacheWord(CCallHelpers& jit, GPRReg dest, unsigned wordInFunction)
 {
 #if CPU(X86_64)
     jit.m_assembler.leaq_mr(std::numeric_limits<int32_t>::max(), instanceGPR, dest);
     m_references.append({ jit.label(), static_cast<uint32_t>(SiteCaches::offsetOfWords + wordInFunction * sizeof(uint64_t)), sizeof(uint64_t), true });
+#elif CPU(ARM64)
+    m_references.append({ jit.label(), static_cast<uint32_t>(SiteCaches::offsetOfWords + wordInFunction * sizeof(uint64_t)), sizeof(uint64_t), true, true });
+    jit.m_assembler.add<64>(dest, instanceGPR, UInt12(0), 12);
+    jit.m_assembler.add<64>(dest, dest, UInt12(0));
 #else
     UNUSED_PARAM(jit);
     UNUSED_PARAM(dest);
@@ -26263,6 +26860,15 @@ void IndexReferences::loadFromCachedLocation(CCallHelpers& jit, GPRReg receiver,
     jit.rshift64(TrustedImm32(SiteCaches::indexShift), cachedWord);
     jit.m_assembler.cmovq_mr(X86Assembler::ConditionC, JSObject::butterflyOffset(), cachedHolder, cachedHolder);
     jit.load64(CCallHelpers::BaseIndex(cachedHolder, cachedWord, CCallHelpers::TimesEight), dest);
+#elif CPU(ARM64)
+    static_assert(SiteCaches::indexShift == SiteCaches::offsetShift + 1 && SiteCaches::isOutOfLine == 1);
+    RELEASE_ASSERT(noOverlap(dest, cachedWord, cachedHolder));
+    jit.moveConditionallyTest64(CCallHelpers::Zero, cachedHolder, cachedHolder, receiver, cachedHolder);
+    jit.loadPtr(CCallHelpers::Address(cachedHolder, JSObject::butterflyOffset()), dest);
+    jit.m_assembler.tst<64>(cachedWord, LogicalImmediate::create64(1ull << SiteCaches::offsetShift));
+    jit.m_assembler.csel<64>(cachedHolder, dest, cachedHolder, ARM64Assembler::ConditionNE);
+    jit.rshift64(TrustedImm32(SiteCaches::indexShift), cachedWord);
+    jit.load64(CCallHelpers::BaseIndex(cachedHolder, cachedWord, CCallHelpers::TimesEight), dest);
 #else
     UNUSED_PARAM(jit);
     UNUSED_PARAM(receiver);
@@ -26278,7 +26884,7 @@ Vector<IndexReference> IndexReferences::link(LinkBuffer& linkBuffer)
     auto* start = static_cast<uint8_t*>(linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr());
     Vector<IndexReference> result;
     for (auto& reference : m_references)
-        result.append({ static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(reference.instructions).untaggedPtr()) - start), reference.addend, static_cast<uint16_t>(reference.scale), reference.isSiteCacheWord });
+        result.append({ static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(reference.instructions).untaggedPtr()) - start), reference.addend, static_cast<uint16_t>(reference.scale), reference.isSiteCacheWord, reference.isAddress });
     return result;
 }
 
@@ -26291,6 +26897,10 @@ void IndexReferences::fill(uint8_t* code, const IndexReference& reference, uint3
     constexpr uint32_t immediate = 0xfffu << 10;
     RELEASE_ASSERT(!(instructions[0] & immediate) && !(instructions[1] & immediate));
     instructions[0] |= static_cast<uint32_t>(distance >> 12) << 10;
+    if (reference.isAddress) {
+        instructions[1] |= static_cast<uint32_t>(distance & 0xfff) << 10;
+        return;
+    }
     unsigned log2BytesLoaded = instructions[1] >> 30;
     RELEASE_ASSERT(!(distance & ((1u << log2BytesLoaded) - 1)));
     instructions[1] |= static_cast<uint32_t>((distance & 0xfff) >> log2BytesLoaded) << 10;

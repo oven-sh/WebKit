@@ -88,6 +88,7 @@ aot/AOTTypedBuiltinsString.cpp @no-unify
 aot/AOTTypedBuiltinsStringAppend.cpp @no-unify
 aot/AOTTypedBuiltinsTypedArray.cpp @no-unify
 aot/AOTTypedAllocationRemarks.cpp @no-unify
+aot/AOTTypedArrayMethodChainFusion.cpp @no-unify
 aot/AOTTypedCallResolution.cpp @no-unify
 aot/AOTTypedCastSimplification.cpp @no-unify
 aot/AOTTypedCompactTable.cpp @no-unify
@@ -213,6 +214,7 @@ b3/B3Const128Value.cpp
 b3/B3ConstDoubleValue.cpp
 b3/B3ConstFloatValue.cpp
 b3/B3ConstrainedValue.cpp
+b3/B3ConvertBranchesToSelects.cpp @no-unify
 b3/B3CountedLoops.cpp @no-unify
 b3/B3CycleForest.cpp @no-unify
 b3/B3DataSection.cpp

@@ -7189,6 +7189,41 @@ static void findRecordsImmutableAfterAllocation(Program& program)
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT placement: records immutable after allocation: ", count, " of ", records);
 }
 
+static void findLayoutsFrozenByUntypedCode(Program& program)
+{
+    auto& builtins = Builtins::singleton();
+    auto changesIntegrityLevel = [&](BuiltinID id) {
+        auto& builtin = builtins.at(id);
+        if (builtin.kind != BuiltinKind::StaticFunction)
+            return false;
+        if (builtin.holder == "Object"_s)
+            return builtin.name == "freeze"_s || builtin.name == "seal"_s || builtin.name == "preventExtensions"_s;
+        return builtin.holder == "Reflect"_s && builtin.name == "preventExtensions"_s;
+    };
+    uint8_t takesAnyObject = 0;
+    forEachIndexInParallel(program.functions.size(), [&](unsigned number) {
+        static constexpr OpcodeSet uses { Opcode::CallBuiltin, Opcode::BuiltinFunction };
+        if (WTF::atomicLoad(&takesAnyObject, std::memory_order_relaxed) || !program.functions.mayContain(number, uses))
+            return;
+        ImmutableFunctionScope immutableFunctionScope;
+        auto& function = std::as_const(program).functions[number];
+        std::as_const(program).functions.forEachIndexedValue(number, uses, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (!changesIntegrityLevel(value.builtin()))
+                return;
+            if (value.opcode == Opcode::CallBuiltin && (value.arguments.isEmpty() || !program.typeOf(function, value.arguments[0]).anyObject))
+                return;
+            WTF::atomicStore(&takesAnyObject, static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
+    });
+    if (!takesAnyObject)
+        return;
+    for (auto& layout : program.layouts) {
+        if (layout.mayDespecialize)
+            layout.mayBeFrozen = true;
+    }
+}
+
 static void findTypesNeededAtRuntime(Program& program)
 {
     BitVector& named = program.typesNeededAtRuntime;
@@ -7276,6 +7311,8 @@ void place(Program& program)
     PhaseTimes phaseTimes("place"_s);
     findRecordsImmutableAfterAllocation(program);
     phaseTimes.didFinish("findRecordsImmutableAfterAllocation"_s);
+    findLayoutsFrozenByUntypedCode(program);
+    phaseTimes.didFinish("findLayoutsFrozenByUntypedCode"_s);
     assignStructureDescriptors(program);
     phaseTimes.didFinish("assignStructureDescriptors"_s);
     findTypesNeededAtRuntime(program);

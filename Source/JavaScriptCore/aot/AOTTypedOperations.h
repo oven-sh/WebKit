@@ -204,6 +204,9 @@ struct Slot;
     v(operationAOTTypedNewArray) \
     v(operationAOTTypedTryGetByValWithKeyParts) \
     v(operationAOTTypedTryMapOrSetLookupWithKeyParts) \
+    v(operationAOTTypedFindMakingKey) \
+    v(operationAOTTypedMapSetAfterLookup) \
+    v(operationAOTTypedSetAddAfterLookup) \
     v(operationAOTTypedNewNumberArray) \
     v(operationAOTTypedArrayPush) \
     v(operationAOTTypedArrayPushNumber) \
@@ -250,6 +253,8 @@ struct Slot;
     v(operationAOTTypedRopeCodeUnit) \
     v(operationAOTTypedFlatten) \
     v(operationAOTTypedStringEq) \
+    v(operationAOTTypedStringReplaceCharacters) \
+    v(operationAOTTypedCompareStrings) \
     v(operationAOTTypedStringEqualsLiteralInRegister) \
     v(operationAOTTypedStringHasAt) \
     v(operationAOTTypedStringIndexOf) \
@@ -287,6 +292,15 @@ static constexpr uint32_t typeAllowsFunctions = 1 << 11;
 static constexpr uint32_t assertionIsOnResult = 1 << 8;
 static constexpr int64_t arraySearchDeclined = 1ll << 48;
 enum class NullishAccess : uint32_t { Read, Write, Iterate };
+
+struct ReplacementSteps {
+    static constexpr unsigned maxCount = 8;
+    static constexpr uint32_t countMask = 15;
+    static constexpr uint32_t hasSets = 16;
+    static constexpr unsigned wordOfRepeats = 1;
+    static constexpr unsigned firstWordOfSet = 2;
+    static constexpr unsigned wordsWithSet = 6;
+};
 
 } // namespace Typed
 
@@ -526,6 +540,9 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryPutProperties, Heap, size_t, (In
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArray, RuntimeState, JSCell*, (Instance*, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryGetByValWithKeyParts, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts, Nothing, EncodedJSValue, (Instance*, JSCell*, uint32_t, uint32_t, const EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFindMakingKey, RuntimeState, JSCell*, (Instance*, JSCell*, uint32_t, const EncodedJSValue*, EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMapSetAfterLookup, RuntimeState, void, (Instance*, JSCell*, JSCell*, EncodedJSValue, uint64_t));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetAddAfterLookup, RuntimeState, void, (Instance*, JSCell*, JSCell*, uint64_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewNumberArray, RuntimeState, JSCell*, (Instance*, uint32_t, uint32_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPush, Heap, EncodedJSValue, (Instance*, JSCell* array, EncodedJSValue value, uint64_t expectedAndSite));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayPushNumber, Heap, EncodedJSValue, (Instance*, JSCell* array, uint64_t numberBits, uint64_t expectedAndSite));
@@ -567,6 +584,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSubstring, RuntimeState, JSCell*, (
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRopeCodeUnit, RuntimeState, size_t, (Instance*, JSCell*, int64_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFlatten, RuntimeState, void*, (Instance*, JSCell*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringEq, RuntimeState, size_t, (Instance*, JSCell*, JSCell*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringReplaceCharacters, RuntimeState, JSCell*, (Instance*, JSCell*, uint32_t, const EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCompareStrings, RuntimeState, size_t, (Instance*, JSCell*, JSCell*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringEqualsLiteralInRegister, Nothing, size_t, (Instance*, JSCell*, uint64_t text));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringHasAt, RuntimeState, size_t, (Instance*, JSCell* string, JSCell* other, int32_t place));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringIndexOf, RuntimeState, size_t, (Instance*, JSCell* string, JSCell* other, int32_t place));

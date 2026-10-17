@@ -174,6 +174,9 @@ enum class MatchProperty : uint8_t { Index, Input };
 std::optional<MatchProperty> matchPropertyRead(const Program&, const Value&);
 MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program&, const Function&);
 ValueID matchBehindCasts(const Function&, ValueID);
+enum class DescriptorProperty : uint8_t { Value, Writable, Enumerable, Configurable, Get, Set };
+std::optional<DescriptorProperty> descriptorPropertyRead(const Program&, const Value&);
+BitVector findDescriptorsOnlyTakenApart(const Program&, const Function&);
 void computeFunctionsReturningMapKeys(Program&);
 void findCalledOnlyOperands(Program&);
 void verifyCalledOnlyParameters(const Program&, Vector<String>& findings);
@@ -192,6 +195,7 @@ bool keepsFunctionPinned(const Program&, const Function&, const Field&, ValueID 
 bool replacesPinnedFunction(const Program&, const Function&, LayoutID created, const Value& store);
 unsigned inlineCalls(const Program&, FunctionID, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 void internNamesForGeneratorLoopFusion(Program&);
+void fuseArrayMethodChains(Program&);
 unsigned fuseGeneratorLoops(const Program&, Function&);
 unsigned stepGeneratorsInPlace(const Program&, Function&);
 void prepareForInlining(Program&);

@@ -278,7 +278,22 @@ public:
         }
     }
 
+    static constexpr uint64_t placeIsUnknown = 0;
+    static constexpr uint64_t keyIsAbsent = 1;
+    uint64_t placeOfValue(uint32_t entry) const
+    {
+        switch (m_valueWidth) {
+        case Width::Wide:
+            return std::bit_cast<uintptr_t>(at<EncodedJSValue>(offsetOfValues()) + entry);
+        case Width::None:
+            return std::bit_cast<uintptr_t>(this);
+        default:
+            return placeIsUnknown;
+        }
+    }
+
     enum class CreateIfNeeded : bool { No, Yes };
+    template<typename Traits> static bool tryAddAbsent(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSString* key, JSValue);
     template<typename Traits> static bool tryAdd(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key, JSValue, CreateIfNeeded = CreateIfNeeded::No, uint32_t minCapacity = initialCapacity);
     template<typename Traits> static bool remove(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key);
     template<typename Traits> static void clear(VM&, JSOrderedHashTable<Traits>*);

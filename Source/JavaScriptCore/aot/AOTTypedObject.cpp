@@ -84,6 +84,11 @@
 #include <wtf/Scope.h>
 #include <wtf/ThreadSpecific.h>
 
+#if OS(LINUX)
+#include <errno.h>
+#include <sys/mman.h>
+#endif
+
 #if OS(WINDOWS)
 extern "C" __attribute__((weak)) void Bun__atexit(void (*)());
 #endif
@@ -7190,6 +7195,41 @@ static size_t allocationEntriesAndIndicesSize(const Data& data)
     return allocationEntriesSize(data) + sizeOfZeroedTable(data.numberOfAllocations, sizeof(uint16_t));
 }
 
+static size_t tableArenaSize(const Data& data)
+{
+    constexpr size_t sizeOfFixedSizeTables = 2 * MB;
+    return sizeOfFixedSizeTables
+        + sizeOfZeroedTable(data.numberOfLayouts, sizeof(uint32_t))
+        + allocationEntriesAndIndicesSize(data)
+        + sizeOfZeroedTable(data.numberOfLayoutIndices, sizeof(uint8_t))
+        + sizeOfZeroedTable(data.numberOfLayoutIndices, sizeof(JSCell*))
+        + sizeOfZeroedTable(data.numberOfLiteralStrings, sizeof(JSCell*))
+        + sizeOfZeroedTable(data.numberOfFunctions, sizeof(JSCell*))
+        + sizeOfZeroedTable(Instance::numberOfTypedOrderKeyIndices(data.numberOfLayouts), sizeof(uintptr_t*))
+        + sizeOfZeroedTable(data.numberOfLayouts, sizeof(uint16_t));
+}
+
+template<typename T>
+T* State::createZeroedTable(size_t count)
+{
+    constexpr size_t smallTableAlignment = 64;
+    static_assert(alignof(T) <= smallTableAlignment);
+    size_t size = std::max<size_t>(count, 1) * sizeof(T);
+    size_t start = roundUpToMultipleOf(size < pageSize() ? smallTableAlignment : pageSize(), m_tableArenaUsed);
+    if (start + size > m_tableArenaSize)
+        return Typed::createZeroedTable<T>(count);
+    m_tableArenaUsed = start + size;
+    return reinterpret_cast<T*>(m_tableArena + start);
+}
+
+template<typename T>
+void State::destroyZeroedTable(T* table, size_t count)
+{
+    auto* address = reinterpret_cast<char*>(table);
+    if (address < m_tableArena || address >= m_tableArena + m_tableArenaSize)
+        Typed::destroyZeroedTable(table, count);
+}
+
 static constexpr uint32_t stringTableInitialCapacity = 2048;
 
 static uint64_t* createStringTable(uint32_t capacity)
@@ -7363,6 +7403,11 @@ State::State(VM& vm, Instance& instance, const Data& data)
 {
     if (!data.usesWideReferences)
         MarkedBlockCage::require();
+    m_tableArenaSize = tableArenaSize(data);
+    m_tableArena = static_cast<char*>(OSAllocator::reserveAndCommit(m_tableArenaSize));
+#if OS(LINUX)
+    while (madvise(m_tableArena, m_tableArenaSize, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+#endif
     structures = createZeroedTable<uint32_t>(data.numberOfLayouts);
     m_cachedFields = createZeroedTable<CachedField>(numberOfCachedFields);
     m_cachedFieldNames = createZeroedTable<CachedFieldName>(numberOfCachedFieldNames);
@@ -7486,6 +7531,7 @@ State::~State()
     destroyZeroedTable(instance.typedOrderKeys, Instance::numberOfTypedOrderKeyIndices(data.numberOfLayouts));
     destroyZeroedTable(instance.typedOrderKeyIndices, data.numberOfLayouts);
     destroyZeroedTable(instance.typedKeyLists, Instance::numberOfTypedKeyLists);
+    OSAllocator::decommitAndRelease(m_tableArena, m_tableArenaSize);
 }
 
 } // namespace Typed
@@ -13676,13 +13722,17 @@ void State::cacheConversion(uint32_t structureID, uint32_t typeAndReason, const 
 void State::cachePlainRecordShape(Structure* structure, const CoercionPlan& plan)
 {
     using Shape = Instance::PlainRecordShape;
-    if (structure->isDictionary() || structure->hasPolyProto() || plan.keepsObject || plan.fields.size() != plan.layout->numberOfFields || plan.fields.size() > Shape::maxNumberOfFields)
+    if (structure->isDictionary() || structure->hasPolyProto() || plan.keepsObject || plan.layout->numberOfFields > Shape::maxNumberOfFields)
         return;
-    Shape shape { structure->id().bits(), plan.layout->index, { } };
+    Shape shape { structure->id().bits(), plan.layout->index, { }, nullptr };
     for (auto& planned : plan.fields) {
         if (!isInlineOffset(planned.offset))
             return;
         shape.locations[planned.field - plan.layout->fields()] = static_cast<uint8_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offsetInInlineStorage(planned.offset));
+    }
+    for (uint32_t i = 0; i < plan.layout->numberOfFields; ++i) {
+        if (!shape.locations[i] && (plan.layout->fields()[i].flags & (fieldIsOptional | fieldAllowsUndefined)) != (fieldIsOptional | fieldAllowsUndefined))
+            return;
     }
     instance.plainRecordShapes[Instance::indexOfPlainRecordShape(plan.layout->index)] = shape;
     m_hasCachedConversions = true;

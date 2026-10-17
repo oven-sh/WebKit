@@ -3408,22 +3408,26 @@ private:
         Air::Opcode moveConditionallyDoubleWithZero;
         Air::Opcode moveConditionallyFloatWithZero;
     };
-    Inst createSelect(const MoveConditionallyConfig& config)
+    Inst createSelect(const MoveConditionallyConfig& config, Value* thenValue = nullptr, Value* elseValue = nullptr, bool inverted = false)
     {
         using namespace Air;
+        if (!thenValue) {
+            thenValue = m_value->child(1);
+            elseValue = m_value->child(2);
+        }
         auto createSelectInstruction = [&] (Air::Opcode opcode, const Arg& condition, ArgPromise& left, ArgPromise& right) -> Inst {
-            if (m_value->child(2)->isInt(0)) {
+            if (elseValue->isInt(0)) {
                 if (isValidForm(opcode, condition.kind(), left.kind(), right.kind(), Arg::Tmp, Arg::ZeroReg, Arg::Tmp)) {
                     Tmp result = tmp(m_value);
-                    Tmp thenCase = tmp(m_value->child(1));
+                    Tmp thenCase = tmp(thenValue);
                     return left.inst(right.inst(opcode, m_value, condition, left.consume(*this), right.consume(*this), thenCase, zeroReg(), result));
                 }
             }
 
             if (isValidForm(opcode, condition.kind(), left.kind(), right.kind(), Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
                 Tmp result = tmp(m_value);
-                Tmp thenCase = tmp(m_value->child(1));
-                Tmp elseCase = tmp(m_value->child(2));
+                Tmp thenCase = tmp(thenValue);
+                Tmp elseCase = tmp(elseValue);
                 return left.inst(right.inst(
                     opcode, m_value, condition,
                     left.consume(*this), right.consume(*this), thenCase, elseCase, result));
@@ -3516,8 +3520,40 @@ private:
                 }
                 return Inst();
             },
-            false);
+            inverted);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    bool tryAppendSelectOfIncrementedValue()
+    {
+        if (!isARM64() || !m_procedure.positionIndependent() || !m_value->type().isInt())
+            return false;
+        Value* condition = m_value->child(0);
+        if (condition->numChildren() && condition->child(0)->type().isFloat())
+            return false;
+        for (unsigned incrementedIndex : { 1u, 2u }) {
+            Value* incremented = m_value->child(incrementedIndex);
+            if (incremented->opcode() != Add || !incremented->child(1)->isInt(1) || !canBeInternal(incremented))
+                continue;
+            MoveConditionallyConfig config;
+            config.moveConditionally32 = Air::MoveConditionallyIncremented32;
+            config.moveConditionally64 = Air::MoveConditionallyIncremented64;
+            config.moveConditionallyTest32 = Air::MoveConditionallyIncrementedTest32;
+            config.moveConditionallyTest64 = Air::MoveConditionallyIncrementedTest64;
+            config.moveConditionallyDouble = Air::Oops;
+            config.moveConditionallyFloat = Air::Oops;
+            config.moveConditionallyDoubleWithZero = Air::Oops;
+            config.moveConditionallyFloatWithZero = Air::Oops;
+            Inst inst = createSelect(config, incremented->child(0), m_value->child(3 - incrementedIndex), incrementedIndex == 2);
+            if (!inst)
+                return false;
+            commitInternal(incremented);
+            m_insts.last().append(WTF::move(inst));
+            return true;
+        }
+        return false;
+    }
+#endif
     
     bool tryAppendLea()
     {
@@ -6373,6 +6409,11 @@ private:
                 ifTrueBlock->setSuccessors(doneBlock);
                 return;
             }
+
+#if USE(BUN_JSC_ADDITIONS)
+            if (tryAppendSelectOfIncrementedValue())
+                return;
+#endif
 
             MoveConditionallyConfig config;
             if (m_value->type().isInt()) {

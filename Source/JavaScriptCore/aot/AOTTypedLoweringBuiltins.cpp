@@ -456,6 +456,11 @@ Boxed Lowering::lowerMethodGetById(const Value& value)
 
 Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
 {
+    if (m_isDoneByLastReplacement.get(result.index()) && !m_isLoweringReplacementsOneByOne)
+        return Operand(value.rep, nullptr);
+    if (auto replaced = tryLowerReplacementChain(result, value))
+        return *replaced;
+    m_lastTableEntry = { };
     if (value.tableInImage() != Format::none) {
         auto& created = m_builtins.classes()[value.engineClass()];
         Word32 table = word32(value.tableInImage());
@@ -487,14 +492,14 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
         validateReceiverHasOriginalStructure(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleEngineClass()), receiver, result);
     }
     if (!hasGenericFallback(m_program, m_function, value))
-        return lowerResolvedBuiltin(result, value);
+        return didLookUpInTable(result, lowerResolvedBuiltin(result, value));
     auto answer = value.receiverHasOriginalStructure ? std::optional<bool>(true) : resultOfDominatingGuard(value.child(0), *typeOf(value.child(0)).singleEngineClass(), GuardKind::Structure);
     if (answer.value_or(true)) {
         if (auto searched = lowerArraySearchAsSingleCall(result, value))
             return *searched;
     }
     if (answer.value_or(false))
-        return lowerResolvedBuiltin(result, value);
+        return didLookUpInTable(result, lowerResolvedBuiltin(result, value));
     auto& type = typeOf(result);
     Rep rep = repOf(type);
     CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));

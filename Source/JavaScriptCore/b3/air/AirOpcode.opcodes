@@ -1731,6 +1731,26 @@ BranchNeg32 U:G:32, UZD:G:32 /branch
     x86_64: ResCond, Tmp, Imm, Tmp, Tmp, Tmp
     arm64: ResCond, Tmp, Tmp, Tmp, ZeroReg, Tmp
 
+arm64: MoveConditionallyIncremented32 U:G:32, U:G:32, U:G:32, U:G:Ptr, U:G:Ptr, D:G:Ptr
+    RelCond, Tmp, Tmp, Tmp, Tmp, Tmp
+    RelCond, Tmp, Imm, Tmp, Tmp, Tmp
+    RelCond, Tmp, Tmp, Tmp, ZeroReg, Tmp
+    RelCond, Tmp, Imm, Tmp, ZeroReg, Tmp
+
+arm64: MoveConditionallyIncremented64 U:G:32, U:G:64, U:G:64, U:G:Ptr, U:G:Ptr, D:G:Ptr
+    RelCond, Tmp, Tmp, Tmp, Tmp, Tmp
+    RelCond, Tmp, Imm, Tmp, Tmp, Tmp
+    RelCond, Tmp, Tmp, Tmp, ZeroReg, Tmp
+    RelCond, Tmp, Imm, Tmp, ZeroReg, Tmp
+
+arm64: MoveConditionallyIncrementedTest32 U:G:32, U:G:32, U:G:32, U:G:Ptr, U:G:Ptr, D:G:Ptr
+    ResCond, Tmp, Tmp, Tmp, Tmp, Tmp
+    ResCond, Tmp, Tmp, Tmp, ZeroReg, Tmp
+
+arm64: MoveConditionallyIncrementedTest64 U:G:32, U:G:64, U:G:64, U:G:Ptr, U:G:Ptr, D:G:Ptr
+    ResCond, Tmp, Tmp, Tmp, Tmp, Tmp
+    ResCond, Tmp, Tmp, Tmp, ZeroReg, Tmp
+
 64: MoveConditionallyDouble U:G:32, U:F:64, U:F:64, U:G:Ptr, U:G:Ptr, D:G:Ptr
     DoubleCond, Tmp, Tmp, Tmp, Tmp, Tmp
 

@@ -100,9 +100,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
     unsigned length = array->length();
     Vector<WithNumber, 32> numbers;
     Vector<WithString> strings;
-    Structure* lastStructure = nullptr;
+    StructureID lastStructureID;
     PropertyOffset lastOffset = invalidOffset;
-    const Typed::LayoutData* lastLayout = nullptr;
+    bool lastHasLayout = false;
     const Typed::FieldData* lastField = nullptr;
     bool isInOrder = true;
     bool isFalling = true;
@@ -135,31 +135,33 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
         isInOrder &= numberCount == i;
         JSValue keyValue = element;
         if (!ident.isNull()) {
-            if (!element.isObject())
+            if (!element.isCell())
                 OPERATION_RETURN(scope, declined);
-            JSObject* object = asObject(element);
-            Structure* structure = object->structure();
-            const Typed::LayoutData* layout = structure->compiledLayout();
-            if (layout && Typed::isObjectLayout(layout->kind)) {
-                auto* typedObject = uncheckedDowncast<Typed::Object>(object);
-                if (layout != lastLayout) {
-                    lastLayout = layout;
+            JSCell* cell = element.asCell();
+            if (cell->structureID() != lastStructureID) [[unlikely]] {
+                if (!cell->isObject())
+                    OPERATION_RETURN(scope, declined);
+                Structure* structure = cell->structure();
+                const Typed::LayoutData* layout = structure->compiledLayout();
+                lastHasLayout = layout && Typed::isObjectLayout(layout->kind);
+                if (lastHasLayout) {
+                    auto* typedObject = uncheckedDowncast<Typed::Object>(cell);
                     lastField = typedObject->fieldNamed(typedObject->state(), ident);
-                }
-                keyValue = lastField ? typedObject->readInline(*lastField) : JSValue();
-                if (!keyValue)
-                    keyValue = Typed::Object::tryGetOwnData(vm, object, ident);
-            } else {
-                if (structure != lastStructure) {
+                } else {
                     unsigned attributes = 0;
-                    PropertyOffset offset = layout || object->type() != FinalObjectType || structure->isUncacheableDictionary() ? invalidOffset : structure->get(vm, ident, attributes);
+                    PropertyOffset offset = layout || cell->type() != FinalObjectType || structure->isUncacheableDictionary() ? invalidOffset : structure->get(vm, ident, attributes);
                     if (!isValidOffset(offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
                         OPERATION_RETURN(scope, declined);
-                    lastStructure = structure;
                     lastOffset = offset;
                 }
-                keyValue = object->getDirect(lastOffset);
+                lastStructureID = cell->structureID();
             }
+            if (lastHasLayout) {
+                keyValue = lastField ? uncheckedDowncast<Typed::Object>(cell)->readInline(*lastField) : JSValue();
+                if (!keyValue)
+                    keyValue = Typed::Object::tryGetOwnData(vm, cell, ident);
+            } else
+                keyValue = asObject(cell)->getDirect(lastOffset);
         }
         if (!keyValue)
             OPERATION_RETURN(scope, declined);

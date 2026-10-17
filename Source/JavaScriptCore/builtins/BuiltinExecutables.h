@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "BuiltinUtils.h"
 #include "ExecutableInfo.h"
 #include "Intrinsic.h"
 #include "JSCBuiltins.h"
@@ -54,15 +55,6 @@ static constexpr unsigned numberOfBuiltinCodes = 0 JSC_FOREACH_BUILTIN_CODE(COUN
 
 // Every field is a function of the source characters alone, which is what lets the builtins generator
 // compute these at build time.
-struct BuiltinSourceMetadata {
-    unsigned sourceLength { 0 };
-    unsigned parametersStart { 0 };
-    unsigned parameterCount { 0 };
-    int closeBraceOffsetFromEnd { 0 };
-    bool isAsyncFunction { false };
-    bool isInStrictContext { false };
-};
-
 // Emitted by the builtins generator, indexed by BuiltinCodeIndex.
 extern constinit const BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[numberOfBuiltinCodes];
 extern constinit const unsigned s_JSCBuiltinSourceStarts[numberOfBuiltinCodes]; // in s_JSCCombinedCode
@@ -89,6 +81,7 @@ SourceCode name##Source();
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);
+    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     DECLARE_VISIT_AGGREGATE;
 
@@ -99,8 +92,6 @@ private:
 
     FunctionExecutable* linkFromText(BuiltinCodeIndex, Intrinsic);
     UnlinkedFunctionExecutable* executableFor(BuiltinCodeIndex);
-
-    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     UnlinkedFunctionExecutable* createBuiltinExecutable(const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
 

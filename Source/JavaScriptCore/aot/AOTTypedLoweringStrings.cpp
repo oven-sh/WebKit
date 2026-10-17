@@ -2074,10 +2074,12 @@ static bool isNumberOrNullish(const Type& type)
     return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
 }
 
-bool Lowering::isConcatenation(const Value& value) const
+bool Lowering::isConcatenation(const Value& value, bool mayHoldNullishStrings) const
 {
     auto isStringOrNumber = [&](ValueID id) {
         auto& type = m_program.at(m_function.at(id).type);
+        if (mayHoldNullishStrings && type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull))
+            return true;
         return type.isString() || isNumberOrNullish(type);
     };
     switch (value.opcode) {
@@ -2096,17 +2098,17 @@ bool Lowering::isConcatenation(const Value& value) const
     }
 }
 
-bool Lowering::collectConcatenationParts(const BitVector& isInBlock, ValueID id, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough)
+bool Lowering::collectConcatenationParts(const BitVector& isInBlock, ValueID id, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough, bool looksThroughStrings)
 {
     auto& value = m_function.at(id);
-    if (isLast || (isInBlock.get(id.index()) && useCountOf(id) == 1 && isConcatenation(value) && !m_stringBuilderAnalysis.isState(id))) {
+    if (isLast || (isInBlock.get(id.index()) && useCountOf(id) == 1 && isConcatenation(value, looksThroughStrings) && !m_stringBuilderAnalysis.isState(id))) {
         size_t numberOfParts = parts.size();
         size_t searchedCount = lookedThrough.size();
         if (!isLast)
             lookedThrough.append(id);
         bool hasOnlyNumbersAndConstants = true;
         auto collect = [&](ValueID part) {
-            hasOnlyNumbersAndConstants &= collectConcatenationParts(isInBlock, part, false, parts, lookedThrough);
+            hasOnlyNumbersAndConstants &= collectConcatenationParts(isInBlock, part, false, parts, lookedThrough, looksThroughStrings);
         };
         if (value.opcode == Opcode::Strcat) {
             for (ValueID part : value.arguments)
@@ -2116,7 +2118,7 @@ bool Lowering::collectConcatenationParts(const BitVector& isInBlock, ValueID id,
             if (value.opcode == Opcode::Add)
                 collect(value.child(1));
         }
-        if (isLast || value.opcode == Opcode::ToString || hasOnlyNumbersAndConstants)
+        if (isLast || value.opcode == Opcode::ToString || hasOnlyNumbersAndConstants || looksThroughStrings)
             return hasOnlyNumbersAndConstants;
         parts.shrink(numberOfParts);
         lookedThrough.shrink(searchedCount);
@@ -2144,34 +2146,49 @@ void Lowering::findConcatenationsWithNumbers()
         for (size_t i = block.values.size(); i--;) {
             ValueID id = block.values[i];
             auto& value = m_function.at(id);
-            if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || value.rep != Rep::Cell || isLazilyFetched(id) || m_stringBuilderAnalysis.isState(id) || !isConcatenation(value))
+            if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || value.rep != Rep::Cell || isLazilyFetched(id) || m_stringBuilderAnalysis.isState(id) || !isConcatenation(value, true))
                 continue;
             if (!keys)
                 keys = computeMapKeyValues(m_program, m_id, m_function);
             if (!keys->get(id.index()))
                 continue;
+            bool isLookupKey = false;
+            bool isFirstLookedUpInTable = false;
+            for (size_t j = i + 1; j < block.values.size(); ++j) {
+                auto& user = m_function.at(block.values[j]);
+                bool isUser = false;
+                user.forEachChild([&](ValueID child) {
+                    isUser |= child == id;
+                });
+                if (!isUser)
+                    continue;
+                isLookupKey = user.opcode == Opcode::GetByVal && user.child(1) == id && user.child(0) != id;
+                if (user.opcode == Opcode::CallBuiltin && user.arguments.size() == 1 && user.arguments[0] == id && user.child(0) != id) {
+                    auto& implementation = m_builtins.at(user.builtin()).implementation;
+                    isLookupKey = implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::MapGet || implementation.inlined == InlineBuiltin::MapHas || implementation.inlined == InlineBuiltin::SetHas);
+                    bool isInvoked = block.terminator.kind == TerminatorKind::Invoke && j + 1 == block.values.size();
+                    isFirstLookedUpInTable = isLookupKey && !isInvoked && (user.receiverHasOriginalStructure || !hasGenericFallback(m_program, m_function, user));
+                }
+                break;
+            }
+            bool isSunk = isLookupKey && useCountOf(id) == 1;
+            bool isMadeByLookup = isFirstLookedUpInTable && useCountOf(id) > 1;
+            if (!isMadeByLookup && !isConcatenation(value, false))
+                continue;
             ConcatenationParts parts;
             ConcatenationParts lookedThrough;
-            collectConcatenationParts(isInBlock, id, true, parts, lookedThrough);
+            collectConcatenationParts(isInBlock, id, true, parts, lookedThrough, isMadeByLookup);
             if (parts.size() < 2 || parts.size() > 8)
                 continue;
             for (ValueID part : lookedThrough)
                 m_isLazilyFetched.set(part.index());
             m_concatenationParts.add(id.index(), WTF::move(parts));
-            if (useCountOf(id) == 1) {
-                for (size_t j = i + 1; j < block.values.size(); ++j) {
-                    auto& user = m_function.at(block.values[j]);
-                    bool isLookupKey = user.opcode == Opcode::GetByVal && user.child(1) == id && user.child(0) != id;
-                    if (user.opcode == Opcode::CallBuiltin && user.arguments.size() == 1 && user.arguments[0] == id && user.child(0) != id) {
-                        auto& implementation = m_builtins.at(user.builtin()).implementation;
-                        isLookupKey = implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::MapGet || implementation.inlined == InlineBuiltin::MapHas || implementation.inlined == InlineBuiltin::SetHas);
-                    }
-                    if (isLookupKey) {
-                        m_sunkKeyConcatenations.set(id.index());
-                        m_isLazilyFetched.set(id.index());
-                    }
-                }
+            if (isSunk || isMadeByLookup) {
+                m_sunkKeyConcatenations.set(id.index());
+                m_isLazilyFetched.set(id.index());
             }
+            if (isMadeByLookup)
+                m_keysMadeByLookups.set(id.index());
         }
     }
 }
@@ -2572,11 +2589,8 @@ std::optional<Operand> Lowering::lowerAsConcatenationPart(ValueID id, const Valu
     return convert(concatenateInOnePiece(found->value), typeOf(id), value.rep);
 }
 
-std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& type, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath)
+LValue Lowering::storeKeyParts(const ConcatenationParts& parts)
 {
-    if (!m_sunkKeyConcatenations.get(key.index()) || m_keyBeingMaterialized == key)
-        return std::nullopt;
-    auto& parts = m_concatenationParts.find(key.index())->value;
     LValue buffer = m_out.lockedStackSlot(parts.size() * sizeof(EncodedJSValue));
     for (unsigned i = 0; i < parts.size(); ++i) {
         auto& partType = typeOf(parts[i]);
@@ -2594,6 +2608,39 @@ std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& t
             boxed = convertTo<Boxed>(operand, partType);
         m_out.store64(boxed.value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
     }
+    return buffer;
+}
+
+std::optional<Operand> Lowering::tryFindMakingKey(InlineBuiltin which, ValueID result, const Value& value, CellPointer table, const Type& type)
+{
+    static constexpr uint32_t returnsValue = 1 << 8;
+    ValueID key = value.arguments[0];
+    if (!m_keysMadeByLookups.get(key.index()) || !isLazilyFetched(key) || !isOnMainPath() || m_activeHandler)
+        return std::nullopt;
+    auto& parts = m_concatenationParts.find(key.index())->value;
+    LValue buffer = storeKeyParts(parts);
+    LValue found = m_out.lockedStackSlot(2 * sizeof(EncodedJSValue));
+    CellPointer made = AOT_TYPED_OPERATION(FindMakingKey, table, word32(parts.size() | (which == InlineBuiltin::MapGet ? returnsValue : 0)), Pointer(buffer), Pointer(found));
+    Boxed answer(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, 0)));
+    m_isLazilyFetched.clear(key.index());
+    m_sunkKeyConcatenations.clear(key.index());
+    Operand operand = convert(made, typeOf(key), m_function.at(key).rep);
+    if (operand.rep == Rep::Cell)
+        m_cellTypes.add(operand.value, m_function.at(key).type);
+    define(key, operand);
+    if (m_tableLookupsRepeatedLater.get(result.index()))
+        m_lastTableEntry = TableEntry { m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, sizeof(EncodedJSValue))), made.value() };
+    if (which == InlineBuiltin::MapGet)
+        return ensure(answer, type);
+    return ensure(unboxedBoolean(answer), m_program.at(m_program.types.boolean), type);
+}
+
+std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& type, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath)
+{
+    if (!m_sunkKeyConcatenations.get(key.index()) || m_keyBeingMaterialized == key)
+        return std::nullopt;
+    auto& parts = m_concatenationParts.find(key.index())->value;
+    LValue buffer = storeKeyParts(parts);
     Rep rep = repOf(type);
     LBasicBlock hit = m_out.newBlock();
     LBasicBlock miss = m_out.newBlock();
@@ -2684,7 +2731,9 @@ CellPointer Lowering::concatenateInOnePiece(const ConcatenationParts& parts)
                 passed.append(convertTo<Boxed>(operand, type));
             continue;
         }
-        CellPointer string = operand.as<CellPointer>();
+        if (operand.rep != Rep::Cell)
+            require(isCell(convertTo<Boxed>(operand, type)));
+        CellPointer string = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(convertTo<Boxed>(operand, type));
         passed.append(box(string));
         if (constantASCIIString(part))
             continue;
@@ -2882,6 +2931,10 @@ Word32 Lowering::equalsLiteralByStub(CellPointer string, ValueID constant)
 
 void Lowering::branchOnLiteralByOneCall(ValueID subject, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther)
 {
+    if (std::exchange(m_readDeferredToComparison, ValueID()) == subject) {
+        branchOnLiteralOfRead(m_function.at(subject), text, isText, isOther);
+        return;
+    }
     Operand operand = get(subject);
     auto& type = typeOf(subject);
     bool isString = operand.rep == Rep::Cell && type.hasOnlyPrimitives(Primitive::String);
@@ -3587,7 +3640,21 @@ Boxed Lowering::mapKey(ValueID id)
     if (operand.rep != Rep::Double)
         return convertTo<Boxed>(operand, typeOf(id));
     Number key = operand.as<Number>();
-    return select(equal(key, number(0)), boxInt32(word32(0)), boxNumber(key));
+    auto anyNumber = [&] {
+        return select(equal(key, number(0)), boxInt32(word32(0)), boxNumber(key));
+    };
+    if (!m_isInLoop && !m_program.isHotOutsideLoops(m_id))
+        return anyNumber();
+    LBasicBlock otherwise = newUnlikelyBlock();
+    Join join(m_out, Rep::JSValue, Int64);
+    if (auto exact = knownIntegerFor(id)) {
+        orElse(equal(signExtended(low32(*exact)), *exact), otherwise);
+        join.add(boxInt32(low32(*exact)));
+    } else
+        join.add(boxInt32(low32(integralOrElse(key, Range::int32(), otherwise))));
+    m_out.appendTo(otherwise);
+    join.add(anyNumber());
+    return join.finish().as<Boxed>();
 }
 
 static bool isComparedByBits(const Type& key)
@@ -3605,7 +3672,7 @@ Word32 Lowering::mapKeyHash(Boxed key)
     return Word32(m_out.castToInt32(m_out.bitXor(m_out.mul(a, b), m_out.uMulHigh(a, b))));
 }
 
-Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word32 hash, LBasicBlock absent)
+Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, bool keyMayBeNumber, LBasicBlock absent)
 {
     static_assert(JSMap::Helper::capacityIndex() == JSSet::Helper::capacityIndex() && JSMap::Helper::hashTableStartIndex() == JSSet::Helper::hashTableStartIndex());
     LBasicBlock hasStorage = m_out.newBlock();
@@ -3623,8 +3690,19 @@ Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word3
     m_out.appendTo(hasStorage);
     Pointer data(m_out.add(storage.value(), m_out.constIntPtr(JSCellButterfly::offsetOfData())));
     Word32 capacity(m_out.load32(at(data, JSMap::Helper::capacityIndex())));
-    Word32 bucket = add(bitAnd(hash, add(capacity, word32(-1))), word32(JSMap::Helper::hashTableStartIndex()));
-    ValueFromBlock first = m_out.anchor(m_out.load64(at(offsetBy(data, zeroExtended(bucket), 3), 0)));
+    Vector<ValueFromBlock, 2> first;
+    if (keyMayBeNumber) {
+        LBasicBlock isPlacedByKey = m_out.newBlock();
+        LBasicBlock isPlacedByHash = m_out.newBlock();
+        Integer small(m_out.sub(key.value(), m_numberTag));
+        m_out.branch(below(small, zeroExtended(capacity)).value(), unsure(isPlacedByKey), unsure(isPlacedByHash));
+        m_out.appendTo(isPlacedByKey);
+        first.append(m_out.anchor(m_out.load64(at(offsetBy(data, small, 3), JSMap::Helper::hashTableStartIndex()))));
+        m_out.jump(loop);
+        m_out.appendTo(isPlacedByHash);
+    }
+    Word32 bucket = bitAnd(mapKeyHash(key), add(capacity, word32(-1)));
+    first.append(m_out.anchor(m_out.load64(at(offsetBy(data, zeroExtended(bucket), 3), JSMap::Helper::hashTableStartIndex()))));
     m_out.jump(loop);
 
     m_out.appendTo(loop);
@@ -3641,6 +3719,138 @@ Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word3
 
     m_out.appendTo(found);
     return entry;
+}
+
+bool Lowering::mayChangeTables(const Block& block, size_t index) const
+{
+    auto& value = m_function.at(block.values[index]);
+    switch (value.opcode) {
+    case Opcode::Await:
+    case Opcode::Yield:
+        return true;
+    case Opcode::GetResumeMode:
+        return false;
+    case Opcode::CallDirect:
+        return m_program.at(value.function()).writes > Writes::Nothing;
+    case Opcode::CallBuiltin: {
+        if ((hasGenericFallback(m_program, m_function, value) && !value.receiverHasOriginalStructure) || writesOfResolvedBuiltinCall(m_program, m_function, value) == Writes::Heap)
+            return true;
+        auto& builtin = m_builtins.at(value.builtin());
+        if (builtin.effects & (Effect::CallsUserCode | Effect::WritesArguments))
+            return true;
+        if (!(builtin.effects & (Effect::WritesReceiver | Effect::WritesRuntimeState)))
+            return false;
+        auto* engineClass = builtin.hasReceiver() && value.child(0) ? typeOf(value.child(0)).singleEngineClass() : nullptr;
+        return !engineClass || engineClass->type == JSMapType || engineClass->type == JSSetType;
+    }
+    default:
+        return writesOf(m_program, m_function, block, index) == Writes::Heap;
+    }
+}
+
+void Lowering::findRepeatedTableLookups(const Vector<BlockID>& order)
+{
+    struct Lookup {
+        ValueID id;
+        BlockID block;
+        unsigned index;
+        bool onlyReads;
+    };
+    UncheckedKeyHashMap<uint64_t, Vector<Lookup, 2>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> lookups;
+    bool hasRepeatedLookup = false;
+    for (BlockID blockID : order) {
+        auto& block = m_function.at(blockID);
+        for (unsigned index = 0; index < block.values.size(); ++index) {
+            auto& value = m_function.at(block.values[index]);
+            if (value.opcode != Opcode::CallBuiltin || !value.child(0) || value.arguments.isEmpty())
+                continue;
+            auto& implementation = m_builtins.at(value.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Inline)
+                continue;
+            bool onlyReads = true;
+            switch (implementation.inlined) {
+            case InlineBuiltin::MapGet:
+            case InlineBuiltin::MapHas:
+            case InlineBuiltin::SetHas:
+                break;
+            case InlineBuiltin::MapSet:
+            case InlineBuiltin::SetAdd:
+                onlyReads = false;
+                break;
+            default:
+                continue;
+            }
+            auto& keyType = typeOf(value.arguments[0]);
+            bool keyIsStringByType = keyType.primitives & Primitive::String && keyType.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+            if (value.arguments.size() != (implementation.inlined == InlineBuiltin::MapSet ? 2 : 1) || (!isComparedByBits(keyType) && !keyIsStringByType))
+                continue;
+            auto& sameKey = lookups.add(static_cast<uint64_t>(value.child(0).index()) << 32 | value.arguments[0].index(), Vector<Lookup, 2> { }).iterator->value;
+            hasRepeatedLookup |= !sameKey.isEmpty();
+            sameKey.append(Lookup { block.values[index], blockID, index, onlyReads });
+        }
+    }
+    if (!hasRepeatedLookup)
+        return;
+
+    PredecessorLists predecessors = computePredecessors(order);
+    auto leavesTablesAlone = [&](BlockID blockID, size_t begin, size_t end) {
+        auto& block = m_function.at(blockID);
+        for (size_t index = begin; index < end; ++index) {
+            if (mayChangeTables(block, index))
+                return false;
+        }
+        return true;
+    };
+    auto isStillRight = [&](const Lookup& first, const Lookup& second) {
+        static constexpr unsigned maxBlocksBetween = 16;
+        if (first.block == second.block)
+            return leavesTablesAlone(first.block, first.index + 1, second.index);
+        if (!dominates(first.block, second.block))
+            return false;
+        if (!leavesTablesAlone(first.block, first.index + 1, m_function.at(first.block).values.size()) || !leavesTablesAlone(second.block, 0, second.index))
+            return false;
+        BitVector isSeen;
+        Vector<unsigned, 16> worklist;
+        worklist.append(predecessors[second.block.index()]);
+        unsigned numberOfBlocksBetween = 0;
+        while (!worklist.isEmpty()) {
+            unsigned between = worklist.takeLast();
+            if (between == first.block.index() || isSeen.set(between))
+                continue;
+            if (++numberOfBlocksBetween > maxBlocksBetween || !leavesTablesAlone(BlockID(between), 0, m_function.blocks[between].values.size()))
+                return false;
+            worklist.append(predecessors[between]);
+        }
+        return true;
+    };
+    for (auto& sameKey : lookups.values()) {
+        for (unsigned second = 1; second < sameKey.size(); ++second) {
+            for (unsigned first = second; first--;) {
+                if (!sameKey[first].onlyReads || !isStillRight(sameKey[first], sameKey[second]))
+                    continue;
+                m_earlierTableLookups.add(sameKey[second].id.index(), sameKey[first].id);
+                m_tableLookupsRepeatedLater.set(sameKey[first].id.index());
+                break;
+            }
+        }
+    }
+}
+
+auto Lowering::entryFoundByEarlierLookup(ValueID id) const -> const TableEntry*
+{
+    auto earlier = m_earlierTableLookups.find(id.index());
+    if (earlier == m_earlierTableLookups.end())
+        return nullptr;
+    auto found = m_tableEntries.find(earlier->value.index());
+    return found == m_tableEntries.end() ? nullptr : &found->value;
+}
+
+Operand Lowering::didLookUpInTable(ValueID id, Operand returnedValue)
+{
+    TableEntry found = std::exchange(m_lastTableEntry, TableEntry { });
+    if (found.entry && isOnMainPath() && !m_activeHandler)
+        m_tableEntries.add(id.index(), found);
+    return returnedValue;
 }
 
 bool Lowering::tableStubChecksReceiver(ValueID result, const Value& value)
@@ -3719,6 +3929,8 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         return ensure(table, typeOf(value.child(0)).withoutPrimitives(Primitive::UndefinedOrNull), type);
     };
     if (which == InlineBuiltin::MapGet || which == InlineBuiltin::MapHas || which == InlineBuiltin::SetHas) {
+        if (auto answer = tryFindMakingKey(which, result, value, table, type))
+            return *answer;
         if (auto answer = tryLookupWithSunkKey(arguments[0], type, [&](Word32 count, Pointer parts) -> Boxed {
             return AOT_TYPED_OPERATION(TryMapOrSetLookupWithKeyParts, table, word32(which == InlineBuiltin::MapGet), count, parts);
         }, [&]() -> Operand {
@@ -3726,7 +3938,8 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         }))
             return *answer;
     }
-    Boxed key = mapKey(arguments[0]);
+    const TableEntry* earlier = entryFoundByEarlierLookup(result);
+    Boxed key = earlier ? Boxed(earlier->key) : mapKey(arguments[0]);
 
     if (!isComparedByBits(typeOf(arguments[0]))) {
         auto callStub = [&](Stub stub) {
@@ -3737,6 +3950,29 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         };
         auto& keyType = typeOf(arguments[0]);
         bool keyIsStringByType = keyType.primitives & Primitive::String && keyType.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+        if (earlier && (which == InlineBuiltin::MapSet || which == InlineBuiltin::SetAdd)) {
+            LBasicBlock hasPlace = m_out.newBlock();
+            LBasicBlock hasNone = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            Integer place(earlier->entry);
+            m_out.branch(m_out.above(place.value(), m_out.constInt64(CompactTable::keyIsAbsent)), unsure(hasPlace), unsure(hasNone));
+            m_out.appendTo(hasPlace);
+            if (isMap) {
+                didEmitWrite(Writes::RuntimeState);
+                m_out.store64(in<Boxed>(arguments[1]).value(), m_out.address(m_heaps.AOTTyped_runtimeState, place.value(), 0));
+                if (typeOf(arguments[1]).hasCells())
+                    barrier(loadField<CellPointer>(table, m_heaps.JSMap_compactTable));
+            }
+            m_out.jump(continuation);
+            m_out.appendTo(hasNone);
+            if (isMap)
+                AOT_TYPED_OPERATION(MapSetAfterLookup, table, CellPointer(earlier->key), in<Boxed>(arguments[1]), place);
+            else
+                AOT_TYPED_OPERATION(SetAddAfterLookup, table, CellPointer(earlier->key), place);
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            return tableResult();
+        }
         switch (which) {
         case InlineBuiltin::MapGet:
             return ensure(callStub(keyIsStringByType ? Stub::MapGetWithStringKey : Stub::MapGet), type);
@@ -3755,7 +3991,7 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         return tableResult();
     }
 
-    if (!m_isInLoop && !m_program.isHotOutsideLoops(m_id)) {
+    if (!earlier && !m_isInLoop && !m_program.isHotOutsideLoops(m_id)) {
         Stub stub = Stub::SetAddByBits;
         switch (which) {
         case InlineBuiltin::MapGet:
@@ -3785,28 +4021,52 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         return tableResult();
     }
 
-    Word32 hash = mapKeyHash(key);
     LBasicBlock absent = m_out.newBlock();
-    Pointer entry = findInMapOrSet(table, isMap, key, hash, absent);
+    Pointer entry;
+    if (earlier) {
+        LBasicBlock found = m_out.newBlock();
+        entry = Pointer(earlier->entry);
+        m_out.branch(m_out.notNull(entry.value()), unsure(found), unsure(absent));
+        m_out.appendTo(found);
+    } else
+        entry = findInMapOrSet(table, isMap, key, typeOf(arguments[0]).primitives & Primitive::Number, absent);
     TypedPointer entryValue = m_out.address(m_heaps.OrderedHashTableData, entry.value(), sizeof(EncodedJSValue));
+    bool isRepeatedLater = m_tableLookupsRepeatedLater.get(result.index());
+    Vector<ValueFromBlock, 2> entries;
+    auto noteEntry = [&](LValue found) {
+        if (isRepeatedLater && !earlier)
+            entries.append(m_out.anchor(found));
+    };
+    auto keepEntry = [&] {
+        if (isRepeatedLater)
+            m_lastTableEntry = earlier ? *earlier : TableEntry { m_out.phi(Int64, entries), key.value() };
+    };
     switch (which) {
     case InlineBuiltin::MapGet: {
         Rep rep = repOf(type);
         Join join(m_out, rep, b3TypeOf(rep));
+        noteEntry(entry.value());
         join.add(ensure(Boxed(m_out.load64(entryValue)), type));
         m_out.appendTo(absent);
+        noteEntry(m_out.int64Zero);
         join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
         Operand found = join.finish();
+        keepEntry();
         ensureStillAliveHere(table);
         return found;
     }
     case InlineBuiltin::MapHas:
     case InlineBuiltin::SetHas: {
         Join join(m_out, Rep::Int32, Int32);
+        noteEntry(entry.value());
         join.add(boolean(true));
         m_out.appendTo(absent);
+        noteEntry(m_out.int64Zero);
         join.add(boolean(false));
         Operand has = join.finish();
+        keepEntry();
+        if (isRepeatedLater)
+            has = Word32(m_out.notNull(m_lastTableEntry.entry));
         ensureStillAliveHere(table);
         return ensure(has, booleanType, type);
     }
@@ -3825,9 +4085,9 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
     join.add({ });
     m_out.appendTo(absent);
     if (isMap)
-        callOperation<operationAOTMapSet>(Entry::operationAOTMapSet, addEffects, table, key, in<Boxed>(arguments[1]), hash);
+        callOperation<operationAOTMapSet>(Entry::operationAOTMapSet, addEffects, table, key, in<Boxed>(arguments[1]), mapKeyHash(key));
     else
-        callOperation<operationAOTSetAdd>(Entry::operationAOTSetAdd, addEffects, table, key, hash);
+        callOperation<operationAOTSetAdd>(Entry::operationAOTSetAdd, addEffects, table, key, mapKeyHash(key));
     join.add({ });
     join.finish();
     return tableResult();

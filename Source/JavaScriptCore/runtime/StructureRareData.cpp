@@ -164,6 +164,10 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         JSValue prototype = ownStructure->storedPrototype();
         if (!prototype.isObject())
             return !target;
+#if ENABLE(AOT)
+        for (JSValue holder = prototype; holder.isObject(); holder = asObject(holder)->getPrototypeDirect())
+            AOT::Typed::ClassPrototype::look(asObject(holder));
+#endif
         return !!prepareChainForCaching(globalObject, asObject(prototype), uid, target);
     };
 

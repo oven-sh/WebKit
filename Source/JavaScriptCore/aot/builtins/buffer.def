@@ -24,6 +24,15 @@ inline DataViewSetFloat32
 inline DataViewSetFloat64
 inline DataViewSetBigInt64
 inline DataViewSetBigUint64
+inline AtomicsAdd
+inline AtomicsAnd
+inline AtomicsCompareExchange
+inline AtomicsExchange
+inline AtomicsLoad
+inline AtomicsOr
+inline AtomicsStore
+inline AtomicsSub
+inline AtomicsXor
 
 runtime FindBufferAccessor : Heap void (JSCell* receiver, uint32_t row) noexcept
 runtime NewBigInt64 : RuntimeState JSCell* (uint64_t bits, uint32_t isSigned)
@@ -128,15 +137,24 @@ method DataView.prototype.setUint32 this/w (toNumber, toNumber, any/-?) -> undef
 method DataView.prototype.setInt8 this/w (toNumber, toNumber) -> undefined ; MayThrow ReadsReceiver WritesReceiver ; Inline(DataViewSetInt8)
 method DataView.prototype.setUint8 this/w (toNumber, toNumber) -> undefined ; MayThrow ReadsReceiver WritesReceiver ; Inline(DataViewSetUint8)
 
+static Atomics.add (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsAdd)
 static Atomics.add (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.and (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsAnd)
 static Atomics.and (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.compareExchange (TypedArray!/w, number!, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsCompareExchange)
 static Atomics.compareExchange (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.exchange (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsExchange)
 static Atomics.exchange (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.load (TypedArray!/-, number!) -> number | bigint ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsLoad)
 static Atomics.load (any/-?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.or (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsOr)
 static Atomics.or (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.store (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsStore)
 static Atomics.store (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.sub (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsSub)
 static Atomics.sub (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
 static Atomics.waitAsync (any/K?, any/G...) -> anything ; CallsUserCode ; HostCall
+static Atomics.xor (TypedArray!/w, number!, number!) -> number ; MayThrow ReadsArguments WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(AtomicsXor)
 static Atomics.xor (any/w?, any/G...) -> anything ; CallsUserCode ; HostCall
 static Atomics.isLockFree (toNumber) -> boolean ; Pure ; HostCall
 static Atomics.notify (any/-?, any/G...) -> number ; CallsUserCode ; HostCall

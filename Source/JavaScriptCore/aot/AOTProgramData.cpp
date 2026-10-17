@@ -1293,20 +1293,19 @@ struct VMProgram::Impl {
     UncheckedKeyHashMap<uint32_t, FixedVector<IdentifierSet>> identifierSets;
 };
 
-template<typename T> static T* zeroedTable(size_t count)
-{
-    static_assert(std::is_trivially_default_constructible_v<T>, "this table is zeroed pages and its entries are never constructed, so default member initializers would be ignored");
-    return static_cast<T*>(OSAllocator::reserveAndCommit(roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(count, 1) * sizeof(T)), OSAllocator::FastMallocPages));
-}
-
-template<typename T> static void freeTable(T* table, size_t count)
-{
-    OSAllocator::decommitAndRelease(table, roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(count, 1) * sizeof(T)));
-}
-
 static size_t identifierCapacity(const ProgramData& data)
 {
     return std::min<size_t>(data.numberOfIdentifiers, UINT16_MAX) + 1;
+}
+
+static size_t offsetOfIdentifierPositions(const ProgramData& data)
+{
+    return roundUpToMultipleOf(WTF::pageSize(), identifierCapacity(data) * sizeof(UniquedStringImpl*));
+}
+
+static size_t sizeOfIdentifierTables(const ProgramData& data)
+{
+    return offsetOfIdentifierPositions(data) + roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(data.numberOfIdentifiers, 1) * sizeof(uint16_t));
 }
 
 VMProgram* VMProgram::of(VM& vm)
@@ -1319,8 +1318,8 @@ VMProgram* VMProgram::of(VM& vm)
 VMProgram::VMProgram(VM& vm)
     : m_vm(vm)
     , m_data(*ProgramData::get())
-    , m_identifiers(zeroedTable<UniquedStringImpl*>(identifierCapacity(m_data)))
-    , m_identifierPositions(zeroedTable<uint16_t>(m_data.numberOfIdentifiers))
+    , m_identifiers(static_cast<UniquedStringImpl**>(OSAllocator::reserveAndCommit(sizeOfIdentifierTables(m_data), OSAllocator::FastMallocPages)))
+    , m_identifierPositions(reinterpret_cast<uint16_t*>(reinterpret_cast<char*>(m_identifiers) + offsetOfIdentifierPositions(m_data)))
     , m_impl(makeUnique<Impl>())
 {
     m_impl->providers.grow(m_data.numberOfModules);
@@ -1337,8 +1336,7 @@ VMProgram::~VMProgram()
         m_identifiers[place]->deref();
     fastFree(m_constantValues);
     fastFree(m_constantKeys);
-    freeTable(m_identifiers, identifierCapacity(m_data));
-    freeTable(m_identifierPositions, m_data.numberOfIdentifiers);
+    OSAllocator::decommitAndRelease(m_identifiers, sizeOfIdentifierTables(m_data));
 }
 
 DecoderStringTable& VMProgram::strings()

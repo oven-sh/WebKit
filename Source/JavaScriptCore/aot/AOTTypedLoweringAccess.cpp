@@ -784,7 +784,7 @@ void Lowering::barrier(CellPointer owner)
             patchpoint->clobberLate(RegisterSet { callMarkerGPR });
         } else if (!hasFramelessFunctionStubs)
             m_context.hasColdSites = true;
-        uint32_t immediate = static_cast<uint32_t>(static_cast<unsigned>(isARM64() ? Entry::operationAOTTypedBarrierSlowPreservingRegisters : Entry::operationAOTTypedBarrierSlow) * sizeof(void*));
+        uint32_t immediate = offsetInTable(isARM64() ? Entry::operationAOTTypedBarrierSlowPreservingRegisters : Entry::operationAOTTypedBarrierSlow);
         patchpoint->setGenerator([context = &m_context, immediate](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             GPRReg owner = params[0].gpr();
@@ -2470,6 +2470,10 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
             if (auto read = getByNameWithFollowingRead(result, value))
                 return *read;
             if (auto read = getByNameForFollowingBranch(result, value))
+                return *read;
+            if (auto read = getByNameForFollowingComparison(result, value))
+                return *read;
+            if (auto read = getByNameForFollowingCall(result, value))
                 return *read;
             return genericPath();
         }
@@ -6390,6 +6394,23 @@ void Lowering::lowerPutById(ValueID, const Value& value)
         throwIfOfAnotherInstance(cell, name);
     if (value.isOnSlowPath && m_program.at(supertype).acceptsUntypedObjects) {
         emitPutById(box(cell), name, in<Boxed>(stored));
+        return;
+    }
+    if (mayBeFrozen(supertype) && !isPrivateName(m_program.string(name)) && !field->isMissingInSomeSubtype && m_program.at(supertype).acceptsUntypedObjects && !isAllocatedAsSubtypeOf(object, supertype) && !m_program.at(supertype).test.neverPasses()) {
+        LBasicBlock genericPath = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_knownSubtype = { };
+        orElse(passes(shapeWordOf(cell), m_program.at(supertype).test), genericPath);
+        orElse(hasNoBits(orderWordOf(cell), orderWordIsFrozen), genericPath);
+        {
+            SetForScope isAfterStoreShapeTest(m_isAfterStoreShapeTest, true);
+            writeField(cell, object, *field, stored);
+        }
+        m_out.jump(continuation);
+        m_out.appendTo(genericPath);
+        emitPutById(box(cell), name, in<Boxed>(stored));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
         return;
     }
     accessThroughSupertype(cell, object, supertype, *field, Rep::Void, [&]() -> Operand {

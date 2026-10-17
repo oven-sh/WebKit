@@ -57,12 +57,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayFromTypedArray, JSCell*, (Instanc
 static bool growVector(VM& vm, JSArray* array, unsigned length, unsigned expected = 0)
 {
     static constexpr unsigned maxLength = 1024;
-    static_assert(maxLength < MIN_SPARSE_ARRAY_INDEX && maxLength < MAX_STORAGE_VECTOR_LENGTH);
+    static constexpr unsigned maxExpectedLength = 1 << 23;
+    static_assert(maxLength < MIN_SPARSE_ARRAY_INDEX && maxExpectedLength < MAX_STORAGE_VECTOR_LENGTH);
     Butterfly* butterfly = array->butterfly();
     unsigned oldVectorLength = butterfly->vectorLength();
-    if (length > maxLength || length <= oldVectorLength || array->structure()->outOfLineCapacity()) [[unlikely]]
+    bool isExpected = expected >= length && (expected <= maxLength || (expected <= maxExpectedLength && expected >= nextLength(length)));
+    if ((length > maxLength && !isExpected) || length <= oldVectorLength || array->structure()->outOfLineCapacity()) [[unlikely]]
         return false;
-    unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), expected >= length && expected <= maxLength ? expected : static_cast<unsigned>(nextLength(length)));
+    unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), isExpected ? expected : static_cast<unsigned>(nextLength(length)));
     void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, newVectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
     if (!base) [[unlikely]]
         return false;
@@ -665,7 +667,7 @@ std::optional<Lowering::CountedLoop> Lowering::countedLoopContaining(BlockID blo
     if (test.opcode == Opcode::Less) {
         result.counter = test.child(0);
         result.bound = test.child(1);
-        if (!typeOf(result.bound).isInteger())
+        if (!typeOf(result.bound).isNumber())
             return std::nullopt;
     } else if (test.opcode == Opcode::IteratorHasNext && keyedAccessOf(m_program, m_function, test) == KeyedAccess::Array && !isLazilyFetched(m_function.at(test.child(0)).child(0))) {
         result.counter = test.child(1);
@@ -1141,16 +1143,18 @@ void Lowering::updateVectorLengthHint(CellPointer array, ValueID receiver)
     m_out.appendTo(continuation);
 }
 
-Word32 Lowering::remainingLoopIterations()
+Word32 Lowering::remainingLoopIterations(ValueID receiver)
 {
-    static constexpr int64_t maxTurns = 1 << 20;
     auto counted = countedLoopContaining(m_currentBlockID);
     if (!counted)
         return word32(0);
+    BlockID receiverBlock = m_definingBlock[originOf(receiver).index()];
+    bool isSameReceiverInEveryTurn = receiverBlock && !m_loops[counted->index].blocks.get(receiverBlock.index());
+    int64_t maxTurns = isSameReceiverInEveryTurn ? 1 << 22 : 1 << 10;
     ValueID boundSource = counted->iteratedArray ? m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0) : counted->bound;
     if (!isAvailableAtCurrentValue(boundSource) || !get(boundSource).value)
         return word32(0);
-    Integer bound = counted->iteratedArray ? arrayLength(asCell(in<Boxed>(m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0)))) : in<Integer>(counted->bound);
+    Integer bound = counted->iteratedArray ? arrayLength(asCell(in<Boxed>(m_function.at(m_function.at(m_loops[counted->index].header).terminator.value).child(0)))) : typeOf(counted->bound).isInteger() ? in<Integer>(counted->bound) : add(truncateToInteger(in<Number>(counted->bound)), integer(1));
     Integer turns = sub(bound, in<Integer>(counted->counter));
     return low32(select(below(turns, integer(maxTurns)), turns, integer(0)));
 }
@@ -1165,7 +1169,7 @@ LValue Lowering::expectedIndexingOfStoredArray(ValueID receiver, ValueID key, bo
     };
     bool staysWithinLength = counted && (isReceiverLength(counted->bound) || (counted->iteratedArray && originOf(counted->iteratedArray) == originOf(receiver)));
     bool appendsInLoopOrder = counted && !staysWithinLength && (originOf(key) == originOf(counted->counter) || isReceiverLength(key));
-    Word32 turns = appendsInLoopOrder ? remainingLoopIterations() : word32(0);
+    Word32 turns = appendsInLoopOrder ? remainingLoopIterations(receiver) : word32(0);
     if (!hasSite && turns.value()->isInt32(0))
         return nullptr;
     LValue expectedAndSite = m_out.shl(m_out.zeroExtPtr(turns.value()), m_out.constInt32(32));

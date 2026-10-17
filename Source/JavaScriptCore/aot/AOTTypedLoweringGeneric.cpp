@@ -869,7 +869,7 @@ bool Lowering::usesSiteCaches(StringID name) const
 {
     if (name && m_program.possibleAccessorNames.get(name.index()))
         return false;
-    return isX86_64() && m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
+    return m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
 }
 
 Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
@@ -888,6 +888,7 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
     RegisterSet clobbered = *registersClobberedBy(Stub::GetByName);
     clobbered.add(GPRInfo::returnValueGPR, IgnoreVectors);
     clobbered.add(stubImmediateGPR, IgnoreVectors);
+    clobbered.add(readSiteCacheGPR, IgnoreVectors);
     patchpoint->clobberLate(clobbered);
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site;
@@ -898,9 +899,7 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
         CCallHelpers::Label start = jit.label();
         CCallHelpers::JumpList misses;
         misses.append(jit.branchIfNotCell(receiver));
-        context->indexReferences.loadSiteCacheWord(jit, cached, word);
-        misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(receiver, JSCell::structureIDOffset())));
-        context->indexReferences.loadSiteCacheWord(jit, holder, word + 1);
+        misses.append(context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word));
         IndexReferences::loadFromCachedLocation(jit, receiver, cached, holder, GPRInfo::returnValueGPR);
         CCallHelpers::Label done = jit.label();
         context->rangesKeptInline.append({ start, done });
@@ -912,7 +911,7 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
             misses.link(&jit);
             jit.move(receiver, firstStubOperandGPR);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
-            context->indexReferences.getAddressOfSiteCacheWord(jit, GPRInfo::argumentGPR1, word);
+            context->indexReferences.getAddressOfSiteCacheWord(jit, readSiteCacheGPR, word);
             context->stubCalls.call(jit, stub, site);
             jit.jump().linkTo(done, &jit);
         });
@@ -937,6 +936,9 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
     RegisterSet clobbered = *registersClobberedBy(Stub::PutByName);
     clobbered.add(GPRInfo::returnValueGPR, IgnoreVectors);
     clobbered.add(stubImmediateGPR, IgnoreVectors);
+    clobbered.add(storeSiteCacheGPR, IgnoreVectors);
+    clobbered.add(cached, IgnoreVectors);
+    clobbered.add(structureAfterStore, IgnoreVectors);
     patchpoint->clobberLate(clobbered);
     CallSite site;
     site.bits = nextSite();
@@ -945,9 +947,7 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
         CCallHelpers::JumpList misses;
         CCallHelpers::Label start = jit.label();
         misses.append(jit.branchIfNotCell(firstStubOperandGPR));
-        context->indexReferences.loadSiteCacheWord(jit, cached, word);
-        misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset())));
-        context->indexReferences.loadSiteCacheWord(jit, structureAfterStore, word + 1);
+        misses.append(context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word));
         jit.urshift64(CCallHelpers::TrustedImm32(SiteCaches::offsetShift), cached);
         jit.store64(GPRInfo::argumentGPR1, CCallHelpers::BaseIndex(firstStubOperandGPR, cached, CCallHelpers::TimesOne));
         jit.store32(structureAfterStore, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset()));
@@ -964,7 +964,7 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
             jit.jump().linkTo(done, &jit);
             misses.link(&jit);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
-            context->indexReferences.getAddressOfSiteCacheWord(jit, stubTemporaryGPRs[3], word);
+            context->indexReferences.getAddressOfSiteCacheWord(jit, storeSiteCacheGPR, word);
             context->stubCalls.call(jit, stub, site);
             jit.jump().linkTo(done, &jit);
         });
@@ -975,6 +975,11 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
 Boxed Lowering::emitStandaloneCachedGetById(Boxed base, StringID name, bool isInRun)
 {
     if (auto number = isInRun ? std::nullopt : tableIndexOfName(name)) {
+        if (SpeculatedMethod method = std::exchange(m_methodBeingReadAheadOfArguments, SpeculatedMethod::None); method != SpeculatedMethod::None && *number < PropertyLookupTable::numberOfColumns) {
+            static_assert(static_cast<unsigned>(Stub::GetArrayPushByName) == static_cast<unsigned>(Stub::GetCollectionGetByName) + 2 * (static_cast<unsigned>(SpeculatedMethod::ArrayPushReadAhead) - static_cast<unsigned>(SpeculatedMethod::CollectionGet)));
+            Stub stub = static_cast<Stub>(static_cast<unsigned>(Stub::GetCollectionGetByName) + 2 * (static_cast<unsigned>(method) - static_cast<unsigned>(SpeculatedMethod::CollectionGet)));
+            return Boxed(callICStub(stub, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
+        }
         if (usesSiteCaches(name))
             return getByNameThroughSiteCache(base, *number);
         return Boxed(callICStub(Stub::GetByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
@@ -1127,7 +1132,7 @@ bool Lowering::isPlainReadByName(size_t index)
 {
     ValueID id = m_currentBlock->values[index];
     auto& read = m_function.at(id);
-    if (read.opcode != Opcode::GetById || read.methodGetByIdBuiltin() || read.rep != Rep::JSValue || read.isAtKnownSlot() || read.isOnSlowPath || isLazilyFetched(id) || isLazilyFetched(read.child(0)))
+    if (read.opcode != Opcode::GetById || read.methodGetByIdBuiltin() || read.rep != Rep::JSValue || read.isAtKnownSlot() || read.isOnSlowPath || isLazilyFetched(id) || isLazilyFetched(read.child(0)) || m_methodsReadAheadOfArguments.contains(id.index()))
         return false;
     auto& anything = m_program.at(m_program.types.anything);
     if (typeOf(id) != anything || typeOf(read.child(0)) != anything || m_function.at(read.child(0)).rep != Rep::JSValue || m_function.at(read.child(0)).opcode == Opcode::GetGlobal)
@@ -1223,6 +1228,120 @@ std::optional<Operand> Lowering::getByNameForFollowingBranch(ValueID result, con
         return std::nullopt;
     m_readDeferredToBranch = result;
     return placeholder(read.rep);
+}
+
+std::optional<Operand> Lowering::getByNameForFollowingComparison(ValueID result, const Value& read)
+{
+    auto& values = m_currentBlock->values;
+    if (m_fusedCasts || m_activeHandler || handlerEnteredByBranch() || m_isInLoop || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return std::nullopt;
+    if (useCountOf(result) != 1 || isCompact() || !isPlainReadByName(m_currentIndexInBlock))
+        return std::nullopt;
+    size_t next = m_currentIndexInBlock + 1;
+    while (next < values.size() && m_function.at(values[next]).opcode == Opcode::String)
+        ++next;
+    if (next >= values.size())
+        return std::nullopt;
+    auto& comparison = m_function.at(values[next]);
+    if (comparison.opcode != Opcode::StrictEq || comparison.inlineFrame != read.inlineFrame || isLazilyFetched(values[next]) || fusedUseIndex(next, 0))
+        return std::nullopt;
+    ValueID literal = comparison.child(0) == result ? comparison.child(1) : comparison.child(1) == result ? comparison.child(0) : ValueID();
+    if (!literal || !typeOf(literal).isString())
+        return std::nullopt;
+    auto text = constantASCIIString(literal);
+    if (!text || text->empty() || text->size() > maxRegisterStringLength)
+        return std::nullopt;
+    m_readDeferredToComparison = result;
+    m_indexOfReadDeferredToComparison = m_currentIndexInBlock;
+    return placeholder(read.rep);
+}
+
+std::optional<Operand> Lowering::getByNameForFollowingCall(ValueID result, const Value& read)
+{
+    auto& values = m_currentBlock->values;
+    if (m_fusedCasts || m_activeHandler || handlerEnteredByBranch() || m_dropsDroppableCallerFrame || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return std::nullopt;
+    if (useCountOf(result) != 1 || !prefersGenericPathInColdCode() || m_function.isSharedOutlinedBody || !isPlainReadByName(m_currentIndexInBlock))
+        return std::nullopt;
+    size_t next = m_currentIndexInBlock + 1;
+    auto isConstant = [&](ValueID id) {
+        switch (m_function.at(id).opcode) {
+        case Opcode::String:
+        case Opcode::Integer:
+        case Opcode::Boolean:
+        case Opcode::Undefined:
+        case Opcode::Null:
+            return true;
+        default:
+            return false;
+        }
+    };
+    while (next < values.size() && isConstant(values[next]))
+        ++next;
+    if (next >= values.size())
+        return std::nullopt;
+    auto& call = m_function.at(values[next]);
+    if (call.opcode != Opcode::Call || call.child(0) != result || !call.child(1) || call.child(1) != read.child(0) || call.inlineFrame != read.inlineFrame)
+        return std::nullopt;
+    if (call.speculatedMethod != SpeculatedMethod::None || call.isSignatureCall || call.arguments.size() > numberOfArgumentGPRs || call.arguments.contains(result) || isGuardedCallee(result) || isLazilyFetched(values[next]) || fusedUseIndex(next, 0))
+        return std::nullopt;
+    if (m_knownNullishIn.contains(m_currentBlockID.index()) || predictedBuiltin(BuiltinKind::Method, call.child(1), read.string(), call.arguments))
+        return std::nullopt;
+    m_readDeferredToCall = result;
+    return placeholder(read.rep);
+}
+
+void Lowering::branchOnLiteralOfRead(const Value& read, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther)
+{
+    m_context.emitsCalls = true;
+    Stub comparison = static_cast<Stub>(static_cast<unsigned>(Stub::ValueEqualsLiteralOfLength1) + 4 * (text.size() - 1));
+    Stub stub = static_cast<Stub>(static_cast<unsigned>(Stub::GetByNameEqualsLiteralOfLength1) + text.size() - 1);
+    uint64_t packed = packStringIntoRegister(text);
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->effects.terminal = true;
+    patchpoint->append(ConstrainedValue(in<Boxed>(read.child(0)).value(), ValueRep::reg(firstStubOperandGPR)));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    RegisterSet changed = *registersClobberedBy(Stub::GetByName);
+    changed.merge(*registersClobberedBy(comparison));
+    changed.add(GPRInfo::returnValueGPR, IgnoreVectors);
+    changed.add(stubImmediateGPR, IgnoreVectors);
+    changed.add(pairedNamesGPR, IgnoreVectors);
+    changed.add(literalOfComparedReadGPR, IgnoreVectors);
+    patchpoint->clobberLate(changed);
+    patchpoint->clobberEarly(RegisterSet { literalOfComparedReadGPR, pairedNamesGPR });
+    m_out.appendSuccessor(unsure(isOther));
+    m_out.appendSuccessor(unsure(isText));
+    CallSite site;
+    {
+        SetForScope currentIndex(m_currentIndexInBlock, m_indexOfReadDeferredToComparison);
+        site.bits = nextSite();
+    }
+    patchpoint->setGenerator([context = &m_context, name = *tableIndexOfName(read.string()), site, stub, packed](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.move(CCallHelpers::TrustedImm32(name), pairedNamesGPR);
+        if (packed <= UINT32_MAX)
+            jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(packed)), literalOfComparedReadGPR);
+        else
+            jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(packed)), literalOfComparedReadGPR);
+        context->stubCalls.call(jit, stub, site);
+        bool leavesIfSame = params.fallsThroughToSuccessor(0);
+#if CPU(X86_64)
+        CCallHelpers::Jump leaves = CCallHelpers::Jump(jit.m_assembler.jCC(leavesIfSame ? X86Assembler::ConditionE : X86Assembler::ConditionNE));
+#else
+        CCallHelpers::Jump leaves = jit.branchOnFlags(leavesIfSame ? CCallHelpers::Equal : CCallHelpers::NotEqual);
+#endif
+        CCallHelpers::Jump isSame;
+        if (!leavesIfSame && !params.fallsThroughToSuccessor(1))
+            isSame = jit.jump();
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        params.addLatePath([=](CCallHelpers& jit) {
+            leaves.linkTo(*labels[leavesIfSame], &jit);
+            if (isSame.isSet())
+                isSame.linkTo(*labels[1], &jit);
+        });
+    });
 }
 
 void Lowering::branchOnTruthinessOfRead(const Value& read, FTL::WeightedTarget isTruthy, FTL::WeightedTarget isFalsy)

@@ -312,7 +312,7 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
         m_out.appendTo(isCellCase);
         LValue cell = asCell(operand).value();
         LValue classInfo = m_out.loadPtr(structureOf(cell), m_heaps.Structure_classInfo);
-        m_out.branch(m_out.equal(classInfo, m_out.loadPtr(at(fixedPointer(Instance::offsetOfRuntimeTable()), static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*)))), unsure(isGenerator), unsure(isOther));
+        m_out.branch(m_out.equal(classInfo, m_out.loadPtr(at(fixedPointer(Instance::offsetOfRuntimeTable()), offsetInTable(Entry::GeneratorClassInfo)))), unsure(isGenerator), unsure(isOther));
         m_out.appendTo(isGenerator);
         m_out.branch(m_out.isZero32(m_out.load8ZeroExt32(at(cell, Generator::offsetOfHasOtherPrototype()))), usually(hasItsPrototype), rarely(isOther));
         m_out.appendTo(hasItsPrototype);
@@ -324,7 +324,7 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
     case InlineBuiltin::DeclaredGenerator:
         return valueResult(arguments[0], type);
     case InlineBuiltin::DrivenIteratorMarker:
-        return ensure(Boxed(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfRuntimeTable()), m_out.constIntPtr(static_cast<unsigned>(Entry::DrivenIteratorMarker) * sizeof(void*)))))), type);
+        return ensure(Boxed(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfRuntimeTable()), m_out.constIntPtr(offsetInTable(Entry::DrivenIteratorMarker)))))), type);
     case InlineBuiltin::MakeIteratorResult: {
         constexpr size_t sizeOfResult = JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue);
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));

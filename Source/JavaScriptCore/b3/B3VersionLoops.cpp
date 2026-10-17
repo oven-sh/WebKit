@@ -94,6 +94,7 @@ private:
         IndexSet<Value*> omittedValues;
         unsigned numberOfClonedValues { 0 };
         unsigned numberOfHoistedValues { 0 };
+        unsigned numberOfOmittedValues { 0 };
         std::optional<unsigned> nextVersionIndex;
         Value* unswitchedTerminal { nullptr };
         BasicBlock* nextVersionSuccessor { nullptr };
@@ -199,8 +200,8 @@ private:
         UnswitchCandidate candidate;
         std::optional<Version> version = tryCreateVersion(loops, loop, preHeader, nullptr, nullptr, &candidate);
         if (topTestedVersion) {
-            unsigned stays = topTestedVersion->numberOfClonedValues - topTestedVersion->numberOfHoistedValues;
-            unsigned staysOnOtherPath = version ? version->numberOfClonedValues - version->numberOfHoistedValues : topTestedVersion->numberOfClonedValues;
+            unsigned stays = topTestedVersion->numberOfClonedValues - topTestedVersion->numberOfHoistedValues - topTestedVersion->numberOfOmittedValues;
+            unsigned staysOnOtherPath = version ? version->numberOfClonedValues - version->numberOfHoistedValues - version->numberOfOmittedValues : topTestedVersion->numberOfClonedValues;
             if (topTestedVersion->isTopTested ? stays * 4 <= staysOnOtherPath * 3 : stays < staysOnOtherPath) {
                 addVersion(WTF::move(*topTestedVersion));
                 return;
@@ -737,6 +738,14 @@ private:
             version.omittedValues.add(version.poll->condition);
             version.hoistedValueSet.add(version.poll->block->last());
             version.hoistedGuardLikelySuccessors.add(version.poll->block->last(), version.poll->continuation);
+            version.numberOfOmittedValues += emitsInstructions(version.poll->limit) + emitsInstructions(version.poll->condition) + 1;
+        }
+        for (auto& entry : version.comparisonResults) {
+            Value* comparison = entry.key;
+            if (version.hoistedValueSet.contains(comparison))
+                continue;
+            Value* last = comparison->owner->last();
+            version.numberOfOmittedValues += emitsInstructions(comparison) + (last->opcode() == Branch && last->child(0) == comparison && m_numberOfUses[comparison] == 1);
         }
         return version;
     }

@@ -6591,6 +6591,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
 
     void recordLinkedJumps() { m_recordsLinkedJumps = true; }
+    const Vector<X86LinkedJump>& linkedJumps() const LIFETIME_BOUND { return m_linkedJumps; }
 
     void shortenLinkedJumps()
     {

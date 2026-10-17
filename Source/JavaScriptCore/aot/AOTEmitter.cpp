@@ -850,7 +850,7 @@ LValue Emitter::entry(Entry which)
         m_heaps.decorateMemory(&m_heaps.AOTInstance_runtimeTable, m_table);
         atHead.insert(afterInstance, m_table);
     }
-    LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[static_cast<unsigned>(which)]));
+    LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[offsetInTable(which) / sizeof(void*)]));
     static_cast<MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
     return result;
 }

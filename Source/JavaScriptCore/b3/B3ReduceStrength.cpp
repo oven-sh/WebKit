@@ -3126,6 +3126,9 @@ private:
             if (narrowsEqualityOfExtendedWords())
                 break;
 
+            if (comparesSignsByExclusiveOr())
+                break;
+
             // Turn this: Equal(bool, 0)
             // Into this: BitXor(bool, 1)
             if (m_value->child(0)->returnsBool() && m_value->child(1)->isInt32(0)) {
@@ -3168,6 +3171,9 @@ private:
             handleCommutativity();
 
             if (narrowsEqualityOfExtendedWords())
+                break;
+
+            if (comparesSignsByExclusiveOr())
                 break;
 
             if (m_value->child(0)->returnsBool()) {
@@ -5157,6 +5163,24 @@ private:
     void replaceWithNew(Arguments... arguments)
     {
         replaceWithNewValue(m_proc.add<ValueType>(arguments...));
+    }
+
+    bool comparesSignsByExclusiveOr()
+    {
+        if (!m_proc.positionIndependent())
+            return false;
+        auto isSignTest = [](Value* value) {
+            return (value->opcode() == LessThan || value->opcode() == GreaterEqual) && value->child(0)->isInteger() && value->child(1)->isInt(0);
+        };
+        Value* left = m_value->child(0);
+        Value* right = m_value->child(1);
+        if (!isSignTest(left) || !isSignTest(right) || left->child(0)->type() != right->child(0)->type())
+            return false;
+        bool holdsWhereSignsDiffer = (m_value->opcode() == NotEqual) == (left->opcode() == right->opcode());
+        Value* difference = m_insertionSet.insert<Value>(m_index, BitXor, m_value->origin(), left->child(0), right->child(0));
+        Value* zero = m_insertionSet.insertIntConstant(m_index, m_value->origin(), difference->type(), 0);
+        replaceWithNew<Value>(holdsWhereSignsDiffer ? LessThan : GreaterEqual, m_value->origin(), difference, zero);
+        return true;
     }
 
     bool isNumberTag(Value* value)

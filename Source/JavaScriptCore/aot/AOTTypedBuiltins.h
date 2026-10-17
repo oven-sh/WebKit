@@ -184,6 +184,12 @@ enum class LanguageOperation : uint8_t {
 #undef AOT_TYPED_DECLARE_LANGUAGE_OPERATION
 };
 
+static constexpr unsigned numberOfLanguageOperations = 0
+#define AOT_TYPED_COUNT_LANGUAGE_OPERATION(name) + 1
+    FOR_EACH_AOT_TYPED_LANGUAGE_OPERATION(AOT_TYPED_COUNT_LANGUAGE_OPERATION);
+#undef AOT_TYPED_COUNT_LANGUAGE_OPERATION
+int32_t numberInCode(LanguageOperation);
+
 enum class PreludeFunction : uint8_t {
 #define AOT_TYPED_DECLARE_PRELUDE_FUNCTION(name, text) name,
     FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION(AOT_TYPED_DECLARE_PRELUDE_FUNCTION)

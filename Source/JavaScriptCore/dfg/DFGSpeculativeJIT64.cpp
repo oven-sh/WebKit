@@ -2548,6 +2548,11 @@ void SpeculativeJIT::compileMapGetImpl(Node* node)
     load32(Address(mapStorageOrDataGPR, MapOrSet::Helper::capacityIndex() * sizeof(uint64_t)), bucketCountGPR);
     sub32(bucketCountGPR, TrustedImm32(1), bucketIndexOrDeletedValueGPR);
     and32(hashGPR, bucketIndexOrDeletedValueGPR);
+    JumpList isPlacedByHash;
+    isPlacedByHash.append(branchIfNotInt32(keyGPR));
+    isPlacedByHash.append(branch32(AboveOrEqual, keyGPR, bucketCountGPR));
+    zeroExtend32ToWord(keyGPR, bucketIndexOrDeletedValueGPR);
+    isPlacedByHash.link(this);
     add32(TrustedImm32(MapOrSet::Helper::hashTableStartIndex()), bucketIndexOrDeletedValueGPR);
 
     JIT_COMMENT(*this, "Get the entryKeyIndex JSValue.");

@@ -749,6 +749,18 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
 }
 
 template<typename Traits>
+bool CompactTable::tryAddAbsent(JSGlobalObject* globalObject, JSOrderedHashTable<Traits>* owner, JSString* key, JSValue value)
+{
+    auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+    const StringImpl* impl = key->tryGetValueImpl();
+    if (impl && !table->isInImage() && table->m_used < table->m_capacity && canHold(table->m_valueWidth, value) && canHold(table->keyWidth(), key)) [[likely]] {
+        table->append(globalObject->vm(), key, impl->hash(), value);
+        return true;
+    }
+    return tryAdd(globalObject, owner, key, value);
+}
+
+template<typename Traits>
 bool CompactTable::remove(JSGlobalObject* globalObject, JSOrderedHashTable<Traits>* owner, JSValue key)
 {
     auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
@@ -1465,6 +1477,7 @@ DEFINE_VISIT_CHILDREN(CompactTable);
 
 #define AOT_TYPED_INSTANTIATE_COMPACT_TABLE(Traits) \
     template bool CompactTable::tryAdd<Traits>(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue, JSValue, CreateIfNeeded, uint32_t); \
+    template bool CompactTable::tryAddAbsent<Traits>(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSString*, JSValue); \
     template bool CompactTable::remove<Traits>(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue); \
     template void CompactTable::clear<Traits>(VM&, JSOrderedHashTable<Traits>*); \
     template void CompactTable::convert<Traits>(VM&, JSOrderedHashTable<Traits>*); \

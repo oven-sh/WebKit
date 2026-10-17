@@ -137,7 +137,7 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VirtualCallInfo);
 void* stubAddress(Stub stub)
 {
     const void* inImage = Image::stubAddress(stub);
-    RELEASE_ASSERT_WITH_MESSAGE(inImage, "No AOT image with code is registered.");
+    RELEASE_ASSERT_WITH_MESSAGE(inImage, "No AOT image with code is registered, or it holds no such stub.");
     return const_cast<void*>(inImage);
 }
 
@@ -201,6 +201,12 @@ struct CountedOperation<entry, operation> {
     }
 };
 #endif
+
+static void JIT_OPERATION_ATTRIBUTES operationNotUsedByImage()
+{
+    dataLogLn("AOT: compiled code has called an operation that its image does not list among those it uses.");
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 RuntimeTable::RuntimeTable(VM& vm)
 {
@@ -271,6 +277,17 @@ RuntimeTable::RuntimeTable(VM& vm)
     setHostFunction(Entry::HostSetAdd, setProtoFuncAdd);
 
     installOperationFrontEnds(vm, m_entries);
+    const uint32_t* entriesUsed = Image::withCode()->header().entriesUsed;
+    auto trapUnlessUsed = [&](Entry entry) {
+        unsigned index = static_cast<unsigned>(entry);
+        if (!(entriesUsed[index / 32] >> index % 32 & 1))
+            m_entries[index] = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);
+    };
+    for (unsigned index = 0; index < static_cast<unsigned>(Entry::HandleException); ++index)
+        trapUnlessUsed(static_cast<Entry>(index));
+    forEachOperationFrontEnd([&](Entry, Entry raw, Stub) {
+        trapUnlessUsed(raw);
+    });
 
     vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::CallBoundFunction))));
 }
@@ -574,7 +591,6 @@ struct Instance::Collections {
     size_t usedDataEnd { 0 };
     size_t dataEnd { 0 };
     uint64_t* dataStartBits { nullptr };
-    size_t dataStartBitsSize { 0 };
     Vector<std::pair<size_t, size_t>> freeDataList;
     struct SlotNoLongerWatched {
         Data* data;
@@ -709,8 +725,16 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     size_t numberOfFunctions = Image::numberOfFunctions();
     size_t numberOfStates = program->data().numberOfStates;
     size_t dataStart = SiteCaches::endOffset(dataStartFor(numberOfStates));
-    size_t size = dataStart + roundUpToMultipleOf(WTF::pageSize(), Image::totalDataSize());
+    size_t dataEnd = dataStart + roundUpToMultipleOf(WTF::pageSize(), Image::totalDataSize());
+    size_t dataStartBitsSize = roundUpToMultipleOf(WTF::pageSize(), ((dataEnd >> stateWithDataShift) - (dataStart >> stateWithDataShift)) / 8 + sizeof(uint64_t));
+    constexpr size_t sizeOfCaches = sizeOfKeyedTables + 2 * numberOfNamedFields * sizeof(NamedField) + immutableElementCacheSize * sizeof(ImmutableElement) + spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry) + copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry);
+    size_t cachesStart = roundUpToMultipleOf(WTF::pageSize(), dataEnd);
+    size_t size = cachesStart + sizeOfCaches + dataStartBitsSize;
     Instance* instance = reinterpret_cast<Instance*>(static_cast<char*>(OSAllocator::reserveAndCommit(environmentsSize + size, OSAllocator::FastMallocPages)) + environmentsSize);
+    char* nextCache = reinterpret_cast<char*>(instance) + cachesStart;
+    auto takeCache = [&](size_t bytes) {
+        return std::exchange(nextCache, nextCache + bytes);
+    };
 #if OS(LINUX)
     while (madvise(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif
@@ -721,27 +745,26 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections = new Collections;
     instance->remainingSymbolKeyedRuns = maxSymbolKeyedRuns;
     instance->remainingCopiedNameRuns = maxCopiedNameRuns;
-    instance->keyedReads = static_cast<KeyedRead*>(OSAllocator::reserveAndCommit(sizeOfKeyedTables, OSAllocator::FastMallocPages));
+    instance->keyedReads = reinterpret_cast<KeyedRead*>(takeCache(sizeOfKeyedTables));
     instance->keyedAdditions = reinterpret_cast<KeyedAddition*>(instance->keyedReads + numberOfKeyedReads);
     instance->keyedHas = reinterpret_cast<Slot*>(instance->keyedAdditions + numberOfKeyedAdditions);
     static_assert(!(numberOfNamedFields * sizeof(NamedField) % (16 * KB)));
-    instance->namedFieldReads = static_cast<NamedField*>(OSAllocator::reserveAndCommit(numberOfNamedFields * sizeof(NamedField), OSAllocator::FastMallocPages));
-    instance->namedFieldWrites = static_cast<NamedField*>(OSAllocator::reserveAndCommit(numberOfNamedFields * sizeof(NamedField), OSAllocator::FastMallocPages));
+    instance->namedFieldReads = reinterpret_cast<NamedField*>(takeCache(numberOfNamedFields * sizeof(NamedField)));
+    instance->namedFieldWrites = reinterpret_cast<NamedField*>(takeCache(numberOfNamedFields * sizeof(NamedField)));
     static_assert(!(immutableElementCacheSize * sizeof(ImmutableElement) % (16 * KB)));
-    instance->immutableElementCache = static_cast<ImmutableElement*>(OSAllocator::reserveAndCommit(immutableElementCacheSize * sizeof(ImmutableElement), OSAllocator::FastMallocPages));
+    instance->immutableElementCache = reinterpret_cast<ImmutableElement*>(takeCache(immutableElementCacheSize * sizeof(ImmutableElement)));
     static_assert(!(spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry) % (16 * KB)));
-    instance->spreadCopyCache = static_cast<SpreadCopyCacheEntry*>(OSAllocator::reserveAndCommit(spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry), OSAllocator::FastMallocPages));
+    instance->spreadCopyCache = reinterpret_cast<SpreadCopyCacheEntry*>(takeCache(spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry)));
     static_assert(!(copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry) % (16 * KB)));
-    instance->copyKeyOrderCache = static_cast<CopyKeyOrderEntry*>(OSAllocator::reserveAndCommit(copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry), OSAllocator::FastMallocPages));
+    instance->copyKeyOrderCache = reinterpret_cast<CopyKeyOrderEntry*>(takeCache(copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry)));
     instance->collections->loader = loader;
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
     instance->collections->numberOfFunctions = numberOfFunctions;
     instance->collections->dataStart = dataStart >> stateWithDataShift;
     instance->collections->usedDataEnd = instance->collections->dataStart;
-    instance->collections->dataEnd = size >> stateWithDataShift;
-    instance->collections->dataStartBitsSize = roundUpToMultipleOf(WTF::pageSize(), (instance->collections->dataEnd - instance->collections->dataStart) / 8 + sizeof(uint64_t));
-    instance->collections->dataStartBits = static_cast<uint64_t*>(OSAllocator::reserveAndCommit(instance->collections->dataStartBitsSize, OSAllocator::FastMallocPages));
+    instance->collections->dataEnd = dataEnd >> stateWithDataShift;
+    instance->collections->dataStartBits = reinterpret_cast<uint64_t*>(takeCache(dataStartBitsSize));
     instance->program = program;
     instance->programData = &program->data();
     instance->infos = program->data().infos();
@@ -1195,7 +1218,6 @@ void Instance::destroy(Instance* instance)
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
     size_t size = instance->collections->sizeFromInstance;
-    OSAllocator::decommitAndRelease(instance->collections->dataStartBits, instance->collections->dataStartBitsSize);
     fastFree(instance->cachedReturnAddresses);
     delete instance->collections;
     auto holdsSameCustomGetters = [&](Instance* other) {
@@ -1210,12 +1232,6 @@ void Instance::destroy(Instance* instance)
     destroyJSONSource(*instance);
     destroyStringAppender(*instance);
     destroyFormatPatternState(*instance);
-    OSAllocator::decommitAndRelease(instance->namedFieldReads, numberOfNamedFields * sizeof(NamedField));
-    OSAllocator::decommitAndRelease(instance->namedFieldWrites, numberOfNamedFields * sizeof(NamedField));
-    OSAllocator::decommitAndRelease(instance->immutableElementCache, immutableElementCacheSize * sizeof(ImmutableElement));
-    OSAllocator::decommitAndRelease(instance->spreadCopyCache, spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry));
-    OSAllocator::decommitAndRelease(instance->copyKeyOrderCache, copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry));
-    OSAllocator::decommitAndRelease(instance->keyedReads, sizeOfKeyedTables);
     OSAllocator::decommitAndRelease(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
 }
 

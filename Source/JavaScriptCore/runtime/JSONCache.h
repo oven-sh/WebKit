@@ -31,6 +31,7 @@
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/Latin1Character.h>
 
@@ -125,6 +126,15 @@ public:
     };
 
     JSONCache() = default;
+
+    static UniqueRef<JSONCache> create()
+    {
+#if USE(TZONE_MALLOC)
+        return makeUniqueRef<JSONCache>();
+#else
+        return UniqueRef<JSONCache>(*static_cast<JSONCache*>(fastZeroedMalloc(sizeof(JSONCache))));
+#endif
+    }
 
     template<typename CharacterType>
     ALWAYS_INLINE Ref<AtomStringImpl> makeIdentifier(VM&, std::span<const CharacterType> characters);

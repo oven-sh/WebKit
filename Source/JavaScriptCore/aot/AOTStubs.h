@@ -329,6 +329,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafFlatStringsAreEqual) \
     v(StringsAreEqual) \
     v(LeafStringsAreEqual) \
+    v(CompareStrings) \
+    v(LeafCompareStrings) \
     v(ConcatenateTwo) \
     v(LeafConcatenateTwo) \
     v(ConcatenateThree) \
@@ -656,8 +658,26 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByNameFromTwo) \
     v(GetByNameIsTruthy) \
     v(GetByNameIsTruthyPreservingTwo) \
+    v(GetByNameEqualsLiteralOfLength1) \
+    v(GetByNameEqualsLiteralOfLength2) \
+    v(GetByNameEqualsLiteralOfLength3) \
+    v(GetByNameEqualsLiteralOfLength4) \
+    v(GetByNameEqualsLiteralOfLength5) \
+    v(GetByNameEqualsLiteralOfLength6) \
+    v(GetByNameEqualsLiteralOfLength7) \
+    v(GetByNameEqualsLiteralOfLength8) \
     v(GetLengthByName) \
     v(GetLengthByNamePreservingTwo) \
+    v(GetCollectionGetByName) \
+    v(GetCollectionGetByNamePreservingTwo) \
+    v(GetCollectionHasByName) \
+    v(GetCollectionHasByNamePreservingTwo) \
+    v(GetCollectionSetByName) \
+    v(GetCollectionSetByNamePreservingTwo) \
+    v(GetCollectionAddByName) \
+    v(GetCollectionAddByNamePreservingTwo) \
+    v(GetArrayPushByName) \
+    v(GetArrayPushByNamePreservingTwo) \
     v(GetParentDataByName) \
     v(AddInlineByName) \
     v(AddOutOfLineByName) \
@@ -744,6 +764,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByValCached) \
     v(GetByValCachedOfCells) \
     v(GetOwnByValIfCached) \
+    v(GetOwnFieldByKeyIfCached) \
     v(PutByValCached) \
     v(PutByValCachedSloppy) \
     v(PrivateGet) \
@@ -831,6 +852,11 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(RegExpTestOrCallValue) \
     v(StringMatchOrCallMethod) \
     v(StringMatchOrCallValue) \
+    v(CollectionGetOrCallValue) \
+    v(CollectionHasOrCallValue) \
+    v(CollectionSetOrCallValue) \
+    v(CollectionAddOrCallValue) \
+    v(ArrayPushReadAheadOrCallValue) \
     v(ReadBatchedElements) \
     v(SuspendAtFirstAwait) \
     v(AppendSpread) \
@@ -1087,6 +1113,7 @@ Stub stubVariantForReceiverGPR(Stub, GPRReg receiver);
 enum class PerNameStubKind : uint8_t { Reads, Stores, Definitions, Calls };
 void clearNamesWithDedicatedStubs();
 enum class CollectionMethod : uint8_t { None, Get, Has, Set, Add };
+static constexpr int32_t greatestMarkerOfMethodReadAhead = 4 << 4;
 CollectionMethod collectionMethodNamed(std::span<const uint8_t> name);
 void setCollectionMethodNamed(uint32_t name, CollectionMethod);
 bool isCollectionMethodName(uint32_t name);
@@ -1102,6 +1129,10 @@ struct StubBlob {
     Vector<unsigned> returnsIntoAdapters;
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
+    BitVector entriesUsed;
+    BitVector languageOperationsUsed;
+    BitVector stubsGenerated;
+    BitVector stubsReached;
 };
 std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, bool mayRunInMultipleInstances, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly);
 constexpr bool isGeneratedOnlyIfCalled(Stub stub) { return (stub >= Stub::GetByIdAsDouble && stub <= Stub::GetByNameAsArrayOrNullishPreservingTwo) || (stub >= Stub::UnboxNumberArgument0ToFPR0 && stub <= Stub::LeafUnboxNumberArgument3ToFPR3); }
@@ -1112,12 +1143,13 @@ struct IndexReference {
     uint32_t addend;
     uint16_t scale;
     bool isSiteCacheWord { false };
+    bool isAddress { false };
 };
 class IndexReferences {
 public:
     void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
     void load16(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
-    void loadSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
+    CCallHelpers::Jump loadSiteCacheUnlessStructureDiffers(CCallHelpers&, GPRReg cell, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction);
     void getAddressOfSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
     static void loadFromCachedLocation(CCallHelpers&, GPRReg receiver, GPRReg cachedWord, GPRReg cachedHolder, GPRReg dest);
     Vector<IndexReference> link(LinkBuffer&);
@@ -1129,7 +1161,9 @@ private:
         uint32_t addend;
         uint32_t scale;
         bool isSiteCacheWord { false };
+        bool isAddress { false };
     };
+    void loadSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
     Vector<Reference, 2> m_references;
 };
 

@@ -14,6 +14,7 @@
 #include "AOTCompiler.h"
 #include "AOTInstructionsInCode.h"
 #include "AOTOutliner.h"
+#include "AOTThunks.h"
 #include "AOTTypedBuiltins.h"
 #include "AOTTypedFormat.h"
 #include "AOTTypedOperations.h"
@@ -51,6 +52,7 @@
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 #include <sys/mman.h>
 #if OS(DARWIN)
+#include <crt_externs.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
@@ -74,7 +76,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Image);
 static int addProgramBuildID(struct dl_phdr_info* info, size_t, void* context)
 {
     auto& identity = *static_cast<uint64_t*>(context);
-    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+    for (unsigned i = info->dlpi_phnum; i--;) {
         auto& segment = info->dlpi_phdr[i];
         if (segment.p_type != PT_NOTE)
             continue;
@@ -90,6 +92,7 @@ static int addProgramBuildID(struct dl_phdr_info* info, size_t, void* context)
             if (note.n_type == NT_GNU_BUILD_ID && note.n_namesz == 4 && !memcmp(at, "GNU", 4)) {
                 for (size_t byte = 0; byte < note.n_descsz; ++byte)
                     identity = (identity ^ at[nameSize + byte]) * 0x100000001b3ULL;
+                return 1;
             }
             at += nameSize + descriptionSize;
         }
@@ -105,7 +108,7 @@ static uint64_t currentBinaryIdentity()
 #if OS(LINUX)
         dl_iterate_phdr(addProgramBuildID, &identity);
 #elif OS(DARWIN)
-        auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(0));
+        auto* header = reinterpret_cast<const mach_header_64*>(_NSGetMachExecuteHeader());
         auto* command = reinterpret_cast<const uint8_t*>(header + 1);
         for (uint32_t i = 0; header && i < header->ncmds; ++i) {
             auto& loadCommand = *reinterpret_cast<const load_command*>(command);
@@ -2369,6 +2372,13 @@ Vector<uint8_t> ImageBuilder::finish()
         RELEASE_ASSERT(!thunkIsGeneratedOnlyIfCalled(thunk) || calledThunks.get(thunk));
         return stubs.thunkOffsets[thunk];
     };
+    auto offsetOfStub = [&](Stub stub) {
+        if (!stubs.stubsReached.get(static_cast<unsigned>(stub))) [[unlikely]] {
+            dataLogLn("AOT: compiled code calls the stub ", nameOf(stub), ", which was left out of the image.");
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return stubs.offsets[static_cast<unsigned>(stub)];
+    };
     size_t argumentThunksAt = WTF::roundUpToMultipleOf<imageStubsAlignment>(stubs.bytes.size());
     size_t sizeOfStubs = argumentThunks.bytes.isEmpty() ? stubs.bytes.size() : argumentThunksAt + argumentThunks.bytes.size();
     size_t sharedBodiesAt = WTF::roundUpToMultipleOf<sizeof(uint32_t)>(sizeOfStubs);
@@ -2722,7 +2732,7 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         if (jump.argumentMoves != StubCall::noArgumentMoves)
             return stubCopyIndex + argumentThunksAt + argumentThunks.offsets[numberOfArgumentMoves(bodyArgumentMoves[jump.argumentMoves])];
-        return stubCopyIndex + (jump.thunk ? offsetOfThunk(jump.thunk - 1) : stubs.offsets[static_cast<unsigned>(jump.stub)]);
+        return stubCopyIndex + (jump.thunk ? offsetOfThunk(jump.thunk - 1) : offsetOfStub(jump.stub));
     };
     for (size_t index = 0; index < m_functions.size(); ++index) {
         size_t at = placement[index].first + sizesWithVeneers[index] - sizeOfOwnBodiesOf[index];
@@ -3251,7 +3261,11 @@ Vector<uint8_t> ImageBuilder::finish()
         map->println("B\t", codeSize);
     header.numberOfFunctions = m_functions.size();
     for (unsigned i = 0; i < numberOfStubs; ++i)
-        header.stubOffsets[i] = safeCast<uint32_t>(stubs.offsets[i] + (stubsAt.isEmpty() ? 0 : stubsAt.first()));
+        header.stubOffsets[i] = stubs.stubsReached.get(i) ? safeCast<uint32_t>(stubs.offsets[i] + (stubsAt.isEmpty() ? 0 : stubsAt.first())) : ImageHeader::noStub;
+    for (size_t entry : stubs.entriesUsed)
+        header.entriesUsed[entry / 32] |= 1u << entry % 32;
+    for (size_t operation : stubs.languageOperationsUsed)
+        header.languageOperationsUsed[operation / 32] |= 1u << operation % 32;
 
     endStep("the header and the frames"_s);
     Vector<uint8_t> image;
@@ -3389,7 +3403,7 @@ Vector<uint8_t> ImageBuilder::finish()
         memcpy(code + at + argumentThunksAt, argumentThunks.bytes.span().data(), argumentThunks.bytes.size());
         for (auto& jump : argumentThunks.jumps) {
             RELEASE_ASSERT(!isGeneratedOnlyIfCalled(jump.stub) || calledStubs.get(static_cast<unsigned>(jump.stub)));
-            retargetStubCall(code, at + argumentThunksAt + jump.offset, at + (jump.thunk ? offsetOfThunk(jump.thunk - 1) : stubs.offsets[static_cast<unsigned>(jump.stub)]), true);
+            retargetStubCall(code, at + argumentThunksAt + jump.offset, at + (jump.thunk ? offsetOfThunk(jump.thunk - 1) : offsetOfStub(jump.stub)), true);
         }
     }
     for (size_t at : stubsAt) {
@@ -3527,7 +3541,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 continue;
             }
             RELEASE_ASSERT(!isGeneratedOnlyIfCalled(call.stub) || calledStubs.get(static_cast<unsigned>(call.stub)));
-            size_t target = call.thunk ? offsetOfThunk(call.thunk - 1) : stubs.offsets[static_cast<unsigned>(call.stub)];
+            size_t target = call.thunk ? offsetOfThunk(call.thunk - 1) : offsetOfStub(call.stub);
             if (call.argumentMoves != StubCall::noArgumentMoves)
                 target = argumentThunksAt + argumentThunks.offsets[numberOfArgumentMoves(info.argumentMoves[call.argumentMoves])];
             retargetStubCall(code, codeAt + call.offset, stubsForFunction + target, call.isTailCall);
@@ -4331,8 +4345,10 @@ const void* Image::stubAddress(Stub stub)
     auto& all = registry();
     Locker locker { all.lock };
     for (Image* image : all.images) {
-        if (image->header().codeSize)
-            return static_cast<const uint8_t*>(image->m_code) + image->header().stubOffsets[static_cast<unsigned>(stub)];
+        if (!image->header().codeSize)
+            continue;
+        uint32_t offset = image->header().stubOffsets[static_cast<unsigned>(stub)];
+        return offset == ImageHeader::noStub ? nullptr : static_cast<const uint8_t*>(image->m_code) + offset;
     }
     return nullptr;
 }
@@ -4971,6 +4987,53 @@ std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8
     return std::pair { static_cast<size_t>(header.codeOffset), static_cast<size_t>(header.size - header.codeOffset) };
 }
 
+Vector<ASCIILiteral> aotImageOperations(std::span<const uint8_t> image)
+{
+    using AOT::Entry;
+    Vector<ASCIILiteral> result;
+    AOT::ImageHeader header;
+    if (image.size() < sizeof(header))
+        return result;
+    memcpySpan(asMutableByteSpan(header), image.first(sizeof(header)));
+    if (header.magic != AOT::imageMagic)
+        return result;
+    auto isUsed = [&](Entry entry) {
+        unsigned index = static_cast<unsigned>(entry);
+        return !!(header.entriesUsed[index / 32] >> index % 32 & 1);
+    };
+    constexpr unsigned numberOfOperations = static_cast<unsigned>(Entry::HandleException);
+    WTF::BitSet<numberOfOperations> isCalled;
+    for (unsigned index = 0; index < numberOfOperations; ++index)
+        isCalled.set(index, isUsed(static_cast<Entry>(index)));
+    AOT::forEachOperationFrontEnd([&](Entry entry, Entry raw, AOT::Stub) {
+        isCalled.set(static_cast<unsigned>(entry), isUsed(raw));
+    });
+    for (size_t index : isCalled)
+        result.append(AOT::nameOf(static_cast<Entry>(index)));
+    return result;
+}
+
+Vector<ASCIILiteral> aotImageLanguageOperations(std::span<const uint8_t> image)
+{
+    static constexpr ASCIILiteral names[] = {
+#define AOT_NAME_OF_LANGUAGE_OPERATION(name) #name ""_s,
+        FOR_EACH_AOT_TYPED_LANGUAGE_OPERATION(AOT_NAME_OF_LANGUAGE_OPERATION)
+#undef AOT_NAME_OF_LANGUAGE_OPERATION
+    };
+    Vector<ASCIILiteral> result;
+    AOT::ImageHeader header;
+    if (image.size() < sizeof(header))
+        return result;
+    memcpySpan(asMutableByteSpan(header), image.first(sizeof(header)));
+    if (header.magic != AOT::imageMagic)
+        return result;
+    for (unsigned index = 0; index < std::size(names); ++index) {
+        if (header.languageOperationsUsed[index / 32] >> index % 32 & 1)
+            result.append(names[index]);
+    }
+    return result;
+}
+
 size_t aotImageAlignment() { return AOT::imagePageSize; }
 
 } // namespace JSC
@@ -4988,6 +5051,8 @@ Vector<uint8_t> buildAOTFile(VM&, std::span<const SourceCode>, bool, std::span<c
 std::optional<size_t> aotImageSize(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t>) { return std::nullopt; }
+Vector<ASCIILiteral> aotImageOperations(std::span<const uint8_t>) { return { }; }
+Vector<ASCIILiteral> aotImageLanguageOperations(std::span<const uint8_t>) { return { }; }
 size_t aotImageAlignment() { return 1; }
 
 } // namespace JSC

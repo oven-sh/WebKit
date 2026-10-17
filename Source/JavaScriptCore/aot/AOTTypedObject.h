@@ -1808,6 +1808,12 @@ struct State {
             growKeysByParts();
     }
     KeyByParts lastKeyPartsLookup;
+    struct LastReplacement {
+        std::array<EncodedJSValue, 48> steps;
+        uint32_t countAndForm { 0 };
+        uint32_t lastStep { 0 };
+    };
+    LastReplacement lastReplacement;
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
         size_t numberOfPlaces = m_cachedKeys.size();
@@ -2501,6 +2507,11 @@ private:
     Vector<std::unique_ptr<GlobalPropertyWatchpoint>> m_globalPropertyWatchpoints;
     Vector<std::unique_ptr<GlobalPropertyWatchpoint>> m_memberHolderWatchpoints;
     Vector<uint64_t*> m_retiredStringTables;
+    template<typename T> T* createZeroedTable(size_t count);
+    template<typename T> void destroyZeroedTable(T*, size_t count);
+    char* m_tableArena { nullptr };
+    size_t m_tableArenaSize { 0 };
+    size_t m_tableArenaUsed { 0 };
     Vector<uint64_t> m_cachedKeys;
     size_t m_cachedKeyEvictionCount { 0 };
     std::array<uint64_t, 256> m_caseConvertedStrings { };

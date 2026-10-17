@@ -284,7 +284,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 #endif
     , m_regExpCache(makeUnique<RegExpCache>())
     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
-    , m_jsonCache(makeUniqueRef<JSONCache>())
+    , m_jsonCache(JSONCache::create())
     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
@@ -306,7 +306,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         });
 
         m_megamorphicCache.initLater([](VM&, auto& ref) {
-            ref.set(makeUniqueRef<MegamorphicCache>());
+            ref.set(MegamorphicCache::create());
         });
 
         m_stringSplitCache.initLater([](VM&, auto& ref) {
@@ -954,6 +954,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> VM::getCTIStub(CommonJITThunkID thunkID)
 }
 
 #endif // ENABLE(JIT)
+
+NEVER_INLINE void VM::destroy() const
+{
+    delete this;
+}
 
 void VM::createBytecodeIntrinsicRegistry()
 {

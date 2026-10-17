@@ -228,11 +228,16 @@ std::optional<Word32> Lowering::compareWithIntegerConstant(const Value& value)
         bool isKept = found != m_numbersAsIntegers.end() && found->value.minimum && get(number).value == found->value.number;
         if (!isKept && !(isOptionalIntegerWithoutNull(m_program, m_function.at(number)) && get(number).rep == Rep::OptionalInt64 && minIfIntegerOrNaN(number)))
             continue;
-        Integer x = integerOrMarker(number);
-        int64_t least = isKept ? *found->value.minimum : *minIfIntegerOrNaN(number);
         int64_t bound = constant.integer();
         bool testsLess = (value.opcode == Opcode::Less || value.opcode == Opcode::LessEq) == isNumberFirst;
         bool includesEqual = value.opcode == Opcode::LessEq || value.opcode == Opcode::GreaterEq;
+        static_assert(undefinedInteger > maxExactInteger);
+        if (testsLess && !isKept && bound <= maxExactInteger) {
+            Integer integerOrUndefined = assumedInteger(get(number).as<OptionalInteger>());
+            return includesEqual ? lessThanOrEqual(integerOrUndefined, integer(bound)) : lessThan(integerOrUndefined, integer(bound));
+        }
+        Integer x = integerOrMarker(number);
+        int64_t least = isKept ? *found->value.minimum : *minIfIntegerOrNaN(number);
         if (!testsLess)
             return includesEqual ? greaterThanOrEqual(x, integer(bound)) : greaterThan(x, integer(bound));
         if (includesEqual ? bound < least : bound <= least)

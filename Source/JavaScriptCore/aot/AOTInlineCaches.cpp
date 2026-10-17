@@ -2483,6 +2483,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyLookupTable);
 static constexpr size_t sizeOfCells = 2 * static_cast<size_t>(PropertyLookupTable::entriesPerPlane) * sizeof(PropertyLookupTable::Cell);
 static constexpr size_t sizeOfSlots = PropertyLookupTable::maxNumberOfSlots * sizeof(Slot);
 static constexpr size_t sizeOfOccupied = (PropertyLookupTable::entriesPerPlane / 64 + 4) * sizeof(uint64_t);
+static constexpr size_t offsetOfOccupied = roundUpToMultipleOf<16 * KB>(sizeOfCells);
+static constexpr size_t offsetOfSlots = offsetOfOccupied + roundUpToMultipleOf<16 * KB>(sizeOfOccupied);
+static constexpr size_t sizeOfTables = offsetOfSlots + sizeOfSlots;
 
 static void* reserveForTable(size_t size)
 {
@@ -2574,6 +2577,13 @@ uint32_t PropertyLookupTable::findBase(std::span<const uint16_t> names, uint32_t
     return 0;
 }
 
+NEVER_INLINE void PropertyLookupTable::willChangeEntryAt(uint32_t index, uint32_t entry)
+{
+    const Cell& cell = m_cells[index];
+    if (mayBeInSiteCaches(cell) && !readsLike(cell, entry) && isInRowInSiteCaches(index))
+        clearSiteCaches();
+}
+
 void PropertyLookupTable::occupy(uint32_t index, uint32_t entry)
 {
     ASSERT(entry && !entryAt(index));
@@ -2593,10 +2603,10 @@ uint32_t PropertyLookupTable::vacate(uint32_t index)
 
 PropertyLookupTable::PropertyLookupTable()
 {
-    m_cells = static_cast<Cell*>(reserveForTable(sizeOfCells));
-    m_occupied = static_cast<uint64_t*>(reserveForTable(sizeOfOccupied));
+    m_cells = static_cast<Cell*>(reserveForTable(sizeOfTables));
+    m_occupied = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(m_cells) + offsetOfOccupied);
     m_bases.limit = numberOfBases;
-    m_slots = static_cast<Slot*>(reserveForTable(sizeOfSlots));
+    m_slots = reinterpret_cast<Slot*>(reinterpret_cast<char*>(m_cells) + offsetOfSlots);
     m_data = static_cast<Data*>(fastZeroedMalloc(sizeof(Data)));
     m_data->hasBeenFilledSinceLastCollection = true;
     m_data->slotEpoch = 1;
@@ -2606,9 +2616,7 @@ PropertyLookupTable::~PropertyLookupTable()
 {
     delete m_data->watchpoints;
     fastFree(m_data);
-    OSAllocator::decommitAndRelease(m_cells, sizeOfCells);
-    OSAllocator::decommitAndRelease(m_occupied, sizeOfOccupied);
-    OSAllocator::decommitAndRelease(m_slots, sizeOfSlots);
+    OSAllocator::decommitAndRelease(m_cells, sizeOfTables);
 }
 
 PropertyLookupTable& PropertyLookupTable::of(VM& vm)
@@ -2745,7 +2753,8 @@ uint32_t PropertyLookupTable::moveRow(uint32_t base, std::optional<uint16_t> nam
 {
     if (m_data->instance)
         countOperationNamed(m_data->instance, "PropertyLookupTable::moveRow");
-    uint32_t findStructureDescriptor = payload(base);
+    uint32_t numberAndMark = payload(base);
+    uint32_t findStructureDescriptor = rowNumberAt(base);
     Vector<uint16_t, 32> names;
     names.append(m_rows[findStructureDescriptor].names.span());
     unsigned numberOfNamesMoved = names.size();
@@ -2756,7 +2765,7 @@ uint32_t PropertyLookupTable::moveRow(uint32_t base, std::optional<uint16_t> nam
         return 0;
     uint32_t mark = vacate(base);
     occupy(newBase, nameToAdd && *nameToAdd & isInOverflow ? baseMarkerWithOverflowNames : mark);
-    setPayload(newBase, findStructureDescriptor);
+    setPayload(newBase, numberAndMark);
     for (unsigned i = 0; i < numberOfNamesMoved; ++i) {
         uint32_t from = indexOfRowName(base, names[i]);
         uint32_t to = indexOfRowName(newBase, names[i]);
@@ -2836,7 +2845,7 @@ static std::optional<uint32_t> codeForInlineOrOutOfLineOffset(PropertyOffset off
 
 uint32_t PropertyLookupTable::entryRow(uint32_t index, uint32_t name) const
 {
-    return payload((index < entriesPerPlane ? index : index - entriesPerPlane) - 1 - name);
+    return rowNumberAt((index < entriesPerPlane ? index : index - entriesPerPlane) - 1 - name);
 }
 
 void PropertyLookupTable::appendToNameList(uint32_t row, uint32_t& head)
@@ -3318,7 +3327,9 @@ auto PropertyLookupTable::entriesReferencing(UniquedStringImpl* uid, JSCell* hol
 
 void PropertyLookupTable::release(uint32_t base)
 {
-    uint32_t findStructureDescriptor = payload(base);
+    uint32_t findStructureDescriptor = rowNumberAt(base);
+    if (payload(base) & rowIsInSiteCaches)
+        m_siteCachesMayBeStale = true;
     Row& row = m_rows[findStructureDescriptor];
     for (uint16_t listed : row.names) {
         uint32_t index = indexOfRowName(base, listed);
@@ -3328,7 +3339,6 @@ void PropertyLookupTable::release(uint32_t base)
             m_dependsOnPrototypes.quickClear(bitOf(index));
     }
     vacate(base);
-    m_siteCachesMayBeStale = true;
     row.owner = nullptr;
     row.names.clear();
     m_freeRows.append(findStructureDescriptor);

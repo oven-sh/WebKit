@@ -1408,6 +1408,8 @@ private:
     bool specialize(BlockID block, unsigned index)
     {
         ValueID id = m_function.at(block).values[index];
+        if (m_mode == Mode::Prelude && m_function.at(id).isOnSlowPath)
+            return false;
         if (m_mode == Mode::Speculation && m_function.at(id).opcode == Opcode::Construct)
             return specializeResponseConstruction(block, index);
         if (m_mode == Mode::Speculation && specializeHeaderRead(block, index))

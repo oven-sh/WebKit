@@ -209,6 +209,7 @@ enum class Entry : uint16_t {
 
 static constexpr unsigned numberOfEntries = static_cast<unsigned>(Entry::NumberOfEntries);
 ASCIILiteral nameOf(Entry);
+uint32_t offsetInTable(Entry);
 
 bool hasInstanceParameter(Entry);
 
@@ -1293,6 +1294,17 @@ struct Instance {
     bool hasOwnPropertyLocations;
     static constexpr ptrdiff_t offsetOfOwnPropertyLocations() { return OBJECT_OFFSETOF(Instance, ownPropertyLocations); }
     void cacheOwnPropertyLocation(uint32_t structureID, UniquedStringImpl* uid, uint32_t place);
+    struct OwnPropertyParts {
+        static constexpr uint32_t isPresent = OwnPropertyLocation::isPresent;
+        static constexpr uint32_t attributes = OwnPropertyLocation::attributes;
+        static constexpr uint32_t hasNoWritable = 16;
+
+        EncodedJSValue value;
+        EncodedJSValue getter;
+        EncodedJSValue setter;
+    };
+    OwnPropertyParts ownPropertyParts;
+    static constexpr ptrdiff_t offsetOfOwnPropertyParts() { return OBJECT_OFFSETOF(Instance, ownPropertyParts); }
     struct ObjectCreateCacheEntry {
         JSCell* prototype;
         uint64_t header;
@@ -1896,10 +1908,11 @@ struct Instance {
     uint32_t hostClassStructureIDs[numberOfHostClasses];
     static constexpr ptrdiff_t offsetOfHostClassStructureID(unsigned number) { return OBJECT_OFFSETOF(Instance, hostClassStructureIDs) + number * sizeof(uint32_t); }
     struct PlainRecordShape {
-        static constexpr unsigned maxNumberOfFields = 24;
+        static constexpr unsigned maxNumberOfFields = 16;
         uint32_t structureID;
         uint32_t layout;
         uint8_t locations[maxNumberOfFields];
+        const void* lastObject;
     };
     static constexpr unsigned numberOfPlainRecordShapes = 64;
     static constexpr unsigned indexOfPlainRecordShape(uint32_t layout) { return layout % numberOfPlainRecordShapes; }
@@ -2058,6 +2071,8 @@ public:
     static constexpr int32_t offsetOfNameInEntry = OBJECT_OFFSETOF(Cell, name);
     static constexpr uint8_t rowHasOverflowNames = 1;
     static constexpr int32_t offsetOfRowFlags = offsetOfFirstColumn - static_cast<int32_t>(sizeof(Cell)) + offsetOfCodeInEntry;
+    static constexpr int32_t offsetOfRowNumber = offsetOfFirstColumn - static_cast<int32_t>(sizeof(Cell));
+    static constexpr uint32_t rowIsInSiteCaches = 1u << 31;
     static constexpr unsigned bitsOfKind = 5;
     static_assert(numberOfKinds <= 1u << bitsOfKind);
     static constexpr uint8_t valueIsInStorage = 1u << bitsOfKind;
@@ -2255,7 +2270,7 @@ private:
         if (!(entry & hasKindAndCode))
             return false;
         if (storeAddsInline(kindOf(cell)))
-            return kindOf(entry) == kindOf(cell) && codeOf(entry) == cell.code;
+            return kindOf(entry) == kindOf(cell) && (codeOf(entry) | codeFlagForKind(kindOf(cell))) == cell.code;
         if (impliesAbsent(kindOf(cell)))
             return impliesAbsent(kindOf(entry));
         if (isOwnOutOfLine(kindOf(cell)))
@@ -2277,8 +2292,8 @@ private:
     void setEntryAt(uint32_t index, uint32_t entry)
     {
         Cell& cell = m_cells[index];
-        if (mayBeInSiteCaches(cell) && !readsLike(cell, entry)) [[unlikely]]
-            clearSiteCaches();
+        if (cell.name) [[unlikely]]
+            willChangeEntryAt(index, entry);
         uint32_t low = isInlineEntry(entry) ? codeOf(entry) : isInlineEntry(cell) ? 0 : cell.readOffsetOrPayload;
 #if CPU(ARM64)
         if (entry & hasKindAndCode)
@@ -2291,7 +2306,7 @@ private:
     {
         ASSERT(!isInlineEntry(m_cells[index]));
         Cell& cell = m_cells[index];
-        if (cell.readOffsetOrPayload && cell.readOffsetOrPayload != payload && mayBeInSiteCaches(cell)) [[unlikely]]
+        if (cell.readOffsetOrPayload && cell.readOffsetOrPayload != payload && mayBeInSiteCaches(cell) && isInRowInSiteCaches(index)) [[unlikely]]
             clearSiteCaches();
         cell.readOffsetOrPayload = payload;
     }
@@ -2314,7 +2329,10 @@ private:
     uint32_t findIndexOfSlots(Structure*, uint32_t name) const;
     uint32_t ensureIndexInOverflow(Structure*, uint32_t name);
     static size_t bitOf(uint32_t index) { return index; }
-    Row& rowAt(uint32_t base) { return m_rows[payload(base)]; }
+    uint32_t rowNumberAt(uint32_t base) const { return payload(base) & ~rowIsInSiteCaches; }
+    Row& rowAt(uint32_t base) { return m_rows[rowNumberAt(base)]; }
+    bool isInRowInSiteCaches(uint32_t index) const { return payload((index < entriesPerPlane ? index : index - entriesPerPlane) - 1 - (m_cells[index].name & maxName)) & rowIsInSiteCaches; }
+    void willChangeEntryAt(uint32_t index, uint32_t entry);
     uint32_t ensureIndex(Structure*, uint32_t name);
     uint32_t createRow(Structure*, uint32_t name);
     uint32_t moveRow(uint32_t base, std::optional<uint16_t> nameToAdd);

@@ -292,6 +292,12 @@ public:
     static Ref<VM> createContextGroup(HeapType = HeapType::Small);
     JS_EXPORT_PRIVATE ~VM();
 
+    void derefSuppressingSaferCPPChecking() const
+    {
+        if (derefBase()) [[unlikely]]
+            destroy();
+    }
+
     Watchdog* watchdog() { return m_watchdog.getIfExists(); }
     Watchdog& ensureWatchdog() { return m_watchdog.get(*this); }
 
@@ -1547,6 +1553,7 @@ private:
     std::unique_ptr<FuzzerAgent> m_fuzzerAgent;
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
     void createBytecodeIntrinsicRegistry();
+    JS_EXPORT_PRIVATE void destroy() const;
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
 

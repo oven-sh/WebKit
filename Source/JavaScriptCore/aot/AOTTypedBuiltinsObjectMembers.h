@@ -18,6 +18,17 @@
     Word32 ownPropertyLocationOrElse(CellPointer object, ValueID key, LBasicBlock otherwise);
     Word32 hasOwnPropertyAt(CellPointer object, Word32 place);
     Operand lowerGetOwnPropertyDescriptor(ValueID result, const Value&);
+    struct DescriptorInFrame {
+        Word32 kind;
+        Boxed value;
+        Boxed getter;
+        Boxed setter;
+    };
+    BitVector m_descriptorsOnlyTakenApart;
+    UncheckedKeyHashMap<uint32_t, DescriptorInFrame, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_descriptorsInFrame;
+    void findDescriptorsOnlyTakenApart();
+    Operand lowerDescriptorOnlyTakenApart(ValueID result, const Value&);
+    std::optional<Operand> lowerPropertyOfDescriptor(ValueID result, const Value&);
     Operand lowerCreate(ValueID result, const Value&);
     Operand createWithPrototype(ValueID result, const Value&);
     std::optional<size_t> indexOfAssignThatClones(ValueID created);

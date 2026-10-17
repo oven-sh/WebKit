@@ -13,6 +13,7 @@
 #include "AirGenerate.h"
 #include "B3BasicBlockUtils.h"
 #include "B3CompilationCohort.h"
+#include "B3ConvertBranchesToSelects.h"
 #include "B3CountedLoops.h"
 #include "B3CycleForest.h"
 #include "B3DuplicateTails.h"
@@ -7909,6 +7910,7 @@ private:
         }
         if (often([&] { return stripMineLoops(proc); }))
             sometimes(runHoisting);
+        often([&] { return convertBranchesToSelects(proc); });
         sometimes([&] { return sinkValues(proc); });
     }
 
@@ -7938,8 +7940,193 @@ static void testRandomProgramRegressions()
     }
 }
 
+static bool convertBranchesToSelectsAndValidate(Procedure& proc)
+{
+    bool result = convertBranchesToSelects(proc);
+    validate(proc);
+    return result;
+}
+
+static Value* elementAtIndex(Graph& graph, TopTestedLoop& loop, BasicBlock* block)
+{
+    Value* offset = graph.make(block, Shl, graph.get(block, loop.index), graph.int32(block, 3));
+    return graph.load(block, Int64, graph.make(block, Add, loop.pointer, offset), 0, firstHeap);
+}
+
+static void testConvertBranchesToSelectsConvertsTriangle()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* taken = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* loaded = elementAtIndex(graph, loop, loop.body);
+    graph.branch(loop.body, graph.make(loop.body, GreaterThan, loaded, loop.extra), taken, join);
+    graph.increase(taken, loop.sum, 1);
+    graph.jump(taken, join);
+    loop.endBody(join);
+    checkValueCountInEachLoop(proc, Branch, { 2 });
+
+    CHECK(convertBranchesToSelectsAndValidate(proc));
+    checkValueCountInEachLoop(proc, Branch, { 1 });
+    checkValueCountInEachLoop(proc, Select, { 1 });
+    auto code = compileProc(proc);
+    int64_t memory[6] = { 5, -3, 9, 4, 4, 100 };
+    CHECK_EQ(run(*code, 6, memory, 4), 3);
+    CHECK_EQ(run(*code, 6, memory, 100), 0);
+    CHECK_EQ(run(*code, 6, memory, -4), 6);
+    CHECK_EQ(run(*code, 1, memory, 4), 1);
+    CHECK_EQ(run(*code, 0, memory, 4), 0);
+}
+
+static void testConvertBranchesToSelectsConvertsDiamond()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* taken = proc.addBlock();
+    BasicBlock* notTaken = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* loaded = elementAtIndex(graph, loop, loop.body);
+    graph.branch(loop.body, graph.make(loop.body, BitAnd, loaded, graph.int64(loop.body, 1)), taken, notTaken);
+    graph.increase(taken, loop.sum, loaded);
+    graph.jump(taken, join);
+    graph.set(notTaken, loop.sum, graph.make(notTaken, Sub, graph.get(notTaken, loop.sum), loop.extra));
+    graph.jump(notTaken, join);
+    loop.endBody(join);
+    checkValueCountInEachLoop(proc, Branch, { 2 });
+
+    CHECK(convertBranchesToSelectsAndValidate(proc));
+    checkValueCountInEachLoop(proc, Branch, { 1 });
+    checkValueCountInEachLoop(proc, Select, { 1 });
+    auto code = compileProc(proc);
+    int64_t memory[5] = { 5, 2, -7, 0, 11 };
+    CHECK_EQ(run(*code, 5, memory, 10), 5 - 10 - 7 - 10 + 11);
+    CHECK_EQ(run(*code, 2, memory, 1), 4);
+    CHECK_EQ(run(*code, 0, memory, 1), 0);
+}
+
+static void testConvertBranchesToSelectsConvertsNestedTest()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    Variable* length = proc.addVariable(Int64);
+    BasicBlock* goesOn = proc.addBlock();
+    BasicBlock* isLongest = proc.addBlock();
+    BasicBlock* innerJoin = proc.addBlock();
+    BasicBlock* ends = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    loop.root->removeLast(proc);
+    graph.set(loop.root, length, graph.int64(loop.root, 0));
+    graph.jump(loop.root, loop.header);
+    Value* loaded = elementAtIndex(graph, loop, loop.body);
+    graph.branch(loop.body, graph.make(loop.body, GreaterEqual, loaded, graph.int64(loop.body, 0)), goesOn, ends);
+    graph.increase(goesOn, length, 1);
+    graph.branch(goesOn, graph.make(goesOn, GreaterThan, graph.get(goesOn, length), graph.get(goesOn, loop.sum)), isLongest, innerJoin);
+    graph.set(isLongest, loop.sum, graph.get(isLongest, length));
+    graph.jump(isLongest, innerJoin);
+    graph.jump(innerJoin, join);
+    graph.set(ends, length, graph.int64(ends, 0));
+    graph.jump(ends, join);
+    loop.endBody(join);
+    checkValueCountInEachLoop(proc, Branch, { 3 });
+
+    CHECK(convertBranchesToSelectsAndValidate(proc));
+    checkValueCountInEachLoop(proc, Branch, { 1 });
+    auto code = compileProc(proc);
+    int64_t memory[10] = { 1, 2, -1, 3, 4, 5, 0, -2, 6, 7 };
+    CHECK_EQ(run(*code, 10, memory), 4);
+    CHECK_EQ(run(*code, 3, memory), 2);
+    CHECK_EQ(run(*code, 0, memory), 0);
+    int64_t negative[3] = { -1, -2, -3 };
+    CHECK_EQ(run(*code, 3, negative), 0);
+}
+
+template<typename ConditionFunctor, typename ArmFunctor>
+static bool convertsTriangle(const ConditionFunctor& makeCondition, const ArmFunctor& fillArm, FrequencyClass frequencyOfArm = FrequencyClass::Normal)
+{
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* taken = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* loaded = elementAtIndex(graph, loop, loop.body);
+    graph.branch(loop.body, makeCondition(graph, loop, loaded), FrequentedBlock(taken, frequencyOfArm), FrequentedBlock(join));
+    fillArm(graph, loop, taken, loaded);
+    graph.jump(taken, join);
+    loop.endBody(join);
+    return convertBranchesToSelectsAndValidate(proc);
+}
+
+static void testConvertBranchesToSelectsKeepsOtherBranches()
+{
+    auto onLoadedValue = [](Graph& graph, TopTestedLoop& loop, Value* loaded) {
+        return graph.make(loop.body, GreaterThan, loaded, loop.extra);
+    };
+    auto onIndex = [](Graph& graph, TopTestedLoop& loop, Value*) {
+        return graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), graph.int64(loop.body, 1));
+    };
+    auto onValueFromOutsideLoop = [](Graph& graph, TopTestedLoop& loop, Value*) {
+        return graph.make(loop.body, GreaterThan, loop.extra, loop.bound);
+    };
+    auto counts = [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value*) {
+        graph.increase(arm, loop.sum, 1);
+    };
+    CHECK(convertsTriangle(onLoadedValue, counts));
+    CHECK(!convertsTriangle(onIndex, counts));
+    CHECK(!convertsTriangle(onValueFromOutsideLoop, counts));
+    CHECK(!convertsTriangle(onLoadedValue, counts, FrequencyClass::Rare));
+    CHECK(!convertsTriangle(onLoadedValue, [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value* loaded) {
+        graph.increase(arm, loop.sum, 1);
+        graph.store(arm, loaded, loop.pointer, 0, secondHeap);
+    }));
+    CHECK(!convertsTriangle(onLoadedValue, [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value*) {
+        graph.increase(arm, loop.sum, graph.load(arm, Int64, loop.pointer, 0, firstHeap));
+    }));
+    CHECK(!convertsTriangle(onLoadedValue, [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value*) {
+        graph.increase(arm, loop.sum, 1);
+        graph.callLikePatchpoint(arm);
+    }));
+    CHECK(!convertsTriangle(onLoadedValue, [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value* loaded) {
+        graph.set(arm, loop.sum, graph.make(arm, Div, graph.get(arm, loop.sum), loaded));
+    }));
+    CHECK(!convertsTriangle(onLoadedValue, [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value* loaded) {
+        Value* value = graph.get(arm, loop.sum);
+        for (unsigned i = 0; i < 3; ++i)
+            value = graph.make(arm, BitXor, graph.make(arm, Add, value, loop.extra), loaded);
+        graph.set(arm, loop.sum, value);
+    }));
+}
+
+static void testConvertBranchesToSelectsKeepsBranchOutsideLoop()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* taken = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Variable* result = proc.addVariable(Int64);
+    auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+    Value* loaded = graph.load(root, Int64, arguments[1], 0, firstHeap);
+    graph.set(root, result, graph.int64(root, 0));
+    graph.branch(root, graph.make(root, GreaterThan, loaded, arguments[2]), taken, join);
+    graph.increase(taken, result, 1);
+    graph.jump(taken, join);
+    graph.ret(join, graph.get(join, result));
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+    CHECK(!convertBranchesToSelectsAndValidate(proc));
+}
+
 void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& tasks)
 {
+    RUN(testConvertBranchesToSelectsConvertsTriangle());
+    RUN(testConvertBranchesToSelectsConvertsDiamond());
+    RUN(testConvertBranchesToSelectsConvertsNestedTest());
+    RUN(testConvertBranchesToSelectsKeepsOtherBranches());
+    RUN(testConvertBranchesToSelectsKeepsBranchOutsideLoop());
     RUN(testRotateLoopsMovesTestToBottom());
     RUN(testRotateLoopsBottomTestedLoop());
     RUN(testRotateLoopsSkipsLargeTest());

@@ -9,6 +9,7 @@
 
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
+#include "AOTTypedBuiltins.h"
 #include "CPU.h"
 #include "CodeSpecializationKind.h"
 #include "YarrFlags.h"
@@ -39,6 +40,8 @@ static constexpr unsigned numberOfTargetFindingStubs = 3;
 static constexpr unsigned maxReturnsIntoHostFunctionFrames = numberOfTargetFindingStubs + 1;
 
 struct ImageHeader {
+    static constexpr uint32_t noStub = std::numeric_limits<uint32_t>::max();
+
     uint64_t magic;
     uint64_t stamp;
     uint64_t size;
@@ -86,6 +89,8 @@ struct ImageHeader {
     uint32_t codeGranuleShift;
     uint32_t webAssemblyDirectoryOffset;
     uint32_t webAssemblyCodeOffset;
+    uint32_t entriesUsed[(numberOfEntries + 31) / 32];
+    uint32_t languageOperationsUsed[(Typed::numberOfLanguageOperations + 31) / 32];
 };
 
 struct ImageRegExp {

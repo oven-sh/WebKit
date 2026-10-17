@@ -105,6 +105,9 @@ void Lowering::findCalleesCalledInLoops()
                 callee = m_function.at(callee).child(0);
             if (m_function.at(callee).predictedClosure() || repOf(typeOf(callee)) != Rep::JSValue)
                 continue;
+            auto& enclosingFunction = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+            if (!enclosingFunction.has(Format::FunctionIsBuiltin))
+                continue;
             for (unsigned i = 0; i < m_loops.size(); ++i) {
                 auto& loop = m_loops[i];
                 if (!loop.blocks.get(b) || !loop.header.index() || !isLoopInvariant(loop, callee))
@@ -282,6 +285,14 @@ std::optional<Word32> Lowering::lowerRelationalWithOptionalInteger(const Value& 
         return std::nullopt;
     Integer kept = assumedInteger(optional.as<OptionalInteger>());
     bool neitherIsNegative = optionalType.integers.minimum >= 0 && typeOf(integerOperand).integers.minimum >= 0;
+    static_assert(undefinedInteger > maxExactInteger);
+    bool asksWhetherOptionalIsSmaller = integerIsFirst ? value.opcode == Opcode::Greater || value.opcode == Opcode::GreaterEq : value.opcode == Opcode::Less || value.opcode == Opcode::LessEq;
+    if (asksWhetherOptionalIsSmaller && typeOf(integerOperand).integers.maximum <= maxExactInteger) {
+        Integer bound = in<Integer>(integerOperand);
+        if (value.opcode == Opcode::Less || value.opcode == Opcode::Greater)
+            return neitherIsNegative ? below(kept, bound) : lessThan(kept, bound);
+        return neitherIsNegative ? belowOrEqual(kept, bound) : lessThanOrEqual(kept, bound);
+    }
     return either<Word32>(lessThan(kept, integer(undefinedInteger)), [&] {
         Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
         Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);

@@ -1031,6 +1031,7 @@ void Lowering::lowerBlock(BlockID id)
     if (Options::aotMapFilePath()) [[unlikely]]
         m_out.setOrigin(std::bit_cast<DFG::Node*>(std::bit_cast<uintptr_t>(originForMap(firstTerminatorForMap + static_cast<unsigned>(block.terminator.kind), false)) | static_cast<uintptr_t>(0x800000 + id.index() + 1) << 32 | (id.index() + 1 < 1u << 16 ? conditionForMap(block.terminator.value) : 0) << 48 | classForMap(block.terminator.value) << 56));
     lowerTerminator(block.terminator);
+    RELEASE_ASSERT(!m_readDeferredToComparison && !m_readDeferredToCall);
 #if CPU(X86_64)
     if (m_context.hasColdSites && LoweringContext::treatsColdSitesAsCallsForSplitting())
         m_context.blocksWithCalls.set(id.index());
@@ -1386,7 +1387,10 @@ bool Lowering::run()
         findLazilyFetchedLeaves();
     if (callsBuiltins) {
         findSplitsOnlyTakenApart();
+        findDescriptorsOnlyTakenApart();
         findSubstringsOnlyInspected();
+        findReplacementChains();
+        findRepeatedTableLookups(order);
     }
     if (m_opcodes.intersects(concatenations))
         findConcatenationsWithNumbers();
@@ -1394,6 +1398,7 @@ bool Lowering::run()
     findNumberArraysUsedInLoops();
     findTypedArraysAccessedInLoops();
     findCalleesCalledInLoops();
+    findMethodsReadAheadOfArguments();
     if (opensIterators)
         findStringIterations();
     if (callsBuiltins)
@@ -2397,7 +2402,7 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
     }
     auto outOfLine = [&] {
         auto [count, list] = argumentBuffer(value.arguments);
-        Boxed result = AOT_TYPED_OPERATION_WITH_EFFECTS(LanguageOperation, builtinCallEffects(value), word32(static_cast<int32_t>(builtin.implementation.operation)), count, list);
+        Boxed result = AOT_TYPED_OPERATION_WITH_EFFECTS(LanguageOperation, builtinCallEffects(value), word32(numberInCode(builtin.implementation.operation)), count, list);
         return guaranteesResultType(m_program, m_function, value) ? convert(result, type, value.rep) : ensure(result, type);
     };
     if (builtin.implementation.operation == LanguageOperation::UnlistFields || (builtin.implementation.operation == LanguageOperation::ListFields && value.arguments.size() == 6)) {
@@ -2543,7 +2548,7 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
             LValue buffer = transientBuffer(std::size(inBuffer) * sizeof(EncodedJSValue));
             for (unsigned i = 0; i < std::size(inBuffer); ++i)
                 m_out.store64(inBuffer[i], m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
-            return finish(ensure(AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(LanguageOperation::CopyDataProperties)), word32(std::size(inBuffer)), Pointer(buffer)), type));
+            return finish(ensure(AOT_TYPED_OPERATION(LanguageOperation, word32(numberInCode(LanguageOperation::CopyDataProperties)), word32(std::size(inBuffer)), Pointer(buffer)), type));
         }
     }
     if (builtin.implementation.operation == LanguageOperation::AppendSpread) {
@@ -2708,6 +2713,12 @@ Operand Lowering::lower(ValueID id, const Value& value)
             return lowerMethodGetById(value);
         if (auto property = lowerPropertyOfMatch(id, value))
             return *property;
+        if (auto property = lowerPropertyOfDescriptor(id, value))
+            return *property;
+        if (auto found = m_methodsReadAheadOfArguments.find(id.index()); found != m_methodsReadAheadOfArguments.end()) {
+            SetForScope methodBeingRead(m_methodBeingReadAheadOfArguments, found->value);
+            return lowerGetById(id, value);
+        }
         return lowerGetById(id, value);
     case Opcode::PutById:
         lowerPutById(id, value);

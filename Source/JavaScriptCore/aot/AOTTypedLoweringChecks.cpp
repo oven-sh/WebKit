@@ -478,7 +478,10 @@ LValue Lowering::plainRecordProperty(CellPointer object, LayoutID record, uint32
     for (uint32_t i = 0; i < field; ++i)
         number += !(fields[i].flags & fieldIsNeverStored);
     LValue location = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfPlainRecordShapes()), Instance::indexOfPlainRecordShape(record.index()) * sizeof(Shape) + OBJECT_OFFSETOF(Shape, locations) + number));
-    return m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object.value(), m_out.shl(m_out.zeroExtPtr(location), m_out.constInt32(3)))));
+    LValue held = m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object.value(), m_out.shl(m_out.zeroExtPtr(location), m_out.constInt32(3)))));
+    if (!(fields[field].flags & fieldIsOptional) || !(m_program.at(fields[field].storedInSlot).primitives & Primitive::Undefined))
+        return held;
+    return m_out.select(m_out.isZero32(location), undefined().value(), held);
 }
 
 void Lowering::branchOnPlainRecord(const Value& value, LBasicBlock isOne, LBasicBlock isNone)
@@ -500,6 +503,9 @@ void Lowering::branchOnPlainRecord(const Value& value, LBasicBlock isOne, LBasic
         if (!(fields[field].flags & fieldIsNeverStored))
             narrowOrElse(Boxed(plainRecordProperty(object, record, field)), m_program.at(m_program.types.anything), m_program.at(fields[field].type), isNone);
     }
+    TypedPointer lastObject = m_out.address(m_heaps.AOTInstance_mutableFields, shapes, shape + OBJECT_OFFSETOF(Shape, lastObject));
+    orElse(Word32(m_out.notEqual(m_out.loadPtr(lastObject), object.value())), isNone);
+    m_out.storePtr(object.value(), lastObject);
     m_out.jump(isOne);
 }
 
@@ -1476,7 +1482,7 @@ Boxed Lowering::castInRegister(Boxed given, Entry operation, bool operationRetur
         CCallHelpers::Label done = jit.label();
         ArgumentMoves moves;
         appendArgumentMove(moves, held, ArgumentSource::KindCheck, (tests[1] & (KindCheck::Undefined | KindCheck::Null | KindCheck::Boolean | KindCheck::Number)) | (mayBeModifiedArray ? KindCheck::ChangedArray : 0));
-        appendArgumentMove(moves, castInRegisterWordGPR(), ArgumentSource::Constant, CastInRegister::word(argument, static_cast<unsigned>(operation) * sizeof(void*), operationReturnsValue, held));
+        appendArgumentMove(moves, castInRegisterWordGPR(), ArgumentSource::Constant, CastInRegister::word(argument, offsetInTable(operation), operationReturnsValue, held));
         bool isLeaf = context->hasNoFrame(params.proc().code());
         if (slowPathIsInline) {
             doesNotFit.link(&jit);
@@ -2573,7 +2579,7 @@ void checkShadowBeforeAccesses(Procedure& proc)
                     jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
                     jit.move(instanceGPR, GPRInfo::argumentGPR2);
                     jit.loadPtr(CCallHelpers::Address(instanceGPR, Instance::offsetOfRuntimeTable()), GPRInfo::argumentGPR3);
-                    jit.call(CCallHelpers::Address(GPRInfo::argumentGPR3, static_cast<unsigned>(Entry::operationAOTReportPoisonedAccess) * sizeof(void*)), OperationPtrTag);
+                    jit.call(CCallHelpers::Address(GPRInfo::argumentGPR3, offsetInTable(Entry::operationAOTReportPoisonedAccess)), OperationPtrTag);
                     jit.breakpoint();
                 });
             });
@@ -3896,6 +3902,8 @@ void Lowering::convertPlainRowInPlace(ValueID row, TypeID type)
 
 Operand Lowering::lowerCast(ValueID result, const Value& value)
 {
+    if (m_isDoneByLastReplacement.get(result.index()))
+        return Operand(value.rep, nullptr);
     if (m_castFusedIntoRead && m_castFusedIntoRead->block == m_currentBlock && m_castFusedIntoRead->index == m_currentIndexInBlock)
         return std::exchange(m_castFusedIntoRead, std::nullopt)->operand;
     if (value.castReason() == CastReason::Member)

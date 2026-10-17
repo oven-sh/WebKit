@@ -6083,6 +6083,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringEq, size_t, (Instance* instance,
     OPERATION_RETURN(scope, uncheckedDowncast<JSString>(left)->equal(globalObject, uncheckedDowncast<JSString>(right)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedCompareStrings, size_t, (Instance* instance, JSCell* left, JSCell* right))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto first = uncheckedDowncast<JSString>(left)->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    auto second = uncheckedDowncast<JSString>(right)->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    auto order = codePointCompare(StringView { first.data }, StringView { second.data });
+    OPERATION_RETURN(scope, static_cast<uint32_t>(order < 0 ? -1 : order > 0 ? 1 : 0));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringHasAt, size_t, (Instance* instance, JSCell* string, JSCell* other, int32_t place))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);

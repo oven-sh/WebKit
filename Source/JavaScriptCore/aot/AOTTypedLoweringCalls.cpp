@@ -361,7 +361,7 @@ LValue Lowering::callOnLatePath(Entry entry, bool mayThrow, OperationEffects eff
     CallSite site;
     if (mayThrow)
         site.bits = nextSite();
-    uint32_t immediate = static_cast<uint32_t>(static_cast<unsigned>(entry) * sizeof(void*));
+    uint32_t immediate = offsetInTable(entry);
     Box<LoweringContext::LatePathCallAccess> firstAccess;
     if (firstAccessedIndex)
         firstAccess = Box<LoweringContext::LatePathCallAccess>::create(LoweringContext::LatePathCallAccess { returnsValue + *firstAccessedIndex });
@@ -522,7 +522,7 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
     CallSite site;
     if (mayThrow)
         site.bits = nextSite();
-    uint32_t immediate = static_cast<uint32_t>(static_cast<unsigned>(entry) * sizeof(void*));
+    uint32_t immediate = offsetInTable(entry);
     if (isSlowPathCall) {
         bool returnsDouble = type == Double;
         bool returnsValue = type != Void && !returnsDouble;
@@ -1151,6 +1151,11 @@ static std::optional<Stub> stubForSpeculatedMethod(SpeculatedMethod method, bool
     static_assert(static_cast<unsigned>(Stub::StringMatchOrCallValue) == static_cast<unsigned>(Stub::ArrayPushOrCallMethod) + 2 * (static_cast<unsigned>(SpeculatedMethod::StringMatch) - static_cast<unsigned>(SpeculatedMethod::ArrayPush)) + 1);
     if (method == SpeculatedMethod::None)
         return std::nullopt;
+    if (method >= SpeculatedMethod::CollectionGet) {
+        static_assert(static_cast<unsigned>(Stub::ArrayPushReadAheadOrCallValue) == static_cast<unsigned>(Stub::CollectionGetOrCallValue) + static_cast<unsigned>(SpeculatedMethod::ArrayPushReadAhead) - static_cast<unsigned>(SpeculatedMethod::CollectionGet));
+        RELEASE_ASSERT(methodIsRead);
+        return static_cast<Stub>(static_cast<unsigned>(Stub::CollectionGetOrCallValue) + static_cast<unsigned>(method) - static_cast<unsigned>(SpeculatedMethod::CollectionGet));
+    }
     return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayPushOrCallMethod) + 2 * (static_cast<unsigned>(method) - static_cast<unsigned>(SpeculatedMethod::ArrayPush)) + methodIsRead);
 }
 
@@ -1771,7 +1776,7 @@ Boxed Lowering::lowerGetMyArgumentByVal(const Value& value)
         LValue buffer = transientBuffer(2 * sizeof(EncodedJSValue));
         m_out.store64(array.value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, 0));
         m_out.store64(boxedKey.value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, sizeof(EncodedJSValue)));
-        join.add(AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(LanguageOperation::GetFromArguments)), word32(2), Pointer(buffer)));
+        join.add(AOT_TYPED_OPERATION(LanguageOperation, word32(numberInCode(LanguageOperation::GetFromArguments)), word32(2), Pointer(buffer)));
     } else
         join.add(emitGetByVal(array, boxedKey, false));
     return join.finish().as<Boxed>();
@@ -2636,9 +2641,7 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
             CCallHelpers::JumpList misses;
             CCallHelpers::Label start = jit.label();
             misses.append(jit.branchIfNotCell(thisGPR));
-            context->indexReferences.loadSiteCacheWord(jit, cached, siteCacheWord);
-            misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(thisGPR, JSCell::structureIDOffset())));
-            context->indexReferences.loadSiteCacheWord(jit, holder, siteCacheWord + 1);
+            misses.append(context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, thisGPR, cached, holder, siteCacheWord));
             IndexReferences::loadFromCachedLocation(jit, thisGPR, cached, holder, calleeGPR);
             misses.append(jit.branchIfNotCell(calleeGPR));
             CCallHelpers::Label isFound = jit.label();
@@ -2648,7 +2651,7 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 misses.link(&jit);
                 jit.move(CCallHelpers::TrustedImm32(slot | PropertyLookupTable::hasKindAndCode), calleeGPR);
-                context->indexReferences.getAddressOfSiteCacheWord(jit, stubTemporaryGPRs[0], siteCacheWord);
+                context->indexReferences.getAddressOfSiteCacheWord(jit, methodSiteCacheGPR, siteCacheWord);
                 stubCalls->call(jit, Stub::FindMethodByNameAndFillSiteCache, callSite);
                 jit.jump().linkTo(isFound, &jit);
             });
@@ -2905,7 +2908,7 @@ Operand Lowering::lowerApply(ValueID callee, ValueID thisValue, ValueID list, co
     LValue inBuffer[] = { function.value(), receiver.value(), boxedList.value() };
     for (unsigned i = 0; i < std::size(inBuffer); ++i)
         m_out.store64(inBuffer[i], m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
-    join.add(ensure(AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(operation)), word32(std::size(inBuffer)), Pointer(buffer)), type));
+    join.add(ensure(AOT_TYPED_OPERATION(LanguageOperation, word32(numberInCode(operation)), word32(std::size(inBuffer)), Pointer(buffer)), type));
     return join.finish();
 }
 
@@ -2959,6 +2962,40 @@ Operand Lowering::lowerCallBySignature(ValueID result, const Value& value, Strin
     return ensure(Operand(rep, patchpoint), m_program.at(convention.resultType), type);
 }
 
+void Lowering::findMethodsReadAheadOfArguments()
+{
+    if (!m_opcodes.contains(Opcode::Call) || !m_opcodes.contains(Opcode::GetById))
+        return;
+    auto withoutCasts = [&](ValueID id) {
+        while (m_function.at(id).opcode == Opcode::Cast)
+            id = m_function.at(id).child(0);
+        return id;
+    };
+    for (auto& block : m_function.blocks) {
+        for (ValueID id : block.values) {
+            auto& call = m_function.at(id);
+            if (call.opcode != Opcode::Call || !call.child(1) || (call.speculatedMethod != SpeculatedMethod::None && call.speculatedMethod != SpeculatedMethod::ArrayPush) || call.isSignatureCall)
+                continue;
+            ValueID readID = call.child(0);
+            auto& read = m_function.at(readID);
+            if (read.opcode != Opcode::GetById || read.methodGetByIdBuiltin() || read.isAtKnownSlot() || read.predictedClosure() || withoutCasts(read.child(0)) != withoutCasts(call.child(1)) || useCountOf(readID) != 1)
+                continue;
+            if (!typeOf(read.child(0)).anyObject)
+                continue;
+            SpeculatedMethod method = SpeculatedMethod::ArrayPushReadAhead;
+            if (call.speculatedMethod == SpeculatedMethod::None) {
+                CollectionMethod named = collectionMethodNamed(m_program.string(read.string()));
+                if (named == CollectionMethod::None || call.arguments.size() != (named == CollectionMethod::Set ? 2 : 1))
+                    continue;
+                static_assert(static_cast<unsigned>(SpeculatedMethod::CollectionAdd) - static_cast<unsigned>(SpeculatedMethod::CollectionGet) == static_cast<unsigned>(CollectionMethod::Add) - static_cast<unsigned>(CollectionMethod::Get));
+                method = static_cast<SpeculatedMethod>(static_cast<unsigned>(SpeculatedMethod::CollectionGet) + static_cast<unsigned>(named) - static_cast<unsigned>(CollectionMethod::Get));
+            }
+            m_methodsReadAheadOfArguments.add(readID.index(), method);
+            m_callsOfMethodsReadAheadOfArguments.add(id.index(), method);
+        }
+    }
+}
+
 Operand Lowering::lowerCall(ValueID result, const Value& value)
 {
     SetForScope resolvedCall(m_resolvedCall, resolvedCallAt(result));
@@ -2975,6 +3012,10 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
         methodName = read.string();
     else if (thisValue)
         methodName = value.string();
+    if (m_readDeferredToCall) {
+        RELEASE_ASSERT(std::exchange(m_readDeferredToCall, ValueID()) == callee && thisValue && methodName);
+        return ensure(callMethodGeneric(in<Boxed>(thisValue), methodName, value.arguments), type);
+    }
     if (auto found = m_knownNullishIn.find(m_currentBlockID.index()); found != m_knownNullishIn.end() && m_currentBlock->terminator.kind == TerminatorKind::Unreachable && m_currentIndexInBlock + 1 == m_currentBlock->values.size() && !Options::auditAOTTypedAssertions()) {
         ValueID tested = callee;
         while (m_function.at(tested).opcode == Opcode::Cast && m_function.at(tested).castReason() != CastReason::As && m_function.at(tested).castReason() != CastReason::Coerce)
@@ -2985,13 +3026,21 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
             return placeholder(repOf(type));
         }
     }
-    if (value.speculatedMethod != SpeculatedMethod::None && thisValue && value.arguments.size() <= numberOfArgumentGPRs)
-        return ensure(callGeneric(in<Boxed>(callee), in<Boxed>(thisValue), value.arguments, methodName, value.speculatedMethod), type);
     auto genericPath = [&] {
         if (value.isSignatureCall && !canTailCallValue() && !m_dropsDroppableCallerFrame)
             return lowerCallBySignature(result, value, methodName);
         return lowerIndirectCall(callee, thisValue, value.arguments, type, methodName);
     };
+    if (auto found = m_callsOfMethodsReadAheadOfArguments.find(result.index()); found != m_callsOfMethodsReadAheadOfArguments.end()) {
+        auto throughStub = [&] {
+            return ensure(callGeneric(in<Boxed>(callee), in<Boxed>(thisValue), value.arguments, methodName, found->value), type);
+        };
+        if (!value.mustBeProperTailCall || found->value == SpeculatedMethod::ArrayPushReadAhead)
+            return throughStub();
+        return eitherOperand(Word32(m_out.belowOrEqual(in<Boxed>(callee).value(), m_out.constInt64(greatestMarkerOfMethodReadAhead))), repOf(type), throughStub, genericPath);
+    }
+    if (value.speculatedMethod != SpeculatedMethod::None && thisValue && value.arguments.size() <= numberOfArgumentGPRs)
+        return ensure(callGeneric(in<Boxed>(callee), in<Boxed>(thisValue), value.arguments, methodName, value.speculatedMethod), type);
     if (auto call = lowerBuiltinFunctionCall(result, callee, thisValue, value.arguments))
         return *call;
     if (BuiltinName global = globalNameOf(callee)) {

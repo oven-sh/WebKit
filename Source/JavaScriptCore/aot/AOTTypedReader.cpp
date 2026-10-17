@@ -247,10 +247,6 @@ public:
             }
         }
         for (auto& layout : m_program.layouts) {
-            if (layout.mayDespecialize)
-                layout.mayBeFrozen = false;
-        }
-        for (auto& layout : m_program.layouts) {
             if (layout.kind != LayoutKind::Instance)
                 continue;
             const Layout* ancestor = &layout;

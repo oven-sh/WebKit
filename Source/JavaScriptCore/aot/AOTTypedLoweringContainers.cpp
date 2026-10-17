@@ -927,7 +927,7 @@ Operand Lowering::pushArrayElement(CellPointer array, ValueID receiver, ValueID 
     }
 
     m_out.appendTo(slowPath);
-    LValue expectedAndSite = m_out.shl(m_out.zeroExtPtr(remainingLoopIterations().value()), m_out.constInt32(32));
+    LValue expectedAndSite = m_out.shl(m_out.zeroExtPtr(remainingLoopIterations(receiver).value()), m_out.constInt32(32));
     if (literal && m_function.at(literal).vectorLengthHintOffset() != Format::none)
         expectedAndSite = m_out.bitOr(expectedAndSite, m_out.constInt64((static_cast<uint64_t>(m_function.at(literal).vectorLengthHintOffset()) + 1) << 1));
     if (m_predictedMethodAlreadyRead && m_builtins.at(m_predictedMethodAlreadyRead).implementation.inlined == InlineBuiltin::ArrayPush)

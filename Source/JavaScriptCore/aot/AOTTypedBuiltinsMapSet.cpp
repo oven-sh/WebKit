@@ -13,9 +13,9 @@
 #include "AOTTypedCompactTable.h"
 #include "AOTTypedObject.h"
 #include "JSCInlines.h"
-#include "JSMap.h"
+#include "JSMapInlines.h"
 #include "JSMapIterator.h"
-#include "JSSet.h"
+#include "JSSetInlines.h"
 #include "JSSetIterator.h"
 #include "JSWeakMap.h"
 #include "JSWeakSet.h"
@@ -267,11 +267,13 @@ static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyP
             writeAsDecimal(magnitude, cursor + length);
             ++pieces.count;
         } else {
-            const StringImpl* impl = part.isString() ? asString(part)->tryGetValueImpl() : nullptr;
-            if (!impl || !impl->is8Bit() || impl->length() > room)
+            if (!part.isString() || !asString(part)->is8Bit() || asString(part)->length() > room)
                 return std::nullopt;
-            length = impl->length();
-            copyCharacters(cursor, impl->span8().data(), length);
+            length = asString(part)->length();
+            if (const StringImpl* impl = asString(part)->tryGetValueImpl()) [[likely]]
+                copyCharacters(cursor, impl->span8().data(), length);
+            else
+                asString(part)->resolveToBuffer(std::span { cursor, length });
             if (length) {
                 ++pieces.count;
                 pieces.lastString = asString(part);
@@ -401,6 +403,107 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithInte
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
     OPERATION_RETURN(scope, result);
+}
+
+static constexpr uint32_t findReturnsValue = 1 << 8;
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES findMakingKeyGeneric(Instance* instance, JSCell* collection, uint32_t countAndKind, const EncodedJSValue* parts, EncodedJSValue* found)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    countOperationNamed(instance, "operationAOTTypedFindMakingKey");
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t count = countAndKind & 0xff;
+    JSString* key = nullptr;
+    std::array<Latin1Character, Typed::State::maxCachedKeyLength> characters;
+    KeyPieces pieces;
+    if (auto text = flattenKeyParts(count, parts, characters, pieces))
+        key = pieces.count == 1 && pieces.lastString ? pieces.lastString : instance->typed->cachedKeyFor(vm, *text);
+    else {
+        key = jsEmptyString(vm);
+        for (uint32_t i = 0; i < count; ++i) {
+            JSString* part = JSValue::decode(parts[i]).toString(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+            key = jsString(globalObject, key, part);
+            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+    }
+    JSValue answer;
+    if (collection->type() != JSMapType)
+        answer = jsBoolean(uncheckedDowncast<JSSet>(collection)->has(globalObject, key));
+    else if (countAndKind & findReturnsValue)
+        answer = uncheckedDowncast<JSMap>(collection)->get(globalObject, key);
+    else
+        answer = jsBoolean(uncheckedDowncast<JSMap>(collection)->has(globalObject, key));
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    found[0] = JSValue::encode(answer);
+    found[1] = CompactTable::placeIsUnknown;
+    OPERATION_RETURN(scope, key);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedFindMakingKey, JSCell*, (Instance* instance, JSCell* collection, uint32_t countAndKind, const EncodedJSValue* parts, EncodedJSValue* found))
+{
+    JSCell* cell = collection->type() == JSMapType ? uncheckedDowncast<JSMap>(collection)->m_compactTable.get() : uncheckedDowncast<JSSet>(collection)->m_compactTable.get();
+    std::array<Latin1Character, Typed::State::maxCachedKeyLength> characters;
+    KeyPieces pieces;
+    if (auto text = cell ? flattenKeyParts(countAndKind & 0xff, parts, characters, pieces) : std::nullopt; text && text->size() >= 2 && !Options::useAOTOperationCounters()) [[likely]] {
+        auto* table = uncheckedDowncast<CompactTable>(cell);
+        unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(*text);
+        bool returnsValue = countAndKind & findReturnsValue;
+        uint32_t entry;
+        switch (table->tryFindCharactersQuickly(*text, hash, entry)) {
+        case CompactTable::Quickly::Found:
+            found[0] = JSValue::encode(returnsValue ? table->valueAt(entry) : jsBoolean(true));
+            found[1] = table->placeOfValue(entry);
+            return { table->keyAt(entry), nullptr };
+        case CompactTable::Quickly::Absent: {
+            found[0] = JSValue::encode(returnsValue ? jsUndefined() : jsBoolean(false));
+            found[1] = CompactTable::keyIsAbsent;
+            if (pieces.count == 1 && pieces.lastString)
+                return { pieces.lastString, nullptr };
+            if (JSString* key = instance->typed->tryFindCachedKey(*text, hash))
+                return { key, nullptr };
+            return makeKey(instance, DECLARE_CALL_FRAME(*instance->vm), *text, hash);
+        }
+        case CompactTable::Quickly::Unknown:
+            break;
+        }
+    }
+    [[clang::musttail]] return findMakingKeyGeneric(instance, collection, countAndKind, parts, found);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedMapSetAfterLookup, void, (Instance* instance, JSCell* map, JSCell* key, EncodedJSValue value, uint64_t place))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSMap* table = uncheckedDowncast<JSMap>(map);
+    if (!table->m_storage) {
+        bool isAdded = place == CompactTable::keyIsAbsent
+            ? CompactTable::tryAddAbsent(globalObject, table, uncheckedDowncast<JSString>(key), JSValue::decode(value))
+            : CompactTable::tryAdd(globalObject, table, key, JSValue::decode(value), CompactTable::CreateIfNeeded::Yes);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (isAdded)
+            OPERATION_RETURN(scope);
+    }
+    table->set(globalObject, key, JSValue::decode(value));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetAddAfterLookup, void, (Instance* instance, JSCell* set, JSCell* key, uint64_t place))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSSet* table = uncheckedDowncast<JSSet>(set);
+    if (!table->m_storage) {
+        bool isAdded = place == CompactTable::keyIsAbsent
+            ? CompactTable::tryAddAbsent(globalObject, table, uncheckedDowncast<JSString>(key), JSValue())
+            : CompactTable::tryAdd(globalObject, table, key, JSValue(), CompactTable::CreateIfNeeded::Yes);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (isAdded)
+            OPERATION_RETURN(scope);
+    }
+    table->add(globalObject, key);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedMapNext, size_t, (Instance* instance, JSCell* map, EncodedJSValue table, uint32_t entry))

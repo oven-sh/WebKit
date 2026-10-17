@@ -324,9 +324,9 @@ static constexpr uint32_t shapeTestIsExact = 1;
 static constexpr uint32_t shapeTestIsForThisInstance = 2;
 static constexpr uint32_t shapeTestGuardsFastPath = 3;
 
-static constexpr unsigned maxNumberOfPlainRecordFields = 24;
+static constexpr unsigned maxNumberOfPlainRecordFields = 16;
 
-enum class SpeculatedMethod : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest, StringMatch };
+enum class SpeculatedMethod : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest, StringMatch, CollectionGet, CollectionHas, CollectionSet, CollectionAdd, ArrayPushReadAhead };
 
 struct Value {
     Opcode opcode { Opcode::Undefined };

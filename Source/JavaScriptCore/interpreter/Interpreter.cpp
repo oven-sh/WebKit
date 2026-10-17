@@ -1425,10 +1425,6 @@ public:
                 m_catchableFromWasm = error->isCatchableFromWasm();
             else
                 m_catchableFromWasm = true;
-
-            // https://webassembly.github.io/exception-handling/js-api/#create-a-host-function
-            if (!m_wasmTag)
-                m_wasmTag = &Wasm::Tag::jsExceptionTag();
         }
     }
 #else
@@ -1525,6 +1521,9 @@ public:
                 if (m_catchableFromWasm) {
                     auto* wasmCallee = uncheckedDowncast<Wasm::Callee>(nativeCallee);
                     if (wasmCallee->hasExceptionHandlers()) {
+                        // https://webassembly.github.io/exception-handling/js-api/#create-a-host-function
+                        if (!m_wasmTag)
+                            m_wasmTag = &Wasm::Tag::jsExceptionTag();
                         JSWebAssemblyInstance* instance = m_callFrame->wasmInstance();
                         unsigned exceptionHandlerIndex = visitor->wasmCallSiteIndex().bits();
                         auto* wasmHandler = wasmCallee->handlerForIndex(*instance, exceptionHandlerIndex, m_wasmTag.get());
@@ -1699,7 +1698,7 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled)
+NEVER_INLINE JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled)
 #else
 JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj)
 #endif

@@ -48,14 +48,18 @@ class RegExpCachedResult {
 public:
     inline void record(VM&, JSObject* owner, RegExp*, JSString* input, MatchResult, bool oneCharacterMatch);
 
+    using Reconstruction = void (*)(JSGlobalObject*, RegExpCachedResult&, JSString* original, void* context);
+    inline void recordToBeReconstructed(VM&, JSObject* owner, JSString* original, Reconstruction, void* context);
+
     JSArray* lastResult(JSGlobalObject*, JSObject* owner);
     void setInput(JSGlobalObject*, JSObject* owner, JSString*);
 
     JSString* leftContext(JSGlobalObject*, JSObject* owner);
     JSString* rightContext(JSGlobalObject*, JSObject* owner);
 
-    JSString* input()
+    JSString* input(JSGlobalObject* globalObject)
     {
+        reconstructIfNeeded(globalObject);
         return m_reified ? m_reifiedInput.get() : m_lastInput.get();
     }
 
@@ -72,8 +76,15 @@ public:
     MatchResult result() const { return m_result; }
 
 private:
+    static constexpr uint8_t isToBeReconstructed = 2;
+    void reconstructIfNeeded(JSGlobalObject* globalObject)
+    {
+        if (m_reified == isToBeReconstructed) [[unlikely]]
+            m_reconstruction(globalObject, *this, m_lastInput.get(), m_reconstructionContext);
+    }
+
     MatchResult m_result { 0, 0 };
-    bool m_reified { false };
+    uint8_t m_reified { false };
     bool m_oneCharacterMatch { false };
     WriteBarrier<JSString> m_lastInput;
     WriteBarrier<RegExp> m_lastRegExp;
@@ -81,6 +92,8 @@ private:
     WriteBarrier<JSString> m_reifiedInput;
     WriteBarrier<JSString> m_reifiedLeftContext;
     WriteBarrier<JSString> m_reifiedRightContext;
+    Reconstruction m_reconstruction { nullptr };
+    void* m_reconstructionContext { nullptr };
 };
 
 } // namespace JSC

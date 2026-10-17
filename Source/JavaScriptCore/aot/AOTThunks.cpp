@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImage.h"
 #include "AOTInlineCaches.h"
 #include "AOTOperations.h"
 #include "AOTRuntime.h"
@@ -101,7 +102,7 @@ void loadEntry(CCallHelpers& jit, Entry entry, GPRReg result)
 {
     loadInstance(jit, result);
     jit.loadPtr(Address(result, Instance::offsetOfRuntimeTable()), result);
-    jit.loadPtr(Address(result, static_cast<unsigned>(entry) * sizeof(void*)), result);
+    jit.loadPtr(Address(result, offsetInTable(entry)), result);
 }
 
 void tailCall(CCallHelpers& jit, Entry operation, Restores restores = Restores::CalleeSavesAndArguments)
@@ -419,40 +420,14 @@ void generateFrontEndNewObjectLiteral(CCallHelpers& jit)
 
 void installOperationFrontEnds(VM& vm, void** entries)
 {
-    auto install = [&](Entry entry, Entry raw, Stub stub) {
-        entries[static_cast<unsigned>(raw)] = entries[static_cast<unsigned>(entry)];
-        entries[static_cast<unsigned>(entry)] = tagCodePtr<OperationPtrTag>(stubAddress(stub));
-    };
-#define AOT_INSTALL_FRONT_END(name) install(Entry::operationAOT##name, Entry::Raw##name, Stub::FrontEnd##name);
     entries[static_cast<unsigned>(Entry::MegamorphicCache)] = &vm.ensureMegamorphicCache();
     entries[static_cast<unsigned>(Entry::UndefinedHolder)] = const_cast<EncodedJSValue*>(undefinedValueHolder());
-    AOT_INSTALL_FRONT_END(GetById)
-    AOT_INSTALL_FRONT_END(GetByVal)
-    AOT_INSTALL_FRONT_END(PutById)
-    AOT_INSTALL_FRONT_END(PutByVal)
-    AOT_INSTALL_FRONT_END(NewObjectLiteral)
-#define AOT_INSTALL_HELPER(name, operation) install(Entry::operation, Entry::name##SlowPath, Stub::name##WithFastPath);
-    FOR_EACH_AOT_OPERATION_WITH_HELPER(AOT_INSTALL_HELPER)
-#undef AOT_INSTALL_HELPER
-    AOT_INSTALL_FRONT_END(CompareStrictEq)
-    AOT_INSTALL_FRONT_END(CompareEq)
-    install(Entry::operationAOTTypedPutExtra, Entry::RawTypedPutExtra, Stub::FrontEndTypedPutExtra);
-    install(Entry::operationAOTTypedGetExtra, Entry::RawTypedGetExtra, Stub::FrontEndTypedGetExtra);
-    install(Entry::operationAOTTypedGetByNameChecked, Entry::RawTypedGetByNameChecked, Stub::FrontEndTypedGetByNameChecked);
-    install(Entry::operationAOTTypedGetByNameCheckedAsNumber, Entry::RawTypedGetByNameCheckedAsNumber, Stub::FrontEndTypedGetByNameCheckedAsNumber);
-    install(Entry::operationAOTTypedHasOwnPropertyByName, Entry::RawTypedHasOwnPropertyByName, Stub::FrontEndTypedHasOwnPropertyByName);
-    install(Entry::operationAOTTypedToString, Entry::RawTypedToString, Stub::FrontEndTypedToString);
-    install(Entry::operationAOTTypedBitNot, Entry::RawTypedBitNot, Stub::FrontEndTypedBitNot);
-    install(Entry::operationAOTTypedConstruct, Entry::RawTypedConstruct, Stub::FrontEndTypedConstruct);
-    install(Entry::operationAOTTypedCloneObject, Entry::RawTypedCloneObject, Stub::FrontEndTypedCloneObject);
-    install(Entry::operationAOTTypedCloneObjectAndExtend, Entry::RawTypedCloneObjectAndExtend, Stub::FrontEndTypedCloneObjectAndExtend);
-    install(Entry::operationAOTTypedCloneObjectAndExtendWithNumber, Entry::RawTypedCloneObjectAndExtendWithNumber, Stub::FrontEndTypedCloneObjectAndExtendWithNumber);
-    install(Entry::operationAOTTypedCloneObjectWithSubtypeCheck, Entry::RawTypedCloneObjectWithSubtypeCheck, Stub::FrontEndTypedCloneObjectWithSubtypeCheck);
-    install(Entry::operationAOTTypedCloneObjectAs, Entry::RawTypedCloneObjectAs, Stub::FrontEndTypedCloneObjectAs);
-    install(Entry::operationAOTTypedCoerce, Entry::RawTypedCoerce, Stub::FrontEndTypedCoerce);
-    install(Entry::operationAOTTypedConstructSuper, Entry::RawTypedConstructSuper, Stub::FrontEndTypedConstructSuper);
+    forEachOperationFrontEnd([&](Entry entry, Entry raw, Stub stub) {
+        entries[static_cast<unsigned>(raw)] = entries[static_cast<unsigned>(entry)];
+        if (const void* frontEnd = Image::stubAddress(stub))
+            entries[static_cast<unsigned>(entry)] = tagCodePtr<OperationPtrTag>(const_cast<void*>(frontEnd));
+    });
     entries[static_cast<unsigned>(Entry::NonConstructorHostFunction)] = std::bit_cast<void*>(&callHostFunctionAsConstructor);
-#undef AOT_INSTALL_FRONT_END
 }
 
 #else

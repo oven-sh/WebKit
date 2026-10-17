@@ -16,6 +16,7 @@ void storeBytes(Pointer, TypedArrayType, Operand, const ByteOrder&);
 Word32 isNegativeBigInt(CellPointer);
 Integer low64Of(CellPointer bigInt);
 CellPointer newBigInt(Integer bits, bool isSigned);
+std::optional<Operand> lowerAtomics(InlineBuiltin, ValueID result, const Value&, Writes inlinePath);
 
 std::optional<unsigned> bufferAccessorNamed(StringID) const;
 Boxed getBufferAccessor(Boxed base, StringID, unsigned row, bool isCalled);

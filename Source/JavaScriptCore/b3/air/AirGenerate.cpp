@@ -56,6 +56,40 @@
 
 namespace JSC { namespace B3 { namespace Air {
 
+#if USE(BUN_JSC_ADDITIONS)
+static bool hoistMovesThatBeginBothSuccessors(Code& code)
+{
+    bool changed = false;
+    for (BasicBlock* block : code) {
+        if (block->numSuccessors() != 2 || block->last().kind.opcode == Patch)
+            continue;
+        BasicBlock* taken = block->successorBlock(0);
+        BasicBlock* notTaken = block->successorBlock(1);
+        if (taken == notTaken || taken == block || notTaken == block || taken->numPredecessors() != 1 || notTaken->numPredecessors() != 1 || code.isEntrypoint(taken) || code.isEntrypoint(notTaken))
+            continue;
+        while (taken->size() > 1 && notTaken->size() > 1) {
+            Inst move = taken->at(0);
+            Inst& other = notTaken->at(0);
+            if (move.kind != other.kind || move.kind.opcode != Move || move.args().size() != 2 || move.args()[0] != other.args()[0] || move.args()[1] != other.args()[1])
+                break;
+            if (!move.args()[1].isTmp() || !(move.args()[0].isTmp() || move.args()[0].isZeroReg()))
+                break;
+            bool mattersToBranch = false;
+            block->last().forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+                mattersToBranch |= tmp == move.args()[1].tmp() || (Arg::isAnyDef(role) && move.args()[0].isTmp() && tmp == move.args()[0].tmp());
+            });
+            if (mattersToBranch)
+                break;
+            block->insts().insert(block->size() - 1, WTF::move(move));
+            taken->insts().removeAt(0);
+            notTaken->insts().removeAt(0);
+            changed = true;
+        }
+    }
+    return changed;
+}
+#endif
+
 void prepareForGeneration(Code& code)
 {
     CompilerTimingScope timingScope("Total Air"_s, "prepareForGeneration"_s);
@@ -147,6 +181,8 @@ void prepareForGeneration(Code& code)
     simplifyCFG(code);
 
 #if USE(BUN_JSC_ADDITIONS)
+    if (code.proc().positionIndependent() && hoistMovesThatBeginBothSuccessors(code))
+        simplifyCFG(code);
     if (code.chargesForCalleeSaves() && code.needsUsedRegisters())
         forwardRegisterCopies(code);
 #if CPU(X86_64)
@@ -217,6 +253,60 @@ static bool repeatsCompareOfOnlyPredecessor(Code& code, BasicBlock* block)
         return false;
     Inst& before = predecessor->last();
     return before.kind.opcode == branch.kind.opcode && before.args()[1] == branch.args()[1] && before.args()[2] == branch.args()[2];
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+static bool generateConditionalMoveOnFlagsOfPrevious(Code& code, CCallHelpers& jit, BasicBlock* block, unsigned index)
+{
+    if (!index || !code.proc().positionIndependent())
+        return false;
+    Inst& inst = block->at(index);
+    Inst& previous = block->at(index - 1);
+    bool isTest = inst.kind.opcode == MoveConditionallyTest32 || inst.kind.opcode == MoveConditionallyTest64;
+    if (!isTest && inst.kind.opcode != MoveConditionally32 && inst.kind.opcode != MoveConditionally64)
+        return false;
+    if (previous.kind.opcode != inst.kind.opcode || inst.args().size() != 6 || previous.args().size() != 6)
+        return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (previous.args()[i] != inst.args()[i] || previous.args()[5] == inst.args()[i])
+            return false;
+    }
+    using Condition = Assembler::Condition;
+    Condition condition;
+    if (isTest)
+        condition = static_cast<Condition>(inst.args()[0].asResultCondition());
+    else {
+        auto relationalCondition = inst.args()[0].asRelationalCondition();
+        condition = static_cast<Condition>(relationalCondition);
+        if (inst.args()[2].isImm() && !inst.args()[2].value()) {
+            if (auto resultCondition = MacroAssembler::commuteCompareToZeroIntoTest(relationalCondition))
+                condition = static_cast<Condition>(*resultCondition);
+        }
+    }
+#if CPU(ARM64)
+    auto registerOf = [](const Arg& arg) {
+        return arg.isZeroReg() ? ARM64Registers::zr : arg.gpr();
+    };
+    jit.m_assembler.csel<64>(inst.args()[5].gpr(), registerOf(inst.args()[3]), registerOf(inst.args()[4]), condition);
+#elif CPU(X86_64)
+    GPRReg thenCase = inst.args()[3].gpr();
+    GPRReg elseCase = inst.args()[4].gpr();
+    GPRReg result = inst.args()[5].gpr();
+    if (thenCase != result && elseCase != result) {
+        jit.move(elseCase, result);
+        elseCase = result;
+    }
+    if (elseCase == result)
+        jit.m_assembler.cmovq_rr(condition, thenCase, result);
+    else
+        jit.m_assembler.cmovq_rr(static_cast<Condition>(condition ^ 1), elseCase, result);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_VARIABLE(condition);
+    return false;
+#endif
+    return true;
 }
 #endif
 
@@ -330,7 +420,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             Inst& inst = block->at(i);
             addItem(inst);
             auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
+#if USE(BUN_JSC_ADDITIONS)
+            CCallHelpers::Jump jump = generateConditionalMoveOnFlagsOfPrevious(code, jit, block, i) ? CCallHelpers::Jump() : inst.generate(jit, context);
+#else
             CCallHelpers::Jump jump = inst.generate(jit, context);
+#endif
             ASSERT_UNUSED(jump, !jump.isSet());
             if (disassembler)
                 disassembler->addInst(&inst, start, jit.labelIgnoringWatchpoints());

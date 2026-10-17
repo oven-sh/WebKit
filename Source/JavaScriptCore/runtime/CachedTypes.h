@@ -550,6 +550,8 @@ JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, std::span<const SourceCode>,
 JS_EXPORT_PRIVATE bool isAOTImagePC(const void*);
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE std::optional<size_t> aotImageSize(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE Vector<ASCIILiteral> aotImageOperations(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE Vector<ASCIILiteral> aotImageLanguageOperations(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE size_t aotImageAlignment();
 #endif

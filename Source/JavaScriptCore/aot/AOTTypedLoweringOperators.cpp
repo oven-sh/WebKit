@@ -637,7 +637,7 @@ Number Lowering::fmodOnSlowPath(Number x, Number y)
         }
         GPRReg target = jit.scratchRegister();
         jit.loadPtr(CCallHelpers::Address(instanceGPR, Instance::offsetOfRuntimeTable()), target);
-        jit.loadPtr(CCallHelpers::Address(target, static_cast<unsigned>(Entry::operationAOTTypedFmod) * sizeof(void*)), target);
+        jit.loadPtr(CCallHelpers::Address(target, offsetInTable(Entry::operationAOTTypedFmod)), target);
         jit.call(target, OperationPtrTag);
         for (unsigned i = 0; i < kept.size(); ++i) {
             CCallHelpers::Address slot(CCallHelpers::stackPointerRegister, i * sizeof(Register));
@@ -944,6 +944,11 @@ Word32 Lowering::lowerRelational(const Value& value)
         join.add(genericPath());
         return join.finish().as<Word32>();
     }
+    auto isStringOrNullish = [](const Type& type) {
+        return type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+    };
+    if (isStringOrNullish(left) && isStringOrNullish(right))
+        return lowerStringRelational(value);
     if (!arePredictedNumbers({ a, b }))
         return genericPath();
     Operand answer = ifPredictedNumbers({ a, b }, Rep::Int32, true, [&](LBasicBlock) {
@@ -952,6 +957,116 @@ Word32 Lowering::lowerRelational(const Value& value)
         return lowerRelational(value);
     }, genericPath, true, successors);
     return successors ? Word32() : answer.as<Word32>();
+}
+
+static bool isRelational(Opcode opcode)
+{
+    return opcode == Opcode::Less || opcode == Opcode::LessEq || opcode == Opcode::Greater || opcode == Opcode::GreaterEq;
+}
+
+static uint64_t orderedPair(ValueID a, ValueID b)
+{
+    return static_cast<uint64_t>(a.index()) << 32 | b.index();
+}
+
+bool Lowering::areComparedMoreThanOnce(ValueID a, ValueID b)
+{
+    if (!m_stringComparisonCounts) {
+        m_stringComparisonCounts.emplace();
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                if (isRelational(value.opcode))
+                    ++m_stringComparisonCounts->add(orderedPair(std::min(value.child(0), value.child(1)), std::max(value.child(0), value.child(1))), 0).iterator->value;
+            }
+        }
+    }
+    return m_stringComparisonCounts->get(orderedPair(std::min(a, b), std::max(a, b))) > 1;
+}
+
+LValue Lowering::stringOrderFoundEarlier(ValueID a, ValueID b) const
+{
+    auto found = m_stringOrders.find(orderedPair(a, b));
+    if (found == m_stringOrders.end())
+        return nullptr;
+    for (auto& earlier : found->value) {
+        if (dominates(earlier.block, m_currentBlockID))
+            return earlier.order;
+    }
+    return nullptr;
+}
+
+Word32 Lowering::lowerStringRelational(const Value& value)
+{
+    static constexpr int32_t isLess = -1;
+    static constexpr int32_t isEqual = 0;
+    static constexpr int32_t isGreater = 1;
+    static constexpr int32_t isUnordered = 2;
+    ValueID a = value.child(0);
+    ValueID b = value.child(1);
+    auto holds = [&](LValue order, Opcode opcode) {
+        switch (opcode) {
+        case Opcode::Less:
+            return Word32(m_out.equal(order, m_out.constInt32(isLess)));
+        case Opcode::Greater:
+            return Word32(m_out.equal(order, m_out.constInt32(isGreater)));
+        case Opcode::LessEq:
+            return Word32(m_out.lessThanOrEqual(order, m_out.constInt32(isEqual)));
+        default:
+            return Word32(m_out.belowOrEqual(order, m_out.constInt32(isGreater)));
+        }
+    };
+    if (LValue order = stringOrderFoundEarlier(a, b))
+        return holds(order, value.opcode);
+    if (LValue order = stringOrderFoundEarlier(b, a))
+        return holds(order, value.opcode == Opcode::Less ? Opcode::Greater : value.opcode == Opcode::Greater ? Opcode::Less : value.opcode == Opcode::LessEq ? Opcode::GreaterEq : Opcode::LessEq);
+
+    bool keepsOrder = isOnMainPath() && !m_activeHandler && areComparedMoreThanOnce(a, b);
+    OperationEffects genericEffects { writesOfArithmetic(typeOf(a), &typeOf(b)), true };
+    StringReceiver first = stringReceiver(a);
+    StringReceiver second = stringReceiver(b);
+    LBasicBlock otherwise = first.isString || second.isString ? newColdBlock() : nullptr;
+    for (auto* receiver : { &first, &second }) {
+        if (receiver->isString)
+            orElse(receiver->isString, otherwise);
+    }
+    Join join(m_out, Rep::Int32, Int32);
+    join.add(Word32(m_out.castToInt32(callAllocationStub(Stub::CompareStrings, { { first.string.value(), stubTemporaryGPRs[2] }, { second.string.value(), stubTemporaryGPRs[3] } }, effectsForOperation<operationAOTTypedCompareStrings>(), true))));
+    if (otherwise) {
+        m_out.appendTo(otherwise);
+        Boxed x = in<Boxed>(a);
+        Boxed y = in<Boxed>(b);
+        auto compare = [&](Opcode opcode) {
+            return emitGenericCompare(opcode == Opcode::Less ? Stub::Less : opcode == Opcode::Greater ? Stub::Greater : opcode == Opcode::LessEq ? Stub::LessEq : Stub::GreaterEq, x, y, genericEffects);
+        };
+        auto orderIf = [&](Word32 condition, int32_t order, int32_t otherOrder) {
+            return Word32(m_out.select(condition.value(), m_out.constInt32(order), m_out.constInt32(otherOrder)));
+        };
+        if (!keepsOrder) {
+            bool holdsIfLess = value.opcode == Opcode::Less || value.opcode == Opcode::LessEq;
+            join.add(orderIf(compare(value.opcode), holdsIfLess ? isLess : isGreater, isUnordered));
+        } else {
+            LBasicBlock isNotLess = newColdBlock();
+            LBasicBlock isNotGreater = newColdBlock();
+            LBasicBlock less = newColdBlock();
+            LBasicBlock greater = newColdBlock();
+            m_out.branch(compare(Opcode::Less).value(), unsure(less), unsure(isNotLess));
+            m_out.appendTo(less);
+            join.add(word32(isLess));
+            m_out.appendTo(isNotLess);
+            m_out.branch(compare(Opcode::Greater).value(), unsure(greater), unsure(isNotGreater));
+            m_out.appendTo(greater);
+            join.add(word32(isGreater));
+            m_out.appendTo(isNotGreater);
+            join.add(orderIf(compare(Opcode::LessEq), isEqual, isUnordered));
+        }
+    }
+    LValue order = join.finish().value;
+    ensureStillAliveHere(first.string);
+    ensureStillAliveHere(second.string);
+    if (keepsOrder)
+        m_stringOrders.add(orderedPair(a, b), Vector<StringOrder, 1> { }).iterator->value.append(StringOrder { m_currentBlockID, order });
+    return holds(order, value.opcode);
 }
 
 unsigned Lowering::integerComparisonCount(ValueID id)

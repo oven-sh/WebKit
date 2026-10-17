@@ -27,6 +27,7 @@ runtime ObjectEntries : RuntimeState JSCell* (EncodedJSValue object) noexcept
 runtime ObjectAssignFrom : Heap void (JSCell* target, EncodedJSValue source)
 runtime ObjectAssignToNew : Heap JSCell* (EncodedJSValue source)
 runtime GetOwnPropertyDescriptor : Heap EncodedJSValue (EncodedJSValue object, EncodedJSValue key)
+runtime GetOwnPropertyParts : Heap size_t (EncodedJSValue object, EncodedJSValue key)
 runtime ObjectCreate : Heap JSCell* (JSCell* prototype) noexcept
 runtime TryCloneWithPrototype : Heap JSCell* (JSCell* source, EncodedJSValue prototype) noexcept
 runtime AdoptPrototype : Heap void (JSCell* born, EncodedJSValue prototype, uint32_t allocation)

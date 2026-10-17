@@ -115,7 +115,7 @@ public:
                 bool callerIsHot = m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id);
                 if (m_program.at(callee).isSharedCallBody && !callerIsHot)
                     continue;
-                if (m_program.at(callee).worker && !isOnlyRead(call))
+                if (m_program.at(callee).worker && !isOnlyRead(call) && !isOnlyReadThroughJoinsAndCalls(call) && !isPassedObjectThatIsOnlyRead(m_caller.at(call)))
                     continue;
                 if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinySizeInColdCode + 1) > tinySizeInColdCode)
                     continue;
@@ -757,14 +757,20 @@ private:
     {
         m_queriesSinceCallerChanged = 0;
         m_firstUser.shrink(0);
+        m_edgesIntoBlocks.shrink(0);
     }
 
     void findUsers()
     {
         unsigned count = m_caller.values.size();
         m_firstUser.fill(0, count + 1);
+        m_blockOfValue.fill(0, count);
         m_isUsedByTerminator.clearAll();
         m_isUsedByTerminator.ensureSize(count);
+        for (unsigned b = 0; b < m_caller.blocks.size(); ++b) {
+            for (ValueID value : m_caller.blocks[b].values)
+                m_blockOfValue[value.index()] = b;
+        }
         for (auto& block : m_caller.blocks) {
             if (block.terminator.value)
                 m_isUsedByTerminator.quickSet(block.terminator.value.index());
@@ -843,6 +849,117 @@ private:
             }
         }
         return true;
+    }
+
+    bool makesObject(ValueID id) const
+    {
+        auto& value = m_caller.at(id);
+        if (value.opcode == Opcode::NewObjectWithShape)
+            return !value.child(0) && isObjectLayout(m_program.at(value.layout()).kind);
+        if (value.opcode != Opcode::CallDirect || value.isJumpToContinuation())
+            return false;
+        auto& wrapper = m_program.at(value.function());
+        return wrapper.worker && !wrapper.nullishResultKind && m_program.at(value.type).singleLayout();
+    }
+
+    bool isReadByCalleeThatWillBeInlined(ValueID user, ValueID object)
+    {
+        auto& call = m_caller.at(user);
+        if (call.opcode != Opcode::CallDirect || call.isJumpToContinuation() || call.immediates[1] == afterHead || call.isCallWithDeclinedInlining() || call.function() == m_id)
+            return false;
+        auto& callee = m_program.at(call.function());
+        if (callee.nullishResultKind || callee.resumeFunction || !canInline(callee, call))
+            return false;
+        bool isInLoop = m_isInCallerLoop.get(m_blockOfValue[user.index()]);
+        if (!isInLoop && !m_program.isHotOutsideLoops(m_id))
+            return false;
+        uint32_t copies = numberOfCopiesAround(call);
+        if (copies >= maxDepth || (copies && !isInLoop))
+            return false;
+        auto& body = callee.worker ? m_program.at(callee.worker) : callee;
+        if (sizeOf(body, smallInCopy + 1) > smallInCopy)
+            return false;
+        for (unsigned i = 0; i < call.arguments.size(); ++i) {
+            if (call.arguments[i] == object && !onlyReadsFieldsOfParameter(body, i))
+                return false;
+        }
+        return true;
+    }
+
+    bool isOnlyReadThroughJoinsAndCalls(ValueID result)
+    {
+        static constexpr unsigned maxWeb = 16;
+        if (!makesObject(result) || m_program.functionsWithInliningDisabled.get(m_id.index()))
+            return false;
+        if (m_firstUser.isEmpty())
+            findUsers();
+        if (m_edgesIntoBlocks.isEmpty())
+            m_edgesIntoBlocks = edgesIntoBlocks(m_caller);
+        Vector<ValueID, maxWeb> web { result };
+        auto add = [&](ValueID id) {
+            if (web.contains(id))
+                return true;
+            if (web.size() == maxWeb)
+                return false;
+            web.append(id);
+            return true;
+        };
+        for (unsigned next = 0; next < web.size(); ++next) {
+            ValueID object = web[next];
+            auto& definition = m_caller.at(object);
+            if (definition.opcode == Opcode::Parameter) {
+                for (const Target* target : m_edgesIntoBlocks[definition.immediates[0]]) {
+                    if (definition.immediates[1] >= target->arguments.size())
+                        return false;
+                    ValueID given = target->arguments[definition.immediates[1]];
+                    while (m_caller.at(given).opcode == Opcode::Cast && classifyObjectUse(m_caller, m_caller.at(given), m_caller.at(given).child(0)) == ObjectUse::IsAlias)
+                        given = m_caller.at(given).child(0);
+                    bool isJoin = m_caller.at(given).opcode == Opcode::Parameter && m_caller.at(given).immediates[0];
+                    if ((!isJoin && !makesObject(given)) || !add(given))
+                        return false;
+                }
+            }
+            if (m_isUsedByTerminator.quickGet(object.index())) {
+                for (auto& block : m_caller.blocks) {
+                    if (block.terminator.value == object)
+                        return false;
+                    for (auto& target : block.terminator.targets) {
+                        auto& parameters = m_caller.at(target.block).parameters;
+                        for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                            if (target.arguments[i] == object && (i >= parameters.size() || !add(parameters[i])))
+                                return false;
+                        }
+                    }
+                }
+            }
+            for (ValueID user : m_users.span().subspan(m_firstUser[object.index()], m_firstUser[object.index() + 1] - m_firstUser[object.index()])) {
+                auto& value = m_caller.at(user);
+                ObjectUse use = classifyObjectUse(m_caller, value, object);
+                if (use == ObjectUse::Reads)
+                    continue;
+                if (use == ObjectUse::IsAlias) {
+                    if (!add(user))
+                        return false;
+                    continue;
+                }
+                if (value.opcode == Opcode::PutField && definition.opcode == Opcode::NewObjectWithShape && value.child(0) == object && value.child(1) != object)
+                    continue;
+                if (!isReadByCalleeThatWillBeInlined(user, object))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool isPassedObjectThatIsOnlyRead(const Value& call)
+    {
+        for (ValueID argument : call.arguments) {
+            if (!m_program.at(m_caller.at(argument).type).singleLayout())
+                continue;
+            if (ValueID origin = originOf(m_caller, argument, m_edgesIntoBlocks); makesObject(origin) && isOnlyReadThroughJoinsAndCalls(origin))
+                return true;
+        }
+        return false;
     }
 
     static bool isUsedOnlyAsReceiver(const Function& caller, ValueID result)
@@ -1324,6 +1441,11 @@ private:
             return maxDepth;
         if (isAccessor(call.function()) || sizeOf(m_program.at(call.function()), maxForwarder + 1) <= maxForwarder)
             return 0;
+        return numberOfCopiesAround(call, counted);
+    }
+
+    uint32_t numberOfCopiesAround(const Value& call, Copies counted = Copies::All) const
+    {
         uint32_t depth = call.immediates[1] == Format::none ? 0 : call.immediates[1];
         uint32_t frames = 0;
         uint32_t innermostFrame = call.inlineFrame;
@@ -2186,6 +2308,8 @@ private:
     unsigned m_queriesSinceCallerChanged { 0 };
     Vector<uint32_t> m_firstUser;
     Vector<ValueID> m_users;
+    Vector<uint32_t> m_blockOfValue;
+    EdgesIntoBlocks m_edgesIntoBlocks;
     BitVector m_isUsedByTerminator;
     unsigned m_resultSearchValueCount { 0 };
     UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_resultReads;

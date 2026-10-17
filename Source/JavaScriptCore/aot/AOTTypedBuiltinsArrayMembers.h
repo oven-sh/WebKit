@@ -39,7 +39,7 @@
     Type arrayTypeAtCreation(ValueID) const;
     ValueID emptyLiteralSourceOf(ValueID receiver);
     UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_emptyLiteralSourcesOfParameters;
-    Word32 remainingLoopIterations();
+    Word32 remainingLoopIterations(ValueID receiver);
     LValue expectedIndexingOfStoredArray(ValueID receiver, ValueID key, bool isNumberAmongNumbers);
     std::optional<Word32> maxPushesInCollectionLoop(ValueID literal);
     unsigned numberOfElementsPushedTo(ValueID array);

@@ -796,6 +796,59 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetOwnPropertyDescriptor, EncodedJSVal
     OPERATION_RETURN(scope, JSValue::encode(objectConstructorGetOwnPropertyDescriptor(globalObject, object, name)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetOwnPropertyParts, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedKey))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    using Parts = Instance::OwnPropertyParts;
+    static_assert(static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete) == Parts::attributes);
+    JSValue base = JSValue::decode(encodedBase);
+    JSObject* object;
+    if (base.isObject()) [[likely]]
+        object = asObject(base);
+    else {
+        if (base.isUndefinedOrNull()) {
+            callInEngine(instance, FunctionInEngine::GetOwnPropertyDescriptor, base, JSValue::decode(encodedKey));
+            OPERATION_RETURN(scope, 0);
+        }
+        object = base.toObject(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    }
+    auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (!object->structure()->typeInfo().overridesGetOwnPropertySlot())
+        cacheOwnPropertyLocationFromSlot(instance, slot, object, name);
+    else if (const Typed::LayoutData* layout = object->structure()->compiledLayout(); has && layout && Typed::isObjectLayout(layout->kind) && JSValue::decode(encodedKey).isCell()) {
+        JSCell* key = JSValue::decode(encodedKey).asCell();
+        auto& read = instance->keyedReadFor(object->structureID(), key);
+        cacheKeyedAccess(read.slot, object->structure(), key, std::nullopt);
+        cacheKeyedCompiledFieldRead(globalObject, read, object, name);
+    }
+    PropertyDescriptor descriptor;
+    has = has && descriptor.setPropertySlot(globalObject, name, slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (!has)
+        OPERATION_RETURN(scope, 0);
+    uint32_t kind = Parts::isPresent;
+    if (!descriptor.enumerable())
+        kind |= static_cast<unsigned>(PropertyAttribute::DontEnum);
+    if (!descriptor.configurable())
+        kind |= static_cast<unsigned>(PropertyAttribute::DontDelete);
+    if (!descriptor.writablePresent())
+        kind |= Parts::hasNoWritable;
+    else if (!descriptor.writable())
+        kind |= static_cast<unsigned>(PropertyAttribute::ReadOnly);
+    auto orUndefined = [](JSValue value) {
+        return JSValue::encode(value ? value : jsUndefined());
+    };
+    instance->ownPropertyParts.value = orUndefined(descriptor.value());
+    instance->ownPropertyParts.getter = descriptor.getterPresent() ? orUndefined(descriptor.getter()) : JSValue::encode(jsUndefined());
+    instance->ownPropertyParts.setter = descriptor.setterPresent() ? orUndefined(descriptor.setter()) : JSValue::encode(jsUndefined());
+    OPERATION_RETURN(scope, kind);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnPropertyByName, size_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t name))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -1303,6 +1356,8 @@ Operand Lowering::lowerGetOwnPropertyDescriptor(ValueID result, const Value& val
     constexpr auto kind = Instance::InlineAllocation::DataPropertyDescriptor;
     static_assert(JSFinalObject::defaultInlineCapacity == 6 && !dataPropertyDescriptorValuePropertyOffset && dataPropertyDescriptorWritablePropertyOffset == 1 && dataPropertyDescriptorEnumerablePropertyOffset == 2 && dataPropertyDescriptorConfigurablePropertyOffset == 3);
     static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
+    if (m_descriptorsOnlyTakenApart.get(result.index()) && isOnMainPath())
+        return lowerDescriptorOnlyTakenApart(result, value);
     auto& type = typeOf(result);
     auto& anything = m_program.at(m_program.types.anything);
     ValueID key = value.arguments[1];
@@ -1348,6 +1403,181 @@ Operand Lowering::lowerGetOwnPropertyDescriptor(ValueID result, const Value& val
     m_out.appendTo(slowPath);
     join.add(genericPath());
     return join.finish();
+}
+
+std::optional<DescriptorProperty> descriptorPropertyRead(const Program& program, const Value& value)
+{
+    if (value.opcode != Opcode::GetById || value.methodGetByIdBuiltin())
+        return std::nullopt;
+    auto name = program.string(value.string());
+    if (equalSpans(name, asBytes("value"_s.span8())))
+        return DescriptorProperty::Value;
+    if (equalSpans(name, asBytes("writable"_s.span8())))
+        return DescriptorProperty::Writable;
+    if (equalSpans(name, asBytes("enumerable"_s.span8())))
+        return DescriptorProperty::Enumerable;
+    if (equalSpans(name, asBytes("configurable"_s.span8())))
+        return DescriptorProperty::Configurable;
+    if (equalSpans(name, asBytes("get"_s.span8())))
+        return DescriptorProperty::Get;
+    if (equalSpans(name, asBytes("set"_s.span8())))
+        return DescriptorProperty::Set;
+    return std::nullopt;
+}
+
+BitVector findDescriptorsOnlyTakenApart(const Program& program, const Function& function)
+{
+    BitVector descriptors;
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
+        return descriptors;
+    auto& builtins = Builtins::singleton();
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            if (value.opcode != Opcode::CallBuiltin || value.arguments.size() < 2 || value.isInTailPosition)
+                continue;
+            auto& implementation = builtins.at(value.builtin()).implementation;
+            if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ObjectGetOwnPropertyDescriptor)
+                descriptors.set(id.index());
+        }
+    }
+    if (descriptors.isEmpty())
+        return descriptors;
+    auto isNil = [&](ValueID id) {
+        Opcode opcode = function.at(id).opcode;
+        return opcode == Opcode::Null || opcode == Opcode::Undefined;
+    };
+    auto escapes = [&](ValueID id) {
+        descriptors.clear(matchBehindCasts(function, id).index());
+    };
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& user = function.at(id);
+            user.forEachChild([&](ValueID child) {
+                if (!descriptors.get(matchBehindCasts(function, child).index()))
+                    return;
+                if (child == user.child(0) && descriptorPropertyRead(program, user))
+                    return;
+                if (user.opcode == Opcode::ToBoolean || user.opcode == Opcode::IsUndefinedOrNull)
+                    return;
+                if (user.opcode == Opcode::Cast && matchBehindCasts(function, id) != id)
+                    return;
+                if ((user.opcode == Opcode::StrictEq || user.opcode == Opcode::Eq) && isNil(user.child(user.child(0) == child)))
+                    return;
+                escapes(child);
+            });
+        }
+        if (block.terminator.value)
+            escapes(block.terminator.value);
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                escapes(argument);
+        }
+    }
+    return descriptors;
+}
+
+void Lowering::findDescriptorsOnlyTakenApart()
+{
+    m_descriptorsOnlyTakenApart = Typed::findDescriptorsOnlyTakenApart(m_program, m_function);
+}
+
+Operand Lowering::lowerDescriptorOnlyTakenApart(ValueID result, const Value& value)
+{
+    using Place = Instance::OwnPropertyLocation;
+    using Parts = Instance::OwnPropertyParts;
+    ValueID key = value.arguments[1];
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 4> kinds;
+    Vector<ValueFromBlock, 4> values;
+    Vector<ValueFromBlock, 4> getters;
+    Vector<ValueFromBlock, 4> setters;
+    auto add = [&](Word32 kind, Boxed held, Boxed getter, Boxed setter) {
+        kinds.append(m_out.anchor(kind.value()));
+        values.append(m_out.anchor(held.value()));
+        getters.append(m_out.anchor(getter.value()));
+        setters.append(m_out.anchor(setter.value()));
+        m_out.jump(continuation);
+    };
+    auto genericPath = [&] {
+        Word32 kind = AOT_TYPED_OPERATION(GetOwnPropertyParts, in<Boxed>(value.arguments[0]), in<Boxed>(key));
+        auto part = [&](ptrdiff_t offset) {
+            return Boxed(m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfOwnPropertyParts() + offset)));
+        };
+        add(kind, part(OBJECT_OFFSETOF(Parts, value)), part(OBJECT_OFFSETOF(Parts, getter)), part(OBJECT_OFFSETOF(Parts, setter)));
+    };
+    if (predictedTypeOf(key).primitives & Primitive::String) {
+        LBasicBlock slowPath = newUnlikelyBlock();
+        LBasicBlock isPresent = m_out.newBlock();
+        LBasicBlock isAbsent = m_out.newBlock();
+        CellPointer object = objectOrElse(value.arguments[0], slowPath);
+        Word32 place = ownPropertyLocationOrElse(object, key, slowPath);
+        orElse(hasNoBits(place, Place::isNotValue), slowPath);
+        m_out.branch(hasBits(place, Place::isPresent).value(), unsure(isPresent), unsure(isAbsent));
+
+        m_out.appendTo(isPresent);
+        Pointer base = select(hasBits(place, Place::isOutOfLine), butterflyOf(object), Pointer(object.value()));
+        LValue displacement = m_out.signExt32ToPtr(m_out.aShr(place.value(), m_out.constInt32(Place::displacementShift)));
+        Boxed held(m_out.load64(TypedPointer(m_heaps.root, m_out.add(base.value(), displacement))));
+        add(bitAnd(place, word32(Parts::isPresent | Parts::attributes)), held, undefined(), undefined());
+
+        m_out.appendTo(isAbsent);
+        add(word32(0), undefined(), undefined(), undefined());
+
+        m_out.appendTo(slowPath);
+        LBasicBlock isField = m_out.newBlock();
+        LBasicBlock isNotKnown = newUnlikelyBlock();
+        Boxed field(callICStub(Stub::GetOwnFieldByKeyIfCached, Int64, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(key).value(), GPRInfo::argumentGPR1 } }));
+        m_out.branch(m_out.notZero64(field.value()), unsure(isField), unsure(isNotKnown));
+        m_out.appendTo(isField);
+        add(word32(Parts::isPresent), field, undefined(), undefined());
+        m_out.appendTo(isNotKnown);
+    }
+    genericPath();
+    m_out.appendTo(continuation);
+    DescriptorInFrame parts { Word32(m_out.phi(Int32, kinds)), Boxed(m_out.phi(Int64, values)), Boxed(m_out.phi(Int64, getters)), Boxed(m_out.phi(Int64, setters)) };
+    m_descriptorsInFrame.set(result.index(), parts);
+    Boxed standIn(fixedPointer(Instance::offsetOfGlobalObject()));
+    return convert(select(hasBits(parts.kind, Parts::isPresent), standIn, undefined()), typeOf(result), value.rep);
+}
+
+std::optional<Operand> Lowering::lowerPropertyOfDescriptor(ValueID result, const Value& value)
+{
+    using Parts = Instance::OwnPropertyParts;
+    if (m_descriptorsInFrame.isEmpty())
+        return std::nullopt;
+    auto found = m_descriptorsInFrame.find(matchBehindCasts(m_function, value.child(0)).index());
+    if (found == m_descriptorsInFrame.end())
+        return std::nullopt;
+    DescriptorInFrame parts = found->value;
+    if (typeOf(value.child(0)).mayBeUndefinedOrNull()) {
+        LBasicBlock isAbsent = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(hasBits(parts.kind, Parts::isPresent).value(), usually(continuation), rarely(isAbsent));
+        m_out.appendTo(isAbsent);
+        throwNullish(undefined(), value.string());
+        m_out.appendTo(continuation);
+    }
+    auto& type = typeOf(result);
+    auto lacks = [&](PropertyAttribute attribute) {
+        return hasNoBits(parts.kind, static_cast<unsigned>(attribute));
+    };
+    switch (*descriptorPropertyRead(m_program, value)) {
+    case DescriptorProperty::Value:
+        return ensure(parts.value, type);
+    case DescriptorProperty::Get:
+        return ensure(parts.getter, type);
+    case DescriptorProperty::Set:
+        return ensure(parts.setter, type);
+    case DescriptorProperty::Writable:
+        static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
+        return ensure(select(hasBits(parts.kind, Parts::hasNoWritable), undefined(), Boxed(m_out.bitOr(m_out.constInt64(JSValue::ValueFalse), zeroExtended(lacks(PropertyAttribute::ReadOnly)).value()))), type);
+    case DescriptorProperty::Enumerable:
+        return booleanResult(lacks(PropertyAttribute::DontEnum), type);
+    case DescriptorProperty::Configurable:
+        return booleanResult(lacks(PropertyAttribute::DontDelete), type);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 std::optional<size_t> Lowering::indexOfAssignThatClones(ValueID created)

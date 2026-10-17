@@ -17,6 +17,7 @@
 #include "RegExpPrototype.h"
 #include "StringPrototypeInlines.h"
 #include "YarrFlags.h"
+#include <wtf/SIMDHelpers.h>
 
 namespace JSC { namespace AOT {
 
@@ -324,6 +325,247 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceRegExpString, JSCell*, (I
     OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, uncheckedDowncast<JSString>(string), regExpObject, callData, replacementText, replacement));
 }
 
+class CharacterReplacer {
+public:
+    using Steps = Typed::ReplacementSteps;
+
+    CharacterReplacer(const Typed::Data& data, uint32_t countAndForm, const EncodedJSValue* steps, std::span<const Latin1Character> characters)
+        : m_data(data)
+        , m_steps(steps)
+        , m_characters(characters)
+        , m_count(countAndForm & Steps::countMask)
+        , m_stride(countAndForm & Steps::hasSets ? Steps::wordsWithSet : 1)
+    {
+        RELEASE_ASSERT(m_count && m_count <= Steps::maxCount);
+        static_assert(Steps::maxCount * Steps::wordsWithSet == std::tuple_size_v<decltype(Typed::State::LastReplacement::steps)>);
+        for (unsigned step = 0; step < m_count; ++step)
+            m_inserted[step] = data.string(static_cast<uint32_t>(steps[step * m_stride]));
+        if (m_stride == 1)
+            findCharacters();
+        else
+            findRuns();
+    }
+
+    bool findsNothing() const { return m_places.isEmpty(); }
+    unsigned lastStep() const { return m_lastStep; }
+    unsigned count() const { return m_count; }
+    size_t numberOfWords() const { return m_count * m_stride; }
+    uint32_t patternOf(unsigned step) const { return static_cast<uint32_t>(m_steps[step * m_stride] >> 32); }
+
+    enum class Outcome : uint8_t { Unchanged, Made, TooLong };
+    Outcome replaceBelow(unsigned limit, RefPtr<StringImpl>& made, MatchResult& last) const
+    {
+        CheckedUint32 length = m_characters.size();
+        bool changes = false;
+        for (auto& place : m_places) {
+            if (place.step < limit) {
+                length += m_inserted[place.step].size();
+                length -= place.length;
+                changes = true;
+            }
+        }
+        if (!changes) {
+            for (auto& place : m_places) {
+                if (place.step == limit)
+                    last = MatchResult { place.index, place.index + place.length };
+            }
+            return Outcome::Unchanged;
+        }
+        if (length.hasOverflowed() || length.value() > String::MaxLength) [[unlikely]]
+            return Outcome::TooLong;
+        std::span<Latin1Character> buffer;
+        made = StringImpl::tryCreateUninitialized(length.value(), buffer);
+        if (!made) [[unlikely]]
+            return Outcome::TooLong;
+        Latin1Character* to = buffer.data();
+        const Latin1Character* from = m_characters.data();
+        size_t copied = 0;
+        for (auto& place : m_places) {
+            if (place.step > limit)
+                continue;
+            copy(to, from + copied, place.index - copied);
+            to += place.index - copied;
+            copied = place.index;
+            if (place.step == limit) {
+                size_t start = to - buffer.data();
+                last = MatchResult { start, start + place.length };
+                continue;
+            }
+            auto inserted = m_inserted[place.step];
+            copy(to, inserted.data(), inserted.size());
+            to += inserted.size();
+            copied += place.length;
+        }
+        copy(to, from + copied, m_characters.size() - copied);
+        return Outcome::Made;
+    }
+
+private:
+    struct Place {
+        uint32_t index;
+        uint32_t length;
+        uint32_t step;
+    };
+
+    static ALWAYS_INLINE void copy(Latin1Character* to, const void* source, size_t length)
+    {
+        auto* from = static_cast<const uint8_t*>(source);
+        auto copyEnds = [&]<typename Word>(Word) ALWAYS_INLINE_LAMBDA {
+            Word first = WTF::unalignedLoad<Word>(from);
+            Word last = WTF::unalignedLoad<Word>(from + length - sizeof(Word));
+            WTF::unalignedStore<Word>(to, first);
+            WTF::unalignedStore<Word>(to + length - sizeof(Word), last);
+        };
+        if (length > 16) {
+            memcpy(to, from, length);
+            return;
+        }
+        if (length >= 8)
+            copyEnds(uint64_t());
+        else if (length >= 4)
+            copyEnds(uint32_t());
+        else if (length >= 2)
+            copyEnds(uint16_t());
+        else if (length)
+            *to = *from;
+    }
+
+    static ALWAYS_INLINE bool has(const uint64_t* set, Latin1Character character)
+    {
+        return set[character / 64] >> character % 64 & 1;
+    }
+
+    ALWAYS_INLINE void didFind(size_t index, size_t length, unsigned step)
+    {
+        m_places.append(Place { static_cast<uint32_t>(index), static_cast<uint32_t>(length), step });
+        m_lastStep = std::max(m_lastStep, step);
+    }
+
+    void findCharacters()
+    {
+        constexpr size_t stride = SIMD::stride<uint8_t>;
+        constexpr unsigned bitsPerLane = SIMD::bitsPerLaneInMask<uint8_t>;
+        constexpr uint64_t oneBitPerLane = bitsPerLane == 1 ? 0xffffull : 0x1111111111111111ull;
+        std::array<Latin1Character, Steps::maxCount> replaced;
+        std::array<simde_uint8x16_t, Steps::maxCount> replacedInEveryLane;
+        for (unsigned step = 0; step < m_count; ++step) {
+            replaced[step] = m_data.string(patternOf(step)).back();
+            replacedInEveryLane[step] = SIMD::splat<uint8_t>(replaced[step]);
+        }
+        auto findIn = [&](const Latin1Character* lanes, size_t index, uint64_t lanesInUse) ALWAYS_INLINE_LAMBDA {
+            auto input = SIMD::load(std::bit_cast<const uint8_t*>(lanes));
+            auto mask = SIMD::equal(input, replacedInEveryLane[0]);
+            for (unsigned step = 1; step < m_count; ++step)
+                mask = SIMD::bitOr(mask, SIMD::equal(input, replacedInEveryLane[step]));
+            for (uint64_t bits = SIMD::laneMask(mask) & lanesInUse; bits; bits &= bits - 1) {
+                unsigned lane = WTF::ctz(bits) / bitsPerLane;
+                unsigned step = 0;
+                while (replaced[step] != lanes[lane])
+                    ++step;
+                didFind(index + lane, 1, step);
+            }
+        };
+        size_t size = m_characters.size();
+        size_t index = 0;
+        for (; index + stride <= size; index += stride)
+            findIn(m_characters.data() + index, index, oneBitPerLane);
+        if (size_t rest = size - index) {
+            std::array<Latin1Character, stride> lanes { };
+            copy(lanes.data(), m_characters.data() + index, rest);
+            findIn(lanes.data(), index, oneBitPerLane & ((1ull << rest * bitsPerLane) - 1));
+        }
+    }
+
+    void findRuns()
+    {
+        std::array<std::array<uint64_t, 4>, Steps::maxCount> replacedBy;
+        std::array<uint64_t, 4> isReplaced { };
+        for (unsigned step = 0; step < m_count; ++step) {
+            for (unsigned word = 0; word < 4; ++word) {
+                replacedBy[step][word] = static_cast<uint64_t>(m_steps[step * m_stride + Steps::firstWordOfSet + word]) & ~isReplaced[word];
+                isReplaced[word] |= replacedBy[step][word];
+            }
+        }
+        size_t size = m_characters.size();
+        for (size_t index = 0; index < size; ++index) {
+            if (!has(isReplaced.data(), m_characters[index])) [[likely]]
+                continue;
+            unsigned step = 0;
+            while (!has(replacedBy[step].data(), m_characters[index]))
+                ++step;
+            size_t end = index + 1;
+            if (m_steps[step * m_stride + Steps::wordOfRepeats]) {
+                while (end < size && has(replacedBy[step].data(), m_characters[end]))
+                    ++end;
+            }
+            didFind(index, end - index, step);
+            index = end - 1;
+        }
+    }
+
+    const Typed::Data& m_data;
+    const EncodedJSValue* m_steps;
+    std::span<const Latin1Character> m_characters;
+    unsigned m_count;
+    unsigned m_stride;
+    unsigned m_lastStep { 0 };
+    std::array<std::span<const uint8_t>, Steps::maxCount> m_inserted;
+    Vector<Place, 32> m_places;
+};
+
+static void reconstructLastReplacement(JSGlobalObject* globalObject, RegExpCachedResult& cachedResult, JSString* original, void* context)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* instance = static_cast<Instance*>(context);
+    auto& replacement = instance->typed->lastReplacement;
+    auto source = original->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    CharacterReplacer replacer(instance->typed->data, replacement.countAndForm, replacement.steps.data(), source->span8());
+    RefPtr<StringImpl> made;
+    MatchResult last;
+    JSString* subject = original;
+    switch (replacer.replaceBelow(replacement.lastStep, made, last)) {
+    case CharacterReplacer::Outcome::Unchanged:
+        break;
+    case CharacterReplacer::Outcome::Made:
+        subject = jsString(vm, String { made.releaseNonNull() });
+        break;
+    case CharacterReplacer::Outcome::TooLong:
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    RegExp* regExp = instance->typed->regExpLiteral(vm, replacer.patternOf(replacement.lastStep), OptionSet<Yarr::Flags> { Yarr::Flags::Global }.toRaw());
+    cachedResult.record(vm, globalObject, regExp, subject, last, false);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceCharacters, JSCell*, (Instance* instance, JSCell* stringCell, uint32_t countAndForm, const EncodedJSValue* steps))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (!globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid() || !globalObject->stringSymbolReplaceWatchpointSet().isStillValid()) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    JSString* string = uncheckedDowncast<JSString>(stringCell);
+    auto source = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!source->is8Bit())
+        OPERATION_RETURN(scope, nullptr);
+    CharacterReplacer replacer(instance->typed->data, countAndForm, steps, source->span8());
+    if (replacer.findsNothing())
+        OPERATION_RETURN(scope, string);
+    RefPtr<StringImpl> made;
+    MatchResult unused;
+    if (replacer.replaceBelow(replacer.count(), made, unused) != CharacterReplacer::Outcome::Made) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+    auto& replacement = instance->typed->lastReplacement;
+    memcpy(replacement.steps.data(), steps, replacer.numberOfWords() * sizeof(EncodedJSValue));
+    replacement.countAndForm = countAndForm;
+    replacement.lastStep = replacer.lastStep();
+    globalObject->regExpGlobalData().cachedResult().recordToBeReconstructed(vm, globalObject, string, reconstructLastReplacement, instance);
+    OPERATION_RETURN(scope, jsString(vm, String { made.releaseNonNull() }));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceAllString, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* search, JSCell* replacement))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -618,6 +860,278 @@ std::optional<Operand> Lowering::lowerMatchOnlyTakenApart(ValueID result, const 
     ensureStillAliveHere(regExpObject);
     m_matchesInFrame.set(result.index(), WTF::move(match));
     return convert(select(isFound, box(regExpObject), boxedConstant(jsNull())), typeOf(result), value.rep);
+}
+
+struct OneCharacterPattern {
+    std::array<uint64_t, 4> set { };
+    bool repeats { false };
+};
+
+static std::optional<OneCharacterPattern> parseOneCharacterPattern(std::span<const uint8_t> text)
+{
+    using Set = std::array<uint64_t, 4>;
+    auto add = [](Set& set, unsigned first, unsigned last) {
+        for (unsigned character = first; character <= last; ++character)
+            set[character / 64] |= 1ull << character % 64;
+    };
+    auto invert = [](Set& set) {
+        for (auto& word : set)
+            word = ~word;
+    };
+    auto isSyntaxCharacter = [](uint8_t character) {
+        return character && strchr("^$\\.*+?()[]{}|/", character);
+    };
+    size_t position = 0;
+    auto parseEscape = [&](Set& set, bool isInClass, std::optional<uint8_t>& single) {
+        if (position == text.size())
+            return false;
+        uint8_t escaped = text[position++];
+        Set named { };
+        switch (escaped) {
+        case 'd':
+        case 'D':
+            add(named, '0', '9');
+            break;
+        case 'w':
+        case 'W':
+            add(named, '0', '9');
+            add(named, 'A', 'Z');
+            add(named, 'a', 'z');
+            add(named, '_', '_');
+            break;
+        case 's':
+        case 'S':
+            add(named, '\t', '\r');
+            add(named, ' ', ' ');
+            add(named, 0xa0, 0xa0);
+            break;
+        case 'n':
+            single = '\n';
+            break;
+        case 'r':
+            single = '\r';
+            break;
+        case 't':
+            single = '\t';
+            break;
+        case 'f':
+            single = '\f';
+            break;
+        case 'v':
+            single = '\v';
+            break;
+        default:
+            if (!isSyntaxCharacter(escaped) && !(isInClass && escaped == '-'))
+                return false;
+            single = escaped;
+            break;
+        }
+        if (single) {
+            add(set, *single, *single);
+            return true;
+        }
+        if (isASCIIUpper(escaped))
+            invert(named);
+        for (unsigned word = 0; word < 4; ++word)
+            set[word] |= named[word];
+        return true;
+    };
+
+    OneCharacterPattern pattern;
+    if (text.empty())
+        return std::nullopt;
+    uint8_t first = text[position++];
+    std::optional<uint8_t> single;
+    if (first == '\\') {
+        if (!parseEscape(pattern.set, false, single))
+            return std::nullopt;
+    } else if (first == '.') {
+        add(pattern.set, '\n', '\n');
+        add(pattern.set, '\r', '\r');
+        invert(pattern.set);
+    } else if (first == '[') {
+        bool isInverted = position < text.size() && text[position] == '^';
+        position += isInverted;
+        bool isClosed = false;
+        while (position < text.size()) {
+            uint8_t character = text[position++];
+            if (character == ']') {
+                isClosed = true;
+                break;
+            }
+            single = std::nullopt;
+            if (character == '\\') {
+                if (!parseEscape(pattern.set, true, single))
+                    return std::nullopt;
+            } else if (character == '-' || character == '[')
+                return std::nullopt;
+            else {
+                single = character;
+                add(pattern.set, character, character);
+            }
+            if (position + 1 >= text.size() || text[position] != '-')
+                continue;
+            uint8_t last = text[position + 1];
+            if (!single || !isASCIIAlphanumeric(*single) || !isASCIIAlphanumeric(last) || last < *single)
+                return std::nullopt;
+            add(pattern.set, *single, last);
+            position += 2;
+        }
+        if (!isClosed)
+            return std::nullopt;
+        if (isInverted)
+            invert(pattern.set);
+    } else if (isSyntaxCharacter(first))
+        return std::nullopt;
+    else
+        add(pattern.set, first, first);
+    if (position < text.size() && text[position] == '+') {
+        pattern.repeats = true;
+        ++position;
+    }
+    if (position != text.size())
+        return std::nullopt;
+    return pattern;
+}
+
+std::optional<Lowering::CharacterReplacement> Lowering::characterReplacementBy(ValueID id)
+{
+    auto& value = m_function.at(id);
+    if (value.opcode != Opcode::CallBuiltin || !value.child(0) || value.arguments.size() != 2 || value.methodGetById() || typeOf(value.child(0)).hasObjects())
+        return std::nullopt;
+    auto& implementation = m_builtins.at(value.builtin()).implementation;
+    if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::StringReplace)
+        return std::nullopt;
+    if (!typeOf(value.arguments[1]).isString() || useCountOf(value.arguments[0]) != 1)
+        return std::nullopt;
+    auto& literal = m_function.at(value.arguments[0]);
+    if (literal.opcode != Opcode::CallBuiltin || literal.arguments.size() != 2)
+        return std::nullopt;
+    OptionSet<Yarr::Flags> flags { Yarr::Flags::Global };
+    auto key = regExpLiteralKey(m_program, m_function, literal);
+    if (!key || static_cast<uint32_t>(*key) != flags.toRaw())
+        return std::nullopt;
+    auto text = constantASCIIString(literal.arguments[0]);
+    auto inserted = constantASCIIString(value.arguments[1]);
+    if (!text || !inserted || !stringConstantOf(value.arguments[1]) || std::ranges::find(*inserted, '$') != inserted->end())
+        return std::nullopt;
+
+    auto pattern = parseOneCharacterPattern(*text);
+    if (!pattern)
+        return std::nullopt;
+    CharacterReplacement replacement { pattern->set, pattern->repeats, false, *inserted };
+    uint8_t last = text->back();
+    std::array<uint64_t, 4> onlyLast { };
+    onlyLast[last / 64] = 1ull << last % 64;
+    replacement.isLastOfPattern = !pattern->repeats && pattern->set == onlyLast;
+    return replacement;
+}
+
+void Lowering::findReplacementChains()
+{
+    for (auto& block : m_function.blocks) {
+        ReplacementChain chain;
+        size_t indexOfLast = 0;
+        auto close = [&] {
+            if (chain.size() > 1 || (chain.size() == 1 && !characterReplacementBy(chain[0])->isLastOfPattern)) {
+                for (ValueID step : chain) {
+                    if (step != chain.last()) {
+                        m_isDoneByLastReplacement.set(step.index());
+                        m_isLazilyFetched.set(step.index());
+                        for (ValueID user : usersOf(step)) {
+                            if (m_function.at(user).opcode == Opcode::Cast) {
+                                m_isDoneByLastReplacement.set(user.index());
+                                m_isLazilyFetched.set(user.index());
+                            }
+                        }
+                    }
+                    m_isDoneByLastReplacement.set(m_function.at(step).arguments[0].index());
+                    m_isLazilyFetched.set(m_function.at(step).arguments[0].index());
+                }
+                m_replacementChains.add(chain.last().index(), chain);
+            }
+            chain.clear();
+        };
+        for (size_t index = 0; index < block.values.size(); ++index) {
+            ValueID id = block.values[index];
+            auto& value = m_function.at(id);
+            auto replacement = value.opcode == Opcode::CallBuiltin ? characterReplacementBy(id) : std::nullopt;
+            if (!replacement)
+                continue;
+            bool follows = !chain.isEmpty() && value.child(0) == chain.last() && chain.size() < maxReplacementsInOnePass;
+            if (follows) {
+                for (ValueID user : usersOf(chain.last()))
+                    follows &= user == id || (m_function.at(user).opcode == Opcode::Cast && !useCountOf(user));
+                for (size_t between = indexOfLast + 1; between < index; ++between) {
+                    ValueID other = block.values[between];
+                    follows &= m_function.at(other).opcode == Opcode::String || other == value.arguments[0] || (m_function.at(other).opcode == Opcode::Cast && m_function.at(other).child(0) == chain.last());
+                }
+                for (ValueID earlier : chain) {
+                    auto inserted = characterReplacementBy(earlier)->inserted;
+                    follows &= !replacement->repeats || !inserted.empty();
+                    for (uint8_t character : inserted)
+                        follows &= !(replacement->set[character / 64] >> character % 64 & 1);
+                }
+            }
+            if (!follows)
+                close();
+            chain.append(id);
+            indexOfLast = index;
+        }
+        close();
+    }
+}
+
+std::optional<Operand> Lowering::tryLowerReplacementChain(ValueID result, const Value& value)
+{
+    if (m_isLoweringReplacementsOneByOne)
+        return std::nullopt;
+    auto found = m_replacementChains.find(result.index());
+    if (found == m_replacementChains.end())
+        return std::nullopt;
+    ReplacementChain chain = found->value;
+    auto& type = typeOf(result);
+    Rep rep = repOf(type);
+    CellPointer receiver = nonNullish(m_function.at(chain[0]).child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    bool hasSets = false;
+    for (ValueID step : chain)
+        hasSets |= !characterReplacementBy(step)->isLastOfPattern;
+    unsigned stride = hasSets ? ReplacementSteps::wordsWithSet : 1;
+    LValue steps = transientBuffer(chain.size() * stride * sizeof(EncodedJSValue));
+    auto store = [&](unsigned word, uint64_t bits) {
+        m_out.store64(integer(static_cast<int64_t>(bits)).value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, steps, word * sizeof(EncodedJSValue)));
+    };
+    for (unsigned i = 0; i < chain.size(); ++i) {
+        auto& step = m_function.at(chain[i]);
+        uint64_t pattern = m_function.at(stringConstantOf(m_function.at(step.arguments[0]).arguments[0])).string().index();
+        uint64_t inserted = m_function.at(stringConstantOf(step.arguments[1])).string().index();
+        store(i * stride, pattern << 32 | inserted);
+        if (!hasSets)
+            continue;
+        auto replacement = *characterReplacementBy(chain[i]);
+        store(i * stride + ReplacementSteps::wordOfRepeats, replacement.repeats);
+        for (unsigned word = 0; word < 4; ++word)
+            store(i * stride + ReplacementSteps::firstWordOfSet + word, replacement.set[word]);
+    }
+    CellPointer replaced = AOT_TYPED_OPERATION(StringReplaceCharacters, receiver, word32(chain.size() | (hasSets ? ReplacementSteps::hasSets : 0)), Pointer(steps));
+    LBasicBlock oneByOne = newColdBlock();
+    Join join(m_out, rep, b3TypeOf(rep));
+    orElse(Word32(m_out.notZero64(replaced.value())), oneByOne);
+    join.add(ensure(replaced, m_program.at(m_program.types.string), type));
+    m_out.appendTo(oneByOne);
+    SetForScope isLoweringOneByOne(m_isLoweringReplacementsOneByOne, true);
+    SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
+    size_t numberOfAssumptions = m_assumptions.size();
+    Operand last;
+    for (ValueID step : chain) {
+        ValueID pattern = m_function.at(step).arguments[0];
+        m_assumptions.append(Assumption { pattern, lowerCallBuiltin(pattern, m_function.at(pattern)), &typeOf(pattern) });
+        last = lowerCallBuiltin(step, m_function.at(step));
+        m_assumptions.append(Assumption { step, last, &typeOf(step) });
+    }
+    m_assumptions.shrink(numberOfAssumptions);
+    join.add(last);
+    return join.finish();
 }
 
 std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID result, const Value& value, Writes writes)

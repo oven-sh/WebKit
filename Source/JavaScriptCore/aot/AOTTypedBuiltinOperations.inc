@@ -138,6 +138,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedObjectEntries, RuntimeStat
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectAssignFrom, Heap, void, (Instance*, JSCell* target, EncodedJSValue source));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectAssignToNew, Heap, JSCell*, (Instance*, EncodedJSValue source));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnPropertyDescriptor, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue key));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnPropertyParts, Heap, size_t, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedObjectCreate, Heap, JSCell*, (Instance*, JSCell* prototype));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryCloneWithPrototype, Heap, JSCell*, (Instance*, JSCell* source, EncodedJSValue prototype));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAdoptPrototype, Heap, void, (Instance*, JSCell* born, EncodedJSValue prototype, uint32_t allocation));
