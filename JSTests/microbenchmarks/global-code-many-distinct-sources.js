@@ -1,5 +1,6 @@
 // Every indirect eval and every Function constructor call here has a source the code cache has not seen. Once the
-// cache holds CodeCacheMap::workingSetMaxEntries (2000) entries, each of them evicts one.
+// cache has admitted Options::codeCacheWorkingSetMaxBytes (16 MB, each entry counting as its length plus 1 KB: about
+// 15000 of these sources), the sources after that evict entries.
 var globalEval = eval;
 
 function test(count) {

@@ -1,5 +1,6 @@
 // A set of sources that is evaluated again and again, with 300 sources the code cache has not seen between two
-// uses. The cache is full, so every new source evicts an entry. A source of the set that was evicted is parsed again.
+// uses. Once the cache has admitted its byte working set (16 MB, each entry counting as its length plus 1 KB), every
+// new source evicts an entry. A source of the set that was evicted is parsed again.
 var globalEval = eval;
 
 var body = "";
