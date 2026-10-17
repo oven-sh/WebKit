@@ -1804,6 +1804,7 @@ class PropertyLookupTable {
     WTF_MAKE_NONCOPYABLE(PropertyLookupTable);
 public:
     static constexpr uint32_t maxName = (1u << 15) - 1;
+    static constexpr uint32_t instanceOfName = 0;
     static constexpr uint32_t hasKindAndCode = 1u << 15;
     static constexpr uint32_t numberOfBases = 1u << 21;
     static constexpr uint32_t numberOfColumns = maxName + 1;
@@ -1898,6 +1899,10 @@ public:
         return 0;
 #endif
     }
+    static constexpr Kind ordinaryInstanceOfKind = Kind::OutOfLine;
+    static constexpr Kind ownHasInstanceKind = Kind::OwnAccessorInline;
+    static constexpr Kind inheritedHasInstanceKind = Kind::Accessor;
+    static constexpr uint32_t instanceOfNameAndKind(Kind kind) { return (hasKindAndCode | instanceOfName) << 8 | static_cast<uint8_t>(kind) | flagsForKind(kind); }
     static constexpr uint8_t codeFlagForKind(Kind kind)
     {
 #if CPU(ARM64)
@@ -1950,6 +1955,7 @@ public:
     bool setOwnOffset(Structure*, uint32_t name, PropertyOffset, bool isStoredTo);
     bool setAbsent(Structure*, uint32_t name, UniquedStringImpl* prototypeDependentUID);
     bool setInherited(Structure*, uint32_t name, JSCell* holder, PropertyOffset, UniquedStringImpl* prototypeDependentUID);
+    bool setInstanceOf(Structure*, Kind, PropertyOffset, JSCell* holderOrNull, UniquedStringImpl* hasInstanceUID);
     bool replaceSlotWithInherited(Structure*, uint32_t name, JSCell* holder, PropertyOffset);
     bool setExtraProperty(Structure*, uint32_t name, PropertyOffset, bool isAccessor, bool isStoredTo, bool hasDefaultAttributes = false);
     bool setExtraPropertyAdded(Structure*, uint32_t name, Structure* after, PropertyOffset, bool createsExtraProperties, UniquedStringImpl* uid, bool isDefinition = false);
@@ -2140,6 +2146,7 @@ private:
         }
     }
     void invalidatePrototypeDependentEntries(uint32_t index);
+    void invalidateEntriesNamed(uint32_t name);
     void removeDeadNewStructures(VM&, Vector<uint32_t>& indices);
     void release(uint32_t base);
     void clear();
@@ -2168,6 +2175,7 @@ private:
         uint32_t next;
     };
     UncheckedKeyHashMap<UniquedStringImpl*, uint16_t> m_nameByUID;
+    UniquedStringImpl* m_hasInstanceUID { nullptr };
     BitVector m_registeredNames;
     static_assert((maxName + 1) / namesPerHeadGroup <= UINT16_MAX);
     std::array<uint16_t, (maxName + 1) / namesPerHeadGroup> m_nameListHeadGroup { };

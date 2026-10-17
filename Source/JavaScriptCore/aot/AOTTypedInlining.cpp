@@ -1829,6 +1829,8 @@ private:
             return false;
         if (callee.has(Format::FunctionIsBuiltin) && !m_program.implementsBuiltin(callee) && containsCallNoInline(call.function()))
             return false;
+        if (call.function() == m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayMapJoin)])
+            return false;
         if (!m_isInliningOwnBody && !isOwnWorker(call.function()) && m_program.at(m_id).startFunction != call.function() && hasHandlers(callee) && !hasHandlers(m_caller) && !isPassedIteratedGenerator(callee, call))
             return false;
         if (call.arguments.size() != callee.blocks[0].parameters.size())

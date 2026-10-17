@@ -197,7 +197,7 @@ static constexpr unsigned numberOfPreludeFunctions = 0
     ;
 
 static constexpr bool isHiddenFromStackTraces(PreludeFunction which) { return which == PreludeFunction::ArrayFlatMap; }
-static constexpr bool isSelectedByCallbackArgument(PreludeFunction which) { return which == PreludeFunction::ArrayFilterTruthy || which == PreludeFunction::ArrayMapByNumber; }
+static constexpr bool isSelectedAtCallSite(PreludeFunction which) { return which == PreludeFunction::ArrayFilterTruthy || which == PreludeFunction::ArrayMapByNumber || which == PreludeFunction::ArrayMapJoin; }
 uint32_t visibilityInEngine(uint32_t builtinFunction);
 bool isStrictInEngine(uint32_t builtinFunction);
 

@@ -565,7 +565,7 @@ struct alignas(32) TypedCloneCacheEntry {
 static_assert(sizeof(TypedCloneCacheEntry) == 32);
 
 struct ConversionMove {
-    enum class Kind : uint8_t { Value, CellOfShape, CellOfType, Function, Object, NumberAsInlineInt32, NumberAsDouble, BooleanAsByte, BooleanAsValueByte };
+    enum class Kind : uint8_t { Value, CellOfShape, CellOfType, Function, Object, NumberAsInlineInt32, NumberAsDouble, BooleanAsByte, BooleanAsValueByte, LiteralString };
     static constexpr uint8_t acceptsUndefined = 1;
     static constexpr uint8_t acceptsNull = 2;
     static constexpr uint8_t isWide = 4;
@@ -580,9 +580,20 @@ struct ConversionMove {
 };
 static_assert(sizeof(ConversionMove) == 16);
 
+struct ConversionText {
+    uint64_t text;
+    uint64_t meaning;
+};
+static_assert(sizeof(ConversionText) == 16);
+
 struct ConversionPlan {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ConversionPlan);
     static constexpr size_t maxCellSize = 128;
+    static constexpr unsigned maxTextCount = 16;
+    const ConversionText* firstText { nullptr };
+    uint32_t discriminantFrom { 0 };
+    uint32_t memberCount { 0 };
+    Vector<ConversionText, 4> texts;
     void* allocator { nullptr };
     const uint64_t* words { nullptr };
     const ConversionMove* firstMove { nullptr };
@@ -1595,9 +1606,10 @@ struct State {
     static constexpr unsigned numberOfQuickConversions = 512;
     static constexpr size_t maxSizeOfQuickConversion = 128;
     bool tryQuickConversion(VM&, JSValue, const RuntimeType&);
-    void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Structure* made, size_t sizeOfCell, uint32_t typeAndReason);
+    void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Object* made, size_t sizeOfCell, uint32_t typeAndReason);
+    std::optional<uint32_t> literalStringWordOfConstant(uint32_t string) const;
     void cacheCopyConversion(VM&, Structure*, const RuntimeType&, const CoercionPlan&, Structure* made, uint32_t typeAndReason);
-    std::unique_ptr<ConversionPlan> createConversionPlan(const CoercionPlan&, size_t sizeOfCell, uint64_t header, void* allocator);
+    std::unique_ptr<ConversionPlan> createConversionPlan(const CoercionPlan&, size_t sizeOfCell, uint64_t header, void* allocator, PropertyOffset discriminant = invalidOffset, const Object* converted = nullptr);
     void cacheConversion(uint32_t structureID, uint32_t typeAndReason, const ConversionPlan&);
     bool m_hasCachedConversions { false };
     static uint64_t discriminantWord(JSValue);

@@ -1745,10 +1745,65 @@ static void cacheSpreadCopy(Instance* instance, VM& vm, JSObject* object, Struct
     instance->spreadCopyCacheIsDirty = true;
 }
 
+static NEVER_INLINE void cacheCopyOfRecordWithExtraProperties(Instance* instance, JSGlobalObject* globalObject, VM& vm, Typed::Object& record)
+{
+    Typed::State& state = *instance->typed;
+    Structure* structure = record.structure();
+    const Typed::LayoutData& layout = record.layout();
+    size_t offset = layout.offsetOfExtraProperties();
+    StructureID named = structure->extraPropertiesStructureID();
+    if (!named || !offset || layout.hasExtension || state.isCounting() || state.data.isCompiledForAudit || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
+        return;
+    Structure* ofExtraProperties = named.decode();
+    if (ofExtraProperties->outOfLineCapacity() || ofExtraProperties->typeInfoBlob() != JSFinalObject::defaultTypeInfoBlob() || !ofExtraProperties->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(ofExtraProperties))
+        return;
+    uint64_t narrowNumbers = 0;
+    for (auto& field : std::span { layout.fields(), layout.numberOfFields }) {
+        if (field.flags & Typed::fieldHoldsLazyClosure)
+            return;
+        if (field.store() != Typed::Store::Int32OrNumberBox)
+            continue;
+        size_t place = (field.offset - Typed::offsetOfFirstField) / sizeof(int32_t);
+        if (place >= 64)
+            return;
+        narrowNumbers |= 1ull << place;
+    }
+    size_t size = layout.sizeWithSpecializationCapacity();
+    size_t copied = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(std::max<size_t>(layout.size, offset + Typed::sizeOfExtraPropertiesWord));
+    size_t cleared = std::max(WTF::roundUpToMultipleOf<sizeof(uint64_t)>(size), copied) - copied;
+    void* allocator = vm.cellSpace().allocatorFor(std::max(size, copied), AllocatorForMode::EnsureAllocator).localAllocator();
+    if (!allocator || copied / sizeof(uint64_t) - 1 > UINT8_MAX || cleared / sizeof(uint64_t) > UINT8_MAX)
+        return;
+    Instance::SpreadCopyCacheEntry* pair = &instance->spreadCopyCache[Instance::spreadCopyCacheIndex(structure->id().bits(), 0)];
+    auto canBeTaken = [&](const Instance::SpreadCopyCacheEntry& place) {
+        return !place.structureID || place.structureID == structure->id().bits();
+    };
+    Instance::SpreadCopyCacheEntry* place = canBeTaken(pair[0]) ? &pair[0] : canBeTaken(pair[1]) ? &pair[1] : nullptr;
+    if (!place) {
+        instance->keyedTableRandomState = instance->keyedTableRandomState * 1664525u + 1013904223u;
+        if (instance->keyedTableRandomState >> 30)
+            return;
+        place = &pair[instance->keyedTableRandomState >> 29 & 1];
+    }
+    *place = {
+        narrowNumbers,
+        static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits(),
+        allocator,
+        structure->id().bits(),
+        static_cast<uint8_t>(copied / sizeof(uint64_t) - 1),
+        static_cast<uint8_t>(cleared / sizeof(uint64_t)),
+        { 0, 0 },
+    };
+    instance->spreadCopyCacheIsDirty = true;
+}
+
 static ALWAYS_INLINE JSObject* cloneObjectInline(Instance* instance, JSGlobalObject* globalObject, VM& vm, EncodedJSValue source, bool keepsLayout)
 {
-    if (Typed::Object* record = keepsLayout ? instance->typed->compiledObject(JSValue::decode(source)) : nullptr; record && record->layout().kind == Typed::LayoutKind::Record)
+    if (Typed::Object* record = keepsLayout ? instance->typed->compiledObject(JSValue::decode(source)) : nullptr; record && record->layout().kind == Typed::LayoutKind::Record) {
+        if (record->hasExtraProperties())
+            cacheCopyOfRecordWithExtraProperties(instance, globalObject, vm, *record);
         return record->clone(globalObject);
+    }
     if (JSValue value = JSValue::decode(source); value.isCell() && value.asCell()->type() == FinalObjectType && !asObject(value)->butterfly()) {
         Structure* structure = value.asCell()->structure();
         Instance::CloneAndExtendPlan plan;
@@ -4406,6 +4461,10 @@ UniquedStringImpl* nameInStructureDescriptor(VM& vm, unsigned number, unsigned i
 static JSObject* newObjectWithFields(Instance* instance, JSGlobalObject* globalObject, VM& vm, Data* data, Slot* cache, Structure* empty, JSCell* constructor, uint32_t count, const EncodedJSValue* values, const uint32_t* nameIndicesOf, uint32_t numberInRegisters, uint32_t structureDescriptorPlusOne = 0)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto valueOrUndefinedAt = [&](unsigned i) {
+        JSValue value = JSValue::decode(values[i]);
+        return value ? value : jsUndefined();
+    };
     if (globalObject != instance->globalObject)
         structureDescriptorPlusOne = 0;
     if (count > 1 || (count && structureDescriptorPlusOne)) {
@@ -4433,7 +4492,7 @@ static JSObject* newObjectWithFields(Instance* instance, JSGlobalObject* globalO
                 }
                 for (unsigned i = 0; i < count; ++i) {
                     if (auto index = indexNamedBy(instance, nameIndicesOf[i], nameAt(instance, nameIndicesOf[i]))) {
-                        object->putDirectIndex(globalObject, *index, JSValue::decode(values[i]));
+                        object->putDirectIndex(globalObject, *index, valueOrUndefinedAt(i));
                         RETURN_IF_EXCEPTION(scope, nullptr);
                     }
                 }
@@ -4457,7 +4516,7 @@ static JSObject* newObjectWithFields(Instance* instance, JSGlobalObject* globalO
     bool areInOrder = true;
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& name = nameAt(instance, nameIndicesOf[i]);
-        JSValue value = JSValue::decode(values[i]);
+        JSValue value = valueOrUndefinedAt(i);
         if (auto index = indexNamedBy(instance, nameIndicesOf[i], name)) {
             object->putDirectIndex(globalObject, *index, value);
             RETURN_IF_EXCEPTION(scope, nullptr);

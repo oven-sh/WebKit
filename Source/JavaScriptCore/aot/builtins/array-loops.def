@@ -74,6 +74,7 @@ method Array.prototype.flatMap this/GPA (any/C?, any/A?, any/-...) -> anything ;
 method Array.prototype.map this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$map)
 method Array.prototype.map this/GPA (any/C?, any/A?, any/-...) -> anything ; CallsUserCode ; Call
 method Array.prototype.map this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$mapByNumber)
+method Array.prototype.map this/GPA (any/C, any/A?) -> string ; CallsUserCode ; Prelude(Array$mapJoin)
 method Array.prototype.reduce this/GPA (any/C) -> anything ; CallsUserCode ; Prelude(Array$reduceWithoutInitialValue)
 method Array.prototype.reduce this/GPA (any/C, any/RA) -> anything ; CallsUserCode ; Prelude(Array$reduce)
 method Array.prototype.reduce this/GPA (any/C?, any/RA?, any/-...) -> anything ; CallsUserCode ; Call

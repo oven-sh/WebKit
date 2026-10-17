@@ -296,6 +296,8 @@ private:
             quoted(value.string());
             if (value.isOnSlowPath)
                 m_out.print(" on the slow path");
+            if (value.isFusedWithMap)
+                m_out.print(" fused with map");
             if (value.opcode == Opcode::GetById && value.methodGetByIdBuiltin())
                 m_out.print(" unless original");
             if (value.opcode == Opcode::PutById && value.isInitialStore())

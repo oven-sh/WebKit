@@ -1151,7 +1151,7 @@ bool cacheNativeSetter(JSGlobalObject* globalObject, Instance& instance, JSObjec
     return true;
 }
 
-static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype)
+static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype, bool slotTakesNothing)
 {
     VM& vm = globalObject->vm();
     Structure* structure = constructor->structure();
@@ -1168,12 +1168,18 @@ static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* c
         return false;
     if (!(hasInstance.attributes() & PropertyAttribute::ReadOnly) || !(hasInstance.attributes() & PropertyAttribute::DontDelete))
         return false;
-    auto location = propertyLocation(prototype.cachedOffset());
-    if (!location || !mayReplace(cache, structure))
-        return false;
     UniquedStringImpl* uid = vm.propertyNames->hasInstanceSymbol.impl();
     auto status = prepareChainForCaching(globalObject, constructor, uid, hasInstance);
     if (!status || status->flattenedDictionary || status->usesPolyProto)
+        return false;
+    if (slotTakesNothing || (cache->structureID && cache->structureID != structure->id())) {
+        if (PropertyLookupTable::of(vm).setInstanceOf(structure, PropertyLookupTable::ordinaryInstanceOfKind, prototype.cachedOffset(), nullptr, uid))
+            return true;
+        if (slotTakesNothing)
+            return false;
+    }
+    auto location = propertyLocation(prototype.cachedOffset());
+    if (!location || !mayReplace(cache, structure))
         return false;
     makePrototypeChainWatchable(vm, constructor);
     if (!watchChain(vm, globalObject, data, cache, structure, hasInstance.slotBase(), uid))
@@ -1184,13 +1190,12 @@ static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* c
 
 void cacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype)
 {
-    if (SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
-        return;
-    if (!tryCacheInstanceOf(globalObject, data, cache, constructor, structureBefore, hasInstance, prototype))
+    bool slotTakesNothing = SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask;
+    if (!tryCacheInstanceOf(globalObject, data, cache, constructor, structureBefore, hasInstance, prototype, slotTakesNothing) && !slotTakesNothing)
         countFailure(cache);
 }
 
-static bool tryCacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, bool isCalled)
+static bool tryCacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, bool isCalled, bool slotTakesNothing)
 {
     VM& vm = globalObject->vm();
     Structure* structure = constructor->structure();
@@ -1200,6 +1205,15 @@ static bool tryCacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* 
         return false;
     JSObject* holder = hasInstance.slotBase();
     if (!isCalled && (holder == constructor || !(hasInstance.attributes() & PropertyAttribute::ReadOnly) || !(hasInstance.attributes() & PropertyAttribute::DontDelete)))
+        return false;
+    if (isCalled && (slotTakesNothing || (cache->structureID && cache->structureID != structure->id()))) {
+        UniquedStringImpl* uid = vm.propertyNames->hasInstanceSymbol.impl();
+        bool isOwn = holder == constructor;
+        auto status = isOwn ? std::nullopt : prepareChainForCaching(globalObject, constructor, uid, hasInstance);
+        if ((isOwn || (status && !status->flattenedDictionary && !status->usesPolyProto)) && PropertyLookupTable::of(vm).setInstanceOf(structure, isOwn ? PropertyLookupTable::ownHasInstanceKind : PropertyLookupTable::inheritedHasInstanceKind, hasInstance.cachedOffset(), isOwn ? nullptr : holder, uid))
+            return true;
+    }
+    if (slotTakesNothing)
         return false;
     auto location = isCalled ? propertyLocation(hasInstance.cachedOffset()) : std::optional<uint32_t>(0);
     if (!location || !mayReplace(cache, structure))
@@ -1224,9 +1238,8 @@ static bool tryCacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* 
 
 void cacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, bool isCalled)
 {
-    if (SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
-        return;
-    if (!tryCacheHasInstance(globalObject, data, cache, constructor, structureBefore, hasInstance, isCalled))
+    bool slotTakesNothing = SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask;
+    if (!tryCacheHasInstance(globalObject, data, cache, constructor, structureBefore, hasInstance, isCalled, slotTakesNothing) && !slotTakesNothing)
         countFailure(cache);
 }
 
@@ -2623,7 +2636,7 @@ uint32_t PropertyLookupTable::createRow(Structure* structure, uint32_t name)
     expected.append(listed);
     RecentRow& last = m_recentRows[name % m_recentRows.size()];
     uint32_t preferredBase = 0;
-    if (last.name == listed && m_rows[last.row].owner) {
+    if (last.name == listed && last.row < m_rows.size() && m_rows[last.row].owner) {
         preferredBase = baseOf(m_rows[last.row].owner) + 1;
         for (uint16_t other : m_rows[last.row].names) {
             if (other != listed && !(other & isInOverflow) && expected.size() < maxNamesExpected)
@@ -2684,7 +2697,7 @@ uint32_t PropertyLookupTable::moveRow(uint32_t base, std::optional<uint16_t> nam
 
 uint32_t PropertyLookupTable::ensureIndex(Structure* structure, uint32_t name)
 {
-    ASSERT(name && name <= maxName);
+    ASSERT(name <= maxName);
     uint32_t base = baseOf(structure);
     if (!base)
         return createRow(structure, name);
@@ -2784,7 +2797,8 @@ void PropertyLookupTable::setDependsOnPrototypes(uint32_t index, uint32_t name, 
         uint32_t& head = ensureNameListHead(name);
         if (!head && !m_registeredNames.get(name)) {
             setBit(m_registeredNames, name);
-            m_nameByUID.add(uid, static_cast<uint16_t>(name));
+            if (name != instanceOfName)
+                m_nameByUID.add(uid, static_cast<uint16_t>(name));
         }
         appendToNameList(entryRow(index, name), head);
     } else if (m_dependsOnPrototypes.get(bitOf(index)))
@@ -2869,6 +2883,24 @@ bool PropertyLookupTable::setInherited(Structure* structure, uint32_t name, JSCe
     if (offset - firstOutOfLineOffset > maxOutOfLineIndex)
         return setInheritedFarOutOfLine(structure, name, holder, offset - firstOutOfLineOffset, uid);
     return setEntryWithKind(structure, name, Kind::InheritedOutOfLine, codeForOutOfLineIndex(offset - firstOutOfLineOffset), MarkedBlockCage::encode(holder), uid);
+}
+
+bool PropertyLookupTable::setInstanceOf(Structure* structure, Kind kind, PropertyOffset offset, JSCell* holderOrNull, UniquedStringImpl* hasInstanceUID)
+{
+    if (holderOrNull && !MarkedBlockCage::contains(holderOrNull))
+        return false;
+    uint32_t code;
+    if (isInlineOffset(offset)) {
+        code = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
+        if (code > INT8_MAX)
+            return false;
+    } else {
+        if (offset - firstOutOfLineOffset > maxOutOfLineIndex)
+            return false;
+        code = codeForOutOfLineIndex(offset - firstOutOfLineOffset);
+    }
+    m_hasInstanceUID = hasInstanceUID;
+    return setEntryWithKind(structure, instanceOfName, kind, code, holderOrNull ? MarkedBlockCage::encode(holderOrNull) : 0, kind == ownHasInstanceKind ? nullptr : hasInstanceUID);
 }
 
 bool PropertyLookupTable::setInheritedFarOutOfLine(Structure* structure, uint32_t name, JSCell* holder, uint32_t place, UniquedStringImpl* uid)
@@ -3145,20 +3177,24 @@ void PropertyLookupTable::forget(Structure* structure, uint32_t name)
         invalidatePrototypeDependentEntries(index);
 }
 
+void PropertyLookupTable::invalidateEntriesNamed(uint32_t name)
+{
+    forEachIndexInNameList(name, [&](uint32_t index) {
+        if (isKindEntryFor(entryAt(index), name))
+            invalidatePrototypeDependentEntries(index);
+    });
+    freeNameList(name);
+}
+
 void PropertyLookupTable::didChangePrototype(UniquedStringImpl* uid)
 {
     if (m_declaredMemberCreationDepth || m_nameListLinks.isEmpty())
         return;
     if (uid) {
-        auto found = m_nameByUID.find(uid);
-        if (found == m_nameByUID.end())
-            return;
-        uint32_t name = found->value;
-        forEachIndexInNameList(name, [&](uint32_t index) {
-            if (isKindEntryFor(entryAt(index), name))
-                invalidatePrototypeDependentEntries(index);
-        });
-        freeNameList(name);
+        if (uid == m_hasInstanceUID)
+            invalidateEntriesNamed(instanceOfName);
+        if (auto found = m_nameByUID.find(uid); found != m_nameByUID.end())
+            invalidateEntriesNamed(found->value);
         return;
     }
     clearNameLists();

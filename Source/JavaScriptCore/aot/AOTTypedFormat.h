@@ -368,6 +368,7 @@ static constexpr uint32_t PredictionIsByKey = 1u << 30;
 static constexpr uint32_t ReceiverHasSingleStructure = 1u << 29;
 static constexpr uint32_t VariableIsKnownInitialized = 1;
 static constexpr uint32_t CallIsInTailPosition = 1;
+static constexpr uint32_t CallIsFusedWithMap = 0;
 
 struct Value {
     Opcode opcode;

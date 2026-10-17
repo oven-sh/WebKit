@@ -1555,6 +1555,17 @@ private:
                 return place(a) < place(b);
             });
         }
+        BitVector suspends;
+        for (unsigned i = 0; i < m_originalValueCount; ++i) {
+            auto& value = m_function.values[i];
+            if (value.opcode == Opcode::Await || value.opcode == Opcode::Yield)
+                suspends.set(i);
+            else if (value.opcode == Opcode::CallBuiltin) {
+                auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+                if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::AwaitBySavingFrame)
+                    suspends.set(i);
+            }
+        }
         Vector<std::optional<Stack>> stateAtHead(numberOfBlocks);
         stateAtHead[0] = Stack { };
         if (m_mode == Mode::Worker)
@@ -1563,8 +1574,21 @@ private:
         while (!worklist.isEmpty()) {
             unsigned b = worklist.takeLast();
             Stack stack = *stateAtHead[b];
+            auto& values = m_function.blocks[b].values;
+            unsigned nextValue = 0;
+            auto suspendsBefore = [&](unsigned index) {
+                if (suspends.isEmpty())
+                    return false;
+                for (; nextValue < values.size() && nextValue < index; ++nextValue) {
+                    if (!stack.isEmpty() && suspends.get(values[nextValue].index()))
+                        return true;
+                }
+                return false;
+            };
             for (unsigned k : insertionsByBlock[b]) {
                 auto& insertion = m_insertions[k];
+                if (suspendsBefore(insertion.at.index))
+                    return false;
                 if (insertion.step == Step::Begin) {
                     bool isNested = stack.containsIf([](auto& entry) { return entry.first != callerRegion; });
                     ValueID flag = at(insertion.value).arguments[0];
@@ -1579,6 +1603,8 @@ private:
                 else
                     stack.last().second = insertion.stateAfter;
             }
+            if (suspendsBefore(UINT_MAX))
+                return false;
             auto& terminator = m_function.blocks[b].terminator;
             bool hasHandler = terminator.kind == TerminatorKind::Invoke || (terminator.kind == TerminatorKind::Throw && !terminator.targets.isEmpty());
             if (hasHandler && (!stack.isEmpty() || !insertionsByBlock[b].isEmpty() || m_function.blocks[b].values.containsIf([&](ValueID id) { return m_isDead.get(id.index()); })))

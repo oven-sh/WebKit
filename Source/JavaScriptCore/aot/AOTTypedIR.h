@@ -335,6 +335,7 @@ struct Value {
     bool operandClassIsProven : 1 { false };
     bool mustBeProperTailCall : 1 { false };
     bool isOnSlowPath : 1 { false };
+    bool isFusedWithMap : 1 { false };
     bool guardsFastPath : 1 { false };
     bool dropsDroppableCallerFrame : 1 { false };
     bool leavesDroppableFrame : 1 { false };

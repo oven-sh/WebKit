@@ -980,6 +980,10 @@ private:
                 m_failed = true;
                 break;
             }
+            if (value.opcode == Opcode::CallMethod && value.immediates[1] == Format::CallIsFusedWithMap) {
+                value.isFusedWithMap = true;
+                value.immediates[1] = Format::none;
+            }
             if ((value.opcode == Opcode::Call || value.opcode == Opcode::CallMethod) && value.immediates[1] != Format::none) {
                 if (uint32_t written = value.immediates[1]; written != Format::CallIsInTailPosition) {
                     uint32_t type = (written - 2) >> 1;

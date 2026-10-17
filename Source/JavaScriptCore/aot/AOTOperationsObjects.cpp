@@ -185,10 +185,6 @@ JSCell* spread(JSGlobalObject* globalObject, JSValue iterable)
 
 static NEVER_INLINE void cacheInstanceOfForNonObject(Instance* instance, CallFrame* callFrame, JSGlobalObject* globalObject, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance)
 {
-    if (SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask) {
-        countOperationNamed(instance, "operationAOTInstanceofAndCache", "left-side-is-no-object:the-slot-takes-nothing");
-        return;
-    }
     VM& vm = globalObject->vm();
     unsigned attributes;
     PropertyOffset offset = constructor->structure()->get(vm, vm.propertyNames->prototype, attributes);

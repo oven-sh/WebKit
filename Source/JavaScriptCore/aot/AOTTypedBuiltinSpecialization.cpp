@@ -148,6 +148,25 @@ private:
         return withoutCalls ? withoutCalls : callee;
     }
 
+    std::optional<unsigned> indexOfFusedJoin(BlockID block, unsigned mapIndex) const
+    {
+        auto& values = m_function.at(block).values;
+        ValueID map = values[mapIndex];
+        if (m_function.at(map).arguments.size() != 1)
+            return std::nullopt;
+        for (unsigned index = mapIndex + 1; index < values.size(); ++index) {
+            auto& value = m_function.at(values[index]);
+            if (value.opcode == Opcode::String)
+                continue;
+            if (value.opcode != Opcode::CallMethod || !value.isFusedWithMap || value.child(0) != map)
+                return std::nullopt;
+            if (value.arguments.size() != 1 || m_function.at(value.arguments[0]).opcode != Opcode::String || useCountOf(map) != 1)
+                return std::nullopt;
+            return index;
+        }
+        return std::nullopt;
+    }
+
     bool isStringClass(const EngineClass& engineClass) const { return engineClass.index == m_builtins.stringClass().index; }
 
     const EngineClass* classSpeculatedFor(ValueID receiver, BuiltinName name) const
@@ -396,6 +415,21 @@ private:
         RELEASE_ASSERT(typeOfClass);
 
         Value original = m_function.at(id);
+        FunctionID mapJoin = m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayMapJoin)];
+        std::optional<unsigned> joinIndex;
+        if (callee && mapJoin && callee == m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayMap)])
+            joinIndex = indexOfFusedJoin(block, index);
+        if (joinIndex) {
+            Value join = m_function.at(m_function.at(block).values[*joinIndex]);
+            Value unused = make(Opcode::Undefined, m_program.types.undefined);
+            unused.position = original.position;
+            unused.inlineFrame = original.inlineFrame;
+            m_function.at(id) = WTF::move(unused);
+            open(block, *joinIndex);
+            join.arguments = { original.arguments[0], join.arguments[0] };
+            callDirectly(mapJoin, site->receiver, join);
+            return true;
+        }
         open(block, index);
         if (callee && receiver.isString()) {
             callDirectly(callee, site->receiver, original);

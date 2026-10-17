@@ -774,6 +774,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(StringIndexOf) \
     v(ArrayIncludes) \
     v(ArrayIndexOf) \
+    v(ArrayIndexOfFrom) \
     v(ArrayIncludesOrCall) \
     v(ArrayIndexOfOrCall) \
     v(ArrayIncludesOrCallMethodRead) \

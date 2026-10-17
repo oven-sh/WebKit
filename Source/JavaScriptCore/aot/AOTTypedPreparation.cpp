@@ -3433,6 +3433,8 @@ static void outlineConcatenations(Program& program)
         RELEASE_ASSERT(numbers[IsOutlined] == taken);
         printOutliningStatistics("concatenations"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "the function is hot by the text"_s, numbers[IsStaticallyHotReason] }, { "more than six parts"_s, numbers[HasTooManyParts] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsInlinedFromHot] }, { "a key"_s, numbers[IsKey] } });
     }
+    for (size_t k = 0; k < bodies.size(); ++k)
+        program.staticallyHotFunctions.set(program.functions.size() + k);
     program.functions.appendVector(WTF::move(bodies));
     destroyOnHelperThread(std::tuple { WTF::move(sites), WTF::move(signatureSites), WTF::move(signatureBody) });
 }
@@ -3723,6 +3725,8 @@ static void outlineBuiltinCalls(Program& program)
     });
     if (Options::verboseAOTCompilation())
         printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is hot"_s, numbers[IsInHotFunction] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "beside handlers"_s, numbers[IsNearHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
+    for (size_t k = 0; k < bodies.size(); ++k)
+        program.staticallyHotFunctions.set(program.functions.size() + k);
     program.functions.appendVector(WTF::move(bodies));
     destroyOnHelperThread(WTF::move(sites));
 }
@@ -6177,7 +6181,7 @@ static BitVector functionsWithOtherEntries(const Program& program)
     }
     BitVector isOnlyReachedByCalls(count);
     for (unsigned which = 0; which < program.preludeFunctions.size(); ++which) {
-        if (program.preludeFunctions[which] && isSelectedByCallbackArgument(static_cast<PreludeFunction>(which)))
+        if (program.preludeFunctions[which] && isSelectedAtCallSite(static_cast<PreludeFunction>(which)))
             isOnlyReachedByCalls.set(program.preludeFunctions[which].index());
     }
     Vector<uint8_t> isReached(FillWith { }, count, static_cast<uint8_t>(0));
@@ -8769,7 +8773,7 @@ static void createGuardedPreludeEntries(Program& program)
     Vector<Function> entries;
     for (unsigned i = 0; i < builtins.size(); ++i) {
         auto& builtin = builtins.at(BuiltinID(i));
-        if (builtin.kind != BuiltinKind::Method || builtin.implementation.kind != BuiltinImplementation::Prelude || isSelectedByCallbackArgument(builtin.implementation.prelude))
+        if (builtin.kind != BuiltinKind::Method || builtin.implementation.kind != BuiltinImplementation::Prelude || isSelectedAtCallSite(builtin.implementation.prelude))
             continue;
         FunctionID prelude = program.preludeFunctions[static_cast<unsigned>(builtin.implementation.prelude)];
         StringID name = program.stringOf(builtin.nameName);
@@ -10141,6 +10145,88 @@ static void allocateLiteralsWithComputedKeysAsRecords(Program& program)
         literalCount.fetch_add(literals.size(), std::memory_order_relaxed);
     });
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", literalCount.load(), " object literals with computed keys are born as the record type expected of them");
+}
+
+static void predictClonesByCastsInOtherBlocks(Program& program)
+{
+    const Program& constProgram = program;
+    std::atomic<unsigned> cloneCount { 0 };
+    static constexpr OpcodeSet calls { Opcode::CallBuiltin };
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        if (!constProgram.functions.mayContain(i, calls))
+            return;
+        auto& function = constProgram.functions[i];
+        struct Clone {
+            ValueID value;
+            unsigned block;
+            ValueID cast;
+            bool isCastInOtherBlock { false };
+            bool hasOtherUses { false };
+        };
+        Vector<Clone, 4> clones;
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            if (function.blocks[b].terminator.kind != TerminatorKind::Invoke)
+                continue;
+            for (ValueID id : function.blocks[b].values) {
+                auto& value = function.at(id);
+                if (value.opcode != Opcode::CallBuiltin || value.prediction())
+                    continue;
+                auto operation = languageOperationOf(constProgram, value);
+                if (operation == LanguageOperation::CloneObject || operation == LanguageOperation::CloneObjectWith || operation == LanguageOperation::CloneObjectAfter)
+                    clones.append({ id, b, { } });
+            }
+        }
+        if (clones.isEmpty())
+            return;
+        auto cloneFor = [&](ValueID id) -> Clone* {
+            for (auto& clone : clones) {
+                if (clone.value == id)
+                    return &clone;
+            }
+            return nullptr;
+        };
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto& block = function.blocks[b];
+            for (ValueID id : block.values) {
+                auto& user = function.at(id);
+                user.forEachChild([&](ValueID child) {
+                    Clone* clone = cloneFor(child);
+                    if (!clone)
+                        return;
+                    bool isStore = user.opcode == Opcode::PutById && user.child(0) == child && user.child(1) != child;
+                    bool isCast = user.opcode == Opcode::Cast && user.castReason() == CastReason::As && !clone->cast;
+                    if (isCast) {
+                        clone->cast = id;
+                        clone->isCastInOtherBlock = b != clone->block;
+                    } else if (!isStore)
+                        clone->hasOtherUses = true;
+                });
+            }
+            auto usesInTerminator = [&](ValueID child) {
+                if (Clone* clone = cloneFor(child))
+                    clone->hasOtherUses = true;
+            };
+            if (block.terminator.value)
+                usesInTerminator(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    usesInTerminator(argument);
+            }
+        }
+        clones.removeAllMatching([&](const Clone& clone) {
+            if (!clone.cast || !clone.isCastInOtherBlock || clone.hasOtherUses)
+                return true;
+            LayoutID layout = constProgram.typeOf(function, clone.cast).singleLayout();
+            return !layout || constProgram.at(layout).kind != LayoutKind::Record || !constProgram.at(layout).isAllocated;
+        });
+        if (clones.isEmpty())
+            return;
+        auto& changed = program.functions.atKeepingValueIndex(i);
+        for (auto& clone : clones)
+            changed.at(clone.value).setPrediction(function.at(clone.cast).type);
+        cloneCount.fetch_add(clones.size(), std::memory_order_relaxed);
+    });
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", cloneCount.load(), " copies of objects are predicted to have the record type they are cast to in another block");
 }
 
 static void addPlaceholderFields(Program& program)
@@ -12267,6 +12353,9 @@ Vector<String> optimize(Program& program)
     if (!Options::auditAOTTypedAssertions())
         allocateLiteralsWithComputedKeysAsRecords(program);
     didFinish("- allocateLiteralsWithComputedKeysAsRecords"_s);
+    if (!Options::auditAOTTypedAssertions())
+        predictClonesByCastsInOtherBlocks(program);
+    didFinish("- predictClonesByCastsInOtherBlocks"_s);
     if (!Options::auditAOTTypedAssertions()) {
         eliminateGuardsOnFreshResults(program);
         didFinish("- eliminateGuardsOnFreshResults"_s);

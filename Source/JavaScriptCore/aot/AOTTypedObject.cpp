@@ -12629,7 +12629,30 @@ static unsigned widthOf(Store store)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& plan, size_t sizeOfCell, uint64_t header, void* allocator)
+std::optional<uint32_t> State::literalStringWordOfConstant(uint32_t string) const
+{
+    auto characters = byteCast<Latin1Character>(data.stringInImage(string));
+    if (characters.empty())
+        return emptyLiteralStringWord;
+    if (!(data.stringFacts(string) & Data::stringIsASCII))
+        return std::nullopt;
+    uint32_t hash = StringHasher::computeHashAndMaskTop8Bits<Latin1Character>(characters);
+    auto* table = data.at<uint32_t>(data.literalStringTableOffset);
+    constexpr uint32_t indexMask = (1u << Data::literalStringTableIndexBits) - 1;
+    for (uint32_t place = hash & data.literalStringTableMask;; place = (place + 1) & data.literalStringTableMask) {
+        uint32_t entry = table[place];
+        if (!entry)
+            return std::nullopt;
+        uint32_t index = (entry & indexMask) - 1;
+        if (entry != Data::literalStringTableEntry(index, hash))
+            continue;
+        uint32_t id = data.literalStringID(index);
+        if (data.stringFacts(id) & Data::stringIsASCII && std::ranges::equal(byteCast<Latin1Character>(data.stringInImage(id)), characters))
+            return literalStringWord(index);
+    }
+}
+
+std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& plan, size_t sizeOfCell, uint64_t header, void* allocator, PropertyOffset discriminant, const Object* converted)
 {
     using Kind = ConversionMove::Kind;
     constexpr uint8_t number = CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble;
@@ -12637,13 +12660,40 @@ std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& 
     if (sizeOfCell > ConversionPlan::maxCellSize || sizeOfCell % (2 * sizeof(uint64_t)) || sizeOfCell < plan.layout->size)
         return nullptr;
     auto made = makeUnique<ConversionPlan>();
+    const FieldData* discriminantField = nullptr;
     for (auto& planned : plan.fields) {
         const FieldData& field = *planned.field;
         const RuntimeType& type = ownTypeOf(field);
         uint8_t kinds = planned.acceptedKinds;
-        if (!isInlineOffset(planned.offset) || field.flags & (fieldIsOutOfLine | fieldIsPinned) || field.numberOfLiterals())
+        if (!isInlineOffset(planned.offset) || field.flags & fieldIsOutOfLine)
+            return nullptr;
+        if (planned.offset == discriminant && converted) {
+            discriminantField = &field;
+            continue;
+        }
+        if (field.flags & fieldIsPinned)
             return nullptr;
         Store store = field.store();
+        if (field.numberOfLiterals()) {
+            if ((store != Store::LiteralString && store != Store::LiteralString32) || made->texts.size() + field.numberOfLiterals() > ConversionPlan::maxTextCount)
+                return nullptr;
+            ConversionMove move { static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(planned.offset) * sizeof(EncodedJSValue)), static_cast<uint16_t>(field.offset), Kind::LiteralString, 0, 0, 0, static_cast<uint32_t>(made->texts.size()), field.numberOfLiterals() };
+            move.flags = (kinds & CoercionPlan::acceptsUndefined ? ConversionMove::acceptsUndefined : 0) | (kinds & CoercionPlan::acceptsNull ? ConversionMove::acceptsNull : 0) | (store == Store::LiteralString ? ConversionMove::isWide : 0);
+            for (auto& literal : std::span { data.at<LiteralData>(field.literalsOffset()), field.numberOfLiterals() }) {
+                if (literal.isNumber())
+                    return nullptr;
+                auto characters = byteCast<Latin1Character>(data.stringInImage(literal.string()));
+                auto word = literalStringWordOfConstant(literal.string());
+                if (!word || characters.size() > 7)
+                    return nullptr;
+                uint64_t text = characters.size() + 1;
+                for (size_t i = 0; i < characters.size(); ++i)
+                    text |= static_cast<uint64_t>(characters[i]) << (8 * (i + 1));
+                made->texts.append({ text, *word });
+            }
+            made->moves.append(move);
+            continue;
+        }
         ConversionMove move { static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(planned.offset) * sizeof(EncodedJSValue)), static_cast<uint16_t>(field.offset), Kind::Value, 0, 0, 0, 0, 0 };
         bool holdsAnything = store == Store::JSValue && type.allowsAnyObject() && type.allowsAnyFunction() && (type.primitives & Primitive::All) == Primitive::All && (kinds & number) == number;
         if (holdsAnything) {
@@ -12703,6 +12753,9 @@ std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& 
     made->cell[0] = header;
     size_t bodySize = std::min(plan.initialBody.size(), sizeOfCell - sizeof(JSCell));
     memcpySpan(asMutableByteSpan(made->cell.mutableSpan().subspan(1)).first(bodySize), plan.initialBody.span().first(bodySize));
+    if (discriminantField)
+        memcpySpan(asMutableByteSpan(made->cell.mutableSpan()).subspan(discriminantField->offset, widthOf(discriminantField->store())), std::span { std::bit_cast<const uint8_t*>(converted) + discriminantField->offset, widthOf(discriminantField->store()) });
+    made->firstText = made->texts.span().data();
     made->allocator = allocator;
     made->words = made->cell.span().data();
     made->wordCount = made->cell.size();
@@ -12735,8 +12788,9 @@ void State::cacheCopyConversion(VM& vm, Structure* structure, const RuntimeType&
         cacheConversion(structure->id().bits(), typeAndReason, *plan.copyConversion);
 }
 
-void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Structure* made, size_t sizeOfCell, uint32_t typeAndReason)
+void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Object* converted, size_t sizeOfCell, uint32_t typeAndReason)
 {
+    Structure* made = converted->structure();
     size_t bodySize = plan.initialBody.size();
     if (m_counts || data.isCompiledForAudit || !bodySize || sizeOfCell % 16 || sizeOfCell < 32 || sizeOfCell > maxSizeOfQuickConversion || sizeOfCell < plan.layout->size || plan.fields.size() > CoercionPlan::maxNumberOfQuickMoves || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity())
         return;
@@ -12780,12 +12834,29 @@ void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, 
         *quickConversion(structureID, type, 0, true) = { structureID, root.discriminant, &type, 0, nullptr, 0, 0 };
     uint64_t header = static_cast<uint64_t>(made->typeInfoBlob() & 0xffffff) << 32 | made->id().bits();
     *quickConversion(structureID, type, dependsOnDiscriminant ? discriminant : 0, true) = { structureID, invalidOffset, &type, dependsOnDiscriminant ? discriminant : 0, &plan, header, static_cast<uint32_t>(sizeOfCell) };
-    if (!typeAndReason || dependsOnDiscriminant)
+    if (!typeAndReason)
         return;
     if (!plan.inPlaceConversion)
-        plan.inPlaceConversion = createConversionPlan(plan, sizeOfCell, header, nullptr);
-    if (plan.inPlaceConversion)
+        plan.inPlaceConversion = createConversionPlan(plan, sizeOfCell, header, nullptr, dependsOnDiscriminant ? root.discriminant : invalidOffset, converted);
+    if (!plan.inPlaceConversion)
+        return;
+    if (!dependsOnDiscriminant) {
         cacheConversion(structureID, typeAndReason, *plan.inPlaceConversion);
+        return;
+    }
+    if (!root.inPlaceConversion) {
+        root.inPlaceConversion = makeUnique<ConversionPlan>();
+        root.inPlaceConversion->discriminantFrom = JSObject::offsetOfInlineStorage() + offsetInInlineStorage(root.discriminant) * sizeof(EncodedJSValue);
+    }
+    ConversionPlan& members = *root.inPlaceConversion;
+    if (!members.texts.containsIf([&](auto& member) { return member.text == discriminant; })) {
+        if (members.texts.size() >= ConversionPlan::maxTextCount)
+            return;
+        members.texts.append({ discriminant, std::bit_cast<uint64_t>(plan.inPlaceConversion.get()) });
+        members.firstText = members.texts.span().data();
+        members.memberCount = members.texts.size();
+    }
+    cacheConversion(structureID, typeAndReason, members);
 }
 
 bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
@@ -13167,7 +13238,7 @@ Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& 
     }
     if (Object* made = tryConvertOrCopyByPlan(vm, object, *plan, mayConvertInPlace)) {
         if (mayBeQuick && JSValue(made) == JSValue(object))
-            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())), typeAndReason);
+            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())), typeAndReason);
         else if (typeAndReason && !mayConvertInPlace)
             cacheCopyConversion(vm, structureBefore, type, *plan, made->structure(), typeAndReason);
         return made;

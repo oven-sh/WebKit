@@ -1804,6 +1804,9 @@ std::optional<Writes> writesOfInlineArray(InlineBuiltin which, std::span<const T
     case InlineBuiltin::ArrayUnshift:
         return writesIf(arguments.size() == 1, Writes::Heap);
     case InlineBuiltin::ArrayIndexOf:
+        if (arguments.size() == 2 && !arguments[0].isNumber() && arguments[1].isInteger() && arguments[1].integers.minimum >= 0 && arguments[1].integers.maximum <= INT32_MAX)
+            return Writes::RuntimeState;
+        [[fallthrough]];
     case InlineBuiltin::ArrayIncludes:
         return writesIf(arguments.size() == 1, Writes::RuntimeState);
     case InlineBuiltin::ArraySlice:
@@ -1950,7 +1953,10 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         }
         orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), slowPath);
         Vector<std::pair<LValue, GPRReg>, 4> operands { { butterflyOf(array).value(), GPRInfo::argumentGPR1 }, { mapKey(arguments[0]).value(), GPRInfo::argumentGPR2 } };
-        Word32 found(m_out.castToInt32(callICStub(isIndexOf ? Stub::ArrayIndexOf : Stub::ArrayIncludes, Int64, operands, std::nullopt, OperationEffects { Writes::RuntimeState, true })));
+        bool hasStart = arguments.size() == 2;
+        if (hasStart)
+            operands.append({ in<Integer>(arguments[1]).value(), GPRInfo::argumentGPR4 });
+        Word32 found(m_out.castToInt32(callICStub(hasStart ? Stub::ArrayIndexOfFrom : isIndexOf ? Stub::ArrayIndexOf : Stub::ArrayIncludes, Int64, operands, std::nullopt, OperationEffects { Writes::RuntimeState, true })));
         ensureStillAliveHere(array);
         if (isIndexOf)
             join.add(ensure(signExtended(found), Type::integer({ -1, INT32_MAX }), type));

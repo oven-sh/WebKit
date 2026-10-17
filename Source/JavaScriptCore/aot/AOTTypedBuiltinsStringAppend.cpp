@@ -708,12 +708,12 @@ static JSString* tryCreateRopeWithSegments(JSGlobalObject* globalObject, std::sp
         if (k < segments.size() && segments[k].length() < minLengthAppendedByReference)
             continue;
         size_t end = k < segments.size() ? segments[k].offset - charactersOffset : characters.size();
-        auto small = segments.subspan(firstSmall, k - firstSmall);
+        auto shortSegments = segments.subspan(firstSmall, k - firstSmall);
         size_t length = end - taken;
-        for (auto& segment : small)
+        for (auto& segment : shortSegments)
             length += segment.length();
         if (length) {
-            auto text = tryCreateStringWithSegments(characters.subspan(taken, end - taken), charactersOffset + taken, small, length);
+            auto text = tryCreateStringWithSegments(characters.subspan(taken, end - taken), charactersOffset + taken, shortSegments, length);
             if (!text)
                 return nullptr;
             pieces.append(jsString(vm, String { text.releaseNonNull() }));
