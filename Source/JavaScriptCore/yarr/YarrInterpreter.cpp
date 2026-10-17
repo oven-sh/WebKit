@@ -37,6 +37,7 @@
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DataLog.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/StackCheck.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -75,11 +76,23 @@ private:
     bool m_recursiveDump { false };
 };
 
-template<typename CharType>
+// What an Interpreter does about a match that backtracks a lot (see "Match memoization" below). Only
+// patterns compiled with Options::useMemoizedRegExp() are run by anything but Unbounded.
+enum class BacktrackingMode : uint8_t {
+    Unbounded, // Nothing, short of giving up at matchLimit.
+    Counted, // Stops once it has backtracked more than its input warrants, for Memoized to run the match again.
+    Memoized, // Remembers what has failed.
+};
+
+template<typename CharType, BacktrackingMode backtrackingMode = BacktrackingMode::Unbounded>
 class Interpreter {
 public:
     static constexpr bool verbose = false;
     static constexpr char32_t errorCodePoint = 0xFFFFFFFFu;
+    static constexpr bool countBacktracks = backtrackingMode == BacktrackingMode::Counted;
+    static constexpr bool memoize = backtrackingMode == BacktrackingMode::Memoized;
+    static constexpr unsigned memoNoPosition = std::numeric_limits<unsigned>::max();
+    using MemoTerm = ByteDisjunction::MemoTerm;
 
     struct ParenthesesDisjunctionContext;
 
@@ -104,7 +117,18 @@ public:
         --backTrack->matchAmount;
     }
 
-    struct DisjunctionContext
+    // Match memoization: the disjunction's ByteDisjunction::memoTerms, the index of its first cache point,
+    // the position at which terms whose guard is MemoTerm::guardFromContext do not record a failure, and
+    // (for an iteration of a ParenthesesSubpattern) whether to record that the iteration failed.
+    struct MemoContext {
+        const MemoTerm* memoTerms { nullptr };
+        unsigned memoBase { 0 };
+        unsigned memoNoRecordPosition { memoNoPosition };
+        bool memoRecordsFailedStart { false };
+    };
+    struct NoMemoContext { };
+
+    struct DisjunctionContext : std::conditional_t<memoize, MemoContext, NoMemoContext>
     {
         DisjunctionContext() = default;
 
@@ -132,14 +156,27 @@ public:
         uintptr_t frame[1];
     };
 
+    static unsigned frameSlotCount(ByteDisjunction* disjunction)
+    {
+#if ASSERT_ENABLED
+        // One more slot per term, for memoNoteExit().
+        if constexpr (memoize)
+            return (Checked<unsigned>(disjunction->m_frameSize) + Checked<unsigned>(disjunction->terms.size())).value();
+#endif
+        return disjunction->m_frameSize;
+    }
+
     DisjunctionContext* allocDisjunctionContext(ByteDisjunction* disjunction)
     {
-        size_t size = DisjunctionContext::allocationSize(disjunction->m_frameSize);
+        size_t size = DisjunctionContext::allocationSize(frameSlotCount(disjunction));
         auto* newAllocatorPool = allocatorPool->ensureCapacity(size);
         if (!newAllocatorPool) [[unlikely]]
             return nullptr;
         allocatorPool = newAllocatorPool;
-        return new (allocatorPool->alloc(size)) DisjunctionContext();
+        auto* context = new (allocatorPool->alloc(size)) DisjunctionContext();
+        if constexpr (memoize)
+            context->memoTerms = disjunction->memoTerms.span().data();
+        return context;
     }
 
     void LEGACY_NODELETE freeDisjunctionContext(DisjunctionContext* context)
@@ -252,7 +289,7 @@ public:
             numDuplicateNamedGroups = duplicateNamedCaptureGroups.bitCount();
         }
 
-        size_t size = Checked<size_t>(ParenthesesDisjunctionContext::allocationSize(numNestedSubpatterns, numDuplicateNamedGroups)) + DisjunctionContext::allocationSize(disjunction->m_frameSize);
+        size_t size = Checked<size_t>(ParenthesesDisjunctionContext::allocationSize(numNestedSubpatterns, numDuplicateNamedGroups)) + DisjunctionContext::allocationSize(frameSlotCount(disjunction));
         auto* newAllocatorPool = allocatorPool->ensureCapacity(size);
         if (!newAllocatorPool) [[unlikely]]
             return nullptr;
@@ -383,6 +420,15 @@ public:
                     return errorCodePoint;
             }
             return result;
+        }
+
+        // How many code units the character that starts at index takes when read forwards.
+        unsigned NODELETE lengthOfCharacterAt(unsigned index)
+        {
+            if (!decodeSurrogatePairs)
+                return 1;
+            char32_t character = reread(index);
+            return character != errorCodePoint && !U_IS_BMP(character) ? 2 : 1;
         }
 
         char32_t prev()
@@ -1156,6 +1202,8 @@ public:
             if (result == JSRegExpResult::Match)
                 return JSRegExpResult::Match;
 
+            if constexpr (memoize)
+                memoEndIteration(context->getDisjunctionContext(), result);
             resetMatches(term, context);
             popParenthesesDisjunctionContext(backTrack);
             freeParenthesesDisjunctionContext(context);
@@ -1543,6 +1591,8 @@ public:
                 if (result != JSRegExpResult::Match)
                     return result;
             } else {
+                if constexpr (memoize)
+                    memoEndIteration(context->getDisjunctionContext(), result);
                 resetMatches(term, context);
                 popParenthesesDisjunctionContext(backTrack);
                 freeParenthesesDisjunctionContext(context);
@@ -1585,10 +1635,12 @@ public:
 
         case QuantifierType::NonGreedy: {
             // If we've not reached the limit, try to add one more match.
-            if (backTrack->matchAmount < term.atom.quantityMaxCount) {
+            if (backTrack->matchAmount < term.atom.quantityMaxCount && !(memoize && memoNextIterationIsKnownToFail(term, backTrack))) {
                 ParenthesesDisjunctionContext* context = allocParenthesesDisjunctionContext(disjunctionBody, output, term);
                 if (!context) [[unlikely]]
                     return JSRegExpResult::ErrorNoMemory;
+                if constexpr (memoize)
+                    memoBeginIteration(term, backTrack, context->getDisjunctionContext());
                 JSRegExpResult result = matchNonZeroDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
                 if (result == JSRegExpResult::Match) {
                     appendParenthesesDisjunctionContext(backTrack, context);
@@ -1596,6 +1648,8 @@ public:
                     return JSRegExpResult::Match;
                 }
 
+                if constexpr (memoize)
+                    memoEndIteration(context->getDisjunctionContext(), result);
                 resetMatches(term, context);
                 freeParenthesesDisjunctionContext(context);
 
@@ -1631,6 +1685,8 @@ public:
                 }
 
                 // pop a match off the stack
+                if constexpr (memoize)
+                    memoEndIteration(context->getDisjunctionContext(), result);
                 resetMatches(term, context);
                 popParenthesesDisjunctionContext(backTrack);
                 freeParenthesesDisjunctionContext(context);
@@ -1650,14 +1706,26 @@ public:
     JSRegExpResult refillParenthesesContextsToMinCount(ByteTerm& term, BackTrackInfoParentheses* backTrack, ByteDisjunction* disjunctionBody)
     {
         while (backTrack->matchAmount < term.atom.quantityMinCount) {
+            if constexpr (memoize) {
+                if (memoNextIterationIsKnownToFail(term, backTrack)) {
+                    JSRegExpResult result = parenthesesDoBacktrack(term, backTrack);
+                    if (result != JSRegExpResult::Match)
+                        return result;
+                    continue;
+                }
+            }
             ParenthesesDisjunctionContext* context = allocParenthesesDisjunctionContext(disjunctionBody, output, term);
             if (!context) [[unlikely]]
                 return JSRegExpResult::ErrorNoMemory;
+            if constexpr (memoize)
+                memoBeginIteration(term, backTrack, context->getDisjunctionContext());
             JSRegExpResult result = matchDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
             if (result == JSRegExpResult::Match) {
                 appendParenthesesDisjunctionContext(backTrack, context);
                 continue;
             }
+            if constexpr (memoize)
+                memoEndIteration(context->getDisjunctionContext(), result);
             resetMatches(term, context);
             freeParenthesesDisjunctionContext(context);
             if (result != JSRegExpResult::NoMatch)
@@ -1674,14 +1742,22 @@ public:
     JSRegExpResult extendParenthesesContextsToMaxCount(ByteTerm& term, BackTrackInfoParentheses* backTrack, ByteDisjunction* disjunctionBody)
     {
         while (backTrack->matchAmount < term.atom.quantityMaxCount) {
+            if constexpr (memoize) {
+                if (memoNextIterationIsKnownToFail(term, backTrack))
+                    break;
+            }
             ParenthesesDisjunctionContext* context = allocParenthesesDisjunctionContext(disjunctionBody, output, term);
             if (!context) [[unlikely]]
                 return JSRegExpResult::ErrorNoMemory;
+            if constexpr (memoize)
+                memoBeginIteration(term, backTrack, context->getDisjunctionContext());
             JSRegExpResult result = matchNonZeroDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
             if (result == JSRegExpResult::Match) {
                 appendParenthesesDisjunctionContext(backTrack, context);
                 continue;
             }
+            if constexpr (memoize)
+                memoEndIteration(context->getDisjunctionContext(), result);
             resetMatches(term, context);
             freeParenthesesDisjunctionContext(context);
             if (result != JSRegExpResult::NoMatch)
@@ -1776,7 +1852,299 @@ public:
         return true;
     }
 
-#define MATCH_NEXT() { if (verbose) { dataLog(" - Match\n"); if (btrack) { dataLog("  Matching\n"); btrack = false; } }  ++context->term; goto matchAgain; }
+    // Match memoization (Options::useMemoizedRegExp()).
+    //
+    // A match that backtracks a lot keeps arriving at the same place in the pattern at the same input
+    // position along different paths, and what happens from there on does not depend on the path. So a
+    // match that has backtracked more than its input warrants (BacktrackingMode::Counted,
+    // memoInitialBudget()) is run again, in BacktrackingMode::Memoized, with a table in which the bit for
+    // (cache point, position) is set when everything that can follow has been tried and has failed; a
+    // path that gets there again backtracks at once. (The first run leaves nothing behind and costs no
+    // more than its budget.) Only failures are remembered and the order in which paths are tried does
+    // not change, so the first path that succeeds, and with it the result, stays the same. (Davis,
+    // Servant, Lee, "Using Selective Memoization to Defeat Regular Expression Denial of Service"; Onigmo
+    // in Ruby 3.2 and later does the same.)
+    //
+    // The bit is only right if what follows a cache point is a function of the position. In this
+    // interpreter it also depends on:
+    //  - how many more iterations an enclosing ParenthesesSubpattern requires or allows. The body of
+    //    one is matched by matchDisjunction() calls that return at SubpatternEnd and are backtracked
+    //    into later, so "what follows" a term of the body includes the rest of the repetition. The
+    //    cache points of a body therefore exist once per category of iteration
+    //    (memoCategoryOfIteration()), and a DisjunctionContext's memoBase selects the block;
+    //  - whether an enclosing optional iteration has consumed anything yet, because it is not allowed
+    //    to stay empty (matchNonZeroDisjunction(), ParenthesesSubpatternOnceEnd / TerminalEnd). A
+    //    failure seen before it has may be down to that, and is not recorded (MemoTerm::guard); the
+    //    other way round is fine, so such a bit may still be read;
+    //  - the captures, if the pattern has back references. Those patterns have no cache points.
+    // ByteCompiler::assignMemoPoints() says where the cache points are.
+
+    ALWAYS_INLINE bool memoTest(unsigned point, unsigned position) const
+    {
+        ASSERT(point < pattern->m_memoPointCount && position < m_memo.stride);
+        size_t bit = point * m_memo.stride + position;
+        return m_memo.table[bit >> 3] & (1 << (bit & 7));
+    }
+
+    ALWAYS_INLINE void memoSet(unsigned point, unsigned position)
+    {
+        ASSERT(point < pattern->m_memoPointCount && position < m_memo.stride);
+        size_t bit = point * m_memo.stride + position;
+        m_memo.table[bit >> 3] |= 1 << (bit & 7);
+    }
+
+    // term is the one context is at.
+    ALWAYS_INLINE const MemoTerm& memoTermOf(ByteTerm& term, DisjunctionContext* context)
+    {
+        ASSERT_UNUSED(term, term.m_memoLoop || term.m_memoExit);
+        return context->memoTerms[context->term];
+    }
+
+    ALWAYS_INLINE unsigned memoPointOf(ByteTerm& term, DisjunctionContext* context)
+    {
+        return context->memoBase + memoTermOf(term, context).point;
+    }
+
+    // The start of the innermost optional iteration around term that may turn out empty, if any.
+    unsigned memoGuardPosition(ByteTerm& term, DisjunctionContext* context)
+    {
+        // A ParenthesesSubpattern in a body that has too many categories of iteration for cache points.
+        if (!term.m_memoLoop && !term.m_memoExit)
+            return memoNoPosition;
+        unsigned guard = memoTermOf(term, context).guard;
+        if (guard == MemoTerm::guardNone)
+            return memoNoPosition;
+        if (guard == MemoTerm::guardFromContext)
+            return context->memoNoRecordPosition;
+        return static_cast<unsigned>(context->frame[guard]);
+    }
+
+    // Everything that can follow term from the current position has failed.
+    void memoRecord(ByteTerm& term, DisjunctionContext* context)
+    {
+        unsigned position = input.getPos();
+        if (position != memoGuardPosition(term, context))
+            memoSet(memoPointOf(term, context), position);
+    }
+
+    ALWAYS_INLINE bool memoExitIsKnownToFail(ByteTerm& term, DisjunctionContext* context)
+    {
+        if (!term.m_memoExit)
+            return false;
+        return memoTest(memoPointOf(term, context), input.getPos());
+    }
+
+    ALWAYS_INLINE void memoNoteExit(ByteDisjunction* disjunction, DisjunctionContext* context)
+    {
+#if ASSERT_ENABLED
+        // memoRecord() relies on the position being back to what it was when the term was left.
+        context->frame[disjunction->m_frameSize + context->term] = input.getPos();
+#else
+        UNUSED_PARAM(disjunction);
+        UNUSED_PARAM(context);
+#endif
+    }
+
+    // What follows an iteration of a group depends on how many more must, and how many more may,
+    // follow it: iterations 1 to min each differ, and so do those after them if there is a maximum.
+    static unsigned memoCategoryOfIteration(ByteTerm& term, unsigned iteration)
+    {
+        if (term.atom.quantityMaxCount == quantifyInfinite)
+            return std::min(iteration - 1, term.atom.quantityMinCount);
+        return iteration - 1;
+    }
+
+    // The context of the disjunction that term, a ParenthesesSubpattern, is in: backTrack is in its frame.
+    static DisjunctionContext* memoEnclosingContext(ByteTerm& term, BackTrackInfoParentheses* backTrack)
+    {
+        return std::bit_cast<DisjunctionContext*>(std::bit_cast<uintptr_t>(backTrack) - term.frameLocation * sizeof(uintptr_t) - OBJECT_OFFSETOF(DisjunctionContext, frame));
+    }
+
+    unsigned memoBaseOfNextIteration(ByteTerm& term, BackTrackInfoParentheses* backTrack, DisjunctionContext* enclosingContext)
+    {
+        ByteDisjunction* disjunctionBody = term.atom.parenthesesDisjunction;
+        ASSERT(disjunctionBody->m_memoPointCount);
+        unsigned iteration = backTrack->matchAmount + 1;
+        return memoPointOf(term, enclosingContext) + 1 + memoCategoryOfIteration(term, iteration) * disjunctionBody->m_memoPointCount;
+    }
+
+    // Matching one more iteration of a ParenthesesSubpattern goes through these three when memoizing.
+    // First, whether an iteration that starts at the current position is known to fail.
+    ALWAYS_INLINE bool memoNextIterationIsKnownToFail(ByteTerm& term, BackTrackInfoParentheses* backTrack)
+    {
+        // Also named, though never called, by the interpreters that do not memoize.
+        if constexpr (memoize) {
+            if (!term.atom.parenthesesDisjunction->m_memoPointCount)
+                return false;
+            return memoTest(memoBaseOfNextIteration(term, backTrack, memoEnclosingContext(term, backTrack)), input.getPos());
+        } else {
+            UNUSED_PARAM(term);
+            UNUSED_PARAM(backTrack);
+            return false;
+        }
+    }
+
+    // Then, once the iteration has a context and before its body is matched.
+    void memoBeginIteration(ByteTerm& term, BackTrackInfoParentheses* backTrack, DisjunctionContext* iterationContext)
+    {
+        ByteDisjunction* disjunctionBody = term.atom.parenthesesDisjunction;
+        DisjunctionContext* enclosingContext = memoEnclosingContext(term, backTrack);
+        unsigned position = input.getPos();
+        unsigned enclosingGuard = memoGuardPosition(term, enclosingContext);
+        // Only the mandatory iterations may match without consuming anything (RepeatMatcher).
+        bool mustConsume = backTrack->matchAmount >= term.atom.quantityMinCount && term.m_bodyCanBeEmpty;
+        iterationContext->memoTerms = disjunctionBody->memoTerms.span().data();
+        iterationContext->memoNoRecordPosition = mustConsume ? position : enclosingGuard;
+        if (!disjunctionBody->m_memoPointCount)
+            return;
+        iterationContext->memoBase = memoBaseOfNextIteration(term, backTrack, enclosingContext);
+        // That an optional iteration has to consume is part of what starting one means, so its own start
+        // is no reason not to record that it failed; an enclosing iteration's is.
+        iterationContext->memoRecordsFailedStart = mustConsume || position != enclosingGuard;
+    }
+
+    // Last, when the body of an iteration, newly matched or backtracked into, has come back with a
+    // result that is not a match, and before its context is freed.
+    void memoEndIteration(DisjunctionContext* iterationContext, JSRegExpResult result)
+    {
+        if (result == JSRegExpResult::NoMatch && iterationContext->memoRecordsFailedStart)
+            memoSet(iterationContext->memoBase, iterationContext->matchBegin);
+    }
+
+    // A forward Greedy or NonGreedy character loop without an upper bound (ByteTerm::m_memoLoop). The
+    // point (loop, position) stands for "the loop has got as far as position and nothing from here on,
+    // whether it stops here or takes more, leads to a match".
+    ALWAYS_INLINE bool memoConsumeOneCharacter(ByteTerm& term)
+    {
+        unsigned position = input.getPos();
+        if (!input.checkInput(1))
+            return false;
+        bool matched;
+        if (term.isCharacterClass())
+            matched = checkCharacterClass(term, term.inputPosition + 1);
+        else if (term.isCasedCharacterType())
+            matched = checkCasedCharacter(term, term.inputPosition + 1);
+        else
+            matched = checkCharacter(term, term.inputPosition + 1);
+        if (!matched)
+            input.setPos(position);
+        return matched;
+    }
+
+    bool memoMatchCharacterLoop(ByteTerm& term, DisjunctionContext* context)
+    {
+        ASSERT(term.matchDirection() == Forward && term.atom.quantityMaxCount == quantifyInfinite);
+        static_assert(sizeof(BackTrackInfoPatternCharacter) == sizeof(BackTrackInfoCharacterClass));
+        BackTrackInfoCharacterClass* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + term.frameLocation);
+        unsigned point = memoPointOf(term, context);
+
+        if (memoTest(point, input.getPos()))
+            return false;
+
+        if (term.atom.quantityType == QuantifierType::NonGreedy) {
+            backTrack->begin = input.getPos();
+            backTrack->matchAmount = 0;
+            return true;
+        }
+
+        unsigned matchAmount = 0;
+        while (true) {
+            unsigned position = input.getPos();
+            if (!memoConsumeOneCharacter(term))
+                break;
+            if (memoTest(point, input.getPos())) {
+                // Longer matches are all known to fail, so they need not be tried.
+                input.setPos(position);
+                break;
+            }
+            ++matchAmount;
+        }
+        backTrack->matchAmount = matchAmount;
+        return true;
+    }
+
+    // Backtracking into a Greedy one records that stopping here has failed (as every longer match did
+    // before it) and gives a character back, like any other term; this is the NonGreedy one.
+    bool memoBacktrackNonGreedyLoop(ByteTerm& term, DisjunctionContext* context)
+    {
+        BackTrackInfoCharacterClass* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + term.frameLocation);
+        unsigned point = memoPointOf(term, context);
+        unsigned position = input.getPos();
+        if (memoConsumeOneCharacter(term)) {
+            if (!memoTest(point, input.getPos())) {
+                ++backTrack->matchAmount;
+                return true;
+            }
+            input.setPos(position);
+        }
+
+        // Stopping has failed everywhere from where the loop began to here, and it cannot go further.
+        unsigned guardPosition = memoGuardPosition(term, context);
+        unsigned recordPosition = backTrack->begin;
+        for (uintptr_t remaining = backTrack->matchAmount; ; --remaining) {
+            if (recordPosition != guardPosition)
+                memoSet(point, recordPosition);
+            if (!remaining)
+                break;
+            recordPosition += input.lengthOfCharacterAt(recordPosition - term.inputPosition);
+        }
+        ASSERT(recordPosition == position);
+        input.setPos(backTrack->begin);
+        return false;
+    }
+
+    static uint64_t memoTableBytes(BytecodePattern* pattern, size_t inputLength)
+    {
+        return ((static_cast<uint64_t>(inputLength) + 1) * pattern->m_memoPointCount + 7) / 8;
+    }
+
+    // Whether a match of input can be run with memoization at all.
+    static bool canMemoize(BytecodePattern* pattern, size_t inputLength)
+    {
+        return pattern->m_memoPointCount && memoTableBytes(pattern, inputLength) <= maxMemoTableBytes;
+    }
+
+    // How many times BacktrackingMode::Counted lets a term that has a cache point be backtracked into
+    // before it gives up. With the table that happens about once per bit, so a match that has done it a
+    // few times that often is going over the same ground (Onigmo switches over after as many failures
+    // as there are bits). The base keeps short inputs out of it, and the maximum bounds what a match
+    // with a large table spends before it gets one.
+    static constexpr uint64_t memoBudgetBase = 1024;
+    static constexpr uint64_t memoBudgetPerTableBit = 8;
+    static constexpr uint64_t memoBudgetMax = 1 << 24;
+
+    unsigned memoInitialBudget()
+    {
+        uint64_t tableBits = (static_cast<uint64_t>(input.end()) + 1) * pattern->m_memoPointCount;
+        return static_cast<unsigned>(std::min(memoBudgetBase + memoBudgetPerTableBit * tableBits, memoBudgetMax));
+    }
+
+    // BacktrackingMode::Memoized: to be called, and to succeed, before interpret().
+    bool memoAllocateTable()
+    {
+        m_memo.stride = static_cast<size_t>(input.end()) + 1;
+        m_memo.table = MallocSpan<uint8_t>::tryZeroedMalloc(static_cast<size_t>(memoTableBytes(pattern, input.end())));
+        return !!m_memo.table;
+    }
+
+// Leaving a term forwards is where a failure that is already known cuts the match short: the term is
+// backtracked into as if what follows it had just failed.
+#define MATCH_NEXT() { \
+    if (verbose) { \
+        dataLog(" - Match\n"); \
+        if (btrack) { \
+            dataLog("  Matching\n"); \
+            btrack = false; \
+        } \
+    } \
+    if constexpr (memoize) { \
+        memoNoteExit(disjunction, context); \
+        if (memoExitIsKnownToFail(currentTerm(), context)) \
+            goto backtrack; \
+    } \
+    ++context->term; \
+    goto matchAgain; \
+}
 #define BACKTRACK() { if (verbose) { dataLog(" - Backtrack\n"); if (!btrack) { dataLog("  Backtracking\n"); btrack = true; } } --context->term; goto backtrack; }
 #define currentTerm() (disjunction->terms[context->term])
 
@@ -1827,6 +2195,10 @@ public:
             dataLogLnIf(verbose, "      Reached match limit - Returning ErrorHitLimit");
             return JSRegExpResult::ErrorHitLimit;
         }
+        if constexpr (countBacktracks) {
+            if (!--m_memo.budget) [[unlikely]]
+                return JSRegExpResult::ErrorHitLimit;
+        }
 
         ByteTermDumper termDumper(compileMode);
 
@@ -1840,6 +2212,15 @@ public:
         ASSERT(context->term < static_cast<int>(disjunction->terms.size()));
 
         DUMP_TERM();
+
+        if constexpr (memoize) {
+            ByteTerm& term = currentTerm();
+            if (term.m_memoLoop) {
+                if (memoMatchCharacterLoop(term, context))
+                    MATCH_NEXT();
+                BACKTRACK();
+            }
+        }
 
         switch (currentTerm().type) {
         case ByteTerm::Type::SubpatternBegin:
@@ -2139,6 +2520,29 @@ public:
 
         DUMP_TERM();
 
+        // Backtracking into a term that has a cache point means that everything after it has failed.
+        // BacktrackingMode::Counted counts how often that happens (and how often a disjunction is
+        // entered, above), and gives up when it is too often.
+        if constexpr (countBacktracks) {
+            ByteTerm& term = currentTerm();
+            if (term.m_memoLoop || term.m_memoExit) {
+                if (!--m_memo.budget) [[unlikely]]
+                    return JSRegExpResult::ErrorHitLimit;
+            }
+        }
+        if constexpr (memoize) {
+            ByteTerm& term = currentTerm();
+            if (term.m_memoLoop && term.atom.quantityType == QuantifierType::NonGreedy) {
+                if (memoBacktrackNonGreedyLoop(term, context))
+                    MATCH_NEXT();
+                BACKTRACK();
+            }
+            if (term.m_memoLoop || term.m_memoExit) {
+                ASSERT(context->frame[disjunction->m_frameSize + context->term] == input.getPos());
+                memoRecord(term, context);
+            }
+        }
+
         switch (currentTerm().type) {
         case ByteTerm::Type::SubpatternBegin:
             DUMP_EXTRA("id:", currentTerm().subpatternId(), " - Return NoMatch\n");
@@ -2325,6 +2729,8 @@ public:
             output[0] = context->matchBegin;
             output[1] = context->matchEnd;
         }
+        if constexpr (memoize)
+            m_memo.ranOutOfMemory = result == JSRegExpResult::ErrorNoMemory;
 
         freeDisjunctionContext(context);
 
@@ -2347,7 +2753,24 @@ public:
         , noNewlineBefore(start)
         , remainingMatchCount(matchLimit)
     {
+        ASSERT(backtrackingMode == BacktrackingMode::Unbounded || canMemoize(pattern, input.size()));
+        if constexpr (countBacktracks)
+            m_memo.budget = memoInitialBudget();
+        if constexpr (memoize) {
+            // The table bounds the match, and the JIT code that hands matches over has no such limit.
+            if (pattern->m_memoizesWholePattern)
+                remainingMatchCount = std::numeric_limits<unsigned>::max();
+        }
     }
+
+    // BacktrackingMode::Counted, after interpret() has returned offsetNoMatch: whether that is because
+    // the match was stopped, by its budget or by matchLimit, and is to be run again with memoization.
+    bool backtrackedExcessively() const { return !m_memo.budget || !remainingMatchCount; }
+
+    // BacktrackingMode::Memoized, after interpret() has returned offsetNoMatch: whether that is because
+    // the match ran out of memory. Its DisjunctionContexts are larger (MemoContext), so it does that
+    // on a subject that the other modes still have room for.
+    bool ranOutOfMemory() const { return m_memo.ranOutOfMemory; }
 
 private:
     inline bool LEGACY_NODELETE isLegacyCompilation() const { return compileMode == CompileMode::Legacy; }
@@ -2367,6 +2790,17 @@ private:
     static constexpr unsigned bolUnsatisfiable = std::numeric_limits<unsigned>::max();
     unsigned noNewlineBefore; // see matchDotStarEnclosure
     unsigned remainingMatchCount;
+
+    struct BacktrackBudget {
+        unsigned budget;
+    };
+    struct MemoTable {
+        MallocSpan<uint8_t> table; // one bit per (cache point, position): stride bits per cache point
+        size_t stride { 0 };
+        bool ranOutOfMemory { false };
+    };
+    struct NoMemoState { };
+    NO_UNIQUE_ADDRESS std::conditional_t<memoize, MemoTable, std::conditional_t<countBacktracks, BacktrackBudget, NoMemoState>> m_memo;
 };
 
 class ByteCompiler {
@@ -2401,12 +2835,177 @@ public:
         }
         regexEnd();
 
+        unsigned memoPointCount = 0;
+        if (Options::useMemoizedRegExp()) [[unlikely]]
+            memoPointCount = assignMemoPoints();
+
 #ifdef ASSERT_ENABLED
         if (Options::dumpCompiledRegExpPatterns())
             ByteTermDumper(&m_pattern).dumpDisjunction(m_bodyDisjunction.get());
 #endif
 
-        return makeUnique<BytecodePattern>(WTF::move(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, lock, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
+        auto bytecodePattern = makeUnique<BytecodePattern>(WTF::move(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, lock, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
+        bytecodePattern->m_memoPointCount = memoPointCount;
+        bytecodePattern->m_memoizesWholePattern = memoPointCount && !m_memoizesOnlyPartOfThePattern;
+        return bytecodePattern;
+    }
+
+    // Returns the pattern's number of cache points: 0 if it cannot be memoized.
+    unsigned assignMemoPoints()
+    {
+        if (!m_pattern.canMemoizeMatches())
+            return 0;
+        auto count = assignMemoPoints(*m_bodyDisjunction, /* isParenthesesBody= */ false);
+        if (count && count.value() <= memoMaxPoints)
+            return count.value();
+        removeMemoPoints(*m_bodyDisjunction);
+        return 0;
+    }
+
+    // See Yarr::memoPointCountIfFullyMemoized().
+    unsigned memoPointCountIfFullyMemoized()
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return 0;
+        regexBegin(m_pattern.m_numSubpatterns, m_pattern.m_body->m_callFrameSize, m_pattern.m_body->m_alternatives[0]->onceThrough());
+        if (emitDisjunction(m_pattern.m_body, 0, 0))
+            return 0;
+        regexEnd();
+        unsigned count = assignMemoPoints();
+        return m_memoizesOnlyPartOfThePattern ? 0 : count;
+    }
+
+    // Match memoization (see Interpreter::memoTest()): numbers the cache points of a disjunction, from 0
+    // (from 1 for the body of a ParenthesesSubpattern, whose point 0 is "an iteration was started"), and
+    // returns how many there are, or nothing if that is too many. A point is only worth its table where
+    // paths meet again, which is after a term that can be matched in more than one way:
+    //  - a Greedy / NonGreedy character, cased character or character class. A forward one without an
+    //    upper bound gets a point for the loop itself (ByteTerm::m_memoLoop): being in the loop at a
+    //    position says all there is to say, and knowing that nothing beyond a position works is what
+    //    keeps a later visit from walking the rest of the input again. Others get one for "left at"
+    //    (ByteTerm::m_memoExit), as do all of the following;
+    //  - a group with alternatives, at its AlternativeEnd, where every alternative comes out;
+    //  - a ParenthesesSubpatternOnce that may be skipped, at its End;
+    //  - a ParenthesesSubpattern, plus the points of its body once per category of iteration.
+    // A ParentheticalAssertion's body is never backtracked into once it has matched, so nothing that
+    // encloses the assertion has a bearing on the terms inside it; "left at" its own End says nothing,
+    // because what follows that is matched from where the assertion began.
+    static constexpr unsigned memoMaxPointsPerParentheses = 1024;
+    static constexpr unsigned memoMaxPoints = 1 << 16;
+
+    std::optional<unsigned> assignMemoPoints(ByteDisjunction& disjunction, bool isParenthesesBody)
+    {
+        using MemoTerm = ByteDisjunction::MemoTerm;
+
+        if (!isSafeToRecurse()) [[unlikely]]
+            return std::nullopt;
+
+        unsigned firstPoint = isParenthesesBody ? 1 : 0;
+        CheckedUint32 nextPoint = firstPoint;
+        unsigned guard = MemoTerm::guardFromContext;
+        Vector<unsigned, 8> enclosingGuards;
+        Vector<MemoTerm> memoTerms(disjunction.terms.size());
+
+        auto assignPoint = [&](unsigned index, bool isLoop = false) {
+            ByteTerm& term = disjunction.terms[index];
+            memoTerms[index] = { nextPoint, guard };
+            term.m_memoLoop = isLoop;
+            term.m_memoExit = !isLoop;
+            ++nextPoint;
+        };
+
+        for (unsigned i = 0; i < disjunction.terms.size(); ++i) {
+            ByteTerm& term = disjunction.terms[i];
+            switch (term.type) {
+            case ByteTerm::Type::PatternCharacterGreedy:
+            case ByteTerm::Type::PatternCharacterNonGreedy:
+            case ByteTerm::Type::PatternCasedCharacterGreedy:
+            case ByteTerm::Type::PatternCasedCharacterNonGreedy:
+            case ByteTerm::Type::CharacterClass:
+                if (term.atom.quantityType == QuantifierType::FixedCount)
+                    break;
+                assignPoint(i, term.matchDirection() == Forward && term.atom.quantityMaxCount == quantifyInfinite);
+                break;
+
+            case ByteTerm::Type::AlternativeEnd:
+                // The alternatives of a group are closed just before the group is.
+                ASSERT(i + 1 < disjunction.terms.size());
+                if (disjunction.terms[i + 1].type != ByteTerm::Type::ParentheticalAssertionEnd)
+                    assignPoint(i);
+                break;
+
+            case ByteTerm::Type::ParenthesesSubpatternOnceBegin:
+                enclosingGuards.append(guard);
+                if (term.atom.quantityType != QuantifierType::FixedCount && term.m_bodyCanBeEmpty)
+                    guard = term.frameLocation + BackTrackInfoParenthesesOnce::beginIndex();
+                break;
+            case ByteTerm::Type::ParenthesesSubpatternOnceEnd:
+                guard = enclosingGuards.takeLast();
+                if (term.atom.quantityType != QuantifierType::FixedCount)
+                    assignPoint(i);
+                break;
+
+            case ByteTerm::Type::ParenthesesSubpatternTerminalBegin:
+                enclosingGuards.append(guard);
+                if (term.m_bodyCanBeEmpty)
+                    guard = term.frameLocation + BackTrackInfoParenthesesTerminal::beginIndex();
+                break;
+            case ByteTerm::Type::ParenthesesSubpatternTerminalEnd:
+                guard = enclosingGuards.takeLast();
+                break;
+
+            case ByteTerm::Type::ParentheticalAssertionBegin:
+                enclosingGuards.append(guard);
+                guard = MemoTerm::guardNone;
+                break;
+            case ByteTerm::Type::ParentheticalAssertionEnd:
+                guard = enclosingGuards.takeLast();
+                break;
+
+            case ByteTerm::Type::ParenthesesSubpattern: {
+                assignPoint(i);
+                ByteDisjunction& body = *term.atom.parenthesesDisjunction;
+                uint64_t categoryCount = term.atom.quantityMaxCount == quantifyInfinite ? static_cast<uint64_t>(term.atom.quantityMinCount) + 1 : term.atom.quantityMaxCount;
+                auto pointsPerIteration = assignMemoPoints(body, /* isParenthesesBody= */ true);
+                if (!pointsPerIteration || categoryCount * pointsPerIteration.value() > memoMaxPointsPerParentheses) {
+                    // Too many to be worth it: nothing inside the group is remembered. What encloses it still is.
+                    removeMemoPoints(body);
+                    m_memoizesOnlyPartOfThePattern = true;
+                    break;
+                }
+                body.m_memoPointCount = pointsPerIteration.value();
+                nextPoint += static_cast<unsigned>(categoryCount * pointsPerIteration.value());
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
+        ASSERT(enclosingGuards.isEmpty());
+
+        if (nextPoint.hasOverflowed())
+            return std::nullopt;
+        if (nextPoint.value() != firstPoint)
+            disjunction.memoTerms = FixedVector<MemoTerm>(WTF::move(memoTerms));
+        return nextPoint.value();
+    }
+
+    // Not recursive: a group left with cache points inside one that has none would index a table it has no part of.
+    void removeMemoPoints(ByteDisjunction& outermost)
+    {
+        Vector<ByteDisjunction*, 8> worklist { &outermost };
+        while (!worklist.isEmpty()) {
+            ByteDisjunction& disjunction = *worklist.takeLast();
+            disjunction.memoTerms.clear();
+            disjunction.m_memoPointCount = 0;
+            for (auto& term : disjunction.terms) {
+                term.m_memoLoop = false;
+                term.m_memoExit = false;
+                if (term.type == ByteTerm::Type::ParenthesesSubpattern)
+                    worklist.append(term.atom.parenthesesDisjunction);
+            }
+        }
     }
 
     void checkInput(unsigned count)
@@ -2487,12 +3086,13 @@ public:
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
     }
 
-    void atomParenthesesOnceBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
+    void atomParenthesesOnceBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation, bool bodyCanBeEmpty)
     {
         unsigned beginTerm = m_bodyDisjunction->terms.size();
 
         m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternOnceBegin, subpatternId, capture, false, matchDirection, inputPosition, m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
+        m_bodyDisjunction->terms.last().m_bodyCanBeEmpty = bodyCanBeEmpty;
         m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
 
@@ -2500,12 +3100,13 @@ public:
         m_currentAlternativeIndex = beginTerm + 1;
     }
 
-    void atomParenthesesTerminalBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
+    void atomParenthesesTerminalBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation, bool bodyCanBeEmpty)
     {
         unsigned beginTerm = m_bodyDisjunction->terms.size();
 
         m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternTerminalBegin, subpatternId, capture, false, matchDirection, inputPosition, m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
+        m_bodyDisjunction->terms.last().m_bodyCanBeEmpty = bodyCanBeEmpty;
         m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
 
@@ -2631,7 +3232,7 @@ public:
         m_bodyDisjunction->terms[endIndex].frameLocation = frameLocation;
     }
 
-    void atomParenthesesSubpatternEnd(unsigned lastSubpatternId, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, unsigned callFrameSize = 0)
+    void atomParenthesesSubpatternEnd(unsigned lastSubpatternId, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, unsigned callFrameSize, bool bodyCanBeEmpty)
     {
         unsigned beginTerm = popParenthesesStack();
         closeAlternative(beginTerm + 1);
@@ -2672,6 +3273,7 @@ public:
         m_bodyDisjunction->terms[beginTerm].atom.quantityMaxCount = quantityMaxCount;
         m_bodyDisjunction->terms[beginTerm].atom.quantityType = quantityType;
         m_bodyDisjunction->terms[beginTerm].frameLocation = frameLocation;
+        m_bodyDisjunction->terms[beginTerm].m_bodyCanBeEmpty = bodyCanBeEmpty;
     }
 
     void atomParenthesesOnceEnd(unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType)
@@ -2891,6 +3493,7 @@ public:
 
                 case PatternTerm::Type::ParenthesesSubpattern: {
                     unsigned disjunctionAlreadyCheckedCount = 0;
+                    bool bodyCanBeEmpty = !term.parentheses.disjunction->m_minimumSize;
                     if (term.quantityMaxCount == 1 && !term.parentheses.isCopy) {
                         unsigned alternativeFrameLocation = term.frameLocation;
                         // For QuantifierType::FixedCount we pre-check the minimum size; for greedy/non-greedy we reserve a slot in the frame.
@@ -2901,7 +3504,7 @@ public:
                         auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
                         if (delegateEndInputOffset.hasOverflowed())
                             return ErrorCode::OffsetTooLarge;
-                        atomParenthesesOnceBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, alternativeFrameLocation);
+                        atomParenthesesOnceBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, alternativeFrameLocation, bodyCanBeEmpty);
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, disjunctionAlreadyCheckedCount, matchDirection))
                             return error;
                         atomParenthesesOnceEnd(delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType);
@@ -2909,7 +3512,7 @@ public:
                         auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
                         if (delegateEndInputOffset.hasOverflowed())
                             return ErrorCode::OffsetTooLarge;
-                        atomParenthesesTerminalBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, term.frameLocation + YarrStackSpaceForBackTrackInfoParenthesesTerminal);
+                        atomParenthesesTerminalBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, term.frameLocation + YarrStackSpaceForBackTrackInfoParenthesesTerminal, bodyCanBeEmpty);
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, disjunctionAlreadyCheckedCount, matchDirection))
                             return error;
                         atomParenthesesTerminalEnd(delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType);
@@ -2921,7 +3524,7 @@ public:
                         unsigned inputOffset = 0;
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, inputOffset, matchDirection))
                             return error;
-                        atomParenthesesSubpatternEnd(term.parentheses.lastSubpatternId, delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_callFrameSize);
+                        atomParenthesesSubpatternEnd(term.parentheses.lastSubpatternId, delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_callFrameSize, bodyCanBeEmpty);
                     }
                     break;
                 }
@@ -2999,6 +3602,7 @@ private:
     Vector<ParenthesesStackEntry> m_parenthesesStack;
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     OptionSet<Flags> m_currentFlags;
+    bool m_memoizesOnlyPartOfThePattern { false };
 };
 
 void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
@@ -3214,6 +3818,8 @@ void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
         dumpInputPosition(term);
         dumpFrameLocation(term);
         dumpQuantity(term);
+        if (term.m_memoExit)
+            out.print(" memo, ", term.atom.parenthesesDisjunction->m_memoPointCount, " per iteration");
         if (m_recursiveDump) {
             out.print("\n");
             dumpDisjunction(term.atom.parenthesesDisjunction, m_nesting);
@@ -3286,6 +3892,9 @@ void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
         out.print("DotStarEnclosure");
         break;
     }
+
+    if ((term.m_memoLoop || term.m_memoExit) && term.type != ByteTerm::Type::ParenthesesSubpattern)
+        out.print(term.m_memoLoop ? " memoLoop" : " memo");
 }
 
 void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nesting)
@@ -3317,9 +3926,45 @@ std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAl
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 }
 
+unsigned memoPointCountIfFullyMemoized(YarrPattern& pattern)
+{
+    return ByteCompiler(pattern).memoPointCountIfFullyMemoized();
+}
+
+// For a pattern that has cache points, which takes Options::useMemoizedRegExp().
+template<typename CharType>
+static NEVER_INLINE unsigned interpretWithMemoization(BytecodePattern* bytecode, std::span<const CharType> input, unsigned start, unsigned* output)
+{
+    using MemoizingInterpreter = Interpreter<CharType, BacktrackingMode::Memoized>;
+
+    if (MemoizingInterpreter::canMemoize(bytecode, input.size())) {
+        if (!Options::forceMemoizedRegExp()) [[likely]] {
+            Interpreter<CharType, BacktrackingMode::Counted> interpreter(bytecode, output, input, start);
+            unsigned result = interpreter.interpret();
+            if (!interpreter.backtrackedExcessively())
+                return result;
+        }
+
+        MemoizingInterpreter interpreter(bytecode, output, input, start);
+        if (interpreter.memoAllocateTable()) [[likely]] {
+            unsigned result = interpreter.interpret();
+            if (!interpreter.ranOutOfMemory()) [[likely]]
+                return result;
+        }
+    }
+
+    // The table would be too large, there is no memory for it, or the match ran out of memory with it.
+    return Interpreter<CharType>(bytecode, output, input, start).interpret();
+}
+
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
+    if (bytecode->m_memoPointCount) [[unlikely]] {
+        if (input.is8Bit())
+            return interpretWithMemoization(bytecode, input.span8(), start, output);
+        return interpretWithMemoization(bytecode, input.span16(), start, output);
+    }
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();

@@ -115,6 +115,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, useMemoizedRegExp, false, Normal, "bounds RegExp backtracking by memoizing the (cache point, input position) pairs that have failed"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
@@ -188,6 +189,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpCSSJITDisassembly, false, Normal, "dumps disassembly of CSS Selector JIT upon compilation"_s) \
     v(Bool, dumpRegExpDisassembly, false, Normal, "dumps disassembly of RegExp upon compilation"_s) \
     v(Bool, traceRegExpJITExecution, false, Normal, "traces RegExp JIT execution at reentry points"_s) \
+    v(Bool, forceMemoizedRegExp, false, Normal, "with useMemoizedRegExp, the RegExp interpreter memoizes every match from its first step (testing aid)"_s) \
     v(Bool, verifyRegExpJITReads, false, Normal, "checks, before every load the RegExp JIT makes from the subject string, that the address lies within the subject (crashes otherwise); a fuzzing aid"_s) \
     v(Bool, dumpWasmDisassembly, false, Normal, "dumps disassembly of all wasm code upon compilation"_s) \
     v(OptionString, dumpWasmSourceFileName, nullptr, Normal, "log every wasm module validation, and dump source bytes to <filename>.0.wasm, <filename>.1.wasm, etc..."_s) \
