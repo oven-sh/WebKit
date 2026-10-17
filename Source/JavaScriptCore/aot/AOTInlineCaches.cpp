@@ -2615,6 +2615,7 @@ PropertyLookupTable& PropertyLookupTable::of(VM& vm)
 {
     if (!vm.m_aotPropertyLookupTable) [[unlikely]] {
         vm.m_aotPropertyLookupTable = new PropertyLookupTable;
+        vm.m_aotPropertyLookupTable->m_vm = &vm;
         vm.m_aotEmptyLookupTableRow = vm.m_aotPropertyLookupTable->emptyRowEntries();
     }
     return *vm.m_aotPropertyLookupTable;
@@ -3055,7 +3056,7 @@ void cacheKeyedExtraPropertyAddition(Instance* instance, Structure* before, Stru
     if (!addition)
         return;
     addition->slot.structureID = StructureID();
-    addition->slot.offset = 0;
+    addition->slot.offset = Instance::keyMayNotBeEvicted;
     addition->slot.pointer = key;
     addition->newStructureID = after->id();
     addition->epoch = Instance::keyedAdditionIsExtraProperty;
@@ -3067,7 +3068,7 @@ void cacheKeyedExtraPropertyAddition(Instance* instance, Structure* before, Stru
 void recordKeyedExtraPropertyAddition(Instance::KeyedAddition& addition, Structure* before, JSCell* key)
 {
     addition.slot.structureID = StructureID();
-    addition.slot.offset = 0;
+    addition.slot.offset = Instance::keyMayNotBeEvicted;
     addition.slot.pointer = key;
     addition.newStructureID = before->id();
     addition.epoch = Instance::keyedExtraPropertyAdditionSeenOnce;
@@ -3327,6 +3328,7 @@ void PropertyLookupTable::release(uint32_t base)
             m_dependsOnPrototypes.quickClear(bitOf(index));
     }
     vacate(base);
+    m_siteCachesMayBeStale = true;
     row.owner = nullptr;
     row.names.clear();
     m_freeRows.append(findStructureDescriptor);
@@ -3472,6 +3474,8 @@ void PropertyLookupTable::finalizeUnconditionally(VM& vm, bool isEdenCollection)
         }
     }
     m_structuresWithNewRows.shrink(0);
+    if (m_siteCachesMayBeStale)
+        clearSiteCaches();
     removeDeadNewStructures(vm, m_newAdditionIndices);
     if (!isEdenCollection)
         removeDeadNewStructures(vm, m_additionIndices);
@@ -3520,6 +3524,13 @@ void PropertyLookupTable::clear()
     clearNameLists();
     m_nameByUID.clear();
     m_registeredNames.clearAll();
+    clearSiteCaches();
+}
+
+void PropertyLookupTable::clearSiteCaches()
+{
+    m_siteCachesMayBeStale = false;
+    SiteCaches::clear(*m_vm);
 }
 
 void PropertyLookupTable::didCreate(Instance* instance)

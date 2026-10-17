@@ -2224,7 +2224,8 @@ static bool convertsResultOfTinyBody(const Program& program, FunctionID id, cons
         if (function.at(id).opcode == Opcode::Cast)
             return false;
     }
-    return repOf(program.at(call.type)) != Rep::JSValue && program.sizesForInlining[call.function().index()] <= maxSizeOfBody;
+    Rep result = repOf(program.at(call.type));
+    return result != Rep::JSValue && result != Rep::Cell && program.sizesForInlining[call.function().index()] <= maxSizeOfBody;
 }
 
 unsigned inlineCalls(const Program& program, FunctionID id, Function& function, CleanUpTiming timing)

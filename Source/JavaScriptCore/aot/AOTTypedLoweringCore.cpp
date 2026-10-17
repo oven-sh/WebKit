@@ -3888,6 +3888,7 @@ static bool emitCode(const Program& program, FunctionID id, const Function& func
         info.knownCallees.append(keyOf(entry));
     }
     info.indexReferences = context.indexReferences.link(linkBuffer);
+    info.numberOfSiteCacheWords = context.numberOfSiteCacheWords;
     info.numSlots = context.sites.size();
     info.numberOfInlineEmptyArrayLiterals = context.numberOfInlineEmptyArrayLiterals;
     info.numberOfStubEmptyArrayLiterals = context.numberOfStubEmptyArrayLiterals;
@@ -4049,6 +4050,8 @@ static bool emitCode(const Program& program, FunctionID id, const Function& func
         return static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));
     };
     result.rareCodeStart = std::min<uint32_t>(offsetOf(proc.code().rareCodeStart()), info.codeSize);
+    for (auto [start, end] : context.rangesKeptInline)
+        info.rangesKeptInline.append({ offsetOf(start), offsetOf(end) });
     for (auto& data : context.dataInCode)
         result.dataInCode.append({ offsetOf(data.start), data.numberOfWords, false });
     for (auto [table, numberOfEntries] : proc.code().tablesInCode())

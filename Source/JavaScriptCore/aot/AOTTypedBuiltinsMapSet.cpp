@@ -116,16 +116,63 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewMapWithStringKeys, JSCell*, (Ins
     OPERATION_RETURN(scope, tryNewTableWithStringKeys<JSMap>(globalObject, globalObject->mapStructure(), JSValue::decode(list)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedNewSetInImage, JSCell*, (Instance* instance, uint32_t table))
+static ALWAYS_INLINE const Typed::TableInImage& tableInImage(Instance* instance, uint32_t table)
 {
     auto& data = instance->typed->data;
-    return CompactTable::createSetInImage(instance->globalObject, *data.at<Typed::TableInImage>(data.at<uint32_t>(data.tablesInImageOffset)[table]));
+    return *data.at<Typed::TableInImage>(data.at<uint32_t>(data.tablesInImageOffset)[table]);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedNewSetInImage, JSCell*, (Instance* instance, uint32_t table))
+{
+    return CompactTable::createSetInImage(instance->globalObject, tableInImage(instance, table));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedNewMapInImage, JSCell*, (Instance* instance, uint32_t table))
 {
-    auto& data = instance->typed->data;
-    return CompactTable::createMapInImage(instance->globalObject, *data.at<Typed::TableInImage>(data.at<uint32_t>(data.tablesInImageOffset)[table]));
+    return CompactTable::createMapInImage(instance->globalObject, tableInImage(instance, table));
+}
+
+static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES askConstantTable(Instance* instance, const Typed::TableInImage* entries, JSString* key, bool returnsValue)
+{
+    auto entry = entries->find(key);
+    if (!returnsValue)
+        return JSValue::encode(jsBoolean(!!entry));
+    return JSValue::encode(entry ? entries->valueAt(*instance->typed, *entry) : jsUndefined());
+}
+
+static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES askConstantTableAt(Instance* instance, const Typed::TableInImage* entries, JSString* key, uint64_t entryAndReturnsValue)
+{
+    uint32_t entry = entryAndReturnsValue >> 1;
+    bool returnsValue = entryAndReturnsValue & 1;
+    if (!CompactTable::equalsCharacters(*key->tryGetValueImpl(), entries->textAt(entry))) [[unlikely]]
+        return askConstantTable(instance, entries, key, returnsValue);
+    return JSValue::encode(returnsValue ? entries->valueAt(*instance->typed, entry) : jsBoolean(true));
+}
+
+static ALWAYS_INLINE EncodedJSValue askConstantTable(Instance* instance, uint32_t table, EncodedJSValue encodedKey, bool returnsValue)
+{
+    JSValue key = JSValue::decode(encodedKey);
+    EncodedJSValue absent = JSValue::encode(returnsValue ? jsUndefined() : jsBoolean(false));
+    if (!key.isString())
+        return absent;
+    auto& entries = tableInImage(instance, table);
+    const StringImpl* impl = asString(key)->tryGetValueImpl();
+    if (!impl || !impl->hasHash()) [[unlikely]]
+        return askConstantTable(instance, &entries, asString(key), returnsValue);
+    auto entry = entries.findFirstWithTagOf(impl->existingHash());
+    if (!entry)
+        return absent;
+    return askConstantTableAt(instance, &entries, asString(key), static_cast<uint64_t>(*entry) << 1 | returnsValue);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedConstantTableHas, EncodedJSValue, (Instance* instance, uint32_t table, EncodedJSValue key))
+{
+    return askConstantTable(instance, table, key, false);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedConstantTableGet, EncodedJSValue, (Instance* instance, uint32_t table, EncodedJSValue key))
+{
+    return askConstantTable(instance, table, key, true);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedMoveTableToHeap, JSCell*, (Instance*, JSCell* collection))
@@ -460,7 +507,10 @@ std::optional<Writes> writesOfInlineMapSet(InlineBuiltin which, std::span<const 
     case InlineBuiltin::MapGet:
     case InlineBuiltin::MapHas:
     case InlineBuiltin::SetHas:
+    case InlineBuiltin::ConstantTableGet:
         return arguments[0].primitives & Primitive::String ? Writes::RuntimeState : Writes::Nothing;
+    case InlineBuiltin::ConstantTableHas:
+        return Writes::Nothing;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -753,6 +803,10 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         ensureStillAliveHere(owner);
         return ensure(Boxed(table), type);
     }
+    case InlineBuiltin::ConstantTableHas:
+        return booleanResult(unboxedBoolean(AOT_TYPED_OPERATION(ConstantTableHas, word32(value.tableInImage()), in<Boxed>(arguments[0]))), type);
+    case InlineBuiltin::ConstantTableGet:
+        return ensure(AOT_TYPED_OPERATION(ConstantTableGet, word32(value.tableInImage()), in<Boxed>(arguments[0])), type);
     case InlineBuiltin::MapNext:
         return next(true);
     case InlineBuiltin::SetNext:

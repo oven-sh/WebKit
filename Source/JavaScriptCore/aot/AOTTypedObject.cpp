@@ -88,7 +88,12 @@
 extern "C" __attribute__((weak)) void Bun__atexit(void (*)());
 #endif
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC {
+
+bool isReadOnlyByProgram(VM&, JSObject*, UniquedStringImpl*);
+void didMakeReadOnlyByProgram(VM&, JSObject*, UniquedStringImpl*);
+
+namespace AOT { namespace Typed {
 
 const ClassInfo Object::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Object) };
 
@@ -3262,7 +3267,7 @@ bool State::mayInterceptPutOfOwnProperty(VM& vm, const LayoutData& layout, JSObj
             unsigned attributes;
             if (!isValidOffset(structure->get(vm, uid, attributes)))
                 return false;
-            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || (attributes & PropertyAttribute::ReadOnly && !structure->inheritorsMayOverride(vm, uid));
+            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || (attributes & PropertyAttribute::ReadOnly && (!structure->inheritorsMayOverride(vm, uid) || isReadOnlyByProgram(vm, object, uid)));
         };
         for (auto& field : std::span { layout.fields(), layout.numberOfFields }) {
             if (intercepts(name(vm, field.name).impl()))
@@ -3499,7 +3504,7 @@ void Object::putExtraWithoutRunningCode(JSGlobalObject* globalObject, PropertyNa
             continue;
         if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
             return refuse("TypeScript code of the program cannot call an inherited setter that is not declared in the type"_s);
-        if (attributes & PropertyAttribute::ReadOnly && !structure->inheritorsMayOverride(vm, name.uid()))
+        if (attributes & PropertyAttribute::ReadOnly && (!structure->inheritorsMayOverride(vm, name.uid()) || isReadOnlyByProgram(vm, holder, name.uid())))
             return rejectPerSpec("the inherited property is read only"_s);
         break;
     }
@@ -9505,6 +9510,10 @@ void State::createClass(JSGlobalObject* globalObject, Closure* classObject, JSVa
     scope.assertNoException();
     prototype->flattenDictionaryObject(vm);
     prototype->structure()->setInheritorsMayOverrideReadOnlyProperties(true);
+    for (auto& [key, attributes] : earlyPrototypeStores) {
+        if (attributes & PropertyAttribute::ReadOnly && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            didMakeReadOnlyByProgram(vm, prototype, key.get());
+    }
 }
 
 bool State::createsMembersLazily(const LayoutData& ofClass) const
@@ -13347,7 +13356,7 @@ Object* State::tryConvertOrCopyByPlan(VM& vm, JSObject* object, const CoercionPl
     return std::bit_cast<Object*>(object);
 }
 
-bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop)
+bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop, uint32_t typeAndReason)
 {
     struct ConvertedInPlace {
         JSObject* object;
@@ -13435,7 +13444,7 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
         countObject(std::bit_cast<Object*>(made.object));
         if (made.plan->graphConversionEpoch != m_quickConversionEpoch && coercionPlan(made.before, *made.type) == made.plan) {
             made.plan->graphConversionEpoch = m_quickConversionEpoch;
-            cacheQuickConversion(made.before, *made.type, *made.plan, *made.plan, 0, std::bit_cast<Object*>(made.object), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(made.before->inlineCapacity())), 0);
+            cacheQuickConversion(made.before, *made.type, *made.plan, *made.plan, 0, std::bit_cast<Object*>(made.object), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(made.before->inlineCapacity())), made.object == top ? typeAndReason : 0);
         }
     }
     return true;
@@ -13617,6 +13626,8 @@ std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& 
                 move.kind = Kind::CellOfShape;
                 move.lastShape = type.view(0).first + type.view(0).count - 1;
                 move.shapeCount = type.view(0).count;
+                if (!allocator)
+                    move.keyOfChild = conversionKeyOfChild(type);
             } else
                 return nullptr;
             break;
@@ -13717,14 +13728,14 @@ void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, 
         *quickConversion(structureID, type, 0, true) = { structureID, root.discriminant, &type, 0, nullptr, 0, 0 };
     uint64_t header = static_cast<uint64_t>(made->typeInfoBlob() & 0xffffff) << 32 | made->id().bits();
     *quickConversion(structureID, type, dependsOnDiscriminant ? discriminant : 0, true) = { structureID, invalidOffset, &type, dependsOnDiscriminant ? discriminant : 0, &plan, header, static_cast<uint32_t>(sizeOfCell) };
-    if (!typeAndReason)
-        return;
     if (!plan.inPlaceConversion)
         plan.inPlaceConversion = createConversionPlan(plan, sizeOfCell, header, nullptr, dependsOnDiscriminant ? root.discriminant : invalidOffset, converted);
     if (!plan.inPlaceConversion)
         return;
     if (!dependsOnDiscriminant) {
-        cacheConversion(structureID, typeAndReason, *plan.inPlaceConversion);
+        if (typeAndReason)
+            cacheConversion(structureID, typeAndReason, *plan.inPlaceConversion);
+        cacheConversion(structureID, conversionKeyOfChild(type), *plan.inPlaceConversion);
         return;
     }
     if (!root.inPlaceConversion) {
@@ -13739,7 +13750,9 @@ void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, 
         members.firstText = members.texts.span().data();
         members.memberCount = members.texts.size();
     }
-    cacheConversion(structureID, typeAndReason, members);
+    if (typeAndReason)
+        cacheConversion(structureID, typeAndReason, members);
+    cacheConversion(structureID, conversionKeyOfChild(type), members);
 }
 
 bool State::canConvertQuickly(JSValue value, const RuntimeType& type, ChildrenOfQuickConversion& seen, unsigned depth)
@@ -13748,12 +13761,15 @@ bool State::canConvertQuickly(JSValue value, const RuntimeType& type, ChildrenOf
         return false;
     JSCell* cell = value.asCell();
     for (auto& [object, typeOfObject] : seen) {
-        if (object == cell)
-            return typeOfObject == &type;
+        if (object != cell)
+            continue;
+        auto ancestors = std::span { m_ancestorsOfQuickConversion }.first(depth);
+        return typeOfObject == &type && std::ranges::find(ancestors, cell) == ancestors.end();
     }
     if (seen.size() == seen.capacity())
         return false;
     seen.append({ cell, &type });
+    m_ancestorsOfQuickConversion[depth] = cell;
     uint32_t structureID = cell->structureID().bits();
     const QuickConversion* entry = quickConversion(structureID, type, 0, false);
     if (!entry)
@@ -13890,9 +13906,22 @@ void State::cacheUnconvertibleObjectPlan(UnconvertibleObjectPlan&& plan)
     (*m_unconvertibleObjectPlans)[place] = WTF::move(plan);
 }
 
+static constexpr UnconvertedCastCheck noChecks[] = { { nullptr, 0, UnconvertedCastCheck::isEnd, 0 } };
+
+void State::didLeavePlainObjectAsItWas(JSValue value, const RuntimeType& type, uint32_t typeAndReason)
+{
+    if (!type.acceptsUntypedObjectsByNature() || isCounting() || data.isCompiledForAudit || !value.isCell() || value.asCell()->type() != FinalObjectType)
+        return;
+    JSObject* object = asObject(value);
+    if (object->structure()->hasPolyProto() || compiledObject(object) || propertyConversionCacheEntry(type) != std::bit_cast<uintptr_t>(&type))
+        return;
+    uint32_t structureID = object->structureID().bits();
+    static_cast<UnconvertedCastEntry*>(instance.typedUnconvertedCasts)[UnconvertedCastEntry::placeOf(structureID, typeAndReason)] = { structureID, typeAndReason, noChecks };
+    m_hasUnconvertedCastsForStub = true;
+}
+
 bool State::passesOpenTypeAsItIs(JSValue value, const RuntimeType& type, uint32_t typeAndReason)
 {
-    static constexpr UnconvertedCastCheck noChecks[] = { { nullptr, 0, UnconvertedCastCheck::isEnd, 0 } };
     if (!type.acceptsUntypedObjectsByNature() || isCounting() || data.isCompiledForAudit || !value.isCell() || value.asCell()->type() != FinalObjectType)
         return false;
     JSObject* object = asObject(value);
@@ -13995,7 +14024,7 @@ void State::cacheConversionsBelowKeptObject(const ObjectsBelowKeptObject& found)
     }
 }
 
-bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
+bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type, uint32_t typeAndReason)
 {
     if (!m_quickConversions || !value.isCell())
         return false;
@@ -14132,6 +14161,11 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     constexpr uint64_t preservedHeaderBits = 0xffull << 56 | static_cast<uint64_t>(TypeInfoPerCellBit) << 48 | static_cast<uint64_t>(static_cast<uint8_t>(~AllArrayTypesAndHistory)) << 32;
     uint64_t* header = std::bit_cast<uint64_t*>(cell);
     *header = (*header & preservedHeaderBits) | entry->header;
+    if (plan.inPlaceConversion && !entry->discriminant) {
+        if (typeAndReason)
+            cacheConversion(structureID, typeAndReason, *plan.inPlaceConversion);
+        cacheConversion(structureID, conversionKeyOfChild(type), *plan.inPlaceConversion);
+    }
     return true;
 }
 
@@ -14351,13 +14385,13 @@ Object* State::tryCloneAs(VM& vm, JSObject* source, uint64_t target)
 
 bool State::tryConvertPlainObjectInPlace(VM& vm, JSValue value, const RuntimeType& type, uint32_t typeAndReason)
 {
-    if (tryQuickConversion(vm, value, type))
+    if (tryQuickConversion(vm, value, type, typeAndReason))
         return true;
     if (data.isCompiledForAudit || !value.isObject() || asObject(value)->type() != FinalObjectType || type.acceptsUntypedObjectsByNature() || compiledObject(value))
         return false;
     if (Object* made = copyUnchangedByPlan(vm, asObject(value), type, true, typeAndReason))
         return JSValue(made) == value;
-    return tryConvertInPlaceByPlans(vm, asObject(value), type);
+    return tryConvertInPlaceByPlans(vm, asObject(value), type, typeAndReason);
 }
 
 Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayConvertInPlace, uint32_t typeAndReason)
@@ -15333,7 +15367,7 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
                 countCoercion(value, nullptr, type, reason, "plan of a copy"_s, hasRoom ? value : JSValue(copy));
                 return hasRoom ? value : JSValue(copy);
             }
-        } else if (mayConvertInPlace && tryConvertInPlaceByPlans(vm, asObject(value), type)) {
+        } else if (mayConvertInPlace && tryConvertInPlaceByPlans(vm, asObject(value), type, requestedReason == Format::CastReason::As ? typeAndReason : 0)) {
             countCoercion(value, nullptr, type, reason, "plans of a graph"_s, value);
             return value;
         }

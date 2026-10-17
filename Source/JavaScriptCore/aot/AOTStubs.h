@@ -64,6 +64,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(CheckCallable) \
     v(CheckCallableNamed) \
     v(FindMethodByName) \
+    v(FindMethodCellByName) \
+    v(FindMethodByNameAndFillSiteCache) \
     v(Enter) \
     v(EnterModule) \
     v(EnterClosure) \
@@ -643,6 +645,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI) \
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInR8) \
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInR15) \
+    v(GetByNameAndFillSiteCache) \
+    v(GetByNameAndFillSiteCachePreservingTwo) \
     v(GetLengthByName) \
     v(GetLengthByNamePreservingTwo) \
     v(GetParentDataByName) \
@@ -705,6 +709,10 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PutByNameSloppyPreservingTwo) \
     v(PutByNameSloppyWithDirectColumn) \
     v(PutByNameSloppyWithDirectColumnPreservingTwo) \
+    v(PutByNameAndFillSiteCache) \
+    v(PutByNameAndFillSiteCachePreservingTwo) \
+    v(PutByNameSloppyAndFillSiteCache) \
+    v(PutByNameSloppyAndFillSiteCachePreservingTwo) \
     v(DefineByNameGeneric) \
     v(DefineThroughSlotByName) \
     v(DefineByNameWithNewStorage) \
@@ -749,6 +757,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(CallHasInstance) \
     v(InstanceOfClass) \
     v(InstanceOfLeafClass) \
+    v(InstanceOfClassCheckingPrototype) \
+    v(InstanceOfLeafClassCheckingPrototype) \
     v(InstanceOfClassByChain) \
     v(MapGetCheckingReceiver) \
     v(MapGet) \
@@ -1069,6 +1079,7 @@ void clearNamesWithDedicatedStubs();
 enum class CollectionMethod : uint8_t { None, Get, Has, Set, Add };
 CollectionMethod collectionMethodNamed(std::span<const uint8_t> name);
 void setCollectionMethodNamed(uint32_t name, CollectionMethod);
+bool isCollectionMethodName(uint32_t name);
 void setNameOfLength(uint32_t name);
 void setHasDedicatedStub(PerNameStubKind, uint32_t numberOfIdentifier);
 bool methodCallHasDedicatedStub(unsigned count, uint32_t name);
@@ -1090,11 +1101,15 @@ struct IndexReference {
     uint32_t offset;
     uint32_t addend;
     uint16_t scale;
+    bool isSiteCacheWord { false };
 };
 class IndexReferences {
 public:
     void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
     void load16(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
+    void loadSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
+    void getAddressOfSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
+    static void loadFromCachedLocation(CCallHelpers&, GPRReg receiver, GPRReg cachedWord, GPRReg cachedHolder, GPRReg dest);
     Vector<IndexReference> link(LinkBuffer&);
     static void fill(uint8_t* code, const IndexReference&, uint32_t index);
 
@@ -1103,6 +1118,7 @@ private:
         CCallHelpers::Label instructions;
         uint32_t addend;
         uint32_t scale;
+        bool isSiteCacheWord { false };
     };
     Vector<Reference, 2> m_references;
 };

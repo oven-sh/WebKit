@@ -27,6 +27,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLinkTimeConstant, RuntimeS
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToLength, Heap, EncodedJSValue, (Instance*, EncodedJSValue value));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainURL, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainURLWithBase, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue base));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainURLWithPlainBase, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindPlainQueryValue, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue offsets, EncodedJSValue name));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainQuery, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindInPlainQuery, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue name));
@@ -99,6 +100,8 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMapKeyAt, Nothing, Encoded
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMapValueAt, Nothing, EncodedJSValue, (Instance*, JSCell* map, uint32_t entry));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetNext, Nothing, size_t, (Instance*, JSCell* set, EncodedJSValue table, uint32_t entry));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetKeyAt, Nothing, EncodedJSValue, (Instance*, JSCell* set, uint32_t entry));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedConstantTableHas, Nothing, EncodedJSValue, (Instance*, uint32_t table, EncodedJSValue key));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedConstantTableGet, RuntimeState, EncodedJSValue, (Instance*, uint32_t table, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNumberToStringWithRadix, RuntimeState, JSCell*, (Instance*, double value, int32_t radix));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedInt32ToStringWithRadix, RuntimeState, JSCell*, (Instance*, int32_t value, int32_t radix));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMathSin, Pure, double, (double x));

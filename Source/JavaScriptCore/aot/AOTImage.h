@@ -51,6 +51,7 @@ struct ImageHeader {
     uint32_t recordsSize;
     uint32_t numberOfFunctions;
     uint32_t totalDataSizeIn16Bytes;
+    uint32_t numberOfSiteCacheWords;
     uint32_t environmentsSize;
     uint32_t environmentsOffset;
     uint32_t numberOfEnvironments;

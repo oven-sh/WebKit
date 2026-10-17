@@ -216,16 +216,21 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURL, EncodedJSValue,
     return scanPlainPathAndQuery(text, findPathStart(text));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURLWithBase, EncodedJSValue, (Instance*, EncodedJSValue encodedInput, EncodedJSValue encodedBase))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURLWithPlainBase, EncodedJSValue, (Instance*, EncodedJSValue encodedInput))
 {
-    if (!isPlainBaseURL(flatLatin1Span(JSValue::decode(encodedBase))))
-        return JSValue::encode(jsUndefined());
     auto text = flatLatin1Span(JSValue::decode(encodedInput));
     if (text.empty() || text[0] != '/')
         return scanPlainPathAndQuery(text, findPathStart(text));
     if (text.size() > 1 && text[1] == '/')
         return JSValue::encode(jsUndefined());
     return scanPlainPathAndQuery(text, 0);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURLWithBase, EncodedJSValue, (Instance* instance, EncodedJSValue encodedInput, EncodedJSValue encodedBase))
+{
+    if (!isPlainBaseURL(flatLatin1Span(JSValue::decode(encodedBase))))
+        return JSValue::encode(jsUndefined());
+    return operationAOTTypedScanPlainURLWithPlainBase(instance, encodedInput);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindPlainQueryValue, EncodedJSValue, (Instance*, EncodedJSValue encodedInput, EncodedJSValue encodedOffsets, EncodedJSValue encodedName))
@@ -581,6 +586,8 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     case InlineBuiltin::ScanPlainURL:
         return ensure(AOT_TYPED_OPERATION(ScanPlainURL, in<Boxed>(arguments[0])), type);
     case InlineBuiltin::ScanPlainURLWithBase:
+        if (constant(1).opcode == Opcode::String && isPlainBaseURL(byteCast<Latin1Character>(m_program.string(constant(1).string()))))
+            return ensure(AOT_TYPED_OPERATION(ScanPlainURLWithPlainBase, in<Boxed>(arguments[0])), type);
         return ensure(AOT_TYPED_OPERATION(ScanPlainURLWithBase, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), type);
     case InlineBuiltin::FindPlainQueryValue:
         return ensure(AOT_TYPED_OPERATION(FindPlainQueryValue, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), in<Boxed>(arguments[2])), m_program.at(m_program.types.number), type);

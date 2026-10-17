@@ -57,6 +57,7 @@ aot/AOTOutliner.cpp @no-unify
 aot/AOTProgram.cpp
 aot/AOTProgramData.cpp
 aot/AOTRuntime.cpp
+aot/AOTSiteCaches.cpp
 aot/AOTStubs.cpp
 aot/AOTSlotWatchpoint.cpp
 aot/AOTThunks.cpp

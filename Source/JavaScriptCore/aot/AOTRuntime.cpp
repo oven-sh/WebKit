@@ -708,7 +708,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     }
     size_t numberOfFunctions = Image::numberOfFunctions();
     size_t numberOfStates = program->data().numberOfStates;
-    size_t size = dataStartFor(numberOfStates) + roundUpToMultipleOf(WTF::pageSize(), Image::totalDataSize());
+    size_t dataStart = SiteCaches::endOffset(dataStartFor(numberOfStates));
+    size_t size = dataStart + roundUpToMultipleOf(WTF::pageSize(), Image::totalDataSize());
     Instance* instance = reinterpret_cast<Instance*>(static_cast<char*>(OSAllocator::reserveAndCommit(environmentsSize + size, OSAllocator::FastMallocPages)) + environmentsSize);
 #if OS(LINUX)
     while (madvise(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
@@ -736,7 +737,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
     instance->collections->numberOfFunctions = numberOfFunctions;
-    instance->collections->dataStart = dataStartFor(numberOfStates) >> stateWithDataShift;
+    instance->collections->dataStart = dataStart >> stateWithDataShift;
     instance->collections->usedDataEnd = instance->collections->dataStart;
     instance->collections->dataEnd = size >> stateWithDataShift;
     instance->collections->dataStartBitsSize = roundUpToMultipleOf(WTF::pageSize(), (instance->collections->dataEnd - instance->collections->dataStart) / 8 + sizeof(uint64_t));
@@ -867,6 +868,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     if (JSValue call = globalObject->linkTimeConstant(LinkTimeConstant::callFunction); call.isCell())
         instance->functionPrototypeCall = call.asCell();
     instance->collections->token = Symbol::create(vm);
+    instance->holderOfUndefined = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    instance->holderOfUndefined->inlineStorage()[0].setWithoutWriteBarrier(jsUndefined());
     if (Image* image = Image::withCode(); image && image->header().typedDataSize)
         instance->typed = new Typed::State(vm, *instance, *image->at<Typed::Data>(image->header().typedDataOffset));
     loader->setAOTInstance(instance);
@@ -893,6 +896,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     }
     RELEASE_ASSERT(vm.heap.mutatorMarkStack().headSegmentOffsetIsValid());
     RELEASE_ASSERT(*std::bit_cast<MarkStackArray**>(std::bit_cast<char*>(&vm.heap) + Heap::offsetOfMutatorMarkStack()) == &vm.heap.mutatorMarkStack());
+    instance->megamorphicCacheEpoch = vm.ensureMegamorphicCache().epoch();
     vm.m_aotInstances.append(instance);
     PropertyLookupTable::of(vm).didCreate(instance);
     for (unsigned kind = 0; kind < PropertyLookupTable::numberOfKinds; ++kind) {
@@ -2460,6 +2464,7 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         visitor.appendUnbarriered(structure);
     visitor.appendUnbarriered(asyncContextFrameStructure);
     visitor.appendUnbarriered(collections->token);
+    visitor.appendUnbarriered(holderOfUndefined);
     if (!visitsEverything) {
         for (JSCell* cell : collections->cellsAddedSinceLastCollection)
             visitor.appendUnbarriered(cell);
@@ -3213,6 +3218,18 @@ void Instance::validateKeyedTables()
     }
     for (unsigned i = 0; i < numberOfKeyedAdditions; ++i) {
         auto& addition = keyedAdditions[i];
+        if (addition.slot.structureID && isKeyedReplacement(addition)) {
+            Structure* structure = addition.slot.structureID.decode();
+            JSCell* key = static_cast<JSCell*>(addition.slot.pointer);
+            if (!isOrdinary(structure))
+                continue;
+            auto uid = uidOf(key);
+            unsigned attributes;
+            PropertyOffset own = locationIn(structure, uid.get(), attributes);
+            if (!isAt(addition.slot.offset, own) || attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
+                fail("keyedAdditions"_s, i, "the object has no plain value that may be written where the entry says"_s, structure, key);
+            continue;
+        }
         if (!addition.slot.structureID || addition.slot.offset & Slot::isGetter || addition.holderValueCount || (addition.epoch != MegamorphicCache::invalidEpoch && addition.epoch != epoch))
             continue;
         Structure* structure = addition.slot.structureID.decode();
@@ -3345,7 +3362,7 @@ void Instance::sweepKeyedTables(bool newOnly)
             return;
         bool isStoreToCompiledField = addition.slot.offset & Slot::isGetter;
         uint32_t epoch = addition.epoch == keyedAdditionIsExtraProperty ? addition.holderValueCount >> keyedExtraPropertyEpochShift : addition.epoch;
-        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
+        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && !isKeyedReplacement(addition) && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
             zeroBytes(addition);
     });
     groupsToSweep.clearAll();

@@ -12,6 +12,7 @@
 #include "AOTOperationsBuiltins.h"
 #include "AOTOperationsObjects.h"
 #include "AOTProgramData.h"
+#include "AOTSiteCaches.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTStubs.h"
 #include "AOTTypedOperations.h"
@@ -900,6 +901,8 @@ struct Instance {
     static constexpr unsigned numberOfKnownClosureStructureIDs = 128;
     static constexpr unsigned knownClosureStructureIDShift = 7;
     uint32_t knownClosureStructureIDs[numberOfKnownClosureStructureIDs];
+    JSObject* holderOfUndefined;
+    uint32_t siteCacheMisses;
     LocalAllocator* typedSlimClosureAllocators[3];
     JSCell* typedSlimClosureLengthGetter;
     JSCell* typedSlimClosureNameGetter;
@@ -920,6 +923,8 @@ struct Instance {
     uintptr_t** typedOrderKeys;
     uint16_t* typedOrderKeyIndices;
     uint16_t numberOfTypedOrderKeyIndicesUsed;
+    uint32_t megamorphicCacheEpoch;
+    static constexpr ptrdiff_t offsetOfMegamorphicCacheEpoch() { return OBJECT_OFFSETOF(Instance, megamorphicCacheEpoch); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeys() { return OBJECT_OFFSETOF(Instance, typedOrderKeys); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeyIndices() { return OBJECT_OFFSETOF(Instance, typedOrderKeyIndices); }
     static size_t numberOfTypedOrderKeyIndices(uint32_t numberOfLayouts) { return std::min<size_t>(numberOfLayouts, UINT16_MAX) + 1; }
@@ -1685,6 +1690,7 @@ struct Instance {
     static constexpr uint32_t keyedAdditionIsExtraProperty = UINT32_MAX;
     static constexpr uint32_t keyedExtraPropertyAdditionSeenOnce = UINT32_MAX - 1;
     static constexpr unsigned keyedExtraPropertyEpochShift = 16;
+    static bool isKeyedReplacement(const KeyedAddition& entry) { return !(entry.slot.offset & (Slot::isGetter | keyMayNotBeEvicted)); }
     static constexpr unsigned numberOfKeyedAdditions = 1024;
     static_assert(hasOneBitSet(numberOfKeyedAdditions));
     KeyedAddition& keyedAdditionFor(StructureID structureID, const JSCell* key) { return keyedEntryFor(keyedAdditions, numberOfKeyedAdditions, structureID, key); }
@@ -1868,6 +1874,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedSlimClosureLengthGetter() { return OBJECT_OFFSETOF(Instance, typedSlimClosureLengthGetter); }
     static constexpr ptrdiff_t offsetOfTypedSlimClosureNameGetter() { return OBJECT_OFFSETOF(Instance, typedSlimClosureNameGetter); }
     static constexpr ptrdiff_t offsetOfTypedClosureStructureIDPair() { return OBJECT_OFFSETOF(Instance, typedClosureStructureIDPair); }
+    static constexpr ptrdiff_t offsetOfHolderOfUndefined() { return OBJECT_OFFSETOF(Instance, holderOfUndefined); }
+    static constexpr ptrdiff_t offsetOfSiteCacheMisses() { return OBJECT_OFFSETOF(Instance, siteCacheMisses); }
     static constexpr ptrdiff_t offsetOfTypedClosureWithPrototypeStructureID() { return OBJECT_OFFSETOF(Instance, typedClosureWithPrototypeStructureID); }
     static constexpr ptrdiff_t offsetOfReifiedSlimClosureStructureID(unsigned which) { return OBJECT_OFFSETOF(Instance, reifiedSlimClosureStructureIDs) + which * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfKnownClosureStructureIDs() { return OBJECT_OFFSETOF(Instance, knownClosureStructureIDs); }
@@ -2164,6 +2172,7 @@ public:
 
 private:
     PropertyLookupTable();
+    void clearSiteCaches();
 
     struct Bases {
         uint32_t first { 1 };
@@ -2223,6 +2232,26 @@ private:
     static bool isInlineEntry(uint32_t entry) { return entry & maxName && !(entry & hasKindAndCode); }
     static bool isInlineEntry(const Cell& cell) { return static_cast<uint16_t>(cell.name - 1) < maxName; }
     static bool hasOwnOffsetInWord(uint32_t entry) { return isInlineEntry(entry) || (entry & hasKindAndCode && (kindOf(entry) == Kind::OutOfLine || kindOf(entry) == Kind::OutOfLineAndWritten)); }
+    static Kind kindOf(const Cell& cell) { return static_cast<Kind>(cell.kindOrStoreOffset & ((1u << bitsOfKind) - 1)); }
+    static bool isOwnOutOfLine(Kind kind) { return kind == Kind::OutOfLine || kind == Kind::OutOfLineAndWritten; }
+    static bool mayBeInSiteCaches(const Cell& cell)
+    {
+        if (isInlineEntry(cell))
+            return true;
+        return cell.name & hasKindAndCode && (impliesAbsent(kindOf(cell)) || isOwnOutOfLine(kindOf(cell)) || kindOf(cell) == Kind::InheritedInline || kindOf(cell) == Kind::InheritedOutOfLine);
+    }
+    static bool readsLike(const Cell& cell, uint32_t entry)
+    {
+        if (isInlineEntry(cell))
+            return isInlineEntry(entry) && codeOf(entry) == cell.readOffsetOrPayload;
+        if (!(entry & hasKindAndCode))
+            return false;
+        if (impliesAbsent(kindOf(cell)))
+            return impliesAbsent(kindOf(entry));
+        if (isOwnOutOfLine(kindOf(cell)))
+            return isOwnOutOfLine(kindOf(entry));
+        return kindOf(entry) == kindOf(cell) && codeOf(entry) == cell.code;
+    }
     uint32_t entryAt(uint32_t index) const
     {
         static_assert(offsetOfCodeInEntry == 4 && offsetOfKindInEntry == 5 && offsetOfNameInEntry == 6);
@@ -2238,6 +2267,8 @@ private:
     void setEntryAt(uint32_t index, uint32_t entry)
     {
         Cell& cell = m_cells[index];
+        if (mayBeInSiteCaches(cell) && !readsLike(cell, entry)) [[unlikely]]
+            clearSiteCaches();
         uint32_t low = isInlineEntry(entry) ? codeOf(entry) : isInlineEntry(cell) ? 0 : cell.readOffsetOrPayload;
 #if CPU(ARM64)
         if (entry & hasKindAndCode)
@@ -2249,7 +2280,10 @@ private:
     void setPayload(uint32_t index, uint32_t payload)
     {
         ASSERT(!isInlineEntry(m_cells[index]));
-        m_cells[index].readOffsetOrPayload = payload;
+        Cell& cell = m_cells[index];
+        if (cell.readOffsetOrPayload && cell.readOffsetOrPayload != payload && mayBeInSiteCaches(cell)) [[unlikely]]
+            clearSiteCaches();
+        cell.readOffsetOrPayload = payload;
     }
     Slot* slotsAt(uint32_t index) { return payload(index) & payloadIsSlots ? m_slots + (payload(index) >> 1) : nullptr; }
     static bool usesPayloadDirectly(Kind);
@@ -2362,6 +2396,8 @@ private:
     Vector<uint32_t> m_freeSlots;
     Data* m_data { nullptr };
     bool m_isSharedByInstances { false };
+    bool m_siteCachesMayBeStale { false };
+    VM* m_vm { nullptr };
     unsigned m_declaredMemberCreationDepth { 0 };
 };
 
@@ -2430,6 +2466,8 @@ struct CompiledFunctionInfo {
     unsigned codeSize { 0 };
     Convention convention;
     Vector<IndexReference> indexReferences;
+    unsigned numberOfSiteCacheWords { 0 };
+    Vector<std::pair<uint32_t, uint32_t>> rangesKeptInline;
     uint32_t stateNumber { 0 };
     Vector<SpreadSite> spreadSites;
     struct InlineFrame {

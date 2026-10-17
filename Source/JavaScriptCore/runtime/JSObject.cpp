@@ -74,10 +74,11 @@ static unsigned lastArraySize = 0;
 #if ENABLE(AOT)
 bool isWritableWithoutLock(VM&, UniquedStringImpl*, JSObject*, JSValue);
 #endif
+bool isReadOnlyByProgram(VM&, JSObject*, UniquedStringImpl*);
 
 static bool mayBeOverriddenByInheritors(VM& vm, JSObject* holder, UniquedStringImpl* name, JSValue held)
 {
-    if (!holder->structure()->inheritorsMayOverride(vm, name))
+    if (!holder->structure()->inheritorsMayOverride(vm, name) || isReadOnlyByProgram(vm, holder, name))
         return false;
 #if ENABLE(AOT)
     return !held || name == vm.propertyNames->stackTraceLimit.impl() || isWritableWithoutLock(vm, name, holder, held);
@@ -971,6 +972,8 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
         if (hasProperty) {
             if (attributes & PropertyAttribute::ReadOnly) {
                 if (!mayBeOverriddenByInheritors(vm, obj, propertyName.uid(), isValidOffset(offset) ? obj->getDirect(offset) : JSValue()) || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+                    if (isReadOnlyByProgram(vm, obj, propertyName.uid())) [[unlikely]]
+                        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
                     JSValue held;
                     bool isRejectedOnlyByLockHere = obj->isLockedBuiltin() && obj->isRejectedOnlyByLock(vm, propertyName.uid(), held);
                     if (isRejectedOnlyByLockHere && !isThisValueAltered(slot, obj) && held == value)
@@ -3344,6 +3347,47 @@ static void invalidateCachesForLockedProperties(VM& vm, JSObject* object)
     }
 }
 
+static SymbolImpl::StaticSymbolImpl readOnlyByProgramPrivateName { "readOnlyByProgram", SymbolImpl::s_flagIsPrivate };
+
+bool isReadOnlyByProgram(VM& vm, JSObject* holder, UniquedStringImpl* name)
+{
+    if (!holder->structure()->inheritorsMayOverrideReadOnlyProperties()) [[likely]]
+        return false;
+    JSValue names = holder->getDirect(vm, PropertyName(&static_cast<SymbolImpl&>(readOnlyByProgramPrivateName)));
+    if (!names || names.isTrue())
+        return !!names;
+    if (std::optional<uint32_t> index = parseIndex(PropertyName(name)))
+        return !!asObject(names)->getDirectIndex(holder->globalObject(), *index);
+    return !!asObject(names)->getDirect(vm, PropertyName(name));
+}
+
+void didMakeReadOnlyByProgram(VM&, JSObject*, UniquedStringImpl*);
+
+void didMakeReadOnlyByProgram(VM& vm, JSObject* holder, UniquedStringImpl* nameOrNullForAll)
+{
+    PropertyName key(&static_cast<SymbolImpl&>(readOnlyByProgramPrivateName));
+    constexpr unsigned attributes = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
+    JSValue names = holder->getDirect(vm, key);
+    if (names && names.isTrue())
+        return;
+    ++vm.allowLazyMaterializationOfImmutablePropertiesCount;
+    if (!nameOrNullForAll)
+        holder->putDirect(vm, key, jsBoolean(true), attributes);
+    else {
+        if (!names) {
+            names = constructEmptyObject(vm, holder->globalObject()->nullPrototypeObjectStructure());
+            holder->putDirect(vm, key, names, attributes);
+        }
+        if (std::optional<uint32_t> index = parseIndex(PropertyName(nameOrNullForAll)))
+            asObject(names)->putDirectIndex(holder->globalObject(), *index, jsBoolean(true));
+        else
+            asObject(names)->putDirect(vm, PropertyName(nameOrNullForAll), jsBoolean(true));
+    }
+    --vm.allowLazyMaterializationOfImmutablePropertiesCount;
+    if (holder->mayBePrototype())
+        invalidateCachesForLockedProperties(vm, holder);
+}
+
 void JSObject::lockProperties(VM& vm, LockedObjectExtensibility kind, LockedObjectHistory history)
 {
     if (structure()->inheritorsMayOverrideReadOnlyProperties() || structure()->typeInfo().wouldHaveFixedProperties())
@@ -3387,6 +3431,8 @@ bool JSObject::inheritsImmutableProperty(VM& vm, PropertyName propertyName)
 
 void JSObject::freeze(VM& vm)
 {
+    if (structure()->inheritorsMayOverrideReadOnlyProperties() && type() == FinalObjectType) [[unlikely]]
+        didMakeReadOnlyByProgram(vm, this, nullptr);
     // The attributes do not change. Object.freeze() does not come here for such an object: it takes the generic path, which reports the refusal.
     if (structure()->hasImmutableProperties()) [[unlikely]]
         return;
@@ -4861,6 +4907,11 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
     RETURN_IF_EXCEPTION(throwScope, false);
     bool isExtensible = this->isExtensible(globalObject);
     RETURN_IF_EXCEPTION(throwScope, false);
+    auto didDefine = [&](bool isDefined) {
+        if (isDefined && structure()->inheritorsMayOverrideReadOnlyProperties() && type() == FinalObjectType && !propertyName.isPrivateName() && !descriptor.isAccessorDescriptor() && (descriptor.writablePresent() ? !descriptor.writable() : !isCurrentDefined)) [[unlikely]]
+            didMakeReadOnlyByProgram(vm, this, propertyName.uid());
+        return isDefined;
+    };
     if (structure()->typeInfo().wouldHaveFixedProperties() || (isCurrentDefined && current.attributes() & PropertyAttribute::WouldBeFixed)) [[unlikely]] {
         ImmutableIntrinsicsAudit::willDefineOwnProperty(globalObject, this, propertyName, descriptor, isCurrentDefined, current, throwException);
         RETURN_IF_EXCEPTION(throwScope, false);
@@ -4870,7 +4921,7 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
         bool isDefined = validateAndApplyPropertyDescriptor(globalObject, this, propertyName, isExtensible, descriptor, isCurrentDefined, current, false);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (isDefined)
-            return true;
+            return didDefine(true);
         if (recordIfOnlyLockRejects(vm, propertyName.uid(), false, true) || (!isCurrentDefined && isExtensible)) {
             JSValue held;
             bool isNamed = isRejectedOnlyByLock(vm, propertyName.uid(), held);
@@ -4878,7 +4929,9 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
         }
     }
 #endif
-    RELEASE_AND_RETURN(throwScope, validateAndApplyPropertyDescriptor(globalObject, this, propertyName, isExtensible, descriptor, isCurrentDefined, current, throwException));
+    bool isDefined = validateAndApplyPropertyDescriptor(globalObject, this, propertyName, isExtensible, descriptor, isCurrentDefined, current, throwException);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    return didDefine(isDefined);
 }
 
 bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
@@ -4895,6 +4948,15 @@ bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject,
         // e.i. Set oldLenDesc.[[Value]] to index + 1.
         // e.ii. Call the default [[DefineOwnProperty]] internal method (8.12.9) on A passing "length", oldLenDesc, and false as arguments. This call will always return true.
         // f. Return true.
+        if (object->structure()->inheritorsMayOverrideReadOnlyProperties() && object->type() == FinalObjectType && !descriptor.isAccessorDescriptor()) [[unlikely]] {
+            VM& vm = globalObject->vm();
+            PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool wasDefined = JSObject::getOwnPropertySlotByIndex(object, globalObject, index.value(), slot);
+            bool isDefined = object->defineOwnIndexedProperty(globalObject, index.value(), descriptor, throwException);
+            if (isDefined && (descriptor.writablePresent() ? !descriptor.writable() : !wasDefined))
+                didMakeReadOnlyByProgram(vm, object, propertyName.uid());
+            return isDefined;
+        }
         return object->defineOwnIndexedProperty(globalObject, index.value(), descriptor, throwException);
     }
     

@@ -581,6 +581,8 @@ struct ConversionMove {
     static constexpr uint8_t acceptsUndefined = 1;
     static constexpr uint8_t acceptsNull = 2;
     static constexpr uint8_t isWide = 4;
+    static constexpr uint32_t reasonOfChild = 15;
+    static constexpr uint32_t maxDepthOfChildren = 4;
     uint16_t from;
     uint16_t to;
     Kind kind;
@@ -589,8 +591,9 @@ struct ConversionMove {
     uint8_t isOutOfLine;
     uint32_t lastShape;
     uint32_t shapeCount;
+    uint32_t keyOfChild { 0 };
 };
-static_assert(sizeof(ConversionMove) == 16);
+static_assert(sizeof(ConversionMove) == 20);
 
 struct ConversionText {
     uint64_t text;
@@ -1655,7 +1658,8 @@ struct State {
     };
     static constexpr unsigned numberOfQuickConversions = 512;
     static constexpr size_t maxSizeOfQuickConversion = 128;
-    bool tryQuickConversion(VM&, JSValue, const RuntimeType&);
+    bool tryQuickConversion(VM&, JSValue, const RuntimeType&, uint32_t typeAndReason = 0);
+    uint32_t conversionKeyOfChild(const RuntimeType& type) const { return static_cast<uint32_t>((reinterpret_cast<const uint8_t*>(&type) - reinterpret_cast<const uint8_t*>(&data)) >> 2) << 4 | ConversionMove::reasonOfChild; }
     bool tryConvertPlainObjectInPlace(VM&, JSValue, const RuntimeType&, uint32_t typeAndReason);
     void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Object* made, size_t sizeOfCell, uint32_t typeAndReason);
     std::optional<uint32_t> literalStringWordOfConstant(uint32_t string) const;
@@ -1669,6 +1673,7 @@ struct State {
     uint32_t m_quickConversionEpoch { 1 };
     static constexpr unsigned maxDepthOfChildConversions = 4;
     bool m_isConvertingChildren { false };
+    std::array<JSCell*, maxDepthOfChildConversions> m_ancestorsOfQuickConversion { };
     using ChildrenOfQuickConversion = Vector<std::pair<JSCell*, const RuntimeType*>, 16>;
     bool canConvertQuickly(JSValue, const RuntimeType&, ChildrenOfQuickConversion&, unsigned depth);
     bool canSettleByPlans(JSValue, const RuntimeType&, ChildrenOfQuickConversion& seen, ChildrenOfQuickConversion& converted, unsigned depth);
@@ -1698,6 +1703,7 @@ struct State {
     bool staysUnconvertedByPlan(JSValue, const RuntimeType&) const;
     void shareUnconvertibleObjectPlanWithStub(JSObject*, const RuntimeType&, uint32_t typeAndReason);
     bool passesOpenTypeAsItIs(JSValue, const RuntimeType&, uint32_t typeAndReason);
+    void didLeavePlainObjectAsItWas(JSValue, const RuntimeType&, uint32_t typeAndReason);
     bool m_hasUnconvertedCastsForStub { false };
     void cacheUnconvertibleObjectPlan(UnconvertibleObjectPlan&&);
     std::unique_ptr<std::array<UnconvertibleObjectPlan, 1u << UnconvertibleObjectPlan::indexBits>> m_unconvertibleObjectPlans;
@@ -1823,7 +1829,7 @@ struct State {
     uint8_t kindsAcceptedBy(const RuntimeType&) const;
     Object* copyUnchangedByPlan(VM&, JSObject*, const RuntimeType&, bool mayConvertInPlace = false, uint32_t typeAndReason = 0);
     Object* tryConvertOrCopyByPlan(VM&, JSObject*, const CoercionPlan&, bool mayConvertInPlace);
-    bool tryConvertInPlaceByPlans(VM&, JSObject*, const RuntimeType&);
+    bool tryConvertInPlaceByPlans(VM&, JSObject*, const RuntimeType&, uint32_t typeAndReason = 0);
     enum class WireFormat : uint8_t { Int32, Float32, Float64, Boolean, Text, TimestampMicroseconds };
     struct RowColumn {
         const uint8_t* name;

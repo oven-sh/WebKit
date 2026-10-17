@@ -2587,7 +2587,11 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
         operands.append(genericCallArgument(argument).value());
     RELEASE_ASSERT(!slotIsNameIndex || method == SpeculatedMethod::None);
     bool methodHasDedicatedStub = slotIsNameIndex && methodCallHasDedicatedStub(count, slot);
-    LValue address = methodHasDedicatedStub ? nullptr : slotIsNameIndex ? m_out.constInt64(slot | PropertyLookupTable::hasKindAndCode) : slotAddress(slot, SlotAddressUse::FastPath).value();
+    bool findsMethodThroughSiteCache = slotIsNameIndex && !(methodHasDedicatedStub && isCollectionMethodName(slot)) && usesSiteCaches();
+    unsigned siteCacheWord = m_context.numberOfSiteCacheWords;
+    if (findsMethodThroughSiteCache)
+        m_context.numberOfSiteCacheWords += SiteCaches::wordsOfLocation;
+    LValue address = methodHasDedicatedStub || findsMethodThroughSiteCache ? nullptr : slotIsNameIndex ? m_out.constInt64(slot | PropertyLookupTable::hasKindAndCode) : slotAddress(slot, SlotAddressUse::FastPath).value();
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     applyEffects(patchpoint, { });
     if (address)
@@ -2603,8 +2607,32 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
         patchpoint->clobberLate(RegisterSet { reg });
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite callSite { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, count, callSite, slotIsNameIndex, methodHasDedicatedStub, slot, asks = stubForSpeculatedMethod(method, false)](CCallHelpers& jit, const StackmapGenerationParams&) {
+    patchpoint->setGenerator([context = &m_context, stubCalls = &m_context.stubCalls, count, callSite, slotIsNameIndex, methodHasDedicatedStub, findsMethodThroughSiteCache, siteCacheWord, slot, asks = stubForSpeculatedMethod(method, false)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (findsMethodThroughSiteCache) {
+            constexpr GPRReg cached = stubTemporaryGPRs[2];
+            constexpr GPRReg holder = stubTemporaryGPRs[4];
+            CCallHelpers::JumpList misses;
+            CCallHelpers::Label start = jit.label();
+            misses.append(jit.branchIfNotCell(thisGPR));
+            context->indexReferences.loadSiteCacheWord(jit, cached, siteCacheWord);
+            misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(thisGPR, JSCell::structureIDOffset())));
+            context->indexReferences.loadSiteCacheWord(jit, holder, siteCacheWord + 1);
+            IndexReferences::loadFromCachedLocation(jit, thisGPR, cached, holder, calleeGPR);
+            misses.append(jit.branchIfNotCell(calleeGPR));
+            CCallHelpers::Label isFound = jit.label();
+            context->rangesKeptInline.append({ start, isFound });
+            stubCalls->call(jit, Stub::CallValue, count, callSite);
+            params.addLatePath([=](CCallHelpers& jit) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                misses.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(slot | PropertyLookupTable::hasKindAndCode), calleeGPR);
+                context->indexReferences.getAddressOfSiteCacheWord(jit, stubTemporaryGPRs[0], siteCacheWord);
+                stubCalls->call(jit, Stub::FindMethodByNameAndFillSiteCache, callSite);
+                jit.jump().linkTo(isFound, &jit);
+            });
+            return;
+        }
         if (methodHasDedicatedStub)
             stubCalls->callMethodWithDedicatedStub(jit, count, slot, callSite);
         else if (asks)

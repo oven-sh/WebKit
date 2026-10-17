@@ -4960,7 +4960,7 @@ private:
             return !mayThrow(m_program, m_function, value);
         case Opcode::Operation:
         case Opcode::CallBuiltin:
-            return languageOperationOf(m_program, value) == LanguageOperation::CreateArguments;
+            return languageOperationOf(m_program, value) == LanguageOperation::CreateArguments || (value.tableInImage() != Format::none && Builtins::singleton().at(value.builtin()).kind == BuiltinKind::Constructor);
         case Opcode::Undefined:
         case Opcode::Null:
         case Opcode::Boolean:

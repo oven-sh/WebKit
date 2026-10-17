@@ -2980,6 +2980,7 @@ static void findStaticallyHotFunctions(Program& program)
         if (std::ranges::any_of(perRequestRuntimeModules, [&](ASCIILiteral name) { return equalSpans(path, name.span8()); }))
             runsPerRequest.set(module.index());
     }
+    program.modulesRunPerRequest = runsPerRequest;
     if (!runsPerRequest.isEmpty()) {
         BitVector isModuleBody(count);
         for (auto& [number, code] : program.builtinModules) {
@@ -13627,10 +13628,14 @@ Vector<String> optimize(Program& program)
         predictClonesByCastsInOtherBlocks(program);
     didFinish("- predictClonesByCastsInOtherBlocks"_s);
     if (!Options::auditAOTTypedAssertions()) {
+        moveConstantTablesIntoImage(program);
+        didFinish("- moveConstantTablesIntoImage"_s);
         eliminateGuardsOnFreshResults(program);
         didFinish("- eliminateGuardsOnFreshResults"_s);
         eliminateGuardsOnUnescapedModuleVariables(program);
         didFinish("- eliminateGuardsOnUnescapedModuleVariables"_s);
+        askFreshTablesInImage(program);
+        didFinish("- askFreshTablesInImage"_s);
         std::atomic<unsigned> lateGuardedPreludeEntryCallCount { 0 };
         forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
             if (!std::as_const(program).functions[i].pendingGuardedPreludeEntries.isEmpty())
@@ -13674,8 +13679,6 @@ Vector<String> optimize(Program& program)
     if (!Options::auditAOTTypedAssertions())
         shareModuleEvaluation(program);
     didFinish("- shareModuleEvaluation"_s);
-    moveConstantTablesIntoImage(program);
-    didFinish("- moveConstantTablesIntoImage"_s);
     removeUncalledFunctions(program);
     didFinish("- removeUncalledFunctions"_s);
     findComparedBuiltinCells(program);

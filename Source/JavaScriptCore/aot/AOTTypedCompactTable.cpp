@@ -117,11 +117,15 @@ CompactTable* CompactTable::createInImage(VM& vm, Structure* structure, const Ta
 
 JSValue CompactTable::valueInImage(uint32_t entry) const
 {
-    uint64_t encoded = tableInImage().values()[entry];
+    return tableInImage().valueAt(**at<Typed::State*>(offsetOfIndex() + sizeof(void*)), entry);
+}
+
+JSValue TableInImage::valueAt(State& state, uint32_t entry) const
+{
+    uint64_t encoded = values()[entry];
     JSValue value = JSValue::decode(encoded);
     if (!value.isCell())
         return value;
-    Typed::State& state = **at<Typed::State*>(offsetOfIndex() + sizeof(void*));
     VM& vm = *state.instance.vm;
     if (encoded & Data::encodedStringIsSmall)
         return encoded >> 3 ? vm.smallStrings.singleCharacterString(static_cast<unsigned char>(encoded >> 3)) : vm.smallStrings.emptyString();
@@ -139,6 +143,8 @@ Vector<uint8_t> TableInImage::encode(std::span<const std::pair<uint32_t, std::sp
     bool hasShortSlots = header.capacity <= CompactTable::maxCapacityWithShortSlots;
     header.keysShift = header.indexBits ? header.indexBits + !hasShortSlots : CompactTable::keysShiftWithTags;
     header.hasValues = !values.empty();
+    for (auto& [string, text] : keys)
+        header.lengthOfLongestKey = std::max<uint32_t>(header.lengthOfLongestKey, text.size());
     size_t sizeOfIndex = static_cast<size_t>(2) << header.keysShift;
     size_t offsetOfStrings = sizeof(TableInImage) + sizeOfIndex;
     size_t offsetOfValues = offsetOfStrings + sizeof(uint32_t) * header.capacity;
@@ -266,25 +272,20 @@ ALWAYS_INLINE std::optional<uint32_t> CompactTable::findCharacters(std::span<con
     });
 }
 
-std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, JSString* key) const
+std::optional<uint32_t> TableInImage::find(JSString* key) const
 {
-    const TableInImage& entries = tableInImage();
     if (const StringImpl* impl = key->tryGetValueImpl()) [[likely]]
-        return entries.find(*impl);
-    auto findCharacters = [&]<typename CharacterType>(std::span<const CharacterType> characters) {
-        return entries.findWithHash(RapidHash::computeHashAndMaskTop8Bits<CharacterType>(characters), [&](uint32_t entry) {
-            return StringView { entries.textAt(entry) } == StringView { characters };
+        return find(*impl);
+    if (key->length() > lengthOfLongestKey)
+        return std::nullopt;
+    auto findCopy = [&]<typename CharacterType>() {
+        Vector<CharacterType, 128> characters(key->length());
+        key->resolveToBuffer(characters.mutableSpan());
+        return findWithHash(RapidHash::computeHashAndMaskTop8Bits<CharacterType>(characters.span()), [&](uint32_t entry) {
+            return StringView { textAt(entry) } == StringView { characters.span() };
         });
     };
-    if (key->isSubstring()) {
-        auto characters = key->view(globalObject);
-        return characters->is8Bit() ? findCharacters(characters->span8()) : findCharacters(characters->span16());
-    }
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto string = key->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    return entries.find(*string->impl());
+    return key->is8Bit() ? findCopy.template operator()<Latin1Character>() : findCopy.template operator()<char16_t>();
 }
 
 std::optional<uint32_t> CompactTable::find(JSGlobalObject* globalObject, JSValue value) const
@@ -293,7 +294,7 @@ std::optional<uint32_t> CompactTable::find(JSGlobalObject* globalObject, JSValue
         return std::nullopt;
     JSString* key = asString(value);
     if (isInImage())
-        return findInImage(globalObject, key);
+        return tableInImage().find(key);
     if (key->isSubstring()) {
         auto characters = key->view(globalObject);
         auto entry = characters->is8Bit() ? findCharacters(characters->span8()) : findCharacters(characters->span16());
@@ -595,7 +596,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     auto* table = owner->m_compactTable ? uncheckedDowncast<CompactTable>(owner->m_compactTable.get()) : nullptr;
     if (table && table->isInImage()) {
         if constexpr (!Traits::hasValueData) {
-            auto entry = table->findInImage(globalObject, string);
+            auto entry = table->tableInImage().find(string);
             RETURN_IF_EXCEPTION(scope, false);
             if (entry)
                 return true;

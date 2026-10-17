@@ -2405,10 +2405,16 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         }
         if (supertype && isOnlyInExtraProperties(m_program, supertype, name)) {
             CellPointer cell = nonNullish(object, name);
+            if (!(type.primitives & Primitive::Undefined) && &m_program.at(value.type) == &type) {
+                if (auto held = getByIdWithTypeCheck(box(cell), name, value.type))
+                    return *held;
+            }
+            if (value.prediction() && !(m_program.at(value.prediction()).primitives & Primitive::Undefined) && !m_fusedCasts)
+                return ensure(emitGetById(box(cell), name), type);
             return eitherOperand(hasNoBits(orderWordOf(cell), orderWordHasExtraProperties), joinRepFor(type), [&] {
                 return ensure(undefined(), m_program.at(m_program.types.undefined), type);
             }, [&] {
-                return getFromObjectWithExtraProperties(cell, name, type);
+                return ensure(emitGetById(box(cell), name), type);
             });
         }
         auto genericPath = [&] {
@@ -6297,7 +6303,11 @@ void Lowering::lowerPutById(ValueID, const Value& value)
     SetForScope namedStoreValueIsNotCell(m_namedStoreValueIsNotCell, !holdsCells(get(stored).rep));
     if (!field) {
         auto genericPath = [&]() -> Operand {
-            emitPutById(in<Boxed>(object), name, in<Boxed>(stored));
+            LayoutID supertype = receiver.singleLayout();
+            if (auto number = supertype && isOnlyInExtraProperties(m_program, supertype, name) && !isNamedLastIndex(name) ? tableIndexOfName(name) : std::nullopt)
+                emitPutByNameThroughTable(isInSloppyCode() ? Stub::PutByNameSloppy : Stub::PutByName, in<Boxed>(object), *number, in<Boxed>(stored));
+            else
+                emitPutById(in<Boxed>(object), name, in<Boxed>(stored));
             return { };
         };
         if (value.isFirstStoreToThis() && value.initialStructureOfFirstStore() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions()) {

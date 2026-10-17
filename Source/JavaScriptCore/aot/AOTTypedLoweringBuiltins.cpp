@@ -456,7 +456,7 @@ Boxed Lowering::lowerMethodGetById(const Value& value)
 
 Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
 {
-    if (value.tableInImage() != Format::none) {
+    if (value.tableInImage() != Format::none && m_builtins.at(value.builtin()).kind == BuiltinKind::Constructor) {
         auto& created = m_builtins.classes()[value.engineClass()];
         Word32 table = word32(value.tableInImage());
         return ensure(created.type == JSSetType ? AOT_TYPED_OPERATION(NewSetInImage, table) : AOT_TYPED_OPERATION(NewMapInImage, table), Type::engineClass(created), typeOf(result));

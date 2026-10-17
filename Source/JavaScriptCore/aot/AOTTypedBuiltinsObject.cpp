@@ -1607,7 +1607,7 @@ std::optional<Vector<Lowering::AssignedField, 8>> Lowering::fieldsAssignedWithou
     LayoutID supertype = receiver.singleLayout();
     if (!supertype || Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations())
         return std::nullopt;
-    if (!isObjectLayout(m_program.at(supertype).kind) || m_program.at(supertype).acceptsUntypedObjects || mayDespecialize(supertype))
+    if (!isObjectLayout(m_program.at(supertype).kind) || m_program.at(supertype).test.neverPasses())
         return std::nullopt;
     constexpr uint32_t isNoPlainSlot = fieldMayBeUnlisted | fieldHoldsLazyClosure | fieldMayExistWithoutStorage;
     Vector<AssignedField, 8> result;
@@ -1637,7 +1637,7 @@ std::optional<Vector<Lowering::AssignedField, 8>> Lowering::fieldsAssignedWithou
         default:
             return std::nullopt;
         }
-        if (to->store != from.store || to->isOutOfLine || to->isPinned || to->isMissingInSomeSubtype || to->hasOtherOffsetInSomeSubtype || to->isAnyObjectInSomeSubtype || to->mayBeCoercedInSomeSubtype)
+        if (to->isOutOfLine || to->isPinned || to->isMissingInSomeSubtype || to->hasOtherOffsetInSomeSubtype || to->isAnyObjectInSomeSubtype || to->mayBeCoercedInSomeSubtype)
             return std::nullopt;
         if (to->flags & (isNoPlainSlot | fieldIsNeverStored | fieldIsImmutable) || m_program.at(to->slot).isDiscriminant || hasSubtypeKeepingField(supertype, from.name))
             return std::nullopt;
@@ -1655,6 +1655,8 @@ void Lowering::assignFields(CellPointer target, ValueID targetID, CellPointer so
 {
     LayoutID supertype = typeOf(targetID).singleLayout();
     bool addsProperties = std::ranges::any_of(fields, [](auto& field) { return !field.to; });
+    if (m_program.at(supertype).acceptsUntypedObjects || mayDespecialize(supertype))
+        orElse(passes(shapeWordOf(target), m_program.at(supertype).test, otherwise), otherwise);
     bool mayHaveIntegrity = mayBeFrozen(supertype) || m_program.at(supertype).subtypes.containsIf([&](LayoutID subtype) {
         return m_program.at(subtype).isImmutableAfterAllocation;
     });
@@ -1663,18 +1665,39 @@ void Lowering::assignFields(CellPointer target, ValueID targetID, CellPointer so
     else if (mayHaveIntegrity)
         orElse(hasNoBits(orderWordOf(target), orderWordIsFrozen), otherwise);
     Vector<LValue, 8> bits;
+    Vector<Operand, 8> converted;
     for (auto& field : fields) {
-        if (!field.to) {
-            bits.append(nullptr);
+        bits.append(nullptr);
+        converted.append(Operand { });
+        if (!field.to)
             continue;
+        Store store = field.to->store;
+        if (field.from->store == store) {
+            TypedPointer from = fieldAt(source, *field.from);
+            unsigned size = sizeOf(store);
+            bits.last() = size == 8 ? m_out.load64(from) : size == 4 ? m_out.load32(from) : m_out.load8ZeroExt32(from);
+            if (store == Store::Int32OrNumberBox)
+                orElse(Word32(m_out.greaterThanOrEqual(bits.last(), m_out.constInt32(minInlineInt32))), otherwise);
+        } else {
+            Type held = m_program.at(field.from->stored).withoutPrimitives(Primitive::Absent);
+            Operand value = readField(source, *field.from, held);
+            if (store != Store::Int32OrNumberBox)
+                converted.last() = convert(value, held, repOf(store));
+            else {
+#if CPU(ARM64)
+                Integer word = narrowOrElse(value, held, Type::integer(Range::int32()), otherwise).as<Integer>();
+                LBasicBlock isInline = m_out.newBlock();
+                branchOnInt32Inline(word, usually(isInline), rarely(otherwise));
+                m_out.appendTo(isInline);
+                bits.last() = low32(word).value();
+#else
+                bits.last() = low32(narrowOrElse(value, held, Type::integer({ minInlineInt32, INT32_MAX }), otherwise).as<Integer>()).value();
+#endif
+            }
         }
-        TypedPointer from = fieldAt(source, *field.from);
-        unsigned size = sizeOf(field.to->store);
-        bits.append(size == 8 ? m_out.load64(from) : size == 4 ? m_out.load32(from) : m_out.load8ZeroExt32(from));
-        if (field.to->store == Store::Int32OrNumberBox) {
-            orElse(Word32(m_out.greaterThanOrEqual(bits.last(), m_out.constInt32(minInlineInt32))), otherwise);
+        if (store == Store::Int32OrNumberBox)
             orElse(Word32(m_out.greaterThanOrEqual(m_out.load32(fieldAt(target, *field.to)), m_out.constInt32(minInlineInt32))), otherwise);
-        } else if (m_program.at(field.to->stored).primitives & Primitive::Absent)
+        else if (m_program.at(field.to->stored).primitives & Primitive::Absent)
             orElse(hasField(target, *field.to), otherwise);
     }
     didEmitWrite(Writes::Fields);
@@ -1684,7 +1707,9 @@ void Lowering::assignFields(CellPointer target, ValueID targetID, CellPointer so
             continue;
         TypedPointer to = fieldAt(target, *fields[i].to);
         unsigned size = sizeOf(fields[i].to->store);
-        if (size == 8)
+        if (!bits[i])
+            store(fields[i].to->store, converted[i], to);
+        else if (size == 8)
             m_out.store64(bits[i], to);
         else if (size == 4)
             m_out.store32(bits[i], to);

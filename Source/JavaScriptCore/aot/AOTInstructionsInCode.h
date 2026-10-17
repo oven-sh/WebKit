@@ -713,6 +713,8 @@ Cause tryDecode(const Code& code, const Functor& functor)
     auto& calls = code.info.stubCalls;
     auto& faults = code.info.faultingAccesses;
     auto& references = code.info.indexReferences;
+    auto& keptInline = code.info.rangesKeptInline;
+    size_t nextKeptInline = 0;
     auto& ranges = code.dataInCode;
     size_t call = 0;
     size_t fault = 0;
@@ -795,6 +797,10 @@ Cause tryDecode(const Code& code, const Functor& functor)
                 return Cause::KeyOnABranch;
             instruction.kind = Kind::Pinned;
         }
+        while (nextKeptInline < keptInline.size() && keptInline[nextKeptInline].second <= at)
+            ++nextKeptInline;
+        if (nextKeptInline < keptInline.size() && keptInline[nextKeptInline].first <= at && instruction.kind == Kind::Plain)
+            instruction.kind = Kind::Pinned;
 #if CPU(ARM64)
         if (at >= code.appendedEntriesStart && instruction.kind == Kind::Plain)
             instruction.kind = Kind::Pinned;

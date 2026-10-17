@@ -156,6 +156,7 @@ uint64_t imageStamp()
     mix(Instance::offsetOfTypedData());
     mix(OBJECT_OFFSETOF(Instance::TypedAllocation, allocator) << 16 | OBJECT_OFFSETOF(Instance::TypedAllocation, words) << 8 | sizeof(Instance::TypedAllocation));
     mix(Instance::minStateWithData);
+    mix(SiteCaches::offsetOfWords);
     mix(numberOfStubs);
     mix(sizeof(ImageHeader));
     mix(sizeof(ImageFunction));
@@ -3183,6 +3184,12 @@ Vector<uint8_t> ImageBuilder::finish()
     for (size_t size : dataSizes)
         totalDataSize += size;
     header.totalDataSizeIn16Bytes = safeCast<uint32_t>(totalDataSize / 16);
+    Vector<uint32_t> firstSiteCacheWord(m_functions.size());
+    for (size_t index = 0; index < m_functions.size(); ++index) {
+        firstSiteCacheWord[index] = header.numberOfSiteCacheWords;
+        header.numberOfSiteCacheWords += m_functions[index].code.info.numberOfSiteCacheWords;
+    }
+    RELEASE_ASSERT_WITH_MESSAGE(header.numberOfSiteCacheWords <= SiteCaches::maxNumberOfWords, "AOT: the program has more site caches than there is room for behind the instance");
     RELEASE_ASSERT_WITH_MESSAGE(!m_typedData.size() || sizeof(Instance::NegativeOffsetFields) + m_environmentsSize <= Instance::bytesReservedForEnvironments - Instance::bytesReservedForLoopPollPage, "AOT: the program has more environments than there is room for below the instance");
     RELEASE_ASSERT_WITH_MESSAGE(!m_typedData.size() || reinterpret_cast<const Typed::Data*>(m_typedData.span().data())->numberOfStructureDescriptors <= Instance::maxStructureDescriptors, "AOT: the program has more rows than there is room for below the instance");
     header.environmentsSize = m_environmentsSize;
@@ -3505,7 +3512,7 @@ Vector<uint8_t> ImageBuilder::finish()
         auto [codeAt, stubsForFunction] = placement[index];
         memcpy(code + codeAt, function.code.bytes.span().data(), function.code.bytes.size());
         for (auto& reference : info.indexReferences)
-            IndexReferences::fill(code + codeAt, reference, info.stateNumber);
+            IndexReferences::fill(code + codeAt, reference, reference.isSiteCacheWord ? firstSiteCacheWord[index] : info.stateNumber);
         for (auto& call : info.stubCalls) {
             if (call.body) {
                 uint32_t indexWithinKind = bodyIndexWithinKind[call.body - 1];

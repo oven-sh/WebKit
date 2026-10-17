@@ -3596,7 +3596,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerce, EncodedJSValue, (Instance* ins
 {
     if ((typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::As) || (typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::AsIfConvertible)) {
         auto& type = instance->typed->type(typeAndReason >> 4);
-        if (instance->typed->tryQuickConversion(*instance->vm, JSValue::decode(value), type))
+        if (instance->typed->tryQuickConversion(*instance->vm, JSValue::decode(value), type, typeAndReason))
             return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
         if (instance->typed->staysUnconvertedByPlan(JSValue::decode(value), type)) {
             instance->typed->shareUnconvertibleObjectPlanWithStub(asObject(JSValue::decode(value)), type, typeAndReason);
@@ -3607,7 +3607,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerce, EncodedJSValue, (Instance* ins
     }
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
-    OPERATION_RETURN(scope, JSValue::encode(state.coerce(globalObject, JSValue::decode(value), state.type(typeAndReason >> 4), static_cast<Typed::Format::CastReason>(typeAndReason & 15), { }, State::CoercionResult::ConvertedValue, typeAndReason)));
+    JSValue result = state.coerce(globalObject, JSValue::decode(value), state.type(typeAndReason >> 4), static_cast<Typed::Format::CastReason>(typeAndReason & 15), { }, State::CoercionResult::ConvertedValue, typeAndReason);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (JSValue::encode(result) == value)
+        state.didLeavePlainObjectAsItWas(result, state.type(typeAndReason >> 4), typeAndReason);
+    OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerceInPlace, void, (Instance* instance, EncodedJSValue value, uint32_t typeAndReason))
@@ -4118,6 +4122,7 @@ struct InheritedField {
     JSObject* holder { nullptr };
     PropertyOffset offset { invalidOffset };
     JSObject* extraProperties { nullptr };
+    bool isAbsent { false };
 };
 
 static JSValue getFromReceiver(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, InheritedField& inherited)
@@ -4140,15 +4145,18 @@ static JSValue getFromReceiver(JSGlobalObject* globalObject, JSObject* object, c
             inherited.offset = offset;
             return extra->getDirect(offset);
         }
+        inherited.extraProperties = extra;
     }
     JSValue prototype = object->getPrototypeDirect();
     if (!prototype.isObject()) {
         inherited.isKnown = isAbsentField;
+        inherited.isAbsent = true;
         return jsUndefined();
     }
     JSObject* above = asObject(prototype);
     if (auto* found = vm.megamorphicCache() ? vm.megamorphicCache()->findLoad(above->structureID(), name.impl()) : nullptr) {
         inherited.isKnown = isAbsentField;
+        inherited.isAbsent = !found->m_holder;
         if (!found->m_holder)
             return jsUndefined();
         inherited.holder = found->m_holder == JSCell::seenMultipleCalleeObjects() ? above : asObject(found->m_holder);
@@ -4169,13 +4177,13 @@ static void rememberExtraProperty(Instance* instance, JSCell* cell, uint32_t nam
 {
     State& state = *instance->typed;
     Structure* ofExtraProperties = found.extraProperties->structure();
-    if (state.isCounting() || state.data.isCompiledForAudit || ofExtraProperties->isDictionary() || &uncheckedDowncast<Typed::Object>(cell)->state() != &state)
+    if (state.isCounting() || state.data.isCompiledForAudit || ofExtraProperties->isDictionary() || &uncheckedDowncast<Typed::Object>(cell)->state() != &state || (!found.isAbsent && (found.holder || !isValidOffset(found.offset))))
         return;
     uncheckedDowncast<Typed::Object>(cell)->specializeStructureForExtraProperties(*instance->vm);
     const Typed::RuntimeType& accepted = state.type(type);
     uint64_t kinds = state.kindsAcceptedBy(accepted);
     uint64_t structureOfValue = value.isCell() && state.fits(accepted, value) ? value.asCell()->structureID().bits() : 0;
-    instance->rememberInheritedFieldAnswer({ cell->structureID().bits(), name, type | Instance::asksForExtraProperty, static_cast<int32_t>(offsetRelativeToBase(found.offset)), std::bit_cast<JSCell*>(static_cast<uintptr_t>(ofExtraProperties->id().bits())), kinds | structureOfValue << 32 });
+    instance->rememberInheritedFieldAnswer({ cell->structureID().bits(), name, type | Instance::asksForExtraProperty, found.isAbsent ? 0 : static_cast<int32_t>(offsetRelativeToBase(found.offset)), std::bit_cast<JSCell*>(static_cast<uintptr_t>(ofExtraProperties->id().bits())), kinds | structureOfValue << 32 });
 }
 
 static bool acceptsEveryValue(const Typed::RuntimeType& type)
@@ -4284,6 +4292,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRecordTypeMismatch, void, (Instance* i
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedEnforceTypeOrConvert, EncodedJSValue, (Instance* instance, EncodedJSValue value, uint32_t type))
 {
+    if (value && instance->typed->staysUnconvertedByPlan(JSValue::decode(value), instance->typed->type(type)))
+        return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSValue given = JSValue::decode(value);

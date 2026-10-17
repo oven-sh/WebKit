@@ -184,6 +184,8 @@ struct LoweringContext {
     UncheckedKeyHashMap<uint32_t, uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> calleeIndices;
     AddressLikeIntegers wideIntegerConstants;
     IndexReferences indexReferences;
+    unsigned numberOfSiteCacheWords { 0 };
+    Vector<std::pair<CCallHelpers::Label, CCallHelpers::Label>> rangesKeptInline;
     Vector<Site> sites;
     Vector<StringID> identifiers;
     Vector<uint32_t> plans;
@@ -1516,6 +1518,9 @@ private:
     const AccessRun* currentAccessRun(StringID);
     LValue slotFromAccessRun(const AccessRun&, Boxed base, StringID, LBasicBlock own);
     Boxed emitStandaloneCachedGetById(Boxed base, StringID, bool isInRun = false);
+    bool usesSiteCaches() const;
+    Boxed getByNameThroughSiteCache(Boxed base, uint32_t name);
+    void putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t name, Boxed value);
     void emitPutByNameThroughTable(Stub, Boxed base, uint32_t identifier, Boxed value);
     std::optional<Stub> getByNameStubForType(const Type&) const;
     std::optional<Operand> getByIdWithTypeCheck(Boxed base, StringID, TypeID held, std::optional<size_t> castIndex = std::nullopt);

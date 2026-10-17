@@ -204,6 +204,7 @@ unsigned eliminateGuardsOnUnescapedReceivers(const Program&, Function&);
 void eliminateGuardsOnFreshResults(Program&);
 void compareHeaderNamesWithPassedConstants(Program&);
 void eliminateGuardsOnUnescapedModuleVariables(Program&);
+void askFreshTablesInImage(Program&);
 void resolveBuiltins(const Program&, Function&);
 void sinkEmptyArrayLiterals(Function&);
 void convertCallIntrinsicToCall(Value&);

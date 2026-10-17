@@ -4244,7 +4244,7 @@ bool Lowering::instanceOfUsesShapeTest(const Value& value)
     if (named.opcode != Opcode::FunctionReference)
         return false;
     LayoutID ofClass = m_program.at(named.function()).constructedClass;
-    if (!ofClass || !m_program.at(ofClass).instances.isRange() || m_program.at(ofClass).instancesMayBecomeRecords || m_program.at(ofClass).hasInstancesWithOtherPrototype)
+    if (!ofClass || !m_program.at(ofClass).instances.isRange() || m_program.at(ofClass).instancesMayBecomeRecords)
         return false;
     for (LayoutID at = ofClass; at; at = m_program.at(at).base) {
         auto& layout = m_program.at(at);
@@ -4272,6 +4272,7 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
 {
     LayoutID ofClass = m_program.at(m_function.at(value.child(1)).function()).constructedClass;
     ShapeTest instances = m_program.at(ofClass).instances;
+    bool instancesMayHaveOtherPrototype = m_program.at(ofClass).hasInstancesWithOtherPrototype;
     auto callStub = [&](bool walksChain) {
         LValue operand = in<Boxed>(value.child(0)).value();
         m_context.emitsCalls = true;
@@ -4287,7 +4288,7 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
 #endif
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         CallSite site { nextSite() };
-        patchpoint->setGenerator([stubCalls = &m_context.stubCalls, site, walksChain, numberOfClass = ofClass.index(), last = instances.count ? instances.last() : 0, count = instances.count](CCallHelpers& jit, const StackmapGenerationParams&) {
+        patchpoint->setGenerator([stubCalls = &m_context.stubCalls, site, walksChain, instancesMayHaveOtherPrototype, numberOfClass = ofClass.index(), last = instances.count ? instances.last() : 0, count = instances.count](CCallHelpers& jit, const StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.move(CCallHelpers::TrustedImm32(numberOfClass), GPRInfo::argumentGPR1);
             if (walksChain) {
@@ -4296,12 +4297,12 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
             }
             if (count == 1) {
                 jit.move(CCallHelpers::TrustedImm32(Typed::shapeWordOf(last)), GPRInfo::argumentGPR2);
-                stubCalls->call(jit, Stub::InstanceOfLeafClass, site);
+                stubCalls->call(jit, instancesMayHaveOtherPrototype ? Stub::InstanceOfLeafClassCheckingPrototype : Stub::InstanceOfLeafClass, site);
                 return;
             }
             jit.move(CCallHelpers::TrustedImm32(last), GPRInfo::argumentGPR2);
             jit.move(CCallHelpers::TrustedImm32(count), GPRInfo::argumentGPR3);
-            stubCalls->call(jit, Stub::InstanceOfClass, site);
+            stubCalls->call(jit, instancesMayHaveOtherPrototype ? Stub::InstanceOfClassCheckingPrototype : Stub::InstanceOfClass, site);
         });
         unwindToLandingPad(patchpoint, site);
         return Word32(patchpoint);
@@ -4312,7 +4313,7 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
         LBasicBlock genericPath = newColdBlock();
         bool hasOnlyTypedObjects = !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.acceptsUntypedObjects(m_program);
         bool mayHaveOtherPrototype = acceptsObjectsWithOtherPrototype(m_program, type);
-        LBasicBlock chainPath = hasOnlyTypedObjects && !mayHaveOtherPrototype ? nullptr : newColdBlock();
+        LBasicBlock chainPath = hasOnlyTypedObjects && !mayHaveOtherPrototype && !instancesMayHaveOtherPrototype ? nullptr : newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         orElse(isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedModifiedClassObjects()), ofClass.index())))), genericPath);
         Operand given = get(value.child(0));
@@ -4329,7 +4330,13 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
         Word32 isInstance = passes(shapeWord, instances);
         if (m_program.mayRunInMultipleInstances)
             isInstance = Word32(m_out.bitAnd(isInstance.value(), belongsToThisInstance(cell).value()));
-        m_out.branch(isInstance.value(), unsure(isOne), unsure(hasOtherShape));
+        if (instancesMayHaveOtherPrototype) {
+            LBasicBlock hasShape = m_out.newBlock();
+            m_out.branch(isInstance.value(), unsure(hasShape), unsure(hasOtherShape));
+            m_out.appendTo(hasShape);
+            m_out.branch(hasOtherPrototype(cell).value(), rarely(chainPath), usually(isOne));
+        } else
+            m_out.branch(isInstance.value(), unsure(isOne), unsure(hasOtherShape));
         m_out.appendTo(hasOtherShape);
         if (!hasOnlyTypedObjects) {
             LBasicBlock hasLayout = m_out.newBlock();

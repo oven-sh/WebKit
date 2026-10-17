@@ -814,10 +814,121 @@ std::optional<uint32_t> Lowering::tableIndexOfName(StringID name)
     return PropertyLookupTable::nameForIdentifierIndex(identifier);
 }
 
+bool Lowering::usesSiteCaches() const
+{
+    return isX86_64() && m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
+}
+
+Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
+{
+    m_context.emitsCalls = true;
+    unsigned word = m_context.numberOfSiteCacheWords;
+    m_context.numberOfSiteCacheWords += SiteCaches::wordsOfLocation;
+    constexpr GPRReg cached = stubTemporaryGPRs[2];
+    constexpr GPRReg holder = stubTemporaryGPRs[4];
+    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->append(ConstrainedValue(base.value(), ValueRep::SomeRegister));
+    patchpoint->clobberEarly(RegisterSet { cached, holder });
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    RegisterSet clobbered = *registersClobberedBy(Stub::GetByName);
+    clobbered.add(GPRInfo::returnValueGPR, IgnoreVectors);
+    clobbered.add(stubImmediateGPR, IgnoreVectors);
+    patchpoint->clobberLate(clobbered);
+    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    CallSite site;
+    site.bits = nextSite();
+    patchpoint->setGenerator([context = &m_context, name, word, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg receiver = params[1].gpr();
+        CCallHelpers::Label start = jit.label();
+        CCallHelpers::JumpList misses;
+        misses.append(jit.branchIfNotCell(receiver));
+        context->indexReferences.loadSiteCacheWord(jit, cached, word);
+        misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(receiver, JSCell::structureIDOffset())));
+        context->indexReferences.loadSiteCacheWord(jit, holder, word + 1);
+        IndexReferences::loadFromCachedLocation(jit, receiver, cached, holder, GPRInfo::returnValueGPR);
+        CCallHelpers::Label done = jit.label();
+        context->rangesKeptInline.append({ start, done });
+        RegisterSet live = RegisterSet::registersToSaveForCCall(params.usedRegisters());
+        live.remove(GPRInfo::returnValueGPR);
+        Stub stub = stubVariantPreserving(Stub::GetByName, live) == Stub::GetByName ? Stub::GetByNameAndFillSiteCache : Stub::GetByNameAndFillSiteCachePreservingTwo;
+        params.addLatePath([=](CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            misses.link(&jit);
+            jit.move(receiver, firstStubOperandGPR);
+            jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
+            context->indexReferences.getAddressOfSiteCacheWord(jit, GPRInfo::argumentGPR1, word);
+            context->stubCalls.call(jit, stub, site);
+            jit.jump().linkTo(done, &jit);
+        });
+    });
+    unwindToLandingPad(patchpoint, site);
+    return Boxed(patchpoint);
+}
+
+void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t name, Boxed value)
+{
+    m_context.emitsCalls = true;
+    unsigned word = m_context.numberOfSiteCacheWords++;
+    constexpr GPRReg cached = stubTemporaryGPRs[2];
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->append(ConstrainedValue(base.value(), ValueRep::reg(firstStubOperandGPR)));
+    patchpoint->append(ConstrainedValue(value.value(), ValueRep::reg(GPRInfo::argumentGPR1)));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    RegisterSet clobbered = *registersClobberedBy(Stub::PutByName);
+    clobbered.add(GPRInfo::returnValueGPR, IgnoreVectors);
+    clobbered.add(stubImmediateGPR, IgnoreVectors);
+    patchpoint->clobberLate(clobbered);
+    CallSite site;
+    site.bits = nextSite();
+    patchpoint->setGenerator([context = &m_context, isSloppy, name, word, site, valueIsNotCell = m_namedStoreValueIsNotCell](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        CCallHelpers::JumpList misses;
+        CCallHelpers::Label start = jit.label();
+        misses.append(jit.branchIfNotCell(firstStubOperandGPR));
+        context->indexReferences.loadSiteCacheWord(jit, cached, word);
+        misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset())));
+        jit.urshift64(CCallHelpers::TrustedImm32(SiteCaches::offsetShift), cached);
+        jit.store64(GPRInfo::argumentGPR1, CCallHelpers::BaseIndex(firstStubOperandGPR, cached, CCallHelpers::TimesOne));
+        CCallHelpers::Jump storesCell;
+        if (!valueIsNotCell)
+            storesCell = jit.branchIfCell(GPRInfo::argumentGPR1);
+        CCallHelpers::Label done = jit.label();
+        context->rangesKeptInline.append({ start, done });
+        bool preservesTwo = stubVariantPreserving(Stub::PutByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::PutByName;
+        Stub stub = static_cast<Stub>(static_cast<unsigned>(isSloppy ? Stub::PutByNameSloppyAndFillSiteCache : Stub::PutByNameAndFillSiteCache) + preservesTwo);
+        params.addLatePath([=](CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            if (!valueIsNotCell) {
+                storesCell.link(&jit);
+                CCallHelpers::Label barrierStart = jit.label();
+                jit.load8(CCallHelpers::Address(firstStubOperandGPR, JSCell::cellStateOffset()), cached);
+                jit.branch32(CCallHelpers::Above, cached, CCallHelpers::Address(instanceGPR, Instance::offsetOfBarrierThreshold())).linkTo(done, &jit);
+                context->rangesKeptInline.append({ barrierStart, jit.label() });
+                context->stubCalls.call(jit, Stub::WriteBarrier, CallSite { });
+                jit.jump().linkTo(done, &jit);
+            }
+            misses.link(&jit);
+            jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
+            context->indexReferences.getAddressOfSiteCacheWord(jit, stubTemporaryGPRs[3], word);
+            context->stubCalls.call(jit, stub, site);
+            jit.jump().linkTo(done, &jit);
+        });
+    });
+    unwindToLandingPad(patchpoint, site);
+}
+
 Boxed Lowering::emitStandaloneCachedGetById(Boxed base, StringID name, bool isInRun)
 {
-    if (auto number = isInRun ? std::nullopt : tableIndexOfName(name))
+    if (auto number = isInRun ? std::nullopt : tableIndexOfName(name)) {
+        if (usesSiteCaches())
+            return getByNameThroughSiteCache(base, *number);
         return Boxed(callICStub(Stub::GetByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
+    }
     auto slot = allocateSite(name, 0);
     if (!slot && !isInRun && name.index() < m_program.identifierNumbers.size() && m_program.identifierNumbers[name.index()])
         return Boxed(callICStub(Stub::GetByNameUncached, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { GPRInfo::argumentGPR1, name.index() }));
@@ -1019,7 +1130,10 @@ void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed valu
     auto* valueBoxing = value.value()->as<PatchpointValue>();
     bool storesNumberJustBoxed = valueBoxing && valueBoxing->generator() == m_context.numberBoxingGenerator.get();
     if (auto number = siteFlags || onlyThroughStub || storesNumberJustBoxed ? std::nullopt : tableIndexOfName(name)) {
-        emitPutByNameThroughTable(isSloppy ? Stub::PutByNameSloppy : Stub::PutByName, base, *number, value);
+        if (usesSiteCaches())
+            putByNameThroughSiteCache(isSloppy, base, *number, value);
+        else
+            emitPutByNameThroughTable(isSloppy ? Stub::PutByNameSloppy : Stub::PutByName, base, *number, value);
         return;
     }
     unsigned isStrict = isSloppy ? 0 : 2;
