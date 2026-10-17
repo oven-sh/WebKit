@@ -37,6 +37,7 @@ function caught(s) {
 
 const small = "aaac";
 const abandoned = "a".repeat(35) + "c";
+const throwCount = Math.min(testLoopCount, 200);
 const sites = [
     [testLiteral, true], [test, true], [exec, "c"], [execSticky, "aac"], [match, "c"], [matchGlobal, 1], [matchAll, 1],
     [search, 3], [replace, "aaaX"], [replaceGlobal, "aaa"], [replaceFunction, "aaaY"], [split, 2], [caught, true],
@@ -46,7 +47,7 @@ for (const [run, expected] of sites) {
     noInline(run);
 
     // Until the optimizing compiler has compiled it. numberOfDFGCompiles() is large when that compiler is off.
-    for (let i = 0; i < 10000000 && !numberOfDFGCompiles(run); i++) {
+    for (let i = 0; i < testLoopCount && !numberOfDFGCompiles(run); i++) {
         const result = run(small);
         if (result !== expected)
             throw new Error(run.name + " on the small subject: expected " + JSON.stringify(expected) + " but got " + JSON.stringify(result));
@@ -55,7 +56,7 @@ for (const [run, expected] of sites) {
     if (!compiles)
         throw new Error(run.name + " was not compiled");
 
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < throwCount; i++) {
         let result;
         let error = null;
         try {
@@ -73,7 +74,7 @@ for (const [run, expected] of sites) {
             throw new Error("execSticky at iteration " + i + ": lastIndex is " + stickyRegExp.lastIndex);
     }
 
-    // Code that left for a lower tier at each of the 200 calls is thrown away and compiled again.
+    // Code that left for a lower tier at each of these calls is thrown away and compiled again.
     if (numberOfDFGCompiles(run) !== compiles)
         throw new Error(run.name + " was compiled again: " + compiles + " then " + numberOfDFGCompiles(run));
     if (run(small) !== expected)
