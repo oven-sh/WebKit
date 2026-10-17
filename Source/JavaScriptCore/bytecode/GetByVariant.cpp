@@ -68,6 +68,9 @@ GetByVariant& GetByVariant::operator=(const GetByVariant& other)
     m_offset = other.m_offset;
     m_intrinsicFunction = other.m_intrinsicFunction;
     m_customAccessorGetter = other.m_customAccessorGetter;
+#if ASSERT_ENABLED
+    m_customAccessorRealm = other.m_customAccessorRealm;
+#endif
     if (other.m_domAttribute)
         m_domAttribute = WTF::makeUnique<DOMAttributeAnnotation>(*other.m_domAttribute);
     else
@@ -153,6 +156,8 @@ bool GetByVariant::attemptToMerge(const GetByVariant& other)
             return false;
         m_conditionSet = mergedConditionSet;
     }
+
+    ASSERT(m_customAccessorRealm == other.m_customAccessorRealm);
     
     m_structureSet.merge(other.m_structureSet);
     

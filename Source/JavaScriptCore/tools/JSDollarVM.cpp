@@ -1915,6 +1915,10 @@ void JSTestCustomGetterSetter::finishCreation(VM& vm)
     putDirectCustomAccessor(vm, Identifier::fromString(vm, "customFunction"_s),
         CustomGetterSetter::create(vm, customGetAccessor, customFunctionSetter), static_cast<unsigned>(PropertyAttribute::CustomAccessor));
 
+    // A custom accessor that has a DOMAttributeAnnotation and no DOMJIT snippet. The DFG and the FTL call its getter from CallDOMGetter.
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "customDOMAttributeGlobalObject"_s),
+        DOMAttributeGetterSetter::create(vm, customGetAccessorGlobalObject, customSetAccessorGlobalObject, DOMAttributeAnnotation { info(), nullptr }),
+        PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum);
 }
 
 const ClassInfo Element::s_info = { "Element"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Element) };
