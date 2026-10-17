@@ -10,6 +10,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConvention.h"
+#include "AOTTypedCompactTable.h"
 #include "FPRInfo.h"
 #include "Options.h"
 #include <numeric>
@@ -3473,6 +3474,131 @@ static void outlineConcatenations(Program& program)
         program.staticallyHotFunctions.set(program.functions.size() + k);
     program.functions.appendVector(WTF::move(bodies));
     destroyOnHelperThread(std::tuple { WTF::move(sites), WTF::move(signatureSites), WTF::move(signatureBody) });
+}
+
+static std::optional<uint64_t> encodedConstantInImage(const Program& program, const Value& constant)
+{
+    switch (constant.opcode) {
+    case Opcode::Undefined:
+        return JSValue::encode(jsUndefined());
+    case Opcode::Null:
+        return JSValue::encode(jsNull());
+    case Opcode::Boolean:
+        return JSValue::encode(jsBoolean(constant.boolean()));
+    case Opcode::Integer:
+        return JSValue::encode(jsNumber(static_cast<double>(constant.integer())));
+    case Opcode::Double:
+        return JSValue::encode(jsDoubleNumber(purifyNaN(std::bit_cast<double>(constant.bits()))));
+    case Opcode::String: {
+        auto bytes = program.string(constant.string());
+        if (bytes.empty() || (bytes.size() == 1 && bytes[0] && isASCII(bytes[0])))
+            return Data::encodedSmallString(bytes.empty() ? 0 : bytes[0]);
+        return Data::encodedStringConstant(constant.string().index());
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+static void moveConstantTablesIntoImage(Program& program)
+{
+    if (Options::useAOTWideReferences())
+        return;
+    auto& builtins = Builtins::singleton();
+    unsigned count = program.functions.size();
+    Vector<Vector<std::pair<ValueID, Program::ConstantTable>>> found(count);
+    static constexpr OpcodeSet builtinCalls { Opcode::CallBuiltin };
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (!program.hasCode(FunctionID(i)) || !program.functions.mayContain(i, builtinCalls))
+            return;
+        auto& function = std::as_const(program).functions[i];
+        Vector<uint32_t> useCount;
+        auto isUsedOnce = [&](ValueID id) {
+            if (useCount.isEmpty()) {
+                useCount.fill(0, function.values.size());
+                for (auto& block : function.blocks) {
+                    for (ValueID user : block.values) {
+                        function.at(user).forEachChild([&](ValueID child) {
+                            ++useCount[child.index()];
+                        });
+                    }
+                    if (block.terminator.value)
+                        ++useCount[block.terminator.value.index()];
+                    for (auto& target : block.terminator.targets) {
+                        for (ValueID argument : target.arguments)
+                            ++useCount[argument.index()];
+                    }
+                }
+            }
+            return useCount[id.index()] == 1;
+        };
+        auto literalUsedOnlyHere = [&](ValueID list) -> const Value* {
+            while (function.at(list).opcode == Opcode::Cast && isUsedOnce(list))
+                list = function.at(list).child(0);
+            auto& literal = function.at(list);
+            return literal.opcode == Opcode::NewArray && isUsedOnce(list) ? &literal : nullptr;
+        };
+        std::as_const(program).functions.forEachIndexedValue(i, builtinCalls, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (builtins.at(value.builtin()).kind != BuiltinKind::Constructor || value.arguments.size() != 1 || value.engineClass() == Format::none || value.child(0) || value.child(1) || value.child(2))
+                return;
+            JSType created = builtins.classes()[value.engineClass()].type;
+            if (created != JSSetType && created != JSMapType)
+                return;
+            auto* literal = literalUsedOnlyHere(value.arguments[0]);
+            if (!literal || literal->arguments.isEmpty() || literal->arguments.size() > CompactTable::maxCapacity)
+                return;
+            Program::ConstantTable table;
+            UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> entryOf;
+            for (ValueID element : literal->arguments) {
+                ValueID keyID = element;
+                std::optional<uint64_t> held;
+                if (created == JSMapType) {
+                    auto* pair = literalUsedOnlyHere(element);
+                    if (!pair || pair->arguments.size() != 2)
+                        return;
+                    keyID = pair->arguments[0];
+                    held = encodedConstantInImage(program, function.at(pair->arguments[1]));
+                    if (!held)
+                        return;
+                }
+                auto& key = function.at(keyID);
+                if (key.opcode != Opcode::String)
+                    return;
+                if (!std::ranges::all_of(program.string(key.string()), isASCII<uint8_t>))
+                    return;
+                auto entry = entryOf.add(key.string().index(), static_cast<uint32_t>(table.keys.size()));
+                if (entry.isNewEntry) {
+                    table.keys.append(key.string());
+                    if (held)
+                        table.values.append(*held);
+                } else if (held)
+                    table.values[entry.iterator->value] = *held;
+            }
+            found[i].append({ id, WTF::move(table) });
+        });
+    });
+    UncheckedKeyHashMap<String, uint32_t> numbers;
+    size_t numberOfTables = 0;
+    size_t numberOfKeys = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        if (found[i].isEmpty())
+            continue;
+        auto& function = program.functions[i];
+        for (auto& [created, table] : found[i]) {
+            ++numberOfTables;
+            numberOfKeys += table.keys.size();
+            String contents = makeString(table.keys.size(), table.values.isEmpty() ? " keys "_s : " pairs "_s, String(byteCast<Latin1Character>(asBytes(table.keys.span()))), String(byteCast<Latin1Character>(asBytes(table.values.span()))));
+            uint32_t number = numbers.ensure(contents, [&] {
+                program.tablesInImage.append(WTF::move(table));
+                return static_cast<uint32_t>(program.tablesInImage.size() - 1);
+            }).iterator->value;
+            function.at(created).arguments.clear();
+            function.at(created).setTableInImage(number);
+        }
+        removeUnusedValues(program, function);
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfTables, " sets and maps with ", numberOfKeys, " constant strings as keys are ", program.tablesInImage.size(), " tables in the image");
 }
 
 static void outlineBuiltinCalls(Program& program)
@@ -13548,6 +13674,8 @@ Vector<String> optimize(Program& program)
     if (!Options::auditAOTTypedAssertions())
         shareModuleEvaluation(program);
     didFinish("- shareModuleEvaluation"_s);
+    moveConstantTablesIntoImage(program);
+    didFinish("- moveConstantTablesIntoImage"_s);
     removeUncalledFunctions(program);
     didFinish("- removeUncalledFunctions"_s);
     findComparedBuiltinCells(program);

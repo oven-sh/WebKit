@@ -356,6 +356,49 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     auto isGuard = [](BasicBlock* asked) {
         return asked->numSuccessors() == 2 && asked->successor(0).isRare() != asked->successor(1).isRare();
     };
+    IndexSet<BasicBlock*> blocksInLoops;
+    if (placesInGaps && code.placesRareBlocksBehindGuards()) {
+        IndexSet<BasicBlock*> seen;
+        IndexSet<BasicBlock*> isOnPath;
+        Vector<std::pair<BasicBlock*, unsigned>, 16> path;
+        Vector<BasicBlock*, 16> worklist;
+        for (unsigned i = 0; i < code.numEntrypoints(); ++i) {
+            BasicBlock* root = code.entrypoint(i).block();
+            if (!seen.add(root))
+                continue;
+            isOnPath.add(root);
+            path.append({ root, 0 });
+            while (!path.isEmpty()) {
+                BasicBlock* from = path.last().first;
+                if (path.last().second == from->numSuccessors()) {
+                    isOnPath.remove(from);
+                    path.removeLast();
+                    continue;
+                }
+                BasicBlock* to = from->successorBlock(path.last().second++);
+                if (!isOnPath.contains(to)) {
+                    if (seen.add(to)) {
+                        isOnPath.add(to);
+                        path.append({ to, 0 });
+                    }
+                    continue;
+                }
+                IndexSet<BasicBlock*> members;
+                members.add(to);
+                blocksInLoops.add(to);
+                if (members.add(from))
+                    worklist.append(from);
+                while (!worklist.isEmpty()) {
+                    BasicBlock* member = worklist.takeLast();
+                    blocksInLoops.add(member);
+                    for (BasicBlock* predecessor : member->predecessors()) {
+                        if (members.add(predecessor))
+                            worklist.append(predecessor);
+                    }
+                }
+            }
+        }
+    }
     auto hasOneLikelyPredecessor = [](BasicBlock* asked) {
         unsigned numberOfLikelyPredecessors = 0;
         for (BasicBlock* predecessor : asked->predecessors()) {
@@ -409,6 +452,20 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         placedInstCount += block->size();
         if (placesInGaps && isGuard(block))
             waitingForGap.append({ block->successor(block->successor(0).isRare() ? 0 : 1).block(), placedInstCount });
+        if (placesInGaps && code.placesRareBlocksBehindGuards() && isGuard(block) && !blocksInLoops.contains(block)) {
+            bool branchLeadsToRareBlock = block->successor(0).isRare();
+            BasicBlock* rare = block->successor(branchLeadsToRareBlock ? 0 : 1).block();
+            bool canJumpOverRareBlock = block->last().kind.opcode != Patch && (!branchLeadsToRareBlock || block->last().args()[0].isInvertible());
+            if (canJumpOverRareBlock && !done.contains(rare) && rare->size() <= 16 && hasOnlyRarePredecessors(rare)) {
+                waitingForGap.removeLast();
+                done.add(rare);
+                placedInGaps.add(rare);
+                blocksInOrder.append(rare);
+                placedInstCount += rare->size();
+                for (BasicBlock* successor : rare->successorBlocks())
+                    sortedSlowSuccessors.append(successor);
+            }
+        }
         static const bool breaksForTesting = requestedForTesting && !strcmp(requestedForTesting, "1");
         if (breaksForTesting && !waitingForGap.isEmpty()) {
             BasicBlock* rare = waitingForGap.takeLast().first;

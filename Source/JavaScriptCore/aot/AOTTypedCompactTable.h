@@ -16,7 +16,15 @@
 #include "OperationResult.h"
 #include <wtf/UnalignedAccess.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC {
+
+class JSMap;
+class JSSet;
+
+namespace AOT { namespace Typed {
+
+struct State;
+struct TableInImage;
 
 class CompactTable final : public JSCell {
 public:
@@ -29,6 +37,7 @@ public:
 
     enum class Width : uint8_t {
         None = 0,
+        InImage = 1,
         Narrow = 4,
         Wide = 8,
     };
@@ -48,6 +57,9 @@ public:
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr unsigned maxIndexBitsWithShortSlots = 8;
     static constexpr uint8_t keysAreWide = 0x80;
+    static constexpr uint8_t keysAreInImage = 0x40;
+    static constexpr uint8_t indexIsInImage = 0x80;
+    static constexpr uint32_t capacityIsInImage = 1u << 31;
     static constexpr uint8_t keysShiftWithTags = 2;
     static_assert(2u << keysShiftWithTags == maxCapacityWithTags);
     static constexpr uint32_t maxCapacity = (1 << 20) - 2;
@@ -58,6 +70,17 @@ public:
 
     static Structure* createStructure(VM&);
     static CompactTable* create(VM&, Structure*, Width key, Width value, uint32_t minCapacity);
+    static CompactTable* createInImage(VM&, Structure*, const TableInImage&, Typed::State*);
+    static JSSet* createSetInImage(JSGlobalObject*, const TableInImage&);
+    static JSMap* createMapInImage(JSGlobalObject*, const TableInImage&);
+    bool isInImage() const { return m_keysShift & keysAreInImage; }
+    const TableInImage& tableInImage() const { return **at<const TableInImage*>(offsetOfIndex()); }
+    template<typename Traits> static CompactTable* moveToHeap(VM&, JSOrderedHashTable<Traits>*);
+    template<typename Traits> static CompactTable* heapTableOf(JSOrderedHashTable<Traits>* owner)
+    {
+        auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+        return table->isInImage() ? moveToHeap(owner->vm(), owner) : table;
+    }
 
     uint32_t size() const { return m_alive; }
     uint32_t used() const { return m_used; }
@@ -80,6 +103,8 @@ public:
         switch (m_valueWidth) {
         case Width::None:
             return { };
+        case Width::InImage:
+            return valueInImage(entry);
         case Width::Wide:
             return JSValue::decode(at<EncodedJSValue>(offsetOfValues())[entry]);
         case Width::Narrow:
@@ -93,7 +118,7 @@ public:
     CompactTable* copy(VM&) const;
     template<typename Traits> static void forEachKey(JSOrderedHashTable<Traits>* owner, NOESCAPE const auto& functor)
     {
-        auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+        auto* table = heapTableOf(owner);
         for (uint32_t entry = 0, used = table->m_used; entry < used; ++entry) {
             if (JSString* key = table->keyAt(entry); key && functor(key) == IterationStatus::Done)
                 return;
@@ -144,7 +169,7 @@ public:
     template<typename CharacterType>
     ALWAYS_INLINE Quickly tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash, uint32_t& found) const
     {
-        if (m_keysShift & keysAreWide)
+        if (m_keysShift & (keysAreWide | keysAreInImage))
             return Quickly::Unknown;
         auto isAt = [&](const uint32_t* keys, uint32_t entry) ALWAYS_INLINE_LAMBDA {
             uint32_t candidate = keys[entry];
@@ -198,7 +223,7 @@ public:
             return Quickly::Absent;
         JSString* key = asString(value);
         const StringImpl* impl = key->tryGetValueImpl();
-        if (!impl || !impl->hasHash() || m_keysShift & keysAreWide)
+        if (!impl || !impl->hasHash() || m_keysShift & (keysAreWide | keysAreInImage))
             return Quickly::Unknown;
         unsigned hash = impl->existingHash();
         uint32_t narrowKey = static_cast<uint32_t>(std::bit_cast<uintptr_t>(key) >> MarkedBlockCage::shift);
@@ -284,6 +309,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 private:
+    friend struct TableInImage;
+
     CompactTable(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
@@ -306,6 +333,8 @@ private:
     void setValue(uint32_t entry, JSValue);
     template<typename Matches> std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches&) const;
     template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
+    std::optional<uint32_t> findInImage(JSGlobalObject*, JSString*) const;
+    JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
     void fillIndex(uint32_t count);
     void append(VM&, JSString* key, unsigned hash, JSValue);
@@ -326,6 +355,69 @@ private:
 };
 
 static_assert(sizeof(CompactTable) == 24);
+
+struct TableInImage {
+    uint32_t offsetInData;
+    uint32_t unused;
+    uint32_t count;
+    uint32_t alive;
+    uint32_t capacity;
+    uint8_t indexBits;
+    uint8_t keysShift;
+    bool hasValues;
+    uint8_t alsoUnused;
+
+    const Data& data() const { return *reinterpret_cast<const Data*>(reinterpret_cast<const uint8_t*>(this) - offsetInData); }
+    const uint8_t* index() const { return reinterpret_cast<const uint8_t*>(this + 1); }
+    const uint32_t* strings() const { return reinterpret_cast<const uint32_t*>(index() + (static_cast<size_t>(2) << keysShift)); }
+    const uint64_t* values() const { return reinterpret_cast<const uint64_t*>(strings() + capacity); }
+    std::span<const Latin1Character> textAt(uint32_t entry) const { return byteCast<Latin1Character>(data().stringInImage(strings()[entry])); }
+    template<typename Matches> ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
+    {
+        if (!indexBits) {
+            constexpr uint64_t ones = 0x0101010101010101ull;
+            uint64_t difference = WTF::unalignedLoad<uint64_t>(index()) ^ (hash >> CompactTable::shortTagShift) * ones;
+            for (uint64_t flags = (difference - ones) & ~difference & ones << 7; flags; flags &= flags - 1) {
+                uint32_t entry = WTF::ctz(flags) / 8;
+                if (entry >= count)
+                    break;
+                if (matches(entry))
+                    return entry;
+            }
+            return std::nullopt;
+        }
+        uint32_t mask = (1u << indexBits) - 1;
+        if (capacity <= CompactTable::maxCapacityWithShortSlots) {
+            const uint16_t* slots = reinterpret_cast<const uint16_t*>(index());
+            uint32_t tag = hash >> CompactTable::shortTagShift << CompactTable::shortSlotEntryBits;
+            for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
+                uint32_t slot = slots[i];
+                if (slot == UINT16_MAX)
+                    return std::nullopt;
+                if (uint32_t entry = slot ^ tag; entry < 1u << CompactTable::shortSlotEntryBits && matches(entry))
+                    return entry;
+            }
+        }
+        const uint32_t* slots = reinterpret_cast<const uint32_t*>(index());
+        uint32_t tag = hash >> CompactTable::longTagShift << CompactTable::longSlotEntryBits;
+        for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
+            uint32_t slot = slots[i];
+            if (slot == UINT32_MAX)
+                return std::nullopt;
+            if (uint32_t entry = slot ^ tag; entry < 1u << CompactTable::longSlotEntryBits && matches(entry))
+                return entry;
+        }
+    }
+    ALWAYS_INLINE std::optional<uint32_t> find(const StringImpl& key) const
+    {
+        return findWithHash(key.hash(), [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            return CompactTable::equalsCharacters(key, textAt(entry));
+        });
+    }
+    JS_EXPORT_PRIVATE static Vector<uint8_t> encode(std::span<const std::pair<uint32_t, std::span<const uint8_t>>> keys, std::span<const uint64_t> values);
+    static constexpr ptrdiff_t offsetOfOffsetInData() { return OBJECT_OFFSETOF(TableInImage, offsetInData); }
+};
+static_assert(sizeof(TableInImage) == sizeof(CompactTable) && OBJECT_OFFSETOF(TableInImage, count) == CompactTable::offsetOfUsed() && OBJECT_OFFSETOF(TableInImage, capacity) == CompactTable::offsetOfCapacity() && OBJECT_OFFSETOF(TableInImage, indexBits) == CompactTable::offsetOfIndexBits());
 static_assert(CompactTable::offsetOfAlive() == JSOrderedHashTable<MapTraits>::offsetOfAliveInCompactTable && CompactTable::offsetOfAlive() == CompactTable::offsetOfUsed() + 4 && CompactTable::offsetOfIndexBits() == CompactTable::offsetOfCapacity() + 4);
 static_assert(CompactTable::offsetOfKeysShift() == CompactTable::offsetOfCapacity() + 5 && CompactTable::offsetOfValueWidth() == CompactTable::offsetOfCapacity() + 6 && CompactTable::offsetOfState() == CompactTable::offsetOfCapacity() + 7);
 

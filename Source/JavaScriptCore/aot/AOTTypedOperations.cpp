@@ -4171,6 +4171,7 @@ static void rememberExtraProperty(Instance* instance, JSCell* cell, uint32_t nam
     Structure* ofExtraProperties = found.extraProperties->structure();
     if (state.isCounting() || state.data.isCompiledForAudit || ofExtraProperties->isDictionary() || &uncheckedDowncast<Typed::Object>(cell)->state() != &state)
         return;
+    uncheckedDowncast<Typed::Object>(cell)->specializeStructureForExtraProperties(*instance->vm);
     const Typed::RuntimeType& accepted = state.type(type);
     uint64_t kinds = state.kindsAcceptedBy(accepted);
     uint64_t structureOfValue = value.isCell() && state.fits(accepted, value) ? value.asCell()->structureID().bits() : 0;

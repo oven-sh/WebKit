@@ -434,6 +434,13 @@ struct Value {
         holdsCallSignature = false;
         calleeOrSignaturePlusOne = function.index() < (1u << 23) - 1 ? function.index() + 1 : 0;
     }
+    uint32_t tableInImage() const { return opcode == Opcode::CallBuiltin && !holdsCallSignature && calleeOrSignaturePlusOne ? static_cast<uint32_t>(calleeOrSignaturePlusOne) - 1 : Format::none; }
+    void setTableInImage(uint32_t table)
+    {
+        RELEASE_ASSERT(opcode == Opcode::CallBuiltin && table < (1u << 23) - 1);
+        holdsCallSignature = false;
+        calleeOrSignaturePlusOne = table + 1;
+    }
     TypeID coercedType() const { return TypeID(immediates[0]); }
     StringID operandSource() const { return string(); }
     StringID accessedName() const { return castReason() == CastReason::Coerce || castReason() == CastReason::NonNull ? StringID() : string(); }
@@ -1412,6 +1419,11 @@ public:
     uint32_t copyOnWriteButterfliesOffset { 0 };
     uint32_t numberOfCopyOnWriteButterflies { 0 };
     Vector<Vector<uint64_t>> arrayLiteralElements;
+    struct ConstantTable {
+        Vector<StringID> keys;
+        Vector<uint64_t> values;
+    };
+    Vector<ConstantTable> tablesInImage;
     static constexpr unsigned maxInlineArrayLiteralLength = 16;
     uint32_t sharedRegExpObjectsOffset { 0 };
     UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> sharedRegExpObjectOffsets;

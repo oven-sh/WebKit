@@ -1410,7 +1410,7 @@ Boxed Lowering::castInRegister(Boxed given, Entry operation, bool operationRetur
     } else if (!hasFramelessFunctionStubs)
         m_context.hasColdSites = true;
     CallSite site { nextSite() };
-    patchpoint->setGenerator([context = &m_context, site, operation, operationReturnsValue, argument, mayBeModifiedArray, slowPathIsInline = m_function.isGenericEntrypoint(), tests = WTF::move(tests)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([context = &m_context, site, operation, operationReturnsValue, argument, mayBeModifiedArray, slowPathIsInline = m_function.isGenericEntrypoint() || (!m_isInLoop && m_proc.code().placesRareBlocksBehindGuards()), tests = WTF::move(tests)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg held = params[0].gpr();
         CCallHelpers::JumpList doesNotFit;

@@ -23,6 +23,7 @@
     TypedPointer inlineProperty(CellPointer object, PropertyOffset);
     Operand lowerGetPrototypeOf(ValueID result, const Value&);
     Operand lowerSetPrototypeOf(ValueID result, const Value&, Writes);
+    Operand lowerAdoptPrototype(const Value&, Writes);
     Word32 lowerSameValue(ValueID, ValueID);
     struct KeyOrder {
         LayoutID layout;

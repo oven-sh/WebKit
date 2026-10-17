@@ -734,6 +734,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryCloneWithPrototype, JSCell
     return object ? object->tryCloneWithPrototype(instance->globalObject, JSValue::decode(prototype)) : nullptr;
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedAdoptPrototype, void, (Instance* instance, JSCell* born, EncodedJSValue encodedPrototype, uint32_t allocation))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue prototype = JSValue::decode(encodedPrototype);
+    if (!prototype.isObject()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Object prototype may only be an Object or null."_s);
+        OPERATION_RETURN(scope);
+    }
+    uncheckedDowncast<Typed::Object>(born)->adoptPrototypeAtBirth(globalObject, asObject(prototype), allocation);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedObjectCreate, JSCell*, (Instance* instance, JSCell* prototype))
 {
     prepareDataPropertyDescriptorAllocation(instance);
@@ -845,6 +857,8 @@ std::optional<Writes> writesOfInlineObject(InlineBuiltin which, std::span<const 
         return Writes::Heap;
     case InlineBuiltin::ObjectSetPrototypeOf:
         return writesIf(arguments.size() >= 2, Writes::Heap);
+    case InlineBuiltin::AdoptPrototype:
+        return Writes::Heap;
     case InlineBuiltin::ObjectCall:
         return writesIf(arguments.size() == 1, Writes::RuntimeState);
     case InlineBuiltin::ObjectIs:
@@ -1475,6 +1489,40 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
     return join.finish();
 }
 
+Operand Lowering::lowerAdoptPrototype(const Value& value, Writes writes)
+{
+    using Known = Instance::PrototypeAtBirth;
+    static_assert(sizeof(Known) == 16 && Instance::prototypeAtBirthAsksPrototypeChain == StructureID::nukedStructureIDBit && orderWordHasExtraProperties == Instance::prototypeAtBirthAsksPrototypeChain << 28);
+    ValueID allocated = value.arguments[0];
+    while (m_function.at(allocated).opcode == Opcode::Cast)
+        allocated = m_function.at(allocated).child(0);
+    CellPointer born = in<CellPointer>(value.arguments[0]);
+    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    CellPointer prototype = objectOrElse(value.arguments[1], slowPath);
+    uint32_t allocation = m_function.at(allocated).opcode == Opcode::NewObjectWithShape ? m_function.at(allocated).allocation() : UINT32_MAX;
+    if (allocation == UINT32_MAX)
+        m_out.jump(slowPath);
+    else {
+        LValue index = m_out.bitAnd(m_out.add(m_out.lShr(prototype.value(), m_out.constInt32(6)), m_out.constIntPtr(allocation)), m_out.constIntPtr(Instance::numberOfPrototypesAtBirth - 1));
+        LValue known = m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfPrototypesAtBirth())), m_out.shl(index, m_out.constInt32(4)));
+        orElse(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_collectorState, known, OBJECT_OFFSETOF(Known, prototype))), prototype.value()), slowPath);
+        orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, known, OBJECT_OFFSETOF(Known, allocation))), m_out.constInt32(allocation)), slowPath);
+        LValue structureID = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, known, OBJECT_OFFSETOF(Known, structureID)));
+        LValue asksPrototypeChain = m_out.bitAnd(structureID, m_out.constInt32(Instance::prototypeAtBirthAsksPrototypeChain));
+        didEmitWrite(writes);
+        m_out.store32(m_out.bitXor(structureID, asksPrototypeChain), born.value(), m_heaps.JSCell_structureID);
+        storeField(born, m_heaps.AOTTypedObject_orderWord, bitOr(orderWordOf(born), Word32(m_out.shl(asksPrototypeChain, m_out.constInt32(28)))));
+        barrier(born);
+        m_out.jump(continuation);
+    }
+    m_out.appendTo(slowPath);
+    AOT_TYPED_OPERATION(AdoptPrototype, born, in<Boxed>(value.arguments[1]), word32(allocation));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return undefined();
+}
+
 Vector<Lowering::KeyOrder, 2> Lowering::keyOrdersExpectedOf(ValueID id) const
 {
     static constexpr unsigned maxOrders = 2;
@@ -1936,6 +1984,8 @@ std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID 
         return lowerGetPrototypeOf(result, value);
     case InlineBuiltin::ObjectSetPrototypeOf:
         return lowerSetPrototypeOf(result, value, writes);
+    case InlineBuiltin::AdoptPrototype:
+        return lowerAdoptPrototype(value, writes);
     case InlineBuiltin::ObjectIs:
         return booleanResult(lowerSameValue(value.arguments[0], value.arguments[1]), type);
     case InlineBuiltin::ObjectCall: {

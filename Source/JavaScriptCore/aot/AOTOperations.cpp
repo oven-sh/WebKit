@@ -2417,7 +2417,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instanc
                 Structure* above = asObject(prototype)->structure();
                 isPermanent &= above->hasImmutableProperties() && !above->isDictionary() && !above->isStructureExtensible();
             }
-            if (!isInherited && dependsOnlyOnStructures && object->structure() == structure)
+            if (isInherited && dependsOnlyOnStructures && object->structure() == structure)
+                cacheKeyedHas(instance, vm, structure, property.asCell(), true, true, isPermanent);
+            else if (dependsOnlyOnStructures && object->structure() == structure)
                 cacheKeyedHasOfField(instance, vm, structure, property.asCell(), *field, isPermanent);
             OPERATION_RETURN(scope, isInherited || !!ofLayout->read(*field));
         }

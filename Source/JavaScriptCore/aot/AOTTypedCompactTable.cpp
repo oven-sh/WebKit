@@ -99,6 +99,81 @@ CompactTable* CompactTable::create(VM& vm, Structure* structure, Width key, Widt
     return table;
 }
 
+CompactTable* CompactTable::createInImage(VM& vm, Structure* structure, const TableInImage& entries, Typed::State* state)
+{
+    CompactTable* table = new (NotNull, allocateCell<CompactTable>(vm, offsetOfIndex() + (entries.hasValues ? 2 : 1) * sizeof(void*))) CompactTable(vm, structure);
+    table->m_used = entries.count;
+    table->m_alive = entries.count;
+    table->m_capacity = entries.capacity | capacityIsInImage;
+    table->m_indexBits = entries.indexBits | indexIsInImage;
+    table->m_keysShift = entries.keysShift | keysAreInImage;
+    table->m_valueWidth = entries.hasValues ? Width::InImage : Width::None;
+    *table->at<const TableInImage*>(offsetOfIndex()) = &entries;
+    if (entries.hasValues)
+        *table->at<Typed::State*>(offsetOfIndex() + sizeof(void*)) = state;
+    table->finishCreation(vm);
+    return table;
+}
+
+JSValue CompactTable::valueInImage(uint32_t entry) const
+{
+    uint64_t encoded = tableInImage().values()[entry];
+    JSValue value = JSValue::decode(encoded);
+    if (!value.isCell())
+        return value;
+    Typed::State& state = **at<Typed::State*>(offsetOfIndex() + sizeof(void*));
+    VM& vm = *state.instance.vm;
+    if (encoded & Data::encodedStringIsSmall)
+        return encoded >> 3 ? vm.smallStrings.singleCharacterString(static_cast<unsigned char>(encoded >> 3)) : vm.smallStrings.emptyString();
+    return state.string(vm, Data::decodeStringConstant(encoded));
+}
+
+Vector<uint8_t> TableInImage::encode(std::span<const std::pair<uint32_t, std::span<const uint8_t>>> keys, std::span<const uint64_t> values)
+{
+    RELEASE_ASSERT(!keys.empty() && keys.size() <= CompactTable::maxCapacity && (values.empty() || values.size() == keys.size()));
+    TableInImage header { };
+    header.count = keys.size();
+    header.alive = header.count;
+    header.capacity = roundUpToMultipleOf<2>(std::max<uint32_t>(header.count, 2));
+    header.indexBits = CompactTable::indexBitsFor(header.capacity);
+    bool hasShortSlots = header.capacity <= CompactTable::maxCapacityWithShortSlots;
+    header.keysShift = header.indexBits ? header.indexBits + !hasShortSlots : CompactTable::keysShiftWithTags;
+    header.hasValues = !values.empty();
+    size_t sizeOfIndex = static_cast<size_t>(2) << header.keysShift;
+    size_t offsetOfStrings = sizeof(TableInImage) + sizeOfIndex;
+    size_t offsetOfValues = offsetOfStrings + sizeof(uint32_t) * header.capacity;
+    Vector<uint8_t> bytes(FillWith { }, offsetOfValues + (header.hasValues ? sizeof(uint64_t) * header.capacity : 0), static_cast<uint8_t>(0));
+    memcpy(bytes.mutableSpan().data(), &header, sizeof(header));
+    uint8_t* index = bytes.mutableSpan().data() + sizeof(TableInImage);
+    if (header.indexBits)
+        memset(index, 0xff, sizeOfIndex);
+    uint32_t* strings = reinterpret_cast<uint32_t*>(bytes.mutableSpan().data() + offsetOfStrings);
+    memcpy(bytes.mutableSpan().data() + offsetOfValues, values.data(), values.size_bytes());
+    uint32_t mask = (1u << header.indexBits) - 1;
+    for (uint32_t entry = 0; entry < header.count; ++entry) {
+        auto [string, text] = keys[entry];
+        strings[entry] = string;
+        unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(byteCast<Latin1Character>(text));
+        if (!header.indexBits) {
+            index[entry] = shortTagOf(hash);
+            continue;
+        }
+        uint32_t i = hash & mask;
+        if (hasShortSlots) {
+            uint16_t* slots = reinterpret_cast<uint16_t*>(index);
+            while (slots[i] != freeShortSlot)
+                i = (i + 1) & mask;
+            slots[i] = shortTagOf(hash) << CompactTable::shortSlotEntryBits | entry;
+            continue;
+        }
+        uint32_t* slots = reinterpret_cast<uint32_t*>(index);
+        while (slots[i] != freeLongSlot)
+            i = (i + 1) & mask;
+        slots[i] = longTagOf(hash) << CompactTable::longSlotEntryBits | entry;
+    }
+    return bytes;
+}
+
 bool CompactTable::canHold(Width width, JSValue value)
 {
     if (width != Width::Narrow || value.isUndefinedOrNull() || value.isBoolean())
@@ -127,6 +202,8 @@ void CompactTable::setValue(uint32_t entry, JSValue value)
     switch (m_valueWidth) {
     case Width::None:
         return;
+    case Width::InImage:
+        RELEASE_ASSERT_NOT_REACHED();
     case Width::Wide:
         at<EncodedJSValue>(offsetOfValues())[entry] = JSValue::encode(value);
         return;
@@ -189,11 +266,34 @@ ALWAYS_INLINE std::optional<uint32_t> CompactTable::findCharacters(std::span<con
     });
 }
 
+std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, JSString* key) const
+{
+    const TableInImage& entries = tableInImage();
+    if (const StringImpl* impl = key->tryGetValueImpl()) [[likely]]
+        return entries.find(*impl);
+    auto findCharacters = [&]<typename CharacterType>(std::span<const CharacterType> characters) {
+        return entries.findWithHash(RapidHash::computeHashAndMaskTop8Bits<CharacterType>(characters), [&](uint32_t entry) {
+            return StringView { entries.textAt(entry) } == StringView { characters };
+        });
+    };
+    if (key->isSubstring()) {
+        auto characters = key->view(globalObject);
+        return characters->is8Bit() ? findCharacters(characters->span8()) : findCharacters(characters->span16());
+    }
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto string = key->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return entries.find(*string->impl());
+}
+
 std::optional<uint32_t> CompactTable::find(JSGlobalObject* globalObject, JSValue value) const
 {
     if (!value.isString())
         return std::nullopt;
     JSString* key = asString(value);
+    if (isInImage())
+        return findInImage(globalObject, key);
     if (key->isSubstring()) {
         auto characters = key->view(globalObject);
         auto entry = characters->is8Bit() ? findCharacters(characters->span8()) : findCharacters(characters->span16());
@@ -233,6 +333,12 @@ std::optional<uint32_t> CompactTable::find(JSGlobalObject* globalObject, JSValue
 
 std::optional<uint32_t> CompactTable::find(std::span<const Latin1Character> characters) const
 {
+    if (isInImage()) {
+        const TableInImage& entries = tableInImage();
+        return entries.findWithHash(RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters), [&](uint32_t entry) {
+            return StringView { entries.textAt(entry) } == StringView { characters };
+        });
+    }
     return findCharacters(characters);
 }
 
@@ -354,6 +460,8 @@ CompactTable* CompactTable::copyWithCapacity(VM& vm, Width value) const
 CompactTable* CompactTable::copy(VM& vm) const
 {
     RELEASE_ASSERT(isLive());
+    if (isInImage())
+        return createInImage(vm, structure(), tableInImage(), m_valueWidth == Width::InImage ? *at<Typed::State*>(offsetOfIndex() + sizeof(void*)) : nullptr);
     size_t used = allocationSize(m_capacity, keyWidth(), m_valueWidth);
     size_t size = MarkedSpace::optimalSizeFor(used);
     CompactTable* copy = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, structure());
@@ -396,6 +504,84 @@ static Typed::State* stateOf(JSGlobalObject* globalObject)
     return instance ? instance->typed : nullptr;
 }
 
+static Structure* structureFor(JSGlobalObject* globalObject, Typed::State* state)
+{
+    Structure* structure = state->compactTableStructure();
+    if (!globalObject->aotInstance()->compactTableStructureID) {
+        for (Instance* instance : globalObject->vm().m_aotInstances) {
+            if (instance->globalObject == globalObject)
+                instance->compactTableStructureID = structure->id().bits();
+        }
+    }
+    return structure;
+}
+
+JSSet* CompactTable::createSetInImage(JSGlobalObject* globalObject, const TableInImage& entries)
+{
+    VM& vm = globalObject->vm();
+    Typed::State* state = stateOf(globalObject);
+    if (state->isCounting()) [[unlikely]]
+        state->countCompactTable("made in the image"_s, entries.count);
+    if (Options::useAOTOperationCounters()) [[unlikely]] {
+        runtimeTable(vm).countOperation("CompactTable in the image", "made");
+        runtimeTable(vm).countOperation("CompactTable in the image", "entries of those made", entries.count);
+    }
+    JSSet* set = JSSet::create(vm, globalObject->setStructure());
+    set->m_compactTable.set(vm, set, createInImage(vm, structureFor(globalObject, state), entries, state));
+    return set;
+}
+
+JSMap* CompactTable::createMapInImage(JSGlobalObject* globalObject, const TableInImage& entries)
+{
+    VM& vm = globalObject->vm();
+    Typed::State* state = stateOf(globalObject);
+    if (state->isCounting()) [[unlikely]]
+        state->countCompactTable("made in the image"_s, entries.count);
+    if (Options::useAOTOperationCounters()) [[unlikely]] {
+        runtimeTable(vm).countOperation("CompactTable in the image", "made");
+        runtimeTable(vm).countOperation("CompactTable in the image", "entries of those made", entries.count);
+    }
+    JSMap* map = JSMap::create(vm, globalObject->mapStructure());
+    map->m_compactTable.set(vm, map, createInImage(vm, structureFor(globalObject, state), entries, state));
+    return map;
+}
+
+template<typename Traits>
+CompactTable* CompactTable::moveToHeap(VM& vm, JSOrderedHashTable<Traits>* owner)
+{
+    auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+    RELEASE_ASSERT(table->isInImage() && table->isLive());
+    const TableInImage& entries = table->tableInImage();
+    Typed::State* state = stateOf(owner->realm());
+    RELEASE_ASSERT(state && !state->data.usesWideReferences);
+    if (state->isCounting()) [[unlikely]]
+        state->countCompactTable("moved from the image to the heap"_s, entries.count);
+    if (Options::useAOTOperationCounters()) [[unlikely]] {
+        runtimeTable(vm).countOperation("CompactTable in the image", "moved to the heap");
+        runtimeTable(vm).countOperation("CompactTable in the image", "entries of those moved to the heap", entries.count);
+    }
+    DeferGCForAWhile deferGC(vm);
+    Width valueWidth = Width::None;
+    if constexpr (Traits::hasValueData) {
+        valueWidth = Width::Narrow;
+        for (uint32_t entry = 0; entry < entries.count; ++entry) {
+            if (!canHold(Width::Narrow, table->valueInImage(entry)))
+                valueWidth = Width::Wide;
+        }
+    }
+    CompactTable* copy = create(vm, table->structure(), Width::Narrow, valueWidth, entries.count);
+    for (uint32_t entry = 0; entry < entries.count; ++entry) {
+        auto text = entries.textAt(entry);
+        JSString* key = text.empty() ? vm.smallStrings.emptyString() : text.size() == 1 ? vm.smallStrings.singleCharacterString(text[0]) : state->string(vm, entries.strings()[entry]);
+        RELEASE_ASSERT(canHold(Width::Narrow, key));
+        copy->append(vm, key, hashOf(key), Traits::hasValueData ? table->valueInImage(entry) : JSValue());
+    }
+    copy->m_state = table->m_state;
+    table->becomeObsolete(vm, State::Replaced, copy);
+    owner->m_compactTable.set(vm, owner, copy);
+    return copy;
+}
+
 template<typename Traits>
 bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Traits>* owner, JSValue key, JSValue value, CreateIfNeeded createIfNeeded, uint32_t minCapacity)
 {
@@ -407,6 +593,15 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     JSString* string = asString(key);
     Typed::State* state = stateOf(globalObject);
     auto* table = owner->m_compactTable ? uncheckedDowncast<CompactTable>(owner->m_compactTable.get()) : nullptr;
+    if (table && table->isInImage()) {
+        if constexpr (!Traits::hasValueData) {
+            auto entry = table->findInImage(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (entry)
+                return true;
+        }
+        table = moveToHeap(vm, owner);
+    }
     auto replaceBy = [&](CompactTable* replacement, ASCIILiteral event) {
         if (state && state->isCounting()) [[unlikely]]
             state->countCompactTable(event, table->size());
@@ -529,13 +724,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
         bool isNarrow = !state->data.usesWideReferences;
         Width keyWidth = isNarrow ? Width::Narrow : Width::Wide;
         Width valueWidth = !Traits::hasValueData ? Width::None : isNarrow && canHold(Width::Narrow, value) ? Width::Narrow : Width::Wide;
-        table = create(vm, state->compactTableStructure(), keyWidth, valueWidth, minCapacity);
-        if (!globalObject->aotInstance()->compactTableStructureID) {
-            for (Instance* instance : vm.m_aotInstances) {
-                if (instance->globalObject == globalObject)
-                    instance->compactTableStructureID = table->structureID().bits();
-            }
-        }
+        table = create(vm, structureFor(globalObject, state), keyWidth, valueWidth, minCapacity);
         owner->m_compactTable.set(vm, owner, table);
         if (state->isCounting()) [[unlikely]]
             state->countCompactTable(makeString("made key "_s, static_cast<unsigned>(keyWidth), " value "_s, static_cast<unsigned>(valueWidth)), 0);
@@ -566,6 +755,8 @@ bool CompactTable::remove(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     auto entry = table->find(globalObject, key);
     if (!entry)
         return false;
+    if (table->isInImage())
+        table = moveToHeap(globalObject->vm(), owner);
     table->setKey(*entry, nullptr);
     table->setValue(*entry, JSValue());
     --table->m_alive;
@@ -592,7 +783,7 @@ void CompactTable::convert(VM& vm, JSOrderedHashTable<Traits>* owner)
     using Helper = JSOrderedHashTableHelper<Traits>;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSGlobalObject* globalObject = owner->realm();
-    auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+    auto* table = heapTableOf(owner);
     RELEASE_ASSERT(!owner->m_storage);
     if (Typed::State* state = stateOf(globalObject); state && state->isCounting()) [[unlikely]] {
         StringPrintStream callers;
@@ -640,6 +831,10 @@ CompactTable::Position CompactTable::next(VM& vm, JSOrderedHashTable<Traits>* ow
         switch (compact->m_state) {
         case State::Live:
         case State::Iterated:
+            if (compact->isInImage()) {
+                table = moveToHeap(vm, owner);
+                break;
+            }
             for (; entry < compact->m_used; ++entry) {
                 if (JSString* key = compact->keyAt(entry))
                     return { compact, entry, key, compact->valueAt(entry) };
@@ -935,7 +1130,7 @@ static NEVER_INLINE IterationStep JIT_OPERATION_ATTRIBUTES stepThroughSetQuickly
         return { true, nullptr };
     }
     auto* compact = uncheckedDowncast<CompactTable>(table.asCell());
-    if (!compact->isLive())
+    if (!compact->isLive() || compact->isInImage())
         [[clang::musttail]] return stepIterationInFrameGeneric(instance, words);
     JSString* key = nullptr;
     entry = nextEntryWithKey(compact, entry, key);
@@ -966,7 +1161,7 @@ static ALWAYS_INLINE unsigned stepThroughIteratorQuickly(VM& vm, EncodedJSValue*
     if (!table.isCell() || table.asCell()->classInfo() != CompactTable::info())
         return 2;
     auto* compact = uncheckedDowncast<CompactTable>(table.asCell());
-    if (!compact->isLive())
+    if (!compact->isLive() || compact->isInImage())
         return 2;
     JSString* key = nullptr;
     uint32_t entry = nextEntryWithKey(compact, position->get(1).asUInt32(), key);
@@ -1063,7 +1258,7 @@ static bool tryAppendEntries(JSGlobalObject* globalObject, JSArray* target, JSOr
     using Helper = JSOrderedHashTableHelper<Traits>;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* compactTable = owner->m_storage ? nullptr : static_cast<CompactTable*>(owner->m_compactTable.get());
+    auto* compactTable = owner->m_storage || !owner->m_compactTable ? nullptr : CompactTable::heapTableOf(owner);
     unsigned size = compactTable ? compactTable->size() : owner->size();
     if (!size)
         return true;
@@ -1259,6 +1454,8 @@ void CompactTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             visitor.appendUnbarriered(next);
         return;
     }
+    if (table->isInImage())
+        return;
     uint32_t used = table->m_used;
     WTF::loadLoadFence();
     table->visitEntries(visitor, 0, used);
@@ -1271,6 +1468,7 @@ DEFINE_VISIT_CHILDREN(CompactTable);
     template bool CompactTable::remove<Traits>(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue); \
     template void CompactTable::clear<Traits>(VM&, JSOrderedHashTable<Traits>*); \
     template void CompactTable::convert<Traits>(VM&, JSOrderedHashTable<Traits>*); \
+    template CompactTable* CompactTable::moveToHeap<Traits>(VM&, JSOrderedHashTable<Traits>*); \
     template CompactTable::Position CompactTable::next<Traits>(VM&, JSOrderedHashTable<Traits>*, JSCell*, uint32_t);
 AOT_TYPED_INSTANTIATE_COMPACT_TABLE(MapTraits)
 AOT_TYPED_INSTANTIATE_COMPACT_TABLE(SetTraits)

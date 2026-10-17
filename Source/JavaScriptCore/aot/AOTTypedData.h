@@ -559,6 +559,7 @@ struct Data {
     uint32_t rootMasksOffset;
     uint32_t copyOnWriteButterfliesOffset;
     uint32_t arrayLiteralsOffset;
+    uint32_t tablesInImageOffset;
     static constexpr uint64_t encodedStringConstant(uint32_t string) { return (static_cast<uint64_t>(string) + 1) << 3; }
     static constexpr uint32_t decodeStringConstant(uint64_t encoded) { return static_cast<uint32_t>(encoded >> 3) - 1; }
     static constexpr uint64_t encodedStringIsSmall = 1;

@@ -2286,8 +2286,51 @@ bool State::descendantsAddNoProperties(JSObject* prototype, JSObject* classProto
     return addNoProperties;
 }
 
+bool State::holdsNoFieldOf(const LayoutData& layout, JSObject* prototype)
+{
+    static constexpr unsigned maxHolders = 8;
+    auto key = std::pair { prototype, layout.shape + 1 };
+    if (auto known = m_prototypesHoldingNoField.find(key); known != m_prototypesHoldingNoField.end())
+        return known->value;
+    VM& vm = *instance.vm;
+    prototype->didBecomePrototype(vm);
+    JSObject* objectPrototype = instance.globalObject->objectPrototype();
+    Vector<JSObject*, maxHolders> holders;
+    bool holdsNone = true;
+    for (JSObject* next = prototype; holdsNone && next && next != objectPrototype; next = next->getPrototypeDirect().getObject()) {
+        Structure* structure = next->structure();
+        holdsNone = holders.size() < maxHolders && !m_modifiedDescendantPrototypes.contains(next) && next->type() == FinalObjectType && !structure->compiledLayout() && !structure->isDictionary() && !structure->hasPolyProto() && structure->mayBePrototype() && !hasIndexedProperties(next->indexingType())
+            && std::ranges::none_of(std::span { layout.fields(), layout.numberOfFields }, [&](const FieldData& field) {
+                return isValidOffset(structure->get(vm, name(vm, field.name).impl()));
+            });
+        holders.append(next);
+    }
+    m_prototypesHoldingNoField.add(key, holdsNone);
+    if (holdsNone) {
+        for (JSObject* holder : holders) {
+            auto& shapes = m_shapesUnderPrototype.add(holder, Vector<uint32_t, 2> { }).iterator->value;
+            if (!shapes.contains(layout.shape))
+                shapes.append(layout.shape);
+        }
+    }
+    return holdsNone;
+}
+
 void State::didChangeDescendantPrototype(VM& vm, JSObject* changed, UniquedStringImpl* nameOfProperty)
 {
+    auto under = m_shapesUnderPrototype.find(changed);
+    bool namesFieldOfRecord = under != m_shapesUnderPrototype.end() && (!nameOfProperty || std::ranges::any_of(under->value, [&](uint32_t shape) {
+        return field(vm, layoutForShape(shape), nameOfProperty);
+    }));
+    if (namesFieldOfRecord) {
+        m_modifiedDescendantPrototypes.add(changed);
+        m_shapesUnderPrototype.clear();
+        m_prototypesHoldingNoField.clear();
+        forgetInitialObjectStates();
+        revalidatePrototypes(vm, [&](Structure*, const LayoutData& layout) {
+            return layout.kind == LayoutKind::Record && layout.mayHaveOtherPrototype;
+        });
+    }
     if (!m_descendantPrototypes.contains(changed) || nameOfProperty == vm.propertyNames->constructor.impl())
         return;
     m_modifiedDescendantPrototypes.add(changed);
@@ -2341,6 +2384,12 @@ void State::removeDeadDescendantPrototypes(VM& vm)
         return isDead(entry.key) || (entry.value && isDead(entry.value));
     });
     m_descendantPrototypes.removeIf(isDead);
+    m_prototypesHoldingNoField.removeIf([&](auto& entry) {
+        return isDead(entry.key.first);
+    });
+    m_shapesUnderPrototype.removeIf([&](auto& entry) {
+        return isDead(entry.key);
+    });
     m_modifiedDescendantPrototypes.removeIf(isDead);
 }
 
@@ -2352,6 +2401,8 @@ bool State::prototypeMatchesLayout(const LayoutData& layout, JSValue prototype)
     }
     auto* functionPrototypeObject = dynamicDowncast<PrototypeObject>(prototype);
     if (prototype.isNull() || prototype == JSValue(instance.globalObject->objectPrototype()) || (functionPrototypeObject && (layout.mayBeConstructed || !(layout.mayHaveOtherPrototype || layout.mayDespecialize)) && functionPrototypeObject->isGuarded() && !functionPrototypeObject->isModified()))
+        return true;
+    if (prototype.isObject() && layout.mayHaveOtherPrototype && holdsNoFieldOf(layout, asObject(prototype)))
         return true;
     return std::ranges::all_of(std::span { layout.fields(), layout.numberOfFields }, [](const FieldData& field) {
         return field.flags & fieldIsNeverObservedAbsent;
@@ -3254,6 +3305,69 @@ Object* Object::tryCloneWithPrototype(JSGlobalObject* globalObject, JSValue prot
         return nullptr;
     materializeLazyClosures();
     return copyWithStructure(vm, state.structureFor(vm, layout.shape, prototype), copiedExtraProperties);
+}
+
+void Object::adoptPrototypeAtBirth(JSGlobalObject* globalObject, JSObject* prototype, uint32_t allocation)
+{
+    enum class Store : uint8_t { AsksPrototypeChain, CreatesFieldForNow, CreatesField };
+    static constexpr unsigned maxHolders = 16;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    State& state = this->state();
+    bool isPlain = !hasFlagsInOrderWord();
+    prototype->didBecomePrototype(vm);
+    auto storeOf = [&](PropertyName name) {
+        Store answer = Store::CreatesField;
+        unsigned numberOfHolders = 0;
+        for (JSValue next = prototype; next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+            JSObject* holder = asObject(next);
+            Structure* structure = holder->structure();
+            TypeInfo info = structure->typeInfo();
+            if (++numberOfHolders > maxHolders || !structure->hasMonoProto() || info.overridesGetPrototype() || holder->hasNonReifiedStaticProperties())
+                return Store::AsksPrototypeChain;
+            Object* compiled = state.compiledObject(holder);
+            if (!compiled && (!structure->mayBePrototype() || info.overridesGetOwnPropertySlot() || info.overridesPut()))
+                return Store::AsksPrototypeChain;
+            if (compiled && compiled->fieldNamed(state, name))
+                answer = Store::CreatesFieldForNow;
+            PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool isOwn = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
+            scope.assertNoException();
+            if (slot.isTaintedByOpaqueObject())
+                return Store::AsksPrototypeChain;
+            if (isOwn)
+                return slot.isValue() && !(slot.attributes() & PropertyAttribute::ReadOnly) ? answer : Store::AsksPrototypeChain;
+        }
+        return answer;
+    };
+    const FieldData* fields = layout().fields();
+    Vector<const FieldData*, 8> born;
+    forEachFieldInKeyOrder(state, [&](uint16_t index) {
+        born.append(&fields[index]);
+    });
+    Store all = state.isCounting() ? Store::CreatesFieldForNow : Store::CreatesField;
+    for (const FieldData* field : born)
+        all = std::min(all, storeOf(state.name(vm, field->name)));
+    MarkedArgumentBuffer values;
+    if (all == Store::AsksPrototypeChain) [[unlikely]] {
+        for (const FieldData* field : born)
+            values.append(read(*field));
+        for (const FieldData* field : born)
+            clear(*field);
+        setOrderAndCount(orderOf(orderWord()));
+    }
+    setPrototype(this, globalObject, prototype, true);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (unsigned i = 0; i < values.size(); ++i) {
+        PutPropertySlot slot(this, true);
+        prototype->methodTable()->put(prototype, globalObject, state.name(vm, born[i]->name), values.at(i), slot);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (all != Store::CreatesField || !isPlain || allocation == UINT32_MAX || !state.compiledObject(this))
+        return;
+    uint32_t flags = orderWord() & ~orderAndCountMask;
+    if (!(flags & ~orderWordHasExtraProperties) && !anyObjectInChainMayInterceptIndexedAccesses())
+        state.instance.rememberPrototypeAtBirth({ prototype, allocation, structureID().bits() | (flags ? Instance::prototypeAtBirthAsksPrototypeChain : 0) });
 }
 
 static std::pair<JSObject*, PropertyOffset> findAccessorOnOrdinaryPrototypeChain(VM& vm, JSObject* object, PropertyName name)

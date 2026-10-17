@@ -145,6 +145,8 @@ private:
             m_out.print(" without promise");
         if (value.takesElementsOfArrayLiteral)
             m_out.print(" takes elements");
+        if (value.tableInImage() != Format::none)
+            m_out.print(" table in image ", value.tableInImage());
         if (value.dropsDroppableCallerFrame)
             m_out.print(" drops");
         if (value.leavesDroppableFrame)

@@ -26,6 +26,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNativeBinding, Heap, EncodedJSValue
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLinkTimeConstant, RuntimeState, JSCell*, (Instance*, uint32_t constant));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToLength, Heap, EncodedJSValue, (Instance*, EncodedJSValue value));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainURL, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainURLWithBase, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue base));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindPlainQueryValue, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue offsets, EncodedJSValue name));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainQuery, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindInPlainQuery, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue name));
@@ -138,6 +139,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectAssignToNew, Heap, JSCell*, (
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnPropertyDescriptor, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedObjectCreate, Heap, JSCell*, (Instance*, JSCell* prototype));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryCloneWithPrototype, Heap, JSCell*, (Instance*, JSCell* source, EncodedJSValue prototype));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAdoptPrototype, Heap, void, (Instance*, JSCell* born, EncodedJSValue prototype, uint32_t allocation));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSuspendAsyncFunction, Heap, void, (Instance*, JSCell* resumeClosure, EncodedJSValue awaited));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSaveFrameAndAwait, Heap, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAwaitWithSavedFrame, Heap, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* saved));

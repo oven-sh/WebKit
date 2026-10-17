@@ -1005,7 +1005,7 @@ public:
             using AOT::Typed::CompactTable;
             auto* table = static_cast<const CompactTable*>(cell);
             Locker locker { const_cast<JSCell*>(cell)->cellLock() };
-            if (!table->isLive() || table->keyWidth() != CompactTable::Width::Narrow || table->valueWidth() == CompactTable::Width::Wide)
+            if (!table->isLive() || table->keyWidth() != CompactTable::Width::Narrow || table->valueWidth() == CompactTable::Width::Wide || table->isInImage())
                 return false;
             appendStructure(structure);
             std::span keys = table->narrowKeys();

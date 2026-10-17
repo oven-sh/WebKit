@@ -17010,7 +17010,7 @@ struct MissesInCompactTable {
     CCallHelpers::JumpList withLongSlots;
 };
 
-static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, MissesInCompactTable& misses, CCallHelpers::JumpList& found, bool needsEntry, bool needsMisses, CCallHelpers::JumpList* sameCellByTags)
+static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, MissesInCompactTable& misses, CCallHelpers::JumpList& found, bool needsEntry, bool needsMisses, CCallHelpers::JumpList* sameCellByTags, CCallHelpers::JumpList* foundInImage)
 {
     using Lookup = MapOrSetLookup;
     using Table = Typed::CompactTable;
@@ -17027,9 +17027,26 @@ static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherw
     constexpr GPRReg scratch = Lookup::scratch;
     constexpr int32_t index = Table::offsetOfIndex();
     CCallHelpers::JumpList haveSameHash;
+    bool searchesImage = false;
 
     auto compareWithEntry = [&](CCallHelpers::JumpList& next) {
         jit.load32(BaseIndex(keys, entry, CCallHelpers::TimesFour), candidate);
+        if (searchesImage) {
+            constexpr GPRReg data = scratch;
+            constexpr GPRReg length = position;
+            jit.load32(Address(table, Typed::TableInImage::offsetOfOffsetInData()), data);
+            jit.sub64(table, data, data);
+            jit.load32(BaseIndex(data, candidate, CCallHelpers::TimesFour, sizeof(Typed::Data)), candidate);
+            jit.and32(TrustedImm32((1 << Typed::Data::stringLengthBits) - 1), candidate, length);
+            otherwise.append(jit.branchTest32(CCallHelpers::Zero, length));
+            otherwise.append(jit.branch32(CCallHelpers::NotEqual, length, Address(keyImpl, StringImpl::lengthMemoryOffset())));
+            otherwise.append(jit.branchTest32(CCallHelpers::Zero, Address(keyImpl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+            jit.urshift32(TrustedImm32(Typed::Data::stringLengthBits), candidate);
+            jit.add64(data, candidate);
+            jit.loadPtr(Address(keyImpl, StringImpl::dataOffset()), scratch);
+            compareLatin1Characters(jit, candidate, scratch, length, tag, mask, *foundInImage, otherwise);
+            return;
+        }
         next.append(jit.branchTest32(CCallHelpers::Zero, candidate));
         decodeCell32(jit, candidate, candidate);
         found.append(jit.branch64(CCallHelpers::Equal, candidate, key));
@@ -17218,35 +17235,49 @@ static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherw
     UNUSED_PARAM(sameCellByTags);
 #endif
 
-    jit.load8(Address(table, Table::offsetOfIndexBits()), position);
-    Jump hasSlots = jit.branchTest32(CCallHelpers::NonZero, position);
+    Jump isInImage;
+    auto search = [&] {
+        jit.load8(Address(table, Table::offsetOfIndexBits()), position);
+        Jump hasSlots = jit.branchTest32(CCallHelpers::NonZero, position);
 
-    {
-        constexpr GPRReg used = mask;
-        jit.addPtr(TrustedImm32(index + Table::maxCapacityWithTags), table, keys);
-        jit.load32(Address(table, Table::offsetOfUsed()), used);
-        Lookup::loadHash(jit, tag);
-        jit.urshift32(TrustedImm32(Table::shortTagShift), tag);
-        jit.move(TrustedImm32(0), entry);
-        CCallHelpers::Label loop = jit.label();
-        CCallHelpers::JumpList next;
-        misses.withTags.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, used));
-        jit.load8(BaseIndex(table, entry, CCallHelpers::TimesOne, index), scratch);
-        next.append(jit.branch32(CCallHelpers::NotEqual, scratch, tag));
-        compareWithEntry(next);
-        next.link(&jit);
-        jit.add32(TrustedImm32(1), entry);
-        jit.jump().linkTo(loop, &jit);
-    }
+        {
+            constexpr GPRReg used = mask;
+            jit.addPtr(TrustedImm32(index + Table::maxCapacityWithTags), table, keys);
+            jit.load32(Address(table, Table::offsetOfUsed()), used);
+            Lookup::loadHash(jit, tag);
+            jit.urshift32(TrustedImm32(Table::shortTagShift), tag);
+            jit.move(TrustedImm32(0), entry);
+            CCallHelpers::Label loop = jit.label();
+            CCallHelpers::JumpList next;
+            misses.withTags.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, used));
+            jit.load8(BaseIndex(table, entry, CCallHelpers::TimesOne, index), scratch);
+            next.append(jit.branch32(CCallHelpers::NotEqual, scratch, tag));
+            compareWithEntry(next);
+            next.link(&jit);
+            jit.add32(TrustedImm32(1), entry);
+            jit.jump().linkTo(loop, &jit);
+        }
 
-    hasSlots.link(&jit);
-    jit.move(TrustedImm32(1), mask);
-    jit.lshift32(position, mask);
-    jit.sub32(TrustedImm32(1), mask);
-    Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(table, Table::offsetOfCapacity()), TrustedImm32(Table::maxCapacityWithShortSlots));
-    probe(CCallHelpers::TimesTwo, Table::shortTagShift, Table::shortSlotEntryBits);
-    hasLongSlots.link(&jit);
-    probe(CCallHelpers::TimesFour, Table::longTagShift, Table::longSlotEntryBits);
+        hasSlots.link(&jit);
+        jit.move(TrustedImm32(1), mask);
+        jit.lshift32(position, mask);
+        jit.sub32(TrustedImm32(1), mask);
+        Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(table, Table::offsetOfCapacity()), TrustedImm32(Table::maxCapacityWithShortSlots));
+        probe(CCallHelpers::TimesTwo, Table::shortTagShift, Table::shortSlotEntryBits);
+        hasLongSlots.link(&jit);
+        if (!searchesImage)
+            isInImage = jit.branchTest32(CCallHelpers::NonZero, position, TrustedImm32(Table::indexIsInImage));
+        probe(CCallHelpers::TimesFour, Table::longTagShift, Table::longSlotEntryBits);
+    };
+    search();
+
+    if (foundInImage) {
+        isInImage.link(&jit);
+        jit.loadPtr(Address(table, index), table);
+        searchesImage = true;
+        search();
+    } else
+        otherwise.append(isInImage);
 
     haveSameHash.link(&jit);
     jit.load32(Address(candidate, StringImpl::lengthMemoryOffset()), position);
@@ -17259,7 +17290,7 @@ static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherw
 }
 
 template<typename MapOrSet>
-static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, CCallHelpers::JumpList& absentCases, CCallHelpers::JumpList& foundInCompactTable, MissesInCompactTable* missesInCompactTable, CCallHelpers::JumpList* hasNoTable, bool keyIsStringByType, bool needsEntry, CCallHelpers::JumpList* sameCellByTags, CCallHelpers::JumpList* missesInStorage = nullptr, LookupsBegunWithoutFrame* begunWithoutFrame = nullptr)
+static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, CCallHelpers::JumpList& absentCases, CCallHelpers::JumpList& foundInCompactTable, MissesInCompactTable* missesInCompactTable, CCallHelpers::JumpList* hasNoTable, bool keyIsStringByType, bool needsEntry, CCallHelpers::JumpList* sameCellByTags, CCallHelpers::JumpList* missesInStorage = nullptr, LookupsBegunWithoutFrame* begunWithoutFrame = nullptr, CCallHelpers::JumpList* foundInImage = nullptr)
 {
     using Helper = typename MapOrSet::Helper;
     using Lookup = MapOrSetLookup;
@@ -17319,10 +17350,10 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     if (Options::useAOTWideReferences())
         otherwise.append(jit.jump());
     else if (missesInCompactTable)
-        findInCompactTable(jit, otherwise, *missesInCompactTable, foundInCompactTable, needsEntry, true, sameCellByTags);
+        findInCompactTable(jit, otherwise, *missesInCompactTable, foundInCompactTable, needsEntry, true, sameCellByTags, nullptr);
     else {
         MissesInCompactTable misses;
-        findInCompactTable(jit, otherwise, misses, foundInCompactTable, needsEntry, false, sameCellByTags);
+        findInCompactTable(jit, otherwise, misses, foundInCompactTable, needsEntry, false, sameCellByTags, foundInImage);
         absentCases.append(misses.withTags);
         absentCases.append(misses.withShortSlots);
         absentCases.append(misses.withLongSlots);
@@ -17941,10 +17972,12 @@ static void generateMapOrSetOperation(CCallHelpers& jit, MapOrSetOperation opera
     bool needsEntry = operation != MapOrSetOperation::MapHas && operation != MapOrSetOperation::SetHas && operation != MapOrSetOperation::SetAdd;
     CCallHelpers::JumpList sameCellByTags;
     CCallHelpers::JumpList* sameCellByTagsOrNull = isARM64() && operation == MapOrSetOperation::MapGet ? &sameCellByTags : nullptr;
+    CCallHelpers::JumpList foundInImage;
+    bool searchesImage = operation == MapOrSetOperation::MapGet || operation == MapOrSetOperation::MapHas || operation == MapOrSetOperation::SetHas;
     if (isSet)
-        findInMapOrSet<JSSet>(jit, giveUp, absentCases, foundInCompactTable, addsEntries ? &missesInCompactTable : nullptr, createsTable ? &hasNoTable : nullptr, keyIsStringByType, needsEntry, sameCellByTagsOrNull, addsEntries ? &missesInStorage : nullptr, begunWithoutFrame);
+        findInMapOrSet<JSSet>(jit, giveUp, absentCases, foundInCompactTable, addsEntries ? &missesInCompactTable : nullptr, createsTable ? &hasNoTable : nullptr, keyIsStringByType, needsEntry, sameCellByTagsOrNull, addsEntries ? &missesInStorage : nullptr, begunWithoutFrame, searchesImage ? &foundInImage : nullptr);
     else
-        findInMapOrSet<JSMap>(jit, giveUp, absentCases, foundInCompactTable, addsEntries ? &missesInCompactTable : nullptr, createsTable ? &hasNoTable : nullptr, keyIsStringByType, needsEntry, sameCellByTagsOrNull, addsEntries ? &missesInStorage : nullptr, begunWithoutFrame);
+        findInMapOrSet<JSMap>(jit, giveUp, absentCases, foundInCompactTable, addsEntries ? &missesInCompactTable : nullptr, createsTable ? &hasNoTable : nullptr, keyIsStringByType, needsEntry, sameCellByTagsOrNull, addsEntries ? &missesInStorage : nullptr, begunWithoutFrame, searchesImage ? &foundInImage : nullptr);
     switch (operation) {
     case MapOrSetOperation::MapGet: {
         jit.load64(Address(Lookup::slot, sizeof(EncodedJSValue)), result);
@@ -17993,6 +18026,14 @@ static void generateMapOrSetOperation(CCallHelpers& jit, MapOrSetOperation opera
         jit.load64(CCallHelpers::BaseIndex(values, Lookup::slot, CCallHelpers::TimesEight), result);
         Lookup::leave(jit);
         jit.ret();
+        foundInImage.link(&jit);
+        jit.load32(Address(Lookup::data, Table::offsetOfCapacity()), Lookup::scratch);
+        jit.getEffectiveAddress(CCallHelpers::BaseIndex(values, Lookup::scratch, CCallHelpers::TimesFour), values);
+        jit.load64(CCallHelpers::BaseIndex(values, Lookup::slot, CCallHelpers::TimesEight), Lookup::scratch);
+        giveUp.append(jit.branchIfCell(Lookup::scratch));
+        jit.move(Lookup::scratch, result);
+        Lookup::leave(jit);
+        jit.ret();
         absentCases.link(&jit);
         leaveAndReturn(jsUndefined());
         giveUp.link(&jit);
@@ -18002,6 +18043,7 @@ static void generateMapOrSetOperation(CCallHelpers& jit, MapOrSetOperation opera
     case MapOrSetOperation::MapHas:
     case MapOrSetOperation::SetHas:
         foundInCompactTable.link(&jit);
+        foundInImage.link(&jit);
         leaveAndReturn(jsBoolean(true));
         absentCases.link(&jit);
         leaveAndReturn(jsBoolean(false));
@@ -18154,9 +18196,18 @@ struct CompactTableProbe {
     CCallHelpers::JumpList hasFreeShortSlot;
     CCallHelpers::JumpList hasFreeLongSlot;
     CCallHelpers::JumpList comparisonCalls;
+    CCallHelpers::JumpList foundInImage;
+    CCallHelpers::JumpList comparisonCallsInImage;
+    bool searchesImage { false };
 
     void compareWithEntry(CCallHelpers& jit, CCallHelpers::JumpList& next)
     {
+        if (searchesImage) {
+            jit.load32(BaseIndex(keys, entry, CCallHelpers::TimesFour), candidate);
+            comparisonCallsInImage.append(Jump(jit.m_assembler.call()));
+            foundInImage.append(branchIfLastResultWasZero(jit));
+            return;
+        }
         if (Typed::cell32IsPointer) {
             compareWithMemory(jit, 4, key, keys, entry, CCallHelpers::TimesFour);
             found.append(branchIfLastResultWasZero(jit));
@@ -18199,7 +18250,7 @@ struct CompactTableProbe {
         jit.jump().linkTo(loop, &jit);
     }
 
-    void generate(CCallHelpers& jit, bool isSet, bool keyIsStringByType)
+    void generate(CCallHelpers& jit, bool isSet, bool keyIsStringByType, bool maySearchImage)
     {
         jit.loadPtr(Address(receiver, isSet ? JSSet::offsetOfCompactTable() : JSMap::offsetOfCompactTable()), table);
         hasNoTable.append(jit.branchTestPtr(CCallHelpers::Zero, table));
@@ -18211,6 +18262,19 @@ struct CompactTableProbe {
         jit.load32(Address(candidate, StringImpl::flagsOffset()), hash);
         jit.urshift32(TrustedImm32(StringImpl::s_flagCount), hash);
         slowProbe.append(branchIfLastResultWasZero(jit));
+        Jump isInImage = search(jit);
+        if (!maySearchImage) {
+            slowProbe.append(isInImage);
+            return;
+        }
+        isInImage.link(&jit);
+        jit.loadPtr(Address(table, index), table);
+        searchesImage = true;
+        search(jit);
+    }
+
+    Jump search(CCallHelpers& jit)
+    {
         jit.load8(Address(table, Table::offsetOfIndexBits()), position);
         Jump hasSlots = jit.branchTest32(CCallHelpers::NonZero, position);
 
@@ -18237,7 +18301,11 @@ struct CompactTableProbe {
         Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(table, Table::offsetOfCapacity()), TrustedImm32(Table::maxCapacityWithShortSlots));
         probeSlots(jit, CCallHelpers::TimesTwo, Table::shortTagShift, Table::shortSlotEntryBits, hasFreeShortSlot);
         hasLongSlots.link(&jit);
+        Jump isInImage;
+        if (!searchesImage)
+            isInImage = jit.branchTest32(CCallHelpers::NonZero, position, TrustedImm32(Table::indexIsInImage));
         probeSlots(jit, CCallHelpers::TimesFour, Table::longTagShift, Table::longSlotEntryBits, hasFreeLongSlot);
+        return isInImage;
     }
 
     void generateComparison(CCallHelpers& jit)
@@ -18266,6 +18334,59 @@ struct CompactTableProbe {
         isDecided.append(jit.branch32(CCallHelpers::NotEqual, length, Address(other, StringImpl::lengthMemoryOffset())));
         jit.loadPtr(Address(candidate, StringImpl::dataOffset()), candidate);
         jit.loadPtr(Address(other, StringImpl::dataOffset()), other);
+        compareCharacters(jit, isDecided);
+        isDecided.link(&jit);
+        jit.pop(word);
+        jit.pop(length);
+        decidedEarly.link(&jit);
+        if (savesOther)
+            jit.pop(other);
+        jit.ret();
+        isOdd.link(&jit);
+        if (savesOther)
+            jit.pop(other);
+        jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+        slowProbe.append(jit.jump());
+    }
+
+    void generateComparisonInImage(CCallHelpers& jit)
+    {
+        constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+        constexpr GPRReg length = position;
+        constexpr GPRReg word = mask;
+        CCallHelpers::JumpList isDecided;
+        CCallHelpers::JumpList isLeftToOperation;
+        RELEASE_ASSERT(!savesOther);
+        comparisonCallsInImage.link(&jit);
+        jit.push(length);
+        jit.push(word);
+        jit.load32(Address(table, Typed::TableInImage::offsetOfOffsetInData()), other);
+        jit.sub64(table, other, other);
+        jit.load32(BaseIndex(other, candidate, CCallHelpers::TimesFour, sizeof(Typed::Data)), candidate);
+        jit.and32(TrustedImm32((1 << Typed::Data::stringLengthBits) - 1), candidate, length);
+        isLeftToOperation.append(jit.branchTest32(CCallHelpers::Zero, length));
+        jit.urshift32(TrustedImm32(Typed::Data::stringLengthBits), candidate);
+        jit.add64(other, candidate);
+        jit.loadPtr(Address(key, JSString::offsetOfValue()), other);
+        isLeftToOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(other, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        isDecided.append(jit.branch32(CCallHelpers::NotEqual, length, Address(other, StringImpl::lengthMemoryOffset())));
+        jit.loadPtr(Address(other, StringImpl::dataOffset()), other);
+        compareCharacters(jit, isDecided);
+        isDecided.link(&jit);
+        jit.pop(word);
+        jit.pop(length);
+        jit.ret();
+        isLeftToOperation.link(&jit);
+        jit.pop(word);
+        jit.pop(length);
+        jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+        slowProbe.append(jit.jump());
+    }
+
+    void compareCharacters(CCallHelpers& jit, CCallHelpers::JumpList& isDecided)
+    {
+        constexpr GPRReg length = position;
+        constexpr GPRReg word = mask;
         Jump isBelow8 = jit.branch32(CCallHelpers::Below, length, TrustedImm32(8));
         CCallHelpers::Label loop = jit.label();
         jit.sub32(TrustedImm32(8), length);
@@ -18290,18 +18411,6 @@ struct CompactTableProbe {
         jit.load8(BaseIndex(candidate, length, CCallHelpers::TimesOne), word);
         compareWithMemory(jit, 1, word, other, length, CCallHelpers::TimesOne);
         branchIfLastResultWasZero(jit).linkTo(compare, &jit);
-        isDecided.link(&jit);
-        jit.pop(word);
-        jit.pop(length);
-        decidedEarly.link(&jit);
-        if (savesOther)
-            jit.pop(other);
-        jit.ret();
-        isOdd.link(&jit);
-        if (savesOther)
-            jit.pop(other);
-        jit.addPtr(TrustedImm32(sizeof(void*)), sp);
-        slowProbe.append(jit.jump());
     }
 };
 #endif
@@ -18319,7 +18428,7 @@ static void generateLookupInCompactTableWithoutFrame(CCallHelpers& jit, bool isS
     constexpr GPRReg other = X86Registers::r12;
     static_assert(noOverlap(Probe::receiver, Probe::key, Probe::table, Probe::position, hash, other, Probe::mask, Probe::entry, Probe::candidate, Probe::keys, instanceGPR));
     Probe probe { hash, other, false };
-    probe.generate(jit, isSet, keyIsStringByType);
+    probe.generate(jit, isSet, keyIsStringByType, true);
 
     probe.found.link(&jit);
     if (returnsValue) {
@@ -18426,7 +18535,19 @@ static void generateLookupInCompactTableWithoutFrame(CCallHelpers& jit, bool isS
     enterWithKeyImpl(hasNoHash, begunWithoutFrame.hasNoHash);
     enterWithKeyImpl(needsFrame, begunWithoutFrame.isHashed);
 
+    probe.foundInImage.link(&jit);
+    if (returnsValue) {
+        jit.load32(Address(Probe::table, Table::offsetOfCapacity()), Probe::position);
+        jit.getEffectiveAddress(BaseIndex(Probe::keys, Probe::position, CCallHelpers::TimesFour), Probe::keys);
+        jit.load64(BaseIndex(Probe::keys, Probe::entry, CCallHelpers::TimesEight), Probe::candidate);
+        probe.slowProbe.append(jit.branchIfCell(Probe::candidate));
+        jit.move(Probe::candidate, result);
+    } else
+        jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsBoolean(true))), result);
+    jit.ret();
+
     probe.generateComparison(jit);
+    probe.generateComparisonInImage(jit);
     probe.slowProbe.link(&jit);
 #else
     UNUSED_PARAM(jit);
@@ -18460,7 +18581,7 @@ static void generateStoreInCompactTableWithoutFrame(CCallHelpers& jit, bool isSe
     constexpr int32_t index = Table::offsetOfIndex();
     CCallHelpers::JumpList isIndexed;
     Probe probe { tag, receiver, true };
-    probe.generate(jit, isSet, true);
+    probe.generate(jit, isSet, true, false);
     auto& slowProbe = probe.slowProbe;
     slowProbe.append(probe.hasNoTable);
 
@@ -20794,7 +20915,7 @@ static void generateStepThroughTable(CCallHelpers& jit, GPRReg record, GPRReg mo
     isCompact.link(&jit);
     slowCases.append(jit.branch8(CCallHelpers::Above, Address(table, Table::offsetOfState()), TrustedImm32(static_cast<int32_t>(Table::State::Iterated))));
     jit.load8(Address(table, Table::offsetOfKeysShift()), scratch);
-    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(Table::keysAreWide)));
+    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(Table::keysAreWide | Table::keysAreInImage)));
     jit.move(TrustedImm32(2), place);
     jit.lshift64(scratch, place);
     jit.getEffectiveAddress(BaseIndex(table, place, CCallHelpers::TimesOne, Table::offsetOfIndex()), place);

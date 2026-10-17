@@ -95,7 +95,7 @@ static bool isCanonicalIPv4(std::span<const Latin1Character> host)
     return parts == 4;
 }
 
-static std::optional<size_t> findPathStart(std::span<const Latin1Character> text, size_t start)
+static std::optional<size_t> findEndOfHostAndPort(std::span<const Latin1Character> text, size_t start)
 {
     size_t at = start;
     size_t label = start;
@@ -129,9 +129,37 @@ static std::optional<size_t> findPathStart(std::span<const Latin1Character> text
         if (at == digits)
             return std::nullopt;
     }
-    if (at >= text.size() || text[at] != '/')
+    return at;
+}
+
+static std::optional<size_t> findStartOfHost(std::span<const Latin1Character> text)
+{
+    if (text.size() < 8 || text[0] != 'h' || text[1] != 't' || text[2] != 't' || text[3] != 'p')
+        return std::nullopt;
+    size_t colon = text[4] == 's' ? 5 : 4;
+    if (text[colon] != ':' || text[colon + 1] != '/' || text[colon + 2] != '/')
+        return std::nullopt;
+    return colon + 3;
+}
+
+static std::optional<size_t> findPathStart(std::span<const Latin1Character> text)
+{
+    auto host = findStartOfHost(text);
+    if (!host)
+        return std::nullopt;
+    auto at = findEndOfHostAndPort(text, *host);
+    if (!at || *at >= text.size() || text[*at] != '/')
         return std::nullopt;
     return at;
+}
+
+static bool isPlainBaseURL(std::span<const Latin1Character> text)
+{
+    auto host = findStartOfHost(text);
+    if (!host)
+        return false;
+    auto at = findEndOfHostAndPort(text, *host);
+    return at && (*at == text.size() || text[*at] == '/' || text[*at] == '?' || text[*at] == '#');
 }
 
 enum URLCharacterClass : uint8_t {
@@ -161,16 +189,9 @@ static constexpr std::array<uint8_t, 256> urlCharacterClasses = [] {
     return classes;
 }();
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURL, EncodedJSValue, (Instance*, EncodedJSValue encodedInput))
+static EncodedJSValue scanPlainPathAndQuery(std::span<const Latin1Character> text, std::optional<size_t> path)
 {
-    auto text = flatLatin1Span(JSValue::decode(encodedInput));
-    if (text.size() < 8 || text.size() >= static_cast<size_t>(offsetBase) || text[0] != 'h' || text[1] != 't' || text[2] != 't' || text[3] != 'p')
-        return JSValue::encode(jsUndefined());
-    size_t colon = text[4] == 's' ? 5 : 4;
-    if (text[colon] != ':' || text[colon + 1] != '/' || text[colon + 2] != '/')
-        return JSValue::encode(jsUndefined());
-    auto path = findPathStart(text, colon + 3);
-    if (!path)
+    if (!path || text.size() >= static_cast<size_t>(offsetBase))
         return JSValue::encode(jsUndefined());
     size_t at = *path + 1;
     for (; at < text.size(); ++at) {
@@ -187,6 +208,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURL, EncodedJSValue,
     if (at < text.size() && text[at] != '#')
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsNumber(static_cast<double>((static_cast<int64_t>(*path) * offsetBase + static_cast<int64_t>(query)) * offsetBase + static_cast<int64_t>(at))));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURL, EncodedJSValue, (Instance*, EncodedJSValue encodedInput))
+{
+    auto text = flatLatin1Span(JSValue::decode(encodedInput));
+    return scanPlainPathAndQuery(text, findPathStart(text));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURLWithBase, EncodedJSValue, (Instance*, EncodedJSValue encodedInput, EncodedJSValue encodedBase))
+{
+    if (!isPlainBaseURL(flatLatin1Span(JSValue::decode(encodedBase))))
+        return JSValue::encode(jsUndefined());
+    auto text = flatLatin1Span(JSValue::decode(encodedInput));
+    if (text.empty() || text[0] != '/')
+        return scanPlainPathAndQuery(text, findPathStart(text));
+    if (text.size() > 1 && text[1] == '/')
+        return JSValue::encode(jsUndefined());
+    return scanPlainPathAndQuery(text, 0);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindPlainQueryValue, EncodedJSValue, (Instance*, EncodedJSValue encodedInput, EncodedJSValue encodedOffsets, EncodedJSValue encodedName))
@@ -410,6 +449,7 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     case InlineBuiltin::IsObject:
     case InlineBuiltin::HasJSType:
     case InlineBuiltin::ScanPlainURL:
+    case InlineBuiltin::ScanPlainURLWithBase:
     case InlineBuiltin::FindPlainQueryValue:
     case InlineBuiltin::ScanPlainQuery:
     case InlineBuiltin::FindInPlainQuery:
@@ -540,6 +580,8 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     }
     case InlineBuiltin::ScanPlainURL:
         return ensure(AOT_TYPED_OPERATION(ScanPlainURL, in<Boxed>(arguments[0])), type);
+    case InlineBuiltin::ScanPlainURLWithBase:
+        return ensure(AOT_TYPED_OPERATION(ScanPlainURLWithBase, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), type);
     case InlineBuiltin::FindPlainQueryValue:
         return ensure(AOT_TYPED_OPERATION(FindPlainQueryValue, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), in<Boxed>(arguments[2])), m_program.at(m_program.types.number), type);
     case InlineBuiltin::ScanPlainQuery:

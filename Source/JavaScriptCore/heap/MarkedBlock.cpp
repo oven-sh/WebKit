@@ -730,6 +730,8 @@ void MarkedBlock::Handle::poisonDeadCells()
 void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
+    if (!m_directory->isUnswept(this))
+        return;
     bool hasNewlyDeadCells = false;
     forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
         hasNewlyDeadCells = !__asan_address_is_poisoned(cell);
@@ -741,7 +743,7 @@ void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
         m_directory->setIsEmpty(this, false);
     }
     bool hasPendingDestructors = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
-    if (m_directory->isUnswept(this) && !hasPendingDestructors)
+    if (!hasPendingDestructors)
         poisonDeadCells();
 }
 

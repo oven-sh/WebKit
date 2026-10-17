@@ -259,6 +259,9 @@ struct Slot;
     v(operationAOTTypedNewMap) \
     v(operationAOTTypedTryNewStringSet) \
     v(operationAOTTypedTryNewMapWithStringKeys) \
+    v(operationAOTTypedNewSetInImage) \
+    v(operationAOTTypedNewMapInImage) \
+    v(operationAOTTypedMoveTableToHeap) \
     v(operationAOTTypedIterOpen) \
     v(operationAOTTypedIterHas) \
     v(operationAOTTypedIterGet) \
@@ -573,6 +576,9 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCharToString, Nothing, JSC
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewMap, RuntimeState, JSCell*, (Instance*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryNewStringSet, RuntimeState, JSCell*, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryNewMapWithStringKeys, RuntimeState, JSCell*, (Instance*, EncodedJSValue));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewSetInImage, RuntimeState, JSCell*, (Instance*, uint32_t table));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewMapInImage, RuntimeState, JSCell*, (Instance*, uint32_t table));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMoveTableToHeap, RuntimeState, JSCell*, (Instance*, JSCell* collection));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterOpen, Heap, EncodedJSValue, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterHas, Heap, size_t, (Instance*, EncodedJSValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIterGet, Heap, EncodedJSValue, (Instance*, EncodedJSValue));

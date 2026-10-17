@@ -116,6 +116,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewMapWithStringKeys, JSCell*, (Ins
     OPERATION_RETURN(scope, tryNewTableWithStringKeys<JSMap>(globalObject, globalObject->mapStructure(), JSValue::decode(list)));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedNewSetInImage, JSCell*, (Instance* instance, uint32_t table))
+{
+    auto& data = instance->typed->data;
+    return CompactTable::createSetInImage(instance->globalObject, *data.at<Typed::TableInImage>(data.at<uint32_t>(data.tablesInImageOffset)[table]));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedNewMapInImage, JSCell*, (Instance* instance, uint32_t table))
+{
+    auto& data = instance->typed->data;
+    return CompactTable::createMapInImage(instance->globalObject, *data.at<Typed::TableInImage>(data.at<uint32_t>(data.tablesInImageOffset)[table]));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedMoveTableToHeap, JSCell*, (Instance*, JSCell* collection))
+{
+    if (collection->type() == JSMapType)
+        return CompactTable::heapTableOf(uncheckedDowncast<JSMap>(collection));
+    return CompactTable::heapTableOf(uncheckedDowncast<JSSet>(collection));
+}
+
 template<typename Traits>
 static size_t nextEntry(Instance* instance, JSCell* collection, EncodedJSValue encodedTable, uint32_t entry)
 {
@@ -130,7 +149,7 @@ static EncodedJSValue entryPart(JSCell* collection, uint32_t entry, bool isKey)
     using Helper = JSOrderedHashTableHelper<Traits>;
     auto* owner = uncheckedDowncast<JSOrderedHashTable<Traits>>(collection);
     if (owner->m_compactTable) {
-        auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+        auto* table = CompactTable::heapTableOf(owner);
         return JSValue::encode(isKey ? JSValue(table->keyAt(entry)) : table->valueAt(entry));
     }
     if constexpr (Traits::hasValueData) {
@@ -668,12 +687,68 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         LValue storage = m_out.loadPtr(owner.value(), m_heaps.JSMap_storage);
         LBasicBlock isCompact = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
+        auto walksThisCollection = [&](ValueID id) {
+            auto& other = m_function.at(id);
+            if (other.opcode != Opcode::CallBuiltin || other.arguments.isEmpty() || other.arguments[0] != arguments[0])
+                return false;
+            auto& implementation = m_builtins.at(other.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Inline)
+                return false;
+            switch (implementation.inlined) {
+            case InlineBuiltin::CollectionTable:
+            case InlineBuiltin::MapNext:
+            case InlineBuiltin::SetNext:
+                return true;
+            default:
+                return false;
+            }
+        };
+        bool isAlreadyWalked = [&] {
+            for (size_t i = m_currentIndexInBlock; i--;) {
+                if (walksThisCollection(m_currentBlock->values[i]))
+                    return true;
+            }
+            if (m_singlePredecessors.isEmpty()) {
+                m_singlePredecessors.fill(UINT32_MAX, m_function.blocks.size());
+                for (uint32_t i = 0; i < m_function.blocks.size(); ++i) {
+                    for (auto& target : m_function.blocks[i].terminator.targets) {
+                        uint32_t& only = m_singlePredecessors[target.block.index()];
+                        only = only == UINT32_MAX ? i : UINT32_MAX - 1;
+                    }
+                }
+            }
+            uint32_t previous = m_singlePredecessors[m_currentBlockID.index()];
+            return previous < UINT32_MAX - 1 && std::ranges::any_of(m_function.blocks[previous].values, walksThisCollection);
+        }();
+        if (isAlreadyWalked) {
+            m_out.branch(m_out.notNull(compactTable), unsure(isCompact), unsure(continuation));
+            m_out.appendTo(isCompact);
+            didEmitWrite(Writes::RuntimeState);
+            m_out.store32As8(m_out.constInt32(static_cast<int32_t>(CompactTable::State::Iterated)), fieldOf(compactTable, CompactTable::offsetOfState()));
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            LValue table = m_out.select(m_out.notNull(compactTable), compactTable, m_out.select(m_out.notNull(storage), storage, m_out.constInt64(JSValue::encode(jsNull()))));
+            ensureStillAliveHere(owner);
+            return ensure(Boxed(table), type);
+        }
+        LBasicBlock isInImage = newColdBlock();
+        LBasicBlock isInHeap = m_out.newBlock();
+        ValueFromBlock none = m_out.anchor(compactTable);
         m_out.branch(m_out.notNull(compactTable), unsure(isCompact), unsure(continuation));
         m_out.appendTo(isCompact);
         didEmitWrite(Writes::RuntimeState);
-        m_out.store32As8(m_out.constInt32(static_cast<int32_t>(CompactTable::State::Iterated)), fieldOf(compactTable, CompactTable::offsetOfState()));
+        ValueFromBlock unmoved = m_out.anchor(compactTable);
+        m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(fieldOf(compactTable, CompactTable::offsetOfKeysShift())), m_out.constInt32(CompactTable::keysAreInImage)), rarely(isInImage), usually(isInHeap));
+        m_out.appendTo(isInImage);
+        ValueFromBlock moved = m_out.anchor(AOT_TYPED_OPERATION(MoveTableToHeap, owner).value());
+        m_out.jump(isInHeap);
+        m_out.appendTo(isInHeap);
+        LValue heapTable = m_out.phi(pointerType(), unmoved, moved);
+        m_out.store32As8(m_out.constInt32(static_cast<int32_t>(CompactTable::State::Iterated)), fieldOf(heapTable, CompactTable::offsetOfState()));
+        ValueFromBlock iterated = m_out.anchor(heapTable);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
+        compactTable = m_out.phi(pointerType(), none, iterated);
         LValue table = m_out.select(m_out.notNull(compactTable), compactTable, m_out.select(m_out.notNull(storage), storage, m_out.constInt64(JSValue::encode(jsNull()))));
         ensureStillAliveHere(owner);
         return ensure(Boxed(table), type);

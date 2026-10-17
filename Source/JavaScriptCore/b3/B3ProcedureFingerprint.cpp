@@ -199,7 +199,7 @@ bool ProcedureFingerprint::compute(Procedure& proc, std::span<StackmapGenerator*
         append64(word);
 
     append(code.m_optLevel);
-    append(static_cast<uint32_t>(code.m_chargesForCalleeSaves) | code.m_placesRareBlocksInGaps << 1 | code.m_ordersBlocksByEdgeFrequency << 2 | code.m_mayPlaceSpillsAboveFrameRecord << 3 | code.m_mayPlaceCalleeSavesAtFrameBottom << 4 | code.m_preserveB3Origins << 5 | code.m_recordsRareCodeStart << 6 | !!code.m_maskInMemory << 7);
+    append(static_cast<uint32_t>(code.m_chargesForCalleeSaves) | code.m_placesRareBlocksInGaps << 1 | code.m_ordersBlocksByEdgeFrequency << 2 | code.m_mayPlaceSpillsAboveFrameRecord << 3 | code.m_mayPlaceCalleeSavesAtFrameBottom << 4 | code.m_preserveB3Origins << 5 | code.m_recordsRareCodeStart << 6 | !!code.m_maskInMemory << 7 | code.m_placesRareBlocksBehindGuards << 8);
     if (code.m_maskInMemory) {
         append64(code.m_maskInMemory->mask);
         append(code.m_maskInMemory->base);

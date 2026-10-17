@@ -121,8 +121,21 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
 static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES mapHasGeneric(Instance*, JSCell*, EncodedJSValue);
 static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES setHasGeneric(Instance*, JSCell*, EncodedJSValue);
 
+template<typename Table>
+static ALWAYS_INLINE Typed::CompactTable* tableInImageAskedForFlatString(JSCell* collection, EncodedJSValue key)
+{
+    JSCell* table = uncheckedDowncast<Table>(collection)->m_compactTable.get();
+    if (!table || !uncheckedDowncast<Typed::CompactTable>(table)->isInImage() || Options::useAOTOperationCounters())
+        return nullptr;
+    return JSValue::decode(key).isString() && asString(JSValue::decode(key))->tryGetValueImpl() ? uncheckedDowncast<Typed::CompactTable>(table) : nullptr;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
+    if (auto* table = tableInImageAskedForFlatString<JSMap>(map, key)) {
+        auto entry = table->tableInImage().find(*asString(JSValue::decode(key))->tryGetValueImpl());
+        return { JSValue::encode(entry ? table->valueAt(*entry) : jsUndefined()), nullptr };
+    }
     JSValue value;
     switch (tryFindSubstringQuickly(instance, uncheckedDowncast<JSMap>(map), JSValue::decode(key), value)) {
     case Typed::CompactTable::Quickly::Found:
@@ -137,6 +150,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
+    if (auto* table = tableInImageAskedForFlatString<JSMap>(map, key))
+        return { JSValue::encode(jsBoolean(!!table->tableInImage().find(*asString(JSValue::decode(key))->tryGetValueImpl()))), nullptr };
     JSValue value;
     if (auto answer = tryFindSubstringQuickly(instance, uncheckedDowncast<JSMap>(map), JSValue::decode(key), value); answer != Typed::CompactTable::Quickly::Unknown)
         return { JSValue::encode(jsBoolean(answer == Typed::CompactTable::Quickly::Found)), nullptr };
@@ -145,6 +160,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
 {
+    if (auto* table = tableInImageAskedForFlatString<JSSet>(set, key))
+        return { JSValue::encode(jsBoolean(!!table->tableInImage().find(*asString(JSValue::decode(key))->tryGetValueImpl()))), nullptr };
     JSValue value;
     if (auto answer = tryFindSubstringQuickly(instance, uncheckedDowncast<JSSet>(set), JSValue::decode(key), value); answer != Typed::CompactTable::Quickly::Unknown)
         return { JSValue::encode(jsBoolean(answer == Typed::CompactTable::Quickly::Found)), nullptr };

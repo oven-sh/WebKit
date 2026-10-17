@@ -84,6 +84,7 @@ public:
     static Object* createWithInitializedFields(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
     Object* clone(JSGlobalObject*);
     Object* tryCloneWithPrototype(JSGlobalObject*, JSValue prototype);
+    void adoptPrototypeAtBirth(JSGlobalObject*, JSObject* prototype, uint32_t allocation);
     void leaveInlinePaths() { at<uint32_t>(offsetOfOrderWord) |= orderWordHasExtraProperties; }
     Object* copyWithStructure(VM&, Structure*, JSFinalObject* copiedExtraProperties);
     JSObject* tryCopyAsPlainObject(JSGlobalObject*) const;
@@ -1497,7 +1498,7 @@ struct State {
     void updatePrototypeMatchesLayout(Structure*);
     void revalidatePrototypes(VM&, const ScopedLambda<bool(Structure*, const LayoutData&)>& shouldRevalidate);
     void didChangeDescendantPrototype(VM&, JSObject* changed, UniquedStringImpl* nameOfProperty);
-    bool hasDescendantPrototypes() const { return !m_descendantPrototypes.isEmpty(); }
+    bool hasDescendantPrototypes() const { return !m_descendantPrototypes.isEmpty() || !m_shapesUnderPrototype.isEmpty(); }
     void removeDeadDescendantPrototypes(VM&);
     void didModifyPrototypeObject(VM&, PrototypeObject*);
     uint32_t initialOrderWord(VM&, const AllocationData&, Structure*);
@@ -2464,6 +2465,9 @@ private:
     bool descendantsAddNoProperties(JSObject* prototype, JSObject* classPrototype);
     UncheckedKeyHashMap<JSObject*, JSObject*> m_classPrototypeByDescendantPrototype;
     UncheckedKeyHashSet<JSObject*> m_descendantPrototypes;
+    bool holdsNoFieldOf(const LayoutData&, JSObject* prototype);
+    UncheckedKeyHashMap<std::pair<JSObject*, uint32_t>, bool> m_prototypesHoldingNoField;
+    UncheckedKeyHashMap<JSObject*, Vector<uint32_t, 2>> m_shapesUnderPrototype;
     UncheckedKeyHashSet<JSObject*> m_modifiedDescendantPrototypes;
     Vector<std::unique_ptr<WatchedMembers>> m_watchedMembers;
     JSCell* stringIfCreated(uint32_t) const;

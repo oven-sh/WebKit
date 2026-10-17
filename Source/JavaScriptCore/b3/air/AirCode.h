@@ -389,6 +389,8 @@ public:
     const std::optional<MaskInMemory>& maskInMemory() const { return m_maskInMemory; }
     void setPlacesRareBlocksInGaps() { m_placesRareBlocksInGaps = true; }
     bool placesRareBlocksInGaps() const { return m_placesRareBlocksInGaps; }
+    void setPlacesRareBlocksBehindGuards() { m_placesRareBlocksBehindGuards = true; }
+    bool placesRareBlocksBehindGuards() const { return m_placesRareBlocksBehindGuards; }
     void setOrdersBlocksByEdgeFrequency() { m_ordersBlocksByEdgeFrequency = true; }
     bool ordersBlocksByEdgeFrequency() const { return m_ordersBlocksByEdgeFrequency; }
     void setMayPlaceSpillsAboveFrameRecord() { m_mayPlaceSpillsAboveFrameRecord = true; }
@@ -445,6 +447,7 @@ private:
     bool m_chargesForCalleeSaves { false };
     std::optional<MaskInMemory> m_maskInMemory;
     bool m_placesRareBlocksInGaps { false };
+    bool m_placesRareBlocksBehindGuards { false };
     bool m_ordersBlocksByEdgeFrequency { false };
     bool m_mayPlaceSpillsAboveFrameRecord { false };
     bool m_placesSpillsAboveFrameRecord { false };

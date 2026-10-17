@@ -12,6 +12,7 @@ inline ObjectGetOwnPropertyDescriptor
 inline ObjectCreate
 inline ObjectGetPrototypeOf
 inline ObjectSetPrototypeOf
+inline AdoptPrototype
 inline ObjectIs
 inline ObjectCall
 inline ReflectOwnKeys
@@ -28,6 +29,7 @@ runtime ObjectAssignToNew : Heap JSCell* (EncodedJSValue source)
 runtime GetOwnPropertyDescriptor : Heap EncodedJSValue (EncodedJSValue object, EncodedJSValue key)
 runtime ObjectCreate : Heap JSCell* (JSCell* prototype) noexcept
 runtime TryCloneWithPrototype : Heap JSCell* (JSCell* source, EncodedJSValue prototype) noexcept
+runtime AdoptPrototype : Heap void (JSCell* born, EncodedJSValue prototype, uint32_t allocation)
 
 call Object (any/GR?, any/-...) -> new Object ; CallsUserCode ; Inline(ObjectCall)
 construct Object (any/GR?, any/-...) -> new Object ; CallsUserCode ; HostCall
@@ -59,6 +61,7 @@ static Object.hasOwn (any/G, toPropertyKey) -> boolean ; MayThrow ReadsArguments
 static Object.is (any/-, any/-) -> boolean ; Pure ; Inline(ObjectIs)
 
 operation PropertyIsEnumerable (any/G, any/G) -> boolean ; CallsUserCode ; Inline(ObjectPropertyIsEnumerable)
+operation AdoptPrototype (any/WwA, any/KG) -> undefined ; CallsUserCode ; Inline(AdoptPrototype)
 
 method Object.prototype.hasOwnProperty this/G (toPropertyKey) -> boolean ; ReadsReceiver ; HostCall
 method Object.prototype.isPrototypeOf this/- (any/G) -> boolean ; ReadsArguments ; HostCall

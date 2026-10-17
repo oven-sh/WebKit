@@ -3628,6 +3628,8 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     static_assert(Instance::offsetOfNotUndefinedOrNullMask() >= std::numeric_limits<int8_t>::min() && Instance::offsetOfNotUndefinedOrNullMask() <= std::numeric_limits<int8_t>::max());
     proc.code().setMaskInMemory(~static_cast<int64_t>(JSValue::ValueUndefined), instanceGPR, Instance::offsetOfNotUndefinedOrNullMask());
     proc.code().setPlacesRareBlocksInGaps();
+    if (program.isColdInCallGraph(id) || program.isStaticallyRare(id))
+        proc.code().setPlacesRareBlocksBehindGuards();
     proc.code().setOrdersBlocksByEdgeFrequency();
     proc.code().setRecordsRareCodeStart();
     if (Options::aotMapFilePath()) [[unlikely]]

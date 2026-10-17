@@ -15,6 +15,7 @@ inline HasHostClassStructure
 inline HostObjectHasCachedValue
 inline IsGlobalCachedAsBuiltin
 inline ScanPlainURL
+inline ScanPlainURLWithBase
 inline FindPlainQueryValue
 inline ScanPlainQuery
 inline FindInPlainQuery
@@ -27,6 +28,7 @@ runtime NativeBinding : Heap EncodedJSValue (uint32_t index)
 runtime LinkTimeConstant : RuntimeState JSCell* (uint32_t constant) noexcept
 runtime ToLength : Heap EncodedJSValue (EncodedJSValue value)
 runtime ScanPlainURL : Pure EncodedJSValue (EncodedJSValue text) noexcept
+runtime ScanPlainURLWithBase : Pure EncodedJSValue (EncodedJSValue text, EncodedJSValue base) noexcept
 runtime FindPlainQueryValue : Pure EncodedJSValue (EncodedJSValue text, EncodedJSValue offsets, EncodedJSValue name) noexcept
 runtime ScanPlainQuery : Pure EncodedJSValue (EncodedJSValue text) noexcept
 runtime FindInPlainQuery : Pure EncodedJSValue (EncodedJSValue text, EncodedJSValue name) noexcept
@@ -50,6 +52,7 @@ operation PutByValDirect (any/Ww, any/G, any/KR) -> arg2 ; CallsUserCode ; Inlin
 operation HasHostClassStructure (any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasHostClassStructure)
 operation IsGlobalCachedAsBuiltin (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsGlobalCachedAsBuiltin)
 operation ScanPlainURL (any/-) -> anything ; Pure ; Inline(ScanPlainURL)
+operation ScanPlainURLWithBase (any/-, any/-) -> anything ; Pure ; Inline(ScanPlainURLWithBase)
 operation FindPlainQueryValue (any/-, any/-, any/-) -> number ; Pure ; Inline(FindPlainQueryValue)
 operation ScanPlainQuery (any/-) -> anything ; Pure ; Inline(ScanPlainQuery)
 operation FindInPlainQuery (any/-, any/-) -> number ; Pure ; Inline(FindInPlainQuery)

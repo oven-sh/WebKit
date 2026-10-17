@@ -1137,10 +1137,25 @@ private:
                 firstFieldNamed[slotSharingName(field).index() + 1] += exists(field);
         }
         m_firstField.append(next);
+        BitVector isNeverStoredSomewhere(m_program.strings.size());
         for (auto& layout : layouts) {
             for (auto& field : layout.fields) {
                 if (!exists(field) && firstFieldNamed[field.name.index() + 1])
-                    fail("the property ", nameOf(field.name), " is never stored in ", nameOf(layout), " and is stored elsewhere");
+                    isNeverStoredSomewhere.quickSet(field.name.index());
+            }
+        }
+        for (auto& layout : layouts) {
+            if (!isObjectLayout(layout.kind))
+                continue;
+            for (auto& field : layout.fields) {
+                if (!isNeverStoredSomewhere.quickGet(field.name.index()))
+                    continue;
+                for (LayoutID subtype : layout.subtypes) {
+                    for (auto& inSubtype : m_program.at(subtype).fields) {
+                        if (inSubtype.name == field.name && exists(inSubtype) != exists(field))
+                            fail("the property ", nameOf(field.name), " is never stored in one of ", nameOf(layout), " and its subtype ", nameOf(m_program.at(subtype)), " and is stored in the other");
+                    }
+                }
             }
         }
         crashIfFailed();
@@ -5255,6 +5270,19 @@ public:
                     WTF::atomicExchangeAdd(&constantUseCount[value.string().index()], 1u, std::memory_order_relaxed);
             }
         });
+        auto forEachStringInTables = [&](const auto& functor) {
+            for (auto& table : m_program.tablesInImage) {
+                for (StringID key : table.keys)
+                    functor(key);
+                for (uint64_t value : table.values) {
+                    if (JSValue::decode(value).isCell() && !(value & Data::encodedStringIsSmall))
+                        functor(StringID(Data::decodeStringConstant(value)));
+                }
+            }
+        };
+        forEachStringInTables([&](StringID string) {
+            ++constantUseCount[string.index()];
+        });
         BitVector isConstant(strings.size());
         for (uint32_t index = 0; index < strings.size(); ++index) {
             if (constantUseCount[index])
@@ -5325,6 +5353,7 @@ public:
                     recordStringsNamedBy(function.at(id));
             }
         });
+        forEachStringInTables(recordNamedString);
         for (auto& layout : m_program.layouts) {
             recordNamedString(layout.name);
             recordNamedString(layout.declaredPath);
@@ -5594,6 +5623,10 @@ public:
             for (auto& value : m_program.functions[i].values) {
                 if (stringNamingOpcodes.contains(value.opcode))
                     functionSources[i].append(value.immediates[0]);
+                if (value.tableInImage() != Format::none) {
+                    for (StringID key : m_program.tablesInImage[value.tableInImage()].keys)
+                        functionSources[i].append(key.index());
+                }
             }
         });
         size_t sizeBeforeNames = m_result.size();
@@ -6049,6 +6082,16 @@ public:
         for (auto& elements : m_program.arrayLiteralElements)
             arrayLiterals.append({ append(elements), static_cast<uint32_t>(elements.size()) });
         header.arrayLiteralsOffset = append(arrayLiterals);
+        Vector<uint32_t> tablesInImage;
+        for (auto& table : m_program.tablesInImage) {
+            auto keys = table.keys.map([&](StringID key) {
+                return std::pair { key.index(), m_program.string(key) };
+            });
+            uint32_t offset = append(TableInImage::encode(keys.span(), table.values.span()).span(), 8);
+            at<uint32_t>(offset + TableInImage::offsetOfOffsetInData()) = offset;
+            tablesInImage.append(offset);
+        }
+        header.tablesInImageOffset = append(tablesInImage);
 
         header.numberOfFunctions = m_program.functions.size();
         Vector<uint32_t> names;

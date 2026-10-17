@@ -1351,10 +1351,26 @@ struct Instance {
         first[0] = answer;
         hasInheritedFieldAnswers = true;
     }
+    struct PrototypeAtBirth {
+        JSCell* prototype;
+        uint32_t allocation;
+        uint32_t structureID;
+    };
+    static constexpr uint32_t prototypeAtBirthAsksPrototypeChain = 1;
+    static constexpr unsigned numberOfPrototypesAtBirth = 64;
+    static constexpr unsigned indexOfPrototypeAtBirth(uintptr_t prototype, uint32_t allocation) { return ((prototype >> 6) + allocation) & (numberOfPrototypesAtBirth - 1); }
+    static constexpr ptrdiff_t offsetOfPrototypesAtBirth() { return OBJECT_OFFSETOF(Instance, prototypesAtBirth); }
+    void rememberPrototypeAtBirth(const PrototypeAtBirth& known)
+    {
+        prototypesAtBirth[indexOfPrototypeAtBirth(std::bit_cast<uintptr_t>(known.prototype), known.allocation)] = known;
+        hasInheritedFieldAnswers = true;
+    }
     void forgetInheritedFieldAnswers()
     {
-        if (std::exchange(hasInheritedFieldAnswers, false))
+        if (std::exchange(hasInheritedFieldAnswers, false)) {
             zeroSpan(std::span { inheritedFieldAnswers });
+            zeroSpan(std::span { prototypesAtBirth });
+        }
     }
     static constexpr ptrdiff_t offsetOfInheritedFieldAnswers() { return OBJECT_OFFSETOF(Instance, inheritedFieldAnswers); }
     static constexpr unsigned numberOfThisAllocations = 64;
@@ -1887,6 +1903,7 @@ struct Instance {
     };
     static constexpr unsigned numberOfStructuresOfThis = 64;
     StructureOfThis structuresOfThis[numberOfStructuresOfThis];
+    PrototypeAtBirth prototypesAtBirth[numberOfPrototypesAtBirth];
     StructureOfThis& structureOfThis(JSCell* newTarget, Slot* site) { return structuresOfThis[((std::bit_cast<uintptr_t>(newTarget) >> 4) ^ (std::bit_cast<uintptr_t>(site) >> 4)) % numberOfStructuresOfThis]; }
     static constexpr unsigned numberOfTypedStringsWithWord = 4096;
     uint32_t typedStringWords[numberOfTypedStringsWithWord];
