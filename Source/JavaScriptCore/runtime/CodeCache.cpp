@@ -47,7 +47,11 @@ void CodeCacheMap::pruneSlowCase()
     if (m_capacity < m_minCapacity)
         m_capacity = m_minCapacity;
 
+#if USE(BUN_JSC_ADDITIONS)
+    while (m_size > m_capacity) {
+#else
     while (m_size > m_capacity || !canPruneQuickly()) {
+#endif
         // Not begin(): it walks past every empty bucket in front of the first entry, and evicting that entry each
         // time empties the front of the table, so one eviction costs a walk over a large part of the table.
         // The least recently used of a few random entries instead, so a source that is used again and again stays.
@@ -60,7 +64,7 @@ void CodeCacheMap::pruneSlowCase()
 
         writeCodeBlock(it->key, it->value);
 
-        m_size -= it->key.length();
+        m_size -= weight(it->key);
         m_map.remove(it);
     }
 }
@@ -81,10 +85,29 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
         if (!codeBlock || !codeBlock->cachedPayloadIndex())
             return false;
         writeCodeBlock(entry.key, entry.value); // as clear() and removeIfHolds() do for what they drop
-        m_size -= entry.key.length();
+        m_size -= weight(entry.key);
         return true;
     });
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void CodeCacheMap::removeEntriesNotUsedInCurrentFullCollectionCycle()
+{
+    m_map.removeIf([&](auto& entry) {
+        if (entry.value.age >= m_ageAtLastFullCollection)
+            return false;
+        writeCodeBlock(entry.key, entry.value);
+        m_size -= weight(entry.key);
+        return true;
+    });
+    // The working set starts over from what is left: the capacity a busy period grew to does not outlive it, and the
+    // next sources admitted are a new window, as after pruneSlowCase().
+    m_capacity = std::min(m_capacity, m_size);
+    m_minCapacity = 0;
+    m_sizeAtLastPrune = m_size;
+    m_timeAtLastPrune = ApproximateTime::now();
+}
+#endif
 
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
