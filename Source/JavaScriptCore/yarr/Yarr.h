@@ -57,21 +57,25 @@ static constexpr unsigned quantifyInfinite = UINT_MAX;
 static constexpr uint64_t quantifyInfinite64 = std::numeric_limits<uint64_t>::max();
 static constexpr unsigned offsetNoMatch = std::numeric_limits<unsigned>::max();
 
-// The below limit restricts the number of "recursive" match calls in order to
-// avoid spending exponential time on complex regular expressions.
-static constexpr unsigned matchLimit = 100000000;
-
 enum class MatchFrom { VMThread, CompilerThread };
 
+// What one search came to. interpret() returns it; JIT code returns the negative values in the
+// register where the start of a match would go.
 enum class JSRegExpResult {
     Match = 1,
     NoMatch = 0,
-    ErrorNoMatch = -1,
-    JITCodeFailure = -2,
-    ErrorHitLimit = -3,
-    ErrorNoMemory = -4,
+    ErrorNoMatch = -1, // JIT code's NoMatch.
+    JITCodeFailure = -2, // JIT code cannot finish this search; the caller reruns it in the interpreter.
+    ErrorHitLimit = -3, // Abandoned after Options::regExpMatchLimit steps.
+    ErrorNoMemory = -4, // Abandoned: the backtracking state outgrew Options::maxRegExpStackSize or the native stack.
     ErrorInternal = -5,
 };
+
+// An abandoned search has no answer: it is not a miss. The caller throws or reports it.
+constexpr bool isAbandoned(JSRegExpResult result)
+{
+    return result == JSRegExpResult::ErrorHitLimit || result == JSRegExpResult::ErrorNoMemory;
+}
 
 enum class CharSize : uint8_t {
     Char8,

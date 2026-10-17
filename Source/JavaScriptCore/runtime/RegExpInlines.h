@@ -125,6 +125,56 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
     compile(&vm, charSize, sampleString);
 }
 
+// Runs the bytecode interpreter and returns what JIT code returns: the start of the match, -1 for no
+// match, or below -1 the JSRegExpResult the search was abandoned with.
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::interpretInline(VM& vm, StringView s, unsigned startOffset, int* offsetVector)
+{
+    Yarr::JSRegExpResult result;
+    {
+        Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
+        result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+    }
+    if (result == Yarr::JSRegExpResult::Match)
+        return offsetVector[0];
+    if (result == Yarr::JSRegExpResult::NoMatch)
+        return -1;
+    ASSERT(Yarr::isAbandoned(result));
+    return static_cast<int>(result);
+}
+
+// m_state is ParseError: the pattern did not compile. The VM's thread throws for it, and every
+// caller sees no match. This and the helpers below are not lambdas in matchInlineOnce: one that
+// captures by reference costs every match the stores that build its closure.
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::matchParseError(JSGlobalObject* nullOrGlobalObject, VM& vm)
+{
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+        throwParseError(nullOrGlobalObject, vm);
+    return -1;
+}
+
+// The search was abandoned (Yarr::isAbandoned). With a global object this throws and returns -1: the
+// caller sees no match and the exception. A caller with none has nothing to throw on, so it gets the
+// code, which is below -1 and is not a failed match. That is every compiler thread: matchConcurrently()
+// reads the code as no answer.
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::matchAbandoned(JSGlobalObject* nullOrGlobalObject, int code)
+{
+    ASSERT(Yarr::isAbandoned(static_cast<Yarr::JSRegExpResult>(code)));
+    if (matchFrom == Yarr::MatchFrom::CompilerThread || !nullOrGlobalObject)
+        return code;
+    throwMatchAbandoned(nullOrGlobalObject, static_cast<Yarr::JSRegExpResult>(code));
+    return -1;
+}
+
+// The same in MatchResult::start, where JIT code puts a code. -1 there is WTF::notFound: MatchResult::failed().
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE MatchResult RegExp::matchAbandonedResult(JSGlobalObject* nullOrGlobalObject, int code)
+{
+    return MatchResult { static_cast<size_t>(static_cast<ptrdiff_t>(matchAbandoned<matchFrom>(nullOrGlobalObject, code))), 0 };
+}
+
 template<Yarr::MatchFrom matchFrom>
 NEVER_INLINE int RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
@@ -164,20 +214,8 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     noteUse<matchFrom>(vm);
     compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
-    auto throwError = [&] {
-        if (matchFrom == Yarr::MatchFrom::CompilerThread)
-            return -1;
-        if (nullOrGlobalObject) {
-            auto throwScope = DECLARE_THROW_SCOPE(vm);
-            throwScope.throwException(nullOrGlobalObject, errorToThrow(nullOrGlobalObject));
-        }
-        if (!hasHardError(m_constructionErrorCode))
-            reset();
-        return -1;
-    };
-
     if (m_state == ParseError)
-        return throwError();
+        return matchParseError<matchFrom>(nullOrGlobalObject, vm);
 
     ASSERT(ovector.size() >= static_cast<size_t>(offsetVectorSize()));
     int* offsetVector = ovector.data();
@@ -206,38 +244,42 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
                 result = m_regExpJITCode->execute(s.span16(), startOffset, offsetVector, &regExpContext).start;
         }
 
-        if (result == static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure)) {
-            // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
-            // thread must use the bytecode that already exists, and bails out if there is no
-            // bytecode.
-            if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-                byteCodeCompileIfNecessary(&vm);
-                if (m_state == ParseError)
-                    return throwError();
+        // A match or -1 is the answer. Below -1 the JIT code wants the interpreter (JITCodeFailure)
+        // or abandoned the search: one compare on the way out of every JIT match covers both.
+        if (result < -1) [[unlikely]] {
+            if (result == static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure)) {
+                // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
+                // thread must use the bytecode that already exists, and bails out if there is no
+                // bytecode.
+                if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+                    byteCodeCompileIfNecessary(&vm);
+                    if (m_state == ParseError)
+                        return matchParseError<matchFrom>(nullOrGlobalObject, vm);
+                }
+                if (!m_regExpBytecode) {
+                    ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
+                    return result;
+                }
+                result = interpretInline<matchFrom>(vm, s, startOffset, offsetVector);
             }
-            if (!m_regExpBytecode) {
-                ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
-                return result;
-            }
-            {
-                Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-                result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-            }
+            if (result < -1)
+                return matchAbandoned<matchFrom>(nullOrGlobalObject, result);
         }
 
 #if ENABLE(YARR_JIT_DEBUG)
         if (m_state == JITCode) {
             byteCodeCompileIfNecessary(&vm);
             if (m_state == ParseError)
-                return throwError();
+                return matchParseError<matchFrom>(nullOrGlobalObject, vm);
             matchCompareWithInterpreter(s, startOffset, offsetVector, result);
         }
 #endif
     } else
 #endif
     {
-        Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+        result = interpretInline<matchFrom>(vm, s, startOffset, offsetVector);
+        if (result < -1) [[unlikely]]
+            return matchAbandoned<matchFrom>(nullOrGlobalObject, result);
     }
 
     ASSERT(result >= -1);
@@ -322,20 +364,10 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     noteUse<matchFrom>(vm);
     compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
-    auto throwError = [&] {
-        if (matchFrom == Yarr::MatchFrom::CompilerThread)
-            return MatchResult::failed();
-        if (nullOrGlobalObject) {
-            auto throwScope = DECLARE_THROW_SCOPE(vm);
-            throwScope.throwException(nullOrGlobalObject, errorToThrow(nullOrGlobalObject));
-        }
-        if (!hasHardError(m_constructionErrorCode))
-            reset();
+    if (m_state == ParseError) {
+        matchParseError<matchFrom>(nullOrGlobalObject, vm);
         return MatchResult::failed();
-    };
-
-    if (m_state == ParseError)
-        return throwError();
+    }
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
         if (hasValidAtom()) {
@@ -363,16 +395,22 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
         if (!result)
             m_rtMatchOnlyFoundCount++;
 #endif
-        if (result.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
+        // JIT code returns a negative JSRegExpResult where the start would go. -1 (no match) is an
+        // answer; below it the code wants the interpreter (JITCodeFailure) or abandoned the search.
+        if (static_cast<ptrdiff_t>(result.start) >= -1) [[likely]]
             return result;
+        if (result.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
+            return matchAbandonedResult<matchFrom>(nullOrGlobalObject, static_cast<int>(result.start));
 
         // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
         // thread must use the bytecode that already exists, and bails out if there is no
         // bytecode.
         if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
             byteCodeCompileIfNecessary(&vm);
-            if (m_state == ParseError)
-                return throwError();
+            if (m_state == ParseError) {
+                matchParseError<matchFrom>(nullOrGlobalObject, vm);
+                return MatchResult::failed();
+            }
         }
         if (!m_regExpBytecode) {
             ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
@@ -386,10 +424,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     Vector<int, 32> nonReturnedOvector;
     nonReturnedOvector.grow(offsetVectorSize());
     offsetVector = nonReturnedOvector.mutableSpan().data();
-    {
-        Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-    }
+    result = interpretInline<matchFrom>(vm, s, startOffset, offsetVector);
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->outputOneTest(this, s, startOffset, offsetVector, result);
 #endif
@@ -400,6 +435,9 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
 #endif
         return MatchResult(result, reinterpret_cast<unsigned*>(offsetVector)[1]);
     }
+
+    if (result < -1) [[unlikely]]
+        return matchAbandonedResult<matchFrom>(nullOrGlobalObject, result);
 
     return MatchResult::failed();
 }

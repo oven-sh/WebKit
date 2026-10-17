@@ -79,6 +79,11 @@ JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* 
             MatchResult ignoreMatched;
             result = createRegExpMatchesArray(vm, globalObject, string, input, m_lastRegExp.get(), m_result.start, ignoreMatched);
             RETURN_IF_EXCEPTION(scope, nullptr);
+            // The search matched when it first ran. One that does not match now leaves no array for getBackref() and getLastParen() to read.
+            if (!result) [[unlikely]] {
+                throwRangeError(globalObject, scope, "The last regular expression match could not be recomputed"_s);
+                return nullptr;
+            }
         } else {
             result = createEmptyRegExpMatchesArray(globalObject, m_lastInput.get(), m_lastRegExp.get());
             RETURN_IF_EXCEPTION(scope, nullptr);
