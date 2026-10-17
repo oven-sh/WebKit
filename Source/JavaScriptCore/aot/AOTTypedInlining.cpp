@@ -1853,7 +1853,7 @@ private:
             return false;
         if (callee.has(Format::FunctionIsBuiltin) && !m_program.implementsBuiltin(callee) && containsCallNoInline(call.function()))
             return false;
-        if (call.function() == m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayMapJoin)])
+        if (call.function() == m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::ArrayMapJoin)] || call.function() == m_program.preludeFunctions[static_cast<unsigned>(PreludeFunction::SetConstruct)])
             return false;
         if (!m_isInliningOwnBody && !isOwnWorker(call.function()) && m_program.at(m_id).startFunction != call.function() && hasHandlers(callee) && !hasHandlers(m_caller) && !isPassedIteratedGenerator(callee, call))
             return false;
@@ -2209,10 +2209,31 @@ private:
 
 } // anonymous namespace
 
+static bool convertsResultOfTinyBody(const Program& program, FunctionID id, const Function& function)
+{
+    constexpr unsigned maxSizeOfBody = 4;
+    if (!function.isGenericEntrypoint() || function.blocks.size() != 1 || program.sizesForInlining.isEmpty())
+        return false;
+    auto& terminator = function.blocks[0].terminator;
+    if (terminator.kind != TerminatorKind::Return || !terminator.value)
+        return false;
+    auto& call = function.at(terminator.value);
+    if (call.opcode != Opcode::CallDirect || call.inlineFrame || program.genericEntrypoints.get(call.function().index()) != id)
+        return false;
+    return repOf(program.at(call.type)) != Rep::JSValue && program.sizesForInlining[call.function().index()] <= maxSizeOfBody;
+}
+
 unsigned inlineCalls(const Program& program, FunctionID id, Function& function, CleanUpTiming timing)
 {
     if (program.isEntry(id))
         return 0;
+    if (convertsResultOfTinyBody(program, id, function)) {
+        Function withBody = function;
+        if (Inlining(program, id, withBody).inlineOwnBody()) {
+            function = WTF::move(withBody);
+            return 1 + Inlining(program, id, function).run(timing);
+        }
+    }
     if (function.isGenericEntrypoint() && function.blocks.size() == 1 && function.blocks[0].values.containsIf([&](ValueID value) { return function.at(value).opcode == Opcode::CreateRest; })) {
         Function withBody = function;
         bool allocatesArrayOnEntry = !Inlining(program, id, withBody).inlineOwnBody() || withBody.blocks[0].values.containsIf([&](ValueID value) {

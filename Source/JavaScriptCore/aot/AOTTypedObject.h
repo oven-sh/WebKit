@@ -84,6 +84,7 @@ public:
     static Object* createWithInitializedFields(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
     Object* clone(JSGlobalObject*);
     Object* tryCloneWithPrototype(JSGlobalObject*, JSValue prototype);
+    void leaveInlinePaths() { at<uint32_t>(offsetOfOrderWord) |= orderWordHasExtraProperties; }
     Object* copyWithStructure(VM&, Structure*, JSFinalObject* copiedExtraProperties);
     JSObject* tryCopyAsPlainObject(JSGlobalObject*) const;
     Structure* plainCopyStructure(JSGlobalObject*) const;

@@ -155,6 +155,38 @@ private:
         return m_program.preludeFunctions[static_cast<unsigned>(m_builtins.at(entry).implementation.prelude)];
     }
 
+    bool mayMakeSetWithStringKeys(const Value& construct) const
+    {
+        if (construct.hasStringKeysByType)
+            return true;
+        auto isStringOrNullish = [](const Type& type) {
+            return type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+        };
+        ValueID given = construct.arguments[0];
+        auto& list = m_function.at(originOf(given));
+        if (list.opcode == Opcode::NewArray && !list.arguments.isEmpty()) {
+            return std::ranges::all_of(list.arguments, [&](ValueID item) {
+                return isStringOrNullish(typeOf(item));
+            });
+        }
+        for (TypeID type : { m_function.at(given).type, m_function.at(given).prediction(), list.prediction() }) {
+            if (!type)
+                continue;
+            auto* engineClass = m_program.at(type).singleEngineClass();
+            if (engineClass && engineClass->type == ArrayType && m_program.at(type).elements && isStringOrNullish(m_program.at(m_program.at(type).elements)))
+                return true;
+        }
+        return false;
+    }
+
+    FunctionID functionThatFillsSet(BuiltinID entry, const Value& construct) const
+    {
+        BuiltinID selectedHere = entry ? m_builtins.next(entry) : BuiltinID();
+        if (!selectedHere || m_builtins.at(selectedHere).implementation.kind != BuiltinImplementation::Prelude || m_builtins.at(selectedHere).implementation.prelude != PreludeFunction::SetConstruct || mayMakeSetWithStringKeys(construct))
+            return { };
+        return preludeFunctionOf(selectedHere);
+    }
+
     FunctionID preludeFunctionFor(BuiltinID entry, const Value& call) const
     {
         FunctionID callee = preludeFunctionOf(entry);
@@ -1384,7 +1416,11 @@ private:
         for (ValueID argument : m_function.at(id).arguments)
             argumentTypes.append(typeOf(argument));
         if (m_mode == Mode::Prelude) {
-            if (FunctionID callee = preludeFunctionOf(applicableEntry(firstGlobalEntryCalledBy(m_function.at(id)), argumentTypes.span()))) {
+            BuiltinID entry = applicableEntry(firstGlobalEntryCalledBy(m_function.at(id)), argumentTypes.span());
+            FunctionID callee = preludeFunctionOf(entry);
+            if (!callee)
+                callee = functionThatFillsSet(entry, m_function.at(id));
+            if (callee) {
                 Value original = m_function.at(id);
                 open(block, index);
                 callDirectly(callee, { }, original);
@@ -3354,7 +3390,8 @@ unsigned speculateOnReceivers(const Program& program, FunctionID id, Function& f
 
 void compareHeaderNamesWithPassedConstants(Program& program)
 {
-    constexpr unsigned maxConstants = 8;
+    constexpr unsigned maxConstants = 64;
+    constexpr unsigned maxConstantsComparedInTurn = 4;
     constexpr unsigned maxRounds = 4;
     auto& functions = std::as_const(program).functions;
     unsigned count = functions.size();
@@ -3400,7 +3437,7 @@ void compareHeaderNamesWithPassedConstants(Program& program)
     struct Carrier {
         unsigned function;
         unsigned parameter;
-        Vector<StringID, maxConstants> constants;
+        Vector<StringID, 8> constants;
         Vector<unsigned, 2> handsOnTo;
         bool hasTooMany { false };
     };
@@ -3554,26 +3591,78 @@ void compareHeaderNamesWithPassedConstants(Program& program)
                 function.blocks[from].terminator.kind = TerminatorKind::Jump;
                 function.blocks[from].terminator.targets.append(Target { BlockID(after), Arguments { constant } });
             };
-            unsigned current = block;
-            for (StringID constant : carrier.constants) {
-                ValueID text = add(Opcode::String, program.types.string);
-                function.at(text).immediates[0] = constant.index();
-                ValueID isSame = add(Opcode::StrictEq, program.types.boolean);
-                function.at(isSame).children = { call.arguments[1], text, ValueID() };
-                function.blocks[current].values.append(text);
-                function.blocks[current].values.append(isSame);
-                unsigned same = addBlock();
-                unsigned next = addBlock();
-                auto& test = function.blocks[current].terminator;
+            auto branch = [&](unsigned from, ValueID condition, unsigned then, unsigned otherwise) {
+                auto& test = function.blocks[from].terminator;
                 test.kind = TerminatorKind::Branch;
-                test.value = isSame;
-                test.targets.append(Target { BlockID(same), { } });
-                test.targets.append(Target { BlockID(next), { } });
-                jumpWith(same, (unknown & ~static_cast<int64_t>((1 << headersMethodShift) - 1)) | knownHeaderNameOf(program.string(constant)));
-                current = next;
-            }
-            jumpWith(current, unknown);
+                test.value = condition;
+                test.targets.append(Target { BlockID(then), { } });
+                test.targets.append(Target { BlockID(otherwise), { } });
+            };
+            unsigned isNoneOfThem = addBlock();
+            jumpWith(isNoneOfThem, unknown);
+            auto compareInTurn = [&](unsigned current, ValueID name, std::span<const StringID> constants) {
+                for (StringID constant : constants) {
+                    ValueID text = add(Opcode::String, program.types.string);
+                    function.at(text).immediates[0] = constant.index();
+                    ValueID isSame = add(Opcode::StrictEq, program.types.boolean);
+                    function.at(isSame).children = { name, text, ValueID() };
+                    function.blocks[current].values.append(text);
+                    function.blocks[current].values.append(isSame);
+                    unsigned same = addBlock();
+                    unsigned next = addBlock();
+                    branch(current, isSame, same, next);
+                    jumpWith(same, (unknown & ~static_cast<int64_t>((1 << headersMethodShift) - 1)) | knownHeaderNameOf(program.string(constant)));
+                    current = next;
+                }
+                function.blocks[current].terminator.kind = TerminatorKind::Jump;
+                function.blocks[current].terminator.targets.append(Target { BlockID(isNoneOfThem), { } });
+            };
             ++comparedCalls;
+            ValueID name = call.arguments[1];
+            if (carrier.constants.size() <= maxConstantsComparedInTurn) {
+                compareInTurn(block, name, carrier.constants.span());
+                continue;
+            }
+            unsigned isString = block;
+            if (!program.castIsRedundant(program.at(function.at(name).type), program.at(program.types.string), CastReason::Claim)) {
+                ValueID test = add(Opcode::TypeOfIs, program.types.boolean);
+                function.at(test).children[0] = name;
+                function.at(test).immediates[0] = static_cast<uint32_t>(TypeofType::String);
+                function.blocks[block].values.append(test);
+                isString = addBlock();
+                branch(block, test, isString, isNoneOfThem);
+                ValueID text = add(Opcode::Cast, program.types.string);
+                function.at(text).children[0] = name;
+                function.at(text).immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+                function.blocks[isString].values.append(text);
+                name = text;
+            }
+            auto& builtins = Builtins::singleton();
+            BuiltinID lengthGetter = builtins.findForInstance(BuiltinKind::Getter, builtins.stringClass(), builtins.nameOf(asBytes("length"_s.span8())));
+            RELEASE_ASSERT(lengthGetter);
+            TypeID lengthType = program.builtinIntegerResultTypes[lengthGetter.index()];
+            ValueID length = add(Opcode::CallBuiltin, lengthType ? lengthType : program.types.int32);
+            function.at(length).children[0] = name;
+            function.at(length).immediates = { lengthGetter.index(), builtins.stringClass().index };
+            function.blocks[isString].values.append(length);
+            Vector<StringID, 8> sorted = carrier.constants;
+            std::ranges::stable_sort(sorted, { }, [&](StringID constant) {
+                return program.string(constant).size();
+            });
+            function.blocks[isString].terminator.kind = TerminatorKind::Switch;
+            function.blocks[isString].terminator.value = length;
+            for (size_t first = 0; first < sorted.size();) {
+                size_t size = program.string(sorted[first]).size();
+                size_t end = first;
+                while (end < sorted.size() && program.string(sorted[end]).size() == size)
+                    ++end;
+                unsigned hasThisLength = addBlock();
+                function.blocks[isString].terminator.cases.append(size);
+                function.blocks[isString].terminator.targets.append(Target { BlockID(hasThisLength), { } });
+                compareInTurn(hasThisLength, name, sorted.span().subspan(first, end - first));
+                first = end;
+            }
+            function.blocks[isString].terminator.targets.append(Target { BlockID(isNoneOfThem), { } });
         }
     }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", comparedCalls, " header calls compare a name that is a parameter with the constants that calls pass");

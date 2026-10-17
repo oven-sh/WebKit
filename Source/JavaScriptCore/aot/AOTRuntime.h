@@ -918,6 +918,8 @@ struct Instance {
     uintptr_t** typedOrderKeys;
     uint16_t* typedOrderKeyIndices;
     uint16_t numberOfTypedOrderKeyIndicesUsed;
+    uint32_t megamorphicCacheEpoch;
+    static constexpr ptrdiff_t offsetOfMegamorphicCacheEpoch() { return OBJECT_OFFSETOF(Instance, megamorphicCacheEpoch); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeys() { return OBJECT_OFFSETOF(Instance, typedOrderKeys); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeyIndices() { return OBJECT_OFFSETOF(Instance, typedOrderKeyIndices); }
     static size_t numberOfTypedOrderKeyIndices(uint32_t numberOfLayouts) { return std::min<size_t>(numberOfLayouts, UINT16_MAX) + 1; }
@@ -1567,6 +1569,8 @@ struct Instance {
     const JSCell* lastAtomizedKey;
     static constexpr unsigned keyedTableWays = 4;
     alignas(16) std::array<uint8_t, 32> keyedScratchEntry;
+    alignas(8) std::array<uint8_t, 24> headOfViewedSubstring;
+    static constexpr ptrdiff_t offsetOfHeadOfViewedSubstring() { return OBJECT_OFFSETOF(Instance, headOfViewedSubstring); }
     template<typename Entry>
     ALWAYS_INLINE Entry& keyedEntryFor(Entry* table, unsigned numberOfEntries, StructureID structureID, const JSCell* key)
     {
@@ -1670,6 +1674,7 @@ struct Instance {
     static constexpr uint32_t keyedAdditionIsExtraProperty = UINT32_MAX;
     static constexpr uint32_t keyedExtraPropertyAdditionSeenOnce = UINT32_MAX - 1;
     static constexpr unsigned keyedExtraPropertyEpochShift = 16;
+    static bool isKeyedReplacement(const KeyedAddition& entry) { return !(entry.slot.offset & (Slot::isGetter | keyMayNotBeEvicted)); }
     static constexpr unsigned numberOfKeyedAdditions = 1024;
     static_assert(hasOneBitSet(numberOfKeyedAdditions));
     KeyedAddition& keyedAdditionFor(StructureID structureID, const JSCell* key) { return keyedEntryFor(keyedAdditions, numberOfKeyedAdditions, structureID, key); }

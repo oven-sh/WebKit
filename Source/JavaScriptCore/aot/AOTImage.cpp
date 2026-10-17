@@ -4856,6 +4856,9 @@ AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
 {
     return useAOTFile(bytes, reinterpret_cast<uintptr_t>(bytes.data()), [&](size_t offsetOfCode, size_t size, const char*& failureReason) -> void* {
         void* code = const_cast<uint8_t*>(bytes.data()) + offsetOfCode;
+        MEMORY_BASIC_INFORMATION region;
+        if (VirtualQuery(code, &region, sizeof(region)) && region.Protect == PAGE_EXECUTE_READ && static_cast<uint8_t*>(region.BaseAddress) + region.RegionSize >= static_cast<uint8_t*>(code) + size)
+            return code;
         DWORD previousProtection;
         if (!VirtualProtect(code, size, PAGE_EXECUTE_READ, &previousProtection)) {
             failureReason = "its code cannot be made executable";

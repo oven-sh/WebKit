@@ -287,24 +287,19 @@ void Lowering::open(const OpenedString& opened)
         m_out.appendTo(continuation);
         return;
     }
-    if (!m_activeHandler) {
-        LBasicBlock flat = m_out.newBlock();
-        LBasicBlock rope = newColdBlock();
-        m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(rope));
-        m_out.appendTo(rope);
-        SubstringCharacters view = ropeCharacters(receiver.string);
-        set(opened.data, view.data);
-        set(opened.length, zeroExtended(Word32(view.length)).value());
-        set(opened.flags, view.flags);
-        ensureStillAliveHere(receiver.string);
-        m_out.jump(continuation);
-        m_out.appendTo(flat);
-    }
-    Pointer impl = m_activeHandler ? eitherPointer(hasNoBits(fiber, JSString::isRopeInPointer), [&] {
+    Pointer impl = eitherPointer(hasNoBits(fiber, JSString::isRopeInPointer), [&] {
         return fiber;
     }, [&] {
-        return AOT_TYPED_OPERATION(Flatten, receiver.string);
-    }) : fiber;
+        if (m_activeHandler)
+            return Pointer(AOT_TYPED_OPERATION(Flatten, receiver.string));
+        static_assert(sizeof(StringImpl) <= sizeof(Instance::headOfViewedSubstring));
+        SubstringCharacters view = ropeCharacters(receiver.string);
+        Pointer head(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfHeadOfViewedSubstring())));
+        storeField(head, m_heaps.StringImpl_data, Pointer(view.data));
+        storeField(head, m_heaps.StringImpl_length, Word32(view.length));
+        storeField(head, m_heaps.StringImpl_hashAndFlags, Word32(view.flags));
+        return head;
+    });
     set(opened.data, loadField<Pointer>(impl, m_heaps.StringImpl_data).value());
     set(opened.length, zeroExtended(loadField<Word32>(impl, m_heaps.StringImpl_length)).value());
     set(opened.flags, loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed).value());

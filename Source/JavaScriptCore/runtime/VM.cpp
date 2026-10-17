@@ -2522,11 +2522,15 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 void VM::invalidateEpochCaches()
 {
     auto* megamorphicCache = this->megamorphicCache();
-    if (!megamorphicCache || !megamorphicCache->bumpEpoch()) [[likely]]
+    if (!megamorphicCache)
         return;
+    [[maybe_unused]] bool didClearEntries = megamorphicCache->bumpEpoch();
 #if ENABLE(AOT)
-    for (AOT::Instance* instance : m_aotInstances)
-        instance->clearCachesValidatedByMegamorphicCacheEpoch();
+    for (AOT::Instance* instance : m_aotInstances) {
+        instance->megamorphicCacheEpoch = megamorphicCache->epoch();
+        if (didClearEntries) [[unlikely]]
+            instance->clearCachesValidatedByMegamorphicCacheEpoch();
+    }
 #endif
 }
 

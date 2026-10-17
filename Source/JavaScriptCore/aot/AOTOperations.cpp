@@ -330,6 +330,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByNameAndCache, EncodedJSValue, (Instanc
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(instance, callFrame, PropertyLookupTable::identifierIndexForName(name));
     recordLookup(instance, __func__, base, { }, ident.impl());
+    if (Structure* structure = base.isCell() && base.asCell()->type() == FinalObjectType ? base.asCell()->structure() : nullptr; structure && structure->isUncacheableDictionary() && structure->hasBeenFlattenedBefore() && !structure->compiledLayout()) {
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->get(vm, ident.impl(), attributes);
+        if (isValidOffset(offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+            countOperationNamed(instance, __func__, "permanent-dictionary-own-hit");
+            OPERATION_RETURN(scope, JSValue::encode(asObject(base)->getDirect(offset)));
+        }
+    }
     PropertyLookupTable& table = PropertyLookupTable::of(vm);
     Data* data = table.dataFor(instance);
     if ((base.isString() || base.isSymbol() ? table.isSharedByInstances() : base.isNumber() || base.isBoolean()) && ident != vm.propertyNames->length) {
@@ -367,14 +375,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByNameAndCache, EncodedJSValue, (Instanc
         OPERATION_RETURN(scope, JSValue::encode(base.get(globalObject, ident)));
     }
     bool remainsDictionary = structureBefore && base.isObject() && structureBefore->isUncacheableDictionary() && structureBefore->hasBeenFlattenedBefore() && !structureBefore->compiledLayout();
-    if (remainsDictionary && base.asCell()->type() == FinalObjectType) {
-        unsigned attributes = 0;
-        PropertyOffset offset = structureBefore->get(vm, ident.impl(), attributes);
-        if (isValidOffset(offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
-            countOperationNamed(instance, __func__, "permanent-dictionary-own-hit");
-            OPERATION_RETURN(scope, JSValue::encode(asObject(base)->getDirect(offset)));
-        }
-    }
     bool receiverIsMissingProperty = false;
     if (uint32_t descriptorPlusOne = base.isObject() ? structureBefore->structureDescriptorPlusOne() : 0) {
         uint32_t identifier = PropertyLookupTable::identifierIndexForName(name);
@@ -1998,7 +1998,7 @@ bool findOwnPropertyByKeyGeneric(Instance* instance, JSValue base, JSValue key, 
     return !base.asCell()->structure()->compiledLayout();
 }
 
-static void cacheKeyedReplacement(Instance* instance, Structure* structure, JSCell* key, PropertyOffset offset)
+static void cacheKeyedReplacementOfExtraProperty(Instance* instance, Structure* structure, JSCell* key, PropertyOffset offset)
 {
     if (!structure->propertyAccessesAreCacheable() || !propertyLocation(offset))
         return;
@@ -2007,6 +2007,24 @@ static void cacheKeyedReplacement(Instance* instance, Structure* structure, JSCe
         return;
     cacheKeyedAccess(read->slot, structure, key, offset);
     read->slot.offset &= ~Instance::keyMayNotBeEvicted;
+}
+
+static void cacheKeyedReplacement(Instance* instance, Structure* structure, JSCell* key, PropertyOffset offset)
+{
+    const Typed::LayoutData* layout = structure->compiledLayout();
+    if (!structure->propertyAccessesAreCacheable() || !propertyLocation(offset) || (layout && Typed::isObjectLayout(layout->kind)))
+        return;
+    auto* entry = instance->allocateKeyedAddition(structure->id(), key);
+    if (!entry)
+        return;
+    entry->slot.structureID = StructureID();
+    entry->slot.offset = *propertyLocation(offset);
+    entry->slot.pointer = key;
+    entry->newStructureID = structure->id();
+    entry->epoch = Instance::keyedExtraPropertyAdditionSeenOnce;
+    entry->newStorageCapacity = 1;
+    entry->holderValueCount = 1;
+    entry->slot.structureID = structure->id();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyGeneric, size_t, (JSCell* base, JSCell* key, EncodedJSValue encodedValue, Instance* instance))
@@ -2038,7 +2056,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyGeneric, size_t, (JSCell* 
             else if (how == Typed::Object::ExtraPropertyStore::Added && place)
                 recordKeyedExtraPropertyAddition(*place, before, key);
             if (Structure* ofExtraProperties = how == Typed::Object::ExtraPropertyStore::Replaced && shouldCacheByKeyCell ? typedObject->extraProperties()->structure() : nullptr; ofExtraProperties && !ofExtraProperties->isDictionary())
-                cacheKeyedReplacement(instance, ofExtraProperties, key, offset);
+                cacheKeyedReplacementOfExtraProperty(instance, ofExtraProperties, key, offset);
             return answer(how != Typed::Object::ExtraPropertyStore::NotHandled ? "stored-beyond-the-layout" : nullptr);
         }
         if (stored.isObject() || typedObject->hasFlagsInOrderWord() || typedObject->isDiscriminant(*field) || !typedObject->readInline(*field) || !typedObject->write(*instance->vm, *field, stored))

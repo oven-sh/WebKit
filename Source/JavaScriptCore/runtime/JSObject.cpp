@@ -417,10 +417,6 @@ ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyImpl(Visitor& visi
     if (structureID.isNuked())
         return nullptr;
     structure = structureID.decode();
-#if ENABLE(AOT)
-    if (structure->isCompiledCellStructure() && !structure->classInfoForCells()->isSubClassOf(JSObjectWithButterfly::info())) [[unlikely]]
-        return nullptr;
-#endif
     maxOffset = structure->maxOffset();
     IndexingType indexingMode;
     Dependency indexingModeDependency = structure->fencedIndexingMode(indexingMode);
@@ -534,36 +530,6 @@ void JSObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 template<typename Visitor>
 void JSFinalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-#if ENABLE(AOT)
-    if (Options::useAOT() && !visitor.mutatorsAreStopped()) {
-        static const char* const raceReason = "JSFinalObject converted in place";
-        typename Visitor::DefaultMarkingViolationAssertionScope assertionScope(visitor);
-        auto* object = static_cast<JSFinalObject*>(cell);
-        JSCell::visitChildren(object, visitor);
-        StructureID structureID = object->structureID();
-        Structure* structure = structureID.decode();
-        if (structureID.isNuked() || structure->typeInfo().type() != FinalObjectType) {
-            visitor.didRace(object, raceReason);
-            return;
-        }
-        unsigned storageSize = structure->inlineSize();
-        WriteBarrierBase<Unknown> values[maxInlineCapacity];
-        WTF::loadLoadFence();
-        for (unsigned i = 0; i < storageSize; ++i)
-            values[i].setWithoutWriteBarrier(object->inlineStorageUnsafe()[i].get());
-        WTF::loadLoadFence();
-        Structure* visited = object->visitButterfly(visitor);
-        if (!visited)
-            return;
-        if (visited != structure) {
-            visitor.didRace(object, raceReason);
-            return;
-        }
-        visitor.appendValuesHidden(values, storageSize);
-        return;
-    }
-#endif
-
     JSFinalObject* thisObject = uncheckedDowncast<JSFinalObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     typename Visitor::DefaultMarkingViolationAssertionScope assertionScope(visitor);

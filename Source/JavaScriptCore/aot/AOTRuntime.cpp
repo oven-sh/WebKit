@@ -893,6 +893,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     }
     RELEASE_ASSERT(vm.heap.mutatorMarkStack().headSegmentOffsetIsValid());
     RELEASE_ASSERT(*std::bit_cast<MarkStackArray**>(std::bit_cast<char*>(&vm.heap) + Heap::offsetOfMutatorMarkStack()) == &vm.heap.mutatorMarkStack());
+    instance->megamorphicCacheEpoch = vm.ensureMegamorphicCache().epoch();
     vm.m_aotInstances.append(instance);
     PropertyLookupTable::of(vm).didCreate(instance);
     for (unsigned kind = 0; kind < PropertyLookupTable::numberOfKinds; ++kind) {
@@ -3213,6 +3214,18 @@ void Instance::validateKeyedTables()
     }
     for (unsigned i = 0; i < numberOfKeyedAdditions; ++i) {
         auto& addition = keyedAdditions[i];
+        if (addition.slot.structureID && isKeyedReplacement(addition)) {
+            Structure* structure = addition.slot.structureID.decode();
+            JSCell* key = static_cast<JSCell*>(addition.slot.pointer);
+            if (!isOrdinary(structure))
+                continue;
+            auto uid = uidOf(key);
+            unsigned attributes;
+            PropertyOffset own = locationIn(structure, uid.get(), attributes);
+            if (!isAt(addition.slot.offset, own) || attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
+                fail("keyedAdditions"_s, i, "the object has no plain value that may be written where the entry says"_s, structure, key);
+            continue;
+        }
         if (!addition.slot.structureID || addition.slot.offset & Slot::isGetter || addition.holderValueCount || (addition.epoch != MegamorphicCache::invalidEpoch && addition.epoch != epoch))
             continue;
         Structure* structure = addition.slot.structureID.decode();
@@ -3345,7 +3358,7 @@ void Instance::sweepKeyedTables(bool newOnly)
             return;
         bool isStoreToCompiledField = addition.slot.offset & Slot::isGetter;
         uint32_t epoch = addition.epoch == keyedAdditionIsExtraProperty ? addition.holderValueCount >> keyedExtraPropertyEpochShift : addition.epoch;
-        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
+        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && !isKeyedReplacement(addition) && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
             zeroBytes(addition);
     });
     groupsToSweep.clearAll();

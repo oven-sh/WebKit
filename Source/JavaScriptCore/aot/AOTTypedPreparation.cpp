@@ -1784,6 +1784,8 @@ public:
             RELEASE_ASSERT(function.kind == FunctionKind::Plain && function.captureTypes.isEmpty() && !function.parameterTypes.isEmpty());
             RELEASE_ASSERT(!function.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionHasRestParameter | Format::FunctionHasThis));
             m_program.preludeFunctions[static_cast<unsigned>(*which)] = FunctionID(i);
+            if (*which == PreludeFunction::SetConstruct)
+                m_program.functions[i].flags |= Format::FunctionIsHiddenInStackTraces;
         }
         for (auto& engineClass : builtins.classes())
             m_program.engineClassTypes.append(engineClass.canCheckOriginalStructure() ? m_program.types.intern(Type::engineClass(engineClass)) : TypeID());
@@ -3477,7 +3479,7 @@ static void outlineBuiltinCalls(Program& program)
 {
     constexpr unsigned maxOperands = 6;
     auto& builtins = Builtins::singleton();
-    std::array<BuiltinID, 7> operations { Operations::AppendSpread, Operations::Apply, Operations::CallWithSpread, Operations::PrivateGet, Operations::PrivateFieldGet, Operations::PrivateSet, Operations::PrivateFieldAdd };
+    std::array<BuiltinID, 3> operations { Operations::AppendSpread, Operations::Apply, Operations::CallWithSpread };
     auto isCandidate = [&](const Value& value) {
         if (value.opcode == Opcode::Add)
             return program.at(value.type).isString();
@@ -3593,6 +3595,9 @@ static void outlineBuiltinCalls(Program& program)
         auto& builtin = builtins.at(value.builtin());
         if (builtin.effects != Effect::Pure || builtin.implementation.kind != BuiltinImplementation::Inline)
             return false;
+        InlineBuiltin inlined = builtin.implementation.inlined;
+        if (inlined == InlineBuiltin::NumberIsFinite || inlined == InlineBuiltin::NumberIsInteger || inlined == InlineBuiltin::NumberIsNaN || inlined == InlineBuiltin::NumberIsSafeInteger)
+            return true;
         bool result = program.at(value.type).hasOnlyPrimitives(Primitive::Number | Primitive::Boolean);
         forEachOperand(value, [&](ValueID operand) {
             result &= program.typeOf(function, operand).hasOnlyPrimitives(Primitive::Number | Primitive::Boolean);

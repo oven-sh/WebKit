@@ -505,6 +505,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByVal) \
     v(PutByValAtIndex) \
     v(PutByVal) \
+    v(PutByValAtIndexSloppy) \
+    v(PutByValSloppy) \
     v(GetLength) \
     v(GetById) \
     v(PutById) \
@@ -1064,6 +1066,7 @@ void clearNamesWithDedicatedStubs();
 enum class CollectionMethod : uint8_t { None, Get, Has, Set, Add };
 CollectionMethod collectionMethodNamed(std::span<const uint8_t> name);
 void setCollectionMethodNamed(uint32_t name, CollectionMethod);
+void setNameOfLength(uint32_t name);
 void setHasDedicatedStub(PerNameStubKind, uint32_t numberOfIdentifier);
 bool methodCallHasDedicatedStub(unsigned count, uint32_t name);
 void dumpRegistersClobberedByStubs(PrintStream&);

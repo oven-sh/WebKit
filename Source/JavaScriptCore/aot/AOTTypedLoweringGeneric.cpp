@@ -476,6 +476,10 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
                 stubCalls->call(jit, head, site);
                 return;
             }
+            if (stub == Stub::GetLengthByName) {
+                stubCalls->call(jit, called, site);
+                return;
+            }
             if (!thunkFor(called, immediate->second))
                 called = stubVariantForName(called, immediate->second);
             stubCalls->call(jit, called, immediate->second, site);
@@ -492,8 +496,10 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
 
 Boxed Lowering::emitGetLength(Boxed base)
 {
-    if (auto number = tableIndexOfName(m_length))
+    if (auto number = tableIndexOfName(m_length)) {
+        setNameOfLength(*number);
         return Boxed(callICStub(Stub::GetLengthByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
+    }
     if (m_context.sites.size() >= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
         return AOT_TYPED_OPERATION(GetByName, base, word32(m_length.index()));
     Site site { };
@@ -1121,12 +1127,12 @@ Boxed Lowering::emitGetByVal(Boxed base, Boxed key, bool mayBeName)
 
 void Lowering::emitPutByVal(Boxed base, Boxed key, Boxed value, bool mayBeName)
 {
-    uint32_t isStrict = !isInSloppyCode();
+    bool isStrict = !isInSloppyCode();
     if (mayBeName) {
         callICStub(isStrict ? Stub::PutByValCached : Stub::PutByValCachedSloppy, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } });
         return;
     }
-    callICStub(Stub::PutByVal, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } }, std::pair { GPRInfo::argumentGPR3, isStrict });
+    callICStub(isStrict ? Stub::PutByVal : Stub::PutByValSloppy, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } });
 }
 
 static Stub stubAfterInt32Test(Stub stub)

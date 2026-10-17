@@ -1187,16 +1187,8 @@ void Object::clear(const FieldData& field)
 template<typename Visitor>
 void Object::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSCell::visitChildren(cell, visitor);
-    if (!visitor.mutatorsAreStopped()) {
-        StructureID structureID = cell->structureID();
-        if (structureID.isNuked() || !structureID.decode()->compiledLayout()) {
-            visitor.didRace(cell, "JSFinalObject converted in place");
-            return;
-        }
-        WTF::loadLoadFence();
-    }
     Object* object = uncheckedDowncast<Object>(cell);
+    JSCell::visitChildren(cell, visitor);
     const LayoutData& layout = object->layout();
     if (uint32_t word = object->at<uint32_t>(offsetOfOrderWord); isObjectLayout(layout.kind) && word & orderWordHasExtraProperties && object->structure()->markingStampAndFlags() & Structure::isStructureWithExtraProperties) {
         if (uint32_t offset = layout.offsetOfExtraProperties())
@@ -1892,6 +1884,8 @@ void Object::willAddExtraProperty(VM& vm, PropertyName name)
 {
     if (name == vm.propertyNames->isConcatSpreadableSymbol) [[unlikely]]
         realm()->arrayIsConcatSpreadableWatchpointSet().fireAll(vm, "An object of the program has Symbol.isConcatSpreadable");
+    if (state().isPrototypeShape(layout().shape)) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, name.uid());
     state().countExtraProperty(layout(), name);
 }
 
@@ -2130,7 +2124,7 @@ void Object::updateNeedsSlowLookup(State& state, bool isCreation)
         return;
     if (!state.prototypeMatchesLayout(layout(), getPrototypeDirect()))
         at<uint32_t>(offsetOfOrderWord) |= orderWordHasExtraProperties;
-    else if (!isCreation && !extraProperties())
+    else if (!isCreation && !extraProperties() && !structure()->mayBePrototype())
         at<uint32_t>(offsetOfOrderWord) &= ~orderWordHasExtraProperties;
 }
 
@@ -7669,7 +7663,7 @@ bool State::readsThroughModuleGraph(const String& builtin) const
 {
     String spelled = makeString("graph "_s, builtin);
     for (uint32_t string = 0; string < data.numberOfStrings; ++string) {
-        if (hasText(string, spelled))
+        if (!data.hasOnlyDecodedForm(string) && hasText(string, spelled))
             return true;
     }
     return false;
@@ -12868,19 +12862,6 @@ bool State::hasCapacityToConvertInPlace(JSObject* object, Object* copy)
     return !object->structure()->mayBePrototype() && object->cellSize() >= copy->layout().size;
 }
 
-template<typename Functor>
-static ALWAYS_INLINE void replaceBodyInPlace(VM& vm, JSObject* object, Structure* structure, const Functor& writeBody)
-{
-    if (vm.heap.mutatorShouldBeFenced()) [[unlikely]] {
-        object->setStructureIDDirectly(object->structureID().nuke());
-        WTF::storeStoreFence();
-        writeBody();
-        WTF::storeStoreFence();
-    } else
-        writeBody();
-    object->JSCell::setStructure(vm, structure);
-}
-
 void State::become(VM& vm, JSObject* object, Object* copy)
 {
     Structure* structure = copy->structure();
@@ -12889,7 +12870,7 @@ void State::become(VM& vm, JSObject* object, Object* copy)
     RELEASE_ASSERT(size >= sizeof(JSCell) && size >= copy->layout().size && size <= copy->cellSize());
     Object* itself = std::bit_cast<Object*>(object);
     JSObject* extra = copy->extraProperties();
-    replaceBodyInPlace(vm, object, structure, [&] {
+    auto move = [&] {
         uint8_t* cell = std::bit_cast<uint8_t*>(object);
         memcpySpan(std::span { cell + sizeof(JSCell), size - sizeof(JSCell) }, std::span { std::bit_cast<const uint8_t*>(copy) + sizeof(JSCell), size - sizeof(JSCell) });
         zeroSpan(std::span { cell + size, sizeOfCell - size });
@@ -12898,11 +12879,17 @@ void State::become(VM& vm, JSObject* object, Object* copy)
             *reinterpret_cast<uint32_t*>(cell + offsetOfExtraProperties) = MarkedBlockCage::encode(extra);
         if (copy->extraPropertiesHandle())
             extraPropertiesHandleTable.didReplaceObject(copy, copy->at<uint32_t>(offsetOfOrderWord) & orderAndCountMask, itself);
-    });
-    if (extra && isCounting()) [[unlikely]] {
-        removeExtraPropertiesOf(copy);
-        extraProperties.set(itself, extra);
-    }
+        object->JSCell::setStructure(vm, structure);
+        if (extra && isCounting()) [[unlikely]] {
+            removeExtraPropertiesOf(copy);
+            extraProperties.set(itself, extra);
+        }
+    };
+    if (vm.heap.mutatorShouldBeFenced()) [[unlikely]] {
+        PreventCollectionScope preventCollection(vm.heap);
+        move();
+    } else
+        move();
     if (auto* attributes = fieldAttributes.get(copy)) [[unlikely]] {
         FieldAttributesTable::Attributes moved { attributes->isFrozen, attributes->attributesByField };
         fieldAttributes.remove(copy);
@@ -12976,14 +12963,20 @@ Object* State::tryConvertOrCopyByPlan(VM& vm, JSObject* object, const CoercionPl
         uint32_t& word = *reinterpret_cast<uint32_t*>(newCellBytes + offsetOfOrderWord);
         word = (word & ~orderAndCountMask) | extraPropertiesHandleTable.take(object, extra, word & orderAndCountMask);
     }
-    replaceBodyInPlace(vm, object, structure, [&] {
+    auto move = [&] {
         uint8_t* cell = std::bit_cast<uint8_t*>(object);
         size_t moved = std::min(size, sizeOfCell);
         memcpySpan(std::span { cell + sizeof(JSCell), moved - sizeof(JSCell) }, std::span { newCellBytes + sizeof(JSCell), moved - sizeof(JSCell) });
         zeroSpan(std::span { cell + moved, sizeOfCell - moved });
         if (uint32_t offset = extra ? plan.layout->offsetOfExtraProperties() : 0)
             *reinterpret_cast<uint32_t*>(cell + offset) = MarkedBlockCage::encode(extra);
-    });
+        object->JSCell::setStructure(vm, structure);
+    };
+    if (vm.heap.mutatorShouldBeFenced()) [[unlikely]] {
+        PreventCollectionScope preventCollection(vm.heap);
+        move();
+    } else
+        move();
     if (extra && isCounting()) [[unlikely]]
         extraProperties.set(std::bit_cast<Object*>(object), extra);
     vm.writeBarrier(object);
@@ -13060,14 +13053,20 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
                 willModify(*planned.field, made.object->getDirect(planned.offset));
         }
     }
-    for (auto& made : all) {
-        replaceBodyInPlace(vm, made.object, made.structure, [&] {
+    auto move = [&] {
+        for (auto& made : all) {
             uint8_t* cell = std::bit_cast<uint8_t*>(made.object);
             size_t size = std::min(made.plan->initialBody.size() + sizeof(JSCell), made.object->cellSize());
             memcpySpan(std::span { cell + sizeof(JSCell), size - sizeof(JSCell) }, asByteSpan(bodies.span().subspan(made.body)).first(size - sizeof(JSCell)));
             zeroSpan(std::span { cell + size, made.object->cellSize() - size });
-        });
-    }
+            made.object->JSCell::setStructure(vm, made.structure);
+        }
+    };
+    if (vm.heap.mutatorShouldBeFenced()) [[unlikely]] {
+        PreventCollectionScope preventCollection(vm.heap);
+        move();
+    } else
+        move();
     for (auto& made : all) {
         vm.writeBarrier(made.object);
         countObject(std::bit_cast<Object*>(made.object));
@@ -13481,7 +13480,7 @@ bool State::canSettleByPlans(JSValue value, const RuntimeType& type, ChildrenOfQ
 
 bool State::tryKeepByPlan(VM& vm, JSObject* object, const RuntimeType& type)
 {
-    if (!m_quickConversions)
+    if (!m_quickConversions || vm.heap.mutatorShouldBeFenced())
         return false;
     ChildrenOfQuickConversion seen;
     ChildrenOfQuickConversion converted;
@@ -13650,7 +13649,7 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
         if (!entry)
             return false;
     }
-    if (!entry->plan) [[unlikely]]
+    if (!entry->plan || vm.heap.mutatorShouldBeFenced()) [[unlikely]]
         return false;
     using Move = CoercionPlan::QuickMove;
     const CoercionPlan& plan = *entry->plan;
@@ -13721,11 +13720,6 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     uint8_t* newBody = bytes + sizeof(JSCell);
     size_t sizeOfCell = cell->cellSize();
     RELEASE_ASSERT(sizeOfCell >= entry->sizeOfCell);
-    bool isFenced = vm.heap.mutatorShouldBeFenced();
-    if (isFenced) [[unlikely]] {
-        cell->setStructureIDDirectly(cell->structureID().nuke());
-        WTF::storeStoreFence();
-    }
     if (sizeOfCell != entry->sizeOfCell) [[unlikely]]
         zeroSpan(std::span { bytes + entry->sizeOfCell, sizeOfCell - entry->sizeOfCell });
     switch (entry->sizeOfCell) {
@@ -13773,12 +13767,6 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     }
     static_assert(!JSCell::structureIDOffset() && JSCell::indexingTypeAndMiscOffset() == 4 && JSCell::typeInfoFlagsOffset() == 6 && JSCell::cellStateOffset() == 7);
     constexpr uint64_t preservedHeaderBits = 0xffull << 56 | static_cast<uint64_t>(TypeInfoPerCellBit) << 48 | static_cast<uint64_t>(static_cast<uint8_t>(~AllArrayTypesAndHistory)) << 32;
-    if (isFenced) [[unlikely]] {
-        WTF::storeStoreFence();
-        cell->setStructure(vm, std::bit_cast<StructureID>(static_cast<uint32_t>(entry->header)).decode());
-        vm.writeBarrier(cell);
-        return true;
-    }
     uint64_t* header = std::bit_cast<uint64_t*>(cell);
     *header = (*header & preservedHeaderBits) | entry->header;
     return true;
@@ -17331,8 +17319,14 @@ void compiledObjectDidBecomePrototype(JSObject* object)
 {
     for (JSValue next = object; next.isObject(); next = asObject(next)->getPrototypeDirect()) {
         const auto* layout = asObject(next)->structure()->compiledLayout();
-        if (layout && AOT::Typed::isObjectLayout(layout->kind))
+        if (layout && AOT::Typed::isObjectLayout(layout->kind)) {
             asObject(next)->structure()->aotInstance()->typed->didBecomePrototype(*layout);
+            auto* record = uncheckedDowncast<AOT::Typed::Object>(asObject(next));
+            if (layout->mayDespecialize)
+                record->convertToOrdinaryObject(object->vm());
+            else
+                record->leaveInlinePaths();
+        }
     }
 }
 

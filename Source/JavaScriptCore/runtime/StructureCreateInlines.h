@@ -53,8 +53,10 @@ inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
 #if ENABLE(AOT)
-    if (oldStructure->compiledLayout()) [[unlikely]]
+    if (oldStructure->compiledLayout()) [[unlikely]] {
         compiledObjectDidBecomePrototype(this);
+        oldStructure = structure();
+    }
 #endif
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
 #if ENABLE(AOT)

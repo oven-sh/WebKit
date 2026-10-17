@@ -150,8 +150,7 @@ void Lowering::genericPutByVal(ValueID object, ValueID key, ValueID stored)
         emitPutByVal(base, boxedKey, in<Boxed>(stored), !predictedTypeOf(key).isNumber());
         return;
     }
-    uint32_t isStrict = !isInSloppyCode();
-    callICStub(Stub::PutByValAtIndex, Void, { { base.value(), firstStubOperandGPR }, { operand.value, GPRInfo::argumentGPR1 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR2 } }, std::pair { GPRInfo::argumentGPR3, isStrict });
+    callICStub(isInSloppyCode() ? Stub::PutByValAtIndexSloppy : Stub::PutByValAtIndex, Void, { { base.value(), firstStubOperandGPR }, { operand.value, GPRInfo::argumentGPR1 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR2 } });
 }
 
 Pointer Lowering::butterflyOf(CellPointer object)

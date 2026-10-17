@@ -685,7 +685,7 @@ static constexpr size_t maxLengthParsedWithShapes = 1 * MB;
 static constexpr unsigned maxRefusalsBeforeForgetting = 256;
 static constexpr unsigned numberOfRememberedBeginnings = 1024;
 static constexpr uint16_t textsBeforeFirstAttempt = 16;
-static constexpr unsigned minTextsOfTwoKindsToTellApart = 6;
+static constexpr unsigned maxKindsAmongTextsThatGoBy = 8;
 static constexpr uint8_t creditOfNewBeginning = 8;
 static constexpr uint8_t creditOnTrial = 4;
 static constexpr uint8_t maxCreditOfBeginning = 32;
@@ -855,36 +855,15 @@ static NEVER_INLINE uint64_t longerBeginningOf(StringView text)
     return text.is8Bit() ? hashUpToFourthQuote(text.span8()) : hashOfFirstTwoStrings(text.span16());
 }
 
-struct JSONKindsSeenWhileWaiting {
-    unsigned first : 12;
-    unsigned second : 12;
-    unsigned textsOfFirst : 4;
-    unsigned textsOfSecond : 4;
-};
-static_assert(sizeof(JSONKindsSeenWhileWaiting) == sizeof(JSONBeginning::root));
-
 static NEVER_INLINE void noteKindWhileWaiting(JSONBeginning& record, StringView text)
 {
-    auto seen = std::bit_cast<JSONKindsSeenWhileWaiting>(record.root);
-    unsigned kind = (longerBeginningOf(text) & 0xFFF) | 1;
-    if (!seen.first)
-        seen.first = kind;
-    if (seen.first == kind) {
-        if (seen.textsOfFirst < 15)
-            ++seen.textsOfFirst;
-    } else {
-        if (!seen.second)
-            seen.second = kind;
-        if (seen.second == kind && seen.textsOfSecond < 15)
-            ++seen.textsOfSecond;
-    }
-    record.root = std::bit_cast<unsigned>(seen);
+    record.root |= 1u << (longerBeginningOf(text) & 31);
 }
 
 static ALWAYS_INLINE bool holdsSeveralKinds(const JSONBeginning& record)
 {
-    auto seen = std::bit_cast<JSONKindsSeenWhileWaiting>(record.root);
-    return seen.textsOfSecond && seen.textsOfFirst + seen.textsOfSecond >= minTextsOfTwoKindsToTellApart;
+    unsigned kinds = std::popcount(record.root);
+    return kinds > 1 && kinds <= maxKindsAmongTextsThatGoBy;
 }
 
 static ALWAYS_INLINE JSONBeginning& recordOfBeginning(JSONShapeTables& tables, uint64_t beginning)

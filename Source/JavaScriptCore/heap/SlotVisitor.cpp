@@ -837,23 +837,16 @@ public:
             *nextSlot++ = cell;
         };
 
-        auto isCell = [](JSValue value) ALWAYS_INLINE_LAMBDA {
+        auto appendValue = [&](JSValue value) ALWAYS_INLINE_LAMBDA {
             static_assert(!(JSValue::NotCellMask & 0x0001fffffffffff8ull) && (JSValue::NotCellMask & 7) && !JSValue::ValueEmpty);
-            return !((std::rotr(static_cast<uint64_t>(JSValue::encode(value)), 3) - 1) >> 45);
-        };
-
-        auto appendCellOfAnySize = [&](JSCell* cell) ALWAYS_INLINE_LAMBDA {
-            if (cell->isPreciseAllocation()) [[unlikely]] {
+            if ((std::rotr(static_cast<uint64_t>(JSValue::encode(value)), 3) - 1) >> 45)
+                return;
+            if (value.asCell()->isPreciseAllocation()) [[unlikely]] {
                 storeTop();
-                appendHiddenOutOfLine(visitor, cell);
+                appendHiddenOutOfLine(visitor, value.asCell());
                 loadTop();
             } else
-                appendCell(cell);
-        };
-
-        auto appendValue = [&](JSValue value) ALWAYS_INLINE_LAMBDA {
-            if (isCell(value))
-                appendCellOfAnySize(value.asCell());
+                appendCell(value.asCell());
         };
 
         auto appendNarrowReference = [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
@@ -998,40 +991,6 @@ public:
             return true;
         };
 
-        auto tryVisitFinalObject = [&](const JSCell* cell, StructureID structureID, Structure* structure) ALWAYS_INLINE_LAMBDA -> bool {
-            if constexpr (mutatorIsStopped)
-                return tryVisitObjectWithoutElements(cell, true);
-            if (structureID.isNuked())
-                return false;
-            PropertyOffset maxOffset = structure->maxOffset();
-            IndexingType indexingMode;
-            Dependency indexingModeDependency = structure->fencedIndexingMode(indexingMode);
-            if (indexingMode != NonArray)
-                return false;
-            auto* object = indexingModeDependency.consume(static_cast<JSObjectWithButterfly*>(const_cast<JSCell*>(cell)));
-            Butterfly* butterfly = object->butterfly();
-            JSCell* cells[JSFinalObject::maxInlineCapacity];
-            unsigned numberOfCells = 0;
-            const WriteBarrierBase<Unknown>* property = object->inlineStorageUnsafe();
-            for (const WriteBarrierBase<Unknown>* end = property + std::min<unsigned>(maxOffset + 1, structure->inlineCapacity()); property != end; ++property) {
-                if (JSValue value = property->get(); isCell(value))
-                    cells[numberOfCells++] = value.asCell();
-            }
-            WTF::loadLoadFence();
-            if (cell->structureID() != structureID || structure->maxOffset() != maxOffset)
-                return false;
-            appendStructure(structure);
-            if (butterfly) {
-                markAuxiliary(static_cast<HeapCell*>(butterfly->base(0, Structure::outOfLineCapacity(maxOffset))));
-                const WriteBarrierBase<Unknown>* endOfProperties = butterfly->propertyStorage();
-                for (const WriteBarrierBase<Unknown>* outOfLine = endOfProperties - Structure::outOfLineSize(maxOffset); outOfLine != endOfProperties; ++outOfLine)
-                    appendValue(outOfLine->get());
-            }
-            for (unsigned i = 0; i < numberOfCells; ++i)
-                appendCellOfAnySize(cells[i]);
-            return true;
-        };
-
         auto tryVisitMapOrSet = [&](const JSCell* cell) ALWAYS_INLINE_LAMBDA -> bool {
             if (!tryVisitObjectWithoutElements(cell, false))
                 return false;
@@ -1065,8 +1024,7 @@ public:
         };
 
         auto tryVisit = [&](const JSCell* cell) ALWAYS_INLINE_LAMBDA -> bool {
-            StructureID structureID = cell->structureID();
-            Structure* structure = std::bit_cast<Structure*>(structureBase + structureID.decontaminate().bits());
+            Structure* structure = std::bit_cast<Structure*>(structureBase + cell->structureID().decontaminate().bits());
             auto& aotFields = structure->existingAOTFields();
             if (!aotFields.isCompiledCellStructure()) {
                 JSType type = cell->type();
@@ -1075,7 +1033,7 @@ public:
                 if (type == StringType)
                     return tryVisitString(cell, structure);
                 if (type == FinalObjectType)
-                    return tryVisitFinalObject(cell, structureID, structure);
+                    return tryVisitObjectWithoutElements(cell, true);
                 if (type == JSMapType || type == JSSetType)
                     return tryVisitMapOrSet(cell);
                 if (type == CellType && structure->classInfoForCells() == AOT::Typed::CompactTable::info())
@@ -1086,8 +1044,6 @@ public:
             if (!layout)
                 layout = &environmentLayout(*aotFields.compiledEnvironmentData(), structure->firstCompiledEnvironmentShape(), cell);
             const uint8_t* fields = reinterpret_cast<const uint8_t*>(cell);
-            if constexpr (!mutatorIsStopped)
-                fields = Dependency::fence(structureID.bits()).consume(fields);
             if (!appendStructure(structure)) [[unlikely]] {
                 uint32_t offsetOfExtraProperties = layout->offsetOfExtraProperties();
                 if (!offsetOfExtraProperties) {

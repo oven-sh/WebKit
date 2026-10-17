@@ -933,7 +933,7 @@ Operand Lowering::narrowBoxedOrElse(Boxed value, const Type& from, const Type& t
 
     if (rep == Rep::OptionalDouble && from.primitives & Primitive::Number && to.primitives & Primitive::Double && from.primitives & to.primitives & Primitive::UndefinedOrNull) {
         LBasicBlock isNumberCase = m_out.newBlock();
-        LBasicBlock isNotNumberCase = m_out.newBlock();
+        LBasicBlock isNotNumberCase = newUnlikelyBlock();
         LBasicBlock continuation = m_out.newBlock();
         Vector<ValueFromBlock, 3> results;
         m_out.branch(isNumber(value).value(), unsure(isNumberCase), unsure(isNotNumberCase));
@@ -1431,7 +1431,7 @@ Boxed Lowering::castInRegister(Boxed given, Entry operation, bool operationRetur
             fits.link(&jit);
             return;
         }
-        params.addLatePath([context, site, isLeaf, doesNotFit, done, moves = WTF::move(moves)](CCallHelpers& jit) {
+        params.addNearbyLatePath(jit, [context, site, isLeaf, doesNotFit, done, moves = WTF::move(moves)](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             doesNotFit.link(&jit);
 #if CPU(ARM64)
