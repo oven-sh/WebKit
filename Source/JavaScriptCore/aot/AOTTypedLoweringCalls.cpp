@@ -1361,18 +1361,8 @@ Boxed Lowering::callListEntry(FunctionID entry, LValue closure, Boxed thisValue,
 {
     m_context.emitsCalls = true;
     uint32_t callee = calleeIndex(entry);
-    bool passesRegisters = arguments.size() <= numberOfArgumentGPRs && !needsArgumentsInMemory(m_program.at(entry));
-    Vector<LValue, numberOfArgumentGPRs> inRegisters;
-    LValue extendedCount = nullptr;
-    LValue list = nullptr;
-    if (passesRegisters) {
-        for (unsigned i = 0; i < arguments.size(); ++i)
-            inRegisters.append(in<Boxed>(arguments[i]).value());
-    } else {
-        auto [count, buffer] = argumentBuffer(arguments);
-        extendedCount = m_out.zeroExtPtr(count.value());
-        list = buffer.value();
-    }
+    auto [count, list] = argumentBuffer(arguments);
+    LValue extendedCount = m_out.zeroExtPtr(count.value());
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     auto& summary = m_program.at(entry);
     OperationEffects effects { std::max(summary.writes, Writes::Nothing), true, summary.writesShapeWords };
@@ -1382,26 +1372,16 @@ Boxed Lowering::callListEntry(FunctionID entry, LValue closure, Boxed thisValue,
     applyEffects(patchpoint, effects);
     patchpoint->append(ConstrainedValue(closure, ValueRep::reg(calleeGPR)));
     patchpoint->append(ConstrainedValue(thisValue.value(), ValueRep::reg(thisGPR)));
-    if (passesRegisters) {
-        for (unsigned i = 0; i < inRegisters.size(); ++i)
-            patchpoint->append(ConstrainedValue(inRegisters[i], ValueRep::reg(argumentGPR(i))));
-        patchpoint->clobber(RegisterSet { countGPR, argumentListGPR });
-    } else {
-        patchpoint->append(ConstrainedValue(extendedCount, ValueRep::reg(countGPR)));
-        patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentListGPR)));
-    }
+    patchpoint->append(ConstrainedValue(extendedCount, ValueRep::reg(argumentGPR(0))));
+    patchpoint->append(ConstrainedValue(list.value(), ValueRep::reg(argumentGPR(1))));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
     patchpoint->clobberLate(registersClobberedByCalls());
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, callee, site, passesRegisters, count = arguments.size()](CCallHelpers& jit, const StackmapGenerationParams&) {
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, callee, site](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        if (passesRegisters) {
-            jit.move(CCallHelpers::TrustedImm32(count), countGPR);
-            jit.move(CCallHelpers::TrustedImm32(0), argumentListGPR);
-        }
         stubCalls->callFunction(jit, callee, site);
     });
     unwindToLandingPad(patchpoint, site);
@@ -1774,6 +1754,13 @@ Boxed Lowering::lowerCallForwardVarargs(const Value& value)
 {
     uint32_t skipped = value.numberOfArgumentsToSkip();
     return callValueWithList(in<Boxed>(value.child(0)), in<Boxed>(value.child(1)), restLength(skipped), offsetBy(m_argumentBuffer, integer(skipped), 3));
+}
+
+Boxed Lowering::keyConstant(StringID name)
+{
+    if (isConstantSymbol(m_program.string(name)))
+        return box(AOT_TYPED_OPERATION(ConstantSymbol, word32(name.index())));
+    return box(stringConstant(name));
 }
 
 CellPointer Lowering::stringConstant(StringID string)
@@ -2887,7 +2874,7 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
             tested = m_function.at(tested).child(0);
         if (found->value == tested) {
             SetForScope isBeforeTailCall(m_isBeforeTailCall, true);
-            throwAt(ThrowKind::NotAFunction, Operand(in<Boxed>(callee)), methodName ? methodName.index() : ThrowSite::none);
+            throwAt(ThrowKind::NotAFunction, encodesUndefinedAsZero(callee) ? Operand(Boxed(m_values[callee.index()].value)) : Operand(in<Boxed>(callee)), methodName ? methodName.index() : ThrowSite::none);
             return placeholder(repOf(type));
         }
     }
@@ -3028,6 +3015,10 @@ Operand Lowering::lowerConstructSuper(ValueID result, const Value& value)
         Boxed list = box(skipped ? AOT_TYPED_OPERATION(NewArray, restLength(*skipped), offsetBy(m_argumentBuffer, integer(*skipped), 3)) : newArray(value.arguments));
         return AOT_TYPED_OPERATION(ConstructSuper, classObject, newTarget, list, value.child(2) ? in<Boxed>(value.child(2)) : Boxed(m_out.int64Zero));
     };
+    auto& constructor = m_function.at(value.child(0));
+    LayoutID ofClass = constructor.opcode == Opcode::FunctionReference ? m_program.at(constructor.function()).constructedClass : LayoutID();
+    if (value.isOnSlowPath || (ofClass && m_program.at(ofClass).extendsGlobalClass))
+        return ensure(genericPath(), object, typeOf(result));
     LBasicBlock otherwise = m_out.newBlock();
     Join join(m_out, Rep::JSValue, Int64);
     orElse(isCell(classObject, typeOf(value.child(0))), otherwise);
@@ -3080,6 +3071,11 @@ Operand Lowering::lowerConstruct(ValueID result, const Value& value)
         auto [count, list] = argumentBuffer(value.arguments);
         return AOT_TYPED_OPERATION(Construct, callee, count, list);
     };
+    ValueID constructor = value.child(0);
+    while (m_function.at(constructor).opcode == Opcode::Cast)
+        constructor = m_function.at(constructor).child(0);
+    if (m_function.at(constructor).opcode == Opcode::GetGlobal)
+        return ensure(genericPath(), object, typeOf(result));
     LBasicBlock otherwise = m_out.newBlock();
     Join join(m_out, Rep::JSValue, Int64);
     orElse(isCell(callee, typeOf(value.child(0))), otherwise);
@@ -3234,7 +3230,7 @@ Operand Lowering::lowerCallMethod(ValueID result, const Value& value)
                 return genericPath();
             Value call;
             call.opcode = Opcode::CallBuiltin;
-            call.children = { object, ValueID(), ValueID() };
+            call.children = { object, ValueID(), value.child(2) };
             call.immediates = { entry.index(), engineClass.index };
             call.arguments = value.arguments;
             call.type = value.type;

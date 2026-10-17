@@ -447,6 +447,9 @@ private:
     Vector<HeapForValue> m_heapForWasmArraySet;
     Vector<HeapForValue> m_heapForWasmArrayNew;
     Vector<HeapForValue> m_heapForWasmArrayLength;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_rangesExcludeTemporaryHeaps { false };
+#endif
 };
 
 } // namespace JSC::B3

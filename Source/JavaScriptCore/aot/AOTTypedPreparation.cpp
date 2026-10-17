@@ -365,9 +365,11 @@ void Program::collectNamesAndStringsFromValues()
             auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
             return implementation.kind == BuiltinImplementation::Operation && implementation.operation == LanguageOperation::DefineField;
         };
-        for (auto& value : function.values) {
-            if (value.opcode != Opcode::CallBuiltin || value.arguments.size() < 2)
-                continue;
+        static constexpr OpcodeSet builtinCalls { Opcode::CallBuiltin };
+        std::as_const(functions).forEachValue(i, builtinCalls, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.arguments.size() < 2)
+                return;
             auto& builtin = Builtins::singleton().at(value.builtin());
             bool definesAccessor = builtin.implementation.kind == BuiltinImplementation::Operation && (builtin.implementation.operation == LanguageOperation::DefineGetter || builtin.implementation.operation == LanguageOperation::DefineSetter);
             bool isStaticFunction = builtin.kind == BuiltinKind::StaticFunction;
@@ -376,18 +378,22 @@ void Program::collectNamesAndStringsFromValues()
                 functionNames[i].append(function.at(value.arguments[1]).string());
             if (isStaticFunction && builtin.holder == "Object"_s && (builtin.name == "defineProperties"_s || builtin.name == "create"_s))
                 descriptorLiterals.append(value.arguments[1]);
-        }
+        });
         if (descriptorLiterals.isEmpty())
             return;
-        for (auto& value : function.values) {
-            if (value.opcode == Opcode::CallBuiltin && value.arguments.size() == 3 && definesField(value) && descriptorLiterals.contains(value.arguments[0]) && function.at(value.arguments[1]).opcode == Opcode::String)
+        std::as_const(functions).forEachValue(i, builtinCalls, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.arguments.size() == 3 && definesField(value) && descriptorLiterals.contains(value.arguments[0]) && function.at(value.arguments[1]).opcode == Opcode::String)
                 functionNames[i].append(function.at(value.arguments[1]).string());
-        }
+        });
     };
     auto countNameUses = [&](unsigned i, const Function& function) {
+        static constexpr OpcodeSet nameUses { Opcode::GetById, Opcode::PutById, Opcode::CallMethod, Opcode::InById, Opcode::DeleteById, Opcode::GetGlobal, Opcode::GetGlobalForTypeOf, Opcode::PutGlobal, Opcode::CallBuiltin };
+        if (!functions.mayContain(i, nameUses))
+            return;
         BitVector runOnceValues;
         if (runsOnce(FunctionID(i))) {
-            BitVector isInLoop = blocksInLoops(function);
+            BitVector isInLoop = blocksInLoops(std::as_const(functions), i);
             for (unsigned b = 0; b < function.blocks.size(); ++b) {
                 if (isInLoop.get(b))
                     continue;
@@ -395,9 +401,9 @@ void Program::collectNamesAndStringsFromValues()
                     runOnceValues.set(id.index());
             }
         }
-        unsigned next = 0;
-        for (auto& value : function.values) {
-            unsigned index = next++;
+        std::as_const(functions).forEachValue(i, nameUses, [&](ValueID id) {
+            auto& value = function.at(id);
+            unsigned index = id.index();
             StringID name;
             AccessByName access = value.opcode == Opcode::GetById ? AccessByName::Read : value.opcode == Opcode::PutById ? AccessByName::Store : value.opcode == Opcode::CallMethod ? AccessByName::Call : AccessByName::Other;
             if (value.opcode == Opcode::GetById || value.opcode == Opcode::PutById || value.opcode == Opcode::CallMethod || value.opcode == Opcode::InById || value.opcode == Opcode::DeleteById
@@ -429,7 +435,7 @@ void Program::collectNamesAndStringsFromValues()
                 }
             }
             if (!name)
-                continue;
+                return;
             auto& nameEntry = stringUses[name.index()];
             WTF::atomicExchangeAdd(&nameEntry.uses, 1u, std::memory_order_relaxed);
             if (!runOnceValues.get(index)) {
@@ -439,16 +445,16 @@ void Program::collectNamesAndStringsFromValues()
             }
             if (access != AccessByName::Other)
                 WTF::atomicExchangeAdd(&nameEntry.usesByAccess[static_cast<unsigned>(access)], 1u, std::memory_order_relaxed);
-        }
+        });
     };
     forEachIndexInParallel(functions.size(), [&](unsigned i) {
         auto& function = std::as_const(functions)[i];
         recordAccessorNames(i, function);
         countNameUses(i, function);
-        for (auto& value : function.values) {
-            if (value.opcode == Opcode::String)
-                WTF::atomicExchangeAdd(&constantUses[value.string().index()], 1u, std::memory_order_relaxed);
-        }
+        static constexpr OpcodeSet strings { Opcode::String };
+        std::as_const(functions).forEachValue(i, strings, [&](ValueID id) {
+            WTF::atomicExchangeAdd(&constantUses[function.at(id).string().index()], 1u, std::memory_order_relaxed);
+        });
     });
     m_valueNamesAndStrings = ValueNamesAndStrings { WTF::move(functionNames), WTF::move(stringUses), WTF::move(constantUses) };
 }
@@ -544,6 +550,7 @@ class ConstantSymbolResolution {
 public:
     explicit ConstantSymbolResolution(Program& program)
         : m_program(program)
+        , m_mutableProgram(program)
     {
     }
 
@@ -560,6 +567,7 @@ public:
         m_names.fill(StringID(), m_program.variables.size());
         m_nameRefutingErrors.fill(VariableID(), m_program.variables.size());
         collectExports();
+        findSymbolVariableCandidates();
         trackLateEscapingLiterals();
         while (resolveSymbolVariables()) { }
         m_provenLiteralReads = m_literalReads;
@@ -588,6 +596,14 @@ private:
     struct Export {
         FunctionID function;
         ValueID value;
+    };
+
+    struct ModuleEvaluations {
+        Vector<Vector<Location, 2>> callers;
+        UncheckedKeyHashMap<uint32_t, Vector<std::pair<Location, unsigned>, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> calledIn;
+        BitVector hasUnknownEvaluators;
+        Vector<Vector<FunctionID, 2>> codeOf;
+        BitVector waits;
     };
 
     enum class ChangeKind : uint8_t { TestBeforeNamedAccess, FirstEvaluationSymbol, FailureMarker };
@@ -662,10 +678,12 @@ private:
             Vector<Location> calls;
             Vector<std::pair<uint32_t, uint32_t>> moduleBodyCalls;
             Vector<std::pair<uint32_t, Location>> referencesToHiddenCode;
+            bool isModuleCode { false };
         };
         unsigned count = m_program.functions.size();
         Vector<Found> foundIn(count);
         m_isReadFromOutside.fill(0, m_program.variables.size());
+        m_hasUnprovenRead.fill(0, m_program.variables.size());
         m_isEnteredFromOutside.fill(0, m_program.modules.size());
         m_numberOfReads.fill(0, m_program.variables.size());
         m_isClearedInHandler.fill(0, m_program.variables.size());
@@ -674,57 +692,60 @@ private:
             WTF::atomicStore(&flag, static_cast<uint8_t>(1), std::memory_order_relaxed);
         };
         forEachIndexInParallel(count, [&](unsigned i) {
+            static constexpr OpcodeSet collected { Opcode::PutModuleVariable, Opcode::GetModuleVariable, Opcode::Call, Opcode::CallMethod, Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::CallDirect, Opcode::Operation };
+            if (!m_program.functions.mayContain(i, collected))
+                return;
             auto& function = m_program.functions[i];
             auto& found = foundIn[i];
+            found.isModuleCode = function.kind == FunctionKind::Module && function.module;
             Vector<std::pair<ValueID, uint32_t>, 8> required;
             bool isRunOnce = runsOnce(FunctionID(i));
-            for (unsigned b = 0; b < function.blocks.size(); ++b) {
-                auto& values = function.blocks[b].values;
-                for (unsigned k = 0; k < values.size(); ++k) {
-                    auto& value = function.at(values[k]);
-                    switch (value.opcode) {
-                    case Opcode::PutModuleVariable:
-                        found.stores.append({ value.variable().index(), Location { FunctionID(i), b, k } });
-                        if (function.at(value.child(0)).opcode == Opcode::Undefined) {
-                            bool isInHandler = function.at(values[0]).opcode == Opcode::CatchValue;
-                            note((isInHandler ? m_isClearedInHandler : m_isClearedElsewhere)[value.variable().index()]);
-                            if (isInHandler)
-                                found.clearsInHandlers.append({ value.variable().index(), Location { FunctionID(i), b, k } });
-                        }
-                        break;
-                    case Opcode::GetModuleVariable:
-                        WTF::atomicExchangeAdd(&m_numberOfReads[value.variable().index()], 1u, std::memory_order_relaxed);
-                        if (m_program.variables[value.variable().index()].module != function.module)
-                            note(m_isReadFromOutside[value.variable().index()]);
-                        break;
-                    case Opcode::Call:
-                        if (isRunOnce && isSymbolCall(function, value))
-                            found.calls.append(Location { FunctionID(i), b, k });
-                        break;
-                    case Opcode::CallMethod:
-                        if (isSymbolForCall(function, value))
-                            found.calls.append(Location { FunctionID(i), b, k });
-                        break;
-                    case Opcode::FunctionReference:
-                    case Opcode::NewClosure:
-                    case Opcode::NewClosureOnce:
-                    case Opcode::CallDirect:
-                        if (ModuleID module = m_program.at(value.function()).module; module && module != function.module && !runsOnce(value.function()))
-                            note(m_isEnteredFromOutside[module.index()]);
-                        if (m_program.at(value.function()).kind == FunctionKind::Module)
-                            found.moduleBodyCalls.append({ value.function().index(), value.opcode == Opcode::CallDirect ? i : UINT32_MAX });
-                        if (auto& callee = m_program.at(value.function()); callee.module && (callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsHiddenInStackTraces)))
-                            found.referencesToHiddenCode.append({ value.function().index(), Location { value.opcode == Opcode::CallDirect ? FunctionID(i) : FunctionID(), b, k } });
-                        break;
-                    case Opcode::Operation:
-                        if (auto module = requiredBuiltinModule(function, value))
-                            required.append({ values[k], *module });
-                        break;
-                    default:
-                        break;
+            m_program.functions.forEachIndexedValueWithBlock(i, collected, [&](unsigned b, unsigned k, ValueID id) {
+                auto& value = function.at(id);
+                switch (value.opcode) {
+                case Opcode::PutModuleVariable:
+                    found.stores.append({ value.variable().index(), Location { FunctionID(i), b, k } });
+                    if (function.at(value.child(0)).opcode == Opcode::Undefined) {
+                        bool isInHandler = function.at(function.blocks[b].values[0]).opcode == Opcode::CatchValue;
+                        note((isInHandler ? m_isClearedInHandler : m_isClearedElsewhere)[value.variable().index()]);
+                        if (isInHandler)
+                            found.clearsInHandlers.append({ value.variable().index(), Location { FunctionID(i), b, k } });
                     }
+                    break;
+                case Opcode::GetModuleVariable:
+                    WTF::atomicExchangeAdd(&m_numberOfReads[value.variable().index()], 1u, std::memory_order_relaxed);
+                    if (m_program.variables[value.variable().index()].module != function.module)
+                        note(m_isReadFromOutside[value.variable().index()]);
+                    if (!value.readsInitializedVariable())
+                        note(m_hasUnprovenRead[value.variable().index()]);
+                    break;
+                case Opcode::Call:
+                    if (isRunOnce && isSymbolCall(function, value))
+                        found.calls.append(Location { FunctionID(i), b, k });
+                    break;
+                case Opcode::CallMethod:
+                    if (isSymbolForCall(function, value))
+                        found.calls.append(Location { FunctionID(i), b, k });
+                    break;
+                case Opcode::FunctionReference:
+                case Opcode::NewClosure:
+                case Opcode::NewClosureOnce:
+                case Opcode::CallDirect:
+                    if (ModuleID module = m_program.at(value.function()).module; module && module != function.module && !runsOnce(value.function()))
+                        note(m_isEnteredFromOutside[module.index()]);
+                    if (m_program.at(value.function()).kind == FunctionKind::Module)
+                        found.moduleBodyCalls.append({ value.function().index(), value.opcode == Opcode::CallDirect ? i : UINT32_MAX });
+                    if (auto& callee = m_program.at(value.function()); callee.module && (callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsHiddenInStackTraces)))
+                        found.referencesToHiddenCode.append({ value.function().index(), Location { value.opcode == Opcode::CallDirect ? FunctionID(i) : FunctionID(), b, k } });
+                    break;
+                case Opcode::Operation:
+                    if (auto module = requiredBuiltinModule(function, value))
+                        required.append({ id, *module });
+                    break;
+                default:
+                    break;
                 }
-            }
+            });
             if (required.isEmpty())
                 return;
             auto noteUse = [&](ValueID used) {
@@ -735,18 +756,21 @@ private:
             };
             for (auto& block : function.blocks) {
                 for (ValueID id : block.values) {
-                    auto& value = std::as_const(function).at(id);
+                    auto& value = function.at(id);
                     if (value.opcode != Opcode::GetById && value.opcode != Opcode::IsUndefinedOrNull)
                         value.forEachChild(noteUse);
                 }
-                block.terminator.forEachChild([&](ValueID& used) {
+                const_cast<Terminator&>(block.terminator).forEachChild([&](ValueID& used) {
                     noteUse(used);
                 });
             }
         });
         m_numberOfStores.fill(0, m_program.variables.size());
         m_stores.fill(Location { }, m_program.variables.size());
-        for (auto& found : foundIn) {
+        for (unsigned i = 0; i < count; ++i) {
+            auto& found = foundIn[i];
+            if (found.isModuleCode)
+                m_moduleCode.append(i);
             for (auto& [variable, location] : found.stores) {
                 m_numberOfStores[variable] = static_cast<uint8_t>(std::min(m_numberOfStores[variable] + 1, 3));
                 m_stores[variable] = location;
@@ -761,6 +785,7 @@ private:
                     m_moduleBodyCallers.set(callee, UINT32_MAX);
             }
         }
+        destroyOnHelperThread(WTF::move(foundIn));
     }
 
     bool mayThrow(const Function& function) const
@@ -939,7 +964,7 @@ private:
         auto& facts = factsOf(store.function);
         if (facts.blocksInLoops.get(store.block))
             return false;
-        if (!hasInitialValue(variable))
+        if (!hasInitialValue(variable) || !m_hasUnprovenRead[variable])
             return true;
         ModuleID module = m_program.at(store.function).module;
         if (!module || m_program.variables[variable].module != module || m_isReadFromOutside[variable] || m_isEnteredFromOutside[module.index()])
@@ -959,7 +984,7 @@ private:
     {
         bool hasAny = false;
         for (const Location& location : m_calls) {
-            auto& function = m_program.functions[location.function.index()];
+            auto& function = m_mutableProgram.functions[location.function.index()];
             auto& block = function.blocks[location.block];
             auto& call = function.at(block.values[location.index]);
             if (block.terminator.kind == TerminatorKind::Invoke && location.index + 1 == block.values.size())
@@ -989,7 +1014,7 @@ private:
             if (!call.arguments.isEmpty())
                 name.append(m_program.string(function.at(call.arguments[0]).string()));
             if (error) {
-                StringID forFirstEvaluation = m_program.intern(name.span());
+                StringID forFirstEvaluation = m_mutableProgram.intern(name.span());
                 m_firstEvaluationSymbols.add(static_cast<uint64_t>(location.function.index()) << 32 | block.values[location.index].index(), forFirstEvaluation);
                 m_changes.add(location.function.index(), Vector<Change>()).iterator->value.append(Change { ChangeKind::FirstEvaluationSymbol, location.block, location.index, forFirstEvaluation, error });
                 m_failureMarkerErrors.add(error.index());
@@ -999,7 +1024,7 @@ private:
             call.opcode = Opcode::ConstantSymbol;
             call.children = { };
             call.arguments.clear();
-            call.immediates = { m_program.intern(name.span()).index(), Format::none };
+            call.immediates = { m_mutableProgram.intern(name.span()).index(), Format::none };
             hasAny = true;
         }
         return hasAny;
@@ -1213,6 +1238,37 @@ private:
         return mark.opcode == Opcode::GetModuleVariable && m_isClearedInHandler[mark.variable().index()];
     }
 
+    ModuleEvaluations findModuleEvaluations() const
+    {
+        unsigned numberOfModules = m_program.modules.size();
+        ModuleEvaluations result;
+        result.callers.grow(numberOfModules);
+        result.hasUnknownEvaluators.ensureSize(numberOfModules);
+        for (auto& [callee, location] : m_referencesToHiddenCode) {
+            auto module = evaluatedModuleOf(FunctionID(callee));
+            if (!module)
+                continue;
+            if (!location.function || !m_program.at(location.function).module) {
+                result.hasUnknownEvaluators.set(*module);
+                continue;
+            }
+            if (m_program.at(location.function).module.index() == *module)
+                continue;
+            result.callers[*module].append(location);
+            result.calledIn.add(location.function.index(), Vector<std::pair<Location, unsigned>, 4> { }).iterator->value.append({ location, *module });
+        }
+        result.codeOf.grow(numberOfModules);
+        result.waits.ensureSize(numberOfModules);
+        for (unsigned i : m_moduleCode) {
+            auto& function = std::as_const(m_program).functions[i];
+            if (function.has(Format::FunctionIsAsync) || function.has(Format::FunctionIsGenerator))
+                result.waits.set(function.module.index());
+            if (runsOnce(FunctionID(i)))
+                result.codeOf[function.module.index()].append(FunctionID(i));
+        }
+        return result;
+    }
+
     void trackLateEscapingLiterals()
     {
         if (!m_program.usesOperation(Operations::DefineField))
@@ -1225,9 +1281,9 @@ private:
         Vector<Literal> literals;
         Vector<uint32_t> literalOf;
         literalOf.fill(UINT32_MAX, m_program.variables.size());
-        for (unsigned i = 0; i < m_program.functions.size(); ++i) {
-            auto& function = m_program.functions[i];
-            if (function.kind != FunctionKind::Module || !function.module || function.blocks.size() != 1 || !runsOnce(FunctionID(i)) || mayThrow(function) || mayRunAgain(FunctionID(i)) || !isReevaluatedAfterFailure(function))
+        for (unsigned i : m_moduleCode) {
+            auto& function = std::as_const(m_program).functions[i];
+            if (function.blocks.size() != 1 || !runsOnce(FunctionID(i)) || mayThrow(function) || mayRunAgain(FunctionID(i)) || !isReevaluatedAfterFailure(function))
                 continue;
             auto& values = function.blocks[0].values;
             for (unsigned last = values.size(); last--;) {
@@ -1279,17 +1335,14 @@ private:
             Location location;
             ValueID read;
         };
-        Vector<Vector<LiteralUse>> usesIn(m_program.functions.size());
-        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
-            auto& function = std::as_const(m_program).functions[i];
+        auto uses = collectInParallel<LiteralUse>(m_program.functions.size(), [&](unsigned i, Vector<LiteralUse>& collected) {
+            auto& function = m_program.functions[i];
             Vector<std::pair<ValueID, uint32_t>, 4> held;
-            for (auto& block : function.blocks) {
-                for (ValueID id : block.values) {
-                    auto& value = function.at(id);
-                    if (value.opcode == Opcode::GetModuleVariable && literalOf[value.variable().index()] != UINT32_MAX)
-                        held.append({ id, literalOf[value.variable().index()] });
-                }
-            }
+            static constexpr OpcodeSet variableReads { Opcode::GetModuleVariable };
+            m_program.functions.forEachIndexedValue(i, variableReads, [&](ValueID id) {
+                if (uint32_t literal = literalOf[function.at(id).variable().index()]; literal != UINT32_MAX)
+                    held.append({ id, literal });
+            });
             if (held.isEmpty())
                 return;
             auto literalOfRead = [&](ValueID id) {
@@ -1307,12 +1360,12 @@ private:
                         uint32_t literal = literalOfRead(child);
                         if (literal == UINT32_MAX || value.opcode == Opcode::IsUndefinedOrNull)
                             return;
-                        usesIn[i].append({ literal, Location { FunctionID(i), b, k }, value.opcode == Opcode::GetById ? block.values[k] : ValueID() });
+                        collected.append({ literal, Location { FunctionID(i), b, k }, value.opcode == Opcode::GetById ? block.values[k] : ValueID() });
                     });
                 }
                 auto recordEscape = [&](ValueID child) {
                     if (uint32_t literal = literalOfRead(child); literal != UINT32_MAX)
-                        usesIn[i].append({ literal, Location { FunctionID(i), b, UINT_MAX }, ValueID() });
+                        collected.append({ literal, Location { FunctionID(i), b, UINT_MAX }, ValueID() });
                 };
                 if (block.terminator.value)
                     recordEscape(block.terminator.value);
@@ -1322,43 +1375,17 @@ private:
                 }
             }
         });
-        for (auto& uses : usesIn) {
-            for (auto& use : uses) {
-                if (use.read)
-                    literals[use.literal].reads.append({ use.location, use.read });
-                else
-                    literals[use.literal].escapes.append(use.location);
-            }
+        for (auto& use : uses) {
+            if (use.read)
+                literals[use.literal].reads.append({ use.location, use.read });
+            else
+                literals[use.literal].escapes.append(use.location);
         }
 
         unsigned numberOfModules = m_program.modules.size();
-        Vector<Vector<Location, 2>> evaluationCallers(numberOfModules);
-        UncheckedKeyHashMap<uint32_t, Vector<std::pair<Location, unsigned>, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> evaluationsCalledIn;
-        BitVector hasUnknownEvaluators(numberOfModules);
-        for (auto& [callee, location] : m_referencesToHiddenCode) {
-            auto module = evaluatedModuleOf(FunctionID(callee));
-            if (!module)
-                continue;
-            if (!location.function || !m_program.at(location.function).module) {
-                hasUnknownEvaluators.set(*module);
-                continue;
-            }
-            if (m_program.at(location.function).module.index() == *module)
-                continue;
-            evaluationCallers[*module].append(location);
-            evaluationsCalledIn.add(location.function.index(), Vector<std::pair<Location, unsigned>, 4> { }).iterator->value.append({ location, *module });
-        }
-        Vector<Vector<FunctionID, 2>> codeOf(numberOfModules);
-        BitVector waits(numberOfModules);
-        for (unsigned i = 0; i < m_program.functions.size(); ++i) {
-            auto& function = m_program.functions[i];
-            if (function.kind != FunctionKind::Module || !function.module)
-                continue;
-            if (function.has(Format::FunctionIsAsync) || function.has(Format::FunctionIsGenerator))
-                waits.set(function.module.index());
-            if (runsOnce(FunctionID(i)))
-                codeOf[function.module.index()].append(FunctionID(i));
-        }
+        if (!m_moduleEvaluations)
+            m_moduleEvaluations = findModuleEvaluations();
+        auto& [evaluationCallers, evaluationsCalledIn, hasUnknownEvaluators, codeOf, waits] = *m_moduleEvaluations;
 
         auto modulesFinishedAt = [&](const Location& escape) -> std::optional<BitVector> {
             auto& escaping = m_program.at(escape.function);
@@ -1440,12 +1467,39 @@ private:
         }
     }
 
+    void findSymbolVariableCandidates()
+    {
+        Vector<uint8_t> isCandidate(FillWith { }, m_program.variables.size(), static_cast<uint8_t>(0));
+        forEachIndexInParallel(isCandidate.size(), [&](unsigned variable) {
+            if (m_numberOfStores[variable] != 1)
+                return;
+            const Location& store = m_stores[variable];
+            auto& function = std::as_const(m_program).at(store.function);
+            switch (function.at(withoutUpcasts(function, function.at(function.blocks[store.block].values[store.index]).child(0))).opcode) {
+            case Opcode::ConstantSymbol:
+            case Opcode::Call:
+            case Opcode::GetModuleVariable:
+            case Opcode::GetById:
+            case Opcode::ToPropertyKey:
+            case Opcode::Parameter:
+                isCandidate[variable] = 1;
+                break;
+            default:
+                break;
+            }
+        });
+        for (unsigned variable = 0; variable < isCandidate.size(); ++variable) {
+            if (isCandidate[variable])
+                m_symbolVariableCandidates.append(variable);
+        }
+    }
+
     bool resolveSymbolVariables()
     {
         bool changed = false;
         UncheckedKeyHashMap<uint32_t, EdgesIntoBlocks, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> edgesByFunction;
-        for (unsigned variable = 0; variable < m_program.variables.size(); ++variable) {
-            if (m_names[variable] || m_numberOfStores[variable] != 1)
+        for (unsigned variable : m_symbolVariableCandidates) {
+            if (m_names[variable])
                 continue;
             const Location& store = m_stores[variable];
             auto& function = m_program.at(store.function);
@@ -1461,6 +1515,8 @@ private:
         }
         return changed;
     }
+
+    static bool isObjectWithoutLayout(const Type& type) { return type.anyObject && type.objectLayouts.isEmpty() && type.engineClasses.isEmpty(); }
 
     static void convertToNamedAccess(Value& value, StringID name)
     {
@@ -1482,22 +1538,25 @@ private:
             VariableID error = moduleErrorVariable(m_program.variables[mark].module);
             if (!error || !m_failureMarkerErrors.contains(error.index()))
                 continue;
-            m_program.variables[error.index()].isStoredOnce = false;
+            m_mutableProgram.variables[error.index()].isStoredOnce = false;
             m_changes.add(location.function.index(), Vector<Change>()).iterator->value.append(Change { ChangeKind::FailureMarker, location.block, location.index, { }, error });
         }
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            static constexpr OpcodeSet keyedAccesses { Opcode::GetByVal, Opcode::PutByVal };
             auto& function = m_program.functions[i];
             EdgesIntoBlocks edges;
             Vector<Change> changes;
             if (auto found = m_changes.find(i); found != m_changes.end())
                 changes = found->value;
+            else if (!m_program.functions.mayContain(i, keyedAccesses))
+                return;
             for (unsigned b = 0; b < function.blocks.size(); ++b) {
                 auto& values = function.blocks[b].values;
                 for (unsigned k = 0; k < values.size(); ++k) {
                     auto& value = function.at(values[k]);
-                    if (value.opcode != Opcode::GetByVal && value.opcode != Opcode::PutByVal)
+                    if (!keyedAccesses.contains(value.opcode))
                         continue;
-                    if ((value.opcode == Opcode::GetByVal && value.immediates[0] != Format::none) || !m_program.typeOf(function, value.child(0)).isAnything())
+                    if ((value.opcode == Opcode::GetByVal && value.immediates[0] != Format::none) || !isObjectWithoutLayout(m_program.typeOf(function, value.child(0))))
                         continue;
                     ValueID key = withoutUpcasts(function, value.child(1));
                     Opcode keyOpcode = function.at(key).opcode;
@@ -1507,7 +1566,7 @@ private:
                     if (!symbol)
                         continue;
                     if (!symbol.refutingError)
-                        convertToNamedAccess(value, symbol.name);
+                        convertToNamedAccess(m_mutableProgram.functions[i].at(values[k]), symbol.name);
                     else if (m_failureMarkerErrors.contains(symbol.refutingError.index()))
                         changes.append(Change { ChangeKind::TestBeforeNamedAccess, b, k, symbol.name, symbol.refutingError });
                 }
@@ -1516,7 +1575,7 @@ private:
                 return a.block != b.block ? a.block > b.block : a.index > b.index;
             });
             for (auto& change : changes)
-                apply(function, change);
+                apply(m_mutableProgram.functions[i], change);
         });
     }
 
@@ -1631,14 +1690,18 @@ private:
         function.blocks[after.index()].parameters.append(id);
     }
 
-    Program& m_program;
+    const Program& m_program;
+    Program& m_mutableProgram;
     StringID m_symbol;
     StringID m_for;
     Vector<Location> m_calls;
+    Vector<uint32_t> m_moduleCode;
+    Vector<uint32_t> m_symbolVariableCandidates;
     Vector<uint32_t> m_numberOfReads;
     Vector<uint8_t> m_numberOfStores;
     Vector<Location> m_stores;
     Vector<uint8_t> m_isReadFromOutside;
+    Vector<uint8_t> m_hasUnprovenRead;
     Vector<uint8_t> m_isEnteredFromOutside;
     Vector<uint8_t> m_isClearedInHandler;
     Vector<uint8_t> m_isClearedElsewhere;
@@ -1653,6 +1716,7 @@ private:
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_failureMarkerErrors;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_provenLiteralReads;
     Vector<std::pair<uint32_t, Location>> m_referencesToHiddenCode;
+    std::optional<ModuleEvaluations> m_moduleEvaluations;
     UncheckedKeyHashMap<uint64_t, Export, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_literalValues;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_literalReads;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_escapedExports;
@@ -1708,10 +1772,12 @@ public:
 
         auto& builtins = Builtins::singleton();
         m_program.preludeFunctions.fill(FunctionID(), numberOfPreludeFunctions);
-        for (uint32_t i = 0; i < m_program.functions.size(); ++i) {
+        auto namedBuiltinFunctions = findIndicesInParallel(m_program.functions.size(), [&](unsigned i) {
             auto& function = std::as_const(m_program).functions[i];
-            if (!function.has(Format::FunctionIsBuiltin) || !function.name || function.blocks.isEmpty())
-                continue;
+            return function.has(Format::FunctionIsBuiltin) && function.name && !function.blocks.isEmpty();
+        });
+        for (uint32_t i : namedBuiltinFunctions) {
+            auto& function = std::as_const(m_program).functions[i];
             auto which = builtins.preludeFunctionNamed(m_program.string(function.name));
             if (!which)
                 continue;
@@ -1752,7 +1818,15 @@ private:
         if (!m_program.usesOperation(Operations::Initialize))
             return;
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned functionIndex) {
+            static constexpr OpcodeSet operations { Opcode::Operation };
+            bool initializesObject = false;
+            std::as_const(m_program).functions.forEachIndexedValue(functionIndex, operations, [&](ValueID id) {
+                initializesObject |= m_program.operationOf(std::as_const(m_program).functions[functionIndex].at(id)) == Operations::Initialize;
+            });
+            if (!initializesObject)
+                return;
             auto& function = m_program.functions[functionIndex];
+            function.allocatesForUnknownCallers = true;
             for (auto& block : function.blocks) {
                 for (size_t at = 0; at < block.values.size(); ++at) {
                     if (function.at(block.values[at]).opcode != Opcode::Operation || m_program.operationOf(function.at(block.values[at])) != Operations::Initialize)
@@ -1762,7 +1836,7 @@ private:
                     auto& receiver = m_program.typeOf(function, operation.arguments[0]);
                     bool areInitialStores = !Options::auditAOTTypedAssertions();
                     for (size_t i = 1; i < operation.arguments.size(); i += 2) {
-                        RELEASE_ASSERT(function.at(operation.arguments[i]).opcode == Opcode::String);
+                        RELEASE_ASSERT(function.at(operation.arguments[i]).opcode == Opcode::String || function.at(operation.arguments[i]).opcode == Opcode::ConstantSymbol);
                         StringID name = function.at(operation.arguments[i]).string();
                         areInitialStores = areInitialStores && fieldOf(m_program, receiver, name) && !inheritsThroughLayoutPrototype(m_program, receiver.singleLayout(), name);
                     }
@@ -2070,8 +2144,11 @@ private:
         };
         Vector<uint8_t> hasLongLiteral(FillWith { }, m_program.functions.size(), static_cast<uint8_t>(0));
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
-            hasLongLiteral[i] = std::as_const(m_program).functions[i].values.containsIf([&](auto& value) {
-                return value.opcode == Opcode::NewArray && value.arguments.size() > maxElementsPerBatch;
+            static constexpr OpcodeSet arrayLiterals { Opcode::NewArray };
+            auto& functions = std::as_const(m_program).functions;
+            functions.forEachValue(i, arrayLiterals, [&](ValueID id) {
+                if (functions[i].at(id).arguments.size() > maxElementsPerBatch)
+                    hasLongLiteral[i] = 1;
             });
         });
         for (unsigned functionIndex = 0; functionIndex < m_program.functions.size(); ++functionIndex) {
@@ -2221,7 +2298,7 @@ private:
     {
         auto prototype = m_program.find(asBytes("prototype"_s.span8()));
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned functionIndex) {
-            auto& function = m_program.functions[functionIndex];
+            auto& function = std::as_const(m_program).functions[functionIndex];
             auto note = [&](ValueID id) {
                 FunctionID predicted = function.at(id).predictedClosure();
                 while (function.at(id).opcode == Opcode::Cast)
@@ -2245,11 +2322,13 @@ private:
                 }
                 for (FunctionID each : { used, predicted, definition.predictedClosure() }) {
                     if (each)
-                        WTF::atomicStore(&m_program.at(each).isUsedAsObject, true, std::memory_order_relaxed);
+                        WTF::atomicStore(&m_program.functions.atKeepingValueIndex(each.index()).isUsedAsObject, true, std::memory_order_relaxed);
                 }
             };
             bool isCalledByOwnArguments = false;
-            for (auto& value : function.values) {
+            static constexpr OpcodeSet usesOfObjects { Opcode::Construct, Opcode::PutById, Opcode::PutByVal, Opcode::DeleteById, Opcode::DeleteByVal, Opcode::InstanceOf, Opcode::GetById, Opcode::Operation };
+            std::as_const(m_program).functions.forEachValue(functionIndex, usesOfObjects, [&](ValueID id) {
+                auto& value = function.at(id);
                 switch (value.opcode) {
                 case Opcode::Construct:
                 case Opcode::PutById:
@@ -2275,9 +2354,9 @@ private:
                 default:
                     break;
                 }
-            }
+            });
             if (isCalledByOwnArguments)
-                WTF::atomicStore(&function.isUsedAsObject, true, std::memory_order_relaxed);
+                WTF::atomicStore(&m_program.functions.atKeepingValueIndex(functionIndex).isUsedAsObject, true, std::memory_order_relaxed);
         });
     }
 
@@ -2286,23 +2365,25 @@ private:
         if (!m_program.usesOperation(Operations::ForInKeys) || !m_program.usesOperation(Operations::HasEnumerableProperty))
             return;
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned functionIndex) {
-            auto& function = m_program.functions[functionIndex];
+            auto& function = std::as_const(m_program).functions[functionIndex];
             auto originOf = [&](ValueID id) {
                 while (function.at(id).opcode == Opcode::Cast)
                     id = function.at(id).child(0);
                 return id;
             };
-            for (auto& value : function.values) {
-                if (value.opcode != Opcode::Operation || m_program.operationOf(value) != Operations::HasEnumerableProperty || value.arguments.size() != 2)
-                    continue;
+            static constexpr OpcodeSet operations { Opcode::Operation };
+            std::as_const(m_program).functions.forEachValue(functionIndex, operations, [&](ValueID id) {
+                auto& value = function.at(id);
+                if (m_program.operationOf(value) != Operations::HasEnumerableProperty || value.arguments.size() != 2)
+                    return;
                 auto& key = function.at(originOf(value.arguments[1]));
                 if (key.opcode != Opcode::GetByVal)
-                    continue;
+                    return;
                 ValueID keys = originOf(key.child(0));
                 auto& listing = function.at(keys);
                 if (listing.opcode == Opcode::Operation && m_program.operationOf(listing) == Operations::ForInKeys && listing.arguments[0] == value.arguments[0])
-                    value.arguments.append(keys);
-            }
+                    m_program.functions.atKeepingValueIndex(functionIndex).at(id).arguments.append(keys);
+            });
         });
     }
 
@@ -2390,16 +2471,21 @@ static void findLazyClosureNames(Program& program)
         ValueID self;
         if (function.kind == FunctionKind::Constructor && function.has(Format::FunctionHasThis) && !function.blocks.isEmpty() && function.blocks[0].parameters.size() > function.captureTypes.size())
             self = function.blocks[0].parameters[function.captureTypes.size()];
-        for (auto& value : function.values) {
-            if ((value.opcode != Opcode::PutById && value.opcode != Opcode::PutField) || function.at(value.child(1)).opcode != Opcode::NewClosure || function.at(value.child(1)).arguments.size() > 1)
-                continue;
+        static constexpr OpcodeSet closures { Opcode::NewClosure };
+        if (!std::as_const(program).functions.mayContain(number, closures))
+            return;
+        static constexpr OpcodeSet stores { Opcode::PutById, Opcode::PutField };
+        std::as_const(program).functions.forEachValue(number, stores, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (!closures.contains(function.at(value.child(1)).opcode) || function.at(value.child(1)).arguments.size() > 1)
+                return;
             ValueID holder = withoutUpcasts(value.child(0));
             if (holder != self && function.at(holder).opcode != Opcode::NewObjectWithShape)
-                continue;
+                return;
             if (auto& captured = function.at(value.child(1)).arguments; !captured.isEmpty() && withoutUpcasts(captured[0]) != holder)
-                continue;
+                return;
             found[number].append((value.opcode == Opcode::PutById ? value.string() : program.at(value.layout()).fields[value.field()].name).index());
-        }
+        });
     });
     for (auto& names : found) {
         for (uint32_t name : names)
@@ -2432,12 +2518,15 @@ static bool castsFreshObjectToRecord(const Function& function, const Value& valu
 void linkAllocations(Program& program)
 {
     UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> byHash;
-    auto numberOf = [&](const Allocation& allocation) -> uint32_t {
+    auto hashOf = [](const Allocation& allocation) {
         Hasher hasher;
         add(hasher, allocation.layout, allocation.constructedBy, allocation.initialFieldCount, allocation.numberOfCaptures);
         for (uint16_t field : allocation.order)
             add(hasher, field);
-        auto& candidates = byHash.add(hasher.hash(), Vector<uint32_t, 1>()).iterator->value;
+        return hasher.hash();
+    };
+    auto numberWithHash = [&](const Allocation& allocation, unsigned hash) -> uint32_t {
+        auto& candidates = byHash.add(hash, Vector<uint32_t, 1>()).iterator->value;
         for (uint32_t candidate : candidates) {
             if (program.allocations[candidate] == allocation)
                 return candidate;
@@ -2445,6 +2534,9 @@ void linkAllocations(Program& program)
         candidates.append(program.allocations.size());
         program.allocations.append(allocation);
         return candidates.last();
+    };
+    auto numberOf = [&](const Allocation& allocation) {
+        return numberWithHash(allocation, hashOf(allocation));
     };
     auto ensureClosureAllocation = [&](unsigned numberOfCaptures) {
         RELEASE_ASSERT(numberOfCaptures <= UINT8_MAX);
@@ -2458,57 +2550,67 @@ void linkAllocations(Program& program)
         program.closureAllocations[index] = numberOf(allocation);
     };
     ensureClosureAllocation(0);
-    Vector<Vector<ValueID>> allocationSites(program.functions.size());
-    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+    struct AllocationSite {
+        enum Kind : uint8_t { Closure, Object, Clone, Cast };
+        uint32_t function;
+        ValueID value;
+        Kind kind;
+        uint32_t operand;
+        unsigned hash { 0 };
+    };
+    auto allocationSites = collectInParallel<AllocationSite>(program.functions.size(), [&](unsigned i, Vector<AllocationSite>& collected) {
         auto& function = std::as_const(program).functions[i];
         static constexpr OpcodeSet mayBeAllocations { Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::NewObjectWithShape, Opcode::CallBuiltin, Opcode::Cast };
         std::as_const(program).functions.forEachIndexedValue(i, mayBeAllocations, [&](ValueID id) {
-            Opcode opcode = function.at(id).opcode;
-            if (opcode == Opcode::NewClosure || opcode == Opcode::NewClosureOnce || opcode == Opcode::NewObjectWithShape || predictedCloneLayout(program, function.at(id)) || castsFreshObjectToRecord(function, function.at(id)))
-                allocationSites[i].append(id);
+            auto& value = function.at(id);
+            if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
+                collected.append({ i, id, AllocationSite::Closure, static_cast<uint32_t>(value.arguments.size()) });
+            else if (value.opcode == Opcode::NewObjectWithShape)
+                collected.append({ i, id, AllocationSite::Object, value.allocation(), hashOf(function.allocations[value.allocation()]) });
+            else if (LayoutID supertype = predictedCloneLayout(program, value))
+                collected.append({ i, id, AllocationSite::Clone, supertype.index() });
+            else if (castsFreshObjectToRecord(function, value))
+                collected.append({ i, id, AllocationSite::Cast, value.type.index() });
         });
     });
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
-        if (allocationSites[i].isEmpty())
+    for (auto& site : allocationSites) {
+        if (site.kind == AllocationSite::Closure)
+            ensureClosureAllocation(site.operand);
+        if (site.kind != AllocationSite::Object)
             continue;
-        auto& function = program.functions.atKeepingValueIndex(i);
-        for (ValueID id : allocationSites[i]) {
-            auto& value = function.at(id);
-            if (value.opcode == Opcode::CallBuiltin || value.opcode == Opcode::Cast)
-                continue;
-            if (value.opcode != Opcode::NewObjectWithShape) {
-                ensureClosureAllocation(value.arguments.size());
-                continue;
-            }
-            auto& allocation = function.allocations[value.allocation()];
-            program.at(allocation.layout).isAllocated = true;
-            value.immediates[1] = numberOf(allocation);
-        }
+        auto& allocation = std::as_const(program).functions[site.function].allocations[site.operand];
+        program.at(allocation.layout).isAllocated = true;
+        site.operand = numberWithHash(allocation, site.hash);
     }
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
-        for (ValueID id : allocationSites[i]) {
-            if (LayoutID supertype = predictedCloneLayout(program, std::as_const(program).functions[i].at(id)); supertype && program.at(supertype).isAllocated)
+    forEachIndexInParallel(allocationSites.size(), [&](unsigned k) {
+        auto& site = allocationSites[k];
+        if (site.kind == AllocationSite::Object)
+            program.functions.atKeepingValueIndex(site.function).at(site.value).immediates[1] = site.operand;
+    });
+    for (auto& site : allocationSites) {
+        if (site.kind == AllocationSite::Clone && program.at(LayoutID(site.operand)).isAllocated)
+            numberOf(Allocation { LayoutID(site.operand), { }, { }, 0 });
+        if (site.kind != AllocationSite::Cast)
+            continue;
+        for (LayoutID supertype : program.at(TypeID(site.operand)).objectLayouts) {
+            if (program.at(supertype).kind == LayoutKind::Record && program.at(supertype).isAllocated)
                 numberOf(Allocation { supertype, { }, { }, 0 });
-            if (auto& value = std::as_const(program).functions[i].at(id); value.opcode == Opcode::Cast) {
-                for (LayoutID supertype : program.at(value.type).objectLayouts) {
-                    if (program.at(supertype).kind == LayoutKind::Record && program.at(supertype).isAllocated)
-                        numberOf(Allocation { supertype, { }, { }, 0 });
-                }
-            }
         }
     }
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         program.functions.atKeepingValueIndex(i).allocations.clear();
     });
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
-        auto& function = program.functions.atKeepingValueIndex(i);
+    auto functionsAndThisLayouts = collectInParallel<std::pair<uint32_t, LayoutID>>(program.functions.size(), [&](unsigned i, auto& collected) {
+        auto& function = std::as_const(program).functions[i];
         TypeID thisType = function.assertedThisType ? function.assertedThisType : function.thisType;
-        if (function.kind != FunctionKind::Plain || function.declaredAs & (functionIsAsync | functionIsGenerator) || !thisType || !program.genericEntrypoints.contains(i))
-            continue;
+        if (function.kind != FunctionKind::Plain || function.declaredAs & (functionIsAsync | functionIsGenerator) || !thisType || !program.genericEntrypoints.contains(i) || !function.allocatesForUnknownCallers)
+            return;
         LayoutID supertype = program.at(thisType).singleLayout();
-        if (supertype && program.at(supertype).kind == LayoutKind::Record && program.at(supertype).isAllocated)
-            function.thisAllocation = numberOf(Allocation { supertype, { }, { }, 0 });
-    }
+        if (supertype && std::as_const(program).at(supertype).kind == LayoutKind::Record && std::as_const(program).at(supertype).isAllocated)
+            collected.append({ i, supertype });
+    });
+    for (auto [i, supertype] : functionsAndThisLayouts)
+        program.functions.atKeepingValueIndex(i).thisAllocation = numberOf(Allocation { supertype, { }, { }, 0 });
     for (uint32_t i = 0; i < program.allocations.size(); ++i) {
         auto& allocation = program.allocations[i];
         auto& layout = program.at(allocation.layout);
@@ -2610,6 +2712,15 @@ Vector<unsigned> computeBlockCycles(const Function& function)
     return computeBlockCycles(function, nullptr);
 }
 
+static constexpr OpcodeSet loopHints { Opcode::LoopHint };
+
+BitVector blocksInLoops(const Functions& functions, size_t index)
+{
+    if (!functions.mayContain(index, loopHints))
+        return { };
+    return blocksInLoops(functions[index]);
+}
+
 BitVector blocksInLoops(const Function& function)
 {
     unsigned numberOfBlocks = function.blocks.size();
@@ -2617,7 +2728,7 @@ BitVector blocksInLoops(const Function& function)
     Vector<unsigned, 8> headers;
     for (unsigned b = 0; b < numberOfBlocks; ++b) {
         bool isHeader = function.blocks[b].values.containsIf([&](ValueID id) {
-            return function.at(id).opcode == Opcode::LoopHint;
+            return loopHints.contains(function.at(id).opcode);
         });
         if (isHeader)
             headers.append(b);
@@ -2745,11 +2856,15 @@ static void findFunctionsInCycles(Program& program)
 {
     unsigned count = program.functions.size();
     Vector<Vector<unsigned>> callees(count);
+    Vector<unsigned> index;
+    index.fill(0, count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        for (auto& value : program.functions[i].values) {
-            if (value.opcode == Opcode::CallDirect)
-                callees[i].append(value.function().index());
-        }
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        std::as_const(program).functions.forEachValue(i, directCalls, [&](ValueID id) {
+            callees[i].append(std::as_const(program).functions[i].at(id).function().index());
+        });
+        if (callees[i].isEmpty())
+            index[i] = 1;
     });
     struct Frame {
         unsigned function;
@@ -2757,8 +2872,6 @@ static void findFunctionsInCycles(Program& program)
     };
     BitVector result(count);
     BitVector isOnStack(count);
-    Vector<unsigned> index;
-    index.fill(0, count);
     Vector<unsigned> low;
     low.fill(0, count);
     Vector<unsigned> stack;
@@ -2808,6 +2921,7 @@ static void findFunctionsInCycles(Program& program)
     }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", result.bitCount(), " of ", count, " functions are in a cycle of calls by name");
     program.functionsInCycles = WTF::move(result);
+    destroyOnHelperThread(WTF::move(callees));
 }
 
 static void findStaticallyHotFunctions(Program& program)
@@ -2830,7 +2944,7 @@ static void findStaticallyHotFunctions(Program& program)
     Vector<unsigned> frontier;
     Vector<std::optional<Vector<unsigned>>> calledInLoops(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        BitVector isInLoop = blocksInLoops(std::as_const(program).functions[i]);
+        BitVector isInLoop = blocksInLoops(std::as_const(program).functions, i);
         bool isInCycle = program.functionsInCycles.get(i);
         if (isInLoop.isEmpty() && !isInCycle)
             return;
@@ -2867,18 +2981,22 @@ static void findStaticallyHotFunctions(Program& program)
             if (code)
                 isModuleBody.set(code.index());
         }
-        for (unsigned i = 0; i < count; ++i) {
+        auto functionsRunPerRequest = findIndicesInParallel(count, [&](unsigned i) {
             auto& function = std::as_const(program).functions[i];
-            if (function.module && runsPerRequest.get(function.module.index()) && !function.isGenericEntrypoint() && !isModuleBody.get(i) && !isCalled.set(i))
+            return function.module && runsPerRequest.get(function.module.index()) && !function.isGenericEntrypoint() && !isModuleBody.get(i);
+        });
+        for (unsigned i : functionsRunPerRequest) {
+            if (!isCalled.set(i))
                 frontier.append(i);
         }
     }
     BitVector hasLoop = result;
     isCalled.merge(program.functionsInCycles);
-    for (unsigned i = 0; i < count; ++i) {
-        if (std::as_const(program).functions[i].savesFrameOnSuspend)
-            isCalled.clear(i);
-    }
+    auto functionsSavingFrames = findIndicesInParallel(count, [&](unsigned i) {
+        return std::as_const(program).functions[i].savesFrameOnSuspend;
+    });
+    for (unsigned i : functionsSavingFrames)
+        isCalled.clear(i);
     BitVector isCalledOrCreated = isCalled;
     BitVector isCalledNearLoops = isCalled;
     auto say = [](Vector<uint8_t>& said, unsigned index) {
@@ -2932,10 +3050,10 @@ static void findStaticallyHotFunctions(Program& program)
     forEachIndexInParallel(count, [&](unsigned i) {
         if (!warm.get(i))
             return;
-        for (auto& value : program.functions[i].values) {
-            if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce || value.opcode == Opcode::FunctionReference)
-                say(isCreatedByWarmFunction, value.function().index());
-        }
+        static constexpr OpcodeSet functionValues { Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::FunctionReference };
+        std::as_const(program).functions.forEachValue(i, functionValues, [&](ValueID id) {
+            say(isCreatedByWarmFunction, std::as_const(program).functions[i].at(id).function().index());
+        });
     });
     forEachFlagged(isCreatedByWarmFunction, [&](unsigned callee) {
         created.set(callee);
@@ -2947,6 +3065,8 @@ static void findStaticallyHotFunctions(Program& program)
     program.functionsHotOnlyInLoops = WTF::move(hasLoop);
     Vector<uint8_t> isCalledUnderHiddenHandler(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
+        if (!program.functions.mayEndWith(i, TerminatorKind::Invoke))
+            return;
         auto& function = std::as_const(program).functions[i];
         if (!function.has(Format::FunctionIsHiddenInStackTraces) || function.isGenericEntrypoint())
             return;
@@ -2983,12 +3103,17 @@ static void findStaticallyRareFunctions(Program& program)
     Vector<unsigned> usedAsValueCount;
     usedAsValueCount.fill(0, count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        for (auto& value : program.functions[i].values) {
-            if (value.predictedClosure())
-                WTF::atomicExchangeAdd(&usedAsValueCount[value.predictedClosure().index()], 1u, std::memory_order_relaxed);
-            if (value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
-                WTF::atomicExchangeAdd(&usedAsValueCount[value.function().index()], 1u, std::memory_order_relaxed);
+        auto& function = std::as_const(program).functions[i];
+        if (program.functions.mayContainPredictedClosure(i)) {
+            for (auto& value : function.values) {
+                if (value.predictedClosure())
+                    WTF::atomicExchangeAdd(&usedAsValueCount[value.predictedClosure().index()], 1u, std::memory_order_relaxed);
+            }
         }
+        static constexpr OpcodeSet functionValues { Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce };
+        std::as_const(program).functions.forEachValue(i, functionValues, [&](ValueID id) {
+            WTF::atomicExchangeAdd(&usedAsValueCount[function.at(id).function().index()], 1u, std::memory_order_relaxed);
+        });
     });
     BitVector isUsedAsValue(count);
     for (unsigned i = 0; i < count; ++i) {
@@ -3019,12 +3144,13 @@ static void findStaticallyRareFunctions(Program& program)
     Vector<uint32_t> callsInRareCode;
     callsInRareCode.fill(0, count);
     Vector<unsigned> worklist;
-    for (unsigned i = 0; i < count; ++i) {
+    auto functionsRunOnce = findIndicesInParallel(count, [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
-        if ((function.kind == FunctionKind::Module && function.parameterTypes.isEmpty()) || (function.module && program.modules[function.module.index()].initializer == FunctionID(i))) {
-            program.staticallyRareFunctions.set(i);
-            worklist.append(i);
-        }
+        return (function.kind == FunctionKind::Module && function.parameterTypes.isEmpty()) || (function.module && program.modules[function.module.index()].initializer == FunctionID(i));
+    });
+    for (unsigned i : functionsRunOnce) {
+        program.staticallyRareFunctions.set(i);
+        worklist.append(i);
     }
     while (!worklist.isEmpty()) {
         Vector<Vector<unsigned>> calledOutsideLoops(worklist.size());
@@ -3316,6 +3442,7 @@ static void outlineConcatenations(Program& program)
         printOutliningStatistics("concatenations"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "the function is hot by the text"_s, numbers[IsStaticallyHotReason] }, { "more than six parts"_s, numbers[HasTooManyParts] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsInlinedFromHot] }, { "a key"_s, numbers[IsKey] } });
     }
     program.functions.appendVector(WTF::move(bodies));
+    destroyOnHelperThread(std::tuple { WTF::move(sites), WTF::move(signatureSites), WTF::move(signatureBody) });
 }
 
 static void outlineBuiltinCalls(Program& program)
@@ -3394,8 +3521,11 @@ static void outlineBuiltinCalls(Program& program)
     };
     Vector<Vector<Site>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        static constexpr OpcodeSet candidates { Opcode::Add, Opcode::CallMethod, Opcode::CallBuiltin, Opcode::GetById };
+        if (program.isCalledNearLoops(FunctionID(i)) || !program.functions.mayContain(i, candidates))
+            return;
         auto& function = std::as_const(program).functions[i];
-        if (program.isCalledNearLoops(FunctionID(i)) || function.blocks.isEmpty())
+        if (function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
         std::optional<BitVector> keys;
@@ -3413,44 +3543,42 @@ static void outlineBuiltinCalls(Program& program)
                 keys = computeMapKeyValues(program, FunctionID(i), function);
             return keys->get(key.index());
         };
-        bool hasHandlers = function.blocks.containsIf([](auto& block) {
+        bool hasHandlers = program.functions.mayEndWith(i, TerminatorKind::Invoke) && function.blocks.containsIf([](auto& block) {
             return block.terminator.kind == TerminatorKind::Invoke;
         });
-        for (unsigned b = 0; b < function.blocks.size(); ++b) {
-            for (ValueID id : function.blocks[b].values) {
-                auto& value = function.at(id);
-                if ((!isCandidate(value) && !isPredictedClassMethodRead(function, value)) || isDescribedByLiteral(function, value))
-                    continue;
-                if (value.opcode == Opcode::Add ? isLocallyCreatedKey(id) || usesStringBuilder(id) : value.opcode == Opcode::CallBuiltin && !value.arguments.isEmpty() && isLocallyCreatedKey(value.arguments[0]))
-                    continue;
-                if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || writesLiteralAsJSON(function, value))
-                    continue;
-                if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
-                    continue;
-                if (!isInLoop)
-                    isInLoop = blocksInLoops(function);
-                if (isInLoop->get(b))
-                    continue;
-                if (isInlinedFromHotFunction(program, function, value, true))
-                    continue;
-                StringBuilder signature;
-                signature.append(static_cast<unsigned>(value.opcode), ' ', value.immediates[0], ' ', value.immediates[1], ' ', value.type.index(), ' ', value.prediction().index(), value.children[0] ? ' ' : '-');
-                if (value.predictedReceiverClassPlusOne)
-                    signature.append('e', value.predictedReceiverClassPlusOne);
-                if (value.receiverHasOriginalStructure)
-                    signature.append('m');
-                if (value.child(1))
-                    signature.append('r');
-                forEachOperand(value, [&](ValueID operandID) {
-                    auto& operand = function.at(operandID);
-                    signature.append(' ', operand.type.index(), '~', operand.prediction().index(), '~', operand.predictedClosure().index());
-                    if (staysInBody(operand))
-                        signature.append('=', static_cast<unsigned>(operand.opcode), ':', operand.immediates[0], ':', operand.immediates[1]);
-                });
-                sites[i].append({ id, signature.toString() });
-                sites[i].last().signature.impl()->hash();
-            }
-        }
+        std::as_const(program).functions.forEachIndexedValueWithBlock(i, candidates, [&](unsigned b, unsigned, ValueID id) {
+            auto& value = function.at(id);
+            if ((!isCandidate(value) && !isPredictedClassMethodRead(function, value)) || isDescribedByLiteral(function, value))
+                return;
+            if (value.opcode == Opcode::Add ? isLocallyCreatedKey(id) || usesStringBuilder(id) : value.opcode == Opcode::CallBuiltin && !value.arguments.isEmpty() && isLocallyCreatedKey(value.arguments[0]))
+                return;
+            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || writesLiteralAsJSON(function, value))
+                return;
+            if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
+                return;
+            if (!isInLoop)
+                isInLoop = blocksInLoops(function);
+            if (isInLoop->get(b))
+                return;
+            if (isInlinedFromHotFunction(program, function, value, true))
+                return;
+            StringBuilder signature;
+            signature.append(static_cast<unsigned>(value.opcode), ' ', value.immediates[0], ' ', value.immediates[1], ' ', value.type.index(), ' ', value.prediction().index(), value.children[0] ? ' ' : '-');
+            if (value.predictedReceiverClassPlusOne)
+                signature.append('e', value.predictedReceiverClassPlusOne);
+            if (value.receiverHasOriginalStructure)
+                signature.append('m');
+            if (value.child(1))
+                signature.append('r');
+            forEachOperand(value, [&](ValueID operandID) {
+                auto& operand = function.at(operandID);
+                signature.append(' ', operand.type.index(), '~', operand.prediction().index(), '~', operand.predictedClosure().index());
+                if (staysInBody(operand))
+                    signature.append('=', static_cast<unsigned>(operand.opcode), ':', operand.immediates[0], ':', operand.immediates[1]);
+            });
+            sites[i].append({ id, signature.toString() });
+            sites[i].last().signature.impl()->hash();
+        });
     });
     struct Signature {
         uint32_t numberOfSites;
@@ -3604,6 +3732,7 @@ static void outlineBuiltinCalls(Program& program)
     if (Options::verboseAOTCompilation())
         printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "beside handlers"_s, numbers[IsNearHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
     program.functions.appendVector(WTF::move(bodies));
+    destroyOnHelperThread(WTF::move(sites));
 }
 
 bool canUseConstructBody(const Program& program, FunctionID id, const Function& function, const Value& value)
@@ -3720,27 +3849,27 @@ static void outlineCasts(Program& program)
     unsigned count = program.functions.size();
     Vector<Vector<std::pair<ValueID, uint64_t>>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        auto& function = std::as_const(program).functions[i];
+        static constexpr OpcodeSet casts { Opcode::Cast };
         FunctionID id(i);
-        bool isInSet = !function.isSharedOutlinedBody && program.isColdInCallGraph(id);
-        if (!isInSet || function.blocks.isEmpty())
+        if (!program.isColdInCallGraph(id) || !program.functions.mayContain(i, casts))
+            return;
+        auto& function = std::as_const(program).functions[i];
+        if (function.isSharedOutlinedBody || function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
-        for (unsigned b = 0; b < function.blocks.size(); ++b) {
-            for (ValueID valueID : function.blocks[b].values) {
-                auto& value = function.at(valueID);
-                if (!Program::mayHaveBody(value) || value.rep == Rep::Void || value.operandClassIsProven)
-                    continue;
-                Rep given = function.at(value.child(0)).rep;
-                if ((given != Rep::JSValue && given != Rep::Cell) || program.castIsRedundant(program.typeOf(function, value.child(0)), program.at(value.type), value))
-                    continue;
-                if (!isInLoop)
-                    isInLoop = blocksInLoops(function);
-                if (isInLoop->get(b))
-                    break;
-                sites[i].append({ valueID, Program::castBodyKey(value) });
-            }
-        }
+        std::as_const(program).functions.forEachIndexedValueWithBlock(i, casts, [&](unsigned b, unsigned, ValueID valueID) {
+            auto& value = function.at(valueID);
+            if (!Program::mayHaveBody(value) || value.rep == Rep::Void || value.operandClassIsProven)
+                return;
+            Rep given = function.at(value.child(0)).rep;
+            if ((given != Rep::JSValue && given != Rep::Cell) || program.castIsRedundant(program.typeOf(function, value.child(0)), program.at(value.type), value))
+                return;
+            if (!isInLoop)
+                isInLoop = blocksInLoops(function);
+            if (isInLoop->get(b))
+                return;
+            sites[i].append({ valueID, Program::castBodyKey(value) });
+        });
     });
     struct FirstSite {
         uint64_t key;
@@ -4110,25 +4239,32 @@ static unsigned removeRedundantModuleEvaluations(Function& function, const Vecto
 static void shareModuleEvaluation(Program& program)
 {
     unsigned count = program.functions.size();
-    Vector<std::optional<FoundModuleEvaluation>> found(count);
-    forEachIndexInParallel(count, [&](unsigned i) {
-        found[i] = asModuleEvaluation(program, FunctionID(i));
+    auto found = collectInParallel<FoundModuleEvaluation>(count, [&](unsigned i, Vector<FoundModuleEvaluation>& collected) {
+        if (auto evaluation = asModuleEvaluation(program, FunctionID(i)))
+            collected.append(WTF::move(*evaluation));
     });
     Vector<uint8_t> isReachedByOtherPaths(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
-        for (auto& value : std::as_const(program).functions[i].values) {
-            if (value.predictedClosure())
-                WTF::atomicStore(&isReachedByOtherPaths[value.predictedClosure().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-            bool namesFunction = value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce || value.opcode == Opcode::IsClosureOf || value.opcode == Opcode::GetCapture;
-            if (namesFunction || (value.opcode == Opcode::CallDirect && (!value.arguments.isEmpty() || value.isJumpToContinuation())))
-                WTF::atomicStore(&isReachedByOtherPaths[value.function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        auto& function = std::as_const(program).functions[i];
+        if (program.functions.mayContainPredictedClosure(i)) {
+            for (auto& value : function.values) {
+                if (value.predictedClosure())
+                    WTF::atomicStore(&isReachedByOtherPaths[value.predictedClosure().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+            }
         }
+        static constexpr OpcodeSet functionReferences { Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::IsClosureOf, Opcode::GetCapture, Opcode::CallDirect };
+        std::as_const(program).functions.forEachValue(i, functionReferences, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.opcode != Opcode::CallDirect || !value.arguments.isEmpty() || value.isJumpToContinuation())
+                WTF::atomicStore(&isReachedByOtherPaths[value.function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
     });
-    for (unsigned i = 0; i < count; ++i) {
-        if (!found[i] || isReachedByOtherPaths[i])
-            continue;
-        program.moduleEvaluationIndexByFunction.add(i, program.moduleEvaluations.size());
-        program.moduleEvaluations.append(WTF::move(found[i]->evaluation));
+    found.removeAllMatching([&](auto& one) {
+        return isReachedByOtherPaths[one.evaluation.function.index()];
+    });
+    for (auto& one : found) {
+        program.moduleEvaluationIndexByFunction.add(one.evaluation.function.index(), program.moduleEvaluations.size());
+        program.moduleEvaluations.append(WTF::move(one.evaluation));
     }
     bool hasCycle = moduleEvaluationsHaveCycle(program);
     constexpr unsigned minSitesWorthSharing = 4;
@@ -4139,9 +4275,10 @@ static void shareModuleEvaluation(Program& program)
     }
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> externalModuleNumber;
     Vector<std::pair<FunctionID, ExternalModuleFetch>> externalModules;
-    for (auto& evaluation : program.moduleEvaluations) {
+    for (unsigned number = 0; number < found.size(); ++number) {
+        auto& evaluation = program.moduleEvaluations[number];
         auto& function = std::as_const(program).at(evaluation.function);
-        for (auto& fetch : found[evaluation.function.index()]->fetches) {
+        for (auto& fetch : found[number].fetches) {
             uint64_t key = static_cast<uint64_t>(function.at(fetch.read).variable().index()) << 32 | function.at(fetch.fetch).string().index();
             auto number = externalModuleNumber.add(key, static_cast<uint32_t>(externalModules.size()));
             if (number.isNewEntry)
@@ -4339,12 +4476,12 @@ static void removeModuleEvaluations(Program& program)
         return;
     Vector<uint8_t> isNamed(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (program.moduleEvaluationIndexByFunction.contains(i))
+        static constexpr OpcodeSet variableAccesses { Opcode::GetModuleVariable, Opcode::PutModuleVariable };
+        if (!program.functions.mayContain(i, variableAccesses) || program.moduleEvaluationIndexByFunction.contains(i))
             return;
-        for (auto& value : std::as_const(program).functions[i].values) {
-            if (value.opcode == Opcode::GetModuleVariable || value.opcode == Opcode::PutModuleVariable)
-                WTF::atomicStore(&isNamed[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-        }
+        std::as_const(program).functions.forEachValue(i, variableAccesses, [&](ValueID id) {
+            WTF::atomicStore(&isNamed[std::as_const(program).functions[i].at(id).variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
     });
     for (auto& evaluation : program.moduleEvaluations) {
         for (VariableID variable : { evaluation.isEvaluated, evaluation.error }) {
@@ -4364,6 +4501,8 @@ static bool fitInRegisters(const Program& program, const Vector<TypeID, 4>& type
     }
     return numberOfGPRs <= numberOfArgumentGPRs && numberOfFPRs <= FPRInfo::numberOfArgumentRegisters;
 }
+
+static constexpr OpcodeSet freshResultAllocations { Opcode::NewArray, Opcode::NewObjectWithShape };
 
 std::optional<FreshResults> computeFreshResults(const Program& program, const Function& function)
 {
@@ -4385,7 +4524,7 @@ std::optional<FreshResults> computeFreshResults(const Program& program, const Fu
             result.nullishReturns.append(b);
             continue;
         }
-        if ((returned != Opcode::NewArray && returned != Opcode::NewObjectWithShape) || !function.blocks[b].values.contains(terminator.value))
+        if (!freshResultAllocations.contains(returned) || !function.blocks[b].values.contains(terminator.value))
             return std::nullopt;
         result.returns.append({ b, { } });
     }
@@ -4834,20 +4973,20 @@ static void outlineDestructuredParameterReads(Program& program)
     Vector<uint32_t> parametersPassedNewObjects(FillWith { }, count, 0u);
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& call = function.at(id);
-                if (call.opcode != Opcode::CallDirect)
-                    continue;
-                for (unsigned k = 0; k < call.arguments.size() && k < 32; ++k) {
-                    ValueID argument = call.arguments[k];
-                    while (function.at(argument).opcode == Opcode::Cast)
-                        argument = function.at(argument).child(0);
-                    if (function.at(argument).opcode == Opcode::NewObjectWithShape)
-                        WTF::atomicExchangeOr(&parametersPassedNewObjects[call.function().index()], 1u << k, std::memory_order_relaxed);
-                }
+        static constexpr OpcodeSet newObjects { Opcode::NewObjectWithShape };
+        if (!program.functions.mayContain(i, newObjects))
+            return;
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        std::as_const(program).functions.forEachIndexedValue(i, directCalls, [&](ValueID id) {
+            auto& call = function.at(id);
+            for (unsigned k = 0; k < call.arguments.size() && k < 32; ++k) {
+                ValueID argument = call.arguments[k];
+                while (function.at(argument).opcode == Opcode::Cast)
+                    argument = function.at(argument).child(0);
+                if (newObjects.contains(function.at(argument).opcode))
+                    WTF::atomicExchangeOr(&parametersPassedNewObjects[call.function().index()], 1u << k, std::memory_order_relaxed);
             }
-        }
+        });
     });
     Vector<Function> bodies;
     for (unsigned i = 0; i < count; ++i) {
@@ -5070,6 +5209,8 @@ static void splitOffWorkers(Program& program)
     program.types.thaw();
     Vector<std::unique_ptr<FreshResults>> freshResults(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        if (!program.functions.mayContain(i, freshResultAllocations))
+            return;
         if (auto fresh = computeFreshResults(program, std::as_const(program).functions[i]))
             freshResults[i] = makeUniqueWithoutFastMallocCheck<FreshResults>(WTF::move(*fresh));
     });
@@ -5090,8 +5231,7 @@ static void splitOffWorkers(Program& program)
         if (fitInRegisters(program, fresh->types, fresh->nullishKind))
             functionsSplit.append(i);
     }
-    Vector<Function> wrappers(functionsSplit.size());
-    Vector<Function> workers(functionsSplit.size());
+    program.functions.grow(count + functionsSplit.size());
     forEachIndexInParallel(functionsSplit.size(), [&](unsigned numberOfSplit) {
         unsigned i = functionsSplit[numberOfSplit];
         auto& fresh = freshResults[i];
@@ -5252,8 +5392,8 @@ static void splitOffWorkers(Program& program)
         if (fresh->nullishKind)
             worker.resultTypes.insert(0, program.types.boolean);
 
-        wrappers[numberOfSplit] = WTF::move(wrapper);
-        workers[numberOfSplit] = WTF::move(worker);
+        program.functions[i] = WTF::move(wrapper);
+        program.functions[workerID.index()] = WTF::move(worker);
     });
     for (unsigned numberOfSplit = 0; numberOfSplit < functionsSplit.size(); ++numberOfSplit) {
         unsigned i = functionsSplit[numberOfSplit];
@@ -5273,8 +5413,6 @@ static void splitOffWorkers(Program& program)
             program.functionsWithInliningDisabled.set(workerID.index());
         if (program.callGraphColdFunctions.get(i))
             program.callGraphColdFunctions.set(workerID.index());
-        program.functions[i] = WTF::move(wrappers[numberOfSplit]);
-        program.functions.append(WTF::move(workers[numberOfSplit]));
     }
     program.types.freeze();
 }
@@ -5295,17 +5433,20 @@ static void outlineHostObjectReads(Program& program)
     Vector<uint32_t> useCounts;
     Vector<uint8_t> readsHostObject(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
+        static constexpr OpcodeSet globalReads { Opcode::GetGlobal };
+        if (!program.functions.mayContain(i, globalReads))
+            return;
         auto& function = std::as_const(program).functions[i];
         if (function.isGenericEntrypoint() || function.has(Format::FunctionIsBuiltin))
             return;
-        for (auto& block : function.blocks) {
-            for (unsigned k = 1; k < block.values.size(); ++k) {
-                auto& read = function.at(block.values[k]);
-                auto& global = function.at(block.values[k - 1]);
-                if (read.opcode == Opcode::GetById && global.opcode == Opcode::GetGlobal && program.isHostObjectDataProperty(global.string(), read.string()))
-                    readsHostObject[i] = 1;
-            }
-        }
+        std::as_const(program).functions.forEachIndexedValueWithBlock(i, globalReads, [&](unsigned block, unsigned k, ValueID id) {
+            auto& values = function.blocks[block].values;
+            if (k + 1 == values.size())
+                return;
+            auto& read = function.at(values[k + 1]);
+            if (read.opcode == Opcode::GetById && program.isHostObjectDataProperty(function.at(id).string(), read.string()))
+                readsHostObject[i] = 1;
+        });
     });
     for (unsigned i = 0; i < count; ++i) {
         if (!readsHostObject[i])
@@ -5401,6 +5542,8 @@ static void outlineGetStoreCalls(Program& program)
     auto& functions = std::as_const(program).functions;
     Vector<Vector<ValueID, 0>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        if (!functions.mayContain(i, methodCalls))
+            return;
         auto& function = functions[i];
         if (function.isGenericEntrypoint() || function.has(Format::FunctionIsBuiltin))
             return;
@@ -5832,16 +5975,16 @@ static void findFunctionsWithCheckedStack(Program& program, const BitVector& may
 {
     unsigned count = program.functions.size();
     BitVector isCandidate(count);
-    for (unsigned i = 0; i < count; ++i) {
+    auto candidates = findIndicesInParallel(count, [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
         if (mayBeEnteredWithoutCheck.get(i) || program.uncalledFunctions.get(i) || function.blocks.isEmpty())
-            continue;
+            return false;
         if (function.resumeFunction || function.startFunction || function.declaredAs & (functionIsAsync | functionIsGenerator) || function.has(FunctionIsPartOfHiddenCoroutine) || function.has(FunctionHasUnknownCallers))
-            continue;
-        if (function.takesCalleeClosure || function.rampForClosures || function.isRampForClosures)
-            continue;
+            return false;
+        return !function.takesCalleeClosure && !function.rampForClosures && !function.isRampForClosures;
+    });
+    for (unsigned i : candidates)
         isCandidate.set(i);
-    }
     for (FunctionID function : { program.moduleEvaluator, program.moduleEvaluatorIfNeeded, program.externalModuleEvaluator }) {
         if (function)
             isCandidate.clear(function.index());
@@ -5850,6 +5993,10 @@ static void findFunctionsWithCheckedStack(Program& program, const BitVector& may
         if (function)
             isCandidate.clear(function.index());
     }
+    enum : uint8_t { NotSeen, InProgress, Done };
+    Vector<uint8_t> state(FillWith { }, count, static_cast<uint8_t>(NotSeen));
+    Vector<uint8_t> height(FillWith { }, count, static_cast<uint8_t>(0));
+    static_assert(maxNestedFunctionsWithoutStackCheck < std::numeric_limits<uint8_t>::max());
     Vector<Vector<uint32_t, 4>> callees(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         if (!isCandidate.get(i))
@@ -5870,11 +6017,11 @@ static void findFunctionsWithCheckedStack(Program& program, const BitVector& may
             }
             callees[i].append(callee);
         });
+        if (callees[i].isEmpty()) {
+            state[i] = Done;
+            height[i] = 1;
+        }
     });
-    enum : uint8_t { NotSeen, InProgress, Done };
-    Vector<uint8_t> state(FillWith { }, count, static_cast<uint8_t>(NotSeen));
-    Vector<uint8_t> height(FillWith { }, count, static_cast<uint8_t>(0));
-    static_assert(maxNestedFunctionsWithoutStackCheck < std::numeric_limits<uint8_t>::max());
     Vector<std::pair<uint32_t, uint32_t>> inProgress;
     for (unsigned root = 0; root < count; ++root) {
         if (!isCandidate.get(root) || state[root] != NotSeen)
@@ -5913,10 +6060,11 @@ static void findFunctionsWithCheckedStack(Program& program, const BitVector& may
             program.genericEntrypointsWithCalleeStackCheck.set(entry.index());
     }
     program.functionsWithCheckedStack = WTF::move(isCandidate);
+    destroyOnHelperThread(WTF::move(callees));
 }
 
 template<typename Functor, typename ExtraVisitor>
-static void forEachCalleeOf(const Program& program, const Function& function, const Functor& functor, const ExtraVisitor& extraVisitor)
+static void forEachCalleeOf(const Program& program, FunctionID indexedFunction, const Function& function, const Functor& functor, const OpcodeSet& extraOpcodes, const ExtraVisitor& extraVisitor)
 {
     auto entryOf = [&](FunctionID created) {
         FunctionID entry = program.genericEntrypoints.get(created.index());
@@ -5946,28 +6094,40 @@ static void forEachCalleeOf(const Program& program, const Function& function, co
         }
         return callees->get(expected.index());
     };
+    static constexpr OpcodeSet calleeReferences { Opcode::CallDirect, Opcode::Call, Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::NewObjectWithShape, Opcode::Construct, Opcode::Cast };
+    auto visit = [&](ValueID id) {
+        auto& value = function.at(id);
+        if (extraOpcodes.contains(value.opcode))
+            extraVisitor(value);
+        if (value.opcode == Opcode::CallDirect) {
+            functor(value.function().index());
+            if (program.at(value.function()).has(Format::FunctionHasRestParameter))
+                entryOf(value.function());
+        } else if (FunctionID adapter = value.opcode != Opcode::Call ? FunctionID() : value.isSignatureCall ? FunctionID(value.immediates[1]) : program.didResolveCallsBySignature ? FunctionID() : program.adapterForCall(value)) {
+            functor(adapter.index());
+        } else if (value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
+            entryOf(value.function());
+        else if (value.opcode == Opcode::NewObjectWithShape) {
+            if (FunctionID constructor = function.allocations[value.allocation()].constructedBy)
+                entryOf(constructor);
+        } else if (value.opcode == Opcode::Construct && !function.isSharedOutlinedBody) {
+            if (FunctionID body = program.constructBody(value))
+                functor(body.index());
+        } else if (value.opcode == Opcode::Cast && !function.isSharedOutlinedBody) {
+            if (FunctionID body = program.castBody(value))
+                functor(body.index());
+        }
+    };
+    OpcodeSet visited = calleeReferences | extraOpcodes;
+    if (indexedFunction && !program.functions.mayContainPredictedClosure(indexedFunction.index())) {
+        program.functions.forEachIndexedValue(indexedFunction.index(), visited, visit);
+        return;
+    }
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& value = function.at(id);
-            extraVisitor(value);
-            if (value.opcode == Opcode::CallDirect) {
-                functor(value.function().index());
-                if (program.at(value.function()).has(Format::FunctionHasRestParameter))
-                    entryOf(value.function());
-            } else if (FunctionID adapter = value.opcode != Opcode::Call ? FunctionID() : value.isSignatureCall ? FunctionID(value.immediates[1]) : program.didResolveCallsBySignature ? FunctionID() : program.adapterForCall(value)) {
-                functor(adapter.index());
-            } else if (value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
-                entryOf(value.function());
-            else if (value.opcode == Opcode::NewObjectWithShape) {
-                if (FunctionID constructor = function.allocations[value.allocation()].constructedBy)
-                    entryOf(constructor);
-            } else if (value.opcode == Opcode::Construct && !function.isSharedOutlinedBody) {
-                if (FunctionID body = program.constructBody(value))
-                    functor(body.index());
-            } else if (value.opcode == Opcode::Cast && !function.isSharedOutlinedBody) {
-                if (FunctionID body = program.castBody(value))
-                    functor(body.index());
-            }
+            if (visited.contains(value.opcode))
+                visit(id);
             if (value.predictedClosure()) {
                 if (mayBeEnteredThrough(id))
                     functor(value.predictedClosure().index());
@@ -5987,7 +6147,13 @@ static void forEachCalleeOf(const Program& program, const Function& function, co
 template<typename Functor>
 static void forEachCalleeOf(const Program& program, const Function& function, const Functor& functor)
 {
-    forEachCalleeOf(program, function, functor, [](const Value&) { });
+    forEachCalleeOf(program, FunctionID(), function, functor, OpcodeSet { }, [](const Value&) { });
+}
+
+template<typename Functor>
+static void forEachCalleeOf(const Program& program, FunctionID id, const Functor& functor)
+{
+    forEachCalleeOf(program, id, program.at(id), functor, OpcodeSet { }, [](const Value&) { });
 }
 
 static BitVector functionsWithOtherEntries(const Program& program)
@@ -6080,10 +6246,11 @@ static void removeUncalledFunctions(Program& program)
     Vector<Vector<uint32_t>> functionsUsedAsValuesBy(count);
     Vector<Vector<uint32_t>> methodNamesCalledBy(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        forEachCalleeOf(program, std::as_const(program).functions[i], [&](unsigned callee) {
+        static constexpr OpcodeSet functionValuesAndMethodCalls { Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::CallMethod };
+        forEachCalleeOf(program, FunctionID(i), std::as_const(program).functions[i], [&](unsigned callee) {
             calleesOf[i].append(callee);
             WTF::atomicExchangeAdd(&calls[callee], 1u, std::memory_order_relaxed);
-        }, [&](const Value& value) {
+        }, functionValuesAndMethodCalls, [&](const Value& value) {
             if (value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce) {
                 functionsUsedAsValuesBy[i].append(value.function().index());
                 WTF::atomicExchangeAdd(&usedAsValueCount[value.function().index()], 1u, std::memory_order_relaxed);
@@ -6163,13 +6330,15 @@ static void removeUncalledFunctions(Program& program)
             return false;
         return !isRequestedByIndex.get(i) && !function.has(Format::FunctionIsBuiltin) && !program.isResumeFunction(function) && !function.resumeFunction && !function.startFunction && !program.isEntry(FunctionID(i));
     };
-    enum : uint8_t { IsOnlyEnteredByCallsAndClosures = 1, IsGenericEntry = 2 };
+    enum : uint8_t { IsOnlyEnteredByCallsAndClosures = 1, IsGenericEntry = 2, RunsOnce = 4 };
     Vector<uint8_t> entryKinds(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
-        entryKinds[i] = (isOnlyEnteredByCallsAndClosures(i) ? IsOnlyEnteredByCallsAndClosures : 0) | (std::as_const(program).functions[i].isGenericEntrypoint() ? IsGenericEntry : 0);
+        auto& function = std::as_const(program).functions[i];
+        bool runsOnce = (function.kind == FunctionKind::Module && function.parameterTypes.isEmpty()) || (function.module && program.modules[function.module.index()].initializer == FunctionID(i));
+        entryKinds[i] = (isOnlyEnteredByCallsAndClosures(i) ? IsOnlyEnteredByCallsAndClosures : 0) | (function.isGenericEntrypoint() ? IsGenericEntry : 0) | (runsOnce ? RunsOnce : 0);
     });
     for (unsigned i = 0; i < count; ++i) {
-        if (entryKinds[i] == IsOnlyEnteredByCallsAndClosures)
+        if ((entryKinds[i] & (IsOnlyEnteredByCallsAndClosures | IsGenericEntry)) == IsOnlyEnteredByCallsAndClosures)
             mayBeEnteredWithoutCheck.clear(i);
     }
     for (auto [index, entry] : program.genericEntrypoints) {
@@ -6221,8 +6390,7 @@ static void removeUncalledFunctions(Program& program)
         return calls[i] - fromEntrypoint == 1;
     };
     for (unsigned i = 0; i < count; ++i) {
-        auto& function = std::as_const(program).functions[i];
-        if ((function.kind == FunctionKind::Module && function.parameterTypes.isEmpty()) || (function.module && program.modules[function.module.index()].initializer == FunctionID(i))) {
+        if (entryKinds[i] & RunsOnce) {
             program.runOnceFunctions.set(i);
             worklist.append(i);
         }
@@ -6297,12 +6465,13 @@ static void verifyExceptionPropagation(Program& program)
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
         BitVector isPassedOn;
-        for (unsigned index = 0; index < function.values.size(); ++index) {
-            if (!function.values[index].catchesExceptionObject())
-                continue;
-            RELEASE_ASSERT(function.values[index].type == program.types.anything);
-            isPassedOn.set(index);
-        }
+        static constexpr OpcodeSet catches { Opcode::CatchValue };
+        std::as_const(program).functions.forEachValue(i, catches, [&](ValueID id) {
+            if (!function.at(id).catchesExceptionObject())
+                return;
+            RELEASE_ASSERT(function.at(id).type == program.types.anything);
+            isPassedOn.set(id.index());
+        });
         if (isPassedOn.isEmpty())
             return;
         propagatesExceptionObjects.store(true, std::memory_order_relaxed);
@@ -6347,13 +6516,10 @@ static void verifyVariablesStoredOnce(const Program& program)
     Vector<unsigned> numberOfStores;
     numberOfStores.fill(0, program.variables.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                if (function.at(id).opcode == Opcode::PutModuleVariable)
-                    WTF::atomicExchangeAdd(&numberOfStores[function.at(id).variable().index()], 1u, std::memory_order_relaxed);
-            }
-        }
+        static constexpr OpcodeSet stores { Opcode::PutModuleVariable };
+        program.functions.forEachIndexedValue(i, stores, [&](ValueID id) {
+            WTF::atomicExchangeAdd(&numberOfStores[program.functions[i].at(id).variable().index()], 1u, std::memory_order_relaxed);
+        });
     });
     for (unsigned i = 0; i < program.variables.size(); ++i)
         RELEASE_ASSERT(!program.variables[i].isStoredOnce || numberOfStores[i] <= 1);
@@ -6426,29 +6592,28 @@ static void findFunctionPairsInEnvironments(Program& program)
     Vector<Vector<Stored>> storedIn(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                if (value.opcode != Opcode::PutField || value.layout().index() >= held.size() || value.field() >= held[value.layout().index()].size())
-                    continue;
-                auto& stored = function.at(originThroughTrivialParameters(function, value.child(1)));
-                switch (stored.opcode) {
-                case Opcode::NewClosure:
-                    storedIn[i].append(Stored { value.layout(), value.field(), stored.function(), false });
-                    break;
-                case Opcode::Undefined:
-                case Opcode::Null:
-                    break;
-                case Opcode::GetField:
-                    if (stored.layout() != value.layout() || stored.field() != value.field())
-                        storedIn[i].append(Stored { value.layout(), value.field(), FunctionID(), true });
-                    break;
-                default:
+        static constexpr OpcodeSet fieldStores { Opcode::PutField };
+        std::as_const(program).functions.forEachIndexedValue(i, fieldStores, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.layout().index() >= held.size() || value.field() >= held[value.layout().index()].size())
+                return;
+            auto& stored = function.at(originThroughTrivialParameters(function, value.child(1)));
+            switch (stored.opcode) {
+            case Opcode::NewClosure:
+                storedIn[i].append(Stored { value.layout(), value.field(), stored.function(), false });
+                break;
+            case Opcode::Undefined:
+            case Opcode::Null:
+                break;
+            case Opcode::GetField:
+                if (stored.layout() != value.layout() || stored.field() != value.field())
                     storedIn[i].append(Stored { value.layout(), value.field(), FunctionID(), true });
-                    break;
-                }
+                break;
+            default:
+                storedIn[i].append(Stored { value.layout(), value.field(), FunctionID(), true });
+                break;
             }
-        }
+        });
     });
     for (auto& storedInFunction : storedIn) {
         for (auto& stored : storedInFunction) {
@@ -6497,10 +6662,11 @@ static void removeUnreadExports(Program& program)
     NamespaceIndexMap byVariable;
     Vector<uint8_t> createsNamespace(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
-        for (auto& value : constProgram.functions[i].values) {
-            if (value.opcode == Opcode::Operation && program.operationOf(value) == Operations::MakeModuleNamespace)
+        static constexpr OpcodeSet operations { Opcode::Operation };
+        constProgram.functions.forEachValue(i, operations, [&](ValueID id) {
+            if (program.operationOf(constProgram.functions[i].at(id)) == Operations::MakeModuleNamespace)
                 createsNamespace[i] = 1;
-        }
+        });
     });
     for (unsigned i = 0; i < count; ++i) {
         if (!createsNamespace[i])
@@ -6841,23 +7007,17 @@ static void removeUnreadExports(Program& program)
     auto forEachUse = [&](Opcode yields, const NamespaceIndexMap& byProducer, bool isPromise, auto&& functor) {
         Vector<Vector<Uses>> usesIn(count);
         forEachIndexInParallel(count, [&](unsigned i) {
-            auto& function = constProgram.functions[i];
             UsesByFunction listed;
-            for (auto& block : function.blocks) {
-                for (ValueID id : block.values) {
-                    auto& value = function.at(id);
-                    if (value.opcode != yields)
-                        continue;
-                    auto found = byProducer.find(value.immediates[0]);
-                    if (found == byProducer.end())
-                        continue;
-                    Uses uses;
-                    uses.number = found->value;
-                    uses.user = FunctionID(i);
-                    usesOf(FunctionID(i), id, uses, isPromise, listed);
-                    usesIn[i].append(WTF::move(uses));
-                }
-            }
+            constProgram.functions.forEachIndexedValue(i, OpcodeSet { yields }, [&](ValueID id) {
+                auto found = byProducer.find(constProgram.functions[i].at(id).immediates[0]);
+                if (found == byProducer.end())
+                    return;
+                Uses uses;
+                uses.number = found->value;
+                uses.user = FunctionID(i);
+                usesOf(FunctionID(i), id, uses, isPromise, listed);
+                usesIn[i].append(WTF::move(uses));
+            });
         });
         for (auto& usesInFunction : usesIn) {
             for (auto& uses : usesInFunction)
@@ -6928,13 +7088,15 @@ static void removeUnreadExports(Program& program)
         Vector<uint32_t> numberOfStores(FillWith { }, constProgram.variables.size(), 0u);
         forEachIndexInParallel(count, [&](unsigned i) {
             auto& function = constProgram.functions[i];
-            for (auto& value : function.values) {
-                if (value.opcode != Opcode::PutModuleVariable || !byHoldingVariable.contains(value.variable().index()))
-                    continue;
+            static constexpr OpcodeSet stores { Opcode::PutModuleVariable };
+            constProgram.functions.forEachValue(i, stores, [&](ValueID id) {
+                auto& value = function.at(id);
+                if (!byHoldingVariable.contains(value.variable().index()))
+                    return;
                 Opcode stored = function.at(value.child(0)).opcode;
                 if (stored != Opcode::Undefined && stored != Opcode::Null)
                     WTF::atomicExchangeAdd(&numberOfStores[value.variable().index()], 1u, std::memory_order_relaxed);
-            }
+            });
         });
         for (auto& entry : byHoldingVariable) {
             if (numberOfStores[entry.key] != trackedStores.get(entry.key))
@@ -7047,48 +7209,52 @@ static void removeUnreadExports(Program& program)
                     WTF::atomicStore(&isReferencedElsewhere[found->value], static_cast<uint8_t>(1), std::memory_order_relaxed);
             }
         };
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.parameters)
-                name(function.at(id).predictedClosure(), true);
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                name(value.predictedClosure(), true);
-                switch (value.opcode) {
-                case Opcode::CallDirect:
-                    name(value.function(), false);
-                    break;
-                case Opcode::FunctionReference:
-                case Opcode::NewClosure:
-                case Opcode::NewClosureOnce:
-                case Opcode::IsClosureOf:
-                case Opcode::GetCapture:
-                    name(value.function(), true);
-                    break;
-                case Opcode::NewObjectWithShape:
-                    if (value.allocation() < function.allocations.size())
-                        name(function.allocations[value.allocation()].constructedBy, true);
-                    break;
-                case Opcode::GetModuleVariable:
-                case Opcode::PutModuleVariable:
-                    if (value.opcode == Opcode::PutModuleVariable && isCalledOnNamespace.get(value.variable().index())) {
-                        ValueID stored = value.child(0);
-                        while (function.at(stored).opcode == Opcode::Cast && function.at(stored).castReason() != CastReason::Coerce)
-                            stored = function.at(stored).child(0);
-                        Opcode opcode = function.at(stored).opcode;
-                        bool isClosure = opcode == Opcode::FunctionReference || opcode == Opcode::NewClosure || opcode == Opcode::NewClosureOnce;
-                        if (isClosure ? constProgram.at(function.at(stored).function()).has(Format::FunctionHasThis) : opcode != Opcode::Undefined && opcode != Opcode::Null)
-                            WTF::atomicStore(&mayHoldThisReader[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-                    }
-                    if (!containsNamespace.get(value.variable().index()))
-                        break;
-                    if (auto found = byVariable.find(value.variable().index()); value.opcode == Opcode::PutModuleVariable && namespaces[found->value].maker != FunctionID(i))
-                        WTF::atomicStore(&isReferencedElsewhere[found->value], static_cast<uint8_t>(1), std::memory_order_relaxed);
-                    break;
-                default:
-                    break;
-                }
+        if (constProgram.functions.mayContainPredictedClosure(i)) {
+            for (auto& block : function.blocks) {
+                for (ValueID id : block.parameters)
+                    name(function.at(id).predictedClosure(), true);
+                for (ValueID id : block.values)
+                    name(function.at(id).predictedClosure(), true);
             }
         }
+        static constexpr OpcodeSet references { Opcode::CallDirect, Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::IsClosureOf, Opcode::GetCapture, Opcode::NewObjectWithShape, Opcode::GetModuleVariable, Opcode::PutModuleVariable };
+        constProgram.functions.forEachIndexedValue(i, references, [&](ValueID id) {
+            auto& value = function.at(id);
+            switch (value.opcode) {
+            case Opcode::CallDirect:
+                name(value.function(), false);
+                break;
+            case Opcode::FunctionReference:
+            case Opcode::NewClosure:
+            case Opcode::NewClosureOnce:
+            case Opcode::IsClosureOf:
+            case Opcode::GetCapture:
+                name(value.function(), true);
+                break;
+            case Opcode::NewObjectWithShape:
+                if (value.allocation() < function.allocations.size())
+                    name(function.allocations[value.allocation()].constructedBy, true);
+                break;
+            case Opcode::GetModuleVariable:
+            case Opcode::PutModuleVariable:
+                if (value.opcode == Opcode::PutModuleVariable && isCalledOnNamespace.get(value.variable().index())) {
+                    ValueID stored = value.child(0);
+                    while (function.at(stored).opcode == Opcode::Cast && function.at(stored).castReason() != CastReason::Coerce)
+                        stored = function.at(stored).child(0);
+                    Opcode opcode = function.at(stored).opcode;
+                    bool isClosure = opcode == Opcode::FunctionReference || opcode == Opcode::NewClosure || opcode == Opcode::NewClosureOnce;
+                    if (isClosure ? constProgram.at(function.at(stored).function()).has(Format::FunctionHasThis) : opcode != Opcode::Undefined && opcode != Opcode::Null)
+                        WTF::atomicStore(&mayHoldThisReader[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+                }
+                if (!containsNamespace.get(value.variable().index()))
+                    break;
+                if (auto found = byVariable.find(value.variable().index()); value.opcode == Opcode::PutModuleVariable && namespaces[found->value].maker != FunctionID(i))
+                    WTF::atomicStore(&isReferencedElsewhere[found->value], static_cast<uint8_t>(1), std::memory_order_relaxed);
+                break;
+            default:
+                break;
+            }
+        });
     };
     constexpr unsigned numberOfParts = 16;
     Vector<Vector<uint32_t>> referenceCountInPart(numberOfParts);
@@ -7342,18 +7508,16 @@ static void removeUnreadExports(Program& program)
         Vector<uint8_t> isRead(FillWith { }, constProgram.variables.size(), static_cast<uint8_t>(0));
         Vector<uint8_t> storesToSingleVariable(FillWith { }, count, static_cast<uint8_t>(0));
         forEachIndexInParallel(count, [&](unsigned i) {
-            auto& function = constProgram.functions[i];
-            for (auto& block : function.blocks) {
-                for (ValueID id : block.values) {
-                    auto& value = function.at(id);
-                    if ((value.opcode != Opcode::GetModuleVariable && value.opcode != Opcode::PutModuleVariable) || !mayBecomeUnread.get(value.variable().index()))
-                        continue;
-                    if (value.opcode == Opcode::GetModuleVariable)
-                        isRead[value.variable().index()] = 1;
-                    else
-                        storesToSingleVariable[i] = 1;
-                }
-            }
+            static constexpr OpcodeSet variableAccesses { Opcode::GetModuleVariable, Opcode::PutModuleVariable };
+            constProgram.functions.forEachIndexedValue(i, variableAccesses, [&](ValueID id) {
+                auto& value = constProgram.functions[i].at(id);
+                if (!mayBecomeUnread.get(value.variable().index()))
+                    return;
+                if (value.opcode == Opcode::GetModuleVariable)
+                    isRead[value.variable().index()] = 1;
+                else
+                    storesToSingleVariable[i] = 1;
+            });
         });
         for (unsigned variable : mayBecomeUnread)
             numberOfVariables += !isRead[variable];
@@ -7447,17 +7611,16 @@ static void findInternalModuleExports(Program& program)
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = constProgram.functions[i];
         Vector<std::pair<ValueID, uint32_t>, 8> required;
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                if (value.opcode == Opcode::PutModuleVariable && isHolder.get(value.variable().index()))
-                    WTF::atomicExchangeAdd(&numberOfStores[value.variable().index()], 1u, std::memory_order_relaxed);
-                else if (value.opcode == Opcode::GetModuleVariable && isHolder.get(value.variable().index()))
-                    WTF::atomicExchangeAdd(&numberOfReads[value.variable().index()], 1u, std::memory_order_relaxed);
-                else if (auto module = requiredModule(function, value))
-                    required.append({ id, *module });
-            }
-        }
+        static constexpr OpcodeSet variableAccessesAndOperations { Opcode::PutModuleVariable, Opcode::GetModuleVariable, Opcode::Operation };
+        constProgram.functions.forEachIndexedValue(i, variableAccessesAndOperations, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.opcode == Opcode::PutModuleVariable && isHolder.get(value.variable().index()))
+                WTF::atomicExchangeAdd(&numberOfStores[value.variable().index()], 1u, std::memory_order_relaxed);
+            else if (value.opcode == Opcode::GetModuleVariable && isHolder.get(value.variable().index()))
+                WTF::atomicExchangeAdd(&numberOfReads[value.variable().index()], 1u, std::memory_order_relaxed);
+            else if (auto module = requiredModule(function, value))
+                required.append({ id, *module });
+        });
         if (required.isEmpty())
             return;
         auto& found = foundIn[i];
@@ -7776,19 +7939,16 @@ static void findFunctionsInModuleVariables(Program& program)
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = constProgram.functions[i];
         Incoming incoming;
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                if (value.opcode != Opcode::PutModuleVariable)
-                    continue;
-                auto& variable = constProgram.variables[value.variable().index()];
-                if (variable.singleFunction || (variable.type && !constProgram.at(variable.type).anyFunction))
-                    continue;
-                forEachSource(function, incoming, value.child(0), value.variable(), [&](Source source) {
-                    storesIn[i].append(std::pair { value.variable(), source });
-                });
-            }
-        }
+        static constexpr OpcodeSet stores { Opcode::PutModuleVariable };
+        constProgram.functions.forEachIndexedValue(i, stores, [&](ValueID id) {
+            auto& value = function.at(id);
+            auto& variable = constProgram.variables[value.variable().index()];
+            if (variable.singleFunction || (variable.type && !constProgram.at(variable.type).anyFunction))
+                return;
+            forEachSource(function, incoming, value.child(0), value.variable(), [&](Source source) {
+                storesIn[i].append(std::pair { value.variable(), source });
+            });
+        });
     });
     BitVector hasOtherEntries(count);
     for (auto& layout : constProgram.layouts) {
@@ -7865,39 +8025,48 @@ static void findFunctionsInModuleVariables(Program& program)
                 if (named && isSetter.get(named.index()))
                     seenIn[i].append(Seen { named, { }, { } });
             };
+            static constexpr OpcodeSet references { Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::NewObjectWithShape, Opcode::CallDirect };
+            auto visit = [&](ValueID id) {
+                auto& value = function.at(id);
+                switch (value.opcode) {
+                case Opcode::FunctionReference:
+                case Opcode::NewClosure:
+                case Opcode::NewClosureOnce:
+                    isValue(value.function());
+                    break;
+                case Opcode::NewObjectWithShape:
+                    if (value.allocation() < function.allocations.size())
+                        isValue(function.allocations[value.allocation()].constructedBy);
+                    break;
+                case Opcode::CallDirect: {
+                    if (!isSetter.get(value.function().index()))
+                        break;
+                    for (auto& passed : setters.find(value.function().index())->value) {
+                        if (passed.parameter >= value.arguments.size()) {
+                            seenIn[i].append(Seen { value.function(), passed.variable, Source { } });
+                            continue;
+                        }
+                        forEachSource(function, incoming, value.arguments[passed.parameter], passed.variable, [&](Source source) {
+                            seenIn[i].append(Seen { value.function(), passed.variable, source });
+                        });
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+            };
+            if (!constProgram.functions.mayContainPredictedClosure(i)) {
+                constProgram.functions.forEachIndexedValue(i, references, visit);
+                return;
+            }
             for (auto& block : function.blocks) {
                 for (ValueID id : block.parameters)
                     isValue(function.at(id).predictedClosure());
                 for (ValueID id : block.values) {
-                    auto& value = function.at(id);
-                    isValue(value.predictedClosure());
-                    switch (value.opcode) {
-                    case Opcode::FunctionReference:
-                    case Opcode::NewClosure:
-                    case Opcode::NewClosureOnce:
-                        isValue(value.function());
-                        break;
-                    case Opcode::NewObjectWithShape:
-                        if (value.allocation() < function.allocations.size())
-                            isValue(function.allocations[value.allocation()].constructedBy);
-                        break;
-                    case Opcode::CallDirect: {
-                        if (!isSetter.get(value.function().index()))
-                            break;
-                        for (auto& passed : setters.find(value.function().index())->value) {
-                            if (passed.parameter >= value.arguments.size()) {
-                                seenIn[i].append(Seen { value.function(), passed.variable, Source { } });
-                                continue;
-                            }
-                            forEachSource(function, incoming, value.arguments[passed.parameter], passed.variable, [&](Source source) {
-                                seenIn[i].append(Seen { value.function(), passed.variable, source });
-                            });
-                        }
-                        break;
-                    }
-                    default:
-                        break;
-                    }
+                    isValue(function.at(id).predictedClosure());
+                    if (references.contains(function.at(id).opcode))
+                        visit(id);
                 }
             }
         });
@@ -7950,7 +8119,7 @@ static void findBuiltinsInVariables(Program& program)
         case Location::EntryParameter:
             break;
         }
-        return program.functions[stored.owner].predictedBuiltinsOfEntryParameters[stored.index];
+        return program.functions.atKeepingValueIndex(stored.owner).predictedBuiltinsOfEntryParameters[stored.index];
     };
     unsigned count = program.functions.size();
     Vector<Vector<Stored>> candidates(count);
@@ -7981,27 +8150,32 @@ static void findBuiltinsInVariables(Program& program)
     };
     constexpr PredictedBuiltins holdsSomethingElse { { }, { }, true };
     auto takeFreshCandidates = [&] {
-        activeFunctions.shrink(0);
-        for (unsigned i = 0; i < count; ++i) {
-            if (isActive[i])
-                activeFunctions.append(i);
-        }
-        for (unsigned i : activeFunctions) {
-            for (auto& stored : others[i])
-                predictionFor(stored) = holdsSomethingElse;
-        }
-        for (unsigned i : activeFunctions) {
+        activeFunctions = findIndicesInParallel(count, [&](unsigned i) {
+            return isActive[i];
+        });
+        forEachIndexInParallel(activeFunctions.size(), [&](unsigned k) {
+            for (auto& stored : others[activeFunctions[k]])
+                WTF::atomicStore(&predictionFor(stored).hasTooMany, true, std::memory_order_relaxed);
+        });
+        forEachIndexInParallel(activeFunctions.size(), [&](unsigned k) {
+            unsigned i = activeFunctions[k];
             for (auto& stored : fresh[i]) {
-                if (predictionFor(stored) != holdsSomethingElse)
+                if (!WTF::atomicLoad(&predictionFor(stored).hasTooMany, std::memory_order_relaxed))
                     candidates[i].append(stored);
             }
             fresh[i].shrink(0);
-        }
-        for (unsigned i : activeFunctions) {
-            for (auto& stored : others[i])
-                predictionFor(stored) = { };
+        });
+        forEachIndexInParallel(activeFunctions.size(), [&](unsigned k) {
+            unsigned i = activeFunctions[k];
+            for (auto& stored : others[i]) {
+                auto& prediction = predictionFor(stored);
+                if (WTF::atomicExchange(&prediction.hasTooMany, false, std::memory_order_relaxed)) {
+                    prediction.first = { };
+                    prediction.second = { };
+                }
+            }
             others[i].shrink(0);
-        }
+        });
     };
     Vector<Vector<uint32_t>> queriedEntryParameters(count);
     struct Site {
@@ -8011,33 +8185,31 @@ static void findBuiltinsInVariables(Program& program)
     Vector<Vector<Site>> sitesIn(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
-        if (!function.isGenericEntrypoint()) {
-            for (uint32_t k = 0; k < function.values.size(); ++k) {
-                auto& value = function.values[k];
-                if (value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
-                    sitesIn[i].append(Site { k, value.function().index() });
-            }
+        static constexpr OpcodeSet sites { Opcode::CallDirect, Opcode::NewClosure, Opcode::NewClosureOnce };
+        if (std::as_const(program).functions.mayContain(i, sites) && !function.isGenericEntrypoint()) {
+            std::as_const(program).functions.forEachValue(i, sites, [&](ValueID id) {
+                sitesIn[i].append(Site { id.index(), function.at(id).function().index() });
+            });
         }
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                if (value.opcode == Opcode::PutField) {
-                    auto& layout = std::as_const(program).at(value.layout());
-                    if (layout.kind == LayoutKind::Environment && !layout.isCoroutineFrame)
-                        sort(i, { Location::Field, value.layout().index(), value.field(), value.child(1) });
-                } else if (value.opcode == Opcode::PutModuleVariable)
-                    sort(i, { Location::Variable, 0, value.variable().index(), value.child(0) });
-                else if (value.opcode == Opcode::Call || value.opcode == Opcode::Construct || (value.opcode == Opcode::CallMethod && program.builtinName(value.string()))) {
-                    ValueID called = value.child(0);
-                    while (function.at(called).opcode == Opcode::Cast)
-                        called = function.at(called).child(0);
-                    if (auto& parameter = function.at(called); parameter.opcode == Opcode::Parameter && !parameter.parameterBlock().index()) {
-                        isActive[i] = true;
-                        queriedEntryParameters[i].append(parameter.parameterIndex());
-                    }
+        static constexpr OpcodeSet storesAndCalls { Opcode::PutField, Opcode::PutModuleVariable, Opcode::Call, Opcode::Construct, Opcode::CallMethod };
+        std::as_const(program).functions.forEachIndexedValue(i, storesAndCalls, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.opcode == Opcode::PutField) {
+                auto& layout = std::as_const(program).at(value.layout());
+                if (layout.kind == LayoutKind::Environment && !layout.isCoroutineFrame)
+                    sort(i, { Location::Field, value.layout().index(), value.field(), value.child(1) });
+            } else if (value.opcode == Opcode::PutModuleVariable)
+                sort(i, { Location::Variable, 0, value.variable().index(), value.child(0) });
+            else if (value.opcode == Opcode::Call || value.opcode == Opcode::Construct || (value.opcode == Opcode::CallMethod && program.builtinName(value.string()))) {
+                ValueID called = value.child(0);
+                while (function.at(called).opcode == Opcode::Cast)
+                    called = function.at(called).child(0);
+                if (auto& parameter = function.at(called); parameter.opcode == Opcode::Parameter && !parameter.parameterBlock().index()) {
+                    isActive[i] = true;
+                    queriedEntryParameters[i].append(parameter.parameterIndex());
                 }
             }
-        }
+        });
     });
     takeFreshCandidates();
 
@@ -8053,6 +8225,8 @@ static void findBuiltinsInVariables(Program& program)
     Vector<BitVector> trackedEntryParameters(count);
     BitVector functionsToTrack(count);
     unsigned numberOfPlaces = 0;
+    bool sharesAreCurrent = false;
+    Vector<uint8_t> tracksMoreParameters;
     for (unsigned round = 0; round < 8; ++round) {
         forEachIndexInParallel(activeFunctions.size(), [&](unsigned k) {
             unsigned i = activeFunctions[k];
@@ -8066,11 +8240,13 @@ static void findBuiltinsInVariables(Program& program)
                 locations[i].append(&predictionFor(stored));
             }
         });
-        for (auto& share : shares)
-            share.shrink(0);
-        for (unsigned i : activeFunctions) {
-            for (uint32_t k = 0; k < locations[i].size(); ++k)
-                shares[PtrHash<PredictedBuiltins*>::hash(locations[i][k]) % numberOfShares].append(Candidate { locations[i][k], i, k });
+        if (!std::exchange(sharesAreCurrent, true)) {
+            for (auto& share : shares)
+                share.shrink(0);
+            for (unsigned i : activeFunctions) {
+                for (uint32_t k = 0; k < locations[i].size(); ++k)
+                    shares[PtrHash<PredictedBuiltins*>::hash(locations[i][k]) % numberOfShares].append(Candidate { locations[i][k], i, k });
+            }
         }
         std::array<unsigned, numberOfShares> locationCounts { };
         std::array<bool, numberOfShares> hasChanged { };
@@ -8102,24 +8278,31 @@ static void findBuiltinsInVariables(Program& program)
         }
 
         functionsToTrack.clearAll();
-        for (unsigned i : activeFunctions) {
+        tracksMoreParameters.fill(0, activeFunctions.size());
+        forEachIndexInParallel(activeFunctions.size(), [&](unsigned k) {
+            unsigned i = activeFunctions[k];
             for (uint32_t parameter : queriedEntryParameters[i]) {
                 if (trackedEntryParameters[i].set(parameter))
                     continue;
-                functionsToTrack.set(i);
-                auto& expected = program.functions[i].predictedBuiltinsOfEntryParameters;
+                tracksMoreParameters[k] = 1;
+                auto& expected = program.functions.atKeepingValueIndex(i).predictedBuiltinsOfEntryParameters;
                 if (expected.size() <= parameter)
                     expected.grow(parameter + 1);
             }
             queriedEntryParameters[i].shrink(0);
+        });
+        for (unsigned k = 0; k < activeFunctions.size(); ++k) {
+            if (tracksMoreParameters[k])
+                functionsToTrack.set(activeFunctions[k]);
         }
         if (!functionsToTrack.isEmpty()) {
             changed = true;
-            for (unsigned i : activeFunctions) {
-                candidates[i].removeAllMatching([&](auto& stored) {
+            sharesAreCurrent = false;
+            forEachIndexInParallel(activeFunctions.size(), [&](unsigned k) {
+                candidates[activeFunctions[k]].removeAllMatching([&](auto& stored) {
                     return stored.location == Location::EntryParameter && functionsToTrack.get(stored.owner);
                 });
-            }
+            });
             forEachIndexInParallel(count, [&](unsigned i) {
                 auto& function = std::as_const(program).functions[i];
                 for (auto [index, callee] : sitesIn[i]) {
@@ -8138,7 +8321,7 @@ static void findBuiltinsInVariables(Program& program)
             break;
     }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfPlaces, " stores to variables and parameters are predicted to store a built-in");
-    destroyOnHelperThread(WTF::move(sitesIn));
+    destroyOnHelperThread(std::tuple { WTF::move(sitesIn), WTF::move(candidates), WTF::move(fresh), WTF::move(others), WTF::move(queriedEntryParameters), WTF::move(found), WTF::move(locations), WTF::move(trackedEntryParameters) });
 }
 
 static void findComparedBuiltinCells(Program& program)
@@ -8147,15 +8330,12 @@ static void findComparedBuiltinCells(Program& program)
     static constexpr OpcodeSet guards { Opcode::IsBuiltinFunction };
     Lock lock;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (!program.functions.mayContain(i, guards))
-            return;
-        for (auto& value : std::as_const(program).functions[i].values) {
-            if (value.opcode != Opcode::IsBuiltinFunction)
-                continue;
+        std::as_const(program).functions.forEachValue(i, guards, [&](ValueID id) {
+            auto& value = std::as_const(program).functions[i].at(id);
             BuiltinName global = value.comparedGlobal();
             Locker locker { lock };
             program.comparedBuiltinCells.set(global ? builtins.cellOf(global) : builtins.cellOf(value.builtin()));
-        }
+        });
     });
 }
 
@@ -8163,31 +8343,27 @@ static void findFunctionsWithClosureProperties(Program& program)
 {
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                if (value.opcode != Opcode::PutById && value.opcode != Opcode::PutByVal)
-                    continue;
-                auto& object = function.at(originThroughTrivialParameters(function, value.child(0)));
-                FunctionID given;
-                switch (object.opcode) {
-                case Opcode::NewClosure:
-                case Opcode::NewClosureOnce:
-                    given = object.function();
-                    break;
-                case Opcode::GetField:
-                    given = std::as_const(program).at(object.layout()).fields[object.field()].singleFunction;
-                    break;
-                case Opcode::GetModuleVariable:
-                    given = program.variables[object.variable().index()].singleFunction;
-                    break;
-                default:
-                    break;
-                }
-                if (given)
-                    WTF::atomicStore(&program.at(given).closuresHaveOwnProperties, true, std::memory_order_relaxed);
+        static constexpr OpcodeSet propertyStores { Opcode::PutById, Opcode::PutByVal };
+        std::as_const(program).functions.forEachIndexedValue(i, propertyStores, [&](ValueID id) {
+            auto& object = function.at(originThroughTrivialParameters(function, function.at(id).child(0)));
+            FunctionID given;
+            switch (object.opcode) {
+            case Opcode::NewClosure:
+            case Opcode::NewClosureOnce:
+                given = object.function();
+                break;
+            case Opcode::GetField:
+                given = std::as_const(program).at(object.layout()).fields[object.field()].singleFunction;
+                break;
+            case Opcode::GetModuleVariable:
+                given = program.variables[object.variable().index()].singleFunction;
+                break;
+            default:
+                break;
             }
-        }
+            if (given)
+                WTF::atomicStore(&program.functions.atKeepingValueIndex(given.index()).closuresHaveOwnProperties, true, std::memory_order_relaxed);
+        });
     });
 }
 
@@ -8202,7 +8378,10 @@ static void findInitialStructures(Program& program, Vector<String>& malformed)
     unsigned count = program.functions.size();
     Vector<Found> foundIn(count);
     forEachIndexInParallel(count, [&](unsigned index) {
-        auto& function = program.functions[index];
+        static constexpr OpcodeSet storesByName { Opcode::PutById };
+        if (!program.functions.mayContain(index, storesByName))
+            return;
+        auto& function = program.functions.atKeepingValueIndex(index);
         auto& found = foundIn[index];
         if (function.blocks.isEmpty())
             return;
@@ -8221,33 +8400,31 @@ static void findInitialStructures(Program& program, Vector<String>& malformed)
         Vector<StringID, 8> thisStructure;
         Vector<std::pair<uint32_t, uint32_t>, 8> storesAndAllocations;
         ValueID self = function.has(Format::FunctionHasThis) && function.captureTypes.size() < function.blocks[0].parameters.size() ? function.blocks[0].parameters[function.captureTypes.size()] : ValueID();
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& store = function.at(id);
-                if (!store.isStoreIntoInitialStructure() && !store.isFirstStoreToThis())
-                    continue;
-                if (store.initialStructureOfFirstStore() || store.firstStoreAttributes())
-                    complain("a first store carries more than its slot in "_s);
-                ValueID object = store.child(0);
-                while (object.index() < function.values.size()) {
-                    auto& origin = function.at(object);
-                    if (origin.opcode != Opcode::Cast || origin.castReason() == CastReason::As || origin.castReason() == CastReason::Flow || origin.castReason() == CastReason::Coerce)
-                        break;
-                    object = origin.child(0);
-                }
-                if (store.isFirstStoreToThis()) {
-                    if (!self || object != self)
-                        complain("a store in the structure of this targets another object in "_s);
-                    note(thisStructure, store);
-                    continue;
-                }
-                if (object.index() < function.values.size() && function.at(object).opcode == Opcode::NewObject) {
-                    note(rows.ensure(object.index(), [] { return Vector<StringID, 8>(); }).iterator->value, store);
-                    storesAndAllocations.append({ id.index(), object.index() });
-                } else
-                    complain("a first store has no allocation in "_s);
+        std::as_const(program).functions.forEachIndexedValue(index, storesByName, [&](ValueID id) {
+            auto& store = function.at(id);
+            if (!store.isStoreIntoInitialStructure() && !store.isFirstStoreToThis())
+                return;
+            if (store.initialStructureOfFirstStore() || store.firstStoreAttributes())
+                complain("a first store carries more than its slot in "_s);
+            ValueID object = store.child(0);
+            while (object.index() < function.values.size()) {
+                auto& origin = function.at(object);
+                if (origin.opcode != Opcode::Cast || origin.castReason() == CastReason::As || origin.castReason() == CastReason::Flow || origin.castReason() == CastReason::Coerce)
+                    break;
+                object = origin.child(0);
             }
-        }
+            if (store.isFirstStoreToThis()) {
+                if (!self || object != self)
+                    complain("a store in the structure of this targets another object in "_s);
+                note(thisStructure, store);
+                return;
+            }
+            if (object.index() < function.values.size() && function.at(object).opcode == Opcode::NewObject) {
+                note(rows.ensure(object.index(), [] { return Vector<StringID, 8>(); }).iterator->value, store);
+                storesAndAllocations.append({ id.index(), object.index() });
+            } else
+                complain("a first store has no allocation in "_s);
+        });
         if (!thisStructure.isEmpty()) {
             Program::InitialStructure row;
             row.isForThis = true;
@@ -8301,7 +8478,7 @@ static void findInitialStructures(Program& program, Vector<String>& malformed)
         uint32_t first = firstEvaluationOf[index];
         if (!first || (found.allocationSites.isEmpty() && found.storesWithInitialStructure.isEmpty()))
             return;
-        auto& function = program.functions[index];
+        auto& function = program.functions.atKeepingValueIndex(index);
         for (uint32_t allocationSite : found.allocationSites)
             function.values[allocationSite].immediates[0] += first;
         for (uint32_t store : found.storesWithInitialStructure)
@@ -8500,12 +8677,14 @@ static void passClosuresToGenerators(Program& program)
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = std::as_const(program).functions[i];
         Vector<unsigned> numberOfOtherUses;
-        for (auto& value : function.values) {
+        static constexpr OpcodeSet closuresAndDirectCalls { Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::CallDirect };
+        std::as_const(program).functions.forEachValue(i, closuresAndDirectCalls, [&](ValueID id) {
+            auto& value = function.at(id);
             if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
                 say(value.function(), flaggedHasManyClosures);
-            else if (value.opcode == Opcode::CallDirect && std::as_const(program).at(value.function()).declaredAs & functionIsGenerator && numberOfOtherUses.isEmpty())
+            else if (std::as_const(program).at(value.function()).declaredAs & functionIsGenerator && numberOfOtherUses.isEmpty())
                 numberOfOtherUses.fill(0, function.values.size());
-        }
+        });
         if (numberOfOtherUses.isEmpty())
             return;
         for (auto& block : function.blocks) {
@@ -8672,7 +8851,7 @@ static void createGuardedPreludeEntries(Program& program)
 static void markCallsInTailPosition(Program& program)
 {
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
+        auto& function = program.functions.atKeepingValueIndex(i);
         if (program.implementsBuiltin(function) || program.isInBuiltinFunctionModule(function)) {
             for (auto& value : function.values)
                 value.isInTailPosition = false;
@@ -8698,8 +8877,13 @@ static void markCallsInTailPosition(Program& program)
     });
 }
 
-static void fuseConcatenations(const Program& program, FunctionID functionID, Function& function)
+static constexpr OpcodeSet concatenations { Opcode::Add, Opcode::Strcat };
+
+static void fuseConcatenations(Program& program, FunctionID functionID)
 {
+    if (!program.functions.mayContain(functionID.index(), concatenations))
+        return;
+    auto& function = program.functions.atKeepingValueIndex(functionID.index());
     auto isStringOrNumber = [&](ValueID id) {
         auto& type = program.typeOf(function, id);
         return type.isString() || type.isNumber();
@@ -8708,11 +8892,11 @@ static void fuseConcatenations(const Program& program, FunctionID functionID, Fu
         return !program.typeOf(function, id).hasObjects();
     };
     auto isConcatenation = [&](const Value& value) {
-        if (value.rep != Rep::Cell || !program.at(value.type).isString())
+        if (!concatenations.contains(value.opcode) || value.rep != Rep::Cell || !program.at(value.type).isString())
             return false;
         if (value.opcode == Opcode::Add)
             return isNotObject(value.child(0)) && isNotObject(value.child(1)) && (program.typeOf(function, value.child(0)).isString() || program.typeOf(function, value.child(1)).isString());
-        return value.opcode == Opcode::Strcat && std::ranges::all_of(value.arguments, isNotObject);
+        return std::ranges::all_of(value.arguments, isNotObject);
     };
     Vector<uint32_t> numberOfUses;
     BitVector keys;
@@ -8779,6 +8963,7 @@ static void fuseConcatenations(const Program& program, FunctionID functionID, Fu
             }
             if (fused.isEmpty())
                 continue;
+            program.functions.invalidateValueIndex(functionID.index());
             for (size_t index : fused)
                 block.values.removeAt(index);
             i -= fused.size();
@@ -8820,11 +9005,14 @@ static void refuteIteratorsWithMutableNext(Program& program)
             isRefuted.set(at.index());
     }
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        static constexpr OpcodeSet classTests { Opcode::IsInstanceOfClass };
+        if (!program.functions.mayContain(i, classTests))
+            return;
         auto& function = program.functions[i];
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
-                if (value.opcode != Opcode::IsInstanceOfClass || !isRefuted.get(value.layout().index()))
+                if (!classTests.contains(value.opcode) || !isRefuted.get(value.layout().index()))
                     continue;
                 auto& operand = function.at(value.child(0));
                 if (operand.opcode != Opcode::Operation || program.operationOf(operand) != Operations::GetIterator)
@@ -8849,10 +9037,11 @@ static void findCallGraphColdFunctions(Program& program, const Vector<uint8_t>& 
 {
     static constexpr uint8_t maxColdHeat = 4;
     BitVector result(vigintiles.size());
-    for (unsigned i = 0; i < vigintiles.size(); ++i) {
-        if (vigintiles[i] <= maxColdHeat && !program.functions[i].isValueEntry)
-            result.set(i);
-    }
+    auto coldFunctions = findIndicesInParallel(vigintiles.size(), [&](unsigned i) {
+        return vigintiles[i] <= maxColdHeat && !std::as_const(program).functions[i].isValueEntry;
+    });
+    for (unsigned i : coldFunctions)
+        result.set(i);
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: cold by the graph: ", result.bitCount(), " of ", vigintiles.size(), " functions");
     program.callGraphColdFunctions = WTF::move(result);
 }
@@ -8862,10 +9051,13 @@ static bool isTooSmallForColdCode(const Program& program)
     static constexpr uint64_t minSizeWithColdCode = 65536;
     uint64_t size = 0;
     for (auto& function : program.functions) {
-        if (!function.isGenericEntrypoint() && !function.has(Format::FunctionIsBuiltin | Format::FunctionIsInBuiltinModule))
-            size += function.values.size();
+        if (function.isGenericEntrypoint() || function.has(Format::FunctionIsBuiltin | Format::FunctionIsInBuiltinModule))
+            continue;
+        size += function.values.size();
+        if (size >= minSizeWithColdCode)
+            return false;
     }
-    return size < minSizeWithColdCode;
+    return true;
 }
 
 static void applyCallGraphHeat(Program& program, const Vector<uint8_t>& vigintiles)
@@ -8874,7 +9066,7 @@ static void applyCallGraphHeat(Program& program, const Vector<uint8_t>& vigintil
     uint64_t cooled = 0;
     Vector<uint8_t> isWarmAndHasLoops(FillWith { }, vigintiles.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(vigintiles.size(), [&](unsigned i) {
-        isWarmAndHasLoops[i] = vigintiles[i] <= maxCooledHeat && program.staticallyWarmFunctions.get(i) && !blocksInLoops(std::as_const(program).functions[i]).isEmpty();
+        isWarmAndHasLoops[i] = vigintiles[i] <= maxCooledHeat && program.staticallyWarmFunctions.get(i) && !blocksInLoops(std::as_const(program).functions, i).isEmpty();
     });
     for (unsigned i = 0; i < vigintiles.size(); ++i) {
         if (vigintiles[i] > maxCooledHeat)
@@ -9051,10 +9243,10 @@ static void boxResultsOfIndirectOnlyFunctions(Program& program)
     Vector<FunctionID> enteredBy(program.functions.size());
     for (auto [function, entry] : program.genericEntrypoints)
         enteredBy[entry.index()] = FunctionID(function);
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (FunctionID function = std::as_const(program).functions[i].valueEntryTarget)
             enteredBy[i] = function;
-    }
+    });
     Vector<uint8_t> isCalledDirectly(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& caller = std::as_const(program).functions[i];
@@ -9234,11 +9426,9 @@ static TailCalls findTailCalls(const Program& program)
         if (program.hasCode(FunctionID(i)))
             collectTailCallSites(program, FunctionID(i), std::as_const(program).functions[i], sites[i]);
     });
-    Vector<unsigned> knownClosureCallers;
-    for (unsigned i = 0; i < count; ++i) {
-        if (sites[i].containsIf([](auto& site) { return !!site.calledClosureFunction; }))
-            knownClosureCallers.append(i);
-    }
+    auto knownClosureCallers = findIndicesInParallel(count, [&](unsigned i) {
+        return sites[i].containsIf([](auto& site) { return !!site.calledClosureFunction; });
+    });
     for (bool changed = true; changed;) {
         changed = false;
         for (unsigned i : knownClosureCallers) {
@@ -9252,14 +9442,14 @@ static TailCalls findTailCalls(const Program& program)
         }
     }
     unsigned indirectCalleeNode = count;
-    Vector<unsigned> indirectlyCallable;
+    Vector<uint8_t> hasOrIsGenericEntrypoint(FillWith { }, count, static_cast<uint8_t>(0));
     for (auto [function, entry] : program.genericEntrypoints) {
-        if (!sites[function].isEmpty())
-            indirectlyCallable.append(function);
-        if (!sites[entry.index()].isEmpty())
-            indirectlyCallable.append(entry.index());
+        hasOrIsGenericEntrypoint[function] = 1;
+        hasOrIsGenericEntrypoint[entry.index()] = 1;
     }
-    std::ranges::sort(indirectlyCallable);
+    auto indirectlyCallable = findIndicesInParallel(count, [&](unsigned i) {
+        return hasOrIsGenericEntrypoint[i] && !sites[i].isEmpty();
+    });
     struct Frame {
         unsigned function;
         unsigned next;
@@ -9334,6 +9524,7 @@ static void markMandatoryTailCalls(Program& program)
                 program.functions.atKeepingValueIndex(i).at(site.call).mustBeProperTailCall = true;
         }
     });
+    destroyOnHelperThread(WTF::move(sites));
 }
 
 static unsigned numberOfStackArguments(const Program& program, const Function& function)
@@ -9356,20 +9547,19 @@ static void reserveStackArgumentsForTailCalls(Program& program, const Vector<Vec
 {
     unsigned count = program.functions.size();
     Vector<Vector<unsigned, 2>> callers(count);
-    Vector<unsigned> worklist;
     for (unsigned i = 0; i < count; ++i) {
         for (auto& site : sites[i]) {
             if (site.callee)
                 callers[site.callee.index()].append(i);
         }
     }
-    for (unsigned i = 0; i < count; ++i) {
+    Vector<unsigned> worklist = collectInParallel<unsigned>(count, [&](unsigned i, Vector<unsigned>& collected) {
         if (callers[i].isEmpty() && sites[i].isEmpty())
-            continue;
+            return;
         program.functions.atKeepingValueIndex(i).reservedStackArgumentCount = numberOfStackArguments(program, std::as_const(program).functions[i]);
         if (std::as_const(program).functions[i].reservedStackArgumentCount)
-            worklist.append(i);
-    }
+            collected.append(i);
+    });
     while (!worklist.isEmpty()) {
         unsigned callee = worklist.takeLast();
         for (unsigned caller : callers[callee]) {
@@ -9516,7 +9706,7 @@ static void prepareTailCalls(Program& program)
     forEachIndexInParallel(count, [&](unsigned i) {
         if (sites[i].isEmpty())
             return;
-        auto& function = program.functions[i];
+        auto& function = program.functions.atKeepingValueIndex(i);
         function.hasTailCallSites = true;
         function.isInIndirectTailCallCycle = isInIndirectCycle.get(i);
         if (isBoxed.get(i))
@@ -9535,6 +9725,7 @@ static void prepareTailCalls(Program& program)
         }
         if (!isWidened.get(i))
             return;
+        program.functions.invalidateValueIndex(i);
         bool isCoerced = false;
         Vector<Value> callerCasts;
         for (auto& site : sites[i]) {
@@ -9576,6 +9767,7 @@ static void prepareTailCalls(Program& program)
         widenedCount.fetch_add(1, std::memory_order_relaxed);
     });
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: tail calls: ", isInIndirectCycle.bitCount(), " functions are in the cycle of indirect tail calls, ", cycleMembers.size() - 1, " cycles in total; callers check the result type of ", widenedCount.load(), " functions, ", castsMovedToCallersCount.load(), " casts moved to callers, ", isBoxed.bitCount(), " functions return a boxed value to match their cycle, ", keepsResultType.bitCount(), " functions keep their result type and are called from droppable frames");
+    destroyOnHelperThread(WTF::move(sites));
 }
 
 static void findConstructorsReturningObjects(Program& program)
@@ -9601,21 +9793,18 @@ static void findConstructorsReturningObjects(Program& program)
         }
         returnsObject[i] = returns;
     });
-    auto shouldBeTypedObject = [&](const Value& value) {
-        return value.opcode == Opcode::CallDirect && !value.isJumpToContinuation() && returnsObject[value.function().index()] && constProgram.at(value.type).isAnything();
-    };
     forEachIndexInParallel(count, [&](unsigned i) {
-        if (!returnsObject[i] && !constProgram.functions[i].values.containsIf(shouldBeTypedObject))
-            return;
-        auto& function = program.functions[i];
         if (returnsObject[i])
-            function.resultType = program.types.object;
-        for (auto& value : function.values) {
-            if (!shouldBeTypedObject(value))
-                continue;
-            value.type = program.types.object;
-            value.rep = repOf(object);
-        }
+            program.functions.atKeepingValueIndex(i).resultType = program.types.object;
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        constProgram.functions.forEachValue(i, directCalls, [&](ValueID id) {
+            auto& value = constProgram.functions[i].at(id);
+            if (value.isJumpToContinuation() || !returnsObject[value.function().index()] || !constProgram.at(value.type).isAnything())
+                return;
+            auto& call = program.functions.atKeepingValueIndex(i).at(id);
+            call.type = program.types.object;
+            call.rep = repOf(object);
+        });
     });
 }
 
@@ -9633,12 +9822,14 @@ static void findConstructedRecords(Program& program)
             if (LayoutID supertype = thisType ? constProgram.at(thisType).singleLayout() : LayoutID(); supertype && constProgram.at(supertype).kind == LayoutKind::Record)
                 note(isCreated[supertype.index()]);
         }
-        for (auto& value : function.values) {
-            if (value.opcode != Opcode::Operation || value.arguments.size() < 2 || !(program.operationOf(value) == Operations::ConstructWith || program.operationOf(value) == Operations::ConstructWithSpread))
-                continue;
+        static constexpr OpcodeSet operations { Opcode::Operation };
+        constProgram.functions.forEachValue(i, operations, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.arguments.size() < 2 || !(program.operationOf(value) == Operations::ConstructWith || program.operationOf(value) == Operations::ConstructWithSpread))
+                return;
             auto& object = function.at(value.arguments[1]);
             note(object.opcode == Opcode::NewObjectWithShape ? isCreated[object.layout().index()] : isAnyRecord);
-        }
+        });
     });
     Vector<uint32_t> worklist;
     for (uint32_t i = 0; i < program.layouts.size(); ++i) {
@@ -9665,6 +9856,8 @@ static void findConstructedRecords(Program& program)
             program.layouts[i].mayHaveOtherPrototype = false;
     }
 }
+
+static constexpr OpcodeSet objectLiterals { Opcode::NewObject };
 
 static void markCastsOfUnsharedLiterals(const Program& program, Function& function)
 {
@@ -9695,7 +9888,7 @@ static void markCastsOfUnsharedLiterals(const Program& program, Function& functi
             ValueID literal = cast.child(0);
             while (ValueID behind = numberOfUses[literal.index()] == 1 ? canReplaceParameter(function.at(literal)) : ValueID())
                 literal = behind;
-            if (function.at(literal).opcode != Opcode::NewObject)
+            if (!objectLiterals.contains(function.at(literal).opcode))
                 continue;
             size_t allocationSite = block.values.find(literal);
             if (allocationSite == notFound || allocationSite > i)
@@ -9720,6 +9913,254 @@ static void markCastsOfUnsharedLiterals(const Program& program, Function& functi
     }
 }
 
+static void skipConversionsToLayoutsWithoutFieldAccess(Program& program)
+{
+    const Program& constProgram = program;
+    auto& builtins = Builtins::singleton();
+    unsigned layoutCount = program.layouts.size();
+    Vector<uint8_t> isAccessedDirectly(FillWith { }, layoutCount, static_cast<uint8_t>(0));
+    std::atomic<bool> hasFreshCast { false };
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = constProgram.functions[i];
+        auto markLayout = [&](LayoutID layout) {
+            if (!WTF::atomicLoad(&isAccessedDirectly[layout.index()], std::memory_order_relaxed))
+                WTF::atomicStore(&isAccessedDirectly[layout.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        };
+        auto markStaticType = [&](ValueID id) {
+            for (LayoutID supertype : constProgram.typeOf(function, id).objectLayouts)
+                markLayout(supertype);
+        };
+        auto mark = [&](ValueID id) {
+            markStaticType(id);
+            if (TypeID prediction = function.at(id).prediction()) {
+                for (LayoutID supertype : constProgram.at(prediction).objectLayouts)
+                    markLayout(supertype);
+            }
+        };
+        auto isAllocatedHere = [&](ValueID id) {
+            while (function.at(id).opcode == Opcode::Cast && function.at(id).castReason() == CastReason::Upcast)
+                id = function.at(id).child(0);
+            auto& value = function.at(id);
+            if (value.opcode == Opcode::NewObjectWithShape || value.opcode == Opcode::NewObject)
+                return true;
+            if (value.opcode != Opcode::CallBuiltin)
+                return false;
+            auto& implementation = builtins.at(value.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Operation)
+                return false;
+            return implementation.operation == LanguageOperation::CloneObject || implementation.operation == LanguageOperation::CloneObjectWith || implementation.operation == LanguageOperation::CloneObjectAfter || implementation.operation == LanguageOperation::CopyDataPropertiesExcluding;
+        };
+        static constexpr OpcodeSet accesses { Opcode::GetField, Opcode::HasShapeOf, Opcode::GetById, Opcode::InById, Opcode::DeleteById, Opcode::CallMethod, Opcode::PutById, Opcode::PutField, Opcode::Cast, Opcode::CallBuiltin };
+        constProgram.functions.forEachValue(i, accesses, [&](ValueID id) {
+            auto& value = function.at(id);
+            switch (value.opcode) {
+            case Opcode::GetField:
+            case Opcode::HasShapeOf:
+                markLayout(value.layout());
+                [[fallthrough]];
+            case Opcode::GetById:
+            case Opcode::InById:
+            case Opcode::DeleteById:
+            case Opcode::CallMethod:
+                mark(value.child(0));
+                break;
+            case Opcode::PutById:
+            case Opcode::PutField:
+                if (!isAllocatedHere(value.child(0)))
+                    mark(value.child(0));
+                break;
+            case Opcode::Cast:
+                if (value.castReason() == CastReason::As || value.castReason() == CastReason::Flow || value.castReason() == CastReason::Coerce)
+                    markStaticType(value.child(0));
+                if (value.castReason() == CastReason::As && value.coercesFreshData())
+                    hasFreshCast.store(true, std::memory_order_relaxed);
+                break;
+            case Opcode::CallBuiltin: {
+                auto& builtin = builtins.at(value.builtin());
+                constexpr uint16_t accessesProperties = OperandUse::Gets | OperandUse::WritesProperties;
+                if (builtin.hasReceiver() && value.child(0) && builtin.thisUses & accessesProperties)
+                    mark(value.child(0));
+                for (unsigned k = 0; k < value.arguments.size(); ++k) {
+                    if (builtin.argumentUses(k) & accessesProperties && !isAllocatedHere(value.arguments[k]))
+                        mark(value.arguments[k]);
+                }
+                break;
+            }
+            default:
+                break;
+            }
+        });
+    });
+    if (!hasFreshCast.load())
+        return;
+    BitVector isAccessed(layoutCount);
+    BitVector isSpecialization(layoutCount);
+    for (unsigned i = 0; i < layoutCount; ++i) {
+        for (LayoutID specialization : program.layouts[i].specializations)
+            isSpecialization.set(specialization.index());
+        if (!isAccessedDirectly[i])
+            continue;
+        isAccessed.set(i);
+        for (LayoutID subtype : program.layouts[i].subtypes)
+            isAccessed.set(subtype.index());
+    }
+    BitVector staysUntyped(layoutCount);
+    for (unsigned i = 0; i < layoutCount; ++i) {
+        auto& layout = program.layouts[i];
+        if (layout.kind != LayoutKind::Record || !layout.acceptsUntypedObjects || layout.checksUntypedObjects() || isAccessed.get(i) || isSpecialization.get(i) || program.retagTargets.get(i))
+            continue;
+        bool hasAccessedSubtype = std::ranges::any_of(layout.subtypes, [&](LayoutID subtype) {
+            return isAccessed.get(subtype.index());
+        });
+        if (hasAccessedSubtype)
+            continue;
+        staysUntyped.set(i);
+        program.layoutsWithTrivialCoercion.set(i);
+    }
+    if (staysUntyped.isEmpty())
+        return;
+    std::atomic<unsigned> castCount { 0 };
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        static constexpr OpcodeSet casts { Opcode::Cast };
+        constProgram.functions.forEachValue(i, casts, [&](ValueID id) {
+            auto& value = constProgram.functions[i].at(id);
+            if (value.castReason() != CastReason::As || !value.coercesFreshData())
+                return;
+            auto& to = constProgram.at(value.type);
+            bool staysAsAllocated = !to.objectLayouts.isEmpty() && std::ranges::all_of(to.objectLayouts, [&](LayoutID supertype) {
+                return staysUntyped.get(supertype.index());
+            });
+            if (!staysAsAllocated)
+                return;
+            program.functions.atKeepingValueIndex(i).at(id).immediates[1] &= ~(3u << Format::freshnessShift);
+            castCount.fetch_add(1, std::memory_order_relaxed);
+        });
+    });
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", staysUntyped.bitCount(), " of ", layoutCount, " layouts accept untyped objects and have no field access: ", castCount.load(), " casts of fresh objects do not convert to them");
+}
+
+static void allocateLiteralsWithComputedKeysAsRecords(Program& program)
+{
+    const Program& constProgram = program;
+    std::atomic<unsigned> literalCount { 0 };
+    static constexpr OpcodeSet plainAllocations { Opcode::NewObject };
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        if (!constProgram.functions.mayContain(i, plainAllocations))
+            return;
+        auto& function = constProgram.functions[i];
+        struct Literal {
+            ValueID object;
+            ValueID cast;
+            LayoutID layout;
+            Vector<ValueID, 6> definitions;
+            Vector<uint16_t> order;
+        };
+        Vector<Literal> literals;
+        Vector<uint32_t> useCounts;
+        auto useCountOf = [&](ValueID id) {
+            if (useCounts.isEmpty()) {
+                useCounts.fill(0, function.values.size());
+                for (auto& block : function.blocks) {
+                    for (ValueID user : block.values) {
+                        function.at(user).forEachChild([&](ValueID child) {
+                            ++useCounts[child.index()];
+                        });
+                    }
+                    if (block.terminator.value)
+                        ++useCounts[block.terminator.value.index()];
+                    for (auto& target : block.terminator.targets) {
+                        for (ValueID argument : target.arguments)
+                            ++useCounts[argument.index()];
+                    }
+                }
+            }
+            return useCounts[id.index()];
+        };
+        for (auto& block : function.blocks) {
+            for (size_t at = 0; at < block.values.size(); ++at) {
+                ValueID object = block.values[at];
+                if (function.at(object).opcode != Opcode::NewObject || function.at(object).child(0))
+                    continue;
+                Literal literal { object, { }, { }, { }, { } };
+                unsigned computedKeys = 0;
+                bool isRegular = true;
+                for (size_t k = at + 1; k < block.values.size() && isRegular && !literal.cast; ++k) {
+                    auto& user = function.at(block.values[k]);
+                    bool isDefinition = user.opcode == Opcode::CallBuiltin && user.arguments.size() == 3 && user.arguments[0] == object && languageOperationOf(constProgram, user) == LanguageOperation::DefineField;
+                    if (isDefinition) {
+                        bool isNamed = function.at(user.arguments[1]).opcode == Opcode::String;
+                        isRegular = user.arguments[1] != object && user.arguments[2] != object && !(isNamed && computedKeys);
+                        if (isNamed)
+                            literal.definitions.append(block.values[k]);
+                        else
+                            ++computedKeys;
+                        continue;
+                    }
+                    if (user.opcode == Opcode::Cast && user.castReason() == CastReason::As && user.child(0) == object) {
+                        literal.cast = block.values[k];
+                        continue;
+                    }
+                    user.forEachChild([&](ValueID child) {
+                        isRegular &= child != object;
+                    });
+                }
+                if (!isRegular || !literal.cast || !computedKeys || useCountOf(object) != literal.definitions.size() + computedKeys + 1)
+                    continue;
+                literal.layout = constProgram.typeOf(function, literal.cast).singleLayout();
+                if (!literal.layout)
+                    continue;
+                auto& layout = constProgram.at(literal.layout);
+                bool mayBeBornHere = layout.kind == LayoutKind::Record && layout.isAllocated && layout.specializations.isEmpty() && !layout.fields.containsIf([](const Field& field) {
+                    return field.flags & fieldIsMethod || !field.literals.isEmpty();
+                });
+                if (!mayBeBornHere)
+                    continue;
+                BitVector isDefined;
+                for (ValueID definition : literal.definitions) {
+                    auto& arguments = function.at(definition).arguments;
+                    auto field = layout.fieldNamed(function.at(arguments[1]).string());
+                    isRegular = isRegular && field && !isDefined.set(*field) && !(layout.fields[*field].flags & fieldIsNeverStored) && !useCountOf(definition)
+                        && constProgram.typeOf(function, arguments[2]).isSubsetOf(constProgram.at(layout.fields[*field].type), constProgram, false);
+                    if (!isRegular)
+                        break;
+                    literal.order.append(static_cast<uint16_t>(*field));
+                }
+                for (unsigned field = 0; field < layout.fields.size() && isRegular; ++field)
+                    isRegular = isDefined.get(field) || layout.fields[field].flags & (fieldIsOptional | fieldIsNeverStored);
+                if (isRegular)
+                    literals.append(WTF::move(literal));
+            }
+        }
+        if (literals.isEmpty())
+            return;
+        auto& changed = program.functions[i];
+        for (auto& literal : literals) {
+            for (unsigned k = 0; k < literal.definitions.size(); ++k) {
+                auto& store = changed.at(literal.definitions[k]);
+                store.children = { literal.object, store.arguments[2], ValueID() };
+                store.arguments = { };
+                store.opcode = Opcode::PutField;
+                store.immediates = { literal.layout.index(), literal.order[k] };
+                store.type = constProgram.types.undefined;
+                store.rep = repOf(constProgram.at(store.type));
+                store.setPrediction({ });
+            }
+            Allocation allocation;
+            allocation.layout = literal.layout;
+            allocation.initialFieldCount = literal.order.size();
+            allocation.order = WTF::move(literal.order);
+            auto& birth = changed.at(literal.object);
+            birth.opcode = Opcode::NewObjectWithShape;
+            birth.immediates = { literal.layout.index(), static_cast<uint32_t>(changed.allocations.size()) };
+            birth.type = constProgram.at(literal.layout).type;
+            birth.setPrediction({ });
+            changed.allocations.append(WTF::move(allocation));
+        }
+        literalCount.fetch_add(literals.size(), std::memory_order_relaxed);
+    });
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", literalCount.load(), " object literals with computed keys are born as the record type expected of them");
+}
+
 static void addPlaceholderFields(Program& program)
 {
     const Program& constProgram = program;
@@ -9727,14 +10168,14 @@ static void addPlaceholderFields(Program& program)
     Vector<Vector<uint64_t>> functionReads(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = constProgram.functions[i];
-        for (auto& value : function.values) {
-            if (value.opcode != Opcode::GetById)
-                continue;
+        static constexpr OpcodeSet readsByName { Opcode::GetById };
+        constProgram.functions.forEachValue(i, readsByName, [&](ValueID id) {
+            auto& value = function.at(id);
             LayoutID supertype = constProgram.typeOf(function, value.child(0)).singleLayout();
             if (!supertype || constProgram.at(supertype).kind != LayoutKind::Record || constProgram.at(supertype).acceptsUntypedObjects || !constProgram.at(supertype).fieldNamed(value.string()))
-                continue;
+                return;
             functionReads[i].append(static_cast<uint64_t>(supertype.index()) << 32 | value.string().index());
-        }
+        });
     });
     Vector<uint64_t> reads;
     for (auto& functionReadList : functionReads)
@@ -9743,10 +10184,11 @@ static void addPlaceholderFields(Program& program)
     Vector<uint8_t> isAllocatedWithFinalLayout(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
     Vector<uint8_t> isAllocatedByDiscriminant(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
-        for (auto& value : constProgram.functions[i].values) {
-            if (value.opcode == Opcode::NewObjectWithShape)
-                WTF::atomicStore(&(value.child(0) ? isAllocatedByDiscriminant : isAllocatedWithFinalLayout)[value.layout().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-        }
+        static constexpr OpcodeSet allocations { Opcode::NewObjectWithShape };
+        constProgram.functions.forEachValue(i, allocations, [&](ValueID id) {
+            auto& value = constProgram.functions[i].at(id);
+            WTF::atomicStore(&(value.child(0) ? isAllocatedByDiscriminant : isAllocatedWithFinalLayout)[value.layout().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        });
     });
     BitVector hasSizeAtAllocation(program.layouts.size());
     BitVector isSpecialization(program.layouts.size());
@@ -9844,27 +10286,27 @@ static void addPlaceholderFields(Program& program)
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfPlaceholders, " placeholder fields in ", hasNewField.bitCount(), " layouts");
 }
 
-static void widenUnprofitableLiteralStrings(const Program& program, Function& function, const Vector<TypeID>& widened)
+static void widenUnprofitableLiteralStrings(Program& program, size_t index, const Vector<TypeID>& widened)
 {
+    auto& function = program.functions.atKeepingValueIndex(index);
     auto hasLiteralString = [&](ValueID id) {
         return program.typeOf(function, id).hasLiteralString();
     };
     BitVector candidates;
     BitVector castsIn;
-    for (unsigned b = 0; b < function.blocks.size(); ++b) {
-        auto& block = function.blocks[b];
-        for (ValueID parameter : block.parameters) {
-            if (b && hasLiteralString(parameter))
+    for (unsigned b = 1; b < function.blocks.size(); ++b) {
+        for (ValueID parameter : function.blocks[b].parameters) {
+            if (hasLiteralString(parameter))
                 candidates.set(parameter.index());
         }
-        for (ValueID id : block.values) {
-            auto& value = function.at(id);
-            if (value.opcode == Opcode::Cast && hasLiteralString(id) && !hasLiteralString(value.child(0))) {
-                candidates.set(id.index());
-                castsIn.set(id.index());
-            }
-        }
     }
+    static constexpr OpcodeSet casts { Opcode::Cast };
+    std::as_const(program).functions.forEachIndexedValue(index, casts, [&](ValueID id) {
+        if (hasLiteralString(id) && !hasLiteralString(function.at(id).child(0))) {
+            candidates.set(id.index());
+            castsIn.set(id.index());
+        }
+    });
     if (candidates.isEmpty())
         return;
 
@@ -9975,6 +10417,7 @@ static void widenUnprofitableLiteralStrings(const Program& program, Function& fu
     if (toWiden.isEmpty())
         return;
 
+    program.functions.invalidateValueIndex(index);
     for (unsigned b = 0; b < function.blocks.size(); ++b) {
         unsigned at = !function.blocks[b].values.isEmpty() && function.at(function.blocks[b].values[0]).opcode == Opcode::CatchValue ? 1 : 0;
         for (unsigned t = 0; t < function.blocks[b].terminator.targets.size(); ++t) {
@@ -10053,7 +10496,7 @@ static void widenUnprofitableLiteralStrings(Program& program, bool typesAreFroze
     if (!hasAny)
         return;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        widenUnprofitableLiteralStrings(program, program.functions[i], widened);
+        widenUnprofitableLiteralStrings(program, i, widened);
     });
 }
 
@@ -11384,9 +11827,14 @@ static void findUnusedParameters(Program& program)
             return uses[forwardedParameter.parameter] == ParameterUse::Used;
         });
     });
+    Vector<unsigned> forwardingFunctions;
+    for (unsigned index = 0; index < count; ++index) {
+        if (!forwarded[index].isEmpty())
+            forwardingFunctions.append(index);
+    }
     for (bool changed = true; changed;) {
         changed = false;
-        for (unsigned index = 0; index < count; ++index) {
+        for (unsigned index : forwardingFunctions) {
             for (auto& forwardedParameter : forwarded[index]) {
                 if (!unused[index].get(forwardedParameter.parameter) || unused[forwardedParameter.callee].get(forwardedParameter.calleeParameter))
                     continue;
@@ -11408,9 +11856,15 @@ static void findUnusedParameters(Program& program)
 Vector<String> optimize(Program& program)
 {
     MonotonicTime start = MonotonicTime::now();
+    PhaseTimes phaseTimes("optimize"_s);
     auto didFinish = [&](ASCIILiteral what) {
+        if (Options::validateAOTTypedFacts()) [[unlikely]]
+            program.functions.verifyValueIndex();
+        program.functions.rebuildInvalidatedValueIndex();
         dataLogLnIf(shouldPrintTimings(), "AOT passes: ", what, " done at ", (MonotonicTime::now() - start).seconds(), " s");
+        phaseTimes.didFinish(what);
     };
+    didFinish("- buildValueIndex"_s);
     widenUnusedParameterTypes(program);
     didFinish("- widenUnusedParameterTypes"_s);
     findConstructedRecords(program);
@@ -11475,13 +11929,15 @@ Vector<String> optimize(Program& program)
         createGuardedPreludeEntries(program);
     program.numberOfDirectCalls.fill(0, program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        if (!program.functions.mayContain(i, directCalls))
+            return;
         auto& function = std::as_const(program).functions[i];
         if (function.isGenericEntrypoint() || (function.isValueEntry && !function.isValueEntryClone))
             return;
-        for (auto& value : function.values) {
-            if (value.opcode == Opcode::CallDirect)
-                WTF::atomicExchangeAdd(&program.numberOfDirectCalls[value.function().index()], 1u, std::memory_order_relaxed);
-        }
+        std::as_const(program).functions.forEachValue(i, directCalls, [&](ValueID id) {
+            WTF::atomicExchangeAdd(&program.numberOfDirectCalls[function.at(id).function().index()], 1u, std::memory_order_relaxed);
+        });
     });
     didFinish("- createBoundFunctions and direct call counts"_s);
     preallocateConstructorFields(program);
@@ -11571,8 +12027,8 @@ Vector<String> optimize(Program& program)
     }
     didFinish("- splitOptimizedGenerator"_s);
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
-        if (!Options::auditAOTTypedAssertions())
+        auto& function = program.functions.atKeepingValueIndex(i);
+        if (!Options::auditAOTTypedAssertions() && program.functions.mayContain(i, objectLiterals))
             markCastsOfUnsharedLiterals(program, function);
         function.values.shrinkToFit();
         function.blocks.shrinkToFit();
@@ -11618,6 +12074,11 @@ Vector<String> optimize(Program& program)
                 removedModuleEvaluationCount.fetch_add(redundant, std::memory_order_relaxed);
             }
             if (!changed && !fused && !removed) {
+                if (stepGeneratorsInPlace(program, function)) {
+                    cleanUp(program, function);
+                    round = 0;
+                    continue;
+                }
                 if (std::exchange(hasTriedToSplitFastPaths, true) || !splitSubtypeFastPaths(program, id, function))
                     break;
                 didSplitFastPaths = true;
@@ -11702,7 +12163,7 @@ Vector<String> optimize(Program& program)
     Vector<unsigned> smallFunctions;
     BitVector isQueued = functionsWithOtherEntries(program);
     auto enqueue = [&](unsigned index) {
-        if (std::as_const(program).functions[index].values.size() < minLargeFunctionSize) {
+        if (UINT32_MAX - static_cast<uint32_t>(sizesAndIndices[index] >> 32) < minLargeFunctionSize) {
             smallFunctions.append(index);
             return;
         }
@@ -11713,7 +12174,8 @@ Vector<String> optimize(Program& program)
         enqueue(i);
     unsigned numberOfBusyWorkers = 0;
     unsigned numberOfSleepingWorkers = 0;
-    forEachIndexInParallel(numberOfWorkers, [&](unsigned) {
+    Vector<Functions::ValueIndexRows> valueIndexRows(numberOfWorkers);
+    forEachIndexInParallel(numberOfWorkers, [&](unsigned worker) {
         Vector<unsigned, maxBatchSize> batch;
         Vector<unsigned, 128> callees;
         for (;;) {
@@ -11755,6 +12217,7 @@ Vector<String> optimize(Program& program)
                 optimizeFunction(next);
                 if (!optimized[next])
                     continue;
+                valueIndexRows[worker].append(next, *optimized[next]);
                 forEachCalleeOf(program, *optimized[next], [&](unsigned callee) {
                     callees.append(callee);
                 });
@@ -11807,7 +12270,8 @@ Vector<String> optimize(Program& program)
         }
         std::swap(program.functions[i], *optimized[i]);
     });
-    destroyOnHelperThread(WTF::move(optimized));
+    program.functions.adoptValueIndexRows(valueIndexRows.span());
+    destroyOnHelperThread(std::tuple { WTF::move(optimized), WTF::move(valueIndexRows) });
     for (unsigned i = 0; i < count; ++i) {
         if (!isQueued.get(i))
             program.uncalledFunctions.set(i);
@@ -11815,6 +12279,12 @@ Vector<String> optimize(Program& program)
     didFinish("freeing the unoptimized functions"_s);
     widenUnprofitableLiteralStrings(program, true);
     didFinish("- widenUnprofitableLiteralStrings"_s);
+    if (!Options::auditAOTTypedAssertions())
+        skipConversionsToLayoutsWithoutFieldAccess(program);
+    didFinish("- skipConversionsToLayoutsWithoutFieldAccess"_s);
+    if (!Options::auditAOTTypedAssertions())
+        allocateLiteralsWithComputedKeysAsRecords(program);
+    didFinish("- allocateLiteralsWithComputedKeysAsRecords"_s);
     if (!Options::auditAOTTypedAssertions()) {
         eliminateGuardsOnFreshResults(program);
         didFinish("- eliminateGuardsOnFreshResults"_s);
@@ -11831,10 +12301,8 @@ Vector<String> optimize(Program& program)
         didFinish("- computeFunctionsReturningMapKeys"_s);
         removeUnusedResults(program);
         didFinish("- removeUnusedResults"_s);
-        static constexpr OpcodeSet concatenations { Opcode::Add, Opcode::Strcat };
         forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-            if (program.functions.mayContain(i, concatenations))
-                fuseConcatenations(program, FunctionID(i), program.functions[i]);
+            fuseConcatenations(program, FunctionID(i));
         });
         didFinish("- fuseConcatenations"_s);
         outlineConcatenations(program);
@@ -11850,8 +12318,6 @@ Vector<String> optimize(Program& program)
     }
     didFinish("- outlineBuiltinCalls, outlineConstructs"_s);
     if (!Options::auditAOTTypedAssertions()) {
-        program.functions.buildValueIndex();
-        didFinish("- buildValueIndex"_s);
         returnResultsInRegisters(program);
         specializeResultsByCaller(program);
         removeUnusedResults(program);
@@ -11866,9 +12332,12 @@ Vector<String> optimize(Program& program)
     didFinish("- findComparedBuiltinCells"_s);
     clearLazyClosureSlots(program);
     didFinish("- clearLazyClosureSlots"_s);
-    program.functionLengthsAreBytes = std::ranges::all_of(std::as_const(program).functions, [](auto& function) {
-        return function.length <= std::numeric_limits<uint8_t>::max();
+    std::atomic<bool> functionLengthsAreBytes { true };
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        if (std::as_const(program).functions[i].length > std::numeric_limits<uint8_t>::max())
+            functionLengthsAreBytes.store(false, std::memory_order_relaxed);
     });
+    program.functionLengthsAreBytes = functionLengthsAreBytes.load();
     reportAllocationAssertions(program, result);
     if (!result.isEmpty())
         return result;
@@ -11890,8 +12359,6 @@ Vector<String> optimize(Program& program)
     didFinish("allocations"_s);
     computeEffectSummaries(program);
     didFinish("effects"_s);
-    if (!Options::auditAOTTypedAssertions())
-        program.functions.rebuildInvalidatedValueIndex();
     computeFunctionsReturningMapKeys(program);
     didFinish("map keys"_s);
     removeModuleEvaluations(program);
@@ -11911,6 +12378,11 @@ Vector<String> optimize(Program& program)
     didFinish("- prepareTailCalls"_s);
     findUnusedParameters(program);
     didFinish("- findUnusedParameters"_s);
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        auto& ramp = std::as_const(program).functions[i];
+        if (ramp.resumeFunction && (ramp.declaredAs & (functionIsAsync | functionIsGenerator)) == functionIsGenerator && std::as_const(program).at(ramp.resumeFunction).generatorTemplate == UINT32_MAX)
+            program.at(ramp.resumeFunction).generatorTemplate = program.numberOfGeneratorTemplates++;
+    }
     return result;
 }
 
@@ -12014,13 +12486,14 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
         auto entry = program.genericEntrypoints.find(function.index());
         return entry != program.genericEntrypoints.end() ? entry->value.index() : function.index();
     };
+    static constexpr OpcodeSet functionValues { Opcode::NewClosure, Opcode::NewClosureOnce, Opcode::FunctionReference };
     auto functionOfClosureValue = [](const Function& function, ValueID id) -> FunctionID {
         while (id && function.at(id).opcode == Opcode::Cast)
             id = function.at(id).child(0);
         if (!id)
             return { };
         auto& value = function.at(id);
-        if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce || value.opcode == Opcode::FunctionReference)
+        if (functionValues.contains(value.opcode))
             return value.function();
         return { };
     };
@@ -12096,23 +12569,24 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
     };
     Vector<Vector<LocationStore>> storedIn(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        if (!program.functions.mayContain(i, functionValues))
+            return;
         auto& function = program.functions[i];
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto [key, stored] = storedLocation(function, function.at(id));
-                if (!key)
-                    continue;
-                FunctionID created = functionOfClosureValue(function, stored);
-                if (!created)
-                    continue;
-                Vector<uint32_t> layouts;
-                if (keyKind(key) == 2) {
-                    if (auto found = layoutsStoredThrough(function, function.at(id)))
-                        layouts = WTF::move(*found);
-                }
-                storedIn[i].append(LocationStore { key, enteredByValue(created), WTF::move(layouts) });
+        static constexpr OpcodeSet stores { Opcode::PutById, Opcode::PutField, Opcode::PutModuleVariable, Opcode::CallBuiltin };
+        program.functions.forEachIndexedValue(i, stores, [&](ValueID id) {
+            auto [key, stored] = storedLocation(function, function.at(id));
+            if (!key)
+                return;
+            FunctionID created = functionOfClosureValue(function, stored);
+            if (!created)
+                return;
+            Vector<uint32_t> layouts;
+            if (keyKind(key) == 2) {
+                if (auto found = layoutsStoredThrough(function, function.at(id)))
+                    layouts = WTF::move(*found);
             }
-        }
+            storedIn[i].append(LocationStore { key, enteredByValue(created), WTF::move(layouts) });
+        });
     });
     for (auto& storedInFunction : storedIn) {
         for (auto& [key, entered, layouts] : storedInFunction) {
@@ -12138,10 +12612,11 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
         return false;
     };
     BitVector iteratingNames(program.strings.size());
-    for (unsigned i = 0; i < program.strings.size(); ++i) {
-        if (isIteratingName(program.strings[i]))
-            iteratingNames.set(i);
-    }
+    auto stringsNamingIteration = findIndicesInParallel(program.strings.size(), [&](unsigned i) {
+        return isIteratingName(program.strings[i]);
+    });
+    for (unsigned i : stringsNamingIteration)
+        iteratingNames.set(i);
     UncheckedKeyHashMap<uint64_t, int> parameterCallWeight;
     auto parameterKey = [](uint32_t function, uint32_t index) {
         return (static_cast<uint64_t>(function) + 1) << 20 | (index & 0xfffff);
@@ -12172,10 +12647,11 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
     Vector<float> massOf(FillWith { }, count, 0.0f);
     Vector<uint32_t> sizes(FillWith { }, count, 0u);
     Vector<char> coroutineOfResumeFunction(FillWith { }, count, '-');
-    for (unsigned i = 0; i < count; ++i) {
+    auto ramps = findIndicesInParallel(count, [&](unsigned i) {
+        return !!program.functions[i].resumeFunction;
+    });
+    for (unsigned i : ramps) {
         auto& ramp = program.functions[i];
-        if (!ramp.resumeFunction)
-            continue;
         bool isAsync = ramp.declaredAs & functionIsAsync;
         bool isGenerator = ramp.declaredAs & functionIsGenerator;
         coroutineOfResumeFunction[ramp.resumeFunction.index()] = isAsync && isGenerator ? 'x' : isAsync ? 'a' : isGenerator ? 'g' : '-';
@@ -12554,17 +13030,24 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
         if (evaluator)
             roots.append(evaluator.index());
     }
-    BitVector isReached(nodes);
-    Vector<uint32_t> reachedAndStillInside;
+    Vector<uint8_t> isReachedNode(FillWith { }, nodes, static_cast<uint8_t>(0));
+    Vector<uint32_t> frontier;
     for (uint32_t root : roots) {
-        if (!isReached.set(root))
-            reachedAndStillInside.append(root);
+        if (!std::exchange(isReachedNode[root], 1))
+            frontier.append(root);
     }
-    while (!reachedAndStillInside.isEmpty()) {
-        for (auto& edge : edges[reachedAndStillInside.takeLast()]) {
-            if (!isReached.set(edge.to))
-                reachedAndStillInside.append(edge.to);
-        }
+    while (!frontier.isEmpty()) {
+        frontier = collectInParallel<uint32_t>(frontier.size(), [&](unsigned k, Vector<uint32_t>& reached) {
+            for (auto& edge : edges[frontier[k]]) {
+                if (!WTF::atomicLoad(&isReachedNode[edge.to], std::memory_order_relaxed) && !WTF::atomicExchange(&isReachedNode[edge.to], static_cast<uint8_t>(1), std::memory_order_relaxed))
+                    reached.append(edge.to);
+            }
+        });
+    }
+    BitVector isReached(nodes);
+    for (uint32_t node = 0; node < nodes; ++node) {
+        if (isReachedNode[node])
+            isReached.quickSet(node);
     }
     uint64_t totalSize = 0;
     for (unsigned i = 0; i < count; ++i)
@@ -12674,14 +13157,15 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
     });
     std::array<Vector<uint8_t>, 2> vigintiles;
     for (unsigned which = 0; which < 2; ++which) {
-        Vector<std::pair<double, uint32_t>> order(count, [&](size_t i) {
+        Vector<std::pair<double, uint32_t>> order(count);
+        forEachIndexInParallel(count, [&](unsigned i) {
             double flow = flows[i][which];
             if (sizes[i] < 256) {
                 double shrinkFactor = 256.0 / std::max(1u, sizes[i]);
                 flow *= shrinkFactor * shrinkFactor;
             }
             double mass = massOf[i] < 1e30f ? massOf[i] : 1e30;
-            return std::pair { flow * mass / std::max(1u, sizes[i]), static_cast<uint32_t>(i) };
+            order[i] = std::pair { flow * mass / std::max(1u, sizes[i]), i };
         });
         sortOnPool(order.mutableSpan(), std::less { });
         Vector<uint8_t> result(FillWith { }, count, static_cast<uint8_t>(0));
@@ -12692,6 +13176,7 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
         }
         vigintiles[which] = WTF::move(result);
     }
+    destroyOnHelperThread(std::tuple { WTF::move(edges), WTF::move(hubs), WTF::move(parameterCallWeight) });
     static constexpr uint8_t minHeatNearRoots = 18;
     return Vector<uint8_t>(count, [&](size_t i) {
         return vigintiles[1][i] >= minHeatNearRoots ? vigintileNearRoots : vigintiles[0][i];

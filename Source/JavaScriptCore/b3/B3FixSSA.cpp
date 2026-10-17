@@ -192,6 +192,7 @@ public:
             m_accesses.firstAccessOfVariable[i + 1] += m_accesses.firstAccessOfVariable[i];
 
         m_isLiveAtHead.fill(0, m_proc.size());
+        m_hasLiveVariableAtHead.fill(0, m_proc.size());
         m_isLiveAtTail.fill(0, m_proc.size());
         m_hasSet.fill(0, m_proc.size());
         m_firstAccessOfVariable.fill(0, numVariables + 1);
@@ -211,6 +212,7 @@ public:
                 if (m_isLiveAtHead[block->index()] == epoch)
                     return;
                 m_isLiveAtHead[block->index()] = epoch;
+                m_hasLiveVariableAtHead[block->index()] = 1;
                 m_blocksLiveAtHead.append(block->index());
                 worklist.append(block);
             };
@@ -251,6 +253,7 @@ public:
     }
 
     bool isLiveAtHead(BasicBlock* block) const { return m_isLiveAtHead[block->index()] == m_epoch; }
+    bool hasLiveVariableAtHead(BasicBlock* block) const { return m_hasLiveVariableAtHead[block->index()]; }
 
 private:
     static constexpr unsigned stepsPerBlock = 48;
@@ -258,6 +261,7 @@ private:
     Procedure& m_proc;
     Accesses& m_accesses;
     Vector<unsigned> m_isLiveAtHead;
+    Vector<uint8_t> m_hasLiveVariableAtHead;
     Vector<unsigned> m_isLiveAtTail;
     Vector<unsigned> m_hasSet;
     Vector<unsigned> m_blocksLiveAtHead;
@@ -341,6 +345,9 @@ void fixSSAGlobally(Procedure& proc)
         CompilerTimingScope timingScope("B3"_s, "fixSSA: computePhis"_s);
         ssa.computePhis(
 #if USE(BUN_JSC_ADDITIONS)
+            [&] (BasicBlock* block) {
+                return !usesPerVariableLiveness || livenessByVariable.hasLiveVariableAtHead(block);
+            },
             [&] (SSACalculator::Variable* calcVar) {
                 if (usesPerVariableLiveness)
                     livenessByVariable.selectVariable(calcVarToVariable[calcVar->index()]->index());

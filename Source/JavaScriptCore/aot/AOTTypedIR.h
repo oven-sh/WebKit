@@ -43,7 +43,6 @@ namespace JSC { namespace AOT { namespace Typed {
     v(IsClosureOf) \
     v(IsBuiltinFunction) \
     v(BuiltinFunction) \
-    v(ConstantSymbol) \
     v(Results) \
     v(Unspecified) \
     v(ResultAt) \
@@ -690,10 +689,12 @@ struct Function {
     uint8_t declaredAs { 0 };
     FunctionID resumeFunction;
     FunctionID startFunction;
+    uint32_t generatorTemplate { UINT32_MAX };
     bool savesFrameOnSuspend { false };
     bool capturesExceptions { false };
     Vector<uint32_t> suspensionPositions;
     uint32_t thisAllocation { Format::none };
+    bool allocatesForUnknownCallers { false };
     TypeID thisType;
     TypeID resultType;
     Vector<TypeID, 4> resultTypes;
@@ -842,11 +843,13 @@ struct Layout {
     bool constructorMayBeReplaced { false };
     bool mayBeConstructed { false };
     bool hasComputedMethodName { false };
+    bool hasMethodWithSymbolKey { false };
     bool hasComputedStaticMemberName { false };
     bool instancesMayBecomeRecords { false };
     bool isAllocated { false };
     bool mayBeFrozen { false };
     bool isImmutableAfterAllocation { false };
+    bool isDecodedRow { false };
     bool mayDespecialize { false };
     bool acceptsUntypedObjects { false };
     bool isRelaxedForLogging { false };
@@ -918,6 +921,7 @@ struct Module {
     StringID path;
     FunctionID initializer;
     StringID displayPath;
+    bool isBuiltin { false };
     uint32_t lineTableSize { 0 };
     std::span<const uint8_t> printed;
     Vector<uint32_t> lineStarts;
@@ -940,6 +944,13 @@ public:
 
     constexpr void add(Opcode opcode) { m_words[static_cast<unsigned>(opcode) / 64] |= 1ull << (static_cast<unsigned>(opcode) % 64); }
     constexpr bool contains(Opcode opcode) const { return m_words[static_cast<unsigned>(opcode) / 64] >> (static_cast<unsigned>(opcode) % 64) & 1; }
+    constexpr OpcodeSet operator|(const OpcodeSet& other) const
+    {
+        OpcodeSet result;
+        for (size_t i = 0; i < m_words.size(); ++i)
+            result.m_words[i] = m_words[i] | other.m_words[i];
+        return result;
+    }
     constexpr bool intersects(const OpcodeSet& other) const { return (m_words[0] & other.m_words[0]) | (m_words[1] & other.m_words[1]) | (m_words[2] & other.m_words[2]) | (m_words[3] & other.m_words[3]); }
 
 private:
@@ -947,7 +958,32 @@ private:
 };
 
 class Functions {
+    struct Contents {
+        OpcodeSet opcodes;
+        uint16_t terminatorKinds { 0 };
+        bool containsPredictedClosure { false };
+    };
+
 public:
+    class ValueIndexRows {
+    public:
+        void append(size_t index, const Function&);
+
+    private:
+        friend class Functions;
+        struct Entry {
+            uint32_t function;
+            uint32_t first;
+            uint32_t valueCount;
+            uint32_t indexedValueCount;
+            Contents contents;
+        };
+        Vector<Entry> m_entries;
+        Vector<ValueID> m_ids;
+        Vector<Opcode> m_opcodes;
+        Vector<Opcode> m_valueOpcodes;
+    };
+
     size_t size() const { return m_functions.size(); }
     bool isEmpty() const { return m_functions.isEmpty(); }
 
@@ -977,7 +1013,11 @@ public:
 
     void buildValueIndex();
     void rebuildInvalidatedValueIndex();
+    void adoptValueIndexRows(std::span<const ValueIndexRows>);
+    void verifyValueIndex() const;
     void invalidateValueIndex() { m_isIndexed.clear(); }
+    void invalidateValueIndex(size_t index) { forget(index); }
+    void releaseValueIndex();
     bool isIndexed(size_t index) const { return index < m_isIndexed.size() && WTF::atomicLoad(&m_isIndexed[index], std::memory_order_relaxed); }
 
     bool mayContain(size_t index, const OpcodeSet& wanted) const { return !isIndexed(index) || m_contents[index].opcodes.intersects(wanted); }
@@ -987,6 +1027,8 @@ public:
     void forEachIndexedValue(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
     {
         if (isIndexed(index)) {
+            if (!m_contents[index].opcodes.intersects(wanted))
+                return;
             auto opcodes = indexedOpcodes(index);
             auto ids = m_indexedValues.items<&IndexedValue::id>().subspan(m_firstIndexedValue[index], opcodes.size());
             for (size_t k = 0; k < opcodes.size(); ++k) {
@@ -1004,6 +1046,53 @@ public:
         }
     }
 
+    void forEachIndexedValueWithBlock(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(unsigned, unsigned, ValueID)> auto& functor) const
+    {
+        auto& function = m_functions[index];
+        if (isIndexed(index)) {
+            if (!m_contents[index].opcodes.intersects(wanted))
+                return;
+            auto opcodes = indexedOpcodes(index);
+            auto ids = m_indexedValues.items<&IndexedValue::id>().subspan(m_firstIndexedValue[index], opcodes.size());
+            unsigned block = 0;
+            size_t blockStart = 0;
+            for (size_t k = 0; k < opcodes.size(); ++k) {
+                if (!wanted.contains(opcodes[k]))
+                    continue;
+                while (k - blockStart >= function.blocks[block].values.size())
+                    blockStart += function.blocks[block++].values.size();
+                functor(block, static_cast<unsigned>(k - blockStart), ids[k]);
+            }
+            return;
+        }
+        for (unsigned block = 0; block < function.blocks.size(); ++block) {
+            auto& values = function.blocks[block].values;
+            for (unsigned k = 0; k < values.size(); ++k) {
+                if (wanted.contains(function.at(values[k]).opcode))
+                    functor(block, k, values[k]);
+            }
+        }
+    }
+
+    void forEachValue(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
+    {
+        if (isIndexed(index)) {
+            if (!m_contents[index].opcodes.intersects(wanted))
+                return;
+            auto opcodes = m_valueOpcodes.span().subspan(m_firstIndexedValue[index], m_valueCount[index]);
+            for (size_t k = 0; k < opcodes.size(); ++k) {
+                if (wanted.contains(opcodes[k]))
+                    functor(ValueID(k));
+            }
+            return;
+        }
+        auto& values = m_functions[index].values;
+        for (size_t k = 0; k < values.size(); ++k) {
+            if (wanted.contains(values[k].opcode))
+                functor(ValueID(k));
+        }
+    }
+
 private:
     struct IndexedValue {
         ValueID id;
@@ -1017,22 +1106,26 @@ private:
 
     void forget(size_t index)
     {
-        if (isIndexed(index))
-            WTF::atomicStore(&m_isIndexed[index], static_cast<uint8_t>(0), std::memory_order_relaxed);
+        if (!isIndexed(index))
+            return;
+        WTF::atomicStore(&m_isIndexed[index], static_cast<uint8_t>(0), std::memory_order_relaxed);
+        if (!WTF::atomicLoad(&m_hasInvalidatedFunctions, std::memory_order_relaxed))
+            WTF::atomicStore(&m_hasInvalidatedFunctions, static_cast<uint8_t>(1), std::memory_order_relaxed);
     }
 
     Vector<Function> m_functions;
     MultiArrayList<IndexedValue, &IndexedValue::id, &IndexedValue::opcode> m_indexedValues;
-    struct Contents {
-        OpcodeSet opcodes;
-        uint16_t terminatorKinds { 0 };
-        bool containsPredictedClosure { false };
-    };
 
+    static bool fillValueIndexRows(const Function&, std::span<ValueID> ids, std::span<Opcode> opcodes, std::span<Opcode> valueOpcodes, Contents&, uint32_t& indexedValueCount);
+    void indexValues(size_t index);
+
+    Vector<Opcode> m_valueOpcodes;
     Vector<uint32_t> m_firstIndexedValue;
     Vector<uint32_t> m_indexedValueCount;
+    Vector<uint32_t> m_valueCount;
     Vector<Contents> m_contents;
     mutable Vector<uint8_t> m_isIndexed;
+    uint8_t m_hasInvalidatedFunctions { 0 };
 };
 
 struct CallSignature {
@@ -1134,6 +1227,7 @@ public:
     BitVector extendedGlobals;
     BitVector prototypePropertyNames;
     BitVector methodFieldNames;
+    bool hasFieldsWithSymbolKeys { false };
     BitVector lazyClosureNames;
     BitVector possibleAccessorNames;
     void findPossibleAccessorNames();
@@ -1215,6 +1309,7 @@ public:
     Vector<std::span<const uint8_t>> webAssemblyModules;
     Vector<Layout> layouts;
     Vector<Variable> variables;
+    uint32_t numberOfGeneratorTemplates { 0 };
     Vector<Module> modules;
     Functions functions;
     Vector<unsigned> sizesForInlining;
@@ -1438,6 +1533,7 @@ public:
     Vector<std::pair<LayoutID, FunctionID>> jsonSerializers;
     FunctionID jsonDispatcher;
     Vector<Vector<uint8_t>> formatPatterns;
+    Vector<uint8_t> icuStampOfFormatPatterns;
     StringID nameOfFormatMethod;
     FunctionID jsonSerializerFor(LayoutID layout) const
     {

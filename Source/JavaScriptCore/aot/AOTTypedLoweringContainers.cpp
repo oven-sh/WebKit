@@ -1076,13 +1076,160 @@ Lowering::TypedArrayReceiver Lowering::typedArrayReceiver(CellPointer view)
     return { view, safeIfReaches(view, sizeof(JSArrayBufferView)), { }, { } };
 }
 
+bool Lowering::mayChangeTypedArrayFields(const Loop& loop) const
+{
+    for (size_t b : loop.blocks) {
+        auto& block = m_function.blocks[b];
+        for (size_t i = 0; i < block.values.size(); ++i) {
+            auto& value = m_function.at(block.values[i]);
+            if (value.opcode == Opcode::Await || value.opcode == Opcode::Yield)
+                return true;
+            if ((value.opcode == Opcode::CallDirect ? m_program.at(value.function()).writes : writesOf(m_program, m_function, block, i)) == Writes::Heap)
+                return true;
+        }
+    }
+    return false;
+}
+
+void Lowering::findTypedArraysAccessedInLoops()
+{
+    if (m_loops.isEmpty())
+        return;
+    Vector<std::optional<bool>, 8> mayChangeFields(m_loops.size());
+    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+        if (m_innermostLoop[b] == noLoop)
+            continue;
+        for (ValueID id : m_function.blocks[b].values) {
+            auto& value = m_function.at(id);
+            if ((value.opcode != Opcode::GetByVal && value.opcode != Opcode::PutByVal) || keyedAccessOf(m_program, m_function, value) != KeyedAccess::TypedArray)
+                continue;
+            ValueID array = value.child(0);
+            auto& innermostLoop = m_loops[m_innermostLoop[b]];
+            bool executesOnEveryIteration = true;
+            for (size_t latch : innermostLoop.blocks) {
+                for (auto& target : successorsOf(m_function.blocks[latch].terminator)) {
+                    if (target.block == innermostLoop.header)
+                        executesOnEveryIteration &= dominates(BlockID(b), BlockID(latch));
+                }
+            }
+            if (executesOnEveryIteration)
+                continue;
+            bool hasHoistedView = false;
+            for (unsigned i = 0; i < m_loops.size(); ++i) {
+                auto& loop = m_loops[i];
+                if (!loop.blocks.get(b) || !loop.header.index() || !isLoopInvariant(loop, array))
+                    continue;
+                if (!mayChangeFields[i])
+                    mayChangeFields[i] = mayChangeTypedArrayFields(loop);
+                bool hoistsLength = !*mayChangeFields[i];
+                if (hasHoistedView && !hoistsLength)
+                    continue;
+                if (m_typedArraysHoistedBeforeLoops.isEmpty())
+                    m_typedArraysHoistedBeforeLoops.grow(m_loops.size());
+                auto& hoistedBeforeLoop = m_typedArraysHoistedBeforeLoops[i];
+                size_t index = hoistedBeforeLoop.findIf([&](auto& hoisted) {
+                    return hoisted.array == array;
+                });
+                if (index == notFound) {
+                    index = hoistedBeforeLoop.size();
+                    hoistedBeforeLoop.append(HoistedTypedArray { array });
+                }
+                auto& hoisted = hoistedBeforeLoop[index];
+                m_accessesOfHoistedTypedArrays.set(id.index());
+                if (!hasHoistedView && !hoisted.view) {
+                    hoisted.view = m_proc.addVariable(Int64);
+                    hoisted.isFixedLengthView = m_proc.addVariable(Int32);
+                }
+                hasHoistedView = true;
+                if (!hoistsLength)
+                    continue;
+                if (!hoisted.length) {
+                    hoisted.length = m_proc.addVariable(Int64);
+                    hoisted.vector = m_proc.addVariable(Int64);
+                }
+                break;
+            }
+        }
+    }
+}
+
+void Lowering::hoistTypedArrayFieldsBeforeLoops(const Terminator& terminator)
+{
+    if (m_typedArraysHoistedBeforeLoops.isEmpty())
+        return;
+    auto set = [&](B3::Variable* variable, LValue value) {
+        m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), variable, value);
+    };
+    for (auto& target : successorsOf(terminator)) {
+        for (unsigned i = 0; i < m_loops.size(); ++i) {
+            if (m_loops[i].header != target.block || m_loops[i].blocks.get(m_currentBlockID.index()))
+                continue;
+            for (auto& hoisted : m_typedArraysHoistedBeforeLoops[i]) {
+                TypedArrayReceiver receiver = typedArrayElementReceiver(hoisted.array, true);
+                Word32 isFixedLengthView = receiver.isFixedLengthView;
+                if (!isFixedLengthView) {
+                    isFixedLengthView = hasFixedLength(receiver);
+                    if (receiver.isView)
+                        isFixedLengthView = logicalAnd(receiver.isView, isFixedLengthView);
+                }
+                if (hoisted.view) {
+                    set(hoisted.view, receiver.view.value());
+                    set(hoisted.isFixedLengthView, isFixedLengthView.value());
+                }
+                if (hoisted.length) {
+                    set(hoisted.length, select(isFixedLengthView, loadField<Integer>(receiver.view, m_heaps.JSArrayBufferView_length, receiver.flags), integer(0)).value());
+                    set(hoisted.vector, loadField<Pointer>(receiver.view, m_heaps.JSArrayBufferView_vector, receiver.flags).value());
+                }
+            }
+        }
+    }
+}
+
+Lowering::TypedArrayReceiver Lowering::typedArrayElementReceiver(ValueID object, bool isBeforeLoop)
+{
+    if (m_typedArraysHoistedBeforeLoops.isEmpty() || m_innermostLoop[m_currentBlockID.index()] == noLoop)
+        return typedArrayReceiver(object);
+    if (!isBeforeLoop && !m_accessesOfHoistedTypedArrays.get(currentValue().index()))
+        return typedArrayReceiver(object);
+    auto get = [&](B3::Variable* variable) {
+        return m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), variable);
+    };
+    TypedArrayReceiver receiver;
+    for (unsigned i = 0; i < m_loops.size(); ++i) {
+        if (!m_loops[i].blocks.get(m_currentBlockID.index()))
+            continue;
+        for (auto& hoisted : m_typedArraysHoistedBeforeLoops[i]) {
+            if (hoisted.array != object)
+                continue;
+            if (hoisted.view) {
+                receiver.isHoisted = true;
+                receiver.view = CellPointer(get(hoisted.view));
+                receiver.isFixedLengthView = Word32(get(hoisted.isFixedLengthView));
+            }
+            if (hoisted.length) {
+                receiver.length = Integer(get(hoisted.length));
+                receiver.vector = Pointer(get(hoisted.vector));
+            }
+        }
+    }
+    if (!receiver.isHoisted)
+        return typedArrayReceiver(object);
+    Operand operand = this->get(object);
+    if (operand.rep != Rep::Cell) {
+        receiver.flags = IsSafe;
+        receiver.value = operand.as<Boxed>();
+    }
+    return receiver;
+}
+
 void Lowering::rejectNullish(const TypedArrayReceiver& receiver)
 {
-    if (!receiver.isView)
+    Word32 isView = receiver.isHoisted && receiver.value ? isCell(receiver.value) : receiver.isView;
+    if (!isView)
         return;
     LBasicBlock isNil = newColdBlock();
     LBasicBlock continuation = newColdBlock();
-    m_out.branch(receiver.isView.value(), usually(continuation), rarely(isNil));
+    m_out.branch(isView.value(), usually(continuation), rarely(isNil));
     m_out.appendTo(isNil);
     throwNullish(receiver.value, { });
     m_out.appendTo(continuation);
@@ -1095,17 +1242,24 @@ Word32 Lowering::hasFixedLength(const TypedArrayReceiver& receiver)
 
 Pointer Lowering::findTypedArrayElement(const TypedArrayReceiver& receiver, Integer index, LBasicBlock otherwise, LBasicBlock outside)
 {
-    Word32 hasOwnLength = hasFixedLength(receiver);
-    Word32 hasValidLength = receiver.isView ? logicalAnd(receiver.isView, hasOwnLength) : hasOwnLength;
-    Integer length = select(hasValidLength, loadField<Integer>(receiver.view, m_heaps.JSArrayBufferView_length, receiver.flags), integer(0));
+    Word32 hasOwnLength;
+    Integer length = receiver.length;
+    if (!length) {
+        Word32 hasValidLength = receiver.isFixedLengthView;
+        if (!hasValidLength) {
+            hasOwnLength = hasFixedLength(receiver);
+            hasValidLength = receiver.isView ? logicalAnd(receiver.isView, hasOwnLength) : hasOwnLength;
+        }
+        length = select(hasValidLength, loadField<Integer>(receiver.view, m_heaps.JSArrayBufferView_length, receiver.flags), integer(0));
+    }
     LBasicBlock inside = m_out.newBlock();
     LBasicBlock notInside = newColdBlock();
     m_out.branch(below(index, length).value(), usually(inside), rarely(notInside));
     m_out.appendTo(notInside);
     rejectNullish(receiver);
-    m_out.branch(hasOwnLength.value(), usually(outside), rarely(otherwise));
+    m_out.branch((hasOwnLength ? hasOwnLength : hasFixedLength(receiver)).value(), usually(outside), rarely(otherwise));
     m_out.appendTo(inside);
-    return loadField<Pointer>(receiver.view, m_heaps.JSArrayBufferView_vector, receiver.flags);
+    return receiver.vector.value() ? receiver.vector : loadField<Pointer>(receiver.view, m_heaps.JSArrayBufferView_vector, receiver.flags);
 }
 
 Operand Lowering::getTypedArrayElement(const TypedArrayReceiver& receiver, ValueID key, TypedArrayType arrayType, const Type& type, LBasicBlock otherwise)
@@ -1433,7 +1587,7 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
         m_arrayIsAllocatedAsDouble = indexingTypeAtCreation(typeOf(object)) == ArrayWithDouble;
         return getArrayElement(nonNullish(object, { }), key, type, nullptr, isPredictedNumber(result));
     case KeyedAccess::TypedArray:
-        return getTypedArrayElement(typedArrayReceiver(object), key, typeOf(object).singleEngineClass()->typedArrayType, type);
+        return getTypedArrayElement(typedArrayElementReceiver(object), key, typeOf(object).singleEngineClass()->typedArrayType, type);
     case KeyedAccess::String:
         return getStringElement(stringReceiver(object), key, type);
     case KeyedAccess::Generic:
@@ -1577,7 +1731,7 @@ void Lowering::lowerPutByVal(const Value& value)
         putArrayElement(nonNullish(object, { }), key, stored, nullptr, object);
         return;
     case KeyedAccess::TypedArray:
-        putTypedArrayElement(typedArrayReceiver(object), key, typeOf(object).singleEngineClass()->typedArrayType, stored);
+        putTypedArrayElement(typedArrayElementReceiver(object), key, typeOf(object).singleEngineClass()->typedArrayType, stored);
         return;
     case KeyedAccess::String:
     case KeyedAccess::Generic:
@@ -2367,8 +2521,8 @@ Word32 Lowering::lowerIteratorHasNext(const Value& value)
     auto genericPath = [&] {
         return either<Word32>(isArrayUsedAsIterator(iterator), isInsideArray, [&] {
             if (auto record = recordInFrameOf(iterator))
-                return AOT_TYPED_OPERATION(IterHasInFrame, *record);
-            return AOT_TYPED_OPERATION(IterHas, in<Boxed>(iterator));
+                return low32(Integer(callICStub(Stub::IterHasInFrame, Int64, { { record->value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterHasInFrame>())));
+            return low32(Integer(callICStub(Stub::IterHas, Int64, { { in<Boxed>(iterator).value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterHas>())));
         });
     };
     auto* iteration = stringIteration(iterator);

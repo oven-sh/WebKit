@@ -97,7 +97,8 @@ ALWAYS_INLINE CallFrame* StackVisitor::skipStubFrames(CallFrame* callFrame, Entr
             callFrame = callFrame->callerFrame();
             continue;
         case AOT::ImageAddressInfo::Adapter:
-            adapter = callFrame;
+            if (!adapter)
+                adapter = callFrame;
             callFrame = callerOf(callFrame, entryFrame, returnPC, m_mayVisitAOTFrames);
             continue;
         case AOT::ImageAddressInfo::Function:
@@ -124,11 +125,12 @@ ALWAYS_INLINE void StackVisitor::findCaller(CallFrame* callFrame)
         caller = callFrame->callerFrame();
     } else
         caller = callerOf(callFrame, entryFrame, returnPC, m_mayVisitAOTFrames);
+    bool callerIsInSameEntry = entryFrame == m_frame.m_entryFrame;
     m_frame.m_callerFrame = skipStubFrames(caller, entryFrame, returnPC, adapter);
     m_frame.m_callerReturnPC = returnPC;
     m_frame.m_callerEntryFrame = entryFrame;
     m_frame.m_callerIsEntryFrame = entryFrame != m_frame.m_entryFrame;
-    m_frame.m_aotAdapterFrame = adapter;
+    m_frame.m_aotAdapterFrame = callerIsInSameEntry ? adapter : nullptr;
 }
 
 #if ENABLE(AOT)
@@ -1098,7 +1100,7 @@ String StackVisitor::Frame::sourceURL() const
 #if ENABLE(AOT)
         if (isTypedAOTFrame()) {
             if (auto position = m_aotFunction.reportedPositionFor(bytecodeIndex()); position && position->source)
-                traceLine = AOT::ProgramData::get()->sourceName(position->source);
+                traceLine = AOT::ProgramData::get()->sourceNameInFrames(position->source);
             break;
         }
 #endif

@@ -119,12 +119,14 @@ void setInitializedFields(const Layout& layout, Allocation& allocation)
     allocation.initialFieldCount = static_cast<uint16_t>(allocation.order.size());
 }
 
+static constexpr OpcodeSet allocationsWithShape { Opcode::NewObjectWithShape };
+
 void assignAllocations(const Program& program, Function& function)
 {
     for (auto& block : function.blocks) {
         for (size_t at = 0; at < block.values.size(); ++at) {
             ValueID object = block.values[at];
-            if (function.at(object).opcode != Opcode::NewObjectWithShape)
+            if (!allocationsWithShape.contains(function.at(object).opcode))
                 continue;
             Allocation allocation;
             allocation.layout = function.at(object).layout();
@@ -158,7 +160,8 @@ void assignAllocations(const Program& program, Function& function)
 void assignAllocations(Program& program)
 {
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        assignAllocations(program, program.functions[i]);
+        if (program.functions.mayContain(i, allocationsWithShape))
+            assignAllocations(program, program.functions.atKeepingValueIndex(i));
     });
 }
 
@@ -170,12 +173,12 @@ static bool coerces(const Type& from, const Type& to)
 static void findFieldsWithAnyObjectSubtype(Program& program)
 {
     Vector<Vector<StringID, 2>> matchingFieldNames(program.layouts.size());
-    for (unsigned i = 0; i < program.layouts.size(); ++i) {
-        for (auto& field : program.layouts[i].fields) {
+    forEachIndexInParallel(program.layouts.size(), [&](unsigned i) {
+        for (auto& field : std::as_const(program).layouts[i].fields) {
             if (!field.type || program.at(field.type).anyObject || program.at(field.type).acceptsUntypedObjects(program))
                 matchingFieldNames[i].append(field.name);
         }
-    }
+    });
     Vector<uint32_t> lastLayoutWithName(FillWith { }, program.strings.size(), UINT32_MAX);
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         auto& supertype = program.layouts[i];
@@ -346,27 +349,28 @@ void findRetagTargets(Program& program)
         if (!retaggedTo.get(i) && !isSpecialization.get(i) && !program.layouts[i].checksUntypedObjects())
             trivialCoercion.set(i);
     }
-    BitVector hasOnlyTrivialCoercionFields(numberOfLayouts);
+    Vector<uint8_t> hasOnlyTrivialCoercionFields(FillWith { }, numberOfLayouts, static_cast<uint8_t>(0));
+    Vector<uint8_t> holds(FillWith { }, numberOfLayouts, static_cast<uint8_t>(0));
     for (bool hasChanged = true; hasChanged;) {
         hasChanged = false;
-        for (unsigned i = 0; i < numberOfLayouts; ++i) {
-            auto& layout = program.layouts[i];
-            hasOnlyTrivialCoercionFields.set(i, layout.kind != LayoutKind::Record || !layout.fields.containsIf([&](auto& field) {
+        forEachIndexInParallel(numberOfLayouts, [&](unsigned i) {
+            auto& layout = std::as_const(program).layouts[i];
+            hasOnlyTrivialCoercionFields[i] = layout.kind != LayoutKind::Record || !layout.fields.containsIf([&](auto& field) {
                 if (!field.type || program.at(field.type).objectLayouts.isEmpty())
                     return false;
                 auto& type = program.at(field.type);
                 return !type.acceptsUntypedObjects(program) || type.objectLayouts.containsIf([&](LayoutID supertype) {
                     return !trivialCoercion.get(supertype.index());
                 });
-            }));
-        }
-        for (unsigned i = 0; i < numberOfLayouts; ++i) {
-            if (!trivialCoercion.get(i))
-                continue;
-            bool holds = hasOnlyTrivialCoercionFields.get(i) && std::ranges::all_of(program.layouts[i].subtypes, [&](LayoutID subtype) {
-                return hasOnlyTrivialCoercionFields.get(subtype.index());
             });
-            if (!holds) {
+        });
+        forEachIndexInParallel(numberOfLayouts, [&](unsigned i) {
+            holds[i] = !trivialCoercion.get(i) || (hasOnlyTrivialCoercionFields[i] && std::ranges::all_of(std::as_const(program).layouts[i].subtypes, [&](LayoutID subtype) {
+                return hasOnlyTrivialCoercionFields[subtype.index()];
+            }));
+        });
+        for (unsigned i = 0; i < numberOfLayouts; ++i) {
+            if (!holds[i]) {
                 trivialCoercion.clear(i);
                 hasChanged = true;
             }
@@ -613,17 +617,19 @@ public:
             return;
         unsigned numberOfFunctions = m_program.functions.size();
         m_effects.fill({ }, 2 * numberOfFunctions);
-        m_dependents.fill({ }, 2 * numberOfFunctions);
-        Vector<Vector<std::pair<unsigned, unsigned>>> partsOf(numberOfFunctions);
-        forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
+        auto parts = collectInParallel<std::pair<unsigned, unsigned>>(numberOfFunctions, [&](unsigned i, Vector<std::pair<unsigned, unsigned>>& collected) {
             FunctionID id(i);
-            EffectSummaries(m_program, m_reportsFieldStores).summarizeBody(id, m_effects[anyCallIndex(id)], m_effects[returningCallIndex(id)], partsOf[i]);
+            EffectSummaries(m_program, m_reportsFieldStores).summarizeBody(id, m_effects[anyCallIndex(id)], m_effects[returningCallIndex(id)], collected);
         });
-        for (auto& parts : partsOf) {
-            for (auto [dependent, summary] : parts)
-                dependsOn(dependent, summary);
-        }
-        destroyOnHelperThread(WTF::move(partsOf));
+        Vector<uint32_t> firstDependent(FillWith { }, 2 * numberOfFunctions + 1, 0u);
+        for (auto [dependent, summary] : parts)
+            ++firstDependent[summary + 1];
+        for (unsigned summary = 0; summary < 2 * numberOfFunctions; ++summary)
+            firstDependent[summary + 1] += firstDependent[summary];
+        Vector<unsigned> dependents(parts.size());
+        Vector<uint32_t> nextDependent(firstDependent.span().first(2 * numberOfFunctions));
+        for (auto [dependent, summary] : parts)
+            dependents[nextDependent[summary]++] = dependent;
 
         Vector<unsigned> worklist;
         for (unsigned summary = 0; summary < m_effects.size(); ++summary) {
@@ -632,12 +638,11 @@ public:
         }
         while (!worklist.isEmpty()) {
             unsigned summary = worklist.takeLast();
-            for (unsigned dependent : m_dependents[summary]) {
+            for (unsigned dependent : dependents.span().subspan(firstDependent[summary], firstDependent[summary + 1] - firstDependent[summary])) {
                 if (m_effects[dependent].add(m_effects[summary]))
                     worklist.append(dependent);
             }
         }
-        destroyOnHelperThread(WTF::move(m_dependents));
 
         forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
             FunctionID id(i);
@@ -725,13 +730,6 @@ private:
             }
         }
         return result;
-    }
-
-    void dependsOn(unsigned dependent, unsigned summary)
-    {
-        auto& dependents = m_dependents[summary];
-        if (dependents.isEmpty() || dependents.last() != dependent)
-            dependents.append(dependent);
     }
 
     void summarizeBody(FunctionID id, Effects& anyCallEffects, Effects& returningCallEffects, Vector<std::pair<unsigned, unsigned>>& parts)
@@ -998,7 +996,6 @@ private:
     Program& m_program;
     bool m_reportsFieldStores;
     Vector<Effects> m_effects;
-    Vector<Vector<unsigned, 2>> m_dependents;
     UncheckedKeyHashMap<uint64_t, bool, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_isOnlyInFields;
     UncheckedKeyHashMap<uint64_t, bool, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_storeMayTransition;
 };

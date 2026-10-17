@@ -251,6 +251,13 @@ bool hoistLoopInvariantValues(Procedure& proc)
 #endif
         if (blockLoops.isEmpty())
             continue;
+#if USE(BUN_JSC_ADDITIONS)
+        bool mayHoistFromBlock = !proc.positionIndependent() || blockLoops.containsIf([&](const NaturalLoop* loop) {
+            return data[*loop].blocksGuaranteedToExecute.contains(block);
+        });
+        if (!mayHoistFromBlock)
+            continue;
+#endif
 
         // Values that stay in this block run before everything later in it, so once one of them is a
         // trap barrier nothing after it can be hoisted out on the strength of trapping first.

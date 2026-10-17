@@ -10243,6 +10243,42 @@ static void generateFrontEndTypedCloneObjectImpl(CCallHelpers& jit, bool extends
 }
 static void generateFrontEndTypedCloneObject(CCallHelpers& jit) { generateFrontEndTypedCloneObjectImpl(jit, false); }
 static void generateFrontEndTypedCloneObjectAndExtend(CCallHelpers& jit) { generateFrontEndTypedCloneObjectImpl(jit, true); }
+static void generateFrontEndTypedCloneObjectAndExtendWithNumber(CCallHelpers& jit)
+{
+    constexpr FPRReg value = FPRInfo::argumentFPR0;
+    constexpr GPRReg first = A3;
+    constexpr GPRReg second = A4;
+    constexpr GPRReg boxedDouble = T11;
+    static_assert(noOverlap(A0, A1, A2, first, second, boxedDouble, instanceGPR));
+    jit.moveDoubleTo64(value, boxedDouble);
+#if CPU(ARM64)
+    jit.sub64(GPRInfo::numberTagRegister, boxedDouble);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), first);
+    jit.compareOnFlagsDouble(value, value);
+    jit.m_assembler.csel<64>(boxedDouble, boxedDouble, first, ARM64Assembler::ConditionEQ);
+    jit.convertDoubleToInt32UsingJavaScriptSemantics(value, first);
+    jit.addZeroExtend64(GPRInfo::numberTagRegister, first, first);
+    jit.m_assembler.csel<64>(first, first, boxedDouble, ARM64Assembler::ConditionEQ);
+#else
+    constexpr GPRReg difference = A0;
+    constexpr FPRReg converted = FPRInfo::fpRegT1;
+    jit.truncateDoubleToInt32(value, first);
+    jit.convertInt32ToDouble(first, converted);
+    jit.moveDoubleTo64(converted, difference);
+    jit.add64(numberTag, first);
+    jit.xor64(boxedDouble, difference);
+    jit.sub64(numberTag, boxedDouble);
+    if (CCallHelpers::supportsAVX())
+        jit.m_assembler.vucomisd_rr(value, value);
+    else
+        jit.m_assembler.ucomisd_rr(value, value);
+    jit.m_assembler.cmovq_mr(X86Assembler::ConditionP, static_cast<int>(Instance::offsetOfBoxedNaN()), instanceGPR, boxedDouble);
+    jit.m_assembler.testq_rr(difference, difference);
+    jit.m_assembler.cmovq_rr(X86Assembler::ConditionNE, boxedDouble, first);
+#endif
+    jit.move(TrustedImm32(0), second);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::FrontEndTypedCloneObjectAndExtend });
+}
 static void generateFrontEndTypedCloneObjectWithSubtypeCheck(CCallHelpers& jit)
 {
     constexpr GPRReg source = A1;
@@ -10267,6 +10303,127 @@ static void generateFrontEndTypedCloneObjectWithSubtypeCheck(CCallHelpers& jit)
     isNotRecord.link(&jit);
     jit.move(TrustedImm32(0), keepsLayout);
     s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::FrontEndTypedCloneObject });
+}
+
+static void generateFrontEndTypedCloneObjectAs(CCallHelpers& jit)
+{
+    using CacheEntry = Typed::TypedCloneCacheEntry;
+    using Plan = Typed::TypedClonePlan;
+    using Move = Typed::TypedCloneMove;
+    constexpr GPRReg source = A1;
+    constexpr GPRReg target = A2;
+    constexpr GPRReg counter = A3;
+    constexpr GPRReg value = A4;
+    constexpr GPRReg plan = T11;
+    constexpr GPRReg cursor = plan;
+    constexpr GPRReg result = T9;
+    constexpr GPRReg scratch = A0;
+#if CPU(ARM64)
+    constexpr GPRReg kind = T10;
+#else
+    constexpr GPRReg kind = GPRInfo::returnValueGPR;
+#endif
+    constexpr FPRReg number = FPRInfo::fpRegT0;
+    static_assert(noOverlap(source, target, counter, value, plan, result, scratch, kind, instanceGPR));
+    static_assert(sizeof(CacheEntry) == 32 && sizeof(JSCell) == sizeof(uint64_t));
+    CCallHelpers::JumpList clonesAsPlainObject;
+    CCallHelpers::JumpList asksRuntime;
+    clonesAsPlainObject.append(jit.branchIfNotCell(source));
+    clonesAsPlainObject.append(jit.branchIfNotType(source, FinalObjectType));
+    clonesAsPlainObject.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(source, JSObject::butterflyOffset())));
+    jit.load32(Address(source, JSCell::structureIDOffset()), result);
+    jit.move(target, scratch);
+    jit.urshift64(TrustedImm32(32), scratch);
+    jit.xor32(target, scratch);
+    jit.xor32(result, scratch);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(CacheEntry::multiplier)), scratch, plan);
+    jit.urshift32(TrustedImm32(32 - CacheEntry::indexBits), plan);
+    jit.lshift32(TrustedImm32(5), plan);
+    jit.addPtr(Address(instanceGPR, Instance::offsetOfTypedCloneCache()), plan);
+    asksRuntime.append(jit.branch32(CCallHelpers::NotEqual, result, Address(plan, OBJECT_OFFSETOF(CacheEntry, structureID))));
+    asksRuntime.append(jit.branch64(CCallHelpers::NotEqual, target, Address(plan, OBJECT_OFFSETOF(CacheEntry, target))));
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(CacheEntry, plan)), plan);
+    jit.load32(Address(plan, OBJECT_OFFSETOF(Plan, path)), scratch);
+    clonesAsPlainObject.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(Plan::Path::PlainClone))));
+    asksRuntime.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(Plan::Path::Stub))));
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(Plan, allocator)), scratch);
+    jit.emitAllocateWithNonNullAllocator(result, JITAllocator::variable(), scratch, counter, asksRuntime, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.load64(Address(plan, OBJECT_OFFSETOF(Plan, header)), scratch);
+    jit.store64(scratch, Address(result));
+    jit.load32(Address(plan, OBJECT_OFFSETOF(Plan, bodyWordCount)), counter);
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(Plan, bodyWords)), scratch);
+    CCallHelpers::Label copiesWord = jit.label();
+    jit.load64(CCallHelpers::BaseIndex(scratch, counter, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(uint64_t))), value);
+    jit.store64(value, CCallHelpers::BaseIndex(result, counter, CCallHelpers::TimesEight));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), counter).linkTo(copiesWord, &jit);
+    jit.load32(Address(plan, OBJECT_OFFSETOF(Plan, moveCount)), counter);
+    Jump hasNoMoves = jit.branchTest32(CCallHelpers::Zero, counter);
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(Plan, firstMove)), cursor);
+    CCallHelpers::BaseIndex slot(result, scratch, CCallHelpers::TimesOne);
+    CCallHelpers::Label moves = jit.label();
+    jit.load16(Address(cursor, OBJECT_OFFSETOF(Move, from)), scratch);
+    jit.load64(CCallHelpers::BaseIndex(source, scratch, CCallHelpers::TimesOne), value);
+    jit.load8(Address(cursor, OBJECT_OFFSETOF(Move, kind)), kind);
+    jit.load16(Address(cursor, OBJECT_OFFSETOF(Move, to)), scratch);
+    Jump isNumber = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(Move::Kind::NumberAsDouble)));
+    Jump isInlineInt32 = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(Move::Kind::NumberAsInlineInt32)));
+    Jump isBoolean = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(Move::Kind::BooleanAsByte)));
+    Jump isString = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Move::Kind::Value)));
+    jit.store64(value, slot);
+    CCallHelpers::Label advances = jit.label();
+    jit.addPtr(TrustedImm32(sizeof(Move)), cursor);
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), counter).linkTo(moves, &jit);
+    hasNoMoves.link(&jit);
+    fenceAfterAllocation(jit, scratch);
+    jit.move(result, GPRInfo::returnValueGPR);
+    jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+    jit.ret();
+
+    isNumber.link(&jit);
+    Jump isNotInt32 = jit.branch64(CCallHelpers::Below, value, numberTag);
+    jit.convertInt32ToDouble(value, number);
+    jit.storeDouble(number, slot);
+    jit.jump().linkTo(advances, &jit);
+    isNotInt32.link(&jit);
+    clonesAsPlainObject.append(jit.branchTest64(CCallHelpers::Zero, value, numberTag));
+    jit.add64(numberTag, value);
+    jit.store64(value, slot);
+    jit.jump().linkTo(advances, &jit);
+
+    isInlineInt32.link(&jit);
+    clonesAsPlainObject.append(jit.branch64(CCallHelpers::Below, value, numberTag));
+    clonesAsPlainObject.append(jit.branch32(CCallHelpers::LessThan, value, TrustedImm32(Typed::minInlineInt32)));
+    jit.store32(value, slot);
+    jit.jump().linkTo(advances, &jit);
+
+    isString.link(&jit);
+    Jump isNotCell = jit.branchIfNotCell(value);
+    clonesAsPlainObject.append(jit.branchIfNotString(value));
+    encodeCell32(jit, value, value);
+    jit.store32(value, slot);
+    jit.jump().linkTo(advances, &jit);
+    isNotCell.link(&jit);
+    clonesAsPlainObject.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Move::Kind::NullableStringAsCell32))));
+    jit.store32(value, slot);
+    jit.and64(TrustedImm32(~JSValue::UndefinedTag), value);
+    clonesAsPlainObject.append(jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueNull)));
+    jit.jump().linkTo(advances, &jit);
+
+    isBoolean.link(&jit);
+    jit.xor64(TrustedImm32(JSValue::ValueFalse), value);
+    clonesAsPlainObject.append(jit.branchTest64(CCallHelpers::NonZero, value, TrustedImm32(~1)));
+    jit.store8(value, slot);
+    jit.jump().linkTo(advances, &jit);
+
+    clonesAsPlainObject.link(&jit);
+    jit.move(TrustedImm32(0), A2);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::FrontEndTypedCloneObject });
+
+    asksRuntime.link(&jit);
+    jit.move(instanceGPR, A0);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedCloneObjectAs) * sizeof(void*)), T9);
+    jit.farJump(T9, OperationPtrTag);
 }
 
 static void generateFrontEndTypedGetExtra(CCallHelpers& jit)
@@ -11983,7 +12140,24 @@ static void generateDefinitionUnderKey(CCallHelpers& jit, Entry operation)
     CCallHelpers::Label isDefined = returnAfterStoring(jit, R0);
 
     needsNewStorage.link(&jit);
+    Jump isOnTypedObject = jit.branch32(CCallHelpers::AboveOrEqual, Address(A3, OBJECT_OFFSETOF(Instance::KeyedAddition, epoch)), TrustedImm32(static_cast<int32_t>(Instance::keyedExtraPropertyAdditionSeenOnce)));
     defineInNewStorage(jit, miss, isDefined);
+
+    isOnTypedObject.link(&jit);
+    miss.append(jit.branch32(CCallHelpers::NotEqual, Address(A3, OBJECT_OFFSETOF(Instance::KeyedAddition, epoch)), TrustedImm32(static_cast<int32_t>(Instance::keyedAdditionIsExtraProperty))));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T12);
+    jit.loadPtr(Address(T12, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), T12);
+    miss.append(jit.branchTestPtr(CCallHelpers::Zero, T12));
+    jit.load16(Address(T12, MegamorphicCache::offsetOfEpoch()), T12);
+    jit.load16(Address(A3, OBJECT_OFFSETOF(Instance::KeyedAddition, holderValueCount) + Instance::keyedExtraPropertyEpochShift / 8), T13);
+    miss.append(jit.branch32(CCallHelpers::NotEqual, T12, T13));
+    CCallHelpers::JumpList cannotAdd;
+    jit.move(A1, T13);
+    jit.move(A2, A1);
+    jit.addPtr(TrustedImm32(OBJECT_OFFSETOF(Instance::KeyedAddition, newStorageCapacity) - PropertyLookupTable::offsetOfPayloads), A3);
+    storeExtraProperty(jit, A3, cannotAdd, true);
+    cannotAdd.link(&jit);
+    jit.move(T13, A1);
 
     miss.link(&jit);
     callOperationOnThree(jit, operation);
@@ -13699,8 +13873,8 @@ static void adapt(CCallHelpers& jit, GPRReg word, GPRReg instance, AdapterPasses
 #endif
         jit.jump().linkTo(ready, &jit);
         takesList.link(&jit);
-        ASSERT(noOverlap(word, argumentListGPR));
-        jit.addPtr(TrustedImm32(virtualRegisterForArgumentIncludingThis(1).offset() * static_cast<int>(sizeof(Register))), GPRInfo::callFrameRegister, argumentListGPR);
+        jit.move(countGPR, argumentGPR(0));
+        jit.addPtr(TrustedImm32(virtualRegisterForArgumentIncludingThis(1).offset() * static_cast<int>(sizeof(Register))), GPRInfo::callFrameRegister, argumentGPR(1));
         jit.jump().linkTo(ready, &jit);
     }
 }
@@ -14526,11 +14700,18 @@ static void enterClosure(CCallHelpers& jit, unsigned count, CCallHelpers::JumpLi
     jit.jump().linkTo(enter, &jit);
 
     takesList.link(&jit);
-    static_assert(argumentListGPR == T13 && noOverlap(T11, countGPR, argumentListGPR));
-    toCodeAddress(jit, T11, T13);
-    jit.move(TrustedImm32(count), countGPR);
-    jit.move(TrustedImm32(0), argumentListGPR);
-    jit.farJump(T11, JSEntryPtrTag);
+    testStackBeforeEntering(jit);
+    dropCollapsibleCallerFrames(jit, T13);
+    jit.emitFunctionPrologue();
+    if (count)
+        jit.subPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(count * sizeof(Register))), CCallHelpers::stackPointerRegister);
+    for (unsigned i = 0; i < count; ++i)
+        jit.store64(argumentGPR(i), Address(CCallHelpers::stackPointerRegister, i * sizeof(Register)));
+    toCodeAddress(jit, T11, T13, StackIsTested::Yes);
+    jit.move(TrustedImm32(count), argumentGPR(0));
+    jit.move(CCallHelpers::stackPointerRegister, argumentGPR(1));
+    jit.move(T11, callTargetGPR);
+    jit.jump().linkTo(callTargetWithList(), &jit);
 }
 
 static Jump enterClosureWithStructure(CCallHelpers& jit, unsigned count, CCallHelpers::JumpList& isNotCallable)
@@ -14589,10 +14770,12 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
         closureTakesList.link(&jit);
         if (count)
             jit.move(TrustedImm32(*count), countGPR);
-        static_assert(noOverlap(callTargetGPR, countGPR, argumentListGPR));
+        dropCollapsibleCallerFrames(jit, callTemporaryGPR);
+        spill();
+        jit.move(countGPR, argumentGPR(0));
+        jit.addPtr(TrustedImm32(outgoingFrameSlot(CallFrameSlot::thisArgument, sizeof(Register)).offset), CCallHelpers::stackPointerRegister, argumentGPR(1));
         jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), callTargetGPR);
-        jit.move(TrustedImm32(0), argumentListGPR);
-        jit.farJump(callTargetGPR, JSEntryPtrTag);
+        jit.jump().linkTo(callTargetWithList(), &jit);
         notClosure.link(&jit);
     }
 
@@ -14632,9 +14815,6 @@ static void generateConstructClosureList(CCallHelpers& jit)
     static_assert(noOverlap(T11, T13, countGPR, calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1)));
     Jump takesRegisters = jit.branchTest64(CCallHelpers::Zero, T11, CCallHelpers::TrustedImm64(1LL << ClosureWord::isListBit));
     toCodeAddress(jit, T11, T13);
-    static_assert(noOverlap(T11, countGPR, argumentListGPR));
-    jit.move(argumentGPR(0), countGPR);
-    jit.move(argumentGPR(1), argumentListGPR);
     jit.farJump(T11, JSEntryPtrTag);
     takesRegisters.link(&jit);
     toCodeAddress(jit, T11, T13);
@@ -14655,9 +14835,6 @@ static void generateCallListTo(CCallHelpers& jit, CodeSpecializationKind kind)
             isNot.append(jit.branchTest64(CCallHelpers::NonZero, callTargetGPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit))));
             Jump closureTakesRegisters = jit.branchTest64(CCallHelpers::Zero, callTargetGPR, CCallHelpers::TrustedImm64(1LL << ClosureWord::isListBit));
             toCodeAddress(jit, callTargetGPR, T13);
-            static_assert(noOverlap(callTargetGPR, countGPR, argumentListGPR));
-            jit.move(argumentGPR(0), countGPR);
-            jit.move(argumentGPR(1), argumentListGPR);
             jit.farJump(callTargetGPR, JSEntryPtrTag);
             closureTakesRegisters.link(&jit);
             toCodeAddress(jit, callTargetGPR, T13);
@@ -18221,6 +18398,158 @@ static void generateAsyncIteratorNext(CCallHelpers& jit)
     jit.breakpoint();
 #endif
 }
+
+static void emitMarkerAfterGeneratorBodyCall(CCallHelpers& jit)
+{
+#if CPU(ARM64)
+    jit.m_assembler.mov<64>(ARM64Registers::x12, ARM64Registers::x12);
+#else
+    for (uint8_t byte : { 0x0f, 0x1f, 0x44, 0x26, 0x41 })
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+#endif
+}
+
+static void generateStepGenerator(CCallHelpers& jit, Typed::Generator::StepCheck check)
+{
+    using Typed::Generator;
+    constexpr GPRReg fp = GPRInfo::callFrameRegister;
+    constexpr GPRReg generator = A0;
+    constexpr GPRReg mode = A1;
+    constexpr GPRReg sent = A2;
+    constexpr GPRReg scratch = T9;
+    constexpr GPRReg frame = T10;
+    constexpr GPRReg closure = T11;
+    constexpr int32_t offsetOfGenerator = Generator::generatorSlotInStubFrame * static_cast<int32_t>(sizeof(void*));
+    static_assert(noOverlap(generator, mode, sent, scratch, frame, closure, instanceGPR) && noOverlap(GPRInfo::returnValueGPR, scratch, closure));
+    static_assert(!static_cast<int32_t>(Generator::ResumeMode::Next) && Typed::CoroutineFrame::completedState < 0);
+    Address status { instanceGPR, static_cast<int32_t>(Instance::offsetOfGeneratorStepStatus()) };
+
+    CCallHelpers::JumpList isNotStepped;
+    auto requireUnmodified = [&] {
+        isNotStepped.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfHasOtherPrototype())));
+        isNotStepped.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(generator, JSObject::butterflyOffset())));
+    };
+    if (check == Generator::StepCheck::IsGenerator || check == Generator::StepCheck::IsUnmodifiedGenerator) {
+        isNotStepped.append(jit.branchIfNotCell(generator));
+        jit.load32(Address(generator, JSCell::structureIDOffset()), scratch);
+        structureWithID(jit, scratch);
+        jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), closure);
+        isNotStepped.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(closure, static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*))));
+    }
+    if (check == Generator::StepCheck::IsUnmodifiedGenerator || check == Generator::StepCheck::IsUnmodified)
+        requireUnmodified();
+    if (check == Generator::StepCheck::IsUnmodifiedUnlessNext) {
+        Jump isNext = jit.branchTest32(CCallHelpers::Zero, mode);
+        requireUnmodified();
+        isNext.link(&jit);
+    }
+    isNotStepped.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfIsRunning())));
+    jit.loadPtr(Address(generator, Generator::offsetOfResumeClosure()), closure);
+    jit.load32(Address(generator, Generator::offsetOfOffsetOfState()), scratch);
+    jit.loadPtr(Address(closure, Typed::Closure::offsetOfCaptures()), frame);
+    jit.load32(CCallHelpers::BaseIndex(frame, scratch, CCallHelpers::TimesOne), scratch);
+    isNotStepped.append(jit.branch32(CCallHelpers::LessThan, scratch, TrustedImm32(0)));
+    Jump hasStarted = jit.branchTest32(CCallHelpers::NonZero, scratch);
+    isNotStepped.append(jit.branchTest32(CCallHelpers::NonZero, mode));
+    hasStarted.link(&jit);
+
+    jit.store8(TrustedImm32(1), Address(generator, Generator::offsetOfIsRunning()));
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(stackAlignmentBytes()), CCallHelpers::stackPointerRegister);
+    jit.storePtr(generator, Address(fp, offsetOfGenerator));
+    jit.move(frame, A0);
+    jit.load32(Address(closure, Typed::Closure::offsetOfEntry()), closure);
+    toCodeAddress(jit, closure, scratch, StackIsTested::Yes);
+    jit.call(closure, JSEntryPtrTag);
+    emitMarkerAfterGeneratorBodyCall(jit);
+    jit.loadPtr(Address(fp, offsetOfGenerator), scratch);
+    jit.emitFunctionEpilogue();
+    jit.store8(TrustedImm32(0), Address(scratch, Generator::offsetOfIsRunning()));
+    jit.loadPtr(Address(scratch, Generator::offsetOfResumeClosure()), closure);
+    jit.load32(Address(scratch, Generator::offsetOfOffsetOfState()), scratch);
+    jit.loadPtr(Address(closure, Typed::Closure::offsetOfCaptures()), closure);
+    jit.load32(CCallHelpers::BaseIndex(closure, scratch, CCallHelpers::TimesOne), scratch);
+    jit.compare32(CCallHelpers::Equal, scratch, TrustedImm32(Typed::CoroutineFrame::completedState), scratch);
+    static_assert(!Generator::didYield && Generator::didComplete == 1);
+    jit.store32(scratch, status);
+    jit.ret();
+
+    isNotStepped.link(&jit);
+    jit.store32(TrustedImm32(Generator::wasNotStepped), status);
+    jit.ret();
+}
+
+static void generateIterHas(CCallHelpers& jit, bool recordIsInFrame)
+{
+    using Typed::Generator;
+    constexpr GPRReg fp = GPRInfo::callFrameRegister;
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
+    constexpr GPRReg generator = A0;
+    constexpr GPRReg record = A1;
+    constexpr GPRReg scratch = T9;
+    constexpr GPRReg frame = T10;
+    constexpr GPRReg closure = T11;
+    constexpr int32_t offsetOfGenerator = Generator::generatorSlotInStubFrame * static_cast<int32_t>(sizeof(void*));
+    constexpr int32_t offsetOfRecord = offsetOfGenerator - static_cast<int32_t>(sizeof(void*));
+    static_assert(noOverlap(generator, record, A2, scratch, frame, closure, instanceGPR) && noOverlap(result, scratch, frame, closure));
+    static_assert(stackAlignmentBytes() == 2 * sizeof(void*));
+    auto word = [&](GPRReg base, unsigned index) {
+        return Address(base, static_cast<int32_t>((recordIsInFrame ? 0 : JSCellButterfly::offsetOfData()) + index * sizeof(EncodedJSValue)));
+    };
+
+    CCallHelpers::JumpList slowCases;
+    static_assert(std::endian::native == std::endian::little);
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, word(record, 1), TrustedImm32(Typed::CollectionIteration::iteratesGenerator)));
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, word(record, 1).withOffset(sizeof(uint32_t)), TrustedImm32(static_cast<int32_t>(JSValue::NumberTag >> 32))));
+    jit.loadPtr(word(record, 0), generator);
+    slowCases.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfIsRunning())));
+    jit.loadPtr(Address(generator, Generator::offsetOfResumeClosure()), closure);
+    jit.load32(Address(generator, Generator::offsetOfOffsetOfState()), scratch);
+    jit.loadPtr(Address(closure, Typed::Closure::offsetOfCaptures()), frame);
+    jit.load32(CCallHelpers::BaseIndex(frame, scratch, CCallHelpers::TimesOne), scratch);
+    slowCases.append(jit.branch32(CCallHelpers::LessThan, scratch, TrustedImm32(0)));
+
+    jit.store8(TrustedImm32(1), Address(generator, Generator::offsetOfIsRunning()));
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(stackAlignmentBytes()), CCallHelpers::stackPointerRegister);
+    jit.storePtr(generator, Address(fp, offsetOfGenerator));
+    jit.storePtr(record, Address(fp, offsetOfRecord));
+    jit.move(frame, A0);
+    jit.move(TrustedImm32(static_cast<int32_t>(Generator::ResumeMode::Next)), A1);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), A2);
+    jit.load32(Address(closure, Typed::Closure::offsetOfEntry()), closure);
+    toCodeAddress(jit, closure, scratch, StackIsTested::Yes);
+    jit.call(closure, JSEntryPtrTag);
+    emitMarkerAfterGeneratorBodyCall(jit);
+    jit.loadPtr(Address(fp, offsetOfGenerator), scratch);
+    jit.loadPtr(Address(fp, offsetOfRecord), frame);
+    jit.emitFunctionEpilogue();
+    jit.store64(result, word(frame, 2));
+    jit.store8(TrustedImm32(0), Address(scratch, Generator::offsetOfIsRunning()));
+    jit.loadPtr(Address(scratch, Generator::offsetOfResumeClosure()), closure);
+    jit.load32(Address(scratch, Generator::offsetOfOffsetOfState()), scratch);
+    jit.loadPtr(Address(closure, Typed::Closure::offsetOfCaptures()), closure);
+    jit.load32(CCallHelpers::BaseIndex(closure, scratch, CCallHelpers::TimesOne), scratch);
+    jit.compare32(CCallHelpers::NotEqual, scratch, TrustedImm32(Typed::CoroutineFrame::completedState), result);
+    if (recordIsInFrame)
+        jit.ret();
+    else
+        generateWriteBarrier(jit, frame);
+
+    slowCases.link(&jit);
+    jit.move(TrustedImm32(static_cast<unsigned>(recordIsInFrame ? Entry::operationAOTTypedIterHasInFrame : Entry::operationAOTTypedIterHas) * sizeof(void*)), T9);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
+}
+
+static void generateIterHasInFrame(CCallHelpers& jit) { generateIterHas(jit, true); }
+static void generateIterHas(CCallHelpers& jit) { generateIterHas(jit, false); }
+
+static void generateStepGenerator(CCallHelpers& jit) { generateStepGenerator(jit, Typed::Generator::StepCheck::None); }
+static void generateStepGeneratorUnmodifiedUnlessNext(CCallHelpers& jit) { generateStepGenerator(jit, Typed::Generator::StepCheck::IsUnmodifiedUnlessNext); }
+static void generateStepGeneratorIfUnmodified(CCallHelpers& jit) { generateStepGenerator(jit, Typed::Generator::StepCheck::IsUnmodified); }
+static void generateStepIfGenerator(CCallHelpers& jit) { generateStepGenerator(jit, Typed::Generator::StepCheck::IsGenerator); }
+static void generateStepIfUnmodifiedGenerator(CCallHelpers& jit) { generateStepGenerator(jit, Typed::Generator::StepCheck::IsUnmodifiedGenerator); }
 
 static void generateAwaitInAsyncGenerator(CCallHelpers& jit)
 {

@@ -301,6 +301,9 @@ protected:
 private:
     friend class CheckSpecial;
     friend class PatchpointSpecial;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ProcedureFingerprint;
+#endif
     friend class StackmapGenerationParams;
     friend class StackmapSpecial;
     

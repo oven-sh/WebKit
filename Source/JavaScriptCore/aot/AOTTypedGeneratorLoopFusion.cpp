@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTTypedData.h"
+#include "AOTTypedObject.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -25,6 +27,7 @@ public:
 
     unsigned run()
     {
+        forgetDeclarationsOfCreatedGenerators();
         Vector<ValueID> opens;
         for (auto& block : m_function.blocks) {
             for (ValueID id : block.values) {
@@ -45,6 +48,12 @@ public:
         for (ValueID call : calls)
             changed += fuseSteps(call) || fuseSpread(call);
         return changed;
+    }
+
+    unsigned stepWhatIsNotFused()
+    {
+        unsigned changed = stepDeclaredGeneratorsInPlace();
+        return changed + keepIteratorResultsInParts();
     }
 
 private:
@@ -683,6 +692,487 @@ private:
         return true;
     }
 
+    bool isCreatedGenerator(ValueID id)
+    {
+        auto& value = at(id);
+        if (value.opcode != Opcode::CallDirect || value.isJumpToContinuation())
+            return false;
+        auto& ramp = m_program.at(value.function());
+        return ramp.resumeFunction && !ramp.startFunction && (ramp.declaredAs & (functionIsAsync | functionIsGenerator)) == functionIsGenerator;
+    }
+
+    bool isDeclaredGenerator(ValueID id) { return m_program.operationOf(at(id)) == Operations::DeclaredGenerator; }
+
+    void replaceUses(ValueID from, ValueID to)
+    {
+        auto replace = [&](ValueID& child) {
+            if (child == from)
+                child = to;
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values)
+                at(id).forEachChild(replace);
+            block.terminator.forEachChild(replace);
+        }
+    }
+
+    void forgetDeclarationsOfCreatedGenerators()
+    {
+        Vector<ValueID, 4> declarations;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                if (isDeclaredGenerator(id) && isCreatedGenerator(at(id).arguments[0]))
+                    declarations.append(id);
+            }
+        }
+        for (ValueID id : declarations) {
+            replaceUses(id, at(id).arguments[0]);
+            remove(id);
+        }
+    }
+
+    ValueID appendOperation(BlockID block, BuiltinID which, TypeID type, const Value& like, std::initializer_list<ValueID> arguments)
+    {
+        Value value = make(Opcode::Operation, type, like);
+        value.immediates[0] = which.index();
+        for (ValueID argument : arguments)
+            value.arguments.append(argument);
+        return append(block, WTF::move(value));
+    }
+
+    Value makeBoolean(bool boolean, const Value& like)
+    {
+        Value value = make(Opcode::Boolean, m_program.types.boolean, like);
+        value.immediates[0] = boolean;
+        return value;
+    }
+
+    ValueID prepend(BlockID block, Value&& value)
+    {
+        ValueID id(m_function.values.size());
+        m_function.values.append(WTF::move(value));
+        at(block).values.insert(0, id);
+        return id;
+    }
+
+    void branch(BlockID block, ValueID condition, BlockID then, BlockID otherwise)
+    {
+        auto& terminator = at(block).terminator;
+        terminator = Terminator { };
+        terminator.kind = TerminatorKind::Branch;
+        terminator.value = condition;
+        terminator.targets.append(Target { then, { } });
+        terminator.targets.append(Target { otherwise, { } });
+    }
+
+    unsigned useCountOf(ValueID id)
+    {
+        unsigned count = 0;
+        auto look = [&](ValueID& child) {
+            count += child == id;
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID user : block.values)
+                at(user).forEachChild(look);
+            block.terminator.forEachChild(look);
+        }
+        return count;
+    }
+
+    struct StepSite {
+        ValueID call;
+        ValueID generator;
+        ValueID method;
+        int64_t mode;
+    };
+
+    std::optional<StepSite> stepSiteAt(ValueID id)
+    {
+        static constexpr ASCIILiteral names[] = { "next"_s, "return"_s, "throw"_s };
+        static_assert(!static_cast<int>(JSGenerator::ResumeMode::NormalMode) && static_cast<int>(JSGenerator::ResumeMode::ReturnMode) == 1 && static_cast<int>(JSGenerator::ResumeMode::ThrowMode) == 2);
+        auto& call = at(id);
+        if (call.arguments.size() > 1 || call.mustBeProperTailCall || call.isOnSlowPath || !m_program.at(call.type).anyObject)
+            return std::nullopt;
+        StepSite site { id, { }, { }, 0 };
+        ValueID receiver;
+        StringID name;
+        if (call.opcode == Opcode::CallMethod) {
+            receiver = call.child(0);
+            name = call.string();
+        } else if (call.opcode == Opcode::Call && call.child(1) && at(call.child(0)).opcode == Opcode::GetById) {
+            site.method = call.child(0);
+            receiver = at(site.method).child(0);
+            name = at(site.method).string();
+        } else
+            return std::nullopt;
+        if (isDeclaredGenerator(receiver))
+            site.generator = at(receiver).arguments[0];
+        else if (isCreatedGenerator(receiver))
+            site.generator = receiver;
+        else
+            return std::nullopt;
+        if (site.method && ((call.child(1) != receiver && call.child(1) != site.generator) || useCountOf(site.method) != 1))
+            return std::nullopt;
+        for (unsigned mode = 0; mode < std::size(names); ++mode) {
+            if (auto known = m_program.find(asBytes(names[mode].span8())); known && *known == name) {
+                site.mode = mode;
+                return site;
+            }
+        }
+        return std::nullopt;
+    }
+
+    unsigned stepDeclaredGeneratorsInPlace()
+    {
+        Vector<ValueID, 4> calls;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                if (stepSiteAt(id))
+                    calls.append(id);
+            }
+        }
+        for (ValueID call : calls)
+            stepInPlace(*stepSiteAt(call));
+        return calls.size();
+    }
+
+    void stepInPlace(const StepSite& step)
+    {
+        ValueID isUnmodified;
+        if (step.method) {
+            Site site = siteOf(step.method);
+            Value like = at(step.method);
+            Cut cut = cutAt(site);
+            BlockID reads = addBlock();
+            BlockID isKnown = addBlock();
+            BlockID found = addBlock();
+            if (isCreatedGenerator(step.generator))
+                isUnmodified = appendOperation(site.block, Operations::IsUnmodifiedGenerator, m_program.types.boolean, like, { step.generator, append(site.block, makeBoolean(true, like)) });
+            else
+                isUnmodified = appendOperation(site.block, Operations::IsUnmodifiedGenerator, m_program.types.boolean, like, { step.generator });
+            branch(site.block, isUnmodified, isKnown, reads);
+            ValueID method = addParameter(found, m_program.types.anything, like);
+            replaceUses(step.method, method);
+            at(step.method).children[0] = step.generator;
+            at(reads).values.append(step.method);
+            jump(reads, Target { found, { step.method } }, cut.handler);
+            jump(isKnown, Target { found, { append(isKnown, make(Opcode::Undefined, m_program.types.undefined, like)) } });
+            jump(found, cut.after);
+        }
+        static constexpr Generator::ResumeMode modes[] = { Generator::ResumeMode::Next, Generator::ResumeMode::Return, Generator::ResumeMode::Throw };
+        Site site = siteOf(step.call);
+        Value like = at(step.call);
+        Cut cut = cutAt(site);
+        BlockID steps = step.method ? addBlock() : site.block;
+        BlockID asks = addBlock();
+        BlockID wasStepped = addBlock();
+        BlockID calls = addBlock();
+        BlockID stepped = addBlock();
+        if (step.method)
+            branch(site.block, isUnmodified, steps, calls);
+
+        ValueID result = addParameter(stepped, like.type, like);
+        replaceUses(step.call, result);
+
+        ValueID sent = like.arguments.isEmpty() ? append(steps, make(Opcode::Undefined, m_program.types.undefined, like)) : like.arguments[0];
+        ValueID mode = appendInteger(steps, static_cast<int64_t>(modes[step.mode]), m_program.types.int32, like);
+        ValueID check = appendInteger(steps, static_cast<int64_t>(step.method ? Generator::StepCheck::None : isCreatedGenerator(step.generator) ? Generator::StepCheck::IsUnmodified : Generator::StepCheck::IsUnmodifiedGenerator), m_program.types.int32, like);
+        ValueID value = appendOperation(steps, Operations::StepGenerator, m_program.types.anything, like, { step.generator, mode, sent, check });
+        jump(steps, Target { asks, { } }, cut.handler);
+
+        ValueID status = appendOperation(asks, Operations::GeneratorStepStatus, m_program.types.int32, like, { value });
+        ValueID wasNotStepped = appendCompare(asks, Opcode::StrictEq, status, appendInteger(asks, Generator::wasNotStepped, m_program.types.int32, like), like);
+        BlockID otherwise = calls;
+        if (step.method) {
+            otherwise = addBlock();
+            ValueID modeInEngine = appendInteger(otherwise, step.mode, m_program.types.int32, like);
+            jump(otherwise, Target { stepped, { appendOperation(otherwise, Operations::ResumeGenerator, like.type, like, { step.generator, modeInEngine, sent }) } }, cut.handler);
+        }
+        branch(asks, wasNotStepped, otherwise, wasStepped);
+
+        ValueID isDone = appendCompare(wasStepped, Opcode::StrictEq, status, appendInteger(wasStepped, Generator::didComplete, m_program.types.int32, like), like);
+        jump(wasStepped, Target { stepped, { appendOperation(wasStepped, Operations::MakeIteratorResult, m_program.types.object, like, { value, isDone }) } });
+
+        auto& call = at(step.call);
+        call.isOnSlowPath = true;
+        call.isInTailPosition = false;
+        if (call.opcode == Opcode::CallMethod)
+            call.children[0] = step.generator;
+        at(calls).values.append(step.call);
+        jump(calls, Target { stepped, { step.call } }, cut.handler);
+        jump(stepped, cut.after);
+    }
+
+    struct ResultParts {
+        ValueID object;
+        ValueID value;
+        ValueID isDone;
+        ValueID isInParts;
+    };
+
+    unsigned keepIteratorResultsInParts()
+    {
+        auto done = m_program.find(asBytes("done"_s.span8()));
+        auto value = m_program.find(asBytes("value"_s.span8()));
+        if (!done || !value)
+            return 0;
+        unsigned count = m_function.values.size();
+        BitVector isResult(count);
+        Vector<ValueID, 8> results;
+        auto add = [&](ValueID id) {
+            if (!isResult.set(id.index()))
+                results.append(id);
+        };
+        struct Literal {
+            ValueID value;
+            ValueID isDone;
+            ValueID definesValue;
+            ValueID definesDone;
+            bool hasOtherProperties { false };
+        };
+        UncheckedKeyHashMap<uint32_t, Literal, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> literals;
+        auto definedLiteral = [&](const Value& user) {
+            bool defines = m_program.operationOf(user) == Operations::DefineField && user.arguments.size() == 3 && at(user.arguments[0]).opcode == Opcode::NewObject && user.arguments[2] != user.arguments[0];
+            return defines ? user.arguments[0] : ValueID();
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& user = at(id);
+                if (m_program.operationOf(user) == Operations::MakeIteratorResult)
+                    add(id);
+                ValueID object = definedLiteral(user);
+                if (!object)
+                    continue;
+                auto& literal = literals.add(object.index(), Literal { }).iterator->value;
+                auto& key = at(user.arguments[1]);
+                if (key.opcode == Opcode::String && key.string() == *value && !literal.definesValue) {
+                    literal.value = user.arguments[2];
+                    literal.definesValue = id;
+                } else if (key.opcode == Opcode::String && key.string() == *done && !literal.definesDone && m_program.at(at(user.arguments[2]).type).isBoolean()) {
+                    literal.isDone = user.arguments[2];
+                    literal.definesDone = id;
+                } else
+                    literal.hasOtherProperties = true;
+            }
+        }
+        literals.removeIf([](auto& entry) {
+            return entry.value.hasOtherProperties || !entry.value.definesValue || !entry.value.definesDone;
+        });
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                if (at(id).opcode == Opcode::NewObject && literals.contains(id.index()))
+                    add(id);
+            }
+        }
+        if (results.isEmpty())
+            return 0;
+        Vector<uint32_t> group(count);
+        for (unsigned i = 0; i < count; ++i)
+            group[i] = i;
+        auto groupOf = [&](ValueID id) {
+            uint32_t index = id.index();
+            while (group[index] != index)
+                index = group[index] = group[group[index]];
+            return index;
+        };
+        auto unite = [&](ValueID a, ValueID b) {
+            group[groupOf(a)] = groupOf(b);
+        };
+        for (size_t known = 0; known != results.size();) {
+            known = results.size();
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    if (at(id).opcode == Opcode::Cast && isResult.get(at(id).child(0).index())) {
+                        add(id);
+                        unite(id, at(id).child(0));
+                    }
+                }
+                for (auto& target : block.terminator.targets) {
+                    for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                        if (!isResult.get(target.arguments[i].index()))
+                            continue;
+                        ValueID parameter = at(target.block).parameters[i];
+                        add(parameter);
+                        unite(parameter, target.arguments[i]);
+                    }
+                }
+            }
+        }
+        BitVector escapes(count);
+        BitVector mergesWithObjects(count);
+        Vector<ValueID, 8> reads;
+        Vector<ValueID, 8> checks;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& user = at(id);
+                ValueID defined = definedLiteral(user);
+                bool definesLiteral = defined && literals.contains(defined.index());
+                user.forEachChild([&](ValueID& child) {
+                    if (!isResult.get(child.index()) || (definesLiteral && &child == &user.arguments[0]))
+                        return;
+                    bool isOperand = &child == &user.children[0];
+                    if (isOperand && user.opcode == Opcode::GetById && (user.string() == *done || user.string() == *value))
+                        reads.append(id);
+                    else if (m_program.operationOf(user) == Operations::RequireIteratorResultObject && !useCountOf(id))
+                        checks.append(id);
+                    else if (!isOperand || user.opcode != Opcode::Cast || !m_program.at(user.type).anyObject)
+                        escapes.set(groupOf(child));
+                });
+            }
+            if (block.terminator.value && isResult.get(block.terminator.value.index()))
+                escapes.set(groupOf(block.terminator.value));
+            for (auto& target : block.terminator.targets) {
+                for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                    ValueID parameter = at(target.block).parameters[i];
+                    if (isResult.get(parameter.index()) && !isResult.get(target.arguments[i].index()))
+                        mergesWithObjects.set(groupOf(parameter));
+                }
+            }
+        }
+        results.removeAllMatching([&](ValueID id) {
+            return escapes.get(groupOf(id));
+        });
+        if (results.isEmpty())
+            return 0;
+        reads.removeAllMatching([&](ValueID id) {
+            return escapes.get(groupOf(at(id).child(0)));
+        });
+        checks.removeAllMatching([&](ValueID id) {
+            return escapes.get(groupOf(at(id).arguments[0]));
+        });
+
+        UncheckedKeyHashMap<uint32_t, ResultParts, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> parts;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            unsigned numberOfParameters = m_function.blocks[b].parameters.size();
+            for (unsigned i = 0; i < numberOfParameters; ++i) {
+                ValueID id = m_function.blocks[b].parameters[i];
+                if (!isResult.get(id.index()) || escapes.get(groupOf(id)))
+                    continue;
+                Value like = at(id);
+                at(id).type = m_program.types.anything;
+                at(id).rep = repOf(m_program.at(m_program.types.anything));
+                ResultParts held { id, addParameter(BlockID(b), m_program.types.anything, like), addParameter(BlockID(b), m_program.types.boolean, like), { } };
+                if (mergesWithObjects.get(groupOf(id)))
+                    held.isInParts = addParameter(BlockID(b), m_program.types.boolean, like);
+                parts.add(id.index(), held);
+            }
+        }
+        for (ValueID id : results) {
+            Value like = at(id);
+            if (like.opcode != Opcode::Parameter && like.opcode != Opcode::Cast) {
+                Site site = siteOf(id);
+                ResultParts held { id, { }, { }, { } };
+                if (like.opcode == Opcode::NewObject) {
+                    Literal literal = literals.get(id.index());
+                    held.value = literal.value;
+                    held.isDone = literal.isDone;
+                    remove(literal.definesValue);
+                    remove(literal.definesDone);
+                } else {
+                    held.value = like.arguments[0];
+                    held.isDone = like.arguments[1];
+                }
+                if (mergesWithObjects.get(groupOf(id)))
+                    held.isInParts = prepend(site.block, makeBoolean(true, like));
+                parts.add(id.index(), held);
+                at(id) = make(Opcode::Undefined, m_program.types.undefined, like);
+            }
+        }
+        auto partsOf = [&](ValueID id) {
+            while (at(id).opcode == Opcode::Cast)
+                id = at(id).child(0);
+            return parts.get(id.index());
+        };
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            for (unsigned t = 0; t < m_function.blocks[b].terminator.targets.size(); ++t) {
+                BlockID to = m_function.blocks[b].terminator.targets[t].block;
+                unsigned passed = m_function.blocks[b].terminator.targets[t].arguments.size();
+                for (unsigned i = 0; i < passed; ++i) {
+                    ValueID parameter = at(to).parameters[i];
+                    if (!parts.contains(parameter.index()) || at(parameter).opcode != Opcode::Parameter)
+                        continue;
+                    ValueID argument = m_function.blocks[b].terminator.targets[t].arguments[i];
+                    bool isAlsoInParts = isResult.get(argument.index()) && !escapes.get(groupOf(argument));
+                    ResultParts held;
+                    if (isAlsoInParts)
+                        held = partsOf(argument);
+                    else {
+                        Value like = at(argument);
+                        held = { argument, prepend(BlockID(b), make(Opcode::Undefined, m_program.types.undefined, like)), prepend(BlockID(b), makeBoolean(false, like)), prepend(BlockID(b), makeBoolean(false, like)) };
+                    }
+                    auto& arguments = m_function.blocks[b].terminator.targets[t].arguments;
+                    arguments[i] = held.object;
+                    arguments.append(held.value);
+                    arguments.append(held.isDone);
+                    if (parts.get(parameter.index()).isInParts)
+                        arguments.append(held.isInParts);
+                }
+            }
+        }
+        auto replaceRead = [&](ValueID read, ValueID with) {
+            replaceUses(read, with);
+            for (auto& held : parts.values()) {
+                if (held.value == read)
+                    held.value = with;
+            }
+        };
+        for (ValueID read : reads) {
+            ResultParts held = partsOf(at(read).child(0));
+            Value like = at(read);
+            bool readsDone = like.string() == *done;
+            auto claim = [&] {
+                Value cast = make(Opcode::Cast, like.type, like);
+                cast.children[0] = held.value;
+                cast.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+                cast.copyPredictionFrom(like);
+                return cast;
+            };
+            if (!held.isInParts) {
+                if (readsDone) {
+                    replaceRead(read, held.isDone);
+                    remove(read);
+                } else
+                    at(read) = claim();
+                continue;
+            }
+            Site site = siteOf(read);
+            Cut cut = cutAt(site);
+            BlockID isHeldInParts = addBlock();
+            BlockID isObject = addBlock();
+            BlockID wasRead = addBlock();
+            branch(site.block, held.isInParts, isHeldInParts, isObject);
+            ValueID merged = addParameter(wasRead, like.type, like);
+            at(merged).copyPredictionFrom(like);
+            replaceRead(read, merged);
+            jump(isHeldInParts, Target { wasRead, { readsDone ? held.isDone : append(isHeldInParts, claim()) } });
+            at(read).children[0] = held.object;
+            at(isObject).values.append(read);
+            jump(isObject, Target { wasRead, { read } }, cut.handler);
+            jump(wasRead, cut.after);
+        }
+        for (ValueID check : checks) {
+            ResultParts held = partsOf(at(check).arguments[0]);
+            if (!held.isInParts) {
+                remove(check);
+                continue;
+            }
+            Site site = siteOf(check);
+            Cut cut = cutAt(site);
+            BlockID isObject = addBlock();
+            BlockID wasChecked = addBlock();
+            branch(site.block, held.isInParts, wasChecked, isObject);
+            at(check).arguments[0] = held.object;
+            at(isObject).values.append(check);
+            jump(isObject, Target { wasChecked, { } }, cut.handler);
+            jump(wasChecked, cut.after);
+        }
+        for (ValueID id : results) {
+            if (at(id).opcode == Opcode::Cast)
+                remove(id);
+        }
+        return results.size();
+    }
+
     const Program& m_program;
     Function& m_function;
     ValueID m_frame;
@@ -702,6 +1192,11 @@ void internNamesForGeneratorLoopFusion(Program& program)
 unsigned fuseGeneratorLoops(const Program& program, Function& function)
 {
     return GeneratorLoopFusion(program, function).run();
+}
+
+unsigned stepGeneratorsInPlace(const Program& program, Function& function)
+{
+    return GeneratorLoopFusion(program, function).stepWhatIsNotFused();
 }
 
 } } } // namespace JSC::AOT::Typed

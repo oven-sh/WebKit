@@ -2073,11 +2073,25 @@ void eliminateGuardsOnFreshResults(Program& program)
 {
     unsigned count = program.functions.size();
     program.freshResultClasses.fill(UINT16_MAX, count);
+    static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+    auto callsFunctionIn = [&](unsigned i, const auto& isMatching) {
+        bool result = false;
+        std::as_const(program).functions.forEachValue(i, directCalls, [&](ValueID id) {
+            unsigned callee = std::as_const(program).functions[i].at(id).function().index();
+            result |= callee < count && isMatching(callee);
+        });
+        return result;
+    };
+    Vector<uint16_t> classesBeforeLastRound;
     for (unsigned round = 0; round < 4; ++round) {
         Vector<uint16_t> found = program.freshResultClasses;
         forEachIndexInParallel(count, [&](unsigned i) {
+            if (found[i] != UINT16_MAX || !program.functions.mayEndWith(i, TerminatorKind::Return))
+                return;
+            if (round && !callsFunctionIn(i, [&](unsigned callee) { return program.freshResultClasses[callee] != classesBeforeLastRound[callee]; }))
+                return;
             auto& function = program.functions.atKeepingValueIndex(i);
-            if (found[i] != UINT16_MAX || function.blocks.isEmpty() || function.declaredAs || !function.resultTypes.isEmpty() || function.flags & (FunctionIsPartOfHiddenCoroutine | FunctionIsPartOfAsyncFunction))
+            if (function.blocks.isEmpty() || function.declaredAs || !function.resultTypes.isEmpty() || function.flags & (FunctionIsPartOfHiddenCoroutine | FunctionIsPartOfAsyncFunction))
                 return;
             if (function.kind != FunctionKind::Plain && function.kind != FunctionKind::Arrow && function.kind != FunctionKind::Method)
                 return;
@@ -2086,17 +2100,16 @@ void eliminateGuardsOnFreshResults(Program& program)
         });
         if (found == program.freshResultClasses)
             break;
-        program.freshResultClasses = WTF::move(found);
+        classesBeforeLastRound = std::exchange(program.freshResultClasses, WTF::move(found));
     }
     forEachIndexInParallel(count, [&](unsigned i) {
-        bool callsMatchingFunction = std::as_const(program).functions[i].values.containsIf([&](auto& value) {
-            return value.opcode == Opcode::CallDirect && value.function().index() < count && program.freshResultClasses[value.function().index()] != UINT16_MAX;
-        });
-        if (std::as_const(program).functions[i].blocks.isEmpty() || !callsMatchingFunction)
+        if (!callsFunctionIn(i, [&](unsigned callee) { return program.freshResultClasses[callee] != UINT16_MAX; }) || std::as_const(program).functions[i].blocks.isEmpty())
             return;
-        ReceiverGuardElimination guards(program, program.functions[i]);
-        if (guards.run())
+        ReceiverGuardElimination guards(program, program.functions.atKeepingValueIndex(i));
+        if (guards.run()) {
+            program.functions.invalidateValueIndex(i);
             guards.removeUnreachableBlocks();
+        }
     });
 }
 

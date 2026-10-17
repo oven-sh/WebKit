@@ -167,6 +167,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedResumeGenerator, EncodedJSValue, (Inst
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCreateIteratorResult, JSCell*, (Instance* instance, EncodedJSValue value, uint32_t isDone))
+{
+    return createIteratorResultObject(instance->globalObject, JSValue::decode(value), isDone);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedIsGeneratorSuspendedAtStart, size_t, (Instance*, JSCell* generator))
 {
     return uncheckedDowncast<Typed::Generator>(generator)->isSuspendedAtStart();
@@ -207,8 +212,13 @@ std::optional<Writes> writesOfInlineEngine(InlineBuiltin which, std::span<const 
     switch (which) {
     case InlineBuiltin::IsConstructor:
     case InlineBuiltin::IsGeneratorSuspendedAtStart:
+    case InlineBuiltin::GeneratorStepStatus:
+    case InlineBuiltin::IsUnmodifiedGenerator:
+    case InlineBuiltin::DrivenIteratorMarker:
+    case InlineBuiltin::DeclaredGenerator:
         return Writes::Nothing;
     case InlineBuiltin::SloppyThis:
+    case InlineBuiltin::MakeIteratorResult:
         return Writes::RuntimeState;
     case InlineBuiltin::ArraySpeciesCreate:
     case InlineBuiltin::DeleteByValSloppy:
@@ -216,6 +226,7 @@ std::optional<Writes> writesOfInlineEngine(InlineBuiltin which, std::span<const 
     case InlineBuiltin::ToObject:
     case InlineBuiltin::ToPropertyKey:
     case InlineBuiltin::ResumeGenerator:
+    case InlineBuiltin::StepGenerator:
         return Writes::Heap;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -272,6 +283,68 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
         return ensure(AOT_TYPED_OPERATION(ResumeGenerator, in<Boxed>(arguments[0]), word32(static_cast<uint32_t>(constant(1).integer())), in<Boxed>(arguments[2])), type);
     case InlineBuiltin::IsGeneratorSuspendedAtStart:
         return booleanResult(AOT_TYPED_OPERATION(IsGeneratorSuspendedAtStart, asCell(in<Boxed>(arguments[0]))), type);
+    case InlineBuiltin::StepGenerator: {
+        static constexpr Stub stubs[] = { Stub::StepGenerator, Stub::StepGeneratorUnmodifiedUnlessNext, Stub::StepGeneratorIfUnmodified, Stub::StepIfGenerator, Stub::StepIfUnmodifiedGenerator };
+        static_assert(static_cast<unsigned>(Generator::StepCheck::IsUnmodifiedGenerator) + 1 == std::size(stubs) && static_cast<unsigned>(Generator::StepCheck::IsGenerator) == 3);
+        RELEASE_ASSERT(constant(3).opcode == Opcode::Integer && static_cast<uint64_t>(constant(3).integer()) < std::size(stubs));
+        return ensure(Boxed(callICStub(stubs[constant(3).integer()], Int64, { { in<Boxed>(arguments[0]).value(), argumentGPR(0) }, { in<Integer>(arguments[1]).value(), argumentGPR(1) }, { in<Boxed>(arguments[2]).value(), argumentGPR(2) } }, std::nullopt, builtinCallEffects(value))), type);
+    }
+    case InlineBuiltin::GeneratorStepStatus:
+        return ensure(zeroExtended(Word32(m_out.load32(TypedPointer(m_heaps.root, m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfGeneratorStepStatus())))))), type, type);
+    case InlineBuiltin::IsUnmodifiedGenerator: {
+        if (!typeOf(arguments[0]).anyObject)
+            return booleanResult(boolean(false), type);
+        auto at = [&](LValue base, ptrdiff_t offset) {
+            return TypedPointer(m_heaps.root, m_out.add(base, m_out.constIntPtr(offset)));
+        };
+        Boxed operand = in<Boxed>(arguments[0]);
+        if (arguments.size() > 1) {
+            LValue generator = asCell(operand).value();
+            LValue hasItsPrototype = m_out.isZero32(m_out.load8ZeroExt32(at(generator, Generator::offsetOfHasOtherPrototype())));
+            return booleanResult(Word32(m_out.bitAnd(hasItsPrototype, m_out.isNull(m_out.loadPtr(generator, m_heaps.JSObject_butterfly)))), type);
+        }
+        LBasicBlock isCellCase = m_out.newBlock();
+        LBasicBlock isGenerator = m_out.newBlock();
+        LBasicBlock hasItsPrototype = m_out.newBlock();
+        LBasicBlock isOther = m_out.newBlock();
+        Join join(m_out, Rep::Int32, Int32);
+        m_out.branch(isCell(operand).value(), unsure(isCellCase), unsure(isOther));
+        m_out.appendTo(isCellCase);
+        LValue cell = asCell(operand).value();
+        LValue classInfo = m_out.loadPtr(structureOf(cell), m_heaps.Structure_classInfo);
+        m_out.branch(m_out.equal(classInfo, m_out.loadPtr(at(fixedPointer(Instance::offsetOfRuntimeTable()), static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*)))), unsure(isGenerator), unsure(isOther));
+        m_out.appendTo(isGenerator);
+        m_out.branch(m_out.isZero32(m_out.load8ZeroExt32(at(cell, Generator::offsetOfHasOtherPrototype()))), usually(hasItsPrototype), rarely(isOther));
+        m_out.appendTo(hasItsPrototype);
+        join.add(Word32(m_out.isNull(m_out.loadPtr(cell, m_heaps.JSObject_butterfly))));
+        m_out.appendTo(isOther);
+        join.add(boolean(false));
+        return booleanResult(join.finish().as<Word32>(), type);
+    }
+    case InlineBuiltin::DeclaredGenerator:
+        return valueResult(arguments[0], type);
+    case InlineBuiltin::DrivenIteratorMarker:
+        return ensure(Boxed(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfRuntimeTable()), m_out.constIntPtr(static_cast<unsigned>(Entry::DrivenIteratorMarker) * sizeof(void*)))))), type);
+    case InlineBuiltin::MakeIteratorResult: {
+        constexpr size_t sizeOfResult = JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue);
+        static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
+        Boxed held = in<Boxed>(arguments[0]);
+        LValue isDone = in<Word32>(arguments[1]).value();
+        LBasicBlock slowPath = newColdBlock();
+        Join join(m_out, Rep::Cell, Int64);
+        LValue allocator = m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfCellSpace()), m_out.constIntPtr(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfResult) * sizeof(Allocator)))));
+        Emitter::orElse(m_out.notNull(allocator), slowPath);
+        CellPointer result = allocateCell(allocator, sizeOfResult, slowPath);
+        m_out.store64(changing64(Instance::offsetOfIteratorResultHeader()), result.value(), m_heaps.JSCell_header);
+        m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSObject_butterfly);
+        m_out.store64(held.value(), inlineProperty(result, iteratorResultObjectValuePropertyOffset));
+        m_out.store64(m_out.bitOr(m_out.constInt64(JSValue::ValueFalse), m_out.zeroExt(isDone, Int64)), inlineProperty(result, iteratorResultObjectDonePropertyOffset));
+        fenceAfterInitialization();
+        join.add(result);
+        m_out.appendTo(slowPath);
+        join.add(AOT_TYPED_OPERATION(CreateIteratorResult, held, Word32(isDone)));
+        return ensure(join.finish(), m_program.at(m_program.types.object), type);
+    }
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

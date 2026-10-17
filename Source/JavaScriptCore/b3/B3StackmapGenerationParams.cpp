@@ -101,7 +101,7 @@ StackmapGenerationParams::StackmapGenerationParams(
 }
 
 StackmapGenerationParams::StackmapGenerationParams(
-    StackmapValue* value, Vector<ValueRep>&& reps, Air::GenerationContext& context)
+    StackmapValue* value, Reps&& reps, Air::GenerationContext& context)
     : m_value(value)
     , m_reps(WTF::move(reps))
     , m_context(context)

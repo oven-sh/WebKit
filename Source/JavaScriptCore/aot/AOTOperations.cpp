@@ -18,6 +18,7 @@
 #include "ArrayPrototype.h"
 #include "CodeBlock.h"
 #include "CommonSlowPaths.h"
+#include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GetPutInfo.h"
@@ -726,6 +727,16 @@ static bool arrayHasOrdinaryDefineForName(VM& vm, JSValue base, Structure* struc
     return base.isCell() && isExactlyJSArray(base.asCell()) && ident != vm.propertyNames->length && !parseIndex(ident) && structure->isStructureExtensible();
 }
 
+static bool hostObjectHasOrdinaryDefineForName(VM& vm, JSValue base, Structure* structure, const Identifier& ident)
+{
+    if (!base.isObject() || base.asCell()->type() == FinalObjectType || structure->compiledLayout() || !structure->isStructureExtensible() || parseIndex(ident))
+        return false;
+    if (structure->classInfoForCells() == ErrorInstance::info())
+        return !ErrorInstance::isLazilyMaterialized(vm, ident);
+    TypeInfo typeInfo = structure->typeInfo();
+    return structure->classInfoForCells()->methodTable.defineOwnProperty == JSObject::defineOwnProperty && !typeInfo.overridesGetOwnPropertySlot() && !typeInfo.hasStaticPropertyTable();
+}
+
 static bool defaultArrayPrototypeChainLacksName(JSGlobalObject* globalObject, Structure* structure, UniquedStringImpl* uid)
 {
     VM& vm = globalObject->vm();
@@ -967,7 +978,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByNameAndCache, void, (Instance* instanc
     auto* objectPossiblyMissingField = cache && storedFieldOf ? asTypedObject : nullptr;
     uint64_t wordsBeforeStore = objectPossiblyMissingField ? objectPossiblyMissingField->orderAndShapeWords() : 0;
     PutPropertySlot slot(base, isStrict, PutPropertySlot::PutById);
-    if (unsigned attributesOnArray = 0; definesOnArray && (oldStructure->get(vm, ident, attributesOnArray) == invalidOffset || !attributesOnArray))
+    bool definesOnHostObject = isDirect && hostObjectHasOrdinaryDefineForName(vm, base, oldStructure, ident);
+    if (unsigned attributesOnArray = 0; (definesOnArray || definesOnHostObject) && (oldStructure->get(vm, ident, attributesOnArray) == invalidOffset || !attributesOnArray))
         asObject(base)->putDirect(vm, ident, value, 0, slot);
     else if (unsigned attributes = 0; isDirect && instance->typed && (base.asCell()->type() != FinalObjectType || hasCompiledLayout || !oldStructure->isStructureExtensible() || (oldStructure->get(vm, ident, attributes) != invalidOffset && attributes))) [[unlikely]]
         asObject(base)->createDataProperty(globalObject, ident, value, true);

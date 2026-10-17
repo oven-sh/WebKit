@@ -52,6 +52,7 @@ public:
     JS_EXPORT_PRIVATE void run(unsigned size, const ScopedLambda<void(unsigned member)>& compile);
 
     JS_EXPORT_PRIVATE static void yieldBeforePhase(ASCIILiteral phase);
+    JS_EXPORT_PRIVATE static bool waitForOtherMembers();
 
 #if B3_COMPILATION_COHORT_INTERLEAVES_MEMBERS
 private:
@@ -62,12 +63,14 @@ private:
 
     void prepareStack(unsigned member);
     void yield(const char* phase);
+    void wait();
     [[noreturn]] void finish();
     unsigned pickNextMember();
     void switchTo(unsigned member);
 
     std::array<const char*, maxSize> m_nextPhases { };
     std::array<unsigned, maxSize> m_numberOfYields { };
+    std::array<bool, maxSize> m_isWaiting { };
     std::array<void*, maxSize> m_stackPointers { };
     std::array<void*, maxSize> m_stacks { };
     void* m_callerStackPointer { nullptr };

@@ -41,7 +41,7 @@ static constexpr uint32_t sourceNameRestartInterval = 16;
 
 struct SourceNameHeader {
     uint16_t firstBytesDistance;
-    uint16_t shared;
+    uint16_t sharedAndIsRelative;
     uint16_t restAndIsASCII;
 };
 
@@ -730,12 +730,14 @@ void ProgramData::release(Vector<FunctionReportableSites>& sites)
 Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> moduleEntryOffsets, std::span<const uint8_t> codeImage, const RetainedPositions& positions, std::span<const FunctionReportableSites> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
 {
     MonotonicTime stepStart = MonotonicTime::now();
+    Typed::PhaseTimes phaseTimes("program data"_s);
     auto endStep = [&](ASCIILiteral name) {
         if (!Typed::shouldPrintTimings()) [[likely]]
             return;
         MonotonicTime now = MonotonicTime::now();
         dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
         stepStart = now;
+        phaseTimes.didFinish(name);
     };
     auto image = ImageView::tryCreate(codeImage, nullptr);
     if (!image || payload.empty() || moduleEntryOffsets.empty())
@@ -971,25 +973,32 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             Vector<uint32_t> sorted(builder.m_sourceNames.size(), [](size_t index) {
                 return static_cast<uint32_t>(index);
             });
+            auto isRelative = [&](uint32_t index) {
+                auto name = builder.m_sourceNames[index].span();
+                return !name.empty() && name.front() == ProgramData::relativeSourceNameMarker;
+            };
+            auto textOf = [&](uint32_t index) {
+                return builder.m_sourceNames[index].span().subspan(isRelative(index));
+            };
             std::ranges::sort(sorted, [&](uint32_t a, uint32_t b) {
-                return std::ranges::lexicographical_compare(builder.m_sourceNames[a].span(), builder.m_sourceNames[b].span());
+                return std::ranges::lexicographical_compare(textOf(a), textOf(b));
             });
             sourceNameOffsets.fill(0, sorted.size());
             size_t firstBytesOffset = 0;
             size_t firstRank = 0;
             for (size_t rank = 0; rank < sorted.size(); ++rank) {
                 sourceNameOffsets[sorted[rank]] = sourceNameBytes.size();
-                auto name = builder.m_sourceNames[sorted[rank]].span();
+                auto name = textOf(sorted[rank]);
                 RELEASE_ASSERT(name.size() < 0x8000);
                 size_t shared = 0;
                 if (rank && rank - firstRank < sourceNameRestartInterval && sourceNameBytes.size() - firstBytesOffset < 60000) {
-                    auto first = builder.m_sourceNames[sorted[firstRank]].span();
+                    auto first = textOf(sorted[firstRank]);
                     shared = std::ranges::mismatch(name, first).in1 - name.begin();
                 } else {
                     firstRank = rank;
                     firstBytesOffset = sourceNameBytes.size() + sizeof(SourceNameHeader);
                 }
-                SourceNameHeader head { static_cast<uint16_t>(shared ? sourceNameBytes.size() - firstBytesOffset : 0), static_cast<uint16_t>(shared), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
+                SourceNameHeader head { static_cast<uint16_t>(shared ? sourceNameBytes.size() - firstBytesOffset : 0), static_cast<uint16_t>(shared | (isRelative(sorted[rank]) ? 0x8000 : 0)), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
                 sourceNameBytes.append(asBytes(singleElementSpan(head)));
                 sourceNameBytes.append(name.subspan(shared));
             }
@@ -1122,7 +1131,7 @@ String ProgramData::sourceName(uint32_t source) const
     SourceNameHeader head;
     memcpy(&head, record, sizeof(head));
     size_t rest = head.restAndIsASCII & 0x7fff;
-    std::span shared { record - head.firstBytesDistance, static_cast<size_t>(head.shared) };
+    std::span shared { record - head.firstBytesDistance, static_cast<size_t>(head.sharedAndIsRelative & 0x7fff) };
     std::span own { record + sizeof(head), rest };
     if (head.restAndIsASCII & 0x8000) [[likely]] {
         std::span<Latin1Character> characters;
@@ -1137,13 +1146,54 @@ String ProgramData::sourceName(uint32_t source) const
     return String::fromUTF8(name.span());
 }
 
+String ProgramData::sourceNameInFrames(uint32_t source) const
+{
+    RELEASE_ASSERT(source && source <= numberOfSources);
+    auto* places = at<uint32_t>(sourceNamesOffset);
+    auto* record = reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1];
+    SourceNameHeader head;
+    memcpy(&head, record, sizeof(head));
+    if (!(head.sharedAndIsRelative & 0x8000))
+        return sourceName(source);
+    std::span shared { record - head.firstBytesDistance, static_cast<size_t>(head.sharedAndIsRelative & 0x7fff) };
+    std::span own { record + sizeof(head), static_cast<size_t>(head.restAndIsASCII & 0x7fff) };
+    constexpr auto root = "/$bunfs/root/"_s;
+    if ((head.restAndIsASCII & 0x8000) && (shared.empty() ? own.front() : shared.front()) != '.') [[likely]] {
+        std::span<Latin1Character> characters;
+        String name = StringImpl::createUninitialized(root.length() + shared.size() + own.size(), characters);
+        memcpySpan(characters, root.span8());
+        memcpySpan(characters.subspan(root.length()), byteCast<Latin1Character>(shared));
+        memcpySpan(characters.subspan(root.length() + shared.size()), byteCast<Latin1Character>(own));
+        return name;
+    }
+    Vector<char8_t, 256> name;
+    name.append(byteCast<char8_t>(root.span8()));
+    size_t start = name.size();
+    name.append(shared);
+    name.append(own);
+    size_t levelsAbove = 0;
+    while (spanHasPrefix(name.span().subspan(start + levelsAbove * 3), byteCast<char8_t>("../"_s.span8())))
+        ++levelsAbove;
+    if (levelsAbove) [[unlikely]] {
+        Vector<char8_t, 256> inside;
+        inside.append(name.span().first(start));
+        for (size_t level = 0; level < levelsAbove; ++level)
+            inside.append(byteCast<char8_t>("_.._/"_s.span8()));
+        inside.append(name.span().subspan(start + levelsAbove * 3));
+        name = WTF::move(inside);
+    }
+    if (head.restAndIsASCII & 0x8000) [[likely]]
+        return String(byteCast<Latin1Character>(name.span()));
+    return String::fromUTF8(name.span());
+}
+
 bool ProgramData::isSourceNameEmpty(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
     auto* places = at<uint32_t>(sourceNamesOffset);
     SourceNameHeader head;
     memcpy(&head, reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1], sizeof(head));
-    return !head.shared && !(head.restAndIsASCII & 0x7fff);
+    return !(head.sharedAndIsRelative & 0x7fff) && !(head.restAndIsASCII & 0x7fff);
 }
 
 std::span<const uint8_t> ProgramData::typedFunctionHandlers(uint32_t functionIndex) const
@@ -1245,6 +1295,7 @@ struct VMProgram::Impl {
 
 template<typename T> static T* zeroedTable(size_t count)
 {
+    static_assert(std::is_trivially_default_constructible_v<T>, "this table is zeroed pages and its entries are never constructed, so default member initializers would be ignored");
     return static_cast<T*>(OSAllocator::reserveAndCommit(roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(count, 1) * sizeof(T)), OSAllocator::FastMallocPages));
 }
 

@@ -10,6 +10,7 @@
 
 #include "AOTImage.h"
 #include "AOTLockedOperation.h"
+#include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTTypedCompactTable.h"
@@ -27,6 +28,8 @@
 #include "BytecodeStructs.h"
 #include "CachedTypes.h"
 #include "CustomGetterSetter.h"
+#include "DateInstance.h"
+#include "DeferGCInlines.h"
 #include "ErrorInstance.h"
 #include "FunctionPrototype.h"
 #include "GeneratorFunctionPrototype.h"
@@ -71,12 +74,14 @@
 #include <map>
 #include <mutex>
 #include <wtf/BitVector.h>
+#include <wtf/FlipBytes.h>
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/SHA1.h>
 #include <wtf/Scope.h>
+#include <wtf/ThreadSpecific.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -358,7 +363,7 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Co
     bool areAtoms = orderOf(orderWord()) != keysAreInLayoutOrder;
     for (EncodedJSValue key : excluded) {
         JSValue value = JSValue::decode(key);
-        if (value.isSymbol())
+        if (value.isSymbol() && !state.hasFieldsWithSymbolKeys(layout()))
             continue;
         if (!value.isString() || asString(value)->isRope())
             return nullptr;
@@ -479,7 +484,7 @@ Object* Object::tryCopyAs(JSGlobalObject* globalObject, const LayoutData& to, Co
             created.set(keys.last());
         }
         return isInlinedBlock;
-    });
+    }, SymbolKeys::Include);
     for (auto& name : next) {
         if (!isInlinedBlock)
             break;
@@ -666,7 +671,7 @@ Object* Object::tryMergeAs(JSGlobalObject* globalObject, const LayoutData& to, O
                 fieldSource[index] = i;
             }
             return isInlinedBlock;
-        });
+        }, SymbolKeys::Include);
     }
     for (uint32_t i = 0; i < to.numberOfFields && isInlinedBlock; ++i)
         isInlinedBlock = to.fields()[i].flags & fieldIsOptional || created.get(i);
@@ -729,7 +734,7 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
         if (isInlinedBlock && !wasPresent)
             didCreateField(state, *field);
         return isInlinedBlock;
-    });
+    }, SymbolKeys::Include);
     return hasOnlyFields && isInlinedBlock;
 }
 
@@ -2109,7 +2114,7 @@ bool Object::structureGuaranteesAbsence(Structure* structure, UniquedStringImpl*
         return false;
     State& state = *structure->aotInstance()->typed;
     VM& vm = *state.instance.vm;
-    if (!name->isSymbol() && state.field(vm, *layout, name))
+    if (state.field(vm, *layout, name))
         return false;
     if (state.isStructureWithoutExtraProperties(structure))
         return true;
@@ -2141,8 +2146,6 @@ std::optional<Object::FieldAccess> Object::fieldAccessFor(VM&, PropertyName name
 
 const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
-    if (name.isSymbol() && !name.isPrivateName())
-        return nullptr;
     return state.field(*state.instance.vm, layout(), name.uid());
 }
 
@@ -2155,13 +2158,13 @@ void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)
     });
 }
 
-bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>& functor) const
+bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>& functor, SymbolKeys symbolKeys) const
 {
     if (hasExtraProperties())
         return false;
     State& state = this->state();
     VM& vm = *state.instance.vm;
-    if (auto properties = state.propertiesInOrder(vm, layout(), orderWord() & orderAndCountMask)) {
+    if (auto properties = state.propertiesInOrder(vm, layout(), orderWord() & orderAndCountMask, symbolKeys)) {
         for (auto& property : *properties) {
             JSValue value = readInline(*property.field);
             if (!value) [[unlikely]]
@@ -2174,7 +2177,7 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
     const FieldData* fields = layout().fields();
     bool goesOn = true;
     forEachFieldInKeyOrder(state, [&](uint16_t index) {
-        if (!goesOn || state.isPrivate(fields[index]))
+        if (!goesOn || state.isPrivate(fields[index]) || (symbolKeys == SymbolKeys::Skip && state.hasSymbolKey(fields[index])))
             return;
         if (JSValue value = read(fields[index]))
             goesOn = functor(*state.name(vm, fields[index].name).impl(), value);
@@ -2188,6 +2191,8 @@ CachedPropertyList* Object::cachedPropertyList(VM& vm) const
     if (!extra || orderWord() & orderWordIsFrozen)
         return nullptr;
     State& state = this->state();
+    if (state.hasFieldsWithSymbolKeys(layout()))
+        return nullptr;
     Structure* structure = extra->structure();
     uint32_t shapeWord = shapeWordOf(shape());
     uint32_t orderAndCount = orderWord() & orderAndCountMask;
@@ -2341,12 +2346,12 @@ bool Object::forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringI
                 UniquedStringImpl* name = extraKeyNames[nextExtraKey];
                 unsigned attributes;
                 JSValue value = extra->getDirect(vm, name, attributes);
-                if (value && !(attributes & PropertyAttribute::DontEnum))
+                if (value && !name->isSymbol() && !(attributes & PropertyAttribute::DontEnum))
                     goesOn = functor(*name, value);
             }
             return;
         }
-        if (state.isPrivate(fields[entry]) || (mayHideFields && attributesOf(fields[entry]) & PropertyAttribute::DontEnum))
+        if (!state.hasStringKey(fields[entry]) || (mayHideFields && attributesOf(fields[entry]) & PropertyAttribute::DontEnum))
             return;
         if (JSValue value = read(fields[entry]))
             goesOn = functor(*state.name(vm, fields[entry].name).impl(), value);
@@ -2354,7 +2359,7 @@ bool Object::forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringI
     if (extra && goesOn) {
         size_t ordinal = 0;
         extraPropertiesStructure->forEachProperty(vm, [&](const auto& entry) -> bool {
-            if (entry.key()->isSymbol() || ordinal++ < nextExtraKey || entry.attributes() & PropertyAttribute::DontEnum)
+            if (!hasPositionAmongKeys(entry.key()) || ordinal++ < nextExtraKey || entry.key()->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
             return functor(*entry.key(), extra->getDirect(entry.offset()));
         });
@@ -2379,7 +2384,7 @@ JSCellButterfly* Object::keys(VM& vm) const
 
 void Object::positionExtraKey(State& state, PropertyName name, uint32_t position)
 {
-    if (name.isSymbol() || parseIndex(name) || orderOf(orderWord()) == keysAreInLayoutOrder)
+    if (!hasPositionAmongKeys(name.uid()) || parseIndex(name) || orderOf(orderWord()) == keysAreInLayoutOrder)
         return;
     const LayoutData& layout = this->layout();
     auto entry = extraKeyOrdinal(name);
@@ -2415,7 +2420,7 @@ void Object::positionExtraKeys(State& state, std::span<const std::pair<UniquedSt
     });
     size_t positionedKeyCount = keys.size();
     for (auto [name, position] : namesAndPositions) {
-        if (name->isSymbol() || parseIndex(*name))
+        if (!hasPositionAmongKeys(name) || parseIndex(*name))
             continue;
         if (auto ordinal = extraKeyOrdinal(name); ordinal && !keys.containsIf([&](uint16_t key) { return key >= layout.numberOfFields + *ordinal; }))
             keys.insert(std::min<size_t>(position, keys.size()), static_cast<uint16_t>(layout.numberOfFields + *ordinal));
@@ -2424,12 +2429,17 @@ void Object::positionExtraKeys(State& state, std::span<const std::pair<UniquedSt
         setOrderAndCount(state.orderStartingWith(layout, keys.span(), false));
 }
 
+bool Object::hasPositionAmongKeys(UniquedStringImpl* name) const
+{
+    return !name->isSymbol() || state().hasPositionAmongKeys(layout(), name);
+}
+
 Vector<UniquedStringImpl*, 16> Object::extraKeyNames() const
 {
     Vector<UniquedStringImpl*, 16> names;
     if (JSObject* extra = extraProperties()) {
         extra->structure()->forEachProperty(vm(), [&](const auto& property) {
-            if (!property.key()->isSymbol())
+            if (hasPositionAmongKeys(property.key()))
                 names.append(property.key());
             return true;
         });
@@ -2440,13 +2450,13 @@ Vector<UniquedStringImpl*, 16> Object::extraKeyNames() const
 std::optional<uint16_t> Object::extraKeyOrdinal(PropertyName name) const
 {
     JSObject* extra = extraProperties();
-    if (!extra || name.isSymbol())
+    if (!extra || !hasPositionAmongKeys(name.uid()))
         return std::nullopt;
     uint32_t ordinal = 0;
     bool isFound = false;
     extra->structure()->forEachProperty(vm(), [&](const auto& property) {
         isFound = property.key() == name.uid();
-        ordinal += !isFound && !property.key()->isSymbol();
+        ordinal += !isFound && hasPositionAmongKeys(property.key());
         return !isFound;
     });
     if (!isFound || layout().numberOfFields + ordinal >= UINT16_MAX)
@@ -2532,7 +2542,7 @@ void Object::positionExtraKeys(State& state)
         return;
     uint32_t numberOfExtraKeys = 0;
     extra->structure()->forEachProperty(vm(), [&](const auto& property) {
-        numberOfExtraKeys += !property.key()->isSymbol();
+        numberOfExtraKeys += hasPositionAmongKeys(property.key());
         return true;
     });
     uint32_t entry = layout.numberOfFields + numberOfExtraKeys - 1;
@@ -2822,17 +2832,51 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
             if (index >= layout.numberOfFields) {
                 for (size_t end = std::min<size_t>(index - layout.numberOfFields + 1, extraKeyNames.size()); nextExtraKey < end; ++nextExtraKey) {
                     unsigned attributes;
-                    if (extra->getDirect(vm, extraKeyNames[nextExtraKey], attributes) && (mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum)))
+                    if (!extraKeyNames[nextExtraKey]->isSymbol() && extra->getDirect(vm, extraKeyNames[nextExtraKey], attributes) && (mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum)))
                         names.add(Identifier::fromUid(vm, extraKeyNames[nextExtraKey]));
                 }
                 return;
             }
-            if (!state.isPrivate(fields[index]) && !(mayHideFields && object->attributesOf(fields[index]) & PropertyAttribute::DontEnum))
+            if (state.hasStringKey(fields[index]) && !(mayHideFields && object->attributesOf(fields[index]) & PropertyAttribute::DontEnum))
                 names.add(state.name(vm, fields[index].name));
         });
     }
-    if (extra)
-        extra->getOwnNonIndexPropertyNames(globalObject, names, mode);
+    if (!state.hasFieldsWithSymbolKeys(object->layout())) {
+        if (extra)
+            extra->getOwnNonIndexPropertyNames(globalObject, names, mode);
+        return;
+    }
+    auto addExtraKeys = [&](bool symbols) {
+        if (!extra)
+            return;
+        extra->structure()->forEachProperty(vm, [&](const auto& entry) {
+            if (entry.key()->isSymbol() == symbols && !PropertyName(entry.key()).isPrivateName() && (mode == DontEnumPropertiesMode::Include || !(entry.attributes() & PropertyAttribute::DontEnum)))
+                names.add(Identifier::fromUid(vm, entry.key()));
+            return true;
+        });
+    };
+    if (names.includeStringProperties())
+        addExtraKeys(false);
+    if (names.includeSymbolProperties()) {
+        const LayoutData& layout = object->layout();
+        const FieldData* fields = layout.fields();
+        bool mayHideFields = mode == DontEnumPropertiesMode::Exclude && object->orderWord() & orderWordIsFrozen;
+        auto extraKeyNames = object->extraKeyNames();
+        size_t nextExtraKey = 0;
+        object->forEachListedKey(state, [&](uint16_t index) {
+            if (index >= layout.numberOfFields) {
+                for (size_t end = std::min<size_t>(index - layout.numberOfFields + 1, extraKeyNames.size()); nextExtraKey < end; ++nextExtraKey) {
+                    unsigned attributes;
+                    if (extraKeyNames[nextExtraKey]->isSymbol() && extra->getDirect(vm, extraKeyNames[nextExtraKey], attributes) && (mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum)))
+                        names.add(Identifier::fromUid(vm, extraKeyNames[nextExtraKey]));
+                }
+                return;
+            }
+            if (state.hasSymbolKey(fields[index]) && !(mayHideFields && object->attributesOf(fields[index]) & PropertyAttribute::DontEnum))
+                names.add(state.name(vm, fields[index].name));
+        });
+        addExtraKeys(true);
+    }
 }
 
 static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
@@ -3255,7 +3299,8 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
     const LayoutData& layout = object->layout();
     if (layout.kind != LayoutKind::Record || !(state.prototypeMatchesLayout(layout, prototype) || layout.mayHaveOtherPrototype)) {
         if (layout.mayDespecialize) {
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype, object->convertToOrdinaryObject(vm, prototype));
+            if (JSObject* ordinary = object->convertToOrdinaryObject(vm, prototype); ordinary->mayBePrototype()) [[unlikely]]
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype, ordinary);
             if (state.isPrototypeShape(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
                 object->realm()->haveABadTime(vm);
             return true;
@@ -3621,7 +3666,7 @@ bool PrototypeObject::allowsPrototypeChange(VM& vm)
 bool PrototypeObject::mayDefine(JSGlobalObject* globalObject, PropertyName name, bool isWritableData)
 {
     State& state = *structure()->aotInstance()->typed;
-    if (name.isSymbol() || !isGuarded() || !state.isReservedFieldName(globalObject->vm(), name.uid(), m_function))
+    if (name.isPrivateName() || !isGuarded() || !state.isReservedFieldName(globalObject->vm(), name.uid(), m_function))
         return true;
     if ((isWritableData || !state.createsObjectsWithDefinitelyInitializedFields(m_function)) && allowsModification(globalObject->vm()))
         return true;
@@ -3758,8 +3803,17 @@ bool ClassPrototype::hasMember(JSObject* object, PropertyName name)
     UniquedStringImpl* uid = name.uid();
     if (!uid || uid == object->vm().propertyNames->constructor.impl())
         return !!uid;
+    constexpr uint64_t knowsWhetherThenIsDeclared = 1ull << 62;
+    constexpr uint64_t declaresThen = 1ull << 63;
+    auto* prototype = uncheckedDowncast<ClassPrototype>(object);
+    bool isThen = uid == object->vm().propertyNames->then.impl();
+    if (isThen && prototype->m_classIndex & knowsWhetherThenIsDeclared)
+        return prototype->m_classIndex & declaresThen;
     State& state = *object->structure()->aotInstance()->typed;
-    return state.declaresMethod(*state.classWithIndex(static_cast<uint32_t>(uncheckedDowncast<ClassPrototype>(object)->m_classIndex)), uid);
+    bool isDeclared = state.declaresMethod(*state.classWithIndex(prototype->classIndex()), uid);
+    if (isThen)
+        prototype->m_classIndex |= knowsWhetherThenIsDeclared | (isDeclared ? declaresThen : 0);
+    return isDeclared;
 }
 
 bool ClassPrototype::willBeImmutable(JSObject* object)
@@ -3872,14 +3926,22 @@ static StoredBy storeOrigin(VM& vm)
         uint32_t bytecodeOffset { 0 };
         StoredBy storedBy { StoredBy::UntypedCode };
     };
-    static thread_local std::array<Known, 512> s_known;
-    static thread_local HeapVersion s_knownAsOf { 0 };
-    if (HeapVersion now = vm.heap.objectSpace().markingVersion(); now != s_knownAsOf) {
-        s_known.fill({ });
-        s_knownAsOf = now;
+    struct KnownOrigins {
+        std::array<Known, 512> entries;
+        HeapVersion markingVersion { 0 };
+    };
+    static LazyNeverDestroyed<ThreadSpecific<KnownOrigins>> s_knownOrigins;
+    static std::once_flag s_knownOriginsOnce;
+    std::call_once(s_knownOriginsOnce, [] {
+        s_knownOrigins.construct();
+    });
+    KnownOrigins& origins = *s_knownOrigins.get();
+    if (HeapVersion now = vm.heap.objectSpace().markingVersion(); now != origins.markingVersion) {
+        origins.entries.fill({ });
+        origins.markingVersion = now;
     }
     uint32_t bytecodeOffset = origin.bytecodeIndex().offset();
-    Known& known = s_known[(std::bit_cast<uintptr_t>(codeBlock) / sizeof(void*) + bytecodeOffset * 31) % s_known.size()];
+    Known& known = origins.entries[(std::bit_cast<uintptr_t>(codeBlock) / sizeof(void*) + bytecodeOffset * 31) % origins.entries.size()];
     if (known.codeBlock == codeBlock && known.bytecodeOffset == bytecodeOffset)
         return known.storedBy;
     SourceProvider* provider = codeBlock->source().provider();
@@ -3902,8 +3964,12 @@ bool GuardedObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
     StoredBy storedBy = slot.thisValue() == JSValue(object) ? storeOrigin(globalObject->vm()) : StoredBy::TypedCode;
     if (storedBy == StoredBy::TypedCode)
         return JSObject::put(cell, globalObject, name, value, slot);
-    if (checkGuard(globalObject, object, storedBy == StoredBy::TypedCodeByKey ? 5 : 4, name.uid(), 0, value) != RejectedChange::No)
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RejectedChange refused = checkGuard(globalObject, object, storedBy == StoredBy::TypedCodeByKey ? 5 : 4, name.uid(), 0, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (refused != RejectedChange::No)
         return false;
+    scope.release();
     bool isStored = JSObject::put(cell, globalObject, name, value, slot);
     slot.disableCaching();
     return isStored;
@@ -4001,6 +4067,14 @@ ModuleNamespace* ModuleNamespace::create(VM& vm, Structure* structure, JSObject*
     return object;
 }
 
+ModuleNamespace* ModuleNamespace::createWithLazyNames(VM& vm, Structure* structure, JSObject* read, std::span<const uint32_t> nameStrings, JSObject* star, JSCellButterfly* starExportNames, bool isDeferred)
+{
+    ModuleNamespace* object = create(vm, structure, read, nullptr, star, starExportNames, isDeferred);
+    object->m_nameStrings = nameStrings.data();
+    object->m_numberOfNameStrings = nameStrings.size();
+    return object;
+}
+
 template<typename Visitor>
 void ModuleNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -4033,6 +4107,52 @@ static unsigned indexIn(JSCellButterfly* names, UniquedStringImpl* name)
     return ModuleNamespace::noExport;
 }
 
+static String constantString(const Data&, uint32_t index);
+
+unsigned ModuleNamespace::indexOfName(const Data& data, std::span<const uint32_t> nameStrings, UniquedStringImpl* name)
+{
+    if (name->isSymbol())
+        return noExport;
+    StringView wanted { *name };
+    auto compare = [&](uint32_t string) {
+        if (data.stringFacts(string) & Data::stringIsASCII)
+            return codePointCompare(StringView(byteCast<Latin1Character>(data.stringInImage(string))), wanted);
+        String text = constantString(data, string);
+        return codePointCompare(StringView(text), wanted);
+    };
+    size_t from = 0;
+    size_t to = nameStrings.size();
+    while (from < to) {
+        size_t middle = from + (to - from) / 2;
+        auto order = compare(nameStrings[middle]);
+        if (order == std::strong_ordering::equal)
+            return middle;
+        if (order < 0)
+            from = middle + 1;
+        else
+            to = middle;
+    }
+    return noExport;
+}
+
+JSCellButterfly* ModuleNamespace::ensureNames(JSGlobalObject* globalObject)
+{
+    if (JSCellButterfly* names = m_names.get())
+        return names;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    State& state = *this->globalObject()->aotInstance()->typed;
+    auto* names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, m_numberOfNameStrings);
+    for (unsigned i = 0; i < m_numberOfNameStrings; ++i) {
+        JSString* name = state.string(vm, m_nameStrings[i]);
+        name->toIdentifier(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        names->setIndex(vm, i, name);
+    }
+    m_names.set(vm, this, names);
+    return names;
+}
+
 bool ModuleNamespace::isSymbolLikeKey(UniquedStringImpl* name) const
 {
     return name->isSymbol() || (m_isDeferred && name == vm().propertyNames->then.impl());
@@ -4055,7 +4175,11 @@ bool ModuleNamespace::evaluateIfNeeded(JSGlobalObject* globalObject)
 
 unsigned ModuleNamespace::numberOf(UniquedStringImpl* name) const
 {
-    return isSymbolLikeKey(name) ? noExport : indexIn(m_names.get(), name);
+    if (isSymbolLikeKey(name))
+        return noExport;
+    if (JSCellButterfly* names = m_names.get())
+        return indexIn(names, name);
+    return indexOfName(globalObject()->aotInstance()->typed->data, { m_nameStrings, m_numberOfNameStrings }, name);
 }
 
 bool ModuleNamespace::isStarExport(UniquedStringImpl* name) const
@@ -4080,7 +4204,7 @@ void ModuleNamespace::detach(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    unsigned count = m_names->length();
+    unsigned count = numberOfNames();
     JSArray* values = constructEmptyArray(globalObject, nullptr, count);
     if (scope.exception()) [[unlikely]]
         return;
@@ -4174,7 +4298,8 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(object);
     thisObject->evaluateIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    JSCellButterfly* own = thisObject->m_names.get();
+    JSCellButterfly* own = thisObject->ensureNames(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
     JSCellButterfly* ofStar = thisObject->m_starExportNames.get();
     unsigned numberOfStar = ofStar ? ofStar->length() : 0;
     for (unsigned number = 0, place = 0; number < own->length() || place < numberOfStar;) {
@@ -4266,11 +4391,54 @@ Structure* Generator::createStructure(VM& vm, JSGlobalObject* globalObject, JSVa
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-Generator* Generator::create(VM& vm, Structure* structure, Closure* resumeClosure)
+Generator* Generator::create(VM& vm, Structure* structure, Closure* resumeClosure, bool hasUnmodifiedIteration, uint32_t offsetOfState)
 {
     Generator* generator = new (NotNull, allocateCell<Generator>(vm)) Generator(vm, structure, resumeClosure);
     generator->finishCreation(vm);
+    generator->m_offsetOfState = offsetOfState;
+    generator->m_hasOtherPrototype = !hasUnmodifiedIteration;
     return generator;
+}
+
+uint32_t Generator::offsetOfStateIn(Closure* resumeClosure)
+{
+    return uncheckedDowncast<Object>(resumeClosure->environment())->layout().describedVariables()[CoroutineFrame::stateField].offset;
+}
+
+bool Generator::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
+{
+    uncheckedDowncast<Generator>(object)->m_hasOtherPrototype = true;
+    return Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
+}
+
+Generator::Template Generator::asTemplate() const
+{
+    ASSERT(!m_isRunning);
+    Template result { static_cast<uint64_t>(structure()->typeInfoBlob()) << 32 | structure()->id().bits(), 0 };
+    memcpy(&result.offsetOfStateAndFlags, &m_offsetOfState, sizeof(uint64_t));
+    return result;
+}
+
+void State::setGeneratorTemplate(uint32_t index, uint32_t numberOfTemplates, Generator::Template filled)
+{
+    if (m_generatorTemplates.isEmpty()) {
+        m_generatorTemplates.fill(Generator::Template { }, numberOfTemplates);
+        instance.generatorTemplates = m_generatorTemplates.mutableSpan().data();
+    }
+    m_generatorTemplates[index] = filled;
+}
+
+Generator* Generator::forBodyFrame(const uint64_t* frame)
+{
+    uint32_t afterCall;
+    memcpy(&afterCall, std::bit_cast<const void*>(frame[1]), sizeof(afterCall));
+    return afterCall == markerAfterBodyCall ? std::bit_cast<Generator* const*>(frame[0])[generatorSlotInStubFrame] : nullptr;
+}
+
+void Generator::didThrow()
+{
+    m_isRunning = false;
+    state() = CoroutineFrame::completedState;
 }
 
 template<typename Visitor>
@@ -4417,10 +4585,10 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     return createIteratorResultObject(globalObject, result, isDone);
 }
 
-bool Generator::hasUnmodifiedIteration(JSGlobalObject* globalObject)
+bool Generator::hasUnmodifiedIteration(JSGlobalObject* globalObject, Structure* structure)
 {
-    JSObject* prototype = getPrototypeDirect().getObject();
-    if (structure()->maxOffset() != invalidOffset || !prototype || prototype->type() != FinalObjectType || prototype->structure()->maxOffset() != invalidOffset || !prototype->structure()->hasImmutableProperties())
+    JSObject* prototype = structure->storedPrototypeObject();
+    if (structure->maxOffset() != invalidOffset || structure->inlineCapacity() || !prototype || prototype->type() != FinalObjectType || prototype->structure()->maxOffset() != invalidOffset || !prototype->structure()->hasImmutableProperties())
         return false;
     JSObject* shared = globalObject->generatorPrototype();
     return prototype->getPrototypeDirect() == JSValue(shared) && shared->getPrototypeDirect() == JSValue(globalObject->iteratorPrototype());
@@ -4428,10 +4596,7 @@ bool Generator::hasUnmodifiedIteration(JSGlobalObject* globalObject)
 
 int32_t& Generator::state() const
 {
-    Object* frame = uncheckedDowncast<Object>(m_resumeClosure->environment());
-    if (!m_offsetOfState) [[unlikely]]
-        m_offsetOfState = frame->layout().describedVariables()[CoroutineFrame::stateField].offset;
-    return frame->at<int32_t>(m_offsetOfState);
+    return uncheckedDowncast<Object>(m_resumeClosure->environment())->at<int32_t>(m_offsetOfState);
 }
 
 bool Generator::isCompleted() const
@@ -5015,7 +5180,7 @@ static void installGeneratorMethod(JSGlobalObject* globalObject, JSObject* proto
     VM& vm = globalObject->vm();
     unsigned attributes;
     JSObject* original = generatorMethod(globalObject, prototype, name, attributes);
-    if (original->inherits<JSNativeStdFunction>())
+    if (original->inherits<JSNativeStdFunction>() || original->inherits<Closure>())
         return;
     auto* function = JSNativeStdFunction::create(vm, globalObject, 1, name.string(), [original](JSGlobalObject* globalObject, CallFrame* callFrame) {
         VM& vm = globalObject->vm();
@@ -5104,22 +5269,22 @@ void State::setGeneratorPrototype(VM& vm, uint32_t resumeFunction, bool isAsync,
 {
     JSGlobalObject* globalObject = instance.globalObject;
     Structure* structure = isAsync ? AsyncGenerator::createStructure(vm, globalObject, prototype) : Generator::createStructure(vm, globalObject, prototype);
-    m_generatorStructures.set(resumeFunction, structure);
+    m_generatorStructures.set(resumeFunction, GeneratorStructure { structure, 0, !isAsync && Generator::hasUnmodifiedIteration(globalObject, structure) });
     didCreate(structure);
 }
 
-Structure* State::generatorStructure(VM& vm, uint32_t resumeFunction, bool isAsync)
+State::GeneratorStructure& State::generatorStructure(VM& vm, uint32_t resumeFunction, bool isAsync)
 {
-    if (!m_generatorStructures.get(resumeFunction)) {
-        JSGlobalObject* globalObject = instance.globalObject;
-        JSObject* prototype = constructEmptyObject(globalObject, isAsync ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
-        prototype->lockAndMakePropertiesImmutable(vm);
-        setGeneratorPrototype(vm, resumeFunction, isAsync, prototype);
-    }
-    return m_generatorStructures.get(resumeFunction);
+    if (auto known = m_generatorStructures.find(resumeFunction); known != m_generatorStructures.end()) [[likely]]
+        return known->value;
+    JSGlobalObject* globalObject = instance.globalObject;
+    JSObject* prototype = constructEmptyObject(globalObject, isAsync ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
+    prototype->lockAndMakePropertiesImmutable(vm);
+    setGeneratorPrototype(vm, resumeFunction, isAsync, prototype);
+    return m_generatorStructures.find(resumeFunction)->value;
 }
 
-Structure* State::generatorStructure(VM& vm, Closure* generatorFunction, bool isAsync)
+State::GeneratorStructure& State::generatorStructure(VM& vm, Closure* generatorFunction, bool isAsync)
 {
     if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_generatorStructuresVersion) [[unlikely]] {
         m_closureGeneratorStructures.fill({ });
@@ -5136,8 +5301,8 @@ Structure* State::generatorStructure(VM& vm, Closure* generatorFunction, bool is
     }
     JSValue prototype = generatorFunction->ensurePrototypeProperty(vm) ? generatorFunction->getDirect(vm, vm.propertyNames->prototype) : JSValue();
     Structure* structure = prototype && prototype.isObject() ? globalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(globalObject, asObject(prototype), ofRealm) : ofRealm;
-    known = { generatorFunction, structure, instance.negativeOffsetFields().typedPrototypeEpoch };
-    return structure;
+    known = { generatorFunction, { structure, 0, !isAsync && Generator::hasUnmodifiedIteration(globalObject, structure) }, instance.negativeOffsetFields().typedPrototypeEpoch };
+    return known.structure;
 }
 
 static JSC_DECLARE_HOST_FUNCTION(getLiveBinding);
@@ -5698,7 +5863,7 @@ bool Closure::ensurePrototypeProperty(VM& vm)
             prototype = constructEmptyObject(globalObject, isDeclaredAs(functionIsAsync) ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
             prototype->lockAndMakePropertiesImmutable(vm);
         } else
-            prototype = state.generatorStructure(vm, state.resumeFunctionOf(functionIndex()), isDeclaredAs(functionIsAsync))->storedPrototypeObject();
+            prototype = state.generatorStructure(vm, state.resumeFunctionOf(functionIndex()), isDeclaredAs(functionIsAsync)).structure->storedPrototypeObject();
     } else {
         if (state.hasGuardedPrototype(functionIndex()))
             prototype = PrototypeObject::create(vm, state.prototypeObjectStructure(vm), functionIndex());
@@ -6386,6 +6551,7 @@ static size_t sizeOfZeroedTable(size_t count, size_t size)
 template<typename T>
 static T* createZeroedTable(size_t count)
 {
+    static_assert(std::is_trivially_default_constructible_v<T>, "this table is zeroed pages and its entries are never constructed, so default member initializers would be ignored");
     return static_cast<T*>(OSAllocator::reserveAndCommit(sizeOfZeroedTable(count, sizeof(T))));
 }
 
@@ -6589,6 +6755,7 @@ State::State(VM& vm, Instance& instance, const Data& data)
     instance.typedKnownStoreTransitions = createZeroedTable<KnownStoreTransition>(1 << KnownStoreTransition::indexBits);
     instance.typedExtraPropertyLocations = createZeroedTable<ExtraPropertyLocation>(1 << ExtraPropertyLocation::indexBits);
     instance.typedLateFieldCreations = createZeroedTable<LateFieldCreation>(1 << LateFieldCreation::indexBits);
+    instance.typedCloneCache = createZeroedTable<TypedCloneCacheEntry>(1 << TypedCloneCacheEntry::indexBits);
     m_propertyConversionCache = createZeroedTable<uintptr_t>(propertyConversionCacheSize);
     m_propertiesWithSupertypes = createZeroedTable<PropertiesWithSupertypes>(numberOfPropertiesWithSupertypes);
     createStatics();
@@ -6673,6 +6840,7 @@ State::~State()
     destroyZeroedTable(static_cast<KnownStoreTransition*>(instance.typedKnownStoreTransitions), 1 << KnownStoreTransition::indexBits);
     destroyZeroedTable(static_cast<ExtraPropertyLocation*>(instance.typedExtraPropertyLocations), 1 << ExtraPropertyLocation::indexBits);
     destroyZeroedTable(static_cast<LateFieldCreation*>(instance.typedLateFieldCreations), 1 << LateFieldCreation::indexBits);
+    destroyZeroedTable(static_cast<TypedCloneCacheEntry*>(instance.typedCloneCache), 1 << TypedCloneCacheEntry::indexBits);
     destroyZeroedTable(m_propertyConversionCache, propertyConversionCacheSize);
     destroyZeroedTable(m_propertiesWithSupertypes, numberOfPropertiesWithSupertypes);
     fastFree(m_youngRoots);
@@ -7120,6 +7288,8 @@ static Identifier createConstantSymbol(VM& vm, std::span<const uint8_t> name)
 
 static Identifier createNumberedIdentifier(VM& vm, const Data& data, uint32_t index)
 {
+    if (data.stringFacts(index) & Data::stringIsASCII) [[likely]]
+        return Identifier::fromString(vm, atomOf(data, index));
     auto name = data.string(index);
     if (isConstantSymbol(name))
         return createConstantSymbol(vm, name);
@@ -7266,7 +7436,7 @@ NEVER_INLINE const Identifier& State::nameSlow(VM& vm, uint32_t index)
             name = Identifier::fromUid(PrivateSymbolImpl::create(*textOf(written).impl()).get());
         } else if (facts & Data::stringIsEnginePrivateName) {
             name = enginePrivateName(vm, textOf(data.string(index).subspan(1)));
-        } else if (isConstantSymbol(data.string(index)))
+        } else if (!(facts & Data::stringIsASCII) && isConstantSymbol(data.string(index)))
             name = createConstantSymbol(vm, data.string(index));
         else
             name = Identifier::fromString(vm, atomOf(data, index));
@@ -7495,7 +7665,7 @@ bool State::hasText(uint32_t string, StringView text) const
     if (data.hasOnlyDecodedForm(string))
         return !(data.stringFacts(string) & (Data::stringIsPrivateName | Data::stringIsEnginePrivateName)) && text == constantString(data, string);
     auto characters = byteCast<Latin1Character>(data.stringInImage(string));
-    if (characters.size() < text.length() || isPrivateName(data.string(string)) || isEnginePrivateName(data.string(string)))
+    if (characters.size() < text.length() || isPrivateName(data.string(string)) || isEnginePrivateName(data.string(string)) || isConstantSymbol(data.string(string)))
         return false;
     bool isASCII = charactersAreAllASCII(characters);
     if (characters.size() == text.length())
@@ -7579,6 +7749,16 @@ std::optional<uint32_t> State::fieldNameIndex(UniquedStringImpl* name) const
 std::optional<uint32_t> State::findFieldNameIndex(UniquedStringImpl* name) const
 {
     auto names = std::span { data.at<std::array<uint32_t, 2>>(data.fieldNamesOffset), data.numberOfFieldNames };
+    if (name->isSymbol()) {
+        auto found = std::ranges::lower_bound(names, UINT32_MAX, { }, [](auto& entry) {
+            return entry[0];
+        });
+        for (; found != names.end(); ++found) {
+            if (data.stringFacts((*found)[1]) & Data::stringIsConstantSymbol && nameIfCreated((*found)[1]).impl() == name)
+                return (*found)[1];
+        }
+        return std::nullopt;
+    }
     for (uint32_t hash : { name->hash(), UINT32_MAX }) {
         auto found = std::ranges::lower_bound(names, hash, { }, [](auto& entry) {
             return entry[0];
@@ -7596,7 +7776,7 @@ const FieldData* State::findField(VM& vm, const LayoutData& layout, UniquedStrin
     auto fields = std::span { layout.fields(), layout.numberOfFields };
     if (name->isSymbol()) {
         for (auto& field : fields) {
-            if (data.stringFacts(field.name) & (Data::stringIsPrivateName | Data::stringIsEnginePrivateName) && this->name(vm, field.name).impl() == name)
+            if (data.stringFacts(field.name) & (Data::stringIsPrivateName | Data::stringIsEnginePrivateName | Data::stringIsConstantSymbol) && this->name(vm, field.name).impl() == name)
                 return &field;
         }
         return nullptr;
@@ -9316,6 +9496,7 @@ void State::didChangePrototypeOf(VM& vm, Closure* constructor)
         if (!prototype)
             prototype = isAsync ? static_cast<JSObject*>(instance.globalObject->asyncGeneratorPrototype()) : instance.globalObject->generatorPrototype();
         setGeneratorPrototype(vm, resumeFunctionOf(constructor->functionIndex()), isAsync, prototype);
+        m_generatorTemplates.fill(Generator::Template { });
         return;
     }
     uint32_t function = constructor->functionIndex();
@@ -9544,7 +9725,7 @@ bool State::hasImmutableMethod(const LayoutData& layout, UniquedStringImpl* name
 
 bool State::storeNeverSpecializes(const LayoutData& layout, UniquedStringImpl* name) const
 {
-    if (!layout.numberOfSpecializations() || name->isSymbol())
+    if (!layout.numberOfSpecializations() || PropertyName(name).isPrivateName())
         return true;
     auto found = m_specializationsWithField.find({ layout.shape, name });
     return found != m_specializationsWithField.end() && found->value.isEmpty();
@@ -9771,15 +9952,29 @@ bool State::leavesFieldsUnlisted(const LayoutData& layout, uint32_t orderWord)
     });
 }
 
-std::optional<std::span<const State::FieldAsProperty>> State::propertiesInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord)
+bool State::hasFieldsWithSymbolKeys(const LayoutData& layout)
+{
+    auto& known = orderTableFor(layout).hasFieldsWithSymbolKeys;
+    if (!known) [[unlikely]] {
+        known = std::ranges::any_of(std::span { layout.fields(), layout.numberOfFields }, [&](const FieldData& field) {
+            return hasSymbolKey(field);
+        });
+    }
+    return *known;
+}
+
+std::optional<std::span<const State::FieldAsProperty>> State::propertiesInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, Object::SymbolKeys symbolKeys)
 {
     if (orderOf(orderWord) == keysAreInLayoutOrder)
         return std::nullopt;
     auto& table = orderTableFor(layout);
-    if (table.lastOrderWord == orderWord) [[likely]]
+    bool includesSymbolKeys = symbolKeys == Object::SymbolKeys::Include && hasFieldsWithSymbolKeys(layout);
+    if (table.lastOrderWord == orderWord && !includesSymbolKeys) [[likely]]
         return table.lastProperties;
-    auto& lists = table.propertyLists;
+    auto& lists = includesSymbolKeys ? table.propertyListsWithSymbolKeys : table.propertyLists;
     auto remember = [&](std::span<const FieldAsProperty> properties) {
+        if (includesSymbolKeys)
+            return properties;
         table.lastOrderWord = orderWord;
         table.lastProperties = properties;
         return properties;
@@ -9793,7 +9988,7 @@ std::optional<std::span<const State::FieldAsProperty>> State::propertiesInOrder(
         if (index >= layout.numberOfFields)
             return std::nullopt;
         auto& field = layout.fields()[index];
-        if (!isPrivate(field))
+        if (hasStringKey(field) || (includesSymbolKeys && hasSymbolKey(field)))
             list.append({ name(vm, field.name).impl(), &field });
     }
     return remember(lists.add(orderWord, FixedVector<FieldAsProperty>(WTF::move(list))).iterator->value.span());
@@ -9830,7 +10025,7 @@ const State::KeysAsJSON* State::keysAsJSON(VM& vm, const LayoutData& layout, uin
         made->text.append(name);
         made->text.append('"');
         made->text.append(':');
-        made->keys.append({ property.field, start, static_cast<uint32_t>(made->text.size()) - start });
+        made->keys.append({ Object::readKindAndOffset(*property.field), static_cast<uint32_t>(property.field - layout.fields()), start, static_cast<uint32_t>(made->text.size()) - start });
     }
     for (unsigned i = 0; i < KeysAsJSON::copyStride; ++i)
         made->text.append(0);
@@ -9868,7 +10063,7 @@ const State::PlainCopyExcludingPlan& State::plainCopyExcludingPlan(VM& vm, const
     auto plan = makeUnique<PlainCopyExcludingPlan>();
     for (UniquedStringImpl* name : excluded)
         plan->excluded.append(name);
-    if (auto listed = propertiesInOrder(vm, layout, orderWord)) {
+    if (auto listed = propertiesInOrder(vm, layout, orderWord, Object::SymbolKeys::Include)) {
         Vector<FieldAsProperty> kept;
         for (auto& property : *listed) {
             if (std::ranges::find(excluded, property.name) == excluded.end())
@@ -9893,7 +10088,7 @@ const State::PlainCopyPlan& State::plainCopyPlan(VM& vm, const LayoutData& layou
     };
     if (auto found = table.plainCopyPlans.find(orderWord); found != table.plainCopyPlans.end()) [[likely]]
         return remember(found->value);
-    auto listed = propertiesInOrder(vm, layout, orderWord);
+    auto listed = propertiesInOrder(vm, layout, orderWord, Object::SymbolKeys::Include);
     std::span<const FieldAsProperty> properties = listed.value_or(std::span<const FieldAsProperty> { });
     Structure* structure = listed ? plainObjectStructureWith(vm, properties) : nullptr;
     return remember(table.plainCopyPlans.add(orderWord, PlainCopyPlan { properties, structure }).iterator->value);
@@ -9911,7 +10106,7 @@ JSCellButterfly* State::keysInOrder(VM& vm, const LayoutData& layout, uint32_t o
     for (uint16_t index : fieldsInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
         if (index >= layout.numberOfFields)
             return nullptr;
-        if (!isPrivate(layout.fields()[index]))
+        if (hasStringKey(layout.fields()[index]))
             listed.append(index);
     }
     JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, listed.size());
@@ -11472,7 +11667,7 @@ private:
                     result->ensureExtraProperties(m_vm)->putDirectAccessor(m_globalObject, property.name, uncheckedDowncast<GetterSetter>(value), property.attributes);
                 else
                     result->ensureExtraProperties(m_vm)->putDirect(m_vm, property.name, value, property.attributes);
-                numberOfExtraKeys += !property.name->isSymbol();
+                numberOfExtraKeys += m_state.hasPositionAmongKeys(*layout, property.name);
                 continue;
             }
             m_path.append(property.name);
@@ -11840,7 +12035,7 @@ bool State::specializeToStore(JSGlobalObject* globalObject, Object* object, Prop
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     const LayoutData& from = object->layout();
-    if (!from.numberOfSpecializations() || name.isSymbol())
+    if (!from.numberOfSpecializations() || name.isPrivateName())
         return false;
     bool usesPlans = !object->hasFlagsInOrderWord() && !data.isCompiledForAudit;
     JSValue discriminant = from.discriminant() != LayoutData::noBase ? object->read(from.fields()[from.discriminant()]) : JSValue();
@@ -12410,7 +12605,7 @@ static unsigned widthOf(Store store)
 void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Structure* made, size_t sizeOfCell)
 {
     size_t bodySize = plan.initialBody.size();
-    if (m_counts || data.isCompiledForAudit || !bodySize || sizeOfCell % 16 || sizeOfCell < 32 || sizeOfCell > maxSizeOfQuickConversion || plan.fields.size() > CoercionPlan::maxNumberOfQuickMoves || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity())
+    if (m_counts || data.isCompiledForAudit || !bodySize || sizeOfCell % 16 || sizeOfCell < 32 || sizeOfCell > maxSizeOfQuickConversion || sizeOfCell < plan.layout->size || plan.fields.size() > CoercionPlan::maxNumberOfQuickMoves || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity())
         return;
     if (structures[plan.layout->shape] != made->id().bits())
         return;
@@ -12508,7 +12703,7 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
             staged[i] = held.asBoolean();
             break;
         case Move::Kind::Any:
-            if (!(move.acceptedKinds & CoercionPlan::kindOf(held)) && (!(move.acceptedKinds & CoercionPlan::takesUntypedObject) || !held.isObject() || compiledObject(held) || asObject(held)->classInfo() == ClassPrototype::info()))
+            if (!(move.acceptedKinds & CoercionPlan::kindOf(held)) && !canHoldWithoutConversion(*plan.fields[i].field, move.acceptedKinds, held))
                 return false;
             staged[i] = 0;
             if (move.store != Store::Int32OrNumberBox) {
@@ -12525,6 +12720,10 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     }
     const uint8_t* body = plan.quickBody.span().data();
     uint8_t* newBody = bytes + sizeof(JSCell);
+    size_t sizeOfCell = cell->cellSize();
+    RELEASE_ASSERT(sizeOfCell >= entry->sizeOfCell);
+    if (sizeOfCell != entry->sizeOfCell) [[unlikely]]
+        zeroSpan(std::span { bytes + entry->sizeOfCell, sizeOfCell - entry->sizeOfCell });
     switch (entry->sizeOfCell) {
     case 32:
         memcpy(newBody, body, 24);
@@ -12634,6 +12833,158 @@ const State::CoercionPlan* State::firstCoercionPlanForShape(VM& vm, JSObject* ob
     return coercionPlan(structure, type) == made ? made : nullptr;
 }
 
+bool State::canHoldWithoutConversion(const FieldData& field, uint8_t acceptedKinds, JSValue value) const
+{
+    const RuntimeType& type = ownTypeOf(field);
+    if (!value.isObject())
+        return fits(type, value);
+    if (Object* compiled = compiledObject(value)) {
+        if (type.allowsAnyObject())
+            return true;
+        return acceptsShape(type, compiled->shape()) && !layoutForShape(compiled->shape()).numberOfSpecializations();
+    }
+    if (asObject(value)->classInfo() == ClassPrototype::info())
+        return false;
+    return acceptedKinds & CoercionPlan::takesUntypedObject || matchesTypedSubtype(type, asObject(value));
+}
+
+const TypedClonePlan& State::typedClonePlan(VM& vm, Structure* structure, uint64_t target)
+{
+    if (auto found = m_typedClonePlans.find({ structure, target }); found != m_typedClonePlans.end())
+        return *found->value;
+    if (m_typedClonePlans.size() >= maxTypedClonePlans)
+        return m_noTypedClonePlan;
+    auto plan = makeUnique<TypedClonePlan>();
+    uint32_t shape = TypedCloneTarget::shapeOf(target);
+    const LayoutData& layout = layoutForShape(shape);
+    size_t size = sizeWithSpecializationCapacity(shape);
+    auto storedFieldAt = [&](unsigned i) -> std::optional<uint32_t> {
+        uint32_t fieldPlusOne = TypedCloneTarget::storedFieldPlusOne(target, i);
+        return fieldPlusOne ? std::optional(fieldPlusOne - 1) : std::nullopt;
+    };
+    auto isStoredByCaller = [&](uint32_t index) {
+        for (unsigned i = 0; i < TypedCloneTarget::maxStoredFields; ++i) {
+            if (storedFieldAt(i) == index)
+                return true;
+        }
+        return false;
+    };
+    auto kindOfMove = [&](const FieldData& field, uint8_t kinds) {
+        using Kind = TypedCloneMove::Kind;
+        constexpr uint8_t nullish = CoercionPlan::acceptsUndefined | CoercionPlan::acceptsNull;
+        const RuntimeType& type = ownTypeOf(field);
+        if (field.store() == Store::JSValue && type.allowsAnyObject() && type.allowsAnyFunction() && (type.primitives & Primitive::All) == Primitive::All && kinds & CoercionPlan::acceptsInt32 && kinds & CoercionPlan::acceptsDouble)
+            return Kind::Value;
+        if (field.store() == Store::Double && kinds == (CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble))
+            return Kind::NumberAsDouble;
+        if (field.store() == Store::Int32OrNumberBox && kinds == (CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble))
+            return Kind::NumberAsInlineInt32;
+        if (field.store() == Store::Cell32 && kinds == CoercionPlan::acceptsString)
+            return Kind::StringAsCell32;
+        if (field.store() == Store::OptionalCell32 && kinds == (CoercionPlan::acceptsString | nullish))
+            return Kind::NullableStringAsCell32;
+        if (field.store() == Store::Boolean && kinds == (CoercionPlan::acceptsTrue | CoercionPlan::acceptsFalse))
+            return Kind::BooleanAsByte;
+        return Kind::General;
+    };
+    bool isEligible = !isCounting() && !data.isCompiledForAudit && layout.kind == LayoutKind::Record && !layout.hasExtension && !layout.literalsWithoutFieldOffset() && layout.numberOfFields <= 64
+        && size <= CoercionPlan::maxInPlaceConversionSize && !(size % sizeof(uint64_t)) && structure->isStructureExtensible() && !structure->isDictionary() && !structure->hasPolyProto()
+        && !hasIndexedProperties(structure->indexingType()) && !structure->outOfLineCapacity() && structure->realm() == instance.globalObject;
+    Vector<uint16_t, 16> order;
+    uint64_t isPresent = 0;
+    bool hasGeneralMove = false;
+    if (isEligible) {
+        structure->forEachProperty(vm, [&](const auto& entry) {
+            const FieldData* field = entry.attributes() ? nullptr : this->field(vm, layout, entry.key());
+            if (!field || field->numberOfLiterals() || field->flags & (fieldIsOutOfLine | fieldIsPinned | fieldIsImmutable) || !isInlineOffset(entry.offset())) {
+                isEligible = false;
+                return false;
+            }
+            uint32_t index = field - layout.fields();
+            isPresent |= 1ull << index;
+            order.append(index);
+            if (isStoredByCaller(index))
+                return true;
+            uint8_t kinds = kindsAcceptedBy(ownTypeOf(*field));
+            auto kind = kindOfMove(*field, kinds);
+            hasGeneralMove |= kind == TypedCloneMove::Kind::General;
+            plan->moves.append({ static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(entry.offset()) * sizeof(EncodedJSValue)), static_cast<uint16_t>(field->offset), kind, kinds, field->store(), 0 });
+            plan->fields.append(field);
+            return true;
+        });
+    }
+    for (unsigned i = 0; i < TypedCloneTarget::maxStoredFields && isEligible; ++i) {
+        auto index = storedFieldAt(i);
+        if (!index || isPresent >> *index & 1)
+            continue;
+        isPresent |= 1ull << *index;
+        order.append(*index);
+    }
+    for (uint32_t i = 0; i < layout.numberOfFields && isEligible; ++i)
+        isEligible = layout.fields()[i].flags & fieldIsOptional || isPresent >> i & 1;
+    uint32_t orderAndCount = isEligible && order.size() <= maxFieldsInOrder ? orderStartingWith(layout, order.span()) : orderWordOf(keysAreInLayoutOrder, 0);
+    if (isEligible && orderOf(orderAndCount) != keysAreInLayoutOrder) {
+        plan->body.fill(0, (size - sizeof(JSCell)) / sizeof(uint64_t));
+        uint8_t* cell = reinterpret_cast<uint8_t*>(plan->body.mutableSpan().data()) - sizeof(JSCell);
+        for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
+            if (const FieldData& field = layout.fields()[i]; !(field.flags & fieldIsOutOfLine))
+                clearSlot(cell + field.offset, field.store());
+        }
+        *reinterpret_cast<uint32_t*>(cell + offsetOfOrderWord) = (orderWordOf(keysAreInLayoutOrder, 0) & ~orderAndCountMask) | orderAndCount;
+        *reinterpret_cast<uint32_t*>(cell + offsetOfShapeWord) = shapeWordOf(shape);
+        plan->structure = structureFor(vm, shape, instance.globalObject->objectPrototype());
+        plan->header = static_cast<uint64_t>(plan->structure->typeInfoBlob()) << 32 | plan->structure->id().bits();
+        plan->allocator = vm.cellSpace().allocatorFor(size, AllocatorForMode::EnsureAllocator).localAllocator();
+        plan->bodyWords = plan->body.span().data();
+        plan->bodyWordCount = plan->body.size();
+        plan->firstMove = plan->moves.span().data();
+        plan->moveCount = plan->moves.size();
+        plan->path = hasGeneralMove || !plan->allocator ? TypedClonePlan::Path::Runtime : TypedClonePlan::Path::Stub;
+    }
+    m_hasNewTypedClonePlans = true;
+    return *m_typedClonePlans.add({ structure, target }, WTF::move(plan)).iterator->value;
+}
+
+Object* State::tryCloneAs(VM& vm, JSObject* source, uint64_t target)
+{
+    Structure* structure = source->structure();
+    uint32_t structureID = structure->id().bits();
+    TypedCloneCacheEntry& cached = static_cast<TypedCloneCacheEntry*>(instance.typedCloneCache)[TypedCloneCacheEntry::placeOf(structureID, target)];
+    const TypedClonePlan* found = cached.plan;
+    if (cached.structureID != structureID || cached.target != target) [[unlikely]] {
+        DeferGC deferGC(vm);
+        found = &typedClonePlan(vm, structure, target);
+        cached = { target, found, structureID };
+        m_hasCachedTypedClones = true;
+    }
+    const TypedClonePlan& plan = *found;
+    if (plan.path == TypedClonePlan::Path::PlainClone)
+        return nullptr;
+    Object* copy = Object::createWithBody(vm, plan.structure, asBytes(plan.body.span()));
+    const uint8_t* from = std::bit_cast<const uint8_t*>(source);
+    uint8_t* to = std::bit_cast<uint8_t*>(copy);
+    for (unsigned i = 0; i < plan.moves.size(); ++i) {
+        auto& move = plan.moves[i];
+        JSValue value = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(from + move.from));
+        if (!(move.acceptedKinds & CoercionPlan::kindOf(value)) && !canHoldWithoutConversion(*plan.fields[i], move.acceptedKinds, value))
+            return nullptr;
+        if (move.store != Store::Int32OrNumberBox) {
+            if (!storeAs(*this, move.store, to + move.to, value))
+                return nullptr;
+            continue;
+        }
+        if (value.isInt32() && value.asInt32() >= minInlineInt32)
+            *reinterpret_cast<int32_t*>(to + move.to) = value.asInt32();
+        else if (value.isUndefinedOrNull())
+            *reinterpret_cast<int32_t*>(to + move.to) = value.isUndefined() ? undefinedInt32 : nullInt32;
+        else
+            return nullptr;
+    }
+    vm.mutatorFence();
+    ensureStillAliveHere(source);
+    return copy;
+}
+
 Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayConvertInPlace)
 {
     const CoercionPlan* plan = coercionPlan(object, type);
@@ -12677,7 +13028,7 @@ Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& 
     }
     if (Object* made = tryConvertOrCopyByPlan(vm, object, *plan, mayConvertInPlace)) {
         if (mayBeQuick && JSValue(made) == JSValue(object))
-            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), made->cellSize());
+            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())));
         return made;
     }
     if (!plan->extraProperties.isEmpty())
@@ -12930,6 +13281,13 @@ void State::removeDeadCachedKeys(VM& vm)
 void State::removeDeadCoercionPlans(VM& vm, bool newOnly)
 {
     m_lastCoercionPlanLookup = { };
+    if (std::exchange(m_hasCachedTypedClones, false))
+        zeroSpan(std::span { static_cast<TypedCloneCacheEntry*>(instance.typedCloneCache), static_cast<size_t>(1) << TypedCloneCacheEntry::indexBits });
+    if (std::exchange(m_hasNewTypedClonePlans, false) || !newOnly) {
+        m_typedClonePlans.removeIf([&](auto& entry) {
+            return !vm.heap.isMarked(entry.key.first);
+        });
+    }
     if (m_quickConversions) {
         m_quickConversions->fill({ });
         ++m_quickConversionEpoch;
@@ -15037,7 +15395,7 @@ bool tryAssignPrimitivesToCompiledObjectFields(VM& vm, JSObject* target, JSObjec
         return false;
     Vector<std::pair<const FieldData*, JSValue>, 8> stores;
     auto note = [&](UniquedStringImpl& name, JSValue value) {
-        const FieldData* field = value.isObject() || name.isSymbol() ? nullptr : typedTarget->fieldNamed(state, &name);
+        const FieldData* field = value.isObject() ? nullptr : typedTarget->fieldNamed(state, &name);
         if (!field || typedTarget->isDiscriminant(*field) || !typedTarget->readInline(*field))
             return false;
         stores.append({ field, value });
@@ -15051,7 +15409,7 @@ bool tryAssignPrimitivesToCompiledObjectFields(VM& vm, JSObject* target, JSObjec
         bool isWalked = uncheckedDowncast<Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
             isNoted = note(name, value);
             return isNoted;
-        });
+        }, Object::SymbolKeys::Include);
         if (!isWalked)
             return false;
     } else {
@@ -15164,8 +15522,10 @@ bool forEachCompiledObjectOwnProperty(JSObject* object, const ScopedLambda<bool(
     if (!layout || !isObjectLayout(layout->kind))
         return false;
     auto* typedObject = uncheckedDowncast<Object>(object);
-    if (typedObject->forEachFieldAsProperty(functor))
+    if (typedObject->forEachFieldAsProperty(functor, Object::SymbolKeys::Include))
         return true;
+    if (typedObject->state().hasFieldsWithSymbolKeys(*layout))
+        return false;
     bool goesOn = true;
     bool isWalked = typedObject->forEachFieldAndExtraProperty([&](UniquedStringImpl& name, JSValue value) {
         goesOn = functor(name, value);
@@ -15194,6 +15554,279 @@ void didChangePrototypeProperty(VM& vm, JSCell* function)
 {
     if (auto* closure = dynamicDowncast<Closure>(function))
         closure->structure()->aotInstance()->typed->didChangePrototypeOf(vm, closure);
+}
+
+void State::setExpectedRowType(VM& vm, JSObject* query, uint32_t type)
+{
+    if (!m_expectedRowTypeSymbol)
+        m_expectedRowTypeSymbol = PrivateSymbolImpl::create(*String("expectedRowType"_s).impl());
+    query->putDirect(vm, PropertyName(m_expectedRowTypeSymbol.get()), jsNumber(type + 1));
+}
+
+uint32_t State::expectedRowType(VM& vm, JSObject* query)
+{
+    if (!m_expectedRowTypeSymbol)
+        return 0;
+    JSValue expected = query->getDirect(vm, PropertyName(m_expectedRowTypeSymbol.get()));
+    return expected && expected.isInt32() ? expected.asInt32() : 0;
+}
+
+auto State::createRowDecoder(VM& vm, JSGlobalObject* globalObject, const RuntimeType& type, std::span<const RowColumn> columns) -> std::unique_ptr<RowDecoder>
+{
+    using Step = RowDecoder::Step;
+    if (data.isCompiledForAudit || isCounting() || type.allowsAnyObject() || type.numberOfSupertypes() != 1 || !type.view(0).supertypeShape || !hasLayoutForShape(type.view(0).supertypeShape))
+        return nullptr;
+    const LayoutData& layout = layoutForShape(type.view(0).supertypeShape);
+    if (layout.kind != LayoutKind::Record || layout.isAbstract || layout.literalsWithoutFieldOffset() || layout.numberOfFields > 64 || columns.size() > maxFieldsInOrder)
+        return nullptr;
+    auto decoder = makeUnique<RowDecoder>();
+    CoercionPlan stores;
+    Vector<uint16_t, 16> order;
+    uint64_t isPresent = 0;
+    JSObject* sampleDate = nullptr;
+    for (auto& column : columns) {
+        std::span columnName { column.name, column.nameLength };
+        RefPtr name = charactersAreAllASCII(columnName) ? AtomStringImpl::add(byteCast<Latin1Character>(columnName)) : nullptr;
+        const FieldData* field = name ? this->field(vm, layout, name.get()) : nullptr;
+        if (!field || field->flags & (fieldIsOutOfLine | fieldIsPinned | fieldHoldsLazyClosure | fieldMayExistWithoutStorage | fieldIsPlaceholder) || isPresent >> (field - layout.fields()) & 1)
+            return nullptr;
+        isPresent |= 1ull << (field - layout.fields());
+        order.append(field - layout.fields());
+        const RuntimeType& fieldType = ownTypeOf(*field);
+        Store store = field->store();
+        uint8_t kinds = kindsAcceptedBy(fieldType);
+        bool storesCell32 = store == Store::Cell32 || store == Store::OptionalCell32;
+        bool storesValue = store == Store::Cell || store == Store::JSValue;
+        bool storesDouble = store == Store::Double || store == Store::OptionalDouble;
+        Step step = Step::General;
+        size_t firstLiteral = 0;
+        switch (column.format) {
+        case WireFormat::Int32:
+            if (kinds & CoercionPlan::acceptsInt32 && !field->numberOfLiterals())
+                step = store == Store::Int32OrNumberBox ? Step::InlineInt32 : store == Store::Int32 ? Step::Int32AsInt32 : storesDouble ? Step::Int32AsDouble : store == Store::JSValue ? Step::Int32AsValue : Step::General;
+            break;
+        case WireFormat::Float32:
+        case WireFormat::Float64:
+            if (kinds & CoercionPlan::acceptsInt32 && kinds & CoercionPlan::acceptsDouble && !field->numberOfLiterals() && storesDouble)
+                step = column.format == WireFormat::Float32 ? Step::Float32AsDouble : Step::Float64AsDouble;
+            break;
+        case WireFormat::Boolean:
+            if (kinds & CoercionPlan::acceptsTrue && kinds & CoercionPlan::acceptsFalse)
+                step = store == Store::Boolean ? Step::BooleanAsByte : store == Store::OptionalBoolean ? Step::BooleanAsLowByteOfValue : Step::General;
+            break;
+        case WireFormat::Text:
+            if (kinds & CoercionPlan::acceptsString && !field->numberOfLiterals())
+                step = storesCell32 ? Step::TextAsCell32 : storesValue ? Step::TextAsValue : Step::General;
+            else if (kinds & CoercionPlan::acceptsString && store != Store::Int32OrNumberBox) {
+                std::span allowed { data.at<LiteralData>(field->literalsOffset()), field->numberOfLiterals() };
+                firstLiteral = decoder->literals.size();
+                for (auto& literal : allowed) {
+                    uint64_t bits = 0;
+                    if (literal.isNumber() || !(data.stringFacts(literal.string()) & Data::stringIsASCII) || !storeAs(*this, store, &bits, string(vm, literal.string())))
+                        break;
+                    decoder->literals.append({ data.string(literal.string()), bits });
+                }
+                if (decoder->literals.size() - firstLiteral == allowed.size())
+                    step = Step::TextAsLiteral;
+                else
+                    decoder->literals.shrink(firstLiteral);
+            }
+            break;
+        case WireFormat::TimestampMicroseconds:
+            if (!sampleDate)
+                sampleDate = DateInstance::create(vm, globalObject->dateStructure(), 0);
+            if (matchesTypedSubtype(fieldType, sampleDate))
+                step = storesCell32 ? Step::DateAsCell32 : storesValue ? Step::DateAsValue : Step::General;
+            break;
+        }
+        uint64_t nullBits = 0;
+        uint8_t nullWidth = 0;
+        if (fits(fieldType, jsNull())) {
+            if (store == Store::Int32OrNumberBox) {
+                nullBits = static_cast<uint32_t>(nullInt32);
+                nullWidth = sizeof(int32_t);
+            } else if (storeAs(*this, store, &nullBits, jsNull()))
+                nullWidth = widthOf(store);
+        }
+        decoder->columns.append({ field, nullBits, field->offset, column.format, step, nullWidth, kinds });
+        if (step == Step::TextAsLiteral) {
+            decoder->columns.last().literalWidth = widthOf(store);
+            decoder->columns.last().firstLiteral = firstLiteral;
+            decoder->columns.last().literalCount = decoder->literals.size() - firstLiteral;
+        }
+    }
+    for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
+        if (!(layout.fields()[i].flags & fieldIsOptional) && !(isPresent >> i & 1))
+            return nullptr;
+    }
+    finishCoercionPlan(stores, layout, orderStartingWith(layout, order.span()));
+    if (stores.initialBody.isEmpty())
+        return nullptr;
+    decoder->layout = &layout;
+    decoder->initialBody = WTF::move(stores.initialBody);
+    return decoder;
+}
+
+bool State::tryConvertRow(VM& vm, JSObject* row, const RuntimeType& type)
+{
+    return row->type() == FinalObjectType && !data.isCompiledForAudit && !isCounting() && tryConvertInPlaceByPlans(vm, row, type);
+}
+
+Object* State::tryDecodeRow(VM& vm, JSGlobalObject* globalObject, const RowDecoder& decoder, std::span<const uint8_t> row)
+{
+    using Step = RowDecoder::Step;
+    static constexpr int64_t unixMillisecondsAtYear2000 = 946684800000;
+    size_t bodySize = decoder.initialBody.size();
+    alignas(sizeof(EncodedJSValue)) uint8_t cellBytes[CoercionPlan::maxInPlaceConversionSize];
+    memcpySpan(std::span { cellBytes + sizeof(JSCell), bodySize }, decoder.initialBody.span());
+    const uint8_t* cursor = row.data();
+    const uint8_t* end = cursor + row.size();
+    auto take = [&]<typename T>(T) {
+        T bits;
+        memcpy(&bits, cursor, sizeof(T));
+        cursor += sizeof(T);
+        return flipBytes(bits);
+    };
+    auto takeText = [&](uint32_t length) -> JSString* {
+        std::span text { cursor, length };
+        cursor += length;
+        if (charactersAreAllASCII(text))
+            return jsString(vm, String(byteCast<Latin1Character>(text)));
+        String decoded = String::fromUTF8(text);
+        return decoded.isNull() ? nullptr : jsString(vm, WTF::move(decoded));
+    };
+    auto takeDate = [&]() -> JSObject* {
+        int64_t microseconds = static_cast<int64_t>(take(uint64_t()));
+        if (microseconds == INT64_MAX || microseconds == INT64_MIN)
+            return nullptr;
+        int64_t milliseconds = microseconds / 1000 - (microseconds % 1000 < 0);
+        return DateInstance::create(vm, globalObject->dateStructure(), static_cast<double>(milliseconds + unixMillisecondsAtYear2000));
+    };
+    if (row.size() < sizeof(uint16_t) || take(uint16_t()) != decoder.columns.size())
+        return nullptr;
+    DeferGC deferGC(vm);
+    for (auto& column : decoder.columns) {
+        if (static_cast<size_t>(end - cursor) < sizeof(uint32_t))
+            return nullptr;
+        uint32_t length = take(uint32_t());
+        uint8_t* slot = cellBytes + column.offset;
+        auto keep = [&](auto bits) {
+            memcpy(slot, &bits, sizeof(bits));
+        };
+        if (length == UINT32_MAX) {
+            if (!column.nullWidth)
+                return nullptr;
+            memcpy(slot, &column.nullBits, column.nullWidth);
+            continue;
+        }
+        static constexpr uint8_t fixedLengths[] = { 4, 4, 8, 1, 0, 8 };
+        if (static_cast<size_t>(end - cursor) < length || (column.format != WireFormat::Text && length != fixedLengths[static_cast<unsigned>(column.format)]))
+            return nullptr;
+        switch (column.step) {
+        case Step::InlineInt32: {
+            int32_t number = static_cast<int32_t>(take(uint32_t()));
+            if (number < minInlineInt32)
+                return nullptr;
+            keep(number);
+            continue;
+        }
+        case Step::Int32AsInt32:
+            keep(take(uint32_t()));
+            continue;
+        case Step::Int32AsDouble:
+            keep(static_cast<double>(static_cast<int32_t>(take(uint32_t()))));
+            continue;
+        case Step::Int32AsValue:
+            keep(JSValue::encode(jsNumber(static_cast<int32_t>(take(uint32_t())))));
+            continue;
+        case Step::Float32AsDouble:
+            keep(purifyNaN(static_cast<double>(std::bit_cast<float>(take(uint32_t())))));
+            continue;
+        case Step::Float64AsDouble:
+            keep(purifyNaN(std::bit_cast<double>(take(uint64_t()))));
+            continue;
+        case Step::BooleanAsByte:
+            keep(static_cast<uint8_t>(*cursor++ == 1));
+            continue;
+        case Step::BooleanAsLowByteOfValue:
+            keep(static_cast<uint8_t>(JSValue::encode(jsBoolean(*cursor++ == 1))));
+            continue;
+        case Step::TextAsCell32:
+        case Step::TextAsValue: {
+            JSString* text = takeText(length);
+            if (!text)
+                return nullptr;
+            if (column.step == Step::TextAsCell32)
+                keep(MarkedBlockCage::encode(text));
+            else
+                keep(JSValue::encode(text));
+            continue;
+        }
+        case Step::TextAsLiteral: {
+            std::span text { cursor, length };
+            cursor += length;
+            auto allowed = decoder.literals.span().subspan(column.firstLiteral, column.literalCount);
+            auto found = std::ranges::find_if(allowed, [&](auto& literal) { return equalSpans(literal.text, text); });
+            if (found == allowed.end())
+                return nullptr;
+            memcpy(slot, &found->bits, column.literalWidth);
+            countOperationNamed(&instance, "RowDecoder::literalText");
+            continue;
+        }
+        case Step::DateAsCell32:
+        case Step::DateAsValue: {
+            JSObject* date = takeDate();
+            if (!date)
+                return nullptr;
+            if (column.step == Step::DateAsCell32)
+                keep(MarkedBlockCage::encode(date));
+            else
+                keep(JSValue::encode(date));
+            continue;
+        }
+        case Step::General:
+            break;
+        }
+        JSValue value;
+        switch (column.format) {
+        case WireFormat::Int32:
+            value = jsNumber(static_cast<int32_t>(take(uint32_t())));
+            break;
+        case WireFormat::Float32:
+            value = jsNumber(purifyNaN(static_cast<double>(std::bit_cast<float>(take(uint32_t())))));
+            break;
+        case WireFormat::Float64:
+            value = jsNumber(purifyNaN(std::bit_cast<double>(take(uint64_t()))));
+            break;
+        case WireFormat::Boolean:
+            value = jsBoolean(*cursor++ == 1);
+            break;
+        case WireFormat::TimestampMicroseconds:
+            value = takeDate();
+            break;
+        case WireFormat::Text:
+            value = takeText(length);
+            break;
+        }
+        if (!value)
+            return nullptr;
+        const FieldData& field = *column.field;
+        if (!(column.acceptedKinds & CoercionPlan::kindOf(value)) && (value.isObject() ? !matchesTypedSubtype(ownTypeOf(field), asObject(value)) : !fits(ownTypeOf(field), value)))
+            return nullptr;
+        if (field.numberOfLiterals() && !isAllowedLiteral(field, value))
+            return nullptr;
+        if (field.store() != Store::Int32OrNumberBox) {
+            if (!storeAs(*this, field.store(), slot, value))
+                return nullptr;
+            continue;
+        }
+        if (!value.isInt32() || value.asInt32() < minInlineInt32)
+            return nullptr;
+        keep(value.asInt32());
+    }
+    if (cursor != end)
+        return nullptr;
+    return Object::createWithBody(vm, structureFor(vm, decoder.layout->shape, globalObject->objectPrototype()), std::span { cellBytes + sizeof(JSCell), bodySize });
 }
 
 } // namespace Typed

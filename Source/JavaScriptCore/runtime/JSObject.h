@@ -592,7 +592,8 @@ public:
     inline void setStructure(VM&, Structure*); // Defined in StructureCreateInlines.h
 
     enum class LockedObjectExtensibility : bool { StaysExtensible, BecomesNonExtensible };
-    JS_EXPORT_PRIVATE void lockProperties(VM&, LockedObjectExtensibility);
+    enum class LockedObjectHistory : bool { MayBeCached, NewlyCreated };
+    JS_EXPORT_PRIVATE void lockProperties(VM&, LockedObjectExtensibility, LockedObjectHistory = LockedObjectHistory::MayBeCached);
     JS_EXPORT_PRIVATE bool inheritsImmutableProperty(VM&, PropertyName);
     JS_EXPORT_PRIVATE void becomeDerivedArray(VM&);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);

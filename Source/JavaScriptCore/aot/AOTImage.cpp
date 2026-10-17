@@ -887,12 +887,14 @@ Vector<uint8_t> ImageBuilder::finish()
         dataLogLn("AOT: Yarr's compiler took ", static_cast<unsigned>(m_timeInRegExpCompiler.milliseconds()), " ms in all, on ", m_regExpCompilerThreads.size(), " threads");
     }
     MonotonicTime stepStart = MonotonicTime::now();
+    Typed::PhaseTimes phaseTimes("image"_s);
     auto endStep = [&](ASCIILiteral name) {
         if (!Typed::shouldPrintTimings()) [[likely]]
             return;
         MonotonicTime now = MonotonicTime::now();
         dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
         stepStart = now;
+        phaseTimes.didFinish(name);
     };
     auto reorderFunctions = [&](const Vector<uint32_t>& order) {
         Functions taken;
@@ -963,8 +965,8 @@ Vector<uint8_t> ImageBuilder::finish()
         capacity *= 2;
 
     const IdentifierIndices* identifierIndices = m_programIdentifierIndices;
-    for (auto& function : m_functions) {
-        auto& info = function.code.info;
+    Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        auto& info = m_functions[index].code.info;
         RELEASE_ASSERT(info.siteConstants.size() == info.numSlots);
         for (unsigned slot = 0; slot < info.numSlots; ++slot) {
             uint32_t& constant = info.siteConstants[slot];
@@ -977,7 +979,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 info.sites[slot].identifierAndExtra = constant;
             }
         }
-    }
+    });
     endStep("the plans at the sites of the functions"_s);
     struct EntryInsideFunction {
         ImageKey key;
@@ -1382,11 +1384,15 @@ Vector<uint8_t> ImageBuilder::finish()
     }
 
     endStep("folding functions"_s);
+    Vector<ImageKey> functionKeys(m_functions.size());
+    Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        functionKeys[index] = m_functions[index].key;
+    });
     Vector<uint32_t> functionWithKey;
     functionWithKey.fill(std::numeric_limits<uint32_t>::max(), capacity);
     for (size_t index = 0; index < m_functions.size(); ++index) {
-        unsigned bucket = m_functions[index].key.hash() & (capacity - 1);
-        while (functionWithKey[bucket] != std::numeric_limits<uint32_t>::max() && !m_functions[functionWithKey[bucket]].key.sameFunction(m_functions[index].key))
+        unsigned bucket = functionKeys[index].hash() & (capacity - 1);
+        while (functionWithKey[bucket] != std::numeric_limits<uint32_t>::max() && !functionKeys[functionWithKey[bucket]].sameFunction(functionKeys[index]))
             bucket = (bucket + 1) & (capacity - 1);
         if (functionWithKey[bucket] == std::numeric_limits<uint32_t>::max())
             functionWithKey[bucket] = index;
@@ -1396,7 +1402,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
         calleesOf[index] = WTF::map(m_functions[index].code.info.knownCallees, [&](const ImageKey& key) {
             for (unsigned bucket = key.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
-                if (m_functions[functionWithKey[bucket]].key.sameFunction(key))
+                if (functionKeys[functionWithKey[bucket]].sameFunction(key))
                     return functionWithKey[bucket];
             }
             return ImageFunction::noSuchFunction;
@@ -1554,12 +1560,15 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<Vector<uint8_t>> preambles(m_functions.size());
     size_t sizeBeforeEntryWithThis = 0;
     auto generateFunctionPreambles = [&] {
-        for (size_t index = 0; index < m_functions.size(); ++index) {
+        auto functionsWithPreambles = Typed::collectInParallel<uint32_t>(m_functions.size(), [&](unsigned index, Vector<uint32_t>& collected) {
             auto& info = m_functions[index].code.info;
             if (omittedArgumentsOf[index][1])
                 info.compatibleResultsMask = 0;
-            if (info.signatureAdapter == StubCall::noFunction && info.adapterResult == StubCall::noFunction && !info.compatibleResultsMask)
-                continue;
+            if (info.signatureAdapter != StubCall::noFunction || info.adapterResult != StubCall::noFunction || info.compatibleResultsMask)
+                collected.append(index);
+        });
+        for (uint32_t index : functionsWithPreambles) {
+            auto& info = m_functions[index].code.info;
             RELEASE_ASSERT(!omittedArgumentsOf[index][1] && info.valueEntry == StubCall::noFunction);
             if (info.compatibleResultsMask)
                 preambles[index].append(std::span { reinterpret_cast<const uint8_t*>(&info.compatibleResultsMask), info.compatibleResultsMaskSize });
@@ -1586,7 +1595,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Outlining outlining;
     auto indexOfFunctionWithKey = [&](const ImageKey& key) -> uint32_t {
         for (unsigned bucket = key.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
-            if (m_functions[functionWithKey[bucket]].key.sameFunction(key))
+            if (functionKeys[functionWithKey[bucket]].sameFunction(key))
                 return functionWithKey[bucket];
         }
         return ImageFunction::noSuchFunction;
@@ -2351,10 +2360,14 @@ Vector<uint8_t> ImageBuilder::finish()
         reach = sizeOfStubs + imageStubsAlignment + sizeOfFunctions / copies;
     }
     bool stubsServeBothSides = false;
+    Vector<std::array<size_t, 2>> codeAndPreambleSizes(m_functions.size());
+    Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        codeAndPreambleSizes[index] = { m_functions[index].code.bytes.size(), preambleSize(index) };
+    });
     {
         size_t sizeOfCode = sizeOfStubs + imageStubsAlignment + (static_cast<size_t>(1) << codeGranuleShift);
         for (size_t index = 0; index < m_functions.size(); ++index)
-            sizeOfCode += WTF::roundUpToMultipleOf<imageFunctionAlignment>(m_functions[index].code.bytes.size() + sizeOfOwnBodiesOf[index] + preambleSize(index)) + imageFunctionAlignment;
+            sizeOfCode += WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeAndPreambleSizes[index][0] + sizeOfOwnBodiesOf[index] + codeAndPreambleSizes[index][1]) + imageFunctionAlignment;
         stubsServeBothSides = sizeOfCode > reach;
     }
     endStep("the stubs and the argument thunks"_s);
@@ -2371,9 +2384,9 @@ Vector<uint8_t> ImageBuilder::finish()
         size_t lastStubs = std::numeric_limits<size_t>::max();
         bool isBeforeStubs = stubsServeBothSides;
         size_t startOfCodeBeforeStubs = end;
-        for (auto& function : m_functions) {
-            end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + preambleSize(at.size()));
-            size_t endOfFunction = end + function.code.bytes.size() + sizeOfOwnBodiesOf[at.size()];
+        for (auto [functionSize, sizeBeforeFunction] : codeAndPreambleSizes) {
+            end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + sizeBeforeFunction);
+            size_t endOfFunction = end + functionSize + sizeOfOwnBodiesOf[at.size()];
             if (!isBeforeStubs && stubsServeBothSides && endOfFunction - lastStubs > reach) {
                 isBeforeStubs = true;
                 startOfCodeBeforeStubs = end;
@@ -2381,10 +2394,10 @@ Vector<uint8_t> ImageBuilder::finish()
             if (isBeforeStubs ? endOfFunction + imageStubsAlignment + sizeOfStubs - startOfCodeBeforeStubs > reach : lastStubs == std::numeric_limits<size_t>::max() || endOfFunction - lastStubs > reach) {
                 isBeforeStubs = false;
                 end = lastStubs = WTF::roundUpToMultipleOf<imageStubsAlignment>(end);
-                end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + sizeOfStubs + preambleSize(at.size()));
+                end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + sizeOfStubs + sizeBeforeFunction);
             }
             at.append(end);
-            end += function.code.bytes.size() + sizeOfOwnBodiesOf[at.size() - 1];
+            end += functionSize + sizeOfOwnBodiesOf[at.size() - 1];
         }
         std::atomic<size_t> sizeOfVeneers { 0 };
         Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
@@ -2411,7 +2424,7 @@ Vector<uint8_t> ImageBuilder::finish()
     BitVector hasSharedKey(m_functions.size());
     Vector<uint32_t> firstWithKey(m_functions.size());
     Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
-        firstWithKey[index] = indexOfFunctionWithKey(m_functions[index].key);
+        firstWithKey[index] = indexOfFunctionWithKey(functionKeys[index]);
     });
     for (size_t index = 0; index < m_functions.size(); ++index) {
         if (uint32_t first = firstWithKey[index]; first != index) {
@@ -2421,10 +2434,13 @@ Vector<uint8_t> ImageBuilder::finish()
     }
     constexpr uint32_t noJumpToNext = std::numeric_limits<uint32_t>::max();
     Vector<uint32_t> jumpToNext(FillWith { }, m_functions.size(), noJumpToNext);
+    Vector<size_t> sizesBeforeCut(FillWith { }, m_functions.size(), static_cast<size_t>(0));
+    Vector<uint8_t> jumpIsReturnedTo(FillWith { }, m_functions.size(), static_cast<uint8_t>(0));
     Typed::forEachIndexInParallel(m_functions.isEmpty() ? 0 : m_functions.size() - 1, [&](unsigned index) {
         auto& function = m_functions[index].code;
         auto& calls = function.info.stubCalls;
         size_t size = function.bytes.size();
+        sizesBeforeCut[index] = size;
         size_t last = calls.findIf([&](const StubCall& call) {
             return call.isTailCall && !call.thunk && !call.body && call.function != StubCall::noFunction && call.argumentMoves == StubCall::noArgumentMoves && call.firstOmittedGPR == call.endOfOmittedGPRs
                 && call.offset + sizeOfJump <= size && size - call.offset - sizeOfJump < imageFunctionAlignment + isX86() && *directTargetOf(index, call) == index + 1;
@@ -2440,33 +2456,39 @@ Vector<uint8_t> ImageBuilder::finish()
             mayBeCut = equalSpans(afterJump, std::span<const uint8_t> { padding }.first(afterJump.size()));
         }
 #endif
-        if (mayBeCut)
-            jumpToNext[index] = safeCast<uint32_t>(last);
+        if (!mayBeCut)
+            return;
+        jumpToNext[index] = safeCast<uint32_t>(last);
+        size_t offset = calls[last].offset;
+        jumpIsReturnedTo[index] = !(offset % imageFunctionAlignment) && calls.containsIf([&](const StubCall& call) {
+            return !call.isTailCall && call.offset + sizeOfNearCall == offset;
+        });
     });
     size_t numberOfJumpsReturnedTo = 0;
     for (size_t index = 0, sizeOfRun = 0; index + 1 < m_functions.size(); ++index) {
         constexpr size_t maxRunSize = 1 << 20;
-        auto& function = m_functions[index].code;
-        auto& calls = function.info.stubCalls;
-        sizeOfRun += function.bytes.size();
-        size_t last = jumpToNext[index];
-        if (last == noJumpToNext || sizeOfRun > maxRunSize) {
+        sizeOfRun += sizesBeforeCut[index];
+        if (jumpToNext[index] == noJumpToNext || sizeOfRun > maxRunSize) {
             sizeOfRun = 0;
             continue;
         }
-        size_t offset = calls[last].offset;
-        size_t filling = WTF::roundUpToMultipleOf<imageFunctionAlignment>(offset) - offset;
-        bool isReturnedTo = calls.containsIf([&](const StubCall& call) {
-            return !call.isTailCall && call.offset + sizeOfNearCall == offset;
-        });
-        if (isReturnedTo && !filling) {
+        if (jumpIsReturnedTo[index]) {
             ++numberOfJumpsReturnedTo;
             if (!isX86()) {
                 sizeOfRun = 0;
                 continue;
             }
-            filling = imageFunctionAlignment;
         }
+        fallsIntoNext.quickSet(index);
+    }
+    Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        if (!fallsIntoNext.quickGet(index))
+            return;
+        auto& function = m_functions[index].code;
+        auto& calls = function.info.stubCalls;
+        size_t last = jumpToNext[index];
+        size_t offset = calls[last].offset;
+        size_t filling = jumpIsReturnedTo[index] ? imageFunctionAlignment : WTF::roundUpToMultipleOf<imageFunctionAlignment>(offset) - offset;
         calls.removeAt(last);
         function.bytes.shrink(offset);
         if (!function.instructions.isEmpty()) {
@@ -2483,8 +2505,7 @@ Vector<uint8_t> ImageBuilder::finish()
 #else
         RELEASE_ASSERT(!filling);
 #endif
-        fallsIntoNext.quickSet(index);
-    }
+    });
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", fallsIntoNext.bitCount(), " functions fall into the function that is placed next; ", hasSharedKey.bitCount(), " share their key with another and are left as they are; ", numberOfJumpsReturnedTo, " such jumps stand where a call returns to, with no filling behind");
     Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
         auto& function = m_functions[index].code;
@@ -3125,8 +3146,13 @@ Vector<uint8_t> ImageBuilder::finish()
     header.recordsOffset = header.tableOffset + header.tableCapacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
     size_t totalDataSize = 0;
-    for (auto& function : m_functions)
-        totalDataSize += roundUpToMultipleOf<16>(Data::allocationSize(function.code.info.numSlots, true));
+    auto dataSizes = Typed::collectInParallel<size_t>(m_functions.size(), [&](unsigned index, Vector<size_t>& sums) {
+        if (sums.isEmpty())
+            sums.append(0);
+        sums[0] += roundUpToMultipleOf<16>(Data::allocationSize(m_functions[index].code.info.numSlots, true));
+    });
+    for (size_t size : dataSizes)
+        totalDataSize += size;
     header.totalDataSizeIn16Bytes = safeCast<uint32_t>(totalDataSize / 16);
     RELEASE_ASSERT_WITH_MESSAGE(!m_typedData.size() || sizeof(Instance::NegativeOffsetFields) + m_environmentsSize <= Instance::bytesReservedForEnvironments - Instance::bytesReservedForLoopPollPage, "AOT: the program has more environments than there is room for below the instance");
     RELEASE_ASSERT_WITH_MESSAGE(!m_typedData.size() || reinterpret_cast<const Typed::Data*>(m_typedData.span().data())->numberOfStructureDescriptors <= Instance::maxStructureDescriptors, "AOT: the program has more rows than there is room for below the instance");
@@ -3423,7 +3449,7 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& entry : entriesInsideFunctions) {
             uint32_t function = ImageFunction::noSuchFunction;
             for (unsigned bucket = entry.function.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
-                if (m_functions[functionWithKey[bucket]].key.sameFunction(entry.function)) {
+                if (functionKeys[functionWithKey[bucket]].sameFunction(entry.function)) {
                     function = functionWithKey[bucket];
                     break;
                 }

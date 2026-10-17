@@ -101,6 +101,49 @@ void Lowering::define(ValueID id, Operand operand)
     m_values[id.index()] = operand;
 }
 
+bool Lowering::encodesUndefinedAsZero(ValueID id) const
+{
+    auto& value = m_function.at(id);
+    return value.opcode == Opcode::GetModuleVariable && m_program.variables[value.variable().index()].storesUndefinedAsZero;
+}
+
+bool Lowering::isKnownDefinedHere(ValueID read) const
+{
+    if (read == m_readKnownDefinedOnEdge)
+        return true;
+    auto found = m_blocksWhereReadIsDefined.find(read.index());
+    if (found == m_blocksWhereReadIsDefined.end())
+        return false;
+    unsigned enter = m_dominatorTreeEnter[m_currentBlockID.index()];
+    return std::ranges::any_of(found->value, [&](BlockID block) {
+        return m_dominatorTreeEnter[block.index()] <= enter && enter <= m_dominatorTreeLeave[block.index()];
+    });
+}
+
+Operand Lowering::decodeUndefined(ValueID read, Operand encoded)
+{
+    auto& decoded = m_decodedReads.add(read.index(), std::pair<LBasicBlock, Operand> { }).iterator->value;
+    if (decoded.first != m_out.m_block)
+        decoded = { m_out.m_block, Operand(Boxed(m_out.select(m_out.isZero64(encoded.value), undefined().value(), encoded.value))) };
+    return decoded.second;
+}
+
+ValueID Lowering::readProvenDefinedWhenFalse(const Terminator& terminator) const
+{
+    if (terminator.targets[0].block == terminator.targets[1].block)
+        return { };
+    auto& test = m_function.at(terminator.value);
+    if (test.opcode == Opcode::IsUndefinedOrNull)
+        return encodesUndefinedAsZero(test.child(0)) ? test.child(0) : ValueID { };
+    if (test.opcode != Opcode::StrictEq)
+        return { };
+    for (auto [read, constant] : { std::pair { test.child(0), test.child(1) }, std::pair { test.child(1), test.child(0) } }) {
+        if (m_function.at(constant).opcode == Opcode::Undefined && encodesUndefinedAsZero(read))
+            return read;
+    }
+    return { };
+}
+
 Operand Lowering::get(ValueID id)
 {
     if (!m_deferredLiterals.isEmpty()) [[unlikely]] {
@@ -125,6 +168,8 @@ Operand Lowering::get(ValueID id)
         return fetched.second;
     }
     Operand operand = m_values[id.index()];
+    if (encodesUndefinedAsZero(id) && !isKnownDefinedHere(id))
+        return decodeUndefined(id, operand);
     auto& declared = m_program.at(m_function.at(id).type);
     if (!declared.mayBeUndefinedOrNull() || declared.isUndefinedOrNull() || !hasPassedNullishTest(id))
         return operand;

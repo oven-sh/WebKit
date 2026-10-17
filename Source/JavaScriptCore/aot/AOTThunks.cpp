@@ -441,7 +441,9 @@ void installOperationFrontEnds(VM& vm, void** entries)
     install(Entry::operationAOTTypedConstruct, Entry::RawTypedConstruct, Stub::FrontEndTypedConstruct);
     install(Entry::operationAOTTypedCloneObject, Entry::RawTypedCloneObject, Stub::FrontEndTypedCloneObject);
     install(Entry::operationAOTTypedCloneObjectAndExtend, Entry::RawTypedCloneObjectAndExtend, Stub::FrontEndTypedCloneObjectAndExtend);
+    install(Entry::operationAOTTypedCloneObjectAndExtendWithNumber, Entry::RawTypedCloneObjectAndExtendWithNumber, Stub::FrontEndTypedCloneObjectAndExtendWithNumber);
     install(Entry::operationAOTTypedCloneObjectWithSubtypeCheck, Entry::RawTypedCloneObjectWithSubtypeCheck, Stub::FrontEndTypedCloneObjectWithSubtypeCheck);
+    install(Entry::operationAOTTypedCloneObjectAs, Entry::RawTypedCloneObjectAs, Stub::FrontEndTypedCloneObjectAs);
     install(Entry::operationAOTTypedConstructSuper, Entry::RawTypedConstructSuper, Stub::FrontEndTypedConstructSuper);
     entries[static_cast<unsigned>(Entry::NonConstructorHostFunction)] = std::bit_cast<void*>(&callHostFunctionAsConstructor);
 #undef AOT_INSTALL_FRONT_END

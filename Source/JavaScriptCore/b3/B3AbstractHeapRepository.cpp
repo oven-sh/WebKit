@@ -316,7 +316,20 @@ void AbstractHeapRepository::decorateWasmArrayLength(const AbstractHeap* heap, V
 
 void AbstractHeapRepository::computeRangesAndDecorateInstructions()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasTemporaryHeaps = absolute.hasTemporaryHeaps();
+#define CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS(name, offset, size) hasTemporaryHeaps |= name.hasTemporaryHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS)
+#undef CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS
+#define CHECK_FOR_TEMPORARY_NUMBERED_ABSTRACT_HEAPS(name) hasTemporaryHeaps |= name.hasTemporaryHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(CHECK_FOR_TEMPORARY_NUMBERED_ABSTRACT_HEAPS)
+#undef CHECK_FOR_TEMPORARY_NUMBERED_ABSTRACT_HEAPS
+    if (hasTemporaryHeaps || !m_rangesExcludeTemporaryHeaps)
+        root.compute();
+    m_rangesExcludeTemporaryHeaps = !hasTemporaryHeaps;
+#else
     root.compute();
+#endif
 
     if (Options::verboseCompilation() || Options::verboseFTLCompilation()) [[unlikely]] {
         WTF::dataFile().atomically([&](auto&) {

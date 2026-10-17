@@ -1230,8 +1230,19 @@ std::optional<Word32> Lowering::compareWithCachedShortString(ValueID a, ValueID 
 Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
 {
     for (auto [read, constant] : { std::pair { a, b }, std::pair { b, a } }) {
-        if (auto& value = m_function.at(read); value.opcode == Opcode::GetModuleVariable && m_program.variables[value.variable().index()].storesUndefinedAsZero && m_function.at(constant).opcode == Opcode::Undefined)
-            return Word32(m_out.isZero64(get(read).value));
+        if (!encodesUndefinedAsZero(read))
+            continue;
+        Boxed encoded(m_values[read.index()].value);
+        switch (m_function.at(constant).opcode) {
+        case Opcode::Undefined:
+            return Word32(m_out.isZero64(encoded.value()));
+        case Opcode::Null:
+            return haveEqualBits(encoded, boxedConstant(jsNull()));
+        case Opcode::Boolean:
+            return haveEqualBits(encoded, boxedConstant(jsBoolean(m_function.at(constant).boolean())));
+        default:
+            break;
+        }
     }
     if (!m_pinnedReads.isEmpty()) {
         for (auto [read, text] : { std::pair { a, b }, std::pair { b, a } }) {

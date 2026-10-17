@@ -2,6 +2,15 @@
 // attributes left as they are ($vm.makePropertiesImmutable(object)) or fixed ($vm.makePropertiesImmutable(object, true)).
 
 function shouldBe(actual, expected, message) { if (actual !== expected) throw new Error(message + ": expected " + String(expected) + " but got " + String(actual)); }
+// How a refused delete is reported (JSObject::recordIfOnlyLockRejects()): by a TypeError, in sloppy code too, unless the property looks like one that the language itself protects (Math.PI):
+// a number, boolean, undefined, null or symbol under a string key, the prototype of a function, the length of an array. Those return false in sloppy code.
+function deleteThrows(o, k) {
+    const d = Object.getOwnPropertyDescriptor(o, k);
+    if ((typeof o === "function" && k === "prototype") || (Array.isArray(o) && k === "length")) return false;
+    if (typeof k === "symbol" || !("value" in d) || (typeof o === "function" && k === "length")) return true;
+    return typeof d.value === "string" || typeof d.value === "bigint" || typeof d.value === "function" || (typeof d.value === "object" && d.value !== null);
+}
+function outcome(func) { try { return String(func()); } catch (e) { return e.constructor.name; } }
 function shouldThrow(func, message) { let error; try { func(); } catch (e) { error = e; } if (!(error instanceof TypeError)) throw new Error(message + ": expected a TypeError but got " + String(error)); }
 const flags = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + [d.writable, d.enumerable, d.configurable].map(b => b === undefined ? "-" : b ? "T" : "f").join(""); }).join(" ");
 const makers = {
@@ -28,7 +37,7 @@ for (const fix of [false, true]) {
         keys.forEach((k, i) => {
             const d = Object.getOwnPropertyDescriptor(o, k);
             if ("value" in d) { o[k] = "other"; shouldBe(o[k], values[i], what + ": " + String(k) + " keeps its value"); shouldThrow(() => { "use strict"; o[k] = "other"; }, what + ": " + String(k) + ", strict"); }
-            shouldBe(delete o[k], false, what + ": " + String(k) + " is not deleted"); shouldBe(Object.hasOwn(o, k), true, what + ": " + String(k) + " is there");
+            shouldBe(outcome(() => delete o[k]), deleteThrows(o, k) ? "TypeError" : "false", what + ": " + String(k) + " is not deleted"); shouldBe(Object.hasOwn(o, k), true, what + ": " + String(k) + " is there");
         });
         const heir = Object.create(o); for (const k of keys) { const d = Object.getOwnPropertyDescriptor(o, k); if (fix || typeof k !== "string" || !("value" in d)) continue; heir[k] = "own"; shouldBe(Object.hasOwn(heir, k), d.writable, what + ": an heir has its own " + k + ", unless it is read-only"); }
         heir.a = "own"; shouldBe(heir.a, "own", what + ": and what was lost");

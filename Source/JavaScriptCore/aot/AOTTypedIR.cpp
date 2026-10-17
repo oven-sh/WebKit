@@ -656,52 +656,190 @@ void Functions::buildValueIndex()
 
 void Functions::rebuildInvalidatedValueIndex()
 {
-    unsigned count = m_functions.size();
-    while (m_isIndexed.size() < count)
-        m_isIndexed.append(0);
-    Vector<uint32_t> forgotten;
-    for (unsigned i = 0; i < count; ++i) {
-        if (!m_isIndexed[i])
-            forgotten.append(i);
-    }
-    if (forgotten.isEmpty())
+    size_t count = m_functions.size();
+    if (m_isIndexed.size() == count && !m_hasInvalidatedFunctions)
         return;
-    if (forgotten.size() == count)
-        m_indexedValues.clear();
-    m_firstIndexedValue.grow(count);
-    m_indexedValueCount.grow(count);
-    m_contents.grow(count);
-    forEachIndexInParallel(forgotten.size(), [&](unsigned k) {
-        uint32_t number = 0;
-        for (auto& block : m_functions[forgotten[k]].blocks)
-            number += block.values.size();
-        m_indexedValueCount[forgotten[k]] = number;
-    });
+    m_hasInvalidatedFunctions = 0;
+    if (size_t indexedCount = m_isIndexed.size(); indexedCount < count) {
+        m_isIndexed.grow(count);
+        zeroSpan(m_isIndexed.mutableSpan().subspan(indexedCount));
+        m_firstIndexedValue.grow(count);
+        zeroSpan(m_firstIndexedValue.mutableSpan().subspan(indexedCount));
+        m_indexedValueCount.grow(count);
+        m_valueCount.grow(count);
+        zeroSpan(m_valueCount.mutableSpan().subspan(indexedCount));
+        m_contents.grow(count);
+    }
+    Vector<uint32_t> invalidated;
+    auto isIndexed = m_isIndexed.span();
+    for (size_t i = 0; i < count; ++i) {
+        if (isIndexed[i]) {
+            i = std::ranges::find(isIndexed.subspan(i), 0) - isIndexed.begin();
+            if (i == count)
+                break;
+        }
+        invalidated.append(i);
+    }
+    if (invalidated.isEmpty())
+        return;
     uint32_t end = m_indexedValues.size();
-    for (uint32_t i : forgotten) {
-        m_firstIndexedValue[i] = end;
-        end += m_indexedValueCount[i];
+    if (invalidated.size() == count) {
+        end = 0;
+        zeroSpan(m_firstIndexedValue.mutableSpan());
+        zeroSpan(m_valueCount.mutableSpan());
+        m_indexedValues.clear();
+        m_valueOpcodes.shrink(0);
+    }
+    Vector<uint32_t> newValueCount(invalidated.size());
+    forEachIndexInParallel(invalidated.size(), [&](unsigned k) {
+        newValueCount[k] = m_functions[invalidated[k]].values.size();
+    });
+    for (size_t k = 0; k < invalidated.size(); ++k) {
+        uint32_t i = invalidated[k];
+        if (newValueCount[k] > m_valueCount[i]) {
+            m_firstIndexedValue[i] = end;
+            end += newValueCount[k];
+        }
+        m_valueCount[i] = newValueCount[k];
+    }
+    if (end > m_indexedValues.capacity()) {
+        m_indexedValues.reserveCapacity(end + end / 4);
+        m_valueOpcodes.reserveCapacity(end + end / 4);
     }
     m_indexedValues.growWithoutInitializing(end);
-    auto ids = m_indexedValues.items<&IndexedValue::id>();
-    auto opcodes = m_indexedValues.items<&IndexedValue::opcode>();
-    forEachIndexInParallel(forgotten.size(), [&](unsigned k) {
-        uint32_t i = forgotten[k];
-        auto& function = m_functions[i];
-        uint32_t next = m_firstIndexedValue[i];
-        Contents contents;
+    m_valueOpcodes.grow(end);
+    forEachIndexInParallel(invalidated.size(), [&](unsigned k) {
+        indexValues(invalidated[k]);
+    });
+}
+
+void Functions::releaseValueIndex()
+{
+    m_indexedValues.clearAndFree();
+    m_valueOpcodes.clear();
+    m_firstIndexedValue.clear();
+    m_indexedValueCount.clear();
+    m_valueCount.clear();
+    m_contents.clear();
+    m_isIndexed.clear();
+}
+
+void Functions::verifyValueIndex() const
+{
+    forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
+        if (!isIndexed(index))
+            return;
+        auto& function = m_functions[index];
+        auto& contents = m_contents[index];
+        RELEASE_ASSERT(m_valueCount[index] == function.values.size());
+        auto valueOpcodes = m_valueOpcodes.span().subspan(m_firstIndexedValue[index], m_valueCount[index]);
+        for (size_t k = 0; k < valueOpcodes.size(); ++k) {
+            RELEASE_ASSERT(valueOpcodes[k] == function.values[k].opcode);
+            RELEASE_ASSERT(contents.opcodes.contains(valueOpcodes[k]));
+            RELEASE_ASSERT(contents.containsPredictedClosure || !function.values[k].predictedClosure());
+        }
+        auto opcodes = indexedOpcodes(index);
+        auto ids = m_indexedValues.items<&IndexedValue::id>().subspan(m_firstIndexedValue[index], opcodes.size());
+        size_t next = 0;
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
-                ids[next] = id;
-                opcodes[next++] = function.at(id).opcode;
+                RELEASE_ASSERT(next < ids.size() && ids[next] == id && opcodes[next] == function.at(id).opcode);
+                ++next;
             }
-            contents.terminatorKinds |= 1u << static_cast<unsigned>(block.terminator.kind);
+            RELEASE_ASSERT(contents.terminatorKinds >> static_cast<unsigned>(block.terminator.kind) & 1);
         }
-        for (auto& value : function.values) {
-            contents.opcodes.add(value.opcode);
-            contents.containsPredictedClosure |= !!value.predictedClosure();
+        RELEASE_ASSERT(next == ids.size());
+    });
+}
+
+bool Functions::fillValueIndexRows(const Function& function, std::span<ValueID> ids, std::span<Opcode> opcodes, std::span<Opcode> valueOpcodes, Contents& contents, uint32_t& indexedValueCount)
+{
+    size_t valueCount = function.values.size();
+    for (size_t k = 0; k < valueCount; ++k) {
+        auto& value = function.values[k];
+        valueOpcodes[k] = value.opcode;
+        contents.opcodes.add(value.opcode);
+        contents.containsPredictedClosure |= !!value.predictedClosure();
+    }
+    size_t next = 0;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            if (next == valueCount || id.index() >= valueCount)
+                return false;
+            ids[next] = id;
+            opcodes[next++] = valueOpcodes[id.index()];
         }
-        m_contents[i] = contents;
+        contents.terminatorKinds |= 1u << static_cast<unsigned>(block.terminator.kind);
+    }
+    indexedValueCount = next;
+    return true;
+}
+
+void Functions::indexValues(size_t index)
+{
+    uint32_t first = m_firstIndexedValue[index];
+    uint32_t valueCount = m_valueCount[index];
+    Contents contents;
+    if (!fillValueIndexRows(m_functions[index], m_indexedValues.items<&IndexedValue::id>().subspan(first, valueCount), m_indexedValues.items<&IndexedValue::opcode>().subspan(first, valueCount), m_valueOpcodes.mutableSpan().subspan(first, valueCount), contents, m_indexedValueCount[index]))
+        return;
+    m_contents[index] = contents;
+    m_isIndexed[index] = 1;
+}
+
+void Functions::ValueIndexRows::append(size_t index, const Function& function)
+{
+    size_t first = m_valueOpcodes.size();
+    size_t valueCount = function.values.size();
+    m_ids.grow(first + valueCount);
+    m_opcodes.grow(first + valueCount);
+    m_valueOpcodes.grow(first + valueCount);
+    Entry entry { static_cast<uint32_t>(index), static_cast<uint32_t>(first), static_cast<uint32_t>(valueCount), 0, { } };
+    if (fillValueIndexRows(function, m_ids.mutableSpan().subspan(first), m_opcodes.mutableSpan().subspan(first), m_valueOpcodes.mutableSpan().subspan(first), entry.contents, entry.indexedValueCount))
+        m_entries.append(entry);
+}
+
+void Functions::adoptValueIndexRows(std::span<const ValueIndexRows> allRows)
+{
+    size_t count = m_functions.size();
+    m_isIndexed.fill(0, count);
+    m_valueCount.fill(0, count);
+    m_firstIndexedValue.fill(0, count);
+    m_indexedValueCount.grow(count);
+    m_contents.grow(count);
+    m_indexedValues.clear();
+    m_valueOpcodes.shrink(0);
+    m_hasInvalidatedFunctions = 1;
+    struct Source {
+        const ValueIndexRows* rows { nullptr };
+        const ValueIndexRows::Entry* entry { nullptr };
+    };
+    Vector<Source> sources(count);
+    for (auto& rows : allRows) {
+        for (auto& entry : rows.m_entries)
+            sources[entry.function] = { &rows, &entry };
+    }
+    uint32_t end = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (!sources[i].entry)
+            continue;
+        m_firstIndexedValue[i] = end;
+        m_valueCount[i] = sources[i].entry->valueCount;
+        end += sources[i].entry->valueCount;
+    }
+    m_indexedValues.reserveCapacity(end + end / 4);
+    m_valueOpcodes.reserveCapacity(end + end / 4);
+    m_indexedValues.growWithoutInitializing(end);
+    m_valueOpcodes.grow(end);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto [rows, entry] = sources[i];
+        if (!entry)
+            return;
+        uint32_t first = m_firstIndexedValue[i];
+        memcpySpan(m_indexedValues.items<&IndexedValue::id>().subspan(first), rows->m_ids.span().subspan(entry->first, entry->indexedValueCount));
+        memcpySpan(m_indexedValues.items<&IndexedValue::opcode>().subspan(first), rows->m_opcodes.span().subspan(entry->first, entry->indexedValueCount));
+        memcpySpan(m_valueOpcodes.mutableSpan().subspan(first), rows->m_valueOpcodes.span().subspan(entry->first, entry->valueCount));
+        m_indexedValueCount[i] = entry->indexedValueCount;
+        m_contents[i] = entry->contents;
         m_isIndexed[i] = 1;
     });
 }

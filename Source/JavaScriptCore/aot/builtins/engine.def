@@ -34,6 +34,12 @@ inline SloppyThis
 inline ToPropertyKey
 inline ResumeGenerator
 inline IsGeneratorSuspendedAtStart
+inline StepGenerator
+inline GeneratorStepStatus
+inline MakeIteratorResult
+inline IsUnmodifiedGenerator
+inline DrivenIteratorMarker
+inline DeclaredGenerator
 
 runtime IsConstructor : Nothing size_t (EncodedJSValue value) noexcept
 runtime ArraySpeciesCreate : Heap EncodedJSValue (EncodedJSValue length, JSCell* array)
@@ -44,6 +50,7 @@ runtime SloppyThis : RuntimeState EncodedJSValue (EncodedJSValue value)
 runtime ToPropertyKey : Heap EncodedJSValue (EncodedJSValue value)
 runtime ResumeGenerator : Heap EncodedJSValue (EncodedJSValue generator, int32_t mode, EncodedJSValue value)
 runtime IsGeneratorSuspendedAtStart : Nothing size_t (JSCell* generator) noexcept
+runtime CreateIteratorResult : RuntimeState JSCell* (EncodedJSValue value, uint32_t isDone) noexcept
 
 # The message of ToObject is a string constant, the mode of ResumeGenerator a JSGenerator::ResumeMode.
 operation IsConstructor (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsConstructor)
@@ -55,6 +62,12 @@ operation SloppyThis (any/R) -> anything ; Allocates ReadsRuntimeState ; Inline(
 operation ToPropertyKey (any/GR) -> string | symbol ; CallsUserCode ; Inline(ToPropertyKey)
 operation ResumeGenerator (any, any/-, any) -> anything ; CallsUserCode ; Inline(ResumeGenerator)
 operation IsGeneratorSuspendedAtStart (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsGeneratorSuspendedAtStart)
+operation StepGenerator (any, any/-, any, any/-) -> anything ; CallsUserCode ; Inline(StepGenerator)
+operation GeneratorStepStatus (any/-) -> int[0,2] ; ReadsRuntimeState ; Inline(GeneratorStepStatus)
+operation MakeIteratorResult (any/K, any/-) -> new Object/N ; Allocates ; Inline(MakeIteratorResult)
+operation IsUnmodifiedGenerator (any/-, any/-?) -> boolean ; ReadsRuntimeState ; Inline(IsUnmodifiedGenerator)
+operation DrivenIteratorMarker () -> anything ; Pure ; Inline(DrivenIteratorMarker)
+operation DeclaredGenerator (any/R) -> arg0 ; Pure ; Inline(DeclaredGenerator)
 
 # JavaScriptCore's bytecode intrinsics: bytecompiler/NodesCodegen.cpp, emit_intrinsic_*. All read there, and the slow path of the opcode in runtime/CommonSlowPaths.cpp.
 $deleteByValSloppy Call = Operation(DeleteByValSloppy)
@@ -148,6 +161,9 @@ $alwaysInline Value = Directive
 
 # For the files written by hand.
 $isGeneratorSuspendedAtStart Call = Operation(IsGeneratorSuspendedAtStart)
+$stepGenerator Call = Operation(StepGenerator)
+$generatorStepStatus Call = Operation(GeneratorStepStatus)
+$makeIteratorResult Call = Operation(MakeIteratorResult)
 $resumeGenerator Call = Operation(ResumeGenerator)
 
 # Builtins written in JavaScript that other builtins call: `$linkTimeConstant;`.

@@ -93,6 +93,7 @@
 #include "JSPromiseCombinatorsContextInlines.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
 #include "JSPromiseReaction.h"
 #include "JSPropertyNameEnumeratorInlines.h"
 #include "JSSentinelInlines.h"
@@ -2065,6 +2066,38 @@ NativeExecutable* VM::promiseAnySlowRejectFunctionExecutableSlow()
     return executable;
 }
 
+NativeExecutable* VM::promiseFinallyThenFinallyExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyThenFinallyExecutable);
+    auto* executable = getHostFunction(promiseFinallyThenFinallyFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, nullString());
+    m_promiseFinallyThenFinallyExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::promiseFinallyCatchFinallyExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyCatchFinallyExecutable);
+    auto* executable = getHostFunction(promiseFinallyCatchFinallyFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, nullString());
+    m_promiseFinallyCatchFinallyExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::promiseFinallyValueThunkExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyValueThunkExecutable);
+    auto* executable = getHostFunction(promiseFinallyValueThunkFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nullString());
+    m_promiseFinallyValueThunkExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::promiseFinallyThrowerExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyThrowerExecutable);
+    auto* executable = getHostFunction(promiseFinallyThrowerFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nullString());
+    m_promiseFinallyThrowerExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
 bool VM::hasLanguageChange()
 {
     return m_intlCache->hasLanguageChange();
@@ -2351,6 +2384,10 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_promiseAllSettledSlowRejectFunctionExecutable);
     visitor.append(m_promiseAnyRejectFunctionExecutable);
     visitor.append(m_promiseAnySlowRejectFunctionExecutable);
+    visitor.append(m_promiseFinallyThenFinallyExecutable);
+    visitor.append(m_promiseFinallyCatchFinallyExecutable);
+    visitor.append(m_promiseFinallyValueThunkExecutable);
+    visitor.append(m_promiseFinallyThrowerExecutable);
 }
 DEFINE_VISIT_AGGREGATE(VM);
 
@@ -2436,6 +2473,20 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
     auto* megamorphicCache = this->megamorphicCache();
     if (megamorphicCache && megamorphicCache->mayHaveEntryThroughObject(changed) && (!nameOfProperty || megamorphicCache->mayHaveEntryForName(*nameOfProperty)))
         invalidateEpochCaches();
+}
+
+bool VM::mayHaveCachesDependingOnPrototype(JSObject* object)
+{
+#if ENABLE(AOT)
+    if (m_aotPropertyLookupTable && m_aotPropertyLookupTable->hasPrototypeDependentEntries())
+        return true;
+    for (AOT::Instance* instance : m_aotInstances) {
+        if (instance->typed && instance->typed->hasDescendantPrototypes())
+            return true;
+    }
+#endif
+    auto* megamorphicCache = this->megamorphicCache();
+    return megamorphicCache && megamorphicCache->mayHaveEntryThroughObject(object);
 }
 
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)

@@ -152,7 +152,7 @@ MacroAssembler::Jump PatchpointSpecial::generate(Inst& inst, CCallHelpers& jit, 
     PatchpointValue* value = inst.origin->as<PatchpointValue>();
     ASSERT(value);
 
-    Vector<ValueRep> reps;
+    StackmapGenerationParams::Reps reps;
     unsigned offset = 1;
 
     Type type = value->type();

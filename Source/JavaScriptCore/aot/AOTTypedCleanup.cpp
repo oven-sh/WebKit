@@ -2666,7 +2666,7 @@ private:
         if (m_program.at(layout).kind != LayoutKind::Record || m_program.at(layout).fieldNamed(name) || isPrivateName(m_program.string(name)) || mayInherit(m_program, layout, name))
             return false;
         for (LayoutID ancestor = layout; ancestor; ancestor = m_program.at(ancestor).base) {
-            if (m_program.at(ancestor).hasComputedMethodName)
+            if (m_program.at(ancestor).hasComputedMethodName || (m_program.at(ancestor).hasMethodWithSymbolKey && isConstantSymbol(m_program.string(name))))
                 return false;
             for (auto& method : m_program.at(ancestor).methods) {
                 if (method.name == name)
@@ -3536,6 +3536,17 @@ private:
 
     void gatherLiteralFields()
     {
+        bool spreadsIntoLiteral = m_function.blocks.containsIf([&](auto& block) {
+            return block.values.containsIf([&](ValueID id) {
+                auto& value = m_function.at(id);
+                if ((value.opcode != Opcode::Operation && value.opcode != Opcode::CallBuiltin) || value.arguments.isEmpty())
+                    return false;
+                auto& object = m_function.at(value.arguments[0]);
+                return object.opcode == Opcode::NewObject && !object.hasInitialStructure() && languageOperationOf(m_program, value) == LanguageOperation::CopyDataProperties;
+            });
+        });
+        if (!spreadsIntoLiteral)
+            return;
         Vector<unsigned> literalBlock;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             for (ValueID id : m_function.blocks[b].values) {

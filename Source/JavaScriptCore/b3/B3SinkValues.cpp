@@ -37,14 +37,23 @@ public:
         m_preOrder = m_proc.blocksInPreOrder();
         for (unsigned i = m_preOrder.size(); i--;) {
             BasicBlock* block = m_preOrder[i];
+            Value* comparisonFusedIntoBranch = nullptr;
             for (unsigned index = block->size(); index--;) {
                 Value* value = block->at(index);
                 Place place { block, index };
                 const Uses& uses = m_uses[value];
-                if (uses.first.block && uses.first.block != block && canSink(value))
-                    place = sink(value, place, uses);
-                for (Value* child : value->children())
-                    addUse(child, place);
+                if (uses.first.block && uses.first.block != block && canSink(value)) {
+                    if (value == comparisonFusedIntoBranch)
+                        cloneForSlowPath(value, place, uses);
+                    else
+                        place = sink(value, place, uses);
+                }
+                if (index + 1 == block->size())
+                    comparisonFusedIntoBranch = findComparisonFusedIntoBranch(block);
+                for (Value* child : value->children()) {
+                    if (hasSinkableKind(child) && (child != comparisonFusedIntoBranch || index + 1 != block->size()))
+                        addUse(child, place);
+                }
             }
         }
         if (m_sunk.isEmpty())
@@ -179,7 +188,7 @@ private:
         uses.second = { };
     }
 
-    bool canSink(Value* value)
+    static bool hasSinkableKind(Value* value)
     {
         switch (value->opcode()) {
         case Nop:
@@ -193,10 +202,57 @@ private:
         default:
             break;
         }
-        if (value->isConstant() || value->type() == Void || value->type().isTuple())
+        return !value->isConstant() && value->type() != Void && !value->type().isTuple();
+    }
+
+    bool canSink(Value* value)
+    {
+        if (!hasSinkableKind(value))
             return false;
         Effects effects = value->effects();
         return !effects.terminal && !effects.exitsSideways && !effects.writesLocalState && !effects.readsLocalState && !effects.readsPinned && !effects.writesPinned && !effects.fence && !effects.writes && !effects.reads;
+    }
+
+    Value* findComparisonFusedIntoBranch(BasicBlock* block)
+    {
+        if (block->last()->opcode() != Branch)
+            return nullptr;
+        Value* condition = block->last()->child(0);
+        switch (condition->opcode()) {
+        case Equal:
+        case NotEqual:
+        case LessThan:
+        case GreaterThan:
+        case LessEqual:
+        case GreaterEqual:
+        case Above:
+        case Below:
+        case AboveEqual:
+        case BelowEqual:
+            break;
+        default:
+            return nullptr;
+        }
+        if (!condition->child(0)->type().isInt())
+            return nullptr;
+        return block->values().contains(condition) ? condition : nullptr;
+    }
+
+    void cloneForSlowPath(Value* value, Place from, Uses uses)
+    {
+        if (uses.second.block)
+            uses.first = beforeTerminal(nearestCommonDominator(uses.first.block, uses.second.block));
+        Place place = uses.first;
+        if (place.block == from.block || !leaveLoops(from.block, place) || place.block == from.block || !isAtMostHalf(place.block->frequency(), from.block) || !isOrdered(from.block, place.block))
+            return;
+        if (!m_clones.size())
+            m_clones.resize(m_uses.size());
+        Value* clone = m_proc.clone(value);
+        m_clones[value] = { clone, place.block };
+        m_blocksBelowClones.add(place.block);
+        put(clone, place);
+        for (Value* child : value->children())
+            addUse(child, place);
     }
 
     bool leaveLoops(BasicBlock* from, Place& place)
@@ -243,7 +299,8 @@ private:
         for (BasicBlock* candidate : m_proc)
             isReducible &= m_isOrdered[candidate];
         if (!isReducible) {
-            CycleForest cycles(m_proc);
+            m_cycles.emplace(m_proc);
+            CycleForest& cycles = *m_cycles;
             for (BasicBlock* candidate : m_proc) {
                 bool isOnIrreducibleCycle = false;
                 for (unsigned cycle = cycles.innermost(candidate); cycle != CycleForest::none; cycle = cycles[cycle].parent)
@@ -252,6 +309,17 @@ private:
             }
         }
         return m_isOrdered[block];
+    }
+
+    bool isOrdered(BasicBlock* from, BasicBlock* block)
+    {
+        if (isOrdered(block))
+            return true;
+        for (unsigned cycle = m_cycles->innermost(block); cycle != CycleForest::none; cycle = (*m_cycles)[cycle].parent) {
+            if (!(*m_cycles)[cycle].isReducible() && !m_cycles->contains(cycle, from))
+                return false;
+        }
+        return true;
     }
 
     static bool isAtMostHalf(double frequency, BasicBlock* of) { return frequency * 2 <= of->frequency(); }
@@ -279,7 +347,7 @@ private:
                 && leaveLoops(from.block, first) && leaveLoops(from.block, second)
                 && !m_dominators.dominates(first.block, second.block) && !m_dominators.dominates(second.block, first.block)
                 && isAtMostHalf(first.block->frequency() + second.block->frequency(), from.block)
-                && isOrdered(first.block) && isOrdered(second.block)) {
+                && isOrdered(from.block, first.block) && isOrdered(from.block, second.block)) {
                 if (!m_clones.size())
                     m_clones.resize(m_uses.size());
                 Value* clone = m_proc.clone(value);
@@ -293,7 +361,7 @@ private:
             uses.first = beforeTerminal(nearestCommonDominator(uses.first.block, uses.second.block));
         }
         Place place = uses.first;
-        if (place.block == from.block || !leaveLoops(from.block, place) || !isAtMostHalf(place.block->frequency(), from.block) || !isOrdered(place.block))
+        if (place.block == from.block || !leaveLoops(from.block, place) || !isAtMostHalf(place.block->frequency(), from.block) || !isOrdered(from.block, place.block))
             return from;
         return move(value, from, place);
     }
@@ -305,6 +373,7 @@ private:
     IndexMap<Value*, Clone> m_clones;
     IndexMap<BasicBlock*, BasicBlock*> m_jump;
     IndexMap<BasicBlock*, bool> m_isOrdered;
+    std::optional<CycleForest> m_cycles;
     IndexSet<BasicBlock*> m_changedBlocks;
     IndexSet<BasicBlock*> m_blocksBelowClones;
     Vector<Sunk> m_sunk;

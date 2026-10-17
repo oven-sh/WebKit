@@ -5569,7 +5569,7 @@ private:
         m_heapEpochs.startLayer();
         m_factLayerStarts.append(m_newFactsAboutConditions.size());
 
-        MemoryState state;
+        MemoryState& state = m_memoryState;
         unsigned callEpoch = 0;
         bool isFirst = true;
         for (BasicBlock* predecessor : block->predecessors()) {
@@ -5586,13 +5586,14 @@ private:
             if (callEpoch != atTail.callEpoch)
                 callEpoch = 0;
         }
+        if (isFirst)
+            state = { };
         if ((!state.id || !m_dominators->dominates(state.owner, block)) && !mergeSameEpochStates(block, state) && !inheritStateFromBeforeLoop(block, state, callEpoch)) {
             state.id = ++m_lastMemoryStateID;
             state.owner = block;
             state.beginEpoch(block);
         }
         state.callEpoch = callEpoch ? callEpoch : ++m_lastMemoryStateID;
-        m_memoryState = state;
 
         if (block->numPredecessors() != 1)
             return;

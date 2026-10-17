@@ -76,10 +76,10 @@ void LazyClassStructure::Initializer::didInitialize()
 {
     if (!global->locksOrAuditsIntrinsics() || std::bit_cast<uintptr_t>(&classStructure) - std::bit_cast<uintptr_t>(global) >= sizeof(JSGlobalObject)) [[likely]]
         return;
-    if (constructor)
-        global->makeIntrinsicImmutable(constructor, JSGlobalObject::IntrinsicKind::Other);
     if (prototype)
-        global->makeIntrinsicImmutable(prototype, JSGlobalObject::IntrinsicKind::Prototype);
+        global->makeIntrinsicImmutable(prototype, JSGlobalObject::IntrinsicKind::Prototype, JSObject::LockedObjectHistory::NewlyCreated);
+    if (constructor)
+        global->makeIntrinsicImmutable(constructor, JSGlobalObject::IntrinsicKind::Other, JSObject::LockedObjectHistory::NewlyCreated);
 }
 
 template<typename Visitor>

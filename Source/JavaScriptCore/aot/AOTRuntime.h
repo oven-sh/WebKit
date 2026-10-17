@@ -51,6 +51,8 @@ namespace AOT {
 namespace Typed {
 struct State;
 }
+struct FormatPatternState;
+enum class FormatPatternsOrigin : uint8_t { NotCompared, ThisICU, AnotherICU };
 struct JSONWideSegment;
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
@@ -172,13 +174,17 @@ struct JSONWideSegment;
     v(RawTypedConstruct) \
     v(RawTypedCloneObject) \
     v(RawTypedCloneObjectAndExtend) \
+    v(RawTypedCloneObjectAndExtendWithNumber) \
     v(RawTypedCloneObjectWithSubtypeCheck) \
+    v(RawTypedCloneObjectAs) \
     v(RawTypedConstructSuper) \
     v(ErrorConstructorClassInfo) \
     v(NonConstructorHostFunction) \
     v(NewArraySlowPath) \
     v(ValueAddSlowPath) \
     v(AsyncGeneratorClassInfo) \
+    v(GeneratorClassInfo) \
+    v(DrivenIteratorMarker) \
     v(ResumeFunctionReturnAddress) \
     v(WebAssemblyFunctionClassInfo) \
 
@@ -576,6 +582,16 @@ inline constexpr auto powersOfTen = [] {
 
 enum class JSONSourceEncoding : uint32_t { Latin1, UTF8, Saturated16Bit };
 
+template<typename T>
+class ZeroedStorage {
+public:
+    T& get() { return *reinterpret_cast<T*>(m_bytes); }
+    const T& get() const { return *reinterpret_cast<const T*>(m_bytes); }
+
+private:
+    alignas(T) uint8_t m_bytes[sizeof(T)];
+};
+
 struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSModuleLoader*);
     JS_EXPORT_PRIVATE static Instance& ensure(JSGlobalObject*);
@@ -804,38 +820,38 @@ struct Instance {
     static constexpr ptrdiff_t negativeOffsetOf(size_t offsetInNegativeOffsetFields) { return static_cast<ptrdiff_t>(offsetInNegativeOffsetFields) - static_cast<ptrdiff_t>(sizeof(NegativeOffsetFields)); }
 
     BiasedDataPointer sharedData;
-    const uint32_t* typedShapeSets { nullptr };
+    const uint32_t* typedShapeSets;
     VM* vm;
-    StackManager::Mirror stackMirror;
-    uint32_t barrierThreshold { 0 };
-    uint8_t mutatorShouldBeFenced { 0 };
-    uint8_t awaitMustSuspend { 0 };
-    bool isResumingWaiters { false };
-    uint64_t typedSlimClosureHeaders[2] { };
+    ZeroedStorage<StackManager::Mirror> stackMirror;
+    uint32_t barrierThreshold;
+    uint8_t mutatorShouldBeFenced;
+    uint8_t awaitMustSuspend;
+    bool isResumingWaiters;
+    uint64_t typedSlimClosureHeaders[2];
     uint64_t undefinedDouble;
     uintptr_t numberBoxBase;
-    void* typedClosures { nullptr };
-    void* singleCharacterStrings { nullptr };
+    void* typedClosures;
+    void* singleCharacterStrings;
     int64_t numberTag;
     int64_t notCellMask;
     JSGlobalObject* globalObject;
-    JSCell* waiterToResume { nullptr };
-    EncodedJSValue waiterResolution { 0 };
-    EncodedJSValue waiterAsyncContext { 0 };
-    JSCell* enteredSavedFrame { nullptr };
-    const uint64_t* typedFunctions { nullptr };
+    JSCell* waiterToResume;
+    EncodedJSValue waiterResolution;
+    EncodedJSValue waiterAsyncContext;
+    JSCell* enteredSavedFrame;
+    const uint64_t* typedFunctions;
     uintptr_t cellCageBase;
-    const void* savedFrameReturnAddress { nullptr };
-    void* savedFrameSpace { nullptr };
-    uint64_t savedFrameHeader { 0 };
+    const void* savedFrameReturnAddress;
+    void* savedFrameSpace;
+    uint64_t savedFrameHeader;
     static constexpr unsigned arrayKindShift = 1;
     static constexpr unsigned numberOfArrayKinds = 16;
     static_assert(((IndexingShapeMask | CopyOnWrite) >> arrayKindShift) == numberOfArrayKinds - 1);
-    uint32_t originalArrayStructureIDs[numberOfArrayKinds] { };
+    uint32_t originalArrayStructureIDs[numberOfArrayKinds];
     static constexpr ptrdiff_t offsetOfOriginalArrayStructureIDs() { return OBJECT_OFFSETOF(Instance, originalArrayStructureIDs); }
-    uint32_t firstThisStructureDescriptorPlusOne { UINT32_MAX };
+    uint32_t firstThisStructureDescriptorPlusOne;
     static constexpr ptrdiff_t offsetOfFirstThisStructureDescriptorPlusOne() { return OBJECT_OFFSETOF(Instance, firstThisStructureDescriptorPlusOne); }
-    const double* powersOfTen { nullptr };
+    const double* powersOfTen;
     const uint32_t* functionMetadataOffsets;
     const uint8_t* code;
     const uint32_t* codeGranules;
@@ -846,43 +862,43 @@ struct Instance {
         void* allocator;
         const void* fieldTemplate;
     };
-    Typed::State* typed { nullptr };
+    Typed::State* typed;
     const FunctionInfo* infos;
     static constexpr unsigned typedCardShift = 8;
     static constexpr uint8_t typedCardIsDirty = 1;
     static constexpr uint8_t typedCardWasScanned = 2;
     void didStoreRootInStatics(uint32_t offset) { typedCards[offset >> typedCardShift] = typedCardIsDirty; }
-    uint16_t* typedAllocationIndices { nullptr };
+    uint16_t* typedAllocationIndices;
     TypedAllocation* typedAllocation(uint32_t number) const
     {
         uint16_t row = typedAllocationIndices[number];
         return row ? reinterpret_cast<TypedAllocation*>(typedAllocationIndices) - row : nullptr;
     }
-    uint8_t* typedModifiedClassObjects { nullptr };
+    uint8_t* typedModifiedClassObjects;
     static constexpr unsigned numberOfTypedClosureStructures = 5;
-    uint32_t typedClosureStructureIDs[numberOfTypedClosureStructures - 1] { };
+    uint32_t typedClosureStructureIDs[numberOfTypedClosureStructures - 1];
     uint32_t& typedClosureStructureID(unsigned which) { return which ? typedClosureStructureIDs[which - 1] : negativeOffsetFields().typedClosureStructureID; }
-    uint64_t typedClosureStructureIDPair { 0 };
-    LocalAllocator* typedSlimClosureAllocators[3] { };
-    JSCell* typedSlimClosureLengthGetter { nullptr };
-    JSCell* typedSlimClosureNameGetter { nullptr };
-    uint8_t typedModifiedLiterals[256] { };
-    const uint8_t* typedData { nullptr };
-    JSCell** typedWideStrings { nullptr };
-    JSCell** typedLiteralStrings { nullptr };
-    uint64_t* typedLiteralStringCache { nullptr };
-    uint8_t* typedCards { nullptr };
+    uint64_t typedClosureStructureIDPair;
+    LocalAllocator* typedSlimClosureAllocators[3];
+    JSCell* typedSlimClosureLengthGetter;
+    JSCell* typedSlimClosureNameGetter;
+    uint8_t typedModifiedLiterals[256];
+    const uint8_t* typedData;
+    JSCell** typedWideStrings;
+    JSCell** typedLiteralStrings;
+    uint64_t* typedLiteralStringCache;
+    uint8_t* typedCards;
     static constexpr unsigned numberOfTypedExecutables = 6;
-    JSCell* typedExecutables[numberOfTypedExecutables] { };
-    uint8_t* typedStatics { nullptr };
+    JSCell* typedExecutables[numberOfTypedExecutables];
+    uint8_t* typedStatics;
     struct KeyedRead;
     struct KeyedAddition;
-    KeyedRead* keyedReads { nullptr };
-    Slot* keyedHas { nullptr };
-    KeyedAddition* keyedAdditions { nullptr };
-    uintptr_t** typedOrderKeys { nullptr };
-    uint16_t* typedOrderKeyIndices { nullptr };
-    uint16_t numberOfTypedOrderKeyIndicesUsed { 0 };
+    KeyedRead* keyedReads;
+    Slot* keyedHas;
+    KeyedAddition* keyedAdditions;
+    uintptr_t** typedOrderKeys;
+    uint16_t* typedOrderKeyIndices;
+    uint16_t numberOfTypedOrderKeyIndicesUsed;
     static constexpr ptrdiff_t offsetOfTypedOrderKeys() { return OBJECT_OFFSETOF(Instance, typedOrderKeys); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeyIndices() { return OBJECT_OFFSETOF(Instance, typedOrderKeyIndices); }
     static size_t numberOfTypedOrderKeyIndices(uint32_t numberOfLayouts) { return std::min<size_t>(numberOfLayouts, UINT16_MAX) + 1; }
@@ -902,26 +918,26 @@ struct Instance {
     };
     static constexpr uint32_t numberOfTypedKeyLists = 1024;
     static constexpr uint32_t indexOfTypedKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord) % numberOfTypedKeyLists; }
-    TypedKeyList* typedKeyLists { nullptr };
+    TypedKeyList* typedKeyLists;
     static constexpr ptrdiff_t offsetOfTypedKeyLists() { return OBJECT_OFFSETOF(Instance, typedKeyLists); }
-    JSCell* emptyKeyList { nullptr };
+    JSCell* emptyKeyList;
     static constexpr ptrdiff_t offsetOfEmptyKeyList() { return OBJECT_OFFSETOF(Instance, emptyKeyList); }
-    JSCell* typedArrayLengthGetter { nullptr };
+    JSCell* typedArrayLengthGetter;
     static constexpr ptrdiff_t offsetOfTypedArrayLengthGetter() { return OBJECT_OFFSETOF(Instance, typedArrayLengthGetter); }
     struct TypedArrayWithBuiltinLength {
-        uint32_t structureID { 0 };
-        uint32_t prototypeStructureID { 0 };
-        uint32_t secondPrototypeStructureID { 0 };
-        uint32_t unused { 0 };
-        JSCell* prototype { nullptr };
-        JSCell* secondPrototype { nullptr };
+        uint32_t structureID;
+        uint32_t prototypeStructureID;
+        uint32_t secondPrototypeStructureID;
+        uint32_t unused;
+        JSCell* prototype;
+        JSCell* secondPrototype;
     };
     static_assert(sizeof(TypedArrayWithBuiltinLength) == 32);
-    TypedArrayWithBuiltinLength typedArraysWithBuiltinLength[NumberOfTypedArrayTypesExcludingDataView][2] { };
-    JSCell* typedArrayViewPrototype { nullptr };
-    JSCell* typedArrayLengthAccessor { nullptr };
-    intptr_t typedArrayLengthOffsetInButterfly { 0 };
-    uint32_t typedArrayViewPrototypeStructureID { 0 };
+    TypedArrayWithBuiltinLength typedArraysWithBuiltinLength[NumberOfTypedArrayTypesExcludingDataView][2];
+    JSCell* typedArrayViewPrototype;
+    JSCell* typedArrayLengthAccessor;
+    intptr_t typedArrayLengthOffsetInButterfly;
+    uint32_t typedArrayViewPrototypeStructureID;
     bool typedArrayHasBuiltinLength(JSCell* typedArray) const
     {
         uint32_t structureID = typedArray->structureID().bits();
@@ -941,55 +957,55 @@ struct Instance {
     UniquedStringImpl* const* programIdentifiers;
     const uint16_t* programIdentifierPositions;
     uintptr_t lookupTableBaseForStructureIDZero;
-    Slot* lookupTableSlots { nullptr };
-    void* getByNameHandlers[3][numberOfByNameEntryKinds] { };
-    void* putByNameHandlers[6][numberOfByNameEntryKinds] { };
+    Slot* lookupTableSlots;
+    void* getByNameHandlers[3][numberOfByNameEntryKinds];
+    void* putByNameHandlers[6][numberOfByNameEntryKinds];
     JSObject* objectPrototype;
-    JSObject* stringPrototype { nullptr };
-    JSObject* numberPrototype { nullptr };
-    JSObject* booleanPrototype { nullptr };
-    JSObject* symbolPrototype { nullptr };
+    JSObject* stringPrototype;
+    JSObject* numberPrototype;
+    JSObject* booleanPrototype;
+    JSObject* symbolPrototype;
     static constexpr ptrdiff_t offsetOfStringPrototype() { return OBJECT_OFFSETOF(Instance, stringPrototype); }
     static constexpr ptrdiff_t offsetOfNumberPrototype() { return OBJECT_OFFSETOF(Instance, numberPrototype); }
     static constexpr ptrdiff_t offsetOfBooleanPrototype() { return OBJECT_OFFSETOF(Instance, booleanPrototype); }
     static constexpr ptrdiff_t offsetOfSymbolPrototype() { return OBJECT_OFFSETOF(Instance, symbolPrototype); }
-    JSCell* functionPrototypeCall { nullptr };
-    uint32_t boundFunctionStructureID { 0 };
-    uint32_t hostFunctionStructureID { 0 };
+    JSCell* functionPrototypeCall;
+    uint32_t boundFunctionStructureID;
+    uint32_t hostFunctionStructureID;
     uintptr_t fieldIDAtDirectLocationBase;
-    JSObject* realmObjectPrototype { nullptr };
+    JSObject* realmObjectPrototype;
     static constexpr ptrdiff_t offsetOfRealmObjectPrototype() { return OBJECT_OFFSETOF(Instance, realmObjectPrototype); }
-    JSObject* lockedRealmObjectPrototype { nullptr };
+    JSObject* lockedRealmObjectPrototype;
     static constexpr ptrdiff_t offsetOfLockedRealmObjectPrototype() { return OBJECT_OFFSETOF(Instance, lockedRealmObjectPrototype); }
-    const uint32_t* nameDisplacements { nullptr };
+    const uint32_t* nameDisplacements;
     static constexpr ptrdiff_t offsetOfNameDisplacements() { return OBJECT_OFFSETOF(Instance, nameDisplacements); }
-    const uint32_t* offsetsByNameAndStructure { nullptr };
+    const uint32_t* offsetsByNameAndStructure;
     static constexpr ptrdiff_t offsetOfOffsetsByNameAndStructure() { return OBJECT_OFFSETOF(Instance, offsetsByNameAndStructure); }
     static constexpr ptrdiff_t offsetOfTypedPrototypeEpoch() { return negativeOffsetOf(OBJECT_OFFSETOF(NegativeOffsetFields, typedPrototypeEpoch)); }
     static constexpr ptrdiff_t offsetOfFunctionPrototypeCall() { return OBJECT_OFFSETOF(Instance, functionPrototypeCall); }
     static constexpr ptrdiff_t offsetOfBoundFunctionStructureID() { return OBJECT_OFFSETOF(Instance, boundFunctionStructureID); }
     static constexpr ptrdiff_t offsetOfHostFunctionStructureID() { return OBJECT_OFFSETOF(Instance, hostFunctionStructureID); }
-    JSCell* boundFunctionExecutable { nullptr };
-    Structure* argumentsStructure { nullptr };
-    std::array<Structure*, 2> emptyStructuresForKeyedStores { };
-    std::array<uint32_t, 128> transitionsRequestedOnce { };
+    JSCell* boundFunctionExecutable;
+    Structure* argumentsStructure;
+    std::array<Structure*, 2> emptyStructuresForKeyedStores;
+    std::array<uint32_t, 128> transitionsRequestedOnce;
     bool wasTransitionRequestedBefore(StructureID structureID, const UniquedStringImpl* name)
     {
         uint32_t step = (structureID.bits() + static_cast<uint32_t>(std::bit_cast<uintptr_t>(name) >> 4)) * 0x9e3779b1u | 1;
         uint32_t& noted = transitionsRequestedOnce[step >> 25];
         return std::exchange(noted, step) == step;
     }
-    JSCell* argumentsCallee { nullptr };
-    JSCell* argumentsIterator { nullptr };
+    JSCell* argumentsCallee;
+    JSCell* argumentsIterator;
     static constexpr ptrdiff_t offsetOfArgumentsCallee() { return OBJECT_OFFSETOF(Instance, argumentsCallee); }
     static constexpr ptrdiff_t offsetOfArgumentsIterator() { return OBJECT_OFFSETOF(Instance, argumentsIterator); }
     static constexpr ptrdiff_t offsetOfBoundFunctionExecutable() { return OBJECT_OFFSETOF(Instance, boundFunctionExecutable); }
-    const ClassInfo* boundFunctionClassInfo { nullptr };
+    const ClassInfo* boundFunctionClassInfo;
     static constexpr ptrdiff_t offsetOfBoundFunctionClassInfo() { return OBJECT_OFFSETOF(Instance, boundFunctionClassInfo); }
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     static constexpr unsigned numberOfReceivers = 16;
-    uint32_t receiverStructureIDs[numberOfReceivers] { };
+    uint32_t receiverStructureIDs[numberOfReceivers];
     static constexpr ptrdiff_t offsetOfReceiverStructureID(Receiver receiver)
     {
         switch (receiver) {
@@ -1015,21 +1031,21 @@ struct Instance {
     const ProgramData* programData;
     void** runtimeTable;
     static constexpr unsigned maxVectorLengthGrownByStub = 31;
-    uint8_t nextVectorLengths[maxVectorLengthGrownByStub + 1] { };
+    uint8_t nextVectorLengths[maxVectorLengthGrownByStub + 1];
     static constexpr ptrdiff_t offsetOfNextVectorLengths() { return OBJECT_OFFSETOF(Instance, nextVectorLengths); }
-    uint64_t newArrayWithTypedContiguousHeader { 0 };
-    uint64_t regExpMatchesArrayHeader { 0 };
+    uint64_t newArrayWithTypedContiguousHeader;
+    uint64_t regExpMatchesArrayHeader;
     static constexpr ptrdiff_t offsetOfRegExpMatchesArrayHeader() { return OBJECT_OFFSETOF(Instance, regExpMatchesArrayHeader); }
-    Structure* cachedTypedContiguousArrayStructure { nullptr };
+    Structure* cachedTypedContiguousArrayStructure;
     JS_EXPORT_PRIVATE Structure* typedContiguousArrayStructure();
-    uint64_t newCopyOnWriteArrayHeaders[2] { };
-    uint64_t arrayUnderConstructionHeaders[3] { };
-    Structure* arrayUnderConstructionStructures[3] { };
+    uint64_t newCopyOnWriteArrayHeaders[2];
+    uint64_t arrayUnderConstructionHeaders[3];
+    Structure* arrayUnderConstructionStructures[3];
     static constexpr unsigned arrayUnderConstructionIndex(IndexingType indexingType) { return ((indexingType & IndexingShapeMask) - Int32Shape) / 2; }
     static constexpr ptrdiff_t offsetOfArrayUnderConstructionHeaders() { return OBJECT_OFFSETOF(Instance, arrayUnderConstructionHeaders); }
     JS_EXPORT_PRIVATE bool isArrayUnderConstruction(JSCell*) const;
     Structure* arrayUnderConstructionStructure(IndexingType);
-    void* typedCastTransitions { nullptr };
+    void* typedCastTransitions;
     static ptrdiff_t offsetOfNewArrayHeader(IndexingType indexingType)
     {
         switch (indexingType) {
@@ -1053,58 +1069,63 @@ struct Instance {
         return OBJECT_OFFSETOF(Instance, newCopyOnWriteArrayHeaders) + ((indexingType & IndexingShapeMask) - Int32Shape) / 2 * sizeof(uint64_t);
     }
     static constexpr ptrdiff_t offsetOfStringHeader() { return negativeOffsetOf(OBJECT_OFFSETOF(NegativeOffsetFields, stringHeader)); }
-    uint32_t arraysHaveNoIsConcatSpreadable { 0 };
-    uint32_t arraysHaveNoInheritedElements { 0 };
-    uint64_t iteratorResultHeader { 0 };
+    uint32_t arraysHaveNoIsConcatSpreadable;
+    uint32_t arraysHaveNoInheritedElements;
+    uint64_t iteratorResultHeader;
+    uint32_t generatorStepStatus;
+    void* generatorTemplates;
+    static constexpr ptrdiff_t offsetOfGeneratorTemplates() { return OBJECT_OFFSETOF(Instance, generatorTemplates); }
+    static constexpr ptrdiff_t offsetOfGeneratorStepStatus() { return OBJECT_OFFSETOF(Instance, generatorStepStatus); }
     static constexpr ptrdiff_t offsetOfIteratorResultHeader() { return OBJECT_OFFSETOF(Instance, iteratorResultHeader); }
     static constexpr ptrdiff_t offsetOfIteratorResultStructureID() { return OBJECT_OFFSETOF(Instance, iteratorResultHeader); }
 #define AOT_COUNT_BUFFER_ACCESSOR(...) + 1
     static constexpr unsigned numberOfBufferAccessors = 0 FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR(AOT_COUNT_BUFFER_ACCESSOR);
 #undef AOT_COUNT_BUFFER_ACCESSOR
     static constexpr uint32_t bufferAccessorLookupDisabled = 1;
-    uint32_t bufferAccessorStructureIDs[numberOfBufferAccessors] { };
+    uint32_t bufferAccessorStructureIDs[numberOfBufferAccessors];
     static constexpr uint8_t maxBufferAccessorAttempts = 16;
-    uint8_t bufferAccessorAttempts[numberOfBufferAccessors] { };
-    JSCell* bufferAccessors[numberOfBufferAccessors] { };
-    Structure* bufferStructure { nullptr };
-    JSObject* bufferAccessorHolder { nullptr };
+    uint8_t bufferAccessorAttempts[numberOfBufferAccessors];
+    JSCell* bufferAccessors[numberOfBufferAccessors];
+    Structure* bufferStructure;
+    JSObject* bufferAccessorHolder;
     static constexpr ptrdiff_t offsetOfBufferAccessorStructureID(unsigned row) { return OBJECT_OFFSETOF(Instance, bufferAccessorStructureIDs) + row * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfBufferAccessor(unsigned row) { return OBJECT_OFFSETOF(Instance, bufferAccessors) + row * sizeof(JSCell*); }
     void watchBufferAccessor(unsigned row, const ObjectPropertyCondition&);
-    uint32_t asyncLocalStorageStructureIDs[2] { };
-    uint32_t asyncContextFrameStructureID { 0 };
-    uint32_t asyncLocalStorageDefaultValueOffset { 0 };
-    Structure* asyncLocalStorageStructures[2] { };
-    Structure* asyncContextFrameStructure { nullptr };
+    uint32_t asyncLocalStorageStructureIDs[2];
+    uint32_t asyncContextFrameStructureID;
+    uint32_t asyncLocalStorageDefaultValueOffset;
+    Structure* asyncLocalStorageStructures[2];
+    Structure* asyncContextFrameStructure;
     static constexpr ptrdiff_t offsetOfAsyncLocalStorageStructureID(unsigned which) { return OBJECT_OFFSETOF(Instance, asyncLocalStorageStructureIDs) + which * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfAsyncContextFrameStructureID() { return OBJECT_OFFSETOF(Instance, asyncContextFrameStructureID); }
     static constexpr ptrdiff_t offsetOfAsyncLocalStorageDefaultValueOffset() { return OBJECT_OFFSETOF(Instance, asyncLocalStorageDefaultValueOffset); }
     void registerAsyncLocalStorage(JSObject* storage, JSObject* frame, JSCell* getStore);
-    void* auxiliarySpace { nullptr };
-    void* cellSpace { nullptr };
-    const void* knownCompactTableGrowths { nullptr };
-    JSCell** youngRootsCursor { nullptr };
-    JSCell** youngRootsEnd { nullptr };
-    Latin1Character* jsonBufferStart { nullptr };
-    Latin1Character* jsonBufferEnd { nullptr };
-    EncodedJSValue preparedJSONValue { 0 };
-    StringImpl* preparedJSONString { nullptr };
-    Vector<JSONWideSegment>* jsonWideSegments { nullptr };
-    uint32_t jsonWideSegmentCount { 0 };
-    uint32_t jsonParserGaveUp { 0 };
-    JSONSourceEncoding jsonSourceEncoding { JSONSourceEncoding::Latin1 };
-    const char16_t* jsonSource16Bit { nullptr };
-    uint8_t* jsonSourceStart { nullptr };
-    const uint8_t* jsonSourceEnd { nullptr };
-    size_t jsonSourceCapacity { 0 };
-    uint64_t jsonCursor { 0 };
-    double jsonNumber { 0 };
-    uint64_t jsonParserFrame { 0 };
+    void* auxiliarySpace;
+    void* cellSpace;
+    const void* knownCompactTableGrowths;
+    JSCell** youngRootsCursor;
+    JSCell** youngRootsEnd;
+    Latin1Character* jsonBufferStart;
+    Latin1Character* jsonBufferEnd;
+    EncodedJSValue preparedJSONValue;
+    StringImpl* preparedJSONString;
+    Vector<JSONWideSegment>* jsonWideSegments;
+    FormatPatternState* formatPatternState;
+    uint32_t jsonWideSegmentCount;
+    uint32_t jsonParserGaveUp;
+    JSONSourceEncoding jsonSourceEncoding;
+    FormatPatternsOrigin formatPatternsOrigin;
+    const char16_t* jsonSource16Bit;
+    uint8_t* jsonSourceStart;
+    const uint8_t* jsonSourceEnd;
+    size_t jsonSourceCapacity;
+    uint64_t jsonCursor;
+    double jsonNumber;
+    uint64_t jsonParserFrame;
     static constexpr ptrdiff_t offsetOfYoungRootsCursor() { return OBJECT_OFFSETOF(Instance, youngRootsCursor); }
     static constexpr ptrdiff_t offsetOfYoungRootsEnd() { return OBJECT_OFFSETOF(Instance, youngRootsEnd); }
     static constexpr ptrdiff_t offsetOfJSONBufferStart() { return OBJECT_OFFSETOF(Instance, jsonBufferStart); }
     static constexpr ptrdiff_t offsetOfJSONBufferEnd() { return OBJECT_OFFSETOF(Instance, jsonBufferEnd); }
-    static constexpr ptrdiff_t offsetOfJSONWideSegmentCount() { return OBJECT_OFFSETOF(Instance, jsonWideSegmentCount); }
     static constexpr ptrdiff_t offsetOfJSONParserGaveUp() { return OBJECT_OFFSETOF(Instance, jsonParserGaveUp); }
     static constexpr ptrdiff_t offsetOfJSONSourceEnd() { return OBJECT_OFFSETOF(Instance, jsonSourceEnd); }
     static constexpr ptrdiff_t offsetOfJSONCursor() { return OBJECT_OFFSETOF(Instance, jsonCursor); }
@@ -1114,8 +1135,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfMutatorShouldBeFenced() { return OBJECT_OFFSETOF(Instance, mutatorShouldBeFenced); }
     double cachedIntegerDoubles[maxCachedIntegerDouble - minCachedIntegerDouble + 1];
     uint64_t otherCachedDoubles[std::size(otherCachedDoubleBits)];
-    JSCell* sentinelString { nullptr };
-    uint32_t compactTableStructureID { 0 };
+    JSCell* sentinelString;
+    uint32_t compactTableStructureID;
     static constexpr ptrdiff_t offsetOfAuxiliarySpace() { return OBJECT_OFFSETOF(Instance, auxiliarySpace); }
     static constexpr ptrdiff_t offsetOfCellSpace() { return OBJECT_OFFSETOF(Instance, cellSpace); }
     static constexpr ptrdiff_t offsetOfKnownCompactTableGrowths() { return OBJECT_OFFSETOF(Instance, knownCompactTableGrowths); }
@@ -1126,11 +1147,11 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfEmptyString() { return negativeOffsetOf(OBJECT_OFFSETOF(NegativeOffsetFields, emptyString)); }
     static constexpr ptrdiff_t offsetOfPowersOfTen() { return OBJECT_OFFSETOF(Instance, powersOfTen); }
     static constexpr ptrdiff_t offsetOfStringStructureID() { return negativeOffsetOf(OBJECT_OFFSETOF(NegativeOffsetFields, stringHeader)); }
-    const void* smallIntStrings { nullptr };
-    const void* intStrings { nullptr };
+    const void* smallIntStrings;
+    const void* intStrings;
     static constexpr ptrdiff_t offsetOfSmallIntStrings() { return OBJECT_OFFSETOF(Instance, smallIntStrings); }
     static constexpr ptrdiff_t offsetOfIntStrings() { return OBJECT_OFFSETOF(Instance, intStrings); }
-    uint64_t hashSecrets[2] { };
+    uint64_t hashSecrets[2];
     static constexpr ptrdiff_t offsetOfHashSecrets() { return OBJECT_OFFSETOF(Instance, hashSecrets); }
     enum class InlineAllocation : unsigned { Promise, Generator, AsyncFunctionGenerator, Map, Set, BoundFunction, BigInt, DataPropertyDescriptor, RegExpObject, Arguments, GetterSetter };
     static constexpr unsigned numberOfInlineAllocations = 11;
@@ -1138,9 +1159,9 @@ struct Instance {
         void* allocator;
         uint64_t header;
     };
-    InlineAllocationData inlineAllocations[numberOfInlineAllocations] { };
-    JSObject* nullGetterFunction { nullptr };
-    JSObject* nullSetterFunction { nullptr };
+    InlineAllocationData inlineAllocations[numberOfInlineAllocations];
+    JSObject* nullGetterFunction;
+    JSObject* nullSetterFunction;
     static constexpr ptrdiff_t offsetOfNullGetterFunction() { return OBJECT_OFFSETOF(Instance, nullGetterFunction); }
     static constexpr ptrdiff_t offsetOfNullSetterFunction() { return OBJECT_OFFSETOF(Instance, nullSetterFunction); }
     struct TypedArrayAllocation {
@@ -1151,8 +1172,8 @@ struct Instance {
     };
     static_assert(sizeof(TypedArrayAllocation) == 32);
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
-    TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations] { };
-    void* primitiveAuxiliarySpace { nullptr };
+    TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
+    void* primitiveAuxiliarySpace;
     static constexpr ptrdiff_t offsetOfTypedArrayAllocations() { return OBJECT_OFFSETOF(Instance, typedArrayAllocations); }
     static constexpr ptrdiff_t offsetOfPrimitiveAuxiliarySpace() { return OBJECT_OFFSETOF(Instance, primitiveAuxiliarySpace); }
     static constexpr ptrdiff_t offsetOfAllocatorFor(InlineAllocation kind) { return OBJECT_OFFSETOF(Instance, inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, allocator); }
@@ -1162,8 +1183,8 @@ struct Instance {
     static constexpr uint32_t maxNameWithOwnPropertyResult = INT32_MAX;
     static constexpr uint32_t ownPropertyResultSalt(uint32_t name) { return name * 0x9e3779b1u >> 16; }
     static constexpr unsigned ownPropertyResultIndex(uint32_t structureID, uint32_t name) { return ((structureID >> 4) ^ ownPropertyResultSalt(name)) & (numberOfOwnPropertyResults - 1); }
-    uint64_t ownPropertyResults[numberOfOwnPropertyResults] { };
-    bool hasOwnPropertyResults { false };
+    uint64_t ownPropertyResults[numberOfOwnPropertyResults];
+    bool hasOwnPropertyResults;
     static constexpr ptrdiff_t offsetOfOwnPropertyResults() { return OBJECT_OFFSETOF(Instance, ownPropertyResults); }
     static constexpr unsigned ownPropertyResultWays = 4;
     void cacheOwnPropertyResult(uint32_t structureID, uint32_t name, bool answer)
@@ -1203,8 +1224,8 @@ struct Instance {
     static constexpr unsigned numberOfOwnPropertyLocations = 512;
     static constexpr unsigned ownPropertyLocationWays = 4;
     static constexpr unsigned ownPropertyLocationIndex(uint32_t structureID, uintptr_t uid) { return ((uid + 5 * static_cast<uintptr_t>(structureID)) >> 4) & (numberOfOwnPropertyLocations - 1); }
-    OwnPropertyLocation ownPropertyLocations[numberOfOwnPropertyLocations] { };
-    bool hasOwnPropertyLocations { false };
+    OwnPropertyLocation ownPropertyLocations[numberOfOwnPropertyLocations];
+    bool hasOwnPropertyLocations;
     static constexpr ptrdiff_t offsetOfOwnPropertyLocations() { return OBJECT_OFFSETOF(Instance, ownPropertyLocations); }
     void cacheOwnPropertyLocation(uint32_t structureID, UniquedStringImpl* uid, uint32_t place);
     struct ObjectCreateCacheEntry {
@@ -1213,21 +1234,21 @@ struct Instance {
     };
     static constexpr unsigned objectCreateCacheSize = 8;
     static constexpr unsigned objectCreateCacheIndex(uintptr_t prototype) { return (prototype >> 4) & (objectCreateCacheSize - 1); }
-    ObjectCreateCacheEntry objectCreateCache[objectCreateCacheSize] { };
-    bool objectCreateCacheIsDirty { false };
+    ObjectCreateCacheEntry objectCreateCache[objectCreateCacheSize];
+    bool objectCreateCacheIsDirty;
     static constexpr unsigned numberOfThisAllocations = 64;
     static constexpr unsigned slotsPerThisAllocation = 4;
     static_assert(hasOneBitSet(numberOfThisAllocations) && hasOneBitSet(slotsPerThisAllocation * sizeof(Slot)));
-    Slot thisAllocations[numberOfThisAllocations * slotsPerThisAllocation] { };
-    bool hasThisAllocations { false };
+    ZeroedStorage<Slot[numberOfThisAllocations * slotsPerThisAllocation]> thisAllocations;
+    bool hasThisAllocations;
     static constexpr uint16_t maxSymbolKeyedRuns = 256;
     static constexpr uint16_t maxCopiedNameRuns = 1024;
     uint16_t remainingSymbolKeyedRuns;
     uint16_t remainingCopiedNameRuns;
     PropertyRunBudget reservedPropertyRunBudget;
-    Slot* thisAllocationFor(const JSCell* newTarget) { return &thisAllocations[(std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfThisAllocations - 1)) * slotsPerThisAllocation]; }
+    Slot* thisAllocationFor(const JSCell* newTarget) { return &thisAllocations.get()[(std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfThisAllocations - 1)) * slotsPerThisAllocation]; }
     static constexpr ptrdiff_t offsetOfThisAllocations() { return OBJECT_OFFSETOF(Instance, thisAllocations); }
-    Structure* emptyLiteralStructures[16] { };
+    Structure* emptyLiteralStructures[16];
     static constexpr ptrdiff_t offsetOfObjectCreateCache() { return OBJECT_OFFSETOF(Instance, objectCreateCache); }
     struct CustomGetter {
         uint32_t structureID;
@@ -1244,7 +1265,7 @@ struct Instance {
     static_assert(sizeof(CustomGetter) == 64);
     static constexpr unsigned numberOfCustomGetters = 256;
     static_assert(numberOfCustomGetters * sizeof(CustomGetter) < 1ull << (64 - Slot::customGetterIndexShift));
-    CustomGetter* customGetters { nullptr };
+    CustomGetter* customGetters;
     static constexpr ptrdiff_t offsetOfCustomGetters() { return OBJECT_OFFSETOF(Instance, customGetters); }
     static_assert(numberOfCustomGetters == 1u << 8);
     static unsigned indexOfCustomGetter(uint32_t structureID, UniquedStringImpl* uid) { return ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4) * 0x85ebca6bu) * 0x9e3779b1u >> (32 - 8); }
@@ -1290,7 +1311,7 @@ struct Instance {
     };
     static_assert(sizeof(PropertyRun) == 24);
     static constexpr unsigned numberOfPropertyRuns = 256;
-    PropertyRun* propertyRuns { nullptr };
+    PropertyRun* propertyRuns;
     static constexpr ptrdiff_t offsetOfPropertyRuns() { return OBJECT_OFFSETOF(Instance, propertyRuns); }
     static unsigned indexOfPropertyRun(uint32_t structureID, const Slot* site) { return ((structureID >> 4) * 9 + static_cast<uint32_t>(std::bit_cast<uintptr_t>(site) >> 4)) % numberOfPropertyRuns; }
     struct InheritedSetter {
@@ -1304,7 +1325,7 @@ struct Instance {
     static_assert(sizeof(InheritedSetter) == 32);
     static constexpr unsigned numberOfInheritedSetters = 128;
     static_assert(hasOneBitSet(numberOfInheritedSetters));
-    InheritedSetter inheritedSetters[numberOfInheritedSetters] { };
+    InheritedSetter inheritedSetters[numberOfInheritedSetters];
     InheritedSetter& inheritedSetterFor(uint32_t structureID, UniquedStringImpl* uid)
     {
         unsigned index = ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfInheritedSetters;
@@ -1317,7 +1338,7 @@ struct Instance {
         return first;
     }
     static constexpr ptrdiff_t offsetOfInheritedSetters() { return OBJECT_OFFSETOF(Instance, inheritedSetters); }
-    uint32_t hasCachedNativeSetter { 0 };
+    uint32_t hasCachedNativeSetter;
     static constexpr ptrdiff_t offsetOfHasCachedNativeSetter() { return OBJECT_OFFSETOF(Instance, hasCachedNativeSetter); }
     struct CaseConversion {
         JSCell* source;
@@ -1326,8 +1347,8 @@ struct Instance {
     static_assert(sizeof(CaseConversion) == 16);
     static constexpr unsigned numberOfCaseConversions = 64;
     static_assert(hasOneBitSet(numberOfCaseConversions));
-    CaseConversion caseConversions[2][numberOfCaseConversions] { };
-    bool hasCaseConversions { false };
+    CaseConversion caseConversions[2][numberOfCaseConversions];
+    bool hasCaseConversions;
     struct SpreadCopyCacheEntry {
         uint64_t more;
         uint64_t header;
@@ -1340,8 +1361,8 @@ struct Instance {
     static_assert(sizeof(SpreadCopyCacheEntry) == 32);
     static constexpr unsigned spreadCopyCacheSize = 512;
     static_assert(hasOneBitSet(spreadCopyCacheSize));
-    SpreadCopyCacheEntry* spreadCopyCache { nullptr };
-    bool spreadCopyCacheIsDirty { false };
+    SpreadCopyCacheEntry* spreadCopyCache;
+    bool spreadCopyCacheIsDirty;
     struct CopyKeyOrderEntry {
         uint64_t sourceHeaderWords;
         const Slot* site;
@@ -1355,8 +1376,8 @@ struct Instance {
     static constexpr unsigned copyKeyOrderSiteShift = 4;
     static constexpr uint32_t copyKeyOrderFromSecondSource = 1u << 31;
     static constexpr uint32_t copyAlwaysFails = 1u << 30;
-    CopyKeyOrderEntry* copyKeyOrderCache { nullptr };
-    bool copyKeyOrderCacheIsDirty { false };
+    CopyKeyOrderEntry* copyKeyOrderCache;
+    bool copyKeyOrderCacheIsDirty;
     static constexpr ptrdiff_t offsetOfCopyKeyOrderCache() { return OBJECT_OFFSETOF(Instance, copyKeyOrderCache); }
     void cacheCopyKeyOrder(uint64_t sourceHeaderWords, const Slot* site, uint32_t orderWordAndSource)
     {
@@ -1365,8 +1386,8 @@ struct Instance {
         copyKeyOrderCacheIsDirty = true;
     }
     static constexpr unsigned proxyTrapKeyCacheSize = 256;
-    JSString* proxyTrapKeyCache[proxyTrapKeyCacheSize] { };
-    bool proxyTrapKeyCacheIsDirty { false };
+    JSString* proxyTrapKeyCache[proxyTrapKeyCacheSize];
+    bool proxyTrapKeyCacheIsDirty;
     JS_EXPORT_PRIVATE JSString* proxyTrapKey(VM&, UniquedStringImpl*);
     static constexpr ptrdiff_t offsetOfSpreadCopyCache() { return OBJECT_OFFSETOF(Instance, spreadCopyCache); }
     static constexpr unsigned secondAddedNameShift = 24;
@@ -1400,12 +1421,12 @@ struct Instance {
     static_assert(sizeof(KeyedRead) == 32);
     static constexpr uint32_t keyedStructureHashMultiplier = 0x9e3779b1;
     static constexpr unsigned keyedHashShift = 16;
-    uint32_t keyedTableRandomState { 1 };
-    int32_t keyedReadsByNameUntilCacheAttempt { 0 };
+    uint32_t keyedTableRandomState;
+    int32_t keyedReadsByNameUntilCacheAttempt;
     static constexpr ptrdiff_t offsetOfKeyedReadsByNameUntilCacheAttempt() { return OBJECT_OFFSETOF(Instance, keyedReadsByNameUntilCacheAttempt); }
-    const JSCell* lastAtomizedKey { nullptr };
+    const JSCell* lastAtomizedKey;
     static constexpr unsigned keyedTableWays = 4;
-    alignas(16) std::array<uint8_t, 32> keyedScratchEntry { };
+    alignas(16) std::array<uint8_t, 32> keyedScratchEntry;
     template<typename Entry>
     ALWAYS_INLINE Entry& keyedEntryFor(Entry* table, unsigned numberOfEntries, StructureID structureID, const JSCell* key)
     {
@@ -1518,8 +1539,8 @@ struct Instance {
     static constexpr unsigned numberOfNamedFields = 2048;
     static constexpr unsigned namedFieldShapeShift = 5;
     static_assert(hasOneBitSet(numberOfNamedFields) && sizeof(NamedField) == 16);
-    NamedField* namedFieldReads { nullptr };
-    NamedField* namedFieldWrites { nullptr };
+    NamedField* namedFieldReads;
+    NamedField* namedFieldWrites;
     struct ImmutableElement {
         uint64_t cellAndIndex;
         EncodedJSValue value;
@@ -1527,8 +1548,8 @@ struct Instance {
     static constexpr unsigned immutableElementCacheSize = 1024;
     static constexpr unsigned immutableElementIndexBits = 16;
     static_assert(hasOneBitSet(immutableElementCacheSize) && sizeof(ImmutableElement) == 16);
-    ImmutableElement* immutableElementCache { nullptr };
-    bool immutableElementCacheIsDirty { false };
+    ImmutableElement* immutableElementCache;
+    bool immutableElementCacheIsDirty;
     static constexpr ptrdiff_t offsetOfImmutableElementCache() { return OBJECT_OFFSETOF(Instance, immutableElementCache); }
     void cacheImmutableElement(JSCell* cell, uint32_t index, JSValue value)
     {
@@ -1549,17 +1570,19 @@ struct Instance {
         immutableElementCache[place] = { cellAndIndex, JSValue::encode(value) };
         immutableElementCacheIsDirty = true;
     }
-    EncodedJSValue thrownValue { 0 };
-    void* typedKnownStoreTransitions { nullptr };
-    void* typedExtraPropertiesHandleSegments { nullptr };
-    void* typedExtraPropertyLocations { nullptr };
-    void* typedLateFieldCreations { nullptr };
+    EncodedJSValue thrownValue;
+    void* typedKnownStoreTransitions;
+    void* typedExtraPropertiesHandleSegments;
+    void* typedExtraPropertyLocations;
+    void* typedLateFieldCreations;
+    void* typedCloneCache;
     static constexpr ptrdiff_t offsetOfNamedFieldReads() { return OBJECT_OFFSETOF(Instance, namedFieldReads); }
     static constexpr ptrdiff_t offsetOfNamedFieldWrites() { return OBJECT_OFFSETOF(Instance, namedFieldWrites); }
     static constexpr ptrdiff_t offsetOfTypedKnownStoreTransitions() { return OBJECT_OFFSETOF(Instance, typedKnownStoreTransitions); }
     static constexpr ptrdiff_t offsetOfTypedExtraPropertiesHandleSegments() { return OBJECT_OFFSETOF(Instance, typedExtraPropertiesHandleSegments); }
     static constexpr ptrdiff_t offsetOfTypedExtraPropertyLocations() { return OBJECT_OFFSETOF(Instance, typedExtraPropertyLocations); }
     static constexpr ptrdiff_t offsetOfTypedLateFieldCreations() { return OBJECT_OFFSETOF(Instance, typedLateFieldCreations); }
+    static constexpr ptrdiff_t offsetOfTypedCloneCache() { return OBJECT_OFFSETOF(Instance, typedCloneCache); }
     static void cacheNamedField(NamedField* table, uint32_t shapeWord, uint32_t name, uint64_t access)
     {
         table[((shapeWord << namedFieldShapeShift) + name) % numberOfNamedFields] = { shapeWord | static_cast<uint64_t>(name) << 32, access };
@@ -1609,9 +1632,9 @@ struct Instance {
     };
     static_assert(sizeof(StackTraceInfo) == 8 && sizeof(UnwindInfo) == 8);
     static constexpr unsigned numberOfCachedAddressInfos = 512;
-    CachedAddressInfo cachedAddressInfos[numberOfCachedAddressInfos] { };
+    CachedAddressInfo cachedAddressInfos[numberOfCachedAddressInfos];
     CachedAddressInfo& cachedAddressInfo(const void* address) { return cachedAddressInfos[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos]; }
-    CachedAddressInfo* cachedReturnAddresses { nullptr };
+    CachedAddressInfo* cachedReturnAddresses;
     JS_EXPORT_PRIVATE CachedAddressInfo* allocateCachedReturnAddresses();
     CachedAddressInfo* ensureCachedReturnAddresses() { return cachedReturnAddresses ? cachedReturnAddresses : allocateCachedReturnAddresses(); }
     static size_t primaryReturnAddressIndex(const void* address) { return (std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos; }
@@ -1634,17 +1657,17 @@ struct Instance {
     JS_EXPORT_PRIVATE const UnwindInfo& findUnwindInfo(const CachedAddressInfo&);
     JS_EXPORT_PRIVATE bool nearestHandlerIgnoresValue(VM&, CallFrame*, void* returnPC);
     JS_EXPORT_PRIVATE const CachedAddressInfo* resolveReturnAddress(const void*);
-    uint32_t operationSamplingState { 0 };
-    uint32_t moduleEvaluationDepth { 0 };
-    bool evictsSecondaryReturnAddress { false };
-    bool thrownValueIsAtStackTraceItemSite { false };
-    const CallSiteOverride* callSiteOverrides { nullptr };
+    uint32_t operationSamplingState;
+    uint32_t moduleEvaluationDepth;
+    bool evictsSecondaryReturnAddress;
+    bool thrownValueIsAtStackTraceItemSite;
+    const CallSiteOverride* callSiteOverrides;
     static_assert(!(sizeOfKeyedTables % keyedEntryGroupBytes));
-    WTF::BitSet<sizeOfKeyedTables / keyedEntryGroupBytes> keyedGroupsUsedInThisEntry;
-    WTF::BitSet<sizeOfKeyedTables / keyedEntryGroupBytes> keyedGroupsUsedEarlier;
-    unsigned entryCountAtLastKeyedUse { 0 };
-    bool hasNewOwnPropertyResults { false };
-    bool hasNewOwnPropertyLocations { false };
+    ZeroedStorage<WTF::BitSet<sizeOfKeyedTables / keyedEntryGroupBytes>> keyedGroupsUsedInThisEntry;
+    ZeroedStorage<WTF::BitSet<sizeOfKeyedTables / keyedEntryGroupBytes>> keyedGroupsUsedEarlier;
+    unsigned entryCountAtLastKeyedUse;
+    bool hasNewOwnPropertyResults;
+    bool hasNewOwnPropertyLocations;
     static constexpr ptrdiff_t offsetOfTypedStatics() { return OBJECT_OFFSETOF(Instance, typedStatics); }
     static constexpr size_t bytesReservedForEnvironments = 1 * MB;
     static constexpr size_t bytesReservedForLoopPollPage = 16 * KB;
@@ -1688,7 +1711,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedClosures() { return OBJECT_OFFSETOF(Instance, typedClosures); }
     static constexpr ptrdiff_t offsetOfTypedBuiltins() { return negativeOffsetOf(OBJECT_OFFSETOF(NegativeOffsetFields, typedBuiltins)); }
     static constexpr unsigned numberOfHostClasses = Typed::maxNumberOfHostClasses;
-    uint32_t hostClassStructureIDs[numberOfHostClasses] { };
+    uint32_t hostClassStructureIDs[numberOfHostClasses];
     static constexpr ptrdiff_t offsetOfHostClassStructureID(unsigned number) { return OBJECT_OFFSETOF(Instance, hostClassStructureIDs) + number * sizeof(uint32_t); }
     BiasedDataPointer linkedFunctionsSharedData;
     BiasedDataPointer ownData[maxNumberOfOwnData];
@@ -1698,6 +1721,7 @@ struct Instance {
     uint16_t missCounters[numberOfMissCounters];
     uint16_t states[0];
 };
+static_assert(std::is_trivially_default_constructible_v<Instance>, "Instance lives in zeroed pages and is never constructed, so default member initializers would be ignored");
 static_assert(sizeof(Instance::NegativeOffsetFields) <= 256);
 static_assert(Instance::offsetOfTypedData() < 4096 * sizeof(uint32_t));
 
@@ -1918,6 +1942,7 @@ public:
     bool setAdded(Structure*, uint32_t name, Access, Structure* after, PropertyOffset, uint32_t newStructureFlags, UniquedStringImpl* prototypeDependentUID);
     Slot* slotIfExists(Structure*, uint32_t name, Access);
     void didChangePrototype(UniquedStringImpl* uidOrNull);
+    bool hasPrototypeDependentEntries() const { return !m_nameListLinks.isEmpty(); }
     void willCreateDeclaredMembers() { ++m_declaredMemberCreationDepth; }
     void didCreateDeclaredMembers() { --m_declaredMemberCreationDepth; }
     void forget(Structure*, uint32_t name);

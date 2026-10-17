@@ -963,7 +963,7 @@ StringBuilderAnalysis analyzeStringBuilders(const Program& program, FunctionID f
         return typeOf(id).isString() || isNumberOrNullish(id) || mayBeBuilderState(id);
     };
     auto isConcatenation = [&](const Value& value, bool allowsStateAsFirstOperand) {
-        if (!holdsCells(value.rep) || !program.at(value.type).isString())
+        if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || !holdsCells(value.rep) || !program.at(value.type).isString())
             return false;
         if (value.opcode == Opcode::Add) {
             bool leftIsString = typeOf(value.child(0)).isString() || (allowsStateAsFirstOperand && mayBeBuilderState(value.child(0)));

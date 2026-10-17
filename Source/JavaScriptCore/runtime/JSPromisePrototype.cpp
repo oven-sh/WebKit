@@ -43,10 +43,6 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromisePrototype);
 static JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncCatch);
 static JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncFinally);
 
-static JSC_DECLARE_HOST_FUNCTION(promiseFinallyThenFinallyFunc);
-static JSC_DECLARE_HOST_FUNCTION(promiseFinallyCatchFinallyFunc);
-static JSC_DECLARE_HOST_FUNCTION(promiseFinallyValueThunkFunc);
-static JSC_DECLARE_HOST_FUNCTION(promiseFinallyThrowerFunc);
 
 }
 
@@ -187,8 +183,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseFinallyThenFinallyFunc, (JSGlobalObject* globalO
     auto* resolvedPromise = JSPromise::promiseResolve(globalObject, constructor, result);
     RETURN_IF_EXCEPTION(scope, { });
 
-    NativeExecutable* thunkExecutable = vm.getHostFunction(promiseFinallyValueThunkFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nullString());
-    auto* valueThunk = JSFunctionWithFields::create(vm, globalObject, thunkExecutable);
+    auto* valueThunk = JSFunctionWithFields::create(vm, globalObject, vm.promiseFinallyValueThunkExecutable());
     valueThunk->setField(vm, JSFunctionWithFields::Field::ResolvingPromise, value);
 
     JSValue then = resolvedPromise->get(globalObject, vm.propertyNames->then);
@@ -219,8 +214,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseFinallyCatchFinallyFunc, (JSGlobalObject* global
     auto* resolvedPromise = JSPromise::promiseResolve(globalObject, constructor, result);
     RETURN_IF_EXCEPTION(scope, { });
 
-    NativeExecutable* throwerExecutable = vm.getHostFunction(promiseFinallyThrowerFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nullString());
-    auto* thrower = JSFunctionWithFields::create(vm, globalObject, throwerExecutable);
+    auto* thrower = JSFunctionWithFields::create(vm, globalObject, vm.promiseFinallyThrowerExecutable());
     thrower->setField(vm, JSFunctionWithFields::Field::ResolvingPromise, reason);
 
     JSValue then = resolvedPromise->get(globalObject, vm.propertyNames->then);
@@ -258,13 +252,11 @@ static EncodedJSValue promiseProtoFuncFinallySlow(JSGlobalObject* globalObject, 
         RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, then, thenCallData, thisValue, ArgList { thenArguments.data(), thenArguments.size() })));
     }
 
-    NativeExecutable* thenFinallyExecutable = vm.getHostFunction(promiseFinallyThenFinallyFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, nullString());
-    auto* thenFinally = JSFunctionWithFields::create(vm, globalObject, thenFinallyExecutable);
+    auto* thenFinally = JSFunctionWithFields::create(vm, globalObject, vm.promiseFinallyThenFinallyExecutable());
     thenFinally->setField(vm, JSFunctionWithFields::Field::ResolvingPromise, onFinally);
     thenFinally->setField(vm, JSFunctionWithFields::Field::ResolvingOther, constructor);
 
-    NativeExecutable* catchFinallyExecutable = vm.getHostFunction(promiseFinallyCatchFinallyFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, nullString());
-    auto* catchFinally = JSFunctionWithFields::create(vm, globalObject, catchFinallyExecutable);
+    auto* catchFinally = JSFunctionWithFields::create(vm, globalObject, vm.promiseFinallyCatchFinallyExecutable());
     catchFinally->setField(vm, JSFunctionWithFields::Field::ResolvingPromise, onFinally);
     catchFinally->setField(vm, JSFunctionWithFields::Field::ResolvingOther, constructor);
 

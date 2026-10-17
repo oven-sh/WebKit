@@ -17,6 +17,7 @@ inline GetIteratorNext
 inline GeneratorResume
 inline GeneratorIsDone
 inline AsyncGeneratorYield
+inline TryNewPromiseSubclass
 
 runtime SuspendAsyncFunction : Heap void (JSCell* resumeClosure, EncodedJSValue awaited)
 runtime SaveFrameAndAwait : Heap JSCell* (EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra)
@@ -28,8 +29,8 @@ runtime GetAsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
 runtime AsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator, EncodedJSValue sent)
 runtime GetIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
 runtime GeneratorResume : Heap EncodedJSValue (JSCell* generator, EncodedJSValue mode, EncodedJSValue value)
-runtime GeneratorIsDone : Nothing size_t (JSCell* generator) noexcept
 runtime AsyncGeneratorYield : Heap void (JSCell* resumeClosure, EncodedJSValue operand)
+runtime TryNewPromiseSubclass : Heap EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, EncodedJSValue executor)
 
 operation AwaitMayContinue (any/-, any/-) -> boolean ; ReadsRuntimeState ; Inline(AwaitMayContinue)
 operation AwaitedValue (any/P) -> anything ; ReadsRuntimeState WritesRuntimeState ; Inline(AwaitedValue)
@@ -43,11 +44,13 @@ operation GeneratorIsDone (any/-) -> boolean ; ReadsRuntimeState ; Inline(Genera
 operation IsAsyncIteratorDriven (any/-) -> boolean ; Pure ; Inline(IsAsyncIteratorDriven)
 operation AsyncIteratorNext (any, any?) -> anything ; CallsUserCode ; Inline(AsyncIteratorNext)
 operation ClearAsyncIteratorResult (any/-, any/W) -> undefined ; WritesArguments ; Inline(ClearAsyncIteratorResult)
+intrinsic TryNewPromiseSubclass (any/-, any/G, any/-) -> anything/N ; CallsUserCode ; Inline(TryNewPromiseSubclass, None)
 
 static Array.fromAsync (any/KGP?, any/KC?, any/KA?, any/-...) -> new Promise/N ; CallsUserCode ; Call
 
 construct Promise (any/C) -> new Promise/N ; CallsUserCode ; Prelude(Promise$construct)
 construct Promise (any/C?, any/-...) -> new Promise/N ; CallsUserCode ; Call
+construct Promise (any/wKR, any/C) -> arg0 ; CallsUserCode ; Prelude(Promise$runExecutorOfSubclass)
 
 static Promise.all (any/GPD) -> new Promise/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
 static Promise.any (any/GPD) -> new Promise/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall

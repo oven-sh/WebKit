@@ -372,16 +372,28 @@ private:
     void didPassNullishTest(ValueID, BlockID);
     const Type& withoutNullish(TypeID) const;
     Operand get(ValueID);
+    bool encodesUndefinedAsZero(ValueID) const;
+    bool isKnownDefinedHere(ValueID) const;
+    Operand decodeUndefined(ValueID, Operand);
+    ValueID readProvenDefinedWhenFalse(const Terminator&) const;
     void define(ValueID, Operand);
     static LType b3TypeOf(Rep);
     LBasicBlock newColdBlock();
     LBasicBlock newUnlikelyBlock();
     std::span<const Target> successorsOf(const Terminator&) const;
     Vector<BlockID> reversePostorder() const;
-    void computeLoopBlocks(const Vector<BlockID>& order);
-    void computeDominators(const Vector<BlockID>& order);
+    struct PredecessorLists {
+        std::span<const unsigned> operator[](unsigned block) const { return blocks.span().subspan(first[block], first[block + 1] - first[block]); }
+
+        Vector<unsigned, 32> placeInOrder;
+        Vector<unsigned, 33> first;
+        Vector<unsigned, 48> blocks;
+    };
+    PredecessorLists computePredecessors(const Vector<BlockID>& order) const;
+    void computeLoopBlocks(const Vector<BlockID>& order, const PredecessorLists&);
+    void computeDominators(const Vector<BlockID>& order, const PredecessorLists&);
     struct Loop;
-    void computeLoops(const Vector<BlockID>& order);
+    void computeLoops(const Vector<BlockID>& order, const PredecessorLists&);
     bool verifyDefinitions(const Vector<BlockID>& order) const;
     bool isLoopInvariant(const Loop&, ValueID) const;
     bool isGuaranteedToExecute(const Loop&) const;
@@ -399,6 +411,7 @@ private:
     LBasicBlock landingPadFor(const Target&);
     void findHandlersEnteredByBranch(const Vector<BlockID>& order);
     LBasicBlock handlerEnteredByBranch() const;
+    void convertPlainRowInPlace(ValueID row, TypeID);
     void lowerBlock(BlockID);
     void lowerTerminator(const Terminator&);
     std::optional<unsigned> nullishSuccessorOf(const Terminator&) const;
@@ -1037,10 +1050,28 @@ private:
         size_t last() const { return cast != notFound ? cast : stores.last(); }
     };
     std::optional<CloneGroup> findCloneGroup(size_t cloneIndex);
+    struct TypedCloneOfUntypedSource {
+        const Block* block { nullptr };
+        ValueID copy;
+        LayoutID layout;
+        size_t firstAdjacentStore { notFound };
+        size_t cast { notFound };
+        bool plainObjectsPassCast { false };
+        Operand castResult { };
+    };
+    std::optional<uint64_t> typedCloneTargetAt(size_t cloneIndex);
+    void storeToTypedCloneField(CellPointer, const Value& store);
+    void storeToPlainClone(Boxed, const Value& store);
+    bool tryStoreToTypedClone(const Value& store);
+    std::optional<Operand> tryCastTypedClone();
+    TypedCloneOfUntypedSource m_typedCloneOfUntypedSource;
     bool allSubtypesAreIn(const Type&, const Vector<LayoutID, 2>& layouts);
     void branchOnSourceLayout(Word32 shapeWord, const Layout&, bool isLastCandidate, LBasicBlock otherwise);
     template<typename Functor> void dispatchOnCloneSourceLayout(const CloneGroup&, LBasicBlock slowPath, const Functor& onLayout);
     void decideCloneGroup(CloneGroup&);
+    bool everyCloneOffUsualPathPassesCast(const CloneGroup&);
+    std::optional<uint64_t> namesStoredWhereEveryLayoutIsCopiedInline(const CloneGroup&);
+    std::optional<CellPointer> tryCloneAsExtendedPlainObject(const CloneGroup&);
     Operand lowerCloneGroup(CloneGroup);
     CellPointer copyRecordAs(const Value&, LayoutID to, CopyNamesKind, const Vector<LayoutID, 4>* inlineSources = nullptr, bool callerInitializesNamedFields = false, LBasicBlock onFailure = nullptr);
     Operand initialFieldValue(const Field&, bool wasAllocated);
@@ -1066,6 +1097,12 @@ private:
     bool canStoreFieldsDirectly(const Layout&, const SpreadGroup&);
     Operand lowerSpreadGroup(SpreadGroup);
     std::optional<SpreadGroup> m_spreadGroup;
+    struct CastOfCopiedRecord {
+        const Block* block { nullptr };
+        size_t cast { notFound };
+        Operand result { };
+    };
+    CastOfCopiedRecord m_castOfCopiedRecord;
     bool m_isLoweringMergeGroup { false };
     bool isPredictedSymbol(const Function&, ValueID) const;
     void lowerObjectLiteral(const ObjectLiteral&);
@@ -1101,6 +1138,7 @@ private:
     CellPointer cloneObjectOutOfLine(ValueID source, const CloneCapacity&);
     CellPointer cloneObject(ValueID source, bool keepsLayout, const CloneDefinitions& = { }, const CloneCapacity& = { });
     CloneDefinitions definitionsOnClone(ValueID object, bool mayCarryOut);
+    CloneDefinitions storesDirectlyBehindClone(ValueID object);
     const Block* m_cloneDefinitionsBlock { nullptr };
     Vector<size_t, 2> m_cloneDefinitions;
     Vector<LayoutID, 2> inlineClonedLayouts(const Type&) const;
@@ -1340,6 +1378,7 @@ private:
     std::optional<uint32_t> constantAllocation(const Value& newObject) const;
     bool layoutVariesByDiscriminant(const Allocation&) const;
     CellPointer stringConstant(StringID);
+    Boxed keyConstant(StringID);
     bool isLazilyFetched(ValueID id) const { return m_isLazilyFetched.get(id.index()); }
     bool operandsAreAvailable(ValueID id) const
     {
@@ -1539,7 +1578,24 @@ private:
         unsigned flags { 0 };
         Word32 isView;
         Boxed value;
+        bool isHoisted { false };
+        Word32 isFixedLengthView { };
+        Integer length { };
+        Pointer vector { };
     };
+    struct HoistedTypedArray {
+        ValueID array;
+        B3::Variable* view { nullptr };
+        B3::Variable* isFixedLengthView { nullptr };
+        B3::Variable* length { nullptr };
+        B3::Variable* vector { nullptr };
+    };
+    Vector<Vector<HoistedTypedArray, 1>> m_typedArraysHoistedBeforeLoops;
+    BitVector m_accessesOfHoistedTypedArrays;
+    void findTypedArraysAccessedInLoops();
+    bool mayChangeTypedArrayFields(const Loop&) const;
+    void hoistTypedArrayFieldsBeforeLoops(const Terminator&);
+    TypedArrayReceiver typedArrayElementReceiver(ValueID, bool isBeforeLoop = false);
     TypedArrayReceiver typedArrayReceiver(ValueID);
     TypedArrayReceiver typedArrayReceiver(CellPointer);
     void rejectNullish(const TypedArrayReceiver&);
@@ -1757,6 +1813,7 @@ private:
     UncheckedKeyHashSet<B3::Value*> m_structurePreservingStores;
     static uint64_t accessRunKey(BlockID block, unsigned index) { return (static_cast<uint64_t>(block.index()) << 32 | index) + 1; }
     BitVector m_loopBlocks;
+    OpcodeSet m_opcodes;
     BitVector m_handlersEnteredByBranch;
     const Target* m_activeHandler { nullptr };
     LBasicBlock m_currentLandingPad { nullptr };
@@ -1872,6 +1929,9 @@ private:
         unsigned maxLeave;
     };
     UncheckedKeyHashMap<uint32_t, Vector<BlockAfterNullishTest, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksAfterNullishTest;
+    UncheckedKeyHashMap<uint32_t, Vector<BlockID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksWhereReadIsDefined;
+    UncheckedKeyHashMap<uint32_t, std::pair<LBasicBlock, Operand>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_decodedReads;
+    ValueID m_readKnownDefinedOnEdge;
     UncheckedKeyHashMap<LValue, LValue> m_shapeWordCells;
     LValue m_knownTypeCell { nullptr };
     const Type* m_knownCellType { nullptr };
@@ -1882,9 +1942,6 @@ private:
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<Type>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_widenedLiteralStringTypes;
     Word32 m_argumentCount;
     Pointer m_argumentBuffer;
-    std::array<LValue, numberOfArgumentGPRs> m_argumentRegisters { };
-    static bool needsArgumentsInMemory(const Function&);
-    LBasicBlock m_lastPrologueBlock { nullptr };
     bool m_isInLoop { false };
     bool m_hasFailedInt32Test { false };
     bool m_retestsOperands { false };

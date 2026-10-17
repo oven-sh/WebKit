@@ -347,13 +347,29 @@ static NEVER_INLINE RefPtr<StringImpl> makeStringWithWideSegments(std::span<cons
     return StringImpl::create(storage.span().first(output.data() - storage.span().data()));
 }
 
+static ALWAYS_INLINE void releaseLargeJSONBuffer(Instance* instance)
+{
+    if (static_cast<size_t>(instance->jsonBufferEnd - instance->jsonBufferStart) > maxRetainedJSONBufferCapacity) [[unlikely]] {
+        fastFree(instance->jsonBufferStart);
+        instance->jsonBufferStart = nullptr;
+        instance->jsonBufferEnd = nullptr;
+    }
+}
+
+static void resetJSONOutput(Instance* instance)
+{
+    if (instance->jsonWideSegments)
+        instance->jsonWideSegments->clear();
+    instance->jsonWideSegmentCount = 0;
+    releaseLargeJSONBuffer(instance);
+}
+
 static NEVER_INLINE JSCell* finishWithWideSegments(Instance* instance, JSGlobalObject* globalObject, VM& vm, uint64_t cursor)
 {
     RefPtr<StringImpl> text;
     if (!mayHaveToJSON(globalObject, vm, globalObject->objectPrototype()) && !mayHaveToJSON(globalObject, vm, globalObject->arrayPrototype()))
         text = makeStringWithWideSegments({ instance->jsonBufferStart, std::bit_cast<Latin1Character*>(cursor) }, instance->jsonWideSegments->span().first(instance->jsonWideSegmentCount));
-    instance->jsonWideSegments->clear();
-    instance->jsonWideSegmentCount = 0;
+    resetJSONOutput(instance);
     return text ? jsString(vm, String { text.releaseNonNull() }) : nullptr;
 }
 
@@ -395,12 +411,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instanc
             result = jsString(vm, String { impl.releaseNonNull() });
         }
     }
-    if (static_cast<size_t>(instance->jsonBufferEnd - instance->jsonBufferStart) > maxRetainedJSONBufferCapacity) [[unlikely]] {
-        fastFree(instance->jsonBufferStart);
-        instance->jsonBufferStart = nullptr;
-        instance->jsonBufferEnd = nullptr;
-    }
+    releaseLargeJSONBuffer(instance);
     return result;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONDiscard, void, (Instance* instance))
+{
+    resetJSONOutput(instance);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONPrepare, void, (Instance* instance, uint64_t cursor, EncodedJSValue value))
@@ -420,15 +437,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONPrepare, void, (Instance*
                 memcpy(copy.data(), characters.data(), characters.size());
         }
     }
-    if (instance->jsonWideSegmentCount) [[unlikely]] {
-        instance->jsonWideSegments->clear();
-        instance->jsonWideSegmentCount = 0;
-    }
-    if (static_cast<size_t>(instance->jsonBufferEnd - instance->jsonBufferStart) > maxRetainedJSONBufferCapacity) [[unlikely]] {
-        fastFree(instance->jsonBufferStart);
-        instance->jsonBufferStart = nullptr;
-        instance->jsonBufferEnd = nullptr;
-    }
+    resetJSONOutput(instance);
     if (!text)
         return;
     holder->preparedJSONString = text.leakRef();
@@ -521,16 +530,11 @@ public:
         static constexpr OpcodeSet builtinCalls { Opcode::CallBuiltin };
         Vector<Vector<ValueID, 0>> sites(count);
         forEachIndexInParallel(count, [&](unsigned i) {
-            if (!m_program.functions.mayContain(i, builtinCalls))
-                return;
-            auto& function = m_program.functions[i];
-            for (auto& block : function.blocks) {
-                for (ValueID id : block.values) {
-                    auto& value = function.at(id);
-                    if (value.opcode == Opcode::CallBuiltin && (value.builtin() == m_stringify || value.builtin() == m_responseJSON) && !value.arguments.isEmpty())
-                        sites[i].append(id);
-                }
-            }
+            m_program.functions.forEachIndexedValue(i, builtinCalls, [&](ValueID id) {
+                auto& value = m_program.functions[i].at(id);
+                if ((value.builtin() == m_stringify || value.builtin() == m_responseJSON) && !value.arguments.isEmpty())
+                    sites[i].append(id);
+            });
         });
         for (unsigned i = 0; i < count; ++i) {
             for (ValueID id : sites[i]) {
@@ -592,7 +596,7 @@ void createJSONSerializers(Program& program)
         auto& layout = program.at(member);
         return layout.kind == LayoutKind::Record && layout.isAllocated && layout.fields.size() <= maxFields && std::ranges::all_of(layout.fields, [&](const Field& field) {
             auto name = program.string(field.name);
-            return isPrivateName(name) || isKeyEmittedInline(name);
+            return !isStringKey(name) || isKeyEmittedInline(name);
         });
     };
     auto forEachSupertype = [&](TypeID id, const auto& functor) {
@@ -735,7 +739,7 @@ Vector<Lowering::JSONKeyOrder, 4> Lowering::keyOrdersForJSON(std::span<const Lay
             if (isWhole && !(m_program.at(layout.fields[index].stored).primitives & Primitive::Absent))
                 keys.minKeyCount = position;
             auto name = m_program.string(layout.fields[index].name);
-            if (isPrivateName(name))
+            if (!isStringKey(name))
                 continue;
             isRefused |= name.empty() || isASCIIDigit(name.front()) || equalSpans(name, asBytes("__proto__"_s.span8())) || equalSpans(name, asBytes("toJSON"_s.span8())) || !needsNoJSONEscaping(name);
             keys.fields.append(index);
@@ -1362,7 +1366,7 @@ void Lowering::appendObjectByOwnKeys(JSONOutput& output, CellPointer cell, Layou
         m_out.appendTo(block);
         output.knownCapacity = 0;
         auto name = m_program.string(field->name);
-        if (!isPrivateName(name)) {
+        if (isStringKey(name)) {
             JSONSeparator separator = JSONSeparator::Unknown;
             appendMember(output, separator, { name, !!(m_program.at(field->stored).primitives & (Primitive::Absent | Primitive::Undefined | Primitive::Symbol)) }, [&, field = field](JSONExit& nothing) {
                 appendField(output, cell, *field, 1, nothing);
@@ -1535,7 +1539,14 @@ std::optional<Lowering::DeferredLiteral> Lowering::findDeferrableLiteral(ValueID
         auto& implementation = m_builtins.at(user.builtin()).implementation;
         return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::JSONStringify;
     };
-    if (isJSONStringify())
+    auto isFormattedByPattern = [&] {
+        if (user.opcode != Opcode::CallBuiltin || !user.child(2) || user.arguments.size() != 2 || user.arguments[1] != object)
+            return false;
+        auto& implementation = m_builtins.at(user.builtin()).implementation;
+        return implementation.kind == BuiltinImplementation::Inline && familyOf(implementation.inlined) == BuiltinFamily::IntlTemporal;
+    };
+    bool isOnlyReadOnSlowPath = isFormattedByPattern();
+    if (isOnlyReadOnSlowPath || isJSONStringify())
         literal.callIndex = useIndex;
     else {
         if (depth + 1 >= maxInlineJSONDepth)
@@ -1575,7 +1586,7 @@ std::optional<Lowering::DeferredLiteral> Lowering::findDeferrableLiteral(ValueID
         }
     }
     SetForScope indexInBlock(m_currentIndexInBlock, literal.callIndex);
-    if (!freshLiteralMembers(object, holder))
+    if (!isOnlyReadOnSlowPath && !freshLiteralMembers(object, holder))
         return std::nullopt;
     return literal;
 }
@@ -1924,7 +1935,7 @@ Operand Lowering::lowerResponseJSON(ValueID result, const Value& value)
         AOT_TYPED_OPERATION(JSONPrepare, Integer(cursorOf(output)), in<Boxed>(value.arguments[0]));
         m_out.jump(calls);
         m_out.appendTo(output.givesUp);
-        m_out.store32(m_out.constInt32(0), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONWideSegmentCount()));
+        AOT_TYPED_OPERATION(JSONDiscard);
         m_out.jump(calls);
         m_out.appendTo(calls);
     }
@@ -1951,7 +1962,7 @@ Operand Lowering::lowerJSONStringify(ValueID result, const Value& value)
     m_out.appendTo(isFinished);
     join.add(ensure(string, m_program.at(m_program.types.string), type));
     m_out.appendTo(output.givesUp);
-    m_out.store32(m_out.constInt32(0), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONWideSegmentCount()));
+    AOT_TYPED_OPERATION(JSONDiscard);
     join.add(genericPath());
     return join.finish();
 }

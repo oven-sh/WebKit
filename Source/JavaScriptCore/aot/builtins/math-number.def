@@ -123,7 +123,7 @@ method Number.prototype.toPrecision (toNumber?) -> string ; MayThrow ; HostCall
 method Number.prototype.toPrecision (any/G?, any/-...) -> string ; CallsUserCode ; HostCall
 method Number.prototype.toString (toNumber?) -> string ; MayThrow ; Inline(NumberToString)
 method Number.prototype.toString (any/G?, any/-...) -> string ; CallsUserCode ; Inline(NumberToString)
-method Number.prototype.toLocaleString (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; HostCall
+method Number.prototype.toLocaleString (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; Inline(NumberToLocaleString)
 method Number.prototype.valueOf () -> number ; Pure ; Inline(This)
 
 call BigInt (any/G) -> bigint ; MayThrow ReadsArguments ; HostCall

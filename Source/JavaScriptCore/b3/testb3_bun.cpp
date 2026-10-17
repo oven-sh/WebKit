@@ -23,6 +23,7 @@
 #include "B3InferSwitches.h"
 #include "B3LowerMacros.h"
 #include "B3NaturalLoops.h"
+#include "B3ProcedureFingerprint.h"
 #include "B3RotateLoops.h"
 #include "B3SeparateIntegerPaths.h"
 #include "B3SinkValues.h"
@@ -1312,6 +1313,9 @@ static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
         CHECK_EQ(valueCountInEachLoop(proc, Load).first(), 0u);
         CHECK_EQ(numberOfValues(proc, Load), 2u);
         CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 1u);
+        CHECK_EQ(special->numPredecessors(), 2u);
+        for (BasicBlock* predecessor : special->predecessors())
+            CHECK_EQ(predecessor->numSuccessors(), 1u);
         auto code = compileProc(proc);
         for (int64_t special : { -1, 0, 4, 9, 10 }) {
             int64_t memory[1] = { 5 };
@@ -2081,6 +2085,93 @@ static void testSinkValuesKeepsValueUsedInSameBlock()
 
     CHECK(!sinkValues(proc));
     CHECK_EQ(numberOfValues(blocks.root, Mul), 1u);
+}
+
+static void testSinkValuesClonesComparisonFusedIntoBranchForRareUser()
+{
+    enum class OtherUser : uint8_t { IsRare, IsAsFrequent, IsInSameBlock };
+    for (OtherUser otherUser : { OtherUser::IsRare, OtherUser::IsAsFrequent, OtherUser::IsInSameBlock }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* other = proc.addBlock(otherUser == OtherUser::IsAsFrequent ? 1 : 0.01);
+        BasicBlock* hot = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root);
+        Value* pointer = arguments[2];
+        Value* isLess = graph.make(root, LessThan, arguments[0], arguments[1]);
+        if (otherUser == OtherUser::IsInSameBlock)
+            graph.store(root, graph.make(root, ZExt32, isLess), pointer, 0, firstHeap);
+        graph.branch(root, isLess, FrequentedBlock(hot), rarely(other));
+        graph.ret(other, graph.make(other, Add, graph.make(other, ZExt32, isLess), graph.int64(other, 10)));
+        graph.ret(hot, graph.int64(hot, 1));
+        proc.resetReachability();
+        validate(proc);
+
+        CHECK_EQ(sinkValues(proc), otherUser == OtherUser::IsRare);
+        validate(proc);
+        CHECK_EQ(numberOfValues(root, LessThan), 1u);
+        CHECK_EQ(numberOfValues(other, LessThan), otherUser == OtherUser::IsRare ? 1u : 0u);
+        CHECK_EQ(root->last()->child(0), isLess);
+        auto code = compileProc(proc);
+        int64_t memory[1] = { 7 };
+        CHECK_EQ(invoke<int64_t>(*code, 1, 2, memory), 1);
+        CHECK_EQ(invoke<int64_t>(*code, 2, 1, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 2, 2, memory), 10);
+    }
+}
+
+static void testSinkValuesSinksWithinIrreducibleCycle()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* rare = proc.addBlock(0.001);
+    BasicBlock* second = proc.addBlock();
+    BasicBlock* behind = proc.addBlock();
+    Variable* left = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+    Value* entersAtFirst = arguments[0];
+    Value* turns = arguments[1];
+    Value* factor = arguments[2];
+    graph.set(root, left, turns);
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.branch(root, graph.make(root, Equal, entersAtFirst, graph.int64(root, 1)), first, second);
+    Value* product = graph.make(first, Mul, factor, graph.get(first, left));
+    graph.branch(first, graph.make(first, BitAnd, graph.get(first, left), graph.int64(first, 3)), FrequentedBlock(second), rarely(rare));
+    graph.increase(rare, sum, product);
+    graph.jump(rare, second);
+    graph.increase(second, left, -1);
+    graph.increase(second, sum, 1);
+    graph.branch(second, graph.make(second, GreaterThan, graph.get(second, left), graph.int64(second, 0)), first, behind);
+    graph.ret(behind, graph.get(behind, sum));
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+    CHECK_EQ(numberOfValues(first, Mul), 1u);
+
+    CHECK(sinkValues(proc));
+    validate(proc);
+    CHECK_EQ(numberOfValues(first, Mul), 0u);
+    CHECK_EQ(numberOfValues(rare, Mul), 1u);
+    auto code = compileProc(proc);
+    for (int64_t entersAtFirst : { 0, 1 }) {
+        for (int64_t turns : { 1, 4, 9 }) {
+            int64_t expected = 0;
+            bool isInFirst = entersAtFirst;
+            for (int64_t remaining = turns;;) {
+                if (isInFirst && !(remaining & 3))
+                    expected += 5 * remaining;
+                --remaining;
+                ++expected;
+                if (remaining <= 0)
+                    break;
+                isInFirst = true;
+            }
+            CHECK_EQ(invoke<int64_t>(*code, entersAtFirst, turns, 5), expected);
+        }
+    }
 }
 
 static void testSinkValuesKeepsLoads()
@@ -4882,6 +4973,73 @@ static void testCompilationCohortCompilesProcedures()
         CHECK_EQ(invoke<int64_t>(*compilations[member], 5), static_cast<int64_t>((5 + member) * 3));
 }
 
+static void testCompilationCohortWaitingMembersRunLast()
+{
+    constexpr unsigned size = 4;
+    using Step = std::pair<unsigned, unsigned>;
+    CHECK(!CompilationCohort::waitForOtherMembers());
+    if (!CompilationCohort::interleavesMembers)
+        return;
+    CompilationCohort cohort;
+    Vector<Step> steps;
+    bool isReady = false;
+    cohort.run(size, [&](unsigned member) {
+        steps.append({ 0, member });
+        if (member % 2) {
+            while (!isReady)
+                CHECK(CompilationCohort::waitForOtherMembers());
+            steps.append({ 3, member });
+            return;
+        }
+        CompilationCohort::yieldBeforePhase("first"_s);
+        steps.append({ 1, member });
+        CompilationCohort::yieldBeforePhase("last"_s);
+        steps.append({ 2, member });
+        isReady |= member == 2;
+    });
+    CHECK(steps == (Vector<Step> { { 0, 0 }, { 0, 1 }, { 0, 2 }, { 0, 3 }, { 1, 0 }, { 1, 2 }, { 2, 0 }, { 2, 2 }, { 3, 3 }, { 3, 1 } }));
+}
+
+static void testProcedureFingerprint()
+{
+    enum class Variant { Plain, OtherConstant, OtherClobber, OtherFrequency, SharedGenerator, OtherOffset };
+    auto fingerprintOf = [](Variant variant) {
+        Procedure proc;
+        proc.setPositionIndependent();
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* rare = proc.addBlock(variant == Variant::OtherFrequency ? 0.5 : 0.25);
+        BasicBlock* done = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t>(proc, root);
+        Value* sum = graph.make(root, Add, arguments[0], graph.int64(root, variant == Variant::OtherConstant ? 8 : 7));
+        PatchpointValue* first = graph.callLikePatchpoint(root);
+        if (variant == Variant::OtherClobber)
+            first->clobberLate(RegisterSet { GPRInfo::returnValueGPR });
+        graph.branch(root, sum, FrequentedBlock(done), FrequentedBlock(rare, FrequencyClass::Rare));
+        PatchpointValue* second = graph.callLikePatchpoint(rare);
+        if (variant == Variant::SharedGenerator)
+            second->setGenerator(first->generator());
+        graph.jump(rare, done);
+        graph.ret(done, graph.load(done, Int64, sum, variant == Variant::OtherOffset ? 16 : 8, HeapRange(1, 2)));
+        proc.resetReachability();
+        ProcedureFingerprint fingerprint;
+        CHECK(fingerprint.compute(proc, { }, 0));
+        CHECK_EQ(fingerprint.generators().size(), 2u);
+        return fingerprint;
+    };
+    ProcedureFingerprint plain = fingerprintOf(Variant::Plain);
+    CHECK(plain == fingerprintOf(Variant::Plain));
+    for (Variant variant : { Variant::OtherConstant, Variant::OtherClobber, Variant::OtherFrequency, Variant::SharedGenerator, Variant::OtherOffset })
+        CHECK(!(plain == fingerprintOf(variant)));
+
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    graph.ret(root, root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8)));
+    ProcedureFingerprint fingerprint;
+    CHECK(!fingerprint.compute(proc, { }, 0));
+}
+
 static void testUseCountsDuplicateChild()
 {
     Procedure proc;
@@ -7665,6 +7823,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testSinkValuesKeepsValueUsedOnHotPath());
     RUN(testSinkValuesKeepsValueWithEquallyFrequentUser());
     RUN(testSinkValuesKeepsValueUsedInSameBlock());
+    RUN(testSinkValuesClonesComparisonFusedIntoBranchForRareUser());
+    RUN(testSinkValuesSinksWithinIrreducibleCycle());
     RUN(testSinkValuesKeepsLoads());
     RUN(testSinkValuesKeepsOpaque());
     RUN(testSinkValuesDoesNotSinkIntoLoop());
@@ -7755,6 +7915,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testCachedBlockOrdersAreInvalidated());
     RUN(testCompilationCohortRunsEachPhaseForAllMembers());
     RUN(testCompilationCohortCompilesProcedures());
+    RUN(testCompilationCohortWaitingMembersRunLast());
+    RUN(testProcedureFingerprint());
     RUN(testUseCountsDuplicateChild());
     RUN(testRedundantZeroExtension());
     RUN(testBranchOnExactSumFitsInt32());

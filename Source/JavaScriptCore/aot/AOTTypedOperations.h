@@ -177,6 +177,8 @@ struct Slot;
     v(operationAOTTypedNewObjectLiteral) \
     v(operationAOTTypedCloneObject) \
     v(operationAOTTypedCloneObjectAndExtend) \
+    v(operationAOTTypedCloneObjectAndExtendWithNumber) \
+    v(operationAOTTypedCloneObjectAs) \
     v(operationAOTTypedCloneObjectWithSubtypeCheck) \
     v(operationAOTTypedFinishObjectLiteral) \
     v(operationAOTTypedTryCopyRecordAs) \
@@ -329,7 +331,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCopyDataProperties, Heap, void, (In
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectEntriesFlat, Heap, JSCell*, (Instance*, EncodedJSValue object));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedOwnPropertyDescriptorsUnlessCopied, Heap, EncodedJSValue, (Instance*, EncodedJSValue source));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCopyOwnPropertyDescriptors, Heap, void, (Instance*, EncodedJSValue target, EncodedJSValue source, EncodedJSValue descriptors));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewGenerator, RuntimeState, JSCell*, (Instance*, JSCell* resumeClosure, EncodedJSValue closure, uint32_t isAsync));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewGenerator, RuntimeState, JSCell*, (Instance*, JSCell* resumeClosure, EncodedJSValue closure, uint32_t isAsync, uint32_t generatorTemplate, uint32_t numberOfTemplates));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetAsyncIterator, Heap, EncodedJSValue, (Instance*, EncodedJSValue iterable));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewObjectWithSpreads, Heap, JSCell*, (Instance*, uint32_t membersPlanOffset, uint32_t numberOfSources, const EncodedJSValue* values));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewPromise, RuntimeState, JSCell*, (Instance*));
@@ -475,7 +477,9 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewObjectWithCapacity, Run
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewObjectLiteral, RuntimeState, JSCell*, (Instance*, Slot* cache, uint32_t count, uint32_t hasNullPrototypeAndInlineCapacity, const EncodedJSValue* values, uint32_t rowOfNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObject, Heap, JSCell*, (Instance*, EncodedJSValue source, uint32_t keepsLayout));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObjectAndExtend, Heap, JSCell*, (Instance*, EncodedJSValue source, uint64_t more, EncodedJSValue first, EncodedJSValue second));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObjectAndExtendWithNumber, Heap, JSCell*, (Instance*, EncodedJSValue source, uint64_t more, double first));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObjectWithSubtypeCheck, Heap, JSCell*, (Instance*, EncodedJSValue source, uint32_t supertypeShape, uint32_t lastSubtypeShape, uint32_t subtypeShapeCount));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObjectAs, Heap, JSCell*, (Instance*, EncodedJSValue source, uint64_t target));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFinishObjectLiteral, RuntimeState, JSCell*, (Instance*, JSCell* object));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryCopyRecordAs, RuntimeState, JSCell*, (Instance*, uint32_t shape, uint32_t namesKind, uint32_t count, const EncodedJSValue* values));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryCopyRecordAsAt, RuntimeState, JSCell*, (Instance*, Slot* cache, uint32_t firstShape, uint32_t secondShape, uint32_t shape, uint32_t namesKind, uint32_t count, const EncodedJSValue* values));

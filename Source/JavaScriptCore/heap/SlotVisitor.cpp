@@ -31,6 +31,7 @@
 #include "AOTTypedData.h"
 #include "AOTTypedObject.h"
 #include "CellContainerInlines.h"
+#include "DateInstance.h"
 #include "Collector.h"
 #include "ConservativeRoots.h"
 #include "GCSegmentedArrayInlines.h"
@@ -41,7 +42,10 @@
 #include "JSArray.h"
 #include "JSCellButterfly.h"
 #include "JSCellInlines.h"
+#include "JSFunctionWithFields.h"
 #include "JSMap.h"
+#include "JSPromise.h"
+#include "JSPromiseReaction.h"
 #include "JSSet.h"
 #include "JSString.h"
 #include "MarkedBlockCage.h"
@@ -486,6 +490,11 @@ class CompiledLayoutVisitor {
         case StructureType:
         case GetterSetterType:
         case JSCellButterflyType:
+        case JSFunctionType:
+        case JSPromiseType:
+        case JSFullPromiseReactionType:
+        case JSSlimPromiseReactionType:
+        case JSDateType:
             return visitOutsideLoop(visitor, cell);
         default:
             return visitor.visitChildrenOfBlackCell(cell);
@@ -596,6 +605,28 @@ class CompiledLayoutVisitor {
             visitor.visitChildrenOfBlackCell(cell);
     }
 
+    static ALWAYS_INLINE bool tryAppendObjectWithoutElements(SlotVisitor& visitor, Appender& appender, const JSCell* cell, StructureID structureID, Structure* structure)
+    {
+        auto* object = static_cast<JSObjectWithButterfly*>(const_cast<JSCell*>(cell));
+        PropertyOffset maxOffset = structure->maxOffset();
+        IndexingType indexingMode;
+        Dependency indexingModeDependency = structure->fencedIndexingMode(indexingMode);
+        if (indexingMode != NonArray)
+            return false;
+        Butterfly* butterfly;
+        Dependency butterflyDependency = indexingModeDependency.consume(object)->fencedButterfly(butterfly);
+        if (butterflyDependency.consume(cell)->structureID() != structureID || butterflyDependency.consume(structure)->maxOffset() != maxOffset)
+            return false;
+        appender.appendStructure(structure);
+        if (!butterfly)
+            return true;
+        visitor.markAuxiliary(butterfly->base(0, Structure::outOfLineCapacity(maxOffset)));
+        const WriteBarrierBase<Unknown>* endOfProperties = butterfly->propertyStorage();
+        for (const WriteBarrierBase<Unknown>* property = endOfProperties - Structure::outOfLineSize(maxOffset); property != endOfProperties; ++property)
+            appender.appendValue(property->get());
+        return true;
+    }
+
     static ALWAYS_INLINE bool tryVisitOutsideLoop(SlotVisitor& visitor, const JSCell* cell)
     {
         using namespace AOT::Typed;
@@ -654,6 +685,66 @@ class CompiledLayoutVisitor {
             appender.appendStructure(cell->structure());
             appender.appendValue(*reinterpret_cast<JSCell* const*>(bytes + GetterSetter::offsetOfGetter()));
             appender.appendValue(*reinterpret_cast<JSCell* const*>(bytes + GetterSetter::offsetOfSetter()));
+            return true;
+        }
+        case JSFunctionType:
+        case JSPromiseType:
+        case JSDateType: {
+            StructureID structureID = cell->structureID();
+            if (structureID.isNuked())
+                return false;
+            Structure* structure = structureID.decode();
+            const ClassInfo* classInfo = structure->classInfoForCells();
+            std::array<EncodedJSValue, 4> references;
+            unsigned count = 0;
+            uint64_t closureWord = 0;
+            auto addValueAt = [&](ptrdiff_t offset) ALWAYS_INLINE_LAMBDA { references[count++] = *reinterpret_cast<const EncodedJSValue*>(bytes + offset); };
+            if (classInfo == JSPromise::info()) {
+                references[count++] = JSValue::encode(static_cast<const JSPromise*>(cell)->payloadCell());
+                addValueAt(JSPromise::offsetOfSlot());
+            } else if (classInfo == JSFunction::info() || classInfo == JSFunctionWithFields::info() || classInfo == Closure::info()) {
+                addValueAt(JSCallee::offsetOfScopeChain());
+                references[count++] = *reinterpret_cast<const EncodedJSValue*>(bytes + JSFunction::offsetOfExecutableOrRareData()) & ~static_cast<EncodedJSValue>(JSFunction::rareDataTag);
+                if (classInfo == JSFunctionWithFields::info()) {
+                    static_assert(JSFunctionWithFields::numberOfInternalFields == 2);
+                    addValueAt(JSFunctionWithFields::offsetOfInternalFields());
+                    addValueAt(JSFunctionWithFields::offsetOfInternalFields() + sizeof(EncodedJSValue));
+                } else if (classInfo == Closure::info())
+                    closureWord = static_cast<const Closure*>(cell)->entry();
+            } else if (classInfo != DateInstance::info())
+                return false;
+            Appender appender(visitor);
+            if (!tryAppendObjectWithoutElements(visitor, appender, cell, structureID, structure))
+                return false;
+            for (unsigned i = 0; i < count; ++i)
+                appender.appendValue(JSValue::decode(references[i]));
+            if (!closureWord)
+                return true;
+            AOT::Image* image = AOT::Image::withCode();
+            const Data* data = image->at<Data>(image->header().typedDataOffset);
+            const EncodedJSValue* capture = reinterpret_cast<const EncodedJSValue*>(bytes + Closure::offsetOfCaptures());
+            for (const EncodedJSValue* end = capture + data->at<std::array<uint8_t, 2>>(data->closureCountsOffset)[AOT::ClosureWord::functionOf(closureWord)][0]; capture != end; ++capture)
+                appender.appendValue(JSValue::decode(*capture));
+            return true;
+        }
+        case JSFullPromiseReactionType: {
+            auto* reaction = static_cast<const JSFullPromiseReaction*>(cell);
+            Appender appender(visitor);
+            appender.appendStructure(cell->structure());
+            appender.appendValue(reaction->promise());
+            appender.appendValue(reaction->next());
+            appender.appendValue(reaction->onFulfilled());
+            appender.appendValue(reaction->onRejected());
+            appender.appendValue(reaction->context());
+            return true;
+        }
+        case JSSlimPromiseReactionType: {
+            auto* reaction = static_cast<const JSSlimPromiseReaction*>(cell);
+            Appender appender(visitor);
+            appender.appendStructure(cell->structure());
+            appender.appendValue(reaction->promise());
+            appender.appendValue(reaction->next());
+            appender.appendValue(reaction->handlerOrContext());
             return true;
         }
         case JSCellButterflyType: {

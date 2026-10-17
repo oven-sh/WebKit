@@ -659,6 +659,10 @@ public:
     WriteBarrier<NativeExecutable> m_promiseAllSettledSlowRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnyRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnySlowRejectFunctionExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyThenFinallyExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyCatchFinallyExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyValueThunkExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyThrowerExecutable;
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
@@ -789,6 +793,10 @@ public:
     inline NativeExecutable* promiseAllSettledSlowRejectFunctionExecutable();
     inline NativeExecutable* promiseAnyRejectFunctionExecutable();
     inline NativeExecutable* promiseAnySlowRejectFunctionExecutable();
+    inline NativeExecutable* promiseFinallyThenFinallyExecutable();
+    inline NativeExecutable* promiseFinallyCatchFinallyExecutable();
+    inline NativeExecutable* promiseFinallyValueThunkExecutable();
+    inline NativeExecutable* promiseFinallyThrowerExecutable();
 
     WeakGCMap<WTF::SymbolImpl*, Symbol, PtrHash<WTF::SymbolImpl*>> symbolImplToSymbolMap;
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> atomStringToJSStringMap;
@@ -1064,6 +1072,7 @@ public:
     };
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent);
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty = nullptr);
+    JS_EXPORT_PRIVATE bool mayHaveCachesDependingOnPrototype(JSObject*);
     void invalidateEpochCaches();
 
 #if ENABLE(REGEXP_TRACING)
@@ -1413,6 +1422,10 @@ private:
     NativeExecutable* promiseAllSettledSlowRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnyRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnySlowRejectFunctionExecutableSlow();
+    NativeExecutable* promiseFinallyThenFinallyExecutableSlow();
+    NativeExecutable* promiseFinallyCatchFinallyExecutableSlow();
+    NativeExecutable* promiseFinallyValueThunkExecutableSlow();
+    NativeExecutable* promiseFinallyThrowerExecutableSlow();
 
     void updateStackLimits();
 

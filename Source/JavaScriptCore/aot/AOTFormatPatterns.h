@@ -9,24 +9,57 @@
 
 #include "AOTDateTimeWriter.h"
 #include <optional>
+#include <wtf/dragonbox/dragonbox.h>
 #include <wtf/text/Latin1Character.h>
+#include <wtf/text/WTFString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-namespace JSC { namespace AOT {
+namespace JSC {
+
+class IntlDateTimeFormat;
+class IntlNumberFormat;
+class JSGlobalObject;
+class JSValue;
+
+namespace AOT {
 
 enum class FormatPatternKind : uint8_t {
     DateTime,
-    Integer,
+    Number,
+};
+
+enum class FormatPatternTimeZone : uint8_t {
+    FixedOffset,
+    Default,
+    Named,
 };
 
 struct FormatPatternHeader {
     FormatPatternKind kind;
-    uint8_t is16Bit;
+    bool is16Bit;
+    FormatPatternTimeZone timeZone;
+    uint8_t requiredComponentAndDefaults;
     uint16_t maxLength;
+    uint16_t constructorArgumentsOffset;
     int32_t utcOffsetInMinutes;
 };
-static_assert(sizeof(FormatPatternHeader) == 8);
+static_assert(sizeof(FormatPatternHeader) == 12);
+
+enum class FormatPatternUse : uint8_t {
+    Formats,
+    MustBePlannedAgain,
+    OnlyInitializes,
+};
+
+struct ICUStamp {
+    uint8_t codeVersion[4];
+    uint8_t dataVersion[4];
+    uint8_t cldrVersion[4];
+    char timeZoneDataVersion[12];
+    char systemBuild[24];
+};
+static_assert(sizeof(ICUStamp) == 48);
 
 enum class DateTimePatternOp : uint8_t {
     End,
@@ -186,75 +219,163 @@ inline CharacterType* writeDateTime(CharacterType* cursor, const CharacterType* 
 static constexpr double firstTimeValueOfYear1 = -62135596800000.0;
 static constexpr double maxTimeValue = 8.64e15;
 
-inline std::optional<UTCDateTime> fieldsForDateTimePattern(const FormatPatternHeader& header, double timeValue)
+inline std::optional<UTCDateTime> fieldsAtUTCOffset(double timeValue, double utcOffsetInMilliseconds)
 {
     if (!(std::abs(timeValue) <= maxTimeValue))
         return std::nullopt;
-    double shifted = std::trunc(timeValue) + header.utcOffsetInMinutes * 60000.0;
+    double shifted = std::trunc(timeValue) + utcOffsetInMilliseconds;
     if (shifted < firstTimeValueOfYear1 || shifted > maxTimeValue)
         return std::nullopt;
     return utcDateTimeFromTimeValue(shifted);
 }
 
-enum class IntegerPatternText : uint8_t {
+inline std::optional<UTCDateTime> fieldsForDateTimePattern(const FormatPatternHeader& header, double timeValue)
+{
+    return fieldsAtUTCOffset(timeValue, header.utcOffsetInMinutes * 60000.0);
+}
+
+enum class NumberPatternParameter : uint8_t {
+    PrimaryGroupSize,
+    SecondaryGroupSize,
+    MinDigitsToGroup,
+    MinFractionDigits,
+    MaxFractionDigits,
+    MinIntegerDigits,
+    DecimalShift,
+};
+static constexpr unsigned numberOfNumberPatternParameters = 7;
+
+enum class NumberPatternText : uint8_t {
     PositivePrefix,
     PositiveSuffix,
     NegativePrefix,
     NegativeSuffix,
     GroupSeparator,
+    DecimalSeparator,
 };
-static constexpr unsigned numberOfIntegerPatternTexts = 5;
+static constexpr unsigned numberOfNumberPatternTexts = 6;
+
+struct DecimalNumber {
+    bool isNegative;
+    uint8_t fractionDigits;
+    uint64_t digits;
+};
+
+static constexpr unsigned maxFractionDigitsInPattern = 15;
+static constexpr double maxMagnitudeOfFormattedNumber = 9007199254740991.0;
+static constexpr double minMagnitudeOfFormattedFraction = 1e-6;
+
+ALWAYS_INLINE uint64_t powerOfTen(unsigned exponent)
+{
+    static constexpr uint64_t powers[] = {
+        1ull, 10ull, 100ull, 1000ull, 10000ull, 100000ull, 1000000ull, 10000000ull, 100000000ull, 1000000000ull,
+        10000000000ull, 100000000000ull, 1000000000000ull, 10000000000000ull, 100000000000000ull, 1000000000000000ull,
+        10000000000000000ull, 100000000000000000ull, 1000000000000000000ull, 10000000000000000000ull,
+    };
+    ASSERT(exponent < std::size(powers));
+    return powers[exponent];
+}
+
+inline std::optional<DecimalNumber> decimalNumberForPattern(double number, unsigned maxFractionDigits, unsigned decimalShift)
+{
+    double magnitude = std::abs(number);
+    if (!(magnitude <= maxMagnitudeOfFormattedNumber))
+        return std::nullopt;
+    bool isNegative = std::signbit(number);
+    uint64_t digits = static_cast<uint64_t>(magnitude);
+    unsigned fractionDigits = 0;
+    if (static_cast<double>(digits) != magnitude) {
+        if (magnitude < minMagnitudeOfFormattedFraction)
+            return std::nullopt;
+        auto shortest = WTF::dragonbox::to_decimal(magnitude);
+        ASSERT(shortest.exponent < 0);
+        digits = shortest.significand;
+        fractionDigits = static_cast<unsigned>(-shortest.exponent);
+        if (fractionDigits >= decimalShift)
+            fractionDigits -= decimalShift;
+        else {
+            digits *= powerOfTen(decimalShift - fractionDigits);
+            fractionDigits = 0;
+        }
+        if (fractionDigits > maxFractionDigits) {
+            unsigned dropped = fractionDigits - maxFractionDigits;
+            if (dropped > 19)
+                digits = 0;
+            else {
+                uint64_t divisor = powerOfTen(dropped);
+                uint64_t remainder = digits % divisor;
+                digits = digits / divisor + (remainder >= divisor / 2);
+            }
+            fractionDigits = maxFractionDigits;
+        }
+        for (; fractionDigits && !(digits % 10); --fractionDigits)
+            digits /= 10;
+    } else
+        digits *= powerOfTen(decimalShift);
+    if (!digits && isNegative)
+        return std::nullopt;
+    return DecimalNumber { isNegative, static_cast<uint8_t>(fractionDigits), digits };
+}
 
 template<typename CharacterType>
-inline CharacterType* writeInteger(CharacterType* cursor, const CharacterType* code, int64_t integer)
+inline CharacterType* writeNumber(CharacterType* cursor, const CharacterType* code, double number)
 {
-    unsigned primaryGroupSize = patternUnit(code[0]);
-    unsigned secondaryGroupSize = patternUnit(code[1]);
-    unsigned minDigitsToGroup = patternUnit(code[2]);
-    code += 3;
-    const CharacterType* texts[numberOfIntegerPatternTexts];
+    auto parameter = [&](NumberPatternParameter which) { return patternUnit(code[static_cast<unsigned>(which)]); };
+    auto decimal = decimalNumberForPattern(number, parameter(NumberPatternParameter::MaxFractionDigits), parameter(NumberPatternParameter::DecimalShift));
+    if (!decimal) [[unlikely]]
+        return nullptr;
+    unsigned primaryGroupSize = parameter(NumberPatternParameter::PrimaryGroupSize);
+    unsigned secondaryGroupSize = parameter(NumberPatternParameter::SecondaryGroupSize);
+    unsigned minDigitsToGroup = parameter(NumberPatternParameter::MinDigitsToGroup);
+    unsigned minFractionDigits = parameter(NumberPatternParameter::MinFractionDigits);
+    const CharacterType* texts[numberOfNumberPatternTexts];
+    const CharacterType* next = code + numberOfNumberPatternParameters;
     for (auto& text : texts) {
-        text = code;
-        code += 1 + patternUnit(code[0]);
+        text = next;
+        next += 1 + patternUnit(next[0]);
     }
-    auto textOf = [&](IntegerPatternText which) { return texts[static_cast<unsigned>(which)]; };
-    bool isNegative = integer < 0;
-    uint64_t magnitude = isNegative ? -static_cast<uint64_t>(integer) : static_cast<uint64_t>(integer);
-    const CharacterType* prefix = textOf(isNegative ? IntegerPatternText::NegativePrefix : IntegerPatternText::PositivePrefix);
-    const CharacterType* suffix = textOf(isNegative ? IntegerPatternText::NegativeSuffix : IntegerPatternText::PositiveSuffix);
-    cursor = writeCharacters(cursor, prefix + 1, patternUnit(prefix[0]));
+    auto writeText = [&](NumberPatternText which) ALWAYS_INLINE_LAMBDA {
+        const CharacterType* text = texts[static_cast<unsigned>(which)];
+        cursor = writeCharacters(cursor, text + 1, patternUnit(text[0]));
+    };
+    writeText(decimal->isNegative ? NumberPatternText::NegativePrefix : NumberPatternText::PositivePrefix);
 
+    uint64_t scale = powerOfTen(decimal->fractionDigits);
+    uint64_t integerPart = decimal->digits / scale;
+    uint64_t fraction = decimal->digits % scale;
     CharacterType digits[maxDecimalLengthOfInteger];
     unsigned length = 0;
     do {
-        digits[length++] = static_cast<CharacterType>('0' + magnitude % 10);
-        magnitude /= 10;
-    } while (magnitude);
+        digits[length++] = static_cast<CharacterType>('0' + integerPart % 10);
+        integerPart /= 10;
+    } while (integerPart);
+    while (length < parameter(NumberPatternParameter::MinIntegerDigits))
+        digits[length++] = '0';
     if (!primaryGroupSize || length < minDigitsToGroup) {
         while (length)
             *cursor++ = digits[--length];
     } else {
-        const CharacterType* separator = textOf(IntegerPatternText::GroupSeparator);
         while (length) {
             *cursor++ = digits[--length];
             if (length >= primaryGroupSize && !((length - primaryGroupSize) % secondaryGroupSize))
-                cursor = writeCharacters(cursor, separator + 1, patternUnit(separator[0]));
+                writeText(NumberPatternText::GroupSeparator);
         }
     }
-    return writeCharacters(cursor, suffix + 1, patternUnit(suffix[0]));
+    if (decimal->fractionDigits || minFractionDigits) {
+        writeText(NumberPatternText::DecimalSeparator);
+        for (unsigned place = decimal->fractionDigits; place--;)
+            *cursor++ = static_cast<CharacterType>('0' + fraction / powerOfTen(place) % 10);
+        for (unsigned place = decimal->fractionDigits; place < minFractionDigits; ++place)
+            *cursor++ = '0';
+    }
+    writeText(decimal->isNegative ? NumberPatternText::NegativeSuffix : NumberPatternText::PositiveSuffix);
+    return cursor;
 }
 
-static constexpr int64_t maxMagnitudeOfFormattedInteger = 9007199254740991;
-
-inline std::optional<int64_t> integerForPattern(double number)
-{
-    if (!(std::abs(number) <= static_cast<double>(maxMagnitudeOfFormattedInteger)))
-        return std::nullopt;
-    int64_t integer = static_cast<int64_t>(number);
-    if (static_cast<double>(integer) != number || (!integer && std::signbit(number)))
-        return std::nullopt;
-    return integer;
-}
+String tryFormatWithCompiledPattern(JSGlobalObject*, IntlDateTimeFormat&, JSValue);
+String tryFormatWithCompiledPattern(JSGlobalObject*, IntlNumberFormat&, double);
+void initializeFromCompiledPattern(JSGlobalObject*, IntlDateTimeFormat&);
+void initializeFromCompiledPattern(JSGlobalObject*, IntlNumberFormat&);
 
 } } // namespace JSC::AOT
 

@@ -680,6 +680,9 @@ protected:
     size_t computeAdjacencyListOffset() const;
 
     friend class Procedure;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ProcedureFingerprint;
+#endif
     friend class SparseCollection<Value>;
 #if USE(BUN_JSC_ADDITIONS)
     friend struct ValueDestroyer;

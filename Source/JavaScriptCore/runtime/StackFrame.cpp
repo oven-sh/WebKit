@@ -357,7 +357,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
             if (!executable && !jsFrame.isTyped())
                 return "[native code]"_s;
             if (auto position = reportedPosition(); position && position->source)
-                return AOT::ProgramData::get()->sourceName(position->source);
+                return AOT::ProgramData::get()->sourceNameInFrames(position->source);
             if (!executable)
                 return emptyString();
             return processSourceURL(vm, *this, executable->sourceURL(), allowOverride);
@@ -527,7 +527,7 @@ String StackFrame::toString(VM& vm) const
     bool isTyped = isTypedAOTFrame() && !isAsyncFrameWithoutCodeBlock();
     if (isTyped) {
         typedPosition = reportedPosition();
-        fullSourceURL = typedPosition && typedPosition->source ? AOT::ProgramData::get()->sourceName(typedPosition->source) : emptyString();
+        fullSourceURL = typedPosition && typedPosition->source ? AOT::ProgramData::get()->sourceNameInFrames(typedPosition->source) : emptyString();
     } else
         fullSourceURL = this->sourceURLStripped(vm);
     auto sourceURL = truncateLongDataURL(fullSourceURL);

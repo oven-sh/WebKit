@@ -1295,7 +1295,7 @@ public:
     bool locksOrAuditsIntrinsics() const { return m_hasImmutableIntrinsics || vm().auditsImmutableIntrinsics(); }
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
     enum class IntrinsicKind : bool { Prototype, Other };
-    JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind);
+    JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind, JSObject::LockedObjectHistory = JSObject::LockedObjectHistory::MayBeCached);
     void makeIntrinsicValueImmutable(JSObject& holder, PropertyName, JSValue, unsigned attributes);
     std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();

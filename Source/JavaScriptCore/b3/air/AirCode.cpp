@@ -181,7 +181,13 @@ bool Code::needsUsedRegisters() const
 
 BasicBlock* Code::addBlock(double frequency)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    Arena* arena = m_proc.arenaOrNull();
+    std::unique_ptr<BasicBlock> block(new (arena) BasicBlock(m_blocks.size(), frequency));
+    block->m_isInArena = !!arena;
+#else
     std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));
+#endif
     BasicBlock* result = block.get();
     m_blocks.append(WTF::move(block));
     return result;

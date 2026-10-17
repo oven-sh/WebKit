@@ -82,9 +82,9 @@ method Date.prototype.toString () -> string ; ReadsRuntimeState ; HostCall
 method Date.prototype.toTimeString () -> string ; ReadsRuntimeState ; HostCall
 method Date.prototype.toUTCString () -> string ; ReadsRuntimeState ; HostCall
 method Date.prototype.toISOString () -> string ; MayThrow ReadsRuntimeState ; Inline(DateToISOString)
-method Date.prototype.toLocaleDateString this/- (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; HostCall
-method Date.prototype.toLocaleString this/- (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; HostCall
-method Date.prototype.toLocaleTimeString this/- (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; HostCall
+method Date.prototype.toLocaleDateString this/- (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; Inline(DateToLocaleString)
+method Date.prototype.toLocaleString this/- (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; Inline(DateToLocaleString)
+method Date.prototype.toLocaleTimeString this/- (any/G?, any/G?, any/-...) -> string ; CallsUserCode ; Inline(DateToLocaleString)
 method Date.prototype.toJSON this/G (any/-?, any/-...) -> anything ; CallsUserCode ; HostCall
 method Date.prototype.toTemporalInstant this/- (any/-...) -> anything ; CallsUserCode ; HostCall
 method Date.prototype.@@toPrimitive this/G (any/-?, any/-...) -> anything ; CallsUserCode ; HostCall

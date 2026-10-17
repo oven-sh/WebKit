@@ -9,15 +9,67 @@
 
 #include <algorithm>
 #include <span>
+#include <wtf/MonotonicTime.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(unsigned)>&);
 
 bool shouldPrintTimings();
+
+class ParallelLoopScope {
+public:
+    ParallelLoopScope();
+    ~ParallelLoopScope();
+
+private:
+    Seconds m_start;
+    bool m_isOutermost { false };
+};
+
+class PhaseTimes {
+public:
+    explicit PhaseTimes(ASCIILiteral stage);
+    void didFinish(ASCIILiteral phase);
+
+private:
+    ASCIILiteral m_stage;
+    MonotonicTime m_wallTime;
+    Seconds m_cpuTimeOutsideParallelLoops;
+};
+
+template<typename T>
+Vector<T> collectInParallel(unsigned count, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+{
+    constexpr unsigned chunkSize = 256;
+    Vector<Vector<T>> chunks((count + chunkSize - 1) / chunkSize);
+    forEachIndexInParallel(chunks.size(), [&](unsigned chunk) {
+        unsigned end = std::min(count, (chunk + 1) * chunkSize);
+        for (unsigned index = chunk * chunkSize; index < end; ++index)
+            collect(index, chunks[chunk]);
+    });
+    size_t size = 0;
+    for (auto& chunk : chunks)
+        size += chunk.size();
+    Vector<T> result;
+    result.reserveInitialCapacity(size);
+    for (auto& chunk : chunks)
+        result.appendVector(WTF::move(chunk));
+    return result;
+}
+
+Vector<uint32_t> findIndicesInParallel(unsigned count, const Invocable<bool(unsigned)> auto& matches)
+{
+    return collectInParallel<uint32_t>(count, [&](unsigned index, Vector<uint32_t>& found) {
+        if (matches(index))
+            found.append(index);
+    });
+}
 
 template<typename T, typename Less>
 void sortOnPool(std::span<T> list, const Less& isAhead)

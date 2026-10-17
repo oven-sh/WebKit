@@ -82,6 +82,7 @@ aot/AOTTypedBuiltinsMathNumber.cpp @no-unify
 aot/AOTTypedBuiltinsObject.cpp @no-unify
 aot/AOTTypedBuiltinsPromise.cpp @no-unify
 aot/AOTTypedBuiltinsRegExp.cpp @no-unify
+aot/AOTTypedBuiltinsRowDecoder.cpp @no-unify
 aot/AOTTypedBuiltinsString.cpp @no-unify
 aot/AOTTypedBuiltinsTypedArray.cpp @no-unify
 aot/AOTTypedAllocationRemarks.cpp @no-unify
@@ -246,6 +247,7 @@ b3/B3PatchpointValue.cpp
 b3/B3PhaseScope.cpp
 b3/B3PhiChildren.cpp
 b3/B3Procedure.cpp
+b3/B3ProcedureFingerprint.cpp
 b3/B3PureCSE.cpp
 b3/B3ReduceDoubleToFloat.cpp
 b3/B3ReduceStrength.cpp

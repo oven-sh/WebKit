@@ -2043,7 +2043,7 @@ void FastStringifier<CharType, bufferMode>::appendTypedObjectWithKeys(AOT::Typed
     unsigned skippedComma = 1;
     const Latin1Character* text = keys.text.span().data();
     for (auto& key : keys.keys) {
-        JSValue value = object.readInline(*key.field);
+        JSValue value = object.readInline(key.readKindAndOffset, [&]() ALWAYS_INLINE_LAMBDA -> const AOT::Typed::FieldData& { return object.layout().fields()[key.fieldIndex]; });
         if (!value || value.isUndefined())
             continue;
         if (!hasRemainingCapacity(newLineAndIndent + key.length + (hasGap == HasGap::Yes) + copyStride + maxInt32StringLength)) [[unlikely]] {

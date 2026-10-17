@@ -3575,7 +3575,7 @@ static bool isErrorPrototype(JSObject* object)
     return false;
 }
 
-void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind)
+void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind, JSObject::LockedObjectHistory history)
 {
     VM& vm = this->vm();
     if (object->structure()->inheritorsMayOverrideReadOnlyProperties() || object->structure()->typeInfo().wouldHaveFixedProperties())
@@ -3584,7 +3584,7 @@ void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind
         return;
     if (m_isNumberingIntrinsics && object->hasNonReifiedStaticProperties())
         object->reifyAllStaticProperties(this);
-    object->lockProperties(vm, kind == IntrinsicKind::Prototype ? JSObject::LockedObjectExtensibility::BecomesNonExtensible : JSObject::LockedObjectExtensibility::StaysExtensible);
+    object->lockProperties(vm, kind == IntrinsicKind::Prototype ? JSObject::LockedObjectExtensibility::BecomesNonExtensible : JSObject::LockedObjectExtensibility::StaysExtensible, history);
     if (object->classInfo() == ErrorConstructor::info())
         object->putDirect(vm, vm.propertyNames->stackTraceLimit, object->getDirect(vm, vm.propertyNames->stackTraceLimit), static_cast<unsigned>(PropertyAttribute::None));
     object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {

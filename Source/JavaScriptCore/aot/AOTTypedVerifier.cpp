@@ -12,6 +12,7 @@
 #include "YarrFlags.h"
 #include "YarrSyntaxChecker.h"
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

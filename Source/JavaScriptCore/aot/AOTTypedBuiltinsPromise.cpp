@@ -17,6 +17,7 @@
 #include "JSAsyncFromSyncIterator.h"
 #include "JSCInlines.h"
 #include "JSPromise.h"
+#include "JSPromiseConstructor.h"
 #include "JSSentinel.h"
 #include "MicrotaskQueueInlines.h"
 
@@ -123,6 +124,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPromiseCatch, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, derived);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewPromiseSubclass, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, EncodedJSValue executor))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (JSValue::decode(parent) != globalObject->promiseConstructor() || !JSValue::decode(newTarget).isObject() || !JSValue::decode(executor).isCallable())
+        OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+    Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, asObject(JSValue::decode(newTarget)), globalObject->promiseConstructor());
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(JSPromise::create(vm, structure)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedAsyncGeneratorYield, void, (Instance* instance, JSCell* resumeClosure, EncodedJSValue operand))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -152,11 +163,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGeneratorResume, EncodedJSValue, (Inst
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     bool isDone;
     OPERATION_RETURN(scope, JSValue::encode(inner->resume(globalObject, resumeMode, JSValue::decode(value), isDone)));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedGeneratorIsDone, size_t, (Instance*, JSCell* generator))
-{
-    return uncheckedDowncast<Typed::Generator>(generator)->isCompleted();
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetAsyncIteratorNext, EncodedJSValue, (Instance* instance, EncodedJSValue encodedIterator))
@@ -221,6 +227,7 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
     case InlineBuiltin::GeneratorResume:
     case InlineBuiltin::AsyncGeneratorYield:
     case InlineBuiltin::ClearAsyncIteratorResult:
+    case InlineBuiltin::TryNewPromiseSubclass:
         return Writes::Heap;
     case InlineBuiltin::IsAsyncIteratorDriven:
     case InlineBuiltin::GeneratorIsDone:
@@ -508,10 +515,19 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     }
     if (which == InlineBuiltin::GetIteratorNext)
         return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetIteratorNext, builtinCallEffects(value), in<Boxed>(value.arguments[0])), type);
+    if (which == InlineBuiltin::TryNewPromiseSubclass)
+        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(TryNewPromiseSubclass, builtinCallEffects(value), in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1]), in<Boxed>(value.arguments[2])), type);
     if (which == InlineBuiltin::GeneratorResume)
         return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GeneratorResume, builtinCallEffects(value), asCell(in<Boxed>(value.arguments[0])), in<Boxed>(value.arguments[1]), in<Boxed>(value.arguments[2])), type);
-    if (which == InlineBuiltin::GeneratorIsDone)
-        return booleanResult(AOT_TYPED_OPERATION(GeneratorIsDone, asCell(in<Boxed>(value.arguments[0]))), type);
+    if (which == InlineBuiltin::GeneratorIsDone) {
+        auto at = [&](LValue base, ptrdiff_t offset) {
+            return TypedPointer(m_heaps.root, m_out.add(base, m_out.constIntPtr(offset)));
+        };
+        LValue generator = asCell(in<Boxed>(value.arguments[0])).value();
+        LValue frame = m_out.loadPtr(at(m_out.loadPtr(at(generator, Generator::offsetOfResumeClosure())), Closure::offsetOfCaptures()));
+        LValue state = m_out.load32(TypedPointer(m_heaps.root, m_out.add(frame, m_out.zeroExtPtr(m_out.load32(at(generator, Generator::offsetOfOffsetOfState()))))));
+        return booleanResult(Word32(m_out.equal(state, m_out.constInt32(CoroutineFrame::completedState))), type);
+    }
     if (which == InlineBuiltin::GetAsyncIteratorNext)
         return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(GetAsyncIteratorNext, builtinCallEffects(value), in<Boxed>(value.arguments[0])), type);
     if (which == InlineBuiltin::AsyncIteratorNext)

@@ -199,9 +199,10 @@ public:
                 for (auto& method : slice(m_methods, shape.methods)) {
                     bool isStatic = method.flags & Format::MethodIsStatic;
                     if (method.name == Format::none) {
-                        if (method.flags & Format::MethodKeyIsSymbol && !Options::auditAOTTypedAssertions())
+                        if (method.flags & Format::MethodKeyIsSymbol && !Options::auditAOTTypedAssertions()) {
                             symbolKeysOfShapes[index].append({ LayoutID(index), method.key });
-                        else
+                            layout.hasMethodWithSymbolKey |= !isStatic;
+                        } else
                             (isStatic ? layout.hasComputedStaticMemberName : layout.hasComputedMethodName) = true;
                     }
                     (isStatic ? layout.staticMethods : layout.methods).append(Method { StringID(method.name), FunctionID(method.function), method.kind, method.key, !!(method.flags & Format::MethodMayBeReplaced) });
@@ -221,6 +222,10 @@ public:
         for (auto& keys : symbolKeysOfShapes)
             m_symbolKeys.appendVector(keys);
         for (auto& layout : m_program.layouts) {
+            if (isObjectLayout(layout.kind)) {
+                for (auto& field : layout.fields)
+                    m_program.hasFieldsWithSymbolKeys |= field.name && isConstantSymbol(m_program.string(field.name));
+            }
             if (layout.kind != LayoutKind::Instance)
                 continue;
             for (auto& field : layout.fields) {
@@ -328,17 +333,25 @@ public:
 #endif
         m_program.functions.grow(functions.size());
         Vector<Vector<std::pair<LayoutID, uint32_t>>> cachedClosures(functions.size());
-        forEachIndexInParallel(functions.size(), [&](unsigned i) {
-            m_program.functions[i] = read(functions[i]);
-            auto& function = std::as_const(m_program).functions[i];
-            for (auto& value : function.values) {
-                if (value.opcode != Opcode::NewClosureOnce)
-                    continue;
-                LayoutID environment = value.child(0).index() < function.values.size() ? m_program.typeOf(function, value.child(0)).singleLayout() : LayoutID();
-                if (environment && m_program.at(environment).kind == LayoutKind::Environment && value.field() < m_program.at(environment).fields.size())
-                    cachedClosures[i].append({ environment, value.field() });
+        constexpr size_t functionsPerChunk = 32;
+        Vector<Functions::ValueIndexRows> valueIndexRows((functions.size() + functionsPerChunk - 1) / functionsPerChunk);
+        forEachIndexInParallel(valueIndexRows.size(), [&](unsigned chunk) {
+            size_t end = std::min(functions.size(), (chunk + 1) * functionsPerChunk);
+            for (size_t i = chunk * functionsPerChunk; i < end; ++i) {
+                m_program.functions[i] = read(functions[i]);
+                auto& function = std::as_const(m_program).functions[i];
+                for (auto& value : function.values) {
+                    if (value.opcode != Opcode::NewClosureOnce)
+                        continue;
+                    LayoutID environment = value.child(0).index() < function.values.size() ? m_program.typeOf(function, value.child(0)).singleLayout() : LayoutID();
+                    if (environment && m_program.at(environment).kind == LayoutKind::Environment && value.field() < m_program.at(environment).fields.size())
+                        cachedClosures[i].append({ environment, value.field() });
+                }
+                valueIndexRows[chunk].append(i, function);
             }
         });
+        m_program.functions.adoptValueIndexRows(valueIndexRows.span());
+        destroyOnHelperThread(WTF::move(valueIndexRows));
         for (auto& ofFunction : cachedClosures) {
             for (auto [environment, field] : ofFunction)
                 m_program.at(environment).fields[field].flags |= fieldHoldsCachedClosure;
@@ -389,10 +402,12 @@ public:
                 return "the builtin modules are not sorted by number"_s;
             if (index >= m_program.functions.size())
                 return "a builtin module is not a function of the program"_s;
-            auto& function = m_program.functions[index];
+            auto& function = m_program.functions.atKeepingValueIndex(index);
             if (function.kind != FunctionKind::Plain || function.declaredAs & (functionIsAsync | functionIsGenerator) || !function.parameterTypes.isEmpty() || !function.captureTypes.isEmpty())
                 return "a builtin module is not a plain function without parameters and captures"_s;
             function.flags |= Format::FunctionIsUsedAsValue;
+            if (function.module)
+                m_program.modules[function.module.index()].isBuiltin = true;
             m_program.builtinModules.append({ id, FunctionID(index) });
         }
         auto builtinFunctions = slice(m_words, m_header->builtinFunctions);
@@ -408,7 +423,7 @@ public:
                 return "a builtin function is not a function of the program without captures"_s;
             if (visibility > static_cast<uint32_t>(ImplementationVisibility::PrivateRecursive))
                 return "a builtin function has an unknown visibility"_s;
-            m_program.functions[index].flags |= Format::FunctionIsUsedAsValue;
+            m_program.functions.atKeepingValueIndex(index).flags |= Format::FunctionIsUsedAsValue;
             m_program.builtinFunctions.append({ id, FunctionID(index), visibility });
         }
         for (auto& function : std::as_const(m_program).functions) {
@@ -437,7 +452,7 @@ private:
     ASCIILiteral checkClasses()
     {
         auto& layouts = m_program.layouts;
-        auto& functions = m_program.functions;
+        auto& functions = std::as_const(m_program).functions;
         for (unsigned i = 0; i < layouts.size(); ++i) {
             auto& layout = layouts[i];
             if (layout.reuseVariable && (layout.reuseVariable.index() >= m_program.variables.size() || layout.fields.size() < 2))
@@ -458,7 +473,7 @@ private:
             }
             if (layout.constructor.index() >= functions.size() || functions[layout.constructor.index()].kind != FunctionKind::Constructor)
                 return "the constructor of a class is not a constructor"_s;
-            auto& constructor = functions[layout.constructor.index()];
+            auto& constructor = m_program.functions.atKeepingValueIndex(layout.constructor.index());
             if (constructor.constructedClass)
                 return "two classes have the same constructor"_s;
             constructor.constructedClass = LayoutID(i);
@@ -811,6 +826,7 @@ private:
         case Opcode::Double:
         case Opcode::String:
         case Opcode::BigInt:
+        case Opcode::ConstantSymbol:
         case Opcode::FunctionReference:
         case Opcode::NewClosure:
         case Opcode::NewClosureOnce:
@@ -936,6 +952,10 @@ private:
             for (unsigned i = 0; i < 3; ++i)
                 value.children[i] = ValueID(from.children[i]);
             value.immediates = { from.immediates[0], from.immediates[1] };
+            if (value.opcode == Opcode::ConstantSymbol && (value.immediates[0] >= m_program.strings.size() || !isConstantSymbol(m_program.strings[value.immediates[0]]))) {
+                m_failed = true;
+                break;
+            }
             if ((value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && value.immediates[0] != Format::none && value.immediates[0] != Value::elementTypeIsProvenByStores) {
                 m_failed = true;
                 break;

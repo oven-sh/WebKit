@@ -169,6 +169,7 @@ static constexpr uint32_t listsFieldNamed = 1u << 30;
 inline bool isPrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfe; }
 inline bool isEnginePrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfd; }
 inline bool isConstantSymbol(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfc; }
+inline bool isStringKey(std::span<const uint8_t> name) { return !isPrivateName(name) && !isConstantSymbol(name); }
 
 static constexpr uint32_t nameMayBeOwnField = 1u << 31;
 static constexpr uint32_t fieldIsOptional = 1;
@@ -634,12 +635,14 @@ struct Data {
     uint32_t numberOfHashedStrings;
     uint32_t hashedStringsOffset;
     uint32_t formatPatternsOffset;
+    uint32_t icuStampOfFormatPatternsOffset;
     static constexpr uint32_t stringHashMask = (1u << 24) - 1;
     static constexpr uint32_t stringIsASCII = 1u << 24;
     static constexpr uint32_t stringIsPrivateName = 1u << 25;
     static constexpr uint32_t stringIsEnginePrivateName = 1u << 26;
     static constexpr uint32_t stringHasIdentifierNumber = 1u << 27;
     static constexpr uint32_t stringStartsWithDigit = 1u << 28;
+    static constexpr uint32_t stringIsConstantSymbol = 1u << 29;
 
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(this) + offset); }
     uint32_t offsetOfClass(uint32_t index) const

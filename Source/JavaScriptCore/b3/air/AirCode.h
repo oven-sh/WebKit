@@ -54,6 +54,7 @@ class CCallHelpers;
 namespace B3 {
 
 class Procedure;
+class ProcedureFingerprint;
 class WasmBoundsCheckValue;
 
 #if !ASSERT_ENABLED
@@ -210,6 +211,13 @@ public:
         return m_prologueGenerators[entrypointIndex];
     }
     void setEpilogueGenerator(RefPtr<EpilogueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
+#if USE(BUN_JSC_ADDITIONS)
+    void copyFrameGeneratorsFrom(Code& other)
+    {
+        m_prologueGenerators = other.m_prologueGenerators;
+        m_epilogueGenerator = other.m_epilogueGenerator;
+    }
+#endif
 
     void setNumEntrypoints(unsigned);
 
@@ -406,6 +414,9 @@ public:
 
 private:
     friend class ::JSC::B3::Procedure;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ::JSC::B3::ProcedureFingerprint;
+#endif
     friend class BlockInsertionSet;
     
     Code(Procedure&);
@@ -485,6 +496,7 @@ public:
 public:
     void recordTableInCode(MacroAssembler::Label, unsigned numberOfEntries);
     const Vector<std::pair<MacroAssembler::Label, unsigned>>& tablesInCode() const { return m_tablesInCode; }
+    void clearTablesInCode() { m_tablesInCode.shrink(0); }
 
 private:
     Vector<std::pair<MacroAssembler::Label, unsigned>> m_tablesInCode;

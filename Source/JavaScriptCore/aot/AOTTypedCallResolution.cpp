@@ -54,12 +54,11 @@ public:
     {
     }
 
-    void collectBoundFunctions(Vector<uint64_t>& wanted) const
+    void collectBoundFunction(ValueID id, Vector<uint64_t>& wanted) const
     {
-        for (auto& value : m_function.values) {
-            if (auto known = boundCalleeOf(value))
-                wanted.append(Program::boundFunctionKey(known->function, boundArgumentCount(value)));
-        }
+        auto& value = m_function.at(id);
+        if (auto known = boundCalleeOf(value))
+            wanted.append(Program::boundFunctionKey(known->function, boundArgumentCount(value)));
     }
 
     void expandDisposableStacks()
@@ -122,6 +121,7 @@ private:
         bool isCertain { true };
         bool isCertainUnlessNullish { false };
         FunctionID other { };
+        bool isClassFieldInitializer { false };
     };
 
     using Refuted = std::pair<ValueID, FunctionID>;
@@ -1238,7 +1238,10 @@ private:
         BlockID isUnmodified = m_block;
         m_classObjectFallbackBlocks[asks.index()] = ofClass;
         moveTo(asks);
-        ValueID result = appendThrowing(Value(original));
+        Value fallback(original);
+        if (original.opcode == Opcode::ConstructSuper || original.opcode == Opcode::ConstructSuperForwardVarargs)
+            fallback.isOnSlowPath = true;
+        ValueID result = appendThrowing(WTF::move(fallback));
         if (original.opcode == Opcode::PutById)
             result = held(append(make(Opcode::Undefined, m_program.types.undefined)), original.type, CastReason::Claim);
         finish(result);
@@ -1402,6 +1405,7 @@ private:
     {
         ValueID operand = value;
         FunctionID predicted;
+        bool isClassFieldInitializer = false;
         value = originOf(value);
         auto& definition = m_function.at(value);
         switch (definition.opcode) {
@@ -1427,9 +1431,13 @@ private:
             break;
         }
         case Opcode::GetById:
-            if (auto access = fieldOf(m_program, typeOf(definition.child(0)), definition.string()))
-                predicted = m_program.at(access->layout).fields[access->field].singleFunction;
-            else if (definition.predictedByKey())
+            if (auto access = fieldOf(m_program, typeOf(definition.child(0)), definition.string())) {
+                auto& layout = m_program.at(access->layout);
+                auto& field = layout.fields[access->field];
+                predicted = field.singleFunction;
+                constexpr uint32_t alwaysSet = fieldIsSetAtCreation | fieldIsNeverObservedAbsent;
+                isClassFieldInitializer = predicted && layout.kind == LayoutKind::Instance && layout.hasFixedLayout && (field.flags & alwaysSet) == alwaysSet;
+            } else if (definition.predictedByKey())
                 predicted = m_program.functionByKey(definition.predictedByKey(), definition.string());
             break;
         case Opcode::GetByVal:
@@ -1439,11 +1447,13 @@ private:
         default:
             break;
         }
-        if (FunctionID ofValue = m_function.at(operand).predictedClosure() ? m_function.at(operand).predictedClosure() : definition.predictedClosure())
+        if (FunctionID ofValue = m_function.at(operand).predictedClosure() ? m_function.at(operand).predictedClosure() : definition.predictedClosure()) {
+            isClassFieldInitializer &= ofValue == predicted;
             predicted = ofValue;
+        }
         if (!predicted || !m_program.genericEntrypoints.contains(predicted.index()))
             return std::nullopt;
-        return KnownCallee { predicted, value, { }, false };
+        return KnownCallee { predicted, value, { }, false, false, { }, isClassFieldInitializer };
     }
 
     Arguments capturesOf(const KnownCallee& known, ValueID callee)
@@ -1528,7 +1538,7 @@ private:
         Vector<ValueID, 2> literals;
         if (!known->isCertain)
             literals = literalsPassedToRecordParameters(id, known->function);
-        if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNullish && !known->other && literals.isEmpty())
+        if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNullish && !known->other && !known->isClassFieldInitializer && literals.isEmpty())
             return false;
         open(block, index);
         BlockID otherwise;
@@ -2200,7 +2210,7 @@ private:
         if (mayConstructClassDirectly(known->function)) {
             allocation.layout = callee.constructedClass;
             setInitializedFields(m_program.at(allocation.layout), allocation);
-        } else if (mayConstructDirectly(known->function) && callee.thisType) {
+        } else if (mayConstructDirectly(known->function) && callee.thisType && callee.allocatesForUnknownCallers) {
             allocation.layout = m_program.at(callee.thisType).singleLayout();
             allocation.constructedBy = known->function;
             if (!allocation.layout || m_program.at(allocation.layout).kind != LayoutKind::Record || !m_program.at(allocation.layout).isAllocated)
@@ -2790,14 +2800,17 @@ void createResultAdapters(Program& program)
     };
     Vector<Vector<RequestedCallResult>> requestedResultsIn(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        static constexpr OpcodeSet calls { Opcode::Call };
+        if (!constProgram.functions.mayContain(i, calls))
+            return;
         auto& function = constProgram.functions[i];
-        if (function.blocks.isEmpty() || function.isValueEntry || !function.has(Format::FunctionIsTyped) || std::ranges::none_of(function.values, [](auto& value) { return value.opcode == Opcode::Call; }))
+        if (function.blocks.isEmpty() || function.isValueEntry || !function.has(Format::FunctionIsTyped))
             return;
         Vector<uint32_t> useCounts = useCountsIn(function);
         for (auto& block : function.blocks) {
             for (unsigned indexInBlock = 0; indexInBlock < block.values.size(); ++indexInBlock) {
                 auto& call = function.at(block.values[indexInBlock]);
-                if (call.opcode != Opcode::Call || call.arguments.size() > numberOfArgumentGPRs || constProgram.adapterForCall(call))
+                if (!calls.contains(call.opcode) || call.arguments.size() > numberOfArgumentGPRs || constProgram.adapterForCall(call))
                     continue;
                 ValueID cast = castAfterCall(function, block, indexInBlock, useCounts);
                 TypeID type = cast ? function.at(cast).type : call.type;
@@ -2831,22 +2844,26 @@ void createResultAdapters(Program& program)
     if (results.isEmpty())
         return;
 
-    Vector<std::pair<FunctionID, FunctionID>> candidates;
+    struct Candidate {
+        FunctionID general;
+        TypeID resultType;
+    };
     Vector<TypeID> resultTypes;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> resultTypeIndex;
-    for (auto& [index, general] : constProgram.genericEntrypoints) {
+    auto candidates = collectInParallel<Candidate>(count, [&](unsigned index, Vector<Candidate>& collected) {
+        auto entrypoint = constProgram.genericEntrypoints.find(index);
+        if (entrypoint == constProgram.genericEntrypoints.end())
+            return;
         FunctionID id(index);
+        FunctionID general = entrypoint->value;
         auto& function = constProgram.at(id);
         if (!isPlainFunctionWithKnownCallers(constProgram, id) || function.has(Format::FunctionIsBuiltin) || !function.has(Format::FunctionIsTyped) || !function.resultType || !constProgram.usesSlimClosures(function) || constProgram.at(general).valueEntry)
-            continue;
-        candidates.append({ id, general });
-    }
-    std::ranges::sort(candidates, { }, [](auto& candidate) {
-        return candidate.first.index();
+            return;
+        collected.append({ general, function.resultType });
     });
-    for (auto [id, general] : candidates) {
-        if (resultTypeIndex.add(constProgram.at(id).resultType.index(), static_cast<uint32_t>(resultTypes.size())).isNewEntry)
-            resultTypes.append(constProgram.at(id).resultType);
+    for (auto [general, resultType] : candidates) {
+        if (resultTypeIndex.add(resultType.index(), static_cast<uint32_t>(resultTypes.size())).isNewEntry)
+            resultTypes.append(resultType);
     }
     Vector<uint32_t> mostRequestedFirst(results.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
@@ -2868,12 +2885,12 @@ void createResultAdapters(Program& program)
     });
     uint64_t usedCompatibleResults = 0;
     uint64_t numberOfFunctions = 0;
-    for (auto [id, general] : candidates) {
-        uint64_t holding = compatibleResults[resultTypeIndex.get(constProgram.at(id).resultType.index())];
+    for (auto [general, resultType] : candidates) {
+        uint64_t holding = compatibleResults[resultTypeIndex.get(resultType.index())];
         if (!holding)
             continue;
         program.functions[general.index()].compatibleResultsMask = holding;
-        program.functions[general.index()].resultTypeAtAdapterSelection = constProgram.at(id).resultType;
+        program.functions[general.index()].resultTypeAtAdapterSelection = resultType;
         usedCompatibleResults |= holding;
         ++numberOfFunctions;
     }
@@ -2913,10 +2930,14 @@ void createResultAdapters(Program& program)
 void clearCallerCheckedResultTypes(Program& program)
 {
     auto& constProgram = std::as_const(program);
-    for (auto& [index, general] : constProgram.genericEntrypoints) {
+    forEachIndexInParallel(constProgram.functions.size(), [&](unsigned index) {
+        auto entrypoint = constProgram.genericEntrypoints.find(index);
+        if (entrypoint == constProgram.genericEntrypoints.end())
+            return;
+        FunctionID general = entrypoint->value;
         if (constProgram.at(general).compatibleResultsMask && (constProgram.functions[index].resultType != constProgram.at(general).resultTypeAtAdapterSelection || constProgram.functions[index].isCalledFromDroppableFrame))
             program.functions[general.index()].compatibleResultsMask = 0;
-    }
+    });
 }
 
 void createValueEntrypoints(Program& program)
@@ -2956,19 +2977,23 @@ void createValueEntrypoints(Program& program)
     };
     Vector<Vector<Site>> sitesIn(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        static constexpr OpcodeSet callsWithSignature { Opcode::Call, Opcode::CallMethod };
+        if (!constProgram.functions.mayContain(i, callsWithSignature))
+            return;
         auto& function = constProgram.functions[i];
         if (function.blocks.isEmpty() || !function.has(Format::FunctionIsTyped))
             return;
-        for (auto& call : function.values) {
+        constProgram.functions.forEachValue(i, callsWithSignature, [&](ValueID id) {
+            auto& call = function.at(id);
             if (!canCallBySignature(constProgram, call))
-                continue;
+                return;
             auto parameters = valueCallShapeParameters(constProgram, call);
             if (!isPassedUnboxed(constProgram, call.type) && std::ranges::none_of(parameters, [&](TypeID type) { return isPassedUnboxed(constProgram, type); }))
-                continue;
+                return;
             if (constProgram.at(call.type).hasCells() || std::ranges::any_of(parameters, [&](TypeID type) { return constProgram.at(type).hasCells(); }))
-                continue;
+                return;
             sitesIn[i].append(Site { WTF::move(parameters), call.type });
-        }
+        });
     });
     for (unsigned i = 0; i < count; ++i) {
         for (auto& [parameters, result] : sitesIn[i]) {
@@ -2997,21 +3022,10 @@ void createValueEntrypoints(Program& program)
         uint32_t shape { Format::none };
         unsigned argumentCount { 0 };
     };
-    Vector<FunctionID> enteredByValue;
-    for (auto& [index, general] : constProgram.genericEntrypoints)
-        enteredByValue.append(FunctionID(index));
-    std::ranges::sort(enteredByValue, { }, [](FunctionID id) {
-        return id.index();
+    auto candidates = collectInParallel<FunctionID>(constProgram.functions.size(), [&](unsigned index, Vector<FunctionID>& collected) {
+        if (constProgram.genericEntrypoints.contains(index) && canHaveValueEntry(constProgram, FunctionID(index)))
+            collected.append(FunctionID(index));
     });
-    Vector<uint8_t> canHaveEntry(FillWith { }, enteredByValue.size(), static_cast<uint8_t>(0));
-    forEachIndexInParallel(enteredByValue.size(), [&](unsigned k) {
-        canHaveEntry[k] = canHaveValueEntry(constProgram, enteredByValue[k]);
-    });
-    Vector<FunctionID> candidates;
-    for (unsigned k = 0; k < enteredByValue.size(); ++k) {
-        if (canHaveEntry[k])
-            candidates.append(enteredByValue[k]);
-    }
     Vector<Vector<TypeID, 4>> possibleParameterTypes(candidates.size());
     for (unsigned k = 0; k < candidates.size(); ++k) {
         for (TypeID type : constProgram.at(candidates[k]).parameterTypes)
@@ -3078,13 +3092,11 @@ void createValueEntrypoints(Program& program)
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = constProgram.functions[i];
         Vector<ValueID, 8> closures;
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = function.at(id);
-                if ((value.opcode == Opcode::FunctionReference || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce) && matchesSomeShape.get(value.function().index()))
-                    closures.append(id);
-            }
-        }
+        static constexpr OpcodeSet functionValues { Opcode::FunctionReference, Opcode::NewClosure, Opcode::NewClosureOnce };
+        constProgram.functions.forEachIndexedValue(i, functionValues, [&](ValueID id) {
+            if (matchesSomeShape.get(function.at(id).function().index()))
+                closures.append(id);
+        });
         if (closures.isEmpty())
             return;
         auto recordEscapingClosure = [&](ValueID used) {
@@ -3187,8 +3199,11 @@ void resolveCallsBySignature(Program& program)
     };
     Vector<Vector<Judged>> verdictsIn(constProgram.functions.size());
     forEachIndexInParallel(constProgram.functions.size(), [&](unsigned i) {
+        static constexpr OpcodeSet calls { Opcode::Call };
+        if (!constProgram.functions.mayContain(i, calls))
+            return;
         auto& function = constProgram.functions[i];
-        if (function.blocks.isEmpty() || function.isValueEntry || std::ranges::none_of(function.values, [](auto& value) { return value.opcode == Opcode::Call; }))
+        if (function.blocks.isEmpty() || function.isValueEntry)
             return;
         Vector<uint32_t> useCounts;
         if (!constProgram.resultAdapters.isEmpty())
@@ -3197,7 +3212,7 @@ void resolveCallsBySignature(Program& program)
             for (unsigned indexInBlock = 0; indexInBlock < block.values.size(); ++indexInBlock) {
                 ValueID id = block.values[indexInBlock];
                 auto& call = function.at(id);
-                if (call.opcode != Opcode::Call)
+                if (!calls.contains(call.opcode))
                     continue;
                 FunctionID adapter = constProgram.adapterForCall(call);
                 ValueID cast;
@@ -3248,7 +3263,7 @@ void resolveCallsBySignature(Program& program)
                 ++cheapToBoxCount;
                 break;
             case Verdict::CallsBySignature: {
-                auto& changed = program.functions[i].at(id);
+                auto& changed = program.functions.atKeepingValueIndex(i).at(id);
                 changed.isSignatureCall = true;
                 changed.immediates[1] = adapter.index();
                 program.adaptersCalledBySignature.set(adapter.index());
@@ -3282,13 +3297,13 @@ void resolveCallsBySignature(Program& program)
     for (auto& [function, id, cast, adapter] : callsByResult) {
         if (adapterCallCount.get(adapter.index()) < minCallsPerAdapter || !(profitableResults >> constProgram.at(adapter).adapterResult & 1))
             continue;
-        auto& changed = program.functions[function].at(id);
+        auto& changed = program.functions.atKeepingValueIndex(function).at(id);
         changed.isSignatureCall = true;
         changed.immediates[1] = adapter.index();
         if (cast) {
             changed.type = constProgram.functions[function].at(cast).type;
             changed.rep = repOf(constProgram.at(changed.type));
-            program.functions[function].at(cast).setCastReason(CastReason::Upcast);
+            program.functions.atKeepingValueIndex(function).at(cast).setCastReason(CastReason::Upcast);
             ++savedCastCount;
         }
         ++callByResultSiteCount;
@@ -3319,18 +3334,20 @@ void findDeclaredSuperclasses(Program& program)
             id = withoutCasts(id);
             return function.at(id).opcode == Opcode::FunctionReference ? function.at(id).function() : FunctionID();
         };
-        for (auto& value : function.values) {
-            if (value.opcode != Opcode::Operation || program.operationOf(value) != Operations::MakeClass || value.arguments.size() != 2)
-                continue;
+        static constexpr OpcodeSet operations { Opcode::Operation };
+        std::as_const(program).functions.forEachValue(i, operations, [&](ValueID id) {
+            auto& value = function.at(id);
+            if (program.operationOf(value) != Operations::MakeClass || value.arguments.size() != 2)
+                return;
             FunctionID constructor = constantClosure(value.arguments[0]);
             FunctionID parent = constantClosure(value.arguments[1]);
             if (constructor && std::as_const(program).at(constructor).constructedClass && function.at(withoutCasts(value.arguments[1])).opcode == Opcode::GetGlobal)
                 found[i].append({ std::as_const(program).at(constructor).constructedClass, FunctionID() });
             if (!constructor || !parent || std::as_const(program).at(parent).kind != FunctionKind::Constructor)
-                continue;
+                return;
             if (LayoutID ofClass = std::as_const(program).at(constructor).constructedClass; ofClass && program.at(ofClass).isEvaluatedOnce && !program.at(ofClass).base)
                 found[i].append({ ofClass, parent });
-        }
+        });
     });
     for (auto& perFunction : found) {
         for (auto [ofClass, parent] : perFunction) {
@@ -3349,10 +3366,10 @@ void createGenericEntrypoints(Program& program)
             program.layouts[i].type = program.types.intern(Type::forLayout(LayoutID(i)));
     }
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        for (auto& value : std::as_const(program).functions[i].values) {
-            if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
-                WTF::atomicStore(&program.at(value.function()).hasManyClosures, true, std::memory_order_relaxed);
-        }
+        static constexpr OpcodeSet closures { Opcode::NewClosure, Opcode::NewClosureOnce };
+        std::as_const(program).functions.forEachValue(i, closures, [&](ValueID id) {
+            WTF::atomicStore(&program.functions.atKeepingValueIndex(std::as_const(program).functions[i].at(id).function().index()).hasManyClosures, true, std::memory_order_relaxed);
+        });
     });
     for (auto& layout : program.layouts) {
         bool mayBecomeRecord = layout.kind == LayoutKind::Instance && layout.specializations.containsIf([&](LayoutID specialization) {
@@ -3367,10 +3384,11 @@ void createGenericEntrypoints(Program& program)
 
     BitVector isValue(program.functions.size());
     BitVector isMethodOfClass(program.functions.size());
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
-        if (std::as_const(program).functions[i].has(Format::FunctionIsUsedAsValue))
-            isValue.set(i);
-    }
+    auto functionsUsedAsValues = findIndicesInParallel(program.functions.size(), [&](unsigned i) {
+        return std::as_const(program).functions[i].has(Format::FunctionIsUsedAsValue);
+    });
+    for (unsigned i : functionsUsedAsValues)
+        isValue.set(i);
     for (auto& layout : program.layouts) {
         if (layout.constructor)
             isValue.set(layout.constructor.index());
@@ -3382,9 +3400,10 @@ void createGenericEntrypoints(Program& program)
             }
         }
     }
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
-        if (!std::as_const(program).functions[i].has(Format::FunctionIsDeclaredGenericEntrypoint))
-            continue;
+    auto declaredGenericEntrypoints = findIndicesInParallel(program.functions.size(), [&](unsigned i) {
+        return std::as_const(program).functions[i].has(Format::FunctionIsDeclaredGenericEntrypoint);
+    });
+    for (unsigned i : declaredGenericEntrypoints) {
         bool isForClassMethod = false;
         for (auto& value : std::as_const(program).functions[i].values) {
             if (value.opcode != Opcode::CallDirect)
@@ -3415,26 +3434,26 @@ void createGenericEntrypoints(Program& program)
                 break;
         }
     }
-    for (unsigned i = 0, originalFunctionCount = program.functions.size(); i < originalFunctionCount; ++i) {
+    auto functionsWithLoggingEntrypoints = findIndicesInParallel(program.functions.size(), [&](unsigned i) {
         FunctionID written = std::as_const(program).functions[i].declaredGenericEntrypoint;
-        if (!written || !std::as_const(program).at(written).has(FunctionLogsTypeMismatches))
-            continue;
+        return written && std::as_const(program).at(written).has(FunctionLogsTypeMismatches);
+    });
+    for (unsigned i : functionsWithLoggingEntrypoints) {
+        FunctionID written = std::as_const(program).functions[i].declaredGenericEntrypoint;
         Function copy = std::as_const(program).at(written);
         copy.flags |= FunctionIsEnteredByValue;
         program.functions[i].declaredGenericEntrypoint = FunctionID(program.functions.size());
         program.functions.append(WTF::move(copy));
     }
-    Vector<unsigned> entered;
-    for (unsigned i : isValue) {
-        if (!std::as_const(program).functions[i].isGenericEntrypoint() && !program.genericEntrypoints.contains(i))
-            entered.append(i);
-    }
+    auto entered = findIndicesInParallel(isValue.size(), [&](unsigned i) {
+        return isValue.get(i) && !std::as_const(program).functions[i].isGenericEntrypoint() && !program.genericEntrypoints.contains(i);
+    });
     unsigned firstEntry = program.functions.size();
     program.functions.grow(firstEntry + entered.size());
     program.firstGenericEntrypoint = firstEntry;
     program.numberOfConsecutiveGenericEntrypoints = entered.size();
     forEachIndexInParallel(entered.size(), [&](unsigned k) {
-        program.functions[firstEntry + k] = createGenericEntrypoint(program, FunctionID(entered[k]), program.functions[entered[k]].declaredGenericEntrypoint);
+        program.functions[firstEntry + k] = createGenericEntrypoint(program, FunctionID(entered[k]), std::as_const(program).functions[entered[k]].declaredGenericEntrypoint);
     });
     for (unsigned k = 0; k < entered.size(); ++k)
         program.genericEntrypoints.add(entered[k], FunctionID(firstEntry + k));
@@ -3511,7 +3530,13 @@ void expandDisposableStacks(Program& program)
     if (!program.usesOperation(Operations::NewDisposableStack))
         return;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        CallResolution(program, program.functions[i]).expandDisposableStacks();
+        static constexpr OpcodeSet operations { Opcode::Operation };
+        bool createsDisposableStack = false;
+        std::as_const(program).functions.forEachIndexedValue(i, operations, [&](ValueID id) {
+            createsDisposableStack |= program.operationOf(std::as_const(program).functions[i].at(id)) == Operations::NewDisposableStack;
+        });
+        if (createsDisposableStack)
+            CallResolution(program, program.functions[i]).expandDisposableStacks();
     });
 }
 
@@ -3519,9 +3544,16 @@ void createBoundFunctions(Program& program)
 {
     Vector<Vector<uint64_t>> boundFunctionsNeededBy(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
-        if (!function.isGenericEntrypoint())
-            CallResolution(program, function).collectBoundFunctions(boundFunctionsNeededBy[i]);
+        static constexpr OpcodeSet methodCalls { Opcode::CallMethod };
+        if (!program.functions.mayContain(i, methodCalls))
+            return;
+        auto& function = program.functions.atKeepingValueIndex(i);
+        if (function.isGenericEntrypoint())
+            return;
+        CallResolution resolution(program, function);
+        std::as_const(program).functions.forEachValue(i, methodCalls, [&](ValueID id) {
+            resolution.collectBoundFunction(id, boundFunctionsNeededBy[i]);
+        });
     });
     Vector<uint64_t> wanted;
     for (auto& perFunction : boundFunctionsNeededBy)

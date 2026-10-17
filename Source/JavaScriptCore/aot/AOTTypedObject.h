@@ -95,6 +95,10 @@ public:
     State& state() const;
     JSValue read(const FieldData&) const;
     JSValue readInline(const FieldData&) const;
+    enum class ReadKind : uint32_t { Int32OrNumberBox, Cell32, Double, Boolean, JSValue, Int32, General };
+    static constexpr unsigned readKindShift = 24;
+    static uint32_t readKindAndOffset(const FieldData&);
+    JSValue readInline(uint32_t readKindAndOffset, const Invocable<const FieldData&()> auto& field) const;
     static JSValue tryGetOwnData(VM&, JSCell*, PropertyName);
     bool isDiscriminant(const FieldData&) const;
     void positionExtraKey(State&, PropertyName, uint32_t position);
@@ -166,7 +170,8 @@ public:
     static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
     bool mayDefineAccessorOnExtraProperties(VM&, State&, PropertyName, JSObject*& extra);
     const FieldData* fieldNamed(State&, PropertyName) const;
-    bool forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&) const;
+    enum class SymbolKeys : bool { Skip, Include };
+    bool forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&, SymbolKeys = SymbolKeys::Skip) const;
     bool forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&) const;
     JSCellButterfly* keys(VM&) const;
     JSCellButterfly* keysWithExtraProperties(VM&) const;
@@ -270,6 +275,7 @@ private:
     void forEachFieldInKeyOrder(State&, const Invocable<void(uint16_t)> auto&) const;
     Vector<UniquedStringImpl*, 16> extraKeyNames() const;
     std::optional<uint16_t> extraKeyOrdinal(PropertyName) const;
+    bool hasPositionAmongKeys(UniquedStringImpl*) const;
     void didRemoveExtraKey(State&, uint16_t ordinal, const FieldData* replacementField = nullptr);
     JSObject* ensureExtraProperties(VM&);
     JSFinalObject* tryCopyExtraPropertiesForClone(VM&) const;
@@ -308,6 +314,59 @@ ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
     default:
         return read(field);
     }
+}
+
+inline uint32_t Object::readKindAndOffset(const FieldData& field)
+{
+    auto kind = [&] {
+        if (field.flags & (fieldIsOutOfLine | fieldMayBeUnlisted))
+            return ReadKind::General;
+        switch (field.store()) {
+        case Store::Int32OrNumberBox:
+            return ReadKind::Int32OrNumberBox;
+        case Store::Cell32:
+        case Store::OptionalCell32:
+            return ReadKind::Cell32;
+        case Store::Double:
+            return ReadKind::Double;
+        case Store::Boolean:
+            return ReadKind::Boolean;
+        case Store::Cell:
+        case Store::JSValue:
+            return ReadKind::JSValue;
+        case Store::Int32:
+            return ReadKind::Int32;
+        default:
+            return ReadKind::General;
+        }
+    }();
+    return static_cast<uint32_t>(kind) << readKindShift | field.offset;
+}
+
+ALWAYS_INLINE JSValue Object::readInline(uint32_t readKindAndOffset, const Invocable<const FieldData&()> auto& field) const
+{
+    constexpr auto first = [](ReadKind kind) { return static_cast<uint32_t>(kind) << readKindShift; };
+    static_assert(!first(ReadKind::Int32OrNumberBox));
+    if (readKindAndOffset < first(ReadKind::Cell32)) {
+        if (int32_t word = at<int32_t>(readKindAndOffset); word >= minInlineInt32) [[likely]]
+            return jsNumber(word);
+        return read(field());
+    }
+    if (readKindAndOffset < first(ReadKind::Double)) {
+        uint32_t word = at<uint32_t>(readKindAndOffset - first(ReadKind::Cell32));
+        if (word == unmaterializedClosureCell32) [[unlikely]]
+            return read(field());
+        return word <= undefinedCell32 ? JSValue::decode(word) : JSValue(MarkedBlockCage::decode(word));
+    }
+    if (readKindAndOffset < first(ReadKind::Boolean))
+        return jsNumber(purifyNaN(at<double>(readKindAndOffset - first(ReadKind::Double))));
+    if (readKindAndOffset < first(ReadKind::JSValue))
+        return jsBoolean(at<uint8_t>(readKindAndOffset - first(ReadKind::Boolean)));
+    if (readKindAndOffset < first(ReadKind::Int32))
+        return JSValue::decode(at<EncodedJSValue>(readKindAndOffset - first(ReadKind::JSValue)));
+    if (readKindAndOffset < first(ReadKind::General))
+        return jsNumber(at<int32_t>(readKindAndOffset - first(ReadKind::Int32)));
+    return read(field());
 }
 
 struct DiscriminatingField {
@@ -457,6 +516,52 @@ struct ExtraPropertyLocation {
     int32_t displacement;
 };
 static_assert(sizeof(ExtraPropertyLocation) == 16);
+
+struct TypedCloneMove {
+    enum class Kind : uint8_t { Value, NumberAsDouble, NumberAsInlineInt32, StringAsCell32, NullableStringAsCell32, BooleanAsByte, General };
+    uint16_t from;
+    uint16_t to;
+    Kind kind;
+    uint8_t acceptedKinds;
+    Store store;
+    uint8_t unused;
+};
+static_assert(sizeof(TypedCloneMove) == 8);
+
+struct TypedClonePlan {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(TypedClonePlan);
+    enum class Path : uint32_t { PlainClone, Runtime, Stub };
+    Path path { Path::PlainClone };
+    uint32_t moveCount { 0 };
+    uint32_t bodyWordCount { 0 };
+    void* allocator { nullptr };
+    uint64_t header { 0 };
+    const uint64_t* bodyWords { nullptr };
+    const TypedCloneMove* firstMove { nullptr };
+    Structure* structure { nullptr };
+    Vector<TypedCloneMove, 8> moves;
+    Vector<const FieldData*, 8> fields;
+    Vector<uint64_t, 8> body;
+};
+
+struct TypedCloneTarget {
+    static constexpr unsigned shapeBits = 20;
+    static constexpr unsigned fieldBits = 6;
+    static constexpr unsigned maxStoredFields = 4;
+    static constexpr uint32_t shapeOf(uint64_t target) { return target & ((1u << shapeBits) - 1); }
+    static constexpr uint32_t storedFieldPlusOne(uint64_t target, unsigned i) { return target >> (shapeBits + fieldBits * i) & ((1u << fieldBits) - 1); }
+    static constexpr uint64_t withStoredField(uint64_t target, unsigned i, uint32_t field) { return target | static_cast<uint64_t>(field + 1) << (shapeBits + fieldBits * i); }
+};
+
+struct alignas(32) TypedCloneCacheEntry {
+    static constexpr unsigned indexBits = 7;
+    static constexpr uint32_t multiplier = 0x9e3779b1;
+    static constexpr unsigned placeOf(uint32_t structureID, uint64_t target) { return ((structureID ^ static_cast<uint32_t>(target) ^ static_cast<uint32_t>(target >> 32)) * multiplier) >> (32 - indexBits); }
+    uint64_t target;
+    const TypedClonePlan* plan;
+    uint32_t structureID;
+};
+static_assert(sizeof(TypedCloneCacheEntry) == 32);
 
 struct alignas(32) LateFieldCreation {
     static constexpr unsigned indexBits = 10;
@@ -844,6 +949,8 @@ public:
 
     static Structure* createStructure(VM&, JSGlobalObject*, bool hasHostPrototype);
     static ModuleNamespace* create(VM&, Structure*, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* starExportNames, bool isDeferred);
+    static ModuleNamespace* createWithLazyNames(VM&, Structure*, JSObject* read, std::span<const uint32_t> nameStrings, JSObject* star, JSCellButterfly* starExportNames, bool isDeferred);
+    static unsigned indexOfName(const Data&, std::span<const uint32_t> nameStrings, UniquedStringImpl*);
     static constexpr ptrdiff_t offsetOfRead() { return OBJECT_OFFSETOF(ModuleNamespace, m_read); }
     static constexpr unsigned noExport = UINT_MAX;
     unsigned numberOf(UniquedStringImpl*) const;
@@ -877,6 +984,8 @@ private:
 
     bool isSymbolLikeKey(UniquedStringImpl*) const;
     bool evaluateIfNeeded(JSGlobalObject*);
+    unsigned numberOfNames() const { return m_names ? m_names->length() : m_numberOfNameStrings; }
+    JSCellButterfly* ensureNames(JSGlobalObject*);
 
     JSValue fixedProperty(VM&, PropertyName) const;
 
@@ -887,6 +996,8 @@ private:
     bool m_hasESModuleFlag { false };
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
+    unsigned m_numberOfNameStrings { 0 };
+    const uint32_t* m_nameStrings { nullptr };
 };
 
 class Generator final : public JSNonFinalObject {
@@ -898,7 +1009,9 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
-    static Generator* create(VM&, Structure*, Closure*);
+    static Generator* create(VM&, Structure*, Closure*, bool hasUnmodifiedIteration, uint32_t offsetOfState);
+    static uint32_t offsetOfStateIn(Closure* resumeClosure);
+    static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -906,9 +1019,32 @@ public:
     enum class ResumeMode : uint8_t { Next, Throw, Return };
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue);
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue, bool& isDone);
-    bool hasUnmodifiedIteration(JSGlobalObject*);
+    static bool hasUnmodifiedIteration(JSGlobalObject*, Structure*);
+    bool hasUnmodifiedIteration(JSGlobalObject*) const { return !m_hasOtherPrototype && !butterfly(); }
     bool isSuspendedAtStart() const;
     bool isCompleted() const;
+
+    enum class StepCheck : uint8_t { None, IsUnmodifiedUnlessNext, IsUnmodified, IsGenerator, IsUnmodifiedGenerator };
+    static constexpr int32_t didYield = 0;
+    static constexpr int32_t didComplete = 1;
+    static constexpr int32_t wasNotStepped = 2;
+    static constexpr int32_t generatorSlotInStubFrame = -1;
+#if CPU(ARM64)
+    static constexpr uint32_t markerAfterBodyCall = 0xaa0c03ec;
+#else
+    static constexpr uint32_t markerAfterBodyCall = 0x26441f0f;
+#endif
+    struct Template {
+        uint64_t header;
+        uint64_t offsetOfStateAndFlags;
+    };
+    Template asTemplate() const;
+    static Generator* forBodyFrame(const uint64_t* frame);
+    void didThrow();
+    static constexpr ptrdiff_t offsetOfResumeClosure() { return OBJECT_OFFSETOF(Generator, m_resumeClosure); }
+    static constexpr ptrdiff_t offsetOfOffsetOfState() { return OBJECT_OFFSETOF(Generator, m_offsetOfState); }
+    static constexpr ptrdiff_t offsetOfIsRunning() { return OBJECT_OFFSETOF(Generator, m_isRunning); }
+    static constexpr ptrdiff_t offsetOfHasOtherPrototype() { return OBJECT_OFFSETOF(Generator, m_hasOtherPrototype); }
 
 private:
     Generator(VM& vm, Structure* structure, Closure* resumeClosure)
@@ -920,9 +1056,11 @@ private:
     int32_t& state() const;
 
     Closure* m_resumeClosure;
+    uint32_t m_offsetOfState { 0 };
     bool m_isRunning { false };
-    mutable uint32_t m_offsetOfState { 0 };
+    bool m_hasOtherPrototype { false };
 };
+static_assert(sizeof(Generator) == 32 && Generator::offsetOfOffsetOfState() == 24);
 
 class SavedFrame final : public JSNonFinalObject {
 public:
@@ -1228,9 +1366,15 @@ struct State {
     uint32_t lazyClosureFunction(JSCell* cell) const { return m_lazyClosureFunctions.get(cell); }
     bool closuresHaveCaptures(uint32_t function) const;
     UncheckedKeyHashMap<JSCell*, uint32_t> m_lazyClosureFunctions;
-    Structure* generatorStructure(VM&, uint32_t resumeFunction, bool isAsync);
+    struct GeneratorStructure {
+        Structure* structure { nullptr };
+        uint32_t offsetOfState { 0 };
+        bool hasUnmodifiedIteration { false };
+    };
+    GeneratorStructure& generatorStructure(VM&, uint32_t resumeFunction, bool isAsync);
+    void setGeneratorTemplate(uint32_t index, uint32_t numberOfTemplates, Generator::Template);
     Structure* savedFrameStructure(VM&);
-    Structure* generatorStructure(VM&, Closure* generatorFunction, bool isAsync);
+    GeneratorStructure& generatorStructure(VM&, Closure* generatorFunction, bool isAsync);
     uint32_t resumeFunctionOf(uint32_t generatorFunction) const;
     bool takesCalleeClosure(uint32_t generatorFunction) const;
     const LayoutData* classConstructedBy(uint32_t function) const;
@@ -1310,6 +1454,10 @@ struct State {
 
     const FieldData* field(VM&, const LayoutData&, UniquedStringImpl*);
     bool isPrivate(const FieldData&) const;
+    bool hasSymbolKey(const FieldData& field) const { return data.stringFacts(field.name) & Data::stringIsConstantSymbol; }
+    bool hasStringKey(const FieldData& field) const { return !isPrivate(field) && !hasSymbolKey(field); }
+    bool hasFieldsWithSymbolKeys(const LayoutData&);
+    bool hasPositionAmongKeys(const LayoutData& layout, UniquedStringImpl* name) { return !name->isSymbol() || (!static_cast<SymbolImpl*>(name)->isPrivate() && hasFieldsWithSymbolKeys(layout)); }
     bool findPrivateMethod(VM&, const LayoutData&, UniquedStringImpl*, Object::PrivateElement&);
     bool hasImmutableMethod(const LayoutData&, UniquedStringImpl*) const;
     bool storeNeverSpecializes(const LayoutData&, UniquedStringImpl*) const;
@@ -1410,6 +1558,14 @@ struct State {
     QuickConversion* quickConversion(uint32_t structureID, const RuntimeType&, uint64_t discriminant, bool evictsIfFull);
     std::unique_ptr<std::array<QuickConversion, numberOfQuickConversions>> m_quickConversions;
     uint32_t m_quickConversionEpoch { 1 };
+    static constexpr unsigned maxTypedClonePlans = 4096;
+    Object* tryCloneAs(VM&, JSObject* source, uint64_t target);
+    const TypedClonePlan& typedClonePlan(VM&, Structure*, uint64_t target);
+    bool canHoldWithoutConversion(const FieldData&, uint8_t acceptedKinds, JSValue) const;
+    bool m_hasCachedTypedClones { false };
+    bool m_hasNewTypedClonePlans { false };
+    UncheckedKeyHashMap<std::pair<Structure*, uint64_t>, std::unique_ptr<TypedClonePlan>> m_typedClonePlans;
+    TypedClonePlan m_noTypedClonePlan;
     const CoercionPlan* coercionPlan(Structure*, const RuntimeType&) const;
     const CoercionPlan* coercionPlan(JSObject*, const RuntimeType&) const;
     const CoercionPlan* firstCoercionPlanForShape(VM&, JSObject*, const RuntimeType&);
@@ -1517,6 +1673,42 @@ struct State {
     Object* copyUnchangedByPlan(VM&, JSObject*, const RuntimeType&, bool mayConvertInPlace = false);
     Object* tryConvertOrCopyByPlan(VM&, JSObject*, const CoercionPlan&, bool mayConvertInPlace);
     bool tryConvertInPlaceByPlans(VM&, JSObject*, const RuntimeType&);
+    enum class WireFormat : uint8_t { Int32, Float32, Float64, Boolean, Text, TimestampMicroseconds };
+    struct RowColumn {
+        const uint8_t* name;
+        uint32_t nameLength;
+        WireFormat format;
+    };
+    struct RowDecoder {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RowDecoder);
+        enum class Step : uint8_t { General, InlineInt32, Int32AsInt32, Int32AsDouble, Int32AsValue, Float32AsDouble, Float64AsDouble, BooleanAsByte, BooleanAsLowByteOfValue, TextAsCell32, TextAsValue, TextAsLiteral, DateAsCell32, DateAsValue };
+        struct LiteralText {
+            std::span<const uint8_t> text;
+            uint64_t bits;
+        };
+        struct Column {
+            const FieldData* field;
+            uint64_t nullBits;
+            uint32_t offset;
+            WireFormat format;
+            Step step;
+            uint8_t nullWidth;
+            uint8_t acceptedKinds;
+            uint8_t literalWidth { 0 };
+            uint16_t firstLiteral { 0 };
+            uint16_t literalCount { 0 };
+        };
+        const LayoutData* layout { nullptr };
+        Vector<Column, 16> columns;
+        Vector<LiteralText, 8> literals;
+        Vector<uint8_t> initialBody;
+    };
+    void setExpectedRowType(VM&, JSObject* query, uint32_t type);
+    uint32_t expectedRowType(VM&, JSObject* query);
+    std::unique_ptr<RowDecoder> createRowDecoder(VM&, JSGlobalObject*, const RuntimeType&, std::span<const RowColumn>);
+    Object* tryDecodeRow(VM&, JSGlobalObject*, const RowDecoder&, std::span<const uint8_t>);
+    bool tryConvertRow(VM&, JSObject*, const RuntimeType&);
+    RefPtr<PrivateSymbolImpl> m_expectedRowTypeSymbol;
     bool hasCapacityToConvertInPlace(JSObject*, Object* copy);
     bool rejectsCopiesOfSharedObjects() const { return !data.logsTypeErrors && !data.isCompiledForAudit; }
     void become(VM&, JSObject*, Object* copy);
@@ -1610,13 +1802,14 @@ struct State {
         UniquedStringImpl* name;
         const FieldData* field;
     };
-    std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord);
+    std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord, Object::SymbolKeys = Object::SymbolKeys::Skip);
     bool leavesFieldsUnlisted(const LayoutData&, uint32_t orderWord);
     static bool isDefinedByConstructor(const LayoutData& layout, uint16_t key) { return layout.kind == LayoutKind::Instance && key < layout.numberOfFields && !(layout.fields()[key].flags & (fieldIsAbsentAtCreation | fieldIsPlaceholder)); }
     struct KeysAsJSON {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(KeysAsJSON);
         struct Key {
-            const FieldData* field;
+            uint32_t readKindAndOffset;
+            uint32_t fieldIndex;
             uint32_t start;
             uint32_t length;
         };
@@ -1830,6 +2023,8 @@ private:
         UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> placements;
         UncheckedKeyHashMap<uint32_t, JSCellButterfly*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keyLists;
         UncheckedKeyHashMap<uint32_t, FixedVector<FieldAsProperty>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> propertyLists;
+        UncheckedKeyHashMap<uint32_t, FixedVector<FieldAsProperty>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> propertyListsWithSymbolKeys;
+        std::optional<bool> hasFieldsWithSymbolKeys;
         UncheckedKeyHashMap<uint32_t, std::unique_ptr<KeysAsJSON>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keysAsJSON;
         UncheckedKeyHashMap<uint32_t, PlainCopyPlan, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> plainCopyPlans;
         UncheckedKeyHashMap<uint32_t, Vector<std::unique_ptr<PlainCopyExcludingPlan>, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> plainCopyExcludingPlans;
@@ -1904,12 +2099,13 @@ private:
     size_t m_lastNamedPropertiesTransitionIndex { 0 };
     UncheckedKeyHashSet<String> m_reportedRules;
     bool m_hasIgnoredRule { false };
-    UncheckedKeyHashMap<uint32_t, Structure*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_generatorStructures;
+    UncheckedKeyHashMap<uint32_t, GeneratorStructure, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_generatorStructures;
+    Vector<Generator::Template> m_generatorTemplates;
     std::array<Structure*, 2> m_realmGeneratorStructures { };
     Structure* m_savedFrameStructure { nullptr };
     struct ClosureGeneratorStructure {
         Closure* closure;
-        Structure* structure;
+        GeneratorStructure structure;
         uint32_t epoch;
     };
     std::array<ClosureGeneratorStructure, 16> m_closureGeneratorStructures { };
@@ -1969,8 +2165,8 @@ private:
     UncheckedKeyHashMap<MergeKey, std::unique_ptr<MergePlan>> m_mergePlans;
     TransitionPlan* transitionPlan(JSGlobalObject*, Object*, const RuntimeType&, Format::CastReason);
     struct CastOutcome {
-        TransitionPlan* plan { nullptr };
-        DiscriminatingField* discriminatingField { nullptr };
+        TransitionPlan* plan;
+        DiscriminatingField* discriminatingField;
     };
     CastOutcome castOutcome(JSGlobalObject*, Object*, const RuntimeType&, Format::CastReason, EncodedJSValue discriminant, bool isDiscriminantKey);
     static std::optional<EncodedJSValue> discriminantKeyFor(const DiscriminatingField&, JSValue);

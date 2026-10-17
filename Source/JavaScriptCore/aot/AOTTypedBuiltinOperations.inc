@@ -38,10 +38,14 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSloppyThis, RuntimeState, EncodedJS
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToPropertyKey, Heap, EncodedJSValue, (Instance*, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedResumeGenerator, Heap, EncodedJSValue, (Instance*, EncodedJSValue generator, int32_t mode, EncodedJSValue value));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIsGeneratorSuspendedAtStart, Nothing, size_t, (Instance*, JSCell* generator));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCreateIteratorResult, RuntimeState, JSCell*, (Instance*, EncodedJSValue value, uint32_t isDone));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewError, Heap, JSCell*, (Instance*, uint32_t type, EncodedJSValue message, EncodedJSValue options));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPrepareBoundFunctionAllocation, RuntimeState, void, (Instance*));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatDateTime, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, uint32_t pattern, double timeValue));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatNumber, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, uint32_t pattern, double number));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewConstantFormatter, RuntimeState, JSCell*, (Instance*, uint32_t pattern));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatDateTime, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double timeValue));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatNumber, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double number));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatTimeValueWithPattern, RuntimeState, JSCell*, (Instance*, uint32_t pattern, double timeValue));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatNumberWithPattern, RuntimeState, JSCell*, (Instance*, uint32_t pattern, double number));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONOpen, RuntimeState, void*, (Instance*, EncodedJSValue text, uint64_t frame));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONDecodeSource, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue value));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONStringAt, RuntimeState, JSCell*, (Instance*, uint64_t cursor));
@@ -63,6 +67,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendElementsFrom, Ru
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONKeyOrdersOf, RuntimeState, void*, (Instance*, JSCell* object));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONFinish, RuntimeState, JSCell*, (Instance*, uint64_t cursor));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONPrepare, RuntimeState, void, (Instance*, uint64_t cursor, EncodedJSValue value));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONDiscard, RuntimeState, void, (Instance*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedForInKeys, Heap, JSCell*, (Instance*, EncodedJSValue object));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasEnumerableProperty, Heap, size_t, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetSuperConstructor, Nothing, EncodedJSValue, (Instance*, JSCell* classObject));
@@ -127,8 +132,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetAsyncIteratorNext, Heap, Encoded
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAsyncIteratorNext, Heap, EncodedJSValue, (Instance*, EncodedJSValue iterator, EncodedJSValue sent));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetIteratorNext, Heap, EncodedJSValue, (Instance*, EncodedJSValue iterator));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGeneratorResume, Heap, EncodedJSValue, (Instance*, JSCell* generator, EncodedJSValue mode, EncodedJSValue value));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedGeneratorIsDone, Nothing, size_t, (Instance*, JSCell* generator));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAsyncGeneratorYield, Heap, void, (Instance*, JSCell* resumeClosure, EncodedJSValue operand));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryNewPromiseSubclass, Heap, EncodedJSValue, (Instance*, EncodedJSValue parent, EncodedJSValue newTarget, EncodedJSValue executor));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpExec, RuntimeState, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpTest, RuntimeState, size_t, (Instance*, JSCell* regExp, JSCell* string));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpExecFound, RuntimeState, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string));
@@ -149,6 +154,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSplitString, RuntimeState, JS
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSplitRegExp, RuntimeState, JSCell*, (Instance*, JSCell* string, JSCell* regExp, uint32_t limit));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringMatchRegExp, RuntimeState, EncodedJSValue, (Instance*, JSCell* string, JSCell* regExp));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSearchRegExp, RuntimeState, EncodedJSValue, (Instance*, JSCell* string, JSCell* regExp));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetExpectedRowType, Heap, void, (Instance*, EncodedJSValue query, uint32_t type));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryConvertRow, Heap, void, (Instance*, EncodedJSValue row, uint32_t type));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFindCharacter8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringUTF8Length8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFind8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start));

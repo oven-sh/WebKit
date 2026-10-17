@@ -101,6 +101,17 @@ public:
     bool run()
     {
         RELEASE_ASSERT(!m_proc.hasQuirks());
+#if USE(BUN_JSC_ADDITIONS)
+        bool mayFindSomething = !isX86() && (m_proc.hasEverAdded(Load8Z) || m_proc.hasEverAdded(Load16Z));
+        for (Opcode opcode : { Mod, UMod, FMax, FMin, Div, Switch, Depend, AtomicWeakCAS, AtomicStrongCAS, AtomicXchgAdd, AtomicXchgAnd, AtomicXchgOr, AtomicXchgSub, AtomicXchgXor, AtomicXchg,
+            VectorPopcnt, VectorNot, VectorNeg, VectorNotEqual, VectorAbove, VectorBelow, VectorGreaterThanOrEqual, VectorLessThanOrEqual,
+            WasmStructGet, WasmStructSet, WasmStructNew, WasmArrayLength, WasmArrayGet, WasmArraySet, WasmArrayNew, WasmRefCast, WasmRefTest })
+            mayFindSomething |= m_proc.hasEverAdded(opcode);
+        if (!mayFindSomething) {
+            m_proc.setHasQuirks(true);
+            return false;
+        }
+#endif
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();

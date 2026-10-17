@@ -2148,16 +2148,19 @@ Vector<std::pair<FunctionID, Function>> splitCoroutines(Program& program)
         CoroutineSplitter::replaceProvisionalNames(program, coroutines[k], names[k].span());
     });
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
-        for (auto& value : function.values) {
-            if (value.opcode != Opcode::CallDirect || (!program.at(value.function()).resumeFunction && !program.at(value.function()).startFunction))
-                continue;
-            TypeID created = program.at(value.function()).resultType;
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        std::as_const(program).functions.forEachValue(i, directCalls, [&](ValueID id) {
+            auto& value = std::as_const(program).functions[i].at(id);
+            auto& callee = std::as_const(program).at(value.function());
+            if (!callee.resumeFunction && !callee.startFunction)
+                return;
+            TypeID created = callee.resultType;
             if (!created || created == value.type || !program.at(created).isSubsetOf(program.at(value.type), program))
-                continue;
-            value.type = created;
-            value.rep = repOf(program.at(created));
-        }
+                return;
+            auto& call = program.functions.atKeepingValueIndex(i).at(id);
+            call.type = created;
+            call.rep = repOf(program.at(created));
+        });
     });
     return generators;
 }

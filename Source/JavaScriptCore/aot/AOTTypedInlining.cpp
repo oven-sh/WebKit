@@ -67,9 +67,9 @@ public:
         m_neverReturns = noReturnBlocks(m_caller, [&](FunctionID callee) {
             return noReturnBlocksOf(callee).get(0);
         });
-        if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller) || m_program.isHotOnlyInLoops(m_id))
-            m_isInLoop = blocksInLoops(m_caller);
         m_isInCallerLoop = blocksInLoops(m_caller);
+        if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller) || m_program.isHotOnlyInLoops(m_id))
+            m_isInLoop = m_isInCallerLoop;
         BitVector acceptsTypeMismatches;
         if ((m_caller.has(Format::FunctionIsHiddenInStackTraces) && !m_caller.isGenericEntrypoint()) || m_caller.has(FunctionLogsTypeMismatches)) {
             for (auto& block : m_caller.blocks) {

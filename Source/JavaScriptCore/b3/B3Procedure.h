@@ -386,6 +386,9 @@ public:
 
 private:
     friend class BlockInsertionSet;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ProcedureFingerprint;
+#endif
 
     JS_EXPORT_PRIVATE Value* addValueImpl(Value*);
     void setBlockOrderImpl(Vector<BasicBlock*>&);

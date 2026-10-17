@@ -54,6 +54,11 @@ using UDateFormatDeleter = ICUDeleter<udat_close>;
 
 class IntlDateTimeFormatImpl;
 
+namespace AOT {
+struct FormatPatternHeader;
+enum class FormatPatternUse : uint8_t;
+}
+
 class IntlDateTimeFormat final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -135,6 +140,27 @@ public:
     const IntlDateTimeFormatImpl& impl() const LIFETIME_BOUND { return *m_impl; }
     void setImpl(Ref<const IntlDateTimeFormatImpl>&& impl) { m_impl = WTF::move(impl); }
 
+#if ENABLE(AOT)
+    const AOT::FormatPatternHeader* compiledPattern() const { return m_compiledPattern; }
+    AOT::FormatPatternUse compiledPatternUse() const { return m_compiledPatternUse; }
+    void setCompiledPattern(const AOT::FormatPatternHeader*, AOT::FormatPatternUse = { });
+    void replaceCompiledPattern(const AOT::FormatPatternHeader* pattern, AOT::FormatPatternUse use)
+    {
+        m_compiledPattern = pattern;
+        m_compiledPatternUse = use;
+    }
+    uint32_t timeZoneIDAtCreation() const { return m_timeZoneIDAtCreation; }
+    struct UTCOffsets {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(UTCOffsets);
+        double start { 1 };
+        double end { 0 };
+        double offset { 0 };
+        std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> calendar;
+    };
+    std::unique_ptr<UTCOffsets>& utcOffsets() { return m_utcOffsets; }
+    void initializeIfDeferred(JSGlobalObject*);
+#endif
+
     enum class TimeZoneName : uint8_t { None, Short, Long, ShortOffset, LongOffset, ShortGeneric, LongGeneric };
     enum class DateTimeStyle : uint8_t { None, Full, Long, Medium, Short };
 
@@ -215,6 +241,12 @@ private:
     WriteBarrier<JSBoundFunction> m_boundFormat;
     std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter> m_dateIntervalFormat;
     RefPtr<const IntlDateTimeFormatImpl> m_impl;
+#if ENABLE(AOT)
+    const AOT::FormatPatternHeader* m_compiledPattern { nullptr };
+    uint32_t m_timeZoneIDAtCreation { 0 };
+    AOT::FormatPatternUse m_compiledPatternUse { };
+    std::unique_ptr<UTCOffsets> m_utcOffsets;
+#endif
 };
 
 class IntlDateTimeFormatTemporalFormatterCache {

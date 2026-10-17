@@ -1406,9 +1406,10 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
 #if ENABLE(AOT)
         if (!Inherit && propertyNameMode != PropertyNameMode::Symbols && object->structure()->compiledLayout()) [[unlikely]] {
             auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(object);
-            if (auto* keys = typedObject->keys(vm))
+            bool listsOnlyStrings = propertyNameMode == PropertyNameMode::Strings || !typedObject->state().hasFieldsWithSymbolKeys(typedObject->layout());
+            if (auto* keys = listsOnlyStrings ? typedObject->keys(vm) : nullptr)
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
-            if (JSArray* keys = typedObject->tryCreateKeysArrayWithExtraProperties(globalObject))
+            if (JSArray* keys = listsOnlyStrings ? typedObject->tryCreateKeysArrayWithExtraProperties(globalObject) : nullptr)
                 return keys;
         }
 #endif

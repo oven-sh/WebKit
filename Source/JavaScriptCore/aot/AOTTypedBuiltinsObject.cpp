@@ -92,7 +92,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedOwnPropertyKeys, JSCell*, (Instance* i
     case OwnKeys::ObjectGetOwnPropertyNames:
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Include));
     case OwnKeys::ObjectGetOwnPropertySymbols:
-        if (const Typed::LayoutData* layout = object->structure()->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && !uncheckedDowncast<Typed::Object>(object)->extraProperties())
+        if (const Typed::LayoutData* layout = object->structure()->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && !uncheckedDowncast<Typed::Object>(object)->extraProperties() && !uncheckedDowncast<Typed::Object>(object)->state().hasFieldsWithSymbolKeys(*layout))
             OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Symbols, DontEnumPropertiesMode::Include));
     case OwnKeys::ReflectOwnKeys:
@@ -546,7 +546,7 @@ static std::optional<bool> cacheCompiledObjectLocation(Instance* instance, JSObj
     if (!layout || !Typed::isObjectLayout(layout->kind) || parseIndex(name) || name.isPrivateName())
         return std::nullopt;
     auto* compiled = uncheckedDowncast<Typed::Object>(object);
-    const Typed::FieldData* field = name.isSymbol() ? nullptr : compiled->fieldNamed(compiled->state(), name);
+    const Typed::FieldData* field = compiled->fieldNamed(compiled->state(), name);
     if (!field) {
         if (!Typed::Object::structureGuaranteesAbsence(structure, name.uid()))
             return std::nullopt;
@@ -897,6 +897,10 @@ CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument
     bool listsSymbols = keys == OwnKeys::ObjectGetOwnPropertySymbols;
 
     auto findLayoutKeyList = [&] {
+        if (m_program.hasFieldsWithSymbolKeys && (listsSymbols || keys == OwnKeys::ReflectOwnKeys)) {
+            m_out.jump(slowPath);
+            return;
+        }
         if (listsSymbols) {
             orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties), slowPath);
             results.append(m_out.anchor(newArrayOf(std::span<const Boxed> { }).value()));
@@ -1322,7 +1326,7 @@ Vector<Lowering::KeyOrder, 2> Lowering::keyOrdersExpectedOf(ValueID id) const
             auto name = m_program.string(layout.fields[index].name);
             if (isPrivateName(name))
                 continue;
-            hasTooMany |= name.empty() || isASCIIDigit(name.front()) || equalSpans(name, asBytes("__proto__"_s.span8()));
+            hasTooMany |= name.empty() || isASCIIDigit(name.front()) || isConstantSymbol(name) || equalSpans(name, asBytes("__proto__"_s.span8()));
             keys.fields.append(index);
         }
         hasTooMany |= result.size() == maxOrders || keys.fields.size() > maxFields;
@@ -1390,9 +1394,20 @@ CellPointer Lowering::cloneAsPlainObject(ValueID source, const CloneDefinitions&
             names.append(fields[index].name);
             values.append(readField(cell, fields[index], anything).as<Boxed>());
         }
+        for (unsigned i = 0; i < defined.values.size(); ++i) {
+            StringID name(static_cast<uint32_t>((defined.more >> (24 * i) & 0xffffff) - 1));
+            if (size_t position = names.find(name); position != notFound)
+                values[position] = in<Boxed>(defined.values[i]);
+            else {
+                names.append(name);
+                values.append(in<Boxed>(defined.values[i]));
+            }
+        }
         made.add(newObjectLiteral(names.span(), values.span()));
     }, [&] {
-        if (defined.more)
+        if (defined.values.size() == 1 && get(defined.values[0]).rep == Rep::Double)
+            made.add(AOT_TYPED_OPERATION(CloneObjectAndExtendWithNumber, in<Boxed>(source), integer(static_cast<int64_t>(defined.more)), in<Number>(defined.values[0])));
+        else if (defined.more)
             made.add(AOT_TYPED_OPERATION(CloneObjectAndExtend, in<Boxed>(source), integer(static_cast<int64_t>(defined.more)), defined.values.size() > 0 ? in<Boxed>(defined.values[0]) : undefined(), defined.values.size() > 1 ? in<Boxed>(defined.values[1]) : undefined()));
         else
             made.add(AOT_TYPED_OPERATION(CloneObject, in<Boxed>(source), word32(false)));

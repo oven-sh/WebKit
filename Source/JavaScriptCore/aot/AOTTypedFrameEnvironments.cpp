@@ -516,24 +516,15 @@ private:
     unsigned m_allocationBlock { UINT_MAX };
 };
 
-bool readsExtraArguments(const Program& program, const Function& function)
+bool readsExtraArguments(const Program& program, size_t index)
 {
-    return std::ranges::any_of(function.values, [&](const Value& value) {
-        switch (value.opcode) {
-        case Opcode::GetArgument:
-        case Opcode::CreateRest:
-        case Opcode::GetRestLength:
-        case Opcode::GetMyArgumentByVal:
-        case Opcode::CallForwardVarargs:
-        case Opcode::ConstructSuperForwardVarargs:
-            return true;
-        case Opcode::Operation:
-        case Opcode::CallBuiltin:
-            return languageOperationOf(program, value) == LanguageOperation::CreateArguments;
-        default:
-            return false;
-        }
+    static constexpr OpcodeSet mayReadExtraArguments { Opcode::GetArgument, Opcode::CreateRest, Opcode::GetRestLength, Opcode::GetMyArgumentByVal, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs, Opcode::Operation, Opcode::CallBuiltin };
+    bool result = false;
+    program.functions.forEachValue(index, mayReadExtraArguments, [&](ValueID id) {
+        auto& value = program.functions[index].at(id);
+        result |= (value.opcode != Opcode::Operation && value.opcode != Opcode::CallBuiltin) || languageOperationOf(program, value) == LanguageOperation::CreateArguments;
     });
+    return result;
 }
 
 uint64_t operandsWithOtherUses(const Program& program, const Function& function, std::span<const ValueID> operands)
@@ -636,16 +627,16 @@ void findCalledOnlyOperands(Program& program)
         }
         if (!calledOnlyCount)
             return;
-        if (readsExtraArguments(program, function)) {
+        if (readsExtraArguments(program, i)) {
             function.calledOnlyCaptures.clearAll();
             function.calledOnlyParameters.clearAll();
             return;
         }
         calledOnlyCounts[i] = calledOnlyCount;
-        for (auto& value : function.values) {
-            if (value.opcode == Opcode::CallDirect)
-                callees[i].append(value.function().index());
-        }
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        std::as_const(program).functions.forEachValue(i, directCalls, [&](ValueID id) {
+            callees[i].append(function.at(id).function().index());
+        });
         std::ranges::sort(callees[i]);
         callees[i].shrink(std::ranges::unique(callees[i]).begin() - callees[i].begin());
     });
@@ -803,7 +794,7 @@ void findStackAllocatedClosures(Program& program)
             program.functions.atKeepingValueIndex(i).mayPointIntoFrame.clearAll();
             return;
         }
-        auto& function = program.functions[i];
+        auto& function = program.functions.atKeepingValueIndex(i);
         function.mayPointIntoFrame.clearAll();
         BitVector isCandidate(function.values.size());
         Vector<std::pair<ValueID, unsigned>> candidates;
@@ -885,6 +876,8 @@ void findStackAllocatedClosures(Program& program)
                     continue;
             }
             auto& value = function.at(id);
+            if (value.opcode != Opcode::NewClosure)
+                program.functions.invalidateValueIndex(i);
             value.opcode = Opcode::NewClosure;
             value.children[0] = ValueID();
             value.immediates[1] = closureIsStackAllocated;
@@ -1029,7 +1022,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (allocationsByFunction[i].isEmpty())
             return;
-        auto& function = program.functions[i];
+        auto& function = program.functions.atKeepingValueIndex(i);
         std::optional<BitVector> inCycles;
         for (auto& allocationSite : allocationsByFunction[i]) {
             unsigned index = function.at(allocationSite.environment).layout().index();
@@ -1246,7 +1239,7 @@ void reuseEnvironments(Program& program)
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!containsCandidates[i])
             return;
-        auto& function = program.functions[i];
+        auto& function = program.functions.atKeepingValueIndex(i);
         auto isRelease = [&](ValueID id) {
             auto& value = function.at(id);
             return value.opcode == Opcode::PutField && program.at(value.layout()).reuseVariable && value.field() + 1 == program.at(value.layout()).fields.size();
@@ -1368,8 +1361,10 @@ void reuseEnvironments(Program& program)
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             auto& values = function.blocks[b].values;
             for (size_t k = 0; k < values.size(); ++k) {
-                if (isRelease(values[k]) && isReused[function.at(values[k]).layout().index()] && isUsedAfterIndex(b, k, function.at(values[k]).child(0)))
+                if (isRelease(values[k]) && isReused[function.at(values[k]).layout().index()] && isUsedAfterIndex(b, k, function.at(values[k]).child(0))) {
+                    program.functions.invalidateValueIndex(i);
                     values.removeAt(k--);
+                }
             }
         }
     });
@@ -1421,7 +1416,7 @@ void reuseEnvironments(Program& program)
     }
 
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = containsCandidates[i] ? program.functions[i] : program.functions.atKeepingValueIndex(i);
+        auto& function = program.functions.atKeepingValueIndex(i);
         for (auto& allocation : function.allocations) {
             auto& layout = program.at(allocation.layout);
             if (!layout.reuseVariable || isReused[allocation.layout.index()])
@@ -1434,17 +1429,20 @@ void reuseEnvironments(Program& program)
         if (!containsCandidates[i])
             return;
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
-            function.blocks[b].values.removeAllMatching([&](ValueID id) {
+            bool didRemove = function.blocks[b].values.removeAllMatching([&](ValueID id) {
                 auto& value = function.at(id);
                 if (value.opcode != Opcode::PutField)
                     return false;
                 auto& layout = program.at(value.layout());
                 return layout.reuseVariable && !isReused[value.layout().index()] && value.field() + 2 >= layout.fields.size();
             });
+            if (didRemove)
+                program.functions.invalidateValueIndex(i);
         }
         for (auto& escape : escapesByFunction[i]) {
             if (!isReused[escape.layout.index()])
                 continue;
+            program.functions.invalidateValueIndex(i);
             Value constant;
             constant.opcode = Opcode::Boolean;
             constant.immediates[0] = 1;

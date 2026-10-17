@@ -10,6 +10,8 @@
 
 #include "Options.h"
 #include <atomic>
+#include <wtf/CPUTime.h>
+#include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/ParallelHelperPool.h>
@@ -20,8 +22,53 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool shouldPrintTimings()
 {
-    static const bool result = Options::verboseAOTCompilation();
+    static const bool result = Options::logAOTPhaseTimes() || Options::verboseAOTCompilation();
     return result;
+}
+
+static thread_local unsigned t_parallelLoopDepth;
+static thread_local Seconds t_cpuTimeInParallelLoops;
+
+ParallelLoopScope::ParallelLoopScope()
+{
+    if (!shouldPrintTimings()) [[likely]]
+        return;
+    m_isOutermost = !t_parallelLoopDepth++;
+    m_start = CPUTime::forCurrentThread();
+}
+
+ParallelLoopScope::~ParallelLoopScope()
+{
+    if (!shouldPrintTimings()) [[likely]]
+        return;
+    --t_parallelLoopDepth;
+    if (m_isOutermost)
+        t_cpuTimeInParallelLoops += CPUTime::forCurrentThread() - m_start;
+}
+
+static Seconds cpuTimeOutsideParallelLoops()
+{
+    return CPUTime::forCurrentThread() - t_cpuTimeInParallelLoops;
+}
+
+PhaseTimes::PhaseTimes(ASCIILiteral stage)
+    : m_stage(stage)
+{
+    if (!shouldPrintTimings()) [[likely]]
+        return;
+    m_wallTime = MonotonicTime::now();
+    m_cpuTimeOutsideParallelLoops = cpuTimeOutsideParallelLoops();
+}
+
+void PhaseTimes::didFinish(ASCIILiteral phase)
+{
+    if (!shouldPrintTimings()) [[likely]]
+        return;
+    MonotonicTime wallTime = MonotonicTime::now();
+    Seconds cpuTime = cpuTimeOutsideParallelLoops();
+    dataLogLn("AOT phase times: ", m_stage, " | ", phase, " | wall ", (wallTime - m_wallTime).milliseconds(), " ms | outside parallel loops ", (cpuTime - m_cpuTimeOutsideParallelLoops).milliseconds(), " ms");
+    m_wallTime = MonotonicTime::now();
+    m_cpuTimeOutsideParallelLoops = cpuTimeOutsideParallelLoops();
 }
 
 static ParallelHelperPool& helpers()
@@ -112,6 +159,7 @@ void forEachIndexInParallel(unsigned count, NOESCAPE const ScopedLambda<void(uns
     };
     if (count < 2)
         return work();
+    ParallelLoopScope scope;
     ParallelHelperClient client(&helpers());
     client.runFunctionInParallel(work);
 }

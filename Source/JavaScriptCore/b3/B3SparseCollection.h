@@ -149,6 +149,7 @@ public:
     unsigned size() const { return m_vector.size(); }
 #if USE(BUN_JSC_ADDITIONS)
     unsigned numberOfEntries() const { return m_vector.size() - m_indexFreeList.size(); }
+    std::span<const size_t> indexFreeList() const LIFETIME_BOUND { return m_indexFreeList.span(); }
 #endif
     bool isEmpty() const { return m_vector.isEmpty(); }
     

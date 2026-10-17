@@ -14,5 +14,6 @@ runtime JSONAppendElementsFrom : RuntimeState void* (uint64_t cursor, JSCell* ar
 runtime JSONKeyOrdersOf : RuntimeState void* (JSCell* object) noexcept
 runtime JSONFinish : RuntimeState JSCell* (uint64_t cursor) noexcept
 runtime JSONPrepare : RuntimeState void (uint64_t cursor, EncodedJSValue value) noexcept
+runtime JSONDiscard : RuntimeState void () noexcept
 
 intrinsic AppendJSON (any/-, any/-, any/-) -> number ; Allocates ReadsRuntimeState WritesRuntimeState ; Inline(AppendJSON, None)

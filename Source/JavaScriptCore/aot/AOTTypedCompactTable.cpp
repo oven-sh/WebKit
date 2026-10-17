@@ -667,7 +667,7 @@ JSCell* CompactTable::copyPosition(VM& vm, JSCell* position)
 static constexpr int32_t iterationKindMask = 3;
 static constexpr int32_t iteratesSet = 4;
 static constexpr int32_t iteratesThroughIterator = 8;
-static constexpr int32_t iteratesGenerator = 16;
+static constexpr int32_t iteratesGenerator = CollectionIteration::iteratesGenerator;
 static constexpr int32_t iteratesArray = 32;
 static constexpr int32_t iteratesString = 64;
 static constexpr int32_t iteratesMatches = 128;

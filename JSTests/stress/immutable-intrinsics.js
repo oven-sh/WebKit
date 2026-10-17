@@ -14,9 +14,13 @@ const global = globalThis;
 
 // ---- What they have stays as it is.
 const push = Array.prototype.push, floor = Math.floor, keys = Object.keys, then = Promise.prototype.then, toString = Object.prototype.toString;
+// What only the lock refuses throws in sloppy code too. What the language itself makes read-only is ignored there, as ever.
 (function sloppy() {
-    Array.prototype.push = 1; Math.floor = 1; Object.keys = 1; Promise.prototype.then = 1; Object.prototype.toString = 1; Math.PI = 3;
-    delete Array.prototype.push; delete Math.floor; delete Object.keys;
+    throwsTypeError(() => { Array.prototype.push = 1; }, "sloppy: assigning to Array.prototype.push"); throwsTypeError(() => { Math.floor = 1; }, "sloppy: assigning to Math.floor");
+    throwsTypeError(() => { Object.keys = 1; }, "sloppy: assigning to Object.keys"); throwsTypeError(() => { Promise.prototype.then = 1; }, "sloppy: assigning to Promise.prototype.then");
+    throwsTypeError(() => { Object.prototype.toString = 1; }, "sloppy: assigning to Object.prototype.toString");
+    throwsTypeError(() => delete Array.prototype.push, "sloppy: deleting Array.prototype.push"); throwsTypeError(() => delete Math.floor, "sloppy: deleting Math.floor"); throwsTypeError(() => delete Object.keys, "sloppy: deleting Object.keys");
+    Math.PI = 3; check(Math.PI > 3.14, true, "Math.PI"); check(delete Math.PI, false, "sloppy: deleting Math.PI");
 })();
 check(Array.prototype.push, push, "Array.prototype.push"); check(Math.floor, floor, "Math.floor"); check(Object.keys, keys, "Object.keys");
 check(Promise.prototype.then, then, "Promise.prototype.then"); check(Object.prototype.toString, toString, "Object.prototype.toString");
@@ -40,7 +44,11 @@ for (let iterator of [[][Symbol.iterator](), new Map().entries(), new Set().valu
     check(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(iterator), "next").writable, false, "next of an iterator prototype");
 
 // ---- The variables they are found in.
-(function sloppy() { Math = 1; Object = 1; Array = 1; Promise = 1; global.JSON = 1; delete global.Map; })();
+(function sloppy() {
+    throwsTypeError(() => { Math = 1; }, "sloppy: assigning to Math"); throwsTypeError(() => { Object = 1; }, "sloppy: assigning to Object"); throwsTypeError(() => { Array = 1; }, "sloppy: assigning to Array");
+    throwsTypeError(() => { Promise = 1; }, "sloppy: assigning to Promise"); throwsTypeError(() => { global.JSON = 1; }, "sloppy: assigning to globalThis.JSON"); throwsTypeError(() => delete global.Map, "sloppy: deleting globalThis.Map");
+    undefined = 1; NaN = 1; check(undefined, void 0, "undefined"); check(NaN, 0 / 0, "NaN");
+})();
 check(typeof Math, "object", "Math"); check(typeof Object, "function", "Object"); check(typeof Array, "function", "Array"); check(typeof JSON, "object", "JSON"); check(typeof Map, "function", "Map");
 throwsTypeError(() => { "use strict"; Math = 1; }, "assigning to Math");
 throwsTypeError(() => { Object.defineProperty(global, "Array", { value: 1 }); }, "redefining Array");
@@ -98,7 +106,7 @@ for (let o of [Math, JSON, Reflect, Atomics, Intl, Object, Function, Array, Stri
 throwsTypeError(() => { "use strict"; Uint8Array.from = 1; }, "shadowing what a constructor inherits from another");
 
 // ---- A prototype cannot.
-for (let o of [Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Promise, RegExp, Date, Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Iterator, Error, TypeError, RangeError, AggregateError,
+for (let o of [Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Promise, RegExp, Date, Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Iterator,
     ArrayBuffer, DataView, typedArray, Uint8Array, Float64Array, BigInt64Array, Intl.NumberFormat, Intl.Collator, generatorFunction, asyncGeneratorFunction].map((o) => o.prototype).concat([generatorFunction, asyncGeneratorFunction,
     Object.getPrototypeOf(async function () { }), Object.getPrototypeOf(asyncGeneratorFunction.prototype), Object.getPrototypeOf([][Symbol.iterator]()), Object.getPrototypeOf(new Map().entries()), Object.getPrototypeOf(new Set().values()),
     Object.getPrototypeOf(""[Symbol.iterator]()), Object.getPrototypeOf("".matchAll(/a/g)), Object.getPrototypeOf([].values().map((v) => v))])) {
@@ -106,6 +114,11 @@ for (let o of [Object, Function, Array, String, Number, Boolean, Symbol, BigInt,
     throwsTypeError(() => { "use strict"; o.somethingNew = 1; }, "adding to a prototype"); throwsTypeError(() => { "use strict"; o[1] = 1; }, "adding an element to a prototype");
     throwsTypeError(() => Object.defineProperty(o, "somethingNew", { value: 1 }), "defining on a prototype"); throwsTypeError(() => Object.setPrototypeOf(o, {}), "giving a prototype another prototype");
     check(Object.freeze(o), o, "freezing it changes nothing");
+}
+// Error.prototype and the prototypes that inherit from it are not locked: frameworks add to them.
+for (let o of [Error, TypeError, RangeError, EvalError, ReferenceError, SyntaxError, URIError, AggregateError].map((o) => o.prototype)) {
+    check(Object.isExtensible(o), true, "an error prototype is extensible"); check(Object.isFrozen(o), false, "and not frozen");
+    o.somethingNew = 1; check(o.somethingNew, 1, "adding to an error prototype"); check(delete o.somethingNew, true, "and deleting it again");
 }
 check("return" in [][Symbol.iterator](), false, "an iterator of the engine has no return"); check("return" in ""[Symbol.iterator](), false, "nor has that of a string");
 
@@ -153,7 +166,10 @@ for (let k of ["Object", "Array", "Math", "Atomics", "Intl", "Iterator", "BigInt
 }
 check(Array.prototype.push, push, "and what was there is still there");
 check(Object.isExtensible(Object.prototype), false, "Object.prototype is not extensible");
-(function sloppy() { Object.prototype.extra = 1; Object.prototype[3] = 1; Object.prototype[Symbol.iterator] = 1; })();
+(function sloppy() {
+    throwsTypeError(() => { Object.prototype.extra = 1; }, "sloppy: adding to Object.prototype"); throwsTypeError(() => { Object.prototype[3] = 1; }, "sloppy: adding an element to Object.prototype");
+    throwsTypeError(() => { Object.prototype[Symbol.iterator] = 1; }, "sloppy: adding a symbol to Object.prototype");
+})();
 check({}.extra, undefined, "nothing was added to Object.prototype"); check({}[3], undefined, "nor an element"); check([, 1][0], undefined, "and holes are holes"); check({}[Symbol.iterator], undefined, "nor a symbol");
 throwsTypeError(() => { "use strict"; Object.prototype.extra = 1; }, "adding to Object.prototype");
 throwsTypeError(() => { "use strict"; Object.prototype[3] = 1; }, "adding an element to Object.prototype");
@@ -182,7 +198,9 @@ drainMicrotasks();
 check(awaited, 4950 + 200, "await");
 if (typeof createGlobalObject === "function") {
     let other = createGlobalObject();
-    check(other.eval("Array.prototype.push = 1; typeof Array.prototype.push"), "function", "another realm's");
+    // Without an image only the first realm of a VM is locked; with --useAOT=1 every realm is.
+    let answer; try { answer = other.eval("Array.prototype.push = 1; typeof Array.prototype.push"); } catch (e) { answer = e.name; }
+    check(answer === "number" || answer === "TypeError", true, "another realm's: " + answer); check(Array.prototype.push, push, "and this realm's is untouched");
     check(other.eval("var o = {}; o.toString = 5; o.toString"), 5, "another realm's heirs");
 }
 

@@ -197,6 +197,7 @@ JS_EXPORT_PRIVATE void didCreateHostClassStructure(JSGlobalObject*, unsigned num
 
 void destroyJSONBuffers(Instance&);
 void destroyJSONSource(Instance&);
+void destroyFormatPatternState(Instance&);
 void releaseLargeJSONSource(Instance&);
 String takePreparedJSON(Instance&, JSValue);
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);

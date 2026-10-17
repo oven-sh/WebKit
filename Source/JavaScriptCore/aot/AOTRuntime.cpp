@@ -765,6 +765,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         RELEASE_ASSERT(instance->savedFrameReturnAddress && instance->resumeFunctionReturnAddress());
     }
     instance->runtimeTable[static_cast<unsigned>(Entry::AsyncGeneratorClassInfo)] = const_cast<ClassInfo*>(Typed::AsyncGenerator::info());
+    instance->runtimeTable[static_cast<unsigned>(Entry::GeneratorClassInfo)] = const_cast<ClassInfo*>(Typed::Generator::info());
+    instance->runtimeTable[static_cast<unsigned>(Entry::DrivenIteratorMarker)] = vm.fastAsyncGeneratorSentinel();
     instance->runtimeTable[static_cast<unsigned>(Entry::ErrorConstructorClassInfo)] = const_cast<ClassInfo*>(ErrorConstructor::info());
 #if ENABLE(WEBASSEMBLY)
     instance->runtimeTable[static_cast<unsigned>(Entry::WebAssemblyFunctionClassInfo)] = const_cast<ClassInfo*>(WebAssemblyFunction::info());
@@ -870,13 +872,13 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     loader->setAOTInstance(instance);
     if (instance->typed)
         instance->typed->adoptRealmClosures(vm);
-    vm.traps().registerMirror(instance->stackMirror);
+    vm.traps().registerMirror(instance->stackMirror.get());
 #if CPU(X86_64) && OS(LINUX)
     if (instance->typed) {
         Locker locker { s_loopPollPagesLock };
         void* page = reinterpret_cast<char*>(instance) + offsetOfLoopPollPage();
         loopPollPages().append({ &vm, page });
-        if (instance->stackMirror.trapAwareSoftStackLimit() == reinterpret_cast<void*>(StackManager::StopRequestMarkerValue))
+        if (instance->stackMirror.get().trapAwareSoftStackLimit() == reinterpret_cast<void*>(StackManager::StopRequestMarkerValue))
             setLoopPollPageProtected(page, true);
     }
 #endif
@@ -1162,7 +1164,7 @@ void Instance::destroy(Instance* instance)
         });
     }
 #endif
-    instance->vm->traps().unregisterMirror(instance->stackMirror);
+    instance->vm->traps().unregisterMirror(instance->stackMirror.get());
     instance->vm->m_aotInstances.removeFirst(instance);
     instance->vm->m_aotInstancesToDestroy.removeFirst(instance);
     if (PropertyLookupTable* table = instance->vm->m_aotPropertyLookupTable)
@@ -1178,6 +1180,7 @@ void Instance::destroy(Instance* instance)
     fastFree(instance->propertyRuns);
     destroyJSONBuffers(*instance);
     destroyJSONSource(*instance);
+    destroyFormatPatternState(*instance);
     OSAllocator::decommitAndRelease(instance->namedFieldReads, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->namedFieldWrites, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->immutableElementCache, immutableElementCacheSize * sizeof(ImmutableElement));
@@ -1586,8 +1589,11 @@ static ALWAYS_INLINE HandlerInCompiledCode findHandlerInCompiledCallers(VM& vm, 
             if (returnPC == instance.savedFrameReturnAddress && unwoundFrame)
                 return { unwoundFrame, rejectInFrame, false };
             ImageAddressInfo what = classifyAddress(returnPC);
-            if (what.kind == ImageAddressInfo::Stub && what.index != ImageAddressInfo::frameMayBeHostFunction && callFrame->callerFrameOrEntryFrame() != vm.topEntryFrame)
+            if (what.kind == ImageAddressInfo::Stub && what.index != ImageAddressInfo::frameMayBeHostFunction && callFrame->callerFrameOrEntryFrame() != vm.topEntryFrame) {
+                if (auto* generator = unwoundFrame ? Typed::Generator::forBodyFrame(std::bit_cast<const uint64_t*>(unwoundFrame)) : nullptr)
+                    generator->didThrow();
                 continue;
+            }
             if (what.kind != ImageAddressInfo::Function)
                 return { };
             found = &resolve(FunctionRef { &instance, what.index }, returnPC, what.offset);
@@ -1604,6 +1610,14 @@ static ALWAYS_INLINE HandlerInCompiledCode findHandlerInCompiledCallers(VM& vm, 
             calleeSaveRegistersBuffer[bufferSlotsByRegIndex[WTF::ctz(mask)]] = *slot;
         if (place->state == Place::RejectsPromise)
             return { callFrame, rejectInFrame, false };
+    }
+}
+
+static void completeGeneratorsLeftByThrow(VM& vm, CallFrame* throwingFrame, CallFrame* catchingFrame)
+{
+    for (CallFrame* frame = throwingFrame; frame != catchingFrame && frame->callerFrameOrEntryFrame() != vm.topEntryFrame; frame = frame->callerFrame()) {
+        if (auto* generator = Typed::Generator::forBodyFrame(std::bit_cast<const uint64_t*>(frame)))
+            generator->didThrow();
     }
 }
 
@@ -1712,6 +1726,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
     if (handler.code)
         return makeUGPRPair(std::bit_cast<UCPURegister>(handler.code), std::bit_cast<UCPURegister>(handler.frame));
     genericUnwind(vm, callFrame);
+    completeGeneratorsLeftByThrow(vm, callFrame, vm.callFrameForCatch);
     return makeUGPRPair(0, 0);
 }
 
@@ -1793,7 +1808,7 @@ String describeCodeAddresses(std::span<const void* const> addresses)
             bool isModule = typedFunctionCodeType(frame.typedFunction) == ModuleCode;
             String name = isModule ? String() : typedFunctionName(frame.typedFunction);
             auto position = function.reportedPositionFor(frame.callSite());
-            String place = position && position->source ? makeString(program->sourceName(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+            String place = position && position->source ? makeString(program->sourceNameInFrames(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
             if (isModule)
                 result.append("    at "_s, place, '\n');
             else if (place.isEmpty())
@@ -2655,16 +2670,17 @@ Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringI
         structureDescriptorPlusOne = 0;
     if (Instance& realmStructure = ensure(globalObject); &realmStructure != this)
         return realmStructure.literalStructure(empty, names);
-    ASSERT(empty->storedPrototype() == globalObject->objectPrototype());
+    bool hasNullPrototype = empty->storedPrototype().isNull();
+    ASSERT(hasNullPrototype || empty->storedPrototype() == globalObject->objectPrototype());
     unsigned inlineCapacity = empty->inlineCapacity();
-    uint64_t key = inlineCapacity;
+    uint64_t key = inlineCapacity << 1 | hasNullPrototype;
     for (UniquedStringImpl* name : names) {
         key = (key + std::bit_cast<uintptr_t>(name)) * 0x9e3779b97f4a7c15ull;
         key ^= key >> 32;
     }
     key = key >> 1 | 1;
     auto hasExpectedNames = [&](Structure* structure) {
-        if (structure->inlineCapacity() != inlineCapacity || structure->inlineSize() + structure->outOfLineSize() != names.size())
+        if (structure->inlineCapacity() != inlineCapacity || structure->inlineSize() + structure->outOfLineSize() != names.size() || structure->storedPrototype() != empty->storedPrototype())
             return false;
         if (structureDescriptorPlusOne && structure->structureDescriptorPlusOne() == structureDescriptorPlusOne)
             return true;
@@ -3176,19 +3192,19 @@ void Instance::clearNewTarget()
 void Instance::didUseKeyedEntry(const void* entry)
 {
     if (unsigned count = vm->entryCountFromOutside(); count != entryCountAtLastKeyedUse) {
-        keyedGroupsUsedEarlier.merge(keyedGroupsUsedInThisEntry);
-        keyedGroupsUsedInThisEntry.clearAll();
+        keyedGroupsUsedEarlier.get().merge(keyedGroupsUsedInThisEntry.get());
+        keyedGroupsUsedInThisEntry.get().clearAll();
         entryCountAtLastKeyedUse = count;
     }
-    keyedGroupsUsedInThisEntry.set((static_cast<const uint8_t*>(entry) - std::bit_cast<const uint8_t*>(keyedReads)) / keyedEntryGroupBytes);
+    keyedGroupsUsedInThisEntry.get().set((static_cast<const uint8_t*>(entry) - std::bit_cast<const uint8_t*>(keyedReads)) / keyedEntryGroupBytes);
 }
 
 void Instance::sweepKeyedTables(bool newOnly)
 {
-    auto& groupsToSweep = keyedGroupsUsedEarlier;
-    groupsToSweep.merge(keyedGroupsUsedInThisEntry);
+    auto& groupsToSweep = keyedGroupsUsedEarlier.get();
+    groupsToSweep.merge(keyedGroupsUsedInThisEntry.get());
     if (!vm->isEntered() || vm->entryCountFromOutside() != entryCountAtLastKeyedUse)
-        keyedGroupsUsedInThisEntry.clearAll();
+        keyedGroupsUsedInThisEntry.get().clearAll();
     keyedScratchEntry.fill(0);
     Heap& heap = vm->heap;
     MegamorphicCache* cache = vm->megamorphicCache();
@@ -3356,7 +3372,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (std::exchange(objectCreateCacheIsDirty, false))
         zeroSpan(std::span { objectCreateCache });
     if (std::exchange(hasThisAllocations, false))
-        zeroSpan(std::span { thisAllocations });
+        zeroSpan(std::span { thisAllocations.get() });
     if (std::exchange(hasCaseConversions, false))
         zeroBytes(caseConversions);
     if (std::exchange(spreadCopyCacheIsDirty, false))

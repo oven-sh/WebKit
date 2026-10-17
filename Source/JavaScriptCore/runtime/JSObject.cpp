@@ -3318,7 +3318,33 @@ void JSObject::seal(VM& vm)
     }
 }
 
-void JSObject::lockProperties(VM& vm, LockedObjectExtensibility kind)
+static void invalidateCachesForLockedProperties(VM& vm, JSObject* object)
+{
+    if (!vm.mayHaveCachesDependingOnPrototype(object))
+        return;
+    Structure* structure = object->structure();
+    if (structure->isUncacheableDictionary()) {
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, object);
+        return;
+    }
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, object, entry.key());
+        return true;
+    });
+    if (!object->hasNonReifiedStaticProperties())
+        return;
+    for (const ClassInfo* info = object->classInfo(); info; info = info->parentClass) {
+        const HashTable* hashTable = info->staticPropHashTable;
+        if (!hashTable)
+            continue;
+        for (auto& value : *hashTable) {
+            if (RefPtr<AtomStringImpl> uid = AtomStringImpl::lookUp(value.m_key.span8()))
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, object, uid.get());
+        }
+    }
+}
+
+void JSObject::lockProperties(VM& vm, LockedObjectExtensibility kind, LockedObjectHistory history)
 {
     if (structure()->inheritorsMayOverrideReadOnlyProperties() || structure()->typeInfo().wouldHaveFixedProperties())
         return;
@@ -3330,8 +3356,8 @@ void JSObject::lockProperties(VM& vm, LockedObjectExtensibility kind)
         setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, kind == LockedObjectExtensibility::StaysExtensible ? TransitionKind::RecordLockedProperties : TransitionKind::RecordLockedAndImmutableProperties, &deferred));
     else
         setStructure(vm, kind == LockedObjectExtensibility::StaysExtensible ? Structure::lockPropertiesTransition(vm, oldStructure, &deferred) : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::LockAndMakePropertiesImmutable, &deferred));
-    if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this);
+    if (mayBePrototype() && history == LockedObjectHistory::MayBeCached) [[unlikely]]
+        invalidateCachesForLockedProperties(vm, this);
 }
 
 void JSObject::becomeDerivedArray(VM& vm)
@@ -3373,7 +3399,7 @@ void JSObject::freeze(VM& vm)
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::freezeTransition(vm, oldStructure, &deferred));
         if (mayBePrototype()) [[unlikely]]
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this);
+            invalidateCachesForLockedProperties(vm, this);
     }
 }
 
@@ -3566,7 +3592,7 @@ bool JSObject::makePropertiesImmutable(VM& vm, TransitionKind transitionKind)
         nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
     setStructure(vm, newStructure);
     if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this);
+        invalidateCachesForLockedProperties(vm, this);
     return true;
 }
 
@@ -5112,8 +5138,10 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
         // We fall through to the generic case and consume the rest of put operations if batching stopped in the middle.
         i = offsets.size();
 
-        if (mayBePrototype())
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this);
+        if (mayBePrototype()) {
+            for (unsigned index = 0; index < i; ++index)
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, properties[index]);
+        }
     }
 
     for (; i < size; ++i) {

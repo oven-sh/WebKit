@@ -357,6 +357,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(AsyncIteratorNext) \
     v(AwaitInAsyncGenerator) \
     v(AsyncGeneratorYield) \
+    v(StepGenerator) \
+    v(StepGeneratorUnmodifiedUnlessNext) \
+    v(StepGeneratorIfUnmodified) \
+    v(StepIfGenerator) \
+    v(StepIfUnmodifiedGenerator) \
+    v(IterHasInFrame) \
     v(ArrayLiteral0) \
     v(LeafArrayLiteral0) \
     v(ArrayLiteral1) \
@@ -440,6 +446,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(CreateArguments) \
     v(LeafCreateArguments) \
     v(WriteBarrier) \
+    v(IterHas) \
     v(ToBoolean) \
     v(ValueIsTruthy) \
     v(SubstringCharacters) \
@@ -816,7 +823,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(FrontEndTypedConstruct) \
     v(FrontEndTypedCloneObject) \
     v(FrontEndTypedCloneObjectAndExtend) \
+    v(FrontEndTypedCloneObjectAndExtendWithNumber) \
     v(FrontEndTypedCloneObjectWithSubtypeCheck) \
+    v(FrontEndTypedCloneObjectAs) \
     v(FrontEndTypedConstructSuper) \
     FOR_EACH_AOT_HELPER(v) \
     v(NewArrayWithFastPath) \

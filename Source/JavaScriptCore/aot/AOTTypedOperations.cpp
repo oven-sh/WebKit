@@ -715,6 +715,11 @@ static void createDataProperty(JSGlobalObject* globalObject, JSObject* object, P
 {
     Structure* structure = object->structure();
     unsigned attributes = 0;
+    if (const Typed::LayoutData* layout = structure->compiledLayout(); layout && Typed::isObjectLayout(layout->kind)) {
+        PropertyOffset offset;
+        if (uncheckedDowncast<Typed::Object>(object)->tryStoreExtraProperty(globalObject->vm(), name, value, offset, false, true) != Typed::Object::ExtraPropertyStore::NotHandled)
+            return;
+    }
     if (object->type() == FinalObjectType && !structure->compiledLayout() && structure->isStructureExtensible() && !parseIndex(name) && (structure->get(globalObject->vm(), name, attributes) == invalidOffset || !attributes))
         object->putDirect(globalObject->vm(), name, value);
     else
@@ -730,6 +735,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineByKey, void, (Instance* instance
     auto name = key.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     Structure* before = object->structure();
+    if (const Typed::LayoutData* layout = before->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && isAlreadyPropertyName) {
+        auto* typedObject = uncheckedDowncast<Typed::Object>(object);
+        bool hadNoExtraProperties = !typedObject->extraProperties();
+        auto* place = hadNoExtraProperties || before->extraPropertiesStructureID() ? instance->freeKeyedAdditionEntry(before->id(), key.asCell()) : nullptr;
+        bool wasSeenBefore = place && place->slot.structureID == before->id() && place->slot.pointer == key.asCell() && place->epoch >= Instance::keyedExtraPropertyAdditionSeenOnce;
+        PropertyOffset offset;
+        auto how = typedObject->tryStoreExtraProperty(vm, name, JSValue::decode(value), offset, false, false, nullptr, wasSeenBefore);
+        if (how == Typed::Object::ExtraPropertyStore::Added && wasSeenBefore)
+            cacheKeyedExtraPropertyAddition(instance, before, typedObject->structure(), key.asCell(), offset, hadNoExtraProperties);
+        else if (how == Typed::Object::ExtraPropertyStore::Added && place)
+            recordKeyedExtraPropertyAddition(*place, before, key.asCell());
+        if (how == Typed::Object::ExtraPropertyStore::Added)
+            OPERATION_RETURN(scope);
+    }
     createDataProperty(globalObject, object, name, JSValue::decode(value));
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (isAlreadyPropertyName)
@@ -1236,8 +1255,9 @@ static EncodedJSValue createModuleNamespace(Instance* instance, std::span<const 
     auto nameAt = [&](unsigned index) {
         return nameIndicesOf.empty() ? asString(argument(index + 1)) : instance->typed->string(vm, nameIndicesOf[index]);
     };
-    auto* names = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numberOfNames);
-    for (unsigned i = 0; i < numberOfNames; ++i) {
+    bool hasLazyNames = !nameIndicesOf.empty();
+    auto* names = hasLazyNames ? nullptr : JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numberOfNames);
+    for (unsigned i = 0; !hasLazyNames && i < numberOfNames; ++i) {
         nameAt(i)->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
         RELEASE_ASSERT(!i || codePointCompare(StringView(*nameAt(i - 1)->tryGetValueImpl()), StringView(*nameAt(i)->tryGetValueImpl())) < 0);
@@ -1250,8 +1270,8 @@ static EncodedJSValue createModuleNamespace(Instance* instance, std::span<const 
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
         Vector<Identifier> brought;
         for (auto& name : found) {
-            bool isOwn = name == vm.propertyNames->defaultKeyword;
-            for (unsigned i = 0; i < numberOfNames && !isOwn; ++i)
+            bool isOwn = name == vm.propertyNames->defaultKeyword || (hasLazyNames && Typed::ModuleNamespace::indexOfName(instance->typed->data, nameIndicesOf, name.impl()) != Typed::ModuleNamespace::noExport);
+            for (unsigned i = 0; !hasLazyNames && i < numberOfNames && !isOwn; ++i)
                 isOwn = nameAt(i)->tryGetValueImpl() == name.impl();
             if (!isOwn)
                 brought.append(name);
@@ -1267,7 +1287,10 @@ static EncodedJSValue createModuleNamespace(Instance* instance, std::span<const 
             starExportNames->setIndex(vm, i, text);
         }
     }
-    return JSValue::encode(Typed::ModuleNamespace::create(vm, instance->typed->structureForNewModuleNamespace(vm, hasHostPrototype), asObject(argument(0)), names, star, starExportNames, isDeferred));
+    Structure* structure = instance->typed->structureForNewModuleNamespace(vm, hasHostPrototype);
+    if (hasLazyNames)
+        return JSValue::encode(Typed::ModuleNamespace::createWithLazyNames(vm, structure, asObject(argument(0)), nameIndicesOf, star, starExportNames, isDeferred));
+    return JSValue::encode(Typed::ModuleNamespace::create(vm, structure, asObject(argument(0)), names, star, starExportNames, isDeferred));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedMakeModuleNamespace, EncodedJSValue, (Instance* instance, uint32_t numberOfNames, uint32_t rowOfNames, uint32_t count, const EncodedJSValue* readerAndTrailingValues))
@@ -1709,11 +1732,10 @@ static void cacheSpreadCopy(Instance* instance, VM& vm, JSObject* object, Struct
     instance->spreadCopyCacheIsDirty = true;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObject, JSCell*, (Instance* instance, EncodedJSValue source, uint32_t keepsLayout))
+static ALWAYS_INLINE JSObject* cloneObjectInline(Instance* instance, JSGlobalObject* globalObject, VM& vm, EncodedJSValue source, bool keepsLayout)
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     if (Typed::Object* record = keepsLayout ? instance->typed->compiledObject(JSValue::decode(source)) : nullptr; record && record->layout().kind == Typed::LayoutKind::Record)
-        OPERATION_RETURN(scope, record->clone(globalObject));
+        return record->clone(globalObject);
     if (JSValue value = JSValue::decode(source); value.isCell() && value.asCell()->type() == FinalObjectType && !asObject(value)->butterfly()) {
         Structure* structure = value.asCell()->structure();
         Instance::CloneAndExtendPlan plan;
@@ -1725,22 +1747,41 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObject, JSCell*, (Instance* insta
         }
         cacheSpreadCopy(instance, vm, asObject(value), structure, 0, plan);
     }
-    OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, JSValue::decode(source)));
+    return cloneObjectForSpread(globalObject, JSValue::decode(source));
+}
+
+[[maybe_unused]] static NEVER_INLINE JSObject* cloneObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, EncodedJSValue source, bool keepsLayout)
+{
+    return cloneObjectInline(instance, globalObject, vm, source, keepsLayout);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObject, JSCell*, (Instance* instance, EncodedJSValue source, uint32_t keepsLayout))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, cloneObjectInline(instance, globalObject, vm, source, keepsLayout));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectWithSubtypeCheck, JSCell*, (Instance* instance, EncodedJSValue source, uint32_t supertypeShape, uint32_t lastSubtypeShape, uint32_t subtypeShapeCount))
 {
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     Typed::State& state = *instance->typed;
     Typed::Object* record = state.compiledObject(JSValue::decode(source));
     bool isSubtype = record && lastSubtypeShape - record->shape() < subtypeShapeCount;
-    if (!record || isSubtype)
-        return operationAOTTypedCloneObject(instance, source, isSubtype);
-    {
-        AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (record && !isSubtype) {
         if (Typed::Object* copy = record->tryCopyAs(globalObject, state.layoutForShape(supertypeShape), Typed::CopyNamesKind::StoredNext, { }))
             OPERATION_RETURN(scope, copy);
     }
-    return operationAOTTypedCloneObject(instance, source, false);
+    OPERATION_RETURN(scope, cloneObjectInline(instance, globalObject, vm, source, isSubtype));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectAs, JSCell*, (Instance* instance, EncodedJSValue source, uint64_t target))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (JSValue value = JSValue::decode(source); value.isCell() && value.asCell()->type() == FinalObjectType && !asObject(value)->butterfly()) {
+        if (Typed::Object* copy = instance->typed->tryCloneAs(vm, asObject(value), target))
+            OPERATION_RETURN(scope, copy);
+    }
+    OPERATION_RETURN(scope, cloneObject(instance, globalObject, vm, source, false));
 }
 
 static PropertyOffset offsetOfPropertyInOrder(Structure* structure, size_t place)
@@ -1760,6 +1801,8 @@ static Instance::CloneAndExtendPlan planCloneAndExtend(Instance* instance, JSGlo
     for (unsigned i = 0; i < 2; ++i) {
         if (uint32_t number = (more >> (24 * i)) & 0xffffff) {
             defined[i] = nameAt(instance, number - 1).impl();
+            if (parseIndex(*defined[i]))
+                return { };
             needed += !isValidOffset(source->get(vm, defined[i])) && defined[i] != defined[0];
         }
     }
@@ -1943,6 +1986,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectAndExtend, JSCell*, (Instan
             OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
+    OPERATION_RETURN(scope, copy);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectAndExtendWithNumber, JSCell*, (Instance* instance, EncodedJSValue source, uint64_t more, double first))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSObject* copy = cloneObjectForSpread(globalObject, JSValue::decode(source));
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    createDataProperty(globalObject, copy, nameAt(instance, (more & 0xffffff) - 1), jsNumber(purifyNaN(first)));
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, copy);
 }
 
@@ -2269,16 +2322,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateArguments, JSCell*, (Instance* i
 
 static JSCell* newGenerator(Instance* instance, JSGlobalObject* globalObject, VM& vm, Typed::Closure* resumeClosure, JSValue closure, bool isAsync)
 {
-    Structure* structure = closure.isCell() ? instance->typed->generatorStructure(vm, uncheckedDowncast<Typed::Closure>(closure), isAsync) : instance->typed->generatorStructure(vm, resumeClosure->functionIndex(), isAsync);
+    auto& known = closure.isCell() ? instance->typed->generatorStructure(vm, uncheckedDowncast<Typed::Closure>(closure), isAsync) : instance->typed->generatorStructure(vm, resumeClosure->functionIndex(), isAsync);
     if (isAsync)
-        return Typed::AsyncGenerator::create(vm, globalObject, structure, resumeClosure);
-    return Typed::Generator::create(vm, structure, resumeClosure);
+        return Typed::AsyncGenerator::create(vm, globalObject, known.structure, resumeClosure);
+    if (!known.offsetOfState) [[unlikely]] {
+        known.offsetOfState = Typed::Generator::offsetOfStateIn(resumeClosure);
+        if (!instance->iteratorResultHeader) {
+            Structure* ofResults = globalObject->iteratorResultObjectStructure();
+            instance->iteratorResultHeader = static_cast<uint64_t>(ofResults->typeInfoBlob()) << 32 | ofResults->id().bits();
+        }
+    }
+    return Typed::Generator::create(vm, known.structure, resumeClosure, known.hasUnmodifiedIteration, known.offsetOfState);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewGenerator, JSCell*, (Instance* instance, JSCell* resumeClosure, EncodedJSValue closure, uint32_t isAsync))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewGenerator, JSCell*, (Instance* instance, JSCell* resumeClosure, EncodedJSValue closure, uint32_t isAsync, uint32_t generatorTemplate, uint32_t numberOfTemplates))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    OPERATION_RETURN(scope, newGenerator(instance, globalObject, vm, uncheckedDowncast<Typed::Closure>(resumeClosure), JSValue::decode(closure), isAsync));
+    JSCell* created = newGenerator(instance, globalObject, vm, uncheckedDowncast<Typed::Closure>(resumeClosure), JSValue::decode(closure), isAsync);
+    if (generatorTemplate < numberOfTemplates)
+        instance->typed->setGeneratorTemplate(generatorTemplate, numberOfTemplates, uncheckedDowncast<Typed::Generator>(created)->asTemplate());
+    OPERATION_RETURN(scope, created);
 }
 
 static JSObject* tryWrapUnmodifiedGenerator(JSGlobalObject* globalObject, VM& vm, JSValue iterable)
@@ -4335,14 +4398,34 @@ static JSObject* newObjectWithFields(Instance* instance, JSGlobalObject* globalO
     if (count > 1 || (count && structureDescriptorPlusOne)) {
         bool isOrdinaryLiteral = !constructor && empty->storedPrototype() == JSValue(globalObject->objectPrototype());
         Vector<UniquedStringImpl*, 16> names;
-        bool hasIndex = false;
         for (unsigned i = 0; i < count; ++i) {
             const Identifier& name = nameAt(instance, nameIndicesOf[i]);
-            hasIndex |= !!indexNamedBy(instance, nameIndicesOf[i], name);
-            names.append(name.impl());
+            if (!indexNamedBy(instance, nameIndicesOf[i], name))
+                names.append(name.impl());
         }
-        if (Structure* structure = hasIndex ? nullptr : isOrdinaryLiteral ? instance->literalStructure(empty, names.span(), structureDescriptorPlusOne) : structureAfterPropertyRun(instance, vm, empty, names.span())) {
+        bool hasIndex = names.size() != count;
+        if (hasIndex)
+            structureDescriptorPlusOne = 0;
+        if (Structure* structure = hasIndex && names.size() < 2 ? nullptr : isOrdinaryLiteral ? instance->literalStructure(empty, names.span(), structureDescriptorPlusOne) : structureAfterPropertyRun(instance, vm, empty, names.span())) {
             unsigned inlineCapacity = structure->inlineCapacity();
+            if (hasIndex) {
+                JSObject* object = names.size() > inlineCapacity
+                    ? JSFinalObject::createWithButterfly(vm, structure, Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0))
+                    : constructEmptyObject(vm, structure);
+                unsigned numberOfNamed = 0;
+                for (unsigned i = 0; i < count; ++i) {
+                    if (indexNamedBy(instance, nameIndicesOf[i], nameAt(instance, nameIndicesOf[i])))
+                        continue;
+                    object->putDirectOffset(vm, offsetForPropertyNumber(numberOfNamed++, inlineCapacity), JSValue::decode(values[i]));
+                }
+                for (unsigned i = 0; i < count; ++i) {
+                    if (auto index = indexNamedBy(instance, nameIndicesOf[i], nameAt(instance, nameIndicesOf[i]))) {
+                        object->putDirectIndex(globalObject, *index, JSValue::decode(values[i]));
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                    }
+                }
+                return object;
+            }
             if (count > inlineCapacity) {
                 JSObject* object = JSFinalObject::createWithButterfly(vm, structure, Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0));
                 for (unsigned i = 0; i < count; ++i)

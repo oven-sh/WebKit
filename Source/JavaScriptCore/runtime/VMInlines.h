@@ -162,6 +162,10 @@ JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAllSettledSlowFulfillFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAllSettledSlowRejectFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAnyRejectFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAnySlowRejectFunction)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyThenFinally)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyCatchFinally)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyValueThunk)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyThrower)
 #undef JSC_DEFINE_VM_LAZY_EXECUTABLE
 
 } // namespace JSC

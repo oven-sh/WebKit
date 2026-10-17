@@ -425,10 +425,10 @@ def operand_uses(entry):
     effects = entry['effects']
     returns_primitive = not any(alternative.strip().startswith(('new ', 'anything', 'this', 'arg')) for alternative in entry['result'].split('|'))
     is_harmless = returns_primitive and not any(effect in effects for effect in ('CallsUserCode', 'WritesReceiver', 'WritesArguments', 'WritesRuntimeState'))
-    takes_this = entry['kind'] in ('method', 'getter', 'setter') and entry['holder'] not in PRIMITIVE_HOLDERS
-    if entry['this'] is not None and not takes_this:
+    accepts_this = entry['kind'] in ('method', 'getter', 'setter') and entry['holder'] not in PRIMITIVE_HOLDERS
+    if entry['this'] is not None and not accepts_this:
         errors.append('%s: it takes no `this` that is an object' % entry['where'])
-    this = 0 if not takes_this else entry['this'] if entry['this'] is not None else (GETS if 'ReadsReceiver' in effects else 0) if is_harmless else EVERYTHING
+    this = 0 if not accepts_this else entry['this'] if entry['this'] is not None else (GETS if 'ReadsReceiver' in effects else 0) if is_harmless else EVERYTHING
     parameters = []
     for parameter, uses in zip(entry['parameters'], entry['uses']):
         pattern = parameter.rstrip('?').rstrip('.')

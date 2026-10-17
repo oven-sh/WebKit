@@ -1561,7 +1561,7 @@ public:
 
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
 #if ENABLE(AOT)
-        if (CallFrame* adapter = visitor->aotAdapterFrame()) [[unlikely]]
+        if (CallFrame* adapter = visitor->aotAdapterFrame(); adapter && std::bit_cast<uintptr_t>(adapter) < std::bit_cast<uintptr_t>(m_vm.topEntryFrame)) [[unlikely]]
             copyAdapterCalleeSaves(adapter);
 #endif
 

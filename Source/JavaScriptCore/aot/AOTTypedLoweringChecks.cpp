@@ -1944,6 +1944,8 @@ void useMemoryOperandsAtLoopPolls(Procedure& proc, LoweringContext& context)
 
 void narrowZeroExtendedComparisons(Procedure& proc)
 {
+    if (!proc.hasEverAdded(B3::ZExt32) && !proc.hasEverAdded(B3::ZShr))
+        return;
     auto isZeroExtended = [](B3::Value* value) {
         return value->opcode() == B3::ZExt32;
     };
@@ -2046,6 +2048,8 @@ void narrowZeroExtendedComparisons(Procedure& proc)
 
 void storeAdjacentConstantsTogether(Procedure& proc)
 {
+    if (!proc.hasEverAdded(B3::Store))
+        return;
     struct ConstantStore {
         unsigned index;
         MemoryValue* store;
@@ -2098,6 +2102,8 @@ void storeAdjacentConstantsTogether(Procedure& proc)
                     stores.append({ index, store });
                 continue;
             }
+            if (stores.isEmpty())
+                continue;
             Effects effects = value->effects();
             if (effects.mustExecute() || effects.reads || effects.readsLocalState || effects.readsPinned || effects.controlDependent)
                 endRun();
@@ -2140,6 +2146,8 @@ void storeAdjacentConstantsTogether(Procedure& proc)
 
 void narrowSignExtendedComparisons(Procedure& proc)
 {
+    if (!proc.hasEverAdded(B3::SExt32))
+        return;
     auto isSignExtended = [](B3::Value* value) {
         return value->opcode() == B3::SExt32;
     };
@@ -2210,6 +2218,8 @@ void narrowSignExtendedComparisons(Procedure& proc)
 void loadDoubleConstantsFromInstance(Procedure& proc)
 {
 #if CPU(X86_64)
+    if (!proc.hasEverAdded(B3::ConstDouble))
+        return;
     B3::Value* instance = nullptr;
     for (B3::Value* value : *proc[0]) {
         if (auto* argument = value->as<ArgumentRegValue>(); argument && argument->argumentReg() == Reg(instanceGPR))
@@ -2493,6 +2503,8 @@ void checkShadowBeforeAccesses(Procedure& proc)
 
 void useFaultsForNullishTests(Procedure& proc, LoweringContext& context)
 {
+    if (context.nullishTests.isEmpty())
+        return;
     InsertionSet insertionSet(proc);
     bool didChange = false;
     UncheckedKeyHashMap<B3::Value*, Vector<B3::Value*, 1>> extensionsOf;
@@ -3770,6 +3782,23 @@ std::optional<Number> Lowering::unboxArgumentWithStub(ValueID result, const Valu
     return Number(patchpoint);
 }
 
+void Lowering::convertPlainRowInPlace(ValueID row, TypeID type)
+{
+    if (get(row).rep != Rep::JSValue)
+        return;
+    Boxed boxed = in<Boxed>(row);
+    LBasicBlock cellCase = m_out.newBlock();
+    LBasicBlock plainObject = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isCell(boxed).value(), usually(cellCase), rarely(continuation));
+    m_out.appendTo(cellCase);
+    m_out.branch(equal(loadCellType(asCell(boxed)), word32(FinalObjectType)).value(), rarely(plainObject), usually(continuation));
+    m_out.appendTo(plainObject);
+    AOT_TYPED_OPERATION(TryConvertRow, boxed, word32(type.index()));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
 Operand Lowering::lowerCast(ValueID result, const Value& value)
 {
     if (m_castFusedIntoRead && m_castFusedIntoRead->block == m_currentBlock && m_castFusedIntoRead->index == m_currentIndexInBlock)
@@ -3788,14 +3817,22 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
         bool isRelaxedForLogging = m_program.logsTypeErrors && (written.isGenericEntrypoint() || written.has(Format::FunctionIsHiddenInStackTraces) || written.has(FunctionLogsTypeMismatches)) && typeOf(result).acceptsUntypedObjects(m_program);
         SetForScope rejectUntypedScope(m_rejectsUntypedObjects, m_rejectsUntypedObjects || isRelaxedForLogging);
         SetForScope isHolding(m_isCheckingTypeRelaxedForLogging, isRelaxedForLogging);
+        if (auto& layouts = typeOf(result).objectLayouts; value.castReason() == CastReason::Claim && layouts.size() == 1 && m_program.at(layouts[0]).isDecodedRow)
+            convertPlainRowInPlace(value.child(0), value.type);
         return ensure(get(value.child(0)), typeOf(value.child(0)), typeOf(result));
     }
     if (m_cloneGroup && m_cloneGroup->cast == m_currentIndexInBlock)
         return lowerCloneGroup(*std::exchange(m_cloneGroup, std::nullopt));
+    if (auto result = tryCastTypedClone())
+        return *result;
     if (m_mergeGroup && m_mergeGroup->first + 2 == m_currentIndexInBlock)
         return lowerMergeGroup(*std::exchange(m_mergeGroup, std::nullopt));
     if (m_spreadGroup && m_spreadGroup->cast == m_currentIndexInBlock)
         return lowerSpreadGroup(*std::exchange(m_spreadGroup, std::nullopt));
+    if (m_castOfCopiedRecord.block == m_currentBlock && m_castOfCopiedRecord.cast == m_currentIndexInBlock) {
+        m_castOfCopiedRecord.block = nullptr;
+        return m_castOfCopiedRecord.result;
+    }
     if (auto fused = lowerFusedCast(m_currentIndexInBlock))
         return *fused;
     if (Options::auditAOTTypedAssertions() && value.castReason() != CastReason::Upcast && !value.accessedName()) [[unlikely]]
@@ -3859,6 +3896,8 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
 
 Word32 Lowering::lowerIsUndefinedOrNull(ValueID id)
 {
+    if (encodesUndefinedAsZero(id))
+        return Word32(m_out.belowOrEqual(m_values[id.index()].value, m_out.constInt64(JSValue::encode(jsNull()))));
     auto& type = typeOf(id);
     Operand operand = get(id);
     if (operand.rep == Rep::OptionalInt64 || operand.rep == Rep::OptionalDouble)

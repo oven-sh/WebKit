@@ -351,8 +351,6 @@ bool OptimizeAssociativeExpressionTrees::run()
     // In the second one we optimize each such expression tree in turn.
     // We need the use counts to avoid duplicating code.
 
-    m_proc.resetValueOwners();
-
 #if USE(BUN_JSC_ADDITIONS)
     bool hasTreeOfThree = false;
     for (BasicBlock* block : m_proc) {
@@ -373,6 +371,8 @@ bool OptimizeAssociativeExpressionTrees::run()
     if (!hasTreeOfThree)
         return false;
 #endif
+
+    m_proc.resetValueOwners();
 
     Vector<unsigned> useCounts(FillWith { }, m_proc.values().size(), 0); // Mapping from Value::m_index to use counts.
     UncheckedKeyHashSet<Value*> expressionTreeRoots;

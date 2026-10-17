@@ -141,6 +141,7 @@ void CompilationCohort::run(unsigned size, const ScopedLambda<void(unsigned)>& c
         prepareStack(member);
         m_nextPhases[member] = start;
         m_numberOfYields[member] = 0;
+        m_isWaiting[member] = false;
     }
     m_size = size;
     m_numberOfUnfinishedMembers = size;
@@ -182,25 +183,54 @@ void CompilationCohort::yield(const char* phase)
     switchTo(pickNextMember());
 }
 
+bool CompilationCohort::waitForOtherMembers()
+{
+    CompilationCohort* cohort = current();
+    if (!cohort)
+        return false;
+    cohort->wait();
+    return true;
+}
+
+void CompilationCohort::wait()
+{
+    static constexpr const char* waiting = "wait";
+    unsigned member = m_runningMember;
+    m_nextPhases[member] = waiting;
+    m_isWaiting[member] = true;
+    switchTo(pickNextMember());
+    m_isWaiting[member] = false;
+}
+
 unsigned CompilationCohort::pickNextMember()
 {
-    for (unsigned offset = 1; offset <= m_size; ++offset) {
+    auto memberAfter = [&](unsigned offset) {
         unsigned member = m_runningMember + offset;
-        if (member >= m_size)
-            member -= m_size;
-        if (m_nextPhases[member] == m_phase)
+        return member >= m_size ? member - m_size : member;
+    };
+    for (unsigned offset = 1; offset <= m_size; ++offset) {
+        unsigned member = memberAfter(offset);
+        if (m_nextPhases[member] == m_phase && !m_isWaiting[member])
             return member;
     }
-    unsigned result = 0;
+    unsigned result = m_size;
     unsigned minYieldCount = std::numeric_limits<unsigned>::max();
     for (unsigned member = 0; member < m_size; ++member) {
-        if (m_nextPhases[member] && m_numberOfYields[member] < minYieldCount) {
+        if (m_nextPhases[member] && !m_isWaiting[member] && m_numberOfYields[member] < minYieldCount) {
             minYieldCount = m_numberOfYields[member];
             result = member;
         }
     }
-    m_phase = m_nextPhases[result];
-    return result;
+    if (result < m_size) {
+        m_phase = m_nextPhases[result];
+        return result;
+    }
+    for (unsigned offset = 1; offset <= m_size; ++offset) {
+        unsigned member = memberAfter(offset);
+        if (m_nextPhases[member])
+            return member;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void CompilationCohort::switchTo(unsigned member)
@@ -223,6 +253,11 @@ void CompilationCohort::run(unsigned size, const ScopedLambda<void(unsigned)>& c
 
 void CompilationCohort::yieldBeforePhase(ASCIILiteral)
 {
+}
+
+bool CompilationCohort::waitForOtherMembers()
+{
+    return false;
 }
 
 #endif // B3_COMPILATION_COHORT_INTERLEAVES_MEMBERS

@@ -214,15 +214,34 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     GenerationContext context;
     context.code = &code;
     context.blockLabels.resize(code.size());
+#if USE(BUN_JSC_ADDITIONS)
+    IndexMap<BasicBlock*, CCallHelpers::Label> labels(code.size());
+    for (BasicBlock* block : code) {
+        if (block->last().kind.opcode != Patch)
+            continue;
+        for (BasicBlock* successor : block->successorBlocks()) {
+            if (!context.blockLabels[successor])
+                context.blockLabels[successor] = Box<CCallHelpers::Label>::create();
+        }
+    }
+#else
     for (BasicBlock* block : code)
         context.blockLabels[block] = Box<CCallHelpers::Label>::create();
+#endif
     IndexMap<BasicBlock*, CCallHelpers::JumpList> blockJumps(code.size());
 
     auto link = [&] (CCallHelpers::Jump jump, BasicBlock* target) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (labels[target].isSet()) {
+            jump.linkTo(labels[target], &jit);
+            return;
+        }
+#else
         if (context.blockLabels[target]->isSet()) {
             jump.linkTo(*context.blockLabels[target], &jit);
             return;
         }
+#endif
 
         blockJumps[target].append(jump);
     };
@@ -265,7 +284,13 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
         context.indexInBlock = UINT_MAX;
         blockJumps[block].link(&jit);
         CCallHelpers::Label label = jit.label();
+#if USE(BUN_JSC_ADDITIONS)
+        labels[block] = label;
+        if (auto& sharedLabel = context.blockLabels[block])
+            *sharedLabel = label;
+#else
         *context.blockLabels[block] = label;
+#endif
 
         if (disassembler)
             disassembler->startBlock(block, jit); 
@@ -360,14 +385,19 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
         CCallHelpers::Label rareCodeStart = jit.labelIgnoringWatchpoints();
         for (unsigned index = code.size(); index-- > code.numberOfBlocksInChains();) {
             if (BasicBlock* block = code.at(index))
-                rareCodeStart = *context.blockLabels[block];
+                rareCodeStart = labels[block];
         }
         code.recordRareCodeStart(rareCodeStart);
     }
 #endif
     Vector<CCallHelpers::Label> entrypointLabels(code.numEntrypoints());
-    for (unsigned i = code.numEntrypoints(); i--;)
+    for (unsigned i = code.numEntrypoints(); i--;) {
+#if USE(BUN_JSC_ADDITIONS)
+        entrypointLabels[i] = labels[code.entrypoint(i).block()];
+#else
         entrypointLabels[i] = *context.blockLabels[code.entrypoint(i).block()];
+#endif
+    }
     code.setEntrypointLabels(WTF::move(entrypointLabels));
 
     pcToOriginMap.appendItem(jit.label(), Origin());

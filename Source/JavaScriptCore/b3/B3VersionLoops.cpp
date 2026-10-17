@@ -64,6 +64,7 @@ public:
         demoteValuesEscapingHotBlocks();
         for (auto& version : m_versions)
             cloneHotBlocks(version);
+        splitEdgesIntoSlowPaths();
         m_proc.resetReachability();
         m_proc.invalidateCFG();
         return true;
@@ -112,6 +113,7 @@ private:
         Vector<std::pair<Value*, Opcode>, 2> phisNarrowedOnEntry;
         Vector<BasicBlock*, 8> excursionBlocks;
         IndexSet<Value*> hoistedValuesValidInExcursion;
+        Vector<BasicBlock*, 8> slowPathBlocks;
     };
 
     static BasicBlock* guardLikelySuccessor(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block)
@@ -329,6 +331,10 @@ private:
         }
         if (!hasBackEdge || loopsBackThroughInvariantTests(loops, loop))
             return std::nullopt;
+        for (unsigned i = loop.size(); i--;) {
+            if (!hotBlocks.contains(loop.at(i)))
+                version.slowPathBlocks.append(loop.at(i));
+        }
 
         RangeSet<HeapRange> writes;
         bool writesPinned = false;
@@ -814,6 +820,28 @@ private:
         block->appendNew<VariableValue>(m_proc, Set, origin, version.stripEnd, appendStripEnd(m_proc, block, loop, loop.start, bound, !relationHoldsOnEntry(loop)));
     }
 
+    void splitEdgesIntoSlowPaths()
+    {
+        for (auto& version : m_versions) {
+            for (BasicBlock* block : version.slowPathBlocks)
+                m_slowPathBlocks.add(block);
+        }
+        unsigned numberOfBlocks = m_proc.size();
+        for (unsigned i = 0; i < numberOfBlocks; ++i) {
+            BasicBlock* block = m_proc[i];
+            if (!block || block->numSuccessors() < 2 || m_slowPathBlocks.contains(block))
+                continue;
+            for (FrequentedBlock& successor : block->successors()) {
+                if (!m_slowPathBlocks.contains(successor.block()))
+                    continue;
+                BasicBlock* edge = m_proc.addBlock(std::min(block->frequency() * (successor.frequency() == FrequencyClass::Rare ? originalLoopFrequencyScale : 1), successor.block()->frequency()));
+                edge->appendNew<Value>(m_proc, Jump, block->last()->origin());
+                edge->setSuccessors(FrequentedBlock(successor.block()));
+                successor.block() = edge;
+            }
+        }
+    }
+
     void demoteValuesEscapingHotBlocks()
     {
         m_proc.resetValueOwners();
@@ -1021,6 +1049,7 @@ private:
     Vector<Version> m_versions;
     IndexSet<BasicBlock*> m_hotBlocks;
     UncheckedKeyHashMap<BasicBlock*, double> m_originalFrequencies;
+    IndexSet<BasicBlock*> m_slowPathBlocks;
 };
 
 } // anonymous namespace

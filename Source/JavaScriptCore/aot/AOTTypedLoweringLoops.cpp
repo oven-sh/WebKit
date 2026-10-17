@@ -15,39 +15,35 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
 
-void Lowering::computeLoops(const Vector<BlockID>& order)
+void Lowering::computeLoops(const Vector<BlockID>& order, const PredecessorLists& predecessors)
 {
     unsigned numberOfBlocks = m_function.blocks.size();
     m_innermostLoop.fill(noLoop, numberOfBlocks);
     m_definingBlock.fill(BlockID(), m_function.values.size());
-    Vector<Vector<BlockID, 2>> predecessors(numberOfBlocks);
     for (BlockID block : order) {
         for (ValueID parameter : m_function.at(block).parameters)
             m_definingBlock[parameter.index()] = block;
         for (ValueID value : m_function.at(block).values)
             m_definingBlock[value.index()] = block;
-        for (auto& target : successorsOf(m_function.at(block).terminator))
-            predecessors[target.block.index()].append(block);
     }
     for (BlockID header : order) {
+        bool hasBackEdge = std::ranges::any_of(predecessors[header.index()], [&](unsigned predecessor) {
+            return dominates(header, BlockID(predecessor));
+        });
+        if (!hasBackEdge)
+            continue;
         Loop loop;
         loop.header = header;
         loop.blocks.ensureSize(numberOfBlocks);
         loop.blocks.set(header.index());
-        bool hasBackEdge = false;
-        Vector<BlockID, 16> worklist;
-        for (BlockID predecessor : predecessors[header.index()]) {
-            if (!dominates(header, predecessor))
-                continue;
-            hasBackEdge = true;
-            if (!loop.blocks.set(predecessor.index()))
+        Vector<unsigned, 16> worklist;
+        for (unsigned predecessor : predecessors[header.index()]) {
+            if (dominates(header, BlockID(predecessor)) && !loop.blocks.set(predecessor))
                 worklist.append(predecessor);
         }
-        if (!hasBackEdge)
-            continue;
         while (!worklist.isEmpty()) {
-            for (BlockID predecessor : predecessors[worklist.takeLast().index()]) {
-                if (!loop.blocks.set(predecessor.index()))
+            for (unsigned predecessor : predecessors[worklist.takeLast()]) {
+                if (!loop.blocks.set(predecessor))
                     worklist.append(predecessor);
             }
         }

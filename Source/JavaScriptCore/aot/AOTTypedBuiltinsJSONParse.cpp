@@ -498,24 +498,28 @@ static NEVER_INLINE JSCell* makeUncachedString(Instance* instance, CallFrame* ca
     return made;
 }
 
-static NEVER_INLINE JSCell* stringAtInDecodedSource(Instance* instance, CallFrame* callFrame, const uint8_t* start)
+static ALWAYS_INLINE bool isShortTextLatin1AfterDecoding(const Instance* instance, const uint8_t* text, unsigned length)
 {
-    auto* entry = instance->vm->jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding });
-    if (!entry || !isLatin1AfterDecoding(instance, { start, entry->textLength }))
-        return makeUncachedString(instance, callFrame, start);
-    instance->jsonCursor = std::bit_cast<uint64_t>(start - 1 + entry->textLength);
-    return entry->string;
+    constexpr size_t stride = SIMD::stride<uint8_t>;
+    ASSERT(length <= 2 * stride);
+    constexpr simde_uint8x16_t lowIndices { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    constexpr simde_uint8x16_t highIndices { 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
+    auto lengths = SIMD::splat<uint8_t>(length);
+    auto largestUnchanged = SIMD::splat<uint8_t>(instance->jsonSourceEncoding == JSONSourceEncoding::UTF8 ? 0x7f : saturatedCharacter - 1);
+    auto low = SIMD::bitAnd(SIMD::lessThan(largestUnchanged, SIMD::load(text)), SIMD::lessThan(lowIndices, lengths));
+    auto high = SIMD::bitAnd(SIMD::lessThan(largestUnchanged, SIMD::load(text + stride)), SIMD::lessThan(highIndices, lengths));
+    return !SIMD::isNonZero(SIMD::bitOr(low, high));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONStringAt, JSCell*, (Instance* instance, uint64_t cursorBits))
 {
     countOperationNamed(instance, __func__);
     auto* start = std::bit_cast<const uint8_t*>(cursorBits);
-    if (instance->jsonSourceEncoding != JSONSourceEncoding::Latin1) [[unlikely]]
-        return stringAtInDecodedSource(instance, DECLARE_CALL_FRAME(*instance->vm), start);
     if (auto* entry = instance->vm->jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding })) [[likely]] {
-        instance->jsonCursor = std::bit_cast<uint64_t>(start - 1 + entry->textLength);
-        return entry->string;
+        if (instance->jsonSourceEncoding == JSONSourceEncoding::Latin1 || isShortTextLatin1AfterDecoding(instance, start - 1, entry->textLength)) [[likely]] {
+            instance->jsonCursor = std::bit_cast<uint64_t>(start - 1 + entry->textLength);
+            return entry->string;
+        }
     }
     return makeUncachedString(instance, DECLARE_CALL_FRAME(*instance->vm), start);
 }

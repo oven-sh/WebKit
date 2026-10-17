@@ -148,7 +148,7 @@ enum class BuiltinFamily : uint8_t {
 #undef AOT_TYPED_DECLARE_BUILTIN_FAMILY
 };
 
-enum class InlineBuiltin : uint8_t {
+enum class InlineBuiltin : uint16_t {
 #define AOT_TYPED_DECLARE_INLINE_BUILTIN(name, family, isExact) name,
     FOR_EACH_AOT_TYPED_INLINE_BUILTIN(AOT_TYPED_DECLARE_INLINE_BUILTIN)
 #undef AOT_TYPED_DECLARE_INLINE_BUILTIN

@@ -232,7 +232,13 @@ public:
     template<typename BeforeVariable, typename Functor>
     void computePhis(NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
     {
-        ensureDominanceFrontiers();
+        computePhis([](Node) { return true; }, beforeVariable, functor);
+    }
+
+    template<typename MayNeedPhi, typename BeforeVariable, typename Functor>
+    void computePhis(NOESCAPE const MayNeedPhi& mayNeedPhi, NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
+    {
+        ensureDominanceFrontiers(mayNeedPhi);
 
         CFG& cfg = this->cfg();
 
@@ -368,7 +374,8 @@ private:
         Vector<Def*> m_phis;
     };
 
-    void ensureDominanceFrontiers()
+    template<typename MayNeedPhi>
+    void ensureDominanceFrontiers(NOESCAPE const MayNeedPhi& mayNeedPhi)
     {
         if (m_dominanceFrontiersComputed)
             return;
@@ -382,7 +389,7 @@ private:
         m_dominanceFrontiers = cfg.template newMap<Vector<Node, 2>>();
         for (unsigned blockIndex = 0; blockIndex < cfg.numNodes(); ++blockIndex) {
             Node block = cfg.node(blockIndex);
-            if (!block || cfg.predecessors(block).size() < 2)
+            if (!block || cfg.predecessors(block).size() < 2 || !mayNeedPhi(block))
                 continue;
             Node idomBlock = dominators.idom(block);
             for (Node predecessor : cfg.predecessors(block)) {

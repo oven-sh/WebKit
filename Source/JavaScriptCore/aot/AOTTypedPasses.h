@@ -13,6 +13,10 @@ namespace JSC {
 
 class VM;
 
+namespace B3 {
+class ProcedureFingerprint;
+}
+
 namespace AOT {
 
 class ImageBuilder;
@@ -30,6 +34,7 @@ void splitOptimizedGenerators(Program&, Vector<std::pair<FunctionID, Function>>&
 void recordCellsLiveAcrossAwaits(const Program&, Function&);
 BitVector objectsLiveAcrossSuspensions(const Function&);
 BitVector blocksInLoops(const Function&);
+BitVector blocksInLoops(const Functions&, size_t index);
 constexpr unsigned notInCycle = UINT_MAX;
 Vector<unsigned> computeBlockCycles(const Function&);
 Vector<unsigned> computeBlockCycles(const Function&, Vector<unsigned>* componentRank);
@@ -165,6 +170,7 @@ unsigned resolveCalls(const Program&, Function&, bool mayGuess, CleanUpTiming = 
 unsigned inlineCalls(const Program&, FunctionID, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 void internNamesForGeneratorLoopFusion(Program&);
 unsigned fuseGeneratorLoops(const Program&, Function&);
+unsigned stepGeneratorsInPlace(const Program&, Function&);
 void prepareForInlining(Program&);
 unsigned simplifyCasts(const Program&, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 unsigned convertCountersToIntegers(const Program&, Function&);
@@ -335,6 +341,32 @@ uint32_t maxFunctionSlots();
 ImageKey keyOf(FunctionID);
 ImageKey continuationKey(FunctionID, unsigned index);
 bool compile(VM&, const Program&, FunctionID, CompiledCode&);
+uint32_t shapeHashForCompilationOrder(const Function&);
+
+class CompiledProcedureCache {
+    WTF_MAKE_NONCOPYABLE(CompiledProcedureCache);
+public:
+    struct Entry;
+
+    CompiledProcedureCache();
+    ~CompiledProcedureCache();
+
+    static CompiledProcedureCache* current();
+
+    Entry* find(const B3::ProcedureFingerprint&);
+    Entry* add(std::unique_ptr<Entry>&&);
+    void remove(Entry*);
+    void didUse(Entry&);
+    void suspend() { ++m_suspensionCount; }
+    void resume() { --m_suspensionCount; }
+
+private:
+    static constexpr unsigned capacity = 32;
+
+    Vector<std::unique_ptr<Entry>, capacity> m_entries;
+    uint64_t m_lastUse { 0 };
+    unsigned m_suspensionCount { 0 };
+};
 void addRegExpLiterals(VM&, const Program&, ImageBuilder&);
 std::optional<uint64_t> regExpLiteralKey(const Program&, const Function&, const Value&);
 Vector<String> describeForMap(const Program&);

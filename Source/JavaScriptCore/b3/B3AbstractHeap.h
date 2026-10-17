@@ -151,6 +151,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void retainCurrentHeaps();
     void removeTemporaryHeaps();
+    bool hasTemporaryHeaps() const { return m_heapForAnyIndex.numberOfChildren() != m_retainedHeapCount; }
 #endif
 
 private:
@@ -199,6 +200,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
     void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
+    bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
 #endif
     const AbstractHeap& operator[](ptrdiff_t number) { return at(number); }
 
@@ -219,6 +221,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
     void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
+    bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
 #endif
 
     const AbstractHeap& at(const void* address)

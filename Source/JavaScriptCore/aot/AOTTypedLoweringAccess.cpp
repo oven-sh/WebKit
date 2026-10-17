@@ -170,7 +170,7 @@ static bool computePrototypeChainLacksProperty(const Program& program, LayoutID 
         if (layout.mayHaveOtherPrototype && !forObjectWithoutExtraProperties)
             return false;
         for (LayoutID ancestor = subtype; ancestor; ancestor = program.at(ancestor).base) {
-            if (program.at(ancestor).hasComputedMethodName)
+            if (program.at(ancestor).hasComputedMethodName || (program.at(ancestor).hasMethodWithSymbolKey && isConstantSymbol(program.string(name))))
                 return false;
             for (auto& method : program.at(ancestor).methods) {
                 if (method.name == name)
@@ -235,15 +235,17 @@ void indexLayoutSupertypes(Program& program)
                 for (LayoutID supertype : program.at(function.at(receiver).type).objectLayouts)
                     stores.append(static_cast<uint64_t>(supertype.index()) << 32 | name.index());
             };
-            for (auto& value : function.values) {
+            static constexpr OpcodeSet propertyStores { Opcode::PutById, Opcode::PutField };
+            std::as_const(program).functions.forEachValue(i, propertyStores, [&](ValueID id) {
+                auto& value = function.at(id);
                 if (value.opcode == Opcode::PutById)
                     recordStoreThroughTypeOf(value.child(0), value.string());
-                else if (value.opcode == Opcode::PutField && isObjectLayout(program.at(value.layout()).kind)) {
+                else if (isObjectLayout(program.at(value.layout()).kind)) {
                     StringID name = program.at(value.layout()).fields[value.field()].name;
                     stores.append(static_cast<uint64_t>(value.layout().index()) << 32 | name.index());
                     recordStoreThroughTypeOf(value.child(0), name);
                 }
-            }
+            });
         }
         std::ranges::sort(stores);
         removeDuplicates(stores);
@@ -3462,12 +3464,9 @@ void Lowering::assignStructureDescriptors(Program& program)
 {
     static constexpr OpcodeSet literals { Opcode::NewObject };
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        if (!program.functions.mayContain(i, literals))
-            return;
-        for (auto& value : program.functions.atKeepingValueIndex(i).values) {
-            if (value.opcode == Opcode::NewObject)
-                value.immediates[1] = Format::none;
-        }
+        std::as_const(program).functions.forEachValue(i, literals, [&](ValueID id) {
+            program.functions.atKeepingValueIndex(i).at(id).immediates[1] = Format::none;
+        });
     });
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         auto& layout = program.layouts[i];
@@ -3486,6 +3485,7 @@ void Lowering::assignStructureDescriptors(Program& program)
         unsigned initialNameCount;
         Vector<StringID, 8> names;
         Vector<unsigned> storeBlocks;
+        uint32_t descriptor;
     };
     Vector<Vector<AllocationSite>> allocationsByFunctionIndex(program.functions.size());
     const UsersInBlocks noUsers;
@@ -3501,12 +3501,10 @@ void Lowering::assignStructureDescriptors(Program& program)
             return builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "create"_s;
         };
         BitVector isCreation;
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values) {
-                if (function.at(id).opcode == Opcode::NewObject || createsNullPrototypeObject(function.at(id)))
-                    isCreation.set(id.index());
-            }
-        }
+        std::as_const(program).functions.forEachIndexedValue(i, allocationSites, [&](ValueID id) {
+            if (function.at(id).opcode == Opcode::NewObject || createsNullPrototypeObject(function.at(id)))
+                isCreation.set(id.index());
+        });
         if (isCreation.isEmpty())
             return;
         UncheckedKeyHashMap<uint32_t, UsersInBlocks, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> allocationUsers;
@@ -3567,20 +3565,18 @@ void Lowering::assignStructureDescriptors(Program& program)
                     names.append(store.string());
                     storeBlocks.append(users[k].block);
                 }
-                allocationsByFunctionIndex[i].append(AllocationSite { id, room, hasNullPrototype, initialNameCount, WTF::move(names), WTF::move(storeBlocks) });
+                allocationsByFunctionIndex[i].append(AllocationSite { id, room, hasNullPrototype, initialNameCount, WTF::move(names), WTF::move(storeBlocks), Format::none });
             }
         }
     });
     unsigned allocationSites = 0;
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
-        auto& function = program.functions.atKeepingValueIndex(i);
-        for (auto& allocationSite : allocationsByFunctionIndex[i]) {
+    for (auto& allocationsInFunction : allocationsByFunctionIndex) {
+        for (auto& allocationSite : allocationsInFunction) {
             ++allocationSites;
             uint32_t number = program.ensureStructureDescriptor(allocationSite.names.span().first(allocationSite.initialNameCount), allocationSite.room, allocationSite.hasNullPrototype);
-            if (function.at(allocationSite.id).opcode == Opcode::NewObject) {
-                function.values[allocationSite.id.index()].immediates[1] = number;
+            allocationSite.descriptor = number;
+            if (!allocationSite.hasNullPrototype)
                 program.structuresWithoutTransitions.set(number);
-            }
             unsigned block = UINT_MAX;
             for (unsigned k = 0; k < allocationSite.storeBlocks.size(); ++k) {
                 if (allocationSite.storeBlocks[k] != block) {
@@ -3594,6 +3590,13 @@ void Lowering::assignStructureDescriptors(Program& program)
             }
         }
     }
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        for (auto& allocationSite : allocationsByFunctionIndex[i]) {
+            if (!allocationSite.hasNullPrototype)
+                program.functions.atKeepingValueIndex(i).values[allocationSite.id.index()].immediates[1] = allocationSite.descriptor;
+        }
+    });
+    destroyOnHelperThread(WTF::move(allocationsByFunctionIndex));
     program.firstThisStructureDescriptor = program.structureDescriptors.size();
     for (auto& row : program.initialStructures) {
         bool isNumbered = row.isForThis && row.isWhole && row.names.size() <= maxNamedPropertiesPerSite;
@@ -4599,6 +4602,153 @@ std::optional<Lowering::CloneGroup> Lowering::findCloneGroup(size_t cloneIndex)
     return group;
 }
 
+std::optional<uint64_t> Lowering::typedCloneTargetAt(size_t cloneIndex)
+{
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
+        return std::nullopt;
+    auto& values = m_currentBlock->values;
+    ValueID copy = values[cloneIndex];
+    Vector<size_t, 4> stores;
+    size_t cast = notFound;
+    for (size_t k = cloneIndex + 1; k < values.size() && cast == notFound; ++k) {
+        auto& value = m_function.at(values[k]);
+        if (value.opcode == Opcode::PutById && !value.isInitialStore() && !value.hasKnownSlotWord() && value.child(0) == copy && value.child(1) != copy) {
+            stores.append(k);
+            continue;
+        }
+        if (value.opcode == Opcode::Cast && value.castReason() == CastReason::As && value.coercesFreshData() && value.child(0) == copy) {
+            cast = k;
+            continue;
+        }
+        bool usesCopy = false;
+        value.forEachChild([&](ValueID child) {
+            usesCopy |= child == copy;
+        });
+        if (usesCopy)
+            return std::nullopt;
+    }
+    if (cast == notFound || stores.size() > TypedCloneTarget::maxStoredFields || useCountOf(copy) != stores.size() + 1)
+        return std::nullopt;
+    LayoutID id = typeOf(values[cast]).singleLayout();
+    if (!id)
+        return std::nullopt;
+    auto& layout = m_program.at(id);
+    if (layout.kind != LayoutKind::Record || !layout.shape || layout.shape >= 1u << TypedCloneTarget::shapeBits || !layout.isAllocated || layout.hasExtension || layout.fields.size() + 1 >= 1u << TypedCloneTarget::fieldBits || !layout.subtypes.contains(id))
+        return std::nullopt;
+    uint64_t target = layout.shape;
+    Vector<StringID, 4> names;
+    for (size_t k : stores) {
+        auto& member = m_function.at(values[k]);
+        auto index = layout.fieldNamed(member.string());
+        if (!index || names.contains(member.string()) || member.storesLazyClosure || lazyClosureStoredBy(member) || mayBeStoredBeforeJump(member))
+            return std::nullopt;
+        auto& field = layout.fields[*index];
+        bool isStoredDirectly = !(field.flags & (fieldIsNeverStored | fieldIsImmutable)) && !field.isOutOfLine && !field.isPinned && !m_program.at(field.slot).isDiscriminant && field.literals.isEmpty()
+            && (!field.type || typeOf(member.child(1)).isSubsetOf(m_program.at(field.type), m_program));
+        if (!isStoredDirectly)
+            return std::nullopt;
+        uint32_t describedFieldIndex = 0;
+        for (uint32_t i = 0; i < *index; ++i)
+            describedFieldIndex += !(layout.fields[i].flags & fieldIsNeverStored);
+        target = TypedCloneTarget::withStoredField(target, names.size(), describedFieldIndex);
+        names.append(member.string());
+    }
+    size_t firstAdjacentStore = cast;
+    while (firstAdjacentStore > cloneIndex + 1 && stores.contains(firstAdjacentStore - 1))
+        --firstAdjacentStore;
+    auto& to = typeOf(values[cast]);
+    bool plainObjectsPassCast = to.acceptsUncheckedObjects(m_program) && !m_program.annotationCoercesUntypedObjects(to) && !m_program.isRelaxedForLogging(to);
+    m_typedCloneOfUntypedSource = { m_currentBlock, copy, id, firstAdjacentStore, cast, plainObjectsPassCast, { } };
+    return target;
+}
+
+void Lowering::storeToPlainClone(Boxed object, const Value& value)
+{
+    if (isNamedLastIndex(value.string()))
+        emitPutById(object, value.string(), in<Boxed>(value.child(1)));
+    else
+        emitStandaloneCachedPutById(object, value.string(), in<Boxed>(value.child(1)), true);
+}
+
+void Lowering::storeToTypedCloneField(CellPointer cell, const Value& value)
+{
+    auto& layout = m_program.at(m_typedCloneOfUntypedSource.layout);
+    auto& field = layout.fields[*layout.fieldNamed(value.string())];
+    didEmitWrite(Writes::Fields);
+    if (field.store == Store::Int32OrNumberBox)
+        storeInt32OrNumberBox(cell, field, value.child(1), true);
+    else
+        store(field.store, in(value.child(1), repOf(field.store)), fieldAt(cell, field));
+    if (holdsCells(field.store) && typeOf(value.child(1)).hasCells())
+        barrier(cell);
+}
+
+bool Lowering::tryStoreToTypedClone(const Value& value)
+{
+    auto& clone = m_typedCloneOfUntypedSource;
+    if (clone.block != m_currentBlock || clone.copy != value.child(0))
+        return false;
+    if (m_currentIndexInBlock > clone.firstAdjacentStore)
+        return true;
+    auto& values = m_currentBlock->values;
+    auto& layout = m_program.at(clone.layout);
+    bool includesCast = m_currentIndexInBlock == clone.firstAdjacentStore;
+    LBasicBlock isTyped = m_out.newBlock();
+    LBasicBlock isUntyped = newColdBlock();
+    Boxed boxed = in<Boxed>(value.child(0));
+    CellPointer cell = asCell(boxed);
+    m_out.branch(equal(shapeWordOf(cell), word32(Typed::shapeWordOf(layout.shape))).value(), usually(isTyped), rarely(isUntyped));
+    if (!includesCast) {
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.appendTo(isTyped);
+        storeToTypedCloneField(cell, value);
+        m_out.jump(continuation);
+        m_out.appendTo(isUntyped);
+        storeToPlainClone(boxed, value);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return true;
+    }
+    Rep rep = m_function.at(values[clone.cast]).rep;
+    Join join(m_out, rep, b3TypeOf(rep));
+    m_out.appendTo(isTyped);
+    for (size_t k = clone.firstAdjacentStore; k < clone.cast; ++k)
+        storeToTypedCloneField(cell, m_function.at(values[k]));
+    join.add(convert(Operand(cell), m_program.at(layout.type), rep));
+    m_out.appendTo(isUntyped);
+    {
+        SetForScope indexInBlock(m_currentIndexInBlock, m_currentIndexInBlock);
+        SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
+        for (size_t k = clone.firstAdjacentStore; k < clone.cast; ++k) {
+            m_currentIndexInBlock = k;
+            storeToPlainClone(boxed, m_function.at(values[k]));
+        }
+        m_currentIndexInBlock = clone.cast;
+        if (clone.plainObjectsPassCast)
+            join.add(convert(Operand(cell), m_program.at(m_program.types.object), rep));
+        else {
+            clone.block = nullptr;
+            join.add(lower(values[clone.cast], m_function.at(values[clone.cast])));
+            clone.block = m_currentBlock;
+        }
+    }
+    clone.castResult = join.finish();
+    return true;
+}
+
+std::optional<Operand> Lowering::tryCastTypedClone()
+{
+    auto& clone = m_typedCloneOfUntypedSource;
+    if (clone.block != m_currentBlock || clone.cast != m_currentIndexInBlock)
+        return std::nullopt;
+    clone.block = nullptr;
+    if (clone.firstAdjacentStore < clone.cast)
+        return clone.castResult;
+    if (!clone.plainObjectsPassCast)
+        return std::nullopt;
+    return convert(Operand(asCell(in<Boxed>(clone.copy))), m_program.at(m_program.types.object), m_function.at(m_currentBlock->values[clone.cast]).rep);
+}
+
 template<typename Functor>
 void Lowering::dispatchOnCloneSourceLayout(const CloneGroup& group, LBasicBlock slowPath, const Functor& onLayout)
 {
@@ -4646,6 +4796,58 @@ void Lowering::decideCloneGroup(CloneGroup& group)
     m_out.appendTo(continuation);
     group.decision = m_out.phi(Int32, decisions);
     group.copied = m_out.phi(Int64, copies);
+}
+
+bool Lowering::everyCloneOffUsualPathPassesCast(const CloneGroup& group)
+{
+    auto& values = m_currentBlock->values;
+    if (group.cast == notFound)
+        return false;
+    auto& to = typeOf(values[group.cast]);
+    if (!to.acceptsUncheckedObjects(m_program) || m_program.annotationCoercesUntypedObjects(to) || m_program.isRelaxedForLogging(to))
+        return false;
+    for (LayoutID supertype : typeOf(m_function.at(values[group.clone]).arguments[0]).objectLayouts) {
+        for (LayoutID subtype : m_program.at(supertype).subtypes) {
+            if (!m_program.castIsRedundant(m_program.at(m_program.at(subtype).type), to, CastReason::As))
+                return false;
+        }
+    }
+    return true;
+}
+
+std::optional<uint64_t> Lowering::namesStoredWhereEveryLayoutIsCopiedInline(const CloneGroup& group)
+{
+    auto& values = m_currentBlock->values;
+    if (group.isDecidedAtClone || group.stores.size() > 2)
+        return std::nullopt;
+    for (LayoutID supertype : typeOf(m_function.at(values[group.clone]).arguments[0]).objectLayouts) {
+        for (LayoutID subtype : m_program.at(supertype).subtypes) {
+            if (m_program.at(subtype).isAllocated && !group.layouts.contains(subtype))
+                return std::nullopt;
+        }
+    }
+    uint64_t names = 0;
+    for (unsigned i = 0; i < group.stores.size(); ++i) {
+        auto& member = m_function.at(values[group.stores[i]]);
+        bool repeatsName = i && member.string() == m_function.at(values[group.stores[0]]).string();
+        if (member.string().index() + 1 >= (1u << 24) || repeatsName || isNamedLastIndex(member.string()) || member.storesLazyClosure || lazyClosureStoredBy(member) || mayBeStoredBeforeJump(member))
+            return std::nullopt;
+        names |= static_cast<uint64_t>(member.string().index() + 1) << (24 * i);
+    }
+    return names;
+}
+
+std::optional<CellPointer> Lowering::tryCloneAsExtendedPlainObject(const CloneGroup& group)
+{
+    auto names = namesStoredWhereEveryLayoutIsCopiedInline(group);
+    if (!names || !*names)
+        return std::nullopt;
+    auto& values = m_currentBlock->values;
+    Boxed source = in<Boxed>(m_function.at(values[group.clone]).arguments[0]);
+    ValueID first = m_function.at(values[group.stores[0]]).child(1);
+    if (group.stores.size() == 1 && get(first).rep == Rep::Double)
+        return AOT_TYPED_OPERATION(CloneObjectAndExtendWithNumber, source, integer(static_cast<int64_t>(*names)), in<Number>(first));
+    return AOT_TYPED_OPERATION(CloneObjectAndExtend, source, integer(static_cast<int64_t>(*names)), in<Boxed>(first), group.stores.size() > 1 ? in<Boxed>(m_function.at(values[group.stores[1]]).child(1)) : undefined());
 }
 
 Operand Lowering::lowerCloneGroup(CloneGroup group)
@@ -4712,10 +4914,14 @@ Operand Lowering::lowerCloneGroup(CloneGroup group)
     }
 
     m_out.appendTo(slowPath);
-    CellPointer other = group.isDecidedAtClone ? CellPointer(group.copied) : cloneObjectOutOfLine(sourceID, cloneCapacityOf(copyID));
+    bool passesCast = everyCloneOffUsualPathPassesCast(group);
+    std::optional<CellPointer> plainCopy = passesCast ? tryCloneAsExtendedPlainObject(group) : std::nullopt;
+    CellPointer other = plainCopy ? *plainCopy : group.isDecidedAtClone ? CellPointer(group.copied) : cloneObjectOutOfLine(sourceID, cloneCapacityOf(copyID));
     defineDeferredAllocation(copyID, other);
     Operand result;
-    {
+    if (plainCopy)
+        result = convert(Operand(other), m_program.at(m_program.types.object), castRep);
+    else {
         SetForScope indexInBlock(m_currentIndexInBlock, m_currentIndexInBlock);
         SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
         auto carryOut = [&](size_t k) {
@@ -4725,7 +4931,9 @@ Operand Lowering::lowerCloneGroup(CloneGroup group)
         };
         for (size_t k : group.stores)
             carryOut(k);
-        if (hasCast)
+        if (passesCast)
+            result = convert(Operand(other), m_program.at(m_program.types.object), castRep);
+        else if (hasCast)
             carryOut(group.cast);
     }
     copies.append(m_out.anchor(other.value()));
@@ -4755,7 +4963,7 @@ Lowering::CloneDefinitions Lowering::definitionsOnClone(ValueID object, bool may
         auto& key = m_function.at(user.arguments[1]);
         auto afterClone = values.subspan(m_currentIndexInBlock + 1, index - m_currentIndexInBlock - 1);
         bool isCreatedAfterClone = std::ranges::find(afterClone, user.arguments[2]) != afterClone.end();
-        if (key.opcode != Opcode::String || key.string().index() + 1 >= (1u << 24) || user.arguments[2] == object || isCreatedAfterClone)
+        if (key.opcode != Opcode::String || key.string().index() + 1 >= (1u << 24) || parseIndex(m_program.string(key.string())) || user.arguments[2] == object || isCreatedAfterClone)
             break;
         result.more |= static_cast<uint64_t>(key.string().index() + 1) << (24 * result.values.size());
         result.values.append(user.arguments[2]);
@@ -4782,6 +4990,27 @@ Lowering::CloneDefinitions Lowering::definitionsOnClone(ValueID object, bool may
         }
     }
     result.more |= std::min<uint64_t>(others, 255) << 48;
+    return result;
+}
+
+Lowering::CloneDefinitions Lowering::storesDirectlyBehindClone(ValueID object)
+{
+    CloneDefinitions result = definitionsOnClone(object, true);
+    if (!result.values.isEmpty())
+        return result;
+    auto& values = m_currentBlock->values;
+    Vector<StringID, 2> names;
+    for (size_t index = m_currentIndexInBlock + 1; index < values.size() && result.values.size() < 2; ++index) {
+        auto& user = m_function.at(values[index]);
+        bool isPlainStore = user.opcode == Opcode::PutById && !user.isInitialStore() && !user.hasKnownSlotWord() && user.child(0) == object && user.child(1) != object
+            && !user.storesLazyClosure && !lazyClosureStoredBy(user) && !mayBeStoredBeforeJump(user);
+        if (!isPlainStore || names.contains(user.string()) || user.string().index() + 1 >= (1u << 24) || isNamedLastIndex(user.string()))
+            break;
+        result.more |= static_cast<uint64_t>(user.string().index() + 1) << (24 * result.values.size());
+        result.values.append(user.child(1));
+        names.append(user.string());
+        m_cloneDefinitions.append(index);
+    }
     return result;
 }
 
@@ -5932,7 +6161,11 @@ void Lowering::lowerPutById(ValueID, const Value& value)
             lowerCloneGroup(*std::exchange(m_cloneGroup, std::nullopt));
         return;
     }
+    if (m_cloneDefinitionsBlock == m_currentBlock && m_cloneDefinitions.contains(m_currentIndexInBlock))
+        return;
     if (m_spreadGroup && m_spreadGroup->startsWithClone && m_spreadGroup->definitions.contains(m_currentIndexInBlock))
+        return;
+    if (tryStoreToTypedClone(value))
         return;
     if (auto* literal = objectLiteralAt(m_currentIndexInBlock)) {
         if (m_currentIndexInBlock == literal->fields.last() && !tryDeferObjectLiteral(*literal))
@@ -6132,7 +6365,7 @@ Word32 Lowering::lowerInById(const Value& value)
         auto genericPath = [&] {
             if (isPrivateName(m_program.string(name)))
                 return AOT_TYPED_OPERATION(HasName, in<Boxed>(object), word32(name.index()));
-            return emitInByVal(in<Boxed>(object), box(stringConstant(name)));
+            return emitInByVal(in<Boxed>(object), keyConstant(name));
         };
         auto expected = predictionOf(object);
         const Field* expectedField = expected ? predictedFieldFor(*expected, name) : nullptr;
@@ -6384,9 +6617,66 @@ Operand Lowering::lowerNewObject(ValueID id, const Value& value)
     }
     if (layout.hasExtension)
         storeField(cell, m_heaps.AOTTypedObject_extension, word32(0));
+    BitVector isFilledWithZeroes;
+    if (!fromTemplate && isObjectLayout(layout.kind) && !isStackAllocated && !mayBeReused) {
+        constexpr uint32_t chunkBytes = 2 * sizeof(uint64_t);
+        Vector<std::pair<uint32_t, uint32_t>, 16> ranges;
+        uint32_t end = 0;
+        for (uint32_t i = 0; i < layout.fields.size(); ++i) {
+            auto& field = layout.fields[i];
+            if (field.isOutOfLine || field.flags & fieldIsNeverStored)
+                continue;
+            end = std::max(end, field.offset + sizeOf(field.store));
+            if (storedNext.get(i))
+                continue;
+            LValue initial = initialFieldValue(field, initializedFields.get(i)).value;
+            bool startsAsZero = (initial->hasInt() && !initial->asInt()) || (initial->hasDouble() && !std::bit_cast<uint64_t>(initial->asDouble()));
+            if (!startsAsZero)
+                continue;
+            ranges.append({ field.offset, field.offset + sizeOf(field.store) });
+            isFilledWithZeroes.set(i);
+        }
+        end = WTF::roundUpToMultipleOf<chunkBytes>(end);
+        std::ranges::sort(ranges);
+        Vector<int32_t, 8> chunks;
+        uint32_t filledUpTo = 0;
+        for (auto [first, last] : ranges) {
+            while (filledUpTo < last) {
+                uint32_t start = std::min(std::max(first, filledUpTo) & ~static_cast<uint32_t>(sizeof(uint64_t) - 1), end - chunkBytes);
+                chunks.append(start);
+                filledUpTo = start + chunkBytes;
+            }
+        }
+        bool takesNoMoreInstructions = isX86_64() ? chunks.size() + 1 <= ranges.size() : chunks.size() < ranges.size();
+        if (ranges.size() < 2 || !takesNoMoreInstructions || end < Typed::offsetOfFirstField + chunkBytes)
+            isFilledWithZeroes.clearAll();
+        else {
+            PatchpointValue* zeroes = m_out.patchpoint(Void);
+            zeroes->effects = Effects::none();
+            m_heaps.decoratePatchpointWrite(&m_heaps.AOTTyped_slots.atAnyNumber(), zeroes);
+            zeroes->append(ConstrainedValue(cell.value(), ValueRep::SomeRegister));
+            zeroes->numFPScratchRegisters = isX86_64();
+            zeroes->setGenerator([chunks = WTF::move(chunks)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                GPRReg object = params[0].gpr();
+#if CPU(X86_64)
+                FPRReg zero = params.fpScratch(0);
+                jit.moveZeroToDouble(zero);
+                for (int32_t offset : chunks) {
+                    if (CCallHelpers::supportsAVX())
+                        jit.m_assembler.vmovups_rm(zero, offset, object);
+                    else
+                        jit.m_assembler.movups_rm(zero, offset, object);
+                }
+#else
+                for (int32_t offset : chunks)
+                    jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, object, CCallHelpers::TrustedImm32(offset));
+#endif
+            });
+        }
+    }
     for (uint32_t i = 0; i < layout.fields.size() && !fromTemplate; ++i) {
         auto& field = layout.fields[i];
-        if (storedNext.get(i) || field.isOutOfLine || field.flags & fieldIsNeverStored)
+        if (storedNext.get(i) || field.isOutOfLine || field.flags & fieldIsNeverStored || isFilledWithZeroes.get(i))
             continue;
         if (layout.isCoroutineFrame && !holdsCells(field.store))
             continue;

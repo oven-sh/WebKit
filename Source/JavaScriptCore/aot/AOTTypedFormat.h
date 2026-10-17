@@ -321,7 +321,8 @@ struct Function {
     v(Await) \
     v(GetExternalModule) \
     v(Yield) \
-    v(GetResumeMode)
+    v(GetResumeMode) \
+    v(ConstantSymbol)
 
 enum class Opcode : uint32_t {
 #define AOT_TYPED_DECLARE_OPCODE(name) name,

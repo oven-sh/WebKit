@@ -141,7 +141,9 @@ struct ProgramData {
     std::optional<ParameterCheck> parameterCheckAt(uint32_t functionIndex, uint32_t site) const;
     const uint64_t* closureWords() const { return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(at<uint64_t>(typedEntriesOffset)) - omittedClosureWordCount * sizeof(uint64_t)); }
     uint64_t closureWordOf(uint32_t function) const { return function >= firstClosureFunction && function - omittedClosureWordCount < numberOfTypedEntries ? closureWords()[function] : 0; }
+    static constexpr char8_t relativeSourceNameMarker = 1;
     JS_EXPORT_PRIVATE String sourceName(uint32_t) const;
+    JS_EXPORT_PRIVATE String sourceNameInFrames(uint32_t) const;
     JS_EXPORT_PRIVATE bool isSourceNameEmpty(uint32_t) const;
     JS_EXPORT_PRIVATE Vector<uint32_t> moduleEntryOffsets() const;
     std::span<const ImageKey> imageKeys() const;

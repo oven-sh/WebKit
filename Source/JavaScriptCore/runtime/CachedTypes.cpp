@@ -6027,12 +6027,14 @@ struct BytecodeLinkEncoder::Impl {
         DeferGC deferGC(vm);
         MonotonicTime phaseStart = MonotonicTime::now();
         MonotonicTime stepStart = phaseStart;
+        AOT::Typed::PhaseTimes phaseTimes("compile"_s);
         auto endPhase = [&](ASCIILiteral name) {
             MonotonicTime now = MonotonicTime::now();
             if (AOT::Typed::shouldPrintTimings()) [[unlikely]]
                 dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
             phaseStart = now;
             stepStart = now;
+            phaseTimes.didFinish(name);
         };
         auto endStep = [&](ASCIILiteral name) {
             if (!AOT::Typed::shouldPrintTimings()) [[likely]]
@@ -6040,6 +6042,7 @@ struct BytecodeLinkEncoder::Impl {
             MonotonicTime now = MonotonicTime::now();
             dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
             stepStart = now;
+            phaseTimes.didFinish(name);
         };
         AOT::ImageBuilder builder;
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
@@ -6242,14 +6245,18 @@ struct BytecodeLinkEncoder::Impl {
             uint32_t numberOfTypedFunctions = typedProgram->functions.size();
             Vector<std::unique_ptr<TypedResult>> typedResults(numberOfTypedFunctions);
             std::atomic<uint32_t> nextTypedFunction { 0 };
-            Vector<uint64_t> sizesAndIndices(numberOfTypedFunctions, [&](size_t index) {
-                return static_cast<uint64_t>(UINT32_MAX - typedProgram->functions[index].values.size()) << 32 | index;
+            constexpr size_t maxValuesToOrderByShape = 64;
+            Vector<std::pair<uint64_t, uint32_t>> sizesAndIndices(numberOfTypedFunctions);
+            AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned index) {
+                auto& function = std::as_const(*typedProgram).functions[index];
+                uint32_t shapeHash = function.values.size() <= maxValuesToOrderByShape ? AOT::Typed::shapeHashForCompilationOrder(function) : 0;
+                sizesAndIndices[index] = { static_cast<uint64_t>(UINT32_MAX - function.values.size()) << 32 | shapeHash, index };
             });
-            AOT::Typed::sortOnPool(sizesAndIndices.mutableSpan(), std::less<uint64_t> { });
+            AOT::Typed::sortOnPool(sizesAndIndices.mutableSpan(), std::less<std::pair<uint64_t, uint32_t>> { });
             Vector<uint32_t> largestFirst;
             largestFirst.reserveInitialCapacity(numberOfTypedFunctions);
-            for (uint64_t sizeAndNumber : sizesAndIndices) {
-                AOT::Typed::FunctionID id(static_cast<uint32_t>(sizeAndNumber));
+            for (auto [sizeAndShape, number] : sizesAndIndices) {
+                AOT::Typed::FunctionID id(number);
                 if (!typedProgram->isEntry(id) && typedProgram->hasCode(id))
                     largestFirst.append(id.index());
             }
@@ -6308,6 +6315,7 @@ struct BytecodeLinkEncoder::Impl {
             };
             auto compileTypedFunctions = [&] {
                 B3::CompilationCohort cohort;
+                AOT::Typed::CompiledProcedureCache compiledProcedures;
                 for (;;) {
                     if (builder.compileOneRequestedRegExp())
                         continue;
@@ -6665,6 +6673,7 @@ void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, s
     });
     AOT::Typed::place(*prepared.program);
     namesAndStringsReader->waitForCompletion();
+    prepared.program->functions.releaseValueIndex();
     prepared.hasPlacement = true;
 #else
     UNUSED_PARAM(prepared);
