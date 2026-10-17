@@ -93,9 +93,10 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
         }
     }
 
-    // What is a function to the engine alone is not a function range to the caller, and has no basic blocks until it runs.
+    // The body of a generator or of an async function and a static block are a part of what the source has as a function
+    // or a class, and run as functions of their own: a gap in the basic blocks around them, with none of their own until they run.
     for (auto [hasExecuted, start, end, parseMode] : vm.functionHasExecutedCache()->getFunctionRanges(sourceID)) {
-        if (FunctionHasExecutedCache::isFunctionInSource(parseMode) || hasExecuted)
+        if (hasExecuted || (!isGeneratorOrAsyncFunctionBodyParseMode(parseMode) && parseMode != SourceParseMode::ClassStaticBlockMode))
             continue;
         BasicBlockRange range;
         range.m_hasExecuted = false;
