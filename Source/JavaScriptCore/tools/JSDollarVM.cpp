@@ -2191,6 +2191,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
 static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
+static JSC_DECLARE_HOST_FUNCTION(functionWasCompiledWithDebuggerHooks);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
@@ -2959,6 +2960,18 @@ JSC_DEFINE_HOST_FUNCTION(functionHasDecodedExpressionInfo, (JSGlobalObject* glob
     if (!codeBlock)
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsBoolean(!!codeBlock->unlinkedCodeBlock()->expressionInfoIfDecoded()));
+}
+
+// Usage: $vm.wasCompiledWithDebuggerHooks(functionObj) or $vm.wasCompiledWithDebuggerHooks(codeBlockToken)
+// Whether the function's code was generated with the debug hooks, which is what a global object with a debugger
+// attached asks for (JSGlobalObject::defaultCodeGenerationMode); undefined if it has no code block.
+JSC_DEFINE_HOST_FUNCTION(functionWasCompiledWithDebuggerHooks, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(codeBlock->wasCompiledWithDebuggingOpcodes()));
 }
 
 // Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
@@ -5936,6 +5949,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
     addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
+    addFunction(vm, allowIfNotFuzz, "wasCompiledWithDebuggerHooks"_s, functionWasCompiledWithDebuggerHooks, 1);
     addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);

@@ -273,13 +273,19 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         }
 #endif
     }
+    // The mode code is generated with decides what that code is: for a debugger every variable is captured in the
+    // scope and the debug hooks are emitted, and each profiler adds its own (BytecodeGenerator::shouldEmitDebugHooks
+    // and the two beside it). One unlinked executable is shared by every global object that links it, and a debugger
+    // is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode), so the code kept here
+    // is the code of whoever asked for it first. Give it out only to the ones that ask for the mode it was generated
+    // with; code for another mode is generated and takes its place.
     switch (specializationKind) {
     case CodeSpecializationKind::CodeForCall:
-        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())
+        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get(); codeBlock && codeBlock->codeGenerationMode() == codeGenerationMode)
             return codeBlock;
         break;
     case CodeSpecializationKind::CodeForConstruct:
-        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForConstruct.get())
+        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForConstruct.get(); codeBlock && codeBlock->codeGenerationMode() == codeGenerationMode)
             return codeBlock;
         break;
     }
