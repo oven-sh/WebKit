@@ -354,11 +354,14 @@ enum class CastReason : uint32_t {
     CoerceFreshGraph,
     AsFreshObject,
     Member,
+    AsIfConvertible,
+    AsFreshObjectIfConvertible,
 };
 enum class Freshness : uint32_t { None, TopLevel, WholeGraph };
 static constexpr unsigned freshnessShift = 8;
 static constexpr uint32_t CastReportsMismatchAtCaller = 1 << 10;
 static constexpr unsigned mismatchedArgumentIndexShift = 11;
+static constexpr uint32_t CastKeepsUnconvertibleObjects = 1 << 20;
 
 static constexpr uint32_t PredictionIsClosure = 1u << 31;
 static constexpr uint32_t PredictionIsByKey = 1u << 30;

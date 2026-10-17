@@ -2174,6 +2174,66 @@ static void testSinkValuesSinksWithinIrreducibleCycle()
     }
 }
 
+static void testFoldPathConstantsFoldsComparisonImpliedByBranch()
+{
+    for (bool isImplied : { true, false }) {
+        Procedure proc;
+        proc.setPositionIndependent();
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* isLarge = proc.addBlock();
+        BasicBlock* isSmall = proc.addBlock();
+        BasicBlock* isSame = proc.addBlock();
+        BasicBlock* isOther = proc.addBlock();
+        Value* number = cCallArgumentValues<int64_t>(proc, root)[0];
+        graph.branch(root, graph.make(root, GreaterEqual, number, graph.int64(root, 100)), isLarge, isSmall);
+        graph.ret(isLarge, graph.int64(isLarge, 1));
+        graph.branch(isSmall, graph.make(isSmall, Equal, number, graph.int64(isSmall, isImplied ? 200 : 50)), isSame, isOther);
+        graph.ret(isSame, graph.int64(isSame, 2));
+        graph.ret(isOther, graph.int64(isOther, 3));
+        proc.resetReachability();
+        validate(proc);
+
+        foldPathConstants(proc);
+        validate(proc);
+        CHECK_EQ(isSmall->last()->child(0)->isInt(0), isImplied);
+        proc.setPositionIndependent(false);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 200), 1);
+        CHECK_EQ(invoke<int64_t>(*code, 100), 1);
+        CHECK_EQ(invoke<int64_t>(*code, 99), 3);
+        CHECK_EQ(invoke<int64_t>(*code, 50), isImplied ? 3 : 2);
+    }
+}
+
+static void testFoldPathConstantsBypassesSelectDecidedByBranch()
+{
+    Procedure proc;
+    proc.setPositionIndependent();
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* isLarge = proc.addBlock();
+    BasicBlock* isSmall = proc.addBlock();
+    Value* number = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* normalized = root->appendNew<Value>(proc, Select, Origin(), graph.make(root, Equal, number, graph.int64(root, 200)), graph.int64(root, 150), number);
+    graph.branch(root, graph.make(root, GreaterEqual, number, graph.int64(root, 100)), isLarge, isSmall);
+    graph.ret(isLarge, normalized);
+    Value* sum = graph.make(isSmall, Add, normalized, graph.int64(isSmall, 1));
+    graph.ret(isSmall, sum);
+    proc.resetReachability();
+    validate(proc);
+
+    foldPathConstants(proc);
+    validate(proc);
+    CHECK_EQ(sum->child(0), number);
+    CHECK_EQ(isLarge->last()->child(0), normalized);
+    proc.setPositionIndependent(false);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 200), 150);
+    CHECK_EQ(invoke<int64_t>(*code, 300), 300);
+    CHECK_EQ(invoke<int64_t>(*code, 7), 8);
+}
+
 static void testSinkValuesKeepsLoads()
 {
     Procedure proc;
@@ -7825,6 +7885,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testSinkValuesKeepsValueUsedInSameBlock());
     RUN(testSinkValuesClonesComparisonFusedIntoBranchForRareUser());
     RUN(testSinkValuesSinksWithinIrreducibleCycle());
+    RUN(testFoldPathConstantsFoldsComparisonImpliedByBranch());
+    RUN(testFoldPathConstantsBypassesSelectDecidedByBranch());
     RUN(testSinkValuesKeepsLoads());
     RUN(testSinkValuesKeepsOpaque());
     RUN(testSinkValuesDoesNotSinkIntoLoop());

@@ -45,6 +45,7 @@ void createResultAdapters(Program&);
 void clearCallerCheckedResultTypes(Program&);
 void resolveCallsBySignature(Program&);
 void createJSONSerializers(Program&);
+void planStringAppends(Program&, Vector<String>& findings);
 void specializeConstantFormatters(Program&);
 void findDeclaredSuperclasses(Program&);
 void createBoundFunctions(Program&);

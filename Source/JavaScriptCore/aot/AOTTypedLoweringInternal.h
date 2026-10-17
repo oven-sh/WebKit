@@ -1395,6 +1395,7 @@ private:
     std::pair<Word32, Pointer> argumentBuffer(const Arguments&);
     LValue transientBuffer(size_t bytes);
     B3::Air::StackSlot* m_transientBuffer { nullptr };
+    Vector<B3::Air::StackSlot*, 2> m_stringAppendSlots;
     std::pair<CellPointer, Pointer> allocateArray(Word32 length, Word32 vectorLength, LBasicBlock slowPath);
     CellPointer newArray(const Arguments&);
     CellPointer newArrayFromBuffer(Word32 count, Pointer buffer);
@@ -2273,7 +2274,7 @@ Operand Lowering::lowerPredictedBuiltin(ValueID result, const PredictedBuiltin& 
     bool takesObjectArgument = expected.arguments.containsIf([](auto& type) {
         return type.hasObjects();
     });
-    if (needsAnyCheck && !takesObjectArgument && !expected.isFunctionCalledAsValue && !m_isInLoop && !m_program.isStaticallyHot(m_id))
+    if (needsAnyCheck && !takesObjectArgument && !expected.isFunctionCalledAsValue && prefersGenericPathInColdCode())
         return genericPath();
     auto& int32Type = m_program.at(m_program.types.int32);
     BuiltinID integerVariant;

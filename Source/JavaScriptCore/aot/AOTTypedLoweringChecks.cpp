@@ -2948,6 +2948,15 @@ CellPointer Lowering::nonNullish(Operand operand, const Type& type, StringID nam
     return asCell(value);
 }
 
+static CastReason runtimeAnnotationCastReason(const Value& cast)
+{
+    if (cast.castReason() != CastReason::As)
+        return cast.castReason();
+    if (cast.keepsUnconvertibleObjects())
+        return cast.coercesFreshData() ? CastReason::AsFreshObjectIfConvertible : CastReason::AsIfConvertible;
+    return cast.coercesFreshData() ? CastReason::AsFreshObject : CastReason::As;
+}
+
 Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, std::optional<OperationEffects> castEffects)
 {
     auto& to = m_program.at(cast.type);
@@ -2961,7 +2970,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, s
         bool usesCastTest = cast.castReason() == CastReason::As || isNarrowing;
         if (auto tests = castInRegisterTests(to, usesCastTest, inspectsUntypedObjects)) {
             OperationEffects effects = castEffects ? *castEffects : OperationEffects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
-            CastReason reason = cast.castReason() == CastReason::As && cast.coercesFreshData() ? CastReason::AsFreshObject : cast.castReason();
+            CastReason reason = runtimeAnnotationCastReason(cast);
             RELEASE_ASSERT(cast.type.index() < 1u << 28 && static_cast<uint32_t>(reason) < 16);
             return convert(castInRegister(rematerializedValue(operand.as<Boxed>()), Entry::operationAOTTypedCoerce, true, cast.type.index() << 4 | static_cast<uint32_t>(reason), effects, WTF::move(*tests), false), to, rep);
         }
@@ -2987,13 +2996,15 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, s
         return join.finish();
     }
     RELEASE_ASSERT(isNarrowing || !m_program.castsMayRetag || effects.writesShapeWords || cast.castReason() != CastReason::As);
-    Boxed coerced = AOT_TYPED_OPERATION_WITH_EFFECTS(Coerce, effects, passed, typeAndReason(cast.type, cast.castReason() == CastReason::As && cast.coercesFreshData() ? CastReason::AsFreshObject : cast.castReason()));
+    Boxed coerced = AOT_TYPED_OPERATION_WITH_EFFECTS(Coerce, effects, passed, typeAndReason(cast.type, runtimeAnnotationCastReason(cast)));
     join.add(convert(coerced, to, rep));
     return join.finish();
 }
 
 static CastReason runtimeCastReason(const Value& cast)
 {
+    if (cast.keepsUnconvertibleObjects())
+        return CastReason::AsIfConvertible;
     if (cast.castReason() != CastReason::Coerce || !cast.coercesFreshData())
         return cast.castReason();
     return cast.freshness() == Format::Freshness::WholeGraph ? CastReason::CoerceFreshGraph : CastReason::CoerceFreshObject;
@@ -3001,7 +3012,7 @@ static CastReason runtimeCastReason(const Value& cast)
 
 Word32 Lowering::typeAndReason(TypeID type, CastReason reason)
 {
-    static_assert(static_cast<uint32_t>(CastReason::AsFreshObject) < 16);
+    static_assert(static_cast<uint32_t>(CastReason::AsFreshObjectIfConvertible) < 16);
     RELEASE_ASSERT(type.index() < 1u << 28 && static_cast<uint32_t>(reason) < 16);
     return word32(type.index() << 4 | static_cast<uint32_t>(reason));
 }
@@ -3242,7 +3253,7 @@ bool Lowering::readsLengthOfPredictedArrayOrString(size_t readIndex)
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || m_currentBlock->terminator.kind == TerminatorKind::Invoke)
         return false;
     auto& read = m_function.at(m_currentBlock->values[readIndex]);
-    if (read.opcode != Opcode::GetById || read.string() != m_length || read.isAtKnownSlot() || read.methodGetByIdBuiltin() || (!m_isInLoop && !m_program.isStaticallyHot(m_id)))
+    if (read.opcode != Opcode::GetById || read.string() != m_length || read.isAtKnownSlot() || read.methodGetByIdBuiltin() || prefersGenericPathInColdCode())
         return false;
     ValueID object = read.child(0);
     auto& receiver = typeOf(object);
@@ -3859,6 +3870,8 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
     case CastReason::CoerceFreshGraph:
     case CastReason::AsFreshObject:
     case CastReason::Member:
+    case CastReason::AsIfConvertible:
+    case CastReason::AsFreshObjectIfConvertible:
         RELEASE_ASSERT_NOT_REACHED();
     case CastReason::NonNull:
         if (m_program.isRelaxedForLogging(to)) [[unlikely]]
@@ -3992,7 +4005,7 @@ void Lowering::findLazilyFetchedLeaves()
         for (ValueID id : block.values) {
             auto& user = m_function.at(id);
             ValueID late;
-            bool treatsNamesAsData = false;
+            bool treatsNamesAsData = user.opcode == Opcode::CallBuiltin && m_builtins.at(user.builtin()).implementation.kind == BuiltinImplementation::Inline && m_builtins.at(user.builtin()).implementation.inlined == InlineBuiltin::StringAppend;
             switch (user.opcode) {
             case Opcode::GetByVal:
             case Opcode::PutByVal:

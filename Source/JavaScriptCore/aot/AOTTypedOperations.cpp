@@ -479,6 +479,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPrivateFieldAdd, void, (Instance* inst
     Symbol* symbol = asSymbol(JSValue::decode(name));
     JSObject* object = asObject(JSValue::decode(encodedObject));
     Structure* before = object->structure();
+    if (!before->isDictionary() && !before->compiledLayout()) {
+        PropertyOffset offset = invalidOffset;
+        Structure* after = Structure::addPropertyTransitionToExistingStructure(before, PropertyName(symbol->privateName()), 0, offset);
+        if (after && after->outOfLineCapacity() != before->outOfLineCapacity()) {
+            Butterfly* butterfly = object->allocateMoreOutOfLineStorage(vm, before->outOfLineCapacity(), after->outOfLineCapacity());
+            object->nukeStructureAndSetButterfly(vm, before->id(), butterfly);
+            object->putDirectOffset(vm, offset, JSValue::decode(value));
+            object->setStructure(vm, after);
+            ensureStillAliveHere(before);
+            ensureStillAliveHere(after);
+            OPERATION_RETURN(scope);
+        }
+    }
     privateAdd(globalObject, vm, object, PropertyName(symbol->privateName()), JSValue::decode(value), 0);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     cacheKeyedDefinition(instance, vm, before, object->structure(), symbol, &symbol->privateName()->uid());
@@ -3409,11 +3422,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCopyClosureOutOfFrame, Encode
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerce, EncodedJSValue, (Instance* instance, EncodedJSValue value, uint32_t typeAndReason))
 {
-    if ((typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::As) && instance->typed->tryQuickConversion(*instance->vm, JSValue::decode(value), instance->typed->type(typeAndReason >> 4)))
+    if (((typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::As) || (typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::AsIfConvertible)) && instance->typed->tryQuickConversion(*instance->vm, JSValue::decode(value), instance->typed->type(typeAndReason >> 4)))
         return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
-    OPERATION_RETURN(scope, JSValue::encode(state.coerce(globalObject, JSValue::decode(value), state.type(typeAndReason >> 4), static_cast<Typed::Format::CastReason>(typeAndReason & 15))));
+    OPERATION_RETURN(scope, JSValue::encode(state.coerce(globalObject, JSValue::decode(value), state.type(typeAndReason >> 4), static_cast<Typed::Format::CastReason>(typeAndReason & 15), { }, State::CoercionResult::ConvertedValue, typeAndReason)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerceInPlace, void, (Instance* instance, EncodedJSValue value, uint32_t typeAndReason))
@@ -5870,6 +5883,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterOpenInFrame, EncodedJSValue, (Inst
     auto* state = Typed::CollectionIteration::InFrame::at(words);
     if (Typed::CollectionIteration::tryOpen(globalObject, JSValue::decode(iterable), state))
         OPERATION_RETURN(scope, JSValue::encode(globalObject));
+    state->setIndex(vm, Typed::CollectionIteration::structureOfResultsWord, jsNull());
+    state->setIndex(vm, Typed::CollectionIteration::offsetsInResultsWord, jsNumber(0));
     openGenericIteration(globalObject, JSValue::decode(iterable), [&] {
         return state;
     }, [&](JSValue iterator) {
@@ -5941,6 +5956,39 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterHas, size_t, (Instance* instance, 
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     OPERATION_RETURN(scope, stepIteration(globalObject, uncheckedDowncast<JSCellButterfly>(JSValue::decode(encodedState).asCell())));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedFinishIterStepInFrame, size_t, (Instance* instance, EncodedJSValue* words, EncodedJSValue encodedResult))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* state = Typed::CollectionIteration::InFrame::at(words);
+    JSValue result = JSValue::decode(encodedResult);
+    if (!result.isObject()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        OPERATION_RETURN(scope, false);
+    }
+    Structure* structure = asObject(result)->structure();
+    if (!structure->isDictionary() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
+        unsigned attributesOfDone;
+        unsigned attributesOfValue;
+        PropertyOffset done = structure->get(vm, vm.propertyNames->done, attributesOfDone);
+        PropertyOffset value = structure->get(vm, vm.propertyNames->value, attributesOfValue);
+        if (isValidOffset(done) && isValidOffset(value) && isInlineOffset(done) && isInlineOffset(value) && !((attributesOfDone | attributesOfValue) & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+            auto offsetInCell = [](PropertyOffset offset) {
+                return static_cast<int32_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue));
+            };
+            state->setIndex(vm, Typed::CollectionIteration::structureOfResultsWord, structure);
+            state->setIndex(vm, Typed::CollectionIteration::offsetsInResultsWord, jsNumber(offsetInCell(done) | offsetInCell(value) << 16));
+        }
+    }
+    bool isDone = iteratorCompleteExported(globalObject, result);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (isDone)
+        OPERATION_RETURN(scope, false);
+    JSValue value = iteratorValue(globalObject, result);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    state->setIndex(vm, 2, value);
+    OPERATION_RETURN(scope, true);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterHasInFrame, size_t, (Instance* instance, EncodedJSValue* words))

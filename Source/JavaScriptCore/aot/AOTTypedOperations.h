@@ -259,6 +259,7 @@ struct Slot;
     v(operationAOTTypedIterCloseForThrow) \
     v(operationAOTTypedIterOpenInFrame) \
     v(operationAOTTypedIterHasInFrame) \
+    v(operationAOTTypedFinishIterStepInFrame) \
     v(operationAOTTypedIterCloseInFrame) \
     v(operationAOTTypedIterCloseForThrowInFrame) \
     v(operationAOTTypedReadBatchedElements) \
@@ -562,6 +563,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterClose, Heap, void, (Instance*, 
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterCloseForThrow, Heap, void, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterOpenInFrame, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterHasInFrame, Heap, size_t, (Instance*, EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFinishIterStepInFrame, Heap, size_t, (Instance*, EncodedJSValue*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterCloseInFrame, Heap, void, (Instance*, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterCloseForThrowInFrame, Heap, void, (Instance*, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedReadBatchedElements, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue*));

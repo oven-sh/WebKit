@@ -962,7 +962,7 @@ void Lowering::findStructureDescriptorOfRun(AccessRun& run) const
 
 void Lowering::findAccessRuns(const Vector<BlockID>& order)
 {
-    if (m_function.isTyped() || !m_program.isStaticallyHot(m_id) || m_program.runsOnce(m_id))
+    if (m_function.isTyped() || !m_program.isHotOutsideLoops(m_id) || m_program.runsOnce(m_id))
         return;
     struct Access {
         BlockID block;
@@ -1619,7 +1619,7 @@ std::optional<Boxed> Lowering::getGlobalMember(ValueID base, StringID name)
     if (global.opcode != Opcode::GetGlobal || !m_out.m_block->frequency())
         return std::nullopt;
     bool isReadFromCache = !m_function.readsHostObjectMember && m_program.isHostObjectFunction(global.string(), name);
-    if (isReadFromCache ? m_out.m_block->frequency() < 1 || (!m_isInLoop && !m_program.isStaticallyWarm(m_id) && !m_program.isStaticallyHot(m_id)) : !m_function.readsHostObjectMember)
+    if (isReadFromCache ? m_out.m_block->frequency() < 1 || prefersGenericPathInColdCode() : !m_function.readsHostObjectMember)
         return std::nullopt;
     uint32_t cacheNumber = m_program.globalMemberCacheNumber(global.string(), name);
     if (!cacheNumber)
@@ -3500,7 +3500,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
 #else
     constexpr bool canCheckStackWithoutFrame = false;
 #endif
-    if (context.emitsCalls && !context.readsCallerFrame && !context.savesFrameOnSuspend && !context.unwindsToLandingPads && function.isTyped() && !function.isGenericEntrypoint() && !function.declaredAs && program.isStaticallyHot(id) && (canCheckStackWithoutFrame || program.hasCheckedStackOnEntry(id))) {
+    if (context.emitsCalls && !context.readsCallerFrame && !context.savesFrameOnSuspend && !context.unwindsToLandingPads && function.isTyped() && !function.isGenericEntrypoint() && !function.declaredAs && program.isHotOutsideLoops(id) && (canCheckStackWithoutFrame || program.hasCheckedStackOnEntry(id))) {
         proc.resetValueOwners();
         makeCallsPreserveLiveRegisters(proc, context);
     }

@@ -377,7 +377,7 @@ private:
             break;
         case Opcode::Cast: {
             static constexpr ASCIILiteral reasons[] = { "Store"_s, "As"_s, "NonNull"_s, "Claim"_s, "Flow"_s, "Upcast"_s, "Coerce"_s, "CoerceFreshObject"_s, "CoerceFreshGraph"_s, "AsFreshObject"_s, "Member"_s };
-            m_out.print(" ", reasons[static_cast<unsigned>(value.castReason())]);
+            m_out.print(" ", reasons[static_cast<unsigned>(value.castReason())], value.keepsUnconvertibleObjects() ? " if convertible" : "");
             if (value.castReason() == CastReason::Coerce) {
                 m_out.print(value.freshness() == Format::Freshness::WholeGraph ? " fresh graph " : value.coercesFreshData() ? " fresh " : " ");
                 type(value.coercedType());

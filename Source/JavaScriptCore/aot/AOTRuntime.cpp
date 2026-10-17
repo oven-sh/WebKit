@@ -1180,6 +1180,7 @@ void Instance::destroy(Instance* instance)
     fastFree(instance->propertyRuns);
     destroyJSONBuffers(*instance);
     destroyJSONSource(*instance);
+    destroyStringAppender(*instance);
     destroyFormatPatternState(*instance);
     OSAllocator::decommitAndRelease(instance->namedFieldReads, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->namedFieldWrites, numberOfNamedFields * sizeof(NamedField));
@@ -3261,7 +3262,7 @@ void Instance::sweepKeyedTables(bool newOnly)
         if (!entry.structureID)
             return;
         uint32_t flags = entry.offset & Slot::flagsMask;
-        if (!namesLiveCells(entry) || (flags ? flags != keyedHasNeedsLookup : !holds(entry.offset & ((1u << keyedHasResultShift) - 1))))
+        if (!namesLiveCells(entry) || (flags && flags != keyedHasReadsField ? flags != keyedHasNeedsLookup : !holds(entry.offset & ((1u << keyedHasResultShift) - 1))))
             zeroBytes(entry);
     });
     forEachEntryToSweep(keyedAdditions, numberOfKeyedAdditions, [&](KeyedAddition& addition) {

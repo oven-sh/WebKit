@@ -2075,7 +2075,7 @@ std::optional<Operand> Lowering::readHostObjectMember(const Value& call)
 std::optional<Operand> Lowering::readHostObjectMemberInline(ValueID result, const Value& call)
 {
     auto& reader = m_program.at(call.function());
-    if (!reader.cachedHostObjectName || m_out.m_block->frequency() < 1 || (!m_isInLoop && !m_program.isStaticallyWarm(m_id) && !m_program.isStaticallyHot(m_id)))
+    if (!reader.cachedHostObjectName || m_out.m_block->frequency() < 1 || prefersGenericPathInColdCode())
         return std::nullopt;
     uint32_t cacheNumber = m_program.globalMemberCacheNumber(reader.cachedHostObjectName, reader.name);
     if (!cacheNumber || resultRepOf(m_program, reader.genericHostObjectReader) != Rep::JSValue)
@@ -2651,7 +2651,7 @@ Operand Lowering::lowerIndirectCall(ValueID callee, ValueID thisValue, const Arg
     FunctionID expected = m_function.at(callee).predictedClosure();
     if (expected && !mayCallDirectlyFromTailCallSite(expected, type))
         return genericPath();
-    if (!expected || isGuardedCallee(callee) || !m_program.isHotOutsideLoops(m_id))
+    if (!expected || isGuardedCallee(callee) || prefersGenericPathInColdCode())
         return genericPath();
     FunctionID listEntry = listEntryFor(expected);
     if (listEntry && isLoweringCallInTailPosition())

@@ -6756,6 +6756,7 @@ State::State(VM& vm, Instance& instance, const Data& data)
     instance.typedExtraPropertyLocations = createZeroedTable<ExtraPropertyLocation>(1 << ExtraPropertyLocation::indexBits);
     instance.typedLateFieldCreations = createZeroedTable<LateFieldCreation>(1 << LateFieldCreation::indexBits);
     instance.typedCloneCache = createZeroedTable<TypedCloneCacheEntry>(1 << TypedCloneCacheEntry::indexBits);
+    instance.typedConversionCache = createZeroedTable<ConversionCacheEntry>(1 << ConversionCacheEntry::indexBits);
     m_propertyConversionCache = createZeroedTable<uintptr_t>(propertyConversionCacheSize);
     m_propertiesWithSupertypes = createZeroedTable<PropertiesWithSupertypes>(numberOfPropertiesWithSupertypes);
     createStatics();
@@ -6841,6 +6842,7 @@ State::~State()
     destroyZeroedTable(static_cast<ExtraPropertyLocation*>(instance.typedExtraPropertyLocations), 1 << ExtraPropertyLocation::indexBits);
     destroyZeroedTable(static_cast<LateFieldCreation*>(instance.typedLateFieldCreations), 1 << LateFieldCreation::indexBits);
     destroyZeroedTable(static_cast<TypedCloneCacheEntry*>(instance.typedCloneCache), 1 << TypedCloneCacheEntry::indexBits);
+    destroyZeroedTable(static_cast<ConversionCacheEntry*>(instance.typedConversionCache), 1 << ConversionCacheEntry::indexBits);
     destroyZeroedTable(m_propertyConversionCache, propertyConversionCacheSize);
     destroyZeroedTable(m_propertiesWithSupertypes, numberOfPropertiesWithSupertypes);
     fastFree(m_youngRoots);
@@ -11994,8 +11996,33 @@ const StoreTransition* State::fieldCreatingStoreTransition(const FieldData& fiel
     return known.last().get();
 }
 
+const StoreTransition* State::storageCreatingStoreTransition(const FieldData& field, Object* object, uint64_t fieldWrite)
+{
+    Structure* structure = object->structure();
+    uint64_t words = object->orderAndShapeWords();
+    uint32_t orderWord = static_cast<uint32_t>(words);
+    if (data.isCompiledForAudit || isCounting() || !(field.flags & fieldIsOutOfLine) || !(field.flags & fieldMayExistWithoutStorage) || object->isDiscriminant(field) || object->extraPropertiesHandle())
+        return nullptr;
+    if (orderWord & (orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible) || orderOf(orderWord) == keysAreInLayoutOrder || !object->isInKeyOrder(*this, field))
+        return nullptr;
+    auto& known = m_storageCreatingStoreTransitions.add({ structure, &field }, Vector<std::unique_ptr<StoreTransition>, 1> { }).iterator->value;
+    for (auto& transition : known) {
+        if (transition->wordsBefore == words)
+            return transition.get();
+    }
+    if (known.size() >= TransitionPlan::maxOrderWords)
+        return nullptr;
+    auto made = makeUnique<StoreTransition>();
+    *made = { words, words, fieldWrite, { }, { }, structure->id().bits(), structure->compiledLayout()->size, 0, nullptr, { }, static_cast<uint32_t>(WTF::roundUpToMultipleOf<minExtensionSize>(field.offset + sizeOf(field.store()))) };
+    known.append(WTF::move(made));
+    return known.last().get();
+}
+
 void State::removeDeadStoreTransitions(VM& vm)
 {
+    m_storageCreatingStoreTransitions.removeIf([&](auto& entry) {
+        return !vm.heap.isMarked(entry.key.first);
+    });
     for (auto& transitions : m_lateFieldCreationStoreTransitions) {
         transitions.removeIf([&](auto& entry) {
             return !vm.heap.isMarked(entry.key.first);
@@ -12602,7 +12629,113 @@ static unsigned widthOf(Store store)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Structure* made, size_t sizeOfCell)
+std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& plan, size_t sizeOfCell, uint64_t header, void* allocator)
+{
+    using Kind = ConversionMove::Kind;
+    constexpr uint8_t number = CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble;
+    constexpr uint8_t boolean = CoercionPlan::acceptsTrue | CoercionPlan::acceptsFalse;
+    if (sizeOfCell > ConversionPlan::maxCellSize || sizeOfCell % (2 * sizeof(uint64_t)) || sizeOfCell < plan.layout->size)
+        return nullptr;
+    auto made = makeUnique<ConversionPlan>();
+    for (auto& planned : plan.fields) {
+        const FieldData& field = *planned.field;
+        const RuntimeType& type = ownTypeOf(field);
+        uint8_t kinds = planned.acceptedKinds;
+        if (!isInlineOffset(planned.offset) || field.flags & (fieldIsOutOfLine | fieldIsPinned) || field.numberOfLiterals())
+            return nullptr;
+        Store store = field.store();
+        ConversionMove move { static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(planned.offset) * sizeof(EncodedJSValue)), static_cast<uint16_t>(field.offset), Kind::Value, 0, 0, 0, 0, 0 };
+        bool holdsAnything = store == Store::JSValue && type.allowsAnyObject() && type.allowsAnyFunction() && (type.primitives & Primitive::All) == Primitive::All && (kinds & number) == number;
+        if (holdsAnything) {
+            made->moves.append(move);
+            continue;
+        }
+        if (store == Store::OptionalCell32 || store == Store::JSValue || store == Store::Int32OrNumberBox || store == Store::OptionalDouble || store == Store::OptionalBoolean)
+            move.flags = (kinds & CoercionPlan::acceptsUndefined ? ConversionMove::acceptsUndefined : 0) | (kinds & CoercionPlan::acceptsNull ? ConversionMove::acceptsNull : 0);
+        switch (store) {
+        case Store::Double:
+        case Store::OptionalDouble:
+            if ((kinds & number) != number)
+                return nullptr;
+            move.kind = Kind::NumberAsDouble;
+            break;
+        case Store::Int32OrNumberBox:
+            if ((kinds & number) != number)
+                return nullptr;
+            move.kind = Kind::NumberAsInlineInt32;
+            break;
+        case Store::Boolean:
+        case Store::OptionalBoolean:
+            if ((kinds & boolean) != boolean)
+                return nullptr;
+            move.kind = store == Store::Boolean ? Kind::BooleanAsByte : Kind::BooleanAsValueByte;
+            break;
+        case Store::Cell:
+        case Store::JSValue:
+        case Store::Cell32:
+        case Store::OptionalCell32: {
+            if (store == Store::Cell || store == Store::JSValue)
+                move.flags |= ConversionMove::isWide;
+            if (type.allowsAnyObject())
+                move.kind = Kind::Object;
+            else if (kinds & CoercionPlan::acceptsString) {
+                move.kind = Kind::CellOfType;
+                move.cellType = StringType;
+            } else if (type.allowsAnyFunction())
+                move.kind = Kind::Function;
+            else if (type.numberOfJSTypes()) {
+                move.kind = Kind::CellOfType;
+                move.cellType = type.jsTypes()[0];
+            } else if (type.numberOfSupertypes() && type.view(0).set == UINT32_MAX && subtypesHaveNoSpecializations(type)) {
+                move.kind = Kind::CellOfShape;
+                move.lastShape = type.view(0).first + type.view(0).count - 1;
+                move.shapeCount = type.view(0).count;
+            } else
+                return nullptr;
+            break;
+        }
+        default:
+            return nullptr;
+        }
+        made->moves.append(move);
+    }
+    made->cell.fill(0, sizeOfCell / sizeof(uint64_t));
+    made->cell[0] = header;
+    size_t bodySize = std::min(plan.initialBody.size(), sizeOfCell - sizeof(JSCell));
+    memcpySpan(asMutableByteSpan(made->cell.mutableSpan().subspan(1)).first(bodySize), plan.initialBody.span().first(bodySize));
+    made->allocator = allocator;
+    made->words = made->cell.span().data();
+    made->wordCount = made->cell.size();
+    made->firstMove = made->moves.span().data();
+    made->moveCount = made->moves.size();
+    return made;
+}
+
+void State::cacheConversion(uint32_t structureID, uint32_t typeAndReason, const ConversionPlan& plan)
+{
+    static_cast<ConversionCacheEntry*>(instance.typedConversionCache)[ConversionCacheEntry::placeOf(structureID, typeAndReason)] = { structureID, typeAndReason, &plan };
+    m_hasCachedConversions = true;
+}
+
+void State::cacheCopyConversion(VM& vm, Structure* structure, const RuntimeType& type, const CoercionPlan& plan, Structure* made, uint32_t typeAndReason)
+{
+    if (plan.copyConversionEpoch == m_quickConversionEpoch)
+        return;
+    plan.copyConversionEpoch = m_quickConversionEpoch;
+    if (m_counts || data.isCompiledForAudit || plan.initialBody.isEmpty() || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity() || coercionPlan(structure, type) != &plan || structures[plan.layout->shape] != made->id().bits())
+        return;
+    if (!plan.copyConversion) {
+        size_t size = WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(plan.initialBody.size() + sizeof(JSCell));
+        void* allocator = vm.cellSpace().allocatorFor(size, AllocatorForMode::EnsureAllocator).localAllocator();
+        if (!allocator)
+            return;
+        plan.copyConversion = createConversionPlan(plan, size, static_cast<uint64_t>(made->typeInfoBlob()) << 32 | made->id().bits(), allocator);
+    }
+    if (plan.copyConversion)
+        cacheConversion(structure->id().bits(), typeAndReason, *plan.copyConversion);
+}
+
+void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Structure* made, size_t sizeOfCell, uint32_t typeAndReason)
 {
     size_t bodySize = plan.initialBody.size();
     if (m_counts || data.isCompiledForAudit || !bodySize || sizeOfCell % 16 || sizeOfCell < 32 || sizeOfCell > maxSizeOfQuickConversion || sizeOfCell < plan.layout->size || plan.fields.size() > CoercionPlan::maxNumberOfQuickMoves || !plan.extraProperties.isEmpty() || structure->outOfLineCapacity())
@@ -12647,6 +12780,12 @@ void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, 
         *quickConversion(structureID, type, 0, true) = { structureID, root.discriminant, &type, 0, nullptr, 0, 0 };
     uint64_t header = static_cast<uint64_t>(made->typeInfoBlob() & 0xffffff) << 32 | made->id().bits();
     *quickConversion(structureID, type, dependsOnDiscriminant ? discriminant : 0, true) = { structureID, invalidOffset, &type, dependsOnDiscriminant ? discriminant : 0, &plan, header, static_cast<uint32_t>(sizeOfCell) };
+    if (!typeAndReason || dependsOnDiscriminant)
+        return;
+    if (!plan.inPlaceConversion)
+        plan.inPlaceConversion = createConversionPlan(plan, sizeOfCell, header, nullptr);
+    if (plan.inPlaceConversion)
+        cacheConversion(structureID, typeAndReason, *plan.inPlaceConversion);
 }
 
 bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
@@ -12985,7 +13124,7 @@ Object* State::tryCloneAs(VM& vm, JSObject* source, uint64_t target)
     return copy;
 }
 
-Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayConvertInPlace)
+Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayConvertInPlace, uint32_t typeAndReason)
 {
     const CoercionPlan* plan = coercionPlan(object, type);
     if (!plan && mayConvertInPlace)
@@ -13028,7 +13167,9 @@ Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& 
     }
     if (Object* made = tryConvertOrCopyByPlan(vm, object, *plan, mayConvertInPlace)) {
         if (mayBeQuick && JSValue(made) == JSValue(object))
-            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())));
+            cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made->structure(), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())), typeAndReason);
+        else if (typeAndReason && !mayConvertInPlace)
+            cacheCopyConversion(vm, structureBefore, type, *plan, made->structure(), typeAndReason);
         return made;
     }
     if (!plan->extraProperties.isEmpty())
@@ -13288,10 +13429,11 @@ void State::removeDeadCoercionPlans(VM& vm, bool newOnly)
             return !vm.heap.isMarked(entry.key.first);
         });
     }
-    if (m_quickConversions) {
+    if (std::exchange(m_hasCachedConversions, false))
+        zeroSpan(std::span { static_cast<ConversionCacheEntry*>(instance.typedConversionCache), static_cast<size_t>(1) << ConversionCacheEntry::indexBits });
+    if (m_quickConversions)
         m_quickConversions->fill({ });
-        ++m_quickConversionEpoch;
-    }
+    ++m_quickConversionEpoch;
     if (!std::exchange(m_hasNewCoercionPlans, false) && newOnly)
         return;
     m_coercionPlans.removeIf([&](auto& entry) {
@@ -13862,11 +14004,14 @@ bool State::tryPreviousTransition(VM& vm, JSValue value, uint32_t typeAndReason)
     return true;
 }
 
-JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const RuntimeType& type, Format::CastReason reason, AuditSite site, CoercionResult resultMode)
+JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const RuntimeType& type, Format::CastReason reason, AuditSite site, CoercionResult resultMode, uint32_t typeAndReason)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool hasObjects = type.allowsAnyObject() || type.allowsAnyFunction() || type.acceptsUntypedObjects() || type.numberOfSupertypes() || type.numberOfJSTypes();
+    bool keepsUnconvertibleObjects = reason == Format::CastReason::AsIfConvertible || reason == Format::CastReason::AsFreshObjectIfConvertible;
+    if (keepsUnconvertibleObjects)
+        reason = reason == Format::CastReason::AsIfConvertible ? Format::CastReason::As : Format::CastReason::AsFreshObject;
     bool isFreshObject = reason == Format::CastReason::AsFreshObject || reason == Format::CastReason::CoerceFreshObject;
     bool isConvertedEvenIfAccepted = reason == Format::CastReason::AsFreshObject;
     if (reason == Format::CastReason::AsFreshObject)
@@ -13913,7 +14058,7 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     }
     if (!compiled && !data.isCompiledForAudit && value.isCell() && value.asCell()->type() == FinalObjectType && (!type.acceptsUntypedObjectsByNature() || isConvertedEvenIfAccepted) && (requestedReason == Format::CastReason::As || requestedReason == Format::CastReason::CoerceFreshObject || requestedReason == Format::CastReason::CoerceFreshGraph)) {
         bool mayConvertInPlace = !isFreshObject && requestedReason != Format::CastReason::CoerceFreshGraph;
-        if (Object* copy = copyUnchangedByPlan(vm, asObject(value), type, mayConvertInPlace)) {
+        if (Object* copy = copyUnchangedByPlan(vm, asObject(value), type, mayConvertInPlace, requestedReason == Format::CastReason::As ? typeAndReason : 0)) {
             bool didConvertInPlace = JSValue(copy) == value;
             bool hasRoom = didConvertInPlace || (mayConvertInPlace && hasCapacityToConvertInPlace(asObject(value), copy));
             bool copiesSharedObject = requestedReason == Format::CastReason::As && !isFreshObject && !hasRoom;
@@ -13942,6 +14087,8 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     countCoercion(value, before, type, reason, way, result);
     if (result)
         return result;
+    if (keepsUnconvertibleObjects && value.isObject() && type.acceptsOnlyOtherLayouts())
+        return value;
     if ((reason == Format::CastReason::Flow || ((reason == Format::CastReason::Claim || reason == Format::CastReason::Store) && type.checksUntypedObjects())) && !compiled && value.isObject() && !data.isCompiledForAudit) {
         bool didConvertInPlace = convertInPlace(globalObject, asObject(value), type);
         RETURN_IF_EXCEPTION(scope, { });

@@ -37,30 +37,13 @@ MarkingConstraintSolver::MarkingConstraintSolver(MarkingConstraintSet& set, Slot
     : m_mainVisitor(mainVisitor)
     , m_set(set)
 {
-    m_mainVisitor.collector().forEachHeap([&](Heap& heap) {
-        m_mutatorExecutionVersion += heap.mutatorExecutionVersion();
-    });
     m_mainVisitor.collector().forEachSlotVisitor(
         [&] (SlotVisitor& visitor) {
             m_visitCounters.append(VisitCounter(visitor));
-            m_visitCountAtStart += visitor.visitCount();
         });
 }
 
 MarkingConstraintSolver::~MarkingConstraintSolver() = default;
-
-bool MarkingConstraintSolver::mayFindWork(MarkingConstraint& constraint)
-{
-    const auto& last = m_set.m_lastExecutions[constraint.index()];
-    if (!last.didExecuteOnce || last.mutatorExecutionVersion != m_mutatorExecutionVersion || constraint.quickWorkEstimate(m_mainVisitor) > 0.)
-        return true;
-    return constraint.volatility() != ConstraintVolatility::GreyedByExecution && last.visitCountAtStartOfRound != m_visitCountAtStart;
-}
-
-void MarkingConstraintSolver::didExecute(MarkingConstraint& constraint)
-{
-    m_set.m_lastExecutions[constraint.index()] = { m_mutatorExecutionVersion, m_visitCountAtStart, true };
-}
 
 bool MarkingConstraintSolver::didVisitSomething() const
 {
@@ -140,25 +123,15 @@ void MarkingConstraintSolver::converge(const Vector<MarkingConstraint*>& order)
             return;
     }
     
-    auto takeNextProductiveConstraint = [&] () -> MarkingConstraint* {
-        while (index < order.size()) {
-            MarkingConstraint* constraint = order[index++];
-            if (mayFindWork(*constraint))
-                return constraint;
-        }
-        return nullptr;
-    };
-    MarkingConstraint* next = takeNextProductiveConstraint();
-    if (!next && m_toExecuteInParallel.isEmpty())
-        return;
-
     auto pickNext = [&] () -> std::optional<unsigned> {
-        if (didVisitSomething() || !next)
+        if (didVisitSomething())
             return std::nullopt;
 
-        unsigned result = next->index();
-        next = takeNextProductiveConstraint();
-        return result;
+        if (index >= order.size())
+            return std::nullopt;
+
+        MarkingConstraint& constraint = *order[index++];
+        return constraint.index();
     };
     
     execute(ParallelWorkFirst, pickNext);
@@ -172,7 +145,6 @@ void MarkingConstraintSolver::execute(MarkingConstraint& constraint)
     constraint.prepareToExecute(NoLockingNecessary, m_mainVisitor);
     constraint.execute(m_mainVisitor);
     m_executed.set(constraint.index());
-    didExecute(constraint);
 }
 
 void MarkingConstraintSolver::addParallelTask(RefPtr<SharedTask<void(SlotVisitor&)>> task, MarkingConstraint& constraint)
@@ -278,7 +250,6 @@ void MarkingConstraintSolver::runExecutionThread(SlotVisitor& visitor, Scheduler
                 if (constraint->parallelism() == ConstraintParallelism::Parallel)
                     m_numThreadsThatMayProduceWork--;
                 m_executed.set(indexToRun);
-                didExecute(*constraint);
             }
                         
             m_condition.notifyAll();

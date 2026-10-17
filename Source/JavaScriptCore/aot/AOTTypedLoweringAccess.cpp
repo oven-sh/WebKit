@@ -6223,7 +6223,7 @@ void Lowering::lowerPutById(ValueID, const Value& value)
         }
         auto expected = predictionOf(object);
         const Field* expectedField = expected ? predictedFieldFor(*expected, name) : nullptr;
-        if (!expectedField || hasSubtypeKeepingField(expected->singleLayout(), name) || m_program.at(expectedField->slot).isDiscriminant || (!m_isInLoop && !m_program.isStaticallyHot(m_id))) {
+        if (!expectedField || hasSubtypeKeepingField(expected->singleLayout(), name) || m_program.at(expectedField->slot).isDiscriminant || prefersGenericPathInColdCode()) {
             genericPath();
             return;
         }

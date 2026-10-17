@@ -71,19 +71,12 @@ private:
     friend class MarkingConstraintSolver;
 
     bool executeConvergenceImpl(SlotVisitor&);
-
-    struct Execution {
-        uint64_t mutatorExecutionVersion { 0 };
-        size_t visitCountAtStartOfRound { 0 };
-        bool didExecuteOnce { false };
-    };
     
     BitVector m_unexecutedRoots;
     BitVector m_unexecutedOutgrowths;
     Vector<std::unique_ptr<MarkingConstraint>> m_set;
     Vector<MarkingConstraint*> m_ordered;
     Vector<MarkingConstraint*> m_outgrowths;
-    Vector<Execution> m_lastExecutions;
     unsigned m_iteration { 1 };
 };
 

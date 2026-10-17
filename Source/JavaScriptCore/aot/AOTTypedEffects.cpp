@@ -466,6 +466,8 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::CoerceFreshObject:
     case CastReason::CoerceFreshGraph:
     case CastReason::AsFreshObject:
+    case CastReason::AsIfConvertible:
+    case CastReason::AsFreshObjectIfConvertible:
         RELEASE_ASSERT_NOT_REACHED();
     }
     auto& to = program.at(value.coercedType());

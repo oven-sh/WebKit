@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CellContainerInlines.h"
+#include "HeapCellInlines.h"
 #include "MarkedBlock.h"
 #include <JavaScriptCore/JSCell.h>
 

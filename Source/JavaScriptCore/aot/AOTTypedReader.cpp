@@ -1044,6 +1044,12 @@ private:
                 if (uint32_t freshness = from.immediates[1] >> Format::freshnessShift & 3; (from.immediates[1] & 0xff) > static_cast<uint32_t>(CastReason::Coerce)
                     || freshness > static_cast<uint32_t>(Format::Freshness::WholeGraph) || (freshness && value.castReason() != CastReason::Coerce && !(value.castReason() == CastReason::As && freshness == static_cast<uint32_t>(Format::Freshness::TopLevel))))
                     m_failed = true;
+                if (value.keepsUnconvertibleObjects()) {
+                    if (value.castReason() != CastReason::As)
+                        m_failed = true;
+                    else if (!m_program.at(value.type).acceptsOnlyOtherLayouts(m_program))
+                        value.immediates[1] &= ~Format::CastKeepsUnconvertibleObjects;
+                }
                 TypeID coercedTo = value.castReason() == CastReason::Coerce ? typeAt(from.immediates[0]) : TypeID();
                 if (value.castReason() == CastReason::Coerce && !coercedTo)
                     m_failed = true;

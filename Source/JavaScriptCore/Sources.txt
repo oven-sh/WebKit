@@ -84,6 +84,7 @@ aot/AOTTypedBuiltinsPromise.cpp @no-unify
 aot/AOTTypedBuiltinsRegExp.cpp @no-unify
 aot/AOTTypedBuiltinsRowDecoder.cpp @no-unify
 aot/AOTTypedBuiltinsString.cpp @no-unify
+aot/AOTTypedBuiltinsStringAppend.cpp @no-unify
 aot/AOTTypedBuiltinsTypedArray.cpp @no-unify
 aot/AOTTypedAllocationRemarks.cpp @no-unify
 aot/AOTTypedCallResolution.cpp @no-unify
@@ -115,6 +116,7 @@ aot/AOTTypedPlacement.cpp @no-unify
 aot/AOTTypedPreparation.cpp @no-unify
 aot/AOTTypedReader.cpp @no-unify
 aot/AOTTypedRegExpLiterals.cpp @no-unify
+aot/AOTTypedStringAppendPlanning.cpp @no-unify
 aot/AOTTypedThreads.cpp @no-unify
 aot/AOTTypedType.cpp @no-unify
 aot/AOTTypedVerifier.cpp @no-unify

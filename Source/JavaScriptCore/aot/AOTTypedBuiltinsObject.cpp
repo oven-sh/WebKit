@@ -537,6 +537,16 @@ static bool appliesToAllObjectsWithStructure(const PropertySlot& slot, JSObject*
     return !structure->typeInfo().prohibitsPropertyCaching() && structure->propertyAccessesAreCacheable() && (!slot.isUnset() || (structure->propertyAccessesAreCacheableForAbsence() && !structure->isDictionary()));
 }
 
+static bool hasExtraPropertyByStructure(VM& vm, Typed::Object* object, PropertyName name)
+{
+    if (!(object->structure()->markingStampAndFlags() & Structure::isStructureWithExtraProperties))
+        return false;
+    if (!object->structure()->extraPropertiesStructureID())
+        object->specializeStructureForExtraProperties(vm);
+    unsigned attributes = 0;
+    return !!Typed::Object::offsetOfExtraProperty(vm, object, name, attributes);
+}
+
 static std::optional<bool> cacheCompiledObjectLocation(Instance* instance, JSObject* object, PropertyName name)
 {
     using Place = Instance::OwnPropertyLocation;
@@ -548,6 +558,11 @@ static std::optional<bool> cacheCompiledObjectLocation(Instance* instance, JSObj
     auto* compiled = uncheckedDowncast<Typed::Object>(object);
     const Typed::FieldData* field = compiled->fieldNamed(compiled->state(), name);
     if (!field) {
+        if (hasExtraPropertyByStructure(*instance->vm, compiled, name)) {
+            instance->cacheOwnPropertyLocation(object->structureID().bits(), name.uid(), Place::isPresent | Place::isNotValue);
+            return true;
+        }
+        structure = object->structure();
         if (!Typed::Object::structureGuaranteesAbsence(structure, name.uid()))
             return std::nullopt;
         instance->cacheOwnPropertyLocation(structure->id().bits(), name.uid(), 0);
@@ -733,6 +748,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnPropertyByName, size_t, (Instanc
                 OPERATION_RETURN(scope, true);
             }
             OPERATION_RETURN(scope, !!compiled->read(*field));
+        }
+        if (hasExtraPropertyByStructure(vm, compiled, identifier)) {
+            instance->cacheOwnPropertyResult(object->structureID().bits(), name, true);
+            OPERATION_RETURN(scope, true);
         }
         if (Typed::Object::structureGuaranteesAbsence(object->structure(), identifier.impl())) {
             instance->cacheOwnPropertyResult(object->structureID().bits(), name, false);

@@ -223,7 +223,7 @@ private:
             auto& cast = m_function.at(id);
             if (cast.opcode == Opcode::NewClosureOnce)
                 return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | 3u << 30 | cast.field();
-            uint32_t type = cast.castReason() == CastReason::Coerce ? cast.coercedType().index() | 1u << 31 : cast.type.index();
+            uint32_t type = cast.castReason() == CastReason::Coerce ? cast.coercedType().index() | 1u << 31 : cast.keepsUnconvertibleObjects() ? cast.type.index() | 1u << 29 : cast.type.index();
             return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | type;
         };
         static constexpr unsigned maxTestsToCompare = 64;

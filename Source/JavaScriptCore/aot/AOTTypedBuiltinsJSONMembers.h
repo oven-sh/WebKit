@@ -6,6 +6,7 @@
     struct JSONOutput {
         B3::Variable* cursor { nullptr };
         LBasicBlock givesUp { nullptr };
+        LBasicBlock givesUpBeforeWriting { nullptr };
         Vector<uint8_t, 64> pendingBytes;
         unsigned knownCapacity { 0 };
         unsigned remainingFields { 0 };

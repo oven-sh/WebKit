@@ -2477,7 +2477,7 @@ Operand Lowering::lowerIteratorOpen(ValueID result, const Value& value)
     }
     auto genericPath = [&] {
         if (auto record = recordInFrameOf(result))
-            return AOT_TYPED_OPERATION(IterOpenInFrame, in<Boxed>(iterable), *record);
+            return Boxed(callICStub(Stub::IterOpenInFrame, Int64, { { in<Boxed>(iterable).value(), GPRInfo::argumentGPR1 }, { record->value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsForOperation<operationAOTTypedIterOpenInFrame>()));
         return AOT_TYPED_OPERATION(IterOpen, in<Boxed>(iterable));
     };
     auto expected = predictionOf(iterable);
@@ -2626,7 +2626,7 @@ void Lowering::lowerIteratorClose(const Value& value)
             if (record && value.immediates[0])
                 AOT_TYPED_OPERATION(IterCloseForThrowInFrame, *record);
             else if (record)
-                AOT_TYPED_OPERATION(IterCloseInFrame, *record);
+                callICStub(Stub::IterCloseInFrame, Void, { { record->value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterCloseInFrame>());
             else if (value.immediates[0])
                 AOT_TYPED_OPERATION(IterCloseForThrow, in<Boxed>(value.child(0)));
             else

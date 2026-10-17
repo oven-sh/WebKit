@@ -3,8 +3,10 @@
 replaceable console
 replaceable Buffer
 replaceable Response
+replaceable Bun
 predicted Buffer.byteLength
 predicted Response.json
+predicted Bun.escapeHTML
 
 static console.log (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
 static console.info (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
@@ -33,3 +35,6 @@ static Buffer.byteLength (toString, toString?) -> int[0,6442450941] ; MayThrow ;
 static Buffer.byteLength (any, any/-?, any/-...) -> number ; CallsUserCode ; Inline(StringUTF8ByteLength)
 
 static Response.json (any, any?, any/-...) -> anything ; CallsUserCode ; Inline(ResponseJSON)
+
+static Bun.escapeHTML (toString) -> string ; MayThrow Allocates ; HostCall
+static Bun.escapeHTML (any/G?, any/-...) -> string ; CallsUserCode ; HostCall

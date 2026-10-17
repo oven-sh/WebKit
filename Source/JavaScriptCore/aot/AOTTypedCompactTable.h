@@ -384,6 +384,8 @@ public:
     static void close(JSGlobalObject*, InFrame*);
     static constexpr int32_t iteratesArrayEntriesByIndex = 256;
     static constexpr int32_t iteratesGenerator = 16;
+    static constexpr unsigned structureOfResultsWord = 3;
+    static constexpr unsigned offsetsInResultsWord = 4;
     static bool step(JSGlobalObject*, JSCellButterfly* record);
     static void close(JSGlobalObject*, JSCellButterfly* record);
     static bool tryAppendTo(JSGlobalObject*, JSArray*, JSValue iterable);

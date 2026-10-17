@@ -156,6 +156,12 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringMatchRegExp, RuntimeState, En
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSearchRegExp, RuntimeState, EncodedJSValue, (Instance*, JSCell* string, JSCell* regExp));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetExpectedRowType, Heap, void, (Instance*, EncodedJSValue query, uint32_t type));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryConvertRow, Heap, void, (Instance*, EncodedJSValue row, uint32_t type));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppendBegin, RuntimeState, void, (Instance*, uint64_t frame, uint32_t region, EncodedJSValue* firstPiece));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringAppendReset, RuntimeState, void, (Instance*, uint64_t frame, uint32_t isNested));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppend, RuntimeState, void, (Instance*, uint64_t frame, uint64_t count, const EncodedJSValue* parts, EncodedJSValue* firstPiece));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppendMeasure, RuntimeState, void, (Instance*, uint64_t frame, uint64_t count, const EncodedJSValue* parts));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringAppendSync, RuntimeState, void, (Instance*, uint64_t frame));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppendFinish, RuntimeState, JSCell*, (Instance*, uint64_t frame, uint32_t region, EncodedJSValue* firstPiece));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFindCharacter8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringUTF8Length8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFind8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start));

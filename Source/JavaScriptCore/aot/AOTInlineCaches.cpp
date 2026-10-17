@@ -648,6 +648,8 @@ void cacheCompiledField(VM& vm, Data* data, Slot* cache, JSCell* cell, const Ide
     auto* object = uncheckedDowncast<Typed::Object>(cell);
     Structure* structure = object->structure();
     const Typed::FieldData* field = object->fieldNamed(object->state(), ident);
+    if (field && field->flags & Typed::fieldMayExistWithoutStorage && cacheAbsentCompiledField(structure->globalObject(), data, cache, cell, ident, mayBePolymorphic))
+        return;
     auto read = field ? fieldReadFor(field->store()) : !ident.isPrivateName() && !parseIndex(ident) ? std::optional(Slot::FieldRead::NoField) : std::nullopt;
     if (!read) {
         countFailure(cache);
@@ -1592,6 +1594,22 @@ bool cacheFieldCreation(Instance* instance, Data* data, JSCell* cell, uint64_t w
     const Typed::StoreTransition* transition = fieldWrite || isOutOfLine ? state.fieldCreatingStoreTransition(*field, wordsBefore, object, fieldWrite, checksPrototypeChain) : nullptr;
     bool wordsAreViaHandle = object->extraProperties() && !object->layout().offsetOfExtraProperties();
     if (!transition || isOutOfLine || wordsAreViaHandle || !cache || SharedData::contains(cache) || !mayReplace(cache, cell->structure()))
+        return false;
+    if (cache->hasPointer())
+        stopWatching(data, cache);
+    fill(vm, data, cache, cell->structure(), Slot::pointerIsNotCell, std::bit_cast<void*>(Slot::isStoreTransition | std::bit_cast<uintptr_t>(transition)));
+    return true;
+}
+
+bool cacheStorageCreation(Instance* instance, Data* data, JSCell* cell, const Identifier& ident, Slot* cache)
+{
+    VM& vm = *instance->vm;
+    auto* object = uncheckedDowncast<Typed::Object>(cell);
+    Typed::State& state = object->state();
+    const Typed::FieldData* field = object->fieldNamed(state, ident);
+    uint64_t fieldWrite = field ? fieldWriteFor(vm, object, ident, false, true) : 0;
+    const Typed::StoreTransition* transition = fieldWrite ? state.storageCreatingStoreTransition(*field, object, fieldWrite) : nullptr;
+    if (!transition || !cache || SharedData::contains(cache) || !mayReplace(cache, cell->structure()))
         return false;
     if (cache->hasPointer())
         stopWatching(data, cache);

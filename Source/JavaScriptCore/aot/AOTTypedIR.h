@@ -423,6 +423,7 @@ struct Value {
     bool reportsMismatchAtCaller() const { return opcode == Opcode::Cast && immediates[1] & Format::CastReportsMismatchAtCaller; }
     uint32_t mismatchedArgumentIndex() const { return (immediates[1] >> Format::mismatchedArgumentIndexShift & 0xff) == 0xff ? UINT32_MAX : immediates[1] >> Format::mismatchedArgumentIndexShift & 0xff; }
     bool coercesFreshData() const { return freshness() != Format::Freshness::None; }
+    bool keepsUnconvertibleObjects() const { return opcode == Opcode::Cast && immediates[1] & Format::CastKeepsUnconvertibleObjects; }
     FunctionID parameterCheckCallee() const { return opcode == Opcode::Cast && !holdsCallSignature && calleeOrSignaturePlusOne ? FunctionID(static_cast<uint32_t>(calleeOrSignaturePlusOne) - 1) : FunctionID(); }
     void setParameterCheckCallee(FunctionID function)
     {
@@ -1468,8 +1469,6 @@ public:
     bool isStaticallyHot(FunctionID id) const { return staticallyHotFunctions.get(id.index()); }
     BitVector staticallyWarmFunctions;
     bool isStaticallyWarm(FunctionID id) const { return staticallyWarmFunctions.get(id.index()); }
-    BitVector functionsCalledNearLoops;
-    bool isCalledNearLoops(FunctionID id) const { return functionsCalledNearLoops.get(id.index()); }
     BitVector staticallyRareFunctions;
     bool isStaticallyRare(FunctionID id) const { return staticallyRareFunctions.get(id.index()); }
     BitVector callGraphColdFunctions;

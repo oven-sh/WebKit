@@ -68,8 +68,6 @@ public:
     
 private:
     void runExecutionThread(SlotVisitor&, SchedulerPreference, NOESCAPE const ScopedLambda<std::optional<unsigned>()>& pickNext);
-    bool mayFindWork(MarkingConstraint&);
-    void didExecute(MarkingConstraint&);
     
     struct TaskWithConstraint {
         TaskWithConstraint() { }
@@ -96,8 +94,6 @@ private:
     bool m_pickNextIsStillActive { true };
     unsigned m_numThreadsThatMayProduceWork { 0 };
     Vector<VisitCounter, 16> m_visitCounters;
-    uint64_t m_mutatorExecutionVersion { 0 };
-    size_t m_visitCountAtStart { 0 };
 };
 
 } // namespace JSC

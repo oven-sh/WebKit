@@ -363,6 +363,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(StepIfGenerator) \
     v(StepIfUnmodifiedGenerator) \
     v(IterHasInFrame) \
+    v(CallValueWithoutArguments) \
+    v(IterOpenInFrame) \
+    v(IterCloseInFrame) \
     v(ArrayLiteral0) \
     v(LeafArrayLiteral0) \
     v(ArrayLiteral1) \
@@ -826,6 +829,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(FrontEndTypedCloneObjectAndExtendWithNumber) \
     v(FrontEndTypedCloneObjectWithSubtypeCheck) \
     v(FrontEndTypedCloneObjectAs) \
+    v(FrontEndTypedCoerce) \
+    v(ConvertByPlan) \
     v(FrontEndTypedConstructSuper) \
     FOR_EACH_AOT_HELPER(v) \
     v(NewArrayWithFastPath) \

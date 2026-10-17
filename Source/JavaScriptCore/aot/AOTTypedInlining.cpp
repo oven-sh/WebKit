@@ -68,7 +68,7 @@ public:
             return noReturnBlocksOf(callee).get(0);
         });
         m_isInCallerLoop = blocksInLoops(m_caller);
-        if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller) || m_program.isHotOnlyInLoops(m_id))
+        if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller))
             m_isInLoop = m_isInCallerLoop;
         BitVector acceptsTypeMismatches;
         if ((m_caller.has(Format::FunctionIsHiddenInStackTraces) && !m_caller.isGenericEntrypoint()) || m_caller.has(FunctionLogsTypeMismatches)) {
@@ -112,7 +112,7 @@ public:
                 }
                 if (!canInline(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
                     continue;
-                bool callerIsHot = m_program.isStaticallyHot(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInLoops(m_id));
+                bool callerIsHot = m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id);
                 if (m_program.at(callee).worker && !isOnlyRead(call))
                     continue;
                 if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinySizeInColdCode + 1) > tinySizeInColdCode)

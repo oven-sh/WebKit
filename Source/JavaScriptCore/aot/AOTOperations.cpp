@@ -990,6 +990,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByNameAndCache, void, (Instance* instanc
     else
         base.putInline(globalObject, ident, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (!isDirect && objectPossiblyMissingField && storedFieldOf->flags & Typed::fieldMayExistWithoutStorage && objectPossiblyMissingField->structure() == oldStructure && objectPossiblyMissingField->orderAndShapeWords() == wordsBeforeStore) {
+        if (Slot* storeSlot = table.ensureSlot(oldStructure, name, access); storeSlot && cacheStorageCreation(instance, data, objectPossiblyMissingField, ident, storeSlot))
+            OPERATION_RETURN(scope);
+    }
     if (objectPossiblyMissingField && objectPossiblyMissingField->structure() == oldStructure && Typed::Object::didCreateOneField(static_cast<uint32_t>(wordsBeforeStore), objectPossiblyMissingField->orderWord()) && Typed::Object::tryGetOwnData(vm, objectPossiblyMissingField, ident)) {
         if (Slot* storeSlot = table.ensureSlot(oldStructure, name, access); storeSlot && cacheFieldCreation(instance, data, objectPossiblyMissingField, wordsBeforeStore, ident, storeSlot, !isDirect))
             OPERATION_RETURN(scope);
@@ -1193,6 +1197,62 @@ static void cacheKeyedHas(Instance* instance, VM& vm, Structure* structure, JSCe
     entry.offset = dependsOnlyOnStructure ? (isPermanent ? MegamorphicCache::permanentEpoch : epochForKey(vm, key, structure)) | static_cast<uint32_t>(result) << Instance::keyedHasResultShift : Slot::isGetter;
     entry.pointer = key;
     entry.structureID = structure->id();
+}
+
+static void cacheKeyedHasOfField(Instance* instance, VM& vm, Structure* structure, JSCell* key, const Typed::FieldData& field, bool isPermanent)
+{
+    using Typed::Store;
+    using Kind = Instance::KeyedHasField;
+    Kind kind;
+    unsigned width;
+    switch (field.store()) {
+    case Store::Cell32:
+    case Store::OptionalCell32:
+    case Store::LiteralString32:
+        kind = Kind::Word32;
+        width = 4;
+        break;
+    case Store::JSValue:
+    case Store::Cell:
+    case Store::LiteralString:
+        kind = Kind::Word64;
+        width = 8;
+        break;
+    case Store::OptionalBoolean:
+        kind = Kind::Byte;
+        width = 1;
+        break;
+    case Store::Int32OrNumberBox:
+        kind = Kind::Int32OrNumberBox;
+        width = 4;
+        break;
+    case Store::OptionalDouble:
+        kind = Kind::Double;
+        width = 8;
+        break;
+    case Store::OptionalInt64:
+        kind = Kind::Int64;
+        width = 8;
+        break;
+    default:
+        return;
+    }
+    if (field.offset % width || field.offset / width > Instance::maxKeyedHasFieldIndex)
+        return;
+    Slot& entry = instance->keyedHasFor(structure->id(), key);
+    entry.structureID = StructureID();
+    entry.offset = Instance::keyedHasReadsField | field.offset / width << Instance::keyedHasFieldIndexShift | static_cast<uint32_t>(kind) << Instance::keyedHasFieldKindShift | (isPermanent ? MegamorphicCache::permanentEpoch : epochForKey(vm, key, structure));
+    entry.pointer = key;
+    entry.structureID = structure->id();
+}
+
+static bool lookupAboveRunsNoCode(JSObject* object)
+{
+    for (JSValue next = object->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        if (asObject(next)->type() == ProxyObjectType || asObject(next)->structure()->typeInfo().overridesGetPrototype())
+            return false;
+    }
+    return true;
 }
 
 static void cacheKeyedAddition(Instance* instance, VM& vm, Structure* before, Structure* after, JSCell* key, PropertyOffset offset)
@@ -2276,14 +2336,43 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instanc
         scope.release();
         return hasPropertyInDictionaryAndCache(instance, globalObject, vm, object, property.asCell(), atom);
     }
-    if (const Typed::LayoutData* layout = structure->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties) {
+    if (const Typed::LayoutData* layout = structure->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && structure->hasMonoProto()) {
         auto* ofLayout = uncheckedDowncast<Typed::Object>(object);
         const Typed::FieldData* field = ofLayout->fieldNamed(ofLayout->state(), atom);
+        if (field && ofLayout->state().mayBeAbsent(*field) && !(field->flags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted | Typed::fieldIsOutOfLine)) && lookupAboveRunsNoCode(object)) {
+            bool isInherited = false;
+            bool dependsOnlyOnStructures = true;
+            bool isPermanent = true;
+            if (JSValue prototype = object->getPrototypeDirect(); prototype.isObject()) {
+                isInherited = hasPropertyAndFillMegamorphicCache(globalObject, asObject(prototype), atom, dependsOnlyOnStructures, &isPermanent);
+                OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+                Structure* above = asObject(prototype)->structure();
+                isPermanent &= above->hasImmutableProperties() && !above->isDictionary() && !above->isStructureExtensible();
+            }
+            if (!isInherited && dependsOnlyOnStructures && object->structure() == structure)
+                cacheKeyedHasOfField(instance, vm, structure, property.asCell(), *field, isPermanent);
+            OPERATION_RETURN(scope, isInherited || !!ofLayout->read(*field));
+        }
+    }
+    if (const Typed::LayoutData* layout = structure->compiledLayout(); layout && Typed::isObjectLayout(layout->kind) && structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties) {
+        auto* ofLayout = uncheckedDowncast<Typed::Object>(object);
+        if (!structure->extraPropertiesStructureID()) {
+            ofLayout->specializeStructureForExtraProperties(vm);
+            structure = object->structure();
+        }
+        const Typed::FieldData* field = ofLayout->fieldNamed(ofLayout->state(), atom);
         if (field && !(field->flags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted))) {
-            if (ofLayout->read(*field))
+            if (ofLayout->read(*field)) {
+                if (!ofLayout->state().mayBeAbsent(*field))
+                    cacheKeyedHas(instance, vm, structure, property.asCell(), true, true, true);
                 OPERATION_RETURN(scope, 1);
+            }
             if (structure->markingStampAndFlags() & Structure::hasPrototypeOfLayout)
                 OPERATION_RETURN(scope, 0);
+        }
+        if (unsigned attributes = 0; !field && Typed::Object::offsetOfExtraProperty(vm, object, atom, attributes)) {
+            cacheKeyedHas(instance, vm, structure, property.asCell(), true, true, true);
+            OPERATION_RETURN(scope, 1);
         }
     }
     bool dependsOnlyOnStructure;

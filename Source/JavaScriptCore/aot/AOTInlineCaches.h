@@ -65,6 +65,7 @@ void cacheStoreTransition(Instance*, Data*, JSCell* object, Structure* oldStruct
 void cacheKnownStoreTransition(Instance*, JSCell* object, Structure* oldStructure, uint64_t wordsBefore, const Identifier&, uint32_t name);
 bool cacheFieldCreation(Instance*, Data*, JSCell* object, uint64_t wordsBefore, const Identifier&, Slot* cache, bool checksPrototypeChain);
 void recordFieldCreation(Instance*, JSCell* object, uint64_t wordsBefore, const Identifier&);
+bool cacheStorageCreation(Instance*, Data*, JSCell* object, const Identifier&, Slot* cache);
 
 void fillAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uint32_t payload = 0, JSCell* extra = nullptr);
 bool tryGetFromOrdinaryObject(JSGlobalObject*, JSValue base, UniquedStringImpl*, PropertySlot&, JSValue& result, bool fillsMegamorphicCache = true, bool* structureGuaranteesAbsent = nullptr);

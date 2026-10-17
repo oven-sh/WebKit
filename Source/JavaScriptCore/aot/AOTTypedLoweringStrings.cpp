@@ -655,7 +655,7 @@ CellPointer Lowering::makeSubstring(const StringReceiver& receiver, Integer leng
     auto byStub = [&](bool isSlowPathCall) {
         return CellPointer(callAllocationStub(Stub::Substring, { { receiver.string.value(), GPRInfo::toArgumentRegister(1) }, { from.value(), GPRInfo::toArgumentRegister(2) }, { to.value(), GPRInfo::toArgumentRegister(3) } }, effectsForOperation<operationAOTTypedSubstring>(), true, isSlowPathCall));
     };
-    if (!m_program.isStaticallyWarm(m_id))
+    if (prefersGenericPathInColdCode())
         return byStub(false);
     if (!m_isInLoop && !m_activeHandler) {
         LBasicBlock several = m_out.newBlock();

@@ -2998,7 +2998,6 @@ static void findStaticallyHotFunctions(Program& program)
     for (unsigned i : functionsSavingFrames)
         isCalled.clear(i);
     BitVector isCalledOrCreated = isCalled;
-    BitVector isCalledNearLoops = isCalled;
     auto say = [](Vector<uint8_t>& said, unsigned index) {
         WTF::atomicStore(&said[index], static_cast<uint8_t>(1), std::memory_order_relaxed);
     };
@@ -3027,19 +3026,16 @@ static void findStaticallyHotFunctions(Program& program)
     });
     forEachFlagged(isCalledByFrontier, [&](unsigned callee) {
         isCalledOrCreated.set(callee);
-        isCalledNearLoops.set(callee);
     });
     unsigned forced = Options::aotHotByTextForTesting();
     if (forced == 1) [[unlikely]] {
         isCalled.clearAll();
         isCalledOrCreated.clearAll();
-        isCalledNearLoops.clearAll();
     }
     if (forced == 2) [[unlikely]] {
         for (unsigned i = 0; i < count; ++i) {
             isCalled.set(i);
             isCalledOrCreated.set(i);
-            isCalledNearLoops.set(i);
         }
     }
     BitVector warm = result;
@@ -3082,19 +3078,15 @@ static void findStaticallyHotFunctions(Program& program)
     forEachFlagged(isCalledUnderHiddenHandler, [&](unsigned callee) {
         result.clear(callee);
         warm.clear(callee);
-        isCalledNearLoops.clear(callee);
     });
     for (auto [function, entry] : program.genericEntrypoints) {
         if (result.get(function))
             result.set(entry.index());
         if (warm.get(function))
             warm.set(entry.index());
-        if (isCalledNearLoops.get(function))
-            isCalledNearLoops.set(entry.index());
     }
     program.staticallyHotFunctions = WTF::move(result);
     program.staticallyWarmFunctions = WTF::move(warm);
-    program.functionsCalledNearLoops = WTF::move(isCalledNearLoops);
 }
 
 static void findStaticallyRareFunctions(Program& program)
@@ -3180,12 +3172,12 @@ static void findStaticallyRareFunctions(Program& program)
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", program.staticallyRareFunctions.bitCount(), " of ", count, " functions are statically rare");
 }
 
-static bool isInlinedFromHotFunction(const Program& program, const Function& function, const Value& value, bool requiresNearbyLoops)
+static bool isInlinedFromHotFunction(const Program& program, const Function& function, const Value& value)
 {
     if (!value.inlineFrame)
         return false;
     FunctionID original = function.inlineFrames[value.inlineFrame].callee;
-    return program.isStaticallyHot(original) || (requiresNearbyLoops && program.isCalledNearLoops(original));
+    return program.isHotOutsideLoops(original);
 }
 
 static void printOutliningStatistics(ASCIILiteral what, size_t bodies, std::initializer_list<std::pair<ASCIILiteral, uint64_t>> rows)
@@ -3249,7 +3241,7 @@ static void outlineConcatenations(Program& program)
         if (!program.functions.mayContain(i, concatenations))
             return;
         auto& function = std::as_const(program).functions[i];
-        if ((program.isStaticallyHot(FunctionID(i)) && !program.isHotOnlyInLoops(FunctionID(i))) || function.blocks.isEmpty())
+        if (program.isHotOutsideLoops(FunctionID(i)) || function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
         std::optional<BitVector> keys;
@@ -3294,7 +3286,7 @@ static void outlineConcatenations(Program& program)
                     isInLoop = blocksInLoops(function);
                 if (isInLoop->get(b))
                     break;
-                if (isInlinedFromHotFunction(program, function, value, false))
+                if (isInlinedFromHotFunction(program, function, value))
                     continue;
                 if (!builders)
                     builders = analyzeStringBuilders(program, FunctionID(i), function);
@@ -3334,13 +3326,13 @@ static void outlineConcatenations(Program& program)
         auto& function = std::as_const(program).functions[i];
         if (function.blocks.isEmpty())
             continue;
-        bool isHot = program.isStaticallyHot(FunctionID(i)) && !program.isHotOnlyInLoops(FunctionID(i));
+        bool isHot = program.isHotOutsideLoops(FunctionID(i));
         BitVector isInLoop = blocksInLoops(function);
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::Strcat)
-                    ++numbers[isHot ? IsStaticallyHotReason : value.arguments.size() > maxOperands ? HasTooManyParts : isInLoop.get(b) ? IsInLoop : isInlinedFromHotFunction(program, function, value, false) ? IsInlinedFromHot : consistsOfNumbersAndConstants(program, function, id) && computeMapKeyValues(program, FunctionID(i), function).get(id.index()) ? IsKey : IsOutlined];
+                    ++numbers[isHot ? IsStaticallyHotReason : value.arguments.size() > maxOperands ? HasTooManyParts : isInLoop.get(b) ? IsInLoop : isInlinedFromHotFunction(program, function, value) ? IsInlinedFromHot : consistsOfNumbersAndConstants(program, function, id) && computeMapKeyValues(program, FunctionID(i), function).get(id.index()) ? IsKey : IsOutlined];
             }
         }
     }
@@ -3522,7 +3514,7 @@ static void outlineBuiltinCalls(Program& program)
     Vector<Vector<Site>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         static constexpr OpcodeSet candidates { Opcode::Add, Opcode::CallMethod, Opcode::CallBuiltin, Opcode::GetById };
-        if (program.isCalledNearLoops(FunctionID(i)) || !program.functions.mayContain(i, candidates))
+        if (program.isHotOutsideLoops(FunctionID(i)) || !program.functions.mayContain(i, candidates))
             return;
         auto& function = std::as_const(program).functions[i];
         if (function.blocks.isEmpty())
@@ -3560,7 +3552,7 @@ static void outlineBuiltinCalls(Program& program)
                 isInLoop = blocksInLoops(function);
             if (isInLoop->get(b))
                 return;
-            if (isInlinedFromHotFunction(program, function, value, true))
+            if (isInlinedFromHotFunction(program, function, value))
                 return;
             StringBuilder signature;
             signature.append(static_cast<unsigned>(value.opcode), ' ', value.immediates[0], ' ', value.immediates[1], ' ', value.type.index(), ' ', value.prediction().index(), value.children[0] ? ' ' : '-');
@@ -3599,7 +3591,7 @@ static void outlineBuiltinCalls(Program& program)
             }
         }
     }
-    enum : unsigned { IsOutlined, OccursOnce, IsNearLoops, IsGetterOrSetter, IsOperation, HasOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsArithmetic, IsAllocation, IsNearHandlers, IsInLoop, IsUnchanged, NumberOfReasons };
+    enum : unsigned { IsOutlined, OccursOnce, IsInHotFunction, IsGetterOrSetter, IsOperation, HasOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsArithmetic, IsAllocation, IsNearHandlers, IsInLoop, IsUnchanged, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
     for (unsigned i = 0; Options::verboseAOTCompilation() && i < count; ++i) {
         auto& function = std::as_const(program).functions[i];
@@ -3612,7 +3604,7 @@ static void outlineBuiltinCalls(Program& program)
             if (signatures[site.signatureNumber].numberOfSites >= 2)
                 isSharedSite.set(site.value.index());
         }
-        bool isNearLoops = program.isCalledNearLoops(FunctionID(i));
+        bool isHot = program.isHotOutsideLoops(FunctionID(i));
         bool hasHandlers = function.blocks.containsIf([](auto& block) {
             return block.terminator.kind == TerminatorKind::Invoke;
         });
@@ -3627,8 +3619,8 @@ static void outlineBuiltinCalls(Program& program)
                 unsigned reason = IsUnchanged;
                 if (isSite.get(id.index()))
                     reason = isSharedSite.get(id.index()) ? IsOutlined : OccursOnce;
-                else if (isNearLoops)
-                    reason = IsNearLoops;
+                else if (isHot)
+                    reason = IsInHotFunction;
                 else if (!isCandidate(value)) {
                     if (value.child(2) || value.arguments.size() + !!value.child(0) + !!value.child(1) > maxOperands)
                         reason = HasTooManyOperands;
@@ -3730,16 +3722,16 @@ static void outlineBuiltinCalls(Program& program)
         }
     });
     if (Options::verboseAOTCompilation())
-        printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "beside handlers"_s, numbers[IsNearHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
+        printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is hot"_s, numbers[IsInHotFunction] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "beside handlers"_s, numbers[IsNearHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
     program.functions.appendVector(WTF::move(bodies));
     destroyOnHelperThread(WTF::move(sites));
 }
 
 bool canUseConstructBody(const Program& program, FunctionID id, const Function& function, const Value& value)
 {
-    if (function.isSharedOutlinedBody || program.isCalledNearLoops(id))
+    if (function.isSharedOutlinedBody || program.isHotOutsideLoops(id))
         return false;
-    return !isInlinedFromHotFunction(program, function, value, true);
+    return !isInlinedFromHotFunction(program, function, value);
 }
 
 static void outlineConstructs(Program& program)
@@ -3755,7 +3747,7 @@ static void outlineConstructs(Program& program)
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
-                if (value.opcode != Opcode::Construct || value.arguments.size() > numberOfArgumentGPRs || function.isSharedOutlinedBody || program.isCalledNearLoops(FunctionID(i)))
+                if (value.opcode != Opcode::Construct || value.arguments.size() > numberOfArgumentGPRs || function.isSharedOutlinedBody || program.isHotOutsideLoops(FunctionID(i)))
                     continue;
                 if (!isInLoop)
                     isInLoop = blocksInLoops(function);
@@ -3819,7 +3811,7 @@ static void outlineConstructs(Program& program)
     }
     if (!Options::verboseAOTCompilation())
         return;
-    enum : unsigned { IsOutlined, OccursOnce, HasTooManyArguments, IsInBody, IsNearLoops, IsInLoop, IsInlinedFromHot, NumberOfReasons };
+    enum : unsigned { IsOutlined, OccursOnce, HasTooManyArguments, IsInBody, IsInHotFunction, IsInLoop, IsInlinedFromHot, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
     for (unsigned i = 0; i < count; ++i) {
         auto& function = std::as_const(program).functions[i];
@@ -3831,7 +3823,7 @@ static void outlineConstructs(Program& program)
                 auto& value = function.at(id);
                 if (value.opcode != Opcode::Construct)
                     continue;
-                ++numbers[value.arguments.size() > numberOfArgumentGPRs ? HasTooManyArguments : function.isSharedOutlinedBody ? IsInBody : program.isCalledNearLoops(FunctionID(i)) ? IsNearLoops : isInLoop.get(b) ? IsInLoop
+                ++numbers[value.arguments.size() > numberOfArgumentGPRs ? HasTooManyArguments : function.isSharedOutlinedBody ? IsInBody : program.isHotOutsideLoops(FunctionID(i)) ? IsInHotFunction : isInLoop.get(b) ? IsInLoop
                     : !canUseConstructBody(program, FunctionID(i), function, value) ? IsInlinedFromHot : numberOfSites[value.arguments.size()] < 2 ? OccursOnce : IsOutlined];
             }
         }
@@ -3840,7 +3832,7 @@ static void outlineConstructs(Program& program)
     for (auto& perFunction : sites)
         taken += perFunction.size();
     RELEASE_ASSERT(numbers[IsOutlined] + numbers[OccursOnce] == taken);
-    printOutliningStatistics("constructions"_s, std::ranges::count_if(numberOfSites, [](unsigned sites) { return sites >= 2; }), { { "call a body"_s, numbers[IsOutlined] }, { "a number of arguments that occurs once"_s, numbers[OccursOnce] }, { "more arguments than registers"_s, numbers[HasTooManyArguments] }, { "in a body of several sites"_s, numbers[IsInBody] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsInlinedFromHot] } });
+    printOutliningStatistics("constructions"_s, std::ranges::count_if(numberOfSites, [](unsigned sites) { return sites >= 2; }), { { "call a body"_s, numbers[IsOutlined] }, { "a number of arguments that occurs once"_s, numbers[OccursOnce] }, { "more arguments than registers"_s, numbers[HasTooManyArguments] }, { "in a body of several sites"_s, numbers[IsInBody] }, { "the function is hot"_s, numbers[IsInHotFunction] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsInlinedFromHot] } });
 }
 
 static void outlineCasts(Program& program)
@@ -5187,8 +5179,6 @@ static void outlineDestructuredParameterReads(Program& program)
             program.staticallyHotFunctions.set(bodyID.index());
         if (program.staticallyWarmFunctions.get(i))
             program.staticallyWarmFunctions.set(bodyID.index());
-        if (program.functionsCalledNearLoops.get(i))
-            program.functionsCalledNearLoops.set(bodyID.index());
         if (program.functionsHotOnlyInLoops.get(i))
             program.functionsHotOnlyInLoops.set(bodyID.index());
         if (program.functionsInCycles.get(i))
@@ -5403,8 +5393,6 @@ static void splitOffWorkers(Program& program)
             program.staticallyHotFunctions.set(workerID.index());
         if (program.staticallyWarmFunctions.get(i))
             program.staticallyWarmFunctions.set(workerID.index());
-        if (program.functionsCalledNearLoops.get(i))
-            program.functionsCalledNearLoops.set(workerID.index());
         if (program.functionsHotOnlyInLoops.get(i))
             program.functionsHotOnlyInLoops.set(workerID.index());
         if (program.functionsInCycles.get(i))
@@ -5728,8 +5716,6 @@ static void returnResultsInRegisters(Program& program)
                     program.staticallyHotFunctions.set(candidate.worker);
                 if (program.isStaticallyWarm(FunctionID(original)))
                     program.staticallyWarmFunctions.set(candidate.worker);
-                if (program.isCalledNearLoops(FunctionID(original)))
-                    program.functionsCalledNearLoops.set(candidate.worker);
                 if (program.functionsInCycles.get(original))
                     program.functionsInCycles.set(candidate.worker);
                 workers.append(WTF::move(worker));
@@ -5881,8 +5867,6 @@ static void specializeResultsByCaller(Program& program)
                 program.staticallyHotFunctions.set(index);
             if (program.isStaticallyWarm(FunctionID(original)))
                 program.staticallyWarmFunctions.set(index);
-            if (program.isCalledNearLoops(FunctionID(original)))
-                program.functionsCalledNearLoops.set(index);
             program.functions.append(WTF::move(clone));
             ++cloneCount;
         }
@@ -9072,7 +9056,6 @@ static void applyCallGraphHeat(Program& program, const Vector<uint8_t>& vigintil
         if (vigintiles[i] > maxCooledHeat)
             continue;
         if (isWarmAndHasLoops[i]) {
-            program.functionsCalledNearLoops.clear(i);
             program.functionsHotOnlyInLoops.clear(i);
             program.staticallyHotFunctions.clear(i);
             continue;
@@ -9080,11 +9063,10 @@ static void applyCallGraphHeat(Program& program, const Vector<uint8_t>& vigintil
         cooled += program.staticallyHotFunctions.get(i) || program.staticallyWarmFunctions.get(i);
         program.staticallyHotFunctions.clear(i);
         program.staticallyWarmFunctions.clear(i);
-        program.functionsCalledNearLoops.clear(i);
         program.functionsHotOnlyInLoops.clear(i);
     }
     for (auto [function, entry] : program.genericEntrypoints) {
-        for (auto* marks : { &program.staticallyHotFunctions, &program.staticallyWarmFunctions, &program.functionsCalledNearLoops, &program.functionsHotOnlyInLoops })
+        for (auto* marks : { &program.staticallyHotFunctions, &program.staticallyWarmFunctions, &program.functionsHotOnlyInLoops })
             marks->set(entry.index(), marks->get(function));
     }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: heat by the graph: ", cooled, " functions lose the mark hot or warm, of ", vigintiles.size());
@@ -12305,6 +12287,10 @@ Vector<String> optimize(Program& program)
             fuseConcatenations(program, FunctionID(i));
         });
         didFinish("- fuseConcatenations"_s);
+        planStringAppends(program, result);
+        if (!result.isEmpty())
+            return result;
+        didFinish("- planStringAppends"_s);
         outlineConcatenations(program);
         didFinish("- outlineConcatenations"_s);
     }

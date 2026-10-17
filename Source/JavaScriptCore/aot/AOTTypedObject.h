@@ -411,6 +411,7 @@ struct StoreTransition {
     uint32_t clearedSlotCount;
     const Cleared* cleared;
     Vector<Cleared, 4> clearedSlots;
+    uint32_t extensionSize { 0 };
 };
 static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && !(offsetOfOrderWord % sizeof(uint64_t)));
 
@@ -562,6 +563,44 @@ struct alignas(32) TypedCloneCacheEntry {
     uint32_t structureID;
 };
 static_assert(sizeof(TypedCloneCacheEntry) == 32);
+
+struct ConversionMove {
+    enum class Kind : uint8_t { Value, CellOfShape, CellOfType, Function, Object, NumberAsInlineInt32, NumberAsDouble, BooleanAsByte, BooleanAsValueByte };
+    static constexpr uint8_t acceptsUndefined = 1;
+    static constexpr uint8_t acceptsNull = 2;
+    static constexpr uint8_t isWide = 4;
+    uint16_t from;
+    uint16_t to;
+    Kind kind;
+    uint8_t flags;
+    uint8_t cellType;
+    uint8_t unused;
+    uint32_t lastShape;
+    uint32_t shapeCount;
+};
+static_assert(sizeof(ConversionMove) == 16);
+
+struct ConversionPlan {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ConversionPlan);
+    static constexpr size_t maxCellSize = 128;
+    void* allocator { nullptr };
+    const uint64_t* words { nullptr };
+    const ConversionMove* firstMove { nullptr };
+    uint32_t wordCount { 0 };
+    uint32_t moveCount { 0 };
+    Vector<uint64_t, 8> cell;
+    Vector<ConversionMove, 8> moves;
+};
+
+struct alignas(16) ConversionCacheEntry {
+    static constexpr unsigned indexBits = 8;
+    static constexpr uint32_t multiplier = 0x9e3779b1;
+    static constexpr unsigned placeOf(uint32_t structureID, uint32_t typeAndReason) { return ((structureID ^ typeAndReason) * multiplier) >> (32 - indexBits); }
+    uint32_t structureID;
+    uint32_t typeAndReason;
+    const ConversionPlan* plan;
+};
+static_assert(sizeof(ConversionCacheEntry) == 16);
 
 struct alignas(32) LateFieldCreation {
     static constexpr unsigned indexBits = 10;
@@ -1495,7 +1534,7 @@ struct State {
     bool fits(const RuntimeType&, JSValue) const;
     bool accepts(JSGlobalObject*, const RuntimeType&, JSValue);
     enum class CoercionResult : bool { OriginalObject, ConvertedValue };
-    JSValue coerce(JSGlobalObject*, JSValue, const RuntimeType&, Format::CastReason, AuditSite = { }, CoercionResult = CoercionResult::ConvertedValue);
+    JSValue coerce(JSGlobalObject*, JSValue, const RuntimeType&, Format::CastReason, AuditSite = { }, CoercionResult = CoercionResult::ConvertedValue, uint32_t typeAndReason = 0);
     bool tryPreviousTransition(VM&, JSValue, uint32_t typeAndReason);
     struct CoercionPlan {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CoercionPlan);
@@ -1540,6 +1579,9 @@ struct State {
         static constexpr unsigned maxNumberOfQuickMoves = 14;
         mutable Vector<QuickMove, 8> quickMoves;
         mutable Vector<uint8_t> quickBody;
+        mutable std::unique_ptr<ConversionPlan> inPlaceConversion;
+        mutable std::unique_ptr<ConversionPlan> copyConversion;
+        mutable uint32_t copyConversionEpoch { 0 };
     };
     struct QuickConversion {
         uint32_t structureID { 0 };
@@ -1553,7 +1595,11 @@ struct State {
     static constexpr unsigned numberOfQuickConversions = 512;
     static constexpr size_t maxSizeOfQuickConversion = 128;
     bool tryQuickConversion(VM&, JSValue, const RuntimeType&);
-    void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Structure* made, size_t sizeOfCell);
+    void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Structure* made, size_t sizeOfCell, uint32_t typeAndReason);
+    void cacheCopyConversion(VM&, Structure*, const RuntimeType&, const CoercionPlan&, Structure* made, uint32_t typeAndReason);
+    std::unique_ptr<ConversionPlan> createConversionPlan(const CoercionPlan&, size_t sizeOfCell, uint64_t header, void* allocator);
+    void cacheConversion(uint32_t structureID, uint32_t typeAndReason, const ConversionPlan&);
+    bool m_hasCachedConversions { false };
     static uint64_t discriminantWord(JSValue);
     QuickConversion* quickConversion(uint32_t structureID, const RuntimeType&, uint64_t discriminant, bool evictsIfFull);
     std::unique_ptr<std::array<QuickConversion, numberOfQuickConversions>> m_quickConversions;
@@ -1670,7 +1716,7 @@ struct State {
     void clearPropertyListCache();
     void removeExtraPropertiesOf(Object*);
     uint8_t kindsAcceptedBy(const RuntimeType&) const;
-    Object* copyUnchangedByPlan(VM&, JSObject*, const RuntimeType&, bool mayConvertInPlace = false);
+    Object* copyUnchangedByPlan(VM&, JSObject*, const RuntimeType&, bool mayConvertInPlace = false, uint32_t typeAndReason = 0);
     Object* tryConvertOrCopyByPlan(VM&, JSObject*, const CoercionPlan&, bool mayConvertInPlace);
     bool tryConvertInPlaceByPlans(VM&, JSObject*, const RuntimeType&);
     enum class WireFormat : uint8_t { Int32, Float32, Float64, Boolean, Text, TimestampMicroseconds };
@@ -1718,6 +1764,7 @@ struct State {
     bool storeByKnownTransition(VM&, Object*, UniquedStringImpl* name, JSValue);
     const StoreTransition* storeTransitionFor(Structure* before, uint64_t wordsBefore, Object*, UniquedStringImpl* name, uint64_t fieldWrite);
     const StoreTransition* fieldCreatingStoreTransition(const FieldData&, uint64_t wordsBefore, Object*, uint64_t fieldWrite, bool checksPrototypeChain);
+    const StoreTransition* storageCreatingStoreTransition(const FieldData&, Object*, uint64_t fieldWrite);
     bool tryCreateFieldWithCachedTransition(VM&, Object*, const FieldData&, JSValue);
     void removeDeadStoreTransitions(VM&);
     const Vector<uint16_t, 2>& requiredFieldsAdded(const LayoutData& from, const LayoutData& to);
@@ -2217,6 +2264,7 @@ private:
     UncheckedKeyHashMap<std::pair<const TransitionPlan*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_storeTransitions;
     UncheckedKeyHashMap<std::pair<Structure*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_fieldCreatingStoreTransitions[2];
     UncheckedKeyHashMap<std::pair<Structure*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_lateFieldCreationStoreTransitions[2];
+    UncheckedKeyHashMap<std::pair<Structure*, const FieldData*>, Vector<std::unique_ptr<StoreTransition>, 1>> m_storageCreatingStoreTransitions;
     struct CachedStore {
         Structure* structure;
         UniquedStringImpl* name;

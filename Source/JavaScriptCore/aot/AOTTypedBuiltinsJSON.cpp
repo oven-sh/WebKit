@@ -417,6 +417,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instanc
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONDiscard, void, (Instance* instance))
 {
+    countOperationNamed(instance, __func__);
     resetJSONOutput(instance);
 }
 
@@ -1228,7 +1229,7 @@ void Lowering::appendObject(JSONOutput& output, CellPointer cell, const Type& ty
         return mayBeBuiltUp(m_program, serializer.first);
     });
     LBasicBlock delegatesRestOfList = std::exchange(output.delegatesRestOfList, nullptr);
-    LBasicBlock otherwise = usesSerializerFunction ? newColdBlock() : delegatesRestOfList ? delegatesRestOfList : depth ? newColdBlock() : output.givesUp;
+    LBasicBlock otherwise = usesSerializerFunction ? newColdBlock() : delegatesRestOfList ? delegatesRestOfList : depth ? newColdBlock() : output.givesUpBeforeWriting;
     appendObjectInline(output, cell, orders, depth, otherwise, continuation);
     if (usesSerializerFunction) {
         output.delegatesRestOfList = delegatesRestOfList;
@@ -1757,6 +1758,7 @@ Operand Lowering::lowerAppendJSON(const Value& value)
     }
     JSONOutput output;
     output.givesUp = newColdBlock();
+    output.givesUpBeforeWriting = output.givesUp;
     output.cursor = m_proc.addVariable(Int64);
     setCursor(output, start.value());
     JSONExit continuation { m_out.newBlock() };
@@ -1804,7 +1806,7 @@ void Lowering::appendArray(JSONOutput& output, CellPointer array, const Type& ty
     reserveCapacity(output, 2);
     unsigned capacity = output.knownCapacity;
     JSONExit continuation { m_out.newBlock() };
-    LBasicBlock otherwise = depth ? newColdBlock() : output.givesUp;
+    LBasicBlock otherwise = depth ? newColdBlock() : output.givesUpBeforeWriting;
     orElse(isPlainArray(array), otherwise);
     Word32 shape = anyArrayIndexingMode(array, IndexingShapeMask);
     Pointer butterfly = butterflyOf(array);
@@ -1901,6 +1903,7 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
     if (Options::auditAOTTypedAssertions() || (dispatchesOnShape && !(m_program.jsonDispatcher && m_program.hasCode(m_program.jsonDispatcher) && expected.hasObjects())))
         return false;
     output.givesUp = newColdBlock();
+    output.givesUpBeforeWriting = newColdBlock();
     output.cursor = m_proc.addVariable(Int64);
     output.remainingFields = maxInlineJSONFields;
     setCursor(output, m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONBufferStart())));
@@ -1916,8 +1919,8 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
                 most = std::max(most, shape);
             }
         }
-        CellPointer cell = objectOrElse(argument, output.givesUp);
-        orElse(below(add(shapeWordOf(cell), word32(static_cast<int32_t>(most))), word32(static_cast<int32_t>(most - least + 1))), output.givesUp);
+        CellPointer cell = objectOrElse(argument, output.givesUpBeforeWriting);
+        orElse(below(add(shapeWordOf(cell), word32(static_cast<int32_t>(most))), word32(static_cast<int32_t>(most - least + 1))), output.givesUpBeforeWriting);
         LValue cursor = callFunction(m_program.jsonDispatcher, Int64, { cell.value(), cursorOf(output) });
         orElse(Word32(m_out.above(cursor, m_out.constInt64(isNotWrittenByDispatcher))), output.givesUp);
         setCursor(output, cursor);
@@ -1936,6 +1939,8 @@ Operand Lowering::lowerResponseJSON(ValueID result, const Value& value)
         m_out.jump(calls);
         m_out.appendTo(output.givesUp);
         AOT_TYPED_OPERATION(JSONDiscard);
+        m_out.jump(calls);
+        m_out.appendTo(output.givesUpBeforeWriting);
         m_out.jump(calls);
         m_out.appendTo(calls);
     }
@@ -1963,6 +1968,8 @@ Operand Lowering::lowerJSONStringify(ValueID result, const Value& value)
     join.add(ensure(string, m_program.at(m_program.types.string), type));
     m_out.appendTo(output.givesUp);
     AOT_TYPED_OPERATION(JSONDiscard);
+    m_out.jump(output.givesUpBeforeWriting);
+    m_out.appendTo(output.givesUpBeforeWriting);
     join.add(genericPath());
     return join.finish();
 }

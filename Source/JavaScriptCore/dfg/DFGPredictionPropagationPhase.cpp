@@ -932,6 +932,16 @@ private:
             break;
         }
         
+        case PutCellButterflySlot: {
+            // The inlined sort reads the scratch of an Int32 array back with no check, and ArraySortCommit
+            // copies it into the array as is. A pivot in the double format would be stored as a boxed double.
+            m_graph.voteChildren(node, VoteValue, weight);
+            Node* value = node->child3().node();
+            if (value->op() == GetLocal)
+                value->variableAccessData()->mergeDoubleFormatState(CantUseDoubleFormat);
+            break;
+        }
+
         case DataViewSet: {
             DataViewData data = node->dataViewData();
             if (data.isFloatingPoint)

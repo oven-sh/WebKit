@@ -54,6 +54,7 @@ struct State;
 struct FormatPatternState;
 enum class FormatPatternsOrigin : uint8_t { NotCompared, ThisICU, AnotherICU };
 struct JSONWideSegment;
+struct StringAppender;
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
 #define AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE 1
@@ -177,6 +178,7 @@ struct JSONWideSegment;
     v(RawTypedCloneObjectAndExtendWithNumber) \
     v(RawTypedCloneObjectWithSubtypeCheck) \
     v(RawTypedCloneObjectAs) \
+    v(RawTypedCoerce) \
     v(RawTypedConstructSuper) \
     v(ErrorConstructorClassInfo) \
     v(NonConstructorHostFunction) \
@@ -1122,6 +1124,13 @@ struct Instance {
     uint64_t jsonCursor;
     double jsonNumber;
     uint64_t jsonParserFrame;
+    Latin1Character* stringAppenderOrigin;
+    uint64_t stringAppenderLength;
+    uint64_t stringAppenderLimit;
+    uint64_t stringAppenderOwner;
+    uint64_t* stringAppenderStartsTop;
+    uint64_t* stringAppenderStartsEnd;
+    StringAppender* stringAppender;
     static constexpr ptrdiff_t offsetOfYoungRootsCursor() { return OBJECT_OFFSETOF(Instance, youngRootsCursor); }
     static constexpr ptrdiff_t offsetOfYoungRootsEnd() { return OBJECT_OFFSETOF(Instance, youngRootsEnd); }
     static constexpr ptrdiff_t offsetOfJSONBufferStart() { return OBJECT_OFFSETOF(Instance, jsonBufferStart); }
@@ -1131,6 +1140,10 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfJSONCursor() { return OBJECT_OFFSETOF(Instance, jsonCursor); }
     static constexpr ptrdiff_t offsetOfJSONNumber() { return OBJECT_OFFSETOF(Instance, jsonNumber); }
     static constexpr ptrdiff_t offsetOfJSONParserFrame() { return OBJECT_OFFSETOF(Instance, jsonParserFrame); }
+    static constexpr ptrdiff_t offsetOfStringAppenderLength() { return OBJECT_OFFSETOF(Instance, stringAppenderLength); }
+    static constexpr ptrdiff_t offsetOfStringAppenderOwner() { return OBJECT_OFFSETOF(Instance, stringAppenderOwner); }
+    static constexpr ptrdiff_t offsetOfStringAppenderStartsTop() { return OBJECT_OFFSETOF(Instance, stringAppenderStartsTop); }
+    static constexpr ptrdiff_t offsetOfStringAppenderStartsEnd() { return OBJECT_OFFSETOF(Instance, stringAppenderStartsEnd); }
     static constexpr ptrdiff_t offsetOfBarrierThreshold() { return OBJECT_OFFSETOF(Instance, barrierThreshold); }
     static constexpr ptrdiff_t offsetOfMutatorShouldBeFenced() { return OBJECT_OFFSETOF(Instance, mutatorShouldBeFenced); }
     double cachedIntegerDoubles[maxCachedIntegerDouble - minCachedIntegerDouble + 1];
@@ -1505,6 +1518,11 @@ struct Instance {
     static constexpr uint32_t keyIsOwnAccessor = Slot::isGetter | ownAccessorIsAtLocation;
     static_assert(!(ownAccessorIsAtLocation & (Slot::offsetMask | Slot::flagsMask | keyMayNotBeEvicted)));
     static constexpr uint32_t keyedHasNeedsLookup = Slot::isGetter | Slot::pointerIsNotCell;
+    static constexpr uint32_t keyedHasReadsField = Slot::isGetter | Slot::isIndirect;
+    enum class KeyedHasField : uint8_t { Word32, Word64, Byte, Int32OrNumberBox, Double, Int64 };
+    static constexpr unsigned keyedHasFieldKindShift = 16;
+    static constexpr unsigned keyedHasFieldIndexShift = 19;
+    static constexpr uint32_t maxKeyedHasFieldIndex = (Slot::isIndirect >> keyedHasFieldIndexShift) - 1;
     static constexpr size_t cannotLookUp = 2;
     static constexpr uint32_t nameIsIdentifierIndex = 1u << 31;
     struct KeyedAddition {
@@ -1576,6 +1594,7 @@ struct Instance {
     void* typedExtraPropertyLocations;
     void* typedLateFieldCreations;
     void* typedCloneCache;
+    void* typedConversionCache;
     static constexpr ptrdiff_t offsetOfNamedFieldReads() { return OBJECT_OFFSETOF(Instance, namedFieldReads); }
     static constexpr ptrdiff_t offsetOfNamedFieldWrites() { return OBJECT_OFFSETOF(Instance, namedFieldWrites); }
     static constexpr ptrdiff_t offsetOfTypedKnownStoreTransitions() { return OBJECT_OFFSETOF(Instance, typedKnownStoreTransitions); }
@@ -1583,6 +1602,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedExtraPropertyLocations() { return OBJECT_OFFSETOF(Instance, typedExtraPropertyLocations); }
     static constexpr ptrdiff_t offsetOfTypedLateFieldCreations() { return OBJECT_OFFSETOF(Instance, typedLateFieldCreations); }
     static constexpr ptrdiff_t offsetOfTypedCloneCache() { return OBJECT_OFFSETOF(Instance, typedCloneCache); }
+    static constexpr ptrdiff_t offsetOfTypedConversionCache() { return OBJECT_OFFSETOF(Instance, typedConversionCache); }
     static void cacheNamedField(NamedField* table, uint32_t shapeWord, uint32_t name, uint64_t access)
     {
         table[((shapeWord << namedFieldShapeShift) + name) % numberOfNamedFields] = { shapeWord | static_cast<uint64_t>(name) << 32, access };

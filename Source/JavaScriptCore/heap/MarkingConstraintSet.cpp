@@ -43,7 +43,6 @@ void MarkingConstraintSet::didStartMarking()
 {
     m_unexecutedRoots.clearAll();
     m_unexecutedOutgrowths.clearAll();
-    m_lastExecutions.fill({ }, m_set.size());
     for (auto& constraint : m_set) {
         constraint->resetStats();
         switch (constraint->volatility()) {
