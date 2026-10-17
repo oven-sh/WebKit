@@ -76,7 +76,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Image);
 static int addProgramBuildID(struct dl_phdr_info* info, size_t, void* context)
 {
     auto& identity = *static_cast<uint64_t*>(context);
-    for (unsigned i = info->dlpi_phnum; i--;) {
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
         auto& segment = info->dlpi_phdr[i];
         if (segment.p_type != PT_NOTE)
             continue;
@@ -92,7 +92,6 @@ static int addProgramBuildID(struct dl_phdr_info* info, size_t, void* context)
             if (note.n_type == NT_GNU_BUILD_ID && note.n_namesz == 4 && !memcmp(at, "GNU", 4)) {
                 for (size_t byte = 0; byte < note.n_descsz; ++byte)
                     identity = (identity ^ at[nameSize + byte]) * 0x100000001b3ULL;
-                return 1;
             }
             at += nameSize + descriptionSize;
         }

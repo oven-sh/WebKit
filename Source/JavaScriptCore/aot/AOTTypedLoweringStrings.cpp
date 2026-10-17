@@ -2629,7 +2629,7 @@ std::optional<Operand> Lowering::tryFindMakingKey(InlineBuiltin which, ValueID r
         m_cellTypes.add(operand.value, m_function.at(key).type);
     define(key, operand);
     if (m_tableLookupsRepeatedLater.get(result.index()))
-        m_lastTableEntry = TableEntry { m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, sizeof(EncodedJSValue))), made.value() };
+        m_lastTableEntry = TableEntry { m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, sizeof(EncodedJSValue))), made.value(), nullptr };
     if (which == InlineBuiltin::MapGet)
         return ensure(answer, type);
     return ensure(unboxedBoolean(answer), m_program.at(m_program.types.boolean), type);
@@ -3672,7 +3672,7 @@ Word32 Lowering::mapKeyHash(Boxed key)
     return Word32(m_out.castToInt32(m_out.bitXor(m_out.mul(a, b), m_out.uMulHigh(a, b))));
 }
 
-Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, bool keyMayBeNumber, LBasicBlock absent)
+Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word32 hash, LBasicBlock absent)
 {
     static_assert(JSMap::Helper::capacityIndex() == JSSet::Helper::capacityIndex() && JSMap::Helper::hashTableStartIndex() == JSSet::Helper::hashTableStartIndex());
     LBasicBlock hasStorage = m_out.newBlock();
@@ -3690,19 +3690,8 @@ Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, bool 
     m_out.appendTo(hasStorage);
     Pointer data(m_out.add(storage.value(), m_out.constIntPtr(JSCellButterfly::offsetOfData())));
     Word32 capacity(m_out.load32(at(data, JSMap::Helper::capacityIndex())));
-    Vector<ValueFromBlock, 2> first;
-    if (keyMayBeNumber) {
-        LBasicBlock isPlacedByKey = m_out.newBlock();
-        LBasicBlock isPlacedByHash = m_out.newBlock();
-        Integer small(m_out.sub(key.value(), m_numberTag));
-        m_out.branch(below(small, zeroExtended(capacity)).value(), unsure(isPlacedByKey), unsure(isPlacedByHash));
-        m_out.appendTo(isPlacedByKey);
-        first.append(m_out.anchor(m_out.load64(at(offsetBy(data, small, 3), JSMap::Helper::hashTableStartIndex()))));
-        m_out.jump(loop);
-        m_out.appendTo(isPlacedByHash);
-    }
-    Word32 bucket = bitAnd(mapKeyHash(key), add(capacity, word32(-1)));
-    first.append(m_out.anchor(m_out.load64(at(offsetBy(data, zeroExtended(bucket), 3), JSMap::Helper::hashTableStartIndex()))));
+    Word32 bucket = add(bitAnd(hash, add(capacity, word32(-1))), word32(JSMap::Helper::hashTableStartIndex()));
+    ValueFromBlock first = m_out.anchor(m_out.load64(at(offsetBy(data, zeroExtended(bucket), 3), 0)));
     m_out.jump(loop);
 
     m_out.appendTo(loop);
@@ -4021,6 +4010,7 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         return tableResult();
     }
 
+    Word32 hash = earlier ? Word32(earlier->hash) : mapKeyHash(key);
     LBasicBlock absent = m_out.newBlock();
     Pointer entry;
     if (earlier) {
@@ -4029,7 +4019,7 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         m_out.branch(m_out.notNull(entry.value()), unsure(found), unsure(absent));
         m_out.appendTo(found);
     } else
-        entry = findInMapOrSet(table, isMap, key, typeOf(arguments[0]).primitives & Primitive::Number, absent);
+        entry = findInMapOrSet(table, isMap, key, hash, absent);
     TypedPointer entryValue = m_out.address(m_heaps.OrderedHashTableData, entry.value(), sizeof(EncodedJSValue));
     bool isRepeatedLater = m_tableLookupsRepeatedLater.get(result.index());
     Vector<ValueFromBlock, 2> entries;
@@ -4039,7 +4029,7 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
     };
     auto keepEntry = [&] {
         if (isRepeatedLater)
-            m_lastTableEntry = earlier ? *earlier : TableEntry { m_out.phi(Int64, entries), key.value() };
+            m_lastTableEntry = earlier ? *earlier : TableEntry { m_out.phi(Int64, entries), key.value(), hash.value() };
     };
     switch (which) {
     case InlineBuiltin::MapGet: {
@@ -4085,9 +4075,9 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
     join.add({ });
     m_out.appendTo(absent);
     if (isMap)
-        callOperation<operationAOTMapSet>(Entry::operationAOTMapSet, addEffects, table, key, in<Boxed>(arguments[1]), mapKeyHash(key));
+        callOperation<operationAOTMapSet>(Entry::operationAOTMapSet, addEffects, table, key, in<Boxed>(arguments[1]), hash);
     else
-        callOperation<operationAOTSetAdd>(Entry::operationAOTSetAdd, addEffects, table, key, mapKeyHash(key));
+        callOperation<operationAOTSetAdd>(Entry::operationAOTSetAdd, addEffects, table, key, hash);
     join.add({ });
     join.finish();
     return tableResult();

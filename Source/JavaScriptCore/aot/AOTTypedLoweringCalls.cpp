@@ -2638,10 +2638,8 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
         if (findsMethodThroughSiteCache) {
             constexpr GPRReg cached = stubTemporaryGPRs[2];
             constexpr GPRReg holder = stubTemporaryGPRs[4];
-            CCallHelpers::JumpList misses;
             CCallHelpers::Label start = jit.label();
-            misses.append(jit.branchIfNotCell(thisGPR));
-            misses.append(context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, thisGPR, cached, holder, siteCacheWord));
+            CCallHelpers::JumpList misses = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, thisGPR, cached, holder, siteCacheWord);
             IndexReferences::loadFromCachedLocation(jit, thisGPR, cached, holder, calleeGPR);
             misses.append(jit.branchIfNotCell(calleeGPR));
             CCallHelpers::Label isFound = jit.label();
@@ -2651,7 +2649,7 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 misses.link(&jit);
                 jit.move(CCallHelpers::TrustedImm32(slot | PropertyLookupTable::hasKindAndCode), calleeGPR);
-                context->indexReferences.getAddressOfSiteCacheWord(jit, methodSiteCacheGPR, siteCacheWord);
+                context->indexReferences.getAddressOfSiteCacheWordAfterMiss(jit, methodSiteCacheGPR, siteCacheWord);
                 stubCalls->call(jit, Stub::FindMethodByNameAndFillSiteCache, callSite);
                 jit.jump().linkTo(isFound, &jit);
             });

@@ -177,13 +177,6 @@ public:
 
     ALWAYS_INLINE static constexpr TableIndex bucketIndex(TableIndex hashTableStartIndex, TableSize bucketCount, TableSize hash) { return hashTableStartIndex + (hash & (bucketCount - 1)); }
     ALWAYS_INLINE static constexpr TableIndex bucketIndex(TableSize capacity, uint32_t hash) { return bucketIndex(hashTableStartIndex(), bucketCount(capacity), hash); }
-    ALWAYS_INLINE static TableIndex bucketIndex(TableIndex hashTableStartIndex, TableSize bucketCount, JSValue normalizedKey, TableSize hash)
-    {
-        if (normalizedKey.isInt32() && static_cast<uint32_t>(normalizedKey.asInt32()) < bucketCount)
-            return hashTableStartIndex + static_cast<uint32_t>(normalizedKey.asInt32());
-        return bucketIndex(hashTableStartIndex, bucketCount, hash);
-    }
-    ALWAYS_INLINE static TableIndex bucketIndex(TableSize capacity, JSValue normalizedKey, uint32_t hash) { return bucketIndex(hashTableStartIndex(), bucketCount(capacity), normalizedKey, hash); }
 
     /* -------------------------------- Data table -------------------------------- */
     // The DataTable is packed and only holds up to dataCapacity entries before a rehash is forced.
@@ -331,7 +324,7 @@ public:
             // key stored in the base table is already normalized.
             TableSize hash = jsMapHash(globalObject, vm, baseKey);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            TableIndex newBucketIndex = bucketIndex(newHashTableStartIndex, newBucketCount, baseKey, hash);
+            TableIndex newBucketIndex = bucketIndex(newHashTableStartIndex, newBucketCount, hash);
             addToChain(copyRef, newBucketIndex, newEntryKeyIndex);
             newEntryKeyIndex += EntrySize;
         }
@@ -401,7 +394,7 @@ public:
     ALWAYS_INLINE static FindResult find(JSGlobalObject* globalObject, Storage& storage, JSValue normalizedKey, TableSize hash)
     {
         VM& vm = getVM(globalObject);
-        TableIndex bucketIndex = Helper::bucketIndex(capacity(storage), normalizedKey, hash);
+        TableIndex bucketIndex = Helper::bucketIndex(capacity(storage), hash);
         ASSERT(!isObsolete(storage) && normalizeMapKey(normalizedKey) == normalizedKey);
 
         JSValue keyIndexValue = get(storage, bucketIndex);
@@ -485,7 +478,7 @@ public:
         incrementAliveEntryCount(storage);
 
         if (rehashed || firstAliveEntry) [[unlikely]]
-            result.bucketIndex = bucketIndex(capacity, result.normalizedKey, result.hash);
+            result.bucketIndex = bucketIndex(capacity, result.hash);
 
         addToChain(storage, result.bucketIndex, newEntryKeyIndex);
         setKeyOrValueData(vm, storage, newEntryKeyIndex, result.normalizedKey);

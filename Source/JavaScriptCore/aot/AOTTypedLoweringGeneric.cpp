@@ -869,7 +869,7 @@ bool Lowering::usesSiteCaches(StringID name) const
 {
     if (name && m_program.possibleAccessorNames.get(name.index()))
         return false;
-    return m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
+    return m_out.m_block->frequency() && m_function.module && m_program.modulesWithSiteCaches.get(m_function.module.index());
 }
 
 Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
@@ -883,6 +883,8 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
     applyEffects(patchpoint, OperationEffects { });
     patchpoint->append(ConstrainedValue(base.value(), ValueRep::SomeRegister));
     patchpoint->clobberEarly(RegisterSet { cached, holder });
+    if (isARM64())
+        patchpoint->clobberEarly(RegisterSet { readSiteCacheGPR });
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     RegisterSet clobbered = *registersClobberedBy(Stub::GetByName);
@@ -897,9 +899,7 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg receiver = params[1].gpr();
         CCallHelpers::Label start = jit.label();
-        CCallHelpers::JumpList misses;
-        misses.append(jit.branchIfNotCell(receiver));
-        misses.append(context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word));
+        CCallHelpers::JumpList misses = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word);
         IndexReferences::loadFromCachedLocation(jit, receiver, cached, holder, GPRInfo::returnValueGPR);
         CCallHelpers::Label done = jit.label();
         context->rangesKeptInline.append({ start, done });
@@ -911,7 +911,7 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
             misses.link(&jit);
             jit.move(receiver, firstStubOperandGPR);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
-            context->indexReferences.getAddressOfSiteCacheWord(jit, readSiteCacheGPR, word);
+            context->indexReferences.getAddressOfSiteCacheWordAfterMiss(jit, readSiteCacheGPR, word);
             context->stubCalls.call(jit, stub, site);
             jit.jump().linkTo(done, &jit);
         });
@@ -944,10 +944,8 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
     site.bits = nextSite();
     patchpoint->setGenerator([context = &m_context, isSloppy, name, word, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        CCallHelpers::JumpList misses;
         CCallHelpers::Label start = jit.label();
-        misses.append(jit.branchIfNotCell(firstStubOperandGPR));
-        misses.append(context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word));
+        CCallHelpers::JumpList misses = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word);
         jit.urshift64(CCallHelpers::TrustedImm32(SiteCaches::offsetShift), cached);
         jit.store64(GPRInfo::argumentGPR1, CCallHelpers::BaseIndex(firstStubOperandGPR, cached, CCallHelpers::TimesOne));
         jit.store32(structureAfterStore, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset()));
@@ -964,7 +962,7 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
             jit.jump().linkTo(done, &jit);
             misses.link(&jit);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
-            context->indexReferences.getAddressOfSiteCacheWord(jit, storeSiteCacheGPR, word);
+            context->indexReferences.getAddressOfSiteCacheWordAfterMiss(jit, storeSiteCacheGPR, word);
             context->stubCalls.call(jit, stub, site);
             jit.jump().linkTo(done, &jit);
         });

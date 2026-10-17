@@ -1149,8 +1149,8 @@ class IndexReferences {
 public:
     void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
     void load16(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
-    CCallHelpers::Jump loadSiteCacheUnlessStructureDiffers(CCallHelpers&, GPRReg cell, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction);
-    void getAddressOfSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
+    CCallHelpers::JumpList loadSiteCacheUnlessStructureDiffers(CCallHelpers&, GPRReg receiver, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction);
+    void getAddressOfSiteCacheWordAfterMiss(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
     static void loadFromCachedLocation(CCallHelpers&, GPRReg receiver, GPRReg cachedWord, GPRReg cachedHolder, GPRReg dest);
     Vector<IndexReference> link(LinkBuffer&);
     static void fill(uint8_t* code, const IndexReference&, uint32_t index);
@@ -1164,6 +1164,7 @@ private:
         bool isAddress { false };
     };
     void loadSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
+    void getAddressOfSiteCacheWord(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
     Vector<Reference, 2> m_references;
 };
 

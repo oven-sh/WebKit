@@ -17875,19 +17875,6 @@ struct MissesInCompactTable {
     CCallHelpers::JumpList withLongSlots;
 };
 
-static void placeInBuckets(CCallHelpers& jit, GPRReg key, GPRReg hash, GPRReg capacityAndPlace)
-{
-    CCallHelpers::JumpList isPlacedByHash;
-    isPlacedByHash.append(jit.branchIfNotInt32(key));
-    isPlacedByHash.append(jit.branch32(CCallHelpers::AboveOrEqual, key, capacityAndPlace));
-    jit.zeroExtend32ToWord(key, capacityAndPlace);
-    Jump isPlaced = jit.jump();
-    isPlacedByHash.link(&jit);
-    jit.sub32(TrustedImm32(1), capacityAndPlace);
-    jit.and32(hash, capacityAndPlace);
-    isPlaced.link(&jit);
-}
-
 static void findInCompactTable(CCallHelpers& jit, CCallHelpers::JumpList& otherwise, MissesInCompactTable& misses, CCallHelpers::JumpList& found, bool needsEntry, bool needsMisses, CCallHelpers::JumpList* sameCellByTags, CCallHelpers::JumpList* foundInImage)
 {
     using Lookup = MapOrSetLookup;
@@ -18354,7 +18341,8 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     absentCases.append(jit.branchTestPtr(CCallHelpers::Zero, data));
     jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), data);
     jit.load32(Address(data, Helper::capacityIndex() * sizeof(uint64_t)), scratch);
-    placeInBuckets(jit, key, hash, scratch);
+    jit.sub32(TrustedImm32(1), scratch);
+    jit.and32(hash, scratch);
     jit.add32(TrustedImm32(Helper::hashTableStartIndex()), scratch);
     jit.load64(CCallHelpers::BaseIndex(data, scratch, CCallHelpers::TimesEight), count);
 
@@ -18754,8 +18742,8 @@ static void generateMapOrSetOperation(CCallHelpers& jit, MapOrSetOperation opera
         jit.add32(capacity, place);
         jit.add32(TrustedImm32(Helper::hashTableStartIndex()), place);
         Lookup::loadHash(jit, bucket);
-        placeInBuckets(jit, Lookup::key, bucket, capacity);
-        jit.move(capacity, bucket);
+        jit.sub32(TrustedImm32(1), capacity);
+        jit.and32(capacity, bucket);
         jit.load64(BaseIndex(data, bucket, CCallHelpers::TimesEight, Helper::hashTableStartIndex() * sizeof(EncodedJSValue)), chain);
         jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), scratch);
         jit.or64(place, scratch);
@@ -19860,7 +19848,8 @@ static void generateLookupByBits(CCallHelpers& jit, MapOrSetOperation operation)
     absent.append(jit.branchTestPtr(CCallHelpers::Zero, storage));
     jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), storage, data);
     jit.load32(Address(data, JSMap::Helper::capacityIndex() * sizeof(EncodedJSValue)), index);
-    placeInBuckets(jit, key, hash, index);
+    jit.sub32(TrustedImm32(1), index);
+    jit.and32(hash, index);
     jit.add32(TrustedImm32(JSMap::Helper::hashTableStartIndex()), index);
     jit.load64(BaseIndex(data, index, CCallHelpers::TimesEight), index);
     absent.append(jit.branchTest64(CCallHelpers::Zero, index));
@@ -26819,18 +26808,34 @@ void IndexReferences::loadSiteCacheWord(CCallHelpers& jit, GPRReg dest, unsigned
 #endif
 }
 
-CCallHelpers::Jump IndexReferences::loadSiteCacheUnlessStructureDiffers(CCallHelpers& jit, GPRReg cell, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction)
+CCallHelpers::JumpList IndexReferences::loadSiteCacheUnlessStructureDiffers(CCallHelpers& jit, GPRReg receiver, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction)
 {
     static_assert(SiteCaches::wordsOfLocation == 2);
+    CCallHelpers::JumpList misses;
 #if CPU(ARM64)
-    getAddressOfSiteCacheWord(jit, secondWord, wordInFunction);
-    jit.loadPair64(secondWord, firstWord, secondWord);
-    return jit.branch32(CCallHelpers::NotEqual, firstWord, CCallHelpers::Address(cell, JSCell::structureIDOffset()));
+    static_assert(readSiteCacheGPR == storeSiteCacheGPR && readSiteCacheGPR == methodSiteCacheGPR);
+    RELEASE_ASSERT(noOverlap(readSiteCacheGPR, receiver, firstWord, secondWord));
+    getAddressOfSiteCacheWord(jit, readSiteCacheGPR, wordInFunction);
+    misses.append(jit.branchIfNotCell(receiver));
+    jit.loadPair64(readSiteCacheGPR, firstWord, secondWord);
+    misses.append(jit.branch32(CCallHelpers::NotEqual, firstWord, CCallHelpers::Address(receiver, JSCell::structureIDOffset())));
 #else
+    misses.append(jit.branchIfNotCell(receiver));
     loadSiteCacheWord(jit, firstWord, wordInFunction);
-    CCallHelpers::Jump differs = jit.branch32(CCallHelpers::NotEqual, firstWord, CCallHelpers::Address(cell, JSCell::structureIDOffset()));
+    misses.append(jit.branch32(CCallHelpers::NotEqual, firstWord, CCallHelpers::Address(receiver, JSCell::structureIDOffset())));
     loadSiteCacheWord(jit, secondWord, wordInFunction + 1);
-    return differs;
+#endif
+    return misses;
+}
+
+void IndexReferences::getAddressOfSiteCacheWordAfterMiss(CCallHelpers& jit, GPRReg dest, unsigned wordInFunction)
+{
+#if CPU(ARM64)
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(wordInFunction);
+    RELEASE_ASSERT(dest == readSiteCacheGPR);
+#else
+    getAddressOfSiteCacheWord(jit, dest, wordInFunction);
 #endif
 }
 
@@ -26841,8 +26846,9 @@ void IndexReferences::getAddressOfSiteCacheWord(CCallHelpers& jit, GPRReg dest, 
     m_references.append({ jit.label(), static_cast<uint32_t>(SiteCaches::offsetOfWords + wordInFunction * sizeof(uint64_t)), sizeof(uint64_t), true });
 #elif CPU(ARM64)
     m_references.append({ jit.label(), static_cast<uint32_t>(SiteCaches::offsetOfWords + wordInFunction * sizeof(uint64_t)), sizeof(uint64_t), true, true });
-    jit.m_assembler.add<64>(dest, instanceGPR, UInt12(0), 12);
-    jit.m_assembler.add<64>(dest, dest, UInt12(0));
+    jit.m_assembler.movz<64>(dest, 0);
+    jit.m_assembler.movk<64>(dest, 0, 16);
+    jit.m_assembler.add<64>(dest, instanceGPR, dest);
 #else
     UNUSED_PARAM(jit);
     UNUSED_PARAM(dest);
@@ -26892,15 +26898,19 @@ void IndexReferences::fill(uint8_t* code, const IndexReference& reference, uint3
 {
 #if CPU(ARM64)
     uint64_t distance = reference.addend + static_cast<uint64_t>(index) * reference.scale;
-    RELEASE_ASSERT(distance < (1u << 24));
     auto* instructions = reinterpret_cast<uint32_t*>(code + reference.offset);
+    if (reference.isAddress) {
+        RELEASE_ASSERT(distance <= std::numeric_limits<uint32_t>::max());
+        constexpr uint32_t wideImmediate = 0xffffu << 5;
+        RELEASE_ASSERT(!(instructions[0] & wideImmediate) && !(instructions[1] & wideImmediate));
+        instructions[0] |= static_cast<uint32_t>(distance & 0xffff) << 5;
+        instructions[1] |= static_cast<uint32_t>(distance >> 16) << 5;
+        return;
+    }
+    RELEASE_ASSERT(distance < (1u << 24));
     constexpr uint32_t immediate = 0xfffu << 10;
     RELEASE_ASSERT(!(instructions[0] & immediate) && !(instructions[1] & immediate));
     instructions[0] |= static_cast<uint32_t>(distance >> 12) << 10;
-    if (reference.isAddress) {
-        instructions[1] |= static_cast<uint32_t>(distance & 0xfff) << 10;
-        return;
-    }
     unsigned log2BytesLoaded = instructions[1] >> 30;
     RELEASE_ASSERT(!(distance & ((1u << log2BytesLoaded) - 1)));
     instructions[1] |= static_cast<uint32_t>((distance & 0xfff) >> log2BytesLoaded) << 10;

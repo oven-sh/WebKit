@@ -342,6 +342,8 @@ public:
             m_inserted[step] = data.string(static_cast<uint32_t>(steps[step * m_stride]));
         if (m_stride == 1)
             findCharacters();
+        else if (m_count == 1 && static_cast<uint64_t>(steps[Steps::wordOfRepeats]) >> Steps::shiftOfNumberOfRanges)
+            findRunsOfOneClass();
         else
             findRuns();
     }
@@ -476,6 +478,62 @@ private:
         }
     }
 
+    void findRunsOfOneClass()
+    {
+        constexpr size_t stride = SIMD::stride<uint8_t>;
+        constexpr unsigned bitsPerLane = SIMD::bitsPerLaneInMask<uint8_t>;
+        constexpr uint64_t oneBitPerLane = bitsPerLane == 1 ? 0xffffull : 0x1111111111111111ull;
+        constexpr uint64_t everyLane = bitsPerLane == 1 ? 0xffffull : ~0ull;
+        constexpr uint64_t firstLane = (1ull << bitsPerLane) - 1;
+        uint64_t form = m_steps[Steps::wordOfRepeats];
+        uint64_t bounds = m_steps[Steps::wordOfRanges];
+        unsigned numberOfRanges = form >> Steps::shiftOfNumberOfRanges;
+        bool repeats = form & Steps::repeats;
+        uint64_t flipped = form & Steps::rangesAreOfTheOthers ? everyLane : 0;
+        std::array<simde_uint8x16_t, Steps::maxRanges> first;
+        std::array<simde_uint8x16_t, Steps::maxRanges> width;
+        for (unsigned range = 0; range < numberOfRanges; ++range) {
+            uint8_t low = bounds >> range * 16;
+            uint8_t high = bounds >> (range * 16 + 8);
+            first[range] = SIMD::splat<uint8_t>(low);
+            width[range] = SIMD::splat<uint8_t>(static_cast<uint8_t>(high - low));
+        }
+        size_t start = 0;
+        bool isInRun = false;
+        auto findIn = [&](const Latin1Character* lanes, size_t index, uint64_t lanesInUse) ALWAYS_INLINE_LAMBDA {
+            auto input = SIMD::load(std::bit_cast<const uint8_t*>(lanes));
+            auto mask = SIMD::lessThanOrEqual(SIMD::sub(input, first[0]), width[0]);
+            for (unsigned range = 1; range < numberOfRanges; ++range)
+                mask = SIMD::bitOr(mask, SIMD::lessThanOrEqual(SIMD::sub(input, first[range]), width[range]));
+            uint64_t members = (SIMD::laneMask(mask) ^ flipped) & lanesInUse;
+            if (!repeats) {
+                for (uint64_t bits = members & oneBitPerLane; bits; bits &= bits - 1)
+                    didFind(index + WTF::ctz(bits) / bitsPerLane, 1, 0);
+                return;
+            }
+            uint64_t previous = (members << bitsPerLane | (isInRun ? firstLane : 0)) & everyLane;
+            for (uint64_t bits = (members ^ previous) & oneBitPerLane; bits; bits &= bits - 1) {
+                size_t place = index + WTF::ctz(bits) / bitsPerLane;
+                if (isInRun)
+                    didFind(start, place - start, 0);
+                else
+                    start = place;
+                isInRun = !isInRun;
+            }
+        };
+        size_t size = m_characters.size();
+        size_t index = 0;
+        for (; index + stride <= size; index += stride)
+            findIn(m_characters.data() + index, index, everyLane);
+        if (size_t rest = size - index) {
+            std::array<Latin1Character, stride> lanes { };
+            copy(lanes.data(), m_characters.data() + index, rest);
+            findIn(lanes.data(), index, (1ull << rest * bitsPerLane) - 1);
+        }
+        if (isInRun)
+            didFind(start, size - start, 0);
+    }
+
     void findRuns()
     {
         std::array<std::array<uint64_t, 4>, Steps::maxCount> replacedBy;
@@ -494,7 +552,7 @@ private:
             while (!has(replacedBy[step].data(), m_characters[index]))
                 ++step;
             size_t end = index + 1;
-            if (m_steps[step * m_stride + Steps::wordOfRepeats]) {
+            if (m_steps[step * m_stride + Steps::wordOfRepeats] & Steps::repeats) {
                 while (end < size && has(replacedBy[step].data(), m_characters[end]))
                     ++end;
             }
@@ -1109,7 +1167,27 @@ std::optional<Operand> Lowering::tryLowerReplacementChain(ValueID result, const 
         if (!hasSets)
             continue;
         auto replacement = *characterReplacementBy(chain[i]);
-        store(i * stride + ReplacementSteps::wordOfRepeats, replacement.repeats);
+        uint64_t form = replacement.repeats ? ReplacementSteps::repeats : 0;
+        uint64_t bounds = 0;
+        for (bool ofTheOthers : { false, true }) {
+            Vector<std::pair<unsigned, unsigned>, 8> ranges;
+            for (unsigned character = 0; character < 256; ++character) {
+                if (static_cast<bool>(replacement.set[character / 64] >> character % 64 & 1) == ofTheOthers)
+                    continue;
+                if (!ranges.isEmpty() && ranges.last().second + 1 == character)
+                    ranges.last().second = character;
+                else
+                    ranges.append({ character, character });
+            }
+            if (ranges.isEmpty() || ranges.size() > ReplacementSteps::maxRanges)
+                continue;
+            form |= static_cast<uint64_t>(ranges.size()) << ReplacementSteps::shiftOfNumberOfRanges | (ofTheOthers ? ReplacementSteps::rangesAreOfTheOthers : 0);
+            for (unsigned range = 0; range < ranges.size(); ++range)
+                bounds |= static_cast<uint64_t>(ranges[range].first | ranges[range].second << 8) << range * 16;
+            break;
+        }
+        store(i * stride + ReplacementSteps::wordOfRepeats, form);
+        store(i * stride + ReplacementSteps::wordOfRanges, bounds);
         for (unsigned word = 0; word < 4; ++word)
             store(i * stride + ReplacementSteps::firstWordOfSet + word, replacement.set[word]);
     }

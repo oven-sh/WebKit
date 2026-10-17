@@ -2972,6 +2972,9 @@ static void findStaticallyHotFunctions(Program& program)
         "internal:streams/readable"_s, "internal:streams/state"_s, "internal:streams/writable"_s, "internal:process/next_tick_queue"_s, "internal:validators"_s,
     };
     BitVector runsPerRequest(program.modules.size());
+    BitVector hasSiteCaches(program.modules.size());
+    for (unsigned module = 0; module < program.modules.size(); ++module)
+        hasSiteCaches.set(module);
     for (auto& [number, code] : program.builtinModules) {
         ModuleID module = code ? std::as_const(program).at(code).module : ModuleID();
         if (!module)
@@ -2979,8 +2982,11 @@ static void findStaticallyHotFunctions(Program& program)
         auto path = program.string(program.modules[module.index()].path);
         if (std::ranges::any_of(perRequestRuntimeModules, [&](ASCIILiteral name) { return equalSpans(path, name.span8()); }))
             runsPerRequest.set(module.index());
+        else
+            hasSiteCaches.clear(module.index());
     }
     program.modulesRunPerRequest = runsPerRequest;
+    program.modulesWithSiteCaches = WTF::move(hasSiteCaches);
     if (!runsPerRequest.isEmpty()) {
         BitVector isModuleBody(count);
         for (auto& [number, code] : program.builtinModules) {
@@ -13827,6 +13833,12 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
     isPlainRecord.children[0] = object;
     isPlainRecord.immediates = { record.index(), Format::none };
     ValueID plainTest = add(WTF::move(isPlainRecord));
+    Value unchecked(function.at(cast));
+    unchecked.immediates = { Format::none, static_cast<uint32_t>(CastReason::Member) };
+    unchecked.holdsCallSignature = 0;
+    unchecked.calleeOrSignaturePlusOne = 0;
+    unchecked.expectation = UINT32_MAX;
+    ValueID typedObject = add(WTF::move(unchecked));
 
     Vector<uint32_t> cloneOfValue(FillWith { }, function.values.size(), none);
     for (unsigned b : cloned) {
@@ -13896,7 +13908,9 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
         }
         clone.terminator.forEachChild(inClone);
         for (auto& target : clone.terminator.targets) {
-            if (target.block.index() == slow)
+            if (target.block.index() == slow && fitsStatically)
+                target.arguments.append(typedObject);
+            else if (target.block.index() == slow)
                 target.block = BlockID(convertingBlock);
             else if (cloneOfBlock[target.block.index()] != none)
                 target.block = BlockID(cloneOfBlock[target.block.index()]);
@@ -13942,13 +13956,6 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
     typedTest.children[0] = object;
     typedTest.immediates[1] = 0;
     ValueID isTyped = add(WTF::move(typedTest));
-    Value unchecked(function.at(cast));
-    unchecked.immediates = { Format::none, static_cast<uint32_t>(CastReason::Member) };
-    unchecked.holdsCallSignature = 0;
-    unchecked.calleeOrSignaturePlusOne = 0;
-    unchecked.expectation = UINT32_MAX;
-    ValueID typedObject = add(WTF::move(unchecked));
-
     auto branch = [&](Block& block, ValueID condition, Target&& taken, Target&& notTaken) {
         block.terminator = Terminator();
         block.terminator.kind = TerminatorKind::Branch;
@@ -13959,6 +13966,7 @@ static bool tryReadPlainRecordWithoutConversion(const Program& program, Function
     auto& first = function.blocks[castBlock];
     first.values.shrink(first.values.size() - 2);
     if (fitsStatically) {
+        first.values.append(typedObject);
         first.terminator = Terminator();
         first.terminator.kind = TerminatorKind::Jump;
         first.terminator.targets.append(Target { BlockID(plainBlock), { } });

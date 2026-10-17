@@ -1500,6 +1500,7 @@ public:
     mutable std::array<LayoutAndNameTypeCache, 64> widestTypeStoredThroughSupertypesCache;
     bool isStaticallyHot(FunctionID id) const { return staticallyHotFunctions.get(id.index()); }
     BitVector modulesRunPerRequest;
+    BitVector modulesWithSiteCaches;
     BitVector staticallyWarmFunctions;
     bool isStaticallyWarm(FunctionID id) const { return staticallyWarmFunctions.get(id.index()); }
     BitVector staticallyRareFunctions;

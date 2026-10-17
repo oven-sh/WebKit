@@ -65,6 +65,7 @@
     struct TableEntry {
         LValue entry { nullptr };
         LValue key { nullptr };
+        LValue hash { nullptr };
     };
     UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_earlierTableLookups;
     BitVector m_tableLookupsRepeatedLater;

@@ -1809,7 +1809,7 @@ struct State {
     }
     KeyByParts lastKeyPartsLookup;
     struct LastReplacement {
-        std::array<EncodedJSValue, 48> steps;
+        std::array<EncodedJSValue, 56> steps;
         uint32_t countAndForm { 0 };
         uint32_t lastStep { 0 };
     };

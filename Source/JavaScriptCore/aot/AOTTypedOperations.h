@@ -299,7 +299,12 @@ struct ReplacementSteps {
     static constexpr uint32_t hasSets = 16;
     static constexpr unsigned wordOfRepeats = 1;
     static constexpr unsigned firstWordOfSet = 2;
-    static constexpr unsigned wordsWithSet = 6;
+    static constexpr unsigned wordOfRanges = 6;
+    static constexpr unsigned wordsWithSet = 7;
+    static constexpr uint64_t repeats = 1;
+    static constexpr uint64_t rangesAreOfTheOthers = 2;
+    static constexpr unsigned shiftOfNumberOfRanges = 8;
+    static constexpr unsigned maxRanges = 4;
 };
 
 } // namespace Typed

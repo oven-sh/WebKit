@@ -1743,7 +1743,7 @@ private:
     Word32 areStringsEqual(ValueID, ValueID);
     Boxed mapKey(ValueID);
     Word32 mapKeyHash(Boxed);
-    Pointer findInMapOrSet(CellPointer table, bool isMap, Boxed key, bool keyMayBeNumber, LBasicBlock absent);
+    Pointer findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word32 hash, LBasicBlock absent);
     Integer mapOrSetSize(CellPointer, bool isMap, bool hasStringKeysByType);
     bool tableStubChecksReceiver(ValueID result, const Value&);
     Operand lowerMapOrSetBuiltin(InlineBuiltin, ValueID result, const Value&, Writes inlinePath);

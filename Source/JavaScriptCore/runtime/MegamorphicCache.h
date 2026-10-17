@@ -28,7 +28,6 @@
 #include "Structure.h"
 #include <wtf/BitSet.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/UniqueRef.h>
 
 namespace JSC {
 
@@ -169,18 +168,6 @@ public:
     static constexpr ptrdiff_t offsetOfEpoch() { return OBJECT_OFFSETOF(MegamorphicCache, m_epoch); }
 
     MegamorphicCache() = default;
-
-    static UniqueRef<MegamorphicCache> create()
-    {
-#if USE(TZONE_MALLOC)
-        return makeUniqueRef<MegamorphicCache>();
-#else
-        static_assert(!invalidEpoch);
-        auto* cache = static_cast<MegamorphicCache*>(fastZeroedMalloc(sizeof(MegamorphicCache)));
-        cache->m_epoch = firstEpoch;
-        return UniqueRef<MegamorphicCache>(*cache);
-#endif
-    }
 
 #if CPU(ADDRESS64)
     // Because Structure is allocated with 16-byte alignment, we should assume that StructureID's lower 4 bits are zeros.

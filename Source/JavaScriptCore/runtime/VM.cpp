@@ -284,7 +284,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 #endif
     , m_regExpCache(makeUnique<RegExpCache>())
     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
-    , m_jsonCache(JSONCache::create())
+    , m_jsonCache(makeUniqueRef<JSONCache>())
     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
@@ -306,7 +306,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         });
 
         m_megamorphicCache.initLater([](VM&, auto& ref) {
-            ref.set(MegamorphicCache::create());
+            ref.set(makeUniqueRef<MegamorphicCache>());
         });
 
         m_stringSplitCache.initLater([](VM&, auto& ref) {
@@ -520,6 +520,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Initialize this last, as a free way of asserting that VM initialization itself
     // won't use this.
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
+
+    createBytecodeIntrinsicRegistry();
 
     if (Options::useTypeProfiler())
         enableTypeProfiler();
@@ -960,7 +962,7 @@ NEVER_INLINE void VM::destroy() const
     delete this;
 }
 
-void VM::createBytecodeIntrinsicRegistry()
+NEVER_INLINE void VM::createBytecodeIntrinsicRegistry()
 {
     m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
 }
