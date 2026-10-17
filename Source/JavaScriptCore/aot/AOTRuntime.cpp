@@ -547,7 +547,7 @@ struct Instance::Collections {
     const Instance::SpreadLiteralPlan* lastSpreadLiteralPlan { nullptr };
     UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Instance::PropertyRunTarget> propertyRunTargets;
     UncheckedKeyHashMap<String, std::unique_ptr<uint32_t>> canonicalPropertyRuns;
-    UncheckedKeyHashMap<std::tuple<Structure*, Structure*, const IdentifierSet*>, Instance::CopiedProperties> copiedProperties;
+    UncheckedKeyHashMap<std::tuple<Structure*, Structure*, const IdentifierSet*>, std::unique_ptr<Instance::CopiedProperties>> copiedProperties;
     UncheckedKeyHashMap<std::tuple<uint32_t, JSObject*, JSCell*>, Instance::ClassStructures> classStructuresByKey;
     UncheckedKeyHashMap<Structure*, JSFunction*> constructorsByFirstStructure;
     void setConstructorByFirstStructure(Structure* first, JSFunction* constructor)
@@ -2872,7 +2872,7 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
         return realmInstance.copiedProperties(target, source, excluded);
     std::tuple key { target, source, excluded };
     if (auto it = collections->copiedProperties.find(key); it != collections->copiedProperties.end())
-        return it->value;
+        return *it->value;
     constexpr unsigned maxSize = 4096;
     if (collections->copiedProperties.size() >= maxSize)
         collections->copiedProperties.clear();
@@ -2908,7 +2908,7 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
         result.offsets[i].second = last->get(*vm, names[i]);
     result.last = last;
     collections->weakTablesAddedToSinceLastCollection |= Collections::CopiedProperties;
-    return collections->copiedProperties.add(key, WTF::move(result)).iterator->value;
+    return *collections->copiedProperties.add(key, makeUniqueWithoutFastMallocCheck<CopiedProperties>(WTF::move(result))).iterator->value;
 }
 
 bool Instance::prototypesAllowAssigning(Structure* target, Structure* source, const CopiedProperties& copied)
@@ -3546,8 +3546,8 @@ void Instance::finalizeUnconditionally(bool newOnly)
         });
         walkWeakTable(Collections::CopiedProperties, collections->copiedProperties, [&](auto& entry) {
             auto& [target, source, excluded] = entry.key;
-            return !vm->heap.isMarked(target) || !vm->heap.isMarked(source) || (entry.value.last && !vm->heap.isMarked(entry.value.last))
-                || std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
+            return !vm->heap.isMarked(target) || !vm->heap.isMarked(source) || (entry.value->last && !vm->heap.isMarked(entry.value->last))
+                || std::ranges::any_of(entry.value->prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
         });
         walkWeakTable(Collections::ClassStructuresTable, collections->classStructuresByKey, [&](auto& entry) {
             return !vm->heap.isMarked(entry.value.classObjectStructure) || !vm->heap.isMarked(entry.value.ofPrototype);

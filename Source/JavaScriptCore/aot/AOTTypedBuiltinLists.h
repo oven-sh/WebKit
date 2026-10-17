@@ -787,28 +787,28 @@
     v(MapValueAt, 484, 182) \
     v(SetNext, 485, 246) \
     v(SetKeyAt, 486, 245) \
-    v(PropertyIsEnumerable, 724, 217) \
-    v(AwaitMayContinue, 748, 27) \
-    v(AwaitedValue, 749, 28) \
-    v(SuspendAsyncFunction, 750, 262) \
-    v(AwaitBySavingFrame, 751, 26) \
-    v(AsyncGeneratorYield, 752, 20) \
-    v(GetAsyncIteratorNext, 753, 92) \
-    v(GetIteratorNext, 754, 102) \
-    v(GeneratorResume, 755, 89) \
-    v(GeneratorIsDone, 756, 88) \
-    v(IsAsyncIteratorDriven, 757, 127) \
-    v(AsyncIteratorNext, 758, 21) \
-    v(ClearAsyncIteratorResult, 759, 40) \
-    v(TryNewPromiseSubclass, 760, 270) \
-    v(RegExpLiteral, 792, 229) \
-    v(SetExpectedRowType, 813, 242) \
-    v(StringAppendBegin, 814, 253) \
-    v(StringAppend, 815, 252) \
-    v(StringAppendMeasure, 816, 256) \
-    v(StringAppendMayEscape, 817, 255) \
-    v(StringAppendSync, 818, 257) \
-    v(StringAppendFinish, 819, 254)
+    v(PropertyIsEnumerable, 723, 217) \
+    v(AwaitMayContinue, 747, 27) \
+    v(AwaitedValue, 748, 28) \
+    v(SuspendAsyncFunction, 749, 262) \
+    v(AwaitBySavingFrame, 750, 26) \
+    v(AsyncGeneratorYield, 751, 20) \
+    v(GetAsyncIteratorNext, 752, 92) \
+    v(GetIteratorNext, 753, 102) \
+    v(GeneratorResume, 754, 89) \
+    v(GeneratorIsDone, 755, 88) \
+    v(IsAsyncIteratorDriven, 756, 127) \
+    v(AsyncIteratorNext, 757, 21) \
+    v(ClearAsyncIteratorResult, 758, 40) \
+    v(TryNewPromiseSubclass, 759, 270) \
+    v(RegExpLiteral, 791, 229) \
+    v(SetExpectedRowType, 812, 242) \
+    v(StringAppendBegin, 813, 253) \
+    v(StringAppend, 814, 252) \
+    v(StringAppendMeasure, 815, 256) \
+    v(StringAppendMayEscape, 816, 255) \
+    v(StringAppendSync, 817, 257) \
+    v(StringAppendFinish, 818, 254)
 
 #define FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION(v) \
     v(ArrayFrom, "Array$from") \
@@ -834,7 +834,6 @@
     v(ArrayReduceRightWithoutInitialValue, "Array$reduceRightWithoutInitialValue") \
     v(ArrayReduceRight, "Array$reduceRight") \
     v(MapForEach, "Map$forEach") \
-    v(SetConstruct, "Set$construct") \
     v(SetForEach, "Set$forEach") \
     v(PromiseConstruct, "Promise$construct") \
     v(PromiseRunExecutorOfSubclass, "Promise$runExecutorOfSubclass")
@@ -1190,11 +1189,11 @@
     v(0, (JSWrapForValidIterator::Field::IteratedIterator)) \
     v(1, (JSWrapForValidIterator::Field::IteratedNextMethod))
 
-#define AOT_TYPED_NUMBER_OF_BUILTINS 950
+#define AOT_TYPED_NUMBER_OF_BUILTINS 949
 #define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 705
 #define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES 37
 #define AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES 35
-#define AOT_TYPED_BUILTINS_HASH 0xcbea967cu
+#define AOT_TYPED_BUILTINS_HASH 0xb7641913u
 
 #define AOT_TYPED_BUILTIN_NAME_TypedArray 275
 #define AOT_TYPED_BUILTIN_NAME_prototype 512
@@ -1214,4 +1213,4 @@
 #define AOT_TYPED_ENGINE_CLASS_Object 24
 #define AOT_TYPED_BUILTIN_HasOriginalStructure 477
 #define AOT_TYPED_BUILTIN_Call 480
-#define AOT_TYPED_BUILTIN_PropertyIsEnumerable 724
+#define AOT_TYPED_BUILTIN_PropertyIsEnumerable 723

@@ -7013,8 +7013,9 @@ State::State(VM& vm, Instance& instance, const Data& data)
     instance.typedExtraPropertyLocations = createZeroedTable<ExtraPropertyLocation>(1 << ExtraPropertyLocation::indexBits);
     instance.typedLateFieldCreations = createZeroedTable<LateFieldCreation>(1 << LateFieldCreation::indexBits);
     instance.typedCloneCache = createZeroedTable<TypedCloneCacheEntry>(1 << TypedCloneCacheEntry::indexBits);
-    instance.typedConversionCache = createZeroedTable<ConversionCacheEntry>(1 << ConversionCacheEntry::indexBits);
-    instance.typedUnconvertedCasts = createZeroedTable<UnconvertedCastEntry>(1 << UnconvertedCastEntry::indexBits);
+    static_assert(sizeof(ConversionCacheEntry) == sizeof(UnconvertedCastEntry) && ConversionCacheEntry::indexBits == UnconvertedCastEntry::indexBits && ConversionCacheEntry::multiplier == UnconvertedCastEntry::multiplier);
+    instance.typedConversionCache = createZeroedTable<ConversionCacheEntry>(2 << ConversionCacheEntry::indexBits);
+    instance.typedUnconvertedCasts = static_cast<ConversionCacheEntry*>(instance.typedConversionCache) + (1 << ConversionCacheEntry::indexBits);
     m_propertyConversionCache = createZeroedTable<uintptr_t>(propertyConversionCacheSize);
     m_propertiesWithSupertypes = createZeroedTable<PropertiesWithSupertypes>(numberOfPropertiesWithSupertypes);
     createStatics();
@@ -7101,8 +7102,7 @@ State::~State()
     destroyZeroedTable(static_cast<ExtraPropertyLocation*>(instance.typedExtraPropertyLocations), 1 << ExtraPropertyLocation::indexBits);
     destroyZeroedTable(static_cast<LateFieldCreation*>(instance.typedLateFieldCreations), 1 << LateFieldCreation::indexBits);
     destroyZeroedTable(static_cast<TypedCloneCacheEntry*>(instance.typedCloneCache), 1 << TypedCloneCacheEntry::indexBits);
-    destroyZeroedTable(static_cast<ConversionCacheEntry*>(instance.typedConversionCache), 1 << ConversionCacheEntry::indexBits);
-    destroyZeroedTable(static_cast<UnconvertedCastEntry*>(instance.typedUnconvertedCasts), 1 << UnconvertedCastEntry::indexBits);
+    destroyZeroedTable(static_cast<ConversionCacheEntry*>(instance.typedConversionCache), 2 << ConversionCacheEntry::indexBits);
     destroyZeroedTable(m_propertyConversionCache, propertyConversionCacheSize);
     destroyZeroedTable(m_propertiesWithSupertypes, numberOfPropertiesWithSupertypes);
     fastFree(m_youngRoots);

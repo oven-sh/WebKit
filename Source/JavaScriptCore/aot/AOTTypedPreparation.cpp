@@ -1784,8 +1784,6 @@ public:
             RELEASE_ASSERT(function.kind == FunctionKind::Plain && function.captureTypes.isEmpty() && !function.parameterTypes.isEmpty());
             RELEASE_ASSERT(!function.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionHasRestParameter | Format::FunctionHasThis));
             m_program.preludeFunctions[static_cast<unsigned>(*which)] = FunctionID(i);
-            if (*which == PreludeFunction::SetConstruct)
-                m_program.functions[i].flags |= Format::FunctionIsHiddenInStackTraces;
         }
         for (auto& engineClass : builtins.classes())
             m_program.engineClassTypes.append(engineClass.canCheckOriginalStructure() ? m_program.types.intern(Type::engineClass(engineClass)) : TypeID());
@@ -3184,6 +3182,38 @@ static bool isInlinedFromHotFunction(const Program& program, const Function& fun
     return program.isHotOutsideLoops(original);
 }
 
+static BitVector findValuesOpenedAsIterables(const Function& function)
+{
+    BitVector result(function.values.size());
+    Vector<ValueID, 8> worklist;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            if (function.at(id).opcode == Opcode::IteratorOpen)
+                worklist.append(function.at(id).child(0));
+        }
+    }
+    while (!worklist.isEmpty()) {
+        ValueID id = worklist.takeLast();
+        if (result.set(id.index()))
+            continue;
+        auto& value = function.at(id);
+        if (value.opcode == Opcode::Cast)
+            worklist.append(value.child(0));
+        if (value.opcode != Opcode::Parameter)
+            continue;
+        for (auto& block : function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = function.at(target.block).parameters;
+                for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                    if (parameters[i] == id)
+                        worklist.append(target.arguments[i]);
+                }
+            }
+        }
+    }
+    return result;
+}
+
 static void printOutliningStatistics(ASCIILiteral what, size_t bodies, std::initializer_list<std::pair<ASCIILiteral, uint64_t>> rows)
 {
     uint64_t all = 0;
@@ -3447,7 +3477,7 @@ static void outlineBuiltinCalls(Program& program)
 {
     constexpr unsigned maxOperands = 6;
     auto& builtins = Builtins::singleton();
-    std::array<BuiltinID, 3> spreads { Operations::AppendSpread, Operations::Apply, Operations::CallWithSpread };
+    std::array<BuiltinID, 7> operations { Operations::AppendSpread, Operations::Apply, Operations::CallWithSpread, Operations::PrivateGet, Operations::PrivateFieldGet, Operations::PrivateSet, Operations::PrivateFieldAdd };
     auto isCandidate = [&](const Value& value) {
         if (value.opcode == Opcode::Add)
             return program.at(value.type).isString();
@@ -3458,8 +3488,10 @@ static void outlineBuiltinCalls(Program& program)
         auto& implementation = builtins.at(value.builtin()).implementation;
         if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ArrayPush)
             return false;
+        if (implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::MapSize || implementation.inlined == InlineBuiltin::SetSize))
+            return true;
         BuiltinKind kind = builtins.at(value.builtin()).kind;
-        return kind == BuiltinKind::Method || kind == BuiltinKind::StaticFunction || (!value.isInTailPosition && std::ranges::find(spreads, value.builtin()) != spreads.end());
+        return kind == BuiltinKind::Method || kind == BuiltinKind::StaticFunction || kind == BuiltinKind::Function || (!value.isInTailPosition && std::ranges::find(operations, value.builtin()) != operations.end());
     };
     auto isPredictedClassMethodRead = [&](const Function& function, const Value& value) {
         return value.opcode == Opcode::GetById && value.methodGetByIdBuiltin() && value.predictedReceiverClassPlusOne && !program.typeOf(function, value.child(0)).singleEngineClass();
@@ -3588,6 +3620,15 @@ static void outlineBuiltinCalls(Program& program)
         std::optional<StringBuilderAnalysis> builders;
         std::optional<SplitsOnlyTakenApart> splitsOnlyTakenApart;
         std::optional<MatchesOnlyTakenApart> matchesOnlyTakenApart;
+        std::optional<BitVector> iterables;
+        auto isOpenedAsIterable = [&](ValueID id) {
+            static constexpr OpcodeSet opens { Opcode::IteratorOpen };
+            if (!program.functions.mayContain(i, opens))
+                return false;
+            if (!iterables)
+                iterables = findValuesOpenedAsIterables(function);
+            return iterables->get(id.index());
+        };
         auto isOnlyTakenApart = [&](ValueID id) {
             auto& value = function.at(id);
             if (value.opcode != Opcode::CallBuiltin)
@@ -3619,9 +3660,6 @@ static void outlineBuiltinCalls(Program& program)
                 keys = computeMapKeyValues(program, FunctionID(i), function);
             return keys->get(key.index());
         };
-        bool hasHandlers = program.functions.mayEndWith(i, TerminatorKind::Invoke) && function.blocks.containsIf([](auto& block) {
-            return block.terminator.kind == TerminatorKind::Invoke;
-        });
         std::as_const(program).functions.forEachIndexedValueWithBlock(i, candidates, [&](unsigned b, unsigned index, ValueID id) {
             auto& value = function.at(id);
             StringID predictedMethod = predictedMethodName(function, value);
@@ -3629,9 +3667,7 @@ static void outlineBuiltinCalls(Program& program)
                 return;
             if (value.opcode == Opcode::Add ? isLocallyCreatedKey(id) || usesStringBuilder(id) : value.opcode == Opcode::CallBuiltin && !value.arguments.isEmpty() && isLocallyCreatedKey(value.arguments[0]))
                 return;
-            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || isPartOfCloneWithPrototype(function, b, index, id) || writesLiteralAsJSON(function, value) || isOnlyTakenApart(id))
-                return;
-            if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
+            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || isPartOfCloneWithPrototype(function, b, index, id) || writesLiteralAsJSON(function, value) || isOnlyTakenApart(id) || isOpenedAsIterable(id))
                 return;
             if (!isInLoop)
                 isInLoop = blocksInLoops(function);
@@ -3691,7 +3727,7 @@ static void outlineBuiltinCalls(Program& program)
             }
         }
     }
-    enum : unsigned { IsOutlined, OccursOnce, IsInHotFunction, IsGetterOrSetter, IsOperation, HasOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsArithmetic, IsAllocation, IsNearHandlers, IsInLoop, IsUnchanged, NumberOfReasons };
+    enum : unsigned { IsOutlined, OccursOnce, IsInHotFunction, IsGetterOrSetter, IsOperation, HasOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsArithmetic, IsAllocation, IsIterable, IsInLoop, IsUnchanged, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
     uint64_t numberOfSplitsTakenApart = 0;
     uint64_t numberOfMatchesTakenApart = 0;
@@ -3709,10 +3745,8 @@ static void outlineBuiltinCalls(Program& program)
                 isSharedSite.set(site.value.index());
         }
         bool isHot = program.isHotOutsideLoops(FunctionID(i));
-        bool hasHandlers = function.blocks.containsIf([](auto& block) {
-            return block.terminator.kind == TerminatorKind::Invoke;
-        });
         BitVector isInLoop = blocksInLoops(function);
+        BitVector iterables = findValuesOpenedAsIterables(function);
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
@@ -3734,7 +3768,7 @@ static void outlineBuiltinCalls(Program& program)
                         reason = IsGetterOrSetter;
                     else if (kind == BuiltinKind::Operation)
                         reason = IsOperation;
-                    else if (kind != BuiltinKind::Method && kind != BuiltinKind::StaticFunction)
+                    else if (kind != BuiltinKind::Method && kind != BuiltinKind::StaticFunction && kind != BuiltinKind::Function)
                         reason = HasOtherKind;
                     else {
                         RELEASE_ASSERT(implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ArrayPush);
@@ -3746,8 +3780,8 @@ static void outlineBuiltinCalls(Program& program)
                     reason = IsArithmetic;
                 else if (createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value))
                     reason = IsAllocation;
-                else if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
-                    reason = IsNearHandlers;
+                else if (iterables.get(id.index()))
+                    reason = IsIterable;
                 else if (isInLoop.get(b))
                     reason = IsInLoop;
                 ++numbers[reason];
@@ -3838,7 +3872,7 @@ static void outlineBuiltinCalls(Program& program)
     });
     if (Options::verboseAOTCompilation()) {
         dataLogLn("AOT: ", numberOfSplitsTakenApart, " results of split and ", numberOfMatchesTakenApart, " of exec and match are only taken apart and never made");
-        printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is hot"_s, numbers[IsInHotFunction] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "beside handlers"_s, numbers[IsNearHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
+        printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is hot"_s, numbers[IsInHotFunction] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "what a loop goes over"_s, numbers[IsIterable] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
     }
     for (size_t k = 0; k < bodies.size(); ++k)
         program.staticallyHotFunctions.set(program.functions.size() + k);
@@ -8667,21 +8701,17 @@ static void findInternalModuleExports(Program& program)
 
 class ResultOfCallWithConstants {
 public:
-    ResultOfCallWithConstants(const Program& program, const Function& caller, const Value& call)
+    ResultOfCallWithConstants(const Program& program, const Function& caller, FunctionID callee, const Value& call)
         : m_program(program)
-        , m_callee(program.at(call.function()))
+        , m_callee(program.at(callee))
     {
         constexpr uint32_t disqualifyingFlags = Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionHasRestParameter | Format::FunctionHasThis | Format::FunctionHasNewTarget | Format::FunctionIsBuiltin | Format::FunctionIsModuleBody | Format::FunctionIsSloppy | Format::FunctionIsDeclaredGenericEntrypoint;
-        if ((m_callee.kind != FunctionKind::Plain && m_callee.kind != FunctionKind::Arrow) || m_callee.has(disqualifyingFlags) || !m_callee.captureTypes.isEmpty() || m_callee.blocks.isEmpty() || m_callee.blocks[0].parameters.size() != call.arguments.size())
+        if ((m_callee.kind != FunctionKind::Plain && m_callee.kind != FunctionKind::Arrow) || m_callee.has(disqualifyingFlags) || !m_callee.captureTypes.isEmpty() || m_callee.blocks.isEmpty() || m_callee.blocks[0].parameters.size() < call.arguments.size())
             return;
-        bool hasConstant = false;
-        for (unsigned i = 0; i < call.arguments.size(); ++i) {
-            Constant given = literal(caller, call.arguments[i]);
-            hasConstant |= given.kind != Constant::Unknown;
-            m_known.add(m_callee.blocks[0].parameters[i].index(), given);
-        }
-        if (hasConstant)
-            run();
+        auto& parameters = m_callee.blocks[0].parameters;
+        for (unsigned i = 0; i < parameters.size(); ++i)
+            m_known.add(parameters[i].index(), i < call.arguments.size() ? literal(caller, call.arguments[i]) : Constant { Constant::Undefined, 0, { }, { } });
+        run();
     }
 
     FunctionID closure() const { return m_closure; }
@@ -8912,11 +8942,27 @@ static unsigned findFunctionsInModuleVariables(Program& program)
                 functor(Source { Source::Nil, { }, 0 });
                 continue;
             case Opcode::CallDirect:
-                if (ResultOfCallWithConstants result(constProgram, function, origin); result.closure()) {
+            case Opcode::Call: {
+                FunctionID callee = origin.opcode == Opcode::CallDirect ? origin.function() : FunctionID();
+                if (!callee) {
+                    ValueID called = origin.child(0);
+                    while (function.at(called).opcode == Opcode::Cast && function.at(called).castReason() != CastReason::Coerce)
+                        called = function.at(called).child(0);
+                    if (function.at(called).opcode == Opcode::FunctionReference)
+                        callee = function.at(called).function();
+                    else if (function.at(called).opcode == Opcode::GetModuleVariable) {
+                        if (auto& held = constProgram.variables[function.at(called).variable().index()]; held.singleFunctionIsProven)
+                            callee = held.singleFunction;
+                    }
+                }
+                if (!callee)
+                    break;
+                if (ResultOfCallWithConstants result(constProgram, function, callee, origin); result.closure()) {
                     functor(Source { Source::Closure, result.closure(), 0, result.functionsCaptured() });
                     continue;
                 }
                 break;
+            }
             case Opcode::GetModuleVariable: {
                 if (origin.variable() == variable) {
                     functor(Source { Source::Same, { }, 0 });

@@ -990,25 +990,29 @@ private:
 
     void branchOnHeaders(ValueID value, ValueID standsForHeaders, BlockID hasOriginalMethods, BlockID otherwise)
     {
-        BlockID isHolder = addBlock();
-        BlockID isNoHolder = addBlock();
         BlockID isObject = addBlock();
         ValueID object = addParameter(isObject, m_program.types.anything);
-        auto& test = m_function.at(m_block).terminator;
-        test.kind = TerminatorKind::Branch;
-        test.value = standsForHeaders;
-        test.targets.append(Target { isHolder, { } });
-        test.targets.append(Target { isNoHolder, { } });
+        if (m_function.at(standsForHeaders).opcode == Opcode::Boolean)
+            jump(isObject, value);
+        else {
+            BlockID isHolder = addBlock();
+            BlockID isNoHolder = addBlock();
+            auto& test = m_function.at(m_block).terminator;
+            test.kind = TerminatorKind::Branch;
+            test.value = standsForHeaders;
+            test.targets.append(Target { isHolder, { } });
+            test.targets.append(Target { isNoHolder, { } });
 
-        moveTo(isNoHolder);
-        jump(isObject, value);
+            moveTo(isNoHolder);
+            jump(isObject, value);
 
-        moveTo(isHolder);
-        BlockID isNotCreated = branch(appendTestWithNumber(Operations::HostObjectHasCachedValue, value, offsetOfCachedHeaders));
-        jump(isObject, appendCachedHeaders(value));
+            moveTo(isHolder);
+            BlockID isNotCreated = branch(appendTestWithNumber(Operations::HostObjectHasCachedValue, value, offsetOfCachedHeaders));
+            jump(isObject, appendCachedHeaders(value));
 
-        moveTo(isNotCreated);
-        jump(hasOriginalMethods, value);
+            moveTo(isNotCreated);
+            jump(hasOriginalMethods, value);
+        }
 
         moveTo(isObject);
         BlockID isChanged = addBlock();
@@ -1151,8 +1155,24 @@ private:
             }
         }
         numberOfReads = members.size();
-        if (!numberOfReads)
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                if (value.opcode != Opcode::Construct || !m_program.at(value.type).anyObject)
+                    continue;
+                auto& callee = m_function.at(originOf(value.child(0)));
+                if (callee.opcode != Opcode::GetGlobal || !equalSpans(m_program.string(callee.string()), asBytes("Headers"_s.span8())))
+                    continue;
+                leaders.append(members.size());
+                members.append(id);
+            }
+        }
+        unsigned numberOfSeeds = members.size();
+        if (!numberOfSeeds)
             return 0;
+        auto isConstructed = [&](unsigned index) {
+            return index >= numberOfReads && index < numberOfSeeds;
+        };
 
         constexpr unsigned maxMembers = 64;
         auto join = [&](ValueID from, ValueID to) {
@@ -1217,7 +1237,7 @@ private:
                 unsigned uses = 0;
                 value.forEachChild([&](ValueID child) {
                     unsigned index = indexOf(child);
-                    if (index == none)
+                    if (index == none || isConstructed(index))
                         return;
                     if (!method || child != receiver || ++uses > 1)
                         isRefused[leaderOf(index)] = true;
@@ -1225,17 +1245,17 @@ private:
                 if (unsigned index = method ? indexOf(receiver) : none; index != none)
                     sites.append({ id, *method, leaderOf(index), methodGetById });
             }
-            if (unsigned index = block.terminator.value ? indexOf(block.terminator.value) : none; index != none)
+            if (unsigned index = block.terminator.value ? indexOf(block.terminator.value) : none; index != none && !isConstructed(index))
                 isRefused[leaderOf(index)] = true;
         }
         for (unsigned index = 0; index < members.size(); ++index) {
             if (!m_program.at(m_function.at(members[index]).type).anyObject)
                 isRefused[leaderOf(index)] = true;
         }
-        auto isTaken = [&](unsigned index) {
-            unsigned group = leaderOf(index);
-            if (isRefused[group])
-                return false;
+        Vector<bool, 8> hasRead(FillWith { }, members.size(), false);
+        for (unsigned index = 0; index < numberOfReads; ++index)
+            hasRead[leaderOf(index)] = true;
+        auto hasMoreThanALoneGet = [&](unsigned group) {
             unsigned count = 0;
             bool onlyReads = true;
             for (auto& site : sites) {
@@ -1247,9 +1267,16 @@ private:
             return count > 1 || (count && !onlyReads);
         };
         Vector<bool, 8> taken(members.size(), [&](size_t index) {
-            return isTaken(index);
+            unsigned group = leaderOf(index);
+            return !isRefused[group] && hasRead[group] && hasMoreThanALoneGet(group);
         });
-        if (!taken.contains(true))
+        auto isCalledOnObject = [&](const Site& site) {
+            if (taken[site.group] || (hasRead[site.group] && !hasMoreThanALoneGet(site.group)))
+                return false;
+            ValueID name = m_function.at(site.id).arguments[0];
+            return knownHeaderName(name) != unknownHeaderName || m_function.blocks[0].parameters.contains(originOf(name));
+        };
+        if (!taken.contains(true) && !sites.containsIf(isCalledOnObject))
             return 0;
 
         m_position = 0;
@@ -1307,7 +1334,7 @@ private:
         }
         unsigned changed = 0;
         for (auto& site : sites) {
-            if (!taken[site.group])
+            if (!taken[site.group] && !isCalledOnObject(site))
                 continue;
             if (site.methodGetById)
                 callHeadersMethodReadEarlier(site.methodGetById, site.id, site.method, flagOf(m_function.at(site.id).child(1)), yes, no);
