@@ -65,7 +65,10 @@ test(function() {
 test(function() {
     function foo(x = ()=>arguments) {
         var arguments = 25;
-        assert(x() === arguments);
+        // Bun: upstream expects x() === arguments. The body's var is a binding of its own (FunctionDeclarationInstantiation step 28), as in V8.
+        assert(x() !== arguments);
+        assert(x().length === 1);
+        assert(arguments === 25);
     }
     foo(undefined);
 });
