@@ -278,6 +278,7 @@ struct PatternTerm {
             unsigned lastSubpatternId;
             bool isCopy : 1;
             bool isTerminal : 1;
+            bool isTailLoop : 1; // See YarrPatternConstructor::markTailLoops(). Only the JIT looks at it.
             bool isStringList : 1;
             bool isEOLStringList: 1;
         } parentheses;
@@ -330,6 +331,7 @@ struct PatternTerm {
         parentheses.subpatternId = subpatternId;
         parentheses.isCopy = false;
         parentheses.isTerminal = false;
+        parentheses.isTailLoop = false;
         parentheses.isStringList = false;
         parentheses.isEOLStringList = false;
         quantityType = QuantifierType::FixedCount;
@@ -567,6 +569,9 @@ public:
     PatternTermList m_terms;
     PatternDisjunction* m_parent;
     unsigned m_minimumSize;
+    // The frame slots of its terms: [m_firstFrameSlot, m_callFrameSize).
+    unsigned m_firstFrameSlot { 0 };
+    unsigned m_callFrameSize { 0 };
     unsigned m_firstSubpatternId;
     unsigned m_lastSubpatternId;
     MatchDirection m_direction;
