@@ -112,6 +112,22 @@ checkBasicBlock(testConditionalInCondition, "y)", ShouldHaveExecuted);
 checkBasicBlock(testConditionalInCondition, "bar()", ShouldNotHaveExecuted);
 checkBasicBlock(testConditionalInCondition, "baz()", ShouldHaveExecuted);
 
+function testElseInCondition(x) {
+    if (x ? bar() : foo())
+        baz();
+}
+testElseInCondition(true);
+checkBasicBlock(testElseInCondition, "bar()", ShouldHaveExecuted);
+checkBasicBlock(testElseInCondition, "foo()", ShouldNotHaveExecuted);
+
+function testCoalesceInCondition(x) {
+    if (x ?? foo())
+        bar();
+}
+testCoalesceInCondition(true);
+checkBasicBlock(testCoalesceInCondition, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testCoalesceInCondition, "bar()", ShouldHaveExecuted);
+
 function testConditionalEnd(x) {
     return [x ? foo() : 2, foo()];
 }

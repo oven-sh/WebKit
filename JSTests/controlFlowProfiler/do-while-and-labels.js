@@ -33,6 +33,17 @@ checkBasicBlock(testDoWhileBreak, "bar()", ShouldNotHaveExecuted);
 checkBasicBlock(testDoWhileBreak, "while (true)", ShouldNotHaveExecuted);
 checkBasicBlock(testDoWhileBreak, "foo();\n}", ShouldHaveExecuted);
 
+function testDoWhileContinue(x) {
+    do {
+        if (x)
+            continue;
+        foo();
+    } while (bar());
+}
+testDoWhileContinue(true);
+checkBasicBlock(testDoWhileContinue, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testDoWhileContinue, "bar()", ShouldHaveExecuted);
+
 function testLabeledBlock(x) {
     label: {
         if (x)

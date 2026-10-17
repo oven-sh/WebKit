@@ -38,6 +38,31 @@ assert(basicBlockExecutionCount(testCounts, "bar()") === 3, "the value of a comp
 assert(basicBlockExecutionCount(testCounts, "static c") === 1, "a static field is initialized once");
 assert(basicBlockExecutionCount(testCounts, "for (") === 1, "what follows the class runs once");
 
+// All of it is one basic block, whose range is the one the function that initializes the fields has.
+function testScopeOfOneBlock() {
+    class A {
+        a = foo();
+    }
+    new A;
+    new A;
+    new A;
+}
+testScopeOfOneBlock();
+testScopeOfOneBlock();
+assert(basicBlockExecutionCount(testScopeOfOneBlock, "class A") === 2, "the class is evaluated once per call");
+assert(basicBlockExecutionCount(testScopeOfOneBlock, "a = foo") === 6, "a field is initialized once per instance");
+assert(basicBlockExecutionCount(testScopeOfOneBlock, "new A") === 2, "what follows the class runs once per call");
+
+function testParenthesizedField() {
+    class A {
+        a = (foo());
+    }
+    new A;
+}
+testParenthesizedField();
+checkBasicBlock(testParenthesizedField, "foo()", ShouldHaveExecuted);
+checkBasicBlock(testParenthesizedField, ");", ShouldHaveExecuted);
+
 function testBranchInField(x) {
     class A {
         a = x ? foo() : bar();
