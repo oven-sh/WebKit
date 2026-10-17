@@ -182,18 +182,30 @@ static SuspendResumeRequest pendingSuspendResumeRequestForCurrentThread()
 // is missing here gets nullptr, and the handler falls back to its own stack pointer.
 static inline void* interruptedStackPointer(ucontext_t* ucontext)
 {
-#if OS(LINUX) && CPU(X86_64)
+#if (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(X86_64)
     return reinterpret_cast<void*>(ucontext->uc_mcontext.gregs[REG_RSP]);
-#elif OS(LINUX) && CPU(ARM64)
+#elif (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(ARM64)
     return reinterpret_cast<void*>(ucontext->uc_mcontext.sp);
-#elif OS(LINUX) && CPU(ARM)
+#elif (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(ARM)
     return reinterpret_cast<void*>(ucontext->uc_mcontext.arm_sp);
-#elif OS(LINUX) && CPU(RISCV64)
+#elif (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(RISCV64)
     return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[REG_SP]);
 #elif OS(FREEBSD) && CPU(X86_64)
     return reinterpret_cast<void*>(ucontext->uc_mcontext.mc_rsp);
+#elif OS(FREEBSD) && CPU(ARM)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[_REG_SP]);
 #elif OS(FREEBSD) && CPU(ARM64)
     return reinterpret_cast<void*>(ucontext->uc_mcontext.mc_gpregs.gp_sp);
+#elif OS(NETBSD) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[_REG_RSP]);
+#elif OS(NETBSD) && (CPU(ARM) || CPU(ARM64))
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[_REG_SP]);
+#elif OS(HAIKU) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.rsp);
+#elif OS(QNX) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.cpu.rsp);
+#elif OS(QNX) && CPU(ARM64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.cpu.gpr[AARCH64_REG_SP]);
 #else
     UNUSED_PARAM(ucontext);
     return nullptr;
