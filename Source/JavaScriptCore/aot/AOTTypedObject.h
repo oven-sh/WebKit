@@ -1571,6 +1571,7 @@ struct State {
         const LayoutData* layout { nullptr };
         const LayoutData* chosen { nullptr };
         bool hasAlternatives { false };
+        bool keepsObject { false };
         uint32_t orderAndCount { 0 };
         Vector<Field, 8> fields;
         Vector<std::pair<PropertyOffset, UniquedStringImpl*>, 2> extraProperties;
@@ -1623,6 +1624,16 @@ struct State {
     bool m_isConvertingChildren { false };
     using ChildrenOfQuickConversion = Vector<std::pair<JSCell*, const RuntimeType*>, 16>;
     bool canConvertQuickly(JSValue, const RuntimeType&, ChildrenOfQuickConversion&, unsigned depth);
+    bool canSettleByPlans(JSValue, const RuntimeType&, ChildrenOfQuickConversion& seen, ChildrenOfQuickConversion& converted, unsigned depth);
+    bool tryKeepByPlan(VM&, JSObject*, const RuntimeType&);
+    struct ObjectBelowKeptObject {
+        JSObject* object;
+        Structure* structure;
+        const RuntimeType* type;
+    };
+    using ObjectsBelowKeptObject = Vector<ObjectBelowKeptObject, 8>;
+    void collectObjectsBelowKeptObject(JSObject*, const RuntimeType&, ObjectsBelowKeptObject&, unsigned depth);
+    void cacheConversionsBelowKeptObject(const ObjectsBelowKeptObject&);
     static constexpr unsigned maxTypedClonePlans = 4096;
     Object* tryCloneAs(VM&, JSObject* source, uint64_t target);
     const TypedClonePlan& typedClonePlan(VM&, Structure*, uint64_t target);

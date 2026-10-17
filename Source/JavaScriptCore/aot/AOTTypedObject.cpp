@@ -11490,6 +11490,7 @@ private:
         if (!m_state.coercionPlan(object, type) && m_state.canAddCoercionPlans()) {
             State::CoercionPlan::Discriminants discriminants;
             auto plan = planFor(object, structure, properties, type, *layout, 0, discriminants);
+            plan->keepsObject = !!plan->layout;
             plan->layout = nullptr;
             m_state.addCoercionPlan(object, structure, type, WTF::move(plan), discriminants);
         }
@@ -12989,6 +12990,80 @@ bool State::canConvertQuickly(JSValue value, const RuntimeType& type, ChildrenOf
     return true;
 }
 
+bool State::canSettleByPlans(JSValue value, const RuntimeType& type, ChildrenOfQuickConversion& seen, ChildrenOfQuickConversion& converted, unsigned depth)
+{
+    if (!type.acceptsUntypedObjectsByNature()) {
+        if (converted.size() == converted.capacity() || !canConvertQuickly(value, type, seen, depth))
+            return false;
+        converted.append({ value.asCell(), &type });
+        return true;
+    }
+    if (depth >= maxDepthOfChildConversions || !value.isObject() || asObject(value)->type() != FinalObjectType)
+        return false;
+    JSObject* object = asObject(value);
+    for (auto& [known, typeOfKnown] : seen) {
+        if (known == object)
+            return typeOfKnown == &type;
+    }
+    if (seen.size() == seen.capacity())
+        return false;
+    seen.append({ object, &type });
+    const CoercionPlan* plan = coercionPlan(object, type);
+    if (!plan || !plan->keepsObject)
+        return false;
+    for (auto& planned : plan->fields) {
+        JSValue held = object->getDirect(planned.offset);
+        if (planned.acceptedKinds & CoercionPlan::kindOf(held) || canHoldWithoutConversion(*planned.field, planned.acceptedKinds, held))
+            continue;
+        if (!canSettleByPlans(held, ownTypeOf(*planned.field), seen, converted, depth + 1))
+            return false;
+    }
+    return true;
+}
+
+bool State::tryKeepByPlan(VM& vm, JSObject* object, const RuntimeType& type)
+{
+    if (!m_quickConversions || vm.heap.mutatorShouldBeFenced())
+        return false;
+    ChildrenOfQuickConversion seen;
+    ChildrenOfQuickConversion converted;
+    if (!canSettleByPlans(object, type, seen, converted, 0))
+        return false;
+    for (auto& [below, typeOfBelow] : converted) {
+        if (!compiledObject(below) && !tryQuickConversion(vm, below, *typeOfBelow))
+            return false;
+    }
+    return true;
+}
+
+void State::collectObjectsBelowKeptObject(JSObject* object, const RuntimeType& type, ObjectsBelowKeptObject& found, unsigned depth)
+{
+    const CoercionPlan* plan = depth < maxDepthOfChildConversions ? coercionPlan(object, type) : nullptr;
+    if (!plan || (!plan->keepsObject && !plan->layout))
+        return;
+    for (auto& planned : plan->fields) {
+        JSValue held = object->getDirect(planned.offset);
+        if (!held.isObject() || asObject(held)->type() != FinalObjectType || found.size() == found.capacity() || found.containsIf([&](auto& known) { return known.object == asObject(held); }))
+            continue;
+        const RuntimeType& ofField = ownTypeOf(*planned.field);
+        if (!ofField.acceptsUntypedObjectsByNature())
+            found.append({ asObject(held), asObject(held)->structure(), &ofField });
+        collectObjectsBelowKeptObject(asObject(held), ofField, found, depth + 1);
+    }
+}
+
+void State::cacheConversionsBelowKeptObject(const ObjectsBelowKeptObject& found)
+{
+    for (auto& below : found) {
+        Object* made = compiledObject(below.object);
+        const CoercionPlan* plan = made ? coercionPlan(below.structure, *below.type) : nullptr;
+        if (!plan || !plan->layout || plan->discriminant != invalidOffset || plan->layout->shape != made->shape() || plan->graphConversionEpoch == m_quickConversionEpoch)
+            continue;
+        plan->graphConversionEpoch = m_quickConversionEpoch;
+        cacheQuickConversion(below.structure, *below.type, *plan, *plan, 0, made, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(below.structure->inlineCapacity())), 0);
+    }
+}
+
 bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
 {
     if (!m_quickConversions || !value.isCell())
@@ -14275,6 +14350,14 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         countCoercion(value, nullptr, type, reason, "nothing below"_s, value);
         return value;
     }
+    bool mayKeepByPlan = !compiled && type.acceptsUntypedObjectsByNature() && requestedReason == Format::CastReason::As && !isFreshObject && value.isObject() && asObject(value)->type() == FinalObjectType && !data.isCompiledForAudit;
+    if (mayKeepByPlan && tryKeepByPlan(vm, asObject(value), type)) {
+        countCoercion(value, nullptr, type, reason, "kept by plan"_s, value);
+        return value;
+    }
+    ObjectsBelowKeptObject objectsBelow;
+    if (mayKeepByPlan)
+        collectObjectsBelowKeptObject(asObject(value), type, objectsBelow, 0);
     const LayoutData* before = compiled ? &compiled->layout() : nullptr;
     ASCIILiteral way = !compiled ? "foreign"_s : "flags"_s;
     if (Object* object = data.isCompiledForAudit ? nullptr : compiled; object && !object->hasFlagsInOrderWord()) {
@@ -14320,6 +14403,8 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     JSValue result = attempt.run(value, type);
     RETURN_IF_EXCEPTION(scope, { });
     countCoercion(value, before, type, reason, way, result);
+    if (result == value)
+        cacheConversionsBelowKeptObject(objectsBelow);
     if (result)
         return result;
     if (keepsUnconvertibleObjects && value.isObject() && type.acceptsOnlyOtherLayouts())

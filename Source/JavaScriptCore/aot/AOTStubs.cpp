@@ -12631,7 +12631,7 @@ static void callOperationOnThree(CCallHelpers& jit, Entry operation)
     callAndCheckException(jit, T11, Returns::Void);
 }
 
-static void returnWhetherFieldIsPresent(CCallHelpers& jit, GPRReg object, bool returnsFromOperation)
+static void returnWhetherFieldIsPresent(CCallHelpers& jit, GPRReg object, GPRReg kindOfField, GPRReg index, GPRReg value, bool returnsFromOperation)
 {
     auto finish = [&] {
         if (returnsFromOperation)
@@ -12639,37 +12639,37 @@ static void returnWhetherFieldIsPresent(CCallHelpers& jit, GPRReg object, bool r
         jit.ret();
     };
     auto isKind = [&](Instance::KeyedHasField kind) {
-        return jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(kind)));
+        return jit.branch32(CCallHelpers::Equal, kindOfField, TrustedImm32(static_cast<int32_t>(kind)));
     };
     Jump isWord64 = isKind(Instance::KeyedHasField::Word64);
     Jump isByte = isKind(Instance::KeyedHasField::Byte);
     Jump isDouble = isKind(Instance::KeyedHasField::Double);
     Jump isInt64 = isKind(Instance::KeyedHasField::Int64);
-    jit.load32(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesFour), T12);
+    jit.load32(CCallHelpers::BaseIndex(object, index, CCallHelpers::TimesFour), value);
     Jump isInt32OrNumberBox = isKind(Instance::KeyedHasField::Int32OrNumberBox);
     static_assert(!Typed::absentCell32);
-    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
+    jit.compare32(CCallHelpers::NotEqual, value, TrustedImm32(0), R0);
     finish();
     isInt32OrNumberBox.link(&jit);
-    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(Typed::absentInt32), R0);
+    jit.compare32(CCallHelpers::NotEqual, value, TrustedImm32(Typed::absentInt32), R0);
     finish();
     isWord64.link(&jit);
-    jit.load64(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesEight), T12);
-    jit.compare64(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
+    jit.load64(CCallHelpers::BaseIndex(object, index, CCallHelpers::TimesEight), value);
+    jit.compare64(CCallHelpers::NotEqual, value, TrustedImm32(0), R0);
     finish();
     isByte.link(&jit);
-    jit.load8(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesOne), T12);
-    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
+    jit.load8(CCallHelpers::BaseIndex(object, index, CCallHelpers::TimesOne), value);
+    jit.compare32(CCallHelpers::NotEqual, value, TrustedImm32(0), R0);
     finish();
     isDouble.link(&jit);
-    jit.load64(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesEight), T12);
-    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(Typed::absentDouble)), T11);
-    jit.compare64(CCallHelpers::NotEqual, T12, T11, R0);
+    jit.load64(CCallHelpers::BaseIndex(object, index, CCallHelpers::TimesEight), value);
+    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(Typed::absentDouble)), kindOfField);
+    jit.compare64(CCallHelpers::NotEqual, value, kindOfField, R0);
     finish();
     isInt64.link(&jit);
-    jit.load64(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesEight), T12);
-    jit.move(CCallHelpers::TrustedImm64(Typed::absentInteger), T11);
-    jit.compare64(CCallHelpers::NotEqual, T12, T11, R0);
+    jit.load64(CCallHelpers::BaseIndex(object, index, CCallHelpers::TimesEight), value);
+    jit.move(CCallHelpers::TrustedImm64(Typed::absentInteger), kindOfField);
+    jit.compare64(CCallHelpers::NotEqual, value, kindOfField, R0);
     finish();
 }
 
@@ -12677,25 +12677,32 @@ static void generateFrontEndTypedHasOwnPropertyByName(CCallHelpers& jit)
 {
     constexpr GPRReg base = A1;
     constexpr GPRReg name = A2;
-    static_assert(noOverlap(base, name, T9, T10, T11, T12, T13, instanceGPR) && R0 == GPRInfo::returnValueGPR);
+    constexpr GPRReg words = A3;
+    constexpr GPRReg entry = T9;
+    constexpr GPRReg scratch = T10;
+    constexpr GPRReg kindOfField = T11;
+    static_assert(noOverlap(A0, base, name, words, entry, scratch, kindOfField, instanceGPR) && R0 == GPRInfo::returnValueGPR);
+#if CPU(X86_64)
+    static_assert(words == X86Registers::ecx && entry == X86Registers::r10 && scratch == X86Registers::r8 && kindOfField == X86Registers::r9);
+#endif
     static_assert(hasOneBitSet(Instance::numberOfOwnFieldPlaces));
     CCallHelpers::JumpList isNotKnown;
     isNotKnown.append(jit.branchIfNotCell(base));
     isNotKnown.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
-    jit.load32(Address(base, Typed::offsetOfShapeWord), T11);
-    jit.lshift32(T11, TrustedImm32(Instance::namedFieldShapeShift), T13);
-    jit.add32(name, T13);
-    jit.and32(TrustedImm32(Instance::numberOfOwnFieldPlaces - 1), T13);
-    jit.lshiftPtr(TrustedImm32(4), T13);
-    jit.addPtr(instanceGPR, T13);
-    jit.zeroExtend32ToWord(name, T10);
-    jit.lshift64(TrustedImm32(32), T10);
-    jit.or64(T10, T11);
-    isNotKnown.append(jit.branch64(CCallHelpers::NotEqual, Address(T13, Instance::offsetOfOwnFieldPlaces() + OBJECT_OFFSETOF(Instance::NamedField, shapeWordAndName)), T11));
-    jit.load64(Address(T13, Instance::offsetOfOwnFieldPlaces() + OBJECT_OFFSETOF(Instance::NamedField, access)), T13);
-    jit.and32(TrustedImm32(7), T13, T11);
-    jit.urshift32(TrustedImm32(Instance::ownFieldIndexShift), T13);
-    returnWhetherFieldIsPresent(jit, base, true);
+    jit.load32(Address(base, Typed::offsetOfShapeWord), words);
+    jit.lshift32(words, TrustedImm32(Instance::namedFieldShapeShift), entry);
+    jit.add32(name, entry);
+    jit.and32(TrustedImm32(Instance::numberOfOwnFieldPlaces - 1), entry);
+    jit.lshiftPtr(TrustedImm32(4), entry);
+    jit.addPtr(instanceGPR, entry);
+    jit.zeroExtend32ToWord(name, scratch);
+    jit.lshift64(TrustedImm32(32), scratch);
+    jit.or64(scratch, words);
+    isNotKnown.append(jit.branch64(CCallHelpers::NotEqual, Address(entry, Instance::offsetOfOwnFieldPlaces() + OBJECT_OFFSETOF(Instance::NamedField, shapeWordAndName)), words));
+    jit.load64(Address(entry, Instance::offsetOfOwnFieldPlaces() + OBJECT_OFFSETOF(Instance::NamedField, access)), entry);
+    jit.and32(TrustedImm32(7), entry, kindOfField);
+    jit.urshift32(TrustedImm32(Instance::ownFieldIndexShift), entry);
+    returnWhetherFieldIsPresent(jit, base, kindOfField, entry, scratch, true);
 
     isNotKnown.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
@@ -12744,7 +12751,7 @@ static void generateInByValCached(CCallHelpers& jit)
     jit.and32(TrustedImm32(Instance::maxKeyedHasFieldIndex), T13);
     jit.urshift32(TrustedImm32(Instance::keyedHasFieldKindShift), T11);
     jit.and32(TrustedImm32(7), T11);
-    returnWhetherFieldIsPresent(jit, R0, false);
+    returnWhetherFieldIsPresent(jit, R0, T11, T13, T12, false);
 
     miss.link(&jit);
     callLookUpByKey(jit, Entry::operationAOTHasByKeyGeneric, T12);

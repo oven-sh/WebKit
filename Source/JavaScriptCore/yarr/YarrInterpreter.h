@@ -478,45 +478,55 @@ public:
     unsigned m_frameSize;
 };
 
+#define FOR_EACH_YARR_FAST_OP(macro) \
+    macro(Character) \
+    macro(Text) \
+    macro(CasedText) \
+    macro(WideText) \
+    macro(Set) \
+    macro(SetCount) \
+    macro(GreedyRun) \
+    macro(PossessiveRun) \
+    macro(LazyRun) \
+    macro(CapturedRun) \
+    macro(Choice) \
+    macro(ChoiceByFirst) \
+    macro(Jump) \
+    macro(CaptureStart) \
+    macro(CaptureEnd) \
+    macro(CaptureEmpty) \
+    macro(ClearCaptures) \
+    macro(SavePosition) \
+    macro(FailIfEmpty) \
+    macro(InputStart) \
+    macro(LineStart) \
+    macro(InputEnd) \
+    macro(LineEnd) \
+    macro(WordBoundary) \
+    macro(NotWordBoundary) \
+    macro(Match) \
+    macro(LoggedCaptureStart) \
+    macro(LoggedCaptureEnd) \
+    macro(LoggedClearCaptures) \
+    macro(LoggedSavePosition) \
+    macro(LoggedSetRegister) \
+    macro(LoggedIncrement) \
+    macro(JumpIfBelow) \
+    macro(JumpIfNotBelow) \
+    macro(LoopBack) \
+    macro(LookaheadBegin) \
+    macro(LookaheadEnd) \
+    macro(LookaheadEndKeepingCaptures) \
+    macro(NegativeLookaheadBegin) \
+    macro(NegativeLookaheadEnd) \
+    macro(BackReference) \
+    macro(BackReferenceIgnoringCase)
+
 struct FastOp {
     enum class Kind : uint8_t {
-        Character,
-        Text,
-        Set,
-        SetCount,
-        GreedyRun,
-        PossessiveRun,
-        LazyRun,
-        Choice,
-        Jump,
-        CaptureStart,
-        CaptureEnd,
-        ClearCaptures,
-        SavePosition,
-        FailIfEmpty,
-        InputStart,
-        LineStart,
-        InputEnd,
-        LineEnd,
-        WordBoundary,
-        NotWordBoundary,
-        Match,
-        LoggedCaptureStart,
-        LoggedCaptureEnd,
-        LoggedClearCaptures,
-        LoggedSavePosition,
-        LoggedSetRegister,
-        LoggedIncrement,
-        JumpIfBelow,
-        JumpIfNotBelow,
-        LoopBack,
-        LookaheadBegin,
-        LookaheadEnd,
-        LookaheadEndKeepingCaptures,
-        NegativeLookaheadBegin,
-        NegativeLookaheadEnd,
-        BackReference,
-        BackReferenceIgnoringCase,
+#define YARR_FAST_OP_ENUMERATOR(name) name,
+        FOR_EACH_YARR_FAST_OP(YARR_FAST_OP_ENUMERATOR)
+#undef YARR_FAST_OP_ENUMERATOR
     };
     Kind kind;
     uint16_t set;
@@ -535,11 +545,12 @@ struct FastSet {
 struct FastProgram {
     WTF_MAKE_TZONE_ALLOCATED(FastProgram);
 public:
-    size_t estimatedSizeInBytes() const { return ops.capacity() * sizeof(FastOp) + sets.capacity() * sizeof(FastSet) + text.capacity() * sizeof(char16_t); }
+    size_t estimatedSizeInBytes() const { return ops.capacity() * sizeof(FastOp) + sets.capacity() * sizeof(FastSet) + text.capacity() + wideText.capacity() * sizeof(char16_t); }
 
     Vector<FastOp> ops;
     Vector<FastSet> sets;
-    Vector<char16_t> text;
+    Vector<Latin1Character> text;
+    Vector<char16_t> wideText;
     uint64_t firstCharacters[4] { };
     unsigned numSubpatterns { 0 };
     unsigned numRegisters { 0 };
