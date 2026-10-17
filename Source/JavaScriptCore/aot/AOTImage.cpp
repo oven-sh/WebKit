@@ -2292,10 +2292,7 @@ Vector<uint8_t> ImageBuilder::finish()
     std::unique_ptr<StubBlob> imageStubs;
     Ref stubGeneratorThread = Thread::create("AOT image"_s, [&] {
         auto* typedData = m_typedData.isEmpty() ? nullptr : reinterpret_cast<const Typed::Data*>(m_typedData.span().data());
-        ShapesWithOtherPrototype shapesWithOtherPrototype;
-        if (typedData)
-            shapesWithOtherPrototype = { typedData->lastShapeWithOtherPrototype, typedData->reachOfShapesWithOtherPrototype, typedData->setOfShapesWithOtherPrototype };
-        imageStubs = createStubBlob(codeGranuleShift, typedData && typedData->functionLengthsAreBytes, shapesWithOtherPrototype, calledThunks, calledStubs, !m_webAssemblyCode.isEmpty());
+        imageStubs = createStubBlob(codeGranuleShift, typedData && typedData->functionLengthsAreBytes, typedData && typedData->mayRunInMultipleInstances, calledThunks, calledStubs, !m_webAssemblyCode.isEmpty());
     }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(4 * MB));
     Vector<const ArgumentMoves*> argumentMoves;
     auto argumentMovesAreInOrder = [](const ArgumentMoves* a, const ArgumentMoves* b) {
@@ -3933,7 +3930,7 @@ static bool isTrapAtThrowSite(const void* instruction)
 {
     if (!s_imageHeader || !s_imageHeader->numberOfTrapsAtThrowSites)
         return false;
-    if (std::bit_cast<uintptr_t>(instruction) - s_imageCode >= s_imageHeader->functionsEnd || *static_cast<const uint8_t*>(instruction) != 0xf4)
+    if (std::bit_cast<uintptr_t>(instruction) - s_imageCode >= s_imageHeader->functionsEnd || (*static_cast<const uint8_t*>(instruction) != trapInstruction && *static_cast<const uint8_t*>(instruction) != trapInstructionWithoutFrame))
         return false;
     ImageAddressInfo place = classifyAddress(instruction);
     if (place.kind != ImageAddressInfo::Function)
@@ -3973,7 +3970,8 @@ void prepareFaultingAccesses()
 #if CPU(X86_64) && OS(LINUX)
         if (isTrapAtThrowSite(instructionPointer->untaggedPtr())) {
             scratchRegisterOf(registers) = std::bit_cast<uintptr_t>(instructionPointer->untaggedPtr()) + offsetOfReturnAddressInTrap;
-            MachineContext::setInstructionPointer(registers, std::bit_cast<void*>(s_imageCode + s_imageHeader->stubOffsets[static_cast<unsigned>(Stub::ThrowAtTrap)]));
+            bool hasNoFrame = *static_cast<const uint8_t*>(instructionPointer->untaggedPtr()) == trapInstructionWithoutFrame;
+            MachineContext::setInstructionPointer(registers, std::bit_cast<void*>(s_imageCode + s_imageHeader->stubOffsets[static_cast<unsigned>(hasNoFrame ? Stub::LeafThrowAtTrap : Stub::ThrowAtTrap)]));
             return SignalAction::Handled;
         }
         if (isTrapAtPrologue(instructionPointer->untaggedPtr())) {

@@ -1419,7 +1419,10 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
     orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, from))), loadField<Word32>(object, m_heaps.JSCell_structureID).value()), slowPath);
     orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
     didEmitWrite(writes);
-    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to))), object.value(), m_heaps.JSCell_structureID);
+    static_assert(orderWordHasExtraProperties == Instance::prototypeChangeAsksPrototypeChain << 28);
+    LValue to = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to)));
+    m_out.store32(m_out.bitAnd(to, m_out.constInt32(~Instance::prototypeChangeAsksPrototypeChain)), object.value(), m_heaps.JSCell_structureID);
+    storeField(object, m_heaps.AOTTypedObject_orderWord, bitOr(orderWordOf(object), Word32(m_out.shl(m_out.bitAnd(to, m_out.constInt32(Instance::prototypeChangeAsksPrototypeChain)), m_out.constInt32(28)))));
     barrier(object);
     join.add(convertToDeclaredResult(get(value.arguments[0]), typeOf(value.arguments[0]), value, type));
 

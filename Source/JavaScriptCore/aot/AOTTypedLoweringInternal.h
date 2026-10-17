@@ -985,6 +985,7 @@ private:
     Operand readProperty(CellPointer, LayoutID supertype, const Field&, const Type&);
     Operand getFromObjectWithExtraProperties(CellPointer, StringID name, const Type&);
     Word32 hasPrototypeOfLayout(CellPointer);
+    Word32 hasOtherPrototype(CellPointer);
     void branchIfOwnFieldRequested(CellPointer, LBasicBlock isNotRequested, LBasicBlock asks);
     Word32 hasField(CellPointer, const Field&);
     Word32 hasOwnField(CellPointer, const Field&);

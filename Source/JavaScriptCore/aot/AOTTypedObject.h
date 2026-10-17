@@ -416,6 +416,9 @@ struct StoreTransition {
     const Cleared* cleared;
     Vector<Cleared, 4> clearedSlots;
     uint32_t extensionSize { 0 };
+    uint32_t sizeIfStorageExists { 0 };
+    uint32_t structureIDIfFieldIsInline { 0 };
+    void initializeFastChecks();
 };
 static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && !(offsetOfOrderWord % sizeof(uint64_t)));
 
@@ -1921,6 +1924,8 @@ struct State {
     };
     const PlainCopyPlan& plainCopyPlan(VM&, const LayoutData&, uint32_t orderWord);
     bool everyFieldIsOrdinaryProperty(VM&, const LayoutData&);
+    bool mayInterceptPutOfOwnProperty(VM&, const LayoutData&, JSObject* extraProperties, JSObject* prototype);
+    void clearCheckedPrototypeChains();
     struct PlainCopyExcludingPlan {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlainCopyExcludingPlan);
         Vector<RefPtr<UniquedStringImpl>, 2> excluded;
@@ -2255,6 +2260,14 @@ private:
     bool m_hasCachedExtraPropertyReads { false };
     bool m_hasCachedLateFieldCreations { false };
     bool m_propertyListCacheIsDirty { false };
+    struct CheckedPrototypeChain {
+        uint32_t shapePlusOne { 0 };
+        StructureID extraProperties;
+        std::array<StructureID, 5> structures { };
+        friend bool operator==(const CheckedPrototypeChain&, const CheckedPrototypeChain&) = default;
+    };
+    std::array<CheckedPrototypeChain, 16> m_checkedPrototypeChains { };
+    bool m_hasCheckedPrototypeChains { false };
     std::unique_ptr<std::array<CachedPropertyList, propertyListCacheSize>> m_propertyListCache;
     struct LastCoercionPlanLookup {
         Structure* structure { nullptr };

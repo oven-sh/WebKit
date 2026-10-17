@@ -149,6 +149,8 @@ struct Slot;
     v(operationAOTTypedGetByNameCheckedAsNumber) \
     v(operationAOTTypedRecordTypeMismatch) \
     v(operationAOTTypedHasExtra) \
+    v(operationAOTTypedStoreCreatesField) \
+    v(operationAOTTypedGetAbsentField) \
     v(operationAOTTypedFieldEqualsString) \
     v(operationAOTTypedPutExtra) \
     v(operationAOTTypedPutInNumberBox) \
@@ -299,6 +301,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLookUpGlobalMember, Heap, 
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetFreeVariable, Heap, void, (Instance*, uint32_t, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetFreeVariableSloppy, Heap, void, (Instance*, uint32_t, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByName, Heap, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetAbsentField, Heap, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetSuperPropertyByName, Heap, EncodedJSValue, (Instance*, EncodedJSValue home, EncodedJSValue receiver, uint32_t nameInTable));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByName, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameSloppy, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
@@ -455,6 +458,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByNameChecked, Heap, EncodedJSVa
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByNameCheckedAsNumber, Heap, double, (Instance*, JSCell* object, uint32_t name, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRecordTypeMismatch, Nothing, void, (Instance*, EncodedJSValue value, uint32_t type, uint32_t parameter, uint32_t isAtCaller));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedHasExtra, Nothing, size_t, (Instance*, JSCell* object, uint32_t name));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStoreCreatesField, Nothing, size_t, (Instance*, JSCell* object, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFieldEqualsString, RuntimeState, size_t, (Instance*, JSCell* object, uint32_t name, uint32_t text));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutExtra, Fields, void, (Instance*, JSCell* object, uint32_t name, EncodedJSValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPutInNumberBox, Fields, void, (Instance*, JSCell* object, uint32_t name, EncodedJSValue));

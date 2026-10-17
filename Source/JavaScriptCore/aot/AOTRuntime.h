@@ -55,6 +55,7 @@ struct FormatPatternState;
 enum class FormatPatternsOrigin : uint8_t { NotCompared, ThisICU, AnotherICU };
 struct JSONWideSegment;
 struct JSONPlanCache;
+struct JSONShapeTables;
 struct StringAppender;
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
@@ -1011,6 +1012,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfBoundFunctionClassInfo() { return OBJECT_OFFSETOF(Instance, boundFunctionClassInfo); }
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
+    static constexpr ptrdiff_t offsetOfLinkTimeConstant(unsigned constant) { return OBJECT_OFFSETOF(Instance, linkTimeConstants) + constant * sizeof(EncodedJSValue); }
     static constexpr unsigned numberOfReceivers = 16;
     uint32_t receiverStructureIDs[numberOfReceivers];
     static constexpr ptrdiff_t offsetOfReceiverStructureID(Receiver receiver)
@@ -1142,6 +1144,7 @@ struct Instance {
     uint64_t jsonCursor;
     double jsonNumber;
     uint64_t jsonParserFrame;
+    JSONShapeTables* jsonShapeTables;
     Latin1Character* stringAppenderOrigin;
     uint64_t stringAppenderLength;
     uint64_t stringAppenderLimit;
@@ -1267,29 +1270,66 @@ struct Instance {
     static constexpr unsigned objectCreateCacheIndex(uintptr_t prototype) { return (prototype >> 6) & (objectCreateCacheSize - 1); }
     ObjectCreateCacheEntry objectCreateCache[objectCreateCacheSize];
     bool objectCreateCacheIsDirty;
-    static constexpr unsigned numberOfCheckedStructures = 32;
-    uint32_t checkedStructureIDs[numberOfCheckedStructures];
-    bool hasCheckedStructures;
-    void forgetCheckedStructures()
-    {
-        if (std::exchange(hasCheckedStructures, false))
-            zeroSpan(std::span { checkedStructureIDs });
-    }
-    bool watchProperty(JSObject* holder, UniquedStringImpl*);
     struct PrototypeChangeCacheEntry {
         JSCell* prototype;
         uint32_t from;
         uint32_t to;
     };
+    static constexpr uint32_t prototypeChangeAsksPrototypeChain = 1;
     static constexpr unsigned prototypeChangeCacheSize = 16;
     static constexpr unsigned prototypeChangeCacheIndex(uintptr_t prototype) { return (prototype >> 6) & (prototypeChangeCacheSize - 1); }
     PrototypeChangeCacheEntry prototypeChangeCache[prototypeChangeCacheSize];
+    PrototypeChangeCacheEntry prototypeChangeCacheForSeenRecords[prototypeChangeCacheSize];
+    static constexpr uint32_t prototypeChangeAsksChainForAbsentFields = 1;
     bool prototypeChangeCacheIsDirty;
     void forgetPrototypeChanges()
     {
-        if (std::exchange(prototypeChangeCacheIsDirty, false))
+        if (std::exchange(prototypeChangeCacheIsDirty, false)) {
             zeroSpan(std::span { prototypeChangeCache });
+            zeroSpan(std::span { prototypeChangeCacheForSeenRecords });
+        }
     }
+    struct InheritedFieldAnswer {
+        uint32_t structureID;
+        uint32_t name;
+        uint32_t question;
+        int32_t offset;
+        JSCell* holder;
+        uint64_t onlyValueChecked;
+        bool answers(uint32_t structureID, uint32_t name, uint32_t question) const { return this->structureID == structureID && this->name == name && this->question == question; }
+    };
+    static_assert(sizeof(InheritedFieldAnswer) == 32);
+    static constexpr uint32_t asksForUncheckedValue = UINT32_MAX;
+    static constexpr uint32_t asksWhetherStoreCreatesField = UINT32_MAX - 1;
+    static constexpr unsigned inheritedFieldAnswerWays = 2;
+    static constexpr unsigned numberOfInheritedFieldAnswers = 256;
+    static constexpr unsigned firstInheritedFieldAnswer(uint32_t structureID, uint32_t name, uint32_t question) { return (((structureID >> 4) ^ name ^ question) & (numberOfInheritedFieldAnswers / inheritedFieldAnswerWays - 1)) * inheritedFieldAnswerWays; }
+    InheritedFieldAnswer inheritedFieldAnswers[numberOfInheritedFieldAnswers];
+    bool hasInheritedFieldAnswers;
+    const InheritedFieldAnswer* findInheritedFieldAnswer(uint32_t structureID, uint32_t name, uint32_t question) const
+    {
+        const InheritedFieldAnswer* first = &inheritedFieldAnswers[firstInheritedFieldAnswer(structureID, name, question)];
+        for (unsigned way = 0; way < inheritedFieldAnswerWays; ++way) {
+            if (first[way].answers(structureID, name, question))
+                return &first[way];
+        }
+        return nullptr;
+    }
+    void rememberInheritedFieldAnswer(const InheritedFieldAnswer& answer)
+    {
+        InheritedFieldAnswer* first = &inheritedFieldAnswers[firstInheritedFieldAnswer(answer.structureID, answer.name, answer.question)];
+        static_assert(inheritedFieldAnswerWays == 2);
+        if (!first[0].answers(answer.structureID, answer.name, answer.question))
+            first[1] = first[0];
+        first[0] = answer;
+        hasInheritedFieldAnswers = true;
+    }
+    void forgetInheritedFieldAnswers()
+    {
+        if (std::exchange(hasInheritedFieldAnswers, false))
+            zeroSpan(std::span { inheritedFieldAnswers });
+    }
+    static constexpr ptrdiff_t offsetOfInheritedFieldAnswers() { return OBJECT_OFFSETOF(Instance, inheritedFieldAnswers); }
     static constexpr unsigned numberOfThisAllocations = 64;
     static constexpr unsigned slotsPerThisAllocation = 4;
     static_assert(hasOneBitSet(numberOfThisAllocations) && hasOneBitSet(slotsPerThisAllocation * sizeof(Slot)));
@@ -1324,8 +1364,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfThisAllocations() { return OBJECT_OFFSETOF(Instance, thisAllocations); }
     Structure* emptyLiteralStructures[16];
     static constexpr ptrdiff_t offsetOfObjectCreateCache() { return OBJECT_OFFSETOF(Instance, objectCreateCache); }
-    static constexpr ptrdiff_t offsetOfCheckedStructureID(unsigned index) { return OBJECT_OFFSETOF(Instance, checkedStructureIDs) + index * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfPrototypeChangeCache() { return OBJECT_OFFSETOF(Instance, prototypeChangeCache); }
+    static constexpr ptrdiff_t offsetOfPrototypeChangeCacheForSeenRecords() { return OBJECT_OFFSETOF(Instance, prototypeChangeCacheForSeenRecords); }
     struct CustomGetter {
         uint32_t structureID;
         uint32_t serial;
@@ -1582,6 +1622,7 @@ struct Instance {
     static_assert(!(ownAccessorIsAtLocation & (Slot::offsetMask | Slot::flagsMask | keyMayNotBeEvicted)));
     static constexpr uint32_t keyedHasNeedsLookup = Slot::isGetter | Slot::pointerIsNotCell;
     static constexpr uint32_t keyedHasReadsField = Slot::isGetter | Slot::isIndirect;
+    static constexpr uint32_t keyedHasAsksPrototype = Slot::isGetter | Slot::pointerIsNotCell | Slot::isIndirect;
     enum class KeyedHasField : uint8_t { Word32, Word64, Byte, Int32OrNumberBox, Double, Int64 };
     static constexpr unsigned keyedHasFieldKindShift = 16;
     static constexpr unsigned keyedHasFieldIndexShift = 19;

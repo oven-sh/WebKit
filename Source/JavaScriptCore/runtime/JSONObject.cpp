@@ -2769,6 +2769,11 @@ JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncParse, (JSGlobalObject* globalObject, Call
             RELEASE_AND_RETURN(scope, JSValue::encode(jsonParseSlow(globalObject, string, view, WTF::move(callData), asObject(function))));
     }
 
+#if ENABLE(AOT)
+    if (JSValue parsed = AOT::tryParseJSONWithLearnedShapes(globalObject, view))
+        return JSValue::encode(parsed);
+#endif
+
     if (view->is8Bit()) {
         LiteralParser<Latin1Character, JSONReviverMode::Disabled> jsonParser(globalObject, view->span8(), StrictJSON);
         JSValue unfiltered = jsonParser.tryLiteralParse();
@@ -2806,6 +2811,11 @@ JSValue JSONParse(JSGlobalObject* globalObject, StringView json)
     if (json.isNull())
         return JSValue();
 
+#if ENABLE(AOT)
+    if (JSValue parsed = AOT::tryParseJSONWithLearnedShapes(globalObject, json))
+        return parsed;
+#endif
+
     if (json.is8Bit()) {
         LiteralParser<Latin1Character, JSONReviverMode::Disabled> jsonParser(globalObject, json.span8(), StrictJSON);
         return jsonParser.tryLiteralParse();
@@ -2838,6 +2848,11 @@ JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json)
 
     if (json.isNull())
         return JSValue();
+
+#if ENABLE(AOT)
+    if (JSValue parsed = AOT::tryParseJSONWithLearnedShapes(globalObject, json))
+        return parsed;
+#endif
 
     if (json.is8Bit()) {
         LiteralParser<Latin1Character, JSONReviverMode::Disabled> jsonParser(globalObject, json.span8(), StrictJSON);

@@ -270,6 +270,7 @@ private:
 struct FreshResults {
     bool isArray { false };
     LayoutID layout;
+    Vector<StringID, 4> names;
     Vector<TypeID, 4> types;
     Vector<std::pair<unsigned, Vector<ValueID, 4>>, 2> returns;
     uint8_t nullishKind { 0 };

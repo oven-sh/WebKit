@@ -4609,7 +4609,18 @@ static bool fitInRegisters(const Program& program, const Vector<TypeID, 4>& type
     return numberOfGPRs <= numberOfArgumentGPRs && numberOfFPRs <= FPRInfo::numberOfArgumentRegisters;
 }
 
-static constexpr OpcodeSet freshResultAllocations { Opcode::NewArray, Opcode::NewObjectWithShape };
+static constexpr OpcodeSet freshResultAllocations { Opcode::NewArray, Opcode::NewObject, Opcode::NewObjectWithShape };
+
+static bool definesNamedFieldOf(const Program& program, const Function& function, const Value& value, ValueID object)
+{
+    return value.arguments.size() == 3 && value.arguments[0] == object && languageOperationOf(program, value) == LanguageOperation::DefineField && function.at(value.arguments[1]).opcode == Opcode::String;
+}
+
+static bool initializesLiteral(const Program& program, const Function& function, ValueID id, ValueID literal)
+{
+    auto& value = function.at(id);
+    return (value.opcode == Opcode::PutField && value.child(0) == literal) || definesNamedFieldOf(program, function, value, literal);
+}
 
 std::optional<FreshResults> computeFreshResults(const Program& program, const Function& function)
 {
@@ -4662,6 +4673,24 @@ std::optional<FreshResults> computeFreshResults(const Program& program, const Fu
                 return std::nullopt;
             result.isArray = true;
             held.appendRange(value.arguments.begin(), value.arguments.end());
+        } else if (value.opcode == Opcode::NewObject) {
+            if ((!isFirst && result.names.isEmpty()) || result.nullishKind || value.child(0) || !value.arguments.isEmpty())
+                return std::nullopt;
+            Vector<StringID, 4> names;
+            for (ValueID id : block.values) {
+                auto& definition = function.at(id);
+                if (!definesNamedFieldOf(program, function, definition, created))
+                    continue;
+                StringID name = function.at(definition.arguments[1]).string();
+                auto text = program.string(name);
+                if (definition.arguments[2] == created || text.empty() || isASCIIDigit(text[0]) || equalSpans(text, asBytes("__proto__"_s.span8())) || uses[id.index()] || names.contains(name))
+                    return std::nullopt;
+                names.append(name);
+                held.append(definition.arguments[2]);
+            }
+            if (names.isEmpty() || names.size() > maxResults || uses[created.index()] != names.size() + 1 || (!isFirst && names != result.names))
+                return std::nullopt;
+            result.names = WTF::move(names);
         } else {
             auto& layout = program.at(value.layout());
             unsigned size = layout.fields.size();
@@ -4702,7 +4731,7 @@ std::optional<FreshResults> computeFreshResults(const Program& program, const Fu
             }
             type = joined;
         }
-        if (TypeID declared = result.isArray ? TypeID() : program.at(result.layout).fields[k].type; declared && !program.at(type).isSubsetOf(program.at(declared), program))
+        if (TypeID declared = result.layout ? program.at(result.layout).fields[k].type : TypeID(); declared && !program.at(type).isSubsetOf(program.at(declared), program))
             type = declared;
         if (repOf(program.at(type)) == Rep::Void)
             type = program.types.anything;
@@ -4743,12 +4772,14 @@ std::optional<FreshResultReads> computeFreshResultReads(const Program& program, 
                     break;
                 }
                 case Opcode::GetField:
-                    if (!fresh.isArray && isObjectLayout(program.at(value.layout()).kind))
+                    if (fresh.layout && isObjectLayout(program.at(value.layout()).kind))
                         index = program.at(fresh.layout).fieldNamed(program.at(value.layout()).fields[value.field()].name);
                     break;
                 case Opcode::GetById:
-                    if (!fresh.isArray && !value.methodGetByIdBuiltin())
+                    if (fresh.layout && !value.methodGetByIdBuiltin())
                         index = program.at(fresh.layout).fieldNamed(value.string());
+                    else if (size_t found = value.methodGetByIdBuiltin() ? notFound : fresh.names.find(value.string()); found != notFound)
+                        index = static_cast<uint32_t>(found);
                     break;
                 case Opcode::IsUndefinedOrNull:
                     result.nullishTests.append(user);
@@ -4781,33 +4812,59 @@ static unsigned readJoinedResultsOnEdges(const Program& program, Function& funct
 {
     auto literalReturnedTo = [&](ValueID id) -> const Value* {
         auto& call = std::as_const(function).at(id);
+        if ((call.opcode == Opcode::NewObjectWithShape || call.opcode == Opcode::NewObject) && !call.child(0) && call.arguments.isEmpty())
+            return &call;
         if (call.opcode != Opcode::CallDirect || call.isJumpToContinuation())
             return nullptr;
         auto& wrapper = program.at(call.function());
         if (!wrapper.worker || wrapper.nullishResultKind)
             return nullptr;
         for (auto& value : wrapper.values) {
-            if (value.opcode == Opcode::NewObjectWithShape)
+            if (value.opcode == Opcode::NewObjectWithShape || value.opcode == Opcode::NewObject)
                 return &value;
         }
         return nullptr;
+    };
+    auto returnsField = [&](ValueID call, StringID name) {
+        auto* literal = literalReturnedTo(call);
+        if (literal->opcode == Opcode::NewObjectWithShape)
+            return !!program.at(literal->layout()).fieldNamed(name);
+        auto& wrapper = literal == &std::as_const(function).at(call) ? std::as_const(function) : program.at(std::as_const(function).at(call).function());
+        return wrapper.values.containsIf([&](auto& value) {
+            return value.arguments.size() == 3 && &wrapper.at(value.arguments[0]) == literal && languageOperationOf(program, value) == LanguageOperation::DefineField && wrapper.at(value.arguments[1]).opcode == Opcode::String && wrapper.at(value.arguments[1]).string() == name;
+        });
     };
     struct Arm {
         unsigned block;
         ValueID call;
     };
     auto tryJoin = [&](unsigned b, unsigned position) {
+        constexpr unsigned maxNestedJoins = 8;
         ValueID joined = function.blocks[b].parameters[position];
         Vector<Arm, 4> arms;
-        for (unsigned from = 0; from < function.blocks.size(); ++from) {
-            auto& block = function.blocks[from];
-            for (auto& target : block.terminator.targets) {
-                if (target.block.index() != b)
-                    continue;
-                ValueID call = target.arguments[position];
-                if (block.terminator.kind != TerminatorKind::Jump || !literalReturnedTo(call) || !block.values.contains(call))
-                    return false;
-                arms.append({ from, call });
+        Vector<Arm, 4> leaves;
+        Vector<Arm, 2> joins { { b, joined } };
+        for (unsigned next = 0; next < joins.size(); ++next) {
+            unsigned to = joins[next].block;
+            size_t at = function.blocks[to].parameters.find(joins[next].call);
+            for (unsigned from = 0; from < function.blocks.size(); ++from) {
+                auto& block = function.blocks[from];
+                for (auto& target : block.terminator.targets) {
+                    if (target.block.index() != to)
+                        continue;
+                    ValueID given = target.arguments[at];
+                    if (block.terminator.kind != TerminatorKind::Jump)
+                        return false;
+                    if (!next)
+                        arms.append({ from, given });
+                    if (literalReturnedTo(given) && block.values.contains(given)) {
+                        leaves.append({ from, given });
+                        continue;
+                    }
+                    if (!block.parameters.contains(given) || joins.size() == maxNestedJoins || joins.containsIf([&](auto& join) { return join.call == given; }))
+                        return false;
+                    joins.append({ from, given });
+                }
             }
         }
         Vector<ValueID, 4> aliases { joined };
@@ -4854,21 +4911,28 @@ static unsigned readJoinedResultsOnEdges(const Program& program, Function& funct
                     }
                     if (!name)
                         return false;
-                    for (auto& arm : arms) {
-                        if (!program.at(literalReturnedTo(arm.call)->layout()).fieldNamed(name))
+                    for (auto& leaf : leaves) {
+                        if (!returnsField(leaf.call, name))
                             return false;
                     }
                     reads.append(user);
                 }
             }
         }
-        for (auto& arm : arms) {
+        leaves.append(joins.span().subspan(1));
+        for (auto& arm : leaves) {
             unsigned uses = 0;
             for (auto& block : function.blocks) {
                 for (ValueID user : block.values) {
+                    unsigned usesByValue = 0;
                     std::as_const(function).at(user).forEachChild([&](ValueID child) {
-                        uses += child == arm.call;
+                        usesByValue += child == arm.call;
                     });
+                    if (usesByValue == 1 && &block == &function.blocks[arm.block] && initializesLiteral(program, function, user, arm.call))
+                        continue;
+                    if (auto& store = std::as_const(function).at(user); usesByValue == 1 && &block == &function.blocks[arm.block] && store.opcode == Opcode::PutById && store.child(0) == arm.call && literalReturnedTo(arm.call) == &std::as_const(function).at(arm.call) && returnsField(arm.call, store.string()))
+                        continue;
+                    uses += usesByValue;
                 }
                 uses += block.terminator.value == arm.call;
                 for (auto& target : block.terminator.targets)
@@ -4922,6 +4986,7 @@ static unsigned readJoinedResultsOnEdges(const Program& program, Function& funct
         return true;
     };
     unsigned changed = 0;
+    BitVector refused;
     for (bool found = true; std::exchange(found, false);) {
         for (unsigned from = 0; from < function.blocks.size() && !found; ++from) {
             auto& terminator = function.blocks[from].terminator;
@@ -4929,8 +4994,13 @@ static unsigned readJoinedResultsOnEdges(const Program& program, Function& funct
                 continue;
             unsigned b = terminator.targets[0].block.index();
             for (unsigned position = 0; position < function.blocks[from].terminator.targets[0].arguments.size() && !found; ++position) {
-                if (literalReturnedTo(function.blocks[from].terminator.targets[0].arguments[position]))
-                    found = tryJoin(b, position);
+                if (!literalReturnedTo(function.blocks[from].terminator.targets[0].arguments[position]) || refused.get(function.blocks[b].parameters[position].index()))
+                    continue;
+                found = tryJoin(b, position);
+                if (found)
+                    refused.clearAll();
+                else
+                    refused.set(function.blocks[b].parameters[position].index());
             }
         }
         changed += found;
@@ -5469,15 +5539,71 @@ static void outlineDestructuredParameterReads(Program& program)
     program.functions.appendVector(WTF::move(bodies));
 }
 
-static void inlineWrapperIntoReturn(const Program& program, Function& function, unsigned b)
+static bool makeForwardedResultWhereReturned(const Program& program, Function& function, ValueID call)
 {
-    Value site(function.at(function.blocks[b].terminator.value));
+    Value site(function.at(call));
     auto& wrapper = program.at(site.function());
+    auto& body = wrapper.blocks[0];
+    ValueID made = body.terminator.value;
+    size_t numberOfValuesBeforeLiteral = body.values.find(made);
+    auto sourceOf = [&](StringID name) {
+        for (ValueID id : body.values) {
+            auto& value = wrapper.at(id);
+            if (value.opcode == Opcode::PutField && value.child(0) == made && program.at(value.layout()).fields[value.field()].name == name)
+                return value.child(1);
+            if (definesNamedFieldOf(program, wrapper, value, made) && wrapper.at(value.arguments[1]).string() == name)
+                return value.arguments[2];
+        }
+        return ValueID();
+    };
+    Vector<std::pair<ValueID, ValueID>, 4> reads;
+    Vector<ValueID, 2> nullishTests;
+    Vector<unsigned, 2> returningBlocks;
+    unsigned home = UINT_MAX;
+    for (unsigned b = 0; b < function.blocks.size(); ++b) {
+        auto& block = function.blocks[b];
+        if (block.terminator.value == call) {
+            if (block.terminator.kind != TerminatorKind::Return)
+                return false;
+            returningBlocks.append(b);
+        }
+        for (auto& target : block.terminator.targets) {
+            if (target.arguments.contains(call))
+                return false;
+        }
+        for (ValueID user : block.values) {
+            if (user == call) {
+                home = b;
+                continue;
+            }
+            auto& value = std::as_const(function).at(user);
+            bool uses = false;
+            value.forEachChild([&](ValueID child) {
+                uses |= child == call;
+            });
+            if (!uses)
+                continue;
+            if (value.opcode == Opcode::IsUndefinedOrNull) {
+                nullishTests.append(user);
+                continue;
+            }
+            StringID name;
+            if (value.opcode == Opcode::GetField && isObjectLayout(program.at(value.layout()).kind))
+                name = program.at(value.layout()).fields[value.field()].name;
+            else if (value.opcode == Opcode::GetById && !value.methodGetByIdBuiltin())
+                name = value.string();
+            ValueID source = name ? sourceOf(name) : ValueID();
+            if (!source || !program.at(wrapper.at(source).type).isSubsetOf(program.at(value.type), program))
+                return false;
+            reads.append({ user, source });
+        }
+    }
+    if (home == UINT_MAX || numberOfValuesBeforeLiteral == notFound || (function.blocks[home].terminator.kind == TerminatorKind::Invoke && function.blocks[home].values.last() == call))
+        return false;
     Vector<ValueID> copies(wrapper.values.size());
     for (unsigned k = 0; k < site.arguments.size(); ++k)
-        copies[wrapper.blocks[0].parameters[k].index()] = site.arguments[k];
-    function.blocks[b].values.removeLast();
-    for (ValueID id : wrapper.blocks[0].values) {
+        copies[body.parameters[k].index()] = site.arguments[k];
+    auto copyOf = [&](ValueID id) {
         Value copy(wrapper.at(id));
         copy.position = site.position;
         copy.inlineFrame = site.inlineFrame;
@@ -5490,10 +5616,31 @@ static void inlineWrapperIntoReturn(const Program& program, Function& function, 
             function.allocations.append(Allocation(wrapper.allocations[wrapper.at(id).allocation()]));
         }
         copies[id.index()] = ValueID(function.values.size());
-        function.blocks[b].values.append(copies[id.index()]);
         function.values.append(WTF::move(copy));
+        return copies[id.index()];
+    };
+    size_t at = function.blocks[home].values.find(call);
+    function.blocks[home].values.removeAt(at);
+    for (size_t k = 0; k < numberOfValuesBeforeLiteral; ++k)
+        function.blocks[home].values.insert(at + k, copyOf(body.values[k]));
+    for (auto [read, source] : reads) {
+        auto& value = function.at(read);
+        value.opcode = Opcode::Cast;
+        value.children = { copies[source.index()], ValueID(), ValueID() };
+        value.immediates = { Format::none, static_cast<uint32_t>(CastReason::Upcast) };
     }
-    function.blocks[b].terminator.value = copies[wrapper.blocks[0].terminator.value.index()];
+    for (ValueID test : nullishTests) {
+        auto& value = function.at(test);
+        value.opcode = Opcode::Boolean;
+        value.children = { };
+        value.immediates = { 0, Format::none };
+    }
+    for (unsigned b : returningBlocks) {
+        for (size_t k = numberOfValuesBeforeLiteral; k < body.values.size(); ++k)
+            function.blocks[b].values.append(copyOf(body.values[k]));
+        function.blocks[b].terminator.value = copies[made.index()];
+    }
+    return true;
 }
 
 static BitVector makeForwardedResultsFresh(Program& program)
@@ -5505,24 +5652,25 @@ static BitVector makeForwardedResultsFresh(Program& program)
         auto& function = std::as_const(program).functions[i];
         if (function.worker || !function.resultTypes.isEmpty() || function.blocks.isEmpty() || program.functionsInCycles.get(i) || !program.functions.mayContain(i, directCalls))
             return;
-        Vector<unsigned, 4> forwardingBlocks;
-        for (unsigned b = 0; b < function.blocks.size(); ++b) {
-            auto& block = function.blocks[b];
-            if (block.terminator.kind != TerminatorKind::Return || !block.terminator.value || function.at(block.terminator.value).opcode != Opcode::CallDirect)
+        Vector<ValueID, 4> forwardedCalls;
+        for (auto& block : function.blocks) {
+            if (block.terminator.kind != TerminatorKind::Return || !block.terminator.value || function.at(block.terminator.value).opcode != Opcode::CallDirect || forwardedCalls.contains(block.terminator.value))
                 continue;
             auto& call = function.at(block.terminator.value);
-            if (call.isJumpToContinuation() || block.values.isEmpty() || block.values.last() != block.terminator.value)
+            if (call.isJumpToContinuation())
                 return;
             auto& wrapper = program.at(call.function());
             if (!wrapper.worker || wrapper.nullishResultKind || wrapper.blocks.size() != 1 || wrapper.blocks[0].parameters.size() != call.arguments.size())
                 return;
-            forwardingBlocks.append(b);
+            forwardedCalls.append(block.terminator.value);
         }
-        if (forwardingBlocks.isEmpty())
+        if (forwardedCalls.isEmpty())
             return;
         Function copy = function;
-        for (unsigned b : forwardingBlocks)
-            inlineWrapperIntoReturn(program, copy, b);
+        for (ValueID call : forwardedCalls) {
+            if (!makeForwardedResultWhereReturned(program, copy, call))
+                return;
+        }
         if (computeFreshResults(program, copy))
             changed[i] = makeUniqueWithoutFastMallocCheck<Function>(WTF::move(copy));
     });
@@ -5547,10 +5695,38 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
         if (auto fresh = computeFreshResults(program, std::as_const(program).functions[i]))
             freshResults[i] = makeUniqueWithoutFastMallocCheck<FreshResults>(WTF::move(*fresh));
     });
+    Vector<uint8_t> hasCallThatOnlyReads(FillWith { }, count, static_cast<uint8_t>(0));
+    forEachIndexInParallel(count, [&](unsigned i) {
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        auto& function = std::as_const(program).functions[i];
+        Vector<ValueID, 8> calls;
+        std::as_const(program).functions.forEachIndexedValue(i, directCalls, [&](ValueID id) {
+            if (auto& fresh = freshResults[function.at(id).function().index()]; fresh && !fresh->names.isEmpty() && !function.at(id).isJumpToContinuation())
+                calls.append(id);
+        });
+        if (calls.isEmpty())
+            return;
+        BitVector isKept(function.values.size());
+        for (auto& block : function.blocks) {
+            for (ValueID user : block.values) {
+                auto& value = function.at(user);
+                bool reads = value.opcode == Opcode::IsUndefinedOrNull || value.opcode == Opcode::Cast || (value.opcode == Opcode::GetById && !value.methodGetByIdBuiltin());
+                if (reads)
+                    continue;
+                value.forEachChild([&](ValueID child) {
+                    isKept.set(child.index());
+                });
+            }
+        }
+        for (ValueID call : calls) {
+            if (!isKept.get(call.index()))
+                WTF::atomicStore(&hasCallThatOnlyReads[function.at(call).function().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        }
+    });
     Vector<unsigned> functionsSplit;
     for (unsigned i = 0; i < count; ++i) {
         auto& fresh = freshResults[i];
-        if (!fresh)
+        if (!fresh || (!fresh->names.isEmpty() && !hasCallThatOnlyReads[i]))
             continue;
         auto& function = std::as_const(program).functions[i];
         for (unsigned k = 0; k < fresh->types.size(); ++k) {
@@ -5652,12 +5828,12 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
         }
         if (fresh->isArray)
             created.arguments = held;
-        else {
+        else if (fresh->layout) {
             wrapper.allocations.append(Allocation(worker.allocations[created.allocation()]));
             created.immediates[1] = 0;
         }
         ValueID object = append(WTF::move(created));
-        if (!fresh->isArray) {
+        if (fresh->layout) {
             for (ValueID id : first.values) {
                 if (worker.at(id).opcode != Opcode::PutField || worker.at(id).child(0) != first.terminator.value)
                     continue;
@@ -5667,6 +5843,18 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
                 append(WTF::move(store));
             }
         }
+        if (!fresh->names.isEmpty()) {
+            unsigned next = 0;
+            for (ValueID id : first.values) {
+                if (!definesNamedFieldOf(program, worker, worker.at(id), first.terminator.value))
+                    continue;
+                Value definition(worker.at(id));
+                definition.arguments[0] = object;
+                definition.arguments[1] = append(Value(worker.at(definition.arguments[1])));
+                definition.arguments[2] = held[next++];
+                append(WTF::move(definition));
+            }
+        }
         wrapper.blocks[building].terminator.kind = TerminatorKind::Return;
         wrapper.blocks[building].terminator.value = object;
 
@@ -5674,7 +5862,7 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
             auto& block = worker.blocks[b];
             ValueID literal = block.terminator.value;
             block.values.removeAllMatching([&](ValueID id) {
-                return id == literal || (worker.at(id).opcode == Opcode::PutField && worker.at(id).child(0) == literal);
+                return id == literal || initializesLiteral(program, worker, id, literal);
             });
             Value results;
             results.opcode = Opcode::Results;
@@ -6295,7 +6483,7 @@ static void returnResultsInRegisters(Program& program)
                     auto& block = worker.blocks[b];
                     ValueID created = block.terminator.value;
                     block.values.removeAllMatching([&](ValueID id) {
-                        return id == created || (worker.at(id).opcode == Opcode::PutField && worker.at(id).child(0) == created);
+                        return id == created || initializesLiteral(program, worker, id, created);
                     });
                     Value results;
                     results.opcode = Opcode::Results;

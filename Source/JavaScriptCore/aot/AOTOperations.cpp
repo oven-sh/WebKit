@@ -1260,6 +1260,26 @@ static void cacheKeyedHasOfField(Instance* instance, VM& vm, Structure* structur
     entry.structureID = structure->id();
 }
 
+static JSObject* prototypeToAskBelowTypedObject(VM& vm, JSObject* object, UniquedStringImpl* name)
+{
+    auto missesByStructure = [&](JSObject* holder) {
+        Structure* structure = holder->structure();
+        return holder->type() == FinalObjectType && !structure->compiledLayout() && !structure->isDictionary() && structure->hasMonoProto() && structure->propertyAccessesAreCacheable()
+            && structure->propertyAccessesAreCacheableForAbsence() && !isValidOffset(structure->get(vm, name));
+    };
+    if (parseIndex(*name))
+        return nullptr;
+    for (JSObject* holder = object; missesByStructure(holder);) {
+        JSValue prototype = holder->getPrototypeDirect();
+        if (!prototype.isObject())
+            return nullptr;
+        holder = asObject(prototype);
+        if (const Typed::LayoutData* layout = holder->structure()->compiledLayout(); layout && Typed::isObjectLayout(layout->kind))
+            return asObject(object->getPrototypeDirect());
+    }
+    return nullptr;
+}
+
 static bool lookupAboveRunsNoCode(JSObject* object)
 {
     for (JSValue next = object->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
@@ -2344,6 +2364,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instanc
         if (!property.isString() && !property.isSymbol())
             OPERATION_RETURN(scope, object->hasProperty(globalObject, key));
         atom = key.impl();
+    }
+    while (JSObject* prototype = prototypeToAskBelowTypedObject(vm, object, atom)) {
+        cacheKeyedLookUp(instance->keyedHasFor(object->structureID(), property.asCell()), object->structure(), property.asCell(), Instance::keyedHasAsksPrototype);
+        object = prototype;
     }
     Structure* structure = object->structure();
     if (structure->isDictionary()) [[unlikely]] {

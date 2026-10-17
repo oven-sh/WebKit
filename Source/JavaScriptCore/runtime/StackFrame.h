@@ -203,6 +203,7 @@ public:
     void setIsConstructed() { jsFrameData()->aotKind = CodeSpecializationKind::CodeForConstruct; }
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
     JS_EXPORT_PRIVATE bool representsHostFunction() const;
+    JS_EXPORT_PRIVATE bool isSloppyTypedAOTFrame() const;
     JS_EXPORT_PRIVATE JSGlobalObject* codeGlobalObject() const;
 
     JSCell* callee() const

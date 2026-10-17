@@ -1069,12 +1069,7 @@ struct StubBlob {
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
 };
-struct ShapesWithOtherPrototype {
-    uint32_t last { 0 };
-    uint32_t reach { 0 };
-    uint32_t set { UINT32_MAX };
-};
-std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, ShapesWithOtherPrototype, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly);
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, bool mayRunInMultipleInstances, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly);
 constexpr bool isGeneratedOnlyIfCalled(Stub stub) { return (stub >= Stub::GetByIdAsDouble && stub <= Stub::GetByNameAsArrayOrNullishPreservingTwo) || (stub >= Stub::UnboxNumberArgument0ToFPR0 && stub <= Stub::LeafUnboxNumberArgument3ToFPR3); }
 bool thunkIsGeneratedOnlyIfCalled(unsigned thunk);
 
@@ -1186,6 +1181,7 @@ static constexpr size_t sizeOfLoopPoll = 0;
 #endif
 #if CPU(X86_64)
 static constexpr uint8_t trapInstruction = 0xf4;
+static constexpr uint8_t trapInstructionWithoutFrame = 0xfa;
 #if OS(LINUX)
 static constexpr size_t sizeOfCallAtPrologue = 1;
 #else

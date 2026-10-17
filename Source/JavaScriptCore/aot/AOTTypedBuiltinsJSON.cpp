@@ -895,6 +895,7 @@ static constexpr unsigned maxInlineJSONFieldsPerFunction = 24;
 static constexpr unsigned maxInlineArrayDepth = 6;
 static constexpr int64_t jsonSerializerStackReserve = 32 * KB;
 static constexpr int64_t isNotWrittenByDispatcher = 1;
+static_assert(isNotWrittenByDispatcher == jsonWroteNothing);
 static constexpr unsigned minRequestedJSONCapacity = 128;
 
 std::optional<Writes> writesOfInlineJSON(InlineBuiltin which, std::span<const Type> arguments)
@@ -1101,7 +1102,7 @@ void createJSONSerializers(Program& program)
         call.type = program.types.integer;
         call.rep = repOf(program.at(call.type));
         call.immediates = { append.index(), Format::none };
-        for (TypeID type : { program.types.object, program.types.integer }) {
+        for (TypeID type : { written < 0 ? program.types.anything : program.types.object, program.types.integer }) {
             Value parameter;
             parameter.opcode = Opcode::Parameter;
             parameter.position = site.position;
@@ -1133,7 +1134,7 @@ void createJSONSerializers(Program& program)
         program.jsonSerializers.append({ LayoutID(layout), FunctionID(count + made.size()) });
         made.append(make(layout));
     }
-    if (dispatches && !made.isEmpty()) {
+    if (dispatches && std::ranges::any_of(program.layouts, [](auto& layout) { return isObjectLayout(layout.kind) && layout.isAllocated; })) {
         program.jsonDispatcher = FunctionID(count + made.size());
         made.append(make(-1));
     }
@@ -2160,11 +2161,13 @@ void Lowering::appendObjectInline(JSONOutput& output, CellPointer cell, const Ve
 
 Operand Lowering::lowerAppendJSON(const Value& value)
 {
-    CellPointer cell = in<CellPointer>(value.arguments[0]);
     Integer start = in<Integer>(value.arguments[1]);
     int64_t written = m_function.at(value.arguments[2]).integer();
     Join join(m_out, Rep::Int64, Int64);
     if (written < 0) {
+        LBasicBlock walks = m_out.newBlock();
+        LBasicBlock writesNothing = m_out.newBlock();
+        CellPointer cell = objectOrElse(value.arguments[0], walks);
         Vector<FTL::SwitchCase> cases;
         Vector<std::pair<LBasicBlock, FunctionID>> blocks;
         for (auto [layout, serializer] : m_program.jsonSerializers) {
@@ -2175,15 +2178,37 @@ Operand Lowering::lowerAppendJSON(const Value& value)
             cases.append(FTL::SwitchCase(m_out.constInt32(static_cast<int32_t>(Typed::shapeWordOf(shape))), blocks.last().first, FTL::Weight()));
         }
         LBasicBlock matchesNone = m_out.newBlock();
-        m_out.switchInstruction(shapeWordOf(cell).value(), cases, matchesNone, FTL::Weight());
+        if (cases.isEmpty())
+            m_out.jump(matchesNone);
+        else
+            m_out.switchInstruction(shapeWordOf(cell).value(), cases, matchesNone, FTL::Weight());
         for (auto [block, serializer] : blocks) {
             m_out.appendTo(block);
             join.add(Integer(callFunction(serializer, Int64, { cell.value(), start.value() })));
         }
         m_out.appendTo(matchesNone);
+        Word32 cellType = loadByte(cell, m_heaps.JSCell_typeInfoType, safeIfReaches(cell, sizeof(JSCell)));
+        orElse(notEqual(cellType, word32(FinalObjectType)), writesNothing);
+        LBasicBlock hasNoLayout = m_out.newBlock();
+        m_out.branch(equal(cellType, word32(ObjectType)).value(), unsure(walks), unsure(hasNoLayout));
+        m_out.appendTo(hasNoLayout);
+        orElse(equal(cellType, word32(ArrayType)), writesNothing);
+        orElse(equal(anyArrayIndexingMode(cell, IndexingShapeMask), word32(ContiguousShape)), walks);
+        Pointer butterfly = butterflyOf(cell);
+        orElse(Word32(m_out.notZero64(publicLength(butterfly).value())), walks);
+        Boxed first(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), m_out.constInt64(0))));
+        orElse(isNotEmpty(first), walks);
+        orElse(isCell(first), walks);
+        CellPointer firstCell = asCell(first);
+        orElse(notEqual(loadByte(firstCell, m_heaps.JSCell_typeInfoType, safeIfReaches(firstCell, sizeof(JSCell))), word32(FinalObjectType)), writesNothing);
+        m_out.jump(walks);
+        m_out.appendTo(walks);
+        join.add(Integer(AOT_TYPED_OPERATION(JSONAppendValue, start, in<Boxed>(value.arguments[0]), word32(jsonValueIsWholeOutput)).value()));
+        m_out.appendTo(writesNothing);
         join.add(integer(isNotWrittenByDispatcher));
         return join.finish();
     }
+    CellPointer cell = in<CellPointer>(value.arguments[0]);
     JSONOutput output;
     output.givesUp = newColdBlock();
     output.givesUpBeforeWriting = output.givesUp;
@@ -2328,7 +2353,7 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
     Type expected = predictedTypeOf(argument);
     auto literal = freshLiteralMembers(argument, { });
     bool dispatchesOnShape = !literal && !expected.withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent).isString() && !hasCodeForJSON(expected);
-    if (Options::auditAOTTypedAssertions() || (dispatchesOnShape && !(expected.hasObjects() && std::ranges::any_of(m_program.layouts, [](auto& layout) { return isObjectLayout(layout.kind) && layout.shape; }))))
+    if (Options::auditAOTTypedAssertions() || (dispatchesOnShape && !(m_program.jsonDispatcher && m_program.hasCode(m_program.jsonDispatcher) && expected.hasObjects())))
         return false;
     output.givesUp = newColdBlock();
     output.givesUpBeforeWriting = newColdBlock();
@@ -2339,60 +2364,14 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
     if (literal)
         appendFreshLiteral(output, *literal, 0);
     else if (dispatchesOnShape) {
-        LBasicBlock walks = m_out.newBlock();
+        LValue cursor = callFunction(m_program.jsonDispatcher, Int64, { in<Boxed>(argument).value(), cursorOf(output) });
         LBasicBlock isWritten = m_out.newBlock();
-        LBasicBlock isNotObject = m_out.newBlock();
-        CellPointer cell = objectOrElse(argument, isNotObject);
-        if (m_program.jsonDispatcher && m_program.hasCode(m_program.jsonDispatcher)) {
-            uint32_t least = UINT32_MAX;
-            uint32_t most = 0;
-            for (auto [layout, serializer] : m_program.jsonSerializers) {
-                if (uint32_t shape = m_program.at(layout).shape) {
-                    least = std::min(least, shape);
-                    most = std::max(most, shape);
-                }
-            }
-            LBasicBlock hasNoSerializer = m_out.newBlock();
-            orElse(below(add(shapeWordOf(cell), word32(static_cast<int32_t>(most))), word32(static_cast<int32_t>(most - least + 1))), hasNoSerializer);
-            LValue cursor = callFunction(m_program.jsonDispatcher, Int64, { cell.value(), cursorOf(output) });
-            LBasicBlock isWrittenByDispatcher = m_out.newBlock();
-            LBasicBlock isNotWrittenByIt = newColdBlock();
-            m_out.branch(m_out.above(cursor, m_out.constInt64(isNotWrittenByDispatcher)), usually(isWrittenByDispatcher), rarely(isNotWrittenByIt));
-            m_out.appendTo(isNotWrittenByIt);
-            m_out.branch(m_out.notZero64(cursor), unsure(walks), unsure(output.givesUp));
-            m_out.appendTo(isWrittenByDispatcher);
-            setCursor(output, cursor);
-            m_out.jump(isWritten);
-            m_out.appendTo(hasNoSerializer);
-        }
-        Word32 cellType = loadByte(cell, m_heaps.JSCell_typeInfoType, safeIfReaches(cell, sizeof(JSCell)));
-        orElse(notEqual(cellType, word32(FinalObjectType)), output.givesUpBeforeWriting);
-        LBasicBlock hasNoLayout = m_out.newBlock();
-        m_out.branch(equal(cellType, word32(ObjectType)).value(), unsure(walks), unsure(hasNoLayout));
-        m_out.appendTo(hasNoLayout);
-        orElse(equal(cellType, word32(ArrayType)), output.givesUpBeforeWriting);
-        orElse(equal(anyArrayIndexingMode(cell, IndexingShapeMask), word32(ContiguousShape)), walks);
-        Pointer butterfly = butterflyOf(cell);
-        orElse(Word32(m_out.notZero64(publicLength(butterfly).value())), walks);
-        Boxed first(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), m_out.constInt64(0))));
-        orElse(isNotEmpty(first), walks);
-        orElse(isCell(first), walks);
-        CellPointer firstCell = asCell(first);
-        orElse(notEqual(loadByte(firstCell, m_heaps.JSCell_typeInfoType, safeIfReaches(firstCell, sizeof(JSCell))), word32(FinalObjectType)), output.givesUpBeforeWriting);
-        m_out.jump(walks);
-        m_out.appendTo(isNotObject);
-        m_out.jump(walks);
-        m_out.appendTo(walks);
-        Pointer cursor = AOT_TYPED_OPERATION(JSONAppendValue, Integer(cursorOf(output)), in<Boxed>(argument), word32(jsonValueIsWholeOutput));
-        LBasicBlock hasText = m_out.newBlock();
-        LBasicBlock hasNoText = m_out.newBlock();
-        m_out.branch(m_out.above(cursor.value(), m_out.constInt64(jsonWroteNothing)), unsure(hasText), unsure(hasNoText));
-        m_out.appendTo(hasNoText);
-        m_out.branch(m_out.notZero64(cursor.value()), unsure(output.givesUpBeforeWriting), unsure(output.givesUp));
-        m_out.appendTo(hasText);
-        setCursor(output, cursor.value());
-        m_out.jump(isWritten);
+        LBasicBlock isNotWritten = m_out.newBlock();
+        m_out.branch(m_out.above(cursor, m_out.constInt64(isNotWrittenByDispatcher)), unsure(isWritten), unsure(isNotWritten));
+        m_out.appendTo(isNotWritten);
+        m_out.branch(m_out.notZero64(cursor), unsure(output.givesUpBeforeWriting), unsure(output.givesUp));
         m_out.appendTo(isWritten);
+        setCursor(output, cursor);
     } else
         appendValue(output, get(argument), expected, false, 0, JSONPosition::Property, nothing);
     flushPendingBytes(output);

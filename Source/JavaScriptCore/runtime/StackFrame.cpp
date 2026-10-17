@@ -223,6 +223,16 @@ bool StackFrame::representsHostFunction() const
 #endif
 }
 
+bool StackFrame::isSloppyTypedAOTFrame() const
+{
+#if ENABLE(AOT)
+    auto* jsFrame = jsFrameData();
+    return jsFrame && jsFrame->isTyped() && AOT::typedFunctionIsSloppy(jsFrame->aotTypedFunction());
+#else
+    return false;
+#endif
+}
+
 bool StackFrame::isBuiltinFunction() const
 {
     auto& jsFrame = *jsFrameData();

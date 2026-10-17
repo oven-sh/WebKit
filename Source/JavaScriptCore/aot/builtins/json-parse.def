@@ -22,6 +22,7 @@ inline JSONSkipMember
 inline JSONGiveUpIfEscaped
 inline JSONGiveUpIfRepeated
 inline JSONGiveUp
+inline JSONParseWithShape
 inline Likely
 
 runtime JSONOpen : RuntimeState void* (EncodedJSValue text, uint64_t frame) noexcept
@@ -35,6 +36,7 @@ runtime JSONSkipValue : RuntimeState void* (uint64_t cursor) noexcept
 runtime JSONSkipMember : RuntimeState void* (uint64_t cursor) noexcept
 runtime JSONGiveUpIfEscaped : RuntimeState void (uint64_t cursor) noexcept
 runtime JSONGiveUpIfRepeated : RuntimeState void (uint64_t cursor, JSCell* name) noexcept
+runtime JSONParseWithShape : RuntimeState EncodedJSValue (EncodedJSValue text, JSCell* shapes) noexcept
 
 operation JSONOpen (any/-) -> int[0,4503599627370496] ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONOpen, None)
 operation JSONDecodeSource (any/R) -> anything ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONDecodeSource, None)
@@ -58,4 +60,5 @@ operation JSONSkipMember (any/-) -> int[0,4503599627370496] ; ReadsRuntimeState 
 operation JSONGiveUpIfEscaped (any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUpIfEscaped, None)
 operation JSONGiveUpIfRepeated (any/-, any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUpIfRepeated, None)
 operation JSONGiveUp () -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUp, None)
+operation JSONParseWithShape (any/-, any/-) -> anything/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONParseWithShape, None)
 operation Likely (any/-) -> boolean ; Pure ; Inline(Likely, None)

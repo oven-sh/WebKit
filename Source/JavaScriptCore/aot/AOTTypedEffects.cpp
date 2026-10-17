@@ -458,7 +458,7 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::Member:
         return Writes::Nothing;
     case CastReason::Flow:
-        return narrowingMayRetag(program, program.at(value.type)) || claimMayAllocate(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
+        return value.keepsUnconvertibleObjects() || narrowingMayRetag(program, program.at(value.type)) || claimMayAllocate(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
     case CastReason::As:
         return writesOfCoercion(from, program.at(value.type));
     case CastReason::Coerce:
@@ -468,6 +468,7 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::AsFreshObject:
     case CastReason::AsIfConvertible:
     case CastReason::AsFreshObjectIfConvertible:
+    case CastReason::FlowIfConvertible:
         RELEASE_ASSERT_NOT_REACHED();
     }
     auto& to = program.at(value.coercedType());
@@ -500,7 +501,7 @@ bool castWritesShapeWords(const Program& program, const Function& function, cons
     if (Options::auditAOTTypedAssertions()) [[unlikely]]
         return writesOfCast(program, function, value) == Writes::Heap;
     if (value.castReason() == CastReason::Flow)
-        return narrowingMayRetag(program, program.at(value.type)) || (program.castsMayRetag && claimMayAllocate(program, function, value));
+        return value.keepsUnconvertibleObjects() || narrowingMayRetag(program, program.at(value.type)) || (program.castsMayRetag && claimMayAllocate(program, function, value));
     if (!program.castsMayRetag)
         return false;
     if (value.castReason() == CastReason::Claim || value.castReason() == CastReason::Store)

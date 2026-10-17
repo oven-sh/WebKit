@@ -55,7 +55,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNativeBinding, EncodedJSValue, (Instan
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLinkTimeConstant, JSCell*, (Instance* instance, uint32_t constant))
 {
-    return instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
+    JSCell* cell = instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
+    instance->linkTimeConstants[constant] = JSValue::encode(cell);
+    return cell;
 }
 
 static constexpr int64_t offsetBase = 2097152;
@@ -268,38 +270,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByValDirect, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedSetCheckedStructure, size_t, (Instance* instance, EncodedJSValue encodedObject, uint32_t index))
-{
-    JSValue object = JSValue::decode(encodedObject);
-    if (!object.isObject() || index >= Instance::numberOfCheckedStructures)
-        return 0;
-    Structure* structure = asObject(object)->structure();
-    if (structure->compiledLayout()) {
-        if (structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties) {
-            StructureID ofExtraProperties = structure->extraPropertiesStructureID();
-            if (!ofExtraProperties || ofExtraProperties.decode()->isDictionary())
-                return 0;
-        }
-    } else if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || structure->hasPolyProto())
-        return 0;
-    instance->checkedStructureIDs[index] = structure->id().bits();
-    instance->hasCheckedStructures = true;
-    return 1;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedWatchProperty, size_t, (Instance* instance, EncodedJSValue encodedHolder, EncodedJSValue encodedKey))
-{
-    JSValue holder = JSValue::decode(encodedHolder);
-    JSValue key = JSValue::decode(encodedKey);
-    if (!holder.isObject())
-        return 0;
-    if (key.isSymbol())
-        return instance->watchProperty(asObject(holder), &asSymbol(key)->uid());
-    if (!key.isString() || asString(key)->isRope())
-        return 0;
-    return instance->watchProperty(asObject(holder), Identifier::fromString(*instance->vm, String(asString(key)->tryGetValue())).impl());
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByIdDirect, void, (Instance* instance, JSCell* cell, uint32_t name, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -345,11 +315,8 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     case InlineBuiltin::HasHostClassStructure:
     case InlineBuiltin::HasHostObjectCachedValue:
     case InlineBuiltin::HostObjectCachedValue:
-    case InlineBuiltin::IsCheckedStructure:
         return Writes::Nothing;
     case InlineBuiltin::LinkTimeConstant:
-    case InlineBuiltin::SetCheckedStructure:
-    case InlineBuiltin::WatchProperty:
         return Writes::RuntimeState;
     case InlineBuiltin::PutInternalField:
     case InlineBuiltin::PutByValDirect:
@@ -519,18 +486,22 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     }
     case InlineBuiltin::HostObjectCachedValue:
         return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);
-    case InlineBuiltin::IsCheckedStructure:
-        RELEASE_ASSERT(integer32(1) < Instance::numberOfCheckedStructures);
-        return ofCell([&](CellPointer cell) {
-            return equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfCheckedStructureID(integer32(1)))));
-        });
-    case InlineBuiltin::SetCheckedStructure:
-        return booleanResult(AOT_TYPED_OPERATION(SetCheckedStructure, in<Boxed>(arguments[0]), word32(integer32(1))), type);
-    case InlineBuiltin::WatchProperty:
-        return booleanResult(AOT_TYPED_OPERATION(WatchProperty, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), type);
-    case InlineBuiltin::LinkTimeConstant:
+    case InlineBuiltin::LinkTimeConstant: {
         RELEASE_ASSERT(integer32(0) < std::size(linkTimeConstants));
-        return ensure(box(AOT_TYPED_OPERATION(LinkTimeConstant, word32(static_cast<uint32_t>(linkTimeConstants[integer32(0)])))), type);
+        auto constant = static_cast<uint32_t>(linkTimeConstants[integer32(0)]);
+        if (!m_out.m_block->frequency())
+            return ensure(box(AOT_TYPED_OPERATION(LinkTimeConstant, word32(constant))), type);
+        LBasicBlock isNotFetched = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue fetched = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfLinkTimeConstant(constant)));
+        ValueFromBlock fast = m_out.anchor(fetched);
+        m_out.branch(m_out.notZero64(fetched), usually(continuation), rarely(isNotFetched));
+        m_out.appendTo(isNotFetched);
+        ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(LinkTimeConstant, word32(constant)).value());
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return ensure(box(CellPointer(m_out.phi(Int64, fast, slow))), type);
+    }
     case InlineBuiltin::RequireBuiltinModule:
         return ensure(AOT_TYPED_OPERATION(RequireBuiltinModule, word32(integer32(0))), type);
     case InlineBuiltin::NativeBinding:

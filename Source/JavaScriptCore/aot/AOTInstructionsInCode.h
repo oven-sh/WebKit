@@ -35,7 +35,7 @@ inline DecodedInstruction decodeInstructionSlow(const uint8_t* bytes, size_t ava
 {
     constexpr DecodedInstruction unknown { 0, 0 };
     static constexpr uint32_t isKnown[7][8] = {
-        { 0x02022b2b, 0x2a2b2b0b, 0xffff0000, 0xffff0308, 0x02ffabfb, 0xff00030a, 0x220a12ca, 0x80d00b00 },
+        { 0x02022b2b, 0x2a2b2b0b, 0xffff0000, 0xffff0308, 0x02ffabfb, 0xff00030a, 0x220a12ca, 0x84d00b00 },
         { 0x80770800, 0x00025700, 0xfff3ffff, 0x40ffffff, 0xffffffff, 0xf5cbc00c, 0x7fbeff77, 0x7f3eff7f },
         { 0x70000001, 0xff290a29, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000 },
         { 0x00704c00, 0x00000007, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000 },
@@ -173,7 +173,7 @@ struct X86OpcodeTraits {
 
     static constexpr std::array<uint8_t, 256> makeFirstMap()
     {
-        constexpr uint32_t isKnown[8] = { 0x02022b2b, 0x2a2b2b0b, 0xffff0000, 0xffff0308, 0x02ffabfb, 0xff00030a, 0x220a12ca, 0x80d00b00 };
+        constexpr uint32_t isKnown[8] = { 0x02022b2b, 0x2a2b2b0b, 0xffff0000, 0xffff0308, 0x02ffabfb, 0xff00030a, 0x220a12ca, 0x84d00b00 };
         constexpr uint32_t hasModRMInFirstMap[8] = { 0x0f0f0f0f, 0x0f0f0f0f, 0x00000000, 0x00000a08, 0x0000ffff, 0x00000000, 0xff0f00c3, 0xc0c00000 };
         std::array<uint8_t, 256> result { };
         for (unsigned opcode = 0; opcode < 256; ++opcode) {
@@ -458,7 +458,7 @@ inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, 
             return jumps(Kind::Jump, 1);
         if (opcode >= 0x70 && opcode <= 0x7f)
             return jumps(Kind::ConditionalJump, 1);
-        if (opcode == 0xc3 || opcode == 0xc2 || opcode == 0xcc || opcode == 0xf4) {
+        if (opcode == 0xc3 || opcode == 0xc2 || opcode == 0xcc || opcode == 0xf4 || opcode == 0xfa) {
             instruction.kind = Kind::End;
             return Cause::None;
         }
@@ -535,7 +535,7 @@ struct X86OpcodeClasses {
                 classes |= isJump;
             else if (opcode >= 0x70 && opcode <= 0x7f)
                 classes |= isConditionalJump;
-            else if (opcode == 0xc3 || opcode == 0xc2 || opcode == 0xcc || opcode == 0xf4)
+            else if (opcode == 0xc3 || opcode == 0xc2 || opcode == 0xcc || opcode == 0xf4 || opcode == 0xfa)
                 classes |= isEnd;
             else if ((opcode >= 0x50 && opcode <= 0x5f) || opcode == 0x68 || opcode == 0x6a || opcode == 0x9c || opcode == 0x9d || opcode == 0xc9)
                 classes |= namesStackPointer;

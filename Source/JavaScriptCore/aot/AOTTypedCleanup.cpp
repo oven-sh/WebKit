@@ -6567,7 +6567,7 @@ public:
         unsigned flattened = 0;
         for (unsigned index = 0, count = m_function.values.size(); index < count; ++index) {
             if (isObjectEntriesCall(m_function.values[index]))
-                flattened += flatten(ValueID(index));
+                flattened += flatten(ValueID(index)) || flattenReadByIndex(ValueID(index));
         }
         return flattened;
     }
@@ -6764,6 +6764,154 @@ private:
         literal.arguments.clear();
         literal.arguments.append(keyID);
         literal.arguments.append(heldID);
+        auto& list = m_function.at(call);
+        list.children[2] = list.arguments[0];
+        if (list.type == m_program.types.anything && predictedPairType && predictedPairType != m_program.types.anything && isAnythingOrArray(predictedPairType)) {
+            list.type = predictedPairType;
+            list.rep = repOf(m_program.at(list.type));
+            list.setPrediction(TypeID());
+        }
+        return true;
+    }
+
+    bool flattenReadByIndex(ValueID call)
+    {
+        auto lengthName = m_program.find(asBytes("length"_s.span8()));
+        if (!lengthName || !isAnythingOrArray(m_function.at(call).type))
+            return false;
+        Uses callUses = usesOf(call);
+        if (callUses.isUsedByTerminator)
+            return false;
+        Vector<ValueID, 2> lengths;
+        Vector<ValueID, 4> pairs;
+        for (ValueID user : callUses.users) {
+            auto& value = m_function.at(user);
+            if (value.opcode == Opcode::GetById && value.string() == *lengthName && !value.methodGetByIdBuiltin())
+                lengths.append(user);
+            else if (value.opcode == Opcode::GetByVal && value.child(0) == call && value.child(1) != call)
+                pairs.append(user);
+            else
+                return false;
+        }
+        if (lengths.isEmpty() || pairs.isEmpty())
+            return false;
+        auto dominators = immediateDominatorsOf(m_function);
+        Vector<unsigned> numberOfPredecessors;
+        numberOfPredecessors.fill(0, m_function.blocks.size());
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets)
+                ++numberOfPredecessors[target.block.index()];
+        }
+        auto isBelowLength = [&](unsigned block, ValueID index) {
+            for (unsigned at = block; dominators[at] != at; at = dominators[at]) {
+                auto& terminator = m_function.blocks[dominators[at]].terminator;
+                if (terminator.kind != TerminatorKind::Branch || terminator.targets[0].block.index() != at || numberOfPredecessors[at] != 1)
+                    continue;
+                auto& test = m_function.at(terminator.value);
+                if (test.opcode == Opcode::Less && test.child(0) == index && lengths.contains(test.child(1)))
+                    return true;
+            }
+            return false;
+        };
+        size_t constantIndex = m_function.values.findIf([](auto& value) {
+            return value.opcode == Opcode::Integer;
+        });
+        if (constantIndex == notFound)
+            return false;
+        ValueID constant(constantIndex);
+        for (ValueID pair : pairs) {
+            Uses uses = usesOf(pair);
+            if (uses.isUsedByTerminator || uses.users.isEmpty() || m_function.at(pair).immediates[0] != Format::none || !isAnythingOrArray(m_function.at(pair).type))
+                return false;
+            for (ValueID user : uses.users) {
+                auto& read = m_function.at(user);
+                if (read.opcode == Opcode::IteratorOpen) {
+                    Uses steps = usesOf(user);
+                    bool onlySteps = !steps.isUsedByTerminator && std::ranges::all_of(steps.users, [&](ValueID step) {
+                        Opcode opcode = m_function.at(step).opcode;
+                        return (opcode == Opcode::IteratorHasNext || opcode == Opcode::IteratorValue || opcode == Opcode::IteratorClose) && m_function.at(step).child(0) == user && m_function.at(step).child(1) != user;
+                    });
+                    if (!onlySteps)
+                        return false;
+                    continue;
+                }
+                if (read.opcode != Opcode::GetByVal || read.child(0) != pair || read.child(1) == pair || m_function.at(read.child(1)).opcode != Opcode::Integer || m_function.at(read.child(1)).integer() < 0)
+                    return false;
+            }
+            ValueID index = m_function.at(pair).child(1);
+            auto& indexType = m_program.at(m_function.at(index).type);
+            Location location = placeOf(pair);
+            if (!indexType.isInteger() || indexType.integers.minimum < 0 || location.index == notFound || !isBelowLength(location.block, index))
+                return false;
+            if (auto& block = m_function.blocks[location.block]; block.terminator.kind == TerminatorKind::Invoke && block.values.last() == pair)
+                return false;
+        }
+        for (ValueID length : lengths) {
+            if (placeOf(length).index == notFound)
+                return false;
+        }
+
+        auto integerOne = [&](const Value& like) {
+            Value one = m_function.at(constant);
+            one.setBits(1);
+            one.type = m_program.types.int32;
+            one.rep = repOf(m_program.at(one.type));
+            one.position = like.position;
+            one.inlineFrame = like.inlineFrame;
+            return append(WTF::move(one));
+        };
+        auto arithmetic = [&](Opcode opcode, const Value& like, ValueID left, ValueID right) {
+            Value value;
+            value.opcode = opcode;
+            value.position = like.position;
+            value.inlineFrame = like.inlineFrame;
+            value.type = m_program.types.int32;
+            value.rep = repOf(m_program.at(value.type));
+            value.children = { left, right, ValueID() };
+            return value;
+        };
+        TypeID predictedPairType = m_function.at(pairs[0]).prediction();
+        for (ValueID length : lengths) {
+            Location location = placeOf(length);
+            ValueID numberOfElements = append(Value(m_function.at(length)));
+            ValueID one = integerOne(m_function.at(length));
+            m_function.at(length) = arithmetic(Opcode::RShift, Value(m_function.at(length)), numberOfElements, one);
+            auto& values = m_function.blocks[location.block].values;
+            values.insert(location.index, one);
+            values.insert(location.index, numberOfElements);
+        }
+        for (ValueID pair : pairs) {
+            Location location = placeOf(pair);
+            Value key = m_function.at(pair);
+            key.type = m_program.types.anything;
+            key.rep = repOf(m_program.at(key.type));
+            key.setAssertedType(TypeID());
+            key.setPrediction(m_program.types.string);
+            key.setPredictedClosure(FunctionID());
+            key.setPredictedByKey(StringID());
+            Value held = key;
+            held.setPrediction(TypeID());
+            ValueID one = integerOne(key);
+            ValueID keyIndex = append(arithmetic(Opcode::LShift, key, key.child(1), one));
+            ValueID heldIndex = append(arithmetic(Opcode::BitOr, key, keyIndex, one));
+            key.children[1] = keyIndex;
+            held.children[1] = heldIndex;
+            ValueID keyID = append(WTF::move(key));
+            ValueID heldID = append(WTF::move(held));
+            auto& values = m_function.blocks[location.block].values;
+            values.insert(location.index, heldID);
+            values.insert(location.index, keyID);
+            values.insert(location.index, heldIndex);
+            values.insert(location.index, keyIndex);
+            values.insert(location.index, one);
+            auto& literal = m_function.at(pair);
+            literal.opcode = Opcode::NewArray;
+            literal.children = { ValueID(), ValueID(), ValueID() };
+            literal.immediates = { Format::none, Format::none };
+            literal.arguments.clear();
+            literal.arguments.append(keyID);
+            literal.arguments.append(heldID);
+        }
         auto& list = m_function.at(call);
         list.children[2] = list.arguments[0];
         if (list.type == m_program.types.anything && predictedPairType && predictedPairType != m_program.types.anything && isAnythingOrArray(predictedPairType)) {

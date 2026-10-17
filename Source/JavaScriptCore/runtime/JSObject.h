@@ -610,7 +610,7 @@ public:
     JS_EXPORT_PRIVATE bool recordIfOnlyLockRejects(VM&, UniquedStringImpl* name, bool failsSilently, bool isDelete = false);
     JS_EXPORT_PRIVATE String lockViolationMessage(VM&, UniquedStringImpl* name, ASCIILiteral otherwise);
     JS_EXPORT_PRIVATE bool isRejectedOnlyByLock(VM&, UniquedStringImpl* name, JSValue& held);
-    JS_EXPORT_PRIVATE void lockAsClassPrototype(JSGlobalObject*, std::span<const Identifier> replaceable, bool constructorMayBeReplaced);
+    JS_EXPORT_PRIVATE void lockAsClassPrototype(JSGlobalObject*, std::span<const Identifier> replaceable, bool constructorMayBeReplaced, bool mayGainMembers);
     JS_EXPORT_PRIVATE bool becomeGuarded(VM&);
     bool isLockedBuiltin() const { return structure()->hasImmutableProperties() || structure()->inheritorsMayOverrideReadOnlyProperties() || isGlobalObject() || type() == GlobalProxyType; }
 #else

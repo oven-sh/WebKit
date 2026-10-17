@@ -1126,7 +1126,8 @@ static JSValue hostRequireFunction(JSGlobalObject* globalObject, Instance* insta
     auto& state = *instance->typed;
     if (!state.importMeta) {
         auto* importer = uncheckedDowncast<JSModuleRecord>(state.moduleRecord);
-        state.importMeta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, state.importerKey(vm)), importer, nullptr);
+        JSModuleLoader* ownLoader = instance->loader() ? instance->loader() : globalObject->moduleLoader();
+        state.importMeta = ownLoader->createImportMetaProperties(globalObject, identifierToJSValue(vm, state.importerKey(vm)), importer, nullptr);
         RETURN_IF_EXCEPTION(scope, { });
     }
     RELEASE_AND_RETURN(scope, state.importMeta->get(globalObject, Identifier::fromString(vm, "require"_s)));
@@ -1910,7 +1911,7 @@ static PropertyOffset offsetOfPropertyInOrder(Structure* structure, size_t place
 
 static Instance::CloneAndExtendPlan planCloneAndExtend(Instance* instance, JSGlobalObject* globalObject, VM& vm, Structure* source, uint64_t more)
 {
-    if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source) || (!source->didTransition() && isValidOffset(source->maxOffset())))
+    if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source, false) || (!source->didTransition() && isValidOffset(source->maxOffset())))
         return { };
     if (source->realm() != globalObject)
         return { };
@@ -1933,6 +1934,8 @@ static Instance::CloneAndExtendPlan planCloneAndExtend(Instance* instance, JSGlo
         names.append(entry.key());
         return isInOrder;
     });
+    if (!source->isQuickPropertyAccessAllowedForEnumeration() && (!isInOrder || names.size() != source->inlineSize() + source->outOfLineSize()))
+        return { };
     needed += names.size();
     Instance::CloneAndExtendPlan result { hasObjectPrototype ? source : nullptr, { } };
     if (isInOrder && (needed > source->inlineCapacity() || !hasObjectPrototype) && needed <= JSFinalObject::maxInlineCapacity) {
@@ -3087,7 +3090,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
             OPERATION_RETURN(scope, JSValue::encode(state.importMetaForModule(globalObject, asString(argument(0)))));
         if (!state.importMeta) {
             auto* importer = uncheckedDowncast<JSModuleRecord>(state.moduleRecord);
-            state.importMeta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, state.importerKey(vm)), importer, nullptr);
+            JSModuleLoader* ownLoader = instance->loader() ? instance->loader() : globalObject->moduleLoader();
+            state.importMeta = ownLoader->createImportMetaProperties(globalObject, identifierToJSValue(vm, state.importerKey(vm)), importer, nullptr);
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         }
         OPERATION_RETURN(scope, JSValue::encode(state.importMeta));
@@ -3648,10 +3652,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedDidCreateField, void, (Instan
     object->didCreateField(state, *field, !(name & Typed::nameIsFieldCreatedWithoutStorage));
 }
 
-static void didCreateFieldAtSite(State& state, Typed::Object* object, const Typed::FieldData& field, Slot* cache)
+static bool isMarkedOnlyToAskPrototypeChain(State& state, Typed::Object* object, uint32_t orderWord)
+{
+    return (orderWord & ~Typed::orderAndCountMask) == Typed::orderWordHasExtraProperties && state.isStructureWithoutExtraProperties(object->structure());
+}
+
+static void didCreateFieldAtSite(State& state, Typed::Object* object, const Typed::FieldData& field, uint32_t slotKey, Slot* cache)
 {
     uint32_t orderWord = object->orderWord();
     object->didCreateField(state, field);
+    if (isMarkedOnlyToAskPrototypeChain(state, object, orderWord)) {
+        state.cacheLateFieldCreation(*object, nullptr, orderWord, slotKey);
+        return;
+    }
     if (!cache || SharedData::contains(cache) || orderWord & ~Typed::orderAndCountMask || Typed::orderOf(object->orderWord()) == Typed::keysAreInLayoutOrder)
         return;
     cache->offset = orderWord ^ object->orderWord();
@@ -3662,7 +3675,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedDidCreateFieldAt, void, (Inst
 {
     State& state = *instance->typed;
     auto* object = uncheckedDowncast<Typed::Object>(cell);
-    didCreateFieldAtSite(state, object, state.fieldAt(object->layout(), offset), cache);
+    didCreateFieldAtSite(state, object, state.fieldAt(object->layout(), offset), offset, cache);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedDidCreateFieldOutOfLineAt, void, (Instance* instance, JSCell* cell, uint32_t offset, Slot* cache))
@@ -3670,7 +3683,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedDidCreateFieldOutOfLineAt, vo
     State& state = *instance->typed;
     auto* object = uncheckedDowncast<Typed::Object>(cell);
     const Typed::FieldData& field = state.fieldAt(object->layout(), offset);
-    didCreateFieldAtSite(state, object, field, cache);
+    didCreateFieldAtSite(state, object, field, offset, cache);
     object->ensureStorageFor(*instance->vm, state, field);
 }
 
@@ -3686,7 +3699,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedDidCreateFieldsAt, void, (Ins
         if (!object->read(field))
             object->didCreateField(state, field);
     }
-    if (JSObject* extra = object->extraProperties(); extra && !(fieldFlags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted))) [[unlikely]]
+    if (JSObject* extra = object->extraProperties(); (extra || isMarkedOnlyToAskPrototypeChain(state, object, orderWord)) && !(fieldFlags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted))) [[unlikely]]
         state.cacheLateFieldCreation(*object, extra, orderWord, offsets);
     if (SharedData::contains(cache) || orderWord & ~Typed::orderAndCountMask || Typed::orderOf(object->orderWord()) == Typed::keysAreInLayoutOrder)
         return;
@@ -4067,52 +4080,127 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedEnforceType, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, value);
 }
 
-static JSValue getFromReceiver(JSGlobalObject* globalObject, JSObject* object, const Identifier& name)
+struct InheritedField {
+    bool isKnown { false };
+    JSObject* holder { nullptr };
+    PropertyOffset offset { invalidOffset };
+};
+
+static JSValue getFromReceiver(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, InheritedField& inherited)
 {
     VM& vm = globalObject->vm();
     Typed::Object* ofLayout = asTypedObject(object);
     if (!ofLayout || parseIndex(name))
         return object->get(globalObject, name);
+    bool isAbsentField = false;
     if (const Typed::FieldData* field = ofLayout->fieldNamed(ofLayout->state(), name)) {
         if (JSValue held = ofLayout->read(*field))
             return held;
+        isAbsentField = !(field->flags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted | Typed::fieldHoldsLazyClosure | Typed::fieldIsPlaceholder));
     } else if (JSObject* extra = ofLayout->extraProperties()) {
         unsigned attributes;
         if (PropertyOffset offset = extra->structure()->get(vm, name, attributes); isValidOffset(offset))
             return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? object->get(globalObject, name) : extra->getDirect(offset);
     }
     JSValue prototype = object->getPrototypeDirect();
-    if (!prototype.isObject())
+    if (!prototype.isObject()) {
+        inherited.isKnown = isAbsentField;
         return jsUndefined();
+    }
     JSObject* above = asObject(prototype);
     if (auto* found = vm.megamorphicCache() ? vm.megamorphicCache()->findLoad(above->structureID(), name.impl()) : nullptr) {
+        inherited.isKnown = isAbsentField;
         if (!found->m_holder)
             return jsUndefined();
-        return (found->m_holder == JSCell::seenMultipleCalleeObjects() ? above : asObject(found->m_holder))->getDirect(found->m_offset);
+        inherited.holder = found->m_holder == JSCell::seenMultipleCalleeObjects() ? above : asObject(found->m_holder);
+        inherited.offset = found->m_offset;
+        return inherited.holder->getDirect(found->m_offset);
     }
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     return getByIdAndFillMegamorphicCache(globalObject, above, name, slot);
 }
 
+static void rememberInheritedField(Instance* instance, JSCell* cell, uint32_t name, uint32_t question, const InheritedField& inherited, JSValue onlyValueChecked = { })
+{
+    int32_t offset = inherited.holder ? static_cast<int32_t>(offsetRelativeToBase(inherited.offset)) : 0;
+    instance->rememberInheritedFieldAnswer({ cell->structureID().bits(), name, question, offset, inherited.holder, static_cast<uint64_t>(JSValue::encode(onlyValueChecked)) });
+}
+
+static bool acceptsEveryValue(const Typed::RuntimeType& type)
+{
+    return (type.primitives & Typed::Primitive::All) == Typed::Primitive::All && type.allowsAnyObject() && type.minInteger() <= -Typed::maxTrackedInteger && type.maxInteger() >= Typed::maxTrackedInteger;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetAbsentField, EncodedJSValue, (Instance* instance, EncodedJSValue base, uint32_t name))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    InheritedField inherited;
+    JSValue value = getFromReceiver(globalObject, asObject(JSValue::decode(base)), nameAt(instance, name), inherited);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (inherited.isKnown)
+        rememberInheritedField(instance, JSValue::decode(base).asCell(), name, Instance::asksForUncheckedValue, inherited);
+    OPERATION_RETURN(scope, JSValue::encode(value));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameChecked, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t name, uint32_t type))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSValue value = getFromReceiver(globalObject, asObject(cell), nameAt(instance, name));
+    InheritedField inherited;
+    JSValue value = getFromReceiver(globalObject, asObject(cell), nameAt(instance, name), inherited);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (!instance->typed->accepts(globalObject, instance->typed->type(type), value)) [[unlikely]]
         throwTypeMismatch(instance, globalObject, scope, value, type);
+    else if (inherited.isKnown) {
+        bool isCheckedAtEveryRead = inherited.holder && !acceptsEveryValue(instance->typed->type(type));
+        if (!isCheckedAtEveryRead || !value.isObject())
+            rememberInheritedField(instance, cell, name, type, inherited, isCheckedAtEveryRead ? value : JSValue());
+    }
     OPERATION_RETURN(scope, JSValue::encode(value));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStoreCreatesField, size_t, (Instance* instance, JSCell* cell, uint32_t name))
+{
+    static constexpr unsigned maxHolders = 16;
+    auto* object = uncheckedDowncast<Typed::Object>(cell);
+    if (object->orderWord() & (Typed::orderWordIsFrozen | Typed::orderWordIsSealed | Typed::orderWordIsNotExtensible))
+        return 0;
+    uint32_t structureID = cell->structureID().bits();
+    if (auto* answer = instance->findInheritedFieldAnswer(structureID, name, Instance::asksWhetherStoreCreatesField))
+        return answer->offset;
+    VM& vm = *instance->vm;
+    UniquedStringImpl* uid = nameAt(instance, name).impl();
+    bool createsField = !parseIndex(*uid) && !instance->typed->isCounting();
+    unsigned numberOfHolders = 0;
+    for (JSValue next = object->getPrototypeDirect(); createsField && next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        JSObject* holder = asObject(next);
+        Structure* structure = holder->structure();
+        TypeInfo info = structure->typeInfo();
+        createsField = ++numberOfHolders <= maxHolders && structure->hasMonoProto() && structure->mayBePrototype() && !info.overridesGetOwnPropertySlot() && !info.overridesGetPrototype() && !holder->hasNonReifiedStaticProperties()
+            && (!info.overridesPut() || holder->inherits<Typed::PrototypeObject>());
+        if (!createsField)
+            break;
+        unsigned attributes;
+        if (isValidOffset(structure->get(vm, uid, attributes))) {
+            createsField = !(attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue));
+            break;
+        }
+    }
+    instance->rememberInheritedFieldAnswer({ structureID, name, Instance::asksWhetherStoreCreatesField, createsField, nullptr, 0 });
+    return createsField;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameCheckedAsNumber, double, (Instance* instance, JSCell* cell, uint32_t name, uint32_t type))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSValue value = getFromReceiver(globalObject, asObject(cell), nameAt(instance, name));
+    InheritedField inherited;
+    JSValue value = getFromReceiver(globalObject, asObject(cell), nameAt(instance, name), inherited);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     if (!instance->typed->fits(instance->typed->type(type), value) || !(value.isNumber() || value.isUndefinedOrNull())) [[unlikely]] {
         throwTypeMismatch(instance, globalObject, scope, value, type);
         OPERATION_RETURN(scope, 0);
     }
+    if (inherited.isKnown && !inherited.holder)
+        rememberInheritedField(instance, cell, name, type, inherited);
     if (value.isNumber())
         OPERATION_RETURN(scope, purifyNaN(value.asNumber()));
     OPERATION_RETURN(scope, std::bit_cast<double>(value.isUndefined() ? Typed::undefinedDouble : Typed::nullDouble));

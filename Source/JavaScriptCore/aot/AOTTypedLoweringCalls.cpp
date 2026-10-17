@@ -211,9 +211,9 @@ static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool is
 {
 #if CPU(X86_64) && OS(LINUX)
     static_assert(throwWordGPR == X86Registers::r11);
-    if (!returnsToSite && !isLeaf && !valueIsInWordRegister) {
+    if (!returnsToSite && !valueIsInWordRegister) {
         context.throwSiteTraps.append({ jit.labelIgnoringWatchpoints(), site.bits });
-        jit.m_assembler.buffer().putByte(static_cast<int8_t>(0xf4));
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(isLeaf ? trapInstructionWithoutFrame : trapInstruction));
         return false;
     }
 #endif
@@ -2033,7 +2033,7 @@ Operand Lowering::callCompiled(FunctionID function, const Vector<Argument, 8>& a
             auto& to = m_program.at(cast.type);
             if (cast.castReason() == CastReason::Coerce)
                 converted = lowerCoercion(converted, *type, to, cast, OperationEffects { });
-            else if (cast.castReason() == CastReason::As || (cast.castReason() == CastReason::Flow && !cast.string() && narrowingMayRetag(m_program, to)))
+            else if (cast.castReason() == CastReason::As || (cast.castReason() == CastReason::Flow && !cast.string() && (cast.keepsUnconvertibleObjects() || narrowingMayRetag(m_program, to))))
                 converted = coerce(converted, *type, cast, OperationEffects { });
             else
                 converted = ensure(converted, *type, to);

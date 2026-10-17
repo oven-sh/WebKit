@@ -191,7 +191,7 @@ private:
             index(layout.constructor.index());
             m_out.print(" environment ");
             index(layout.environment.index());
-            m_out.print(layout.hasFixedLayout ? " fixed-layout" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasUntypedBase ? " untyped-base" : "", layout.hasImmutableMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasNoOwnInstances ? " no own instances" : "", layout.hasComputedStaticMemberName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "");
+            m_out.print(layout.hasFixedLayout ? " fixed-layout" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasUntypedBase ? " untyped-base" : "", layout.hasImmutableMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasNoOwnInstances ? " no own instances" : "", layout.hasComputedStaticMemberName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "", layout.prototypeMayGainMembers ? " extensible prototype" : "");
         }
         m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.prototypeIsSetByTypedCode ? " prototype set by typed code" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.acceptsUntypedObjects ? " accepts-untyped" : "", layout.isRelaxedForLogging ? " relaxed-for-logging" : "", layout.acceptsOnlyOtherLayouts ? " other-layouts-only" : "", layout.mayDespecialize ? " may-despecialize" : "", "\n");
         auto layouts = [&](ASCIILiteral what, const Vector<LayoutID>& list) {

@@ -138,6 +138,7 @@ public:
                 layout.prototypeIsSetByTypedCode = shape.flags & Format::ShapePrototypeIsSetByTypedCode;
                 layout.hasComputedStaticMemberName = shape.flags & Format::ShapeHasComputedStaticMemberName;
                 layout.constructorMayBeReplaced = shape.flags & Format::ShapeConstructorMayBeReplaced;
+                layout.prototypeMayGainMembers = shape.flags & Format::ShapePrototypeMayGainMembers;
                 layout.acceptsUntypedObjects = shape.flags & Format::ShapeAcceptsUntypedObjects;
                 layout.isRelaxedForLogging = shape.flags & Format::ShapeIsRelaxedForLogging;
                 if (layout.isRelaxedForLogging && (!layout.acceptsUntypedObjects || !m_program.logsTypeErrors))
@@ -248,6 +249,18 @@ public:
         for (auto& layout : m_program.layouts) {
             if (layout.mayDespecialize)
                 layout.mayBeFrozen = false;
+        }
+        for (auto& layout : m_program.layouts) {
+            if (layout.kind != LayoutKind::Instance)
+                continue;
+            const Layout* ancestor = &layout;
+            for (size_t steps = 0; steps < m_program.layouts.size(); ++steps) {
+                layout.prototypeChainMayGainMembers |= ancestor->prototypeMayGainMembers;
+                if (!ancestor->base || ancestor->base.index() >= m_program.layouts.size())
+                    break;
+                ancestor = &m_program.layouts[ancestor->base.index()];
+            }
+            m_program.hasPrototypeThatMayGainMembers |= layout.prototypeChainMayGainMembers;
         }
         if (Options::auditAOTTypedAssertions()) [[unlikely]] {
             auto& layouts = m_program.layouts;
@@ -1051,7 +1064,7 @@ private:
                     || freshness > static_cast<uint32_t>(Format::Freshness::WholeGraph) || (freshness && value.castReason() != CastReason::Coerce && !(value.castReason() == CastReason::As && freshness == static_cast<uint32_t>(Format::Freshness::TopLevel))))
                     m_failed = true;
                 if (value.keepsUnconvertibleObjects()) {
-                    if (value.castReason() != CastReason::As)
+                    if (value.castReason() != CastReason::As && value.castReason() != CastReason::Flow)
                         m_failed = true;
                     else if (!m_program.at(value.type).acceptsOnlyOtherLayouts(m_program))
                         value.immediates[1] &= ~Format::CastKeepsUnconvertibleObjects;

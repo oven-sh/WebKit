@@ -365,7 +365,8 @@ struct ClassData {
     uint32_t environment;
     uint32_t numberOfMethods;
     uint32_t numberOfStaticMethods;
-    uint32_t numberOfStaticFields;
+    uint32_t numberOfStaticFields : 31;
+    uint32_t prototypeMayGainMembers : 1;
     uint32_t numberOfVariables;
     uint32_t firstStaticFieldLocation;
 };
@@ -447,7 +448,7 @@ struct LayoutData {
     std::span<const MethodData> methods() const { return { reinterpret_cast<const MethodData*>(fields() + numberOfFields), isClass() ? classData().numberOfMethods : 0 }; }
     std::span<const MethodData> staticMethods() const { return { methods().data() + methods().size(), isClass() ? classData().numberOfStaticMethods : 0 }; }
     const FieldData* variables() const { return reinterpret_cast<const FieldData*>(staticMethods().data() + staticMethods().size()); }
-    std::span<const FieldData> staticFields() const { return { variables(), isClass() ? classData().numberOfStaticFields : 0 }; }
+    std::span<const FieldData> staticFields() const { return { variables(), isClass() ? static_cast<uint32_t>(classData().numberOfStaticFields) : 0u }; }
     std::span<const VariableData> describedVariables() const { return { reinterpret_cast<const VariableData*>(reinterpret_cast<const uint8_t*>(this) + sizeOfEnvironment), numberOfDescribedVariables }; }
 };
 static_assert(sizeof(LayoutData) == 36 && offsetof(LayoutData, index) == 4 && offsetof(LayoutData, ordersOffset) == LayoutData::sizeOfEnvironment);
@@ -588,6 +589,8 @@ struct Data {
     uint32_t asyncGeneratorBodiesOffset;
     uint32_t numberOfSloppyPlainFunctions;
     uint32_t sloppyPlainFunctionsOffset;
+    uint32_t numberOfSloppyFunctionBoundaries;
+    uint32_t sloppyFunctionBoundariesOffset;
     uint32_t numberOfConstructorFunctions;
     uint32_t constructorFunctionsOffset;
     uint32_t numberOfRejectedFreshObjects;
@@ -611,9 +614,6 @@ struct Data {
     uint32_t countsAllocations;
     uint32_t usesWideReferences;
     uint32_t functionLengthsAreBytes;
-    uint32_t lastShapeWithOtherPrototype;
-    uint32_t reachOfShapesWithOtherPrototype;
-    uint32_t setOfShapesWithOtherPrototype;
     uint32_t numberOfFunctionAliases;
     uint32_t numberOfFunctionAliasRuns;
     uint32_t functionAliasesOffset;

@@ -738,7 +738,8 @@ public:
     static constexpr uint8_t isStructureWithExtraProperties = 4;
     static constexpr uint8_t hasPrototypeOfLayout = 8;
     static constexpr uint8_t hasFieldsWithSymbolKeys = 16;
-    static_assert(!((markingStampMask | isStructureWithExtraProperties | hasPrototypeOfLayout | hasFieldsWithSymbolKeys) & (IndexingTypeLockIsHeld | IndexingTypeLockHasParked)));
+    static constexpr uint8_t hasOtherPrototype = 32;
+    static_assert(!((markingStampMask | isStructureWithExtraProperties | hasPrototypeOfLayout | hasFieldsWithSymbolKeys | hasOtherPrototype) & (IndexingTypeLockIsHeld | IndexingTypeLockHasParked)));
     static constexpr uint8_t markingStampFor(uint32_t markingVersion) { return (markingVersion & 1) + 1; }
     uint8_t& markingStampAndFlags() { return *(reinterpret_cast<uint8_t*>(this) + indexingTypeAndMiscOffset()); }
     static_assert(sizeof(SeenProperties) == sizeof(uint64_t));

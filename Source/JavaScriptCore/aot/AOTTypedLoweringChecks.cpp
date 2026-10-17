@@ -2954,6 +2954,8 @@ CellPointer Lowering::nonNullish(Operand operand, const Type& type, StringID nam
 
 static CastReason runtimeAnnotationCastReason(const Value& cast)
 {
+    if (cast.castReason() == CastReason::Flow && cast.keepsUnconvertibleObjects())
+        return CastReason::FlowIfConvertible;
     if (cast.castReason() != CastReason::As)
         return cast.castReason();
     if (cast.keepsUnconvertibleObjects())
@@ -3008,7 +3010,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, s
 static CastReason runtimeCastReason(const Value& cast)
 {
     if (cast.keepsUnconvertibleObjects())
-        return CastReason::AsIfConvertible;
+        return cast.castReason() == CastReason::Flow ? CastReason::FlowIfConvertible : CastReason::AsIfConvertible;
     if (cast.castReason() != CastReason::Coerce || !cast.coercesFreshData())
         return cast.castReason();
     return cast.freshness() == Format::Freshness::WholeGraph ? CastReason::CoerceFreshGraph : CastReason::CoerceFreshObject;
@@ -3016,7 +3018,7 @@ static CastReason runtimeCastReason(const Value& cast)
 
 Word32 Lowering::typeAndReason(TypeID type, CastReason reason)
 {
-    static_assert(static_cast<uint32_t>(CastReason::AsFreshObjectIfConvertible) < 16);
+    static_assert(static_cast<uint32_t>(CastReason::FlowIfConvertible) < 16);
     RELEASE_ASSERT(type.index() < 1u << 28 && static_cast<uint32_t>(reason) < 16);
     return word32(type.index() << 4 | static_cast<uint32_t>(reason));
 }
@@ -3597,7 +3599,7 @@ Operand Lowering::lowerFusedCasts(Operand operand, const Type& from)
 
 bool Lowering::usesCastTest(const Value& cast) const
 {
-    return cast.castReason() == CastReason::As || (cast.castReason() == CastReason::Flow && !cast.string() && narrowingMayRetag(m_program, m_program.at(cast.type)));
+    return cast.castReason() == CastReason::As || (cast.castReason() == CastReason::Flow && !cast.string() && (cast.keepsUnconvertibleObjects() || narrowingMayRetag(m_program, m_program.at(cast.type))));
 }
 
 std::optional<Lowering::SunkCoercion> Lowering::sunkCoercionAt(size_t useIndex)
@@ -3876,13 +3878,14 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
     case CastReason::Member:
     case CastReason::AsIfConvertible:
     case CastReason::AsFreshObjectIfConvertible:
+    case CastReason::FlowIfConvertible:
         RELEASE_ASSERT_NOT_REACHED();
     case CastReason::NonNull:
         if (m_program.isRelaxedForLogging(to)) [[unlikely]]
             return coerce(operand, from, value);
         return lowerNonNull(result, value);
     case CastReason::Flow:
-        if (!value.string() && (narrowingMayRetag(m_program, to) || m_program.isRelaxedForLogging(to)))
+        if (!value.string() && (value.keepsUnconvertibleObjects() || narrowingMayRetag(m_program, to) || m_program.isRelaxedForLogging(to)))
             return coerce(operand, from, value);
         break;
     case CastReason::Store:
@@ -4195,19 +4198,13 @@ Word32 Lowering::lowerToBoolean(ValueID id)
     return genericToBoolean(id);
 }
 
-static bool acceptsRecordsWithOtherPrototype(const Program& program, const Type& type)
+static bool acceptsObjectsWithOtherPrototype(const Program& program, const Type& type)
 {
-    auto isRecordWithOtherPrototype = [](const Layout& layout) {
-        return layout.kind == LayoutKind::Record && layout.mayHaveOtherPrototype;
-    };
-    if (type.anyObject) {
-        return std::ranges::any_of(program.layouts, [](const Layout& layout) {
-            return isObjectLayout(layout.kind) && layout.mayHaveOtherPrototype;
-        });
-    }
+    if (type.anyObject)
+        return true;
     return std::ranges::any_of(type.objectLayouts, [&](LayoutID supertype) {
         return std::ranges::any_of(program.at(supertype).subtypes, [&](LayoutID subtype) {
-            return isRecordWithOtherPrototype(program.at(subtype));
+            return program.at(subtype).kind == LayoutKind::Record || program.at(subtype).mayHaveOtherPrototype;
         });
     });
 }
@@ -4215,7 +4212,7 @@ static bool acceptsRecordsWithOtherPrototype(const Program& program, const Type&
 bool mayWalkPrototypeChain(const Program& program, const Function& function, const Value& value)
 {
     auto& type = program.typeOf(function, value.child(0));
-    return type.anyObject || type.anyFunction || !type.engineClasses.isEmpty() || type.acceptsUntypedObjects(program) || program.at(value.layout()).instancesMayBecomeRecords || acceptsRecordsWithOtherPrototype(program, type);
+    return type.anyObject || type.anyFunction || !type.engineClasses.isEmpty() || type.acceptsUntypedObjects(program) || program.at(value.layout()).instancesMayBecomeRecords || acceptsObjectsWithOtherPrototype(program, type);
 }
 
 bool Lowering::instanceOfUsesShapeTest(const Value& value)
@@ -4293,7 +4290,7 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
         LBasicBlock isNone = m_out.newBlock();
         LBasicBlock genericPath = newColdBlock();
         bool hasOnlyTypedObjects = !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.acceptsUntypedObjects(m_program);
-        bool mayHaveOtherPrototype = acceptsRecordsWithOtherPrototype(m_program, type);
+        bool mayHaveOtherPrototype = acceptsObjectsWithOtherPrototype(m_program, type);
         LBasicBlock chainPath = hasOnlyTypedObjects && !mayHaveOtherPrototype ? nullptr : newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         orElse(isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedModifiedClassObjects()), ofClass.index())))), genericPath);
@@ -4316,7 +4313,7 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
             m_out.appendTo(hasLayout);
         }
         if (mayHaveOtherPrototype)
-            m_out.branch(passes(shapeWord, m_program.shapesWithOtherPrototype).value(), rarely(chainPath), usually(isNone));
+            m_out.branch(hasOtherPrototype(cell).value(), rarely(chainPath), usually(isNone));
         else
             m_out.jump(isNone);
         m_out.appendTo(isOne);
@@ -4524,21 +4521,29 @@ Word32 Lowering::lowerIsInstanceOfClass(const Value& value)
     auto test = [&](CellPointer cell) {
         Word32 shapeWord = shapeWordOf(cell);
         Word32 isInstance = passes(shapeWord, m_program.at(value.layout()).instances);
-        if (m_program.at(value.layout()).instancesMayBecomeRecords || acceptsRecordsWithOtherPrototype(m_program, type)) {
+        auto walksChain = [&] {
+            return AOT_TYPED_OPERATION(InheritsFromClass, cell, word32(value.layout().index()));
+        };
+        if (m_program.at(value.layout()).instancesMayBecomeRecords) {
+            return either<Word32>(isInstance, [&] {
+                return boolean(true);
+            }, walksChain);
+        }
+        auto fromShape = [&] {
+            if (!acceptsObjectsWithOtherPrototype(m_program, type))
+                return isInstance;
             return either<Word32>(isInstance, [&] {
                 return boolean(true);
             }, [&] {
-                return AOT_TYPED_OPERATION(InheritsFromClass, cell, word32(value.layout().index()));
+                return either<Word32>(hasOtherPrototype(cell), walksChain, [&] {
+                    return boolean(false);
+                });
             });
-        }
+        };
         if (hasOnlyTypedObjects)
-            return isInstance;
+            return fromShape();
         Word32 hasShape = passes(shapeWord, ShapeTest { 1, m_program.numberOfShapes });
-        return either<Word32>(hasShape, [&] {
-            return isInstance;
-        }, [&] {
-            return AOT_TYPED_OPERATION(InheritsFromClass, cell, word32(value.layout().index()));
-        });
+        return either<Word32>(hasShape, fromShape, walksChain);
     };
     if (operand.rep == Rep::Cell)
         return test(operand.as<CellPointer>());

@@ -378,6 +378,8 @@ private:
     {
         if (value.opcode == Opcode::PutById && value.child(0) == object && value.child(1) != object && !value.isInitialStore())
             return LiteralDefinition { value.string(), value.child(1) };
+        if (value.opcode == Opcode::PutField && value.child(0) == object && value.child(1) != object && m_function.at(object).opcode == Opcode::NewObjectWithShape && value.layout() == m_function.at(object).layout())
+            return LiteralDefinition { m_program.at(value.layout()).fields[value.field()].name, value.child(1) };
         if (languageOperationOf(m_program, value) != LanguageOperation::DefineField || value.arguments.size() != 3 || value.arguments[0] != object || value.arguments[2] == object || m_function.at(value.arguments[1]).opcode != Opcode::String)
             return std::nullopt;
         return LiteralDefinition { m_function.at(value.arguments[1]).string(), value.arguments[2] };
@@ -386,7 +388,7 @@ private:
     std::optional<ObjectLiteral> literalUsedOnlyBy(ValueID object, BlockID block, size_t user) const
     {
         constexpr unsigned maxBlocks = 32;
-        if (m_function.at(object).opcode != Opcode::NewObject)
+        if (auto& made = m_function.at(object); made.opcode != Opcode::NewObject && (made.opcode != Opcode::NewObjectWithShape || m_program.at(made.layout()).kind != LayoutKind::Record))
             return std::nullopt;
         BlockID handler = m_function.at(block).terminator.kind == TerminatorKind::Invoke ? m_function.at(block).terminator.targets[1].block : BlockID();
         ObjectLiteral literal;

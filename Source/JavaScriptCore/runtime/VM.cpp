@@ -2466,7 +2466,7 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
     if (m_aotPropertyLookupTable)
         m_aotPropertyLookupTable->didChangePrototype(nameOfProperty);
     for (AOT::Instance* instance : m_aotInstances) {
-        instance->forgetCheckedStructures();
+        instance->forgetInheritedFieldAnswers();
         if (instance->typed && instance->typed->hasDescendantPrototypes()) [[unlikely]]
             instance->typed->didChangeDescendantPrototype(*this, changed, nameOfProperty);
     }
@@ -2500,7 +2500,7 @@ bool VM::mayHaveCachesDependingOnPrototype(JSObject* object)
     if (m_aotPropertyLookupTable && m_aotPropertyLookupTable->hasPrototypeDependentEntries())
         return true;
     for (AOT::Instance* instance : m_aotInstances) {
-        if (instance->typed && instance->typed->hasDescendantPrototypes())
+        if (instance->hasInheritedFieldAnswers || (instance->typed && instance->typed->hasDescendantPrototypes()))
             return true;
     }
 #endif
@@ -2514,7 +2514,7 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
     if (m_aotPropertyLookupTable)
         m_aotPropertyLookupTable->didChangePrototype(nullptr);
     for (AOT::Instance* instance : m_aotInstances)
-        instance->forgetCheckedStructures();
+        instance->forgetInheritedFieldAnswers();
 #endif
     invalidateEpochCaches();
 }

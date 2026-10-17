@@ -859,8 +859,10 @@ public:
             if (stampAndFlags != markingStamp) [[unlikely]] {
                 if (stampAndFlags & Structure::isStructureWithExtraProperties)
                     return false;
-                appendCell(structure);
-                stampAndFlags = markingStamp;
+                if ((stampAndFlags & Structure::markingStampMask) != markingStamp) {
+                    appendCell(structure);
+                    stampAndFlags = (stampAndFlags & ~Structure::markingStampMask) | markingStamp;
+                }
             }
             return true;
         };

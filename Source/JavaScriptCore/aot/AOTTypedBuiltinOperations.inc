@@ -30,8 +30,6 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindPlainQueryValue, Pure,
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnProperty, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutByValDirect, Heap, void, (Instance*, JSCell* object, EncodedJSValue key, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutByIdDirect, Heap, void, (Instance*, JSCell* object, uint32_t name, EncodedJSValue value));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetCheckedStructure, RuntimeState, size_t, (Instance*, EncodedJSValue object, uint32_t index));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedWatchProperty, RuntimeState, size_t, (Instance*, EncodedJSValue holder, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedDateNow, Nothing, double, (Instance*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedDateToISOString, RuntimeState, JSCell*, (Instance*, double timeValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIsConstructor, Nothing, size_t, (Instance*, EncodedJSValue value));
@@ -63,6 +61,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONSkipValue, RuntimeStat
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONSkipMember, RuntimeState, void*, (Instance*, uint64_t cursor));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONGiveUpIfEscaped, RuntimeState, void, (Instance*, uint64_t cursor));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONGiveUpIfRepeated, RuntimeState, void, (Instance*, uint64_t cursor, JSCell* name));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONParseWithShape, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue text, JSCell* shapes));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONReserve, RuntimeState, void*, (Instance*, uint64_t cursor, uint64_t size));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendString, RuntimeState, void*, (Instance*, uint64_t cursor, JSCell* string));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAppendInteger, Nothing, void*, (uint64_t cursor, uint64_t integer));

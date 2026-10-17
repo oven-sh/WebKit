@@ -74,7 +74,7 @@ ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObjec
     RETURN_IF_EXCEPTION(scope, void());
 }
 
-ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
+ALWAYS_INLINE bool checkStructureForClone(Structure* structure, bool requiresQuickEnumeration = true)
 {
     static constexpr bool verbose = false;
 
@@ -138,7 +138,7 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
         return false;
     }
 
-    if (!structure->isQuickPropertyAccessAllowedForEnumeration()) {
+    if (requiresQuickEnumeration && !structure->isQuickPropertyAccessAllowedForEnumeration()) {
         dataLogLnIf(verbose, "target has symbol properties (right now we disable this optimization in this case since we cannot detect private symbol properties)");
         return false;
     }

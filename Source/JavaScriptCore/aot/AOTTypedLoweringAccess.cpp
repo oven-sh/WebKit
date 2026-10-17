@@ -142,11 +142,15 @@ bool inheritsThroughLayoutPrototype(const Program& program, LayoutID supertype, 
                 return true;
         }
     }
-    if (!program.prototypePropertyNames.get(name.index()))
+    bool isStoredOnSomePrototype = program.prototypePropertyNames.get(name.index());
+    if (!isStoredOnSomePrototype && !program.hasPrototypeThatMayGainMembers)
         return false;
     for (LayoutID subtype : program.at(supertype).subtypes) {
         auto& layout = program.at(subtype);
-        if (layout.kind == LayoutKind::Instance || (layout.kind == LayoutKind::Record && !layout.mayBeConstructed && (layout.mayHaveOtherPrototype || layout.mayDespecialize)))
+        if (layout.kind == LayoutKind::Instance) {
+            if (!layout.prototypeChainMayGainMembers)
+                continue;
+        } else if (!isStoredOnSomePrototype || (layout.kind == LayoutKind::Record && !layout.mayBeConstructed && (layout.mayHaveOtherPrototype || layout.mayDespecialize)))
             continue;
         auto field = layout.fieldNamed(name);
         if (!(field && layout.fields[*field].flags & fieldIsNeverObservedAbsentAsDeclared))
@@ -1084,6 +1088,13 @@ Word32 Lowering::hasPrototypeOfLayout(CellPointer cell)
     LValue structure = structureWithID(m_out.load32(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(JSCell::structureIDOffset())))));
     LValue flags = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(structure, m_out.constIntPtr(JSCell::indexingTypeAndMiscOffset()))));
     return Word32(m_out.testNonZero32(flags, m_out.constInt32(Structure::hasPrototypeOfLayout)));
+}
+
+Word32 Lowering::hasOtherPrototype(CellPointer cell)
+{
+    LValue structure = structureWithID(m_out.load32(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(JSCell::structureIDOffset())))));
+    LValue flags = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(structure, m_out.constIntPtr(JSCell::indexingTypeAndMiscOffset()))));
+    return Word32(m_out.testNonZero32(flags, m_out.constInt32(Structure::hasOtherPrototype)));
 }
 
 void Lowering::branchIfOwnFieldRequested(CellPointer cell, LBasicBlock isNotRequested, LBasicBlock asks)
@@ -2107,6 +2118,9 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
                         usesObjectLookup = logicalAnd(usesObjectLookup, hasNoBits(orderWordOf(cell), orderWordIsNotExtensible));
                     m_out.branch(usesObjectLookup.value(), unsure(goesOn), unsure(checksPrototypeChain));
                     m_out.appendTo(checksPrototypeChain);
+                    LBasicBlock isIntercepted = newColdBlock();
+                    m_out.branch(AOT_TYPED_OPERATION(StoreCreatesField, cell, word32(field.name.index())).value(), unsure(goesOn), unsure(isIntercepted));
+                    m_out.appendTo(isIntercepted);
                     setByName(box(cell), field.name, in<Boxed>(stored));
                     m_out.jump(done);
                 } else if (mayAlreadyExist) {
@@ -5357,6 +5371,17 @@ void Lowering::lowerStoresAfterSingleTest(const StoresAfterSingleTest& stores)
             usesObjectLookup = logicalAnd(usesObjectLookup, hasNoBits(orderWordOf(cell), others));
         m_out.branch(usesObjectLookup.value(), unsure(storesInline), unsure(checksPrototypeChain));
         m_out.appendTo(checksPrototypeChain);
+        LBasicBlock isIntercepted = newColdBlock();
+        for (size_t index : stores) {
+            const Field& field = *fieldOfStoreAfterSingleTestAt(index);
+            if (!(m_program.at(field.stored).primitives & Primitive::Absent) || !mayInherit(m_program, typeOf(storeAt(index).child(0)).singleLayout(), field.name))
+                continue;
+            LBasicBlock isNotIntercepted = newColdBlock();
+            m_out.branch(AOT_TYPED_OPERATION(StoreCreatesField, cell, word32(field.name.index())).value(), unsure(isNotIntercepted), unsure(isIntercepted));
+            m_out.appendTo(isNotIntercepted);
+        }
+        m_out.jump(storesInline);
+        m_out.appendTo(isIntercepted);
     }
     for (size_t index : stores) {
         SetForScope currentIndex(m_currentIndexInBlock, index);

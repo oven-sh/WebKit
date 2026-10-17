@@ -3651,7 +3651,6 @@ private:
             ClassInstances,
             RetagSources,
             SubtypesKeptByCast,
-            OtherPrototypes,
         };
 
         Kind kind;
@@ -3672,7 +3671,6 @@ private:
         uint32_t numberOfLayouts;
         uint64_t weight { 0 };
         bool hasResult { false };
-        bool constrainsNumbering { false };
         ShapeTest result { };
     };
 
@@ -3780,8 +3778,6 @@ private:
             if (isObjectLayout(layouts[i].kind) && layouts[i].isAllocated && layouts[i].mayHaveOtherPrototype)
                 layoutsWithOtherPrototype.append(i);
         }
-        uint32_t otherPrototypesCandidate = candidates.size();
-        addCandidate(Candidate::OtherPrototypes, 0, 0, layoutsWithOtherPrototype, std::identity { });
 
         Vector<uint32_t> sortedCandidates(candidates.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
@@ -3824,15 +3820,11 @@ private:
                     for (LayoutID subtype : keptSubtypes)
                         listedLayouts.append(subtype.index());
                     break;
-                case Candidate::OtherPrototypes:
-                    listedLayouts.appendVector(layoutsWithOtherPrototype);
-                    break;
                 }
                 RELEASE_ASSERT(listedLayouts.size() - unsortedTests.last().firstLayout == candidate.layouts.count);
             }
             unsortedTests.last().weight += candidate.weight;
             unsortedTests.last().hasResult |= candidate.kind != Candidate::TypeSubtypes;
-            unsortedTests.last().constrainsNumbering |= candidate.kind != Candidate::OtherPrototypes;
             candidate.test = unsortedTests.size() - 1;
         }
         Vector<uint32_t> sortedTests(unsortedTests.size(), [](size_t index) {
@@ -3850,7 +3842,7 @@ private:
         report(candidates.size(), " layout sets are tested, ", tests.size(), " of them distinct, listing ", listedLayouts.size(), " layouts");
         Vector<uint32_t> order;
         for (unsigned i = 0; i < tests.size(); ++i) {
-            if (tests[i].numberOfLayouts > 1 && tests[i].constrainsNumbering)
+            if (tests[i].numberOfLayouts > 1)
                 order.append(i);
         }
         std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
@@ -4229,7 +4221,6 @@ private:
         }
         for (auto& missingFields : m_missingFields)
             layouts[missingFields.layout].fields[missingFields.field].subtypesWithField = resultOf(firstSetCandidate + missingFields.subtypesWithField);
-        m_program.shapesWithOtherPrototype = resultOf(otherPrototypesCandidate);
         for (uint32_t index : layoutsWithOtherPrototype) {
             if (layouts[index].kind != LayoutKind::Instance)
                 continue;
@@ -5151,14 +5142,6 @@ private:
         });
         for (auto& entry : m_program.multiLayoutShapeTests.values())
             checkNumberPassing(sets, entry.test, entry.numberOfShapes);
-        uint32_t numberOfLayoutsWithOtherPrototype = 0;
-        for (auto& layout : layouts) {
-            if (!isObjectLayout(layout.kind) || !layout.isAllocated || !layout.mayHaveOtherPrototype)
-                continue;
-            RELEASE_ASSERT(m_program.passes(m_program.shapesWithOtherPrototype, layout.shape));
-            ++numberOfLayoutsWithOtherPrototype;
-        }
-        checkNumberPassing(sets, m_program.shapesWithOtherPrototype, numberOfLayoutsWithOtherPrototype);
         sets.appendVector(collectInParallel<std::pair<uint32_t, uint32_t>>(layouts.size(), [&](unsigned i, ShapeSets& collected) {
             checkNumberPassing(collected, layouts[i].instances, numberOfInstanceLayouts[i]);
             checkNumberPassing(collected, layouts[i].retagSources, retagSourcesOf(i).size());
@@ -6087,9 +6070,6 @@ public:
         header.functionsOffset = append(names);
         header.functionKindsOffset = append(kinds);
         header.functionLengthsAreBytes = m_program.functionLengthsAreBytes;
-        header.lastShapeWithOtherPrototype = m_program.shapesWithOtherPrototype.count ? m_program.shapesWithOtherPrototype.last() : 0;
-        header.reachOfShapesWithOtherPrototype = m_program.shapesWithOtherPrototype.count;
-        header.setOfShapesWithOtherPrototype = m_program.shapesWithOtherPrototype.set;
         uint32_t firstClosureFunction = m_program.functions.size();
         uint32_t endOfClosureFunctions = m_program.functions.size();
         bool hasClosureEntrypoint = false;
@@ -6232,6 +6212,13 @@ public:
         std::ranges::sort(sloppyPlainFunctions);
         header.numberOfSloppyPlainFunctions = sloppyPlainFunctions.size();
         header.sloppyPlainFunctionsOffset = append(sloppyPlainFunctions);
+        Vector<uint32_t> sloppyFunctionBoundaries;
+        for (unsigned i = 0; i < m_program.functions.size(); ++i) {
+            if (m_program.functions[i].has(Format::FunctionIsSloppy) != (sloppyFunctionBoundaries.size() & 1))
+                sloppyFunctionBoundaries.append(i);
+        }
+        header.numberOfSloppyFunctionBoundaries = sloppyFunctionBoundaries.size();
+        header.sloppyFunctionBoundariesOffset = append(sloppyFunctionBoundaries);
         Vector<std::pair<uint32_t, uint32_t>> constructorFunctions;
         for (unsigned i = 0; i < m_program.functions.size(); ++i) {
             if (uint32_t allocation = m_program.functions[i].thisAllocation; allocation != Format::none)
@@ -7067,6 +7054,7 @@ private:
             ofClass.numberOfMethods = layout.methods.size();
             ofClass.numberOfStaticMethods = layout.staticMethods.size();
             ofClass.numberOfStaticFields = numberOfStaticFields;
+            ofClass.prototypeMayGainMembers = layout.prototypeMayGainMembers;
             ofClass.numberOfVariables = variables.size();
             static_assert(Format::none == LayoutData::noBase);
             ofClass.firstStaticFieldLocation = layout.classObjectSlot;

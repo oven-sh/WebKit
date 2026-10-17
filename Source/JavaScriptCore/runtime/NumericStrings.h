@@ -166,8 +166,9 @@ private:
     {
         ASSERT(m_doubleCache);
         uint64_t bits = std::bit_cast<uint64_t>(d);
-        uint32_t hash = static_cast<uint32_t>(bits) ^ static_cast<uint32_t>(bits >> 32);
-        return m_doubleCache->m_doubleCache[hash & (doubleCacheSize - 1)];
+        uint32_t hash = (static_cast<uint32_t>(bits) ^ static_cast<uint32_t>(bits >> 32)) * 2654435769u;
+        static_assert(doubleCacheSize == 1 << 12);
+        return m_doubleCache->m_doubleCache[hash >> 20];
     }
     CacheEntryWithJSString<int>& lookup(int i) { return m_intCache[WTF::IntHash<int>::hash(i) & (cacheSize - 1)]; }
     CacheEntry<unsigned>& lookup(unsigned i) { return m_unsignedCache[WTF::IntHash<unsigned>::hash(i) & (cacheSize - 1)]; }

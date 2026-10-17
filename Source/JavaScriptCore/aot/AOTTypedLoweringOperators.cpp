@@ -1367,8 +1367,26 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     if (isStringOrNullish(left) && isStringOrNullish(right))
         return areStringsEqual(a, b);
     for (auto [string, other] : { std::pair { a, b }, std::pair { b, a } }) {
-        if (!typeOf(string).isString())
+        if (!isStringOrNullish(typeOf(string)))
             continue;
+        bool mayBeNullish = !typeOf(string).isString();
+        if (mayBeNullish && prefersGenericPathInColdCode())
+            continue;
+        if (mayBeNullish) {
+            LBasicBlock hasSameBits = m_out.newBlock();
+            LBasicBlock hasOtherBits = m_out.newBlock();
+            Join join(m_out, Rep::Int32, Int32);
+            m_out.branch(haveEqualBits(in<Boxed>(a), in<Boxed>(b)).value(), unsure(hasSameBits), unsure(hasOtherBits));
+            m_out.appendTo(hasSameBits);
+            join.add(boolean(true));
+            m_out.appendTo(hasOtherBits);
+            join.add(ifPredictionHolds({ { other, &m_program.at(m_program.types.string) } }, Rep::Int32, [&](LBasicBlock) {
+                return lowerStrictEq(a, b);
+            }, [&] {
+                return boolean(false);
+            }));
+            return join.finish().as<Word32>();
+        }
         if (auto text = constantASCIIString(string); text && !text->empty() && text->size() <= maxInlineStringCompareLength && !m_isInLoop && holdsCells(get(other).rep)) {
             LBasicBlock isText = m_out.newBlock();
             LBasicBlock isOther = m_out.newBlock();

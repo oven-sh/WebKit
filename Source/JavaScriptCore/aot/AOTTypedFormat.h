@@ -154,6 +154,7 @@ enum ShapeFlag : uint32_t {
     ShapeAcceptsOnlyOtherLayouts = 1 << 12,
     ShapePrototypeIsSetByTypedCode = 1 << 13,
     ShapeHasNoOwnInstances = 1 << 14,
+    ShapePrototypeMayGainMembers = 1 << 15,
 };
 
 struct Shape {
@@ -358,6 +359,7 @@ enum class CastReason : uint32_t {
     Member,
     AsIfConvertible,
     AsFreshObjectIfConvertible,
+    FlowIfConvertible,
 };
 enum class Freshness : uint32_t { None, TopLevel, WholeGraph };
 static constexpr unsigned freshnessShift = 8;

@@ -851,6 +851,8 @@ struct Layout {
     bool hasInstancesWithOtherPrototype { false };
     bool prototypeIsSetByTypedCode { false };
     bool constructorMayBeReplaced { false };
+    bool prototypeMayGainMembers { false };
+    bool prototypeChainMayGainMembers { false };
     bool mayBeConstructed { false };
     bool hasComputedMethodName { false };
     bool hasMethodWithSymbolKey { false };
@@ -1236,6 +1238,7 @@ public:
     LineColumn lineColumnFor(ModuleID, uint32_t position) const;
     BitVector extendedGlobals;
     BitVector prototypePropertyNames;
+    bool hasPrototypeThatMayGainMembers { false };
     BitVector methodFieldNames;
     BitVector lazyClosureNames;
     BitVector possibleAccessorNames;
@@ -1384,7 +1387,6 @@ public:
     Vector<uint32_t> shapeCountPrefixSums;
     uint32_t shapeCountInRange(uint32_t first, uint32_t last) const { return first > last ? 0 : shapeCountPrefixSums[last] - shapeCountPrefixSums[first - 1]; }
     BitVector shapeSetBits;
-    ShapeTest shapesWithOtherPrototype;
     struct MultiLayoutShapeTest {
         Vector<LayoutID, 1> objectLayouts;
         ShapeTest test;

@@ -2926,6 +2926,63 @@ static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
     return name == vm.propertyNames->underscoreProto || mayInterceptPuts(object);
 }
 
+bool State::mayInterceptPutOfOwnProperty(VM& vm, const LayoutData& layout, JSObject* extraProperties, JSObject* prototype)
+{
+    CheckedPrototypeChain chain { layout.shape + 1, extraProperties ? extraProperties->structureID() : StructureID(), { } };
+    unsigned length = 0;
+    for (JSObject* object = prototype; object; object = object->getPrototypeDirect().getObject()) {
+        if (length == chain.structures.size())
+            return true;
+        chain.structures[length++] = object->structureID();
+    }
+    auto& checked = m_checkedPrototypeChains[layout.shape % m_checkedPrototypeChains.size()];
+    if (checked == chain) [[likely]]
+        return false;
+    if (extraProperties && extraProperties->structure()->isDictionary())
+        return true;
+    length = 0;
+    for (JSObject* object = prototype; object; object = object->getPrototypeDirect().getObject()) {
+        ClassPrototype::look(object);
+        Structure* structure = object->structure();
+        TypeInfo typeInfo = structure->typeInfo();
+        if (structure->isDictionary() || typeInfo.overridesGetPrototype() || (typeInfo.overridesPut() && structure->classInfoForCells() != PrototypeObject::info()))
+            return true;
+        chain.structures[length++] = structure->id();
+        if (!structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto())
+            continue;
+        if (typeInfo.overridesGetOwnPropertySlot() || object->hasNonReifiedStaticProperties())
+            return true;
+        auto intercepts = [&](UniquedStringImpl* uid) {
+            unsigned attributes;
+            if (!isValidOffset(structure->get(vm, uid, attributes)))
+                return false;
+            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || (attributes & PropertyAttribute::ReadOnly && !structure->inheritorsMayOverride(vm, uid));
+        };
+        for (auto& field : std::span { layout.fields(), layout.numberOfFields }) {
+            if (intercepts(name(vm, field.name).impl()))
+                return true;
+        }
+        bool isIntercepted = false;
+        if (extraProperties) {
+            extraProperties->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+                isIntercepted = intercepts(entry.key());
+                return !isIntercepted;
+            });
+        }
+        if (isIntercepted)
+            return true;
+    }
+    checked = chain;
+    m_hasCheckedPrototypeChains = true;
+    return false;
+}
+
+void State::clearCheckedPrototypeChains()
+{
+    if (std::exchange(m_hasCheckedPrototypeChains, false))
+        m_checkedPrototypeChains = { };
+}
+
 Object* Object::tryCloneWithPrototype(JSGlobalObject* globalObject, JSValue prototype)
 {
     VM& vm = globalObject->vm();
@@ -2935,7 +2992,7 @@ Object* Object::tryCloneWithPrototype(JSGlobalObject* globalObject, JSValue prot
         return nullptr;
     if (at<uint32_t>(offsetOfOrderWord) & ~(orderAndCountMask | orderWordHasExtraProperties) || !state.everyFieldIsOrdinaryProperty(vm, layout))
         return nullptr;
-    if (prototype.isObject() && mayInterceptPuts(asObject(prototype)))
+    if (prototype.isObject() && mayInterceptPuts(asObject(prototype)) && state.mayInterceptPutOfOwnProperty(vm, layout, extraProperties(), asObject(prototype)))
         return nullptr;
     JSFinalObject* copiedExtraProperties = tryCopyExtraPropertiesForClone(vm);
     if (hasExtraProperties() && (!copiedExtraProperties || copiedExtraProperties->structure()->hasUnderscoreProtoPropertyExcludingOriginalProto()))
@@ -3351,7 +3408,9 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
     }
     State& state = object->state();
     const LayoutData& layout = object->layout();
-    if (layout.kind != LayoutKind::Record || !(state.prototypeMatchesLayout(layout, prototype) || layout.mayHaveOtherPrototype)) {
+    bool matchesLayout = state.prototypeMatchesLayout(layout, prototype);
+    bool isForeseen = layout.kind == LayoutKind::Record && (matchesLayout || layout.mayHaveOtherPrototype);
+    if (!isForeseen) {
         if (layout.mayDespecialize) {
             if (JSObject* ordinary = object->convertToOrdinaryObject(vm, prototype); ordinary->mayBePrototype()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype, ordinary);
@@ -3374,10 +3433,19 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype, object);
     Structure* before = object->structure();
     bool isPlain = !object->hasFlagsInOrderWord() && state.isStructureWithoutExtraProperties(before);
+    bool askedChainBefore = object->at<uint32_t>(offsetOfOrderWord) & orderWordHasExtraProperties;
     object->JSCell::setStructure(vm, state.structureWithExtraPropertiesMatching(vm, before, layout.shape, prototype));
     object->updateNeedsSlowLookup(state);
-    if (isPlain && prototype.isObject() && !object->hasFlagsInOrderWord() && !object->anyObjectInChainMayInterceptIndexedAccesses()) {
-        state.instance.prototypeChangeCache[Instance::prototypeChangeCacheIndex(std::bit_cast<uintptr_t>(prototype.asCell()))] = { prototype.asCell(), before->id().bits(), object->structureID().bits() };
+    if (isForeseen && prototype.isObject() && (!matchesLayout || !askedChainBefore) && !state.isPrototypeShape(layout.shape) && !object->anyObjectInChainMayInterceptIndexedAccesses()) {
+        static_assert(Instance::prototypeChangeAsksChainForAbsentFields == StructureID::nukedStructureIDBit);
+        uint32_t after = object->structureID().bits() | (matchesLayout ? 0 : Instance::prototypeChangeAsksChainForAbsentFields);
+        state.instance.prototypeChangeCacheForSeenRecords[Instance::prototypeChangeCacheIndex(std::bit_cast<uintptr_t>(prototype.asCell()))] = { prototype.asCell(), before->id().bits(), after };
+        state.instance.prototypeChangeCacheIsDirty = true;
+    }
+    uint32_t flags = object->orderWord() & ~orderAndCountMask;
+    if (isPlain && prototype.isObject() && !(flags & ~orderWordHasExtraProperties) && (!state.isPrototypeShape(layout.shape) || !object->anyObjectInChainMayInterceptIndexedAccesses())) {
+        static_assert(Instance::prototypeChangeAsksPrototypeChain == StructureID::nukedStructureIDBit);
+        state.instance.prototypeChangeCache[Instance::prototypeChangeCacheIndex(std::bit_cast<uintptr_t>(prototype.asCell()))] = { prototype.asCell(), before->id().bits(), object->structureID().bits() | (flags ? Instance::prototypeChangeAsksPrototypeChain : 0) };
         state.instance.prototypeChangeCacheIsDirty = true;
     }
     if (state.isPrototypeShape(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
@@ -3882,7 +3950,7 @@ bool ClassPrototype::willBeImmutable(JSObject* object)
 {
     State& state = *object->structure()->aotInstance()->typed;
     const LayoutData& ofClass = *state.classWithIndex(static_cast<uint32_t>(uncheckedDowncast<ClassPrototype>(object)->m_classIndex));
-    return ofClass.hasFixedLayout && !ofClass.constructorMayBeReplaced && std::ranges::none_of(ofClass.methods(), [](auto& method) {
+    return ofClass.hasFixedLayout && !ofClass.constructorMayBeReplaced && !ofClass.classData().prototypeMayGainMembers && std::ranges::none_of(ofClass.methods(), [](auto& method) {
         return method.flags & methodMayBeReplaced;
     });
 }
@@ -7053,7 +7121,8 @@ JSObject* State::importMetaForModule(JSGlobalObject* globalObject, JSString* pat
         if (known == text)
             return meta;
     }
-    JSObject* meta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, path, uncheckedDowncast<JSModuleRecord>(moduleRecord), nullptr);
+    JSModuleLoader* ownLoader = instance.loader() ? instance.loader() : globalObject->moduleLoader();
+    JSObject* meta = ownLoader->createImportMetaProperties(globalObject, path, uncheckedDowncast<JSModuleRecord>(moduleRecord), nullptr);
     if (!meta)
         return nullptr;
     didCreate(meta);
@@ -8781,7 +8850,7 @@ void State::createClass(JSGlobalObject* globalObject, Closure* classObject, JSVa
         }
     }
 
-    bool methodsStayReplaceable = ofClass.hasFixedLayout && (ofClass.constructorMayBeReplaced || std::ranges::any_of(ofClass.methods(), [](auto& method) {
+    bool methodsStayReplaceable = ofClass.hasFixedLayout && (ofClass.constructorMayBeReplaced || ofClass.classData().prototypeMayGainMembers || std::ranges::any_of(ofClass.methods(), [](auto& method) {
         return method.flags & methodMayBeReplaced;
     }));
     if (prototypeParent.isObject())
@@ -9013,7 +9082,8 @@ void State::createClass(JSGlobalObject* globalObject, Closure* classObject, JSVa
     lockAll(prototype, ofClass.methods());
     if (!ofClass.constructorMayBeReplaced)
         fix(prototype, vm.propertyNames->constructor, false);
-    JSObject::preventExtensions(prototype, globalObject);
+    if (!ofClass.classData().prototypeMayGainMembers)
+        JSObject::preventExtensions(prototype, globalObject);
     scope.assertNoException();
     prototype->flattenDictionaryObject(vm);
     prototype->structure()->setInheritorsMayOverrideReadOnlyProperties(true);
@@ -9802,6 +9872,8 @@ Structure* State::structureFor(VM& vm, uint32_t shape, JSValue prototype, bool h
     const LayoutData& layout = layoutForShape(shape);
     RELEASE_ASSERT(layout.offsetOfExtraProperties() + sizeOfExtraPropertiesWord <= MarkedSpace::optimalSizeFor(layout.size));
     Structure* created = Object::createStructure(vm, instance, prototype, &layout);
+    if (usual->storedPrototype() != prototype)
+        created->markingStampAndFlags() |= Structure::hasOtherPrototype;
     if (hasExtraProperties) {
         created->markingStampAndFlags() |= Structure::isStructureWithExtraProperties;
         created->setExtraPropertiesStructure(nullptr, static_cast<uint16_t>(layout.offsetOfExtraProperties()), 0);
@@ -9827,6 +9899,8 @@ Structure* State::structureFor(VM& vm, uint32_t shape, JSValue prototype, Struct
     RELEASE_ASSERT(layout.offsetOfExtraProperties() + sizeOfExtraPropertiesWord <= MarkedSpace::optimalSizeFor(layout.size));
     Structure* created = Object::createStructure(vm, instance, prototype, &layout);
     created->markingStampAndFlags() |= Structure::isStructureWithExtraProperties;
+    if (structure(vm, shape)->storedPrototype() != prototype)
+        created->markingStampAndFlags() |= Structure::hasOtherPrototype;
     created->setExtraPropertiesStructure(&ofExtraProperties, static_cast<uint16_t>(layout.offsetOfExtraProperties()), static_cast<uint16_t>(WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(JSFinalObject::allocationSize(ofExtraProperties.inlineCapacity()))));
     m_structuresByExtraProperties.set(key, created);
     m_recentStructuresByExtraProperties[recentStructureIndex(shape, ofExtraProperties)] = created->id();
@@ -10359,7 +10433,7 @@ bool State::everyFieldIsOrdinaryProperty(VM& vm, const LayoutData& layout)
     auto& known = orderTableFor(layout).everyFieldIsOrdinaryProperty;
     if (!known) {
         known = std::ranges::none_of(std::span { layout.fields(), layout.numberOfFields }, [&](const FieldData& field) {
-            return isPrivate(field) || name(vm, field.name) == vm.propertyNames->underscoreProto;
+            return isPrivate(field) || name(vm, field.name) == vm.propertyNames->underscoreProto || parseIndex(name(vm, field.name));
         });
     }
     return *known;
@@ -12183,6 +12257,14 @@ static std::optional<StoreTransition::Cleared> clearedSlot(const TransitionPlan:
     }
 }
 
+void StoreTransition::initializeFastChecks()
+{
+    constexpr uint32_t isNotInCell = Slot::FieldWrite::isFieldWrite | Slot::FieldWrite::isNotField;
+    RELEASE_ASSERT(!extensionSize || (!holders[0] && !clearedSlotCount));
+    sizeIfStorageExists = extensionSize ? UINT32_MAX : size;
+    structureIDIfFieldIsInline = (static_cast<uint32_t>(fieldWrite >> 32) & isNotInCell) == isNotInCell ? 0 : structureID;
+}
+
 const StoreTransition* State::storeTransitionFor(Structure* before, uint64_t wordsBefore, Object* object, UniquedStringImpl* name, uint64_t fieldWrite)
 {
     Structure* after = object->structure();
@@ -12221,6 +12303,7 @@ const StoreTransition* State::storeTransitionFor(Structure* before, uint64_t wor
         }
         made->cleared = made->clearedSlots.span().data();
         made->clearedSlotCount = made->clearedSlots.size();
+        made->initializeFastChecks();
         forSites.append(WTF::move(made));
         return forSites.last().get();
     }
@@ -12262,6 +12345,7 @@ const StoreTransition* State::fieldCreatingStoreTransition(const FieldData& fiel
     }
     if (!hasExtraProperties && m_planStructures.add(structure).isNewEntry)
         didCreate(structure);
+    made->initializeFastChecks();
     known.append(WTF::move(made));
     return known.last().get();
 }
@@ -12284,6 +12368,7 @@ const StoreTransition* State::storageCreatingStoreTransition(const FieldData& fi
         return nullptr;
     auto made = makeUnique<StoreTransition>();
     *made = { words, words, fieldWrite, { }, { }, structure->id().bits(), structure->compiledLayout()->size, 0, nullptr, { }, static_cast<uint32_t>(WTF::roundUpToMultipleOf<minExtensionSize>(field.offset + sizeOf(field.store()))) };
+    made->initializeFastChecks();
     known.append(WTF::move(made));
     return known.last().get();
 }
@@ -13901,9 +13986,9 @@ std::optional<uint32_t> State::orderAfterLateFieldCreation(const Object& object,
 void State::cacheLateFieldCreation(const Object& object, JSObject* extraProperties, uint32_t orderWordBefore, uint64_t slotKeys)
 {
     uint32_t after = object.orderWord() & orderAndCountMask;
-    if (isCounting() || !slotKeys || extraProperties->structure()->isDictionary() || orderOf(orderWordBefore) == keysAreInLayoutOrder || orderOf(after) == keysAreInLayoutOrder)
+    if (isCounting() || !slotKeys || (extraProperties && extraProperties->structure()->isDictionary()) || orderOf(orderWordBefore) == keysAreInLayoutOrder || orderOf(after) == keysAreInLayoutOrder)
         return;
-    uint32_t structureID = extraProperties->structureID().bits();
+    uint32_t structureID = extraProperties ? extraProperties->structureID().bits() : 0;
     uint32_t shapeWord = shapeWordOf(object.shape());
     uint32_t before = orderWordBefore & orderAndCountMask;
     m_hasCachedLateFieldCreations = true;
@@ -14574,9 +14659,9 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool hasObjects = type.allowsAnyObject() || type.allowsAnyFunction() || type.acceptsUntypedObjects() || type.numberOfSupertypes() || type.numberOfJSTypes();
-    bool keepsUnconvertibleObjects = reason == Format::CastReason::AsIfConvertible || reason == Format::CastReason::AsFreshObjectIfConvertible;
+    bool keepsUnconvertibleObjects = reason == Format::CastReason::AsIfConvertible || reason == Format::CastReason::AsFreshObjectIfConvertible || reason == Format::CastReason::FlowIfConvertible;
     if (keepsUnconvertibleObjects)
-        reason = reason == Format::CastReason::AsIfConvertible ? Format::CastReason::As : Format::CastReason::AsFreshObject;
+        reason = reason == Format::CastReason::AsIfConvertible ? Format::CastReason::As : reason == Format::CastReason::FlowIfConvertible ? Format::CastReason::Flow : Format::CastReason::AsFreshObject;
     bool isFreshObject = reason == Format::CastReason::AsFreshObject || reason == Format::CastReason::CoerceFreshObject;
     bool isConvertedEvenIfAccepted = reason == Format::CastReason::AsFreshObject;
     if (reason == Format::CastReason::AsFreshObject)
@@ -15033,6 +15118,7 @@ void State::didBecomePrototype(const LayoutData& layout)
     if (m_prototypeShapes.get(layout.shape))
         return;
     m_prototypeShapes.set(layout.shape);
+    instance.forgetPrototypeChanges();
     for (uint32_t shape : std::span { data.at<uint32_t>(layout.specializationsOffset()), layout.numberOfSpecializations() })
         didBecomePrototype(layoutForShape(shape));
 }
@@ -16679,6 +16765,13 @@ bool typedFunctionIsSynthetic(uint32_t function)
     return (Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::sharedBodyFunctionKind;
 }
 
+bool typedFunctionIsSloppy(uint32_t function)
+{
+    const Typed::Data& data = Typed::dataInImage();
+    std::span boundaries { data.at<uint32_t>(data.sloppyFunctionBoundariesOffset), data.numberOfSloppyFunctionBoundaries };
+    return (std::ranges::upper_bound(boundaries, function) - boundaries.begin()) & 1;
+}
+
 Vector<uint8_t> imageSymbols(std::span<const uint8_t> bytes)
 {
     auto sizeOfImage = aotImageSize(bytes);
@@ -17094,12 +17187,12 @@ bool JSObject::becomeGuarded(VM& vm)
     return true;
 }
 
-void JSObject::lockAsClassPrototype(JSGlobalObject* globalObject, std::span<const Identifier> replaceable, bool constructorMayBeReplaced)
+void JSObject::lockAsClassPrototype(JSGlobalObject* globalObject, std::span<const Identifier> replaceable, bool constructorMayBeReplaced, bool mayGainMembers)
 {
     VM& vm = globalObject->vm();
     didBecomePrototype(vm);
     if (vm.auditsImmutableIntrinsics()) [[unlikely]] {
-        lockProperties(vm, LockedObjectExtensibility::BecomesNonExtensible);
+        lockProperties(vm, mayGainMembers ? LockedObjectExtensibility::StaysExtensible : LockedObjectExtensibility::BecomesNonExtensible);
         auto release = [&](PropertyName name) {
             unsigned attributes = 0;
             if (isValidOffset(structure()->get(vm, name, attributes)) && attributes & PropertyAttribute::WouldBeFixed)
@@ -17111,7 +17204,7 @@ void JSObject::lockAsClassPrototype(JSGlobalObject* globalObject, std::span<cons
             release(vm.propertyNames->constructor);
         return;
     }
-    if (replaceable.empty() && !constructorMayBeReplaced) {
+    if (replaceable.empty() && !constructorMayBeReplaced && !mayGainMembers) {
         lockAndMakePropertiesImmutable(vm);
         return;
     }
@@ -17133,7 +17226,8 @@ void JSObject::lockAsClassPrototype(JSGlobalObject* globalObject, std::span<cons
         JSObject::defineOwnProperty(this, globalObject, name, descriptor, false);
         scope.assertNoException();
     }
-    JSObject::preventExtensions(this, globalObject);
+    if (!mayGainMembers)
+        JSObject::preventExtensions(this, globalObject);
     scope.assertNoException();
     flattenDictionaryObject(vm);
     structure()->setInheritorsMayOverrideReadOnlyProperties(true);
