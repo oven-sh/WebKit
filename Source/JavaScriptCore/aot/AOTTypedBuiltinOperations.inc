@@ -100,7 +100,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMapKeyAt, Nothing, Encoded
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMapValueAt, Nothing, EncodedJSValue, (Instance*, JSCell* map, uint32_t entry));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetNext, Nothing, size_t, (Instance*, JSCell* set, EncodedJSValue table, uint32_t entry));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetKeyAt, Nothing, EncodedJSValue, (Instance*, JSCell* set, uint32_t entry));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedConstantTableHas, Nothing, EncodedJSValue, (Instance*, uint32_t table, EncodedJSValue key));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedConstantTableHas, RuntimeState, EncodedJSValue, (Instance*, uint32_t table, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedConstantTableGet, RuntimeState, EncodedJSValue, (Instance*, uint32_t table, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNumberToStringWithRadix, RuntimeState, JSCell*, (Instance*, double value, int32_t radix));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedInt32ToStringWithRadix, RuntimeState, JSCell*, (Instance*, int32_t value, int32_t radix));

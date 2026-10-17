@@ -278,14 +278,10 @@ std::optional<uint32_t> TableInImage::find(JSString* key) const
         return find(*impl);
     if (key->length() > lengthOfLongestKey)
         return std::nullopt;
-    auto findCopy = [&]<typename CharacterType>() {
-        Vector<CharacterType, 128> characters(key->length());
-        key->resolveToBuffer(characters.mutableSpan());
-        return findWithHash(RapidHash::computeHashAndMaskTop8Bits<CharacterType>(characters.span()), [&](uint32_t entry) {
-            return StringView { textAt(entry) } == StringView { characters.span() };
-        });
-    };
-    return key->is8Bit() ? findCopy.template operator()<Latin1Character>() : findCopy.template operator()<char16_t>();
+    auto resolved = key->tryGetValue();
+    if (resolved->isNull())
+        return std::nullopt;
+    return find(*resolved->impl());
 }
 
 std::optional<uint32_t> CompactTable::find(JSGlobalObject* globalObject, JSValue value) const

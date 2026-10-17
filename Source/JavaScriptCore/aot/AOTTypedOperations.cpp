@@ -3649,6 +3649,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerceProperty, EncodedJSValue, (Insta
 {
     if (instance->typed->staysUnconvertedByPlan(JSValue::decode(encodedValue), instance->typed->type(type)))
         return ExceptionOperationResult<EncodedJSValue> { encodedValue, nullptr };
+    if (JSValue given = JSValue::decode(encodedValue); given.isCell() && !instance->typed->isCounting() && !instance->typed->data.isCompiledForAudit) {
+        JSType kind = given.asCell()->type();
+        if ((kind == ArrayType || kind == DerivedArrayType) && instance->typed->matchesTypedSubtype(instance->typed->type(type), asObject(given)))
+            return ExceptionOperationResult<EncodedJSValue> { encodedValue, nullptr };
+        if (Typed::Object* compiled = instance->typed->compiledObject(given); compiled && !instance->typed->layoutForShape(compiled->shape()).numberOfSpecializations() && instance->typed->matchesTypedSubtype(instance->typed->type(type), compiled))
+            return ExceptionOperationResult<EncodedJSValue> { encodedValue, nullptr };
+        if (kind == FinalObjectType && instance->typed->tryConvertPlainObjectInPlace(*instance->vm, given, instance->typed->type(type), type << 4 | static_cast<uint32_t>(Typed::Format::CastReason::As)))
+            return ExceptionOperationResult<EncodedJSValue> { encodedValue, nullptr };
+    }
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSValue value = JSValue::decode(encodedValue);
@@ -4292,8 +4301,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRecordTypeMismatch, void, (Instance* i
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedEnforceTypeOrConvert, EncodedJSValue, (Instance* instance, EncodedJSValue value, uint32_t type))
 {
-    if (value && instance->typed->staysUnconvertedByPlan(JSValue::decode(value), instance->typed->type(type)))
+    if (value && instance->typed->staysUnconvertedByPlan(JSValue::decode(value), instance->typed->type(type))) {
+        instance->typed->shareUnconvertibleObjectPlanWithStub(asObject(JSValue::decode(value)), instance->typed->type(type), type << 4 | static_cast<uint32_t>(Typed::Format::CastReason::Claim));
         return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
+    }
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSValue given = JSValue::decode(value);
@@ -6111,6 +6122,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedIntToString, JSCell*, (Instan
 {
     VM& vm = *instance->vm;
     int64_t value = static_cast<int64_t>(bits);
+    if (value >= static_cast<int64_t>(NumericStrings::cacheSize) && value <= INT32_MAX) {
+        std::array<Latin1Character, 10> digits;
+        size_t first = digits.size();
+        for (uint32_t rest = static_cast<uint32_t>(value); rest; rest /= 10)
+            digits[--first] = static_cast<Latin1Character>('0' + rest % 10);
+        JSString* string = instance->typed->cachedKeyFor(vm, std::span<const Latin1Character> { digits }.subspan(first));
+        vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
+        return string;
+    }
     if (value == static_cast<int32_t>(value)) {
         JSString* string = int32ToString(vm, static_cast<int32_t>(value), 10);
         string->tryGetValueImpl()->hash();

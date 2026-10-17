@@ -814,8 +814,10 @@ std::optional<uint32_t> Lowering::tableIndexOfName(StringID name)
     return PropertyLookupTable::nameForIdentifierIndex(identifier);
 }
 
-bool Lowering::usesSiteCaches() const
+bool Lowering::usesSiteCaches(StringID name) const
 {
+    if (name && m_program.possibleAccessorNames.get(name.index()))
+        return false;
     return isX86_64() && m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
 }
 
@@ -871,8 +873,10 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
 void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t name, Boxed value)
 {
     m_context.emitsCalls = true;
-    unsigned word = m_context.numberOfSiteCacheWords++;
+    unsigned word = m_context.numberOfSiteCacheWords;
+    m_context.numberOfSiteCacheWords += SiteCaches::wordsOfLocation;
     constexpr GPRReg cached = stubTemporaryGPRs[2];
+    constexpr GPRReg structureAfterStore = stubTemporaryGPRs[4];
     PatchpointValue* patchpoint = m_out.patchpoint(Void);
     applyEffects(patchpoint, OperationEffects { });
     patchpoint->append(ConstrainedValue(base.value(), ValueRep::reg(firstStubOperandGPR)));
@@ -885,33 +889,28 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
     patchpoint->clobberLate(clobbered);
     CallSite site;
     site.bits = nextSite();
-    patchpoint->setGenerator([context = &m_context, isSloppy, name, word, site, valueIsNotCell = m_namedStoreValueIsNotCell](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([context = &m_context, isSloppy, name, word, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         CCallHelpers::JumpList misses;
         CCallHelpers::Label start = jit.label();
         misses.append(jit.branchIfNotCell(firstStubOperandGPR));
         context->indexReferences.loadSiteCacheWord(jit, cached, word);
         misses.append(jit.branch32(CCallHelpers::NotEqual, cached, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset())));
+        context->indexReferences.loadSiteCacheWord(jit, structureAfterStore, word + 1);
         jit.urshift64(CCallHelpers::TrustedImm32(SiteCaches::offsetShift), cached);
         jit.store64(GPRInfo::argumentGPR1, CCallHelpers::BaseIndex(firstStubOperandGPR, cached, CCallHelpers::TimesOne));
-        CCallHelpers::Jump storesCell;
-        if (!valueIsNotCell)
-            storesCell = jit.branchIfCell(GPRInfo::argumentGPR1);
+        jit.store32(structureAfterStore, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset()));
+        jit.load8(CCallHelpers::Address(firstStubOperandGPR, JSCell::cellStateOffset()), cached);
+        CCallHelpers::Jump needsBarrier = jit.branch32(CCallHelpers::BelowOrEqual, cached, CCallHelpers::Address(instanceGPR, Instance::offsetOfBarrierThreshold()));
         CCallHelpers::Label done = jit.label();
         context->rangesKeptInline.append({ start, done });
         bool preservesTwo = stubVariantPreserving(Stub::PutByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::PutByName;
         Stub stub = static_cast<Stub>(static_cast<unsigned>(isSloppy ? Stub::PutByNameSloppyAndFillSiteCache : Stub::PutByNameAndFillSiteCache) + preservesTwo);
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            if (!valueIsNotCell) {
-                storesCell.link(&jit);
-                CCallHelpers::Label barrierStart = jit.label();
-                jit.load8(CCallHelpers::Address(firstStubOperandGPR, JSCell::cellStateOffset()), cached);
-                jit.branch32(CCallHelpers::Above, cached, CCallHelpers::Address(instanceGPR, Instance::offsetOfBarrierThreshold())).linkTo(done, &jit);
-                context->rangesKeptInline.append({ barrierStart, jit.label() });
-                context->stubCalls.call(jit, Stub::WriteBarrier, CallSite { });
-                jit.jump().linkTo(done, &jit);
-            }
+            needsBarrier.link(&jit);
+            context->stubCalls.call(jit, Stub::WriteBarrier, CallSite { });
+            jit.jump().linkTo(done, &jit);
             misses.link(&jit);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
             context->indexReferences.getAddressOfSiteCacheWord(jit, stubTemporaryGPRs[3], word);
@@ -925,7 +924,7 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
 Boxed Lowering::emitStandaloneCachedGetById(Boxed base, StringID name, bool isInRun)
 {
     if (auto number = isInRun ? std::nullopt : tableIndexOfName(name)) {
-        if (usesSiteCaches())
+        if (usesSiteCaches(name))
             return getByNameThroughSiteCache(base, *number);
         return Boxed(callICStub(Stub::GetByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
     }
@@ -1130,7 +1129,7 @@ void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed valu
     auto* valueBoxing = value.value()->as<PatchpointValue>();
     bool storesNumberJustBoxed = valueBoxing && valueBoxing->generator() == m_context.numberBoxingGenerator.get();
     if (auto number = siteFlags || onlyThroughStub || storesNumberJustBoxed ? std::nullopt : tableIndexOfName(name)) {
-        if (usesSiteCaches())
+        if (usesSiteCaches(name))
             putByNameThroughSiteCache(isSloppy, base, *number, value);
         else
             emitPutByNameThroughTable(isSloppy ? Stub::PutByNameSloppy : Stub::PutByName, base, *number, value);

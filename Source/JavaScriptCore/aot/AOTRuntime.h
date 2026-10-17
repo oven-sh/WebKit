@@ -1481,21 +1481,18 @@ struct Instance {
         void* nativeSetter;
     };
     static_assert(sizeof(InheritedSetter) == 32);
-    static constexpr unsigned numberOfInheritedSetters = 128;
-    static_assert(hasOneBitSet(numberOfInheritedSetters));
-    InheritedSetter inheritedSetters[numberOfInheritedSetters];
-    InheritedSetter& inheritedSetterFor(uint32_t structureID, UniquedStringImpl* uid)
-    {
-        unsigned index = ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfInheritedSetters;
-        InheritedSetter& first = inheritedSetters[index];
-        InheritedSetter& second = inheritedSetters[index ^ 1];
-        if (second.structureID == structureID && second.uid == uid)
-            return second;
-        if (first.structureID && (first.structureID != structureID || first.uid != uid) && !second.structureID)
-            return second;
-        return first;
-    }
+    static constexpr unsigned initialNumberOfInheritedSetters = 128;
+    static constexpr unsigned maxNumberOfInheritedSetters = 4096;
+    static_assert(hasOneBitSet(initialNumberOfInheritedSetters) && hasOneBitSet(maxNumberOfInheritedSetters));
+    InheritedSetter initialInheritedSetters[initialNumberOfInheritedSetters];
+    InheritedSetter* inheritedSetters;
+    uint32_t inheritedSettersMask;
+    uint32_t numberOfInheritedSettersDisplaced;
+    bool hasInheritedSetters;
+    InheritedSetter& inheritedSetterFor(uint32_t structureID, UniquedStringImpl*);
+    void clearInheritedSetters();
     static constexpr ptrdiff_t offsetOfInheritedSetters() { return OBJECT_OFFSETOF(Instance, inheritedSetters); }
+    static constexpr ptrdiff_t offsetOfInheritedSettersMask() { return OBJECT_OFFSETOF(Instance, inheritedSettersMask); }
     uint32_t hasCachedNativeSetter;
     static constexpr ptrdiff_t offsetOfHasCachedNativeSetter() { return OBJECT_OFFSETOF(Instance, hasCachedNativeSetter); }
     struct CaseConversion {
@@ -2234,11 +2231,12 @@ private:
     static bool hasOwnOffsetInWord(uint32_t entry) { return isInlineEntry(entry) || (entry & hasKindAndCode && (kindOf(entry) == Kind::OutOfLine || kindOf(entry) == Kind::OutOfLineAndWritten)); }
     static Kind kindOf(const Cell& cell) { return static_cast<Kind>(cell.kindOrStoreOffset & ((1u << bitsOfKind) - 1)); }
     static bool isOwnOutOfLine(Kind kind) { return kind == Kind::OutOfLine || kind == Kind::OutOfLineAndWritten; }
+    static bool storeAddsInline(Kind kind) { return storeAdds(kind) && addedStorage(kind) == AddedStorage::Inline; }
     static bool mayBeInSiteCaches(const Cell& cell)
     {
         if (isInlineEntry(cell))
             return true;
-        return cell.name & hasKindAndCode && (impliesAbsent(kindOf(cell)) || isOwnOutOfLine(kindOf(cell)) || kindOf(cell) == Kind::InheritedInline || kindOf(cell) == Kind::InheritedOutOfLine);
+        return cell.name & hasKindAndCode && (impliesAbsent(kindOf(cell)) || storeAddsInline(kindOf(cell)) || isOwnOutOfLine(kindOf(cell)) || kindOf(cell) == Kind::InheritedInline || kindOf(cell) == Kind::InheritedOutOfLine);
     }
     static bool readsLike(const Cell& cell, uint32_t entry)
     {
@@ -2246,6 +2244,8 @@ private:
             return isInlineEntry(entry) && codeOf(entry) == cell.readOffsetOrPayload;
         if (!(entry & hasKindAndCode))
             return false;
+        if (storeAddsInline(kindOf(cell)))
+            return kindOf(entry) == kindOf(cell) && codeOf(entry) == cell.code;
         if (impliesAbsent(kindOf(cell)))
             return impliesAbsent(kindOf(entry));
         if (isOwnOutOfLine(kindOf(cell)))

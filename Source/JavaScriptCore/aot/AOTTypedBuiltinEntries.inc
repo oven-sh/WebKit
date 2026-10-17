@@ -953,7 +953,7 @@ constexpr Builtin builtinEntries[numberOfBuiltins] = {
     { BuiltinKind::Operation, ""_s, "MapValueAt"_s, Name(), Name(185), { 6, 2 }, { 0, 0, 0, 0, 0 }, Effect::ReadsRuntimeState, 0, inlined(InlineBuiltin::MapValueAt, BuiltinCallee::None) },
     { BuiltinKind::Operation, ""_s, "SetNext"_s, Name(), Name(250), { 96, 3 }, { Result::Integer, 0, 0, -1, INT32_MAX }, Effect::ReadsRuntimeState, 0, inlined(InlineBuiltin::SetNext, BuiltinCallee::None) },
     { BuiltinKind::Operation, ""_s, "SetKeyAt"_s, Name(), Name(249), { 6, 2 }, { 0, 0, 0, 0, 0 }, Effect::ReadsRuntimeState, 0, inlined(InlineBuiltin::SetKeyAt, BuiltinCallee::None) },
-    { BuiltinKind::Operation, ""_s, "ConstantTableHas"_s, Name(), Name(47), { 3, 1 }, { Result::Boolean, 0, 0, 0, 0 }, Effect::Pure, 0, inlined(InlineBuiltin::ConstantTableHas, BuiltinCallee::None) },
+    { BuiltinKind::Operation, ""_s, "ConstantTableHas"_s, Name(), Name(47), { 3, 1 }, { Result::Boolean, 0, 0, 0, 0 }, Effect::ReadsRuntimeState, 0, inlined(InlineBuiltin::ConstantTableHas, BuiltinCallee::None) },
     { BuiltinKind::Operation, ""_s, "ConstantTableGet"_s, Name(), Name(46), { 3, 1 }, { 0, 0, 0, 0, 0 }, Effect::ReadsRuntimeState, 0, inlined(InlineBuiltin::ConstantTableGet, BuiltinCallee::None) },
     { BuiltinKind::Constructor, ""_s, "Map"_s, Name(), Name(182), { 42, 0 }, { Result::Instance, 6, 0, 0, 0 }, Effect::Allocates, 0, inlined(InlineBuiltin::MapNew, BuiltinCallee::InternalFunction) },
     { BuiltinKind::Constructor, ""_s, "Map"_s, Name(), Name(182), { 315, 1 }, { Result::Instance, 6, 0, 0, 0 }, Effect::MayThrow | Effect::Allocates | Effect::ReadsArguments, 0, calls(BuiltinCallee::InternalFunction) },

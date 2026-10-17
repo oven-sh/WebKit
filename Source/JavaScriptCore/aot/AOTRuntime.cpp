@@ -887,6 +887,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
 #endif
     instance->barrierThreshold = vm.heap.barrierThreshold();
     instance->mutatorShouldBeFenced = vm.heap.mutatorShouldBeFenced();
+    instance->inheritedSetters = instance->initialInheritedSetters;
+    instance->inheritedSettersMask = initialNumberOfInheritedSetters - 1;
     if (Instance* first = globalObject->aotInstance()) {
         instance->compactTableStructureID = first->compactTableStructureID;
         memcpySpan(std::span { instance->hostClassStructureIDs }, std::span { first->hostClassStructureIDs });
@@ -1202,6 +1204,8 @@ void Instance::destroy(Instance* instance)
     if (!instance->vm->m_aotInstances.containsIf(holdsSameCustomGetters) && !instance->vm->m_aotInstancesToDestroy.containsIf(holdsSameCustomGetters))
         destroyCustomGetters(instance->customGetters);
     fastFree(instance->propertyRuns);
+    if (instance->inheritedSetters != instance->initialInheritedSetters)
+        fastFree(instance->inheritedSetters);
     destroyJSONBuffers(*instance);
     destroyJSONSource(*instance);
     destroyStringAppender(*instance);
@@ -3405,6 +3409,39 @@ JSString* Instance::proxyTrapKey(VM& vm, UniquedStringImpl* name)
     return made;
 }
 
+Instance::InheritedSetter& Instance::inheritedSetterFor(uint32_t structureID, UniquedStringImpl* uid)
+{
+    hasInheritedSetters = true;
+    while (true) {
+        unsigned index = ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) & inheritedSettersMask;
+        InheritedSetter& first = inheritedSetters[index];
+        InheritedSetter& second = inheritedSetters[index ^ 1];
+        if (second.structureID == structureID && second.uid == uid)
+            return second;
+        if (!first.structureID || (first.structureID == structureID && first.uid == uid))
+            return first;
+        if (!second.structureID)
+            return second;
+        unsigned number = inheritedSettersMask + 1;
+        if (++numberOfInheritedSettersDisplaced <= number / 8 || number >= maxNumberOfInheritedSetters)
+            return first;
+        auto* larger = static_cast<InheritedSetter*>(fastZeroedMalloc(2 * number * sizeof(InheritedSetter)));
+        if (inheritedSetters != initialInheritedSetters)
+            fastFree(inheritedSetters);
+        inheritedSetters = larger;
+        inheritedSettersMask = 2 * number - 1;
+        numberOfInheritedSettersDisplaced = 0;
+    }
+}
+
+void Instance::clearInheritedSetters()
+{
+    if (!std::exchange(hasInheritedSetters, false))
+        return;
+    zeroSpan(std::span { inheritedSetters, static_cast<size_t>(inheritedSettersMask) + 1 });
+    numberOfInheritedSettersDisplaced = 0;
+}
+
 Instance::CustomGetter* Instance::createCustomGetters(unsigned capacity)
 {
     ASSERT(hasOneBitSet(capacity));
@@ -3501,7 +3538,7 @@ void Instance::clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollect
             record.lastSerial = lastSerial;
         }
     }
-    zeroSpan(std::span { inheritedSetters });
+    clearInheritedSetters();
     if (std::exchange(immutableElementCacheIsDirty, false))
         zeroSpan(std::span { immutableElementCache, immutableElementCacheSize });
     if (isAtEndOfCollection) {

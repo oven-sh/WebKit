@@ -12969,7 +12969,7 @@ bool State::specializeToStore(JSGlobalObject* globalObject, Object* object, Prop
         for (uint32_t shape : reached.span().subspan(1)) {
             const LayoutData& to = layoutForShape(shape);
             const FieldData* created = field(vm, to, name.uid());
-            if (to.isAbstract || !created || created->flags & fieldIsImmutable)
+            if (to.isAbstract || !created || created->flags & fieldIsImmutable || to.kind != LayoutKind::Record || to.hasExtension != from.hasExtension)
                 continue;
             bool mayLackAddedFields = true;
             for (uint32_t i = 0; i < to.numberOfFields && mayLackAddedFields; ++i)
@@ -13005,15 +13005,21 @@ bool State::specializeToStore(JSGlobalObject* globalObject, Object* object, Prop
         }
         return storeByPlans(*m_storeSpecializations.add(planKey, WTF::move(known)).iterator->value);
     }
+    if (shapes.isEmpty() || hasPrototypeMembers(from))
+        return false;
+    JSObject* extra = object->extraProperties();
     for (uint32_t shape : shapes) {
         const LayoutData& to = layoutForShape(shape);
+        if (discriminant && to.discriminant() != LayoutData::noBase && !isAllowedLiteral(to.fields()[to.discriminant()], discriminant))
+            continue;
+        bool lacksRequiredField = requiredFieldsAdded(from, to).containsIf([&](uint16_t index) {
+            UniquedStringImpl* required = this->name(vm, to.fields()[index].name).impl();
+            return required != name.uid() && (!extra || !extra->getDirect(vm, required));
+        });
+        if (lacksRequiredField)
+            continue;
         const FieldData& created = *field(vm, to, name.uid());
         if (!fits(ownTypeOf(created), value))
-            continue;
-        bool requiresMore = requiredFieldsAdded(from, to).containsIf([&](uint16_t index) {
-            return this->name(vm, to.fields()[index].name).impl() != name.uid();
-        });
-        if (requiresMore && !object->extraProperties())
             continue;
         if (!hasListedFields(object, listedFieldsFor(vm, from, to)))
             continue;

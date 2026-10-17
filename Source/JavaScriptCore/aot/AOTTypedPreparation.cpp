@@ -11264,7 +11264,7 @@ static void skipConversionsToLayoutsWithoutFieldAccess(Program& program)
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", staysUntyped.bitCount(), " of ", layoutCount, " layouts accept untyped objects and have no field access: ", castCount.load(), " casts of fresh objects do not convert to them");
 }
 
-static void allocateLiteralsWithComputedKeysAsRecords(Program& program)
+static void allocateUnsharedLiteralsAsRecords(Program& program)
 {
     const Program& constProgram = program;
     std::atomic<unsigned> literalCount { 0 };
@@ -11329,7 +11329,7 @@ static void allocateLiteralsWithComputedKeysAsRecords(Program& program)
                         isRegular &= child != object;
                     });
                 }
-                if (!isRegular || !literal.cast || !computedKeys || useCountOf(object) != literal.definitions.size() + computedKeys + 1)
+                if (!isRegular || !literal.cast || useCountOf(object) != literal.definitions.size() + computedKeys + 1)
                     continue;
                 literal.layout = constProgram.typeOf(function, literal.cast).singleLayout();
                 if (!literal.layout)
@@ -11378,12 +11378,13 @@ static void allocateLiteralsWithComputedKeysAsRecords(Program& program)
             birth.opcode = Opcode::NewObjectWithShape;
             birth.immediates = { literal.layout.index(), static_cast<uint32_t>(changed.allocations.size()) };
             birth.type = constProgram.at(literal.layout).type;
+            birth.rep = repOf(constProgram.at(birth.type));
             birth.setPrediction({ });
             changed.allocations.append(WTF::move(allocation));
         }
         literalCount.fetch_add(literals.size(), std::memory_order_relaxed);
     });
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", literalCount.load(), " object literals with computed keys are born as the record type expected of them");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", literalCount.load(), " object literals that only a cast holds are born as the record type expected of them");
 }
 
 static void predictClonesByCastsInOtherBlocks(Program& program)
@@ -13622,8 +13623,8 @@ Vector<String> optimize(Program& program)
         skipConversionsToLayoutsWithoutFieldAccess(program);
     didFinish("- skipConversionsToLayoutsWithoutFieldAccess"_s);
     if (!Options::auditAOTTypedAssertions())
-        allocateLiteralsWithComputedKeysAsRecords(program);
-    didFinish("- allocateLiteralsWithComputedKeysAsRecords"_s);
+        allocateUnsharedLiteralsAsRecords(program);
+    didFinish("- allocateUnsharedLiteralsAsRecords"_s);
     if (!Options::auditAOTTypedAssertions())
         predictClonesByCastsInOtherBlocks(program);
     didFinish("- predictClonesByCastsInOtherBlocks"_s);

@@ -11332,6 +11332,7 @@ static void generateConvertByPlan(CCallHelpers& jit)
 #if CPU(ARM64)
     jit.load64(Address(sp, offsetOfReturnAddress), CCallHelpers::linkRegister);
 #endif
+    jit.move(GPRInfo::returnValueGPR, kind);
     jit.load64(Address(sp, offsetOfCounter), counter);
     jit.load64(Address(sp, offsetOfPlan), plan);
     jit.load64(Address(sp, offsetOfCursor), cursor);
@@ -11339,7 +11340,7 @@ static void generateConvertByPlan(CCallHelpers& jit)
     jit.load64(Address(sp, offsetOfSource), object);
     jit.load16(Address(cursor, OBJECT_OFFSETOF(Move, from)), scratch);
     jit.load64(CCallHelpers::BaseIndex(object, scratch, CCallHelpers::TimesOne), value);
-    fails.append(jit.branchPtr(CCallHelpers::NotEqual, value, GPRInfo::returnValueGPR));
+    fails.append(jit.branchPtr(CCallHelpers::NotEqual, value, kind));
     jit.load32(Address(value, Typed::offsetOfShapeWord), kind);
     jit.add32(Address(cursor, OBJECT_OFFSETOF(Move, lastShape)), kind);
     fails.append(jit.branch32(CCallHelpers::AboveOrEqual, kind, Address(cursor, OBJECT_OFFSETOF(Move, shapeCount))));
@@ -11564,18 +11565,28 @@ static void generateFrontEndTypedCoerce(CCallHelpers& jit)
     jit.farJump(T9, OperationPtrTag);
 }
 
-static bool returnFromCastIfConversionIsPlanned(CCallHelpers& jit, Stub stub)
+static bool returnFromCastIfConversionIsPlanned(CCallHelpers& jit, Stub stub, bool isGivenTypeAlone = false)
 {
+    auto addReason = [&] {
+        if (!isGivenTypeAlone)
+            return;
+        jit.lshift32(TrustedImm32(4), A2);
+        jit.or32(TrustedImm32(static_cast<int32_t>(Typed::Format::CastReason::Claim)), A2);
+    };
     bool isLeaf = stub == Stub::LeafColdOperationValue || stub == Stub::LeafColdOperationValueWithoutFPRs;
     if ((!isLeaf && stub != Stub::ColdOperationValue && stub != Stub::ColdOperationValueWithoutFPRs) || (isLeaf && !isARM64()))
         return false;
     static_assert(operationArgumentGPR(1) == A1 && operationArgumentGPR(2) == A2);
+    CCallHelpers::JumpList isNotAsked;
+    if (isGivenTypeAlone)
+        isNotAsked.append(jit.branchTest64(CCallHelpers::Zero, A1));
 #if CPU(ARM64)
     jit.pushPair(GPRInfo::callFrameRegister, CCallHelpers::linkRegister);
     jit.pushPair(A2, A3);
     jit.pushPair(A4, T9);
     jit.pushPair(T10, T11);
     jit.pushPair(T12, T13);
+    addReason();
     s_callsBetweenStubs->append({ jit.nearCall(), Stub::ConvertByPlan });
     jit.popPair(T12, T13);
     jit.popPair(T10, T11);
@@ -11586,6 +11597,7 @@ static bool returnFromCastIfConversionIsPlanned(CCallHelpers& jit, Stub stub)
     constexpr GPRReg saved[] = { A0, A2, A3, A4, T9, T11 };
     for (GPRReg reg : saved)
         jit.push(reg);
+    addReason();
     s_callsBetweenStubs->append({ jit.nearCall(), Stub::ConvertByPlan });
     for (unsigned i = std::size(saved); i--;)
         jit.pop(saved[i]);
@@ -11593,6 +11605,7 @@ static bool returnFromCastIfConversionIsPlanned(CCallHelpers& jit, Stub stub)
     Jump isNotConverted = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     returnToTypedCaller(jit, isLeaf);
     isNotConverted.link(&jit);
+    isNotAsked.link(&jit);
     return true;
 }
 
@@ -11925,7 +11938,7 @@ static void callNativeSetterIfCached(CCallHelpers& jit, GPRReg name)
     constexpr GPRReg known = T13;
     static_assert(noOverlap(R0, A1, A2, uid, T11, known) && noOverlap(R0, A1, A2, uid, T11, place) && noOverlap(A0, A1, A2, A3, uid, T11, known) && sizeof(Known) == 32);
     RELEASE_ASSERT(noOverlap(name, R0, A1, uid, T11, place, known));
-    auto inRecord = [&](ptrdiff_t offset) { return Address(known, static_cast<int32_t>(Instance::offsetOfInheritedSetters() + offset)); };
+    auto inRecord = [&](ptrdiff_t offset) { return Address(known, static_cast<int32_t>(offset)); };
     CCallHelpers::JumpList isNotCached;
     isNotCached.append(jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, Instance::offsetOfHasCachedNativeSetter())));
     isNotCached.append(jit.branchIfNotCell(R0));
@@ -11943,14 +11956,16 @@ static void callNativeSetterIfCached(CCallHelpers& jit, GPRReg name)
     jit.urshift32(T11, TrustedImm32(4), place);
     jit.urshift64(uid, TrustedImm32(4), known);
     jit.xor32(known, place);
-    jit.and32(TrustedImm32(Instance::numberOfInheritedSetters - 1), place);
+    jit.and32(Address(instanceGPR, Instance::offsetOfInheritedSettersMask()), place);
     jit.lshift32(TrustedImm32(5), place);
-    jit.add64(instanceGPR, place, known);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfInheritedSetters()), known);
+    jit.addPtr(place, known);
     Jump structureDiffers = jit.branch32(CCallHelpers::NotEqual, T11, inRecord(OBJECT_OFFSETOF(Known, structureID)));
     Jump matchesFirst = jit.branchPtr(CCallHelpers::Equal, uid, inRecord(OBJECT_OFFSETOF(Known, uid)));
     structureDiffers.link(&jit);
     jit.xor32(TrustedImm32(sizeof(Known)), place);
-    jit.add64(instanceGPR, place, known);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfInheritedSetters()), known);
+    jit.addPtr(place, known);
     isNotCached.append(jit.branch32(CCallHelpers::NotEqual, T11, inRecord(OBJECT_OFFSETOF(Known, structureID))));
     isNotCached.append(jit.branchPtr(CCallHelpers::NotEqual, uid, inRecord(OBJECT_OFFSETOF(Known, uid))));
     matchesFirst.link(&jit);
@@ -12730,23 +12745,45 @@ static void generateDefineByNameWithDirectColumnPreservingTwo(CCallHelpers& jit)
 static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCache)
 {
 #if CPU(X86_64)
+    using Kind = PropertyLookupTable::Kind;
     constexpr GPRReg name = T9;
     constexpr GPRReg row = T13;
     constexpr GPRReg cache = T12;
     static_assert(noOverlap(R0, A1, name, row, cache, T10, T11));
+    auto inRow = [&](int32_t offset) { return CCallHelpers::BaseIndex(row, name, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
+    Address structureAfterStoreInCache { cache, sizeof(uint64_t) };
     CCallHelpers::Label general = stubLabels()[static_cast<unsigned>(withoutCache)];
     jit.branchIfNotCell(R0).linkTo(general, &jit);
     keepFilledSiteCacheMostly(jit, Address(cache), general);
     loadRowByName(jit, R0, row, T11);
     jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
-    Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE)).linkTo(general, &jit);
-    jit.load8(CCallHelpers::BaseIndex(row, name, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfStoreOffsetInEntry), T10);
+    Jump notInlineEntry = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
+    jit.load8(inRow(PropertyLookupTable::offsetOfStoreOffsetInEntry), T10);
     jit.branchTest32(CCallHelpers::Zero, T10).linkTo(general, &jit);
     jit.lshift32(TrustedImm32(3), T10);
+    jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
+    jit.store64(T11, structureAfterStoreInCache);
     fillSiteCache(jit, R0, T10, T11, cache);
     jit.store64(A1, CCallHelpers::BaseIndex(R0, T10, CCallHelpers::TimesOne));
     jit.branchIfCell(A1).linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
     jit.ret();
+
+    notInlineEntry.link(&jit);
+    jit.add32(TrustedImm32(PropertyLookupTable::hasKindAndCode), name, T11);
+    jit.m_assembler.cmpw_rm(T11, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
+    Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE)).linkTo(general, &jit);
+    jit.load8(inRow(PropertyLookupTable::offsetOfKindInEntry), T11);
+    Jump addsWhereAbsent = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Kind::AbsentAndStoreAddsInline)));
+    jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(static_cast<int32_t>(Kind::StoreAddsInline))).linkTo(general, &jit);
+    addsWhereAbsent.link(&jit);
+    jit.load8(inRow(PropertyLookupTable::offsetOfCodeInEntry), T10);
+    jit.load32(inRow(PropertyLookupTable::offsetOfPayloads), row);
+    jit.lshift32(TrustedImm32(3), T10);
+    jit.store64(row, structureAfterStoreInCache);
+    fillSiteCache(jit, R0, T10, T11, cache);
+    jit.store64(A1, CCallHelpers::BaseIndex(R0, T10, CCallHelpers::TimesOne));
+    jit.store32(row, Address(R0, JSCell::structureIDOffset()));
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
 #else
     UNUSED_PARAM(withoutCache);
     jit.breakpoint();
@@ -12965,7 +13002,7 @@ static void generatePutById(CCallHelpers& jit)
         notFound.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1u << Site::identifierBits)));
 
         using InheritedSetter = Instance::InheritedSetter;
-        auto inEntry = [&](ptrdiff_t offset) { return Address(T12, Instance::offsetOfInheritedSetters() + offset); };
+        auto inEntry = [&](ptrdiff_t offset) { return Address(T12, offset); };
         jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
         static_assert(sizeof(InheritedSetter) == 32);
         auto locateEntry = [&](bool isNeighbor) {
@@ -12974,9 +13011,9 @@ static void generatePutById(CCallHelpers& jit)
             jit.xor32(T13, T12);
             if (isNeighbor)
                 jit.xor32(TrustedImm32(1), T12);
-            jit.and32(TrustedImm32(Instance::numberOfInheritedSetters - 1), T12);
+            jit.and32(Address(instanceGPR, Instance::offsetOfInheritedSettersMask()), T12);
             jit.lshiftPtr(TrustedImm32(5), T12);
-            jit.addPtr(instanceGPR, T12);
+            jit.addPtr(Address(instanceGPR, Instance::offsetOfInheritedSetters()), T12);
         };
         locateEntry(false);
         CCallHelpers::JumpList notInPrimaryEntry;
@@ -23137,7 +23174,8 @@ static void generateArrayElementAs(CCallHelpers& jit, bool isLeaf)
     Jump isNotCell = jit.branchIfNotCell(result);
     fallback.append(jit.branch8(CCallHelpers::NotEqual, Address(result, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
 #if CPU(ARM64)
-    constexpr std::pair<GPRReg, GPRReg> saved[] = { { GPRInfo::callFrameRegister, CCallHelpers::linkRegister }, { A0, A1 }, { A2, A3 }, { A4, T9 }, { T10, T11 }, { T12, T13 } };
+    static_assert(A0 == result);
+    constexpr std::pair<GPRReg, GPRReg> saved[] = { { GPRInfo::callFrameRegister, CCallHelpers::linkRegister }, { A1, A2 }, { A3, A4 }, { T9, T10 }, { T11, T12 }, { T13, CCallHelpers::dataTempRegister } };
     for (auto [first, second] : saved)
         jit.pushPair(first, second);
 #else
@@ -25179,6 +25217,8 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
                         continue;
                     if (entry == static_cast<unsigned>(Entry::operationAOTTypedCoerceInPlace))
                         returnFromCastIfTransitionIsCached(jit, stub);
+                    if (entry == static_cast<unsigned>(Entry::operationAOTTypedEnforceTypeOrConvert))
+                        returnFromCastIfConversionIsPlanned(jit, stub, true);
                     unsigned calledEntry = entry == static_cast<unsigned>(Entry::operationAOTTypedCoerce) && returnFromCastIfConversionIsPlanned(jit, stub) ? static_cast<unsigned>(Entry::RawTypedCoerce) : entry;
                     jit.move(CCallHelpers::TrustedImm32(calledEntry * sizeof(void*)), isColdOperationWithThunk(stub) ? numberOfColdOperationGPR() : T9);
                     jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);

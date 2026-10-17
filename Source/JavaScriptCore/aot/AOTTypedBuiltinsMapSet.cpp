@@ -507,10 +507,9 @@ std::optional<Writes> writesOfInlineMapSet(InlineBuiltin which, std::span<const 
     case InlineBuiltin::MapGet:
     case InlineBuiltin::MapHas:
     case InlineBuiltin::SetHas:
+    case InlineBuiltin::ConstantTableHas:
     case InlineBuiltin::ConstantTableGet:
         return arguments[0].primitives & Primitive::String ? Writes::RuntimeState : Writes::Nothing;
-    case InlineBuiltin::ConstantTableHas:
-        return Writes::Nothing;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
