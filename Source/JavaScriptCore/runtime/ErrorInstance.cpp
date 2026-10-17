@@ -497,7 +497,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        if (hasFrames || !m_sourceURL.isEmpty()) {
+        if (hasFrames || m_lineColumn.line) {
             putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
             putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
             if (!m_sourceURL.isEmpty())
