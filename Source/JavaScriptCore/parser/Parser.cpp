@@ -2020,6 +2020,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseTryStatement(
         // of https://tc39.es/ecma262/#sec-ecmascript-function-objects-construct-argumentslist-newtarget
         // being caught by the `catch` block.
         finallyBlock = context.createEmptyStatement(location);
+        context.setEndOffset(finallyBlock, m_lastTokenLocation.endOffset - 1);
     }
 
     return context.createTryStatement(location, tryBlock, catchPattern, catchBlock, finallyBlock, WTF::move(catchEnvironment));
@@ -3301,6 +3302,7 @@ parseMethod:
                 initializer = parseAssignmentExpression(context);
                 classScope->setExpectedSuperBinding(SuperBinding::NotNeeded);
                 failIfFalse(initializer, "Cannot parse initializer for class field");
+                context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
                 classScope->markLastUsedVariablesSetAsCaptured(usedVariablesSize);
             }
             failIfFalse(autoSemiColon(), "Expected a ';' following a class field");
@@ -3439,6 +3441,10 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 // is skipped (meaning start offset points to `1`) by parsePrimaryExpression().
                 initializer = parseExpression(context);
                 failIfFalse(initializer, "Cannot parse expression statement");
+                // parseClass() ended the initializer after the close parens that match the skipped open parens.
+                while (match(CLOSEPAREN))
+                    next();
+                context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
             }
 
             DefineFieldNode::Type type = DefineFieldNode::Type::Name;
@@ -3535,6 +3541,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExpressionOrL
     for (size_t i = 0; i < labels.size(); i++) {
         const LabelInfo& info = labels[labels.size() - i - 1];
         statement = context.createLabelStatement(location, info.m_ident, statement, info.m_start, info.m_end);
+        context.setEndOffset(statement, m_lastTokenLocation.endOffset);
     }
     return statement;
 }

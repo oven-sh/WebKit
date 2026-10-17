@@ -418,8 +418,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
-        vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset());
+    if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()) {
+        auto* function = dynamicDowncast<FunctionExecutable>(ownerExecutable);
+        if (!function || function->unlinkedExecutable()->hasFunctionRangeInParentSource())
+            vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset(), m_unlinkedCode->parseMode());
+    }
 
     ScriptExecutable* topLevelExecutable = ownerExecutable->topLevelExecutable();
     // We wait to initialize template objects until the end of finishCreation beecause it can
@@ -451,15 +454,15 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     for (size_t count = linkFunctionsEagerly ? m_functionDecls.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
-            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
+            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), unlinkedExecutable->parseMode());
         FunctionExecutable* executable = moduleProgramExecutable ? moduleProgramExecutable->functionDeclaration(vm, i) : unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
         m_functionDecls[i].set(vm, this, executable);
     }
 
     for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache)
-            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
+        if (shouldUpdateFunctionHasExecutedCache && unlinkedExecutable->hasFunctionRangeInParentSource())
+            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), unlinkedExecutable->parseMode());
         m_functionExprs[i].set(vm, this, linkFunctionExpr(i, unlinkedExecutable));
     }
 
@@ -3994,6 +3997,15 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
     if (!unlinkedCodeBlock()->hasOpProfileControlFlowBytecodeOffsets())
         return;
     const FixedVector<JSInstructionStream::Offset>& bytecodeOffsets = unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets();
+
+    Vector<BasicBlockLocation::Gap> partsOfExpressions;
+    for (auto bytecodeOffset : bytecodeOffsets) {
+        auto bytecode = instructions().at(bytecodeOffset)->as<OpProfileControlFlow>();
+        if (bytecode.m_textEndOffset)
+            partsOfExpressions.append({ bytecode.m_textOffset, bytecode.m_textEndOffset - 1 });
+    }
+    std::ranges::sort(partsOfExpressions);
+
     for (size_t i = 0, offsetsLength = bytecodeOffsets.size(); i < offsetsLength; i++) {
         // Because op_profile_control_flow is emitted at the beginning of every basic block, finding
         // the next op_profile_control_flow will give us the text range of a single basic block.
@@ -4004,14 +4016,20 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         auto& metadata = bytecode.metadata(this);
         int basicBlockStartOffset = bytecode.m_textOffset;
         int basicBlockEndOffset;
-        if (i + 1 < offsetsLength) {
-            size_t endIdx = bytecodeOffsets[i + 1];
-            auto endInstruction = instructions().at(endIdx);
-            RELEASE_ASSERT(endInstruction->opcodeID() == op_profile_control_flow);
-            basicBlockEndOffset = endInstruction->as<OpProfileControlFlow>().m_textOffset - 1;
-        } else {
+        if (bytecode.m_textEndOffset)
+            basicBlockEndOffset = bytecode.m_textEndOffset - 1;
+        else {
+            // A part of an expression is in the basic block, it does not end it.
             basicBlockEndOffset = sourceOffset() + ownerExecutable()->source().length() - 1; // Offset before the closing brace.
-            basicBlockStartOffset = std::min(basicBlockStartOffset, basicBlockEndOffset); // Some start offsets may be at the closing brace, ensure it is the offset before.
+            for (size_t next = i + 1; next < offsetsLength; next++) {
+                auto endInstruction = instructions().at(bytecodeOffsets[next]);
+                RELEASE_ASSERT(endInstruction->opcodeID() == op_profile_control_flow);
+                auto endBytecode = endInstruction->as<OpProfileControlFlow>();
+                if (endBytecode.m_textEndOffset)
+                    continue;
+                basicBlockEndOffset = endBytecode.m_textOffset - 1;
+                break;
+            }
         }
 
         // The following check allows for the same textual JavaScript basic block to have its bytecode emitted more
@@ -4032,8 +4050,9 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         // k: op_profile_control_flow (we want to skip over the j->k block and start fresh at offset k as the start of a new basic block k->m).
         // ...
         // m: op_profile_control_flow
+        //
+        // So is a range that starts past the end of the function, after the expression that is the body of an arrow function.
         if (basicBlockEndOffset < basicBlockStartOffset) {
-            RELEASE_ASSERT(i + 1 < offsetsLength); // We should never encounter dummy blocks at the end of a CodeBlock.
             metadata.m_basicBlockLocation = vm().controlFlowProfiler()->dummyBasicBlock();
             continue;
         }
@@ -4047,6 +4066,8 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         // inside the CodeBlock's instruction stream.
         auto insertFunctionGaps = [basicBlockLocation, basicBlockStartOffset, basicBlockEndOffset] (const WriteBarrier<FunctionExecutable>& functionExecutable) {
             const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
+            if (!executable->hasFunctionRangeInParentSource())
+                return;
             int functionStart = executable->unlinkedFunctionStart();
             int functionEnd = executable->unlinkedFunctionEnd();
             if (functionStart >= basicBlockStartOffset && functionEnd <= basicBlockEndOffset)
@@ -4057,6 +4078,14 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
             insertFunctionGaps(executable);
         for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
             insertFunctionGaps(executable);
+
+        // A part of an expression that is a basic block of its own is a gap too. Between two functions, what is left of
+        // this basic block would otherwise have the range of what is left of the part.
+        BasicBlockLocation::Gap basicBlock { basicBlockStartOffset, basicBlockEndOffset };
+        for (auto part = std::ranges::lower_bound(partsOfExpressions, basicBlockStartOffset, { }, &BasicBlockLocation::Gap::first); part != partsOfExpressions.end() && part->first <= basicBlockEndOffset; ++part) {
+            if (*part != basicBlock)
+                basicBlockLocation->insertGap(part->first, part->second);
+        }
 
         metadata.m_basicBlockLocation = basicBlockLocation;
     }

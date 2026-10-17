@@ -689,6 +689,9 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
+        // For a part of an expression that does not always run. The basic block it is in goes on after it, with no need of
+        // a place where control flow joins again to say so.
+        void emitProfileControlFlow(int textOffset, int textEndOffset);
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();
