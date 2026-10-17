@@ -714,6 +714,13 @@ static ALWAYS_INLINE bool needsHomeObject(ExpressionNode* node)
     return false;
 }
 
+// An operator, a parenthesis or white space is before the expression. From the expression itself, the basic block
+// of an expression that is an arrow function would have the range of the one the function has for its own code.
+static int startOffsetOfBasicBlock(ExpressionNode* node)
+{
+    return node->startOffset() - 1;
+}
+
 RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dstOrConstructor, RegisterID* prototype, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* instanceElementDefinitions, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* staticElementDefinitions)
 {
     auto makeClassElementDefinition = [](const PropertyListNode* p) {
@@ -741,7 +748,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
             return;
         Ref<Label> afterField = generator.newLabel();
         generator.emitJump(afterField.get());
-        generator.emitProfileControlFlow(p->m_node->hasComputedName() ? initializer->startOffset() : p->startOffset(), initializer->endOffset());
+        generator.emitProfileControlFlow(p->m_node->hasComputedName() ? startOffsetOfBasicBlock(initializer) : p->startOffset(), initializer->endOffset());
         generator.emitLabel(afterField.get());
     };
 
@@ -3790,7 +3797,7 @@ RegisterID* ConditionalNode::emitBytecode(BytecodeGenerator& generator, Register
     generator.emitNodeInConditionContext(m_logical, beforeThen.get(), beforeElse.get(), FallThroughMeansTrue);
     generator.emitLabel(beforeThen.get());
 
-    generator.emitProfileControlFlow(m_expr1->startOffset(), m_expr1->endOffset());
+    generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr1), m_expr1->endOffset());
     generator.emitNodeInTailPosition(newDst.get(), m_expr1);
     generator.emitJump(afterElse.get());
 
@@ -3815,7 +3822,7 @@ void ConditionalNode::emitBytecodeInConditionContext(BytecodeGenerator& generato
     generator.emitNodeInConditionContext(m_logical, beforeThen.get(), beforeElse.get(), FallThroughMeansTrue);
     generator.emitLabel(beforeThen.get());
 
-    generator.emitProfileControlFlow(m_expr1->startOffset(), m_expr1->endOffset());
+    generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr1), m_expr1->endOffset());
     generator.emitNodeInConditionContext(m_expr1, trueTarget, falseTarget, fallThroughMode);
     generator.emitJump(end.get());
 
@@ -5796,7 +5803,7 @@ void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
     if (!m_assign)
         generator.emitLoad(value.get(), jsUndefined());
     else {
-        generator.emitProfileControlFlow(m_type == DefineFieldNode::Type::ComputedName ? m_assign->startOffset() : startOffset(), m_assign->endOffset());
+        generator.emitProfileControlFlow(m_type == DefineFieldNode::Type::ComputedName ? startOffsetOfBasicBlock(m_assign) : startOffset(), m_assign->endOffset());
         generator.emitNode(value.get(), m_assign);
         shouldSetFunctionName = generator.shouldSetFunctionName(m_assign);
         if (shouldSetFunctionName && m_type != DefineFieldNode::Type::ComputedName)

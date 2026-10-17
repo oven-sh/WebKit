@@ -128,6 +128,25 @@ testCoalesceInCondition(true);
 checkBasicBlock(testCoalesceInCondition, "foo()", ShouldNotHaveExecuted);
 checkBasicBlock(testCoalesceInCondition, "bar()", ShouldHaveExecuted);
 
+// The function has a basic block of its own, from where it starts to where it ends.
+function testFunctionInConditional(x) {
+    let f = x ? () => foo() : () => bar();
+    f();
+    f();
+}
+testFunctionInConditional(true);
+assert(basicBlockExecutionCount(testFunctionInConditional, "foo()") === 2, "the function runs as often as it is called");
+checkBasicBlock(testFunctionInConditional, ": ()", ShouldNotHaveExecuted);
+checkBasicBlock(testFunctionInConditional, "bar()", ShouldNotHaveExecuted);
+
+function testFunctionInPartOfConditional(x) {
+    return x ? [() => foo(), bar()] : [() => foo(), baz()];
+}
+testFunctionInPartOfConditional(false);
+checkBasicBlock(testFunctionInPartOfConditional, "bar()", ShouldNotHaveExecuted);
+checkBasicBlock(testFunctionInPartOfConditional, "baz()", ShouldHaveExecuted);
+checkBasicBlock(testFunctionInPartOfConditional, "return", ShouldHaveExecuted);
+
 function testConditionalEnd(x) {
     return [x ? foo() : 2, foo()];
 }

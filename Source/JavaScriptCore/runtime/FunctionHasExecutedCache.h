@@ -47,12 +47,18 @@ public:
     };
 
     bool hasExecutedAtOffset(SourceID, unsigned offset);
-    void insertUnexecutedRange(SourceID, unsigned start, unsigned end);
+    // The body of a generator or of an async function and a static block are functions to the engine alone.
+    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, bool isFunctionInSource = true);
     void removeUnexecutedRange(SourceID, unsigned start, unsigned end);
-    Vector<std::tuple<bool, unsigned, unsigned>> getFunctionRanges(SourceID);
+    // hasExecuted, start, end, isFunctionInSource.
+    Vector<std::tuple<bool, unsigned, unsigned, bool>> getFunctionRanges(SourceID);
 
 private:
-    using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, bool>;
+    struct State {
+        bool hasExecuted { false };
+        bool isFunctionInSource { true };
+    };
+    using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, State>;
     using SourceIDToRangeMap = UncheckedKeyHashMap<GenericHashKey<intptr_t>, RangeMap>;
     SourceIDToRangeMap m_rangeMap;
 };

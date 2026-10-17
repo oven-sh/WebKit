@@ -400,26 +400,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
 }
 
-// The body of a generator or of an async function and a static block are functions to the engine alone.
-static bool belongsInFunctionHasExecutedCache(const UnlinkedFunctionExecutable* executable)
-{
-    return executable->hasFunctionRangeInParentSource()
-        && !isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode())
-        && executable->parseMode() != SourceParseMode::ClassStaticBlockMode;
-}
-
-static void insertUnexecutedRange(VM& vm, SourceID sourceID, const UnlinkedFunctionExecutable* executable)
-{
-    if (belongsInFunctionHasExecutedCache(executable)) {
-        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID, executable->unlinkedFunctionStart(), executable->unlinkedFunctionEnd());
-        return;
-    }
-
-    // Calling a generator does not run its body, which has no basic blocks until it is compiled.
-    if (isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode()) && vm.controlFlowProfiler())
-        vm.controlFlowProfiler()->getBasicBlockLocation(sourceID, executable->unlinkedFunctionStart(), executable->unlinkedFunctionEnd());
-}
-
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
 // of linking is taking an abstract representation of bytecode and tying it to a GlobalObject and scope
 // chain. For example, this process allows us to cache the depth of lexical environment reads that reach
@@ -440,7 +420,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()) {
         auto* function = dynamicDowncast<FunctionExecutable>(ownerExecutable);
-        if (!function || belongsInFunctionHasExecutedCache(function->unlinkedExecutable()))
+        if (!function || function->unlinkedExecutable()->hasFunctionRangeInParentSource())
             vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset());
     }
 
@@ -481,8 +461,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache)
-            insertUnexecutedRange(vm, ownerExecutable->sourceID(), unlinkedExecutable);
+        if (shouldUpdateFunctionHasExecutedCache && unlinkedExecutable->hasFunctionRangeInParentSource()) {
+            bool isFunctionInSource = !isGeneratorOrAsyncFunctionBodyParseMode(unlinkedExecutable->parseMode()) && unlinkedExecutable->parseMode() != SourceParseMode::ClassStaticBlockMode;
+            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), isFunctionInSource);
+        }
         m_functionExprs[i].set(vm, this, linkFunctionExpr(i, unlinkedExecutable));
     }
 
@@ -4017,6 +3999,15 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
     if (!unlinkedCodeBlock()->hasOpProfileControlFlowBytecodeOffsets())
         return;
     const FixedVector<JSInstructionStream::Offset>& bytecodeOffsets = unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets();
+
+    Vector<BasicBlockLocation::Gap> partsOfExpressions;
+    for (auto bytecodeOffset : bytecodeOffsets) {
+        auto bytecode = instructions().at(bytecodeOffset)->as<OpProfileControlFlow>();
+        if (bytecode.m_textEndOffset)
+            partsOfExpressions.append({ bytecode.m_textOffset, bytecode.m_textEndOffset - 1 });
+    }
+    std::ranges::sort(partsOfExpressions);
+
     for (size_t i = 0, offsetsLength = bytecodeOffsets.size(); i < offsetsLength; i++) {
         // Because op_profile_control_flow is emitted at the beginning of every basic block, finding
         // the next op_profile_control_flow will give us the text range of a single basic block.
@@ -4089,6 +4080,14 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
             insertFunctionGaps(executable);
         for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
             insertFunctionGaps(executable);
+
+        // A part of an expression that is a basic block of its own is a gap too. Between two functions, what is left of
+        // this basic block would otherwise have the range of what is left of the part.
+        BasicBlockLocation::Gap basicBlock { basicBlockStartOffset, basicBlockEndOffset };
+        for (auto part = std::ranges::lower_bound(partsOfExpressions, basicBlockStartOffset, { }, &BasicBlockLocation::Gap::first); part != partsOfExpressions.end() && part->first <= basicBlockEndOffset; ++part) {
+            if (*part != basicBlock)
+                basicBlockLocation->insertGap(part->first, part->second);
+        }
 
         metadata.m_basicBlockLocation = basicBlockLocation;
     }

@@ -63,6 +63,20 @@ testParenthesizedField();
 checkBasicBlock(testParenthesizedField, "foo()", ShouldHaveExecuted);
 checkBasicBlock(testParenthesizedField, ");", ShouldHaveExecuted);
 
+function testFunctionInComputedField() {
+    class A {
+        [key()] = () => foo();
+    }
+    let a = new A;
+    a.k();
+    a.k();
+    a.k();
+}
+testFunctionInComputedField();
+assert(basicBlockExecutionCount(testFunctionInComputedField, "foo()") === 3, "the function runs as often as it is called");
+assert(basicBlockExecutionCount(testFunctionInComputedField, "= ()") === 1, "the field is initialized once");
+assert(basicBlockExecutionCount(testFunctionInComputedField, "key()") === 1, "the key is evaluated once");
+
 function testBranchInField(x) {
     class A {
         a = x ? foo() : bar();
@@ -93,6 +107,22 @@ checkBasicBlock(testStaticBlock, "bar()", ShouldNotHaveExecuted);
 checkBasicBlock(testStaticBlock, "return A", ShouldHaveExecuted);
 
 // What follows a field in the file is not the field, however far it is.
+function testStaticElementsAfterThrow() {
+    try {
+        class A {
+            static a = (() => { throw new Error; })();
+            static b = bar();
+            static {
+                foo();
+            }
+        }
+    } catch { }
+}
+testStaticElementsAfterThrow();
+checkBasicBlock(testStaticElementsAfterThrow, "throw new", ShouldHaveExecuted);
+checkBasicBlock(testStaticElementsAfterThrow, "bar()", ShouldNotHaveExecuted);
+checkBasicBlock(testStaticElementsAfterThrow, "foo()", ShouldNotHaveExecuted);
+
 function testFarFromField() {
     class A {
         a = foo();

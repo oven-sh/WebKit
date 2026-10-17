@@ -69,7 +69,7 @@ void ControlFlowProfiler::dumpData() const
     }
 }
 
-Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM&) const
+Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM& vm) const
 {
     Vector<BasicBlockRange> result(0);
     auto bucketFindResult = m_sourceIDBuckets.find(sourceID);
@@ -91,6 +91,18 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
             range.m_endOffset = gap.second;
             result.append(range);
         }
+    }
+
+    // What is a function to the engine alone is not a function range to the caller, and has no basic blocks until it runs.
+    for (auto [hasExecuted, start, end, isFunctionInSource] : vm.functionHasExecutedCache()->getFunctionRanges(sourceID)) {
+        if (isFunctionInSource || hasExecuted)
+            continue;
+        BasicBlockRange range;
+        range.m_hasExecuted = false;
+        range.m_executionCount = 0;
+        range.m_startOffset = static_cast<int>(start);
+        range.m_endOffset = static_cast<int>(end);
+        result.append(range);
     }
 
     return result;
@@ -118,7 +130,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID 
         }
     }
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+    auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
     for (const auto& functionRange : functionRanges) {
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);
