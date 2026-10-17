@@ -51,6 +51,8 @@ class LICMPhase : public Phase {
     struct LoopData {
         ClobberSet writes;
         BasicBlock* preHeader { nullptr };
+        // The loop's structure checks (see isStructureCheck()), those of its inner loops included.
+        Vector<Node*, 8> structureChecks;
     };
     
 public:
@@ -101,6 +103,11 @@ public:
                     break;
 
                 addWrites(m_graph, node, data.writes);
+
+                if (isStructureCheck(node) && Options::keepMutuallyExclusiveStructureChecksInLoop()) {
+                    for (const NaturalLoop* current = loop; current; current = m_graph.m_ssaNaturalLoops->innerMostOuterLoop(*current))
+                        m_data[current->index()].structureChecks.append(node);
+                }
             }
         }
         
@@ -415,6 +422,13 @@ private:
                 *fromBlock, ") and hoisting had previously failed.");
             return tryHoistChecks();
         }
+
+        if (addsBlindSpeculation && excludesOtherStructureChecks(node, data)) {
+            dataLogLnIf(verbose,
+                "    Not hoisting ", node, " because no structure passes it and the other structure checks that ",
+                *data.preHeader, " gets for the same value.");
+            return tryHoistChecks();
+        }
         
         if (!safeToExecute(m_state, m_graph, node)) {
             // See if we can rescue the situation by inserting blind speculations.
@@ -447,6 +461,118 @@ private:
         else
             nodeRef = m_graph.addNode(Check, originalOrigin, node->children);
         
+        return true;
+    }
+
+    // The nodes that exit unless the structure of their first child is in a set.
+    static bool isStructureCheck(Node* node)
+    {
+        switch (node->op()) {
+        case CheckStructure:
+        case CheckStructureOrEmpty:
+        case MultiGetByOffset:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool passesStructureCheck(Node* check, RegisteredStructure structure)
+    {
+        if (check->op() != MultiGetByOffset)
+            return check->structureSet().contains(structure);
+        for (const MultiGetByOffsetCase& getCase : check->multiGetByOffsetData().cases) {
+            if (getCase.set().contains(structure))
+                return true;
+        }
+        return false;
+    }
+
+    // Whether two nodes that LICM can hoist out of one loop are the same value there. Each arm of a branch has
+    // its own load of a variable or a property that both arms read, and CSE does not merge two loads when
+    // neither dominates the other.
+    static bool isSameValue(Node* a, Node* b)
+    {
+        for (;;) {
+            if (a == b)
+                return true;
+            if (a->op() != b->op())
+                return false;
+            switch (a->op()) {
+            case GetClosureVar:
+                if (a->scopeOffset() != b->scopeOffset())
+                    return false;
+                a = a->child1().node();
+                b = b->child1().node();
+                break;
+            case GetByOffset:
+                if (a->storageAccessData().identifierNumber != b->storageAccessData().identifierNumber
+                    || a->storageAccessData().offset != b->storageAccessData().offset)
+                    return false;
+                a = a->child2().node();
+                b = b->child2().node();
+                break;
+            case GetGlobalVar:
+            case GetGlobalLexicalVariable:
+                return a->variablePointer() == b->variablePointer();
+            case GetScope:
+            case SkipScope:
+                a = a->child1().node();
+                b = b->child1().node();
+                break;
+            default:
+                return false;
+            }
+        }
+    }
+
+    // |node| is about to go to the loop's pre-header as a blind speculation. Returns whether it is a structure
+    // check that no structure passes together with the loop's other structure checks on the same value that
+    // are in the pre-header or can get there. With all of them hoisted, the pre-header exits every time the
+    // loop is entered, and the exit turns blind speculation off for the whole function (HoistingFailed). So
+    // each of them stays in its block, where it fails only if that block runs.
+    bool excludesOtherStructureChecks(Node* node, LoopData& data)
+    {
+        if (!isStructureCheck(node) || !Options::keepMutuallyExclusiveStructureChecksInLoop())
+            return false;
+
+        Node* value = node->child1().node();
+        Vector<Node*, 8> others;
+        for (Node* other : data.structureChecks) {
+            if (other == node || !isSameValue(other->child1().node(), value))
+                continue;
+            // A check of a function whose hoists failed before stays in its block unless it runs whenever the
+            // loop does. It does not get to the pre-header, so it takes no part in this.
+            BasicBlock* block = other->owner;
+            if (m_graph.m_ssaDominators->dominates(block, data.preHeader)
+                || m_graph.m_controlEquivalenceAnalysis->dominatesEquivalently(data.preHeader, block)
+                || !m_graph.hasGlobalExitSite(other->origin.semantic, HoistingFailed))
+                others.append(other);
+        }
+        if (others.isEmpty())
+            return false;
+
+        auto passesOthers = [&] (RegisteredStructure structure) {
+            for (Node* other : others) {
+                if (!passesStructureCheck(other, structure))
+                    return false;
+            }
+            return true;
+        };
+
+        if (node->op() != MultiGetByOffset) {
+            for (RegisteredStructure structure : node->structureSet()) {
+                if (passesOthers(structure))
+                    return false;
+            }
+            return true;
+        }
+        for (const MultiGetByOffsetCase& getCase : node->multiGetByOffsetData().cases) {
+            for (RegisteredStructure structure : getCase.set()) {
+                if (passesOthers(structure))
+                    return false;
+            }
+        }
         return true;
     }
     

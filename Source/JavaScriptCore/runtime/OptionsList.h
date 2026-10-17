@@ -333,6 +333,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, frequentCallThreshold, 2, Normal, nullptr) \
     v(Double, minimumCallToKnownRate, 0.51, Normal, nullptr) \
     v(Bool, createPreHeaders, true, Normal, nullptr) \
+    v(Bool, keepMutuallyExclusiveStructureChecksInLoop, true, Normal, "LICM does not hoist, as blind speculations, structure checks on one value that no structure passes together"_s) \
     v(Bool, useMovHintRemoval, true, Normal, nullptr) \
     v(Bool, usePutStackSinking, true, Normal, nullptr) \
     v(Bool, useObjectAllocationSinking, true, Normal, nullptr) \
