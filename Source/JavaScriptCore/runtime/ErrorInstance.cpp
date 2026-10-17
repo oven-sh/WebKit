@@ -476,8 +476,10 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
 
     auto& fn = vm.onComputeErrorInfoJSValue();
-    if (fn && m_stackTrace && !m_stackTrace->isEmpty()) {
+    // The hook's stack begins with "name: message", so one captured with Error.stackTraceLimit = 0 is not empty.
+    if (fn && m_stackTrace) {
         m_errorInfoMaterialized = true;
+        bool hasFrames = !m_stackTrace->isEmpty();
         DeferGCForAWhile deferGC(vm);
 
         JSValue stack;
@@ -495,10 +497,12 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        if (hasFrames) {
+            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+            if (!m_sourceURL.isEmpty())
+                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        }
 
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             putDirect(vm, vm.propertyNames->stack, stack, attributes);
