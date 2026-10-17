@@ -37,6 +37,7 @@
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DataLog.h>
+#include <wtf/ListDump.h>
 #include <wtf/StackCheck.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -136,8 +137,12 @@ public:
     {
         size_t size = DisjunctionContext::allocationSize(disjunction->m_frameSize);
         auto* newAllocatorPool = allocatorPool->ensureCapacity(size);
-        if (!newAllocatorPool) [[unlikely]]
+        if (!newAllocatorPool) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+            m_ranOutOfMemoryForTesting = true;
+#endif
             return nullptr;
+        }
         allocatorPool = newAllocatorPool;
         return new (allocatorPool->alloc(size)) DisjunctionContext();
     }
@@ -254,8 +259,12 @@ public:
 
         size_t size = Checked<size_t>(ParenthesesDisjunctionContext::allocationSize(numNestedSubpatterns, numDuplicateNamedGroups)) + DisjunctionContext::allocationSize(disjunction->m_frameSize);
         auto* newAllocatorPool = allocatorPool->ensureCapacity(size);
-        if (!newAllocatorPool) [[unlikely]]
+        if (!newAllocatorPool) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+            m_ranOutOfMemoryForTesting = true;
+#endif
             return nullptr;
+        }
         allocatorPool = newAllocatorPool;
         return new (allocatorPool->alloc(size)) ParenthesesDisjunctionContext(pattern, output, term, numDuplicateNamedGroups, duplicateNamedCaptureGroups);
     }
@@ -1820,8 +1829,12 @@ public:
 
     JSRegExpResult matchDisjunction(ByteDisjunction* disjunction, DisjunctionContext* context, bool btrack)
     {
-        if (!isSafeToRecurse()) [[unlikely]]
+        if (!isSafeToRecurse()) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+            m_ranOutOfMemoryForTesting = true;
+#endif
             return JSRegExpResult::ErrorNoMemory;
+        }
 
         if (!--remainingMatchCount) {
             dataLogLnIf(verbose, "      Reached match limit - Returning ErrorHitLimit");
@@ -2293,6 +2306,11 @@ public:
     }
 
     // WTF_IGNORES_THREAD_SAFETY_ANALYSIS because this function does conditional locking.
+#if USE(BUN_JSC_ADDITIONS)
+    // interpretByBacktrackingForTesting() is a second caller of this function. It stays inline
+    // in Yarr::interpret(), as it is where that is its one caller.
+    ALWAYS_INLINE
+#endif
     unsigned interpret() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=195970
@@ -2349,6 +2367,14 @@ public:
     {
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // For tests: a limit below matchLimit, and whether the search was given up: at its limit, or
+    // for the memory of its contexts or the stack. Its answer is then "no match", whatever the
+    // subject has.
+    void setMatchLimitForTesting(unsigned limit) { remainingMatchCount = limit; }
+    bool gaveUpForTesting() const { return !remainingMatchCount || m_ranOutOfMemoryForTesting; }
+#endif
+
 private:
     inline bool LEGACY_NODELETE isLegacyCompilation() const { return compileMode == CompileMode::Legacy; }
     inline bool LEGACY_NODELETE isUnicodeCompilation() const { return compileMode == CompileMode::Unicode; }
@@ -2367,6 +2393,9 @@ private:
     static constexpr unsigned bolUnsatisfiable = std::numeric_limits<unsigned>::max();
     unsigned noNewlineBefore; // see matchDotStarEnclosure
     unsigned remainingMatchCount;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_ranOutOfMemoryForTesting { false };
+#endif
 };
 
 class ByteCompiler {
@@ -3312,18 +3341,151 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, LinearRefusal& refusal, ConcurrentJSLock* lock)
+{
+    // The pattern has to be as the parser left it: jitCompile() reorders its terms, and the
+    // program takes them in the order of the list. So a caller asks here before it asks the JIT.
+    // Also before the ByteCompiler: BytecodePattern takes the pattern's character classes.
+    auto linearProgram = compileLinear(pattern, refusal, errorCode);
+    if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {
+        if (linearProgram)
+            linearProgram->dump(WTF::dataFile());
+        else if (refusal != LinearRefusal::None)
+            dataLogLn("The non-backtracking matcher refused this regular expression: ", linearRefusalName(refusal));
+    }
+    if (!linearProgram)
+        return nullptr;
+
+    auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    if (bytecode)
+        bytecode->m_linearProgram = WTF::move(linearProgram);
+    return bytecode;
+}
+#endif
+
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void normalizeOutputForTesting(std::span<unsigned> output, unsigned numSubpatterns, unsigned offsetVectorBaseForNamedCaptures, bool ofBacktrackingEngine)
+{
+    for (unsigned index = 0; index < offsetVectorBaseForNamedCaptures; index += 2) {
+        if (output[index] == offsetNoMatch)
+            output[index + 1] = offsetNoMatch;
+    }
+    if (!ofBacktrackingEngine)
+        return;
+    for (unsigned index = offsetVectorBaseForNamedCaptures; index < output.size(); ++index) {
+        unsigned group = output[index];
+        if (group >= 1 && group <= numSubpatterns && output[2 * group] == offsetNoMatch)
+            output[index] = 0;
+    }
+}
+
+unsigned interpretByBacktrackingForTesting(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, InterpretStatistics& statistics)
+{
+    // Far below matchLimit: a pattern that makes the interpreter backtrack for seconds is given
+    // up in milliseconds, and the test knows that the answer is not one.
+    static constexpr unsigned matchLimitForTesting = 100000;
+    auto interpretWith = [&](auto characters) {
+        Interpreter<typename decltype(characters)::value_type> interpreter(bytecode, output, characters, start);
+        interpreter.setMatchLimitForTesting(matchLimitForTesting);
+        unsigned result = interpreter.interpret();
+        statistics.gaveUp |= interpreter.gaveUpForTesting();
+        return result;
+    };
+    if (input.is8Bit())
+        return interpretWith(input.span8());
+    return interpretWith(input.span16());
+}
+
+// Options::verifyRegExpLinearEngine(): the bytecode interpreter matches the same bytecode from the
+// same start, and has to find the match the non-backtracking matcher found, with the groups a
+// reader can see. The process ends here when it does not, so that a test that only prints what
+// it finds fails too.
+static NEVER_INLINE void verifyLinearMatch(BytecodePattern* bytecode, StringView input, unsigned start, const unsigned* output, unsigned result)
+{
+    unsigned numSubpatterns = bytecode->m_body->m_numSubpatterns;
+    unsigned baseForNamedCaptures = bytecode->m_offsetVectorBaseForNamedCaptures;
+    Vector<unsigned, 32> expected(FillWith { }, static_cast<size_t>(bytecode->m_offsetsSize), offsetNoMatch);
+    InterpretStatistics statistics;
+    unsigned expectedResult = interpretByBacktrackingForTesting(bytecode, input, start, expected.mutableSpan().data(), statistics);
+    // With the u or v flag, a RegExp takes no match that starts between the two halves of a
+    // surrogate pair. A backtracking engine can find one there, and RegExp::matchInline() then
+    // searches again after the pair. The matcher finds none there in the first place.
+    if (bytecode->eitherUnicode() && !input.is8Bit()) {
+        unsigned expectedStart = start;
+        auto splitsSurrogatePair = [&](unsigned offset) {
+            return offset && offset < input.length() && U16_IS_TRAIL(input[offset]) && U16_IS_LEAD(input[offset - 1]);
+        };
+        while (!statistics.gaveUp && expectedResult != offsetNoMatch && expectedResult > expectedStart && splitsSurrogatePair(expectedResult)) {
+            expectedStart = expectedResult + 1;
+            expected.fill(offsetNoMatch);
+            expectedResult = interpretByBacktrackingForTesting(bytecode, input, expectedStart, expected.mutableSpan().data(), statistics);
+        }
+    }
+    if (statistics.gaveUp)
+        return;
+
+    Vector<unsigned, 32> actual;
+    bool agree = result == expectedResult;
+    if (agree && result != offsetNoMatch) {
+        actual.append(std::span { output, expected.size() });
+        normalizeOutputForTesting(actual.mutableSpan(), numSubpatterns, baseForNamedCaptures, false);
+        normalizeOutputForTesting(expected.mutableSpan(), numSubpatterns, baseForNamedCaptures, true);
+        agree = actual == expected;
+    }
+    if (agree) [[likely]]
+        return;
+
+    dataLogLn("verifyRegExpLinearEngine: the non-backtracking matcher and the bytecode interpreter do not agree.");
+    dataLogLn("    subject (", input.is8Bit() ? "8-bit" : "16-bit", ", ", input.length(), " characters): ", input);
+    dataLogLn("    start: ", start, ", the matcher: ", static_cast<int>(result), ", the interpreter: ", static_cast<int>(expectedResult));
+    if (!actual.isEmpty()) {
+        dataLogLn("    the matcher's output:     ", listDump(actual.map([](unsigned value) { return static_cast<int>(value); })));
+        dataLogLn("    the interpreter's output: ", listDump(expected.map([](unsigned value) { return static_cast<int>(value); })));
+    }
+    bytecode->m_linearProgram->dump(WTF::dataFile());
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#endif
+
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
+#if USE(BUN_JSC_ADDITIONS)
+    if (bytecode->m_linearProgram) [[unlikely]] {
+        unsigned result = bytecode->m_linearProgram->match(input, start, output);
+        if (Options::verifyRegExpLinearEngine()) [[unlikely]]
+            verifyLinearMatch(bytecode, input, start, output, result);
+        return result;
+    }
+#endif
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, InterpretStatistics& statistics)
+{
+    statistics = { };
+    if (bytecode->m_linearProgram) {
+        statistics.engine = InterpretStatistics::Engine::Linear;
+        statistics.programSize = bytecode->m_linearProgram->instructionCount();
+        statistics.maximumStepsPerPosition = bytecode->m_linearProgram->m_maximumStepsPerPosition;
+        statistics.maximumScratchBytes = bytecode->m_linearProgram->m_maximumScratchBytes;
+        unsigned result = bytecode->m_linearProgram->match(input, start, output, &statistics.linear);
+        if (Options::verifyRegExpLinearEngine()) [[unlikely]]
+            verifyLinearMatch(bytecode, input, start, output, result);
+        return result;
+    }
+    return interpret(bytecode, input, start, output);
+}
+#endif
 
 // These should be the same for both char16_t & Latin1Character.
 static_assert(sizeof(BackTrackInfoPatternCharacter) == (YarrStackSpaceForBackTrackInfoPatternCharacter * sizeof(uintptr_t)));

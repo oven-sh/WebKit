@@ -149,6 +149,12 @@ Rules for an edit to an upstream test:
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
+- `JSTests/regexpLinearEngine.yaml`, a collection of this fork in the list of `run-javascriptcore-tests`: the RegExp tests
+  of `JSTests/stress` once more with `--useRegExpLinearEngine=1 --verifyRegExpLinearEngine=1`. Every RegExp that the
+  non-backtracking matcher (`yarr/YarrLinear.h`) accepts runs on it, and after each of its matches the bytecode
+  interpreter matches from the same start: the process ends when the two do not agree. A test that fails only in this
+  collection is a difference between the matcher and the backtracking engines. Step 5 of section E says what to do with
+  it. The collection file names the tests it leaves out, each with its reason.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 
@@ -162,5 +168,17 @@ Rules for an edit to an upstream test:
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
 3. Is it a new upstream test for a feature the sync did not bring over (compare `git log upstream/main -- Source/` for
    the commit that added the test)? Bring the feature over, or skip with `TODO(bun)` naming the upstream commit, as in C.
-4. Otherwise the sync broke something. Upstream's own results for the same test and mode:
+4. Does it fail only in `regexpLinearEngine.yaml` (section D)? The matcher and a backtracking engine differ. Decide
+   first which of them is right.
+   - `$vm.regExpMatchOnBothEngines(regExp, subject, start)` is `null`: the interpreter gave the search up, and the test
+     expects the "no match" of a backtracking engine at its limit. Leave the file out of the collection, with the reason
+     in the yaml.
+   - Otherwise the specification decides. V8 is a second opinion.
+   - The matcher is wrong: fix `yarr/YarrLinear.cpp`. If the sync changed what a `YarrPattern` means and the fix is not
+     plain, make the compiler of the matcher refuse the construct (`LinearRefusal`). The pattern then runs on the
+     backtracking engines, as it does without the option.
+   - The matcher is right: the bug is in the backtracking engines, and it is there without the option too. Leave the
+     file out of the collection with the reason in the yaml, and pin the matcher's answer in
+     `stress/regexp-linear-engine-semantics.js` under `if (matcherIsOn)`.
+5. Otherwise the sync broke something. Upstream's own results for the same test and mode:
    `https://results.webkit.org/api/results/javascriptcore-tests/<url-encoded test.mode>?limit=5000`.
