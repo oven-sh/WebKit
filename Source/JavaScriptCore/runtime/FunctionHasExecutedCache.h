@@ -45,6 +45,8 @@ public:
 
         unsigned m_start;
         unsigned m_end;
+        // A program that is one function has the range of that function.
+        SourceParseMode m_parseMode;
     };
 
     bool hasExecutedAtOffset(SourceID, unsigned offset);
@@ -57,11 +59,7 @@ public:
     static bool isFunctionInSource(SourceParseMode parseMode) { return !isGeneratorOrAsyncFunctionBodyParseMode(parseMode) && parseMode != SourceParseMode::ClassStaticBlockMode; }
 
 private:
-    struct State {
-        bool hasExecuted;
-        SourceParseMode parseMode;
-    };
-    using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, State>;
+    using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, bool>;
     using SourceIDToRangeMap = UncheckedKeyHashMap<GenericHashKey<intptr_t>, RangeMap>;
     SourceIDToRangeMap m_rangeMap;
 };

@@ -42,7 +42,7 @@ bool FunctionHasExecutedCache::hasExecutedAtOffset(SourceID id, unsigned offset)
     for (auto& pair : map) {
         const FunctionRange& range = pair.key.key();
         if (range.m_start <= offset && offset <= range.m_end && range.m_end - range.m_start < distance) {
-            hasExecuted = pair.value.hasExecuted;
+            hasExecuted = pair.value;
             distance = range.m_end - range.m_start;
         }
     }
@@ -56,9 +56,10 @@ void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start
     FunctionRange range;
     range.m_start = start;
     range.m_end = end;
+    range.m_parseMode = parseMode;
     // Only insert unexecuted ranges once for a given sourceID because we may run into a situation where an executable executes, then is GCed, and then is allocated again,
     // and tries to reinsert itself, claiming it has never run, but this is false because it indeed already executed.
-    map.add(range, State { false, parseMode });
+    map.add(range, false);
 }
 
 void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end, SourceParseMode parseMode)
@@ -73,7 +74,8 @@ void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start
     FunctionRange range;
     range.m_start = start;
     range.m_end = end;
-    map.add(range, State { false, parseMode }).iterator->value.hasExecuted = true;
+    range.m_parseMode = parseMode;
+    map.set(range, true);
 }
 
 Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)
@@ -86,7 +88,7 @@ Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> FunctionHasExecute
     RangeMap& map = iterator->value;
     for (auto& pair : map) {
         const FunctionRange& range = pair.key.key();
-        ranges.append(std::tuple { pair.value.hasExecuted, range.m_start, range.m_end, pair.value.parseMode });
+        ranges.append(std::tuple { pair.value, range.m_start, range.m_end, range.m_parseMode });
     }
 
     return ranges;
