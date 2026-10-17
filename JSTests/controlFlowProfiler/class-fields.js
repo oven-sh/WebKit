@@ -156,3 +156,19 @@ function testSkippedClass(x) {
 }
 testSkippedClass(1);
 checkBasicBlock(testSkippedClass, "bar()", ShouldHaveExecuted);
+
+function testStaticFieldOfSkippedClass(x) {
+    x ??= class { static a = foo(); };
+    bar();
+}
+testStaticFieldOfSkippedClass(1);
+checkBasicBlock(testStaticFieldOfSkippedClass, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testStaticFieldOfSkippedClass, "bar()", ShouldHaveExecuted);
+
+function testStaticFieldAfterAccessorOfSkippedClass(x) {
+    x ??= class { get a() { return 1; } static b = foo(); };
+    bar();
+}
+testStaticFieldAfterAccessorOfSkippedClass(1);
+checkBasicBlock(testStaticFieldAfterAccessorOfSkippedClass, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testStaticFieldAfterAccessorOfSkippedClass, "bar()", ShouldHaveExecuted);

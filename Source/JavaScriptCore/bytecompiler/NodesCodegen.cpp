@@ -826,6 +826,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
         if (p->isStaticClassElement()) {
             ASSERT(staticElementDefinitions);
             staticElementDefinitions->append(makeClassElementDefinition(p));
+            emitProfileControlFlowOverField(p);
             continue;
         }
 
@@ -897,6 +898,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
             if (p->isStaticClassElement()) {
                 ASSERT(staticElementDefinitions);
                 staticElementDefinitions->append(makeClassElementDefinition(p));
+                emitProfileControlFlowOverField(p);
                 continue;
             }
 
