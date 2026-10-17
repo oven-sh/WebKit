@@ -166,6 +166,15 @@ static constexpr unsigned maxEagerlyConstructedPatternLength = 64;
 // Deeper patterns are built eagerly so that YarrPatternConstructor's recursion limit still reports at construction.
 static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
 
+#if ASSERT_ENABLED
+// The errors that the Parser does not report and YarrPattern construction does. finishCreation() builds the patterns
+// that can have one eagerly, so that a RegExp it returned as valid never gets one when it is compiled.
+static bool isPatternConstructionError(Yarr::ErrorCode error)
+{
+    return error == Yarr::ErrorCode::OffsetTooLarge || error == Yarr::ErrorCode::FrameTooLarge || error == Yarr::ErrorCode::NegatedClassSetMayContainStrings;
+}
+#endif
+
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -176,7 +185,7 @@ void RegExp::finishCreation(VM& vm)
             m_state = ParseError;
             return;
         }
-        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth) {
+        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && !summary.mayExceedOffsetLimits && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth) {
             m_numSubpatterns = summary.numSubpatterns;
             m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
             return;
@@ -323,6 +332,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         return;
 
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+    ASSERT(!isPatternConstructionError(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -342,6 +352,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     Locker locker { cellLock() };
     
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+    ASSERT(!isPatternConstructionError(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -430,6 +441,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     Locker locker { cellLock() };
 
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::MatchOnly);
+    ASSERT(!isPatternConstructionError(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -471,6 +483,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     // than the match-only one above, whose capturing fixed-string alternations may have been
     // flattened (dropping their subpatterns) for the JIT.
     Yarr::YarrPattern bytecodePattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns);
+    ASSERT(!isPatternConstructionError(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;

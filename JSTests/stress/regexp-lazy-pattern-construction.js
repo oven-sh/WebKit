@@ -9,15 +9,17 @@ function shouldBe(actual, expected, what) {
         throw new Error(what + ": expected " + expected + " but got " + actual);
 }
 
-function shouldThrowSyntaxError(source, flags) {
-    let threw = false;
+function shouldThrowSyntaxError(source, flags, message) {
+    let error = null;
     try {
         new RegExp(source, flags);
     } catch (e) {
-        threw = e instanceof SyntaxError;
+        error = e;
     }
-    if (!threw)
+    if (!(error instanceof SyntaxError))
         throw new Error("expected SyntaxError at construction for /" + source.slice(0, 40) + "/" + flags);
+    if (message !== undefined)
+        shouldBe(error.message, "Invalid regular expression: " + message, "message for /" + source.slice(0, 40) + "/" + flags);
 }
 
 let filler = "x".repeat(80);
@@ -60,6 +62,64 @@ shouldThrowSyntaxError(filler + "[b-a]", "");
 shouldThrowSyntaxError(filler + "\\k<nope>(?<yes>a)", "u");
 shouldThrowSyntaxError("[^\\q{ab}]" + filler, "v");
 shouldThrowSyntaxError(filler + "a{2,1}", "");
+
+// So are the errors that only building the YarrPattern finds. YarrPatternConstructor::setupOffsets refuses input
+// positions that do not fit in 32 bits, and a pattern whose quantifier counts can get there is built eagerly.
+{
+    let tooLong = "pattern exceeds string length limits";
+    // Twice: the second creation must not depend on what the first one left in the RegExp cache.
+    for (let i = 0; i < 2; ++i) {
+        shouldThrowSyntaxError(filler + "y{4294967295}", "", tooLong);
+        shouldThrowSyntaxError(filler + "y{4294967296}", "", tooLong);
+        shouldThrowSyntaxError("a{2147483647}".repeat(3) + filler, "", tooLong);
+        shouldThrowSyntaxError(filler + "[y]{4294967295}", "", tooLong);
+        shouldThrowSyntaxError(filler + "(y{4294967295})?", "", tooLong);
+        shouldThrowSyntaxError(filler + "y{4294967294,4294967295}", "", tooLong);
+        shouldThrowSyntaxError(filler + "\\u{1F600}{2147483648}", "u", tooLong);
+    }
+
+    // The same counts where the YarrPattern can be built.
+    shouldBe(new RegExp(filler + "(?:y){4294967295}").test(filler + "y"), false, "huge count on a group");
+    shouldBe(new RegExp(filler + "y{0,4294967295}").test(filler), true, "huge maximum, no minimum");
+    shouldBe(new RegExp(filler + "y{16777216}").test(filler + "y"), false, "large count that fits");
+    shouldBe(new RegExp(filler + "y{3}z{2,}").test(filler + "yyyzz"), true, "small counts");
+}
+
+// And the ones the Parser finds in a negated class set that may contain strings.
+{
+    let negated = "negated class set may contain strings";
+    shouldThrowSyntaxError("[^\\q{}]" + filler, "v", negated);
+    shouldThrowSyntaxError("[^\\q{a|}]" + filler, "v", negated);
+    shouldThrowSyntaxError(filler + "[^[\\q{}]]", "v", negated);
+    shouldThrowSyntaxError("[^\\p{RGI_Emoji}&&\\p{RGI_Emoji}]" + filler, "v", negated);
+}
+
+// RegExp.prototype.compile() refuses such a pattern as well, and leaves the RegExp as it was.
+{
+    let re = /keep/g;
+    re.lastIndex = 2;
+    let threw = false;
+    try {
+        re.compile(filler + "y{4294967295}");
+    } catch (e) {
+        threw = e instanceof SyntaxError;
+    }
+    shouldBe(threw, true, "compile() with a pattern that construction refuses");
+    shouldBe(re.source, "keep", "source after the refused compile()");
+    shouldBe(re.lastIndex, 2, "lastIndex after the refused compile()");
+}
+
+// A literal of such a pattern throws when it is evaluated, not at its first match.
+{
+    let makeLiteral = new Function("return /" + filler + "y{4294967295}/;");
+    let threw = false;
+    try {
+        makeLiteral();
+    } catch (e) {
+        threw = e instanceof SyntaxError;
+    }
+    shouldBe(threw, true, "evaluating a literal that construction refuses");
+}
 
 // Back references are validated against the counted captures (non-unicode: octal escape fallback).
 shouldBe(new RegExp("(a)" + filler.slice(2) + "|\\1b").test("b"), true, "backreference to an unmatched group matches empty");
