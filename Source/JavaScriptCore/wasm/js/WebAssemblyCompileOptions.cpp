@@ -66,7 +66,8 @@ std::optional<WebAssemblyCompileOptions> WebAssemblyCompileOptions::tryCreate(JS
                 auto contents = asString(nextValue)->value(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
                 String qualifiedName = makeString("wasm:"_s, StringView(contents));
-                options.m_qualifiedBuiltinSetNames.append(qualifiedName);
+                if (!options.m_qualifiedBuiltinSetNames.tryAppend(WTF::move(qualifiedName))) [[unlikely]]
+                    throwOutOfMemoryError(globalObject, scope);
             } else
                 sawBadEntries = true;
         });
