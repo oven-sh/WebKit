@@ -197,7 +197,11 @@ static constexpr unsigned numberOfPreludeFunctions = 0
     ;
 
 static constexpr bool isHiddenFromStackTraces(PreludeFunction which) { return which == PreludeFunction::ArrayFlatMap; }
-static constexpr bool isSelectedAtCallSite(PreludeFunction which) { return which == PreludeFunction::ArrayFilterTruthy || which == PreludeFunction::ArrayMapByNumber || which == PreludeFunction::ArrayMapJoin; }
+static constexpr bool isSelectedAtCallSite(PreludeFunction which) { return which == PreludeFunction::ArrayFilterTruthy || which == PreludeFunction::ArrayMapByNumber || which == PreludeFunction::ArrayMapJoin || which == PreludeFunction::ArraySortByKey || which == PreludeFunction::ArrayToSortedByKey; }
+static constexpr uint32_t sortIsDescending = 1;
+static constexpr uint32_t sortMakesCopy = 2;
+static constexpr uint32_t sortKeysMayBeStrings = 4;
+static constexpr uint32_t sortComparesByLocale = 8;
 uint32_t visibilityInEngine(uint32_t builtinFunction);
 bool isStrictInEngine(uint32_t builtinFunction);
 

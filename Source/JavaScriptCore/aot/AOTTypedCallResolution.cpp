@@ -1142,6 +1142,19 @@ private:
         return true;
     }
 
+    ValueID narrowedToThisType(const Case& which, ValueID receiver)
+    {
+        auto& callee = m_program.at(which.callee);
+        LayoutID declaring = callee.thisType ? m_program.at(callee.thisType).singleLayout() : LayoutID();
+        if (!callee.declaredGenericEntrypoint || !declaring)
+            return receiver;
+        auto& subtypes = m_program.at(declaring).subtypes;
+        bool isProven = std::ranges::all_of(which.subtypes, [&](LayoutID subtype) {
+            return std::ranges::binary_search(subtypes, subtype);
+        });
+        return isProven ? held(receiver, callee.thisType, CastReason::Flow) : receiver;
+    }
+
     void dispatch(const Cases& cases, LayoutID supertype, ValueID receiver, std::span<const ValueID> given, const Value& original, Yields yields)
     {
         for (unsigned c = 0; c < cases.size(); ++c) {
@@ -1154,7 +1167,7 @@ private:
                 otherwise = branch(append(WTF::move(test)));
             }
             if (which.callee)
-                callAndFinish(which.callee, { }, receiver, given, original.type, yields);
+                callAndFinish(which.callee, { }, narrowedToThisType(which, receiver), given, original.type, yields);
             else
                 callFieldValueAndFinish(supertype, receiver, original);
             if (otherwise)
@@ -2275,7 +2288,9 @@ private:
         if (m_program.operationOf(original) != Operations::ConstructWith || original.arguments.size() < 2)
             return false;
         auto known = knownCallee(original.arguments[0]);
-        if (!known || !mayConstructDirectly(known->function, true) || isRefuted(block, *known))
+        if (known && isRefuted(block, *known))
+            return false;
+        if (!known || !mayConstructDirectly(known->function, true))
             return resolveConstructOfUnknownCallee(block, index);
         bool isOneOfMany = m_program.at(known->function).hasManyClosures;
         if (isOneOfMany && !m_program.genericEntrypoints.contains(known->function.index()))

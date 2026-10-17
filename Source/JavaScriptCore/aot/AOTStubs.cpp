@@ -22508,7 +22508,7 @@ Stub putByNameHandler(unsigned variant, PropertyLookupTable::Kind kind)
     return stubs.slotsLabel[form];
 }
 
-std::optional<RegisterSet> registersClobberedBy(Stub stub)
+static std::optional<RegisterSet> registersNamedByGenerator(Stub stub)
 {
     if (variantPreservingTwoIntegers(stub)) {
         RegisterSet changed = RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters());
@@ -22954,6 +22954,16 @@ std::optional<RegisterSet> registersClobberedBy(Stub stub)
     default:
         break;
     }
+    return result;
+}
+
+std::optional<RegisterSet> registersClobberedBy(Stub stub)
+{
+    auto result = registersNamedByGenerator(stub);
+#if CPU(ARM64)
+    if (result && !CCallHelpers::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+        result->merge(RegisterSet::macroClobberedFPRs());
+#endif
     return result;
 }
 

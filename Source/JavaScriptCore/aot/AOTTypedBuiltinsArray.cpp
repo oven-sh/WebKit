@@ -714,7 +714,7 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
 {
     auto isAvailableArray = [&](ValueID id) {
         auto* engineClass = typeOf(id).singleEngineClass();
-        return engineClass && engineClass->type == ArrayType && isAvailableAtCurrentValue(id) && get(id).value;
+        return engineClass && engineClass->type == ArrayType && !isLazilyFetched(id) && isAvailableAtCurrentValue(id) && get(id).value;
     };
     auto isAppendSpread = [&](const Value& value) {
         auto isOperation = [&](const Value& call) {

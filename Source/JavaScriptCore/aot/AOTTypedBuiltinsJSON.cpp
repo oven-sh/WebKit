@@ -364,18 +364,31 @@ static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, J
     return value.isNull() ? appendLiteral(cursor, "null"_s) : nullptr;
 }
 
-static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const Typed::State::KeysAsJSON& keys, unsigned depth)
+struct JSONPlan {
+    const Typed::State::KeysAsJSON::Key* begin { nullptr };
+    const Typed::State::KeysAsJSON::Key* end { nullptr };
+    const Latin1Character* text { nullptr };
+    size_t fixedSize { 0 };
+};
+
+static ALWAYS_INLINE JSONPlan jsonPlanOf(const Typed::State::KeysAsJSON& keys)
+{
+    auto span = keys.keys.span();
+    return { span.data(), span.data() + span.size(), keys.text.span().data(), keys.text.size() + span.size() * maxJSONNumberLength + 2 * jsonBufferSpareCapacity };
+}
+
+static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const JSONPlan& plan, unsigned depth)
 {
     using ReadKind = Typed::Object::ReadKind;
     constexpr unsigned copyStride = Typed::State::KeysAsJSON::copyStride;
     constexpr uint32_t offsetMask = (1u << Typed::Object::readKindShift) - 1;
-    size_t fixedSize = keys.text.size() + keys.keys.size() * maxJSONNumberLength + 2 * jsonBufferSpareCapacity;
+    size_t fixedSize = plan.fixedSize;
     cursor = reserveInJSONBuffer(instance, cursor, fixedSize);
     if (!cursor) [[unlikely]]
         return nullptr;
     size_t start = cursor - instance->jsonBufferStart;
     const uint8_t* body = std::bit_cast<const uint8_t*>(&object);
-    const Latin1Character* text = keys.text.span().data();
+    const Latin1Character* text = plan.text;
     auto appendKey = [&](const Typed::State::KeysAsJSON::Key& key) ALWAYS_INLINE_LAMBDA {
         const Latin1Character* from = text + key.start;
         memcpy(cursor, from, copyStride);
@@ -383,7 +396,8 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
             memcpy(cursor + i, from + i, copyStride);
         cursor += key.length;
     };
-    for (auto& key : keys.keys) {
+    for (auto* next = plan.begin; next != plan.end; ++next) {
+        auto& key = *next;
         uint32_t offset = key.readKindAndOffset & offsetMask;
         auto field = [&]() ALWAYS_INLINE_LAMBDA -> const Typed::FieldData& { return object.layout().fields()[key.fieldIndex]; };
         JSValue value;
@@ -459,7 +473,7 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
 
 static NEVER_INLINE Latin1Character* appendTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const Typed::State::KeysAsJSON& keys, unsigned depth)
 {
-    return writeTypedObject(instance, globalObject, vm, cursor, object, keys, depth);
+    return writeTypedObject(instance, globalObject, vm, cursor, object, jsonPlanOf(keys), depth);
 }
 
 static NEVER_INLINE Latin1Character* appendArray(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, JSArray& array, unsigned depth)
@@ -480,7 +494,8 @@ static NEVER_INLINE Latin1Character* appendArray(Instance* instance, JSGlobalObj
     switch (shape) {
     case Int32Shape:
     case ContiguousShape: {
-        const Typed::State::KeysAsJSON* lastKeys = nullptr;
+        bool hasPlan = false;
+        JSONPlan plan;
         uint64_t lastWords = 0;
         uint32_t lastStructureID = 0;
         for (unsigned i = 0; i < length; ++i) {
@@ -496,12 +511,15 @@ static NEVER_INLINE Latin1Character* appendArray(Instance* instance, JSGlobalObj
                     auto* object = uncheckedDowncast<JSObject>(cell);
                     uint64_t words = WTF::unalignedLoad<uint64_t>(std::bit_cast<const uint8_t*>(object) + Typed::offsetOfOrderWord);
                     uint32_t structureID = object->structureID().bits();
-                    if (!lastKeys || words != lastWords || structureID != lastStructureID) [[unlikely]] {
-                        lastKeys = jsonPlanFor(instance, globalObject, vm, object);
+                    if (!hasPlan || words != lastWords || structureID != lastStructureID) [[unlikely]] {
+                        auto* keys = jsonPlanFor(instance, globalObject, vm, object);
+                        hasPlan = keys;
+                        if (keys)
+                            plan = jsonPlanOf(*keys);
                         lastWords = words;
                         lastStructureID = structureID;
                     }
-                    cursor = lastKeys ? writeTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), *lastKeys, depth + 1) : appendObject(instance, globalObject, vm, cursor, object, depth + 1);
+                    cursor = hasPlan ? writeTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), plan, depth + 1) : appendObject(instance, globalObject, vm, cursor, object, depth + 1);
                 } else if (type == ArrayType) {
                     if (depth + 1 >= maxJSONWalkDepth) [[unlikely]]
                         return jsonWalkGaveUp;

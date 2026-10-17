@@ -661,7 +661,7 @@ private:
         BlockID slow = branch(append(WTF::move(guard)));
 
         if (callee)
-            callDirectly(callee, site->receiver, original);
+            callPreludeFunction(callee, site->receiver, original);
         else {
             Value call = original;
             call.opcode = Opcode::CallMethod;
@@ -964,6 +964,192 @@ private:
         call.arguments = passedTo(callee, receiver, original.arguments.span());
         call.immediates = { callee.index(), m_inliningDepth };
         finish(held(appendThrowing(WTF::move(call)), original.type));
+    }
+
+    struct SortKey {
+        FunctionID sort;
+        StringID name;
+        uint32_t flags;
+    };
+
+    std::optional<SortKey> sortKeyOfComparator(FunctionID callee, const Value& call) const
+    {
+        auto prelude = [&](PreludeFunction which) { return m_program.preludeFunctions[static_cast<unsigned>(which)]; };
+        FunctionID sort = callee == prelude(PreludeFunction::ArraySort) ? prelude(PreludeFunction::ArraySortByKey) : callee == prelude(PreludeFunction::ArrayToSorted) ? prelude(PreludeFunction::ArrayToSortedByKey) : FunctionID();
+        if (!sort || call.arguments.size() != 1)
+            return std::nullopt;
+        auto& passedComparator = m_function.at(originOf(call.arguments[0]));
+        if (passedComparator.opcode != Opcode::FunctionReference && passedComparator.opcode != Opcode::NewClosure)
+            return std::nullopt;
+        auto& comparator = m_program.at(passedComparator.function());
+        if (comparator.blocks.isEmpty() || comparator.has(Format::FunctionIsAsync | Format::FunctionIsGenerator) || comparator.blocks[0].parameters.size() != 2)
+            return std::nullopt;
+        ValueID first = comparator.blocks[0].parameters[0];
+        ValueID second = comparator.blocks[0].parameters[1];
+        StringID name;
+        bool hasSeenKey = false;
+        auto parameterOfKey = [&](ValueID id) -> std::optional<unsigned> {
+            StringID read;
+            if (auto& value = comparator.at(id); value.opcode == Opcode::GetById) {
+                read = value.string();
+                id = value.child(0);
+            }
+            if ((id != first && id != second) || (hasSeenKey && read != name))
+                return std::nullopt;
+            name = read;
+            hasSeenKey = true;
+            return id == second;
+        };
+        auto orderOfOperands = [&](const Value& value, int order) -> std::optional<int> {
+            auto left = parameterOfKey(value.child(0));
+            auto right = parameterOfKey(value.child(1));
+            if (!left || !right || *left == *right)
+                return std::nullopt;
+            return *left ? -order : order;
+        };
+
+        if (auto& block = comparator.blocks[0]; block.terminator.kind == TerminatorKind::Return && block.terminator.value && comparator.at(block.terminator.value).opcode == Opcode::CallMethod) {
+            static const BuiltinName localeCompare = Builtins::singleton().nameOf(asBytes("localeCompare"_s.span8()));
+            auto& compared = comparator.at(block.terminator.value);
+            if (comparator.blocks.size() != 1 || m_program.builtinName(compared.string()) != localeCompare || compared.arguments.size() != 1)
+                return std::nullopt;
+            auto left = parameterOfKey(compared.child(0));
+            auto right = parameterOfKey(compared.arguments[0]);
+            if (!left || !right || *left == *right || block.values.size() != (name ? 3u : 1u))
+                return std::nullopt;
+            return SortKey { sort, name, sortComparesByLocale | (*left ? sortIsDescending : 0) };
+        }
+
+        enum class Kind : uint8_t { Unknown, Number, Boolean };
+        struct Abstract {
+            Kind kind { Kind::Unknown };
+            int value { 0 };
+        };
+        bool needsNumbers = false;
+        auto signOf = [](auto number) { return number > 0 ? 1 : number < 0 ? -1 : 0; };
+        auto resultFor = [&](int order) -> std::optional<int> {
+            UncheckedKeyHashMap<uint32_t, Abstract, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bound;
+            auto evaluate = [&](auto& self, ValueID id) -> Abstract {
+                if (auto found = bound.find(id.index()); found != bound.end())
+                    return found->value;
+                auto& value = comparator.at(id);
+                switch (value.opcode) {
+                case Opcode::Integer:
+                    return { Kind::Number, signOf(value.integer()) };
+                case Opcode::Double: {
+                    double number = std::bit_cast<double>(value.bits());
+                    return number != number ? Abstract { } : Abstract { Kind::Number, signOf(number) };
+                }
+                case Opcode::Boolean:
+                    return { Kind::Boolean, value.boolean() };
+                case Opcode::Negate: {
+                    Abstract operand = self(self, value.child(0));
+                    return operand.kind == Kind::Number ? Abstract { Kind::Number, -operand.value } : Abstract { };
+                }
+                case Opcode::LogicalNot: {
+                    Abstract operand = self(self, value.child(0));
+                    return operand.kind == Kind::Boolean ? Abstract { Kind::Boolean, !operand.value } : Abstract { };
+                }
+                case Opcode::Sub:
+                case Opcode::Less:
+                case Opcode::LessEq:
+                case Opcode::Greater:
+                case Opcode::GreaterEq:
+                case Opcode::StrictEq:
+                case Opcode::Eq: {
+                    auto operands = orderOfOperands(value, order);
+                    if (!operands)
+                        return { };
+                    switch (value.opcode) {
+                    case Opcode::Sub:
+                        needsNumbers = true;
+                        return { Kind::Number, *operands };
+                    case Opcode::Less:
+                        return { Kind::Boolean, *operands < 0 };
+                    case Opcode::LessEq:
+                        return { Kind::Boolean, *operands <= 0 };
+                    case Opcode::Greater:
+                        return { Kind::Boolean, *operands > 0 };
+                    case Opcode::GreaterEq:
+                        return { Kind::Boolean, *operands >= 0 };
+                    default:
+                        return { Kind::Boolean, !*operands };
+                    }
+                }
+                default:
+                    return { };
+                }
+            };
+            BlockID at(0u);
+            for (unsigned steps = 0; steps < 16; ++steps) {
+                auto& block = comparator.at(at);
+                for (ValueID id : block.values) {
+                    switch (comparator.at(id).opcode) {
+                    case Opcode::GetById:
+                        if (!parameterOfKey(id))
+                            return std::nullopt;
+                        break;
+                    case Opcode::Integer:
+                    case Opcode::Double:
+                    case Opcode::Boolean:
+                    case Opcode::Negate:
+                    case Opcode::LogicalNot:
+                        break;
+                    default:
+                        if (evaluate(evaluate, id).kind == Kind::Unknown)
+                            return std::nullopt;
+                    }
+                }
+                auto& terminator = block.terminator;
+                unsigned taken = 0;
+                if (terminator.kind == TerminatorKind::Return) {
+                    Abstract result = terminator.value ? evaluate(evaluate, terminator.value) : Abstract { };
+                    return result.kind == Kind::Number ? std::optional(result.value) : std::nullopt;
+                }
+                if (terminator.kind == TerminatorKind::Branch) {
+                    Abstract condition = evaluate(evaluate, terminator.value);
+                    if (condition.kind != Kind::Boolean)
+                        return std::nullopt;
+                    taken = !condition.value;
+                } else if (terminator.kind != TerminatorKind::Jump)
+                    return std::nullopt;
+                auto& target = terminator.targets[taken];
+                auto& parameters = comparator.at(target.block).parameters;
+                if (target.arguments.size() != parameters.size())
+                    return std::nullopt;
+                Vector<Abstract, 2> passed;
+                for (ValueID argument : target.arguments)
+                    passed.append(evaluate(evaluate, argument));
+                for (unsigned i = 0; i < passed.size(); ++i)
+                    bound.set(parameters[i].index(), passed[i]);
+                at = target.block;
+            }
+            return std::nullopt;
+        };
+        auto whenLess = resultFor(-1);
+        auto whenEqual = resultFor(0);
+        auto whenGreater = resultFor(1);
+        if (!whenLess || !whenEqual || !whenGreater || *whenEqual || !*whenLess || *whenLess != -*whenGreater)
+            return std::nullopt;
+        return SortKey { sort, name, (*whenLess > 0 ? sortIsDescending : 0) | (needsNumbers ? 0 : sortKeysMayBeStrings) };
+    }
+
+    void callPreludeFunction(FunctionID callee, ValueID receiver, const Value& original)
+    {
+        auto key = sortKeyOfComparator(callee, original);
+        if (!key) {
+            callDirectly(callee, receiver, original);
+            return;
+        }
+        Value byKey = original;
+        Value name = make(key->name ? Opcode::String : Opcode::Undefined, key->name ? m_program.types.string : m_program.types.undefined);
+        if (key->name)
+            name.immediates = { key->name.index(), Format::none };
+        byKey.arguments.append(append(WTF::move(name)));
+        Value flags = make(Opcode::Integer, m_program.types.int32);
+        flags.setBits(key->flags);
+        byKey.arguments.append(append(WTF::move(flags)));
+        callDirectly(key->sort, receiver, byKey);
     }
 
     BlockID addBlock()

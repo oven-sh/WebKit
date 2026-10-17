@@ -6658,7 +6658,9 @@ Operand Lowering::lowerNewObject(ValueID id, const Value& value)
             }
         }
         bool takesNoMoreInstructions = isX86_64() ? chunks.size() + 1 <= ranges.size() : chunks.size() < ranges.size();
-        if (ranges.size() < 2 || !takesNoMoreInstructions || end < Typed::offsetOfFirstField + chunkBytes)
+        constexpr uint32_t maxOffsetStoredWithoutScratchRegister = 32760;
+        bool needsScratchRegister = isARM64() && end > maxOffsetStoredWithoutScratchRegister + sizeof(uint64_t);
+        if (ranges.size() < 2 || !takesNoMoreInstructions || needsScratchRegister || end < Typed::offsetOfFirstField + chunkBytes)
             isFilledWithZeroes.clearAll();
         else {
             PatchpointValue* zeroes = m_out.patchpoint(Void);

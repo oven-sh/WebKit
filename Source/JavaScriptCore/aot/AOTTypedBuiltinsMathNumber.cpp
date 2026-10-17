@@ -645,7 +645,7 @@ std::optional<Operand> Lowering::lowerNumberFromSubstring(ValueID result, const 
         part = &found->value;
     }
     bool isParseInt = implementation.inlined == InlineBuiltin::ParseInt;
-    Characters characters = part->charactersOfBase ? *part->charactersOfBase : charactersOf(part->base);
+    Characters characters = charactersOf(part->base);
     Word32 length = low32(lengthOf(*part));
     Word32 radix = isParseInt && value.arguments.size() > 1 ? low32(in<Integer>(value.arguments[1])) : word32(0);
     auto parse = [&] {

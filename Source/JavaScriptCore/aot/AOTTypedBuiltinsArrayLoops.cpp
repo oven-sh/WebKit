@@ -10,8 +10,12 @@
 
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
+#include "AOTTypedObject.h"
 #include "ArrayConstructor.h"
+#include "IntlCollator.h"
+#include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT {
 
@@ -66,6 +70,132 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTruncateNewArray, JSCell*, (Instance* 
     OPERATION_RETURN(scope, array);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue encodedName, uint32_t flags))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    struct WithNumber {
+        double key;
+        EncodedJSValue element;
+    };
+    struct WithString {
+        StringView key;
+        EncodedJSValue element;
+    };
+    const EncodedJSValue declined = JSValue::encode(jsNull());
+    JSArray* array = uncheckedDowncast<JSArray>(cell);
+    JSValue name = JSValue::decode(encodedName);
+    IndexingType shape = array->indexingType() & IndexingShapeMask;
+    bool isDescending = flags & Typed::sortIsDescending;
+    if ((shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) || globalObject->isHavingABadTime())
+        OPERATION_RETURN(scope, declined);
+    if (shape != ContiguousShape && (name.isString() || flags & Typed::sortComparesByLocale))
+        OPERATION_RETURN(scope, declined);
+    if (!(flags & Typed::sortMakesCopy) && !globalObject->isOriginalArrayStructure(array->structure()))
+        OPERATION_RETURN(scope, declined);
+    Identifier ident;
+    if (name.isString()) {
+        ident = asString(name)->toIdentifier(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
+    unsigned length = array->length();
+    Vector<WithNumber> numbers;
+    Vector<WithString> strings;
+    Structure* lastStructure = nullptr;
+    PropertyOffset lastOffset = invalidOffset;
+    for (unsigned i = 0; i < length; ++i) {
+        if (shape == DoubleShape) {
+            double number = array->butterfly()->contiguousDouble().at(array, i);
+            if (number != number)
+                OPERATION_RETURN(scope, declined);
+            numbers.append(WithNumber { isDescending ? -number : number, std::bit_cast<EncodedJSValue>(number) });
+            continue;
+        }
+        JSValue element = array->butterfly()->contiguous().at(array, i).get();
+        if (!element)
+            OPERATION_RETURN(scope, declined);
+        if (element.isUndefined())
+            continue;
+        JSValue keyValue = element;
+        if (!ident.isNull()) {
+            if (!element.isObject())
+                OPERATION_RETURN(scope, declined);
+            JSObject* object = asObject(element);
+            Structure* structure = object->structure();
+            const Typed::LayoutData* layout = structure->compiledLayout();
+            if (layout && Typed::isObjectLayout(layout->kind))
+                keyValue = Typed::Object::tryGetOwnData(vm, object, ident);
+            else {
+                if (structure != lastStructure) {
+                    unsigned attributes = 0;
+                    PropertyOffset offset = layout || object->type() != FinalObjectType || structure->isUncacheableDictionary() ? invalidOffset : structure->get(vm, ident, attributes);
+                    if (!isValidOffset(offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+                        OPERATION_RETURN(scope, declined);
+                    lastStructure = structure;
+                    lastOffset = offset;
+                }
+                keyValue = object->getDirect(lastOffset);
+            }
+        }
+        if (!keyValue)
+            OPERATION_RETURN(scope, declined);
+        if (keyValue.isNumber() && strings.isEmpty() && !(flags & Typed::sortComparesByLocale)) {
+            double number = keyValue.asNumber();
+            if (number != number)
+                OPERATION_RETURN(scope, declined);
+            numbers.append(WithNumber { isDescending ? -number : number, JSValue::encode(element) });
+            continue;
+        }
+        if (!keyValue.isString() || !numbers.isEmpty() || !(flags & (Typed::sortKeysMayBeStrings | Typed::sortComparesByLocale)))
+            OPERATION_RETURN(scope, declined);
+        auto view = asString(keyValue)->view(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        strings.append(WithString { view, JSValue::encode(element) });
+    }
+    if (flags & Typed::sortComparesByLocale) {
+        IntlCollator* collator = globalObject->defaultCollator();
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        bool mayCompareASCII = globalObject->canDoASCIIUCADUCETLocaleCompare();
+        auto isBefore = [&](StringView a, StringView b) {
+            if (mayCompareASCII && a.is8Bit() && b.is8Bit()) {
+                if (auto result = compareASCIIWithUCADUCET(a.span8(), b.span8()))
+                    return *result < 0;
+            }
+            return collator->compareStrings(globalObject, a, b) < 0;
+        };
+        std::stable_sort(strings.begin(), strings.end(), [&](const WithString& a, const WithString& b) {
+            return isDescending ? isBefore(b.key, a.key) : isBefore(a.key, b.key);
+        });
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    } else {
+        std::stable_sort(strings.begin(), strings.end(), [&](const WithString& a, const WithString& b) {
+            return isDescending ? codePointCompareLessThan(b.key, a.key) : codePointCompareLessThan(a.key, b.key);
+        });
+    }
+    std::stable_sort(numbers.begin(), numbers.end(), [](const WithNumber& a, const WithNumber& b) {
+        return a.key < b.key;
+    });
+    JSArray* sorted = array;
+    if (flags & Typed::sortMakesCopy) {
+        sorted = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(IsArray | shape), length);
+        if (!sorted)
+            OPERATION_RETURN(scope, declined);
+    } else
+        array->ensureWritable(vm);
+    unsigned next = 0;
+    for (auto& entry : numbers) {
+        if (shape == DoubleShape)
+            sorted->butterfly()->contiguousDouble().at(sorted, next++) = std::bit_cast<double>(entry.element);
+        else
+            sorted->butterfly()->contiguous().at(sorted, next++).setWithoutWriteBarrier(JSValue::decode(entry.element));
+    }
+    for (auto& entry : strings)
+        sorted->butterfly()->contiguous().at(sorted, next++).setWithoutWriteBarrier(JSValue::decode(entry.element));
+    while (next < length)
+        sorted->butterfly()->contiguous().at(sorted, next++).setWithoutWriteBarrier(jsUndefined());
+    vm.writeBarrier(sorted);
+    OPERATION_RETURN(scope, JSValue::encode(sorted));
+}
+
 namespace Typed {
 
 using namespace B3;
@@ -92,6 +222,7 @@ std::optional<Writes> writesOfInlineArrayLoops(InlineBuiltin which, std::span<co
     case InlineBuiltin::TruncateNewArray:
     case InlineBuiltin::GrowNewArray:
     case InlineBuiltin::TryPutIndex:
+    case InlineBuiltin::TrySortByKey:
         return Writes::Heap;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -338,6 +469,8 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     case InlineBuiltin::GrowNewArray:
         AOT_TYPED_OPERATION_WITH_EFFECTS(GrowNewArray, (OperationEffects { Writes::Heap, true, false }), arrayOperand(arguments[0]), indexOperand(arguments[1]));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    case InlineBuiltin::TrySortByKey:
+        return ensure(AOT_TYPED_OPERATION(TrySortByKey, arrayOperand(arguments[0]), in<Boxed>(arguments[1]), low32(indexOperand(arguments[2]))), type);
     case InlineBuiltin::TryPutIndex:
         didEmitWrite(inlinePath);
         return booleanResult(tryStoreArrayElement(arrayOperand(arguments[0]), indexOperand(arguments[1]), arguments[2]), type);

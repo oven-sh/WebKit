@@ -478,19 +478,32 @@ public:
     unsigned m_frameSize;
 };
 
+#define FOR_EACH_YARR_FAST_OP_THAT_PUSHES_A_FRAME(macro) \
+    macro(Choice) \
+    macro(ChoiceByFirst) \
+    macro(NegativeLookaheadBegin) \
+    macro(GreedyRun) \
+    macro(LazyRun) \
+    macro(GreedyRunBeforeKnownCharacters) \
+    macro(LazyRunBeforeKnownCharacters) \
+    macro(LoggedCaptureStart) \
+    macro(LoggedCaptureEnd) \
+    macro(LoggedClearCaptures) \
+    macro(LoggedSavePosition) \
+    macro(LoggedSetRegister) \
+    macro(LoggedIncrement)
+
 #define FOR_EACH_YARR_FAST_OP(macro) \
+    FOR_EACH_YARR_FAST_OP_THAT_PUSHES_A_FRAME(macro) \
+    macro(KnownCharacters) \
     macro(Character) \
     macro(Text) \
     macro(CasedText) \
     macro(WideText) \
     macro(Set) \
     macro(SetCount) \
-    macro(GreedyRun) \
     macro(PossessiveRun) \
-    macro(LazyRun) \
     macro(CapturedRun) \
-    macro(Choice) \
-    macro(ChoiceByFirst) \
     macro(Jump) \
     macro(CaptureStart) \
     macro(CaptureEnd) \
@@ -505,19 +518,12 @@ public:
     macro(WordBoundary) \
     macro(NotWordBoundary) \
     macro(Match) \
-    macro(LoggedCaptureStart) \
-    macro(LoggedCaptureEnd) \
-    macro(LoggedClearCaptures) \
-    macro(LoggedSavePosition) \
-    macro(LoggedSetRegister) \
-    macro(LoggedIncrement) \
     macro(JumpIfBelow) \
     macro(JumpIfNotBelow) \
     macro(LoopBack) \
     macro(LookaheadBegin) \
     macro(LookaheadEnd) \
     macro(LookaheadEndKeepingCaptures) \
-    macro(NegativeLookaheadBegin) \
     macro(NegativeLookaheadEnd) \
     macro(BackReference) \
     macro(BackReferenceIgnoringCase)
@@ -542,6 +548,13 @@ struct FastSet {
     bool invert;
 };
 
+struct FastFrame {
+    uint32_t op;
+    uint32_t position;
+    uint32_t limit;
+    uint32_t extra;
+};
+
 struct FastProgram {
     WTF_MAKE_TZONE_ALLOCATED(FastProgram);
 public:
@@ -555,9 +568,11 @@ public:
     unsigned numSubpatterns { 0 };
     unsigned numRegisters { 0 };
     unsigned endAnchoredFixedSize { 0 };
-    bool hasFirstCharacters { false };
-    bool tryOnlyAtStart { false };
-    bool sticky { false };
+    bool scansForFirstCharacter { false };
+    bool firstCharacterMayBeWide { false };
+    bool hasOnlyOneFirstCharacter { false };
+    uint8_t onlyFirstCharacter { 0 };
+    bool triesOnlyOnce { false };
     bool validate { false };
 };
 

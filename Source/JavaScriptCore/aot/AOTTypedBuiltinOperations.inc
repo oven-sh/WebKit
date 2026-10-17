@@ -3,6 +3,7 @@
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArrayWithHoles, RuntimeState, JSCell*, (Instance*, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t isCapacity));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGrowNewArray, Heap, void, (Instance*, JSCell* array, uint64_t length));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTruncateNewArray, Heap, JSCell*, (Instance*, JSCell* array, uint32_t length));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTrySortByKey, Heap, EncodedJSValue, (Instance*, JSCell* array, EncodedJSValue name, uint32_t flags));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArraySplice, Heap, EncodedJSValue, (Instance*, JSCell* array, int32_t start, int32_t deleteCount, uint32_t count, const EncodedJSValue* items, uint32_t isUsed));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedArrayGrow, Heap, size_t, (Instance*, JSCell* array, uint32_t length));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedAllocateStorage, RuntimeState, void*, (Instance*, uint64_t size));

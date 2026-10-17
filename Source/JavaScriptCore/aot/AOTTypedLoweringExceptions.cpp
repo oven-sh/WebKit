@@ -158,6 +158,16 @@ Operand Lowering::get(ValueID id)
         auto& fetched = m_fetchedLeaves.add(id.index(), std::pair<LBasicBlock, Operand> { }).iterator->value;
         if (fetched.first != m_out.m_block) {
             auto& value = m_function.at(id);
+            if (auto optional = m_optionalSubstrings.find(id.index()); optional != m_optionalSubstrings.end()) {
+                Substring part = optional->value;
+                Operand made = ensure(either<Boxed>(part.isPresent, [&] {
+                    return box(makeSubstring(part.base, part.lengthOfBase, part.from, part.to));
+                }, [&] {
+                    return undefined();
+                }), m_program.at(value.type));
+                m_fetchedLeaves.set(id.index(), std::pair { m_out.m_block, made });
+                return made;
+            }
             CellPointer cell = value.opcode == Opcode::String ? stringConstant(value.string()) : value.opcode == Opcode::BuiltinFunction ? builtinCell(m_builtins.cellOf(value.builtin())) : concatenateIfNeeded(value);
             Operand operand = convert(cell, m_program.at(value.type), value.rep);
             if (operand.rep == Rep::Cell)

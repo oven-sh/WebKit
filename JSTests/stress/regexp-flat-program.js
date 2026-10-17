@@ -1,6 +1,5 @@
 //@ runDefault("--useRegExpJIT=0", "--validateRegExpFastMatcher=1")
 //@ runDefault("--useRegExpJIT=0")
-//@ runDefault("--useRegExpJIT=0", "--useRegExpFastMatcher=0")
 //@ runDefault
 //@ runDefault("--useExecutableAllocationFuzz=true", "--fireExecutableAllocationFuzzAtOrAfter=1")
 //@ runDefault("--useExecutableAllocationFuzz=true", "--fireExecutableAllocationFuzzRandomly=true")
@@ -11,6 +10,26 @@ function shouldBe(actual, expected, label) {
 }
 
 const cases = [
+    ["(){2}a","","a",0,["a",""]],
+    ["()*a","","a",0,["a",null]],
+    ["()+a","","a",0,["a",""]],
+    ["()??a","","a",0,["a",null]],
+    ["(?:()|(b)){2}a","","a",0,["a","",null]],
+    ["(?:$){3}","","ab",2,[""]],
+    ["(?:(?=(a))){2}a","","a",0,["a","a"]],
+    ["(?:(?=(a)))*a","","a",0,["a",null]],
+    ["(?:(?!a)){2}.","","ab",1,["b"]],
+    ["(?:\\b){2,}x","","a x",2,["x"]],
+    ["(?:(x)|(){2})+y","","xy",0,["xy","x",null]],
+    ["(a)\\1*b","","aaab",0,["aaab","a"]],
+    ["(a)\\1{2}","","aaaa",0,["aaa","a"]],
+    ["(a|b)\\1+?c","","abbbc",1,["bbbc","b"]],
+    ["(a?)\\1*b","","b",0,["b",""]],
+    ["(ab)\\1{1,2}?$","","ababab",0,["ababab","ab"]],
+    ["x.*\\/y","","x/a/b/y/c",0,["x/a/b/y"]],
+    ["x.*?\\/y","","x/a/b/y/c/y",0,["x/a/b/y"]],
+    ["[a-z]{2,4}?[0-9]","","abcd7",0,["abcd7"]],
+    ["[!-~]+ [@-Z]+","","ab~! AZ@[",0,["ab~! AZ@"]],
     ["A\\s\\sM","","x A  M",2,["A  M"]],
     ["a\\s\\s\\sm","i","A M-A   M",4,["A   M"]],
     ["\\d{31}x","","0123456789012345678901234567890x",0,["0123456789012345678901234567890x"]],
@@ -135,6 +154,8 @@ function atom(depth) {
 function term(depth) {
     const text = atom(depth);
     if (/^(\^|\$|\\b|\\B)$/.test(text) || /^\(\?[=!]/.test(text))
+        return text;
+    if (/^\\\d+$/.test(text) && random(5))
         return text;
     return text + pick(["", "", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}?", "{2,}", "{2,3}?"]);
 }

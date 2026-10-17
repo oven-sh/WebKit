@@ -17,10 +17,12 @@ inline PutContiguousIndex
 inline GrowNewArray
 inline TryPutIndex
 inline IsPlainArrayLike
+inline TrySortByKey
 
 runtime NewArrayWithHoles : RuntimeState JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t isCapacity)
 runtime GrowNewArray : Heap void (JSCell* array, uint64_t length)
 runtime TruncateNewArray : Heap JSCell* (JSCell* array, uint32_t length)
+runtime TrySortByKey : Heap EncodedJSValue (JSCell* array, EncodedJSValue name, uint32_t flags)
 
 # Of the prelude. An array operand is a cell. An index is within the length, which the caller has looked at since anything else ran.
 intrinsic CallNoInline (any/C, any/A, any/A...) -> anything ; CallsUserCode ; Inline(Call)
@@ -41,6 +43,7 @@ intrinsic PutContiguousIndex (any/w, any/-, any/K) -> undefined ; WritesRuntimeS
 intrinsic GrowNewArray (any/w, any/-) -> undefined ; MayThrow WritesArguments ; Inline(GrowNewArray)
 intrinsic TryPutIndex (any/w, any/-, any/K) -> boolean ; WritesArguments ; Inline(TryPutIndex)
 intrinsic IsPlainArrayLike (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsPlainArrayLike)
+intrinsic TrySortByKey (any/w, any/-, any/-) -> anything ; MayThrow Allocates WritesArguments ; Inline(TrySortByKey)
 
 static Object.groupBy (any/GP?, any/C?, any/-...) -> new Object/N ; CallsUserCode ; Call
 
@@ -60,8 +63,10 @@ method Array.prototype.forEach this/GPA (any/C, any/A?) -> undefined ; CallsUser
 method Array.prototype.forEach this/GPA (any/C?, any/A?, any/-...) -> undefined ; CallsUserCode ; Call
 method Array.prototype.sort this/wGRP (any/C) -> this ; CallsUserCode ; Prelude(Array$sort)
 method Array.prototype.sort this/wGRP (any/C?, any/-...) -> this ; CallsUserCode ; HostCall
+method Array.prototype.sort this/wGRP (any/C) -> this ; CallsUserCode ; Prelude(Array$sortByKey)
 method Array.prototype.toSorted this/GP (any/C) -> new Array/N ; CallsUserCode ; Prelude(Array$toSorted)
 method Array.prototype.toSorted this/GP (any/C?, any/-...) -> new Array/N ; CallsUserCode ; HostCall
+method Array.prototype.toSorted this/GP (any/C) -> new Array/N ; CallsUserCode ; Prelude(Array$toSortedByKey)
 method Array.prototype.filter this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$filter)
 method Array.prototype.filter this/GPA (any/C?, any/A?, any/-...) -> anything ; CallsUserCode ; Call
 method Array.prototype.filter this/GPA (any/C, any/A?) -> new Array/S ; CallsUserCode ; Prelude(Array$filterTruthy)

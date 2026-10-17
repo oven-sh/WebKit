@@ -45,6 +45,7 @@
     v(GrowNewArray, ArrayLoops, false) \
     v(TryPutIndex, ArrayLoops, false) \
     v(IsPlainArrayLike, ArrayLoops, false) \
+    v(TrySortByKey, ArrayLoops, false) \
     v(ArrayLength, Array, true) \
     v(ArraySetLength, Array, true) \
     v(ArrayPush, Array, true) \
@@ -307,6 +308,7 @@
     v(operationAOTTypedNewArrayWithHoles) \
     v(operationAOTTypedGrowNewArray) \
     v(operationAOTTypedTruncateNewArray) \
+    v(operationAOTTypedTrySortByKey) \
     v(operationAOTTypedArraySplice) \
     v(operationAOTTypedArrayGrow) \
     v(operationAOTTypedAllocateStorage) \
@@ -602,184 +604,185 @@
     v(GrowNewArray, 15, 107) \
     v(TryPutIndex, 16, 263) \
     v(IsPlainArrayLike, 17, 132) \
-    v(RequireBuiltinModule, 150, 222) \
-    v(NativeBinding, 151, 182) \
-    v(LinkTimeConstant, 152, 165) \
-    v(IsObject, 153, 130) \
-    v(IsCallable, 154, 124) \
-    v(HasJSType, 155, 113) \
-    v(GetInternalField, 156, 98) \
-    v(PutInternalField, 157, 213) \
-    v(ToLength, 158, 257) \
-    v(GetOwnProperty, 159, 103) \
-    v(PutByValDirect, 160, 210) \
-    v(HasHostClassStructure, 161, 110) \
-    v(ScanPlainURL, 162, 230) \
-    v(FindPlainQueryValue, 163, 77) \
-    v(HasHostObjectCachedValue, 164, 111) \
-    v(HostObjectCachedValue, 165, 115) \
-    v(IsCheckedStructure, 166, 125) \
-    v(SetCheckedStructure, 167, 232) \
-    v(WatchProperty, 168, 274) \
-    v(IsConstructor, 243, 126) \
-    v(ArraySpeciesCreate, 244, 17) \
-    v(DeleteByValSloppy, 245, 61) \
-    v(GetByValWithThis, 246, 91) \
-    v(ToObject, 247, 258) \
-    v(SloppyThis, 248, 239) \
-    v(ToPropertyKey, 249, 259) \
-    v(ResumeGenerator, 250, 227) \
-    v(IsGeneratorSuspendedAtStart, 251, 129) \
-    v(StepGenerator, 252, 241) \
-    v(GeneratorStepStatus, 253, 88) \
-    v(MakeIteratorResult, 254, 172) \
-    v(IsUnmodifiedGenerator, 255, 133) \
-    v(DrivenIteratorMarker, 256, 69) \
-    v(DeclaredGenerator, 257, 55) \
-    v(NewResponse, 305, 197) \
-    v(NewConstantFormatter, 333, 186) \
-    v(FormatDateTime, 334, 82) \
-    v(FormatNumber, 335, 83) \
-    v(JSONOpen, 358, 151) \
-    v(JSONDecodeSource, 359, 141) \
-    v(JSONClose, 360, 139) \
-    v(JSONAbandon, 361, 137) \
-    v(JSONByteAt, 362, 138) \
-    v(JSONStartsWith, 363, 156) \
-    v(JSONStringAt, 364, 157) \
-    v(JSONNumberAt, 365, 150) \
-    v(JSONNumber, 366, 149) \
-    v(JSONIntegerAt, 367, 147) \
-    v(JSONInteger, 368, 146) \
-    v(JSONValueAt, 369, 158) \
-    v(JSONKeyAt, 370, 148) \
-    v(JSONHasStackSpace, 371, 145) \
-    v(JSONCursor, 372, 140) \
-    v(JSONSetCursor, 373, 152) \
-    v(JSONSkipWhitespace, 374, 155) \
-    v(JSONSkipValue, 375, 154) \
-    v(JSONSkipMember, 376, 153) \
-    v(JSONGiveUpIfEscaped, 377, 143) \
-    v(JSONGiveUpIfRepeated, 378, 144) \
-    v(JSONGiveUp, 379, 142) \
-    v(Likely, 380, 164) \
-    v(AppendJSON, 381, 12) \
-    v(NewJSONResponse, 382, 192) \
-    v(CopyDataProperties, 383, 49) \
-    v(CopyDataPropertiesExcluding, 384, 50) \
-    v(CloneObject, 385, 40) \
-    v(CloneObjectWith, 386, 42) \
-    v(CloneObjectAfter, 387, 41) \
-    v(DefineField, 388, 57) \
-    v(UnlistFields, 389, 272) \
-    v(ListFields, 390, 166) \
-    v(Initialize, 391, 119) \
-    v(DefineGetter, 392, 58) \
-    v(DefineSetter, 393, 60) \
-    v(ForInKeys, 394, 81) \
-    v(HasEnumerableProperty, 395, 109) \
-    v(Increment, 396, 118) \
-    v(Decrement, 397, 56) \
-    v(AppendSpread, 398, 13) \
-    v(AppendHole, 399, 11) \
-    v(Apply, 400, 14) \
-    v(CallWithSpread, 401, 38) \
-    v(ConstructWithArray, 402, 46) \
-    v(ConstructWith, 403, 45) \
-    v(ConstructWithSpread, 404, 47) \
-    v(MakeClass, 405, 171) \
-    v(NewObjectOfClass, 406, 194) \
-    v(DefineMethod, 407, 59) \
-    v(SetFunctionName, 408, 234) \
-    v(SuperGet, 409, 250) \
-    v(SuperSet, 410, 251) \
-    v(GetSuperConstructor, 411, 105) \
-    v(SuperConstruct, 412, 249) \
-    v(ConstructOn, 413, 44) \
-    v(ConstructorResult, 414, 48) \
-    v(DerivedConstructorResult, 415, 62) \
-    v(NewPrivateName, 416, 195) \
-    v(PrivateGet, 417, 204) \
-    v(PrivateSet, 418, 207) \
-    v(PrivateHas, 419, 205) \
-    v(PrivateFieldAdd, 420, 203) \
-    v(PrivateMethodsAdd, 421, 206) \
-    v(NewPromise, 422, 196) \
-    v(ResolvePromise, 423, 225) \
-    v(RejectPromise, 424, 221) \
-    v(NewGenerator, 425, 190) \
-    v(NewAsyncGenerator, 426, 185) \
-    v(StartAsyncGenerator, 427, 240) \
-    v(GetAsyncIterator, 428, 89) \
-    v(CreateArguments, 429, 51) \
-    v(GetFromArguments, 430, 95) \
-    v(CreateMappedArguments, 431, 52) \
-    v(GetMappedParameter, 432, 101) \
-    v(PutMappedParameter, 433, 214) \
-    v(GetIterator, 434, 99) \
-    v(RequireIteratorResultObject, 435, 224) \
-    v(IteratorCloseAndThrowMissingThrowMethod, 436, 135) \
-    v(NewDisposableStack, 437, 188) \
-    v(AddDisposableResource, 438, 9) \
-    v(DisposeNextResource, 439, 67) \
-    v(RecordDisposeError, 440, 216) \
-    v(DisposeResources, 441, 68) \
-    v(ToESM, 442, 256) \
-    v(MakeModuleNamespace, 443, 173) \
-    v(ParseJSON, 444, 202) \
-    v(DirectEval, 445, 65) \
-    v(RequireExternalModule, 446, 223) \
-    v(GetRequireFunction, 447, 104) \
-    v(MarkCommonJSEntryPoint, 448, 178) \
-    v(GetTemplateObject, 449, 106) \
-    v(GetImportMeta, 450, 96) \
-    v(GetNewTarget, 451, 102) \
-    v(ImportExternalModule, 452, 116) \
-    v(ImportWithOptions, 453, 117) \
-    v(GetExternalModuleWithType, 454, 94) \
-    v(NewModuleRecord, 455, 193) \
-    v(EnterModule, 456, 72) \
-    v(DidEvaluateRequiredModule, 457, 63) \
-    v(LeaveModule, 458, 163) \
-    v(DidStartModuleBody, 459, 64) \
-    v(WaitsForImportFromHost, 460, 273) \
-    v(AsyncModuleExecutionFulfilled, 461, 22) \
-    v(AsyncModuleExecutionRejected, 462, 23) \
-    v(NewImportTicket, 463, 191) \
-    v(SetImportPromise, 464, 235) \
-    v(EvaluateModule, 465, 75) \
-    v(Await, 466, 25) \
-    v(HasOriginalStructure, 467, 114) \
-    v(HasIndex, 468, 112) \
-    v(GetIndex, 469, 97) \
-    v(Call, 470, 36) \
-    v(CollectionTable, 471, 43) \
-    v(MapNext, 472, 176) \
-    v(MapKeyAt, 473, 175) \
-    v(MapValueAt, 474, 177) \
-    v(SetNext, 475, 237) \
-    v(SetKeyAt, 476, 236) \
-    v(AwaitMayContinue, 736, 27) \
-    v(AwaitedValue, 737, 28) \
-    v(SuspendAsyncFunction, 738, 253) \
-    v(AwaitBySavingFrame, 739, 26) \
-    v(AsyncGeneratorYield, 740, 20) \
-    v(GetAsyncIteratorNext, 741, 90) \
-    v(GetIteratorNext, 742, 100) \
-    v(GeneratorResume, 743, 87) \
-    v(GeneratorIsDone, 744, 86) \
-    v(IsAsyncIteratorDriven, 745, 123) \
-    v(AsyncIteratorNext, 746, 21) \
-    v(ClearAsyncIteratorResult, 747, 39) \
-    v(TryNewPromiseSubclass, 748, 261) \
-    v(RegExpLiteral, 780, 220) \
-    v(SetExpectedRowType, 801, 233) \
-    v(StringAppendBegin, 802, 244) \
-    v(StringAppend, 803, 243) \
-    v(StringAppendMeasure, 804, 247) \
-    v(StringAppendMayEscape, 805, 246) \
-    v(StringAppendSync, 806, 248) \
-    v(StringAppendFinish, 807, 245)
+    v(TrySortByKey, 18, 264) \
+    v(RequireBuiltinModule, 153, 222) \
+    v(NativeBinding, 154, 182) \
+    v(LinkTimeConstant, 155, 165) \
+    v(IsObject, 156, 130) \
+    v(IsCallable, 157, 124) \
+    v(HasJSType, 158, 113) \
+    v(GetInternalField, 159, 98) \
+    v(PutInternalField, 160, 213) \
+    v(ToLength, 161, 257) \
+    v(GetOwnProperty, 162, 103) \
+    v(PutByValDirect, 163, 210) \
+    v(HasHostClassStructure, 164, 110) \
+    v(ScanPlainURL, 165, 230) \
+    v(FindPlainQueryValue, 166, 77) \
+    v(HasHostObjectCachedValue, 167, 111) \
+    v(HostObjectCachedValue, 168, 115) \
+    v(IsCheckedStructure, 169, 125) \
+    v(SetCheckedStructure, 170, 232) \
+    v(WatchProperty, 171, 275) \
+    v(IsConstructor, 246, 126) \
+    v(ArraySpeciesCreate, 247, 17) \
+    v(DeleteByValSloppy, 248, 61) \
+    v(GetByValWithThis, 249, 91) \
+    v(ToObject, 250, 258) \
+    v(SloppyThis, 251, 239) \
+    v(ToPropertyKey, 252, 259) \
+    v(ResumeGenerator, 253, 227) \
+    v(IsGeneratorSuspendedAtStart, 254, 129) \
+    v(StepGenerator, 255, 241) \
+    v(GeneratorStepStatus, 256, 88) \
+    v(MakeIteratorResult, 257, 172) \
+    v(IsUnmodifiedGenerator, 258, 133) \
+    v(DrivenIteratorMarker, 259, 69) \
+    v(DeclaredGenerator, 260, 55) \
+    v(NewResponse, 308, 197) \
+    v(NewConstantFormatter, 336, 186) \
+    v(FormatDateTime, 337, 82) \
+    v(FormatNumber, 338, 83) \
+    v(JSONOpen, 361, 151) \
+    v(JSONDecodeSource, 362, 141) \
+    v(JSONClose, 363, 139) \
+    v(JSONAbandon, 364, 137) \
+    v(JSONByteAt, 365, 138) \
+    v(JSONStartsWith, 366, 156) \
+    v(JSONStringAt, 367, 157) \
+    v(JSONNumberAt, 368, 150) \
+    v(JSONNumber, 369, 149) \
+    v(JSONIntegerAt, 370, 147) \
+    v(JSONInteger, 371, 146) \
+    v(JSONValueAt, 372, 158) \
+    v(JSONKeyAt, 373, 148) \
+    v(JSONHasStackSpace, 374, 145) \
+    v(JSONCursor, 375, 140) \
+    v(JSONSetCursor, 376, 152) \
+    v(JSONSkipWhitespace, 377, 155) \
+    v(JSONSkipValue, 378, 154) \
+    v(JSONSkipMember, 379, 153) \
+    v(JSONGiveUpIfEscaped, 380, 143) \
+    v(JSONGiveUpIfRepeated, 381, 144) \
+    v(JSONGiveUp, 382, 142) \
+    v(Likely, 383, 164) \
+    v(AppendJSON, 384, 12) \
+    v(NewJSONResponse, 385, 192) \
+    v(CopyDataProperties, 386, 49) \
+    v(CopyDataPropertiesExcluding, 387, 50) \
+    v(CloneObject, 388, 40) \
+    v(CloneObjectWith, 389, 42) \
+    v(CloneObjectAfter, 390, 41) \
+    v(DefineField, 391, 57) \
+    v(UnlistFields, 392, 273) \
+    v(ListFields, 393, 166) \
+    v(Initialize, 394, 119) \
+    v(DefineGetter, 395, 58) \
+    v(DefineSetter, 396, 60) \
+    v(ForInKeys, 397, 81) \
+    v(HasEnumerableProperty, 398, 109) \
+    v(Increment, 399, 118) \
+    v(Decrement, 400, 56) \
+    v(AppendSpread, 401, 13) \
+    v(AppendHole, 402, 11) \
+    v(Apply, 403, 14) \
+    v(CallWithSpread, 404, 38) \
+    v(ConstructWithArray, 405, 46) \
+    v(ConstructWith, 406, 45) \
+    v(ConstructWithSpread, 407, 47) \
+    v(MakeClass, 408, 171) \
+    v(NewObjectOfClass, 409, 194) \
+    v(DefineMethod, 410, 59) \
+    v(SetFunctionName, 411, 234) \
+    v(SuperGet, 412, 250) \
+    v(SuperSet, 413, 251) \
+    v(GetSuperConstructor, 414, 105) \
+    v(SuperConstruct, 415, 249) \
+    v(ConstructOn, 416, 44) \
+    v(ConstructorResult, 417, 48) \
+    v(DerivedConstructorResult, 418, 62) \
+    v(NewPrivateName, 419, 195) \
+    v(PrivateGet, 420, 204) \
+    v(PrivateSet, 421, 207) \
+    v(PrivateHas, 422, 205) \
+    v(PrivateFieldAdd, 423, 203) \
+    v(PrivateMethodsAdd, 424, 206) \
+    v(NewPromise, 425, 196) \
+    v(ResolvePromise, 426, 225) \
+    v(RejectPromise, 427, 221) \
+    v(NewGenerator, 428, 190) \
+    v(NewAsyncGenerator, 429, 185) \
+    v(StartAsyncGenerator, 430, 240) \
+    v(GetAsyncIterator, 431, 89) \
+    v(CreateArguments, 432, 51) \
+    v(GetFromArguments, 433, 95) \
+    v(CreateMappedArguments, 434, 52) \
+    v(GetMappedParameter, 435, 101) \
+    v(PutMappedParameter, 436, 214) \
+    v(GetIterator, 437, 99) \
+    v(RequireIteratorResultObject, 438, 224) \
+    v(IteratorCloseAndThrowMissingThrowMethod, 439, 135) \
+    v(NewDisposableStack, 440, 188) \
+    v(AddDisposableResource, 441, 9) \
+    v(DisposeNextResource, 442, 67) \
+    v(RecordDisposeError, 443, 216) \
+    v(DisposeResources, 444, 68) \
+    v(ToESM, 445, 256) \
+    v(MakeModuleNamespace, 446, 173) \
+    v(ParseJSON, 447, 202) \
+    v(DirectEval, 448, 65) \
+    v(RequireExternalModule, 449, 223) \
+    v(GetRequireFunction, 450, 104) \
+    v(MarkCommonJSEntryPoint, 451, 178) \
+    v(GetTemplateObject, 452, 106) \
+    v(GetImportMeta, 453, 96) \
+    v(GetNewTarget, 454, 102) \
+    v(ImportExternalModule, 455, 116) \
+    v(ImportWithOptions, 456, 117) \
+    v(GetExternalModuleWithType, 457, 94) \
+    v(NewModuleRecord, 458, 193) \
+    v(EnterModule, 459, 72) \
+    v(DidEvaluateRequiredModule, 460, 63) \
+    v(LeaveModule, 461, 163) \
+    v(DidStartModuleBody, 462, 64) \
+    v(WaitsForImportFromHost, 463, 274) \
+    v(AsyncModuleExecutionFulfilled, 464, 22) \
+    v(AsyncModuleExecutionRejected, 465, 23) \
+    v(NewImportTicket, 466, 191) \
+    v(SetImportPromise, 467, 235) \
+    v(EvaluateModule, 468, 75) \
+    v(Await, 469, 25) \
+    v(HasOriginalStructure, 470, 114) \
+    v(HasIndex, 471, 112) \
+    v(GetIndex, 472, 97) \
+    v(Call, 473, 36) \
+    v(CollectionTable, 474, 43) \
+    v(MapNext, 475, 176) \
+    v(MapKeyAt, 476, 175) \
+    v(MapValueAt, 477, 177) \
+    v(SetNext, 478, 237) \
+    v(SetKeyAt, 479, 236) \
+    v(AwaitMayContinue, 739, 27) \
+    v(AwaitedValue, 740, 28) \
+    v(SuspendAsyncFunction, 741, 253) \
+    v(AwaitBySavingFrame, 742, 26) \
+    v(AsyncGeneratorYield, 743, 20) \
+    v(GetAsyncIteratorNext, 744, 90) \
+    v(GetIteratorNext, 745, 100) \
+    v(GeneratorResume, 746, 87) \
+    v(GeneratorIsDone, 747, 86) \
+    v(IsAsyncIteratorDriven, 748, 123) \
+    v(AsyncIteratorNext, 749, 21) \
+    v(ClearAsyncIteratorResult, 750, 39) \
+    v(TryNewPromiseSubclass, 751, 261) \
+    v(RegExpLiteral, 783, 220) \
+    v(SetExpectedRowType, 804, 233) \
+    v(StringAppendBegin, 805, 244) \
+    v(StringAppend, 806, 243) \
+    v(StringAppendMeasure, 807, 247) \
+    v(StringAppendMayEscape, 808, 246) \
+    v(StringAppendSync, 809, 248) \
+    v(StringAppendFinish, 810, 245)
 
 #define FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION(v) \
     v(ArrayFrom, "Array$from") \
@@ -789,7 +792,9 @@
     v(ArrayFindLastIndex, "Array$findLastIndex") \
     v(ArrayForEach, "Array$forEach") \
     v(ArraySort, "Array$sort") \
+    v(ArraySortByKey, "Array$sortByKey") \
     v(ArrayToSorted, "Array$toSorted") \
+    v(ArrayToSortedByKey, "Array$toSortedByKey") \
     v(ArrayFilter, "Array$filter") \
     v(ArrayFilterTruthy, "Array$filterTruthy") \
     v(ArrayFind, "Array$find") \
@@ -937,56 +942,56 @@
     v(34, typedArrayStructure(TypeBigUint64, true))
 
 #define FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR(v) \
-    v(readInt8, 523, false, 1, Signed, true) \
-    v(readUInt8, 528, false, 1, Unsigned, true) \
-    v(readUint8, 533, false, 1, Unsigned, true) \
-    v(readInt16LE, 520, false, 2, Signed, true) \
-    v(readInt16BE, 519, false, 2, Signed, false) \
-    v(readUInt16LE, 525, false, 2, Unsigned, true) \
-    v(readUInt16BE, 524, false, 2, Unsigned, false) \
-    v(readUint16LE, 530, false, 2, Unsigned, true) \
-    v(readUint16BE, 529, false, 2, Unsigned, false) \
-    v(readInt32LE, 522, false, 4, Signed, true) \
-    v(readInt32BE, 521, false, 4, Signed, false) \
-    v(readUInt32LE, 527, false, 4, Unsigned, true) \
-    v(readUInt32BE, 526, false, 4, Unsigned, false) \
-    v(readUint32LE, 532, false, 4, Unsigned, true) \
-    v(readUint32BE, 531, false, 4, Unsigned, false) \
-    v(readFloatLE, 518, false, 4, Float, true) \
-    v(readFloatBE, 517, false, 4, Float, false) \
-    v(readDoubleLE, 516, false, 8, Float, true) \
-    v(readDoubleBE, 515, false, 8, Float, false) \
-    v(readBigInt64LE, 510, false, 8, Signed, true) \
-    v(readBigInt64BE, 509, false, 8, Signed, false) \
-    v(readBigUInt64LE, 512, false, 8, Unsigned, true) \
-    v(readBigUInt64BE, 511, false, 8, Unsigned, false) \
-    v(readBigUint64LE, 514, false, 8, Unsigned, true) \
-    v(readBigUint64BE, 513, false, 8, Unsigned, false) \
-    v(writeInt8, 682, true, 1, Signed, true) \
-    v(writeUInt8, 687, true, 1, Unsigned, true) \
-    v(writeUint8, 692, true, 1, Unsigned, true) \
-    v(writeInt16LE, 679, true, 2, Signed, true) \
-    v(writeInt16BE, 678, true, 2, Signed, false) \
-    v(writeUInt16LE, 684, true, 2, Unsigned, true) \
-    v(writeUInt16BE, 683, true, 2, Unsigned, false) \
-    v(writeUint16LE, 689, true, 2, Unsigned, true) \
-    v(writeUint16BE, 688, true, 2, Unsigned, false) \
-    v(writeInt32LE, 681, true, 4, Signed, true) \
-    v(writeInt32BE, 680, true, 4, Signed, false) \
-    v(writeUInt32LE, 686, true, 4, Unsigned, true) \
-    v(writeUInt32BE, 685, true, 4, Unsigned, false) \
-    v(writeUint32LE, 691, true, 4, Unsigned, true) \
-    v(writeUint32BE, 690, true, 4, Unsigned, false) \
-    v(writeFloatLE, 677, true, 4, Float, true) \
-    v(writeFloatBE, 676, true, 4, Float, false) \
-    v(writeDoubleLE, 675, true, 8, Float, true) \
-    v(writeDoubleBE, 674, true, 8, Float, false) \
-    v(writeBigInt64LE, 669, true, 8, Signed, true) \
-    v(writeBigInt64BE, 668, true, 8, Signed, false) \
-    v(writeBigUInt64LE, 671, true, 8, Unsigned, true) \
-    v(writeBigUInt64BE, 670, true, 8, Unsigned, false) \
-    v(writeBigUint64LE, 673, true, 8, Unsigned, true) \
-    v(writeBigUint64BE, 672, true, 8, Unsigned, false)
+    v(readInt8, 524, false, 1, Signed, true) \
+    v(readUInt8, 529, false, 1, Unsigned, true) \
+    v(readUint8, 534, false, 1, Unsigned, true) \
+    v(readInt16LE, 521, false, 2, Signed, true) \
+    v(readInt16BE, 520, false, 2, Signed, false) \
+    v(readUInt16LE, 526, false, 2, Unsigned, true) \
+    v(readUInt16BE, 525, false, 2, Unsigned, false) \
+    v(readUint16LE, 531, false, 2, Unsigned, true) \
+    v(readUint16BE, 530, false, 2, Unsigned, false) \
+    v(readInt32LE, 523, false, 4, Signed, true) \
+    v(readInt32BE, 522, false, 4, Signed, false) \
+    v(readUInt32LE, 528, false, 4, Unsigned, true) \
+    v(readUInt32BE, 527, false, 4, Unsigned, false) \
+    v(readUint32LE, 533, false, 4, Unsigned, true) \
+    v(readUint32BE, 532, false, 4, Unsigned, false) \
+    v(readFloatLE, 519, false, 4, Float, true) \
+    v(readFloatBE, 518, false, 4, Float, false) \
+    v(readDoubleLE, 517, false, 8, Float, true) \
+    v(readDoubleBE, 516, false, 8, Float, false) \
+    v(readBigInt64LE, 511, false, 8, Signed, true) \
+    v(readBigInt64BE, 510, false, 8, Signed, false) \
+    v(readBigUInt64LE, 513, false, 8, Unsigned, true) \
+    v(readBigUInt64BE, 512, false, 8, Unsigned, false) \
+    v(readBigUint64LE, 515, false, 8, Unsigned, true) \
+    v(readBigUint64BE, 514, false, 8, Unsigned, false) \
+    v(writeInt8, 683, true, 1, Signed, true) \
+    v(writeUInt8, 688, true, 1, Unsigned, true) \
+    v(writeUint8, 693, true, 1, Unsigned, true) \
+    v(writeInt16LE, 680, true, 2, Signed, true) \
+    v(writeInt16BE, 679, true, 2, Signed, false) \
+    v(writeUInt16LE, 685, true, 2, Unsigned, true) \
+    v(writeUInt16BE, 684, true, 2, Unsigned, false) \
+    v(writeUint16LE, 690, true, 2, Unsigned, true) \
+    v(writeUint16BE, 689, true, 2, Unsigned, false) \
+    v(writeInt32LE, 682, true, 4, Signed, true) \
+    v(writeInt32BE, 681, true, 4, Signed, false) \
+    v(writeUInt32LE, 687, true, 4, Unsigned, true) \
+    v(writeUInt32BE, 686, true, 4, Unsigned, false) \
+    v(writeUint32LE, 692, true, 4, Unsigned, true) \
+    v(writeUint32BE, 691, true, 4, Unsigned, false) \
+    v(writeFloatLE, 678, true, 4, Float, true) \
+    v(writeFloatBE, 677, true, 4, Float, false) \
+    v(writeDoubleLE, 676, true, 8, Float, true) \
+    v(writeDoubleBE, 675, true, 8, Float, false) \
+    v(writeBigInt64LE, 670, true, 8, Signed, true) \
+    v(writeBigInt64BE, 669, true, 8, Signed, false) \
+    v(writeBigUInt64LE, 672, true, 8, Unsigned, true) \
+    v(writeBigUInt64BE, 671, true, 8, Unsigned, false) \
+    v(writeBigUint64LE, 674, true, 8, Unsigned, true) \
+    v(writeBigUint64BE, 673, true, 8, Unsigned, false)
 
 #define FOR_EACH_AOT_TYPED_JS_TYPE_NAME(v) \
     v(ArrayType) \
@@ -1072,18 +1077,18 @@
     v(0, (JSWrapForValidIterator::Field::IteratedIterator)) \
     v(1, (JSWrapForValidIterator::Field::IteratedNextMethod))
 
-#define AOT_TYPED_NUMBER_OF_BUILTINS 938
-#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 696
+#define AOT_TYPED_NUMBER_OF_BUILTINS 941
+#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 697
 #define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES 37
 #define AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES 35
-#define AOT_TYPED_BUILTINS_HASH 0xcb0f2cbeu
+#define AOT_TYPED_BUILTINS_HASH 0x4ee2068eu
 
-#define AOT_TYPED_BUILTIN_NAME_TypedArray 265
-#define AOT_TYPED_BUILTIN_NAME_prototype 503
-#define AOT_TYPED_BUILTIN_NAME_call 311
-#define AOT_TYPED_BUILTIN_NAME_apply 291
-#define AOT_TYPED_BUILTIN_NAME_hasOwn 435
-#define AOT_TYPED_BUILTIN_NAME_hasOwnProperty 436
+#define AOT_TYPED_BUILTIN_NAME_TypedArray 266
+#define AOT_TYPED_BUILTIN_NAME_prototype 504
+#define AOT_TYPED_BUILTIN_NAME_call 312
+#define AOT_TYPED_BUILTIN_NAME_apply 292
+#define AOT_TYPED_BUILTIN_NAME_hasOwn 436
+#define AOT_TYPED_BUILTIN_NAME_hasOwnProperty 437
 #define AOT_TYPED_ENGINE_CLASS_Array 0
 #define AOT_TYPED_ENGINE_CLASS_Promise 10
 #define AOT_TYPED_ENGINE_CLASS_String 35
@@ -1093,5 +1098,5 @@
 #define AOT_TYPED_ENGINE_CLASS_BigInt 34
 #define AOT_TYPED_ENGINE_CLASS_Function 25
 #define AOT_TYPED_ENGINE_CLASS_Object 24
-#define AOT_TYPED_BUILTIN_HasOriginalStructure 467
-#define AOT_TYPED_BUILTIN_Call 470
+#define AOT_TYPED_BUILTIN_HasOriginalStructure 470
+#define AOT_TYPED_BUILTIN_Call 473

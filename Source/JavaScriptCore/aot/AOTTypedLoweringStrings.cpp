@@ -416,7 +416,6 @@ std::optional<MatchProperty> matchPropertyRead(const Program& program, const Val
 MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Function& function)
 {
     MatchesOnlyTakenApart matches;
-    return matches;
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
         return matches;
     auto& builtins = Builtins::singleton();
@@ -455,10 +454,10 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
         for (ValueID id : block.values) {
             auto& value = function.at(id);
             auto which = inlinedAs(value);
-            if (value.arguments.size() != 1 || value.isInTailPosition)
+            if (value.arguments.size() != 1 || value.isInTailPosition || program.at(value.type).primitives & ~Primitive::UndefinedOrNull)
                 continue;
             if (which == InlineBuiltin::StringMatch) {
-                if (!program.typeOf(function, value.child(0)).hasObjects() && value.child(0) != value.arguments[0] && isLiteralOnlyMatchedOnce(value.arguments[0], id))
+                if (!program.typeOf(function, value.child(0)).hasObjects() && !(program.typeOf(function, value.arguments[0]).primitives & ~Primitive::UndefinedOrNull) && value.child(0) != value.arguments[0] && isLiteralOnlyMatchedOnce(value.arguments[0], id))
                     matches.add(id.index(), 1);
                 continue;
             }
@@ -2493,11 +2492,11 @@ std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& t
 
 CellPointer Lowering::concatenateIfNeeded(const Value& value)
 {
-    if (value.opcode == Opcode::CallBuiltin) {
-        auto* part = substringCreatedBy(ValueID(static_cast<uint32_t>(&value - m_function.values.span().data())));
-        RELEASE_ASSERT(part);
+    if (auto* part = substringCreatedBy(ValueID(static_cast<uint32_t>(&value - m_function.values.span().data()))))
         return makeSubstring(part->base, part->lengthOfBase, part->from, part->to);
-    }
+    if (auto separated = m_separatedStrings.find(static_cast<uint32_t>(&value - m_function.values.span().data())); separated != m_separatedStrings.end())
+        return AOT_TYPED_OPERATION(StringSplitString, separated->value->subject.string, in<CellPointer>(value.arguments[0]), word32(-1));
+    RELEASE_ASSERT(value.opcode != Opcode::CallBuiltin);
     if (ValueID id(static_cast<uint32_t>(&value - m_function.values.span().data())); isResidentInStringBuilder(id))
         return finishStringBuilder(stringBuilderFor(id), stringBuilderMayBeEmpty(id), true);
     if (size_t index = &value - m_function.values.span().data(); m_sunkKeyConcatenations.get(index))
