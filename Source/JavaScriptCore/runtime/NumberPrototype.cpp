@@ -512,16 +512,16 @@ JSString* NumericStrings::addJSString(VM& vm, int i)
 
     unsigned length = lengthOfIntegerAsString(i);
     std::span<Latin1Character> digits;
-    String string { StringImpl::createUninitialized(length, digits) };
+    String string = String::createUninitialized(length, digits);
     writeIntegerToBuffer(i, digits);
 
     if (entry.seenKey != i) {
         entry.seenKey = i;
-        return jsNontrivialString(vm, WTFMove(string));
+        return jsNontrivialString(vm, std::move(string));
     }
 
     entry.key = i;
-    entry.value = WTFMove(string);
+    entry.value = std::move(string);
     entry.jsString = jsNontrivialString(vm, entry.value);
     return entry.jsString;
 }
