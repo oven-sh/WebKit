@@ -39,6 +39,9 @@ namespace JSC {
 
 const ClassInfo IntlDisplayNames::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDisplayNames) };
 
+// Approximate size of ULocaleDisplayNames for GC memory pressure reporting, measured empirically with uldn_openForContext + of (ICU 78).
+static constexpr size_t estimatedULocaleDisplayNamesSize = 6000;
+
 IntlDisplayNames* IntlDisplayNames::create(VM& vm, Structure* structure)
 {
     auto* object = new (NotNull, allocateCell<IntlDisplayNames>(vm)) IntlDisplayNames(vm, structure);
@@ -55,6 +58,20 @@ IntlDisplayNames::IntlDisplayNames(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
 }
+
+template<typename Visitor>
+void IntlDisplayNames::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<IntlDisplayNames>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    Base::visitChildren(thisObject, visitor);
+
+    if (thisObject->m_displayNames)
+        visitor.reportExtraMemoryVisited(estimatedULocaleDisplayNamesSize);
+}
+
+DEFINE_VISIT_CHILDREN(IntlDisplayNames);
 
 // https://tc39.es/ecma402/#sec-Intl.DisplayNames
 void IntlDisplayNames::initializeDisplayNames(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
@@ -132,6 +149,7 @@ void IntlDisplayNames::initializeDisplayNames(JSGlobalObject* globalObject, JSVa
         throwTypeError(globalObject, scope, "failed to initialize DisplayNames"_s);
         return;
     }
+    vm.heap.reportExtraMemoryAllocated(this, estimatedULocaleDisplayNamesSize);
 }
 
 // https://tc39.es/proposal-intl-displaynames/#sec-Intl.DisplayNames.prototype.of
