@@ -105,7 +105,7 @@ function whileLoop(limit) {
     return i;
 }
 whileLoop(3);
-assert(basicBlockExecutionCount(whileLoop, "&& taken()") === 4, "condition right operand ran once per check");
+assert(basicBlockExecutionCount(whileLoop, "&& taken()") === 3, "condition right operand ran once per check that reached it");
 assert(basicBlockExecutionCount(whileLoop, "i++") === 3, "body ran once per iteration");
 assert(basicBlockExecutionCount(whileLoop, "return i") === 1, "statement after the loop ran once");
 
@@ -117,7 +117,7 @@ function forLoop(limit) {
     return sum;
 }
 forLoop(3);
-assert(basicBlockExecutionCount(forLoop, "&& taken()") === 4, "condition right operand ran once per check");
+assert(basicBlockExecutionCount(forLoop, "&& taken()") === 3, "condition right operand ran once per check that reached it");
 assert(basicBlockExecutionCount(forLoop, "sum += i") === 3, "body ran once per iteration");
 assert(basicBlockExecutionCount(forLoop, "return sum") === 1, "statement after the loop ran once");
 
