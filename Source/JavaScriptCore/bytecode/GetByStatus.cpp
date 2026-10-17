@@ -293,6 +293,12 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
             const AccessCase& access = *list.at(0);
             switch (access.type()) {
             case AccessCase::ModuleNamespaceLoad:
+                // A case that goes by export layout has no one namespace object and variable to inline the load
+                // of. The optimized code gets an inline cache of its own, where the same case serves it. (Such a case
+                // comes after a case for one namespace object, so it is only alone here if that one is gone. A list
+                // of several cases gets the slow version below, since these cases have no structure.)
+                if (access.as<ModuleNamespaceAccessCase>().exportLayout())
+                    return GetByStatus(JSC::slowVersion(summary), propertyCache);
                 return GetByStatus(access.as<ModuleNamespaceAccessCase>());
             case AccessCase::ProxyObjectLoad:
             case AccessCase::IndexedProxyObjectLoad: {
