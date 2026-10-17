@@ -48,8 +48,8 @@ public:
     };
 
     bool hasExecutedAtOffset(SourceID, unsigned offset);
-    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, SourceParseMode = SourceParseMode::NormalFunctionMode);
-    void removeUnexecutedRange(SourceID, unsigned start, unsigned end);
+    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, SourceParseMode);
+    void removeUnexecutedRange(SourceID, unsigned start, unsigned end, SourceParseMode);
     // hasExecuted, start, end, parseMode.
     Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> getFunctionRanges(SourceID);
 
@@ -58,8 +58,8 @@ public:
 
 private:
     struct State {
-        bool hasExecuted { false };
-        SourceParseMode parseMode { SourceParseMode::NormalFunctionMode };
+        bool hasExecuted;
+        SourceParseMode parseMode;
     };
     using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, State>;
     using SourceIDToRangeMap = UncheckedKeyHashMap<GenericHashKey<intptr_t>, RangeMap>;

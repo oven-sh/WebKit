@@ -61,7 +61,7 @@ void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start
     map.add(range, State { false, parseMode });
 }
 
-void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
+void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end, SourceParseMode parseMode)
 {
     // FIXME: We should never have an instance where we return here, but currently do in some situations. Find out why.
     auto iterator = m_rangeMap.find(id);
@@ -73,7 +73,7 @@ void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start
     FunctionRange range;
     range.m_start = start;
     range.m_end = end;
-    map.add(range, State { }).iterator->value.hasExecuted = true;
+    map.add(range, State { false, parseMode }).iterator->value.hasExecuted = true;
 }
 
 Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)
