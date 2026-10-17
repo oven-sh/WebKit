@@ -111,3 +111,103 @@ checkBasicBlock(testConditionalInCondition, "foo()", ShouldNotHaveExecuted);
 checkBasicBlock(testConditionalInCondition, "y)", ShouldHaveExecuted);
 checkBasicBlock(testConditionalInCondition, "bar()", ShouldNotHaveExecuted);
 checkBasicBlock(testConditionalInCondition, "baz()", ShouldHaveExecuted);
+
+function testConditionalEnd(x) {
+    return [x ? foo() : 2, foo()];
+}
+testConditionalEnd(true);
+checkBasicBlock(testConditionalEnd, "2", ShouldNotHaveExecuted);
+checkBasicBlock(testConditionalEnd, ", foo()]", ShouldHaveExecuted);
+
+// The condition and the update of a loop are before its body in the text and after it in the bytecode.
+function thrower() { throw new Error; }
+
+function testBodyThatThrows(x) {
+    while (x && foo()) {
+        thrower();
+    }
+}
+try { testBodyThatThrows(true); } catch { }
+checkBasicBlock(testBodyThatThrows, "thrower()", ShouldHaveExecuted);
+
+function testEndOfBodyThatThrows(x) {
+    while (x ? foo() : 0) {
+        if (x)
+            bar();
+        thrower();
+    }
+}
+try { testEndOfBodyThatThrows(true); } catch { }
+checkBasicBlock(testEndOfBodyThatThrows, "thrower()", ShouldHaveExecuted);
+
+function testWhileContinue(x) {
+    let i = 0;
+    while (x && i < 3) {
+        i++;
+        if (i == 2)
+            continue;
+        baz();
+    }
+}
+testWhileContinue(true);
+assert(basicBlockExecutionCount(testWhileContinue, "baz()") === 2, "continue skips the end of the body of a while loop");
+
+function testForContinue(x) {
+    for (let i = 0; x && i < 3; i = x ? i + 1 : 0) {
+        if (i == 1)
+            continue;
+        baz();
+    }
+}
+testForContinue(true);
+assert(basicBlockExecutionCount(testForContinue, "baz()") === 2, "continue skips the end of the body of a for loop");
+
+// A loop has the bytecode of its condition twice.
+function testConditionOfLaterIteration() {
+    let i = 0;
+    while (i++ < 1 || (i < 4 && bar())) { }
+}
+testConditionOfLaterIteration();
+assert(basicBlockExecutionCount(testConditionOfLaterIteration, "bar()") === 2, "the operand runs in later iterations only");
+
+// What skips an operand that has basic blocks does not skip what follows it.
+let truthy = 1, falsy = 0, nullish = null;
+
+function testInLogicalAssignment() {
+    truthy ||= falsy || foo();
+    truthy ||= falsy ? foo() : bar();
+    falsy &&= falsy ?? foo();
+    baz();
+}
+testInLogicalAssignment();
+checkBasicBlock(testInLogicalAssignment, "baz()", ShouldHaveExecuted);
+
+function testInOptionalChain() {
+    nullish?.method(falsy || foo());
+    nullish?.[falsy ?? foo()];
+    baz();
+}
+testInOptionalChain();
+checkBasicBlock(testInOptionalChain, "baz()", ShouldHaveExecuted);
+
+function testInDefaultValue() {
+    let [x = falsy && foo()] = [1];
+    baz();
+}
+testInDefaultValue();
+checkBasicBlock(testInDefaultValue, "baz()", ShouldHaveExecuted);
+
+// The tests of a switch statement are all before its clauses in the bytecode.
+function testInCaseTests(x) {
+    switch (x) {
+    case falsy || falsy || 1:
+        foo();
+        break;
+    case 5 || 6:
+        return bar();
+    }
+}
+testInCaseTests(5);
+checkBasicBlock(testInCaseTests, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testInCaseTests, "break", ShouldNotHaveExecuted);
+checkBasicBlock(testInCaseTests, "return bar()", ShouldHaveExecuted);

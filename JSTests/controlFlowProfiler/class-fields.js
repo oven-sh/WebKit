@@ -61,7 +61,43 @@ function testStaticBlock(x) {
     return A;
 }
 testStaticBlock(true);
+checkBasicBlock(testStaticBlock, "static {", ShouldHaveExecuted);
 checkBasicBlock(testStaticBlock, "if (x)", ShouldHaveExecuted);
 checkBasicBlock(testStaticBlock, "foo()", ShouldHaveExecuted);
 checkBasicBlock(testStaticBlock, "bar()", ShouldNotHaveExecuted);
 checkBasicBlock(testStaticBlock, "return A", ShouldHaveExecuted);
+
+// What follows a field in the file is not the field, however far it is.
+function testFarFromField() {
+    class A {
+        a = foo();
+    }
+    new A;
+    new A;
+    function never() {
+        // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        bar();
+    }
+    return A;
+}
+testFarFromField();
+checkBasicBlock(testFarFromField, "bar()", ShouldNotHaveExecuted);
+assert(basicBlockExecutionCount(testFarFromField, "return A") === 1, "what follows the class runs once");
+
+function testFieldAfterAccessor() {
+    class A {
+        get b() { return 1; }
+        a = foo();
+    }
+    return A;
+}
+testFieldAfterAccessor();
+checkBasicBlock(testFieldAfterAccessor, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testFieldAfterAccessor, "return A", ShouldHaveExecuted);
+
+function testSkippedClass(x) {
+    x ??= class { a = foo(); };
+    bar();
+}
+testSkippedClass(1);
+checkBasicBlock(testSkippedClass, "bar()", ShouldHaveExecuted);

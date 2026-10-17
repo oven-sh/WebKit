@@ -3440,7 +3440,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 // is skipped (meaning start offset points to `1`) by parsePrimaryExpression().
                 initializer = parseExpression(context);
                 failIfFalse(initializer, "Cannot parse expression statement");
-                // The end that parseClass() saw is past the parentheses whose open parens were skipped.
+                // parseClass() ended the initializer after the close parens that match the skipped open parens.
                 while (match(CLOSEPAREN))
                     next();
                 context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
@@ -4437,12 +4437,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseYieldExpress
     ASSERT(match(YIELD));
     SavePoint savePoint = createSavePoint(context);
     next();
-    auto finish = [&](TreeExpression yield) {
-        context.setEndOffset(yield, m_lastTokenLocation.endOffset);
-        return yield;
-    };
     if (m_lexer->hasLineTerminatorBeforeToken())
-        return finish(context.createYield(location));
+        return context.createYield(location);
 
     bool delegate = consume(TIMES);
     JSTextPosition argumentStart = tokenStartPosition();
@@ -4450,9 +4446,9 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseYieldExpress
     if (!argument) {
         restoreSavePoint(context, savePoint);
         next();
-        return finish(context.createYield(location));
+        return context.createYield(location);
     }
-    return finish(context.createYield(location, argument, delegate, divotStart, argumentStart, lastTokenEndPosition()));
+    return context.createYield(location, argument, delegate, divotStart, argumentStart, lastTokenEndPosition());
 }
 
 template <typename LexerType>
@@ -4471,9 +4467,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseAwaitExpress
     failIfFalse(argument, "Failed to parse await expression");
     failIfTrue(match(POW), "Ambiguous unary expression in the left hand side of the exponentiation expression; parentheses must be used to disambiguate the expression");
     currentFunctionScope()->setUsesAwait();
-    TreeExpression await = context.createAwait(location, argument, divotStart, argumentStart, lastTokenEndPosition());
-    context.setEndOffset(await, m_lastTokenLocation.endOffset);
-    return await;
+    return context.createAwait(location, argument, divotStart, argumentStart, lastTokenEndPosition());
 }
 
 template <typename LexerType>
