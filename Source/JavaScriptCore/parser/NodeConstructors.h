@@ -707,18 +707,22 @@ namespace JSC {
     {
     }
 
-    inline LogicalOpNode::LogicalOpNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, LogicalOperator oper)
+    inline LogicalOpNode::LogicalOpNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, LogicalOperator oper, int expr2StartOffset, int expr2EndOffset)
         : ExpressionNode(location, ResultType::forLogicalOp(expr1->resultDescriptor(), expr2->resultDescriptor()))
         , m_operator(oper)
         , m_expr1(expr1)
         , m_expr2(expr2)
+        , m_expr2StartOffset(expr2StartOffset)
+        , m_expr2EndOffset(expr2EndOffset)
     {
     }
 
-    inline CoalesceNode::CoalesceNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool hasAbsorbedOptionalChain)
+    inline CoalesceNode::CoalesceNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool hasAbsorbedOptionalChain, int expr2StartOffset, int expr2EndOffset)
         : ExpressionNode(location, ResultType::forCoalesce(expr1->resultDescriptor(), expr2->resultDescriptor()))
         , m_expr1(expr1)
         , m_expr2(expr2)
+        , m_expr2StartOffset(expr2StartOffset)
+        , m_expr2EndOffset(expr2EndOffset)
         , m_hasAbsorbedOptionalChain(hasAbsorbedOptionalChain)
     {
     }

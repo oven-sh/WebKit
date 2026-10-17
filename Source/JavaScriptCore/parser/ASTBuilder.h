@@ -153,7 +153,7 @@ public:
     ExpressionNode* makeBitXOrNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, bool rightHasAssignments);
     ExpressionNode* makeBitAndNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, bool rightHasAssignments);
     ExpressionNode* makeBitOrNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, bool rightHasAssignments);
-    ExpressionNode* makeCoalesceNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right);
+    ExpressionNode* makeCoalesceNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, int rightStartOffset, int rightEndOffset);
     ExpressionNode* makeLeftShiftNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, bool rightHasAssignments);
     ExpressionNode* makeRightShiftNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, bool rightHasAssignments);
     ExpressionNode* makeURightShiftNode(const JSTokenLocation&, ExpressionNode* left, ExpressionNode* right, bool rightHasAssignments);
@@ -1404,18 +1404,18 @@ ExpressionNode* ASTBuilder::makeBitXOrNode(const JSTokenLocation& location, Expr
     return new (m_parserArena) BitXOrNode(location, expr1, expr2, rightHasAssignments);
 }
 
-ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2)
+ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, int expr2StartOffset, int expr2EndOffset)
 {
     // Optimization for `x?.y ?? z`.
     if (expr1->isOptionalChain()) {
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr1);
         if (!optionalChain->expr()->isDeleteNode()) {
             constexpr bool hasAbsorbedOptionalChain = true;
-            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain);
+            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain, expr2StartOffset, expr2EndOffset);
         }
     }
     constexpr bool hasAbsorbedOptionalChain = false;
-    return new (m_parserArena) CoalesceNode(location, expr1, expr2, hasAbsorbedOptionalChain);
+    return new (m_parserArena) CoalesceNode(location, expr1, expr2, hasAbsorbedOptionalChain, expr2StartOffset, expr2EndOffset);
 }
 
 ExpressionNode* ASTBuilder::makeStaticBlockFunctionCallNode(const JSTokenLocation& location, ExpressionNode* func, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
@@ -1500,13 +1500,13 @@ ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int 
 {
     switch (token) {
     case COALESCE:
-        return makeCoalesceNode(location, lhs.first, rhs.first);
+        return makeCoalesceNode(location, lhs.first, rhs.first, rhs.second.start.offset, rhs.second.end.offset);
 
     case OR:
-        return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::Or);
+        return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::Or, rhs.second.start.offset, rhs.second.end.offset);
 
     case AND:
-        return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::And);
+        return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::And, rhs.second.start.offset, rhs.second.end.offset);
 
     case BITOR:
         return makeBitOrNode(location, lhs.first, rhs.first, rhs.second.hasAssignment);

@@ -156,6 +156,9 @@ public:
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
 
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
+    // The default constructor is in a text of its own, and the function that initializes the fields of a class has the text of
+    // whatever the class is in.
+    bool hasFunctionRangeInParentSource() const { return !isBuiltinDefaultClassConstructor() && parseMode() != SourceParseMode::ClassFieldInitializerMode; }
     unsigned unlinkedFunctionEnd() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedFunctionEnd; }
     unsigned startOffset() const { return m_startOffset; }
     unsigned sourceLength() { return m_sourceLength; }

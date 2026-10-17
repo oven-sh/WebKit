@@ -689,6 +689,8 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
+        // What runs next is code that the text after the last basic block is not the text of.
+        void emitProfileControlFlowOutsideOfText();
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();

@@ -2100,6 +2100,14 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
     }
 }
 
+void BytecodeGenerator::emitProfileControlFlowOutsideOfText()
+{
+    if (shouldEmitControlFlowProfilerHooks()) {
+        OpProfileControlFlow::emit(this, -1);
+        m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
+    }
+}
+
 unsigned BytecodeGenerator::addConstantIndex()
 {
     unsigned index = m_nextConstantOffset;

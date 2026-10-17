@@ -1421,7 +1421,7 @@ namespace JSC {
     // m_expr1 && m_expr2, m_expr1 || m_expr2
     class LogicalOpNode final : public ExpressionNode {
     public:
-        LogicalOpNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, LogicalOperator);
+        LogicalOpNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, LogicalOperator, int expr2StartOffset, int expr2EndOffset);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1430,11 +1430,14 @@ namespace JSC {
         LogicalOperator m_operator;
         ExpressionNode* m_expr1;
         ExpressionNode* m_expr2;
+        // A binary expression has the location of the leftmost operand of the expression it is in, so m_expr2 cannot tell.
+        int m_expr2StartOffset;
+        int m_expr2EndOffset;
     };
 
     class CoalesceNode final : public ExpressionNode {
     public:
-        CoalesceNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool);
+        CoalesceNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool, int expr2StartOffset, int expr2EndOffset);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1442,6 +1445,8 @@ namespace JSC {
 
         ExpressionNode* m_expr1;
         ExpressionNode* m_expr2;
+        int m_expr2StartOffset;
+        int m_expr2EndOffset;
         bool m_hasAbsorbedOptionalChain;
     };
 
