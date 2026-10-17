@@ -67,6 +67,7 @@ function testFunctionInComputedField() {
     class A {
         [key()] = () => foo();
     }
+    new A;
     let a = new A;
     a.k();
     a.k();
@@ -74,7 +75,7 @@ function testFunctionInComputedField() {
 }
 testFunctionInComputedField();
 assert(basicBlockExecutionCount(testFunctionInComputedField, "foo()") === 3, "the function runs as often as it is called");
-assert(basicBlockExecutionCount(testFunctionInComputedField, "= ()") === 1, "the field is initialized once");
+assert(basicBlockExecutionCount(testFunctionInComputedField, " () =>") === 2, "the field is initialized once per instance");
 assert(basicBlockExecutionCount(testFunctionInComputedField, "key()") === 1, "the key is evaluated once");
 
 function testBranchInField(x) {
