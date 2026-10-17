@@ -2899,6 +2899,43 @@ void testBlockOrderComparesEdges()
     }
 }
 
+void testBlockOrderKeepsUnlikelySideOutOfLine()
+{
+    enum class Shape : uint8_t { Triangle, Diamond };
+    for (Shape shape : { Shape::Triangle, Shape::Diamond }) {
+        for (bool hasFrequencies : { false, true }) {
+            for (auto [sideFrequency, rootFrequency] : { std::pair { 0.5, 1.0 }, std::pair { 0.2, 1.0 }, std::pair { 0.5, 1.4 }, std::pair { 0.2, 1.4 } }) {
+                B3::Procedure proc;
+                proc.setOptLevel(2);
+                Code& code = proc.code();
+                if (hasFrequencies)
+                    code.setOrdersBlocksByEdgeFrequency();
+                BasicBlock* root = code.addBlock(rootFrequency);
+                BasicBlock* side = code.addBlock(sideFrequency);
+                BasicBlock* otherSide = shape == Shape::Diamond ? code.addBlock(1 - sideFrequency) : nullptr;
+                BasicBlock* join = code.addBlock();
+                root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+                root->setSuccessors(side, otherSide ? otherSide : join);
+                side->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR1));
+                side->append(Jump, nullptr);
+                side->setSuccessors(join);
+                if (otherSide) {
+                    otherSide->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR1));
+                    otherSide->append(Jump, nullptr);
+                    otherSide->setSuccessors(join);
+                }
+                join->append(Move, nullptr, Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::returnValueGPR));
+                join->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+                auto compilation = compile(proc);
+                CHECK(invoke<int32_t>(*compilation, 1, 5) == 6);
+                CHECK(invoke<int32_t>(*compilation, 0, 5) == (otherSide ? 7 : 5));
+                CHECK((side->index() > join->index()) == (hasFrequencies && sideFrequency < 0.5));
+            }
+        }
+    }
+}
+
 static RegisterSet callClobberedRegisters()
 {
     RegisterSet result = RegisterSet::allGPRs();
@@ -4004,6 +4041,7 @@ void run(const char* filter)
     RUN(testBlockOrderInvertsBranches());
     RUN(testBlockOrderPlacesRareBlocksInGaps());
     RUN(testBlockOrderComparesEdges());
+    RUN(testBlockOrderKeepsUnlikelySideOutOfLine());
     RUN(testCalleeSaveCost());
     RUN(testUnsavedCalleeSaves());
     RUN(testEpilogueGenerator());

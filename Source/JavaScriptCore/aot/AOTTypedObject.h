@@ -621,6 +621,26 @@ struct alignas(16) ConversionCacheEntry {
 };
 static_assert(sizeof(ConversionCacheEntry) == 16);
 
+struct UnconvertedCastCheck {
+    static constexpr uint32_t comparesStructureID = 1u << 8;
+    static constexpr uint32_t isEnd = 1u << 9;
+    const void* holder;
+    uint32_t offset;
+    uint32_t kinds;
+    uint64_t expected;
+};
+static_assert(sizeof(UnconvertedCastCheck) == 24);
+
+struct alignas(16) UnconvertedCastEntry {
+    static constexpr unsigned indexBits = 8;
+    static constexpr uint32_t multiplier = 0x9e3779b1;
+    static constexpr unsigned placeOf(uint32_t structureID, uint32_t typeAndReason) { return ((structureID ^ typeAndReason) * multiplier) >> (32 - indexBits); }
+    uint32_t structureID;
+    uint32_t typeAndReason;
+    const UnconvertedCastCheck* checks;
+};
+static_assert(sizeof(UnconvertedCastEntry) == 16);
+
 struct alignas(32) LateFieldCreation {
     static constexpr unsigned indexBits = 10;
     static constexpr uint32_t multiplier = 0x9e3779b1;
@@ -1390,6 +1410,7 @@ struct State {
 
     const Identifier& name(VM&, uint32_t);
     std::span<GlobalPropertyCache> globalPropertyCaches() const;
+    bool readsThroughModuleGraph(const String& builtin) const;
     bool trustGlobalProperty(VM&, JSGlobalObject*, uint32_t cacheNumber, UniquedStringImpl*, JSValue);
     bool trustGlobalMember(VM&, JSGlobalObject*, uint32_t cacheNumber, UniquedStringImpl* global, JSObject* holder, UniquedStringImpl* name);
     JSString* string(VM&, uint32_t);
@@ -1649,6 +1670,33 @@ struct State {
     bool canSettleByPlans(JSValue, const RuntimeType&, ChildrenOfQuickConversion& seen, ChildrenOfQuickConversion& converted, unsigned depth);
     bool tryKeepByPlan(VM&, JSObject*, const RuntimeType&);
     bool keepQuickly(VM&, JSObject*, const CoercionPlan&);
+    struct UnconvertibleObjectPlan {
+        struct Check {
+            JSObject* holder;
+            const FieldData* field;
+            const RuntimeType* type;
+            PropertyOffset offset;
+        };
+        struct Prototype {
+            JSObject* object;
+            uint32_t structureID;
+            bool isCompiled;
+        };
+        static constexpr unsigned indexBits = 6;
+        static unsigned placeOf(uint32_t structureID, const RuntimeType& type) { return ((structureID ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(&type) >> 3)) * 0x9e3779b1u) >> (32 - indexBits); }
+        uint32_t structureID { 0 };
+        const RuntimeType* type { nullptr };
+        Vector<Check, 8> checks;
+        Vector<Prototype, 3> prototypes;
+        Vector<UnconvertedCastCheck, 12> checksForStub;
+        bool isCheckedByRuntimeOnly { false };
+    };
+    bool staysUnconvertedByPlan(JSValue, const RuntimeType&) const;
+    void shareUnconvertibleObjectPlanWithStub(JSObject*, const RuntimeType&, uint32_t typeAndReason);
+    bool passesOpenTypeAsItIs(JSValue, const RuntimeType&, uint32_t typeAndReason);
+    bool m_hasUnconvertedCastsForStub { false };
+    void cacheUnconvertibleObjectPlan(UnconvertibleObjectPlan&&);
+    std::unique_ptr<std::array<UnconvertibleObjectPlan, 1u << UnconvertibleObjectPlan::indexBits>> m_unconvertibleObjectPlans;
     struct ObjectBelowKeptObject {
         JSObject* object;
         Structure* structure;
@@ -2217,11 +2265,11 @@ private:
     std::array<Structure*, 2> m_realmGeneratorStructures { };
     Structure* m_savedFrameStructure { nullptr };
     struct ClosureGeneratorStructure {
-        Closure* closure;
         GeneratorStructure structure;
         uint32_t epoch;
     };
-    std::array<ClosureGeneratorStructure, 16> m_closureGeneratorStructures { };
+    static constexpr unsigned maxClosureGeneratorStructures = 256;
+    UncheckedKeyHashMap<Closure*, ClosureGeneratorStructure> m_closureGeneratorStructures;
     HeapVersion m_generatorStructuresVersion { 0 };
     struct InitialObjectState {
         Closure* constructor { nullptr };

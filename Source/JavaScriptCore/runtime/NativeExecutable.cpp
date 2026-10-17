@@ -97,6 +97,8 @@ void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref
             return StubBuiltin::ArrayIsArray;
         case ArrayPushIntrinsic:
             return StubBuiltin::ArrayPush;
+        case ArraySliceIntrinsic:
+            return StubBuiltin::ArraySlice;
         default:
             return m_function == TaggedNativeFunction(objectConstructorSetPrototypeOf) ? StubBuiltin::ObjectSetPrototypeOf : StubBuiltin::None;
         }

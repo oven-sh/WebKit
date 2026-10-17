@@ -57,7 +57,8 @@ enum class FunctionKind : uint32_t {
     AsyncGenerator,
 };
 
-bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation);
+enum class PrototypesOfTarget : uint8_t { DoNotMatter, MayIntercept };
+bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation, PrototypesOfTarget = PrototypesOfTarget::DoNotMatter);
 bool tryCopyRecordDataProperties(Instance*, VM&, JSObject* target, JSObject* record, const char* operation);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectFromDescriptor, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, uint32_t slotIndex));

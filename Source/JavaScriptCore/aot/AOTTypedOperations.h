@@ -175,6 +175,7 @@ struct Slot;
     v(operationAOTTypedStoreAssertionFailed) \
     v(operationAOTTypedThrowReachedUnreachable) \
     v(operationAOTTypedFactViolated) \
+    v(operationAOTTypedCountBranch) \
     v(operationAOTTypedCheckKnownSlot) \
     v(operationAOTTypedThrowStackOverflow) \
     v(operationAOTTypedNewObject) \
@@ -485,6 +486,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedAssertionFailed, Nothing, 
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStoreAssertionFailed, Nothing, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue storedTo, uint32_t type, uint32_t function, uint32_t lineAndColumn));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowReachedUnreachable, Nothing, void, (Instance*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFactViolated, Nothing, void, (Instance*, EncodedJSValue, uint32_t function, uint32_t value));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCountBranch, Nothing, void, (Instance*, uint32_t module, uint32_t positionAndSide));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCheckKnownSlot, Nothing, size_t, (Instance*, EncodedJSValue, uint32_t name, uint32_t placeAndFlags, uint32_t function, uint32_t value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowStackOverflow, Nothing, void, (Instance*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewObject, RuntimeState, JSCell*, (Instance*));

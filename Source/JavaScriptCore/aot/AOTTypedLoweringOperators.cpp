@@ -1409,7 +1409,7 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
             continue;
         Integer wanted = get(integer).as<Integer>();
         Boxed value = in<Boxed>(other);
-        LBasicBlock hasSameBits = newUnlikelyBlock();
+        LBasicBlock hasSameBits = likelyAnswer() == true ? m_out.newBlock() : newUnlikelyBlock();
         LBasicBlock hasOtherBits = m_out.newBlock();
         LBasicBlock isOtherInt32 = m_out.newBlock();
         LBasicBlock notInt32 = newColdBlock();
@@ -1477,9 +1477,14 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
         auto& kind = m_program.at(prediction->isObject() ? m_program.types.object : m_program.types.boolean);
         return ifPredictionHolds({ { id, &kind } }, Rep::Int32, inlinePath, genericPath).as<Word32>();
     }
-    LBasicBlock hasSameBits = newUnlikelyBlock();
-    LBasicBlock isSameNumber = m_out.newBlock();
-    LBasicBlock hasOtherBits = m_out.newBlock();
+    auto isComparedWithLoopInvariant = [&](ValueID first, ValueID second) {
+        unsigned loop = m_innermostLoop[m_currentBlockID.index()];
+        return loop != noLoop && isLoopInvariant(m_loops[loop], first) != isLoopInvariant(m_loops[loop], second);
+    };
+    bool expectsSameBits = likelyAnswer().value_or(!m_isInLoop);
+    LBasicBlock hasSameBits = expectsSameBits ? m_out.newBlock() : newUnlikelyBlock();
+    LBasicBlock isSameNumber = newUnlikelyBlock();
+    LBasicBlock hasOtherBits = expectsSameBits ? newUnlikelyBlock() : m_out.newBlock();
     LBasicBlock areCells = m_out.newBlock();
     LBasicBlock isSame = m_out.newBlock();
     LBasicBlock isOther = m_out.newBlock();
@@ -1493,7 +1498,26 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     m_out.appendTo(hasOtherBits);
     m_out.branch(isCell(Boxed(m_out.bitOr(x.value(), y.value()))).value(), usually(areCells), rarely(callsStub));
     m_out.appendTo(areCells);
-    m_out.branch(aboveOrEqual(loadCellType(asCell(x)), word32(ObjectType)).value(), usually(isOther), rarely(callsStub));
+    Word32 firstCellType = loadCellType(asCell(x));
+    if (m_isInLoop && isComparedWithLoopInvariant(a, b)) {
+        LBasicBlock firstIsNotObject = newUnlikelyBlock();
+        LBasicBlock firstIsString = newUnlikelyBlock();
+        LBasicBlock areStrings = newUnlikelyBlock();
+        m_out.branch(aboveOrEqual(firstCellType, word32(ObjectType)).value(), unsure(isOther), unsure(firstIsNotObject));
+        m_out.appendTo(firstIsNotObject);
+        m_out.branch(equal(firstCellType, word32(StringType)).value(), usually(firstIsString), rarely(callsStub));
+        m_out.appendTo(firstIsString);
+        m_out.branch(equal(loadCellType(asCell(y)), word32(StringType)).value(), unsure(areStrings), unsure(isOther));
+        m_out.appendTo(areStrings);
+        auto& stringType = m_program.at(m_program.types.string);
+        size_t numberOfAssumptions = m_assumptions.size();
+        m_assumptions.append(Assumption { a, asCell(x), &stringType });
+        m_assumptions.append(Assumption { b, asCell(y), &stringType });
+        SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
+        join.add(areStringsEqual(a, b));
+        m_assumptions.shrink(numberOfAssumptions);
+    } else
+        m_out.branch(aboveOrEqual(firstCellType, word32(ObjectType)).value(), usually(isOther), rarely(callsStub));
     m_out.appendTo(isSame);
     join.add(boolean(true));
     m_out.appendTo(isOther);
@@ -1615,6 +1639,17 @@ Word32 Lowering::genericToBoolean(ValueID id)
         join.add(answer());
         m_out.appendTo(next);
     };
+    static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined && JSValue::ValueUndefined < JSValue::DoubleEncodeOffset);
+    bool asksForSmallValuesFirst = likelyAnswer() == false && expected->primitives & (Primitive::UndefinedOrNull | Primitive::Boolean);
+    if (asksForSmallValuesFirst) {
+        LBasicBlock isSmallCase = m_out.newBlock();
+        LBasicBlock isLargeCase = m_out.newBlock();
+        isLargeCase->setFrequency(isLargeCase->frequency() / 2);
+        m_out.branch(belowOrEqual(value, undefined()).value(), unsure(isSmallCase), unsure(isLargeCase));
+        m_out.appendTo(isSmallCase);
+        join.add(equal(value, boxedConstant(jsBoolean(true))));
+        m_out.appendTo(isLargeCase);
+    }
     if (expected->hasCells()) {
         LBasicBlock isCellCase = m_out.newBlock();
         LBasicBlock isOtherCase = m_out.newBlock();
@@ -1647,8 +1682,7 @@ Word32 Lowering::genericToBoolean(ValueID id)
         m_out.jump(otherwise);
         m_out.appendTo(isOtherCase);
     }
-    if (expected->primitives & (Primitive::UndefinedOrNull | Primitive::Boolean)) {
-        static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined && JSValue::ValueUndefined < JSValue::DoubleEncodeOffset);
+    if (!asksForSmallValuesFirst && expected->primitives & (Primitive::UndefinedOrNull | Primitive::Boolean)) {
         when(equal(value, boxedConstant(jsBoolean(true))), [&] {
             return boolean(true);
         });

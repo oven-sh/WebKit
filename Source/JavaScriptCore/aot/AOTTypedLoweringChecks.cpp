@@ -528,7 +528,20 @@ Word32 Lowering::hasClosureStructure(CellPointer cell, ptrdiff_t offsetOfStructu
     Word32 isUnmodified = equal(structureID, Word32(loadRuntimeState32(offsetOfStructureID)));
     if (offsetOfStructureID != Instance::offsetOfTypedClosureStructureID())
         return isUnmodified;
-    return logicalOr(isUnmodified, equal(structureID, Word32(loadRuntimeState32(Instance::offsetOfTypedClosureWithPrototypeStructureID()))));
+    return logicalOr(isUnmodified, isKnownClosureStructureID(structureID));
+}
+
+Word32 Lowering::isClosureWithNoPropertyButPrototype(CellPointer cell)
+{
+    Word32 structureID = loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell)));
+    return logicalOr(equal(structureID, Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID()))), equal(structureID, Word32(loadRuntimeState32(Instance::offsetOfTypedClosureWithPrototypeStructureID()))));
+}
+
+Word32 Lowering::isKnownClosureStructureID(Word32 structureID)
+{
+    LValue index = m_out.bitAnd(m_out.lShr(structureID.value(), m_out.constInt32(Instance::knownClosureStructureIDShift)), m_out.constInt32(Instance::numberOfKnownClosureStructureIDs - 1));
+    LValue row = m_out.add(m_instance, m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(2)));
+    return equal(structureID, Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, row, Instance::offsetOfKnownClosureStructureIDs()))));
 }
 
 void Lowering::checkClosureOfOrElse(CellPointer cell, FunctionID function, bool mustBeUnmodified, LBasicBlock otherwise, bool allowsModified)
@@ -685,9 +698,9 @@ Word32 Lowering::lowerTypeOfIs(const Value& value)
         return isBoolean(operand);
 
     Join join(m_out, Rep::Int32, Int32);
-    auto when = [&](Word32 condition, Word32 answer) {
+    auto when = [&](Word32 condition, Word32 answer, bool usuallyHolds = false) {
         LBasicBlock holds = m_out.newBlock();
-        LBasicBlock next = m_out.newBlock();
+        LBasicBlock next = usuallyHolds ? newUnlikelyBlock() : m_out.newBlock();
         m_out.branch(condition.value(), unsure(holds), unsure(next));
         m_out.appendTo(holds);
         join.add(answer);
@@ -719,7 +732,7 @@ Word32 Lowering::lowerTypeOfIs(const Value& value)
         return boolean(what == wanted);
     };
     Word32 flags = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
-    when(hasBits(flags, TypeOfReturnsFunction), is(TypeofType::Function));
+    when(hasBits(flags, TypeOfReturnsFunction), is(TypeofType::Function), wanted == TypeofType::Function);
     if (wanted != TypeofType::Function)
         when(below(type, word32(ObjectType)), boolean(false));
     when(hasNoBits(flags, MasqueradesAsUndefined | OverridesGetCallData), is(TypeofType::Object));
@@ -4384,7 +4397,7 @@ const EngineClass* Lowering::instanceOfEngineClass(const Value& value)
     if (named.opcode != Opcode::GetGlobal)
         return nullptr;
     BuiltinName name = m_program.builtinName(named.string());
-    if (!m_builtins.isGlobal(name) || m_builtins.isReplaceable(name) || m_program.isExtended(name))
+    if (!m_builtins.isGlobal(name) || m_builtins.isReplaceable(name))
         return nullptr;
     auto* engineClass = m_builtins.classNamed(name);
     return engineClass && engineClass->name == name && engineClass->index != m_builtins.objectClass().index && holdsCells(m_function.at(value.child(0)).rep) ? engineClass : nullptr;

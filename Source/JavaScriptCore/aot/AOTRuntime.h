@@ -705,10 +705,15 @@ struct Instance {
     const uint32_t* canonicalPropertyRun(std::span<UniquedStringImpl* const>);
     bool hasPropertyRunTarget(Structure*, std::span<UniquedStringImpl* const>);
     struct CopiedProperties {
+        enum class Prototypes : uint8_t { NotExamined, AllowAssigning, MayIntercept };
         Structure* last { nullptr };
         Vector<std::pair<PropertyOffset, PropertyOffset>, 8> offsets;
+        mutable Vector<StructureID, 2> prototypeStructures;
+        mutable Prototypes prototypes { Prototypes::NotExamined };
     };
     const CopiedProperties& copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded);
+    bool prototypesAllowAssigning(Structure* target, Structure* source, const CopiedProperties&);
+    static bool hasPrototypeStructures(Structure*, std::span<const StructureID> prototypeStructures);
     struct ClassStructures {
         Structure* classObjectStructure { nullptr };
         Structure* ofPrototype { nullptr };
@@ -888,6 +893,11 @@ struct Instance {
     uint32_t& typedClosureStructureID(unsigned which) { return which ? typedClosureStructureIDs[which - 1] : negativeOffsetFields().typedClosureStructureID; }
     uint64_t typedClosureStructureIDPair;
     uint32_t typedClosureWithPrototypeStructureID;
+    static constexpr unsigned numberOfReifiedSlimClosureStructureIDs = 3;
+    uint32_t reifiedSlimClosureStructureIDs[numberOfReifiedSlimClosureStructureIDs];
+    static constexpr unsigned numberOfKnownClosureStructureIDs = 128;
+    static constexpr unsigned knownClosureStructureIDShift = 7;
+    uint32_t knownClosureStructureIDs[numberOfKnownClosureStructureIDs];
     LocalAllocator* typedSlimClosureAllocators[3];
     JSCell* typedSlimClosureLengthGetter;
     JSCell* typedSlimClosureNameGetter;
@@ -1721,6 +1731,7 @@ struct Instance {
     void* typedLateFieldCreations;
     void* typedCloneCache;
     void* typedConversionCache;
+    void* typedUnconvertedCasts;
     static constexpr ptrdiff_t offsetOfNamedFieldReads() { return OBJECT_OFFSETOF(Instance, namedFieldReads); }
     static constexpr ptrdiff_t offsetOfNamedFieldWrites() { return OBJECT_OFFSETOF(Instance, namedFieldWrites); }
     static constexpr ptrdiff_t offsetOfTypedKnownStoreTransitions() { return OBJECT_OFFSETOF(Instance, typedKnownStoreTransitions); }
@@ -1729,6 +1740,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedLateFieldCreations() { return OBJECT_OFFSETOF(Instance, typedLateFieldCreations); }
     static constexpr ptrdiff_t offsetOfTypedCloneCache() { return OBJECT_OFFSETOF(Instance, typedCloneCache); }
     static constexpr ptrdiff_t offsetOfTypedConversionCache() { return OBJECT_OFFSETOF(Instance, typedConversionCache); }
+    static constexpr ptrdiff_t offsetOfTypedUnconvertedCasts() { return OBJECT_OFFSETOF(Instance, typedUnconvertedCasts); }
     static void cacheNamedField(NamedField* table, uint32_t shapeWord, uint32_t name, uint64_t access)
     {
         table[((shapeWord << namedFieldShapeShift) + name) % numberOfNamedFields] = { shapeWord | static_cast<uint64_t>(name) << 32, access };
@@ -1842,6 +1854,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedSlimClosureNameGetter() { return OBJECT_OFFSETOF(Instance, typedSlimClosureNameGetter); }
     static constexpr ptrdiff_t offsetOfTypedClosureStructureIDPair() { return OBJECT_OFFSETOF(Instance, typedClosureStructureIDPair); }
     static constexpr ptrdiff_t offsetOfTypedClosureWithPrototypeStructureID() { return OBJECT_OFFSETOF(Instance, typedClosureWithPrototypeStructureID); }
+    static constexpr ptrdiff_t offsetOfReifiedSlimClosureStructureID(unsigned which) { return OBJECT_OFFSETOF(Instance, reifiedSlimClosureStructureIDs) + which * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfKnownClosureStructureIDs() { return OBJECT_OFFSETOF(Instance, knownClosureStructureIDs); }
     static constexpr ptrdiff_t offsetOfTypedSlimClosureHeader(unsigned kind) { return OBJECT_OFFSETOF(Instance, typedSlimClosureHeaders) + kind * sizeof(uint64_t); }
     static constexpr ptrdiff_t offsetOfTypedSlimClosureAllocator(unsigned numberOfCaptures) { return OBJECT_OFFSETOF(Instance, typedSlimClosureAllocators) + (numberOfCaptures + 1) / 2 * sizeof(LocalAllocator*); }
     static constexpr ptrdiff_t offsetOfTypedModifiedLiterals() { return OBJECT_OFFSETOF(Instance, typedModifiedLiterals); }

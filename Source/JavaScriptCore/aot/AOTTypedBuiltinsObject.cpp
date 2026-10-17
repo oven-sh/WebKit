@@ -483,7 +483,16 @@ static void assignFrom(Instance* instance, JSGlobalObject* globalObject, JSObjec
         return;
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexedSetterOrReadOnly(targetObject))) {
+    auto* targetObject = dynamicDowncast<JSFinalObject>(target);
+    bool mayCopy = targetObject && targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexedSetterOrReadOnly(targetObject));
+    if (mayCopy && !targetObject->canPerformFastPutInlineExcludingProto()) {
+        Structure* structure = targetObject->structure();
+        if (source->type() == FinalObjectType && !source->hasNonReifiedStaticProperties() && !structure->hasImmutableProperties() && !structure->typeInfo().wouldHaveFixedProperties() && !structure->mayBePrototype() && !structure->isWatchingReplacement()
+            && tryCopyDataProperties(instance, vm, targetObject, source, nullptr, "operationAOTTypedObjectAssignFrom", PrototypesOfTarget::MayIntercept))
+            return;
+        mayCopy = false;
+    }
+    if (mayCopy) {
         if (!source->staticPropertiesReified()) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
@@ -1440,13 +1449,20 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
     LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), m_out.constInt32(2)), m_out.constIntPtr((Instance::prototypeChangeCacheSize - 1) << 4));
     LValue entry = m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfPrototypeChangeCache())), offset);
     orElse(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, prototype))), prototype.value()), slowPath);
-    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, from))), loadField<Word32>(object, m_heaps.JSCell_structureID).value()), slowPath);
+    bool mayAskPrototypeChain = m_program.at(supertype).subtypes.containsIf([&](LayoutID subtype) {
+        return m_program.at(subtype).fields.containsIf([](const Field& field) {
+            return !(field.flags & fieldIsNeverObservedAbsent);
+        });
+    });
+    LValue from = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, from)));
+    LValue asksPrototypeChain = mayAskPrototypeChain ? m_out.bitAnd(from, m_out.constInt32(Instance::prototypeChangeAsksPrototypeChain)) : nullptr;
+    orElse(m_out.equal(asksPrototypeChain ? m_out.bitXor(from, asksPrototypeChain) : from, loadField<Word32>(object, m_heaps.JSCell_structureID).value()), slowPath);
     orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
     didEmitWrite(writes);
+    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to))), object.value(), m_heaps.JSCell_structureID);
     static_assert(orderWordHasExtraProperties == Instance::prototypeChangeAsksPrototypeChain << 28);
-    LValue to = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to)));
-    m_out.store32(m_out.bitAnd(to, m_out.constInt32(~Instance::prototypeChangeAsksPrototypeChain)), object.value(), m_heaps.JSCell_structureID);
-    storeField(object, m_heaps.AOTTypedObject_orderWord, bitOr(orderWordOf(object), Word32(m_out.shl(m_out.bitAnd(to, m_out.constInt32(Instance::prototypeChangeAsksPrototypeChain)), m_out.constInt32(28)))));
+    if (asksPrototypeChain)
+        storeField(object, m_heaps.AOTTypedObject_orderWord, bitOr(orderWordOf(object), Word32(m_out.shl(asksPrototypeChain, m_out.constInt32(28)))));
     barrier(object);
     join.add(convertToDeclaredResult(get(value.arguments[0]), typeOf(value.arguments[0]), value, type));
 

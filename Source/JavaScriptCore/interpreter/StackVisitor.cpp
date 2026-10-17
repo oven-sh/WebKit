@@ -82,6 +82,7 @@ ALWAYS_INLINE CallFrame* StackVisitor::skipStubFrames(CallFrame* callFrame, Entr
 #if ENABLE(AOT)
     if (!m_mayVisitAOTFrames)
         return callFrame;
+    EntryFrame* startingEntryFrame = entryFrame;
     while (callFrame) {
         switch (classify(removeCodePtrTag(returnPC)).kind) {
         case AOT::ImageAddressInfo::Stub:
@@ -97,7 +98,7 @@ ALWAYS_INLINE CallFrame* StackVisitor::skipStubFrames(CallFrame* callFrame, Entr
             callFrame = callFrame->callerFrame();
             continue;
         case AOT::ImageAddressInfo::Adapter:
-            if (!adapter)
+            if (entryFrame == startingEntryFrame)
                 adapter = callFrame;
             callFrame = callerOf(callFrame, entryFrame, returnPC, m_mayVisitAOTFrames);
             continue;

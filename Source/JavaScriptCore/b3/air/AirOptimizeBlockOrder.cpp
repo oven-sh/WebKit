@@ -177,7 +177,21 @@ private:
 
 } // anonymous namespace
 
-static bool detectTriangleStructure(BasicBlock* blockA, ChainWorklist& worklist, IndexSet<BasicBlock*>& done)
+static double frequencyOfEdgeToSharedSuccessor(BasicBlock* block, BasicBlock* exclusive, BasicBlock* shared)
+{
+    double remainder = block->frequency() - exclusive->frequency();
+    double arriving = shared->frequency();
+    for (BasicBlock* predecessor : shared->predecessors()) {
+        if (predecessor == block)
+            continue;
+        if (predecessor->numSuccessors() != 1)
+            return remainder;
+        arriving -= predecessor->frequency();
+    }
+    return std::min(remainder, arriving);
+}
+
+static bool detectTriangleStructure(BasicBlock* blockA, ChainWorklist& worklist, IndexSet<BasicBlock*>& done, bool hasFrequencies)
 {
     // A*
     // |-----.
@@ -200,6 +214,8 @@ static bool detectTriangleStructure(BasicBlock* blockA, ChainWorklist& worklist,
         return false;
 
     auto attemptToDetect = [&](BasicBlock* blockB, BasicBlock* blockC) {
+        if (hasFrequencies && frequencyOfEdgeToSharedSuccessor(blockA, blockC, blockB) > blockC->frequency() * 1.01)
+            return false;
         if ((blockC->numSuccessors() >= 1 && blockC->successor(0).block() == blockB)
             || (blockC->numSuccessors() >= 2 && blockC->successor(1).block() == blockB)) {
             if (!done.contains(blockB))
@@ -217,7 +233,7 @@ static bool detectTriangleStructure(BasicBlock* blockA, ChainWorklist& worklist,
         || attemptToDetect(block1, block0);
 }
 
-static bool detectDiamondStructure(BasicBlock* blockB, ChainWorklist& worklist, IndexSet<BasicBlock*>& done)
+static bool detectDiamondStructure(BasicBlock* blockB, ChainWorklist& worklist, IndexSet<BasicBlock*>& done, bool hasFrequencies)
 {
     //     A
     //  .--'--.
@@ -262,6 +278,9 @@ static bool detectDiamondStructure(BasicBlock* blockB, ChainWorklist& worklist, 
             return false;
         blockC = blockA->successor(0).block();
     } else
+        return false;
+
+    if (hasFrequencies && blockC->frequency() < blockB->frequency())
         return false;
 
     if (blockC->numSuccessors() != 1)
@@ -404,8 +423,13 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
 #endif
         size_t size = chainWorklist.size();
 
-        if (!detectTriangleStructure(block, chainWorklist, done)
-            && !detectDiamondStructure(block, chainWorklist, done)
+#if USE(BUN_JSC_ADDITIONS)
+        bool hasFrequencies = code.ordersBlocksByEdgeFrequency();
+#else
+        bool hasFrequencies = false;
+#endif
+        if (!detectTriangleStructure(block, chainWorklist, done, hasFrequencies)
+            && !detectDiamondStructure(block, chainWorklist, done, hasFrequencies)
             && !detectExclusiveSuccessor(block, chainWorklist, done)) {
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -415,7 +439,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
                 && hasOneLikelyPredecessor(first) != hasOneLikelyPredecessor(second)) {
                 BasicBlock* exclusive = hasOneLikelyPredecessor(first) ? first : second;
                 BasicBlock* shared = exclusive == first ? second : first;
-                bool sharedEdgeIsLikelier = block->frequency() - exclusive->frequency() > exclusive->frequency() * 1.01;
+                bool sharedEdgeIsLikelier = frequencyOfEdgeToSharedSuccessor(block, exclusive, shared) > exclusive->frequency() * 1.01;
                 chainWorklist.append(sharedEdgeIsLikelier ? exclusive : shared);
                 chainWorklist.append(sharedEdgeIsLikelier ? shared : exclusive);
             } else

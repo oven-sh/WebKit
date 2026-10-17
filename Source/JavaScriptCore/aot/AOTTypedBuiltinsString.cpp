@@ -192,6 +192,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringIndexOfLiteral, size_t, (Instanc
     OPERATION_RETURN(scope, found == notFound ? none : found);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringIndexOfCharacter, size_t, (Instance* instance, JSCell* string, uint32_t character, int32_t place))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    constexpr size_t none = static_cast<size_t>(-1);
+    JSString* base = uncheckedDowncast<JSString>(string);
+    unsigned position = place;
+    if (base->length() <= position)
+        OPERATION_RETURN(scope, none);
+    if (base->isRope() && base->length() >= JSString::minLengthForRopeWalk) {
+        if (auto found = base->tryFindOneChar(globalObject, static_cast<char16_t>(character), position))
+            OPERATION_RETURN(scope, *found == notFound ? none : *found);
+    }
+    auto characters = base->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    size_t found = characters->find(static_cast<char16_t>(character), position);
+    OPERATION_RETURN(scope, found == notFound ? none : found);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringFindLiteral8, size_t, (Instance* instance, const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start))
 {
     auto other = instance->typed->data.stringInImage(text);
@@ -767,6 +785,26 @@ Word32 Lowering::lowerStringSearch(InlineBuiltin which, const StringReceiver& re
     if (arguments.size() > 1)
         position = low32(isReverse ? in<Integer>(arguments[1]) : relativeStringIndex(arguments[1], stringLength(receiver), false));
 
+    if (!isReverse && !m_isInLoop) {
+        OperationEffects effects = effectsForOperation<operationAOTTypedStringIndexOf>();
+        Vector<std::pair<LValue, GPRReg>, 4> operands { { receiver.string.value(), GPRInfo::argumentGPR1 } };
+        LValue found;
+        if (auto text = constantASCIIString(other); text && !text->empty()) {
+            operands.append({ position.value(), GPRInfo::argumentGPR4 });
+            if (text->size() == 1) {
+                found = callICStub(Stub::StringFindCharacter, Int64, operands, std::pair { GPRInfo::argumentGPR3, static_cast<uint32_t>((*text)[0]) }, effects);
+            } else
+                found = callICStub(Stub::StringFindLiteral, Int64, operands, std::pair { GPRInfo::argumentGPR3, m_function.at(stringConstantOf(other)).string().index() }, effects);
+        } else {
+            CellPointer otherString = in<CellPointer>(other);
+            operands.append({ otherString.value(), GPRInfo::argumentGPR3 });
+            operands.append({ position.value(), GPRInfo::argumentGPR5 });
+            found = callICStub(Stub::StringFindString, Int64, operands, std::nullopt, effects);
+            ensureStillAliveHere(otherString);
+        }
+        ensureStillAliveHere(receiver.string);
+        return Word32(m_out.castToInt32(found));
+    }
     if (auto text = constantASCIIString(other); text && !text->empty() && !m_isInLoop) {
         LBasicBlock otherwise = newColdBlock();
         Join join(m_out, Rep::Int32, Int32);
@@ -984,16 +1022,26 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         Join join(m_out, rep, b3TypeOf(rep));
         std::optional<Word32> codeUnitFromFlatString;
         if (which == InlineBuiltin::StringCharCodeAt && !part && !openedStringCharacters(receiver)) {
+            bool flattensRope = isReadRepeatedlyByCurrentLoop(value.child(0));
             LBasicBlock flat = m_out.newBlock();
-            LBasicBlock rope = newColdBlock();
+            LBasicBlock rope = flattensRope ? nullptr : newColdBlock();
             LBasicBlock isInside = m_out.newBlock();
             LBasicBlock narrow = m_out.newBlock();
             LBasicBlock wide = m_out.newBlock();
-            LBasicBlock isInsideRope = newColdBlock();
+            LBasicBlock isInsideRope = flattensRope ? nullptr : newColdBlock();
             LBasicBlock hasUnit = m_out.newBlock();
             Integer place = positionOf(arguments[0]);
             Pointer fiber = fiberOf(receiver);
-            m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(rope));
+            if (flattensRope) {
+                Pointer held = fiber;
+                fiber = eitherPointer(hasNoBits(held, JSString::isRopeInPointer), [&] {
+                    return held;
+                }, [&] {
+                    return AOT_TYPED_OPERATION(Flatten, receiver.string);
+                });
+                m_out.jump(flat);
+            } else
+                m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(rope));
             m_out.appendTo(flat);
             Word32 isSubsetOf;
             if (auto known = lengthReadBefore(value.child(0)))
@@ -1011,14 +1059,17 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             m_out.appendTo(wide);
             ValueFromBlock fromWide = m_out.anchor(marked(m_out.load16ZeroExt32(TypedPointer(m_heaps.characters16.atAnyIndex(), offsetBy(loadField<Pointer>(fiber, m_heaps.StringImpl_data), place, 1).value())), IsFixed));
             m_out.jump(hasUnit);
-            m_out.appendTo(rope);
-            LValue ofRope = callAllocationStub(Stub::RopeCodeUnit, { { receiver.string.value(), GPRInfo::toArgumentRegister(1) }, { place.value(), GPRInfo::toArgumentRegister(2) } }, effectsForOperation<operationAOTTypedRopeCodeUnit>(), true);
-            m_out.branch(m_out.lessThan(ofRope, m_out.int64Zero), unsure(outside), unsure(isInsideRope));
-            m_out.appendTo(isInsideRope);
-            ValueFromBlock fromRope = m_out.anchor(m_out.castToInt32(ofRope));
-            m_out.jump(hasUnit);
+            Vector<ValueFromBlock, 3> units { fromNarrow, fromWide };
+            if (!flattensRope) {
+                m_out.appendTo(rope);
+                LValue ofRope = callAllocationStub(Stub::RopeCodeUnit, { { receiver.string.value(), GPRInfo::toArgumentRegister(1) }, { place.value(), GPRInfo::toArgumentRegister(2) } }, effectsForOperation<operationAOTTypedRopeCodeUnit>(), true);
+                m_out.branch(m_out.lessThan(ofRope, m_out.int64Zero), unsure(outside), unsure(isInsideRope));
+                m_out.appendTo(isInsideRope);
+                units.append(m_out.anchor(m_out.castToInt32(ofRope)));
+                m_out.jump(hasUnit);
+            }
             m_out.appendTo(hasUnit);
-            codeUnitFromFlatString = Word32(m_out.phi(Int32, fromNarrow, fromWide, fromRope));
+            codeUnitFromFlatString = Word32(m_out.phi(Int32, units));
             ensureStillAliveHere(receiver.string);
         }
         Characters characters;

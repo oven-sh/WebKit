@@ -134,6 +134,17 @@ static ModuleScopeVariable findInModuleScope(Instance* instance, JSGlobalLexical
     return { };
 }
 
+static constexpr ASCIILiteral graphVariablePrefix = "graph "_s;
+
+static ALWAYS_INLINE const Identifier& freeNameAt(Instance* instance, VM& vm, uint32_t index, Identifier& withoutPrefix)
+{
+    const Identifier& written = nameAt(instance, index);
+    if (!instance->typed->data.mayRunInMultipleInstances || !written.string().startsWith(graphVariablePrefix)) [[likely]]
+        return written;
+    withoutPrefix = Identifier::fromString(vm, written.string().string().substring(graphVariablePrefix.length()));
+    return withoutPrefix;
+}
+
 enum class FreeVariableAccess : uint8_t { Read, TypeOf, GlobalThisProperty };
 
 static JSValue getFreeVariable(Instance* instance, JSGlobalObject* globalObject, VM& vm, uint32_t nameIndex, uint32_t cacheNumber, FreeVariableAccess how)
@@ -146,11 +157,15 @@ static JSValue getFreeVariable(Instance* instance, JSGlobalObject* globalObject,
         if (cache.location && cache.structureID == globalObject->structureID().bits() && cache.globalLexicalBindingEpoch == globalObject->globalLexicalBindingEpoch())
             return JSValue::decode(*std::bit_cast<EncodedJSValue*>((cache.location < 0 ? std::bit_cast<int64_t>(globalObject->butterfly()) : 0) + cache.location));
     }
-    const Identifier& name = nameAt(instance, nameIndex);
+    Identifier withoutPrefix;
+    const Identifier& name = freeNameAt(instance, vm, nameIndex, withoutPrefix);
     JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
     if (how != FreeVariableAccess::GlobalThisProperty) {
-        if (auto found = findInModuleScope(instance, lexical, name); found.variable)
+        if (auto found = findInModuleScope(instance, lexical, name); found.variable) {
+            if (cacheNumber)
+                fillGlobalPropertyCache(vm, instance, globalObject, cacheNumber, std::bit_cast<int64_t>(found.variable->slot()));
             return found.variable->get();
+        }
     }
     PropertySlot lexicalSlot(lexical, PropertySlot::InternalMethodType::Get);
     if (how != FreeVariableAccess::GlobalThisProperty && JSGlobalLexicalEnvironment::getOwnPropertySlot(lexical, globalObject, name, lexicalSlot)) {
@@ -230,7 +245,8 @@ template<bool isStrict>
 static ALWAYS_INLINE OperationReturnType<void> setFreeVariable(Instance* instance, JSGlobalObject* globalObject, VM& vm, uint32_t name, uint32_t cacheNumber, EncodedJSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const Identifier& identifier = nameAt(instance, name);
+    Identifier withoutPrefix;
+    const Identifier& identifier = freeNameAt(instance, vm, name, withoutPrefix);
     JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
     if (auto found = findInModuleScope(instance, lexical, identifier); found.variable) {
         found.variable->set(vm, found.environment, JSValue::decode(value));
@@ -3064,7 +3080,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
             throwSyntaxError(globalObject, scope, withAOTErrorNote("A direct eval in sloppy-mode code declares a variable or a function in the enclosing function, which a program compiled ahead of time does not support"_s));
             OPERATION_RETURN(scope, encodedJSValue());
         }
-        JSScope* around = Typed::EvalScope::create(vm, instance->typed->evalScopeStructure(vm), globalObject->globalScope(), names);
+        JSScope* around = Typed::EvalScope::create(vm, instance->typed->evalScopeStructure(vm), instance->loader()->moduleScope(), names);
         OPERATION_RETURN(scope, JSValue::encode(vm.interpreter.executeEval(executable, thisValue, around)));
     }
     case Typed::LanguageOperation::GetRequireFunction:
@@ -3578,8 +3594,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCopyClosureOutOfFrame, Encode
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerce, EncodedJSValue, (Instance* instance, EncodedJSValue value, uint32_t typeAndReason))
 {
-    if (((typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::As) || (typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::AsIfConvertible)) && instance->typed->tryQuickConversion(*instance->vm, JSValue::decode(value), instance->typed->type(typeAndReason >> 4)))
-        return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
+    if ((typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::As) || (typeAndReason & 15) == static_cast<uint32_t>(Typed::Format::CastReason::AsIfConvertible)) {
+        auto& type = instance->typed->type(typeAndReason >> 4);
+        if (instance->typed->tryQuickConversion(*instance->vm, JSValue::decode(value), type))
+            return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
+        if (instance->typed->staysUnconvertedByPlan(JSValue::decode(value), type)) {
+            instance->typed->shareUnconvertibleObjectPlanWithStub(asObject(JSValue::decode(value)), type, typeAndReason);
+            return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
+        }
+        if (instance->typed->passesOpenTypeAsItIs(JSValue::decode(value), type, typeAndReason))
+            return ExceptionOperationResult<EncodedJSValue> { value, nullptr };
+    }
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     OPERATION_RETURN(scope, JSValue::encode(state.coerce(globalObject, JSValue::decode(value), state.type(typeAndReason >> 4), static_cast<Typed::Format::CastReason>(typeAndReason & 15), { }, State::CoercionResult::ConvertedValue, typeAndReason)));
@@ -3618,6 +3643,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerceElement, EncodedJSValue, (Instan
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerceProperty, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t name, EncodedJSValue encodedValue, uint32_t type))
 {
+    if (instance->typed->staysUnconvertedByPlan(JSValue::decode(encodedValue), instance->typed->type(type)))
+        return ExceptionOperationResult<EncodedJSValue> { encodedValue, nullptr };
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSValue value = JSValue::decode(encodedValue);
@@ -4421,6 +4448,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFactViolated, void, (Instance
     dataLogLn("AOT: type fact violated: f", function, " v", number, " is ", isDescribedByPrototype ? makeString("object "_s, asObject(found)->classInfo()->className) : State::describe(found));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCountBranch, void, (Instance* instance, uint32_t module, uint32_t positionAndSide))
+{
+    if (Options::useAOTOperationCounters())
+        runtimeTable(*instance->vm).countOperationAtSite("Branch", module, positionAndSide, module, positionAndSide / 2);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCheckKnownSlot, size_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t name, uint32_t placeAndFlags, uint32_t function, uint32_t number))
 {
     constexpr uint32_t isNeverNullish = 0x100;
@@ -4602,14 +4635,8 @@ Structure* structureAfterPropertyRun(Instance* instance, VM& vm, Structure* stru
     auto& target = instance->propertyRunTarget(structure, instance->canonicalPropertyRun(names), [&](Vector<UniquedStringImpl*, 16>& result) {
         result.append(names);
     });
-    JSValue prototype = structure->storedPrototype();
-    for (StructureID expected : target.prototypeStructures) {
-        if (!prototype.isObject() || asObject(prototype)->structureID() != expected)
-            return nullptr;
-        prototype = expected.decode()->storedPrototype();
-    }
     Structure* last = target.last;
-    if (prototype.isObject() || !last)
+    if (!last || !Instance::hasPrototypeStructures(structure, target.prototypeStructures.span()))
         return nullptr;
     PropertyOffset offset = structure->maxOffset();
     for (UniquedStringImpl* name : names) {

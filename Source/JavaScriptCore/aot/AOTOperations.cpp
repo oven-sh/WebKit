@@ -63,11 +63,24 @@ enum class NodeKind : uint8_t {
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)))); \
     }
 
+#define AOT_BINARY_OPERATION_ON_NUMERICS(name, function, functionOnBigInts) \
+    JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
+    { \
+        AOT_OPERATION_BEGIN(instance); \
+        JSValue left = JSValue::decode(encodedLeft); \
+        JSValue right = JSValue::decode(encodedRight); \
+        if (left.isHeapBigInt() && right.isHeapBigInt()) \
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::functionOnBigInts(globalObject, left.asHeapBigInt(), right.asHeapBigInt()))); \
+        OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
+    }
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);
     JSValue left = JSValue::decode(encodedLeft);
     JSValue right = JSValue::decode(encodedRight);
+    if (left.isHeapBigInt() && right.isHeapBigInt())
+        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::add(globalObject, left.asHeapBigInt(), right.asHeapBigInt())));
     if (left.isString() && right.isInt32())
         OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, asString(left), int32ToString(vm, right.asInt32(), 10))));
     if (left.isInt32() && right.isString())
@@ -75,10 +88,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instan
     OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
 }
 
-AOT_BINARY_OPERATION(operationAOTValueSub, jsSub)
-AOT_BINARY_OPERATION(operationAOTValueMul, jsMul)
-AOT_BINARY_OPERATION(operationAOTValueDiv, jsDiv)
-AOT_BINARY_OPERATION(operationAOTValueMod, jsRemainder)
+AOT_BINARY_OPERATION_ON_NUMERICS(operationAOTValueSub, jsSub, sub)
+AOT_BINARY_OPERATION_ON_NUMERICS(operationAOTValueMul, jsMul, multiply)
+AOT_BINARY_OPERATION_ON_NUMERICS(operationAOTValueDiv, jsDiv, divide)
+AOT_BINARY_OPERATION_ON_NUMERICS(operationAOTValueMod, jsRemainder, remainder)
 AOT_BINARY_OPERATION(operationAOTValuePow, jsPow)
 AOT_BINARY_OPERATION(operationAOTValueBitAnd, jsBitwiseAnd)
 AOT_BINARY_OPERATION(operationAOTValueBitOr, jsBitwiseOr)
@@ -94,27 +107,44 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance* inst
     return JSValue::decode(encodedOperand).toBoolean(globalObject);
 }
 
+static ALWAYS_INLINE std::optional<JSBigInt::ComparisonResult> orderOfBigInts(EncodedJSValue encodedLeft, EncodedJSValue encodedRight)
+{
+    JSValue left = JSValue::decode(encodedLeft);
+    JSValue right = JSValue::decode(encodedRight);
+    if (!left.isHeapBigInt() || !right.isHeapBigInt())
+        return std::nullopt;
+    return JSBigInt::compare(left.asHeapBigInt(), right.asHeapBigInt());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);
+    if (auto order = orderOfBigInts(encodedLeft, encodedRight))
+        OPERATION_RETURN(scope, *order == JSBigInt::ComparisonResult::LessThan);
     OPERATION_RETURN(scope, jsLess<true>(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);
+    if (auto order = orderOfBigInts(encodedLeft, encodedRight))
+        OPERATION_RETURN(scope, *order != JSBigInt::ComparisonResult::GreaterThan);
     OPERATION_RETURN(scope, jsLessEq<true>(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);
+    if (auto order = orderOfBigInts(encodedLeft, encodedRight))
+        OPERATION_RETURN(scope, *order == JSBigInt::ComparisonResult::GreaterThan);
     OPERATION_RETURN(scope, jsLess<false>(globalObject, JSValue::decode(encodedRight), JSValue::decode(encodedLeft)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareGreaterEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance);
+    if (auto order = orderOfBigInts(encodedLeft, encodedRight))
+        OPERATION_RETURN(scope, *order != JSBigInt::ComparisonResult::LessThan);
     OPERATION_RETURN(scope, jsLessEq<false>(globalObject, JSValue::decode(encodedRight), JSValue::decode(encodedLeft)));
 }
 

@@ -14,6 +14,7 @@ compiled:
   <bun>/src/sema/check/aot/builtins_generated.rs the names the checker trusts, and what each entry does with its operands
   <bun>/src/aot/builtins_generated.rs            the hash, the files and the functions of the prelude
   <bun>/src/jsc/bindings/AOTFrontEndBuiltinsHash.h the hash again, for a static_assert against the engine that Bun is compiled with
+  <bun>/src/jsc/bindings/AOTHTTPHeaderNames.h    a static_assert for each `header` line against Bun's HTTPHeaderName
   <bun>/src/aot/prelude/engine/<File>.js         builtins/<File>.js in the syntax of <bun>/src/js/builtins: see aot_engine_builtins.py
   <bun>/src/aot/prelude/engine/functions.txt     the functions of that folder: BuiltinCodeIndex, file, function, separated by tabs
   <bun>/src/aot/build/intrinsics.rs              what each `$name` of Bun's src/js is
@@ -80,6 +81,9 @@ One declaration per line. `#` starts a comment.
       table has no entry for it and the checker is told nothing: NAME is among the names, and a row of FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR.
       Compiled code takes the row to hold only of a function whose registered descriptor says the same. One whose width is an argument
       (readUIntLE) has no line.
+  header TEXT
+      A header name for which the embedder's HTTPHeaderName has an enumerator: TEXT without its dashes. The lines stand in the order of the
+      enumerators: the first is number 0. A row of FOR_EACH_AOT_TYPED_HTTP_HEADER_NAME: enumerator, TEXT in lower case, number.
   KIND PATH [this/USES] (PARAMETERS) -> RESULT ; EFFECTS ; LOWERING
 
   KIND       method | getter | setter    PATH is HOLDER.prototype.NAME
@@ -153,6 +157,7 @@ WRITES = ['Pure', 'Nothing', 'RuntimeState', 'TypedArrayProperties', 'Fields', '
 
 
 buffer_accessors = {}
+http_header_names = []
 
 
 def family_name(family):
@@ -284,6 +289,12 @@ for path in sorted(glob.glob(os.path.join(aot, 'builtins', '*.def'))):
             if match.group(1) in buffer_accessors:
                 errors.append('%s: accessor %s is declared twice' % (where, match.group(1)))
             buffer_accessors[match.group(1)] = match.groups()[1:]
+            continue
+        match = re.fullmatch(r'header ([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)', line)
+        if match:
+            if match.group(1).lower() in (name.lower() for name in http_header_names):
+                errors.append('%s: header %s is declared twice' % (where, match.group(1)))
+            http_header_names.append(match.group(1))
             continue
         match = ENTRY.fullmatch(line)
         if not match or match.group(1) not in KINDS:
@@ -672,6 +683,7 @@ lists += x_macro('FOR_EACH_AOT_TYPED_ENGINE_BUILTIN_FUNCTION', ['%s, %d' % (code
 lists += x_macro('FOR_EACH_AOT_TYPED_ORIGINAL_STRUCTURE', ['%d, %s' % numbered for numbered in enumerate(structures)])
 lists += x_macro('FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR', ['%s, %d, %s, %s, %s, %s' % (name, name_numbers[name], 'true' if direction == 'write' else 'false', size, kind.capitalize(), 'true' if order == 'little' else 'false')
                                                         for name, (direction, size, kind, order) in buffer_accessors.items()])
+lists += x_macro('FOR_EACH_AOT_TYPED_HTTP_HEADER_NAME', ['%s, "%s", %d' % (name.replace('-', ''), name.lower(), number) for number, name in enumerate(http_header_names)])
 lists += x_macro('FOR_EACH_AOT_TYPED_JS_TYPE_NAME', js_type_names)
 lists += x_macro('FOR_EACH_AOT_TYPED_LINK_TIME_CONSTANT_NAME', link_time_constant_names)
 for family in families:
@@ -894,7 +906,9 @@ for family in families:
 if bun:
     outputs += [(os.path.join(bun, 'src', 'sema', 'check', 'aot', 'builtins_generated.rs'), trusted), (os.path.join(bun, 'src', 'aot', 'builtins_generated.rs'), front_end),
                 (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.rs'), intrinsics_rs), (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.txt'), intrinsics_txt),
-                (os.path.join(bun, 'src', 'jsc', 'bindings', 'AOTFrontEndBuiltinsHash.h'), '// %s\n\n#pragma once\n\n#define BUN_AOT_FRONT_END_BUILTINS_HASH 0x%08xu\n' % (NOTICE, table_hash))]
+                (os.path.join(bun, 'src', 'jsc', 'bindings', 'AOTFrontEndBuiltinsHash.h'), '// %s\n\n#pragma once\n\n#define BUN_AOT_FRONT_END_BUILTINS_HASH 0x%08xu\n' % (NOTICE, table_hash)),
+                (os.path.join(bun, 'src', 'jsc', 'bindings', 'AOTHTTPHeaderNames.h'), '// %s\n\n#pragma once\n\nstatic_assert(WebCore::numHTTPHeaderNames == %d);\n%s' % (NOTICE, len(http_header_names), ''.join(
+                    'static_assert(static_cast<unsigned>(WebCore::HTTPHeaderName::%s) == %d);\n' % (name.replace('-', ''), number) for number, name in enumerate(http_header_names))))]
 if bun:
     engine = os.path.join(bun, 'src', 'aot', 'prelude', 'engine')
     outputs += [(os.path.join(engine, name), text) for name, text in engine_files]

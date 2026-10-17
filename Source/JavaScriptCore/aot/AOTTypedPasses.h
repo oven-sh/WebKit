@@ -202,6 +202,7 @@ unsigned callGuardedPreludeEntries(const Program&, FunctionID, Function&, Unprov
 unsigned speculateOnReceivers(const Program&, FunctionID, Function&);
 unsigned eliminateGuardsOnUnescapedReceivers(const Program&, Function&);
 void eliminateGuardsOnFreshResults(Program&);
+void compareHeaderNamesWithPassedConstants(Program&);
 void eliminateGuardsOnUnescapedModuleVariables(Program&);
 void resolveBuiltins(const Program&, Function&);
 void sinkEmptyArrayLiterals(Function&);

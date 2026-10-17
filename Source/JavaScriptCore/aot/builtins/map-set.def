@@ -68,7 +68,8 @@ method Map.prototype.set this/wR (any/K, any/K) -> this ; ReadsRuntimeState Writ
 method Map.prototype.getOrInsertComputed this/wP (any/KA?, any/C?, any/-...) -> anything ; CallsUserCode ; HostCall
 
 construct Set () -> new Set/N ; Allocates ; HostCall
-construct Set (any/GP) -> new Set/N ; MayThrow Allocates ReadsArguments ; HostCall
+construct Set (any/GP) -> new Set/N ; MayThrow Allocates ReadsArguments ; Prelude(Set$construct)
+construct Set (any/GP, any/-...) -> new Set/N ; MayThrow Allocates ReadsArguments ; HostCall
 
 getter Set.prototype.size this/- () -> int[0,INT32_MAX] ; ReadsRuntimeState ; Inline(SetSize)
 method Set.prototype.add this/wR (any/K) -> this ; ReadsRuntimeState WritesRuntimeState ; Inline(SetAdd)

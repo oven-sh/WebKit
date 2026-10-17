@@ -1513,6 +1513,17 @@ private:
             predicted = variable.singleFunction;
             break;
         }
+        case Opcode::GetCapture: {
+            auto& holder = m_function.at(originOf(definition.child(0)));
+            if (holder.opcode != Opcode::GetModuleVariable)
+                break;
+            auto& variable = m_program.variables[holder.variable().index()];
+            auto& captured = variable.functionsCapturedBySingleFunction;
+            uint32_t index = definition.immediates[1];
+            if (variable.singleFunction == definition.function() && (variable.singleFunctionIsProven || variable.singleFunctionOrNullish) && index < captured.size() && captured[index])
+                return KnownCallee { captured[index], value, { }, true };
+            break;
+        }
         case Opcode::GetField: {
             auto& field = m_program.at(definition.layout()).fields[definition.field()];
             if (field.singleFunctionIsProven || field.singleFunctionOrNullish)
@@ -1794,7 +1805,8 @@ private:
         value = originOf(value);
         while (m_function.at(value).opcode == Opcode::GetById)
             value = originOf(m_function.at(value).child(0));
-        return m_function.at(value).opcode == Opcode::GetGlobal;
+        auto& root = m_function.at(value);
+        return root.opcode == Opcode::GetGlobal && !(m_program.mayRunInMultipleInstances && m_program.isGlobalThisName(root.string()));
     }
 
     bool hasGuard(ValueID method) const
@@ -1874,10 +1886,15 @@ private:
 
     bool isCalledLikeStaticMethod(const Value& site, const PredictedBuiltinCallee& callee) const
     {
-        if (site.opcode != Opcode::Call || !callee.entry || callee.path.isOnPrototype || (site.child(1) && !typeOf(site.child(1)).isUndefinedOrNull()))
+        if (site.opcode != Opcode::Call || !callee.entry || callee.path.isOnPrototype)
             return false;
         auto& builtins = Builtins::singleton();
-        return builtins.classNamed(callee.global) != &builtins.promiseClass() && builtins.at(callee.entry).holderName != BuiltinName(AOT_TYPED_BUILTIN_NAME_TypedArray);
+        if (builtins.classNamed(callee.global) == &builtins.promiseClass() || builtins.at(callee.entry).holderName == BuiltinName(AOT_TYPED_BUILTIN_NAME_TypedArray))
+            return false;
+        if (!site.child(1) || typeOf(site.child(1)).isUndefinedOrNull())
+            return true;
+        auto& read = m_function.at(originOf(site.child(0)));
+        return m_program.mayRunInMultipleInstances && builtins.classNamed(callee.global) != &builtins.arrayClass() && read.opcode == Opcode::GetById && originOf(read.child(0)) == originOf(site.child(1));
     }
 
     bool isLiteralMethodCalledOnLiteral(const Value& site) const
@@ -1944,6 +1961,8 @@ private:
                 if (callee.path.member)
                     builtin = appendRead(builtin, callee.path.member);
                 direct.children[0] = builtin;
+                if (m_program.mayRunInMultipleInstances && original.opcode == Opcode::Call && !callee.entry)
+                    direct.children[1] = append(make(Opcode::Undefined, m_program.types.undefined));
             }
             finish(appendThrowing(WTF::move(direct)));
             moveTo(otherwise);

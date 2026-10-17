@@ -85,6 +85,7 @@
     void openStringsAgainAfter(ValueID);
     void openStringsBeforeLoopsEnteredBy(const Terminator&);
     const OpenedString* openedString(ValueID) const;
+    bool isReadRepeatedlyByCurrentLoop(ValueID string) const;
     struct Substring {
         StringReceiver base;
         Integer lengthOfBase;

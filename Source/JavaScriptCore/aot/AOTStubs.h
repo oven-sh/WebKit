@@ -780,6 +780,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(WeakMapSet) \
     v(StringStartsWith) \
     v(StringIndexOf) \
+    v(StringFindCharacter) \
+    v(StringFindLiteral) \
+    v(StringFindString) \
     v(ArrayIncludes) \
     v(ArrayIndexOf) \
     v(ArrayIndexOfFrom) \

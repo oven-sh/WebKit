@@ -44,6 +44,7 @@
 #include <wtf/StackCheck.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/AccessibleAddress.h>
 #include <wtf/threads/Signals.h>
 
@@ -1215,10 +1216,12 @@ Vector<uint8_t> ImageBuilder::finish()
         Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
             auto& function = m_functions[index];
             auto& info = function.code.info;
-            if (function.key.kind != ImageKey::typedFunction || isDuplicated.get(index) || (!info.hasNoFrame && !info.isGenericEntrypoint) || info.numSlots || !function.code.continuations.isEmpty() || !info.callSites.isEmpty() || info.valueEntry != StubCall::noFunction || info.signatureAdapter != StubCall::noFunction || info.adapterResult != StubCall::noFunction || info.compatibleResultsMask
-                || !info.typedCatchEntrypointsForCallSites.isEmpty() || !info.inlineFrames.isEmpty() || !info.indexReferences.isEmpty() || !info.faultingAccesses.isEmpty() || !info.spreadSites.isEmpty() || !info.plans.isEmpty())
+            bool isSharedBody = (info.kindByte & Typed::functionKindMask) == Typed::sharedBodyFunctionKind && info.kindByte & Typed::functionIsHiddenInStackTraces && info.siteConstants.isEmpty() && info.quotableSites.isEmpty() && info.constructSites.isEmpty()
+                && info.constructingSites.isEmpty() && info.parameterCheckSites.isEmpty() && info.constantIndices.isEmpty() && info.constructionStarts.isEmpty() && info.quotes.isEmpty();
+            if (function.key.kind != ImageKey::typedFunction || isDuplicated.get(index) || (!info.hasNoFrame && !info.isGenericEntrypoint && !isSharedBody) || info.numSlots || !function.code.continuations.isEmpty() || (!info.callSites.isEmpty() && !isSharedBody) || info.valueEntry != StubCall::noFunction || info.signatureAdapter != StubCall::noFunction || info.adapterResult != StubCall::noFunction || info.compatibleResultsMask
+                || !info.typedCatchEntrypointsForCallSites.isEmpty() || !info.inlineFrames.isEmpty() || !info.indexReferences.isEmpty() || (!info.faultingAccesses.isEmpty() && !isSharedBody) || !info.spreadSites.isEmpty() || !info.plans.isEmpty())
                 return;
-            bool hasNoStubCallsToIt = std::ranges::all_of(info.stubCalls, [&](const StubCall& call) {
+            bool hasNoStubCallsToIt = isSharedBody || std::ranges::all_of(info.stubCalls, [&](const StubCall& call) {
                 return call.callSite == StubCall::noCallSite || (info.isGenericEntrypoint && call.function != StubCall::noFunction);
             });
             if (!hasNoStubCallsToIt)
@@ -1230,6 +1233,16 @@ Vector<uint8_t> ImageBuilder::finish()
                 facts.appendList(std::initializer_list<uint64_t> { info.frameSizeInBytes, info.numberOfSitesWithoutCode, static_cast<uint64_t>(info.convention.signature), info.convention.numberOfParameters, info.convention.usesThis, info.kindByte, info.calleeSaveRegisters.registerCount() });
                 for (auto& entry : info.calleeSaveRegisters)
                     facts.appendList(std::initializer_list<uint64_t> { entry.reg().index(), static_cast<uint64_t>(entry.offset()) });
+            }
+            if (isSharedBody) {
+                facts.appendList(std::initializer_list<uint64_t> { info.numberOfSitesWithoutCode, static_cast<uint64_t>(info.convention.signature), info.convention.numberOfParameters, info.convention.usesThis, info.kindByte, info.stackUsedAtCalls, info.isEnteredWithoutStackCheck, info.isProvenToFitOnStack, function.code.rareCodeStart, info.callSites.size(), info.faultingAccesses.size() });
+                for (uint32_t offset : info.callSites)
+                    facts.append(offset);
+                for (auto& access : info.faultingAccesses) {
+                    facts.appendList(std::initializer_list<uint64_t> { access.codeOffset, access.callSite, access.isLoopPoll, access.throwSite.size() });
+                    for (uint32_t word : access.throwSite)
+                        facts.append(word);
+                }
             }
             for (auto& call : info.stubCalls)
                 facts.appendList(std::initializer_list<uint64_t> { call.offset, static_cast<uint64_t>(call.stub), call.isTailCall, call.thunk, call.function == StubCall::noFunction, call.callSite, call.argumentMoves == StubCall::noArgumentMoves ? 0 : info.argumentMoves[call.argumentMoves].size(), call.firstOmittedGPR, call.endOfOmittedGPRs });
@@ -2656,6 +2669,12 @@ Vector<uint8_t> ImageBuilder::finish()
         static_assert(!((1 << minCodeGranuleShift) % imageFunctionAlignment));
         codeSize = WTF::roundUpToMultipleOf(static_cast<size_t>(1) << codeGranuleShift, codeSize + sizeOfStubs + sizeBeforeNext);
     };
+    size_t shiftOfFunctionsForAnotherLayout = 0;
+    if (const char* layoutSeedText = getenv("BUN_AOT_LAYOUT_SEED")) [[unlikely]] {
+        static_assert(!(sizeof(uint32_t) % imageFunctionAlignment));
+        if (unsigned layoutSeed = static_cast<unsigned>(strtoul(layoutSeedText, nullptr, 10)))
+            shiftOfFunctionsForAnotherLayout = sizeof(uint32_t) * WeakRandom(~layoutSeed).getUint32(16);
+    }
     Vector<size_t> recordSizes(m_functions.size());
     Vector<size_t> preambleSizes(m_functions.size());
     Vector<size_t> sizesWithVeneers(m_functions.size());
@@ -2681,6 +2700,8 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         if (isBeforeStubs ? !isFallenInto && codeSize + sizeOfRun + imageStubsAlignment + sizeOfStubs - startOfCodeBeforeStubs > reach : stubsAt.isEmpty() || (!isFallenInto && codeSize + sizeOfRun - stubsAt.last() > reach))
             placeStubs(preambleSizes[functionIndex]);
+        if (!functionIndex)
+            codeSize += shiftOfFunctionsForAnotherLayout;
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
         if (Options::logAOTTypeInference()) [[unlikely]]
             dataLogLn("PLACED @", m_functions[placement.size() - 1].key.module, ":", m_functions[placement.size() - 1].key.start, ":", m_functions[placement.size() - 1].key.kind, " ", codeSize);
@@ -3926,12 +3947,16 @@ static uintptr_t cellCageBaseIn(PlatformRegisters& registers)
 }
 
 #if CPU(X86_64) && OS(LINUX)
-static bool isTrapAtThrowSite(const void* instruction)
+static bool isTrapAtThrowSite(const void* instruction, PlatformRegisters& registers)
 {
     if (!s_imageHeader || !s_imageHeader->numberOfTrapsAtThrowSites)
         return false;
     if (std::bit_cast<uintptr_t>(instruction) - s_imageCode >= s_imageHeader->functionsEnd || (*static_cast<const uint8_t*>(instruction) != trapInstruction && *static_cast<const uint8_t*>(instruction) != trapInstructionWithoutFrame))
         return false;
+    static_assert(instanceGPR == X86Registers::r13);
+    auto* instance = std::bit_cast<const Instance*>(static_cast<uintptr_t>(registers.machineContext.gregs[REG_R13]));
+    if (auto* known = instance->findCachedReturnAddress(static_cast<const uint8_t*>(instruction) + offsetOfReturnAddressInTrap); known && known->site < Instance::CachedAddressInfo::hasNoSite)
+        return true;
     ImageAddressInfo place = classifyAddress(instruction);
     if (place.kind != ImageAddressInfo::Function)
         return false;
@@ -3968,7 +3993,7 @@ void prepareFaultingAccesses()
         if (!instructionPointer)
             return SignalAction::NotHandled;
 #if CPU(X86_64) && OS(LINUX)
-        if (isTrapAtThrowSite(instructionPointer->untaggedPtr())) {
+        if (isTrapAtThrowSite(instructionPointer->untaggedPtr(), registers)) {
             scratchRegisterOf(registers) = std::bit_cast<uintptr_t>(instructionPointer->untaggedPtr()) + offsetOfReturnAddressInTrap;
             bool hasNoFrame = *static_cast<const uint8_t*>(instructionPointer->untaggedPtr()) == trapInstructionWithoutFrame;
             MachineContext::setInstructionPointer(registers, std::bit_cast<void*>(s_imageCode + s_imageHeader->stubOffsets[static_cast<unsigned>(hasNoFrame ? Stub::LeafThrowAtTrap : Stub::ThrowAtTrap)]));

@@ -15,6 +15,31 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
+uint32_t knownHeaderNameOf(std::span<const uint8_t> text)
+{
+    if (text.empty())
+        return unknownHeaderName;
+    for (uint8_t character : text) {
+        if (!isASCIIAlphanumeric(character) && !std::ranges::contains("!#$%&'*+-.^_`|~"_s.span(), static_cast<char>(character)))
+            return unknownHeaderName;
+    }
+    auto isNamed = [&](ASCIILiteral lowercase) {
+        if (text.size() != lowercase.length())
+            return false;
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (toASCIILower(text[i]) != static_cast<uint8_t>(lowercase[i]))
+                return false;
+        }
+        return true;
+    };
+#define RETURN_NUMBER_IF_NAMED(enumerator, lowercase, number) \
+    if (isNamed(lowercase ## _s)) \
+        return number;
+    FOR_EACH_AOT_TYPED_HTTP_HEADER_NAME(RETURN_NUMBER_IF_NAMED)
+#undef RETURN_NUMBER_IF_NAMED
+    return uncommonHeaderName;
+}
+
 class BuiltinSpecialization {
 public:
     enum class Mode : uint8_t {
@@ -41,7 +66,7 @@ public:
     unsigned run(CleanUpTiming timing = CleanUpTiming::Immediate)
     {
         recordRefutedReceivers();
-        unsigned changed = 0;
+        unsigned changed = m_mode == Mode::Speculation ? keepHeadersInHolders() : 0;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             for (unsigned i = m_remainingValueCounts[b]; i < m_function.blocks[b].values.size(); ++i) {
                 auto& value = m_function.at(m_function.blocks[b].values[i]);
@@ -458,7 +483,8 @@ private:
             else if (isNamed(definition.name, "headers"_s)) {
                 auto& store = init->values[i + 1];
                 size_t index = m_function.at(store.block).values.reverseFind(store.id);
-                if (auto headers = literalUsedOnlyBy(definition.value, store.block, index)) {
+                auto headers = literalUsedOnlyBy(definition.value, store.block, index);
+                if (headers && std::ranges::all_of(headers->definitions, [&](auto& header) { return knownHeaderName(header.name) != unknownHeaderName; })) {
                     result.headerDefinitions = WTF::move(headers->definitions);
                     result.literalValues.appendVector(headers->values);
                 } else
@@ -499,8 +525,13 @@ private:
         for (ValueID operand : { init.status, init.statusText, init.headers })
             call.arguments.append(operand ? operand : append(make(Opcode::Undefined, m_program.types.undefined)));
         for (auto& header : init.headerDefinitions) {
+            uint32_t number = knownHeaderName(header.name);
             Value name = make(Opcode::String, m_program.types.string);
             name.immediates[0] = header.name.index();
+            if (number != uncommonHeaderName) {
+                name = make(Opcode::Integer, m_program.types.int32);
+                name.setBits(number);
+            }
             call.arguments.append(append(WTF::move(name)));
             call.arguments.append(header.value);
         }
@@ -752,28 +783,37 @@ private:
         return true;
     }
 
-    void branchUnlessIsRequestWithOriginalHeaders(ValueID subject, BlockID otherwise)
+    enum class HeadersSubject : uint8_t { Holder, HeadersObject };
+
+    void branchUnlessHoldsOriginalHeaders(ValueID subject, BlockID otherwise, HeadersSubject kind = HeadersSubject::Holder)
     {
-        ValueID isRequest = appendTestWithNumber(Operations::HasHostClassStructure, subject, requestHostClass);
-        endBlockAfterThrowingValue();
+        static constexpr unsigned holders[] = { responseHostClass, requestHostClass, bunRequestHostClass };
+        static constexpr unsigned headers[] = { headersHostClass };
+        std::span<const unsigned> classes = kind == HeadersSubject::Holder ? std::span<const unsigned>(holders) : std::span<const unsigned>(headers);
         BlockID then = addBlock();
-        BlockID mayBeRouted = addBlock();
-        auto& first = m_function.at(m_block).terminator;
-        first.kind = TerminatorKind::Branch;
-        first.value = isRequest;
-        first.targets.append(Target { then, { } });
-        first.targets.append(Target { mayBeRouted, { } });
-        moveTo(mayBeRouted);
-        ValueID isRouted = appendTestWithNumber(Operations::HasHostClassStructure, subject, bunRequestHostClass);
-        auto& second = m_function.at(m_block).terminator;
-        second.kind = TerminatorKind::Branch;
-        second.value = isRouted;
-        second.targets.append(Target { then, { } });
-        second.targets.append(Target { otherwise, { } });
+        for (unsigned i = 0; i < classes.size(); ++i) {
+            ValueID isInstance = appendTestWithNumber(Operations::HasHostClassStructure, subject, classes[i]);
+            endBlockAfterThrowingValue();
+            BlockID next = i + 1 < classes.size() ? addBlock() : otherwise;
+            auto& terminator = m_function.at(m_block).terminator;
+            terminator.kind = TerminatorKind::Branch;
+            terminator.value = isInstance;
+            terminator.targets.append(Target { then, { } });
+            terminator.targets.append(Target { next, { } });
+            moveTo(next);
+        }
         moveTo(then);
     }
 
-    bool specializeRequestHeaderRead(BlockID block, unsigned index)
+    uint32_t knownHeaderName(ValueID id) const
+    {
+        auto& value = m_function.at(id);
+        return value.opcode == Opcode::String ? knownHeaderName(value.string()) : unknownHeaderName;
+    }
+
+    uint32_t knownHeaderName(StringID name) const { return knownHeaderNameOf(m_program.string(name)); }
+
+    bool specializeHeaderRead(BlockID block, unsigned index)
     {
         Value original = m_function.at(m_function.at(block).values[index]);
         if (original.opcode != Opcode::CallMethod || original.arguments.size() != 1 || !equalSpans(m_program.string(original.string()), asBytes("get"_s.span8())))
@@ -784,7 +824,7 @@ private:
         auto read = getterReadUsedOnlyBy("headers"_s, headers, block, index, { });
         if (!read || !areUsedOnlyUpTo(block, read->firstValueBehind, index))
             return false;
-        ValueID request = read->receiver;
+        ValueID holder = read->receiver;
         Value headersRead = m_function.at(read->id);
         Vector<ValueID, 8> repeated;
         for (size_t i = read->firstValueBehind; i < index; ++i) {
@@ -808,7 +848,7 @@ private:
         open(read->block, static_cast<unsigned>(m_function.at(read->block).values.reverseFind(read->id)));
         BlockID afterRead = m_after;
         BlockID readsNow = addBlock();
-        branchUnlessIsRequestWithOriginalHeaders(request, readsNow);
+        branchUnlessHoldsOriginalHeaders(holder, readsNow);
         Vector<std::pair<ValueID, ValueID>, 8> copies;
         auto copyOf = [&](ValueID id) {
             for (auto& [from, to] : copies) {
@@ -830,9 +870,12 @@ private:
         m_inliningDepth = inliningDepth;
         m_isInTailPosition = isInTailPosition;
         Value call = make(Opcode::CallBuiltin, original.type);
-        call.immediates[0] = Operations::GetRequestHeader.index();
-        call.arguments.append(request);
+        call.immediates[0] = Operations::GetRequestOrResponseHeader.index();
+        call.arguments.append(holder);
         call.arguments.append(copyOf(original.arguments[0]));
+        Value knownName = make(Opcode::Integer, m_program.types.int32);
+        knownName.setBits(knownHeaderName(original.arguments[0]));
+        call.arguments.append(append(WTF::move(knownName)));
         ValueID header = appendThrowing(WTF::move(call));
         Value isUnanswered = make(Opcode::StrictEq, m_program.types.boolean);
         isUnanswered.children = { header, append(make(Opcode::Undefined, m_program.types.undefined)) };
@@ -849,6 +892,430 @@ private:
         moveTo(readsNow);
         finish(appendThrowing(WTF::move(headersRead)));
         return true;
+    }
+
+    std::optional<HeadersMethod> headersMethodNamed(StringID string, unsigned argumentCount) const
+    {
+        auto isNamed = [&](ASCIILiteral name) {
+            return equalSpans(m_program.string(string), asBytes(name.span8()));
+        };
+        if (argumentCount == 1) {
+            if (isNamed("get"_s))
+                return HeadersMethod::Get;
+            if (isNamed("has"_s))
+                return HeadersMethod::Has;
+            if (isNamed("delete"_s))
+                return HeadersMethod::Delete;
+        }
+        if (argumentCount == 2) {
+            if (isNamed("set"_s))
+                return HeadersMethod::Set;
+            if (isNamed("append"_s))
+                return HeadersMethod::Append;
+        }
+        return std::nullopt;
+    }
+
+    ValueID addParameter(BlockID block, TypeID type)
+    {
+        Value parameter = make(Opcode::Parameter, type);
+        parameter.immediates = { block.index(), static_cast<uint32_t>(m_function.at(block).parameters.size()) };
+        m_function.values.append(WTF::move(parameter));
+        ValueID id(m_function.values.size() - 1);
+        m_function.at(block).parameters.append(id);
+        return id;
+    }
+
+    void jump(BlockID block, ValueID argument)
+    {
+        auto& terminator = m_function.at(m_block).terminator;
+        terminator.kind = m_lastMayThrow ? TerminatorKind::Invoke : TerminatorKind::Jump;
+        terminator.targets.append(Target { block, Arguments { argument } });
+        if (m_lastMayThrow)
+            terminator.targets.append(m_handler);
+        m_lastMayThrow = false;
+    }
+
+    std::pair<BlockID, unsigned> placeOf(ValueID id) const
+    {
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& values = m_function.blocks[b].values;
+            for (unsigned i = m_remainingValueCounts[b]; i < values.size(); ++i) {
+                if (values[i] == id)
+                    return { BlockID(b), i };
+            }
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    ValueID appendCachedHeaders(ValueID holder)
+    {
+        Value offset = make(Opcode::Integer, m_program.types.int32);
+        offset.setBits(offsetOfCachedHeaders);
+        Value read = make(Opcode::CallBuiltin, m_program.types.anything);
+        read.isInTailPosition = false;
+        read.immediates[0] = Operations::HostObjectCachedValue.index();
+        read.arguments.append(holder);
+        read.arguments.append(append(WTF::move(offset)));
+        return append(WTF::move(read));
+    }
+
+    void finish(ValueID result, std::initializer_list<ValueID> more)
+    {
+        finish(result);
+        for (ValueID argument : more)
+            m_function.at(m_block).terminator.targets[0].arguments.append(argument);
+    }
+
+    ValueID keepHeadersInHolder(ValueID read, ValueID yes, ValueID no)
+    {
+        auto [block, index] = placeOf(read);
+        m_siteBlock = block;
+        Value original = m_function.at(read);
+        ValueID holder = original.child(0);
+        open(block, index);
+        ValueID standsForHeaders = addParameter(m_after, m_program.types.boolean);
+        BlockID readsNow = addBlock();
+        branchUnlessHoldsOriginalHeaders(holder, readsNow);
+        BlockID isNotCreated = branch(appendTestWithNumber(Operations::HostObjectHasCachedValue, holder, offsetOfCachedHeaders));
+        finish(held(appendCachedHeaders(holder), original.type), { no });
+
+        moveTo(isNotCreated);
+        finish(held(holder, original.type), { yes });
+
+        moveTo(readsNow);
+        finish(appendThrowing(WTF::move(original)), { no });
+        return standsForHeaders;
+    }
+
+    void branchOnHeaders(ValueID value, ValueID standsForHeaders, BlockID hasOriginalMethods, BlockID otherwise)
+    {
+        BlockID isHolder = addBlock();
+        BlockID isNoHolder = addBlock();
+        BlockID isObject = addBlock();
+        ValueID object = addParameter(isObject, m_program.types.anything);
+        auto& test = m_function.at(m_block).terminator;
+        test.kind = TerminatorKind::Branch;
+        test.value = standsForHeaders;
+        test.targets.append(Target { isHolder, { } });
+        test.targets.append(Target { isNoHolder, { } });
+
+        moveTo(isNoHolder);
+        jump(isObject, value);
+
+        moveTo(isHolder);
+        BlockID isNotCreated = branch(appendTestWithNumber(Operations::HostObjectHasCachedValue, value, offsetOfCachedHeaders));
+        jump(isObject, appendCachedHeaders(value));
+
+        moveTo(isNotCreated);
+        jump(hasOriginalMethods, value);
+
+        moveTo(isObject);
+        BlockID isChanged = addBlock();
+        branchUnlessHoldsOriginalHeaders(object, isChanged, HeadersSubject::HeadersObject);
+        jump(hasOriginalMethods, object);
+
+        moveTo(isChanged);
+        jump(otherwise, object);
+    }
+
+    ValueID appendHeadersMethodCall(HeadersMethod method, ValueID headersOrHolder, const Value& original)
+    {
+        Value call = make(Opcode::CallBuiltin, m_program.types.anything);
+        call.isInTailPosition = false;
+        call.immediates[0] = Operations::CallHeadersMethod.index();
+        call.arguments.append(headersOrHolder);
+        call.arguments.append(original.arguments[0]);
+        call.arguments.append(original.arguments.size() == 2 ? original.arguments[1] : append(make(Opcode::Undefined, m_program.types.undefined)));
+        Value methodAndKnownName = make(Opcode::Integer, m_program.types.int32);
+        methodAndKnownName.setBits(static_cast<uint32_t>(method) << headersMethodShift | knownHeaderName(original.arguments[0]));
+        call.arguments.append(append(WTF::move(methodAndKnownName)));
+        return held(appendThrowing(WTF::move(call)), original.type);
+    }
+
+    void callHeadersMethod(ValueID site, HeadersMethod method, ValueID standsForHeaders)
+    {
+        auto [block, index] = placeOf(site);
+        m_siteBlock = block;
+        Value original = m_function.at(site);
+        open(block, index);
+        BlockID calls = addBlock();
+        ValueID headersOrHolder = addParameter(calls, m_program.types.anything);
+        BlockID asWritten = addBlock();
+        ValueID object = addParameter(asWritten, m_program.types.anything);
+        branchOnHeaders(original.child(0), standsForHeaders, calls, asWritten);
+
+        moveTo(calls);
+        finish(appendHeadersMethodCall(method, headersOrHolder, original));
+
+        moveTo(asWritten);
+        original.children[0] = object;
+        finish(appendThrowing(WTF::move(original)));
+    }
+
+    void callHeadersMethodReadEarlier(ValueID methodGetById, ValueID site, HeadersMethod method, ValueID standsForHeaders, ValueID yes, ValueID no)
+    {
+        auto [readBlock, readIndex] = placeOf(methodGetById);
+        m_siteBlock = readBlock;
+        Value read = m_function.at(methodGetById);
+        open(readBlock, readIndex);
+        m_function.at(methodGetById).type = m_program.types.anything;
+        m_function.at(methodGetById).rep = repOf(m_program.at(m_program.types.anything));
+        ValueID receiver = addParameter(m_after, m_program.types.anything);
+        ValueID hasOriginalMethod = addParameter(m_after, m_program.types.boolean);
+        BlockID isOriginal = addBlock();
+        ValueID headersOrHolder = addParameter(isOriginal, m_program.types.anything);
+        BlockID asWritten = addBlock();
+        ValueID object = addParameter(asWritten, m_program.types.anything);
+        branchOnHeaders(read.child(0), standsForHeaders, isOriginal, asWritten);
+
+        moveTo(isOriginal);
+        finish(append(make(Opcode::Undefined, m_program.types.undefined)), { headersOrHolder, yes });
+
+        moveTo(asWritten);
+        read.children[0] = object;
+        finish(appendThrowing(WTF::move(read)), { object, no });
+
+        auto [block, index] = placeOf(site);
+        m_siteBlock = block;
+        Value original = m_function.at(site);
+        open(block, index);
+        BlockID calls = branchingOn(hasOriginalMethod);
+        original.children[1] = receiver;
+        Value call = original;
+        finish(appendThrowing(WTF::move(call)));
+
+        moveTo(calls);
+        finish(appendHeadersMethodCall(method, receiver, original));
+    }
+
+    BlockID branchingOn(ValueID condition)
+    {
+        BlockID then = addBlock();
+        BlockID otherwise = addBlock();
+        auto& test = m_function.at(m_block).terminator;
+        test.kind = TerminatorKind::Branch;
+        test.value = condition;
+        test.targets.append(Target { then, { } });
+        test.targets.append(Target { otherwise, { } });
+        moveTo(otherwise);
+        return then;
+    }
+
+    bool isMethodReadOfOneCall(ValueID id) const
+    {
+        auto& read = m_function.at(id);
+        if (read.opcode != Opcode::GetById || read.isOnSlowPath || read.hasKnownSlotWord())
+            return false;
+        unsigned calls = 0;
+        unsigned uses = 0;
+        for (auto& block : m_function.blocks) {
+            for (ValueID user : block.values) {
+                auto& value = m_function.at(user);
+                value.forEachChild([&](ValueID child) {
+                    uses += child == id;
+                });
+                calls += value.opcode == Opcode::Call && value.child(0) == id && value.child(1) == read.child(0) && !!headersMethodNamed(read.string(), value.arguments.size());
+            }
+            const_cast<Terminator&>(block.terminator).forEachChild([&](ValueID& child) {
+                uses += child == id;
+            });
+        }
+        return calls == 1 && uses == 1;
+    }
+
+    unsigned keepHeadersInHolders()
+    {
+        constexpr unsigned none = UINT_MAX;
+        Vector<ValueID, 8> members;
+        Vector<unsigned, 8> leaders;
+        unsigned numberOfReads = 0;
+        auto indexOf = [&](ValueID id) {
+            size_t index = members.find(id);
+            return index == notFound ? none : static_cast<unsigned>(index);
+        };
+        auto leaderOf = [&](unsigned index) {
+            while (leaders[index] != index)
+                index = leaders[index];
+            return index;
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                if (value.opcode != Opcode::GetById || value.isOnSlowPath || value.hasKnownSlotWord() || !equalSpans(m_program.string(value.string()), asBytes("headers"_s.span8())))
+                    continue;
+                if (!m_program.at(value.type).anyObject || !typeOf(value.child(0)).anyObject)
+                    continue;
+                leaders.append(members.size());
+                members.append(id);
+            }
+        }
+        numberOfReads = members.size();
+        if (!numberOfReads)
+            return 0;
+
+        constexpr unsigned maxMembers = 64;
+        auto join = [&](ValueID from, ValueID to) {
+            unsigned source = indexOf(from);
+            if (source == none)
+                return false;
+            unsigned target = indexOf(to);
+            if (target == none) {
+                target = members.size();
+                leaders.append(target);
+                members.append(to);
+            }
+            if (leaderOf(source) == leaderOf(target))
+                return false;
+            leaders[leaderOf(target)] = leaderOf(source);
+            return true;
+        };
+        for (bool changed = true; changed && members.size() <= maxMembers;) {
+            changed = false;
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    auto& value = m_function.at(id);
+                    if (value.opcode == Opcode::Cast && (value.castReason() == CastReason::Claim || value.castReason() == CastReason::Upcast) && m_program.at(value.type).anyObject)
+                        changed |= join(value.child(0), id);
+                }
+                for (auto& target : block.terminator.targets) {
+                    auto parameters = m_function.at(target.block).parameters.span();
+                    for (unsigned k = 0; k < target.arguments.size(); ++k)
+                        changed |= join(target.arguments[k], parameters[k]);
+                }
+            }
+        }
+        if (members.size() > maxMembers)
+            return 0;
+
+        struct Site {
+            ValueID id;
+            HeadersMethod method;
+            unsigned group;
+            ValueID methodGetById;
+        };
+        Vector<Site, 8> sites;
+        Vector<bool, 8> isRefused(FillWith { }, members.size(), false);
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                if (indexOf(id) != none && value.opcode == Opcode::Cast)
+                    continue;
+                if (value.opcode == Opcode::GetById && indexOf(value.child(0)) != none && isMethodReadOfOneCall(id))
+                    continue;
+                std::optional<HeadersMethod> method;
+                ValueID receiver;
+                ValueID methodGetById;
+                if (value.opcode == Opcode::CallMethod) {
+                    method = headersMethodNamed(value.string(), value.arguments.size());
+                    receiver = value.child(0);
+                } else if (value.opcode == Opcode::Call && m_function.at(value.child(0)).opcode == Opcode::GetById && m_function.at(value.child(0)).child(0) == value.child(1) && isMethodReadOfOneCall(value.child(0))) {
+                    method = headersMethodNamed(m_function.at(value.child(0)).string(), value.arguments.size());
+                    receiver = value.child(1);
+                    methodGetById = value.child(0);
+                }
+                unsigned uses = 0;
+                value.forEachChild([&](ValueID child) {
+                    unsigned index = indexOf(child);
+                    if (index == none)
+                        return;
+                    if (!method || child != receiver || ++uses > 1)
+                        isRefused[leaderOf(index)] = true;
+                });
+                if (unsigned index = method ? indexOf(receiver) : none; index != none)
+                    sites.append({ id, *method, leaderOf(index), methodGetById });
+            }
+            if (unsigned index = block.terminator.value ? indexOf(block.terminator.value) : none; index != none)
+                isRefused[leaderOf(index)] = true;
+        }
+        for (unsigned index = 0; index < members.size(); ++index) {
+            if (!m_program.at(m_function.at(members[index]).type).anyObject)
+                isRefused[leaderOf(index)] = true;
+        }
+        auto isTaken = [&](unsigned index) {
+            unsigned group = leaderOf(index);
+            if (isRefused[group])
+                return false;
+            unsigned count = 0;
+            bool onlyReads = true;
+            for (auto& site : sites) {
+                if (site.group != group)
+                    continue;
+                ++count;
+                onlyReads &= site.method == HeadersMethod::Get;
+            }
+            return count > 1 || (count && !onlyReads);
+        };
+        Vector<bool, 8> taken(members.size(), [&](size_t index) {
+            return isTaken(index);
+        });
+        if (!taken.contains(true))
+            return 0;
+
+        m_position = 0;
+        m_inlineFrame = 0;
+        m_isInTailPosition = false;
+        auto constant = [&](bool truth) {
+            Value value = make(Opcode::Boolean, m_program.types.boolean);
+            value.immediates[0] = truth;
+            m_function.values.append(WTF::move(value));
+            ValueID id(m_function.values.size() - 1);
+            m_function.blocks[0].values.insert(0, id);
+            return id;
+        };
+        ValueID yes = constant(true);
+        ValueID no = constant(false);
+
+        Vector<ValueID, 8> flags(FillWith { }, members.size(), ValueID());
+        Vector<BlockID, 8> joins;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            unsigned count = m_function.blocks[b].parameters.size();
+            for (unsigned k = 0; k < count; ++k) {
+                unsigned index = indexOf(m_function.blocks[b].parameters[k]);
+                if (index == none || !taken[index])
+                    continue;
+                flags[index] = addParameter(BlockID(b), m_program.types.boolean);
+                if (!joins.contains(BlockID(b)))
+                    joins.append(BlockID(b));
+            }
+        }
+        for (unsigned index = 0; index < numberOfReads; ++index) {
+            if (taken[index])
+                flags[index] = keepHeadersInHolder(members[index], yes, no);
+        }
+        auto flagOf = [&](ValueID id) {
+            for (;;) {
+                unsigned index = indexOf(id);
+                if (index == none || !taken[index])
+                    return no;
+                if (flags[index])
+                    return flags[index];
+                id = m_function.at(id).child(0);
+            }
+        };
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                if (!joins.contains(target.block))
+                    continue;
+                auto parameters = m_function.at(target.block).parameters.span();
+                unsigned count = target.arguments.size();
+                for (unsigned k = 0; k < count; ++k) {
+                    if (unsigned index = indexOf(parameters[k]); index != none && taken[index])
+                        target.arguments.append(flagOf(target.arguments[k]));
+                }
+            }
+        }
+        unsigned changed = 0;
+        for (auto& site : sites) {
+            if (!taken[site.group])
+                continue;
+            if (site.methodGetById)
+                callHeadersMethodReadEarlier(site.methodGetById, site.id, site.method, flagOf(m_function.at(site.id).child(1)), yes, no);
+            else
+                callHeadersMethod(site.id, site.method, flagOf(m_function.at(site.id).child(0)));
+            ++changed;
+        }
+        return changed;
     }
 
     bool specializeResponseConstruction(BlockID block, unsigned index)
@@ -884,7 +1351,7 @@ private:
         ValueID id = m_function.at(block).values[index];
         if (m_mode == Mode::Speculation && m_function.at(id).opcode == Opcode::Construct)
             return specializeResponseConstruction(block, index);
-        if (m_mode == Mode::Speculation && specializeRequestHeaderRead(block, index))
+        if (m_mode == Mode::Speculation && specializeHeaderRead(block, index))
             return true;
         Vector<Type, 4> argumentTypes;
         for (ValueID argument : m_function.at(id).arguments)
@@ -2856,6 +3323,233 @@ unsigned speculateOnReceivers(const Program& program, FunctionID id, Function& f
     if (!program.isHotOutsideLoops(id) && function.kind != FunctionKind::Module)
         speculation.useStubsInColdCode();
     return speculation.run();
+}
+
+void compareHeaderNamesWithPassedConstants(Program& program)
+{
+    constexpr unsigned maxConstants = 8;
+    constexpr unsigned maxRounds = 4;
+    auto& functions = std::as_const(program).functions;
+    unsigned count = functions.size();
+    static constexpr OpcodeSet builtinCalls { Opcode::CallBuiltin };
+    static constexpr OpcodeSet calls { Opcode::CallDirect, Opcode::CallMethod, Opcode::Call };
+
+    auto entryParameterOf = [&](const Function& function, ValueID id) -> std::optional<unsigned> {
+        id = program.originOf(function, id);
+        if (function.at(id).opcode != Opcode::Parameter)
+            return std::nullopt;
+        auto parameters = function.blocks[0].parameters.span();
+        size_t index = std::ranges::find(parameters, id) - parameters.begin();
+        return index == parameters.size() ? std::nullopt : std::optional(static_cast<unsigned>(index));
+    };
+    auto numberOperandOf = [&](const Function& function, const Value& call) {
+        ValueID number = call.arguments.last();
+        while (function.at(number).opcode == Opcode::Cast)
+            number = function.at(number).child(0);
+        return number;
+    };
+
+    struct Use {
+        ValueID call;
+        unsigned parameter;
+    };
+    Vector<Vector<Use, 1>> uses(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = functions[i];
+        if (function.blocks.isEmpty())
+            return;
+        functions.forEachIndexedValue(i, builtinCalls, [&](ValueID id) {
+            auto& call = function.at(id);
+            if (call.builtin() != Operations::CallHeadersMethod)
+                return;
+            auto& number = function.at(numberOperandOf(function, call));
+            if (number.opcode != Opcode::Integer || (number.integer() & ((1 << headersMethodShift) - 1)) != unknownHeaderName || static_cast<HeadersMethod>(number.integer() >> headersMethodShift) == HeadersMethod::Get)
+                return;
+            if (auto parameter = entryParameterOf(function, call.arguments[1]))
+                uses[i].append({ id, *parameter });
+        });
+    });
+
+    struct Carrier {
+        unsigned function;
+        unsigned parameter;
+        Vector<StringID, maxConstants> constants;
+        Vector<unsigned, 2> handsOnTo;
+        bool hasTooMany { false };
+    };
+    Vector<Carrier> carriers;
+    auto carrierOf = [&](unsigned function, unsigned parameter) -> std::optional<unsigned> {
+        size_t index = carriers.findIf([&](auto& carrier) { return carrier.function == function && carrier.parameter == parameter; });
+        return index == notFound ? std::nullopt : std::optional(static_cast<unsigned>(index));
+    };
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto& use : uses[i]) {
+            if (!carrierOf(i, use.parameter))
+                carriers.append({ i, use.parameter, { }, { }, false });
+        }
+    }
+    if (carriers.isEmpty())
+        return;
+
+    struct PassedValue {
+        unsigned carrier;
+        StringID constant;
+        unsigned fromFunction;
+        unsigned fromParameter;
+    };
+    unsigned firstNewCarrier = 0;
+    for (unsigned round = 0; round < maxRounds && firstNewCarrier < carriers.size(); ++round) {
+        unsigned end = carriers.size();
+        Vector<Vector<PassedValue>> found(count);
+        forEachIndexInParallel(count, [&](unsigned i) {
+            auto& function = functions[i];
+            if (function.blocks.isEmpty())
+                return;
+            functions.forEachIndexedValue(i, calls, [&](ValueID id) {
+                auto& call = function.at(id);
+                StringID calledName;
+                if (call.opcode == Opcode::CallMethod)
+                    calledName = call.string();
+                else if (call.opcode == Opcode::Call) {
+                    auto& callee = function.at(program.originOf(function, call.child(0)));
+                    if (callee.opcode != Opcode::GetById)
+                        return;
+                    calledName = callee.string();
+                }
+                for (unsigned c = firstNewCarrier; c < end; ++c) {
+                    auto& callee = functions[carriers[c].function];
+                    unsigned position = carriers[c].parameter;
+                    if (call.opcode == Opcode::CallDirect) {
+                        if (call.function().index() != carriers[c].function)
+                            continue;
+                    } else {
+                        unsigned first = callee.captureTypes.size() + callee.has(Format::FunctionHasThis);
+                        if (callee.name != calledName || callee.isGenericEntrypoint() || callee.has(Format::FunctionIsHiddenInStackTraces) || position < first)
+                            continue;
+                        position -= first;
+                    }
+                    if (position >= call.arguments.size())
+                        continue;
+                    ValueID argument = program.originOf(function, call.arguments[position]);
+                    if (function.at(argument).opcode == Opcode::String)
+                        found[i].append({ c, function.at(argument).string(), 0, UINT_MAX });
+                    else if (auto parameter = entryParameterOf(function, argument))
+                        found[i].append({ c, StringID(), i, *parameter });
+                }
+            });
+        });
+        firstNewCarrier = end;
+        for (auto& list : found) {
+            for (auto& passed : list) {
+                if (passed.fromParameter == UINT_MAX) {
+                    auto& carrier = carriers[passed.carrier];
+                    if (carrier.constants.contains(passed.constant) || knownHeaderNameOf(program.string(passed.constant)) == unknownHeaderName)
+                        continue;
+                    if (carrier.constants.size() == maxConstants)
+                        carrier.hasTooMany = true;
+                    else
+                        carrier.constants.append(passed.constant);
+                    continue;
+                }
+                auto from = carrierOf(passed.fromFunction, passed.fromParameter);
+                if (!from) {
+                    from = carriers.size();
+                    carriers.append({ passed.fromFunction, passed.fromParameter, { }, { }, false });
+                }
+                if (*from != passed.carrier && !carriers[*from].handsOnTo.contains(passed.carrier))
+                    carriers[*from].handsOnTo.append(passed.carrier);
+            }
+        }
+    }
+    for (unsigned round = 0; round < maxRounds; ++round) {
+        for (auto& from : carriers) {
+            for (unsigned to : from.handsOnTo) {
+                auto& carrier = carriers[to];
+                carrier.hasTooMany |= from.hasTooMany;
+                for (StringID constant : from.constants) {
+                    if (carrier.constants.contains(constant))
+                        continue;
+                    if (carrier.constants.size() == maxConstants)
+                        carrier.hasTooMany = true;
+                    else
+                        carrier.constants.append(constant);
+                }
+            }
+        }
+    }
+
+    unsigned comparedCalls = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto& use : uses[i]) {
+            auto& carrier = carriers[*carrierOf(i, use.parameter)];
+            if (carrier.constants.isEmpty() || carrier.hasTooMany)
+                continue;
+            auto& function = program.functions[i];
+            unsigned block = 0;
+            size_t index = notFound;
+            for (; block < function.blocks.size(); ++block) {
+                index = function.blocks[block].values.find(use.call);
+                if (index != notFound)
+                    break;
+            }
+            RELEASE_ASSERT(index != notFound);
+            Value call = function.at(use.call);
+            ValueID replaced = numberOperandOf(function, call);
+            int64_t unknown = function.at(replaced).integer();
+            auto add = [&](Opcode opcode, TypeID type) {
+                Value value;
+                value.opcode = opcode;
+                value.position = call.position;
+                value.inlineFrame = call.inlineFrame;
+                value.type = type;
+                value.rep = repOf(program.at(type));
+                function.values.append(WTF::move(value));
+                return ValueID(function.values.size() - 1);
+            };
+            auto addBlock = [&] {
+                function.blocks.append(Block { });
+                return function.blocks.size() - 1;
+            };
+            unsigned after = addBlock();
+            function.blocks[after].values.append(function.blocks[block].values.subspan(index));
+            function.blocks[block].values.shrink(index);
+            if (replaced == call.arguments.last())
+                function.blocks[block].values.removeFirst(replaced);
+            function.blocks[after].terminator = std::exchange(function.blocks[block].terminator, Terminator { });
+            ValueID number = add(Opcode::Parameter, program.types.int32);
+            function.at(number).immediates = { after, 0 };
+            function.blocks[after].parameters.append(number);
+            function.at(use.call).arguments.last() = number;
+            auto jumpWith = [&](unsigned from, int64_t bits) {
+                ValueID constant = add(Opcode::Integer, program.types.int32);
+                function.at(constant).setBits(bits);
+                function.blocks[from].values.append(constant);
+                function.blocks[from].terminator.kind = TerminatorKind::Jump;
+                function.blocks[from].terminator.targets.append(Target { BlockID(after), Arguments { constant } });
+            };
+            unsigned current = block;
+            for (StringID constant : carrier.constants) {
+                ValueID text = add(Opcode::String, program.types.string);
+                function.at(text).immediates[0] = constant.index();
+                ValueID isSame = add(Opcode::StrictEq, program.types.boolean);
+                function.at(isSame).children = { call.arguments[1], text, ValueID() };
+                function.blocks[current].values.append(text);
+                function.blocks[current].values.append(isSame);
+                unsigned same = addBlock();
+                unsigned next = addBlock();
+                auto& test = function.blocks[current].terminator;
+                test.kind = TerminatorKind::Branch;
+                test.value = isSame;
+                test.targets.append(Target { BlockID(same), { } });
+                test.targets.append(Target { BlockID(next), { } });
+                jumpWith(same, (unknown & ~static_cast<int64_t>((1 << headersMethodShift) - 1)) | knownHeaderNameOf(program.string(constant)));
+                current = next;
+            }
+            jumpWith(current, unknown);
+            ++comparedCalls;
+        }
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", comparedCalls, " header calls compare a name that is a parameter with the constants that calls pass");
 }
 
 unsigned eliminateGuardsOnUnescapedReceivers(const Program& program, Function& function)

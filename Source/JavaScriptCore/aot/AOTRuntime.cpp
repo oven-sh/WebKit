@@ -884,6 +884,13 @@ Instance& Instance::ensure(JSModuleLoader* loader)
 #endif
     instance->barrierThreshold = vm.heap.barrierThreshold();
     instance->mutatorShouldBeFenced = vm.heap.mutatorShouldBeFenced();
+    if (Instance* first = globalObject->aotInstance()) {
+        instance->compactTableStructureID = first->compactTableStructureID;
+        memcpySpan(std::span { instance->hostClassStructureIDs }, std::span { first->hostClassStructureIDs });
+        if (!first->customGetters)
+            first->customGetters = static_cast<CustomGetter*>(fastZeroedMalloc(numberOfCustomGetters * sizeof(CustomGetter)));
+        instance->customGetters = first->customGetters;
+    }
     RELEASE_ASSERT(vm.heap.mutatorMarkStack().headSegmentOffsetIsValid());
     RELEASE_ASSERT(*std::bit_cast<MarkStackArray**>(std::bit_cast<char*>(&vm.heap) + Heap::offsetOfMutatorMarkStack()) == &vm.heap.mutatorMarkStack());
     vm.m_aotInstances.append(instance);
@@ -965,9 +972,16 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
                 }
             }
             for (auto& name : names) {
-                bool shadowsGlobal = lexical->symbolTable()->contains(name.impl()) || globalObject->hasProperty(globalObject, name);
-                RETURN_IF_EXCEPTION(throwScope, 0);
-                if (!shadowsGlobal)
+                bool isLanguageBuiltin = name == vm.propertyNames->undefinedKeyword || name == vm.propertyNames->NaN || name == vm.propertyNames->Infinity;
+                if (!isLanguageBuiltin) {
+                    PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty);
+                    bool isOwn = globalObject->methodTable()->getOwnPropertySlot(globalObject, globalObject, name, slot);
+                    RETURN_IF_EXCEPTION(throwScope, 0);
+                    JSValue held = isOwn ? slot.getValue(globalObject, name) : JSValue();
+                    RETURN_IF_EXCEPTION(throwScope, 0);
+                    isLanguageBuiltin = held && held.isObject() && !asObject(held)->isGlobalObject() && asObject(held) != globalObject->globalThis() && asObject(held)->isLockedBuiltin();
+                }
+                if (!isLanguageBuiltin || typed->readsThroughModuleGraph(name.string()))
                     continue;
                 throwTypeError(globalObject, throwScope, withAOTErrorNote(makeString("The `globals` of a Bun.ModuleGraph cannot replace the global \""_s, name.string(), "\" for a module that was compiled ahead of time"_s)));
                 return 0;
@@ -1178,7 +1192,11 @@ void Instance::destroy(Instance* instance)
     OSAllocator::decommitAndRelease(instance->collections->dataStartBits, instance->collections->dataStartBitsSize);
     fastFree(instance->cachedReturnAddresses);
     delete instance->collections;
-    fastFree(instance->customGetters);
+    auto holdsSameCustomGetters = [&](Instance* other) {
+        return other->customGetters == instance->customGetters;
+    };
+    if (!instance->vm->m_aotInstances.containsIf(holdsSameCustomGetters) && !instance->vm->m_aotInstancesToDestroy.containsIf(holdsSameCustomGetters))
+        fastFree(instance->customGetters);
     fastFree(instance->propertyRuns);
     destroyJSONBuffers(*instance);
     destroyJSONSource(*instance);
@@ -2571,6 +2589,45 @@ bool Instance::reservePropertyRunTarget(PropertyRunBudget room)
     return true;
 }
 
+template<size_t inlineCapacity>
+static bool mayBeInterceptedByPrototypes(VM& vm, Structure* structure, std::span<UniquedStringImpl* const> names, Vector<StructureID, inlineCapacity>& prototypeStructures)
+{
+    if (std::ranges::contains(names, vm.propertyNames->underscoreProto.impl()))
+        return true;
+    for (JSValue next = structure->storedPrototype(); next.isObject();) {
+        JSObject* prototype = asObject(next);
+        Typed::ClassPrototype::look(prototype);
+        Structure* prototypeStructure = prototype->structure();
+        if (prototypeStructure->isDictionary() && !prototypeStructure->isUncacheableDictionary() && !prototypeStructure->hasBeenFlattenedBefore())
+            prototypeStructure = prototypeStructure->flattenDictionaryStructure(vm, prototype);
+        TypeInfo info = prototypeStructure->typeInfo();
+        bool overridesPut = info.overridesPut() && !prototype->inherits<Typed::PrototypeObject>();
+        if (prototypeStructure->isDictionary() || prototypeStructure->hasPolyProto() || overridesPut || info.overridesGetPrototype() || info.overridesGetOwnPropertySlot() || prototype->hasNonReifiedStaticProperties())
+            return true;
+        if (prototypeStructure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
+            for (UniquedStringImpl* name : names) {
+                unsigned attributes;
+                if (isValidOffset(prototypeStructure->get(vm, name, attributes)) && (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
+                    return true;
+            }
+        }
+        prototypeStructures.append(prototypeStructure->id());
+        next = prototypeStructure->storedPrototype();
+    }
+    return false;
+}
+
+bool Instance::hasPrototypeStructures(Structure* structure, std::span<const StructureID> prototypeStructures)
+{
+    JSValue prototype = structure->storedPrototype();
+    for (StructureID expected : prototypeStructures) {
+        if (!prototype.isObject() || asObject(prototype)->structureID() != expected)
+            return false;
+        prototype = expected.decode()->storedPrototype();
+    }
+    return !prototype.isObject();
+}
+
 const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* structure, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
@@ -2582,30 +2639,7 @@ const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* struct
     collectNames(names);
     PropertyRunTarget target;
     target.room = std::exchange(reservedPropertyRunBudget, PropertyRunBudget::None);
-    bool mayBeIntercepted = names.contains(vm->propertyNames->underscoreProto.impl());
-    for (JSValue next = structure->storedPrototype(); next.isObject() && !mayBeIntercepted;) {
-        JSObject* prototype = asObject(next);
-        Typed::ClassPrototype::look(prototype);
-        Structure* prototypeStructure = prototype->structure();
-        if (prototypeStructure->isDictionary() && !prototypeStructure->isUncacheableDictionary() && !prototypeStructure->hasBeenFlattenedBefore())
-            prototypeStructure = prototypeStructure->flattenDictionaryStructure(*vm, prototype);
-        TypeInfo info = prototypeStructure->typeInfo();
-        bool overridesPut = info.overridesPut() && !prototype->inherits<Typed::PrototypeObject>();
-        if (prototypeStructure->isDictionary() || prototypeStructure->hasPolyProto() || overridesPut || info.overridesGetPrototype() || info.overridesGetOwnPropertySlot() || prototype->hasNonReifiedStaticProperties()) {
-            mayBeIntercepted = true;
-            break;
-        }
-        if (prototypeStructure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
-            for (UniquedStringImpl* name : names) {
-                unsigned attributes;
-                if (isValidOffset(prototypeStructure->get(*vm, name, attributes)))
-                    mayBeIntercepted |= !!(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
-            }
-        }
-        target.prototypeStructures.append(prototypeStructure->id());
-        next = prototypeStructure->storedPrototype();
-    }
-    Structure* last = mayBeIntercepted ? nullptr : structure;
+    Structure* last = mayBeInterceptedByPrototypes(*vm, structure, names.span(), target.prototypeStructures) ? nullptr : structure;
     unsigned followed = 0;
     for (; last && followed < names.size(); ++followed) {
         PropertyOffset offset;
@@ -2875,6 +2909,27 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
     result.last = last;
     collections->weakTablesAddedToSinceLastCollection |= Collections::CopiedProperties;
     return collections->copiedProperties.add(key, WTF::move(result)).iterator->value;
+}
+
+bool Instance::prototypesAllowAssigning(Structure* target, Structure* source, const CopiedProperties& copied)
+{
+    using Prototypes = CopiedProperties::Prototypes;
+    if (copied.prototypes == Prototypes::MayIntercept)
+        return false;
+    if (copied.prototypes == Prototypes::AllowAssigning && hasPrototypeStructures(target, copied.prototypeStructures.span()))
+        return true;
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.prototypesAllowAssigning(target, source, copied);
+    Vector<UniquedStringImpl*, 16> names;
+    source->forEachProperty(*vm, [&](const PropertyTableEntry& entry) {
+        if (!PropertyName(entry.key()).isPrivateName() && !(entry.attributes() & PropertyAttribute::DontEnum))
+            names.append(entry.key());
+        return true;
+    });
+    copied.prototypeStructures.shrink(0);
+    copied.prototypes = mayBeInterceptedByPrototypes(*vm, target, names.span(), copied.prototypeStructures) ? Prototypes::MayIntercept : Prototypes::AllowAssigning;
+    collections->weakTablesAddedToSinceLastCollection |= Collections::CopiedProperties;
+    return copied.prototypes == Prototypes::AllowAssigning;
 }
 
 static std::tuple<Structure*, UniquedStringImpl*, uintptr_t> copyExcludingKey(Structure* source, std::span<UniquedStringImpl* const> excluded)
@@ -3408,6 +3463,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (std::exchange(proxyTrapKeyCacheIsDirty, false))
         zeroSpan(std::span { proxyTrapKeyCache });
     zeroSpan(std::span { emptyLiteralStructures });
+    zeroSpan(std::span { knownClosureStructureIDs });
     if (newOnly && Options::validateAOTTypedFacts()) [[unlikely]] {
         for (uint32_t number : collections->filledStructureDescriptors.span().first(collections->visitedFilledStructureDescriptorCount))
             RELEASE_ASSERT_WITH_MESSAGE(vm->heap.isMarked(row(number).structureID.decode()), "AOT: a row that was filled before the last collection names a Structure that a collection of the young has found dead");
@@ -3490,7 +3546,8 @@ void Instance::finalizeUnconditionally(bool newOnly)
         });
         walkWeakTable(Collections::CopiedProperties, collections->copiedProperties, [&](auto& entry) {
             auto& [target, source, excluded] = entry.key;
-            return !vm->heap.isMarked(target) || !vm->heap.isMarked(source) || (entry.value.last && !vm->heap.isMarked(entry.value.last));
+            return !vm->heap.isMarked(target) || !vm->heap.isMarked(source) || (entry.value.last && !vm->heap.isMarked(entry.value.last))
+                || std::ranges::any_of(entry.value.prototypeStructures, [&](StructureID id) { return !vm->heap.isMarked(id.decode()); });
         });
         walkWeakTable(Collections::ClassStructuresTable, collections->classStructuresByKey, [&](auto& entry) {
             return !vm->heap.isMarked(entry.value.classObjectStructure) || !vm->heap.isMarked(entry.value.ofPrototype);

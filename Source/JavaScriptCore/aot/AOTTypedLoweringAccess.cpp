@@ -5479,7 +5479,7 @@ ValueID Lowering::withoutUpcasts(ValueID id) const
 
 bool Lowering::isLazyClosureStore(const Value& closure, const Value& store)
 {
-    if (store.opcode != Opcode::PutById || store.isInitialStore() || store.isAtKnownSlot() || Options::auditAOTTypedAssertions() || closure.opcode != Opcode::NewClosure || closure.arguments.size() != 1)
+    if (store.opcode != Opcode::PutById || store.isInitialStore() || store.isAtKnownSlot() || Options::auditAOTTypedAssertions() || m_program.mayRunInMultipleInstances || closure.opcode != Opcode::NewClosure || closure.arguments.size() != 1)
         return false;
     if (withoutUpcasts(closure.arguments[0]) != withoutUpcasts(store.child(0)) || !typeOf(store.child(0)).anyObject || fieldFor(typeOf(store.child(0)), store.string()))
         return false;

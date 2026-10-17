@@ -27,6 +27,9 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedLinkTimeConstant, RuntimeS
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToLength, Heap, EncodedJSValue, (Instance*, EncodedJSValue value));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainURL, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindPlainQueryValue, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue offsets, EncodedJSValue name));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedScanPlainQuery, Pure, EncodedJSValue, (Instance*, EncodedJSValue text));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindInPlainQuery, Pure, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue name));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPlainQueryEntries, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue text, EncodedJSValue count, uint32_t kind));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnProperty, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutByValDirect, Heap, void, (Instance*, JSCell* object, EncodedJSValue key, EncodedJSValue value));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutByIdDirect, Heap, void, (Instance*, JSCell* object, uint32_t name, EncodedJSValue value));
@@ -46,7 +49,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewError, Heap, JSCell*, (Instance*
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPrepareBoundFunctionAllocation, RuntimeState, void, (Instance*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewResponse, Heap, EncodedJSValue, (Instance*, EncodedJSValue body, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewResponseFromResponse, Heap, EncodedJSValue, (Instance*, EncodedJSValue other));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetRequestHeader, Heap, EncodedJSValue, (Instance*, EncodedJSValue request, EncodedJSValue name));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetRequestOrResponseHeader, Heap, EncodedJSValue, (Instance*, EncodedJSValue holder, EncodedJSValue name, uint32_t knownName));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCallHeadersMethod, Heap, EncodedJSValue, (Instance*, EncodedJSValue headersOrHolder, EncodedJSValue name, EncodedJSValue value, uint32_t methodAndKnownName));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewConstantFormatter, RuntimeState, JSCell*, (Instance*, uint32_t pattern));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatDateTime, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double timeValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatNumber, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double number));
@@ -188,6 +192,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringEqualsLiteral, Nothi
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringStartsWithLiteral, RuntimeState, size_t, (Instance*, JSCell* string, uint32_t text));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringEndsWithLiteral, RuntimeState, size_t, (Instance*, JSCell* string, uint32_t text));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringIndexOfLiteral, RuntimeState, size_t, (Instance*, JSCell* string, uint32_t text, int32_t position));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringIndexOfCharacter, RuntimeState, size_t, (Instance*, JSCell* string, uint32_t character, int32_t position));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringLastIndexOfLiteral, RuntimeState, size_t, (Instance*, JSCell* string, uint32_t text, int32_t position));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFindLiteral8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringReverseFindLiteral8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position));

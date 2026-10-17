@@ -417,8 +417,11 @@ private:
     void lowerBlock(BlockID);
     void lowerTerminator(const Terminator&);
     std::optional<unsigned> nullishSuccessorOf(const Terminator&) const;
+    std::optional<bool> likelyAnswer() const;
+    std::optional<unsigned> differingSuccessorOf(const Terminator&) const;
     std::optional<std::pair<ValueID, unsigned>> nullishTestOf(const Terminator&) const;
     LBasicBlock edgeTo(const Target&, bool isBranch);
+    void countBranchTo(const Target&);
     Operand lower(ValueID, const Value&);
     Operand lowerLanguageOperation(ValueID result, const Value&);
     CellPointer lowerNewPromise();
@@ -718,6 +721,8 @@ private:
 
     Word32 isCallable(CellPointer);
     Word32 hasClosureStructure(CellPointer, ptrdiff_t offsetOfStructureID);
+    Word32 isKnownClosureStructureID(Word32);
+    Word32 isClosureWithNoPropertyButPrototype(CellPointer);
     Word32 lowerTypeOfIs(const Value&);
     Word32 cellIsOfType(CellPointer, const Type& from, const Type& to, LBasicBlock otherwise);
     Word32 nonCellIsOfType(Boxed, const Type& from, const Type& to);

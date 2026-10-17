@@ -50,7 +50,7 @@
 
 namespace JSC { namespace AOT {
 
-bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation)
+bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation, PrototypesOfTarget prototypes)
 {
     Structure* targetStructure = target->structure();
     Structure* sourceStructure = source->structure();
@@ -74,6 +74,10 @@ bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObjec
     Structure* last = copied.last;
     if (!last) {
         countOperationNamed(instance, operation, "no-plan");
+        return false;
+    }
+    if (prototypes == PrototypesOfTarget::MayIntercept && !instance->prototypesAllowAssigning(targetStructure, sourceStructure, copied)) {
+        countOperationNamed(instance, operation, "a-prototype-may-intercept");
         return false;
     }
     countOperationNamed(instance, operation, "copied");

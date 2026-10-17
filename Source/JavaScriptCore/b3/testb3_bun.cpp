@@ -4505,6 +4505,119 @@ static void testEstimateFrequenciesTreatsReturningPathAsUnlikely()
     }
 }
 
+static void testEstimateFrequenciesCarriesWeightsBackward()
+{
+    for (double slowPathWeight : { 0.0, 0.25 }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* answers = proc.addBlock();
+        BasicBlock* asksAgain = proc.addBlock();
+        BasicBlock* givesUp = proc.addBlock();
+        BasicBlock* givesUpToo = proc.addBlock();
+        BasicBlock* slowPath = proc.addBlock(slowPathWeight);
+        auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+        graph.branch(root, arguments[0], answers, asksAgain);
+        graph.ret(answers, graph.int64(answers, 1));
+        graph.branch(asksAgain, arguments[1], givesUp, givesUpToo);
+        graph.jump(givesUp, slowPath);
+        graph.jump(givesUpToo, slowPath);
+        graph.ret(slowPath, graph.int64(slowPath, 2));
+
+        AOT::estimateFrequencies(proc, false);
+        auto isNear = [](double frequency, double expected) {
+            return std::abs(frequency - expected) < expected / 1000;
+        };
+        double share = slowPathWeight ? slowPathWeight / (1 + slowPathWeight) : 1.0 / 1024;
+        CHECK(isNear(root->frequency(), 1));
+        CHECK(isNear(answers->frequency(), 1 - share));
+        CHECK(isNear(asksAgain->frequency(), share));
+        CHECK(isNear(slowPath->frequency(), share));
+        CHECK(root->successor(1).isRare() == !slowPathWeight);
+        CHECK(!root->successor(0).isRare());
+    }
+}
+
+static void testEstimateFrequenciesKeepsEdgesInLoops()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* slowPath = proc.addBlock(0);
+    BasicBlock* latch = proc.addBlock();
+    BasicBlock* done = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    graph.jump(root, header);
+    graph.branch(header, arguments[0], slowPath, latch);
+    graph.jump(slowPath, latch);
+    graph.branch(latch, arguments[1], header, done);
+    graph.ret(done, graph.int64(done, 1));
+
+    AOT::estimateFrequencies(proc, false);
+    CHECK(!header->successor(0).isRare());
+    CHECK(slowPath->frequency() < latch->frequency() / 100);
+}
+
+static void testEstimateFrequenciesKeepsWeightsInLoops()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* givesUp = proc.addBlock();
+    BasicBlock* slowPath = proc.addBlock(0);
+    BasicBlock* answers = proc.addBlock();
+    BasicBlock* latch = proc.addBlock();
+    BasicBlock* done = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    graph.jump(root, header);
+    graph.branch(header, arguments[0], givesUp, answers);
+    graph.jump(givesUp, slowPath);
+    graph.jump(slowPath, latch);
+    graph.jump(answers, latch);
+    graph.branch(latch, arguments[1], header, done);
+    graph.ret(done, graph.int64(done, 1));
+
+    AOT::estimateFrequencies(proc, false);
+    CHECK(givesUp->frequency() == answers->frequency());
+    CHECK(slowPath->frequency() == givesUp->frequency());
+}
+
+static void testEstimateFrequenciesFollowsJoinedAnswers()
+{
+    for (bool trueSideIsCold : { true, false }) {
+        for (bool isNegated : { false, true }) {
+            Procedure proc;
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* saysYes = proc.addBlock();
+            BasicBlock* saysNo = proc.addBlock();
+            BasicBlock* join = proc.addBlock();
+            BasicBlock* whenTrue = proc.addBlock(trueSideIsCold ? 0 : 1);
+            BasicBlock* whenFalse = proc.addBlock(trueSideIsCold ? 1 : 0);
+            auto arguments = cCallArgumentValues<int64_t>(proc, root);
+            Value* answer = graph.phi(join, Int32);
+            graph.branch(root, arguments[0], saysYes, saysNo);
+            graph.upsilon(saysYes, graph.int32(saysYes, 1), answer);
+            graph.jump(saysYes, join);
+            graph.upsilon(saysNo, graph.int32(saysNo, 0), answer);
+            graph.jump(saysNo, join);
+            graph.branch(join, isNegated ? graph.make(join, BitXor, answer, graph.int32(join, 1)) : answer, whenTrue, whenFalse);
+            graph.ret(whenTrue, graph.int64(whenTrue, 1));
+            graph.ret(whenFalse, graph.int64(whenFalse, 2));
+
+            AOT::estimateFrequencies(proc, false);
+            auto isNear = [](double frequency, double expected) {
+                return std::abs(frequency - expected) < expected / 1000;
+            };
+            bool yesIsCold = trueSideIsCold != isNegated;
+            CHECK(isNear((yesIsCold ? saysNo : saysYes)->frequency(), 1023.0 / 1024));
+            CHECK(isNear((yesIsCold ? saysYes : saysNo)->frequency(), 1.0 / 1024));
+        }
+    }
+}
+
 static void testSwitchInPositionIndependentCode()
 {
     struct Case {
@@ -7960,6 +8073,10 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testDuplicateTailsSkipsLoopHeader());
     RUN(testFoldPathConstantsFoldsSelect());
     RUN(testEstimateFrequenciesTreatsReturningPathAsUnlikely());
+    RUN(testEstimateFrequenciesCarriesWeightsBackward());
+    RUN(testEstimateFrequenciesKeepsEdgesInLoops());
+    RUN(testEstimateFrequenciesKeepsWeightsInLoops());
+    RUN(testEstimateFrequenciesFollowsJoinedAnswers());
     RUN(testSwitchInPositionIndependentCode());
     RUN(testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction());
     RUN(testInferSwitchesManyCases());

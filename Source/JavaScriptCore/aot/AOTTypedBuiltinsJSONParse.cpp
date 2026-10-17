@@ -684,6 +684,8 @@ static constexpr unsigned maxAlternativesPerShape = 16;
 static constexpr size_t maxLengthParsedWithShapes = 1 * MB;
 static constexpr unsigned maxRefusalsBeforeForgetting = 256;
 static constexpr unsigned numberOfRememberedBeginnings = 1024;
+static constexpr uint16_t textsBeforeFirstAttempt = 16;
+static constexpr unsigned minTextsOfTwoKindsToTellApart = 6;
 static constexpr uint8_t creditOfNewBeginning = 8;
 static constexpr uint8_t creditOnTrial = 4;
 static constexpr uint8_t maxCreditOfBeginning = 32;
@@ -820,9 +822,69 @@ static uint64_t hashOfFirstTwoStrings(std::span<const CharacterType> text)
     return mixed ^ mixed >> 29;
 }
 
+static uint64_t hashUpToFourthQuote(std::span<const Latin1Character> text)
+{
+    constexpr uint64_t lowSevenBits = 0x7F7F7F7F7F7F7F7FULL;
+    uint64_t mixed = 0;
+    unsigned quotesLeft = 4;
+    size_t length = std::min<size_t>(text.size(), lengthOfLongerBeginning);
+    for (size_t at = 0; at < length; at += sizeof(uint64_t)) {
+        uint64_t word = 0;
+        if (at + sizeof(uint64_t) <= length) [[likely]]
+            word = WTF::unalignedLoad<uint64_t>(text.data() + at);
+        else
+            memcpy(&word, text.data() + at, length - at);
+        uint64_t zeroWhereQuote = word ^ 0x2222222222222222ULL;
+        uint64_t marks = ~(((zeroWhereQuote & lowSevenBits) + lowSevenBits) | zeroWhereQuote | lowSevenBits);
+        unsigned quotes = std::popcount(marks);
+        if (quotes >= quotesLeft) {
+            for (; quotesLeft > 1; --quotesLeft)
+                marks &= marks - 1;
+            word &= marks ^ (marks - 1);
+            length = 0;
+        }
+        quotesLeft -= std::min(quotes, quotesLeft);
+        mixed = (mixed ^ word) * 0x9E3779B97F4A7C15ULL;
+        mixed ^= mixed >> 29;
+    }
+    return mixed;
+}
+
 static NEVER_INLINE uint64_t longerBeginningOf(StringView text)
 {
-    return text.is8Bit() ? hashOfFirstTwoStrings(text.span8()) : hashOfFirstTwoStrings(text.span16());
+    return text.is8Bit() ? hashUpToFourthQuote(text.span8()) : hashOfFirstTwoStrings(text.span16());
+}
+
+struct JSONKindsSeenWhileWaiting {
+    unsigned first : 12;
+    unsigned second : 12;
+    unsigned textsOfFirst : 4;
+    unsigned textsOfSecond : 4;
+};
+static_assert(sizeof(JSONKindsSeenWhileWaiting) == sizeof(JSONBeginning::root));
+
+static NEVER_INLINE void noteKindWhileWaiting(JSONBeginning& record, StringView text)
+{
+    auto seen = std::bit_cast<JSONKindsSeenWhileWaiting>(record.root);
+    unsigned kind = (longerBeginningOf(text) & 0xFFF) | 1;
+    if (!seen.first)
+        seen.first = kind;
+    if (seen.first == kind) {
+        if (seen.textsOfFirst < 15)
+            ++seen.textsOfFirst;
+    } else {
+        if (!seen.second)
+            seen.second = kind;
+        if (seen.second == kind && seen.textsOfSecond < 15)
+            ++seen.textsOfSecond;
+    }
+    record.root = std::bit_cast<unsigned>(seen);
+}
+
+static ALWAYS_INLINE bool holdsSeveralKinds(const JSONBeginning& record)
+{
+    auto seen = std::bit_cast<JSONKindsSeenWhileWaiting>(record.root);
+    return seen.textsOfSecond && seen.textsOfFirst + seen.textsOfSecond >= minTextsOfTwoKindsToTellApart;
 }
 
 static ALWAYS_INLINE JSONBeginning& recordOfBeginning(JSONShapeTables& tables, uint64_t beginning)
@@ -1615,12 +1677,21 @@ static ALWAYS_INLINE JSValue tryParseWithLearnedShapes(JSGlobalObject* globalObj
     bool isToldApartByMore = shortRecord.isToldApartByMore;
     JSONBeginning& record = isToldApartByMore ? recordOfBeginning(*tables, longerBeginningOf(beginning)) : shortRecord;
     if (!record.credit) [[unlikely]] {
-        bool isSeenForTheFirstTime = !record.timesSetAside;
-        if (record.textsToSkip || isSeenForTheFirstTime) {
-            if (record.textsToSkip)
-                --record.textsToSkip;
-            else {
-                record.credit = creditOfNewBeginning;
+        bool wasNeverTried = !record.timesSetAside;
+        if (record.textsToSkip || wasNeverTried) {
+            if (wasNeverTried && !isToldApartByMore)
+                noteKindWhileWaiting(record, beginning);
+            if (record.textsToSkip) {
+                if (!--record.textsToSkip && wasNeverTried) {
+                    if (!isToldApartByMore && holdsSeveralKinds(record)) {
+                        countOperationNamed(instance, "jsonBeginningToldApartByMore");
+                        record.isToldApartByMore = true;
+                    } else
+                        record.credit = creditOfNewBeginning;
+                    record.root = 0;
+                }
+            } else {
+                record.textsToSkip = textsBeforeFirstAttempt - 1;
                 if (isToldApartByMore && ++shortRecord.textsToSkip > maxKindsToldApart) {
                     countOperationNamed(instance, "jsonBeginningSetAside");
                     shortRecord.isToldApartByMore = false;

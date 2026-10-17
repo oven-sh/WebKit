@@ -12,9 +12,13 @@ inline LinkTimeConstant
 inline RequireBuiltinModule
 inline NativeBinding
 inline HasHostClassStructure
+inline HostObjectHasCachedValue
 inline IsGlobalCachedAsBuiltin
 inline ScanPlainURL
 inline FindPlainQueryValue
+inline ScanPlainQuery
+inline FindInPlainQuery
+inline PlainQueryEntries
 inline HasHostObjectCachedValue
 inline HostObjectCachedValue
 
@@ -24,6 +28,9 @@ runtime LinkTimeConstant : RuntimeState JSCell* (uint32_t constant) noexcept
 runtime ToLength : Heap EncodedJSValue (EncodedJSValue value)
 runtime ScanPlainURL : Pure EncodedJSValue (EncodedJSValue text) noexcept
 runtime FindPlainQueryValue : Pure EncodedJSValue (EncodedJSValue text, EncodedJSValue offsets, EncodedJSValue name) noexcept
+runtime ScanPlainQuery : Pure EncodedJSValue (EncodedJSValue text) noexcept
+runtime FindInPlainQuery : Pure EncodedJSValue (EncodedJSValue text, EncodedJSValue name) noexcept
+runtime PlainQueryEntries : RuntimeState EncodedJSValue (EncodedJSValue text, EncodedJSValue count, uint32_t kind)
 runtime GetOwnProperty : Heap EncodedJSValue (EncodedJSValue object, uint32_t name)
 runtime PutByValDirect : Heap void (JSCell* object, EncodedJSValue key, EncodedJSValue value)
 runtime PutByIdDirect : Heap void (JSCell* object, uint32_t name, EncodedJSValue value)
@@ -44,8 +51,12 @@ operation HasHostClassStructure (any/-, any/-) -> boolean ; ReadsArguments Reads
 operation IsGlobalCachedAsBuiltin (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsGlobalCachedAsBuiltin)
 operation ScanPlainURL (any/-) -> anything ; Pure ; Inline(ScanPlainURL)
 operation FindPlainQueryValue (any/-, any/-, any/-) -> number ; Pure ; Inline(FindPlainQueryValue)
+operation ScanPlainQuery (any/-) -> anything ; Pure ; Inline(ScanPlainQuery)
+operation FindInPlainQuery (any/-, any/-) -> number ; Pure ; Inline(FindInPlainQuery)
+operation PlainQueryEntries (any/-, any/-, any/-) -> anything/N ; MayThrow Allocates ; Inline(PlainQueryEntries)
 operation HasHostObjectCachedValue (any/-, any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasHostObjectCachedValue)
 operation HostObjectCachedValue (any/P, any/-) -> anything ; ReadsArguments ; Inline(HostObjectCachedValue)
+operation HostObjectHasCachedValue (any/-, any/-) -> boolean ; ReadsArguments ; Inline(HostObjectHasCachedValue)
 
 # JavaScriptCore's bytecode intrinsics: bytecompiler/NodesCodegen.cpp, emit_intrinsic_*.
 $argument Call = Argument

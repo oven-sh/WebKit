@@ -1784,6 +1784,8 @@ public:
             RELEASE_ASSERT(function.kind == FunctionKind::Plain && function.captureTypes.isEmpty() && !function.parameterTypes.isEmpty());
             RELEASE_ASSERT(!function.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionHasRestParameter | Format::FunctionHasThis));
             m_program.preludeFunctions[static_cast<unsigned>(*which)] = FunctionID(i);
+            if (*which == PreludeFunction::SetConstruct)
+                m_program.functions[i].flags |= Format::FunctionIsHiddenInStackTraces;
         }
         for (auto& engineClass : builtins.classes())
             m_program.engineClassTypes.append(engineClass.canCheckOriginalStructure() ? m_program.types.intern(Type::engineClass(engineClass)) : TypeID());
@@ -2460,6 +2462,8 @@ static void preallocateConstructorFields(Program& program)
 
 static void findLazyClosureNames(Program& program)
 {
+    if (program.mayRunInMultipleInstances)
+        return;
     Vector<Vector<uint32_t>> found(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned number) {
         auto& function = std::as_const(program).functions[number];
@@ -8661,7 +8665,220 @@ static void findInternalModuleExports(Program& program)
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfModules, " internal modules return an object that is only read by name: ", knownReadCount, " reads of it are known to return a function of the program; ", returnedFunctions.size(), " runtime modules return a function: ", knownRequireCount, " requires of them resolve to it");
 }
 
-static void findFunctionsInModuleVariables(Program& program)
+class ResultOfCallWithConstants {
+public:
+    ResultOfCallWithConstants(const Program& program, const Function& caller, const Value& call)
+        : m_program(program)
+        , m_callee(program.at(call.function()))
+    {
+        constexpr uint32_t disqualifyingFlags = Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionHasRestParameter | Format::FunctionHasThis | Format::FunctionHasNewTarget | Format::FunctionIsBuiltin | Format::FunctionIsModuleBody | Format::FunctionIsSloppy | Format::FunctionIsDeclaredGenericEntrypoint;
+        if ((m_callee.kind != FunctionKind::Plain && m_callee.kind != FunctionKind::Arrow) || m_callee.has(disqualifyingFlags) || !m_callee.captureTypes.isEmpty() || m_callee.blocks.isEmpty() || m_callee.blocks[0].parameters.size() != call.arguments.size())
+            return;
+        bool hasConstant = false;
+        for (unsigned i = 0; i < call.arguments.size(); ++i) {
+            Constant given = literal(caller, call.arguments[i]);
+            hasConstant |= given.kind != Constant::Unknown;
+            m_known.add(m_callee.blocks[0].parameters[i].index(), given);
+        }
+        if (hasConstant)
+            run();
+    }
+
+    FunctionID closure() const { return m_closure; }
+    const Vector<FunctionID, 2>& functionsCaptured() const { return m_functionsCaptured; }
+
+private:
+    struct Constant {
+        enum Kind : uint8_t { Unknown, Integer, String, Boolean, Undefined, Null, Closure, TypeName };
+        Kind kind { Unknown };
+        int64_t integer { 0 };
+        StringID string;
+        FunctionID function;
+    };
+
+    static ValueID withoutCasts(const Function& function, ValueID id)
+    {
+        while (function.at(id).opcode == Opcode::Cast && function.at(id).castReason() != CastReason::Coerce)
+            id = function.at(id).child(0);
+        return id;
+    }
+
+    static Constant literal(const Function& function, ValueID id)
+    {
+        auto& value = function.at(withoutCasts(function, id));
+        switch (value.opcode) {
+        case Opcode::Integer:
+            return { Constant::Integer, value.integer(), { }, { } };
+        case Opcode::String:
+            return { Constant::String, 0, value.string(), { } };
+        case Opcode::Boolean:
+            return { Constant::Boolean, value.boolean(), { }, { } };
+        case Opcode::Undefined:
+            return { Constant::Undefined, 0, { }, { } };
+        case Opcode::Null:
+            return { Constant::Null, 0, { }, { } };
+        case Opcode::FunctionReference:
+        case Opcode::NewClosure:
+            return { Constant::Closure, 0, { }, value.function() };
+        default:
+            return { };
+        }
+    }
+
+    static std::optional<TypeofType> typeOf(const Constant& constant)
+    {
+        switch (constant.kind) {
+        case Constant::Integer:
+            return TypeofType::Number;
+        case Constant::String:
+            return TypeofType::String;
+        case Constant::Boolean:
+            return TypeofType::Boolean;
+        case Constant::Undefined:
+            return TypeofType::Undefined;
+        case Constant::Null:
+            return TypeofType::Object;
+        case Constant::Closure:
+            return TypeofType::Function;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    static ASCIILiteral nameOf(TypeofType type)
+    {
+        switch (type) {
+        case TypeofType::Undefined:
+            return "undefined"_s;
+        case TypeofType::BigInt:
+            return "bigint"_s;
+        case TypeofType::Boolean:
+            return "boolean"_s;
+        case TypeofType::Number:
+            return "number"_s;
+        case TypeofType::String:
+            return "string"_s;
+        case TypeofType::Symbol:
+            return "symbol"_s;
+        case TypeofType::Object:
+            return "object"_s;
+        case TypeofType::Function:
+            return "function"_s;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    std::optional<bool> areStrictlyEqual(const Constant& a, const Constant& b) const
+    {
+        if (a.kind == Constant::Unknown || b.kind == Constant::Unknown)
+            return std::nullopt;
+        if (a.kind == Constant::TypeName || b.kind == Constant::TypeName) {
+            auto& name = a.kind == Constant::TypeName ? a : b;
+            auto& other = a.kind == Constant::TypeName ? b : a;
+            if (other.kind == Constant::TypeName)
+                return name.integer == other.integer;
+            if (other.kind != Constant::String)
+                return false;
+            return equalSpans(nameOf(static_cast<TypeofType>(name.integer)).span8(), m_program.string(other.string));
+        }
+        if (a.kind != b.kind)
+            return false;
+        switch (a.kind) {
+        case Constant::Integer:
+        case Constant::Boolean:
+            return a.integer == b.integer;
+        case Constant::String:
+            return equalSpans(m_program.string(a.string), m_program.string(b.string));
+        case Constant::Undefined:
+        case Constant::Null:
+            return true;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    Constant evaluate(ValueID id, unsigned depth = 0) const
+    {
+        id = withoutCasts(m_callee, id);
+        auto& value = m_callee.at(id);
+        auto boolean = [](std::optional<bool> answer) {
+            return answer ? Constant { Constant::Boolean, *answer, { }, { } } : Constant { };
+        };
+        if (depth == 8)
+            return { };
+        switch (value.opcode) {
+        case Opcode::Parameter:
+            return m_known.get(id.index());
+        case Opcode::TypeOf:
+            if (auto type = typeOf(evaluate(value.child(0), depth + 1)))
+                return { Constant::TypeName, static_cast<int64_t>(*type), { }, { } };
+            return { };
+        case Opcode::TypeOfIs:
+            if (auto type = typeOf(evaluate(value.child(0), depth + 1)))
+                return boolean(*type == value.typeofType());
+            return { };
+        case Opcode::StrictEq:
+            return boolean(areStrictlyEqual(evaluate(value.child(0), depth + 1), evaluate(value.child(1), depth + 1)));
+        case Opcode::LogicalNot:
+            if (Constant operand = evaluate(value.child(0), depth + 1); operand.kind == Constant::Boolean)
+                return boolean(!operand.integer);
+            return { };
+        default:
+            return literal(m_callee, id);
+        }
+    }
+
+    void run()
+    {
+        BlockID block(0u);
+        for (unsigned steps = 0; steps < 64; ++steps) {
+            auto& terminator = m_callee.at(block).terminator;
+            const Target* taken = nullptr;
+            switch (terminator.kind) {
+            case TerminatorKind::Jump:
+                taken = &terminator.targets[0];
+                break;
+            case TerminatorKind::Branch: {
+                Constant condition = evaluate(terminator.value);
+                if (condition.kind != Constant::Boolean)
+                    return;
+                taken = &terminator.targets[condition.integer ? 0 : 1];
+                break;
+            }
+            case TerminatorKind::Return:
+                if (Constant returned = evaluate(terminator.value); returned.kind == Constant::Closure) {
+                    m_closure = returned.function;
+                    if (auto& created = m_callee.at(withoutCasts(m_callee, terminator.value)); created.opcode == Opcode::NewClosure) {
+                        for (ValueID captured : created.arguments) {
+                            Constant held = evaluate(captured);
+                            m_functionsCaptured.append(held.kind == Constant::Closure ? held.function : FunctionID());
+                        }
+                    }
+                }
+                return;
+            default:
+                return;
+            }
+            auto& parameters = m_callee.at(taken->block).parameters;
+            if (parameters.size() != taken->arguments.size())
+                return;
+            Vector<Constant, 4> passed;
+            for (ValueID argument : taken->arguments)
+                passed.append(evaluate(argument));
+            for (unsigned i = 0; i < parameters.size(); ++i)
+                m_known.set(parameters[i].index(), passed[i]);
+            block = taken->block;
+        }
+    }
+
+    const Program& m_program;
+    const Function& m_callee;
+    UncheckedKeyHashMap<uint32_t, Constant, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_known;
+    FunctionID m_closure;
+    Vector<FunctionID, 2> m_functionsCaptured;
+};
+
+static unsigned findFunctionsInModuleVariables(Program& program)
 {
     auto& constProgram = std::as_const(program);
     unsigned count = constProgram.functions.size();
@@ -8670,6 +8887,7 @@ static void findFunctionsInModuleVariables(Program& program)
         Kind kind { Unknown };
         FunctionID function;
         uint32_t parameter { 0 };
+        Vector<FunctionID, 2> functionsCaptured { };
     };
     using Incoming = Vector<Vector<const Target*, 2>>;
     auto forEachSource = [&](const Function& function, Incoming& incoming, ValueID stored, VariableID variable, auto&& functor) {
@@ -8693,6 +8911,12 @@ static void findFunctionsInModuleVariables(Program& program)
             case Opcode::Null:
                 functor(Source { Source::Nil, { }, 0 });
                 continue;
+            case Opcode::CallDirect:
+                if (ResultOfCallWithConstants result(constProgram, function, origin); result.closure()) {
+                    functor(Source { Source::Closure, result.closure(), 0, result.functionsCaptured() });
+                    continue;
+                }
+                break;
             case Opcode::GetModuleVariable: {
                 if (origin.variable() == variable) {
                     functor(Source { Source::Same, { }, 0 });
@@ -8701,7 +8925,7 @@ static void findFunctionsInModuleVariables(Program& program)
                 auto& other = constProgram.variables[origin.variable().index()];
                 if (!other.singleFunctionIsProven)
                     break;
-                functor(Source { Source::Closure, other.singleFunction, 0 });
+                functor(Source { Source::Closure, other.singleFunction, 0, other.functionsCapturedBySingleFunction });
                 continue;
             }
             case Opcode::Parameter:
@@ -8732,6 +8956,7 @@ static void findFunctionsInModuleVariables(Program& program)
     };
     struct Held {
         FunctionID function;
+        Vector<FunctionID, 2> functionsCaptured;
         bool mayHoldOtherValues { false };
         bool mayHoldNullish { false };
         void note(const Source& source)
@@ -8744,8 +8969,13 @@ static void findFunctionsInModuleVariables(Program& program)
             }
             if (source.kind != Source::Closure || (function && function != source.function))
                 mayHoldOtherValues = true;
-            else
+            else {
+                if (!function)
+                    functionsCaptured = source.functionsCaptured;
+                else if (functionsCaptured != source.functionsCaptured)
+                    functionsCaptured.clear();
                 function = source.function;
+            }
         }
     };
     Vector<Held> held(constProgram.variables.size());
@@ -8906,6 +9136,7 @@ static void findFunctionsInModuleVariables(Program& program)
         if (variable.singleFunction || !held[i].function || held[i].mayHoldOtherValues || variable.startsZero)
             continue;
         variable.singleFunction = held[i].function;
+        variable.functionsCapturedBySingleFunction = WTF::move(held[i].functionsCaptured);
         if (variable.startsUndefined || held[i].mayHoldNullish)
             variable.singleFunctionOrNullish = true;
         else
@@ -8913,6 +9144,7 @@ static void findFunctionsInModuleVariables(Program& program)
         ++singleCount;
     }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: whole-program store analysis: ", singleCount, " more module variables only hold closures of a single function");
+    return singleCount;
 }
 
 static void findBuiltinsInVariables(Program& program)
@@ -12819,7 +13051,7 @@ Vector<String> optimize(Program& program)
     didFinish("- removeUnreadExports"_s);
     findInternalModuleExports(program);
     didFinish("- findInternalModuleExports"_s);
-    findFunctionsInModuleVariables(program);
+    for (unsigned round = 0; round < 3 && findFunctionsInModuleVariables(program); ++round) { }
     didFinish("- findFunctionsInModuleVariables"_s);
     findFunctionsWithClosureProperties(program);
     didFinish("- findFunctionsWithClosureProperties"_s);
@@ -13229,6 +13461,8 @@ Vector<String> optimize(Program& program)
         });
         dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", lateGuardedPreludeEntryCallCount.load(), " more array method calls use such an entry after whole-program analysis");
         didFinish("- callGuardedPreludeEntries"_s);
+        compareHeaderNamesWithPassedConstants(program);
+        didFinish("- compareHeaderNamesWithPassedConstants"_s);
         computeFunctionsReturningMapKeys(program);
         didFinish("- computeFunctionsReturningMapKeys"_s);
         removeUnusedResults(program);

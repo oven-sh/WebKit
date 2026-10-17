@@ -471,7 +471,8 @@ private:
                     if (isAlias.get(id.index()))
                         continue;
                     bool returnsIt = (value.opcode == Opcode::Cast && isAlias.get(value.child(0).index()))
-                        || (value.opcode == Opcode::GetField && heldIn.contains(static_cast<uint64_t>(value.layout().index()) << 32 | value.field()));
+                        || (value.opcode == Opcode::GetField && heldIn.contains(static_cast<uint64_t>(value.layout().index()) << 32 | value.field()))
+                        || (languageOperationOf(m_program, value) == LanguageOperation::CreateArguments && value.arguments.size() == 1 && isAlias.get(value.arguments[0].index()));
                     if (returnsIt) {
                         isAlias.set(id.index());
                         changed = true;
@@ -508,7 +509,9 @@ private:
                         return false;
                     break;
                 default:
-                    return false;
+                    if (!isAlias.get(id.index()))
+                        return false;
+                    break;
                 }
             }
             if (block.terminator.value && block.terminator.kind != TerminatorKind::Branch && isAlias.get(block.terminator.value.index()))

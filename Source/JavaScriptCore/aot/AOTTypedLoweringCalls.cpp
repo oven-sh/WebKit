@@ -2744,7 +2744,7 @@ Boxed Lowering::getCallOrApply(Boxed base, StringID name, BuiltinID method, cons
         orElse(isCell(base), throughCache);
     CellPointer cell = asCell(base);
     auto checkCalledFullClosureOrElse = [&] {
-        orElse(hasClosureStructure(cell, Instance::offsetOfTypedClosureStructureID()), throughCache);
+        orElse(isClosureWithNoPropertyButPrototype(cell), throughCache);
         if (!definedAs || definedAs->kind == FunctionKind::Constructor)
             orElse(isZero(bitAnd(loadField<Integer>(cell, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), throughCache);
     };
@@ -2757,6 +2757,15 @@ Boxed Lowering::getCallOrApply(Boxed base, StringID name, BuiltinID method, cons
         LBasicBlock isNotSlim = m_out.newBlock();
         m_out.branch(isUnreifiedSlimClosure(cell).value(), usually(inheritsProperty), rarely(isNotSlim));
         m_out.appendTo(isNotSlim);
+        if (m_isInLoop || m_program.isHotOutsideLoops(m_id)) {
+            LBasicBlock isNotReifiedSlim = m_out.newBlock();
+            Word32 structureID = loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell)));
+            Word32 isReifiedSlim = equal(structureID, Word32(loadRuntimeState32(Instance::offsetOfReifiedSlimClosureStructureID(0))));
+            for (unsigned which = 1; which < Instance::numberOfReifiedSlimClosureStructureIDs; ++which)
+                isReifiedSlim = logicalOr(isReifiedSlim, equal(structureID, Word32(loadRuntimeState32(Instance::offsetOfReifiedSlimClosureStructureID(which)))));
+            m_out.branch(isReifiedSlim.value(), unsure(inheritsProperty), unsure(isNotReifiedSlim));
+            m_out.appendTo(isNotReifiedSlim);
+        }
         checkCalledFullClosureOrElse();
         m_out.jump(inheritsProperty);
         m_out.appendTo(inheritsProperty);
@@ -2956,7 +2965,7 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
 
 Integer Lowering::entryWordIfClosure(CellPointer cell)
 {
-    return either<Integer>(hasClosureStructure(cell, Instance::offsetOfTypedClosureStructureID()), [&] {
+    return either<Integer>(isKnownClosureStructureID(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell)))), [&] {
         return loadField<Integer>(cell, m_heaps.AOTTypedClosure_entry);
     }, [&] {
         return Integer(callAllocationStub(Stub::TypedClosureEntry, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false));

@@ -225,6 +225,108 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindPlainQueryValue, EncodedJ
     return JSValue::encode(jsNumber(notFound));
 }
 
+static std::optional<std::span<const Latin1Character>> latin1SpanWithoutResolving(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isString())
+        return std::nullopt;
+    JSString* string = asString(value);
+    if ((string->isRope() && !string->isSubstring()) || !string->is8Bit())
+        return std::nullopt;
+    return string->view(globalObject)->span8();
+}
+
+static constexpr std::array<bool, 256> isUnchangedByFormEncoding = [] {
+    std::array<bool, 256> result { };
+    for (unsigned character = 0; character < 128; ++character)
+        result[character] = isASCIIAlphanumeric(static_cast<char>(character)) || character == '*' || character == '-' || character == '.' || character == '_';
+    return result;
+}();
+
+template<typename Functor>
+static std::optional<unsigned> forEachPlainQueryPair(std::span<const Latin1Character> text, const Functor& functor)
+{
+    constexpr size_t maxLength = 65536;
+    if (text.size() > maxLength)
+        return std::nullopt;
+    size_t at = !text.empty() && text[0] == '?';
+    if (at == text.size())
+        return 0;
+    for (unsigned count = 1;; ++count) {
+        size_t name = at;
+        for (; at < text.size() && isUnchangedByFormEncoding[text[at]]; ++at) { }
+        if (at == text.size() || text[at] != '=')
+            return std::nullopt;
+        size_t value = ++at;
+        for (; at < text.size() && isUnchangedByFormEncoding[text[at]]; ++at) { }
+        if (functor(text.subspan(name, value - 1 - name), value, at) == IterationStatus::Done || at == text.size())
+            return count;
+        if (text[at] != '&' || ++at == text.size())
+            return std::nullopt;
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainQuery, EncodedJSValue, (Instance* instance, EncodedJSValue encodedText))
+{
+    auto text = latin1SpanWithoutResolving(instance->globalObject, JSValue::decode(encodedText));
+    auto count = text ? forEachPlainQueryPair(*text, [](auto, size_t, size_t) { return IterationStatus::Continue; }) : std::nullopt;
+    return JSValue::encode(count ? jsNumber(*count) : jsUndefined());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindInPlainQuery, EncodedJSValue, (Instance* instance, EncodedJSValue encodedText, EncodedJSValue encodedName))
+{
+    constexpr int notFound = -1;
+    constexpr int needsRealObject = -2;
+    auto text = latin1SpanWithoutResolving(instance->globalObject, JSValue::decode(encodedText));
+    auto name = latin1SpanWithoutResolving(instance->globalObject, JSValue::decode(encodedName));
+    if (!text || !name)
+        return JSValue::encode(jsNumber(needsRealObject));
+    int64_t found = notFound;
+    forEachPlainQueryPair(*text, [&](auto candidate, size_t value, size_t end) {
+        if (!equalSpans(candidate, *name))
+            return IterationStatus::Continue;
+        found = static_cast<int64_t>(value) * offsetBase + static_cast<int64_t>(end);
+        return IterationStatus::Done;
+    });
+    return JSValue::encode(jsNumber(static_cast<double>(found)));
+}
+
+static JSString* keyString(VM& vm, std::span<const Latin1Character> name)
+{
+    if (name.size() > KeyAtomStringCache::maxStringLengthForCache)
+        return jsString(vm, String(AtomString(name)));
+    WTF::HashTranslatorCharBuffer<Latin1Character> buffer { name };
+    return vm.keyAtomStringCache.make(vm, buffer, [](VM& vm, auto& buffer) {
+        return jsString(vm, String(AtomString(buffer.characters)));
+    });
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedPlainQueryEntries, EncodedJSValue, (Instance* instance, EncodedJSValue encodedText, EncodedJSValue encodedCount, uint32_t kind))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue textValue = JSValue::decode(encodedText);
+    auto text = latin1SpanWithoutResolving(globalObject, textValue);
+    RELEASE_ASSERT(text);
+    Structure* structure = globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous);
+    JSArray* entries = JSArray::create(vm, structure, JSValue::decode(encodedCount).asUInt32());
+    unsigned index = 0;
+    forEachPlainQueryPair(*text, [&](auto name, size_t value, size_t end) {
+        auto iterationKind = static_cast<IterationKind>(kind);
+        JSString* key = iterationKind == IterationKind::Values ? nullptr : keyString(vm, name);
+        JSString* held = iterationKind == IterationKind::Keys ? nullptr : jsString(vm, String(text->subspan(value, end - value)));
+        JSValue entry = key ? key : held;
+        if (iterationKind == IterationKind::Entries) {
+            JSArray* pair = JSArray::create(vm, structure, 2);
+            pair->setIndexQuickly(vm, 0, key);
+            pair->setIndexQuickly(vm, 1, held);
+            entry = pair;
+        }
+        entries->setIndexQuickly(vm, index++, entry);
+        return IterationStatus::Continue;
+    });
+    ensureStillAliveHere(textValue);
+    OPERATION_RETURN(scope, JSValue::encode(entries));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedToLength, EncodedJSValue, (Instance* instance, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -309,6 +411,8 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     case InlineBuiltin::HasJSType:
     case InlineBuiltin::ScanPlainURL:
     case InlineBuiltin::FindPlainQueryValue:
+    case InlineBuiltin::ScanPlainQuery:
+    case InlineBuiltin::FindInPlainQuery:
         return Writes::Pure;
     case InlineBuiltin::IsCallable:
     case InlineBuiltin::GetInternalField:
@@ -316,8 +420,10 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     case InlineBuiltin::IsGlobalCachedAsBuiltin:
     case InlineBuiltin::HasHostObjectCachedValue:
     case InlineBuiltin::HostObjectCachedValue:
+    case InlineBuiltin::HostObjectHasCachedValue:
         return Writes::Nothing;
     case InlineBuiltin::LinkTimeConstant:
+    case InlineBuiltin::PlainQueryEntries:
         return Writes::RuntimeState;
     case InlineBuiltin::PutInternalField:
     case InlineBuiltin::PutByValDirect:
@@ -436,6 +542,12 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         return ensure(AOT_TYPED_OPERATION(ScanPlainURL, in<Boxed>(arguments[0])), type);
     case InlineBuiltin::FindPlainQueryValue:
         return ensure(AOT_TYPED_OPERATION(FindPlainQueryValue, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), in<Boxed>(arguments[2])), m_program.at(m_program.types.number), type);
+    case InlineBuiltin::ScanPlainQuery:
+        return ensure(AOT_TYPED_OPERATION(ScanPlainQuery, in<Boxed>(arguments[0])), type);
+    case InlineBuiltin::FindInPlainQuery:
+        return ensure(AOT_TYPED_OPERATION(FindInPlainQuery, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), m_program.at(m_program.types.number), type);
+    case InlineBuiltin::PlainQueryEntries:
+        return ensure(AOT_TYPED_OPERATION(PlainQueryEntries, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), word32(integer32(2))), type);
     case InlineBuiltin::ToLength: {
         Boxed operand = in<Boxed>(arguments[0]);
         return ensure(either<Boxed>(isInt32(operand), [&] {
@@ -492,6 +604,8 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
             return booleanResult(boolean(false), type);
         return booleanResult(equal(Boxed(globalPropertyCacheWord(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value))), box(builtinCell(m_builtins.cellOf(global)))), type);
     }
+    case InlineBuiltin::HostObjectHasCachedValue:
+        return booleanResult(isNotEmpty(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1))))), type);
     case InlineBuiltin::HostObjectCachedValue:
         return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);
     case InlineBuiltin::LinkTimeConstant: {

@@ -20,6 +20,7 @@
 #include "B3CycleForest.h"
 #include "B3Generate.h"
 #include "B3Procedure.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
 #include "CodeBlock.h"
@@ -52,7 +53,42 @@ void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
     IndexMap<B3::BasicBlock*, double> weight(proc.size(), 1.0);
     constexpr double returningBlockWeight = 0.25;
     for (B3::BasicBlock* block : proc)
-        weight[block] = std::clamp(block->frequency(), coldFrequency, returnsAreUnlikely && block->last()->opcode() == B3::Return ? returningBlockWeight : 1.0);
+        weight[block] = std::clamp(block->frequency(), coldFrequency, 1.0);
+
+    auto weightOfEdge = [&](const B3::FrequentedBlock& successor) {
+        return successor.frequency() == B3::FrequencyClass::Rare ? coldFrequency : weight[successor.block()];
+    };
+    for (B3::BasicBlock* block : cycles.blocksInPostOrder()) {
+        if (!block->numSuccessors() || cycles.innermost(block) != B3::CycleForest::none)
+            continue;
+        double likeliest = 0;
+        for (auto& successor : block->successors())
+            likeliest = std::max(likeliest, weightOfEdge(successor));
+        weight[block] = std::min(weight[block], likeliest);
+        B3::Value* phi = block->last()->opcode() == B3::Branch ? block->last()->child(0) : nullptr;
+        bool isNegated = false;
+        for (; phi && ((phi->opcode() == B3::Equal && phi->child(1)->isInt32(0)) || (phi->opcode() == B3::BitXor && phi->child(1)->isInt32(1))); phi = phi->child(0))
+            isNegated = !isNegated;
+        if (!phi || phi->opcode() != B3::Phi || phi->owner != block)
+            continue;
+        for (B3::BasicBlock* predecessor : block->predecessors()) {
+            if (predecessor->numSuccessors() != 1)
+                continue;
+            for (B3::Value* value : *predecessor) {
+                auto* upsilon = value->as<B3::UpsilonValue>();
+                if (upsilon && upsilon->phi() == phi && upsilon->child(0)->hasInt32())
+                    weight[predecessor] = std::min(weight[predecessor], weightOfEdge(block->successor(!upsilon->child(0)->asInt32() == isNegated ? 0 : 1)));
+            }
+        }
+    }
+    for (B3::BasicBlock* block : proc) {
+        for (auto& successor : block->successors()) {
+            if (weight[block] > coldFrequency && weight[successor.block()] <= coldFrequency && cycles.innermost(block) == B3::CycleForest::none)
+                successor.frequency() = B3::FrequencyClass::Rare;
+        }
+        if (returnsAreUnlikely && block->last()->opcode() == B3::Return)
+            weight[block] = std::min(weight[block], returningBlockWeight);
+    }
 
     IndexMap<B3::BasicBlock*, double> incoming(proc.size(), 0.0);
     Vector<double, 16> entering(FillWith { }, cycles.size(), 0.0);

@@ -33,12 +33,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewResponseFromResponse, EncodedJSValu
     OPERATION_RETURN(scope, response);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetRequestHeader, EncodedJSValue, (Instance* instance, EncodedJSValue request, EncodedJSValue name))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetRequestOrResponseHeader, EncodedJSValue, (Instance* instance, EncodedJSValue holder, EncodedJSValue name, uint32_t knownName))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    EncodedJSValue header = s_hostClassEntryPoints.getRequestHeader(globalObject, request, name);
+    EncodedJSValue header = s_hostClassEntryPoints.getRequestOrResponseHeader(globalObject, holder, name, knownName);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, header);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedCallHeadersMethod, EncodedJSValue, (Instance* instance, EncodedJSValue headersOrHolder, EncodedJSValue name, EncodedJSValue value, uint32_t methodAndKnownName))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    EncodedJSValue answer = s_hostClassEntryPoints.callHeadersMethod(globalObject, headersOrHolder, name, value, methodAndKnownName);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, answer);
 }
 
 namespace Typed {
@@ -57,7 +65,7 @@ const HostClassEntryPoints& hostClassEntryPoints()
 
 std::optional<Writes> writesOfInlineHost(InlineBuiltin which, std::span<const Type>)
 {
-    RELEASE_ASSERT(which == InlineBuiltin::NewResponse || which == InlineBuiltin::NewResponseFromResponse || which == InlineBuiltin::GetRequestHeader);
+    RELEASE_ASSERT(which == InlineBuiltin::NewResponse || which == InlineBuiltin::NewResponseFromResponse || which == InlineBuiltin::GetRequestOrResponseHeader || which == InlineBuiltin::CallHeadersMethod);
     return Writes::Heap;
 }
 
@@ -65,8 +73,15 @@ std::optional<Operand> Lowering::lowerInlineHost(InlineBuiltin which, ValueID re
 {
     if (which == InlineBuiltin::NewResponseFromResponse)
         return ensure(AOT_TYPED_OPERATION(NewResponseFromResponse, in<Boxed>(value.arguments[0])), typeOf(result));
-    if (which == InlineBuiltin::GetRequestHeader)
-        return ensure(AOT_TYPED_OPERATION(GetRequestHeader, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1])), typeOf(result));
+    if (which == InlineBuiltin::GetRequestOrResponseHeader || which == InlineBuiltin::CallHeadersMethod) {
+        ValueID number = value.arguments.last();
+        while (m_function.at(number).opcode == Opcode::Cast)
+            number = m_function.at(number).child(0);
+        Word32 known = m_function.at(number).opcode == Opcode::Integer ? word32(static_cast<int32_t>(m_function.at(number).integer())) : in<Word32>(number);
+        if (which == InlineBuiltin::CallHeadersMethod)
+            return ensure(AOT_TYPED_OPERATION(CallHeadersMethod, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1]), in<Boxed>(value.arguments[2]), known), typeOf(result));
+        return ensure(AOT_TYPED_OPERATION(GetRequestOrResponseHeader, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1]), known), typeOf(result));
+    }
     RELEASE_ASSERT(which == InlineBuiltin::NewResponse);
     constexpr unsigned firstHeaderOperand = 4;
     auto& arguments = value.arguments;

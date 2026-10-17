@@ -287,11 +287,24 @@ void Lowering::open(const OpenedString& opened)
         m_out.appendTo(continuation);
         return;
     }
-    Pointer impl = eitherPointer(hasNoBits(fiber, JSString::isRopeInPointer), [&] {
+    if (!m_activeHandler) {
+        LBasicBlock flat = m_out.newBlock();
+        LBasicBlock rope = newColdBlock();
+        m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(rope));
+        m_out.appendTo(rope);
+        SubstringCharacters view = ropeCharacters(receiver.string);
+        set(opened.data, view.data);
+        set(opened.length, zeroExtended(Word32(view.length)).value());
+        set(opened.flags, view.flags);
+        ensureStillAliveHere(receiver.string);
+        m_out.jump(continuation);
+        m_out.appendTo(flat);
+    }
+    Pointer impl = m_activeHandler ? eitherPointer(hasNoBits(fiber, JSString::isRopeInPointer), [&] {
         return fiber;
     }, [&] {
         return AOT_TYPED_OPERATION(Flatten, receiver.string);
-    });
+    }) : fiber;
     set(opened.data, loadField<Pointer>(impl, m_heaps.StringImpl_data).value());
     set(opened.length, zeroExtended(loadField<Word32>(impl, m_heaps.StringImpl_length)).value());
     set(opened.flags, loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed).value());
@@ -321,6 +334,14 @@ const Lowering::OpenedString* Lowering::openedString(ValueID id) const
         }
     }
     return nullptr;
+}
+
+bool Lowering::isReadRepeatedlyByCurrentLoop(ValueID string) const
+{
+    if (!string || m_loops.isEmpty())
+        return false;
+    unsigned loop = m_innermostLoop[m_currentBlockID.index()];
+    return loop != noLoop && isLoopInvariant(m_loops[loop], stringDefinedBy(string));
 }
 
 std::optional<Lowering::Characters> Lowering::openedStringCharacters(const StringReceiver& receiver)
@@ -889,6 +910,11 @@ Lowering::Characters Lowering::charactersOf(const StringReceiver& receiver, LBas
     returnWholeString(fiber);
 
     m_out.appendTo(rope);
+    if (!ifRope && isReadRepeatedlyByCurrentLoop(receiver.id)) {
+        returnWholeString(AOT_TYPED_OPERATION(Flatten, receiver.string));
+        m_out.appendTo(continuation);
+        return { Pointer(m_out.phi(Int64, data)), Word32(m_out.phi(Int32, flags)), zeroExtended(Word32(m_out.phi(Int32, lengths))), receiver.string };
+    }
     if (!ifRope && !m_activeHandler) {
         SubstringCharacters opened = ropeCharacters(receiver.string);
         yield(Pointer(opened.data), Word32(opened.flags), Word32(opened.length));

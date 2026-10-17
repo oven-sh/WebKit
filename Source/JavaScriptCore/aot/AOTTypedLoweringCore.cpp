@@ -184,7 +184,8 @@ LBasicBlock Lowering::edgeTo(const Target& target, bool isBranch)
         for (auto [phi, cell] : cells)
             m_out.addIncomingToPhi(phi, m_out.anchor(cell));
     };
-    if (!isBranch || arguments.isEmpty()) {
+    bool countsBranch = isBranch && Options::aotCountsBranches() && m_currentBlock->terminator.kind == TerminatorKind::Branch;
+    if (!isBranch || (arguments.isEmpty() && !countsBranch)) {
         anchorAll();
         return block;
     }
@@ -192,10 +193,67 @@ LBasicBlock Lowering::edgeTo(const Target& target, bool isBranch)
     LBasicBlock edge = m_out.newBlock();
     edge->setFrequency(block->frequency());
     m_out.appendTo(edge);
+    if (countsBranch) [[unlikely]]
+        countBranchTo(target);
     anchorAll();
     m_out.jump(block);
     m_out.appendTo(here);
     return edge;
+}
+
+void Lowering::countBranchTo(const Target& target)
+{
+    auto& terminator = m_currentBlock->terminator;
+    bool isFalseSide = &target == &terminator.targets[1];
+    ValueID condition = terminator.value;
+    for (; m_function.at(condition).opcode == Opcode::LogicalNot; condition = m_function.at(condition).child(0))
+        isFalseSide = !isFalseSide;
+    auto& test = m_function.at(condition);
+    auto& writtenIn = test.inlineFrame ? m_program.at(m_function.inlineFrames[test.inlineFrame].callee) : m_function;
+    if (!writtenIn.module)
+        return;
+    AOT_TYPED_OPERATION(CountBranch, word32(writtenIn.module.index()), word32(test.position * 2 + isFalseSide));
+    if (!Options::aotMapFilePath())
+        return;
+    m_context.branchHintsForMap.append("\nQ\t"_s, writtenIn.module.index(), '\t');
+    for (uint8_t byte : m_program.string(m_program.modules[writtenIn.module.index()].path))
+        m_context.branchHintsForMap.append(static_cast<char>(byte));
+}
+
+std::optional<unsigned> Lowering::differingSuccessorOf(const Terminator& terminator) const
+{
+    if (m_isInLoop)
+        return std::nullopt;
+    bool isNegated = false;
+    ValueID id = terminator.value;
+    for (; m_function.at(id).opcode == Opcode::LogicalNot; id = m_function.at(id).child(0))
+        isNegated = !isNegated;
+    auto& condition = m_function.at(id);
+    if (condition.opcode != Opcode::StrictEq)
+        return std::nullopt;
+    auto& left = m_program.typeOf(m_function, condition.child(0));
+    auto& right = m_program.typeOf(m_function, condition.child(1));
+    if (!left.hasObjects() || !right.hasObjects() || (!left.isAnything() && !right.isAnything()))
+        return std::nullopt;
+    return isNegated ? 0 : 1;
+}
+
+std::optional<bool> Lowering::likelyAnswer() const
+{
+    auto& terminator = m_currentBlock->terminator;
+    if (terminator.kind != TerminatorKind::Branch || m_currentIndexInBlock >= m_currentBlock->values.size())
+        return std::nullopt;
+    bool isNegated = false;
+    ValueID condition = terminator.value;
+    for (; m_function.at(condition).opcode == Opcode::LogicalNot; condition = m_function.at(condition).child(0))
+        isNegated = !isNegated;
+    if (condition != m_currentBlock->values[m_currentIndexInBlock])
+        return std::nullopt;
+    LBasicBlock whenTrue = m_blocks[terminator.targets[0].block.index()];
+    LBasicBlock whenFalse = m_blocks[terminator.targets[1].block.index()];
+    if (!whenTrue || !whenFalse || whenTrue->frequency() == whenFalse->frequency())
+        return std::nullopt;
+    return (whenTrue->frequency() > whenFalse->frequency()) != isNegated;
 }
 
 std::optional<unsigned> Lowering::nullishSuccessorOf(const Terminator& terminator) const
@@ -355,6 +413,15 @@ void Lowering::lowerTerminator(const Terminator& terminator)
                 m_out.appendTo(here);
                 onNullish = edge;
             }
+        }
+        if (auto differingSuccessor = differingSuccessorOf(terminator); differingSuccessor && taken->frequency() >= 1 && notTaken->frequency() >= 1) {
+            LBasicBlock& onDifferent = *differingSuccessor ? notTaken : taken;
+            LBasicBlock here = m_out.m_block;
+            LBasicBlock edge = newUnlikelyBlock();
+            m_out.appendTo(edge);
+            m_out.jump(onDifferent);
+            m_out.appendTo(here);
+            onDifferent = edge;
         }
         if (std::exchange(m_truthinessDeferredToBranch, ValueID()) == terminator.value) {
             std::pair<FTL::WeightedTarget, FTL::WeightedTarget> successorsWithWeights { unsure(taken), unsure(notTaken) };
@@ -1003,8 +1070,9 @@ void Lowering::findStructureDescriptorOfRun(AccessRun& run) const
 
 void Lowering::findAccessRuns(const Vector<BlockID>& order)
 {
-    if (m_function.isTyped() || !m_program.isHotOutsideLoops(m_id) || m_program.runsOnce(m_id))
+    if (m_function.isTyped() || m_program.runsOnce(m_id))
         return;
+    bool looksOnlyInLoops = !m_program.isHotOutsideLoops(m_id);
     struct Access {
         BlockID block;
         unsigned index;
@@ -1019,6 +1087,8 @@ void Lowering::findAccessRuns(const Vector<BlockID>& order)
     Vector<Receiver> receivers;
     UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> receiverIndexInCall;
     for (BlockID id : order) {
+        if (looksOnlyInLoops && !m_loopBlocks.get(id.index()))
+            continue;
         auto& block = m_function.at(id);
         for (unsigned i = 0; i < block.values.size(); ++i) {
             auto& value = m_function.at(block.values[i]);
@@ -1087,6 +1157,8 @@ void Lowering::findAccessRuns(const Vector<BlockID>& order)
                 run.stored |= 1u << index;
         }
         findStructureDescriptorOfRun(run);
+        if (looksOnlyInLoops && run.findStructureDescriptor == Format::none)
+            continue;
         unsigned slots = run.findStructureDescriptor != Format::none ? 0 : (run.names.size() + 7) / 8;
         if (m_context.sites.size() + slots > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
             break;
@@ -1136,7 +1208,7 @@ void Lowering::invalidateAccessRunVerdicts()
         for (unsigned i = 0; i < block->size(); ++i) {
             B3::Value* value = block->at(i);
             HeapRange writes = value->effects().writes;
-            if (!writes || (value->as<MemoryValue>() && (!writes.overlaps(structureIDs) || m_structurePreservingStores.contains(value))))
+            if (!writes.overlaps(structureIDs) || (value->as<MemoryValue>() && m_structurePreservingStores.contains(value)))
                 continue;
             if (i + 1 == block->size()) {
                 for (B3::BasicBlock* successor : block->successorBlocks())
@@ -2594,10 +2666,11 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return undefined();
     case Opcode::GetGlobal:
     case Opcode::GetGlobalForTypeOf:
-        if (BuiltinName name = m_program.builtinName(value.string()); m_builtins.isGlobal(name) && !m_program.isExtended(name)) {
+        if (BuiltinName name = m_program.builtinName(value.string()); m_builtins.isGlobal(name)) {
             if (isUsedOnlyByInlineInstanceOf(id))
                 return placeholder(value.rep);
-            return convert(builtinCell(m_builtins.cellOf(name)), type, value.rep);
+            if (!m_program.isExtended(name))
+                return convert(builtinCell(m_builtins.cellOf(name)), type, value.rep);
         }
         return ensure(lowerGetGlobal(value), type);
     case Opcode::PutGlobal:

@@ -925,6 +925,7 @@ struct Variable {
     FunctionID singleFunction;
     bool singleFunctionIsProven { false };
     bool singleFunctionOrNullish { false };
+    Vector<FunctionID, 2> functionsCapturedBySingleFunction;
     PredictedBuiltins predictedBuiltins;
     Store store { Store::JSValue };
     uint32_t offset { 0 };

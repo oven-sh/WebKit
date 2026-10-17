@@ -6681,7 +6681,7 @@ void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, s
 #endif
 }
 
-void installImageCompiler()
+NEVER_INLINE void installImageCompiler()
 {
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };

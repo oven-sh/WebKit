@@ -96,7 +96,7 @@ public:
 #endif
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
 #if ENABLE(AOT)
-    enum class StubBuiltin : uint8_t { None, MapGet, MapHas, MapSet, SetHas, SetAdd, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas, StringStartsWith, StringIndexOf, ArrayIsArray, ArrayPush, ObjectSetPrototypeOf };
+    enum class StubBuiltin : uint8_t { None, MapGet, MapHas, MapSet, SetHas, SetAdd, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas, StringStartsWith, StringIndexOf, ArrayIsArray, ArrayPush, ArraySlice, ObjectSetPrototypeOf };
     static constexpr ptrdiff_t offsetOfStubBuiltin() { return OBJECT_OFFSETOF(NativeExecutable, m_stubBuiltin); }
 #endif
 private:

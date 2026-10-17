@@ -530,7 +530,12 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
         Width keyWidth = isNarrow ? Width::Narrow : Width::Wide;
         Width valueWidth = !Traits::hasValueData ? Width::None : isNarrow && canHold(Width::Narrow, value) ? Width::Narrow : Width::Wide;
         table = create(vm, state->compactTableStructure(), keyWidth, valueWidth, minCapacity);
-        globalObject->aotInstance()->compactTableStructureID = table->structureID().bits();
+        if (!globalObject->aotInstance()->compactTableStructureID) {
+            for (Instance* instance : vm.m_aotInstances) {
+                if (instance->globalObject == globalObject)
+                    instance->compactTableStructureID = table->structureID().bits();
+            }
+        }
         owner->m_compactTable.set(vm, owner, table);
         if (state->isCounting()) [[unlikely]]
             state->countCompactTable(makeString("made key "_s, static_cast<unsigned>(keyWidth), " value "_s, static_cast<unsigned>(valueWidth)), 0);
