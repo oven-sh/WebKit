@@ -185,6 +185,9 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
         UniquedStringImpl* uid = identifier.uid();
         RELEASE_ASSERT(uid);
         Structure* structure = propertyCache->inlineAccessBaseStructure();
+        // Not NoInformation: that reads as a site that never ran, and the DFG would exit at it instead of emitting a put.
+        if (structure->isDepartedDictionary())
+            return PutByStatus(JSC::slowVersion(summary), *propertyCache);
         PropertyOffset offset = structure->getConcurrently(uid);
         if (isValidOffset(offset))
             return PutByVariant::replace(WTF::move(identifier), structure, offset, /* viaGlobalProxy */ false);
@@ -233,6 +236,8 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
             switch (access.type()) {
             case AccessCase::Replace: {
                 Structure* structure = access.structure();
+                if (structure->isDepartedDictionary())
+                    continue;
                 PropertyOffset offset = structure->getConcurrently(access.uid());
                 if (!isValidOffset(offset))
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);

@@ -460,6 +460,8 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
     ASSERT(!isCompilationThread());
     ASSERT(structure()->classInfoForCells() == info());
     ASSERT(!protectPropertyTableWhileTransitioning());
+    // A dictionary keeps its table pinned, and a departed one has nothing to rebuild it from.
+    ASSERT(!isDictionary());
     
     DeferGC deferGC(vm);
     
@@ -605,7 +607,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->m_transitionPropertyName = propertyName.uid();
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAddition);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->takePropertyTableFrom(vm, structure);
     transition->setMaxOffset(vm, structure->maxOffset());
 
     offset = transition->add(vm, propertyName, attributes);
@@ -701,7 +703,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
     transition->m_transitionPropertyName = propertyName.uid();
     transition->setTransitionKind(TransitionKind::PropertyDeletion);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->takePropertyTableFrom(vm, structure);
     transition->setMaxOffset(vm, structure->maxOffset());
 
     offset = transition->remove(vm, propertyName);
@@ -847,7 +849,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
     transition->m_transitionPropertyName = propertyName.uid();
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAttributeChange);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->takePropertyTableFrom(vm, structure);
     transition->setMaxOffset(vm, structure->maxOffset());
 
     offset = transition->attributeChange(vm, propertyName, attributes);
@@ -926,19 +928,51 @@ Structure* Structure::becomePrototypeTransition(VM& vm, Structure* structure, De
     return nonPropertyTransition(vm, structure, TransitionKind::BecomePrototype, deferred);
 }
 
-PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
+// A dictionary is the structure of one object. When that object transitions away, nothing needs the dictionary's
+// table again: no structure rebuilds its table through a dictionary, as a dictionary has no previousID chain of its
+// own. So a transition from a dictionary takes the table instead of copying it, which keeps a delete or an attribute
+// change on a large object O(1). The taker pins the table, because it cannot rebuild it either. The dictionary is
+// departed from then on (isDepartedDictionary).
+PropertyTable* Structure::takePropertyTableFromDictionary(VM& vm)
 {
-    // This must always return a property table. It can't return null.
+    ASSERT(isDictionary());
+    ASSERT(isPinnedPropertyTable());
     PropertyTable* result = propertyTableOrNull();
-    if (result) {
-        if (isPinnedPropertyTable())
-            return result->copy(vm, result->size() + 1);
+    ASSERT(result);
+    ConcurrentJSLocker locker(m_lock);
+    setIsPinnedPropertyTable(false);
+    setPropertyTable(vm, nullptr);
+    return result;
+}
+
+// Gives this new transition the table of the structure it transitions from. A dictionary's table moves here and is
+// pinned at once, so that the GC cannot clear it. Any other pinned table is copied: the structure that pins it is
+// shared, or is what its transitions rebuild their tables from. An unpinned table moves as it is: the previous
+// structure rebuilds it from its chain when it needs it again.
+void Structure::takePropertyTableFrom(VM& vm, Structure* previous)
+{
+    ASSERT(previousID() == previous);
+    if (previous->isDictionary()) {
+        PropertyTable* table = previous->takePropertyTableFromDictionary(vm);
+        // Not pin(): previousID and the transition name stay. A delete or an attribute change needs them, so
+        // that the transition is listed and counted (transitionCountHasOverflowed) like one whose table was
+        // copied. The other transitions cut the chain with pin() afterwards, as they did before.
         ConcurrentJSLocker locker(m_lock);
-        setPropertyTable(vm, nullptr);
-        return result;
+        setIsPinnedPropertyTable(true);
+        setPropertyTable(vm, table);
+        return;
     }
-    bool setPropertyTable = false;
-    return materializePropertyTable(vm, setPropertyTable);
+    PropertyTable* table = previous->propertyTableOrNull();
+    if (!table) {
+        bool setPropertyTable = false;
+        table = previous->materializePropertyTable(vm, setPropertyTable);
+    } else if (previous->isPinnedPropertyTable())
+        table = table->copy(vm, table->size() + 1);
+    else {
+        ConcurrentJSLocker locker(previous->m_lock);
+        previous->setPropertyTable(vm, nullptr);
+    }
+    setPropertyTable(vm, table);
 }
 
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
@@ -1003,7 +1037,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setHasNonConfigurableProperties(true);
         transition->setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
     } else {
-        transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+        transition->takePropertyTableFrom(vm, structure);
         transition->setMaxOffset(vm, structure->maxOffset());
         checkOffset(transition->maxOffset(), transition->inlineCapacity());
     }
@@ -1013,6 +1047,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     
     if (structure->isDictionary()) {
+        // As before this transition took the table: pin() cuts the chain to the dictionary, which nothing needs.
         PropertyTable* table = transition->ensurePropertyTable(vm);
         transition->pin(Locker { transition->m_lock }, vm, table);
     } else {
@@ -1249,8 +1284,11 @@ PropertyTableStatisticsExitLogger::~PropertyTableStatisticsExitLogger()
 
 PropertyTable* Structure::copyPropertyTableForPinning(VM& vm)
 {
-    if (PropertyTable* table = propertyTableOrNull())
+    if (PropertyTable* table = propertyTableOrNull()) {
+        if (isDictionary())
+            return takePropertyTableFromDictionary(vm);
         return PropertyTable::clone(vm, *table);
+    }
     bool setPropertyTable = false;
     return materializePropertyTable(vm, setPropertyTable);
 }
@@ -1751,11 +1789,12 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory());
     transition->m_transitionPropertyName = &brand->uid();
     transition->setTransitionPropertyAttributes(0);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->takePropertyTableFrom(vm, structure);
     transition->setMaxOffset(vm, structure->maxOffset());
     checkOffset(transition->maxOffset(), transition->inlineCapacity());
 
     if (structure->isDictionary()) {
+        // As before this transition took the table: pin() cuts the chain to the dictionary, which nothing needs.
         PropertyTable* table = transition->ensurePropertyTable(vm);
         transition->pin(Locker { transition->m_lock }, vm, table);
     } else {
