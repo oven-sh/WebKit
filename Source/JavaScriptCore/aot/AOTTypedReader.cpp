@@ -228,10 +228,6 @@ public:
         for (auto& keys : symbolKeysOfShapes)
             m_symbolKeys.appendVector(keys);
         for (auto& layout : m_program.layouts) {
-            if (isObjectLayout(layout.kind)) {
-                for (auto& field : layout.fields)
-                    m_program.hasFieldsWithSymbolKeys |= field.name && isConstantSymbol(m_program.string(field.name));
-            }
             if (layout.kind != LayoutKind::Instance)
                 continue;
             for (auto& field : layout.fields) {

@@ -920,9 +920,9 @@ CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument
     bool listsSymbols = keys == OwnKeys::ObjectGetOwnPropertySymbols;
 
     auto findLayoutKeyList = [&] {
-        if (m_program.hasFieldsWithSymbolKeys && (listsSymbols || keys == OwnKeys::ReflectOwnKeys)) {
-            m_out.jump(slowPath);
-            return;
+        if (listsSymbols || keys == OwnKeys::ReflectOwnKeys) {
+            LValue flags = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(structureOf(object.value()), m_out.constIntPtr(JSCell::indexingTypeAndMiscOffset()))));
+            orElse(Word32(m_out.testIsZero32(flags, m_out.constInt32(Structure::hasFieldsWithSymbolKeys))), slowPath);
         }
         if (listsSymbols) {
             orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties), slowPath);
@@ -1363,7 +1363,8 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
         }
         return first < values.size();
     };
-    if (!supertype || m_program.at(supertype).kind != LayoutKind::Record || !isUnseenSinceItsAllocation())
+    bool isFreshRecord = supertype && m_program.at(supertype).kind == LayoutKind::Record && isUnseenSinceItsAllocation();
+    if (!isFreshRecord && (value.arguments.size() < 2 || typeOf(value.arguments[0]).withoutPrimitives(Primitive::UndefinedOrNull).singleLayout()))
         return convertToDeclaredResult(callBuiltinFunction(value, builtinCallEffects(value)), anything, value, type);
     Rep rep = repOf(type);
     LBasicBlock slowPath = newBlockForGenericCall(value);
@@ -1374,7 +1375,10 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
     LValue entry = m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfPrototypeChangeCache())), offset);
     orElse(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, prototype))), prototype.value()), slowPath);
     orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, from))), loadField<Word32>(object, m_heaps.JSCell_structureID).value()), slowPath);
-    orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
+    if (isFreshRecord)
+        orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
+    else
+        orElse(equal(loadCellType(object), word32(FinalObjectType)), slowPath);
     didEmitWrite(writes);
     m_out.store32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to))), object.value(), m_heaps.JSCell_structureID);
     barrier(object);

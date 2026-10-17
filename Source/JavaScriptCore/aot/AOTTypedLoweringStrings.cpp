@@ -347,6 +347,34 @@ std::optional<unsigned> fieldReadAtConstantIndex(const Program& program, const F
     return static_cast<unsigned>(index);
 }
 
+bool isReadOfLastElement(const Program& program, const Function& function, const Value& value)
+{
+    auto& builtins = Builtins::singleton();
+    auto inlinedAs = [&](const Value& call) -> std::optional<InlineBuiltin> {
+        if (call.opcode != Opcode::CallBuiltin || !call.child(0))
+            return std::nullopt;
+        auto& implementation = builtins.at(call.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline)
+            return std::nullopt;
+        return implementation.inlined;
+    };
+    auto isInteger = [&](ValueID id, int64_t wanted) {
+        ValueID constant = program.constantOf(function, id);
+        return constant && function.at(constant).opcode == Opcode::Integer && function.at(constant).integer() == wanted;
+    };
+    if (value.opcode == Opcode::GetByVal) {
+        auto& index = function.at(value.child(1));
+        if (index.opcode != Opcode::Sub || !isInteger(index.child(1), 1))
+            return false;
+        auto& length = function.at(index.child(0));
+        return inlinedAs(length) == InlineBuiltin::ArrayLength && length.child(0) == value.child(0);
+    }
+    auto which = inlinedAs(value);
+    if (which == InlineBuiltin::ArrayPop)
+        return value.arguments.isEmpty();
+    return which == InlineBuiltin::ArrayAt && value.arguments.size() == 1 && isInteger(value.arguments[0], -1);
+}
+
 SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Function& function)
 {
     SplitsOnlyTakenApart splits;
@@ -370,12 +398,36 @@ SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Func
             if (!constant || function.at(constant).opcode != Opcode::String)
                 continue;
             auto text = program.string(function.at(constant).string());
-            if (text.size() == 1 && isASCII(text[0]))
-                splits.add(id.index(), SplitOnlyTakenApart { 0, false, text[0] });
+            if (!text.empty() && text.size() <= 16 && charactersAreAllASCII(byteCast<Latin1Character>(text)))
+                splits.add(id.index(), SplitOnlyTakenApart { 0, false, false, { }, 0, function.at(constant).string() });
         }
     }
     if (splits.isEmpty())
         return splits;
+    BitVector isUsed;
+    BitVector isUsedOtherThanToStep;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& user = function.at(id);
+            bool steps = user.opcode == Opcode::IteratorHasNext || user.opcode == Opcode::IteratorValue || user.opcode == Opcode::IteratorClose;
+            unsigned index = 0;
+            user.forEachChild([&](ValueID child) {
+                isUsed.set(child.index());
+                if (!steps || index++)
+                    isUsedOtherThanToStep.set(child.index());
+            });
+        }
+        if (block.terminator.value) {
+            isUsed.set(block.terminator.value.index());
+            isUsedOtherThanToStep.set(block.terminator.value.index());
+        }
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments) {
+                isUsed.set(argument.index());
+                isUsedOtherThanToStep.set(argument.index());
+            }
+        }
+    }
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& user = function.at(id);
@@ -383,11 +435,17 @@ SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Func
                 auto found = splits.find(child.index());
                 if (found == splits.end())
                     return;
+                ++found->value.numberOfUses;
                 if (auto field = fieldReadAtConstantIndex(program, function, user); field && child == user.child(0))
                     found->value.numberOfPositions = std::max(found->value.numberOfPositions, *field + 1);
                 else if (inlinedAs(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
                     found->value.countsAllSeparators = true;
-                else
+                else if (child == user.child(0) && !user.arguments.contains(child) && isReadOfLastElement(program, function, user)) {
+                    found->value.countsAllSeparators = true;
+                    found->value.isPopped |= inlinedAs(user) == InlineBuiltin::ArrayPop;
+                } else if (user.opcode == Opcode::IteratorOpen && isUsed.get(id.index()) && !isUsedOtherThanToStep.get(id.index()))
+                    found->value.iterator = id;
+                else if (user.opcode != Opcode::IteratorOpen || isUsed.get(id.index()))
                     splits.remove(found);
             });
         }
@@ -398,6 +456,9 @@ SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Func
                 splits.remove(argument.index());
         }
     }
+    splits.removeIf([](auto& entry) {
+        return (entry.value.isPopped || entry.value.iterator) && entry.value.numberOfUses != 1;
+    });
     return splits;
 }
 
@@ -411,6 +472,17 @@ std::optional<MatchProperty> matchPropertyRead(const Program& program, const Val
     if (equalSpans(name, asBytes("input"_s.span8())))
         return MatchProperty::Input;
     return std::nullopt;
+}
+
+ValueID matchBehindCasts(const Function& function, ValueID id)
+{
+    while (function.at(id).opcode == Opcode::Cast) {
+        CastReason reason = function.at(id).castReason();
+        if (reason != CastReason::NonNull && reason != CastReason::Flow && reason != CastReason::Upcast)
+            break;
+        id = function.at(id).child(0);
+    }
+    return id;
 }
 
 MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Function& function)
@@ -475,11 +547,25 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
         Opcode opcode = function.at(id).opcode;
         return opcode == Opcode::Null || opcode == Opcode::Undefined;
     };
+    BitVector isUsed;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            function.at(id).forEachChild([&](ValueID child) {
+                isUsed.set(child.index());
+            });
+        }
+        if (block.terminator.value)
+            isUsed.set(block.terminator.value.index());
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                isUsed.set(argument.index());
+        }
+    }
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& user = function.at(id);
             user.forEachChild([&](ValueID child) {
-                auto found = matches.find(child.index());
+                auto found = matches.find(matchBehindCasts(function, child).index());
                 if (found == matches.end())
                     return;
                 if (auto field = fieldReadAtConstantIndex(program, function, user); field && child == user.child(0)) {
@@ -487,6 +573,10 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
                     return;
                 }
                 if (user.opcode == Opcode::ToBoolean || user.opcode == Opcode::IsUndefinedOrNull || matchPropertyRead(program, user))
+                    return;
+                if (user.opcode == Opcode::Cast && matchBehindCasts(function, id) != id && !(program.at(user.type).primitives & ~Primitive::UndefinedOrNull))
+                    return;
+                if (user.opcode == Opcode::IteratorOpen && !isUsed.get(id.index()))
                     return;
                 if ((user.opcode == Opcode::StrictEq || user.opcode == Opcode::Eq) && isNil(user.child(user.child(0) == child)))
                     return;
@@ -496,10 +586,10 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
             });
         }
         if (block.terminator.value)
-            matches.remove(block.terminator.value.index());
+            matches.remove(matchBehindCasts(function, block.terminator.value).index());
         for (auto& target : block.terminator.targets) {
             for (ValueID argument : target.arguments)
-                matches.remove(argument.index());
+                matches.remove(matchBehindCasts(function, argument).index());
         }
     }
     return matches;
@@ -508,7 +598,7 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
 bool Lowering::fieldMayBeAbsent(ValueID id) const
 {
     auto& value = m_function.at(id);
-    return value.opcode == Opcode::GetByVal && *fieldReadAtConstantIndex(m_program, m_function, value) && m_program.at(value.type).primitives & Primitive::Undefined;
+    return fieldReadAtConstantIndex(m_program, m_function, value).value_or(0) && m_program.at(value.type).primitives & Primitive::Undefined;
 }
 
 void Lowering::findSplitsOnlyTakenApart()
@@ -523,13 +613,54 @@ std::optional<Operand> Lowering::lowerPropertyOfMatch(ValueID result, const Valu
 {
     if (m_matchesInFrame.isEmpty())
         return std::nullopt;
-    auto found = m_matchesInFrame.find(value.child(0).index());
+    auto found = m_matchesInFrame.find(matchBehindCasts(m_function, value.child(0)).index());
     if (found == m_matchesInFrame.end())
         return std::nullopt;
     nonNullish(value.child(0), value.string());
     if (*matchPropertyRead(m_program, value) == MatchProperty::Index)
         return ensure(found->value->starts[0], Type::integer(Range::length()), typeOf(result));
     return ensure(found->value->subject.string, m_program.at(m_program.types.string), typeOf(result));
+}
+
+Integer Lowering::findSeparators(const SeparatedString& separated, Integer from, uint32_t wanted)
+{
+    auto text = m_program.string(separated.separator);
+    Word32 separator = word32(text.size() == 1 ? text[0] : separated.separator.index());
+    Characters characters = charactersOf(separated.subject);
+    Word32 length = low32(sub(characters.length, from));
+    Integer positions(separated.slot);
+    Integer found = zeroExtended(either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
+        Integer data(offsetBy(characters.data, from, 0).value());
+        if (text.size() == 1)
+            return AOT_TYPED_OPERATION(FindSeparators8, data, length, separator, positions, word32(wanted));
+        return AOT_TYPED_OPERATION(FindLongSeparators8, data, length, separator, positions, word32(wanted));
+    }, [&] {
+        Integer data(offsetBy(characters.data, from, 1).value());
+        if (text.size() == 1)
+            return AOT_TYPED_OPERATION(FindSeparators16, data, length, separator, positions, word32(wanted));
+        return AOT_TYPED_OPERATION(FindLongSeparators16, data, length, separator, positions, word32(wanted));
+    }));
+    ensureStillAliveHere(characters.owner);
+    return found;
+}
+
+std::optional<Operand> Lowering::lowerStepOfIteratedSplit(ValueID result, const Value& value)
+{
+    if (m_splitsByIterator.isEmpty())
+        return std::nullopt;
+    auto split = m_splitsByIterator.find(value.child(0).index());
+    if (split == m_splitsByIterator.end())
+        return std::nullopt;
+    const SeparatedString& separated = *m_separatedStrings.find(split->value)->value;
+    Integer length = separated.length;
+    Integer from(m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), separated.nextPiece));
+    if (value.opcode == Opcode::IteratorHasNext)
+        return Operand(lessThanOrEqual(from, length));
+    Integer isFound = findSeparators(separated, from, 1);
+    Integer position = add(from, zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, separated.slot, 0)))));
+    Integer to = select(isNotZero(isFound), position, length);
+    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), separated.nextPiece, add(to, select(isNotZero(isFound), integer(separated.separatorLength), integer(1))).value());
+    return partOfSubject(result, value, UINT_MAX, separated.subject, length, from, to, Word32());
 }
 
 std::optional<Operand> Lowering::lowerSplitOnlyTakenApart(ValueID result, const Value& value, CellPointer string)
@@ -542,20 +673,20 @@ std::optional<Operand> Lowering::lowerSplitOnlyTakenApart(ValueID result, const 
     SeparatedString separated;
     separated.subject = stringReceiver(string);
     separated.subject.id = value.child(0);
-    separated.characters = charactersOf(separated.subject);
+    separated.length = stringLength(separated.subject);
     m_context.emitsCalls = true;
-    LValue positions = m_out.lockedStackSlot(std::max<size_t>(WTF::roundUpToMultipleOf<sizeof(uint64_t)>(numberOfPositions * sizeof(uint32_t)), sizeof(uint64_t)));
-    Word32 separator = word32(taken->value.separator);
-    Integer data(separated.characters.data.value());
-    Word32 length = low32(separated.characters.length);
-    separated.numberOfSeparators = zeroExtended(either<Word32>(hasBits(separated.characters.flags, StringImpl::flagIs8Bit()), [&] {
-        return AOT_TYPED_OPERATION(FindSeparators8, data, length, separator, Integer(positions), word32(wanted));
-    }, [&] {
-        return AOT_TYPED_OPERATION(FindSeparators16, data, length, separator, Integer(positions), word32(wanted));
-    }));
-    for (unsigned i = 0; i < numberOfPositions; ++i)
-        separated.positions.append(zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, positions, i * sizeof(uint32_t))))));
-    ensureStillAliveHere(separated.characters.owner);
+    separated.slot = m_out.lockedStackSlot(WTF::roundUpToMultipleOf<sizeof(uint64_t)>((numberOfPositions + 1) * sizeof(uint32_t)));
+    separated.separator = taken->value.separator;
+    separated.separatorLength = m_program.string(taken->value.separator).size();
+    if (ValueID iterator = taken->value.iterator) {
+        separated.nextPiece = m_proc.addVariable(Int64);
+        m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), separated.nextPiece, m_out.int64Zero);
+        m_splitsByIterator.set(iterator.index(), result.index());
+    } else {
+        separated.numberOfSeparators = findSeparators(separated, integer(0), wanted);
+        for (unsigned i = 0; i < numberOfPositions + taken->value.countsAllSeparators; ++i)
+            separated.positions.append(zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, separated.slot, i * sizeof(uint32_t))))));
+    }
     m_separatedStrings.set(result.index(), makeUniqueWithoutFastMallocCheck<SeparatedString>(WTF::move(separated)));
     return Operand(value.rep, nullptr);
 }
@@ -565,29 +696,33 @@ std::optional<Operand> Lowering::lowerFieldOfSeparatedString(ValueID result, con
     if (m_separatedStrings.isEmpty() && m_matchesInFrame.isEmpty())
         return std::nullopt;
     unsigned field = fieldReadAtConstantIndex(m_program, m_function, value).value_or(0);
-    if (auto found = m_matchesInFrame.find(value.child(0).index()); found != m_matchesInFrame.end()) {
+    if (auto found = m_matchesInFrame.find(matchBehindCasts(m_function, value.child(0)).index()); found != m_matchesInFrame.end()) {
         const MatchInFrame& match = *found->value;
         nonNullish(value.child(0), { });
         Word32 isPresent = field ? logicalAnd(lessThanOrEqual(integer(field), match.numberOfGroups), greaterThanOrEqual(match.starts[field], integer(0))) : Word32();
-        return partOfSubject(result, value, field, match.subject, stringLength(match.subject), match.starts[field], match.ends[field], isPresent, std::nullopt);
+        return partOfSubject(result, value, field, match.subject, stringLength(match.subject), match.starts[field], match.ends[field], isPresent);
     }
     auto found = m_separatedStrings.find(value.child(0).index());
     if (found == m_separatedStrings.end())
         return std::nullopt;
     const SeparatedString& separated = *found->value;
-    Integer length = separated.characters.length;
-    Integer from = field ? add(separated.positions[field - 1], integer(1)) : integer(0);
+    Integer length = separated.length;
+    if (isReadOfLastElement(m_program, m_function, value)) {
+        Integer from = select(isNotZero(separated.numberOfSeparators), add(separated.positions.last(), integer(separated.separatorLength)), integer(0));
+        return partOfSubject(result, value, UINT8_MAX, separated.subject, length, from, length, Word32());
+    }
+    Integer from = field ? add(separated.positions[field - 1], integer(separated.separatorLength)) : integer(0);
     Integer to = select(lessThan(integer(field), separated.numberOfSeparators), separated.positions[field], length);
     Word32 isPresent = field ? lessThanOrEqual(integer(field), separated.numberOfSeparators) : Word32();
-    return partOfSubject(result, value, field, separated.subject, length, from, to, isPresent, separated.characters);
+    return partOfSubject(result, value, field, separated.subject, length, from, to, isPresent);
 }
 
-Operand Lowering::partOfSubject(ValueID result, const Value& value, unsigned field, const StringReceiver& subject, Integer length, Integer from, Integer to, Word32 isPresent, std::optional<Characters> characters)
+Operand Lowering::partOfSubject(ValueID result, const Value& value, unsigned field, const StringReceiver& subject, Integer length, Integer from, Integer to, Word32 isPresent)
 {
     auto& type = typeOf(result);
     auto& stringType = m_program.at(m_program.types.string);
     bool mayBeAbsent = fieldMayBeAbsent(result);
-    if (field && !mayBeAbsent) {
+    if (isPresent.value() && !mayBeAbsent) {
         LBasicBlock isAbsent = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(isPresent.value(), usually(continuation), rarely(isAbsent));
@@ -597,13 +732,13 @@ Operand Lowering::partOfSubject(ValueID result, const Value& value, unsigned fie
         m_out.appendTo(continuation);
     }
     if (isOnMainPath()) {
-        (mayBeAbsent ? m_optionalSubstrings : m_substrings).set(result.index(), Substring { subject, length, from, to, mayBeAbsent ? isPresent : Word32(), characters });
+        (mayBeAbsent ? m_optionalSubstrings : m_substrings).set(result.index(), Substring { subject, length, from, to, mayBeAbsent ? isPresent : Word32() });
         if (m_substringsOnlyInspected.get(result.index()))
             return Operand(value.rep, nullptr);
     }
     auto make = [&] {
         uint64_t key = static_cast<uint64_t>(value.child(0).index()) << 8 | field;
-        if (mayBeAbsent || !isOnMainPath())
+        if (mayBeAbsent || !isOnMainPath() || field == UINT_MAX)
             return makeSubstring(subject, length, from, to);
         if (auto made = m_fieldsMadeInBlock.find(key); made != m_fieldsMadeInBlock.end() && made->value.first == m_currentBlockID.index())
             return CellPointer(made->value.second);
@@ -624,13 +759,15 @@ std::optional<Operand> Lowering::lowerLengthOfSeparatedString(ValueID result, co
 {
     if ((m_separatedStrings.isEmpty() && m_matchesInFrame.isEmpty()) || !value.child(0))
         return std::nullopt;
-    if (auto match = m_matchesInFrame.find(value.child(0).index()); match != m_matchesInFrame.end()) {
+    if (auto match = m_matchesInFrame.find(matchBehindCasts(m_function, value.child(0)).index()); match != m_matchesInFrame.end()) {
         nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
         return ensure(add(match->value->numberOfGroups, integer(1)), Type::integer(Range::length()), typeOf(result));
     }
     auto found = m_separatedStrings.find(value.child(0).index());
     if (found == m_separatedStrings.end())
         return std::nullopt;
+    if (isReadOfLastElement(m_program, m_function, value))
+        return lowerFieldOfSeparatedString(result, value);
     return ensure(add(found->value->numberOfSeparators, integer(1)), Type::integer(Range::length()), typeOf(result));
 }
 
@@ -651,7 +788,9 @@ void Lowering::findSubstringsOnlyInspected()
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
             auto& value = m_function.at(id);
-            bool isField = value.opcode == Opcode::GetByVal && (m_splitsOnlyTakenApart.contains(value.child(0).index()) || m_matchesOnlyTakenApart.contains(value.child(0).index()));
+            bool isField = value.opcode == Opcode::GetByVal && (m_splitsOnlyTakenApart.contains(value.child(0).index()) || m_matchesOnlyTakenApart.contains(matchBehindCasts(m_function, value.child(0)).index()));
+            isField |= value.opcode == Opcode::CallBuiltin && value.child(0) && m_splitsOnlyTakenApart.contains(value.child(0).index()) && isReadOfLastElement(m_program, m_function, value);
+            isField |= value.opcode == Opcode::IteratorValue && m_function.at(value.child(0)).opcode == Opcode::IteratorOpen && m_splitsOnlyTakenApart.contains(m_function.at(value.child(0)).child(0).index());
             if ((isField || (value.child(0) && isSlice(inlinedAs(value)))) && holdsCells(value.rep))
                 isPart.set(id.index());
         }

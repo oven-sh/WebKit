@@ -178,8 +178,15 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorSetPrototypeOf, (JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     bool shouldThrowIfCantSet = true;
+#if ENABLE(AOT)
+    Structure* structureBefore = object->structure();
+#endif
     bool didSetPrototype = object->setPrototype(vm, globalObject, protoValue, shouldThrowIfCantSet);
     EXCEPTION_ASSERT_UNUSED(didSetPrototype, scope.exception() || didSetPrototype);
+#if ENABLE(AOT)
+    if (didSetPrototype && object->type() == FinalObjectType && protoValue.isObject() && structureBefore->hasMonoProto() && object->structure() != structureBefore)
+        vm.didChangePrototypeOfFinalObject(structureBefore, asObject(protoValue), object->structure());
+#endif
     return JSValue::encode(objectValue);
 }
 

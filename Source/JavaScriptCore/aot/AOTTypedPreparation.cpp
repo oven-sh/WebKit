@@ -3671,10 +3671,14 @@ static void outlineBuiltinCalls(Program& program)
     }
     enum : unsigned { IsOutlined, OccursOnce, IsInHotFunction, IsGetterOrSetter, IsOperation, HasOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsArithmetic, IsAllocation, IsNearHandlers, IsInLoop, IsUnchanged, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
+    uint64_t numberOfSplitsTakenApart = 0;
+    uint64_t numberOfMatchesTakenApart = 0;
     for (unsigned i = 0; Options::verboseAOTCompilation() && i < count; ++i) {
         auto& function = std::as_const(program).functions[i];
         if (function.blocks.isEmpty())
             continue;
+        numberOfSplitsTakenApart += findSplitsOnlyTakenApart(program, function).size();
+        numberOfMatchesTakenApart += findMatchesOnlyTakenApart(program, function).size();
         BitVector isSite;
         BitVector isSharedSite;
         for (auto& site : sites[i]) {
@@ -3810,8 +3814,10 @@ static void outlineBuiltinCalls(Program& program)
             value.arguments = WTF::move(passed);
         }
     });
-    if (Options::verboseAOTCompilation())
+    if (Options::verboseAOTCompilation()) {
+        dataLogLn("AOT: ", numberOfSplitsTakenApart, " results of split and ", numberOfMatchesTakenApart, " of exec and match are only taken apart and never made");
         printOutliningStatistics("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[IsOutlined] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is hot"_s, numbers[IsInHotFunction] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[HasOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsAllocation] }, { "beside handlers"_s, numbers[IsNearHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsUnchanged] } });
+    }
     for (size_t k = 0; k < bodies.size(); ++k)
         program.staticallyHotFunctions.set(program.functions.size() + k);
     program.functions.appendVector(WTF::move(bodies));

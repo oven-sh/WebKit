@@ -1237,7 +1237,6 @@ public:
     BitVector extendedGlobals;
     BitVector prototypePropertyNames;
     BitVector methodFieldNames;
-    bool hasFieldsWithSymbolKeys { false };
     BitVector lazyClosureNames;
     BitVector possibleAccessorNames;
     void findPossibleAccessorNames();

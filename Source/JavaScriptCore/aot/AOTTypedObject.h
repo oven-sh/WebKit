@@ -1521,7 +1521,8 @@ struct State {
     bool isPrivate(const FieldData&) const;
     bool hasSymbolKey(const FieldData& field) const { return data.stringFacts(field.name) & Data::stringIsConstantSymbol; }
     bool hasStringKey(const FieldData& field) const { return !isPrivate(field) && !hasSymbolKey(field); }
-    bool hasFieldsWithSymbolKeys(const LayoutData&);
+    bool hasFieldsWithSymbolKeys(const LayoutData& layout) const { return layout.hasFieldsWithSymbolKeys(); }
+    bool isPublicSymbolThatKeysNoField(UniquedStringImpl* name) const { return name->isSymbol() && !static_cast<SymbolImpl*>(name)->isPrivate() && !fieldNameIndex(name); }
     bool hasPositionAmongKeys(const LayoutData& layout, UniquedStringImpl* name) { return !name->isSymbol() || (!static_cast<SymbolImpl*>(name)->isPrivate() && hasFieldsWithSymbolKeys(layout)); }
     bool findPrivateMethod(VM&, const LayoutData&, UniquedStringImpl*, Object::PrivateElement&);
     void addPrivateMethods(JSGlobalObject*, JSObject*, const LayoutData&);
@@ -2117,7 +2118,6 @@ private:
         UncheckedKeyHashMap<uint32_t, JSCellButterfly*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keyLists;
         UncheckedKeyHashMap<uint32_t, FixedVector<FieldAsProperty>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> propertyLists;
         UncheckedKeyHashMap<uint32_t, FixedVector<FieldAsProperty>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> propertyListsWithSymbolKeys;
-        std::optional<bool> hasFieldsWithSymbolKeys;
         UncheckedKeyHashMap<uint32_t, std::unique_ptr<KeysAsJSON>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keysAsJSON;
         UncheckedKeyHashMap<uint32_t, PlainCopyPlan, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> plainCopyPlans;
         UncheckedKeyHashMap<uint32_t, Vector<std::unique_ptr<PlainCopyExcludingPlan>, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> plainCopyExcludingPlans;
@@ -2211,6 +2211,8 @@ private:
         Vector<uint8_t> body;
     };
     std::array<InitialObjectState, 16> m_initialObjectStatesByNewTarget;
+    void shareWithStub(VM&, const InitialObjectState&);
+    void forgetInitialObjectStates();
     HeapVersion m_initialObjectStatesVersion { 0 };
     JSFunction* m_liveBindingGetter { nullptr };
     uint64_t m_asyncGeneratorStubEntryResults[16] { UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX };

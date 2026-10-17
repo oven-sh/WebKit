@@ -1866,20 +1866,26 @@ void planStringAppends(Program& program, Vector<String>&)
         return any;
     };
 
-    BitVector stringReturnCandidates(count);
+    Vector<unsigned> undecidedCandidates;
     collectInParallel([&](unsigned i) {
         return mayReturnString(program, FunctionID(i), functions[i]);
     }, [&](unsigned i) {
-        stringReturnCandidates.set(i);
+        undecidedCandidates.append(i);
     });
     BitVector returnsStrings(count);
-    for (unsigned round = 0; round < maxRounds; ++round) {
-        bool any = collectInParallel([&](unsigned i) {
-            return stringReturnCandidates.get(i) && !returnsStrings.get(i) && returnsOnlyStrings(program, functions[i], returnsStrings);
-        }, [&](unsigned i) {
-            returnsStrings.set(i);
+    for (unsigned round = 0; round < maxRounds && !undecidedCandidates.isEmpty(); ++round) {
+        forEachIndexInParallel(undecidedCandidates.size(), [&](unsigned k) {
+            unsigned i = undecidedCandidates[k];
+            results[i] = returnsOnlyStrings(program, functions[i], returnsStrings);
         });
-        if (!any)
+        size_t numberBefore = undecidedCandidates.size();
+        undecidedCandidates.removeAllMatching([&](unsigned i) {
+            if (!results[i])
+                return false;
+            returnsStrings.set(i);
+            return true;
+        });
+        if (undecidedCandidates.size() == numberBefore)
             break;
     }
 
@@ -1887,6 +1893,9 @@ void planStringAppends(Program& program, Vector<String>&)
     BitVector mayAppend(count);
     Vector<std::unique_ptr<StringAppendPlanner>> plans(count);
     forEachIndexInParallel(count, [&](unsigned i) {
+        static constexpr OpcodeSet concatenations { Opcode::Strcat, Opcode::Add };
+        if (!functions.mayContain(i, concatenations))
+            return;
         auto& function = functions[i];
         if (function.blocks.isEmpty() || !program.hasCode(FunctionID(i)) || !mayBenefit(program, function, mayAppend, escapeHTMLAliases) || maySuspend(program, function))
             return;

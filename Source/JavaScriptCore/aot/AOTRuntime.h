@@ -174,6 +174,8 @@ struct StringAppender;
     v(RawTypedPutExtra) \
     v(RawTypedGetExtra) \
     v(RawTypedHasOwnPropertyByName) \
+    v(RawTypedToString) \
+    v(RawTypedBitNot) \
     v(RawTypedConstruct) \
     v(RawTypedCloneObject) \
     v(RawTypedCloneObjectAndExtend) \
@@ -1293,6 +1295,26 @@ struct Instance {
     static_assert(hasOneBitSet(numberOfThisAllocations) && hasOneBitSet(slotsPerThisAllocation * sizeof(Slot)));
     ZeroedStorage<Slot[numberOfThisAllocations * slotsPerThisAllocation]> thisAllocations;
     bool hasThisAllocations;
+    struct TypedThisAllocation {
+        JSCell* newTarget;
+        JSCell* constructor;
+        void* allocator;
+        const void* body;
+        uint64_t header;
+        uint32_t epoch;
+        uint32_t bodySize;
+        uint64_t padding[2];
+    };
+    static constexpr unsigned numberOfTypedThisAllocations = 16;
+    static_assert(sizeof(TypedThisAllocation) == 64);
+    ZeroedStorage<TypedThisAllocation[numberOfTypedThisAllocations]> typedThisAllocations;
+    bool hasTypedThisAllocations;
+    static constexpr ptrdiff_t offsetOfTypedThisAllocations() { return OBJECT_OFFSETOF(Instance, typedThisAllocations); }
+    void forgetTypedThisAllocations()
+    {
+        if (std::exchange(hasTypedThisAllocations, false))
+            zeroSpan(std::span { typedThisAllocations.get() });
+    }
     static constexpr uint16_t maxSymbolKeyedRuns = 256;
     static constexpr uint16_t maxCopiedNameRuns = 1024;
     uint16_t remainingSymbolKeyedRuns;

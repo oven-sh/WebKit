@@ -2476,6 +2476,24 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
         invalidateEpochCaches();
 }
 
+#if ENABLE(AOT)
+void VM::didChangePrototypeOfFinalObject(Structure* before, JSObject* prototype, Structure* after)
+{
+    uint32_t idBefore = before->id().bits();
+    for (AOT::Instance* instance : m_aotInstances) {
+        auto& entry = instance->prototypeChangeCache[AOT::Instance::prototypeChangeCacheIndex(std::bit_cast<uintptr_t>(prototype))];
+        if (entry.prototype == prototype && entry.from == idBefore)
+            continue;
+        bool structureDecidesOutcome = before->isStructureExtensible() && !before->mayBePrototype() && !before->hasBeenDictionary() && !hasIndexedProperties(before->indexingType())
+            && !before->typeInfo().wouldHaveFixedProperties() && !before->isImmutablePrototypeExoticObject() && !before->inheritorsMayOverrideReadOnlyProperties();
+        if (!structureDecidesOutcome)
+            return;
+        entry = { prototype, idBefore, after->id().bits() };
+        instance->prototypeChangeCacheIsDirty = true;
+    }
+}
+#endif
+
 bool VM::mayHaveCachesDependingOnPrototype(JSObject* object)
 {
 #if ENABLE(AOT)

@@ -7023,7 +7023,10 @@ private:
                 appendFieldTypes(m_program.variables[number].type ? m_program.variables[number].type : m_program.types.anything, m_program.variables[number].type, 0, 0);
         }
         uint32_t discriminant = layout.discriminant == UINT16_MAX ? LayoutData::noBase : fieldNumber[layout.discriminant];
-        bool hasRareData = layout.sizeWithSpecializationCapacity != layout.size || !specializations.isEmpty() || layout.extensionSize || discriminant != LayoutData::noBase || fieldsByNameOffset || literalsWithoutFieldOffset;
+        bool hasFieldsWithSymbolKeys = false;
+        for (unsigned i = 0; i < layout.fields.size() && isObject; ++i)
+            hasFieldsWithSymbolKeys |= fieldNumber[i] != UINT32_MAX && layout.fields[i].name && isConstantSymbol(m_program.string(layout.fields[i].name));
+        bool hasRareData = hasFieldsWithSymbolKeys || layout.sizeWithSpecializationCapacity != layout.size || !specializations.isEmpty() || layout.extensionSize || discriminant != LayoutData::noBase || fieldsByNameOffset || literalsWithoutFieldOffset;
         bool hasMessageData = typeStringsOffset || keepsDeclarationLocation(layout);
         uint32_t sizeBeforeLayoutData = (isClass ? sizeof(ClassData) : 0) + (hasMessageData ? sizeof(MessageLayoutData) : 0) + (hasRareData ? sizeof(RareLayoutData) : 0);
         uint32_t offset = allocate(sizeBeforeLayoutData + sizeof(LayoutData) + (numberOfFields + variables.size()) * sizeof(FieldData) + methods.sizeInBytes(), alignof(LayoutData)) + sizeBeforeLayoutData;
@@ -7038,7 +7041,7 @@ private:
         if (hasMessageData)
             data.messageData() = { typeStringsOffset, keepsDeclarationLocation(layout) ? layout.declaredPath.index() : UINT32_MAX, keepsDeclarationLocation(layout) ? layout.declaredLine : 0 };
         if (hasRareData)
-            data.rareData() = { layout.sizeWithSpecializationCapacity, static_cast<uint32_t>(specializations.size()), specializationsOffset, layout.extensionSize, discriminant, fieldsByNameOffset, literalsWithoutFieldOffset };
+            data.rareData() = { layout.sizeWithSpecializationCapacity, static_cast<uint32_t>(specializations.size()), hasFieldsWithSymbolKeys, specializationsOffset, layout.extensionSize, discriminant, fieldsByNameOffset, literalsWithoutFieldOffset };
         data.mayBeFrozen = layout.mayBeFrozen || layout.isImmutableAfterAllocation;
         data.mayDespecialize = layout.mayDespecialize;
         data.hasFixedLayout = layout.hasFixedLayout;

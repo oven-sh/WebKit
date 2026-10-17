@@ -2765,10 +2765,20 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::Strcat:
         return convert(lowerStrcat(value), type, value.rep);
     case Opcode::IteratorOpen:
+        if (m_separatedStrings.contains(value.child(0).index()))
+            return placeholder(value.rep);
+        if (m_matchesInFrame.contains(matchBehindCasts(m_function, value.child(0)).index())) {
+            nonNullish(value.child(0), { });
+            return placeholder(value.rep);
+        }
         return lowerIteratorOpen(id, value);
     case Opcode::IteratorHasNext:
+        if (auto hasNext = lowerStepOfIteratedSplit(id, value))
+            return *hasNext;
         return lowerIteratorHasNext(value);
     case Opcode::IteratorValue:
+        if (auto piece = lowerStepOfIteratedSplit(id, value))
+            return *piece;
         return lowerIteratorValue(id, value);
     case Opcode::IteratorClose:
         lowerIteratorClose(value);

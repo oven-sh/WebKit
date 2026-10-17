@@ -1072,6 +1072,9 @@ public:
     };
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent);
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty = nullptr);
+#if ENABLE(AOT)
+    void didChangePrototypeOfFinalObject(Structure* before, JSObject* prototype, Structure* after);
+#endif
     JS_EXPORT_PRIVATE bool mayHaveCachesDependingOnPrototype(JSObject*);
     void invalidateEpochCaches();
 

@@ -480,6 +480,8 @@
     v(operationAOTTypedStringFindCharacter8) \
     v(operationAOTTypedFindSeparators8) \
     v(operationAOTTypedFindSeparators16) \
+    v(operationAOTTypedFindLongSeparators8) \
+    v(operationAOTTypedFindLongSeparators16) \
     v(operationAOTTypedStringUTF8Length8) \
     v(operationAOTTypedStringFind8) \
     v(operationAOTTypedStringReverseFindCharacter8) \

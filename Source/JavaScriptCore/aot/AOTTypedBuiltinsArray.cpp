@@ -667,7 +667,7 @@ std::optional<Lowering::CountedLoop> Lowering::countedLoopContaining(BlockID blo
         result.bound = test.child(1);
         if (!typeOf(result.bound).isInteger())
             return std::nullopt;
-    } else if (test.opcode == Opcode::IteratorHasNext && keyedAccessOf(m_program, m_function, test) == KeyedAccess::Array) {
+    } else if (test.opcode == Opcode::IteratorHasNext && keyedAccessOf(m_program, m_function, test) == KeyedAccess::Array && !isLazilyFetched(m_function.at(test.child(0)).child(0))) {
         result.counter = test.child(1);
         result.iteratedArray = m_function.at(test.child(0)).child(0);
     } else

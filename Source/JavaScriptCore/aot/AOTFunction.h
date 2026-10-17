@@ -193,6 +193,7 @@ struct HostClassCachedGetter {
 JS_EXPORT_PRIVATE void setHostClassCachedGetters(std::span<const HostClassCachedGetter>);
 static constexpr unsigned maxNumberOfHostClasses = 256;
 static constexpr unsigned firstDOMConstructorHostClass = 128;
+static constexpr unsigned bunRequestHostClass = firstDOMConstructorHostClass - 1;
 JS_EXPORT_PRIVATE void didCreateHostClassStructure(JSGlobalObject*, unsigned number, Structure*);
 struct HostClassEntryPoints {
     using NewResponse = EncodedJSValue (*)(JSGlobalObject*, EncodedJSValue bodyOrValue, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, unsigned headerCount, const EncodedJSValue* headerNamesAndValues);

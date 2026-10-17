@@ -91,7 +91,6 @@
         Integer from;
         Integer to;
         Word32 isPresent { };
-        std::optional<Characters> charactersOfBase { };
     };
     UncheckedKeyHashMap<uint32_t, Substring, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_substrings;
     UncheckedKeyHashMap<uint32_t, Substring, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_optionalSubstrings;
@@ -102,10 +101,17 @@
     std::optional<Word32> isOptionalSubstringEqualTo(ValueID, ValueID constant);
     struct SeparatedString {
         StringReceiver subject;
-        Characters characters;
+        Integer length;
         Integer numberOfSeparators;
         Vector<Integer, 8> positions;
+        unsigned separatorLength { 1 };
+        StringID separator { };
+        LValue slot { nullptr };
+        B3::Variable* nextPiece { nullptr };
     };
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_splitsByIterator;
+    Integer findSeparators(const SeparatedString&, Integer from, uint32_t wanted);
+    std::optional<Operand> lowerStepOfIteratedSplit(ValueID, const Value&);
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<SeparatedString>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_separatedStrings;
     UncheckedKeyHashMap<uint64_t, std::pair<unsigned, LValue>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fieldsMadeInBlock;
     struct MatchInFrame {
@@ -118,7 +124,7 @@
     MatchesOnlyTakenApart m_matchesOnlyTakenApart;
     std::optional<Operand> lowerMatchOnlyTakenApart(ValueID, const Value&);
     std::optional<Operand> lowerPropertyOfMatch(ValueID, const Value&);
-    Operand partOfSubject(ValueID, const Value&, unsigned field, const StringReceiver& subject, Integer length, Integer from, Integer to, Word32 isPresent, std::optional<Characters>);
+    Operand partOfSubject(ValueID, const Value&, unsigned field, const StringReceiver& subject, Integer length, Integer from, Integer to, Word32 isPresent);
     SplitsOnlyTakenApart m_splitsOnlyTakenApart;
     void findSplitsOnlyTakenApart();
     bool fieldMayBeAbsent(ValueID) const;

@@ -38,10 +38,47 @@ static ALWAYS_INLINE size_t findSeparators(const CharacterType* characters, uint
             continue;
         if (count < wanted)
             positions[count] = i;
+        if (countsAll)
+            positions[wanted] = i;
         if (++count >= wanted && !countsAll)
             break;
     }
     return count;
+}
+
+template<typename CharacterType>
+static ALWAYS_INLINE size_t findLongSeparators(const CharacterType* characters, uint32_t length, std::span<const uint8_t> text, uint32_t* positions, uint32_t wanted)
+{
+    bool countsAll = wanted >> 31;
+    wanted &= INT32_MAX;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i + text.size() <= length;) {
+        bool isHere = true;
+        for (size_t k = 0; k < text.size() && isHere; ++k)
+            isHere = characters[i + k] == text[k];
+        if (!isHere) {
+            ++i;
+            continue;
+        }
+        if (count < wanted)
+            positions[count] = i;
+        if (countsAll)
+            positions[wanted] = i;
+        if (++count >= wanted && !countsAll)
+            break;
+        i += text.size();
+    }
+    return count;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindLongSeparators8, size_t, (Instance* instance, uint64_t characters, uint32_t length, uint32_t text, uint64_t positions, uint32_t wanted))
+{
+    return findLongSeparators(std::bit_cast<const Latin1Character*>(characters), length, instance->typed->data.stringInImage(text), std::bit_cast<uint32_t*>(positions), wanted);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindLongSeparators16, size_t, (Instance* instance, uint64_t characters, uint32_t length, uint32_t text, uint64_t positions, uint32_t wanted))
+{
+    return findLongSeparators(std::bit_cast<const char16_t*>(characters), length, instance->typed->data.stringInImage(text), std::bit_cast<uint32_t*>(positions), wanted);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindSeparators8, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted))
@@ -1139,7 +1176,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             length = whole->lengthOfBase;
         }
         if (isOnMainPath()) {
-            m_substrings.set(result.index(), Substring { receiver, length, from, to, Word32(), whole ? whole->charactersOfBase : std::nullopt });
+            m_substrings.set(result.index(), Substring { receiver, length, from, to });
             if (m_substringsOnlyInspected.get(result.index()))
                 return Operand(value.rep, nullptr);
         }

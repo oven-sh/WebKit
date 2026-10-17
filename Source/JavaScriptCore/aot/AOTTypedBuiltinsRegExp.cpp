@@ -247,6 +247,45 @@ static JSString* tryReplaceEveryAtom(JSGlobalObject* globalObject, VM& vm, JSStr
     if (found == notFound)
         return string;
 
+    if (source->is8Bit() && atom.is8Bit() && replacementText.is8Bit()) {
+        auto characters = source->span8();
+        auto inserted = replacementText.span8();
+        Latin1Character first = atom.span8()[0];
+        Vector<unsigned, 32> places;
+        do {
+            if (!places.tryAppend(static_cast<unsigned>(found))) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return nullptr;
+            }
+            found = atomLength == 1 ? WTF::find(characters, first, found + 1) : source->find(atom, found + atomLength);
+        } while (found != notFound);
+
+        CheckedUint32 length = places.size();
+        length *= inserted.size();
+        length += sourceLength - places.size() * atomLength;
+        if (length.hasOverflowed() || length.value() > String::MaxLength) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        std::span<Latin1Character> buffer;
+        auto impl = StringImpl::tryCreateUninitialized(length.value(), buffer);
+        if (!impl) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        unsigned copied = 0;
+        for (unsigned place : places) {
+            StringImpl::copyCharacters(buffer, characters.subspan(copied, place - copied));
+            skip(buffer, place - copied);
+            StringImpl::copyCharacters(buffer, inserted);
+            skip(buffer, inserted.size());
+            copied = place + atomLength;
+        }
+        StringImpl::copyCharacters(buffer, characters.subspan(copied));
+        globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult { places.last(), places.last() + atomLength }, false);
+        return jsString(vm, String { impl.releaseNonNull() });
+    }
+
     Vector<Range<int32_t>, 16> sourceRanges;
     unsigned end = 0;
     size_t last = found;

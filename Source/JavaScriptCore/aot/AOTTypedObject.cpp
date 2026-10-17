@@ -97,6 +97,8 @@ Structure* Object::createStructure(VM& vm, Instance& instance, JSValue prototype
     structure->setAOTInstance(&instance);
     structure->setMayBePrototype(true);
     structure->setHasImmutableShape(true);
+    if (layout->hasFieldsWithSymbolKeys())
+        structure->markingStampAndFlags() |= Structure::hasFieldsWithSymbolKeys;
     return structure;
 }
 
@@ -2016,7 +2018,7 @@ void State::didChangeDescendantPrototype(VM& vm, JSObject* changed, UniquedStrin
     m_modifiedDescendantPrototypes.add(changed);
     m_descendantPrototypes.clear();
     m_classPrototypeByDescendantPrototype.clear();
-    m_initialObjectStatesByNewTarget.fill({ });
+    forgetInitialObjectStates();
     revalidatePrototypes(vm, [&](Structure*, const LayoutData& layout) {
         return layout.kind == LayoutKind::Instance && layout.mayHaveOtherPrototype;
     });
@@ -7865,6 +7867,8 @@ bool State::isPrivate(const FieldData& field) const
 
 const FieldData* State::field(VM& vm, const LayoutData& layout, UniquedStringImpl* name)
 {
+    if (name->isSymbol() && !layout.hasFieldsWithSymbolKeys() && !static_cast<SymbolImpl*>(name)->isPrivate())
+        return nullptr;
     CachedField& cached = m_cachedFields[(layout.shape * 0x9e3779b1u ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(name) >> 4)) % numberOfCachedFields];
     if (cached.shape == layout.shape && cached.name == name) [[likely]]
         return cached.field;
@@ -9112,17 +9116,46 @@ Object* State::createClassInstance(VM& vm, const LayoutData& ofClass, JSObject* 
     return object;
 }
 
+void State::forgetInitialObjectStates()
+{
+    instance.forgetTypedThisAllocations();
+    m_initialObjectStatesByNewTarget.fill({ });
+}
+
+void State::shareWithStub(VM& vm, const InitialObjectState& known)
+{
+    static_assert(std::tuple_size_v<decltype(m_initialObjectStatesByNewTarget)> == Instance::numberOfTypedThisAllocations);
+    auto& shared = instance.typedThisAllocations.get()[(std::bit_cast<uintptr_t>(known.newTarget) >> 4) % Instance::numberOfTypedThisAllocations];
+    shared = { };
+    size_t bodySize = known.body.size();
+    if (!bodySize || bodySize % sizeof(uint64_t) || known.constructor->isDeclaredAs(functionReadsNewTarget))
+        return;
+    LocalAllocator* allocator = vm.cellSpace().allocatorFor(bodySize + sizeof(JSCell), AllocatorForMode::EnsureAllocator).localAllocator();
+    if (!allocator)
+        return;
+    shared.constructor = known.constructor;
+    shared.allocator = allocator;
+    shared.body = known.body.span().data();
+    shared.header = static_cast<uint64_t>(known.structure->typeInfoBlob()) << 32 | known.structure->id().bits();
+    shared.epoch = known.epoch;
+    shared.bodySize = bodySize;
+    shared.newTarget = known.newTarget;
+    instance.hasTypedThisAllocations = true;
+}
+
 JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JSObject* newTarget)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (HeapVersion version = vm.heap.objectSpace().newlyAllocatedVersion(); version != m_initialObjectStatesVersion) [[unlikely]] {
-        m_initialObjectStatesByNewTarget.fill({ });
+        forgetInitialObjectStates();
         m_initialObjectStatesVersion = version;
     }
     InitialObjectState& known = m_initialObjectStatesByNewTarget[(std::bit_cast<uintptr_t>(newTarget) >> 4) % m_initialObjectStatesByNewTarget.size()];
-    if (known.newTarget == newTarget && known.constructor == constructor && known.epoch == instance.negativeOffsetFields().typedPrototypeEpoch)
+    if (known.newTarget == newTarget && known.constructor == constructor && known.epoch == instance.negativeOffsetFields().typedPrototypeEpoch) {
+        shareWithStub(vm, known);
         return Object::createWithBody(vm, known.structure, known.body.span());
+    }
     const LayoutData* ofClass = constructor->classData();
     if (ofClass && ofClass->hasUntypedBase)
         return jsUndefined();
@@ -9210,8 +9243,11 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
         return field.flags & fieldIsPinned && !(field.flags & fieldIsAbsentAtCreation);
     });
     bool prototypeIsAllowedByClass = made->mayHaveOtherPrototype || parent == classPrototypeIfExists(made->index);
-    if (target && target->structure()->aotInstance() == &instance && prototypeIsAllowedByClass && !isCounting() && !data.isCompiledForAudit && !hasWatchedField && !(made->hasExtension && object->extension()))
+    if (target && target->structure()->aotInstance() == &instance && prototypeIsAllowedByClass && !isCounting() && !data.isCompiledForAudit && !hasWatchedField && !(made->hasExtension && object->extension())) {
+        instance.typedThisAllocations.get()[(std::bit_cast<uintptr_t>(newTarget) >> 4) % Instance::numberOfTypedThisAllocations] = { };
         known = { constructor, newTarget, object->structure(), instance.negativeOffsetFields().typedPrototypeEpoch, Vector<uint8_t>(std::span { std::bit_cast<const uint8_t*>(object) + sizeof(JSCell), sizeWithSpecializationCapacity(made->shape) - sizeof(JSCell) }) };
+        shareWithStub(vm, known);
+    }
     return object;
 }
 
@@ -9891,7 +9927,7 @@ bool State::hasImmutableMethod(const LayoutData& layout, UniquedStringImpl* name
 
 bool State::storeNeverSpecializes(const LayoutData& layout, UniquedStringImpl* name) const
 {
-    if (!layout.numberOfSpecializations() || PropertyName(name).isPrivateName())
+    if (!layout.numberOfSpecializations() || PropertyName(name).isPrivateName() || isPublicSymbolThatKeysNoField(name))
         return true;
     auto found = m_specializationsWithField.find({ layout.shape, name });
     return found != m_specializationsWithField.end() && found->value.isEmpty();
@@ -10144,17 +10180,6 @@ bool State::leavesFieldsUnlisted(const LayoutData& layout, uint32_t orderWord)
     return layout.kind == LayoutKind::Instance && std::ranges::any_of(fieldsInOrder(layout, orderOf(orderWord)).subspan(countOf(orderWord)), [&](uint16_t key) {
         return isDefinedByConstructor(layout, key);
     });
-}
-
-bool State::hasFieldsWithSymbolKeys(const LayoutData& layout)
-{
-    auto& known = orderTableFor(layout).hasFieldsWithSymbolKeys;
-    if (!known) [[unlikely]] {
-        known = std::ranges::any_of(std::span { layout.fields(), layout.numberOfFields }, [&](const FieldData& field) {
-            return hasSymbolKey(field);
-        });
-    }
-    return *known;
 }
 
 std::optional<std::span<const State::FieldAsProperty>> State::propertiesInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, Object::SymbolKeys symbolKeys)
@@ -12255,7 +12280,7 @@ bool State::specializeToStore(JSGlobalObject* globalObject, Object* object, Prop
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     const LayoutData& from = object->layout();
-    if (!from.numberOfSpecializations() || name.isPrivateName())
+    if (!from.numberOfSpecializations() || name.isPrivateName() || isPublicSymbolThatKeysNoField(name.uid()))
         return false;
     bool usesPlans = !object->hasFlagsInOrderWord() && !data.isCompiledForAudit;
     JSValue discriminant = from.discriminant() != LayoutData::noBase ? object->read(from.fields()[from.discriminant()]) : JSValue();
@@ -14516,6 +14541,10 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         return converted;
     }
     Object* compiled = compiledObject(value);
+    if (!compiled && value.isObject() && type.acceptsUntypedObjectsByNature() && requestedReason == Format::CastReason::As) {
+        countCoercion(value, nullptr, type, reason, "left as it is"_s, value);
+        return value;
+    }
     if (!compiled && reason == Format::CastReason::Coerce && (requestedReason == reason || !isPlainData(asObject(value))) && !data.isCompiledForAudit) {
         countCoercion(value, nullptr, type, reason, "no data"_s, value);
         return value;

@@ -175,6 +175,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppendFinish, RuntimeState, J
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFindCharacter8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindSeparators8, Nothing, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindSeparators16, Nothing, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindLongSeparators8, Nothing, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t text, uint64_t positions, uint32_t wanted));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindLongSeparators16, Nothing, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t text, uint64_t positions, uint32_t wanted));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringUTF8Length8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFind8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringReverseFindCharacter8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position));

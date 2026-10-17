@@ -372,7 +372,8 @@ static_assert(sizeof(ClassData) == 32);
 
 struct RareLayoutData {
     uint32_t sizeWithSpecializationCapacity;
-    uint32_t numberOfSpecializations;
+    uint32_t numberOfSpecializations : 31;
+    uint32_t hasFieldsWithSymbolKeys : 1;
     uint32_t specializationsOffset;
     uint32_t extensionSize;
     uint32_t discriminant;
@@ -429,6 +430,7 @@ struct LayoutData {
     uint32_t declaredLine() const { return hasMessageData ? messageData().declaredLine : 0; }
     uint32_t sizeWithSpecializationCapacity() const { return hasRareData ? rareData().sizeWithSpecializationCapacity : size; }
     uint32_t numberOfSpecializations() const { return hasRareData ? rareData().numberOfSpecializations : 0; }
+    bool hasFieldsWithSymbolKeys() const { return hasRareData && rareData().hasFieldsWithSymbolKeys; }
     uint32_t specializationsOffset() const { return hasRareData ? rareData().specializationsOffset : 0; }
     uint32_t extensionSize() const { return hasRareData ? rareData().extensionSize : 0; }
     uint32_t discriminant() const { return hasRareData ? rareData().discriminant : noBase; }

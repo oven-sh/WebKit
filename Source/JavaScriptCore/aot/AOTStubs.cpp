@@ -12901,6 +12901,90 @@ static void generateFrontEndTypedHasOwnPropertyByName(CCallHelpers& jit)
     jit.farJump(T9, OperationPtrTag);
 }
 
+static void jumpToRawOperation(CCallHelpers& jit, Entry raw)
+{
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, static_cast<unsigned>(raw) * sizeof(void*)), T9);
+    jit.farJump(T9, OperationPtrTag);
+}
+
+static void generateFrontEndTypedToString(CCallHelpers& jit)
+{
+    constexpr GPRReg operand = A1;
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
+#if CPU(ARM64)
+    constexpr GPRReg first = T11;
+    constexpr GPRReg second = T10;
+    constexpr GPRReg high = T9;
+#else
+    constexpr GPRReg first = X86Registers::eax;
+    constexpr GPRReg second = T10;
+    constexpr GPRReg high = X86Registers::edx;
+    static_assert(second == X86Registers::r8 && high == GPRInfo::returnValueGPR2);
+#endif
+    static_assert(noOverlap(A0, operand, first, second, high, instanceGPR));
+    static_assert(sizeof(NumericStrings::StringWithJSString) == 2 * sizeof(void*) && sizeof(NumericStrings::CacheEntryWithJSString<int>) == 3 * sizeof(void*));
+    CCallHelpers::JumpList isNotKnown;
+    isNotKnown.append(jit.branchIfNotInt32(operand));
+    Jump isSmall = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(NumericStrings::cacheSize));
+    jit.zeroExtend32ToWord(operand, first);
+    jit.load64(Address(instanceGPR, Instance::offsetOfHashSecrets() + sizeof(uint64_t)), second);
+    jit.xor64(first, second);
+    jit.load64(Address(instanceGPR, Instance::offsetOfHashSecrets()), high);
+    jit.xor64(high, first);
+#if CPU(ARM64)
+    jit.uMulHigh64(first, second, high);
+    jit.mul64(second, first);
+#else
+    jit.x86UMulHigh64(second, first, high);
+#endif
+    jit.xor32(high, first);
+    jit.and32(TrustedImm32(NumericStrings::cacheSize - 1), first);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(first, first, CCallHelpers::TimesTwo), first);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfIntStrings()), second);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(second, first, CCallHelpers::TimesEight), second);
+    isNotKnown.append(jit.branch32(CCallHelpers::NotEqual, Address(second, NumericStrings::CacheEntryWithJSString<int>::offsetOfKey()), operand));
+    jit.loadPtr(Address(second, NumericStrings::CacheEntryWithJSString<int>::offsetOfJSString()), second);
+    isNotKnown.append(jit.branchTestPtr(CCallHelpers::Zero, second));
+    jit.move(second, result);
+    jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+    jit.ret();
+
+    isSmall.link(&jit);
+    jit.zeroExtend32ToWord(operand, first);
+    jit.lshift64(TrustedImm32(1), first);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfSmallIntStrings()), second);
+    jit.loadPtr(CCallHelpers::BaseIndex(second, first, CCallHelpers::TimesEight, NumericStrings::StringWithJSString::offsetOfJSString()), second);
+    isNotKnown.append(jit.branchTestPtr(CCallHelpers::Zero, second));
+    jit.move(second, result);
+    jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+    jit.ret();
+
+    isNotKnown.link(&jit);
+    jumpToRawOperation(jit, Entry::RawTypedToString);
+}
+
+static void generateFrontEndTypedBitNot(CCallHelpers& jit)
+{
+    constexpr GPRReg operand = A1;
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
+    static_assert(noOverlap(A0, operand, T10, instanceGPR));
+    Jump isNotInt32 = jit.branchIfNotInt32(operand);
+    jit.move(operand, T10);
+    jit.not32(T10);
+#if CPU(ARM64)
+    jit.addZeroExtend64(numberTag, T10, result);
+#else
+    jit.zeroExtend32ToWord(T10, result);
+    jit.add64(numberTag, result);
+#endif
+    jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+    jit.ret();
+
+    isNotInt32.link(&jit);
+    jumpToRawOperation(jit, Entry::RawTypedBitNot);
+}
+
 static void generateInByValCached(CCallHelpers& jit)
 {
     CCallHelpers::JumpList miss;
@@ -19869,32 +19953,39 @@ static void generateIterationStub(CCallHelpers& jit, IterationStub which)
         static_assert(noOverlap(offsets, result, record, scratch, isDone) && Instance::numberOfIteratorResultShapes == 2);
         static_assert(OBJECT_OFFSETOF(Instance::IteratorResultShape, offsetOfDone) == sizeof(uint32_t) && OBJECT_OFFSETOF(Instance::IteratorResultShape, offsetOfValue) == sizeof(uint32_t) + sizeof(uint16_t));
         Jump isNotShapeOfThisLoop = jit.branch32(CCallHelpers::NotEqual, scratch, word(record, Typed::CollectionIteration::structureOfResultsWord));
-        jit.load32(word(record, Typed::CollectionIteration::offsetsInResultsWord), offsets);
-        Jump hasOffsets = jit.jump();
-        isNotShapeOfThisLoop.link(&jit);
-        Jump isNotFirstShape = jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfIteratorResultShapes()));
-        jit.load32(Address(instanceGPR, Instance::offsetOfIteratorResultShapes() + sizeof(uint32_t)), offsets);
-        Jump hasOffsetsOfFirstShape = jit.jump();
-        isNotFirstShape.link(&jit);
-        isFinishedInOperation.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfIteratorResultShapes() + sizeof(Instance::IteratorResultShape))));
-        jit.load32(Address(instanceGPR, Instance::offsetOfIteratorResultShapes() + sizeof(Instance::IteratorResultShape) + sizeof(uint32_t)), offsets);
-        hasOffsets.link(&jit);
-        hasOffsetsOfFirstShape.link(&jit);
-        jit.and32(TrustedImm32(0xffff), offsets, scratch);
-        jit.load64(CCallHelpers::BaseIndex(result, scratch, CCallHelpers::TimesOne), isDone);
-        Jump isNotFalse = jit.branch64(CCallHelpers::NotEqual, isDone, CCallHelpers::TrustedImm64(JSValue::ValueFalse));
-        jit.urshift32(TrustedImm32(16), offsets);
-        jit.load64(CCallHelpers::BaseIndex(result, offsets, CCallHelpers::TimesOne), scratch);
-        jit.store64(scratch, word(record, 2));
-        jit.move(TrustedImm32(1), result);
-        if (recordIsInFrame)
+        auto finish = [&](auto loadOffsetOfDone, auto loadOffsetOfValue) {
+            loadOffsetOfDone();
+            jit.load64(CCallHelpers::BaseIndex(result, scratch, CCallHelpers::TimesOne), isDone);
+            Jump isNotFalse = jit.branch64(CCallHelpers::NotEqual, isDone, CCallHelpers::TrustedImm64(JSValue::ValueFalse));
+            loadOffsetOfValue();
+            jit.load64(CCallHelpers::BaseIndex(result, scratch, CCallHelpers::TimesOne), scratch);
+            jit.store64(scratch, word(record, 2));
+            jit.move(TrustedImm32(1), result);
+            if (recordIsInFrame)
+                jit.ret();
+            else
+                generateWriteBarrier(jit, record);
+            isNotFalse.link(&jit);
+            isFinishedInOperation.append(jit.branch64(CCallHelpers::NotEqual, isDone, CCallHelpers::TrustedImm64(JSValue::ValueTrue)));
+            jit.move(TrustedImm32(0), result);
             jit.ret();
-        else
-            generateWriteBarrier(jit, record);
-        isNotFalse.link(&jit);
-        isFinishedInOperation.append(jit.branch64(CCallHelpers::NotEqual, isDone, CCallHelpers::TrustedImm64(JSValue::ValueTrue)));
-        jit.move(TrustedImm32(0), result);
-        jit.ret();
+        };
+        finish([&] {
+            jit.load16(word(record, Typed::CollectionIteration::offsetsInResultsWord), scratch);
+        }, [&] {
+            jit.load16(word(record, Typed::CollectionIteration::offsetsInResultsWord).withOffset(sizeof(uint16_t)), scratch);
+        });
+        isNotShapeOfThisLoop.link(&jit);
+        jit.addPtr(TrustedImm32(Instance::offsetOfIteratorResultShapes()), instanceGPR, offsets);
+        Jump isFirstShape = jit.branch32(CCallHelpers::Equal, scratch, Address(offsets));
+        jit.addPtr(TrustedImm32(sizeof(Instance::IteratorResultShape)), offsets);
+        isFinishedInOperation.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(offsets)));
+        isFirstShape.link(&jit);
+        finish([&] {
+            jit.load16(Address(offsets, OBJECT_OFFSETOF(Instance::IteratorResultShape, offsetOfDone)), scratch);
+        }, [&] {
+            jit.load16(Address(offsets, OBJECT_OFFSETOF(Instance::IteratorResultShape, offsetOfValue)), scratch);
+        });
         isFinishedInOperation.link(&jit);
         jit.move(result, A2);
         jit.move(TrustedImm32(static_cast<unsigned>(recordIsInFrame ? Entry::operationAOTTypedFinishIterStepInFrame : Entry::operationAOTTypedFinishIterStep) * sizeof(void*)), T9);
@@ -21824,6 +21915,39 @@ static void generateCreateThisByNewTarget(CCallHelpers& jit)
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::NewObjectLiteral0)], &jit);
 
     miss.link(&jit);
+    {
+        using Remembered = Instance::TypedThisAllocation;
+        constexpr GPRReg object = GPRInfo::returnValueGPR;
+        constexpr GPRReg allocator = T11;
+        constexpr GPRReg body = T12;
+        constexpr GPRReg offset = T13;
+        static_assert(noOverlap(object, entry, epoch, allocator, body, offset, A1, A2, A3));
+        CCallHelpers::JumpList isNotRemembered;
+        jit.urshift64(A3, TrustedImm32(4), entry);
+        jit.and32(TrustedImm32(Instance::numberOfTypedThisAllocations - 1), entry);
+        jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(Remembered)))), entry);
+        jit.addPtr(instanceGPR, entry);
+        jit.addPtr(TrustedImm32(Instance::offsetOfTypedThisAllocations()), entry);
+        isNotRemembered.append(jit.branchPtr(CCallHelpers::NotEqual, Address(entry, OBJECT_OFFSETOF(Remembered, newTarget)), A3));
+        isNotRemembered.append(jit.branchPtr(CCallHelpers::NotEqual, Address(entry, OBJECT_OFFSETOF(Remembered, constructor)), A2));
+        jit.load32(Address(entry, OBJECT_OFFSETOF(Remembered, epoch)), epoch);
+        isNotRemembered.append(jit.branch32(CCallHelpers::NotEqual, epoch, Address(instanceGPR, Instance::offsetOfTypedPrototypeEpoch())));
+        jit.loadPtr(Address(entry, OBJECT_OFFSETOF(Remembered, allocator)), allocator);
+        allocateCell(jit, object, allocator, epoch, isNotRemembered);
+        jit.load64(Address(entry, OBJECT_OFFSETOF(Remembered, header)), epoch);
+        jit.store64(epoch, Address(object, 0));
+        jit.loadPtr(Address(entry, OBJECT_OFFSETOF(Remembered, body)), body);
+        jit.load32(Address(entry, OBJECT_OFFSETOF(Remembered, bodySize)), offset);
+        auto copy = jit.label();
+        jit.sub32(TrustedImm32(sizeof(uint64_t)), offset);
+        jit.load64(CCallHelpers::BaseIndex(body, offset, CCallHelpers::TimesOne), epoch);
+        jit.store64(epoch, CCallHelpers::BaseIndex(object, offset, CCallHelpers::TimesOne, sizeof(JSCell)));
+        jit.branchTest32(CCallHelpers::NonZero, offset).linkTo(copy, &jit);
+        fenceAfterAllocation(jit, epoch);
+        jit.ret();
+        refillAllocationIntervals(jit, isNotRemembered);
+        isNotRemembered.link(&jit);
+    }
     jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedCreateThisAt) * sizeof(void*)), T11);

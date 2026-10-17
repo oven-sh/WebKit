@@ -3417,6 +3417,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     forgetPrototypeChanges();
     if (std::exchange(hasThisAllocations, false))
         zeroSpan(std::span { thisAllocations.get() });
+    forgetTypedThisAllocations();
     if (std::exchange(hasCaseConversions, false))
         zeroBytes(caseConversions);
     if (std::exchange(spreadCopyCacheIsDirty, false))

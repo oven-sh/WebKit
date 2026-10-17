@@ -830,6 +830,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(FrontEndTypedPutExtra) \
     v(FrontEndTypedGetExtra) \
     v(FrontEndTypedHasOwnPropertyByName) \
+    v(FrontEndTypedToString) \
+    v(FrontEndTypedBitNot) \
     v(FrontEndTypedConstruct) \
     v(FrontEndTypedCloneObject) \
     v(FrontEndTypedCloneObjectAndExtend) \
