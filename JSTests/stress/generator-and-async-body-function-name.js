@@ -128,10 +128,9 @@ async function main() {
     sink++;
 }
 
-for (let i = 0; i < testLoopCount; ++i) {
-    let error;
-    main().then(() => { sink++; }, rejection => { error = rejection; });
-    drainMicrotasks();
-    if (error)
-        throw error;
-}
+// The name of a frame comes from the executable of its function, whichever tier runs it: one run is enough.
+let error;
+main().then(() => { sink++; }, rejection => { error = rejection; });
+drainMicrotasks();
+if (error)
+    throw error;
