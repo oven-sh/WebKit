@@ -286,7 +286,10 @@ RefPtr<StringImpl> StringImpl::create(std::span<const char8_t> codeUnits)
     // This makes it impossible to use utf16_length_from_utf8 & convert_valid_utf8_to_utf16le
     // because of TOCTOU issue. For now, we use pre-allocated Vector (with maximally possible length)
     // and use convert_utf8_to_utf16 instead.
-    Vector<char16_t, 1024> buffer(inputLength);
+    // That length can be past what a Vector holds, so the allocation is fallible.
+    Vector<char16_t, 1024> buffer;
+    if (!buffer.tryGrow(inputLength)) [[unlikely]]
+        return nullptr;
     size_t written = simdutf::convert_utf8_to_utf16(codeUnits, buffer.mutableSpan());
     if (!written)
         return nullptr;
