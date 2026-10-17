@@ -208,8 +208,17 @@ struct VectorTypeOperations
     }
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// m_capacity counts elements in 31 bits, next to the borrow bit. 310668@main halved the limit on the size in bytes
+// instead, which halved the capacity of every Vector whose T is wider than a byte. This keeps the limit on the size
+// in bytes from before that change and adds the limit on the count.
+template<typename T>
+constexpr inline bool isValidCapacityForVector(size_t capacity) { return capacity <= std::min<size_t>(std::numeric_limits<unsigned>::max() / sizeof(T), std::numeric_limits<unsigned>::max() >> 1); }
+static_assert(isValidCapacityForVector<uint8_t>(std::numeric_limits<unsigned>::max() >> 1) && !isValidCapacityForVector<uint8_t>((std::numeric_limits<unsigned>::max() >> 1) + 1), "a valid capacity fits in the 31 bits of m_capacity");
+#else
 template<typename T>
 constexpr inline bool isValidCapacityForVector(size_t capacity) { return capacity <= (std::numeric_limits<unsigned>::max() >> 1) / sizeof(T); }
+#endif
 
 template<typename Collection> struct CopyOrMoveToVectorResult;
 
