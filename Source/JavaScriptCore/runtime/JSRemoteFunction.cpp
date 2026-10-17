@@ -70,6 +70,13 @@ static inline JSValue wrapArgument(JSGlobalObject* globalObject, JSGlobalObject*
     RELEASE_AND_RETURN(scope, result);
 }
 
+// https://tc39.es/proposal-shadowrealm/#sec-ordinary-wrapped-function-call wraps |this| like an argument.
+// The incoming value can be a JSScope: that is what bytecode passes for an identifier call like `f()`, and it means undefined.
+static inline JSValue wrapThisValue(JSGlobalObject* globalObject, JSGlobalObject* targetGlobalObject, JSValue value)
+{
+    return wrapArgument(globalObject, targetGlobalObject, value.toThis(globalObject, ECMAMode::strict()));
+}
+
 static inline JSValue wrapReturnValue(JSGlobalObject* globalObject, JSGlobalObject* targetGlobalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -108,6 +115,9 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
+    JSValue wrappedThisValue = wrapThisValue(globalObject, targetGlobalObject, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, { });
+
     ExecutableBase* executable = targetFunction->executable();
     if (executable->hasJITCodeForCall()) {
         // Force the executable to cache its arity entrypoint.
@@ -116,7 +126,7 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
 
     auto callData = JSC::getCallData(targetFunction);
     ASSERT(callData.type != CallData::Type::None);
-    auto result = call(targetGlobalObject, targetFunction, callData, jsUndefined(), args);
+    auto result = call(targetGlobalObject, targetFunction, callData, wrappedThisValue, args);
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, globalObject, result)));
@@ -149,10 +159,12 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallGeneric, (JSGlobalObject* globalObjec
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
+    JSValue wrappedThisValue = wrapThisValue(globalObject, targetGlobalObject, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, { });
 
     auto callData = JSC::getCallData(targetFunction);
     ASSERT(callData.type != CallData::Type::None);
-    auto result = call(targetGlobalObject, targetFunction, callData, jsUndefined(), args);
+    auto result = call(targetGlobalObject, targetFunction, callData, wrappedThisValue, args);
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, targetGlobalObject, result)));
