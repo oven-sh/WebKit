@@ -9,13 +9,17 @@ predicted Response.json
 
 inline NewResponse
 inline NewResponseFromResponse
+inline GetRequestHeader
 
 runtime NewResponse : Heap EncodedJSValue (EncodedJSValue body, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues)
 
 runtime NewResponseFromResponse : Heap EncodedJSValue (EncodedJSValue other)
 
+runtime GetRequestHeader : Heap EncodedJSValue (EncodedJSValue request, EncodedJSValue name)
+
 intrinsic NewResponse (any/KG, any/G, any/G, any/GP, any/G...) -> anything/N ; CallsUserCode ; Inline(NewResponse, None)
 intrinsic NewResponseFromResponse (any/wP) -> anything/N ; CallsUserCode ; Inline(NewResponseFromResponse, None)
+intrinsic GetRequestHeader (any/w, any/G) -> undefined | null | string ; CallsUserCode ; Inline(GetRequestHeader, None)
 predicted Bun.escapeHTML
 
 static console.log (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall

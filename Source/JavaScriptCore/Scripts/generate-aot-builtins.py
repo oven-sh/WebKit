@@ -58,7 +58,7 @@ One declaration per line. `#` starts a comment.
       (`o.$NAME`, `o.$NAME(..)`, a key, a member of a class). `$PREFIX* POSITION = WHAT`: of every name that starts so and has no line.
       WHAT is a variant of `Intrinsic` in intrinsics.rs, which says what the front end emits for each:
       Operation(NAME) | HasJSType(FIRST, LAST) | Builtin(HOLDER.NAME) | Builtin(FUNCTION) | Construct(GLOBAL) | IsNullish | Undefined |
-      Int(N, C++ EXPRESSION) | Bool(B) | Double(Infinity) | Call | Apply | ArrayPush | PutByValDirect[(private)] | GetOwnProperty[(private)] |
+      Int(N, C++ EXPRESSION) | Bool(B) | Double(Infinity) | Expect(B) | Call | Apply | ArrayPush | PutByValDirect[(private)] | GetOwnProperty[(private)] |
       ArgumentCount | Argument | LinkTimeConstant | LinkedFunction | PublicGlobal | PrivateGlobal | ReplaceablePrivateGlobal | PrivateName |
       Macro | Define | Directive
       The front end needs the number N; the engine's name for it is the expression. The family's .cpp expands
@@ -616,8 +616,8 @@ for where, name, is_prefix, position, what, payload in intrinsics:
         number, expression = payload.split(', ', 1)
         variant = 'Int(%s)' % number
         checked_constants.setdefault(where.split('.def:')[0], []).append('%s, (%s)' % (number, expression))
-    elif what == 'Bool' and payload in ('true', 'false'):
-        variant = 'Bool(%s)' % payload
+    elif what in ('Bool', 'Expect') and payload in ('true', 'false'):
+        variant = '%s(%s)' % (what, payload)
     elif what == 'Double' and payload == 'Infinity':
         variant = 'Double(f64::INFINITY)'
     elif what in ('PutByValDirect', 'GetOwnProperty') and payload in (None, 'private'):
@@ -822,6 +822,7 @@ pub(crate) enum Intrinsic {
     Int(i64),
     Bool(bool),
     Double(f64),
+    Expect(bool),
     /// `f.$call(this, ..arguments)`: `Op::Call`. No property is read.
     Call,
     /// `f.$apply(this, list)`: `Operation Apply(f, this, list)`.

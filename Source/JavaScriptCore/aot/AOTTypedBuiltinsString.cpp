@@ -709,7 +709,7 @@ Word32 Lowering::lowerStartsOrEndsWith(bool isAtEnd, const StringReceiver& recei
             orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), byStub);
             m_out.branch(below(characters.length, integer(text->size())).value(), unsure(isTooShort), unsure(isLongEnough));
             m_out.appendTo(isLongEnough);
-            Word32 isSame = hasText(isAtEnd ? offsetBy(characters.data, sub(characters.length, integer(text->size())), 0) : characters.data, *text);
+            Word32 isSame = textMatches(isAtEnd ? offsetBy(characters.data, sub(characters.length, integer(text->size())), 0) : characters.data, *text);
             ensureStillAliveHere(characters.owner);
             join.add(isSame);
         } else {

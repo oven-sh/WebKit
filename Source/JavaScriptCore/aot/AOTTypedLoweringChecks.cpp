@@ -487,8 +487,8 @@ Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeU
             return boolean(false);
         });
     }
-    Word32 isUnmodifiedStructure = equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(structureID)));
-    return either<Word32>(isUnmodifiedStructure, [&] {
+    Word32 hasExpectedStructure = allowsModified && !mustBeUnmodified ? hasClosureStructure(cell, structureID) : equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(structureID)));
+    return either<Word32>(hasExpectedStructure, [&] {
         return equal(closureFunction(cell, isSlim), word32(general));
     }, [&] {
         if (mustBeUnmodified || (m_program.at(function).kind != FunctionKind::Constructor && !allowsModified))
@@ -522,6 +522,15 @@ Word32 Lowering::closureFunction(CellPointer closure, bool isSlim)
     return Word32(m_out.bitAnd(upperHalf, m_out.constInt32(static_cast<int32_t>(ClosureWord::functionMask))));
 }
 
+Word32 Lowering::hasClosureStructure(CellPointer cell, ptrdiff_t offsetOfStructureID)
+{
+    Word32 structureID = loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell)));
+    Word32 isUnmodified = equal(structureID, Word32(loadRuntimeState32(offsetOfStructureID)));
+    if (offsetOfStructureID != Instance::offsetOfTypedClosureStructureID())
+        return isUnmodified;
+    return logicalOr(isUnmodified, equal(structureID, Word32(loadRuntimeState32(Instance::offsetOfTypedClosureWithPrototypeStructureID()))));
+}
+
 void Lowering::checkClosureOfOrElse(CellPointer cell, FunctionID function, bool mustBeUnmodified, LBasicBlock otherwise, bool allowsModified)
 {
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
@@ -534,7 +543,7 @@ void Lowering::checkClosureOfOrElse(CellPointer cell, FunctionID function, bool 
         LBasicBlock isUnmodifiedStructure = m_out.newBlock();
         LBasicBlock isModified = newColdBlock();
         LBasicBlock isOne = m_out.newBlock();
-        m_out.branch(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(closureStructureIDOffset(callee)))).value(), usually(isUnmodifiedStructure), rarely(isModified));
+        m_out.branch(hasClosureStructure(cell, closureStructureIDOffset(callee)).value(), usually(isUnmodifiedStructure), rarely(isModified));
         m_out.appendTo(isUnmodifiedStructure);
         m_out.branch(equal(closureFunction(cell, m_program.usesSlimClosures(callee)), word32(entrypoint->value.index())).value(), unsure(isOne), unsure(otherwise));
         m_out.appendTo(isModified);

@@ -2218,6 +2218,10 @@ void Data::destroy(Data* data)
     auto belongsToThisData = [&](Slot* slot) { return slot >= data->slots && slot < data->slots + data->numSlots; };
     instance.collections->transitions.removeAllMatching(belongsToThisData);
     instance.collections->transitionsSinceLastCollection.removeAllMatching(belongsToThisData);
+    for (auto& known : instance.structuresOfThis) {
+        if (belongsToThisData(known.site))
+            known = { };
+    }
     auto removeFrom = [&](Vector<Data*>& list, unsigned Data::*index) {
         RELEASE_ASSERT(list[data->*index] == data);
         Data* last = list.takeLast();

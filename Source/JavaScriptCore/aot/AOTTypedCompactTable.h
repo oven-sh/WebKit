@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTTypedData.h"
+#include "IterationKind.h"
 #include "JSCellButterfly.h"
 #include "JSOrderedHashTable.h"
 #include "JSString.h"
@@ -364,11 +365,13 @@ public:
     static JSCellButterfly* tryOpen(JSGlobalObject*, JSValue iterable);
     static bool isOne(JSCellButterfly* record) { return record->get(1).isInt32(); }
     static constexpr unsigned numberOfWords = 5;
+    static constexpr unsigned firstPartWord = numberOfWords;
+    static constexpr unsigned numberOfWordsWithParts = firstPartWord + 2;
     struct InFrame {
         static InFrame* at(EncodedJSValue* words) { return reinterpret_cast<InFrame*>(words); }
         JSValue get(unsigned word) const { return JSValue::decode(words[word]); }
         void setIndex(VM&, unsigned word, JSValue value) { words[word] = JSValue::encode(value); }
-        EncodedJSValue words[numberOfWords];
+        EncodedJSValue words[numberOfWordsWithParts];
     };
     static bool tryOpen(JSGlobalObject*, JSValue iterable, InFrame*);
     static bool isOne(InFrame* record) { return record->get(1).isInt32(); }
@@ -384,6 +387,13 @@ public:
     static void close(JSGlobalObject*, InFrame*);
     static constexpr int32_t iteratesArrayEntriesByIndex = 256;
     static constexpr int32_t iteratesGenerator = 16;
+    static constexpr int32_t iterationKindMask = 3;
+    static constexpr int32_t iteratesSet = 4;
+    static constexpr int32_t iteratesThroughIterator = 8;
+    static constexpr int32_t iteratesArray = 32;
+    static constexpr int32_t takesPairsApart = 4096;
+    static constexpr int32_t modeOfMap = static_cast<int32_t>(IterationKind::Entries);
+    static constexpr int32_t modeOfSet = static_cast<int32_t>(IterationKind::Values) | iteratesSet | hasFastStepAfterStart;
     static constexpr unsigned structureOfResultsWord = 3;
     static constexpr unsigned offsetsInResultsWord = 4;
     static bool step(JSGlobalObject*, JSCellButterfly* record);

@@ -683,8 +683,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPropertyIsEnumerable, size_t, (Instanc
         UniquedStringImpl* uid;
         PropertyOffset offset;
         unsigned attributes;
-        if (findOwnPropertyByKeyGeneric(instance, JSValue::decode(encodedBase), JSValue::decode(encodedKey), uid, offset, attributes))
+        if (findOwnPropertyByKeyGeneric(instance, JSValue::decode(encodedBase), JSValue::decode(encodedKey), uid, offset, attributes)) {
+            if (uid)
+                cacheOwnPropertyLocationFromSlot(instance, JSValue::decode(encodedBase).asCell()->structure(), uid, offset, attributes);
             OPERATION_RETURN(scope, isValidOffset(offset) && !(attributes & PropertyAttribute::DontEnum));
+        }
     }
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -1764,8 +1767,21 @@ std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID 
         m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
         return yielded;
     }
-    case InlineBuiltin::ObjectPropertyIsEnumerable:
-        return booleanResult(AOT_TYPED_OPERATION(PropertyIsEnumerable, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1])), type);
+    case InlineBuiltin::ObjectPropertyIsEnumerable: {
+        using Place = Instance::OwnPropertyLocation;
+        ValueID key = value.arguments[1];
+        if (!(predictedTypeOf(key).primitives & Primitive::String))
+            return booleanResult(AOT_TYPED_OPERATION(PropertyIsEnumerable, in<Boxed>(value.arguments[0]), in<Boxed>(key)), type);
+        LBasicBlock slowPath = newColdBlock();
+        Join join(m_out, Rep::Int32, Int32);
+        CellPointer object = objectOrElse(value.arguments[0], slowPath);
+        Word32 place = ownPropertyLocationOrElse(object, key, slowPath);
+        orElse(hasNoBits(place, Place::isNotValue | Place::isCompiledField), slowPath);
+        join.add(equal(bitAnd(place, word32(Place::isPresent | static_cast<unsigned>(PropertyAttribute::DontEnum))), word32(Place::isPresent)));
+        m_out.appendTo(slowPath);
+        join.add(AOT_TYPED_OPERATION(PropertyIsEnumerable, in<Boxed>(value.arguments[0]), in<Boxed>(key)));
+        return booleanResult(join.finish().as<Word32>(), type);
+    }
     case InlineBuiltin::ObjectKeys:
     case InlineBuiltin::ObjectGetOwnPropertyNames:
     case InlineBuiltin::ObjectGetOwnPropertySymbols:

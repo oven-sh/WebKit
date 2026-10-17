@@ -456,7 +456,7 @@ Number Lowering::minOrMaxOfElements(bool isMax, CellPointer array, Pointer butte
     m_out.appendTo(doubles);
     fold(ArrayWithDouble);
     m_out.appendTo(values);
-    orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), otherwise);
+    orElse(isContiguousOrInt32Shape(shape), otherwise);
     fold(ArrayWithContiguous);
     m_out.appendTo(continuation);
     Number result(m_out.phi(Double, results));

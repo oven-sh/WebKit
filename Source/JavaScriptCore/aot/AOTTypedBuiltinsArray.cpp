@@ -894,7 +894,7 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
             if (indexingType == ArrayWithDouble)
                 orElse(equal(shape, word32(DoubleShape)), fallback);
             else
-                orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), fallback);
+                orElse(isContiguousOrInt32Shape(shape), fallback);
             orElse(belowOrEqual(count, integer(maxLengthForElementwiseCopy)), fallback);
             counts.append(count);
             length = i ? add(length, count) : count;
@@ -1322,7 +1322,7 @@ Operand Lowering::lowerArrayAt(const Value& value, const Type& type)
         m_out.jump(notDoubles);
 
     m_out.appendTo(notDoubles);
-    orElse(mayReturnNumber ? logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))) : equal(shape, word32(ContiguousShape)), slowPath);
+    orElse(mayReturnNumber ? isContiguousOrInt32Shape(shape) : equal(shape, word32(ContiguousShape)), slowPath);
     orElse(below(index, length), absent);
     Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
     addIfNumber(join, element, type);
@@ -1956,7 +1956,7 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
             returnIndex(signExtended(AOT_TYPED_OPERATION(ArrayIndexOfInt32, array, mapKey(arguments[0]))));
             m_out.appendTo(others);
         }
-        orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), slowPath);
+        orElse(isContiguousOrInt32Shape(shape), slowPath);
         Pointer butterfly = butterflyOf(array);
         Vector<std::pair<LValue, GPRReg>, 4> operands { { butterfly.value(), GPRInfo::argumentGPR1 }, { mapKey(arguments[0]).value(), GPRInfo::argumentGPR2 } };
         bool hasStart = arguments.size() == 2;

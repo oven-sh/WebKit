@@ -64,6 +64,7 @@ $isProxyObject Call = HasJSType(ProxyObjectType, ProxyObjectType)
 $isRegExpObject Call = HasJSType(RegExpObjectType, RegExpObjectType)
 $isSet Call = HasJSType(JSSetType, JSSetType)
 $isUndefinedOrNull Call = IsNullish
+$likely Call = Expect(true)
 $newArrayWithSize Call = Construct(Array)
 $newPromise Call = Operation(NewPromise)
 $proxyFieldHandler Value = Int(1, ProxyObject::Field::Handler)
@@ -71,6 +72,7 @@ $proxyFieldTarget Value = Int(0, ProxyObject::Field::Target)
 $putByIdDirectPrivate Call = PutByValDirect(private)
 $putByValDirect Call = PutByValDirect
 $putInternalField Call = Operation(PutInternalField)
+$unlikely Call = Expect(false)
 
 # Link-time constants: bytecode/LinkTimeConstant.h. They are in the constant pool of a code block, not on the global object.
 $Array Value = PublicGlobal

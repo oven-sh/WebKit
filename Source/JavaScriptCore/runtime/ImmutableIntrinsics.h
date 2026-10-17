@@ -91,6 +91,7 @@ public:
     static void willSetPrototype(JSGlobalObject*, JSObject*, JSValue prototype, bool shouldThrow);
     static void willReplacePrototypeProperty(JSGlobalObject*, JSFunction*, JSValue, bool shouldThrow);
     static void didAccessCallerOrArguments(JSGlobalObject*, JSFunction*, PropertyName);
+    static void didRefuseChange(JSGlobalObject*, const String& refusal, VM::ImmutableIntrinsicsAuditReporter);
 };
 
 } // namespace JSC

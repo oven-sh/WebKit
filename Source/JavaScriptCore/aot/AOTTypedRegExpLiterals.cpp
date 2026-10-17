@@ -1328,6 +1328,7 @@ private:
         switch (value.opcode) {
         case Format::Opcode::Undefined:
         case Format::Opcode::LoopHint:
+        case Format::Opcode::UnlikelyHint:
             return jsUndefined();
         case Format::Opcode::Null:
             return jsNull();

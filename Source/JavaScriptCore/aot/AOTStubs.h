@@ -370,6 +370,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(IterHasInFrame) \
     v(CallValueWithoutArguments) \
     v(IterOpenInFrame) \
+    v(IterOpenPairsInFrame) \
+    v(IterOpenTableInFrame) \
     v(IterCloseInFrame) \
     v(ArrayLiteral0) \
     v(LeafArrayLiteral0) \

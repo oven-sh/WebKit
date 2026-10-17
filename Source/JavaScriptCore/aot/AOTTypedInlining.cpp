@@ -1505,6 +1505,7 @@ private:
         case Opcode::String:
         case Opcode::Cast:
         case Opcode::LoopHint:
+        case Opcode::UnlikelyHint:
         case Opcode::AssertNotAllocated:
         case Opcode::ToBoolean:
         case Opcode::LogicalNot:

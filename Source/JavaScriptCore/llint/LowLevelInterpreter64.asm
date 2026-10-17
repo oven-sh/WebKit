@@ -3837,8 +3837,37 @@ op(llint_throw_during_call_trampoline, macro ()
 end)
 
 
+macro clearStackForHostCall()
+    if ASSERT_ENABLED and not C_LOOP
+        move sp, t5
+        subp StackBytesClearedForCallSlowPath, sp
+        move sp, t3
+        move 0, t4
+    .clearStackForHostCall:
+        if ARM64 or ARM64E
+            storepairq t4, t4, 0[t3]
+            storepairq t4, t4, 16[t3]
+            storepairq t4, t4, 32[t3]
+            storepairq t4, t4, 48[t3]
+        else
+            storeq t4, 0[t3]
+            storeq t4, 8[t3]
+            storeq t4, 16[t3]
+            storeq t4, 24[t3]
+            storeq t4, 32[t3]
+            storeq t4, 40[t3]
+            storeq t4, 48[t3]
+            storeq t4, 56[t3]
+        end
+        addp 64, t3
+        bpb t3, t5, .clearStackForHostCall
+        move t5, sp
+    end
+end
+
 macro nativeCallTrampoline(executableOffsetToFunction)
     functionPrologue()
+    clearStackForHostCall()
     storep 0, CodeBlock[cfr]
     loadp Callee[cfr], a0
     loadp JSFunction::m_executableOrRareData[a0], a2
@@ -3875,6 +3904,7 @@ end
 
 macro internalFunctionCallTrampoline(offsetOfFunction)
     functionPrologue()
+    clearStackForHostCall()
     storep 0, CodeBlock[cfr]
     loadp Callee[cfr], a2
     loadp InternalFunction::m_globalObject[a2], a0

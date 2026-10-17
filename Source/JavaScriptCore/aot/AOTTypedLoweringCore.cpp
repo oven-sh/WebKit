@@ -70,10 +70,12 @@ LType Lowering::b3TypeOf(Rep rep)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static constexpr double unlikelyFrequency = 0.25;
+
 LBasicBlock Lowering::newUnlikelyBlock()
 {
     LBasicBlock block = m_out.newBlock();
-    block->setFrequency(std::min(block->frequency(), 0.25));
+    block->setFrequency(std::min(block->frequency(), unlikelyFrequency));
     return block;
 }
 
@@ -469,6 +471,43 @@ Lowering::PredecessorLists Lowering::computePredecessors(const Vector<BlockID>& 
             result.blocks[next[target.block.index()]++] = block.index();
     }
     return result;
+}
+
+void Lowering::applyBranchHints(const Vector<BlockID>& order)
+{
+    PredecessorLists predecessors = computePredecessors(order);
+    for (unsigned i = 1; i < order.size(); ++i) {
+        ValueID hint;
+        for (ValueID id : m_function.at(order[i]).values) {
+            if (m_function.at(id).opcode == Opcode::UnlikelyHint) {
+                hint = id;
+                break;
+            }
+        }
+        bool hasLikelyPredecessor = false;
+        bool isEnteredByJump = false;
+        for (unsigned predecessor : predecessors[order[i].index()]) {
+            if (predecessors.placeInOrder[predecessor] >= i)
+                continue;
+            hasLikelyPredecessor |= m_blocks[predecessor]->frequency() > unlikelyFrequency;
+            isEnteredByJump |= successorsOf(m_function.blocks[predecessor].terminator).size() == 1;
+        }
+        bool isHinted = hint && !isEnteredByJump;
+        if (hasLikelyPredecessor && !isHinted)
+            continue;
+        LBasicBlock lowered = m_blocks[order[i].index()];
+        lowered->setFrequency(std::min(lowered->frequency(), unlikelyFrequency));
+        if (!isHinted || !Options::aotMapFilePath()) [[likely]]
+            continue;
+        auto& value = m_function.at(hint);
+        auto& writtenIn = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+        if (!writtenIn.module)
+            continue;
+        m_context.branchHintsForMap.append("\nW\t"_s);
+        for (uint8_t byte : m_program.string(m_program.modules[writtenIn.module.index()].path))
+            m_context.branchHintsForMap.append(static_cast<char>(byte));
+        m_context.branchHintsForMap.append('\t', value.position);
+    }
 }
 
 void Lowering::computeLoopBlocks(const Vector<BlockID>& order, const PredecessorLists& predecessors)
@@ -1236,7 +1275,7 @@ bool Lowering::run()
     for (unsigned i = order.size(); m_function.kind != FunctionKind::Module && i--;) {
         auto& block = m_function.at(order[i]);
         bool evaluatesModule = m_opcodes.contains(Opcode::CallDirect) && block.values.containsIf([&](ValueID id) {
-            return m_function.at(id).opcode == Opcode::CallDirect && m_program.at(m_function.at(id).function()).kind == FunctionKind::Module;
+            return m_function.at(id).opcode == Opcode::CallDirect && m_program.at(m_function.at(id).function()).kind == FunctionKind::Module && !m_program.moduleEvaluationIndexByFunction.contains(m_function.at(id).function().index());
         });
         if (!evaluatesModule && (block.terminator.kind == TerminatorKind::Jump || block.terminator.kind == TerminatorKind::Branch)) {
             bool onlyLeadsToColdBlocks = true;
@@ -1251,6 +1290,8 @@ bool Lowering::run()
             m_moduleEvaluatingBlocks.set(order[i].index());
         }
     }
+    if (m_opcodes.contains(Opcode::UnlikelyHint) && !Options::aotIgnoresBranchHintsForTesting())
+        applyBranchHints(order);
     m_out.appendTo(prologue);
     m_out.initializeConstants(m_proc, prologue);
     findPinnedRegisters();
@@ -2622,7 +2663,7 @@ Operand Lowering::lower(ValueID id, const Value& value)
             join.add(boolean(true));
             m_out.appendTo(isNotDouble);
             orElse(notEqual(shape, word32(UndecidedShape)), absent);
-            orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), genericPath);
+            orElse(isContiguousOrInt32Shape(shape), genericPath);
             Pointer values = butterflyOf(array);
             orElse(below(index, publicLength(values)), absent);
             orElse(isNotEmpty(Boxed(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, values.value(), index.value())))), absent);
@@ -2867,6 +2908,8 @@ Operand Lowering::lower(ValueID id, const Value& value)
             m_needsPoll = true;
         else
             poll();
+        return undefined();
+    case Opcode::UnlikelyHint:
         return undefined();
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -3920,7 +3963,7 @@ static bool emitCode(const Program& program, FunctionID id, const Function& func
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly() && result.mayBeDumped, linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
     dropPaddingAtEnd(info, start, proc.code());
     if (Options::aotMapFilePath()) [[unlikely]]
-        result.bytesByOperation = makeString(bytesByOperation(proc.pcToOriginMap(), linkBuffer, info.codeSize), context.literalsForMap.isEmpty() ? ""_s : "\nV"_s, context.literalsForMap.toString());
+        result.bytesByOperation = makeString(bytesByOperation(proc.pcToOriginMap(), linkBuffer, info.codeSize), context.literalsForMap.isEmpty() ? ""_s : "\nV"_s, context.literalsForMap.toString(), context.branchHintsForMap.toString());
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     auto offsetOf = [&](CCallHelpers::Label label) {
         return static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));

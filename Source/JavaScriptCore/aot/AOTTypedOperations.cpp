@@ -4969,7 +4969,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateThisWithStores, JSCell*, (Instan
             object->setStructure(vm, structure);
             if (mayCacheForThis(instance, data, cache))
                 fill(object, structure);
-            else {
+            else if (!SharedData::contains(cache)) {
                 Instance::StructureOfThis remembered { newTarget, cache, structure, instance->negativeOffsetFields().typedPrototypeEpoch, 0, { } };
                 JSValue prototype = structure->storedPrototype();
                 while (prototype.isObject() && remembered.numberOfPrototypes < Instance::StructureOfThis::maxPrototypes) {

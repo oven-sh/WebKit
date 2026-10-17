@@ -518,7 +518,7 @@ private:
         return !!block;
     }
 
-    struct BodyRead {
+    struct GetterRead {
         ValueID id;
         BlockID block;
         ValueID receiver;
@@ -539,6 +539,8 @@ private:
             if (values[i] == callee && readsReplaceableGlobalThroughCache(callee))
                 continue;
             auto& value = m_function.at(values[i]);
+            if (value.opcode == Opcode::CallDirect || value.opcode == Opcode::Await || value.opcode == Opcode::Yield || value.opcode == Opcode::GetResumeMode)
+                return false;
             if (value.opcode == Opcode::Operation || value.opcode == Opcode::CallBuiltin) {
                 BuiltinID operation = m_program.operationOf(value);
                 if (operation == Operations::HostObjectCachedValue || operation == Operations::HasHostObjectCachedValue)
@@ -567,10 +569,10 @@ private:
         return true;
     }
 
-    bool isBodyRead(ValueID id) const
+    bool isReadUsedOnce(ValueID id, ASCIILiteral name) const
     {
         auto& value = m_function.at(id);
-        return value.opcode == Opcode::GetById && equalSpans(m_program.string(value.string()), asBytes("body"_s.span8())) && useCountInRemainingValues(id) == 1;
+        return value.opcode == Opcode::GetById && equalSpans(m_program.string(value.string()), asBytes(name.span8())) && useCountInRemainingValues(id) == 1;
     }
 
     bool isUncheckedCastUsedOnce(ValueID id) const
@@ -582,7 +584,7 @@ private:
         return reason == CastReason::Claim || reason == CastReason::Upcast;
     }
 
-    std::optional<BodyRead> bodyReadUsedOnlyBy(ValueID operand, BlockID block, size_t user, ValueID callee) const
+    std::optional<GetterRead> getterReadUsedOnlyBy(ASCIILiteral name, ValueID operand, BlockID block, size_t user, ValueID callee) const
     {
         size_t first = m_remainingValueCounts[block.index()];
         if (m_function.at(operand).opcode == Opcode::Cast) {
@@ -590,17 +592,17 @@ private:
                 return std::nullopt;
             operand = m_function.at(operand).child(0);
         }
-        if (isBodyRead(operand)) {
+        if (isReadUsedOnce(operand, name)) {
             size_t index = m_function.at(block).values.reverseFind(operand);
             if (index == notFound || index < first || index >= user || !writesNothingBetween(block, index + 1, user, callee))
                 return std::nullopt;
-            return BodyRead { operand, block, m_function.at(operand).child(0), index + 1 };
+            return GetterRead { operand, block, m_function.at(operand).child(0), index + 1 };
         }
         auto parameters = m_function.at(block).parameters.span();
         size_t position = std::ranges::find(parameters, operand) - parameters.begin();
         if (m_function.at(operand).opcode != Opcode::Parameter || position == parameters.size() || useCountInRemainingValues(operand) != 1 || !writesNothingBetween(block, first, user, callee))
             return std::nullopt;
-        std::optional<BodyRead> read;
+        std::optional<GetterRead> read;
         ValueID cached;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             auto& predecessor = m_function.blocks[b];
@@ -610,10 +612,10 @@ private:
                 ValueID incoming = target.arguments[position];
                 if (predecessor.terminator.kind != TerminatorKind::Jump)
                     return std::nullopt;
-                if (isBodyRead(incoming)) {
+                if (isReadUsedOnce(incoming, name)) {
                     if (read || predecessor.values.isEmpty() || predecessor.values.last() != incoming || predecessor.values.size() <= m_remainingValueCounts[b])
                         return std::nullopt;
-                    read = BodyRead { incoming, BlockID(b), m_function.at(incoming).child(0), first };
+                    read = GetterRead { incoming, BlockID(b), m_function.at(incoming).child(0), first };
                     continue;
                 }
                 auto& other = m_function.at(incoming);
@@ -658,7 +660,7 @@ private:
         ValueID callee = original.child(0);
         if (m_function.at(block).terminator.kind == TerminatorKind::Invoke)
             return false;
-        auto read = bodyReadUsedOnlyBy(original.arguments[0], block, index, callee);
+        auto read = getterReadUsedOnlyBy("body"_s, original.arguments[0], block, index, callee);
         if (!read || !areUsedOnlyUpTo(block, read->firstValueBehind, index))
             return false;
         ValueID receiver = read->receiver;
@@ -750,6 +752,105 @@ private:
         return true;
     }
 
+    void branchUnlessIsRequestWithOriginalHeaders(ValueID subject, BlockID otherwise)
+    {
+        ValueID isRequest = appendTestWithNumber(Operations::HasHostClassStructure, subject, requestHostClass);
+        endBlockAfterThrowingValue();
+        BlockID then = addBlock();
+        BlockID mayBeRouted = addBlock();
+        auto& first = m_function.at(m_block).terminator;
+        first.kind = TerminatorKind::Branch;
+        first.value = isRequest;
+        first.targets.append(Target { then, { } });
+        first.targets.append(Target { mayBeRouted, { } });
+        moveTo(mayBeRouted);
+        ValueID isRouted = appendTestWithNumber(Operations::HasHostClassStructure, subject, bunRequestHostClass);
+        auto& second = m_function.at(m_block).terminator;
+        second.kind = TerminatorKind::Branch;
+        second.value = isRouted;
+        second.targets.append(Target { then, { } });
+        second.targets.append(Target { otherwise, { } });
+        moveTo(then);
+    }
+
+    bool specializeRequestHeaderRead(BlockID block, unsigned index)
+    {
+        Value original = m_function.at(m_function.at(block).values[index]);
+        if (original.opcode != Opcode::CallMethod || original.arguments.size() != 1 || !equalSpans(m_program.string(original.string()), asBytes("get"_s.span8())))
+            return false;
+        ValueID headers = original.child(0);
+        if (m_function.at(block).terminator.kind == TerminatorKind::Invoke || isBehindFailedGuardOf(headers, block))
+            return false;
+        auto read = getterReadUsedOnlyBy("headers"_s, headers, block, index, { });
+        if (!read || !areUsedOnlyUpTo(block, read->firstValueBehind, index))
+            return false;
+        ValueID request = read->receiver;
+        Value headersRead = m_function.at(read->id);
+        Vector<ValueID, 8> repeated;
+        for (size_t i = read->firstValueBehind; i < index; ++i) {
+            if (ValueID id = m_function.at(block).values[i]; id != headers)
+                repeated.append(id);
+        }
+
+        open(block, index);
+        BlockID afterCall = m_after;
+        uint32_t position = m_position;
+        uint32_t inlineFrame = m_inlineFrame;
+        uint32_t inliningDepth = m_inliningDepth;
+        bool isInTailPosition = m_isInTailPosition;
+        BlockID asWritten = addBlock();
+        m_calleesThatFailedGuard[asWritten.index()] = headers;
+        m_function.at(m_block).terminator.kind = TerminatorKind::Jump;
+        m_function.at(m_block).terminator.targets.append(Target { asWritten, { } });
+        moveTo(asWritten);
+        finish(appendThrowing(Value(original)));
+
+        open(read->block, static_cast<unsigned>(m_function.at(read->block).values.reverseFind(read->id)));
+        BlockID afterRead = m_after;
+        BlockID readsNow = addBlock();
+        branchUnlessIsRequestWithOriginalHeaders(request, readsNow);
+        Vector<std::pair<ValueID, ValueID>, 8> copies;
+        auto copyOf = [&](ValueID id) {
+            for (auto& [from, to] : copies) {
+                if (from == id)
+                    return to;
+            }
+            return id;
+        };
+        for (ValueID id : repeated) {
+            Value copy = m_function.at(id);
+            copy.forEachChild([&](ValueID& child) {
+                child = copyOf(child);
+            });
+            copies.append({ id, append(WTF::move(copy)) });
+        }
+        m_after = afterCall;
+        m_position = position;
+        m_inlineFrame = inlineFrame;
+        m_inliningDepth = inliningDepth;
+        m_isInTailPosition = isInTailPosition;
+        Value call = make(Opcode::CallBuiltin, original.type);
+        call.immediates[0] = Operations::GetRequestHeader.index();
+        call.arguments.append(request);
+        call.arguments.append(copyOf(original.arguments[0]));
+        ValueID header = appendThrowing(WTF::move(call));
+        Value isUnanswered = make(Opcode::StrictEq, m_program.types.boolean);
+        isUnanswered.children = { header, append(make(Opcode::Undefined, m_program.types.undefined)) };
+        BlockID answered = branch(append(WTF::move(isUnanswered)));
+        original.children[0] = appendThrowing(Value(headersRead));
+        m_calleesThatFailedGuard[m_block.index()] = original.children[0];
+        original.arguments[0] = copyOf(original.arguments[0]);
+        finish(appendThrowing(WTF::move(original)));
+
+        moveTo(answered);
+        finish(header);
+
+        m_after = afterRead;
+        moveTo(readsNow);
+        finish(appendThrowing(WTF::move(headersRead)));
+        return true;
+    }
+
     bool specializeResponseConstruction(BlockID block, unsigned index)
     {
         Value original = m_function.at(m_function.at(block).values[index]);
@@ -783,6 +884,8 @@ private:
         ValueID id = m_function.at(block).values[index];
         if (m_mode == Mode::Speculation && m_function.at(id).opcode == Opcode::Construct)
             return specializeResponseConstruction(block, index);
+        if (m_mode == Mode::Speculation && specializeRequestHeaderRead(block, index))
+            return true;
         Vector<Type, 4> argumentTypes;
         for (ValueID argument : m_function.at(id).arguments)
             argumentTypes.append(typeOf(argument));

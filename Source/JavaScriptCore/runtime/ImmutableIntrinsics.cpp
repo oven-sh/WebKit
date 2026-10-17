@@ -538,4 +538,10 @@ void ImmutableIntrinsicsAudit::didAccessCallerOrArguments(JSGlobalObject* global
     reportRefusal(globalObject, "function-caller-arguments"_s, "get"_s, function, name, "answers null"_s, true);
 }
 
+void ImmutableIntrinsicsAudit::didRefuseChange(JSGlobalObject* globalObject, const String& refusal, VM::ImmutableIntrinsicsAuditReporter reporter)
+{
+    ProgramLocation place = programLocation(globalObject->vm());
+    reporter(globalObject, "refused-change"_s, refusal, place.functionName, place.sourceURL, place.position.line, place.position.column);
+}
+
 } // namespace JSC

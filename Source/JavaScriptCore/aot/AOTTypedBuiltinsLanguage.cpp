@@ -522,7 +522,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
 
     m_out.appendTo(isNotDouble);
     orElse(notEqual(shape, word32(UndecidedShape)), absent);
-    orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), generic);
+    orElse(isContiguousOrInt32Shape(shape), generic);
     Pointer values = butterflyOf(array);
     orElse(below(index, publicLength(values)), absent);
     Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, values.value(), index.value())));

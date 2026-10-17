@@ -839,6 +839,7 @@ private:
         case Opcode::ResultAt:
         case Opcode::TypeOfIs:
         case Opcode::LoopHint:
+        case Opcode::UnlikelyHint:
         case Opcode::AssertNotAllocated:
             return changes(Writes::Nothing);
         case Opcode::String:

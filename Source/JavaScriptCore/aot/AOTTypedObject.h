@@ -2186,6 +2186,7 @@ private:
     static void printCountsAtExit();
     std::unique_ptr<Counts> m_counts;
     Structure* m_closureStructures[classObjectClosureStructure + 1] { };
+    Structure* m_closureWithPrototypeStructure { nullptr };
     Structure* m_slimClosureStructures[numberOfSlimClosureKinds] { };
     Structure* m_reifiedSlimClosureStructures[2][3] { };
     Structure* m_boundClosureStructures[2] { };
@@ -2193,6 +2194,7 @@ private:
 public:
     Structure* asyncBoundFunctionStructure { nullptr };
     void setAsyncBoundFunctionStructure(Structure*);
+    void didAddPrototypeToClosure(Structure*);
 private:
     JSObject* m_slimClosureLazyPropertyHolder { nullptr };
     void didCreateClosureFor(uint32_t function, JSCell*);

@@ -272,6 +272,7 @@ bool guaranteesResultType(const Program& program, const Function& function, cons
     case Opcode::IteratorHasNext:
     case Opcode::IteratorClose:
     case Opcode::LoopHint:
+    case Opcode::UnlikelyHint:
     case Opcode::GetResumeMode:
     case Opcode::GetCapture:
     case Opcode::CreateRest:

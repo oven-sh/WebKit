@@ -11566,6 +11566,7 @@ static unsigned estimatedCloneSize(const Value& value)
     case Opcode::Results:
     case Opcode::ResultAt:
     case Opcode::LoopHint:
+    case Opcode::UnlikelyHint:
         return 0;
     case Opcode::String:
     case Opcode::BigInt:
@@ -12506,7 +12507,8 @@ static SplitOutcome trySplitSubtypeFastPaths(const Program& program, FunctionID 
             return definition;
         if (joins.parameters[join])
             return joins.parameters[join];
-        if (function.at(ValueID(variable)).opcode == Opcode::NewObjectWithShape || function.at(ValueID(variable)).opcode == Opcode::Results) {
+        auto& joined = function.at(ValueID(variable));
+        if (joined.opcode == Opcode::NewObjectWithShape || joined.opcode == Opcode::Results || (joined.opcode == Opcode::CallDirect && !program.at(joined.function()).resultTypes.isEmpty())) {
             failed = true;
             return ValueID(variable);
         }

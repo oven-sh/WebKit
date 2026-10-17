@@ -33,6 +33,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewResponseFromResponse, EncodedJSValu
     OPERATION_RETURN(scope, response);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetRequestHeader, EncodedJSValue, (Instance* instance, EncodedJSValue request, EncodedJSValue name))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    EncodedJSValue header = s_hostClassEntryPoints.getRequestHeader(globalObject, request, name);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, header);
+}
+
 namespace Typed {
 
 using namespace B3;
@@ -49,7 +57,7 @@ const HostClassEntryPoints& hostClassEntryPoints()
 
 std::optional<Writes> writesOfInlineHost(InlineBuiltin which, std::span<const Type>)
 {
-    RELEASE_ASSERT(which == InlineBuiltin::NewResponse || which == InlineBuiltin::NewResponseFromResponse);
+    RELEASE_ASSERT(which == InlineBuiltin::NewResponse || which == InlineBuiltin::NewResponseFromResponse || which == InlineBuiltin::GetRequestHeader);
     return Writes::Heap;
 }
 
@@ -57,6 +65,8 @@ std::optional<Operand> Lowering::lowerInlineHost(InlineBuiltin which, ValueID re
 {
     if (which == InlineBuiltin::NewResponseFromResponse)
         return ensure(AOT_TYPED_OPERATION(NewResponseFromResponse, in<Boxed>(value.arguments[0])), typeOf(result));
+    if (which == InlineBuiltin::GetRequestHeader)
+        return ensure(AOT_TYPED_OPERATION(GetRequestHeader, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1])), typeOf(result));
     RELEASE_ASSERT(which == InlineBuiltin::NewResponse);
     constexpr unsigned firstHeaderOperand = 4;
     auto& arguments = value.arguments;

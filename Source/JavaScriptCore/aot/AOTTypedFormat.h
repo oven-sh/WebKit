@@ -320,6 +320,7 @@ struct Function {
     v(Cast) \
     v(CatchValue) \
     v(LoopHint) \
+    v(UnlikelyHint) \
     v(Operation) \
     v(Await) \
     v(GetExternalModule) \

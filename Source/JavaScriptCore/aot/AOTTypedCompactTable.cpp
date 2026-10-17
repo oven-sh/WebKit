@@ -664,11 +664,11 @@ JSCell* CompactTable::copyPosition(VM& vm, JSCell* position)
     return copy;
 }
 
-static constexpr int32_t iterationKindMask = 3;
-static constexpr int32_t iteratesSet = 4;
-static constexpr int32_t iteratesThroughIterator = 8;
+static constexpr int32_t iterationKindMask = CollectionIteration::iterationKindMask;
+static constexpr int32_t iteratesSet = CollectionIteration::iteratesSet;
+static constexpr int32_t iteratesThroughIterator = CollectionIteration::iteratesThroughIterator;
 static constexpr int32_t iteratesGenerator = CollectionIteration::iteratesGenerator;
-static constexpr int32_t iteratesArray = 32;
+static constexpr int32_t iteratesArray = CollectionIteration::iteratesArray;
 static constexpr int32_t iteratesString = 64;
 static constexpr int32_t iteratesMatches = 128;
 static constexpr int32_t iteratesTypedArray = 512;
@@ -706,12 +706,12 @@ static ALWAYS_INLINE auto tryOpenWith(JSGlobalObject* globalObject, JSValue iter
     case JSMapType:
         if (uncheckedDowncast<JSMap>(cell)->realm() != globalObject || !uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable())
             return nullptr;
-        mode = static_cast<int32_t>(IterationKind::Entries);
+        mode = CollectionIteration::modeOfMap;
         break;
     case JSSetType:
         if (uncheckedDowncast<JSSet>(cell)->realm() != globalObject || !uncheckedDowncast<JSSet>(cell)->isIteratorProtocolFastAndNonObservable())
             return nullptr;
-        mode = static_cast<int32_t>(IterationKind::Values) | iteratesSet | CollectionIteration::hasFastStepAfterStart;
+        mode = CollectionIteration::modeOfSet;
         break;
     case JSMapIteratorType:
         if (uncheckedDowncast<JSMapIterator>(cell)->realm() != globalObject || !mapIteratorProtocolIsFastAndNonObservable(vm, uncheckedDowncast<JSMapIterator>(cell)))
@@ -844,6 +844,26 @@ static ALWAYS_INLINE bool stepThrough(JSGlobalObject* globalObject, Record* reco
             return false;
         if (mode & CollectionIteration::hasFastStepAfterStart)
             storeRecordWord(vm, record, 1, jsNumber(mode ^ (CollectionIteration::hasFastStepAfterStart | CollectionIteration::mayBeSteppedQuickly)));
+    } else if (mode & iteratesArray) {
+        auto* array = uncheckedDowncast<JSArray>(cell);
+        uint32_t index = static_cast<uint32_t>(record->get(4).asNumber());
+        if (index >= array->length())
+            return false;
+        storeRecordWord(vm, record, 4, jsNumber(index + 1));
+        value = jsNumber(index);
+        if (static_cast<IterationKind>(mode & iterationKindMask) == IterationKind::Entries) {
+            JSValue element = array->getIndex(globalObject, index);
+            RETURN_IF_EXCEPTION(scope, false);
+            if constexpr (std::is_same_v<Record, CollectionIteration::InFrame>) {
+                if (mode & CollectionIteration::takesPairsApart) {
+                    storeRecordWord(vm, record, CollectionIteration::firstPartWord, value);
+                    storeRecordWord(vm, record, CollectionIteration::firstPartWord + 1, element);
+                    return true;
+                }
+            }
+            value = constructArrayPair(globalObject, value, element);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
     } else {
         JSCell* table = record->get(3).isCell() ? record->get(3).asCell() : nullptr;
         uint32_t entry = record->get(4).asUInt32();
@@ -856,9 +876,18 @@ static ALWAYS_INLINE bool stepThrough(JSGlobalObject* globalObject, Record* reco
             compact->markAsIterated();
         storeRecordWord(vm, record, 3, position.table);
         storeRecordWord(vm, record, 4, jsNumber(position.entry + 1));
-        value = position.key;
-        if (static_cast<IterationKind>(mode & iterationKindMask) == IterationKind::Entries) {
-            value = constructArrayPair(globalObject, position.key, position.value);
+        IterationKind kind = static_cast<IterationKind>(mode & iterationKindMask);
+        JSValue second = mode & iteratesSet ? position.key : position.value;
+        value = kind == IterationKind::Values ? second : position.key;
+        if (kind == IterationKind::Entries) {
+            if constexpr (std::is_same_v<Record, CollectionIteration::InFrame>) {
+                if (mode & CollectionIteration::takesPairsApart) {
+                    storeRecordWord(vm, record, CollectionIteration::firstPartWord, position.key);
+                    storeRecordWord(vm, record, CollectionIteration::firstPartWord + 1, second);
+                    return true;
+                }
+            }
+            value = constructArrayPair(globalObject, position.key, second);
             RETURN_IF_EXCEPTION(scope, false);
         } else if (mode & CollectionIteration::hasFastStepAfterStart)
             storeRecordWord(vm, record, 1, jsNumber(mode ^ (CollectionIteration::hasFastStepAfterStart | CollectionIteration::mayBeSteppedQuickly)));

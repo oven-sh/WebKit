@@ -204,6 +204,22 @@ void prepareForGeneration(Code& code)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+static bool repeatsCompareOfOnlyPredecessor(Code& code, BasicBlock* block)
+{
+    if (!code.proc().positionIndependent() || block->size() != 1 || block->numPredecessors() != 1 || code.isEntrypoint(block))
+        return false;
+    Inst& branch = block->last();
+    if (branch.kind.opcode != Branch32 && branch.kind.opcode != Branch64)
+        return false;
+    BasicBlock* predecessor = block->predecessor(0);
+    if (predecessor == block)
+        return false;
+    Inst& before = predecessor->last();
+    return before.kind.opcode == branch.kind.opcode && before.args()[1] == branch.args()[1] && before.args()[2] == branch.args()[2];
+}
+#endif
+
 static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 {
     CompilerTimingScope timingScope("Air"_s, "generateWithAlreadyAllocatedRegisters"_s);
@@ -347,7 +363,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 
         addItem(block->last());
         auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+        CCallHelpers::Jump jump = repeatsCompareOfOnlyPredecessor(code, block) ? CCallHelpers::Jump(jit.m_assembler.jCC(static_cast<X86Assembler::Condition>(block->last().args()[0].asRelationalCondition()))) : block->last().generate(jit, context);
+#else
         CCallHelpers::Jump jump = block->last().generate(jit, context);
+#endif
         if (disassembler)
             disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
 

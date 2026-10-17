@@ -6111,7 +6111,10 @@ bool Closure::ensurePrototypeProperty(VM& vm)
             prototype = constructEmptyObject(state.instance.globalObject);
         prototype->putDirect(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
+    bool wasUnmodified = structure()->id().bits() == state.instance.typedClosureStructureID(0);
     putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | (isDeclaredAs(functionIsGenerator) && !state.data.isCompiledForAudit ? PropertyAttribute::ReadOnly : PropertyAttribute::None));
+    if (wasUnmodified)
+        state.didAddPrototypeToClosure(structure());
     return true;
 }
 
@@ -9582,6 +9585,15 @@ const State::NamedPropertiesTransition* State::namedPropertiesTransition(VM& vm,
         didCreate(transition.to);
     m_namedPropertiesTransitions.append(WTF::move(transition));
     return &m_namedPropertiesTransitions.last();
+}
+
+void State::didAddPrototypeToClosure(Structure* structure)
+{
+    if (m_closureWithPrototypeStructure)
+        return;
+    m_closureWithPrototypeStructure = structure;
+    WTF::storeStoreFence();
+    instance.typedClosureWithPrototypeStructureID = structure->id().bits();
 }
 
 std::span<Structure* const> State::closureStructures(VM& vm)
@@ -15999,7 +16011,7 @@ void State::visit(Visitor& visitor)
             visitor.appendUnbarriered(cell);
     }
     instance.youngRootsCursor = m_youngRoots;
-    for (JSCell* cell : std::initializer_list<JSCell*> { moduleRecord, importMeta, m_closureStructures[0], m_closureStructures[1], m_closureStructures[2], m_closureStructures[3], m_closureStructures[4], m_liveBindingGetter, m_liveBindingAccessor, asyncGeneratorImmediateStep }) {
+    for (JSCell* cell : std::initializer_list<JSCell*> { moduleRecord, importMeta, m_closureStructures[0], m_closureStructures[1], m_closureStructures[2], m_closureStructures[3], m_closureStructures[4], m_closureWithPrototypeStructure, m_liveBindingGetter, m_liveBindingAccessor, asyncGeneratorImmediateStep }) {
         if (cell)
             visitor.appendUnbarriered(cell);
     }
@@ -17306,6 +17318,20 @@ String JSObject::lockViolationMessage(VM& vm, UniquedStringImpl* name, ASCIILite
     return AOT::lockedOperationErrorMessage(vm, this, AOT::LockedOperation::Change, name);
 }
 
+static AOT::RefusedChangeReporter s_refusedChangeReporter;
+
+void AOT::setRefusedChangeReporter(RefusedChangeReporter reporter)
+{
+    s_refusedChangeReporter = reporter;
+}
+
+static String reportingRefusal(JSObject* object, String&& refusal)
+{
+    if (s_refusedChangeReporter) [[unlikely]]
+        ImmutableIntrinsicsAudit::didRefuseChange(object->globalObject(), refusal, s_refusedChangeReporter);
+    return WTF::move(refusal);
+}
+
 String AOT::lockedOperationErrorMessage(VM& vm, JSObject* object, LockedOperation refused, UniquedStringImpl* name)
 {
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(object))
@@ -17316,13 +17342,13 @@ String AOT::lockedOperationErrorMessage(VM& vm, JSObject* object, LockedOperatio
         why = object->getDirect(vm, vm.propertyNames->constructor) ? makeString(why, ". Use a subclass of "_s, object->classInfo()->className, " or a wrapper function instead"_s) : makeString(why, ". Use a wrapper function instead"_s);
     String holder = Typed::nameOfLockedObject(vm, object);
     if (refused == LockedOperation::ChangePrototype)
-        return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, ": "_s, why));
+        return withAOTErrorNote(makeString(reportingRefusal(object, makeString("Cannot change the prototype of "_s, holder)), ": "_s, why));
     ASCIILiteral what = refused == LockedOperation::Delete ? "Cannot delete "_s : "Cannot change "_s;
     if (!name || PropertyName(name).isPrivateName())
-        return withAOTErrorNote(makeString(what, holder, ": "_s, why));
+        return withAOTErrorNote(makeString(reportingRefusal(object, makeString(what, holder)), ": "_s, why));
     if (name->isSymbol())
-        return withAOTErrorNote(makeString(what, "["_s, StringView(name), "] of "_s, holder, ": "_s, why));
-    return withAOTErrorNote(makeString(what, "'"_s, StringView(name), "' of "_s, holder, ": "_s, why));
+        return withAOTErrorNote(makeString(reportingRefusal(object, makeString(what, "["_s, StringView(name), "] of "_s, holder)), ": "_s, why));
+    return withAOTErrorNote(makeString(reportingRefusal(object, makeString(what, "'"_s, StringView(name), "' of "_s, holder)), ": "_s, why));
 }
 
 void JSObject::recordLockViolation(VM& vm, UniquedStringImpl* name, ASCIILiteral kind, bool failsSilently)

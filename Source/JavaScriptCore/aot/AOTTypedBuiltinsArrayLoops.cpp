@@ -386,10 +386,9 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         return booleanResult(equal(anyArrayIndexingMode(arrayOperand(arguments[0]), IndexingShapeMask), word32(DoubleShape)), type);
     case InlineBuiltin::IsContiguousArray: {
         Word32 shape = anyArrayIndexingMode(arrayOperand(arguments[0]), IndexingShapeMask);
-        Word32 isContiguous = equal(shape, word32(ContiguousShape));
         if (!mayContainNumbers(arguments[0]))
-            return booleanResult(isContiguous, type);
-        return booleanResult(logicalOr(isContiguous, equal(shape, word32(Int32Shape))), type);
+            return booleanResult(equal(shape, word32(ContiguousShape)), type);
+        return booleanResult(isContiguousOrInt32Shape(shape), type);
     }
     case InlineBuiltin::GetDoubleIndex:
         return ensure(Number(m_out.loadDouble(doubleAt(arrayOperand(arguments[0]), indexOperand(arguments[1])))), m_program.at(m_program.types.number), type);

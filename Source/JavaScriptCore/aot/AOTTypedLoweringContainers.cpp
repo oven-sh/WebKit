@@ -2003,10 +2003,114 @@ void Lowering::findIterationsInFrame()
     if (found.isEmpty())
         return;
     BitVector hasOtherUse = valuesUsedOtherThanAsStepIterators();
-    for (ValueID id : found) {
-        if (!hasOtherUse.get(id.index()))
-            m_iterationsInFrame.add(id.index(), m_proc.addStackSlot(sizeof(CollectionIteration::InFrame)));
+    found.removeAllMatching([&](ValueID id) {
+        return hasOtherUse.get(id.index());
+    });
+    if (found.isEmpty())
+        return;
+    if (!Options::useAOTWideReferences())
+        findPairsTakenApartAndTableMethodCalls(found);
+    for (ValueID id : found)
+        m_iterationsInFrame.add(id.index(), m_proc.addStackSlot((m_loopsTakingPairsApart.get(id.index()) ? CollectionIteration::numberOfWordsWithParts : CollectionIteration::numberOfWords) * sizeof(EncodedJSValue)));
+    for (auto& [pattern, loop] : m_loopsOfPairsTakenApart) {
+        auto& taken = m_batchedElements.find(pattern)->value;
+        taken.slot = m_iterationsInFrame.get(loop.index());
+        taken.offset = CollectionIteration::firstPartWord * sizeof(EncodedJSValue);
     }
+}
+
+std::optional<IterationKind> Lowering::kindOfTableMethod(const Value& call) const
+{
+    if (call.opcode != Opcode::CallMethod || !call.arguments.isEmpty() || call.child(1) || call.speculatedMethod != SpeculatedMethod::None || call.predictedReceiverClassPlusOne || call.isInTailPosition)
+        return std::nullopt;
+    if (m_program.typeOf(m_function, call.child(0)).singleLayout() || m_function.copiesFirstArgumentToHeap)
+        return std::nullopt;
+    static const EngineClass* mapClass = m_builtins.classNamed(m_builtins.nameOf(asBytes("Map"_s.span8())));
+    RELEASE_ASSERT(mapClass);
+    BuiltinName name = m_program.builtinName(call.string());
+    BuiltinID entry = name ? m_builtins.findForInstance(BuiltinKind::Method, *mapClass, name) : BuiltinID();
+    if (!entry)
+        return std::nullopt;
+    auto& builtin = m_builtins.at(entry);
+    if (builtin.implementation.kind != BuiltinImplementation::Inline || builtin.implementation.inlined != InlineBuiltin::MapIterator)
+        return std::nullopt;
+    return builtin.name == "entries"_s ? IterationKind::Entries : builtin.name == "keys"_s ? IterationKind::Keys : IterationKind::Values;
+}
+
+void Lowering::findPairsTakenApartAndTableMethodCalls(const Vector<ValueID, 4>& loops)
+{
+    struct Use {
+        unsigned count { 0 };
+        ValueID user;
+    };
+    UncheckedKeyHashMap<uint32_t, Use, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> uses;
+    ValueByValue stepValues;
+    BitVector isLoop;
+    for (ValueID loop : loops)
+        isLoop.set(loop.index());
+    for (auto& block : m_function.blocks) {
+        for (unsigned i = 0; i < block.values.size(); ++i) {
+            ValueID id = block.values[i];
+            auto& value = m_function.at(id);
+            if (value.opcode == Opcode::IteratorValue && isLoop.get(value.child(0).index())) {
+                if (!stepValues.add(value.child(0).index(), id).isNewEntry)
+                    stepValues.set(value.child(0).index(), ValueID());
+                uses.add(id.index(), Use { });
+            }
+            if (isLoop.get(id.index()) && i && block.values[i - 1] == value.child(0) && kindOfTableMethod(m_function.at(value.child(0)))) {
+                m_tableMethodCallsOfLoops.add(id.index(), value.child(0));
+                uses.add(value.child(0).index(), Use { });
+            }
+        }
+    }
+    if (uses.isEmpty())
+        return;
+    auto didUse = [&](ValueID used, ValueID user) {
+        auto found = uses.find(used.index());
+        if (found == uses.end())
+            return;
+        ++found->value.count;
+        found->value.user = user;
+    };
+    for (auto& block : m_function.blocks) {
+        for (ValueID id : block.values) {
+            m_function.at(id).forEachChild([&](ValueID child) {
+                didUse(child, id);
+            });
+        }
+        if (block.terminator.value)
+            didUse(block.terminator.value, ValueID());
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                didUse(argument, ValueID());
+        }
+    }
+    m_tableMethodCallsOfLoops.removeIf([&](auto& entry) {
+        return uses.get(entry.value.index()).count != 1;
+    });
+    for (ValueID call : m_tableMethodCallsOfLoops.values())
+        m_tableMethodCalls.set(call.index());
+    for (auto& [loop, stepValue] : stepValues) {
+        if (!stepValue)
+            continue;
+        Use use = uses.get(stepValue.index());
+        if (use.count != 1 || !use.user)
+            continue;
+        auto& pattern = m_function.at(use.user);
+        auto* taken = elementsPerStep(use.user);
+        if (pattern.opcode != Opcode::IteratorOpen || !taken || taken->count > 2)
+            continue;
+        if (auto call = m_tableMethodCallsOfLoops.get(loop); call && *kindOfTableMethod(m_function.at(call)) != IterationKind::Entries)
+            continue;
+        m_loopsOfPairsTakenApart.add(use.user.index(), ValueID(loop));
+        m_loopsTakingPairsApart.set(loop);
+    }
+}
+
+LValue Lowering::batchedElementsOf(const BatchedElements& taken)
+{
+    LValue words = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), taken.slot);
+    return taken.offset ? m_out.add(words, m_out.constIntPtr(taken.offset)) : words;
 }
 
 std::optional<Pointer> Lowering::recordInFrameOf(ValueID iterator)
@@ -2442,9 +2546,45 @@ Operand Lowering::lowerIteratorOpen(ValueID result, const Value& value)
 {
     ValueID iterable = value.child(0);
     if (auto* taken = elementsPerStep(result)) {
-        LValue words = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), taken->slot);
-        callICStub(Stub::ReadBatchedElements, Void, { { in<Boxed>(iterable).value(), firstStubOperandGPR }, { words, GPRInfo::argumentGPR1 }, { m_out.constInt64(taken->count), GPRInfo::argumentGPR2 } });
+        auto readElements = [&] {
+            callICStub(Stub::ReadBatchedElements, Void, { { in<Boxed>(iterable).value(), firstStubOperandGPR }, { batchedElementsOf(*taken), GPRInfo::argumentGPR1 }, { m_out.constInt64(taken->count), GPRInfo::argumentGPR2 } });
+        };
+        if (ValueID loop = m_loopsOfPairsTakenApart.get(result.index())) {
+            constexpr int64_t isTakenApart = static_cast<int64_t>(JSValue::NumberTag | CollectionIteration::takesPairsApart);
+            LBasicBlock isWhole = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            LValue mode = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, recordInFrameOf(loop)->value(), sizeof(EncodedJSValue)));
+            m_out.branch(m_out.equal(m_out.bitAnd(mode, m_out.constInt64(isTakenApart)), m_out.constInt64(isTakenApart)), unsure(continuation), unsure(isWhole));
+            m_out.appendTo(isWhole);
+            readElements();
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+        } else
+            readElements();
         return ensure(undefined(), m_program.at(m_program.types.undefined), typeOf(result));
+    }
+    bool takesPairsApart = m_loopsTakingPairsApart.get(result.index());
+    if (takesPairsApart)
+        m_out.store64(m_out.int64Zero, m_out.address(m_heaps.AOTTyped_runtimeState, recordInFrameOf(result)->value(), sizeof(EncodedJSValue)));
+    if (ValueID call = m_tableMethodCallsOfLoops.get(result.index())) {
+        auto& method = m_function.at(call);
+        Boxed object = in<Boxed>(method.child(0));
+        Pointer record = *recordInFrameOf(result);
+        uint32_t mode = static_cast<uint32_t>(*kindOfTableMethod(method)) | (takesPairsApart ? CollectionIteration::takesPairsApart : 0);
+        LBasicBlock isOther = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue opened = callICStub(Stub::IterOpenTableInFrame, Int64, { { object.value(), GPRInfo::argumentGPR1 }, { record.value(), GPRInfo::argumentGPR2 } }, std::pair { GPRInfo::argumentGPR3, mode }, { Writes::RuntimeState, false });
+        ValueFromBlock openedAsTable = m_out.anchor(opened);
+        m_out.branch(m_out.notZero64(opened), unsure(continuation), unsure(isOther));
+        m_out.appendTo(isOther);
+        Boxed iterator = [&] {
+            SetForScope positionOfCall(m_currentIndexInBlock, m_currentIndexInBlock - 1);
+            return callMethodGeneric(object, method.string(), method.arguments);
+        }();
+        ValueFromBlock openedOtherwise = m_out.anchor(callICStub(takesPairsApart ? Stub::IterOpenPairsInFrame : Stub::IterOpenInFrame, Int64, { { iterator.value(), GPRInfo::argumentGPR1 }, { record.value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsForOperation<operationAOTTypedIterOpenInFrame>()));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return ensure(Boxed(m_out.phi(Int64, openedAsTable, openedOtherwise)), typeOf(result));
     }
     if (auto* iteration = stringIteration(result))
         return openStringIteration(*iteration, result, iterable);
@@ -2487,7 +2627,7 @@ Operand Lowering::lowerIteratorOpen(ValueID result, const Value& value)
     }
     auto genericPath = [&] {
         if (auto record = recordInFrameOf(result))
-            return Boxed(callICStub(Stub::IterOpenInFrame, Int64, { { in<Boxed>(iterable).value(), GPRInfo::argumentGPR1 }, { record->value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsForOperation<operationAOTTypedIterOpenInFrame>()));
+            return Boxed(callICStub(takesPairsApart ? Stub::IterOpenPairsInFrame : Stub::IterOpenInFrame, Int64, { { in<Boxed>(iterable).value(), GPRInfo::argumentGPR1 }, { record->value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsForOperation<operationAOTTypedIterOpenInFrame>()));
         return AOT_TYPED_OPERATION(IterOpen, in<Boxed>(iterable));
     };
     auto expected = predictionOf(iterable);
@@ -2570,10 +2710,8 @@ Operand Lowering::lowerIteratorValue(ValueID result, const Value& value)
 {
     ValueID iterator = value.child(0);
     auto& type = typeOf(result);
-    if (auto* taken = elementsPerStep(iterator)) {
-        LValue words = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), taken->slot);
-        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, words, m_function.at(value.child(1)).integer() * sizeof(EncodedJSValue)))), type);
-    }
+    if (auto* taken = elementsPerStep(iterator))
+        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, batchedElementsOf(*taken), m_function.at(value.child(1)).integer() * sizeof(EncodedJSValue)))), type);
     if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array) {
         m_arrayIsConvertedBeforeLoop = isConvertedBeforeLoop(iterator);
         m_arrayIsAllocatedAsDouble = indexingTypeAtCreation(typeOf(m_function.at(iterator).child(0))) == ArrayWithDouble;

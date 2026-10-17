@@ -1126,123 +1126,57 @@ CellPointer Lowering::makeSubstring(const StringReceiver& receiver, Integer leng
     };
     if (prefersGenericPathInColdCode())
         return byStub(false);
-    if (!m_activeHandler) {
-        LBasicBlock several = m_out.newBlock();
-        LBasicBlock part = m_out.newBlock();
-        LBasicBlock flat = m_out.newBlock();
-        LBasicBlock otherwise = newColdBlock();
-        Join join(m_out, Rep::Cell, Int64);
-        Integer span = sub(to, from);
-        if (m_isInLoop) {
-            LBasicBlock atMostOne = m_out.newBlock();
-            LBasicBlock none = m_out.newBlock();
-            LBasicBlock one = m_out.newBlock();
-            LBasicBlock oneOfFlat = m_out.newBlock();
-            LBasicBlock oneOfNarrow = m_out.newBlock();
-            LBasicBlock whole = m_out.newBlock();
-            m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(atMostOne));
-            m_out.appendTo(atMostOne);
-            m_out.branch(equal(span, integer(1)).value(), unsure(one), unsure(none));
-            m_out.appendTo(none);
-            join.add(CellPointer(emptyString()));
-            m_out.appendTo(one);
-            Pointer impl = fiberOf(receiver);
-            m_out.branch(hasNoBits(impl, JSString::isRopeInPointer).value(), usually(oneOfFlat), rarely(otherwise));
-            m_out.appendTo(oneOfFlat);
-            m_out.branch(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()).value(), usually(oneOfNarrow), rarely(otherwise));
-            m_out.appendTo(oneOfNarrow);
-            LValue codeUnit = marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), offsetBy(loadField<Pointer>(impl, m_heaps.StringImpl_data), from, 0).value())), IsFixed);
-            ensureStillAliveHere(receiver.string);
-            join.add(CellPointer(singleCharacterString(codeUnit)));
-            m_out.appendTo(several);
-            m_out.branch(equal(span, length).value(), rarely(whole), usually(part));
-            m_out.appendTo(whole);
-            join.add(receiver.string);
-        } else {
-            m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(otherwise));
-            m_out.appendTo(several);
-            m_out.branch(equal(span, length).value(), rarely(otherwise), usually(part));
-        }
-        m_out.appendTo(part);
-        static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
-        Pointer fiber = fiberOf(receiver);
-        m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(otherwise));
-        m_out.appendTo(flat);
-        Word32 flags = loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed);
-        LValue base = receiver.string.value();
-        CellPointer created = allocateRope(otherwise);
-        m_out.store64(m_out.bitOr(m_out.constInt64(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), zeroExtended(bitAnd(flags, word32(StringImpl::flagIs8Bit()))).value()), created.value(), m_heaps.JSRopeString_fiber0);
-        m_out.store64(m_out.bitOr(span.value(), m_out.shl(base, m_out.constInt32(32))), created.value(), m_heaps.JSRopeString_fiber1);
-        m_out.store64(m_out.bitOr(m_out.lShr(base, m_out.constInt32(32)), m_out.shl(from.value(), m_out.constInt32(16))), created.value(), m_heaps.JSRopeString_fiber2);
-        fenceAfterInitialization();
-        join.add(created);
-        m_out.appendTo(otherwise);
-        join.add(byStub(true));
-        return join.finish().as<CellPointer>();
-    }
-    LBasicBlock atMostOne = m_out.newBlock();
-    LBasicBlock none = m_out.newBlock();
-    LBasicBlock one = m_out.newBlock();
     LBasicBlock several = m_out.newBlock();
-    LBasicBlock whole = m_out.newBlock();
     LBasicBlock part = m_out.newBlock();
     LBasicBlock flat = m_out.newBlock();
-    LBasicBlock rope = newColdBlock();
-    LBasicBlock substring = newColdBlock();
-    LBasicBlock make = m_out.newBlock();
-    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock otherwise = newColdBlock();
     Join join(m_out, Rep::Cell, Int64);
-
     Integer span = sub(to, from);
-    m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(atMostOne));
-
-    m_out.appendTo(atMostOne);
-    m_out.branch(equal(span, integer(1)).value(), unsure(one), unsure(none));
-    m_out.appendTo(none);
-    join.add(CellPointer(emptyString()));
-    m_out.appendTo(one);
-    join.add(singleCharacterStringAt(charactersOf(receiver), from));
-
-    m_out.appendTo(several);
-    m_out.branch(equal(span, length).value(), rarely(whole), usually(part));
-    m_out.appendTo(whole);
-    join.add(receiver.string);
-
+    if (m_isInLoop) {
+        LBasicBlock atMostOne = m_out.newBlock();
+        LBasicBlock none = m_out.newBlock();
+        LBasicBlock one = m_out.newBlock();
+        LBasicBlock oneOfFlat = m_out.newBlock();
+        LBasicBlock oneOfNarrow = m_out.newBlock();
+        LBasicBlock whole = m_out.newBlock();
+        m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(atMostOne));
+        m_out.appendTo(atMostOne);
+        m_out.branch(equal(span, integer(1)).value(), unsure(one), unsure(none));
+        m_out.appendTo(none);
+        join.add(CellPointer(emptyString()));
+        m_out.appendTo(one);
+        Pointer impl = fiberOf(receiver);
+        m_out.branch(hasNoBits(impl, JSString::isRopeInPointer).value(), usually(oneOfFlat), rarely(otherwise));
+        m_out.appendTo(oneOfFlat);
+        m_out.branch(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()).value(), usually(oneOfNarrow), rarely(otherwise));
+        m_out.appendTo(oneOfNarrow);
+        LValue codeUnit = marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), offsetBy(loadField<Pointer>(impl, m_heaps.StringImpl_data), from, 0).value())), IsFixed);
+        ensureStillAliveHere(receiver.string);
+        join.add(CellPointer(singleCharacterString(codeUnit)));
+        m_out.appendTo(several);
+        m_out.branch(equal(span, length).value(), rarely(whole), usually(part));
+        m_out.appendTo(whole);
+        join.add(receiver.string);
+    } else {
+        m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(otherwise));
+        m_out.appendTo(several);
+        m_out.branch(equal(span, length).value(), rarely(otherwise), usually(part));
+    }
     m_out.appendTo(part);
     static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
     Pointer fiber = fiberOf(receiver);
-    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(rope));
+    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(flat), rarely(otherwise));
     m_out.appendTo(flat);
-    ValueFromBlock flatBase = m_out.anchor(receiver.string.value());
-    ValueFromBlock flatStart = m_out.anchor(from.value());
-    ValueFromBlock flatFlags = m_out.anchor(loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed).value());
-    m_out.jump(make);
-
-    m_out.appendTo(rope);
-    CellPointer string(m_out.opaque(receiver.string.value()));
-    Pointer current = loadField<Pointer>(string, m_heaps.JSRopeString_fiber0);
-    m_out.branch(hasNoBits(current, JSRopeString::isSubstringInPointer).value(), unsure(slowPath), unsure(substring));
-    m_out.appendTo(substring);
-    LValue lengthAndBaseLow = m_out.load64(string.value(), m_heaps.JSRopeString_fiber1);
-    LValue baseHighAndOffset = m_out.load64(string.value(), m_heaps.JSRopeString_fiber2);
-    ValueFromBlock substringBase = m_out.anchor(m_out.bitOr(m_out.lShr(lengthAndBaseLow, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(baseHighAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32))));
-    ValueFromBlock startInBase = m_out.anchor(m_out.add(from.value(), m_out.lShr(baseHighAndOffset, m_out.constInt32(16))));
-    ValueFromBlock substringFlags = m_out.anchor(m_out.castToInt32(current.value()));
-    m_out.jump(make);
-
-    m_out.appendTo(make);
-    LValue base = m_out.phi(Int64, flatBase, substringBase);
-    LValue start = m_out.phi(Int64, flatStart, startInBase);
-    Word32 flags(m_out.phi(Int32, flatFlags, substringFlags));
-    CellPointer created = allocateRope(slowPath);
+    Word32 flags = loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed);
+    LValue base = receiver.string.value();
+    CellPointer created = allocateRope(otherwise);
     m_out.store64(m_out.bitOr(m_out.constInt64(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), zeroExtended(bitAnd(flags, word32(StringImpl::flagIs8Bit()))).value()), created.value(), m_heaps.JSRopeString_fiber0);
     m_out.store64(m_out.bitOr(span.value(), m_out.shl(base, m_out.constInt32(32))), created.value(), m_heaps.JSRopeString_fiber1);
-    m_out.store64(m_out.bitOr(m_out.lShr(base, m_out.constInt32(32)), m_out.shl(start, m_out.constInt32(16))), created.value(), m_heaps.JSRopeString_fiber2);
+    m_out.store64(m_out.bitOr(m_out.lShr(base, m_out.constInt32(32)), m_out.shl(from.value(), m_out.constInt32(16))), created.value(), m_heaps.JSRopeString_fiber2);
     fenceAfterInitialization();
     join.add(created);
-
-    m_out.appendTo(slowPath);
-    join.add(AOT_TYPED_OPERATION(Substring, receiver.string, low32(from), low32(to)));
+    m_out.appendTo(otherwise);
+    join.add(byStub(true));
     return join.finish().as<CellPointer>();
 }
 
@@ -2786,11 +2720,20 @@ CellPointer Lowering::integerToString(Integer value, const Type& type)
     return join.finish().as<CellPointer>();
 }
 
-Word32 Lowering::hasText(Pointer data, std::span<const uint8_t> text)
+Word32 Lowering::hasText(Pointer data, std::span<const uint8_t> text, bool leavesAtFirstDifference)
 {
     size_t size = text.size();
     Word32 result;
+    LBasicBlock differs = nullptr;
     auto compare = [&](size_t offset, unsigned width) {
+        if (result && leavesAtFirstDifference) {
+            if (!differs)
+                differs = m_out.newBlock();
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(result.value(), unsure(next), unsure(differs));
+            m_out.appendTo(next);
+            result = Word32();
+        }
         uint64_t expected = 0;
         for (unsigned i = 0; i < width; ++i)
             expected |= static_cast<uint64_t>(text[offset + i]) << (8 * i);
@@ -2820,7 +2763,13 @@ Word32 Lowering::hasText(Pointer data, std::span<const uint8_t> text)
         unsigned last = left > 4 ? 8 : left > 2 ? 4 : left;
         compare(size - last, last);
     }
-    return result;
+    if (!differs)
+        return result;
+    Join join(m_out, Rep::Int32, Int32);
+    join.add(result);
+    m_out.appendTo(differs);
+    join.add(boolean(false));
+    return join.finish().as<Word32>();
 }
 
 Word32 Lowering::hasSubstringAt(const StringReceiver& receiver, Integer place, ValueID constant, std::span<const uint8_t> text)
@@ -2832,7 +2781,7 @@ Word32 Lowering::hasSubstringAt(const StringReceiver& receiver, Integer place, V
         return genericPath();
     Characters characters = charactersOf(receiver);
     return either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
-        Word32 result = hasText(offsetBy(characters.data, place, 0), text);
+        Word32 result = textMatches(offsetBy(characters.data, place, 0), text);
         ensureStillAliveHere(characters.owner);
         return result;
     }, genericPath);
@@ -3139,7 +3088,7 @@ Word32 Lowering::isStringEqualTo(ValueID id, ValueID constant, std::span<const u
     }
     Characters characters = checksRopeOnce ? charactersOfStringWithLength(receiver, text.size(), isNotAsLong, nullptr, true) : charactersOf(receiver);
     join.add(either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
-        Word32 result = hasText(characters.data, text);
+        Word32 result = textMatches(characters.data, text);
         ensureStillAliveHere(characters.owner);
         return result;
     }, [&] {
@@ -3561,6 +3510,13 @@ Word32 Lowering::areStringsEqual(ValueID a, ValueID b)
     for (auto* receiver : { &first, &second }) {
         if (receiver->isString)
             when(logicalNot(receiver->isString), boolean(false));
+    }
+    if (prefersGenericPathInColdCode() && !openedString(first.id) && !openedString(second.id)) {
+        join.add(Word32(m_out.castToInt32(callAllocationStub(Stub::StringsAreEqual, { { first.string.value(), stubTemporaryGPRs[2] }, { second.string.value(), stubTemporaryGPRs[3] } }, { Writes::Nothing, false }, false))));
+        Word32 areEqual = join.finish().as<Word32>();
+        ensureStillAliveHere(first.string);
+        ensureStillAliveHere(second.string);
+        return areEqual;
     }
     if (!openedString(first.id) && !openedString(second.id)) {
 #if CPU(ARM64)

@@ -169,7 +169,16 @@
     struct BatchedElements {
         B3::Air::StackSlot* slot;
         unsigned count;
+        unsigned offset { 0 };
     };
+    using ValueByValue = UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    ValueByValue m_loopsOfPairsTakenApart;
+    BitVector m_loopsTakingPairsApart;
+    ValueByValue m_tableMethodCallsOfLoops;
+    BitVector m_tableMethodCalls;
+    void findPairsTakenApartAndTableMethodCalls(const Vector<ValueID, 4>& loops);
+    std::optional<IterationKind> kindOfTableMethod(const Value& call) const;
+    LValue batchedElementsOf(const BatchedElements&);
     UncheckedKeyHashMap<uint32_t, BatchedElements, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_batchedElements;
     void findElementsPerStep();
     const BatchedElements* elementsPerStep(ValueID iterator) const;

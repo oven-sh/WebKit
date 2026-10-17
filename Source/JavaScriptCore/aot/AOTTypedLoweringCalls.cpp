@@ -207,15 +207,17 @@ void Lowering::branchToLandingPad(PatchpointValue* patchpoint, std::optional<GPR
     m_out.appendTo(continuation);
 }
 
-static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister)
+static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister, bool isThrowStatement)
 {
 #if CPU(X86_64) && OS(LINUX)
     static_assert(throwWordGPR == X86Registers::r11);
-    if (!returnsToSite && !valueIsInWordRegister) {
+    if (!returnsToSite && !valueIsInWordRegister && !(isLeaf && isThrowStatement)) {
         context.throwSiteTraps.append({ jit.labelIgnoringWatchpoints(), site.bits });
         jit.m_assembler.buffer().putByte(static_cast<int8_t>(isLeaf ? trapInstructionWithoutFrame : trapInstruction));
         return false;
     }
+#else
+    UNUSED_PARAM(isThrowStatement);
 #endif
     if (isLeaf && !hasFramelessFunctionStubs) {
         jit.emitFunctionPrologue();
@@ -263,7 +265,7 @@ uint32_t Lowering::throwAt(ThrowKind kind, std::optional<Operand> operand, uint3
 #endif
         unsigned number = rep == Rep::Void ? newErrorClassPlusOne : rep == Rep::Double || rep == Rep::OptionalDouble ? static_cast<unsigned>(params[0].fpr()) : static_cast<unsigned>(params[0].gpr());
         auto words = throwSiteWords(kind, rep, number, a, b);
-        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR))
+        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR, !!newErrorClassPlusOne))
             return;
         context->recordDataInCode(jit, words.size());
         for (uint32_t word : words)
@@ -310,7 +312,7 @@ void Lowering::requireOrThrowAt(Word32 condition, ThrowKind kind, std::optional<
 #endif
         unsigned number = rep == Rep::Void ? 0 : rep == Rep::Double || rep == Rep::OptionalDouble ? static_cast<unsigned>(params[0].fpr()) : static_cast<unsigned>(params[0].gpr());
         auto words = throwSiteWords(kind, rep, number, a, std::nullopt);
-        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR))
+        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR, false))
             return;
         context->recordDataInCode(jit, words.size());
         for (uint32_t word : words)
@@ -2742,7 +2744,7 @@ Boxed Lowering::getCallOrApply(Boxed base, StringID name, BuiltinID method, cons
         orElse(isCell(base), throughCache);
     CellPointer cell = asCell(base);
     auto checkCalledFullClosureOrElse = [&] {
-        orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID()))), throughCache);
+        orElse(hasClosureStructure(cell, Instance::offsetOfTypedClosureStructureID()), throughCache);
         if (!definedAs || definedAs->kind == FunctionKind::Constructor)
             orElse(isZero(bitAnd(loadField<Integer>(cell, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), throughCache);
     };
@@ -2954,8 +2956,7 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
 
 Integer Lowering::entryWordIfClosure(CellPointer cell)
 {
-    Word32 isUnmodifiedStructure = equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID())));
-    return either<Integer>(isUnmodifiedStructure, [&] {
+    return either<Integer>(hasClosureStructure(cell, Instance::offsetOfTypedClosureStructureID()), [&] {
         return loadField<Integer>(cell, m_heaps.AOTTypedClosure_entry);
     }, [&] {
         return Integer(callAllocationStub(Stub::TypedClosureEntry, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false));
@@ -3241,6 +3242,8 @@ Operand Lowering::lowerCallMethod(ValueID result, const Value& value)
     StringID name = value.string();
     auto& receiver = typeOf(object);
     auto& type = typeOf(result);
+    if (m_tableMethodCalls.get(result.index()))
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     LayoutID supertype = receiver.singleLayout();
     auto targets = supertype ? methodTargets(supertype, name) : std::nullopt;
     if (m_function.copiesFirstArgumentToHeap && !m_program.typeOf(m_function, object).singleLayout() && !value.arguments.isEmpty() && value.arguments.size() <= numberOfArgumentGPRs) {

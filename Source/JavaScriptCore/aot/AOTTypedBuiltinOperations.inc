@@ -46,6 +46,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewError, Heap, JSCell*, (Instance*
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPrepareBoundFunctionAllocation, RuntimeState, void, (Instance*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewResponse, Heap, EncodedJSValue, (Instance*, EncodedJSValue body, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewResponseFromResponse, Heap, EncodedJSValue, (Instance*, EncodedJSValue other));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetRequestHeader, Heap, EncodedJSValue, (Instance*, EncodedJSValue request, EncodedJSValue name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewConstantFormatter, RuntimeState, JSCell*, (Instance*, uint32_t pattern));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatDateTime, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double timeValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatNumber, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double number));

@@ -4900,6 +4900,9 @@ private:
                     makeUpcast(parameter, arguments[i]);
                     m_function.blocks[b].values.append(parameter);
                 }
+                taken.values.removeAllMatching([&](ValueID id) {
+                    return m_function.at(id).opcode == Opcode::UnlikelyHint;
+                });
                 m_function.blocks[b].values.appendVector(taken.values);
                 m_function.blocks[b].terminator = WTF::move(taken.terminator);
                 incomingEdges[next] = 0;
@@ -5282,6 +5285,7 @@ private:
     {
         switch (value.opcode) {
         case Opcode::LoopHint:
+        case Opcode::UnlikelyHint:
         case Opcode::StrictEq:
         case Opcode::ToBoolean:
             return true;
@@ -5634,6 +5638,7 @@ bool mayThrow(const Program& program, const Function& function, const Value& val
     case Opcode::MaterializeEnvironment:
     case Opcode::CatchValue:
     case Opcode::LoopHint:
+    case Opcode::UnlikelyHint:
     case Opcode::GetResumeMode:
         return false;
     case Opcode::IsInstanceOfClass:

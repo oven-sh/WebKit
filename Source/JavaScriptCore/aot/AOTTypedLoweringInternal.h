@@ -253,6 +253,7 @@ struct LoweringContext {
     bool createsFrameRecord { false };
     unsigned stackUsedAtCalls { 0 };
     StringBuilder literalsForMap;
+    StringBuilder branchHintsForMap;
 
     static bool coldSitesForceFrame()
     {
@@ -394,6 +395,7 @@ private:
     void computeDominators(const Vector<BlockID>& order, const PredecessorLists&);
     struct Loop;
     void computeLoops(const Vector<BlockID>& order, const PredecessorLists&);
+    void applyBranchHints(const Vector<BlockID>& order);
     bool verifyDefinitions(const Vector<BlockID>& order) const;
     bool isLoopInvariant(const Loop&, ValueID) const;
     bool isGuaranteedToExecute(const Loop&) const;
@@ -510,6 +512,11 @@ private:
     Word32 countLeadingZeros(Word32 a) { return unary<Word32>(&Output::ctlz32, a); }
     Word32 hasBits(Word32 a, uint32_t mask) { return binary<Word32>(&Output::testNonZero32, a, word32(mask)); }
     Word32 hasNoBits(Word32 a, uint32_t mask) { return binary<Word32>(&Output::testIsZero32, a, word32(mask)); }
+    Word32 isContiguousOrInt32Shape(Word32 shape)
+    {
+        static_assert(ContiguousShape == 2 * Int32Shape && hasOneBitSet(static_cast<unsigned>(Int32Shape)));
+        return hasNoBits(binary<Word32>(&Output::sub, shape, word32(Int32Shape)), ~static_cast<uint32_t>(Int32Shape));
+    }
 
     template<typename T> static constexpr bool isBitwiseComparable = !std::is_same_v<T, Number> && !std::is_same_v<T, OptionalNumber>;
     template<typename T> requires isBitwiseComparable<T> Word32 equal(T a, T b) { return binary<Word32>(&Output::equal, a, b); }
@@ -710,6 +717,7 @@ private:
     void validateFact(Operand, ValueID, const Type&);
 
     Word32 isCallable(CellPointer);
+    Word32 hasClosureStructure(CellPointer, ptrdiff_t offsetOfStructureID);
     Word32 lowerTypeOfIs(const Value&);
     Word32 cellIsOfType(CellPointer, const Type& from, const Type& to, LBasicBlock otherwise);
     Word32 nonCellIsOfType(Boxed, const Type& from, const Type& to);
@@ -1671,7 +1679,8 @@ private:
     StringPart concatenate(const StringPart&, const StringPart&, const StringPart* third = nullptr);
     CellPointer lowerStrcat(const Value&);
     CellPointer integerToString(Integer, const Type&);
-    Word32 hasText(Pointer data, std::span<const uint8_t> text);
+    Word32 hasText(Pointer data, std::span<const uint8_t> text, bool leavesAtFirstDifference = false);
+    Word32 textMatches(Pointer data, std::span<const uint8_t> text) { return hasText(data, text, true); }
     Word32 areBytesEqual(Pointer, Pointer, Integer length);
     Word32 hasSubstringAt(const StringReceiver&, Integer place, ValueID constant, std::span<const uint8_t> text);
     Word32 isStringEqualTo(ValueID, ValueID constant, std::span<const uint8_t> text);

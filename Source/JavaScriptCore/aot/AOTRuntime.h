@@ -887,6 +887,7 @@ struct Instance {
     uint32_t typedClosureStructureIDs[numberOfTypedClosureStructures - 1];
     uint32_t& typedClosureStructureID(unsigned which) { return which ? typedClosureStructureIDs[which - 1] : negativeOffsetFields().typedClosureStructureID; }
     uint64_t typedClosureStructureIDPair;
+    uint32_t typedClosureWithPrototypeStructureID;
     LocalAllocator* typedSlimClosureAllocators[3];
     JSCell* typedSlimClosureLengthGetter;
     JSCell* typedSlimClosureNameGetter;
@@ -1840,6 +1841,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedSlimClosureLengthGetter() { return OBJECT_OFFSETOF(Instance, typedSlimClosureLengthGetter); }
     static constexpr ptrdiff_t offsetOfTypedSlimClosureNameGetter() { return OBJECT_OFFSETOF(Instance, typedSlimClosureNameGetter); }
     static constexpr ptrdiff_t offsetOfTypedClosureStructureIDPair() { return OBJECT_OFFSETOF(Instance, typedClosureStructureIDPair); }
+    static constexpr ptrdiff_t offsetOfTypedClosureWithPrototypeStructureID() { return OBJECT_OFFSETOF(Instance, typedClosureWithPrototypeStructureID); }
     static constexpr ptrdiff_t offsetOfTypedSlimClosureHeader(unsigned kind) { return OBJECT_OFFSETOF(Instance, typedSlimClosureHeaders) + kind * sizeof(uint64_t); }
     static constexpr ptrdiff_t offsetOfTypedSlimClosureAllocator(unsigned numberOfCaptures) { return OBJECT_OFFSETOF(Instance, typedSlimClosureAllocators) + (numberOfCaptures + 1) / 2 * sizeof(LocalAllocator*); }
     static constexpr ptrdiff_t offsetOfTypedModifiedLiterals() { return OBJECT_OFFSETOF(Instance, typedModifiedLiterals); }
