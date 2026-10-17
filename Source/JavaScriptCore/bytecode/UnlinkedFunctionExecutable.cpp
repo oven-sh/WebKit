@@ -83,7 +83,6 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     if (error.isValid())
         return nullptr;
-    vm.codeCache()->updateCache(executable, source, kind, result);
     return result;
 }
 
@@ -273,16 +272,15 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         }
 #endif
     }
-    switch (specializationKind) {
-    case CodeSpecializationKind::CodeForCall:
-        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())
-            return codeBlock;
-        break;
-    case CodeSpecializationKind::CodeForConstruct:
-        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForConstruct.get())
-            return codeBlock;
-        break;
-    }
+    // Code for a debugger has the debug hooks and keeps every variable in the scope for them
+    // (BytecodeGenerator::shouldEmitDebugHooks). That is the one part of the mode that differs between the global
+    // objects of a VM: a debugger is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode),
+    // and an unlinked executable is shared by every global object that links it. So the code held here is only given
+    // to the callers that ask for the same. (The profilers are the VM's: whoever turns one on decides whether the code
+    // that exists is generated again.)
+    WriteBarrier<UnlinkedFunctionCodeBlock>& slot = specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct;
+    if (UnlinkedFunctionCodeBlock* held = slot.get(); held && held->wasCompiledWithDebuggingOpcodes() == codeGenerationMode.contains(CodeGenerationMode::Debugger))
+        return held;
 
     UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
         vm, this, source, specializationKind, codeGenerationMode, 
@@ -292,14 +290,15 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     if (error.isValid())
         return nullptr;
 
-    switch (specializationKind) {
-    case CodeSpecializationKind::CodeForCall:
-        m_unlinkedCodeBlockForCall.set(vm, this, result);
-        break;
-    case CodeSpecializationKind::CodeForConstruct:
-        m_unlinkedCodeBlockForConstruct.set(vm, this, result);
-        break;
-    }
+    // The code held stays where it is, and the caller's CodeBlock is all that keeps the new code. The body of a
+    // generator or an async function that is suspended in the held code has to find it again: what was decoded from a
+    // bytecode cache or made by the bytecode optimizer is not what generating it again gives. And the new code is not
+    // this executable's: it is not counted as generated code to clear, and the source provider is not told of it.
+    if (slot)
+        return result;
+
+    slot.set(vm, this, result);
+    vm.codeCache()->updateCache(this, source, specializationKind, result);
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
     vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
