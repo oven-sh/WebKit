@@ -2020,6 +2020,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseTryStatement(
         // of https://tc39.es/ecma262/#sec-ecmascript-function-objects-construct-argumentslist-newtarget
         // being caught by the `catch` block.
         finallyBlock = context.createEmptyStatement(location);
+        context.setEndOffset(finallyBlock, m_lastTokenLocation.endOffset - 1);
     }
 
     return context.createTryStatement(location, tryBlock, catchPattern, catchBlock, finallyBlock, WTF::move(catchEnvironment));
