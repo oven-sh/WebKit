@@ -62,7 +62,8 @@ constexpr static inline double makeDay(double year, double month, double date)
     double mm = month - additionalYears * 12;
     int32_t yearInt32 = toInt32(ym);
     int32_t monthInt32 = toInt32(mm);
-    if (yearInt32 != ym || monthInt32 != mm)
+    // mm is outside [0, 12) only when |month| >= 2^53 made the split inexact.
+    if (yearInt32 != ym || monthInt32 != mm || monthInt32 < 0 || monthInt32 > 11)
         return PNaN;
     double days = dateToDaysFrom1970(yearInt32, monthInt32, 1);
     return days + date - 1;
