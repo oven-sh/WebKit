@@ -456,6 +456,14 @@ Boxed Lowering::lowerMethodGetById(const Value& value)
 
 Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
 {
+    if (value.takesElementsOfArrayLiteral) {
+        auto& literal = m_function.at(value.arguments[0]);
+        uint32_t resultsOfCallsWithoutPromise = 0;
+        for (unsigned i = 0; i < literal.arguments.size(); ++i)
+            resultsOfCallsWithoutPromise |= static_cast<uint32_t>(m_function.at(literal.arguments[i]).isAwaitedWithoutPromise) << i;
+        auto [count, elements] = argumentBuffer(literal.arguments);
+        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(PromiseAll, builtinCallEffects(value), count, elements, word32(static_cast<int32_t>(resultsOfCallsWithoutPromise))), Type::engineClass(m_builtins.promiseClass()), typeOf(result));
+    }
     if (auto& builtin = m_builtins.at(value.builtin()); builtin.hasReceiver()) {
         auto& receiver = typeOf(value.child(0));
         if (!receiver.hasObjects() && receiver.mayBeUndefinedOrNull() && receiver.primitives & (Primitive::Number | Primitive::Boolean)) {

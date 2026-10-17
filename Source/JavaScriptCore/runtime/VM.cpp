@@ -2466,6 +2466,7 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
     if (m_aotPropertyLookupTable)
         m_aotPropertyLookupTable->didChangePrototype(nameOfProperty);
     for (AOT::Instance* instance : m_aotInstances) {
+        instance->forgetCheckedStructures();
         if (instance->typed && instance->typed->hasDescendantPrototypes()) [[unlikely]]
             instance->typed->didChangeDescendantPrototype(*this, changed, nameOfProperty);
     }
@@ -2494,6 +2495,8 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 #if ENABLE(AOT)
     if (m_aotPropertyLookupTable)
         m_aotPropertyLookupTable->didChangePrototype(nullptr);
+    for (AOT::Instance* instance : m_aotInstances)
+        instance->forgetCheckedStructures();
 #endif
     invalidateEpochCaches();
 }

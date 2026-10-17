@@ -526,6 +526,7 @@ struct Instance::Collections {
     AssumptionWatchpoint arraysHaveNoInheritedElements;
     std::unique_ptr<std::array<BufferAccessorWatchpoint, Instance::numberOfBufferAccessors>> bufferAccessorWatchpoints;
     AsyncLocalStorageWatchpoint asyncLocalStorageWatchpoint;
+    Vector<std::unique_ptr<CheckedStructureWatchpoint>> checkedStructureWatchpoints;
     Vector<Slot*> transitions;
     Vector<Slot*> transitionsSinceLastCollection;
     Vector<PolymorphicSlots*> allSiteSlots;
@@ -2432,6 +2433,8 @@ void Instance::visit(Visitor& visitor, bool newOnly)
     visitor.appendUnbarriered(cachedTypedContiguousArrayStructure);
     visitor.appendUnbarriered(bufferStructure);
     visitor.appendUnbarriered(bufferAccessorHolder);
+    for (auto& watchpoint : collections->checkedStructureWatchpoints)
+        visitor.appendUnbarriered(watchpoint->holder());
     for (Structure* structure : asyncLocalStorageStructures)
         visitor.appendUnbarriered(structure);
     visitor.appendUnbarriered(asyncContextFrameStructure);
@@ -2451,6 +2454,30 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         visitor.appendUnbarriered(executable);
     for (JSArray* templateObject : collections->templateObjects.values())
         visitor.appendUnbarriered(templateObject);
+}
+
+bool Instance::watchProperty(JSObject* holder, UniquedStringImpl* uid)
+{
+    auto& watchpoints = collections->checkedStructureWatchpoints;
+    watchpoints.removeAllMatching([](auto& watchpoint) {
+        return watchpoint->hasFired();
+    });
+    Structure* structure = holder->structure();
+    if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || structure->typeInfo().overridesGetOwnPropertySlot())
+        return false;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(*vm, uid, attributes);
+    if (!isValidOffset(offset) || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+        return false;
+    if (watchpoints.containsIf([&](auto& watchpoint) { return watchpoint->holder() == holder && watchpoint->key().uid() == uid; }))
+        return true;
+    auto condition = ObjectPropertyCondition::equivalence(*vm, nullptr, holder, uid, holder->getDirect(offset));
+    if (!condition.isWatchable(PropertyCondition::EnsureWatchability))
+        return false;
+    watchpoints.append(makeUnique<CheckedStructureWatchpoint>());
+    watchpoints.last()->watch(*vm, condition, *this);
+    vm->writeBarrier(globalObject);
+    return true;
 }
 
 void Instance::watchBufferAccessor(unsigned row, const ObjectPropertyCondition& condition)
@@ -3386,6 +3413,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     }
     if (std::exchange(objectCreateCacheIsDirty, false))
         zeroSpan(std::span { objectCreateCache });
+    forgetCheckedStructures();
     forgetPrototypeChanges();
     if (std::exchange(hasThisAllocations, false))
         zeroSpan(std::span { thisAllocations.get() });

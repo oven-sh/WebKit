@@ -85,7 +85,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSaveFrameAndAwait, JSCell*, (Instance*
     resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, saved);
     if (scope.exception()) [[unlikely]]
         saved->willBeRestoredToStack();
-    OPERATION_RETURN(scope, saved->promise());
+    OPERATION_RETURN(scope, saved->promiseOrWaiter());
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwaitWithSavedFrame, JSCell*, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
@@ -93,11 +93,51 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwaitWithSavedFrame, JSCell*, (Instanc
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     vm.writeBarrier(saved);
     if (!awaited)
-        OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promise());
+        OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promiseOrWaiter());
     resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, saved);
     if (scope.exception()) [[unlikely]]
         uncheckedDowncast<Typed::SavedFrame>(saved)->willBeRestoredToStack();
-    OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promise());
+    OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promiseOrWaiter());
+}
+
+static ALWAYS_INLINE void resumeWhenCallSettles(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue awaited, Typed::SavedFrame* waiter)
+{
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    if (awaited.isCell() && awaited.asCell()->structureID() == globalObject->promiseStructure()->id()) {
+        uncheckedDowncast<JSPromise>(awaited)->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AOTAsyncFunctionResume, nullptr, waiter, asyncContext);
+        return;
+    }
+    if (awaited.isCell() && awaited.asCell()->structureID() == std::bit_cast<StructureID>(static_cast<uint32_t>(instance->savedFrameHeader))) {
+        auto* callee = uncheckedDowncast<Typed::SavedFrame>(awaited);
+        if (JSPromise* promise = callee->promise())
+            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AOTAsyncFunctionResume, nullptr, waiter, asyncContext);
+        else
+            callee->setWaiter(vm, waiter, asyncContext);
+        return;
+    }
+    globalObject->queueMicrotask(vm, InternalMicrotask::AOTAsyncFunctionResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), awaited, waiter, asyncContext);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedSaveFrameAndAwaitCall, JSCell*, (Instance* instance, EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    Typed::SavedFrame* saved = Typed::SavedFrame::save(vm, *instance, std::bit_cast<uint64_t*>(frame), std::bit_cast<const uint64_t*>(bottom), std::bit_cast<void*>(resumeAddress), std::bit_cast<const uint64_t*>(extra));
+    resumeWhenCallSettles(instance, globalObject, vm, JSValue::decode(awaited), saved);
+    OPERATION_RETURN(scope, saved->promiseOrWaiter());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwaitCallWithSavedFrame, JSCell*, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    vm.writeBarrier(saved);
+    resumeWhenCallSettles(instance, globalObject, vm, JSValue::decode(awaited), uncheckedDowncast<Typed::SavedFrame>(saved));
+    OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promiseOrWaiter());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedPromiseAll, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* elements, uint32_t resultsOfCallsWithoutPromise))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, promiseAllOfElements(globalObject, std::span { elements, count }, resultsOfCallsWithoutPromise));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStepOrAwait, EncodedJSValue, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
@@ -409,7 +449,8 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
         applyEffects(patchpoint, { Writes::Heap, true });
         patchpoint->effects.writes = HeapRange::top();
-        patchpoint->append(ConstrainedValue(awaited.value(), ValueRep::reg(GPRInfo::argumentGPR1)));
+        bool awaitsCallWithoutPromise = m_function.at(value.arguments[0]).isAwaitedWithoutPromise;
+        patchpoint->append(ConstrainedValue(awaited.value(), ValueRep::reg(awaitsCallWithoutPromise ? GPRInfo::returnValueGPR : GPRInfo::argumentGPR1)));
         for (LValue cell : kept)
             patchpoint->append(ConstrainedValue(cell, ValueRep::LateColdAny));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
@@ -420,7 +461,8 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         patchpoint->clobberLate(m_proc.code().calleeSavesClobberedAtSuspensions());
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         CallSite site { nextSite() };
-        patchpoint->setGenerator([context = &m_context, site, keptCount = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        Stub stub = awaitsCallWithoutPromise ? Stub::AwaitCallBySavingFrame : Stub::AwaitBySavingFrame;
+        patchpoint->setGenerator([context = &m_context, site, stub, keptCount = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             Vector<uint32_t, 8> places { 0u };
             uint32_t promiseLocation = 0;
@@ -481,7 +523,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
                 jit.move(CCallHelpers::TrustedImm64(*word), stubImmediateGPR);
             else
                 jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), stubImmediateGPR);
-            context->stubCalls.call(jit, Stub::AwaitBySavingFrame, site);
+            context->stubCalls.call(jit, stub, site);
         });
         unwindToLandingPad(patchpoint, site);
         return ensure(Boxed(patchpoint), type);

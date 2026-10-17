@@ -58,6 +58,171 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLinkTimeConstant, JSCell*, (I
     return instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
 }
 
+static constexpr int64_t offsetBase = 2097152;
+
+static std::span<const Latin1Character> flatLatin1Span(JSValue value)
+{
+    if (!value.isString())
+        return { };
+    const StringImpl* impl = asString(value)->tryGetValueImpl();
+    if (!impl || !impl->is8Bit())
+        return { };
+    return impl->span8();
+}
+
+static bool isCanonicalIPv4(std::span<const Latin1Character> host)
+{
+    unsigned parts = 0;
+    size_t at = 0;
+    while (at < host.size()) {
+        unsigned value = 0;
+        unsigned digits = 0;
+        for (; at < host.size() && host[at] != '.'; ++at) {
+            if (!isASCIIDigit(host[at]) || (digits == 1 && !value))
+                return false;
+            value = value * 10 + (host[at] - '0');
+            if (++digits > 3)
+                return false;
+        }
+        if (!digits || value > 255)
+            return false;
+        ++parts;
+        if (at < host.size() && ++at == host.size())
+            return false;
+    }
+    return parts == 4;
+}
+
+static std::optional<size_t> findPathStart(std::span<const Latin1Character> text, size_t start)
+{
+    size_t at = start;
+    size_t label = start;
+    for (; at < text.size(); ++at) {
+        Latin1Character character = text[at];
+        if (isASCIILower(character) || isASCIIDigit(character))
+            continue;
+        if (character == '-') {
+            if (at == label || (at - label == 3 && text[at - 1] == '-'))
+                return std::nullopt;
+            continue;
+        }
+        if (character != '.')
+            break;
+        if (at == label || text[at - 1] == '-')
+            return std::nullopt;
+        label = at + 1;
+    }
+    if (at == label || text[at - 1] == '-')
+        return std::nullopt;
+    if (isASCIIDigit(text[label]) && !isCanonicalIPv4(text.subspan(start, at - start)))
+        return std::nullopt;
+    if (at < text.size() && text[at] == ':') {
+        unsigned port = 0;
+        size_t digits = ++at;
+        for (; at < text.size() && isASCIIDigit(text[at]); ++at) {
+            port = port * 10 + (text[at] - '0');
+            if (port > 65535)
+                return std::nullopt;
+        }
+        if (at == digits)
+            return std::nullopt;
+    }
+    if (at >= text.size() || text[at] != '/')
+        return std::nullopt;
+    return at;
+}
+
+enum URLCharacterClass : uint8_t {
+    AllowedInPath = 1,
+    AllowedInQuery = 2,
+    IsDotOrPercent = 4,
+    IsQueryDelimiterOrEscape = 8,
+};
+
+static constexpr std::array<uint8_t, 256> urlCharacterClasses = [] {
+    std::array<uint8_t, 256> classes { };
+    auto isIn = [](unsigned character, uint32_t below64) {
+        uint32_t mask = character < 64 ? (character < 32 ? 0 : below64) : character < 96 ? 0x87ffffffu : character < 128 ? 0x47fffffeu : 0;
+        return mask >> (character & 31) & 1;
+    };
+    for (unsigned character = 0; character < 256; ++character) {
+        if (isIn(character, 0x2fffff72u))
+            classes[character] |= AllowedInPath;
+        if (isIn(character, 0xafffff72u))
+            classes[character] |= AllowedInQuery;
+    }
+    classes['.'] |= IsDotOrPercent;
+    classes['%'] |= IsDotOrPercent | IsQueryDelimiterOrEscape;
+    classes['+'] |= IsQueryDelimiterOrEscape;
+    classes['&'] |= IsQueryDelimiterOrEscape;
+    classes['='] |= IsQueryDelimiterOrEscape;
+    return classes;
+}();
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedScanPlainURL, EncodedJSValue, (Instance*, EncodedJSValue encodedInput))
+{
+    auto text = flatLatin1Span(JSValue::decode(encodedInput));
+    if (text.size() < 8 || text.size() >= static_cast<size_t>(offsetBase) || text[0] != 'h' || text[1] != 't' || text[2] != 't' || text[3] != 'p')
+        return JSValue::encode(jsUndefined());
+    size_t colon = text[4] == 's' ? 5 : 4;
+    if (text[colon] != ':' || text[colon + 1] != '/' || text[colon + 2] != '/')
+        return JSValue::encode(jsUndefined());
+    auto path = findPathStart(text, colon + 3);
+    if (!path)
+        return JSValue::encode(jsUndefined());
+    size_t at = *path + 1;
+    for (; at < text.size(); ++at) {
+        uint8_t classes = urlCharacterClasses[text[at]];
+        if (!(classes & AllowedInPath))
+            break;
+        if (classes & IsDotOrPercent && text[at - 1] == '/')
+            return JSValue::encode(jsUndefined());
+    }
+    size_t query = at;
+    if (at < text.size() && text[at] == '?') {
+        for (++at; at < text.size() && urlCharacterClasses[text[at]] & AllowedInQuery; ++at) { }
+    }
+    if (at < text.size() && text[at] != '#')
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(static_cast<double>((static_cast<int64_t>(*path) * offsetBase + static_cast<int64_t>(query)) * offsetBase + static_cast<int64_t>(at))));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindPlainQueryValue, EncodedJSValue, (Instance*, EncodedJSValue encodedInput, EncodedJSValue encodedOffsets, EncodedJSValue encodedName))
+{
+    constexpr int notFound = -1;
+    constexpr int needsRealObject = -2;
+    JSValue nameValue = JSValue::decode(encodedName);
+    auto text = flatLatin1Span(JSValue::decode(encodedInput));
+    auto name = flatLatin1Span(nameValue);
+    JSValue offsetsValue = JSValue::decode(encodedOffsets);
+    if (!offsetsValue.isNumber() || !nameValue.isString() || (name.empty() && asString(nameValue)->length()))
+        return JSValue::encode(jsNumber(needsRealObject));
+    int64_t offsets = static_cast<int64_t>(offsetsValue.asNumber());
+    size_t end = static_cast<size_t>(offsets % offsetBase);
+    size_t at = static_cast<size_t>(offsets / offsetBase % offsetBase) + 1;
+    if (end > text.size())
+        return JSValue::encode(jsNumber(needsRealObject));
+    while (at < end) {
+        size_t stop = at;
+        for (; stop < end && !(urlCharacterClasses[text[stop]] & IsQueryDelimiterOrEscape); ++stop) { }
+        if (stop < end && text[stop] != '&' && text[stop] != '=')
+            return JSValue::encode(jsNumber(needsRealObject));
+        bool hasValue = stop < end && text[stop] == '=';
+        bool matchesName = (hasValue || stop != at) && stop - at == name.size() && equalSpans(text.subspan(at, stop - at), name);
+        size_t value = stop;
+        if (hasValue) {
+            for (value = ++stop; stop < end && text[stop] != '&'; ++stop) {
+                if (matchesName && (text[stop] == '%' || text[stop] == '+'))
+                    return JSValue::encode(jsNumber(needsRealObject));
+            }
+        }
+        if (matchesName)
+            return JSValue::encode(jsNumber(static_cast<double>(static_cast<int64_t>(value) * offsetBase + static_cast<int64_t>(stop))));
+        at = stop + 1;
+    }
+    return JSValue::encode(jsNumber(notFound));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedToLength, EncodedJSValue, (Instance* instance, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -103,6 +268,38 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByValDirect, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedSetCheckedStructure, size_t, (Instance* instance, EncodedJSValue encodedObject, uint32_t index))
+{
+    JSValue object = JSValue::decode(encodedObject);
+    if (!object.isObject() || index >= Instance::numberOfCheckedStructures)
+        return 0;
+    Structure* structure = asObject(object)->structure();
+    if (structure->compiledLayout()) {
+        if (structure->markingStampAndFlags() & Structure::isStructureWithExtraProperties) {
+            StructureID ofExtraProperties = structure->extraPropertiesStructureID();
+            if (!ofExtraProperties || ofExtraProperties.decode()->isDictionary())
+                return 0;
+        }
+    } else if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || structure->hasPolyProto())
+        return 0;
+    instance->checkedStructureIDs[index] = structure->id().bits();
+    instance->hasCheckedStructures = true;
+    return 1;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedWatchProperty, size_t, (Instance* instance, EncodedJSValue encodedHolder, EncodedJSValue encodedKey))
+{
+    JSValue holder = JSValue::decode(encodedHolder);
+    JSValue key = JSValue::decode(encodedKey);
+    if (!holder.isObject())
+        return 0;
+    if (key.isSymbol())
+        return instance->watchProperty(asObject(holder), &asSymbol(key)->uid());
+    if (!key.isString() || asString(key)->isRope())
+        return 0;
+    return instance->watchProperty(asObject(holder), Identifier::fromString(*instance->vm, String(asString(key)->tryGetValue())).impl());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedPutByIdDirect, void, (Instance* instance, JSCell* cell, uint32_t name, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -140,13 +337,19 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     switch (which) {
     case InlineBuiltin::IsObject:
     case InlineBuiltin::HasJSType:
+    case InlineBuiltin::ScanPlainURL:
+    case InlineBuiltin::FindPlainQueryValue:
         return Writes::Pure;
     case InlineBuiltin::IsCallable:
     case InlineBuiltin::GetInternalField:
+    case InlineBuiltin::HasHostClassStructure:
     case InlineBuiltin::HasHostObjectCachedValue:
     case InlineBuiltin::HostObjectCachedValue:
+    case InlineBuiltin::IsCheckedStructure:
         return Writes::Nothing;
     case InlineBuiltin::LinkTimeConstant:
+    case InlineBuiltin::SetCheckedStructure:
+    case InlineBuiltin::WatchProperty:
         return Writes::RuntimeState;
     case InlineBuiltin::PutInternalField:
     case InlineBuiltin::PutByValDirect:
@@ -165,7 +368,7 @@ bool Lowering::isHostObjectCacheTest(const Value& value) const
     if (value.opcode != Opcode::CallBuiltin)
         return false;
     auto& implementation = m_builtins.at(value.builtin()).implementation;
-    return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::HasHostObjectCachedValue;
+    return implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::HasHostObjectCachedValue || implementation.inlined == InlineBuiltin::HasHostClassStructure);
 }
 
 void Lowering::branchOnHostObjectCache(const Value& value, LBasicBlock isCached, LBasicBlock isNot)
@@ -185,6 +388,10 @@ void Lowering::branchOnHostObjectCache(const Value& value, LBasicBlock isCached,
     orElse(isCell(receiver), isNot);
     CellPointer cell = asCell(receiver);
     orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfHostClassStructureID(integer32(1))))), isNot);
+    if (value.arguments.size() == 2) {
+        m_out.jump(isCached);
+        return;
+    }
     Boxed cached(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, cell.value(), sizeof(JSDestructibleObject) + integer32(2))));
     m_out.branch(isNotEmpty(cached).value(), unsure(isCached), unsure(isNot));
 }
@@ -257,6 +464,10 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         barrier(asCell(in<Boxed>(arguments[0])));
         return valueResult(arguments[2], type);
     }
+    case InlineBuiltin::ScanPlainURL:
+        return ensure(AOT_TYPED_OPERATION(ScanPlainURL, in<Boxed>(arguments[0])), type);
+    case InlineBuiltin::FindPlainQueryValue:
+        return ensure(AOT_TYPED_OPERATION(FindPlainQueryValue, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), in<Boxed>(arguments[2])), m_program.at(m_program.types.number), type);
     case InlineBuiltin::ToLength: {
         Boxed operand = in<Boxed>(arguments[0]);
         return ensure(either<Boxed>(isInt32(operand), [&] {
@@ -292,6 +503,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     }
     case InlineBuiltin::GetOwnProperty:
         return ensure(AOT_TYPED_OPERATION(GetOwnProperty, in<Boxed>(arguments[0]), name(1)), type);
+    case InlineBuiltin::HasHostClassStructure:
     case InlineBuiltin::HasHostObjectCachedValue: {
         if (m_isFusedWithBranch.get(result.index()))
             return booleanResult(boolean(false), type);
@@ -307,6 +519,15 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     }
     case InlineBuiltin::HostObjectCachedValue:
         return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);
+    case InlineBuiltin::IsCheckedStructure:
+        RELEASE_ASSERT(integer32(1) < Instance::numberOfCheckedStructures);
+        return ofCell([&](CellPointer cell) {
+            return equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfCheckedStructureID(integer32(1)))));
+        });
+    case InlineBuiltin::SetCheckedStructure:
+        return booleanResult(AOT_TYPED_OPERATION(SetCheckedStructure, in<Boxed>(arguments[0]), word32(integer32(1))), type);
+    case InlineBuiltin::WatchProperty:
+        return booleanResult(AOT_TYPED_OPERATION(WatchProperty, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), type);
     case InlineBuiltin::LinkTimeConstant:
         RELEASE_ASSERT(integer32(0) < std::size(linkTimeConstants));
         return ensure(box(AOT_TYPED_OPERATION(LinkTimeConstant, word32(static_cast<uint32_t>(linkTimeConstants[integer32(0)])))), type);

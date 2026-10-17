@@ -141,6 +141,10 @@ private:
             m_out.print(" parameter of f", callee.index());
         if (value.isInTailPosition)
             m_out.print(" tail");
+        if (value.isAwaitedWithoutPromise)
+            m_out.print(" without promise");
+        if (value.takesElementsOfArrayLiteral)
+            m_out.print(" takes elements");
         if (value.dropsDroppableCallerFrame)
             m_out.print(" drops");
         if (value.leavesDroppableFrame)
@@ -187,7 +191,7 @@ private:
             index(layout.constructor.index());
             m_out.print(" environment ");
             index(layout.environment.index());
-            m_out.print(layout.hasFixedLayout ? " fixed-layout" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasUntypedBase ? " untyped-base" : "", layout.hasImmutableMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasComputedStaticMemberName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "");
+            m_out.print(layout.hasFixedLayout ? " fixed-layout" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasUntypedBase ? " untyped-base" : "", layout.hasImmutableMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasNoOwnInstances ? " no own instances" : "", layout.hasComputedStaticMemberName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "");
         }
         m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.prototypeIsSetByTypedCode ? " prototype set by typed code" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.acceptsUntypedObjects ? " accepts-untyped" : "", layout.isRelaxedForLogging ? " relaxed-for-logging" : "", layout.acceptsOnlyOtherLayouts ? " other-layouts-only" : "", layout.mayDespecialize ? " may-despecialize" : "", "\n");
         auto layouts = [&](ASCIILiteral what, const Vector<LayoutID>& list) {
@@ -423,6 +427,8 @@ private:
             m_out.print(" speculated method ", static_cast<unsigned>(value.speculatedMethod));
         if (value.predictedReceiverClassPlusOne)
             m_out.print(" expects ", Builtins::singleton().classes()[value.predictedReceiverClassPlusOne - 1].text);
+        if (value.isStackAllocatedClosure())
+            m_out.print(" in the frame");
         m_out.print("\n");
     }
 
@@ -510,6 +516,8 @@ private:
         type(function.resultType);
         if (function.takesCalleeClosure)
             m_out.print(" takes closure");
+        if (function.mayRunWithoutPromise)
+            m_out.print(" may run without promise");
         if (function.isUsedAsObject)
             m_out.print(" used as an object");
         if (m_program.genericEntrypoints.contains(static_cast<uint32_t>(&function - m_program.functions.span().data())))

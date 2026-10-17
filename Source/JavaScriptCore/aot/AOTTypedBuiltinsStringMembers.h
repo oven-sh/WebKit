@@ -90,11 +90,42 @@
         Integer lengthOfBase;
         Integer from;
         Integer to;
+        Word32 isPresent { };
+        std::optional<Characters> charactersOfBase { };
     };
     UncheckedKeyHashMap<uint32_t, Substring, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_substrings;
+    UncheckedKeyHashMap<uint32_t, Substring, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_optionalSubstrings;
     BitVector m_substringsOnlyInspected;
     void findSubstringsOnlyInspected();
     const Substring* substringCreatedBy(ValueID) const;
+    Word32 isSubstringEqualTo(const Substring&, ValueID constant, std::span<const uint8_t> text);
+    std::optional<Word32> isOptionalSubstringEqualTo(ValueID, ValueID constant);
+    struct SeparatedString {
+        StringReceiver subject;
+        Characters characters;
+        Integer numberOfSeparators;
+        Vector<Integer, 8> positions;
+    };
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<SeparatedString>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_separatedStrings;
+    UncheckedKeyHashMap<uint64_t, std::pair<unsigned, LValue>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fieldsMadeInBlock;
+    struct MatchInFrame {
+        StringReceiver subject;
+        Integer numberOfGroups;
+        Vector<Integer, 4> starts;
+        Vector<Integer, 4> ends;
+    };
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<MatchInFrame>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_matchesInFrame;
+    MatchesOnlyTakenApart m_matchesOnlyTakenApart;
+    std::optional<Operand> lowerMatchOnlyTakenApart(ValueID, const Value&);
+    std::optional<Operand> lowerPropertyOfMatch(ValueID, const Value&);
+    Operand partOfSubject(ValueID, const Value&, unsigned field, const StringReceiver& subject, Integer length, Integer from, Integer to, Word32 isPresent, std::optional<Characters>);
+    SplitsOnlyTakenApart m_splitsOnlyTakenApart;
+    void findSplitsOnlyTakenApart();
+    bool fieldMayBeAbsent(ValueID) const;
+    std::optional<Operand> lowerSplitOnlyTakenApart(ValueID, const Value&, CellPointer subject);
+    std::optional<Operand> lowerFieldOfSeparatedString(ValueID, const Value&);
+    std::optional<Operand> lowerLengthOfSeparatedString(ValueID, const Value&);
+    std::optional<Operand> lowerNumberFromSubstring(ValueID, const Value&);
     Integer lengthOf(const Substring&);
     std::optional<Characters> openedStringCharacters(const StringReceiver&);
     struct ComparisonWithLiteral {

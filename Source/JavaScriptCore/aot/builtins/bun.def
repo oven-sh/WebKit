@@ -11,16 +11,26 @@ inline GetOwnProperty
 inline LinkTimeConstant
 inline RequireBuiltinModule
 inline NativeBinding
+inline HasHostClassStructure
+inline ScanPlainURL
+inline FindPlainQueryValue
 inline HasHostObjectCachedValue
 inline HostObjectCachedValue
+inline IsCheckedStructure
+inline SetCheckedStructure
+inline WatchProperty
 
 runtime RequireBuiltinModule : Heap EncodedJSValue (uint32_t id)
 runtime NativeBinding : Heap EncodedJSValue (uint32_t index)
 runtime LinkTimeConstant : RuntimeState JSCell* (uint32_t constant) noexcept
 runtime ToLength : Heap EncodedJSValue (EncodedJSValue value)
+runtime ScanPlainURL : Pure EncodedJSValue (EncodedJSValue text) noexcept
+runtime FindPlainQueryValue : Pure EncodedJSValue (EncodedJSValue text, EncodedJSValue offsets, EncodedJSValue name) noexcept
 runtime GetOwnProperty : Heap EncodedJSValue (EncodedJSValue object, uint32_t name)
 runtime PutByValDirect : Heap void (JSCell* object, EncodedJSValue key, EncodedJSValue value)
 runtime PutByIdDirect : Heap void (JSCell* object, uint32_t name, EncodedJSValue value)
+runtime SetCheckedStructure : RuntimeState size_t (EncodedJSValue object, uint32_t index) noexcept
+runtime WatchProperty : RuntimeState size_t (EncodedJSValue holder, EncodedJSValue key) noexcept
 
 # An id, an index, the number of a field, of a JSType or of a link-time constant is an integer constant. The key of GetOwnProperty is a string constant.
 operation RequireBuiltinModule (any/-) -> anything ; CallsUserCode ; Inline(RequireBuiltinModule)
@@ -34,8 +44,14 @@ operation PutInternalField (any/w, any/-, any/KR) -> arg2 ; WritesArguments ; In
 operation ToLength (any/G) -> number ; CallsUserCode ; Inline(ToLength)
 operation GetOwnProperty (any/GP, any/-) -> anything ; CallsUserCode ; Inline(GetOwnProperty)
 operation PutByValDirect (any/Ww, any/G, any/KR) -> arg2 ; CallsUserCode ; Inline(PutByValDirect)
+operation HasHostClassStructure (any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasHostClassStructure)
+operation ScanPlainURL (any/-) -> anything ; Pure ; Inline(ScanPlainURL)
+operation FindPlainQueryValue (any/-, any/-, any/-) -> number ; Pure ; Inline(FindPlainQueryValue)
 operation HasHostObjectCachedValue (any/-, any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasHostObjectCachedValue)
 operation HostObjectCachedValue (any/P, any/-) -> anything ; ReadsArguments ; Inline(HostObjectCachedValue)
+operation IsCheckedStructure (any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(IsCheckedStructure)
+operation SetCheckedStructure (any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(SetCheckedStructure)
+operation WatchProperty (any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(WatchProperty)
 
 # JavaScriptCore's bytecode intrinsics: bytecompiler/NodesCodegen.cpp, emit_intrinsic_*.
 $argument Call = Argument
@@ -46,6 +62,7 @@ $getByIdDirectPrivate Call = GetOwnProperty(private)
 $getInternalField Call = Operation(GetInternalField)
 $getProxyInternalField Call = Operation(GetInternalField)
 $isCallable Call = Operation(IsCallable)
+$isCheckedStructure Call = Operation(IsCheckedStructure)
 $isJSArray Call = HasJSType(ArrayType, DerivedArrayType)
 $isMap Call = HasJSType(JSMapType, JSMapType)
 $isObject Call = Operation(IsObject)
@@ -61,6 +78,8 @@ $proxyFieldTarget Value = Int(0, ProxyObject::Field::Target)
 $putByIdDirectPrivate Call = PutByValDirect(private)
 $putByValDirect Call = PutByValDirect
 $putInternalField Call = Operation(PutInternalField)
+$setCheckedStructure Call = Operation(SetCheckedStructure)
+$watchProperty Call = Operation(WatchProperty)
 
 # Link-time constants: bytecode/LinkTimeConstant.h. They are in the constant pool of a code block, not on the global object.
 $Array Value = PublicGlobal
@@ -131,7 +150,9 @@ $requireMap Member = PrivateName
 $requireNativeModule Member = PrivateName
 $resolve Member = PrivateName
 $resolveSync Member = PrivateName
+$runTail Member = PrivateName
 $set Member = PrivateName
+$setColumnNameTransform Member = PrivateName
 $size Member = PrivateName
 $start Member = PrivateName
 $then Member = PrivateName

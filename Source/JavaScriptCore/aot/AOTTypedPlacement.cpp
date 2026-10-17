@@ -3672,6 +3672,7 @@ private:
         uint32_t numberOfLayouts;
         uint64_t weight { 0 };
         bool hasResult { false };
+        bool constrainsNumbering { false };
         ShapeTest result { };
     };
 
@@ -3780,7 +3781,7 @@ private:
                 layoutsWithOtherPrototype.append(i);
         }
         uint32_t otherPrototypesCandidate = candidates.size();
-        addCandidate(Candidate::OtherPrototypes, 0, 1, layoutsWithOtherPrototype, std::identity { });
+        addCandidate(Candidate::OtherPrototypes, 0, 0, layoutsWithOtherPrototype, std::identity { });
 
         Vector<uint32_t> sortedCandidates(candidates.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
@@ -3831,6 +3832,7 @@ private:
             }
             unsortedTests.last().weight += candidate.weight;
             unsortedTests.last().hasResult |= candidate.kind != Candidate::TypeSubtypes;
+            unsortedTests.last().constrainsNumbering |= candidate.kind != Candidate::OtherPrototypes;
             candidate.test = unsortedTests.size() - 1;
         }
         Vector<uint32_t> sortedTests(unsortedTests.size(), [](size_t index) {
@@ -3848,7 +3850,7 @@ private:
         report(candidates.size(), " layout sets are tested, ", tests.size(), " of them distinct, listing ", listedLayouts.size(), " layouts");
         Vector<uint32_t> order;
         for (unsigned i = 0; i < tests.size(); ++i) {
-            if (tests[i].numberOfLayouts > 1)
+            if (tests[i].numberOfLayouts > 1 && tests[i].constrainsNumbering)
                 order.append(i);
         }
         std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
@@ -4985,6 +4987,12 @@ private:
                 ++numberOfPinnedFields;
             }
         }
+        for (auto& layout : layouts) {
+            for (auto& field : layout.fields) {
+                if (field.isPinnedToFunction && isObjectLayout(layout.kind) && exists(field) && field.slot)
+                    m_program.at(field.slot).hasPinnedFields = true;
+            }
+        }
         unsigned numberOfSupertypeFields = 0;
         unsigned supertypeFieldsAfterUntypedCount = 0;
         for (unsigned i = 0; i < layouts.size(); ++i) {
@@ -5143,6 +5151,14 @@ private:
         });
         for (auto& entry : m_program.multiLayoutShapeTests.values())
             checkNumberPassing(sets, entry.test, entry.numberOfShapes);
+        uint32_t numberOfLayoutsWithOtherPrototype = 0;
+        for (auto& layout : layouts) {
+            if (!isObjectLayout(layout.kind) || !layout.isAllocated || !layout.mayHaveOtherPrototype)
+                continue;
+            RELEASE_ASSERT(m_program.passes(m_program.shapesWithOtherPrototype, layout.shape));
+            ++numberOfLayoutsWithOtherPrototype;
+        }
+        checkNumberPassing(sets, m_program.shapesWithOtherPrototype, numberOfLayoutsWithOtherPrototype);
         sets.appendVector(collectInParallel<std::pair<uint32_t, uint32_t>>(layouts.size(), [&](unsigned i, ShapeSets& collected) {
             checkNumberPassing(collected, layouts[i].instances, numberOfInstanceLayouts[i]);
             checkNumberPassing(collected, layouts[i].retagSources, retagSourcesOf(i).size());
@@ -7074,7 +7090,7 @@ private:
             auto& field = layout.fields[i];
             if (!isDescribed(i))
                 continue;
-            uint32_t pinned = field.isPinned ? fieldIsPinned | field.slot.index() % numberOfPinnedFieldGuards << pinnedFieldGuardShift : 0;
+            uint32_t pinned = field.isPinned || (field.isPinnedToFunction && field.slot) ? fieldIsPinned | field.slot.index() % numberOfPinnedFieldGuards << pinnedFieldGuardShift : 0;
             appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned, field.storedInSlot);
         }
         memcpySpan(m_result.mutableSpan().subspan(next), asBytes(methods.span()));

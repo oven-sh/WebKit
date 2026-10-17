@@ -1278,7 +1278,7 @@ Operand Lowering::lowerGetOwnPropertyDescriptor(ValueID result, const Value& val
 Operand Lowering::lowerCreate(ValueID result, const Value& value)
 {
     using CacheEntry = Instance::ObjectCreateCacheEntry;
-    static_assert(sizeof(CacheEntry) == 16 && !OBJECT_OFFSETOF(CacheEntry, prototype) && Instance::objectCreateCacheIndex(0x7f40) == ((0x7f40 >> 4) & (Instance::objectCreateCacheSize - 1)));
+    static_assert(sizeof(CacheEntry) == 16 && !OBJECT_OFFSETOF(CacheEntry, prototype) && Instance::objectCreateCacheIndex(0x7f40) == ((0x7f40 >> 6) & (Instance::objectCreateCacheSize - 1)));
     auto& type = typeOf(result);
     auto& objectType = m_program.at(m_program.types.object);
     Rep rep = repOf(type);
@@ -1286,7 +1286,7 @@ Operand Lowering::lowerCreate(ValueID result, const Value& value)
     LBasicBlock slowPath = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     CellPointer prototype = objectOrElse(value.arguments[0], noObject);
-    LValue offset = m_out.bitAnd(prototype.value(), m_out.constIntPtr((Instance::objectCreateCacheSize - 1) << 4));
+    LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), m_out.constInt32(2)), m_out.constIntPtr((Instance::objectCreateCacheSize - 1) << 4));
     LValue entry = m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfObjectCreateCache())), offset);
     orElse(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, prototype))), prototype.value()), slowPath);
     LValue header = m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, header)));

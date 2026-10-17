@@ -6596,7 +6596,7 @@ auto BytecodeLinkEncoder::readTypedProgram(std::span<const uint8_t> bytes) -> Pr
 {
     auto* prepared = new PreparedTypedProgram;
 #if ENABLE(AOT)
-    ASCIILiteral failureReason;
+    String failureReason;
     MonotonicTime start = MonotonicTime::now();
     prepared->program = AOT::Typed::Program::tryRead(bytes, failureReason);
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: reading the program took ", static_cast<unsigned>((MonotonicTime::now() - start).milliseconds()), " ms");

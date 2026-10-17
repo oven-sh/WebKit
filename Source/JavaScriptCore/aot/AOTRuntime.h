@@ -54,6 +54,7 @@ struct State;
 struct FormatPatternState;
 enum class FormatPatternsOrigin : uint8_t { NotCompared, ThisICU, AnotherICU };
 struct JSONWideSegment;
+struct JSONPlanCache;
 struct StringAppender;
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
@@ -1079,6 +1080,15 @@ struct Instance {
     uint32_t generatorStepStatus;
     void* generatorTemplates;
     JSCell* iteratorSymbol;
+    struct IteratorResultShape {
+        uint32_t structureID;
+        uint16_t offsetOfDone;
+        uint16_t offsetOfValue;
+    };
+    static constexpr unsigned numberOfIteratorResultShapes = 2;
+    IteratorResultShape iteratorResultShapes[numberOfIteratorResultShapes];
+    uint32_t nextIteratorResultShape;
+    static constexpr ptrdiff_t offsetOfIteratorResultShapes() { return OBJECT_OFFSETOF(Instance, iteratorResultShapes); }
     static constexpr ptrdiff_t offsetOfIteratorSymbol() { return OBJECT_OFFSETOF(Instance, iteratorSymbol); }
     static constexpr ptrdiff_t offsetOfGeneratorTemplates() { return OBJECT_OFFSETOF(Instance, generatorTemplates); }
     static constexpr ptrdiff_t offsetOfGeneratorStepStatus() { return OBJECT_OFFSETOF(Instance, generatorStepStatus); }
@@ -1116,6 +1126,7 @@ struct Instance {
     EncodedJSValue preparedJSONValue;
     StringImpl* preparedJSONString;
     Vector<JSONWideSegment>* jsonWideSegments;
+    JSONPlanCache* jsonPlanCache;
     FormatPatternState* formatPatternState;
     uint32_t jsonWideSegmentCount;
     uint32_t jsonParserGaveUp;
@@ -1250,10 +1261,19 @@ struct Instance {
         JSCell* prototype;
         uint64_t header;
     };
-    static constexpr unsigned objectCreateCacheSize = 8;
-    static constexpr unsigned objectCreateCacheIndex(uintptr_t prototype) { return (prototype >> 4) & (objectCreateCacheSize - 1); }
+    static constexpr unsigned objectCreateCacheSize = 64;
+    static constexpr unsigned objectCreateCacheIndex(uintptr_t prototype) { return (prototype >> 6) & (objectCreateCacheSize - 1); }
     ObjectCreateCacheEntry objectCreateCache[objectCreateCacheSize];
     bool objectCreateCacheIsDirty;
+    static constexpr unsigned numberOfCheckedStructures = 32;
+    uint32_t checkedStructureIDs[numberOfCheckedStructures];
+    bool hasCheckedStructures;
+    void forgetCheckedStructures()
+    {
+        if (std::exchange(hasCheckedStructures, false))
+            zeroSpan(std::span { checkedStructureIDs });
+    }
+    bool watchProperty(JSObject* holder, UniquedStringImpl*);
     struct PrototypeChangeCacheEntry {
         JSCell* prototype;
         uint32_t from;
@@ -1282,6 +1302,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfThisAllocations() { return OBJECT_OFFSETOF(Instance, thisAllocations); }
     Structure* emptyLiteralStructures[16];
     static constexpr ptrdiff_t offsetOfObjectCreateCache() { return OBJECT_OFFSETOF(Instance, objectCreateCache); }
+    static constexpr ptrdiff_t offsetOfCheckedStructureID(unsigned index) { return OBJECT_OFFSETOF(Instance, checkedStructureIDs) + index * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfPrototypeChangeCache() { return OBJECT_OFFSETOF(Instance, prototypeChangeCache); }
     struct CustomGetter {
         uint32_t structureID;
@@ -1951,6 +1972,8 @@ public:
     static constexpr uint32_t minHolderWord = 1u << 21;
     static constexpr uint8_t farInheritedCode = 1;
     static constexpr uint32_t farInheritedCodeAndKind = farInheritedCode | static_cast<uint32_t>(Kind::Unknown) << 8;
+    static constexpr uint8_t delegatesToPrototypeCode = 2;
+    static constexpr uint32_t delegatesToPrototypeCodeAndKind = delegatesToPrototypeCode | static_cast<uint32_t>(Kind::Unknown) << 8;
     static_assert(offsetOfKindInEntry == offsetOfCodeInEntry + 1);
     static constexpr uint32_t firstCodeOutOfLine = 0x80;
     static constexpr uint32_t needsFirstStorage = 2;
@@ -1984,6 +2007,7 @@ public:
     bool setOwnOffset(Structure*, uint32_t name, PropertyOffset, bool isStoredTo);
     bool setAbsent(Structure*, uint32_t name, UniquedStringImpl* prototypeDependentUID);
     bool setInherited(Structure*, uint32_t name, JSCell* holder, PropertyOffset, UniquedStringImpl* prototypeDependentUID);
+    bool setDelegatesToPrototype(Structure*, uint32_t name, JSCell* prototype);
     bool setInstanceOf(Structure*, Kind, PropertyOffset, JSCell* holderOrNull, UniquedStringImpl* hasInstanceUID);
     bool replaceSlotWithInherited(Structure*, uint32_t name, JSCell* holder, PropertyOffset);
     bool setExtraProperty(Structure*, uint32_t name, PropertyOffset, bool isAccessor, bool isStoredTo, bool hasDefaultAttributes = false);
@@ -2112,7 +2136,8 @@ private:
     static bool addsExtraProperty(uint32_t entry) { return entry & hasKindAndCode && kindOf(entry) == Kind::ExtraProperty && codeOf(entry) & storeAddsExtraProperty; }
     static bool payloadIsStructure(uint32_t entry) { return adds(kindOf(entry)) || kindOf(entry) == Kind::LazyClosure || addsExtraProperty(entry); }
     static bool isFarInherited(uint32_t entry) { return entry & hasKindAndCode && kindOf(entry) == Kind::Unknown && codeOf(entry) == farInheritedCode; }
-    static bool usesPayloadDirectly(uint32_t entry) { return entry & hasKindAndCode && (usesPayloadDirectly(kindOf(entry)) || isFarInherited(entry)); }
+    static bool delegatesToPrototype(uint32_t entry) { return entry & hasKindAndCode && kindOf(entry) == Kind::Unknown && codeOf(entry) == delegatesToPrototypeCode; }
+    static bool usesPayloadDirectly(uint32_t entry) { return entry & hasKindAndCode && (usesPayloadDirectly(kindOf(entry)) || isFarInherited(entry) || delegatesToPrototype(entry)); }
     static Kind kindOf(uint32_t entry) { return static_cast<Kind>(entry >> 24); }
     static uint32_t codeOf(uint32_t entry) { return entry >> 16 & 0xff; }
     static uint32_t entryWithKind(uint32_t name, Kind kind, uint32_t code) { return name | hasKindAndCode | code << 16 | static_cast<uint32_t>(kind) << 24; }

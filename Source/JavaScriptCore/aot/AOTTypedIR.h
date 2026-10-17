@@ -341,6 +341,8 @@ struct Value {
     bool leavesDroppableFrame : 1 { false };
     bool receiverHasSingleStructure : 1 { false };
     bool storesLazyClosure : 1 { false };
+    bool isAwaitedWithoutPromise : 1 { false };
+    bool takesElementsOfArrayLiteral : 1 { false };
     SpeculatedMethod speculatedMethod : 4 { SpeculatedMethod::None };
     uint8_t predictedReceiverClassPlusOne : 6 { 0 };
     uint32_t position { 0 };
@@ -408,6 +410,7 @@ struct Value {
     bool isCallWithDeclinedInlining() const { return opcode == Opcode::CallDirect && inliningWasDeclined - immediates[1] < 16; }
     uint32_t declinedInliningReason() const { return inliningWasDeclined - immediates[1]; }
     bool isJumpToContinuation() const { return opcode == Opcode::CallDirect && immediates[1] - jumpsToContinuation < maxContinuations; }
+    bool testsPinnedField() const { return opcode == Opcode::IsClassObjectUnmodified && immediates[1] != Format::none; }
     uint32_t continuation() const { return immediates[1] - jumpsToContinuation; }
     VariableID variable() const { return VariableID(immediates[0]); }
     bool readsInitializedVariable() const { return opcode == Opcode::GetModuleVariable && immediates[1] == Format::VariableIsKnownInitialized; }
@@ -656,6 +659,7 @@ struct Function {
     bool isUsedAsObject { false };
     bool isSharedOutlinedBody { false };
     bool isSharedCallBody { false };
+    bool testsPinnedFunction { false };
     bool isGuardedPreludeEntry { false };
     bool onlyDestructuresParameter { false };
     bool copiesFirstArgumentToHeap { false };
@@ -692,6 +696,7 @@ struct Function {
     FunctionID startFunction;
     uint32_t generatorTemplate { UINT32_MAX };
     bool savesFrameOnSuspend { false };
+    bool mayRunWithoutPromise { false };
     bool capturesExceptions { false };
     Vector<uint32_t> suspensionPositions;
     uint32_t thisAllocation { Format::none };
@@ -798,6 +803,7 @@ struct Field {
     bool hasOtherOffsetInSomeSubtype { false };
     bool isPinned { false };
     bool isPinnedInEverySubtype { false };
+    bool isPinnedToFunction { false };
     bool holdsIntegralNumbers { false };
     FunctionID singleFunction;
     bool singleFunctionIsProven { false };
@@ -841,6 +847,7 @@ struct Layout {
     bool hasUntypedBase { false };
     bool hasImmutableMembers { false };
     bool mayHaveOtherPrototype { false };
+    bool hasNoOwnInstances { false };
     bool hasInstancesWithOtherPrototype { false };
     bool prototypeIsSetByTypedCode { false };
     bool constructorMayBeReplaced { false };
@@ -1146,7 +1153,7 @@ class Program final {
 public:
     Program() = default;
 
-    static std::unique_ptr<Program> tryRead(std::span<const uint8_t>, ASCIILiteral& failureReason);
+    static std::unique_ptr<Program> tryRead(std::span<const uint8_t>, String& failureReason);
 
     std::span<const uint8_t> string(StringID id) const { return strings[id.index()]; }
     BuiltinName builtinName(StringID id) const { return m_builtinNames[id.index()]; }
@@ -1370,6 +1377,7 @@ public:
     Vector<LayoutID> typedOnlySupertypes;
     BitVector supertypesWithStableSubtypes;
     BitVector retagTargets;
+    Vector<FunctionID> constructorFunctionsWithTypedThis;
     BitVector instantiationTargets;
     BitVector layoutsWithTrivialCoercion;
     Vector<Slot> slots;

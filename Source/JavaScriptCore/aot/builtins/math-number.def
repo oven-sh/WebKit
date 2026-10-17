@@ -55,6 +55,8 @@ runtime MathHypot3 : Pure double (double x, double y, double z) noexcept leaf
 runtime MathF16Round : Pure double (double x) noexcept leaf
 runtime ParseInt8 : Pure double (const Latin1Character* characters, uint32_t length, int32_t radix) noexcept
 runtime StringToNumber8 : Pure double (const Latin1Character* characters, uint32_t length) noexcept
+runtime ParseInt16 : Pure double (uint64_t characters, uint32_t length, int32_t radix) noexcept
+runtime StringToNumber16 : Pure double (uint64_t characters, uint32_t length) noexcept
 
 function isNaN (toNumber) -> boolean ; Pure ; Inline(IsNaN)
 function isNaN (any/G?, any/-...) -> boolean ; CallsUserCode ; Inline(IsNaN)

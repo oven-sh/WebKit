@@ -8,20 +8,53 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFunction.h"
+#include "AOTOperationHelpers.h"
+#include "AOTRuntime.h"
 #include "JSCInlines.h"
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+static constinit Typed::HostClassEntryPoints s_hostClassEntryPoints;
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewResponse, EncodedJSValue, (Instance* instance, EncodedJSValue body, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    EncodedJSValue response = s_hostClassEntryPoints.newResponse(globalObject, body, status, statusText, headers, headerCount, headerNamesAndValues);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, response);
+}
+
+namespace Typed {
 
 using namespace B3;
 
-std::optional<Writes> writesOfInlineHost(InlineBuiltin, std::span<const Type>)
+void setHostClassEntryPoints(const HostClassEntryPoints& entryPoints)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    s_hostClassEntryPoints = entryPoints;
 }
 
-std::optional<Operand> Lowering::lowerInlineHost(InlineBuiltin, ValueID, const Value&, Writes)
+const HostClassEntryPoints& hostClassEntryPoints()
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    return s_hostClassEntryPoints;
+}
+
+std::optional<Writes> writesOfInlineHost(InlineBuiltin which, std::span<const Type>)
+{
+    RELEASE_ASSERT(which == InlineBuiltin::NewResponse);
+    return Writes::Heap;
+}
+
+std::optional<Operand> Lowering::lowerInlineHost(InlineBuiltin which, ValueID result, const Value& value, Writes)
+{
+    RELEASE_ASSERT(which == InlineBuiltin::NewResponse);
+    constexpr unsigned firstHeaderOperand = 4;
+    auto& arguments = value.arguments;
+    unsigned headerOperandCount = arguments.size() - firstHeaderOperand;
+    LValue buffer = transientBuffer(std::max(headerOperandCount, 1u) * sizeof(EncodedJSValue));
+    for (unsigned i = 0; i < headerOperandCount; ++i)
+        m_out.store64(in<Boxed>(arguments[firstHeaderOperand + i]).value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
+    return ensure(AOT_TYPED_OPERATION(NewResponse, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), in<Boxed>(arguments[2]), in<Boxed>(arguments[3]), word32(headerOperandCount / 2), Pointer(buffer)), typeOf(result));
 }
 
 } } } // namespace JSC::AOT::Typed

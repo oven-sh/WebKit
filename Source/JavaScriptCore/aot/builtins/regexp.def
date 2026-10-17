@@ -16,6 +16,7 @@ inline StringSearch
 
 runtime RegExpExec : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string)
 runtime RegExpTest : RuntimeState size_t (JSCell* regExp, JSCell* string)
+runtime RegExpFind : RuntimeState size_t (JSCell* regExp, JSCell* string)
 runtime RegExpExecFound : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string)
 runtime RegExpTestFound : RuntimeState size_t (JSCell* regExp, JSCell* string)
 runtime RegExpTestBoxed : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string)

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSPromiseConstructor.h"
 
+#include "AOTTypedObject.h"
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
@@ -526,18 +527,9 @@ static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFra
     return promise;
 }
 
-JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
+static ALWAYS_INLINE JSPromise* promiseAllFast(JSGlobalObject* globalObject, VM& vm, unsigned vectorLengthHint, [[maybe_unused]] uint32_t resultsOfCallsWithoutPromise, NOESCAPE const auto& forEachElement)
 {
-    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
-
-    if (!thisValue.isObject()) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, "|this| is not an object"_s);
-
-    if (!isFastPromiseConstructor(globalObject, thisValue)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
@@ -549,12 +541,11 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
         promise->reject(vm, exception);
     };
 
-    JSValue iterable = callFrame->argument(0);
-    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, vectorLengthHintForCombinator(iterable));
+    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, vectorLengthHint);
     if (!values) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         callReject();
-        return JSValue::encode(promise);
+        return promise;
     }
 
     JSPromiseCombinatorsGlobalContext* globalContext = JSPromiseCombinatorsGlobalContext::create(vm, promise, values, 1);
@@ -562,11 +553,19 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
     uint64_t index = 0;
     JSFunction* onRejected = nullptr;
 
-    forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
+    forEachElement([&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         values->putDirectIndex(globalObject, index, jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
+
+#if ENABLE(AOT)
+        if (resultsOfCallsWithoutPromise && index < 32 && resultsOfCallsWithoutPromise >> index & 1 && AOT::Typed::settleElementOfPromiseAll(globalObject, vm, value, globalContext, index)) {
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            ++index;
+            return;
+        }
+#endif
 
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
@@ -617,7 +616,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
 
     if (scope.exception()) [[unlikely]] {
         callReject();
-        return JSValue::encode(promise);
+        return promise;
     }
 
     uint64_t count = globalContext->remainingElementsCount() - 1;
@@ -627,12 +626,46 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
         promise->resolve(globalObject, vm, values);
         if (scope.exception()) [[unlikely]] {
             callReject();
-            return JSValue::encode(promise);
+            return promise;
         }
     }
 
-    return JSValue::encode(promise);
+    return promise;
 }
+
+JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+
+    if (!thisValue.isObject()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "|this| is not an object"_s);
+
+    if (!isFastPromiseConstructor(globalObject, thisValue)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, callFrame, thisValue)));
+
+    JSValue iterable = callFrame->argument(0);
+    RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllFast(globalObject, vm, vectorLengthHintForCombinator(iterable), 0, [&](const auto& visit) {
+        forEachInIterable(globalObject, iterable, visit);
+    })));
+}
+
+#if ENABLE(AOT)
+JSPromise* promiseAllOfElements(JSGlobalObject* globalObject, std::span<const EncodedJSValue> elements, uint32_t resultsOfCallsWithoutPromise)
+{
+    VM& vm = globalObject->vm();
+    RELEASE_ASSERT(isFastPromiseConstructor(globalObject, globalObject->promiseConstructor()));
+    return promiseAllFast(globalObject, vm, elements.size(), resultsOfCallsWithoutPromise, [&](const auto& visit) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        for (EncodedJSValue element : elements) {
+            visit(vm, globalObject, JSValue::decode(element));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    });
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(promiseAllFulfillFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

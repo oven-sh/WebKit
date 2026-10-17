@@ -1926,6 +1926,14 @@ void Lowering::guardPinnedFields(LayoutID holder, const Field& field, ValueID st
 {
     if (!field.slot || !m_program.at(field.slot).hasPinnedFields)
         return;
+    if (field.isPinnedToFunction) {
+        ValueID closure = stored;
+        while (m_function.at(closure).opcode == Opcode::Cast)
+            closure = m_function.at(closure).child(0);
+        Opcode opcode = m_function.at(closure).opcode;
+        if ((opcode == Opcode::NewClosure || opcode == Opcode::NewClosureOnce || opcode == Opcode::FunctionReference) && m_function.at(closure).function() == field.singleFunction)
+            return;
+    }
     if (ValueID constant = m_program.constantOf(m_function, stored))
         stored = constant;
     bool preservesFields = holder && m_function.at(stored).opcode == Opcode::String;
@@ -1933,6 +1941,8 @@ void Lowering::guardPinnedFields(LayoutID holder, const Field& field, ValueID st
         for (LayoutID subtype : m_program.at(holder).subtypes) {
             auto& layout = m_program.at(subtype);
             auto own = layout.fieldNamed(field.name);
+            if (own && layout.fields[*own].slot == field.slot && layout.fields[*own].isPinnedToFunction)
+                preservesFields = false;
             if (own && layout.fields[*own].slot == field.slot && layout.fields[*own].isPinned)
                 preservesFields &= layout.fields[*own].literals[0].string == m_function.at(stored).string();
         }

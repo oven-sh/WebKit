@@ -386,6 +386,12 @@ void Lowering::branchOnAnyShapeTest(Word32 shapeWord, const Vector<ShapeTest, 4>
 
 Word32 Lowering::lowerIsClassObjectUnmodified(const Value& value)
 {
+    if (value.testsPinnedField()) {
+        auto& field = m_program.at(value.layout()).fields[value.immediates[1]];
+        if (!field.isPinnedToFunction || !field.slot || !m_program.at(field.slot).hasPinnedFields)
+            return boolean(false);
+        return isZero(Word32(m_out.load8ZeroExt32(pinnedFieldsGuard(field.slot))));
+    }
     return isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedModifiedClassObjects()), value.layout().index()))));
 }
 

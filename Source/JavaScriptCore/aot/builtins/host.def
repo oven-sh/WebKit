@@ -6,6 +6,12 @@ replaceable Response
 replaceable Bun
 predicted Buffer.byteLength
 predicted Response.json
+
+inline NewResponse
+
+runtime NewResponse : Heap EncodedJSValue (EncodedJSValue body, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues)
+
+intrinsic NewResponse (any/KG, any/G, any/G, any/GP, any/G...) -> anything/N ; CallsUserCode ; Inline(NewResponse, None)
 predicted Bun.escapeHTML
 
 static console.log (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall

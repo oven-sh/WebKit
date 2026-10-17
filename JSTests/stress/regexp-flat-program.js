@@ -2,6 +2,8 @@
 //@ runDefault("--useRegExpJIT=0")
 //@ runDefault("--useRegExpJIT=0", "--useRegExpFastMatcher=0")
 //@ runDefault
+//@ runDefault("--useExecutableAllocationFuzz=true", "--fireExecutableAllocationFuzzAtOrAfter=1")
+//@ runDefault("--useExecutableAllocationFuzz=true", "--fireExecutableAllocationFuzzRandomly=true")
 
 function shouldBe(actual, expected, label) {
     if (JSON.stringify(actual) !== JSON.stringify(expected))
@@ -9,6 +11,17 @@ function shouldBe(actual, expected, label) {
 }
 
 const cases = [
+    ["A\\s\\sM","","x A  M",2,["A  M"]],
+    ["a\\s\\s\\sm","i","A M-A   M",4,["A   M"]],
+    ["\\d{31}x","","0123456789012345678901234567890x",0,["0123456789012345678901234567890x"]],
+    ["\\d{3}-\\d{2}-\\d{4}","","id 123-45-6789.",3,["123-45-6789"]],
+    ["([a-c])x[0-9]y","","bx7y",0,["bx7y","b"]],
+    ["(x?)(?:\\1a)b","","ab",0,["ab",""]],
+    ["(x?)(?:\\1a|c)b","","zab",1,["ab",""]],
+    ["()(?:\\1a)b","","ab",0,["ab",""]],
+    ["((?!$((()))))((\\1[^])){2}.","","\n b",0,["\n b","",null,null,null," "," "]],
+    ["(a?)(?:(?:\\1b)+|c)d","","bbd",0,["bbd",""]],
+    ["(a?)x*(?:\\1x)y","","xxy",0,["xxy",""]],
     ["^\\/(?:async\\/([^/]+)$()|users\\/([^/]+)\\/posts\\/([^/]+)$())","","/users/42/posts/7",0,["/users/42/posts/7",null,null,"42","7",""]],
     ["^(?:\\/api(?:\\/projects\\/([^/]+)\\/tasks(?:$()|\\/([^/]+)$())|(?:|\\/.*)$())|.*$())","","/api/projects/3/tasks/317",0,["/api/projects/3/tasks/317","3",null,"317","",null,null]],
     ["^(?:\\/api(?:\\/projects\\/([^/]+)\\/tasks(?:$()|\\/([^/]+)$())|(?:|\\/.*)$())|.*$())","","/api/projects/3/taskz",0,["/api/projects/3/taskz",null,null,null,null,"",null]],
@@ -94,6 +107,8 @@ for (const [source, flags, subject, index, expected] of cases) {
     shouldBe(dated.groups.year, "2026", "groups");
     shouldBe(new RegExp("(?:a|b)*c").exec("ab".repeat(2000) + "c").index, 0, "a long run of iterations");
     shouldBe(new RegExp("(?:a|b)*c").exec("ab".repeat(2000)), null, "a long run of iterations that fails");
+    shouldBe(new RegExp("a?".repeat(1 << 18)).exec("x")[0], "", "a long row of optional characters");
+    shouldBe(new RegExp("(?:" + "a?|".repeat(1 << 12) + "b)" + "c?".repeat(1 << 12) + "d").exec("bd")[0], "bd", "a wide alternation ahead of a long row");
 }
 
 let seed = typeof fuzzSeed === "number" ? 12345 + fuzzSeed * 7919 : 12345;

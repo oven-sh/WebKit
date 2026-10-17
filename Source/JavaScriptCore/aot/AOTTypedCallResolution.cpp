@@ -16,6 +16,33 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+FunctionID functionPinnedToField(const Program& program, const Type& receiver, StringID name)
+{
+    if (program.mayRunInMultipleInstances)
+        return { };
+    auto access = fieldOf(program, receiver, name);
+    if (!access)
+        return { };
+    FunctionID callee = program.at(access->layout).fields[access->field].singleFunction;
+    if (!callee)
+        return { };
+    auto& target = program.at(callee);
+    if (target.blocks.isEmpty() || target.isGenericEntrypoint() || target.rampForClosures || target.takesCalleeClosure || target.has(Format::FunctionHasRestParameter) || target.kind == FunctionKind::Constructor || target.kind == FunctionKind::Module)
+        return { };
+    if (program.at(access->layout).acceptsUntypedObjects || program.at(access->layout).subtypes.isEmpty())
+        return { };
+    constexpr uint32_t alwaysSet = fieldIsSetAtCreation | fieldIsNeverObservedAbsent;
+    for (LayoutID subtype : program.at(access->layout).subtypes) {
+        auto& layout = program.at(subtype);
+        auto field = layout.fieldNamed(name);
+        if (!field || layout.fields[*field].singleFunction != callee || (layout.fields[*field].flags & alwaysSet) != alwaysSet || layout.acceptsUntypedObjects || layout.mayDespecialize)
+            return { };
+        if (layout.kind == LayoutKind::Instance ? !layout.hasFixedLayout : layout.kind != LayoutKind::Record)
+            return { };
+    }
+    return callee;
+}
+
 namespace {
 
 static bool isAsyncFunctionRamp(const Function& function)
@@ -126,6 +153,7 @@ private:
 
     using Refuted = std::pair<ValueID, FunctionID>;
     using RefutedShape = std::pair<ValueID, LayoutID>;
+    using PinnedFunction = std::tuple<LayoutID, StringID, bool>;
 
     enum class Yields : uint8_t {
         Result,
@@ -146,7 +174,7 @@ private:
     {
         switch (m_function.at(m_function.at(block).values[index]).opcode) {
         case Opcode::CallMethod:
-            return resolveByShape(block, index, MethodKind::Method) || resolveOnClassObject(block, index) || resolvePredictedBuiltinCall(block, index) || resolveCallOrApply(block, index) || resolveBind(block, index) || resolveFieldCall(block, index);
+            return resolvePinnedFieldCall(block, index) || resolveByShape(block, index, MethodKind::Method) || resolveOnClassObject(block, index) || resolvePredictedBuiltinCall(block, index) || resolveCallOrApply(block, index) || resolveBind(block, index) || resolveFieldCall(block, index);
         case Opcode::GetById:
             return resolveByShape(block, index, MethodKind::Getter) || resolveOnClassObject(block, index);
         case Opcode::PutById:
@@ -172,6 +200,7 @@ private:
         m_refuted.append(Refuted { });
         m_classObjectFallbackBlocks.append(LayoutID());
         m_refutedShapes.append(RefutedShape { });
+        m_pinnedFunctionBlocks.append(PinnedFunction { });
         return BlockID(m_function.blocks.size() - 1);
     }
 
@@ -910,12 +939,20 @@ private:
         return false;
     }
 
+    bool hasNoInstances(LayoutID subtype) const
+    {
+        auto& layout = m_program.at(subtype);
+        return layout.hasNoOwnInstances && !layout.mayHaveOtherPrototype;
+    }
+
     std::optional<Cases> casesOf(LayoutID supertype, StringID name, MethodKind kind, bool isTestedForMembership = false) const
     {
         if (m_program.at(supertype).acceptsUntypedObjects && !isTestedForMembership)
             return std::nullopt;
         Cases cases;
         for (LayoutID subtype : m_program.at(supertype).subtypes) {
+            if (hasNoInstances(subtype))
+                continue;
             auto& layout = m_program.at(subtype);
             FunctionID callee;
             if (hasMethodField(m_program, subtype, name))
@@ -976,6 +1013,9 @@ private:
         }
         unsigned numberOfCallees = cases.size() - (cases.last().callee ? 0 : 1);
         Vector<LayoutID> left = m_program.at(supertype).subtypes;
+        left.removeAllMatching([&](LayoutID subtype) {
+            return hasNoInstances(subtype);
+        });
         for (unsigned done = 0; done + 1 < cases.size(); ++done) {
             unsigned found = done;
             while (found < numberOfCallees && !findTest(cases[found], left))
@@ -1172,6 +1212,37 @@ private:
         call.setCallSignature(original.callSignature());
         call.arguments = original.arguments;
         finish(appendThrowing(WTF::move(call)));
+    }
+
+    bool resolvePinnedFieldCall(BlockID block, unsigned index)
+    {
+        Value original = m_function.at(m_function.at(block).values[index]);
+        ValueID object = original.child(0);
+        LayoutID supertype = typeOf(object).singleLayout();
+        if (!supertype || m_pinnedFunctionBlocks[block.index()] != PinnedFunction { supertype, original.string(), true })
+            return false;
+        FunctionID callee = functionPinnedToField(m_program, typeOf(object), original.string());
+        if (!callee)
+            return false;
+        open(block, index);
+        ValueID receiver = object;
+        if (typeOf(object).mayBeUndefinedOrNull()) {
+            Value cast = make(Opcode::Cast, m_program.at(supertype).type);
+            cast.children[0] = object;
+            cast.immediates = { original.string().index(), static_cast<uint32_t>(CastReason::Flow) };
+            receiver = appendThrowing(WTF::move(cast));
+        }
+        Arguments captures;
+        if (!m_program.at(callee).captureTypes.isEmpty()) {
+            auto access = fieldOf(m_program, typeOf(object), original.string());
+            Value read = make(Opcode::GetById, m_program.at(access->layout).fields[access->field].type);
+            read.children[0] = receiver;
+            read.immediates[0] = original.immediates[0];
+            ValueID closure = appendThrowing(WTF::move(read));
+            captures = capturesOf(KnownCallee { callee, closure, { }, true }, closure);
+        }
+        callAndFinish(callee, captures.span(), receiver, original.arguments.span(), original.type, Yields::Result);
+        return true;
     }
 
     bool resolveFieldCall(BlockID block, unsigned index)
@@ -1479,12 +1550,19 @@ private:
         m_refuted.fill(Refuted { }, m_function.blocks.size());
         m_classObjectFallbackBlocks.fill(LayoutID(), m_function.blocks.size());
         m_refutedShapes.fill(RefutedShape { }, m_function.blocks.size());
+        m_pinnedFunctionBlocks.fill(PinnedFunction { }, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
             if (block.terminator.kind != TerminatorKind::Branch)
                 continue;
             auto& condition = m_function.at(block.terminator.value);
             if (condition.opcode == Opcode::IsClosureOf)
                 m_refuted[block.terminator.targets[1].block.index()] = Refuted { originOf(condition.child(0)), condition.function() };
+            if (condition.testsPinnedField()) {
+                StringID name = m_program.at(condition.layout()).fields[condition.immediates[1]].name;
+                m_pinnedFunctionBlocks[block.terminator.targets[0].block.index()] = PinnedFunction { condition.layout(), name, true };
+                m_pinnedFunctionBlocks[block.terminator.targets[1].block.index()] = PinnedFunction { condition.layout(), name, false };
+                continue;
+            }
             if (condition.opcode == Opcode::IsClassObjectUnmodified)
                 m_classObjectFallbackBlocks[block.terminator.targets[1].block.index()] = condition.layout();
             if (condition.opcode == Opcode::HasShapeOf && condition.immediates[1] != shapeTestIsExact)
@@ -1539,6 +1617,8 @@ private:
         Vector<ValueID, 2> literals;
         if (!known->isCertain)
             literals = literalsPassedToRecordParameters(id, known->function);
+        if (!known->isCertain && std::get<0>(m_pinnedFunctionBlocks[block.index()]) && !std::get<2>(m_pinnedFunctionBlocks[block.index()]))
+            return false;
         if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNullish && !known->other && !known->isClassFieldInitializer && literals.isEmpty())
             return false;
         open(block, index);
@@ -2061,7 +2141,7 @@ private:
             auto& terminator = m_function.at(predecessor).terminator;
             if (terminator.kind == TerminatorKind::Branch) {
                 auto& condition = m_function.at(terminator.value);
-                if (condition.opcode == Opcode::IsClassObjectUnmodified && condition.layout() == ofClass)
+                if (condition.opcode == Opcode::IsClassObjectUnmodified && !condition.testsPinnedField() && condition.layout() == ofClass)
                     return terminator.targets[0].block == block;
             } else if (terminator.kind != TerminatorKind::Jump)
                 return false;
@@ -2138,6 +2218,56 @@ private:
         return !isUsedElsewhere;
     }
 
+    bool resolveConstructOfUnknownCallee(BlockID block, unsigned index)
+    {
+        ValueID id = m_function.at(block).values[index];
+        Value original = m_function.at(id);
+        if (original.isOnSlowPath)
+            return false;
+        ValueID object = original.arguments[1];
+        if (m_function.at(object).opcode != Opcode::NewObjectWithShape)
+            return false;
+        size_t allocationSite = m_function.at(block).values.find(object);
+        if (allocationSite == notFound || allocationSite >= index || !isUsedOnlyBy(object, id))
+            return false;
+        Vector<FunctionID, maxCallees> takers;
+        for (FunctionID candidate : m_program.constructorFunctionsWithTypedThis) {
+            auto& function = m_program.at(candidate);
+            if (!isSubsetOf(object, function.assertedThisType ? function.assertedThisType : function.thisType))
+                continue;
+            if (takers.size() == maxCallees)
+                return false;
+            takers.append(candidate);
+        }
+        m_function.at(block).values.removeAt(allocationSite);
+
+        open(block, index - 1);
+        if (!takers.isEmpty())
+            absorbResultCast(id);
+        BlockID takesObject = takers.isEmpty() ? BlockID() : addBlock();
+        for (FunctionID taker : takers) {
+            Value test = make(Opcode::IsClosureOf, m_program.types.boolean);
+            test.children[0] = original.arguments[0];
+            test.immediates = { taker.index(), closureMayBeModified };
+            BlockID otherwise = branch(append(WTF::move(test)));
+            auto& terminator = m_function.at(m_block).terminator;
+            terminator.kind = TerminatorKind::Jump;
+            terminator.targets.append(Target { takesObject, { } });
+            moveTo(otherwise);
+        }
+        Value construct = make(Opcode::Construct, m_program.types.anything);
+        construct.children[0] = original.arguments[0];
+        construct.arguments.append(original.arguments.span().subspan(2));
+        finishWithCast(held(appendThrowing(WTF::move(construct)), original.type, CastReason::Claim));
+        if (!takers.isEmpty()) {
+            moveTo(takesObject);
+            place(object);
+            original.isOnSlowPath = true;
+            finishWithCast(appendThrowing(WTF::move(original)));
+        }
+        return true;
+    }
+
     bool resolveConstruct(BlockID block, unsigned index)
     {
         ValueID id = m_function.at(block).values[index];
@@ -2146,15 +2276,15 @@ private:
             return false;
         auto known = knownCallee(original.arguments[0]);
         if (!known || !mayConstructDirectly(known->function, true) || isRefuted(block, *known))
-            return false;
+            return resolveConstructOfUnknownCallee(block, index);
         bool isOneOfMany = m_program.at(known->function).hasManyClosures;
         if (isOneOfMany && !m_program.genericEntrypoints.contains(known->function.index()))
-            return false;
+            return resolveConstructOfUnknownCallee(block, index);
         ValueID object = original.arguments[1];
         if (m_function.at(object).opcode != Opcode::NewObjectWithShape || m_program.at(m_function.at(object).layout()).kind != LayoutKind::Record)
             return false;
         if (!m_program.at(known->function).thisType || !isSubsetOf(object, m_program.at(known->function).thisType))
-            return false;
+            return resolveConstructOfUnknownCallee(block, index);
         size_t allocationSite = m_function.at(block).values.find(object);
         if (allocationSite == notFound || allocationSite >= index || !isUsedOnlyBy(object, id))
             return false;
@@ -2264,6 +2394,7 @@ private:
     Vector<Refuted> m_refuted;
     Vector<LayoutID> m_classObjectFallbackBlocks;
     Vector<RefutedShape> m_refutedShapes;
+    Vector<PinnedFunction> m_pinnedFunctionBlocks;
 
     uint32_t m_position { 0 };
     uint32_t m_inlineFrame { 0 };

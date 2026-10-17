@@ -32,6 +32,8 @@ inline CallStringConstructor
 inline StringUTF8ByteLength
 
 runtime StringFindCharacter8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start) noexcept
+runtime FindSeparators8 : Nothing size_t (uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted) noexcept
+runtime FindSeparators16 : Nothing size_t (uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted) noexcept
 runtime StringUTF8Length8 : Pure size_t (const Latin1Character* characters, uint32_t length) noexcept
 runtime StringFind8 : Pure size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) noexcept
 runtime StringReverseFindCharacter8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) noexcept

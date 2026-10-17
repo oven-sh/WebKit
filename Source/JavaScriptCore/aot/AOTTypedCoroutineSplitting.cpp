@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConvention.h"
 #include "AOTEmitter.h"
 #include "AirCode.h"
 #include "B3Procedure.h"
@@ -2095,6 +2096,270 @@ void recordCellsLiveAcrossAwaits(const Program& program, Function& function)
 BitVector objectsLiveAcrossSuspensions(const Function& function)
 {
     return CoroutineSplitter::objectsLiveAcrossSuspensions(function);
+}
+
+static bool isInlineBuiltin(const Value& value, InlineBuiltin which)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return false;
+    auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+    return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == which;
+}
+
+static bool isLanguageOperation(const Value& value, LanguageOperation which)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return false;
+    auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+    return implementation.kind == BuiltinImplementation::Operation && implementation.operation == which;
+}
+
+static constexpr unsigned maxElementsOfPromiseAll = 32;
+
+static bool isPromiseAll(const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return false;
+    auto& builtin = Builtins::singleton().at(value.builtin());
+    return builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Promise"_s && builtin.name == "all"_s;
+}
+
+static ValueID removablePromiseOf(const Function& function)
+{
+    if (!function.savesFrameOnSuspend || !function.startFunction || function.blocks.isEmpty() || !function.resultTypes.isEmpty())
+        return { };
+    if (function.kind == FunctionKind::Constructor || function.kind == FunctionKind::Module || function.kind == FunctionKind::Bound)
+        return { };
+    if (function.has(FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer | Format::FunctionHasRestParameter))
+        return { };
+    if (function.takesCalleeClosure || function.takesCapturesFromClosure || function.rampForClosures || function.isRampForClosures || function.worker || function.isValueEntry || function.valueEntryTarget)
+        return { };
+    if (function.reservedStackArgumentCount || function.isCalledFromDroppableFrame || function.hasTailCallSites || function.isInIndirectTailCallCycle || !function.callerResultCasts.isEmpty() || function.resultIsCoercedByCallers)
+        return { };
+    if (function.blocks[0].parameters.size() + 1 > numberOfDirectArgumentGPRs)
+        return { };
+    ValueID promise;
+    BitVector onlyReturns(function.blocks.size());
+    for (unsigned b = 0; b < function.blocks.size(); ++b) {
+        auto& block = function.blocks[b];
+        if (block.terminator.kind != TerminatorKind::Return)
+            continue;
+        ValueID returned = block.terminator.value;
+        if (!returned || (promise && returned != promise))
+            return { };
+        promise = returned;
+        if (block.values.isEmpty() && block.parameters.isEmpty() && b)
+            onlyReturns.set(b);
+    }
+    if (!promise || !isLanguageOperation(function.at(promise), LanguageOperation::NewPromise) || !function.blocks[0].values.contains(promise))
+        return { };
+    auto endsFunction = [&](const Block& block) {
+        if (block.terminator.kind == TerminatorKind::Return)
+            return true;
+        return block.terminator.kind == TerminatorKind::Jump && onlyReturns.get(block.terminator.targets[0].block.index());
+    };
+    for (unsigned b = 0; b < function.blocks.size(); ++b) {
+        auto& block = function.blocks[b];
+        bool resolves = !block.values.isEmpty() && isLanguageOperation(function.at(block.values.last()), LanguageOperation::ResolvePromise) && function.at(block.values.last()).arguments[0] == promise;
+        if (block.terminator.kind == TerminatorKind::Return && !onlyReturns.get(b) && !resolves)
+            return { };
+        for (auto& target : block.terminator.targets) {
+            if (onlyReturns.get(target.block.index()) && (block.terminator.kind != TerminatorKind::Jump || !resolves))
+                return { };
+        }
+    }
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& user = function.at(id);
+            unsigned place = isInlineBuiltin(user, InlineBuiltin::AwaitBySavingFrame) ? 1 : isLanguageOperation(user, LanguageOperation::ResolvePromise) && id == block.values.last() && endsFunction(block) ? 0 : UINT_MAX;
+            for (ValueID child : user.children) {
+                if (child == promise)
+                    return { };
+            }
+            for (unsigned i = 0; i < user.arguments.size(); ++i) {
+                if (user.arguments[i] == promise && i != place)
+                    return { };
+            }
+        }
+        for (auto& target : block.terminator.targets) {
+            if (target.arguments.contains(promise))
+                return { };
+        }
+        if (block.terminator.kind != TerminatorKind::Return && block.terminator.value == promise)
+            return { };
+    }
+    return promise;
+}
+
+void awaitDirectCallsWithoutPromises(Program& program)
+{
+    auto& functions = std::as_const(program.functions);
+    unsigned count = functions.size();
+    Vector<ValueID> promises(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        promises[i] = removablePromiseOf(functions[i]);
+    });
+    Vector<Vector<ValueID, 2>> awaitedCalls(count);
+    Vector<Vector<ValueID, 1>> callsOfPromiseAll(count);
+    std::atomic<unsigned> numberOfAwaits { 0 };
+    std::atomic<unsigned> numberOfAwaitedAsyncCalls { 0 };
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = functions[i];
+        if (function.blocks.isEmpty())
+            return;
+        Vector<unsigned> uses;
+        auto useCountOf = [&](ValueID id) {
+            if (uses.isEmpty()) {
+                uses.fill(0, function.values.size());
+                for (auto& other : function.blocks) {
+                    for (ValueID user : other.values) {
+                        function.at(user).forEachChild([&](ValueID child) {
+                            ++uses[child.index()];
+                        });
+                    }
+                    if (other.terminator.value)
+                        ++uses[other.terminator.value.index()];
+                    for (auto& target : other.terminator.targets) {
+                        for (ValueID argument : target.arguments)
+                            ++uses[argument.index()];
+                    }
+                }
+            }
+            return uses[id.index()];
+        };
+        static constexpr OpcodeSet arrayLiterals { Opcode::NewArray };
+        if (functions.mayContain(i, arrayLiterals)) {
+            for (auto& block : function.blocks) {
+                for (ValueID id : block.values) {
+                    auto& call = function.at(id);
+                    if (!isPromiseAll(call) || call.arguments.size() != 1)
+                        continue;
+                    auto& literal = function.at(call.arguments[0]);
+                    if (literal.opcode != Opcode::NewArray || literal.arguments.size() > maxElementsOfPromiseAll || useCountOf(call.arguments[0]) != 1)
+                        continue;
+                    callsOfPromiseAll[i].append(id);
+                    for (ValueID element : literal.arguments) {
+                        auto& made = function.at(element);
+                        if (made.opcode == Opcode::CallDirect && !made.isJumpToContinuation() && promises[made.function().index()] && useCountOf(element) == 1)
+                            awaitedCalls[i].append(element);
+                    }
+                }
+            }
+        }
+        if (!function.savesFrameOnSuspend)
+            return;
+        if (Options::verboseAOTCompilation()) [[unlikely]] {
+            for (auto& block : function.blocks) {
+                for (ValueID id : block.values) {
+                    if (!isInlineBuiltin(function.at(id), InlineBuiltin::AwaitBySavingFrame))
+                        continue;
+                    ++numberOfAwaits;
+                    auto& awaited = function.at(function.at(id).arguments[0]);
+                    numberOfAwaitedAsyncCalls += awaited.opcode == Opcode::CallDirect && !awaited.isJumpToContinuation() && functions[awaited.function().index()].startFunction;
+                }
+            }
+        }
+        Vector<unsigned> numberOfPredecessors;
+        for (auto& block : function.blocks) {
+            for (unsigned k = 0; k < block.values.size(); ++k) {
+                ValueID id = block.values[k];
+                auto& call = function.at(id);
+                if (call.opcode != Opcode::CallDirect || call.isJumpToContinuation() || !promises[call.function().index()])
+                    continue;
+                ValueID next;
+                if (k + 1 < block.values.size())
+                    next = block.values[k + 1];
+                else if ((block.terminator.kind == TerminatorKind::Jump || block.terminator.kind == TerminatorKind::Invoke) && block.terminator.targets[0].arguments.isEmpty()) {
+                    if (numberOfPredecessors.isEmpty()) {
+                        numberOfPredecessors.fill(0, function.blocks.size());
+                        for (auto& from : function.blocks) {
+                            for (auto& target : from.terminator.targets)
+                                ++numberOfPredecessors[target.block.index()];
+                        }
+                    }
+                    auto& behind = function.at(block.terminator.targets[0].block);
+                    if (numberOfPredecessors[block.terminator.targets[0].block.index()] == 1 && !behind.values.isEmpty())
+                        next = behind.values[0];
+                }
+                if (!next || !isInlineBuiltin(function.at(next), InlineBuiltin::AwaitBySavingFrame) || function.at(next).arguments[0] != id)
+                    continue;
+                if (useCountOf(id) == 1)
+                    awaitedCalls[i].append(id);
+            }
+        }
+    });
+    BitVector isAwaited(count);
+    unsigned numberOfSites = 0;
+    unsigned numberOfCallsOfPromiseAll = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        numberOfSites += awaitedCalls[i].size();
+        numberOfCallsOfPromiseAll += callsOfPromiseAll[i].size();
+        for (ValueID call : awaitedCalls[i])
+            isAwaited.set(functions[i].at(call).function().index());
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfSites, " awaits of direct calls take the result of ", isAwaited.bitCount(), " async functions without a promise; ", numberOfAwaits.load(), " awaits save the frame, ", numberOfAwaitedAsyncCalls.load(), " of them await a direct call of an async function; ", numberOfCallsOfPromiseAll, " calls of Promise.all take the elements of an array literal");
+    if (!numberOfSites && !numberOfCallsOfPromiseAll)
+        return;
+    TypeID anything = program.types.anything;
+    Rep boxed = repOf(program.at(anything));
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (awaitedCalls[i].isEmpty() && callsOfPromiseAll[i].isEmpty() && !isAwaited.get(i))
+            return;
+        auto& function = program.functions[i];
+        for (ValueID id : callsOfPromiseAll[i])
+            function.at(id).takesElementsOfArrayLiteral = true;
+        for (ValueID id : awaitedCalls[i]) {
+            auto& call = function.at(id);
+            call.isAwaitedWithoutPromise = true;
+            call.type = anything;
+            call.rep = boxed;
+            call.copyPredictionFrom(Value { });
+        }
+        if (!isAwaited.get(i))
+            return;
+        ValueID promise = promises[i];
+        function.blocks[0].values.removeFirst(promise);
+        Value parameter;
+        parameter.opcode = Opcode::Parameter;
+        parameter.type = function.at(promise).type;
+        parameter.rep = function.at(promise).rep;
+        parameter.position = function.at(promise).position;
+        parameter.immediates = { 0, static_cast<uint32_t>(function.blocks[0].parameters.size()) };
+        function.at(promise) = WTF::move(parameter);
+        function.blocks[0].parameters.append(promise);
+        auto returnResultOf = [&](ValueID id) {
+            auto& resolve = function.at(id);
+            resolve.type = anything;
+            resolve.rep = boxed;
+            return id;
+        };
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            if (function.blocks[b].terminator.kind != TerminatorKind::Return)
+                continue;
+            if (!function.blocks[b].values.isEmpty()) {
+                function.blocks[b].terminator.value = returnResultOf(function.blocks[b].values.last());
+                continue;
+            }
+            Value returned;
+            returned.opcode = Opcode::Parameter;
+            returned.type = anything;
+            returned.rep = boxed;
+            returned.position = function.position;
+            returned.immediates = { b, 0 };
+            ValueID id(function.values.size());
+            function.values.append(WTF::move(returned));
+            function.blocks[b].parameters.append(id);
+            function.blocks[b].terminator.value = id;
+            for (auto& from : function.blocks) {
+                for (auto& target : from.terminator.targets) {
+                    if (target.block.index() == b)
+                        target.arguments.append(returnResultOf(from.values.last()));
+                }
+            }
+        }
+        function.resultType = anything;
+        function.mayRunWithoutPromise = true;
+    });
 }
 
 Vector<std::pair<FunctionID, Function>> splitCoroutines(Program& program)

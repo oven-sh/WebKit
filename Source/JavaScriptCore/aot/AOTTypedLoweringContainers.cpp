@@ -1535,6 +1535,8 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
     ValueID object = value.child(0);
     ValueID key = value.child(1);
     auto& type = typeOf(result);
+    if (auto field = lowerFieldOfSeparatedString(result, value))
+        return *field;
     if (value.readsForInKeys() && get(key).rep == Rep::Int64) {
         CellPointer list = nonNullish(object, { });
         Rep rep = repOf(type);

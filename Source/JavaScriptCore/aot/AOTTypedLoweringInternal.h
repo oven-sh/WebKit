@@ -420,7 +420,7 @@ private:
     Operand lower(ValueID, const Value&);
     Operand lowerLanguageOperation(ValueID result, const Value&);
     CellPointer lowerNewPromise();
-    void lowerResolvePromise(const Value&);
+    Boxed lowerResolvePromise(const Value&);
     bool isPromiseOfUnsuspendedFunction(ValueID) const;
     void findBlocksAroundAwaits();
     bool awaitsBefore(const Block&, size_t end) const;
@@ -1349,6 +1349,7 @@ private:
     Vector<LValue, 8> m_selfTailCallPhis;
     const Value* m_tailCall { nullptr };
     bool m_tailCallReturnsArgument { false };
+    bool m_callIsAwaitedWithoutPromise { false };
     bool m_dropsDroppableCallerFrame { false };
     bool m_leavesDroppableFrame { false };
     bool m_isBeforeTailCall { false };
@@ -2276,7 +2277,7 @@ Operand Lowering::lowerPredictedBuiltin(ValueID result, const PredictedBuiltin& 
     bool takesObjectArgument = expected.arguments.containsIf([](auto& type) {
         return type.hasObjects();
     });
-    if (needsAnyCheck && !takesObjectArgument && !expected.isFunctionCalledAsValue && prefersGenericPathInColdCode())
+    if (needsAnyCheck && !takesObjectArgument && !expected.isFunctionCalledAsValue && prefersGenericPathInColdCode() && !m_function.at(result).isInTailPosition)
         return genericPath();
     auto& int32Type = m_program.at(m_program.types.int32);
     BuiltinID integerVariant;

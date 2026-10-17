@@ -32,6 +32,7 @@ void expandDisposableStacks(Program&);
 Vector<std::pair<FunctionID, Function>> splitCoroutines(Program&);
 void splitOptimizedGenerators(Program&, Vector<std::pair<FunctionID, Function>>&&);
 void recordCellsLiveAcrossAwaits(const Program&, Function&);
+void awaitDirectCallsWithoutPromises(Program&);
 BitVector objectsLiveAcrossSuspensions(const Function&);
 BitVector blocksInLoops(const Function&);
 BitVector blocksInLoops(const Functions&, size_t index);
@@ -155,6 +156,19 @@ struct StringBuilderAnalysis {
 StringBuilderAnalysis analyzeStringBuilders(const Program&, FunctionID, const Function&);
 void dumpStringBuilderRemarks(const Program&, PrintStream&);
 BitVector computeMapKeyValues(const Program&, FunctionID, const Function&);
+struct SplitOnlyTakenApart {
+    static constexpr unsigned maxFields = 16;
+    unsigned numberOfPositions { 0 };
+    bool countsAllSeparators { false };
+    uint8_t separator { 0 };
+};
+using SplitsOnlyTakenApart = UncheckedKeyHashMap<uint32_t, SplitOnlyTakenApart, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+std::optional<unsigned> fieldReadAtConstantIndex(const Program&, const Function&, const Value&);
+SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program&, const Function&);
+using MatchesOnlyTakenApart = UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+enum class MatchProperty : uint8_t { Index, Input };
+std::optional<MatchProperty> matchPropertyRead(const Program&, const Value&);
+MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program&, const Function&);
 void computeFunctionsReturningMapKeys(Program&);
 void findCalledOnlyOperands(Program&);
 void verifyCalledOnlyParameters(const Program&, Vector<String>& findings);
@@ -168,6 +182,7 @@ enum class AllocationSinkingPolicy : uint8_t { EliminateOnly, AllowMaterializati
 bool sinkObjectAllocations(const Program&, Function&, AllocationSinkingPolicy);
 BlockID splitEdge(Function&, BlockID from, unsigned targetIndex);
 unsigned resolveCalls(const Program&, Function&, bool mayGuess, CleanUpTiming = CleanUpTiming::Immediate);
+FunctionID functionPinnedToField(const Program&, const Type& receiver, StringID name);
 unsigned inlineCalls(const Program&, FunctionID, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 void internNamesForGeneratorLoopFusion(Program&);
 unsigned fuseGeneratorLoops(const Program&, Function&);

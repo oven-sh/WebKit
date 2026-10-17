@@ -13,6 +13,7 @@ compiled:
   aot/AOTTypedBuiltinMembers.inc                 includes the families' AOTTypedBuiltins<Family>Members.h in the body of class Lowering
   <bun>/src/sema/check/aot/builtins_generated.rs the names the checker trusts, and what each entry does with its operands
   <bun>/src/aot/builtins_generated.rs            the hash, the files and the functions of the prelude
+  <bun>/src/jsc/bindings/AOTFrontEndBuiltinsHash.h the hash again, for a static_assert against the engine that Bun is compiled with
   <bun>/src/aot/prelude/engine/<File>.js         builtins/<File>.js in the syntax of <bun>/src/js/builtins: see aot_engine_builtins.py
   <bun>/src/aot/prelude/engine/functions.txt     the functions of that folder: BuiltinCodeIndex, file, function, separated by tabs
   <bun>/src/aot/build/intrinsics.rs              what each `$name` of Bun's src/js is
@@ -891,7 +892,8 @@ for family in families:
         sys.exit('%s.def: aot/AOTTypedBuiltins%s.cpp does not hold its constants against the engine: FOR_EACH_AOT_TYPED_%s_CONSTANT' % (family, family_name(family), family_name(family).upper()))
 if bun:
     outputs += [(os.path.join(bun, 'src', 'sema', 'check', 'aot', 'builtins_generated.rs'), trusted), (os.path.join(bun, 'src', 'aot', 'builtins_generated.rs'), front_end),
-                (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.rs'), intrinsics_rs), (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.txt'), intrinsics_txt)]
+                (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.rs'), intrinsics_rs), (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.txt'), intrinsics_txt),
+                (os.path.join(bun, 'src', 'jsc', 'bindings', 'AOTFrontEndBuiltinsHash.h'), '// %s\n\n#pragma once\n\n#define BUN_AOT_FRONT_END_BUILTINS_HASH 0x%08xu\n' % (NOTICE, table_hash))]
 if bun:
     engine = os.path.join(bun, 'src', 'aot', 'prelude', 'engine')
     outputs += [(os.path.join(engine, name), text) for name, text in engine_files]

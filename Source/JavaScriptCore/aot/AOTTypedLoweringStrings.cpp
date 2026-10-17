@@ -334,21 +334,326 @@ std::optional<Lowering::Characters> Lowering::openedStringCharacters(const Strin
     return Characters { Pointer(get(opened->data)), Word32(get(opened->flags)), Integer(get(opened->length)), opened->capturedVariableCell ? CellPointer(get(opened->capturedVariableCell)) : receiver.string };
 }
 
+std::optional<unsigned> fieldReadAtConstantIndex(const Program& program, const Function& function, const Value& value)
+{
+    if (value.opcode != Opcode::GetByVal || value.child(0) == value.child(1))
+        return std::nullopt;
+    ValueID constant = program.constantOf(function, value.child(1));
+    if (!constant || function.at(constant).opcode != Opcode::Integer)
+        return std::nullopt;
+    int64_t index = function.at(constant).integer();
+    if (index < 0 || index >= SplitOnlyTakenApart::maxFields)
+        return std::nullopt;
+    return static_cast<unsigned>(index);
+}
+
+SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Function& function)
+{
+    SplitsOnlyTakenApart splits;
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
+        return splits;
+    auto& builtins = Builtins::singleton();
+    auto inlinedAs = [&](const Value& value) -> std::optional<InlineBuiltin> {
+        if (value.opcode != Opcode::CallBuiltin || !value.child(0))
+            return std::nullopt;
+        auto& implementation = builtins.at(value.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline)
+            return std::nullopt;
+        return implementation.inlined;
+    };
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            if (inlinedAs(value) != InlineBuiltin::StringSplit || value.arguments.size() != 1 || value.isInTailPosition || program.typeOf(function, value.child(0)).hasObjects())
+                continue;
+            ValueID constant = program.constantOf(function, value.arguments[0]);
+            if (!constant || function.at(constant).opcode != Opcode::String)
+                continue;
+            auto text = program.string(function.at(constant).string());
+            if (text.size() == 1 && isASCII(text[0]))
+                splits.add(id.index(), SplitOnlyTakenApart { 0, false, text[0] });
+        }
+    }
+    if (splits.isEmpty())
+        return splits;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& user = function.at(id);
+            user.forEachChild([&](ValueID child) {
+                auto found = splits.find(child.index());
+                if (found == splits.end())
+                    return;
+                if (auto field = fieldReadAtConstantIndex(program, function, user); field && child == user.child(0))
+                    found->value.numberOfPositions = std::max(found->value.numberOfPositions, *field + 1);
+                else if (inlinedAs(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
+                    found->value.countsAllSeparators = true;
+                else
+                    splits.remove(found);
+            });
+        }
+        if (block.terminator.value)
+            splits.remove(block.terminator.value.index());
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                splits.remove(argument.index());
+        }
+    }
+    return splits;
+}
+
+std::optional<MatchProperty> matchPropertyRead(const Program& program, const Value& value)
+{
+    if (value.opcode != Opcode::GetById || value.methodGetByIdBuiltin())
+        return std::nullopt;
+    auto name = program.string(value.string());
+    if (equalSpans(name, asBytes("index"_s.span8())))
+        return MatchProperty::Index;
+    if (equalSpans(name, asBytes("input"_s.span8())))
+        return MatchProperty::Input;
+    return std::nullopt;
+}
+
+MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Function& function)
+{
+    MatchesOnlyTakenApart matches;
+    return matches;
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
+        return matches;
+    auto& builtins = Builtins::singleton();
+    auto inlinedAs = [&](const Value& value) -> std::optional<InlineBuiltin> {
+        if (value.opcode != Opcode::CallBuiltin || !value.child(0))
+            return std::nullopt;
+        auto& implementation = builtins.at(value.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline)
+            return std::nullopt;
+        return implementation.inlined;
+    };
+    auto isLiteralOnlyMatchedOnce = [&](ValueID id, ValueID call) {
+        auto& literal = function.at(id);
+        if (literal.opcode != Opcode::CallBuiltin || literal.arguments.size() != 2)
+            return false;
+        auto& implementation = builtins.at(literal.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::RegExpNew)
+            return false;
+        auto& flags = function.at(literal.arguments[1]);
+        if (function.at(literal.arguments[0]).opcode != Opcode::String || flags.opcode != Opcode::String || std::ranges::contains(program.string(flags.string()), 'g'))
+            return false;
+        bool isUsedElsewhere = false;
+        for (auto& block : function.blocks) {
+            for (ValueID user : block.values) {
+                function.at(user).forEachChild([&](ValueID child) {
+                    isUsedElsewhere |= child == id && user != call;
+                });
+            }
+            isUsedElsewhere |= block.terminator.value == id;
+            for (auto& target : block.terminator.targets)
+                isUsedElsewhere |= target.arguments.contains(id);
+        }
+        return !isUsedElsewhere;
+    };
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            auto which = inlinedAs(value);
+            if (value.arguments.size() != 1 || value.isInTailPosition)
+                continue;
+            if (which == InlineBuiltin::StringMatch) {
+                if (!program.typeOf(function, value.child(0)).hasObjects() && value.child(0) != value.arguments[0] && isLiteralOnlyMatchedOnce(value.arguments[0], id))
+                    matches.add(id.index(), 1);
+                continue;
+            }
+            auto& subject = program.typeOf(function, value.arguments[0]);
+            if (which != InlineBuiltin::RegExpExec || !(subject.primitives & Primitive::String) || !subject.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull))
+                continue;
+            if (hasGenericFallback(program, function, value) && !value.receiverHasOriginalStructure)
+                continue;
+            matches.add(id.index(), 1);
+        }
+    }
+    if (matches.isEmpty())
+        return matches;
+    auto isNil = [&](ValueID id) {
+        Opcode opcode = function.at(id).opcode;
+        return opcode == Opcode::Null || opcode == Opcode::Undefined;
+    };
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& user = function.at(id);
+            user.forEachChild([&](ValueID child) {
+                auto found = matches.find(child.index());
+                if (found == matches.end())
+                    return;
+                if (auto field = fieldReadAtConstantIndex(program, function, user); field && child == user.child(0)) {
+                    found->value = std::max(found->value, *field + 1);
+                    return;
+                }
+                if (user.opcode == Opcode::ToBoolean || user.opcode == Opcode::IsUndefinedOrNull || matchPropertyRead(program, user))
+                    return;
+                if ((user.opcode == Opcode::StrictEq || user.opcode == Opcode::Eq) && isNil(user.child(user.child(0) == child)))
+                    return;
+                if (inlinedAs(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
+                    return;
+                matches.remove(found);
+            });
+        }
+        if (block.terminator.value)
+            matches.remove(block.terminator.value.index());
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                matches.remove(argument.index());
+        }
+    }
+    return matches;
+}
+
+bool Lowering::fieldMayBeAbsent(ValueID id) const
+{
+    auto& value = m_function.at(id);
+    return value.opcode == Opcode::GetByVal && *fieldReadAtConstantIndex(m_program, m_function, value) && m_program.at(value.type).primitives & Primitive::Undefined;
+}
+
+void Lowering::findSplitsOnlyTakenApart()
+{
+    m_splitsOnlyTakenApart = Typed::findSplitsOnlyTakenApart(m_program, m_function);
+    for (uint32_t index : m_splitsOnlyTakenApart.keys())
+        m_isLazilyFetched.set(index);
+    m_matchesOnlyTakenApart = findMatchesOnlyTakenApart(m_program, m_function);
+}
+
+std::optional<Operand> Lowering::lowerPropertyOfMatch(ValueID result, const Value& value)
+{
+    if (m_matchesInFrame.isEmpty())
+        return std::nullopt;
+    auto found = m_matchesInFrame.find(value.child(0).index());
+    if (found == m_matchesInFrame.end())
+        return std::nullopt;
+    nonNullish(value.child(0), value.string());
+    if (*matchPropertyRead(m_program, value) == MatchProperty::Index)
+        return ensure(found->value->starts[0], Type::integer(Range::length()), typeOf(result));
+    return ensure(found->value->subject.string, m_program.at(m_program.types.string), typeOf(result));
+}
+
+std::optional<Operand> Lowering::lowerSplitOnlyTakenApart(ValueID result, const Value& value, CellPointer string)
+{
+    auto taken = m_splitsOnlyTakenApart.find(result.index());
+    if (taken == m_splitsOnlyTakenApart.end() || !isOnMainPath())
+        return std::nullopt;
+    unsigned numberOfPositions = taken->value.numberOfPositions;
+    uint32_t wanted = numberOfPositions | (taken->value.countsAllSeparators ? 1u << 31 : 0);
+    SeparatedString separated;
+    separated.subject = stringReceiver(string);
+    separated.subject.id = value.child(0);
+    separated.characters = charactersOf(separated.subject);
+    m_context.emitsCalls = true;
+    LValue positions = m_out.lockedStackSlot(std::max<size_t>(WTF::roundUpToMultipleOf<sizeof(uint64_t)>(numberOfPositions * sizeof(uint32_t)), sizeof(uint64_t)));
+    Word32 separator = word32(taken->value.separator);
+    Integer data(separated.characters.data.value());
+    Word32 length = low32(separated.characters.length);
+    separated.numberOfSeparators = zeroExtended(either<Word32>(hasBits(separated.characters.flags, StringImpl::flagIs8Bit()), [&] {
+        return AOT_TYPED_OPERATION(FindSeparators8, data, length, separator, Integer(positions), word32(wanted));
+    }, [&] {
+        return AOT_TYPED_OPERATION(FindSeparators16, data, length, separator, Integer(positions), word32(wanted));
+    }));
+    for (unsigned i = 0; i < numberOfPositions; ++i)
+        separated.positions.append(zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, positions, i * sizeof(uint32_t))))));
+    ensureStillAliveHere(separated.characters.owner);
+    m_separatedStrings.set(result.index(), makeUniqueWithoutFastMallocCheck<SeparatedString>(WTF::move(separated)));
+    return Operand(value.rep, nullptr);
+}
+
+std::optional<Operand> Lowering::lowerFieldOfSeparatedString(ValueID result, const Value& value)
+{
+    if (m_separatedStrings.isEmpty() && m_matchesInFrame.isEmpty())
+        return std::nullopt;
+    unsigned field = fieldReadAtConstantIndex(m_program, m_function, value).value_or(0);
+    if (auto found = m_matchesInFrame.find(value.child(0).index()); found != m_matchesInFrame.end()) {
+        const MatchInFrame& match = *found->value;
+        nonNullish(value.child(0), { });
+        Word32 isPresent = field ? logicalAnd(lessThanOrEqual(integer(field), match.numberOfGroups), greaterThanOrEqual(match.starts[field], integer(0))) : Word32();
+        return partOfSubject(result, value, field, match.subject, stringLength(match.subject), match.starts[field], match.ends[field], isPresent, std::nullopt);
+    }
+    auto found = m_separatedStrings.find(value.child(0).index());
+    if (found == m_separatedStrings.end())
+        return std::nullopt;
+    const SeparatedString& separated = *found->value;
+    Integer length = separated.characters.length;
+    Integer from = field ? add(separated.positions[field - 1], integer(1)) : integer(0);
+    Integer to = select(lessThan(integer(field), separated.numberOfSeparators), separated.positions[field], length);
+    Word32 isPresent = field ? lessThanOrEqual(integer(field), separated.numberOfSeparators) : Word32();
+    return partOfSubject(result, value, field, separated.subject, length, from, to, isPresent, separated.characters);
+}
+
+Operand Lowering::partOfSubject(ValueID result, const Value& value, unsigned field, const StringReceiver& subject, Integer length, Integer from, Integer to, Word32 isPresent, std::optional<Characters> characters)
+{
+    auto& type = typeOf(result);
+    auto& stringType = m_program.at(m_program.types.string);
+    bool mayBeAbsent = fieldMayBeAbsent(result);
+    if (field && !mayBeAbsent) {
+        LBasicBlock isAbsent = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isPresent.value(), usually(continuation), rarely(isAbsent));
+        m_out.appendTo(isAbsent);
+        ensure(undefined(), type);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+    }
+    if (isOnMainPath()) {
+        (mayBeAbsent ? m_optionalSubstrings : m_substrings).set(result.index(), Substring { subject, length, from, to, mayBeAbsent ? isPresent : Word32(), characters });
+        if (m_substringsOnlyInspected.get(result.index()))
+            return Operand(value.rep, nullptr);
+    }
+    auto make = [&] {
+        uint64_t key = static_cast<uint64_t>(value.child(0).index()) << 8 | field;
+        if (mayBeAbsent || !isOnMainPath())
+            return makeSubstring(subject, length, from, to);
+        if (auto made = m_fieldsMadeInBlock.find(key); made != m_fieldsMadeInBlock.end() && made->value.first == m_currentBlockID.index())
+            return CellPointer(made->value.second);
+        CellPointer cell = makeSubstring(subject, length, from, to);
+        m_fieldsMadeInBlock.set(key, std::pair { m_currentBlockID.index(), cell.value() });
+        return cell;
+    };
+    if (!mayBeAbsent)
+        return ensure(make(), stringType, type);
+    return ensure(either<Boxed>(isPresent, [&] {
+        return box(make());
+    }, [&] {
+        return undefined();
+    }), type);
+}
+
+std::optional<Operand> Lowering::lowerLengthOfSeparatedString(ValueID result, const Value& value)
+{
+    if ((m_separatedStrings.isEmpty() && m_matchesInFrame.isEmpty()) || !value.child(0))
+        return std::nullopt;
+    if (auto match = m_matchesInFrame.find(value.child(0).index()); match != m_matchesInFrame.end()) {
+        nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        return ensure(add(match->value->numberOfGroups, integer(1)), Type::integer(Range::length()), typeOf(result));
+    }
+    auto found = m_separatedStrings.find(value.child(0).index());
+    if (found == m_separatedStrings.end())
+        return std::nullopt;
+    return ensure(add(found->value->numberOfSeparators, integer(1)), Type::integer(Range::length()), typeOf(result));
+}
+
 void Lowering::findSubstringsOnlyInspected()
 {
     auto inlinedAs = [&](const Value& value) -> std::optional<InlineBuiltin> {
-        if (value.opcode != Opcode::CallBuiltin || !value.child(0))
+        if (value.opcode != Opcode::CallBuiltin)
             return std::nullopt;
         auto& implementation = m_builtins.at(value.builtin()).implementation;
         if (implementation.kind != BuiltinImplementation::Inline)
             return std::nullopt;
         return implementation.inlined;
     };
+    auto isSlice = [](std::optional<InlineBuiltin> which) {
+        return which && (*which == InlineBuiltin::StringSlice || *which == InlineBuiltin::StringSubstring || *which == InlineBuiltin::StringSubstr);
+    };
     BitVector isPart;
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
-            auto which = inlinedAs(m_function.at(id));
-            if (which && (*which == InlineBuiltin::StringSlice || *which == InlineBuiltin::StringSubstring || *which == InlineBuiltin::StringSubstr) && holdsCells(m_function.at(id).rep))
+            auto& value = m_function.at(id);
+            bool isField = value.opcode == Opcode::GetByVal && (m_splitsOnlyTakenApart.contains(value.child(0).index()) || m_matchesOnlyTakenApart.contains(value.child(0).index()));
+            if ((isField || (value.child(0) && isSlice(inlinedAs(value)))) && holdsCells(value.rep))
                 isPart.set(id.index());
         }
     }
@@ -358,13 +663,19 @@ void Lowering::findSubstringsOnlyInspected()
         for (ValueID id : block.values) {
             auto& user = m_function.at(id);
             auto which = inlinedAs(user);
-            bool inspectsReceiver = which && (*which == InlineBuiltin::StringLength || *which == InlineBuiltin::StringCharCodeAt || *which == InlineBuiltin::StringCodePointAt || *which == InlineBuiltin::StringCharAt || *which == InlineBuiltin::StringAt);
+            bool inspectsReceiver = which && user.child(0) && (*which == InlineBuiltin::StringLength || *which == InlineBuiltin::StringCharCodeAt || *which == InlineBuiltin::StringCodePointAt || *which == InlineBuiltin::StringCharAt || *which == InlineBuiltin::StringAt || isSlice(which));
+            bool parsesFirstArgument = which == InlineBuiltin::ToNumber ? user.arguments.size() == 1 : which == InlineBuiltin::ParseInt && (user.arguments.size() == 1 || (user.arguments.size() == 2 && typeOf(user.arguments[1]).isInteger() && typeOf(user.arguments[1]).integers.isSubsetOf(Range::int32())));
             user.forEachChild([&](ValueID child) {
                 if (!isPart.get(child.index()))
                     return;
-                if (inspectsReceiver && child == user.child(0) && !user.arguments.contains(child))
+                bool mayBeAbsent = fieldMayBeAbsent(child);
+                if (parsesFirstArgument && !user.child(0) && child == user.arguments[0] && (!mayBeAbsent || which == InlineBuiltin::ToNumber) && (user.arguments.size() == 1 || user.arguments[1] != child))
+                    return;
+                if (!mayBeAbsent && inspectsReceiver && child == user.child(0) && !user.arguments.contains(child))
                     return;
                 if (user.opcode == Opcode::StrictEq && constantASCIIString(user.child(user.child(0) == child)))
+                    return;
+                if (mayBeAbsent && user.opcode == Opcode::StrictEq && (m_function.at(user.child(user.child(0) == child)).opcode == Opcode::Undefined || m_function.at(user.child(user.child(0) == child)).opcode == Opcode::Null))
                     return;
                 isPart.clear(child.index());
             });
@@ -2560,22 +2871,45 @@ Word32 Lowering::equalsLiteralOfLengthByStub(const StringReceiver& receiver, Val
     return join.finish().as<Word32>();
 }
 
+Word32 Lowering::isSubstringEqualTo(const Substring& part, ValueID constant, std::span<const uint8_t> text)
+{
+    Integer length = lengthOf(part);
+    if (text.empty())
+        return isZero(length);
+    LBasicBlock isAsLong = m_out.newBlock();
+    LBasicBlock isNotAsLong = m_out.newBlock();
+    Join join(m_out, Rep::Int32, Int32);
+    m_out.branch(equal(length, integer(text.size())).value(), unsure(isAsLong), unsure(isNotAsLong));
+    m_out.appendTo(isAsLong);
+    join.add(hasSubstringAt(part.base, part.from, constant, text));
+    m_out.appendTo(isNotAsLong);
+    join.add(boolean(false));
+    return join.finish().as<Word32>();
+}
+
+std::optional<Word32> Lowering::isOptionalSubstringEqualTo(ValueID id, ValueID constant)
+{
+    auto found = m_optionalSubstrings.find(id.index());
+    if (found == m_optionalSubstrings.end() || !m_substringsOnlyInspected.get(id.index()))
+        return std::nullopt;
+    Substring part = found->value;
+    if (m_function.at(constant).opcode == Opcode::Undefined)
+        return logicalNot(part.isPresent);
+    if (m_function.at(constant).opcode == Opcode::Null)
+        return boolean(false);
+    auto text = constantASCIIString(constant);
+    RELEASE_ASSERT(text);
+    return either<Word32>(part.isPresent, [&] {
+        return isSubstringEqualTo(part, constant, *text);
+    }, [&] {
+        return boolean(false);
+    });
+}
+
 Word32 Lowering::isStringEqualTo(ValueID id, ValueID constant, std::span<const uint8_t> text)
 {
-    if (auto* part = substringCreatedBy(id)) {
-        Integer length = lengthOf(*part);
-        if (text.empty())
-            return isZero(length);
-        LBasicBlock isAsLong = m_out.newBlock();
-        LBasicBlock isNotAsLong = m_out.newBlock();
-        Join join(m_out, Rep::Int32, Int32);
-        m_out.branch(equal(length, integer(text.size())).value(), unsure(isAsLong), unsure(isNotAsLong));
-        m_out.appendTo(isAsLong);
-        join.add(hasSubstringAt(part->base, part->from, constant, text));
-        m_out.appendTo(isNotAsLong);
-        join.add(boolean(false));
-        return join.finish().as<Word32>();
-    }
+    if (auto* part = substringCreatedBy(id))
+        return isSubstringEqualTo(*part, constant, text);
     Boxed value = in<Boxed>(id);
     if (text.empty())
         return equal(value, box(CellPointer(emptyString())));
@@ -2677,7 +3011,7 @@ std::optional<Lowering::ComparisonWithLiteral> Lowering::comparisonWithLiteralBr
             continue;
         if (m_pinnedReads.contains(subject.index()))
             continue;
-        if (substringCreatedBy(subject))
+        if (substringCreatedBy(subject) || m_optionalSubstrings.contains(subject.index()))
             continue;
         auto& type = m_program.at(m_function.at(subject).type);
         if (!(type.primitives & Primitive::String) || !holdsCells(m_function.at(subject).rep))

@@ -8,6 +8,8 @@
 #include "AOTTypedThreads.h"
 #include "ImplementationVisibility.h"
 #include "Options.h"
+#include <wtf/HexNumber.h>
+#include <wtf/text/MakeString.h>
 
 #if ENABLE(AOT)
 
@@ -21,7 +23,7 @@ public:
     {
     }
 
-    ASCIILiteral run()
+    String run()
     {
         if (m_buffer.size() < sizeof(Format::Header) || reinterpret_cast<uintptr_t>(m_buffer.data()) % alignof(uint32_t))
             return "the program is shorter than its header"_s;
@@ -29,7 +31,9 @@ public:
         if (m_header->magic != Format::magic)
             return "this is not a program written by the front end"_s;
         if (m_header->version != Format::version || m_header->opcodeNamesHash != Format::opcodeNamesHash || m_header->builtinsHash != builtinsHash)
-            return "the front end and the engine have different versions"_s;
+            return makeString("this Bun was built from a front end and an engine that do not belong together (front end | engine: format "_s, m_header->version, " | "_s, Format::version,
+                ", operations "_s, hex(m_header->opcodeNamesHash, 8, Lowercase), " | "_s, hex(Format::opcodeNamesHash, 8, Lowercase),
+                ", built-ins "_s, hex(m_header->builtinsHash, 8, Lowercase), " | "_s, hex(builtinsHash, 8, Lowercase), "): see WEBKIT_VERSION in scripts/build/deps/webkit.ts"_s);
         if (m_header->sizeInBytes != m_buffer.size())
             return "the program's length does not match its header"_s;
         for (unsigned i = 0; i < std::size(Format::recordSizes); ++i) {
@@ -130,6 +134,7 @@ public:
                 layout.hasUntypedBase = shape.flags & Format::ShapeHasUntypedBase;
                 layout.hasImmutableMembers = shape.flags & Format::ShapeHasFixedMembers;
                 layout.mayHaveOtherPrototype = shape.flags & Format::ShapeMayHaveOtherPrototype;
+                layout.hasNoOwnInstances = shape.flags & Format::ShapeHasNoOwnInstances;
                 layout.prototypeIsSetByTypedCode = shape.flags & Format::ShapePrototypeIsSetByTypedCode;
                 layout.hasComputedStaticMemberName = shape.flags & Format::ShapeHasComputedStaticMemberName;
                 layout.constructorMayBeReplaced = shape.flags & Format::ShapeConstructorMayBeReplaced;
@@ -1111,7 +1116,7 @@ private:
     std::atomic<bool> m_failed { false };
 };
 
-std::unique_ptr<Program> Program::tryRead(std::span<const uint8_t> bytes, ASCIILiteral& failureReason)
+std::unique_ptr<Program> Program::tryRead(std::span<const uint8_t> bytes, String& failureReason)
 {
     auto program = makeUnique<Program>();
     program->buffer = bytes;

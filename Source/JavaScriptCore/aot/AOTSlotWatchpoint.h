@@ -91,6 +91,19 @@ private:
     Instance* m_instance { nullptr };
 };
 
+class CheckedStructureWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
+    WTF_MAKE_TZONE_ALLOCATED(CheckedStructureWatchpoint);
+public:
+    void watch(VM&, const ObjectPropertyCondition&, Instance&);
+    JSObject* holder() const { return key().object(); }
+    bool hasFired() const { return !m_instance; }
+
+private:
+    void handleFire(VM&, const FireDetail&) final;
+
+    Instance* m_instance { nullptr };
+};
+
 class GlobalPropertyWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
     WTF_MAKE_TZONE_ALLOCATED(GlobalPropertyWatchpoint);
 public:

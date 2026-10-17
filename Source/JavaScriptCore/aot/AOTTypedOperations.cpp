@@ -1666,6 +1666,46 @@ static NEVER_INLINE bool hasDefaultArrayIteration(JSArray* array)
     return isFound && !slot.isTaintedByOpaqueObject() && slot.isValue() && slot.slotBase() == globalObject->arrayPrototype();
 }
 
+static bool tryAppendLongArray(VM& vm, JSArray* target, JSArray* source)
+{
+    IndexingType shape = target->indexingMode() & IndexingShapeAndWritabilityMask;
+    IndexingType sourceShape = source->indexingType() & IndexingShapeMask;
+    if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
+        return false;
+    if (sourceShape != shape && (shape != ContiguousShape || sourceShape != Int32Shape))
+        return false;
+    if (target->classInfo() != JSArray::info() || target->structure()->outOfLineCapacity() || !target->isStructureExtensible())
+        return false;
+    uint64_t length = target->butterfly()->publicLength();
+    uint64_t count = source->butterfly()->publicLength();
+    if (length + count > MAX_STORAGE_VECTOR_LENGTH)
+        return false;
+    unsigned newLength = length + count;
+    if (newLength > target->butterfly()->vectorLength()) {
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), newLength);
+        void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
+        if (!base) [[unlikely]]
+            return false;
+        Butterfly* grown = Butterfly::fromBase(base, 0, 0);
+        uint64_t* elements = grown->indexingPayload<uint64_t>();
+        memcpy(elements, target->butterfly()->indexingPayload<uint64_t>(), length * sizeof(uint64_t));
+        memcpy(elements + length, source->butterfly()->indexingPayload<uint64_t>(), count * sizeof(uint64_t));
+        uint64_t hole = shape == DoubleShape ? std::bit_cast<uint64_t>(PNaN) : JSValue::encode(JSValue());
+        for (unsigned i = newLength; i < vectorLength; ++i)
+            elements[i] = hole;
+        grown->setVectorLength(vectorLength);
+        grown->setPublicLength(newLength);
+        target->setButterfly(vm, grown);
+    } else {
+        gcSafeMemcpy(target->butterfly()->indexingPayload<uint64_t>() + length, source->butterfly()->indexingPayload<uint64_t>(), count * sizeof(uint64_t));
+        WTF::storeStoreFence();
+        target->butterfly()->setPublicLength(newLength);
+    }
+    if (shape == ContiguousShape)
+        vm.writeBarrier(target);
+    return true;
+}
+
 static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSValue iterable)
 {
     auto* source = dynamicDowncast<JSArray>(iterable);
@@ -1683,6 +1723,8 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
             return false;
     } else
         return false;
+    if (length >= MIN_SPARSE_ARRAY_INDEX - std::min(target->length(), MIN_SPARSE_ARRAY_INDEX) && tryAppendLongArray(vm, target, source))
+        return true;
     return target->appendMemcpy(globalObject, vm, target->length(), source);
 }
 
@@ -1711,6 +1753,7 @@ static Structure* emptyLiteralStructureForCopy(JSGlobalObject* globalObject, VM&
 }
 
 static Instance::CloneAndExtendPlan planCloneAndExtend(Instance*, JSGlobalObject*, VM&, Structure* source, uint64_t more);
+static JSFinalObject* copyWithAllPropertiesInline(VM&, JSObject*, Structure*, Structure* ofCopy);
 
 static void cacheSpreadCopy(Instance* instance, VM& vm, JSObject* object, Structure* structure, uint64_t more, const Instance::CloneAndExtendPlan& plan)
 {
@@ -1814,6 +1857,11 @@ static ALWAYS_INLINE JSObject* cloneObjectInline(Instance* instance, JSGlobalObj
             plan = *instance->setCloneAndExtendPlan(structure, 0, planCloneAndExtend(instance, globalObject, vm, structure, 0));
         }
         cacheSpreadCopy(instance, vm, asObject(value), structure, 0, plan);
+        if (Structure* ofCopy = plan.structure; ofCopy && structure->storedPrototype() != JSValue(globalObject->objectPrototype())) {
+            if (ofCopy->inlineCapacity() != structure->inlineCapacity())
+                return copyWithAllPropertiesInline(vm, asObject(value), structure, ofCopy);
+            return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, ofCopy, nullptr, asObject(value)->inlineStorage());
+        }
     }
     return cloneObjectForSpread(globalObject, JSValue::decode(source));
 }
@@ -1862,8 +1910,9 @@ static Instance::CloneAndExtendPlan planCloneAndExtend(Instance* instance, JSGlo
 {
     if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source) || (!source->didTransition() && isValidOffset(source->maxOffset())))
         return { };
-    if (source->realm() != globalObject || source->storedPrototype() != JSValue(globalObject->objectPrototype()))
+    if (source->realm() != globalObject)
         return { };
+    bool hasObjectPrototype = source->storedPrototype() == JSValue(globalObject->objectPrototype());
     std::array<UniquedStringImpl*, 2> defined { nullptr, nullptr };
     unsigned needed = more >> 48;
     for (unsigned i = 0; i < 2; ++i) {
@@ -1878,18 +1927,21 @@ static Instance::CloneAndExtendPlan planCloneAndExtend(Instance* instance, JSGlo
     Vector<UniquedStringImpl*, 16> names;
     bool isInOrder = true;
     source->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        isInOrder &= !entry.attributes() && entry.offset() == offsetOfPropertyInOrder(source, names.size());
+        isInOrder &= !entry.attributes() && entry.offset() == offsetOfPropertyInOrder(source, names.size()) && !(entry.key()->isSymbol() && static_cast<SymbolImpl*>(entry.key())->isPrivate());
         names.append(entry.key());
         return isInOrder;
     });
     needed += names.size();
-    Instance::CloneAndExtendPlan result { source, { } };
-    if (isInOrder && needed > source->inlineCapacity() && needed <= JSFinalObject::maxInlineCapacity) {
+    Instance::CloneAndExtendPlan result { hasObjectPrototype ? source : nullptr, { } };
+    if (isInOrder && (needed > source->inlineCapacity() || !hasObjectPrototype) && needed <= JSFinalObject::maxInlineCapacity) {
         size_t size = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(needed));
         unsigned inlineCapacity = std::min<unsigned>((size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
-        if (Structure* wider = instance->literalStructure(emptyLiteralStructureForCopy(globalObject, vm, inlineCapacity), names.span()))
+        Structure* empty = emptyLiteralStructureForCopy(globalObject, vm, inlineCapacity);
+        if (Structure* wider = names.isEmpty() ? empty : instance->literalStructure(empty, names.span()))
             result.structure = wider;
     }
+    if (!result.structure)
+        return { };
     result.offsets = { invalidOffset, invalidOffset };
     for (unsigned i = 0; i < 2 && defined[i]; ++i) {
         PropertyOffset offset = result.structure->get(vm, defined[i]);
@@ -1973,6 +2025,8 @@ static JSObject* withAllPropertiesInline(Instance* instance, JSObject* object)
     if (object->type() != FinalObjectType || !structure->outOfLineSize() || hasIndexedProperties(structure->indexingType()))
         return object;
     JSGlobalObject* globalObject = instance->globalObject;
+    if (structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
+        return object;
     VM& vm = globalObject->vm();
     Instance::CloneAndExtendPlan plan;
     if (auto* known = instance->cloneAndExtendPlan(structure, 0))
@@ -3145,6 +3199,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedResolvePromise, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedResolvePromiseOrReturnResult, EncodedJSValue, (Instance* instance, JSCell* promise, EncodedJSValue encodedResolution))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue resolution = JSValue::decode(encodedResolution);
+    auto* frame = std::bit_cast<const uint64_t*>(callFrame->callerFrame());
+    if (promise) {
+        if (std::bit_cast<const void*>(frame[1]) == instance->savedFrameReturnAddress && !instance->awaitMustSuspend && instance->microtaskQueue->isEmpty() && Typed::tryScheduleImmediateResume(*instance, frame, uncheckedDowncast<JSPromise>(promise), resolution))
+            OPERATION_RETURN(scope, JSValue::encode(promise));
+        uncheckedDowncast<JSPromise>(promise)->resolve(globalObject, vm, resolution);
+        OPERATION_RETURN(scope, JSValue::encode(promise));
+    }
+    bool isNotThenable = !resolution.isObject() || isDefinitelyNonThenable(asObject(resolution), globalObject);
+    Typed::SavedFrame* saved = Typed::SavedFrame::forFrame(*instance, frame);
+    if (isNotThenable) {
+        if (saved)
+            saved->fulfill(globalObject, vm, resolution);
+        OPERATION_RETURN(scope, encodedResolution);
+    }
+    JSPromise* created = saved ? saved->ensurePromise(globalObject, vm) : JSPromise::create(vm, globalObject->promiseStructure());
+    created->resolve(globalObject, vm, resolution);
+    OPERATION_RETURN(scope, JSValue::encode(created));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwait, void, (Instance* instance, JSCell* resumeClosure, EncodedJSValue awaited, uint32_t isAsyncFunction))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -3889,8 +3966,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedRejectWithException, JSCell*,
         generator->didThrow(vm, value);
         return nullptr;
     }
-    Typed::SavedFrame* saved = Typed::SavedFrame::forFrame(*instance, std::bit_cast<const uint64_t*>(frame));
-    JSPromise* promise = saved ? saved->promise() : JSPromise::create(vm, instance->globalObject->promiseStructure());
+    if (Typed::SavedFrame* saved = Typed::SavedFrame::forFrame(*instance, std::bit_cast<const uint64_t*>(frame))) {
+        saved->reject(instance->globalObject, vm, value);
+        return saved->promiseOrWaiter();
+    }
+    JSPromise* promise = JSPromise::create(vm, instance->globalObject->promiseStructure());
     promise->reject(vm, value);
     return promise;
 }
@@ -5382,6 +5462,11 @@ static OperationReturnType<EncodedJSValue> getFromArrayAs(Instance* instance, Ca
     EXCEPTION_ASSERT(!!scope.exception() == !value);
     if (!value)
         OPERATION_RETURN(scope, encodedJSValue());
+    if (!value->isDouble() && state.fits(state.type(type), *value)) {
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            runtimeTable(vm).countOperation("an element that fits is not coerced");
+        OPERATION_RETURN(scope, JSValue::encode(*value));
+    }
     JSValue element = value->isDouble() ? jsNumber(value->asDouble()) : *value;
     JSValue converted = state.hold(globalObject, element, state.type(type));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -5944,7 +6029,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterOpen, EncodedJSValue, (Instance* i
         OPERATION_RETURN(scope, JSValue::encode(state));
     JSCellButterfly* state = nullptr;
     openGenericIteration(globalObject, JSValue::decode(iterable), [&] {
-        return state = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, 3);
+        state = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, Typed::CollectionIteration::numberOfWords);
+        state->setIndex(vm, Typed::CollectionIteration::structureOfResultsWord, jsNull());
+        state->setIndex(vm, Typed::CollectionIteration::offsetsInResultsWord, jsNumber(0));
+        return state;
     }, [&](JSValue iterator) {
         return !!(state = Typed::CollectionIteration::tryOpen(globalObject, iterator));
     });
@@ -6068,14 +6156,28 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterHas, size_t, (Instance* instance, 
     OPERATION_RETURN(scope, stepIteration(globalObject, uncheckedDowncast<JSCellButterfly>(JSValue::decode(encodedState).asCell())));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedFinishIterStepInFrame, size_t, (Instance* instance, EncodedJSValue* words, EncodedJSValue encodedResult))
+static void rememberIteratorResultShape(Instance* instance, Structure* structure, int32_t offsetOfDone, int32_t offsetOfValue)
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    auto* state = Typed::CollectionIteration::InFrame::at(words);
-    JSValue result = JSValue::decode(encodedResult);
+    for (auto& shape : instance->iteratorResultShapes) {
+        if (shape.structureID == structure->id().bits())
+            return;
+    }
+    auto& shape = instance->iteratorResultShapes[instance->nextIteratorResultShape++ % Instance::numberOfIteratorResultShapes];
+    if (shape.structureID)
+        gcUnprotect(std::bit_cast<StructureID>(shape.structureID).decode());
+    gcProtect(structure);
+    shape = { structure->id().bits(), static_cast<uint16_t>(offsetOfDone), static_cast<uint16_t>(offsetOfValue) };
+}
+
+template<typename Record>
+static ALWAYS_INLINE bool finishIterationStep(Instance* instance, Record* state, JSValue result)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
-        OPERATION_RETURN(scope, false);
+        return false;
     }
     Structure* structure = asObject(result)->structure();
     if (!structure->isDictionary() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
@@ -6089,16 +6191,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedFinishIterStepInFrame, size_t, (Instan
             };
             state->setIndex(vm, Typed::CollectionIteration::structureOfResultsWord, structure);
             state->setIndex(vm, Typed::CollectionIteration::offsetsInResultsWord, jsNumber(offsetInCell(done) | offsetInCell(value) << 16));
+            rememberIteratorResultShape(instance, structure, offsetInCell(done), offsetInCell(value));
         }
     }
     bool isDone = iteratorCompleteExported(globalObject, result);
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, false);
     if (isDone)
-        OPERATION_RETURN(scope, false);
+        return false;
     JSValue value = iteratorValue(globalObject, result);
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, false);
     state->setIndex(vm, 2, value);
-    OPERATION_RETURN(scope, true);
+    return true;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedFinishIterStepInFrame, size_t, (Instance* instance, EncodedJSValue* words, EncodedJSValue result))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, finishIterationStep(instance, Typed::CollectionIteration::InFrame::at(words), JSValue::decode(result)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedFinishIterStep, size_t, (Instance* instance, EncodedJSValue state, EncodedJSValue result))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, finishIterationStep(instance, uncheckedDowncast<JSCellButterfly>(JSValue::decode(state).asCell()), JSValue::decode(result)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterHasInFrame, size_t, (Instance* instance, EncodedJSValue* words))

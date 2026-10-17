@@ -3374,8 +3374,10 @@ public:
 
         FirstCharacters first;
         bool canBeEmpty = false;
-        for (unsigned i = 0; i < count; ++i)
+        m_termsLeftToVisit = termsVisitedForFirstCharacters;
+        for (unsigned i = 0; i < count && m_termsLeftToVisit; ++i)
             canBeEmpty |= collectFirstCharacters(*alternatives[i], 0, first);
+        canBeEmpty |= !m_termsLeftToVisit;
         if (!canBeEmpty && !first.atEnd) {
             program->hasFirstCharacters = true;
             for (unsigned i = 0; i < 4; ++i)
@@ -3583,8 +3585,10 @@ private:
         Vector<FirstCharacters, 8> first(count);
         Vector<FirstCharacters, 8> later(count);
         Vector<bool, 8> canBeEmpty(count);
-        for (unsigned i = 0; i < count; ++i)
+        for (unsigned i = 0; i < count; ++i) {
+            m_termsLeftToVisit = termsVisitedForFirstCharacters;
             canBeEmpty[i] = collectFirstCharacters(*alternatives[i], 0, first[i]);
+        }
         for (unsigned i = count - 1; i--;) {
             later[i] = later[i + 1];
             later[i].add(first[i + 1]);
@@ -3831,8 +3835,11 @@ private:
         if (!continuation || !continuation->alternative)
             return true;
         if (continuation->repeatedGroup) {
-            for (auto& nested : continuation->repeatedGroup->parentheses.disjunction->m_alternatives)
+            for (auto& nested : continuation->repeatedGroup->parentheses.disjunction->m_alternatives) {
                 collectFirstCharacters(*nested, 0, following);
+                if (!m_termsLeftToVisit)
+                    break;
+            }
         }
         return collectFollowingCharacters(*continuation->alternative, continuation->nextTermIndex, continuation->outer, following);
     }
@@ -3856,6 +3863,7 @@ private:
         unsigned max = extra == quantifyInfinite || extra > quantifyInfinite - min ? quantifyInfinite : min + extra;
         Kind kind = term.quantityType == QuantifierType::NonGreedy ? Kind::LazyRun : Kind::GreedyRun;
         FirstCharacters following;
+        m_termsLeftToVisit = termsVisitedForFirstCharacters;
         if ((kind == Kind::GreedyRun && term.possessive()) || (!collectFollowingCharacters(alternative, counted + 1, m_continuation, following) && !following.overlaps(m_program->sets[set])))
             kind = Kind::PossessiveRun;
         return Run { kind, set, min, max, counted + 1 - i };
@@ -3981,6 +3989,11 @@ private:
     {
         auto& terms = alternative.m_terms;
         for (unsigned i = from; i < terms.size(); ++i) {
+            if (!m_termsLeftToVisit) {
+                first.fill();
+                return true;
+            }
+            --m_termsLeftToVisit;
             const PatternTerm& term = terms[i];
             switch (term.type) {
             case PatternTerm::Type::PatternCharacter:
@@ -4004,14 +4017,22 @@ private:
                 if (!term.quantityMaxCount)
                     break;
                 bool groupCanBeEmpty = term.type == PatternTerm::Type::ParenthesesSubpattern && !term.quantityMinCount;
-                for (auto& nested : term.parentheses.disjunction->m_alternatives)
+                for (auto& nested : term.parentheses.disjunction->m_alternatives) {
                     groupCanBeEmpty |= collectFirstCharacters(*nested, 0, first);
+                    if (!m_termsLeftToVisit)
+                        break;
+                }
+                if (!m_termsLeftToVisit) {
+                    first.fill();
+                    return true;
+                }
                 if (!groupCanBeEmpty)
                     return false;
                 break;
             }
             case PatternTerm::Type::NumberedBackReference:
             case PatternTerm::Type::NamedBackReference:
+                first.fill();
                 return true;
             default:
                 break;
@@ -4022,6 +4043,8 @@ private:
 
     YarrPattern& m_pattern;
     FastProgram* m_program { nullptr };
+    static constexpr unsigned termsVisitedForFirstCharacters = 64;
+    unsigned m_termsLeftToVisit { 0 };
     unsigned m_recursionDepth { 0 };
     unsigned m_nextRegister { 0 };
     const Continuation* m_continuation { nullptr };
@@ -4621,7 +4644,7 @@ static unsigned validatedFastProgram(BytecodePattern* bytecode, std::span<const 
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
     std::unique_ptr<FastProgram> fastProgram;
-    if (Options::useRegExpFastMatcher())
+    if (Options::useRegExpFastMatcher() && !Options::useRegExpJIT())
         fastProgram = FastProgramBuilder(pattern).build();
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), fastProgram ? "Runs on a flat program" : "Runs in the bytecode interpreter");
     if (fastProgram && !fastProgram->validate) {

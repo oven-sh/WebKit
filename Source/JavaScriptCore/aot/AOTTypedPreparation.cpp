@@ -3449,7 +3449,7 @@ static void outlineBuiltinCalls(Program& program)
             return program.at(value.type).isString();
         if (value.opcode == Opcode::CallMethod && value.predictedReceiverClassPlusOne)
             return !value.isInTailPosition && value.arguments.size() + 1 + !!value.child(1) <= maxOperands;
-        if (value.opcode != Opcode::CallBuiltin || value.child(2) || value.arguments.size() + !!value.child(0) + !!value.child(1) > maxOperands)
+        if (value.opcode != Opcode::CallBuiltin || value.takesElementsOfArrayLiteral || value.child(2) || value.arguments.size() + !!value.child(0) + !!value.child(1) > maxOperands)
             return false;
         auto& implementation = builtins.at(value.builtin()).implementation;
         if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ArrayPush)
@@ -3459,6 +3459,44 @@ static void outlineBuiltinCalls(Program& program)
     };
     auto isPredictedClassMethodRead = [&](const Function& function, const Value& value) {
         return value.opcode == Opcode::GetById && value.methodGetByIdBuiltin() && value.predictedReceiverClassPlusOne && !program.typeOf(function, value.child(0)).singleEngineClass();
+    };
+    auto definitionOf = [](const Function& function, ValueID id) -> const Value& {
+        while (function.at(id).opcode == Opcode::Cast)
+            id = function.at(id).child(0);
+        return function.at(id);
+    };
+    auto expectedKind = [&](const Function& function, ValueID id) {
+        auto& operand = function.at(id);
+        Type expected = operand.prediction() ? program.at(operand.prediction()).withoutPrimitives(Primitive::UndefinedOrNull) : program.at(operand.type);
+        if (expected.isString())
+            return program.types.string;
+        if (expected.isInteger())
+            return program.types.int32;
+        if (expected.isNumber())
+            return program.types.number;
+        return TypeID();
+    };
+    auto predictedMethodName = [&](const Function& function, const Value& value) {
+        if (value.isInTailPosition || value.isSignatureCall || value.speculatedMethod != SpeculatedMethod::None || value.predictedReceiverClassPlusOne || value.type != program.types.anything || value.arguments.size() + 2 > maxOperands)
+            return StringID();
+        StringID name;
+        ValueID receiver;
+        if (value.opcode == Opcode::CallMethod && !value.child(1)) {
+            receiver = value.child(0);
+            name = value.string();
+        } else if (value.opcode == Opcode::Call && value.child(1)) {
+            receiver = value.child(1);
+            if (auto& read = definitionOf(function, value.child(0)); read.opcode == Opcode::GetById && &definitionOf(function, read.child(0)) == &definitionOf(function, receiver))
+                name = read.string();
+        }
+        if (!name || !function.at(receiver).prediction() || !program.builtinName(name))
+            return StringID();
+        if (expectedKind(function, receiver) != program.types.string)
+            return StringID();
+        BuiltinID first = builtins.findForInstance(BuiltinKind::Method, builtins.stringClass(), program.builtinName(name));
+        if (!first || builtins.at(first).implementation.kind != BuiltinImplementation::Inline)
+            return StringID();
+        return name;
     };
     auto isDescribedByLiteral = [&](const Function& function, const Value& value) {
         if (value.opcode != Opcode::CallBuiltin || value.arguments.size() != 3 || function.at(value.arguments[2]).opcode != Opcode::NewObject)
@@ -3493,7 +3531,7 @@ static void outlineBuiltinCalls(Program& program)
         if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty() || function.at(program.originOf(function, value.arguments[0])).opcode != Opcode::NewObject)
             return false;
         auto& implementation = builtins.at(value.builtin()).implementation;
-        return implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::JSONStringify || implementation.inlined == InlineBuiltin::ResponseJSON);
+        return implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::JSONStringify || implementation.inlined == InlineBuiltin::ResponseJSON || implementation.inlined == InlineBuiltin::NewJSONResponse);
     };
     auto isArithmetic = [&](const Function& function, const Value& value) {
         if (value.opcode != Opcode::CallBuiltin)
@@ -3512,10 +3550,12 @@ static void outlineBuiltinCalls(Program& program)
         ValueID value;
         String signature;
         uint32_t signatureNumber { 0 };
+        bool isPredictedMethod { false };
+        bool usesPredictions { false };
     };
     Vector<Vector<Site>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        static constexpr OpcodeSet candidates { Opcode::Add, Opcode::CallMethod, Opcode::CallBuiltin, Opcode::GetById };
+        static constexpr OpcodeSet candidates { Opcode::Add, Opcode::Call, Opcode::CallMethod, Opcode::CallBuiltin, Opcode::GetById };
         if (program.isHotOutsideLoops(FunctionID(i)) || !program.functions.mayContain(i, candidates))
             return;
         auto& function = std::as_const(program).functions[i];
@@ -3524,6 +3564,26 @@ static void outlineBuiltinCalls(Program& program)
         std::optional<BitVector> isInLoop;
         std::optional<BitVector> keys;
         std::optional<StringBuilderAnalysis> builders;
+        std::optional<SplitsOnlyTakenApart> splitsOnlyTakenApart;
+        std::optional<MatchesOnlyTakenApart> matchesOnlyTakenApart;
+        auto isOnlyTakenApart = [&](ValueID id) {
+            auto& value = function.at(id);
+            if (value.opcode != Opcode::CallBuiltin)
+                return false;
+            auto& implementation = builtins.at(value.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Inline)
+                return false;
+            if (implementation.inlined == InlineBuiltin::RegExpExec || implementation.inlined == InlineBuiltin::StringMatch) {
+                if (!matchesOnlyTakenApart)
+                    matchesOnlyTakenApart = findMatchesOnlyTakenApart(program, function);
+                return matchesOnlyTakenApart->contains(id.index());
+            }
+            if (implementation.inlined != InlineBuiltin::StringSplit)
+                return false;
+            if (!splitsOnlyTakenApart)
+                splitsOnlyTakenApart = findSplitsOnlyTakenApart(program, function);
+            return splitsOnlyTakenApart->contains(id.index());
+        };
         auto usesStringBuilder = [&](ValueID id) {
             if (!builders)
                 builders = analyzeStringBuilders(program, FunctionID(i), function);
@@ -3542,11 +3602,12 @@ static void outlineBuiltinCalls(Program& program)
         });
         std::as_const(program).functions.forEachIndexedValueWithBlock(i, candidates, [&](unsigned b, unsigned, ValueID id) {
             auto& value = function.at(id);
-            if ((!isCandidate(value) && !isPredictedClassMethodRead(function, value)) || isDescribedByLiteral(function, value))
+            StringID predictedMethod = predictedMethodName(function, value);
+            if ((!isCandidate(value) && !isPredictedClassMethodRead(function, value) && !predictedMethod) || isDescribedByLiteral(function, value))
                 return;
             if (value.opcode == Opcode::Add ? isLocallyCreatedKey(id) || usesStringBuilder(id) : value.opcode == Opcode::CallBuiltin && !value.arguments.isEmpty() && isLocallyCreatedKey(value.arguments[0]))
                 return;
-            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || writesLiteralAsJSON(function, value))
+            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || writesLiteralAsJSON(function, value) || isOnlyTakenApart(id))
                 return;
             if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
                 return;
@@ -3557,6 +3618,17 @@ static void outlineBuiltinCalls(Program& program)
             if (isInlinedFromHotFunction(program, function, value))
                 return;
             StringBuilder signature;
+            if (predictedMethod) {
+                signature.append('p', static_cast<unsigned>(value.opcode), ' ', predictedMethod.index());
+                forEachOperand(value, [&](ValueID operandID) {
+                    signature.append(' ', expectedKind(function, operandID).index());
+                    if (auto& operand = function.at(operandID); staysInBody(operand))
+                        signature.append('=', static_cast<unsigned>(operand.opcode), ':', operand.immediates[0], ':', operand.immediates[1]);
+                });
+                sites[i].append({ id, signature.toString(), 0, true, true });
+                sites[i].last().signature.impl()->hash();
+                return;
+            }
             signature.append(static_cast<unsigned>(value.opcode), ' ', value.immediates[0], ' ', value.immediates[1], ' ', value.type.index(), ' ', value.prediction().index(), value.children[0] ? ' ' : '-');
             if (value.predictedReceiverClassPlusOne)
                 signature.append('e', value.predictedReceiverClassPlusOne);
@@ -3564,13 +3636,17 @@ static void outlineBuiltinCalls(Program& program)
                 signature.append('m');
             if (value.child(1))
                 signature.append('r');
+            bool usesPredictions = false;
+            bool takesObject = false;
             forEachOperand(value, [&](ValueID operandID) {
                 auto& operand = function.at(operandID);
+                usesPredictions |= !!operand.prediction();
+                takesObject |= program.at(operand.prediction() ? operand.prediction() : operand.type).hasObjects();
                 signature.append(' ', operand.type.index(), '~', operand.prediction().index(), '~', operand.predictedClosure().index());
                 if (staysInBody(operand))
                     signature.append('=', static_cast<unsigned>(operand.opcode), ':', operand.immediates[0], ':', operand.immediates[1]);
             });
-            sites[i].append({ id, signature.toString() });
+            sites[i].append({ id, signature.toString(), 0, false, value.opcode == Opcode::CallBuiltin && usesPredictions && !takesObject });
             sites[i].last().signature.impl()->hash();
         });
     });
@@ -3624,7 +3700,9 @@ static void outlineBuiltinCalls(Program& program)
                 else if (isHot)
                     reason = IsInHotFunction;
                 else if (!isCandidate(value)) {
-                    if (value.child(2) || value.arguments.size() + !!value.child(0) + !!value.child(1) > maxOperands)
+                    if (value.takesElementsOfArrayLiteral)
+                        reason = IsDescribedByLiteral;
+                    else if (value.child(2) || value.arguments.size() + !!value.child(0) + !!value.child(1) > maxOperands)
                         reason = HasTooManyOperands;
                     else if (kind == BuiltinKind::Getter || kind == BuiltinKind::Setter)
                         reason = IsGetterOrSetter;
@@ -3653,7 +3731,7 @@ static void outlineBuiltinCalls(Program& program)
     Vector<uint32_t> signaturesWithBody;
     for (uint32_t number = 0; number < signatures.size(); ++number) {
         auto& signature = signatures[number];
-        if (signature.numberOfSites < 2)
+        if (signature.numberOfSites < 2 && !sites[signature.firstSiteFunction][signature.firstSite].usesPredictions)
             continue;
         signature.body = count + static_cast<uint32_t>(signaturesWithBody.size());
         signaturesWithBody.append(number);
@@ -3675,8 +3753,14 @@ static void outlineBuiltinCalls(Program& program)
         Value call(value);
         call.inlineFrame = 0;
         call.position = function.position;
+        if (site.isPredictedMethod) {
+            call.immediates = { predictedMethodName(function, value).index(), Format::none };
+            call.receiverHasOriginalStructure = false;
+            call.copyPredictionFrom(Value { });
+        }
         forEachOperand(call, [&](ValueID& operandID) {
             Value operand(function.at(operandID));
+            TypeID kind = site.isPredictedMethod ? expectedKind(function, operandID) : TypeID();
             operand.inlineFrame = 0;
             operand.position = function.position;
             operandID = ValueID(created.values.size());
@@ -3686,11 +3770,14 @@ static void outlineBuiltinCalls(Program& program)
                 Value parameter;
                 parameter.opcode = Opcode::Parameter;
                 parameter.position = function.position;
-                parameter.type = operand.type;
-                parameter.rep = operand.rep;
-                parameter.copyPredictionFrom(operand);
+                parameter.type = site.isPredictedMethod ? program.types.anything : operand.type;
+                parameter.rep = site.isPredictedMethod ? repOf(program.at(program.types.anything)) : operand.rep;
+                if (site.isPredictedMethod)
+                    parameter.setPrediction(kind);
+                else
+                    parameter.copyPredictionFrom(operand);
                 parameter.immediates = { 0, static_cast<uint32_t>(created.parameterTypes.size()) };
-                created.parameterTypes.append(operand.type);
+                created.parameterTypes.append(parameter.type);
                 created.blocks[0].parameters.append(operandID);
                 operand = WTF::move(parameter);
             }
@@ -3709,7 +3796,7 @@ static void outlineBuiltinCalls(Program& program)
         auto& function = program.functions[i];
         for (auto& site : sites[i]) {
             auto& signature = signatures[site.signatureNumber];
-            if (signature.numberOfSites < 2)
+            if (signature.numberOfSites < 2 && !site.usesPredictions)
                 continue;
             auto& value = function.at(site.value);
             Arguments passed;
@@ -5653,14 +5740,17 @@ static void shareCallsOfFunctionFields(Program& program)
     };
     Vector<Vector<ValueID, 0>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        if (!functions.mayContain(i, methodCalls) || program.isStaticallyWarm(FunctionID(i)))
+        if (!functions.mayContain(i, methodCalls))
             return;
         auto& function = functions[i];
         if (function.isGenericEntrypoint() || function.has(Format::FunctionIsBuiltin))
             return;
+        bool isWarm = program.isStaticallyWarm(FunctionID(i));
         functions.forEachIndexedValue(i, methodCalls, [&](ValueID id) {
             auto& call = function.at(id);
-            if (!call.isSignatureCall && call.arguments.size() <= maxArguments && onlyFunctionCalledBy(function, call))
+            if (call.isSignatureCall || call.arguments.size() > maxArguments || !onlyFunctionCalledBy(function, call))
+                return;
+            if (!isWarm || functionPinnedToField(program, program.typeOf(function, call.child(0)), call.string()))
                 sites[i].append(id);
         });
     });
@@ -5674,6 +5764,9 @@ static void shareCallsOfFunctionFields(Program& program)
         uint32_t firstFunction;
         ValueID firstSite;
         uint32_t created { Format::none };
+        uint32_t pinnedTest { Format::none };
+        uint32_t numberOfColdCalls { 0 };
+        bool hasWarmSite { false };
     };
     Vector<Body> bodies;
     UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> bodiesByReceiverAndName;
@@ -5712,12 +5805,14 @@ static void shareCallsOfFunctionFields(Program& program)
                 bodies.append(Body { receiver, call.type, call.callSignature(), flags, WTF::move(parameters), 0, i, id, Format::none });
             }
             ++bodies[candidates[found]].numberOfCalls;
+            bodies[candidates[found]].hasWarmSite |= program.isStaticallyWarm(FunctionID(i));
+            bodies[candidates[found]].numberOfColdCalls += !program.isStaticallyWarm(FunctionID(i));
             bodyOfSite[i].append(candidates[found]);
         }
     }
     Vector<Function> created;
     for (auto& body : bodies) {
-        if (body.numberOfCalls < 2)
+        if (body.numberOfColdCalls < 2)
             continue;
         auto& function = functions[body.firstFunction];
         auto& site = function.at(body.firstSite);
@@ -5757,17 +5852,67 @@ static void shareCallsOfFunctionFields(Program& program)
         body.created = count + created.size();
         created.append(WTF::move(shared));
     }
-    if (created.isEmpty())
-        return;
-    forEachIndexInParallel(count, [&](unsigned i) {
-        if (sites[i].isEmpty())
-            return;
-        auto& function = program.functions[i];
-        for (unsigned k = 0; k < sites[i].size(); ++k) {
-            auto& body = bodies[bodyOfSite[i][k]];
-            if (body.created == Format::none)
-                continue;
-            auto& call = function.at(sites[i][k]);
+    for (auto& body : bodies) {
+        if (!body.hasWarmSite)
+            continue;
+        auto& function = functions[body.firstFunction];
+        auto& site = function.at(body.firstSite);
+        if (!functionPinnedToField(program, program.at(body.receiver), site.string()))
+            continue;
+        auto access = fieldOf(program, program.at(body.receiver), site.string());
+        program.layouts[access->layout.index()].fields[access->field].isPinnedToFunction = true;
+        for (LayoutID subtype : std::as_const(program).at(access->layout).subtypes) {
+            auto& layout = program.layouts[subtype.index()];
+            layout.fields[*layout.fieldNamed(site.string())].isPinnedToFunction = true;
+        }
+        Function tests;
+        tests.name = site.string();
+        tests.module = function.module;
+        tests.position = site.position;
+        tests.flags = body.flags | Format::FunctionIsHiddenInStackTraces;
+        tests.testsPinnedFunction = true;
+        tests.resultType = body.result;
+        tests.blocks.grow(3);
+        auto addParameter = [&](TypeID type) {
+            ValueID id(tests.values.size());
+            Value parameter;
+            parameter.opcode = Opcode::Parameter;
+            parameter.position = site.position;
+            parameter.type = type;
+            parameter.rep = repOf(program.at(type));
+            parameter.immediates = { 0, static_cast<uint32_t>(tests.parameterTypes.size()) };
+            tests.parameterTypes.append(type);
+            tests.blocks[0].parameters.append(id);
+            tests.values.append(WTF::move(parameter));
+            return id;
+        };
+        Value call(site);
+        call.inlineFrame = 0;
+        call.isInTailPosition = true;
+        call.children = { addParameter(body.receiver), ValueID(), ValueID() };
+        call.arguments.clear();
+        for (TypeID type : body.parameters)
+            call.arguments.append(addParameter(type));
+        tests.length = tests.parameterTypes.size();
+        Value test;
+        test.opcode = Opcode::IsClassObjectUnmodified;
+        test.position = site.position;
+        test.type = types.boolean;
+        test.rep = repOf(program.at(types.boolean));
+        test.immediates = { access->layout.index(), access->field };
+        ValueID testID(tests.values.size());
+        tests.values.append(WTF::move(test));
+        tests.blocks[0].values.append(testID);
+        tests.blocks[0].terminator.kind = TerminatorKind::Branch;
+        tests.blocks[0].terminator.value = testID;
+        tests.blocks[0].terminator.targets.append(Target { BlockID(1u), { } });
+        tests.blocks[0].terminator.targets.append(Target { BlockID(2u), { } });
+        ValueID direct(tests.values.size());
+        tests.values.append(Value(call));
+        tests.blocks[1].values.append(direct);
+        tests.blocks[1].terminator.kind = TerminatorKind::Return;
+        tests.blocks[1].terminator.value = direct;
+        if (body.created != Format::none) {
             Arguments passed;
             passed.append(call.child(0));
             passed.append(call.arguments.span());
@@ -5777,11 +5922,43 @@ static void shareCallsOfFunctionFields(Program& program)
             call.immediates = { body.created, Format::none };
             call.arguments = WTF::move(passed);
         }
+        ValueID general(tests.values.size());
+        tests.values.append(WTF::move(call));
+        tests.blocks[2].values.append(general);
+        tests.blocks[2].terminator.kind = TerminatorKind::Return;
+        tests.blocks[2].terminator.value = general;
+        body.pinnedTest = count + created.size();
+        created.append(WTF::move(tests));
+    }
+    if (created.isEmpty())
+        return;
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (sites[i].isEmpty())
+            return;
+        auto& function = program.functions[i];
+        for (unsigned k = 0; k < sites[i].size(); ++k) {
+            auto& body = bodies[bodyOfSite[i][k]];
+            uint32_t target = body.pinnedTest != Format::none && program.isStaticallyWarm(FunctionID(i)) ? body.pinnedTest : body.created;
+            if (target == Format::none)
+                continue;
+            auto& call = function.at(sites[i][k]);
+            Arguments passed;
+            passed.append(call.child(0));
+            passed.append(call.arguments.span());
+            call.opcode = Opcode::CallDirect;
+            call.setCallSignature(Format::none);
+            call.children = { };
+            call.immediates = { target, Format::none };
+            call.arguments = WTF::move(passed);
+        }
     });
+    program.numberOfDirectCalls.grow(count + created.size());
     for (auto& body : bodies) {
+        if (body.pinnedTest != Format::none)
+            program.numberOfDirectCalls[body.pinnedTest] = body.numberOfCalls;
         if (body.created == Format::none)
             continue;
-        program.numberOfDirectCalls.append(body.numberOfCalls);
+        program.numberOfDirectCalls[body.created] = body.numberOfCalls;
         program.staticallyHotFunctions.set(body.created);
         program.staticallyWarmFunctions.set(body.created);
     }
@@ -12172,6 +12349,11 @@ Vector<String> optimize(Program& program)
     didFinish("assigning allocations"_s);
     createTypedOnlySupertypes(program);
     findRetagTargets(program);
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        auto& function = std::as_const(program).functions[i];
+        if (function.kind == FunctionKind::Plain && !(function.declaredAs & (functionIsAsync | functionIsGenerator)) && (function.thisType || function.assertedThisType) && program.genericEntrypoints.contains(i))
+            program.constructorFunctionsWithTypedThis.append(FunctionID(i));
+    }
     program.types.freeze();
     didFinish("what looks at the whole program"_s);
 
@@ -12544,6 +12726,7 @@ Vector<String> optimize(Program& program)
         didFinish("- outlineConcatenations"_s);
     }
     if (!Options::auditAOTTypedAssertions()) {
+        awaitDirectCallsWithoutPromises(program);
         specializeConstantFormatters(program);
         createJSONSerializers(program);
         outlineBuiltinCalls(program);
@@ -13501,7 +13684,7 @@ bool dumpAtStage(std::span<const uint8_t> bytes, const String& stage, PrintStrea
         }
         return true;
     }
-    ASCIILiteral failureReason;
+    String failureReason;
     auto program = Program::tryRead(bytes, failureReason);
     if (!program) {
         out.print(failureReason);

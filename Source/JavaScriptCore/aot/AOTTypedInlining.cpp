@@ -121,7 +121,7 @@ public:
                     continue;
                 if (k + 1 == m_caller.at(block).values.size() && m_caller.at(block).terminator.kind == TerminatorKind::Invoke && !initialStoresOf(m_program.at(callee)).empty() && !initialStoresCannotThrowAt(block, k, m_program.at(callee)))
                     continue;
-                bool isBuiltin = m_program.at(callee).worker || isOwnWorker(callee) || (callerIsHot && m_program.at(callee).has(Format::FunctionIsBuiltin));
+                bool isBuiltin = m_program.at(callee).worker || isOwnWorker(callee) || (callerIsHot && m_program.at(callee).has(Format::FunctionIsBuiltin)) || m_program.at(callee).testsPinnedFunction;
                 bool isMoved = !isTooDeep && isOnlyCall(callee, m_caller.at(call));
                 bool disablesNestedInlining = !m_currentBlockIsInCallerLoop && !constructsForDerivedClass(callee, m_caller.at(call));
                 unsigned limit = depthOf(m_caller.at(call)) ? (disablesNestedInlining ? 0 : smallInCopy) : smallSize;

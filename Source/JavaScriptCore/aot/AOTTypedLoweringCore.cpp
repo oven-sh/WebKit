@@ -892,6 +892,8 @@ void Lowering::lowerBlock(BlockID id)
             m_substringsOnlyInspected.clear(valueID.index());
             m_isLazilyFetched.clear(valueID.index());
         }
+        if (result.value && m_splitsOnlyTakenApart.remove(valueID.index()))
+            m_isLazilyFetched.clear(valueID.index());
         define(valueID, result);
         openStringsAgainAfter(valueID);
         RELEASE_ASSERT_WITH_MESSAGE(!m_environmentAwaitingBarrier || i + 1 < block.values.size(), "AOT: a block ends between a store to an environment and its barrier");
@@ -1264,8 +1266,10 @@ bool Lowering::run()
     findClosureTestsFusedWithBranches();
     if (m_opcodes.intersects(lazilyFetchedLeaves))
         findLazilyFetchedLeaves();
-    if (callsBuiltins)
+    if (callsBuiltins) {
+        findSplitsOnlyTakenApart();
         findSubstringsOnlyInspected();
+    }
     if (m_opcodes.intersects(concatenations))
         findConcatenationsWithNumbers();
     findStringsReadInLoops();
@@ -1932,6 +1936,8 @@ bool Lowering::isPromiseOfUnsuspendedFunction(ValueID promise) const
 {
     if (m_function.savesFrameOnSuspend && (m_blocksReachedWithoutAwaiting.isEmpty() || m_blocksReachedAfterAwait.get(m_currentBlockID.index()) || awaitsBefore(*m_currentBlock, m_currentIndexInBlock)))
         return false;
+    if (m_function.mayRunWithoutPromise)
+        return m_function.blocks[0].parameters.last() == promise;
     if (m_function.startFunction) {
         bool isReturned = false;
         for (auto& block : m_function.blocks) {
@@ -1955,31 +1961,30 @@ bool Lowering::isPromiseOfUnsuspendedFunction(ValueID promise) const
     return m_program.at(frame.fields[CoroutineFrame::promiseField].type).singleEngineClass() == &m_builtins.promiseClass();
 }
 
-void Lowering::lowerResolvePromise(const Value& value)
+Boxed Lowering::lowerResolvePromise(const Value& value)
 {
     CellPointer promise = in<CellPointer>(value.arguments[0]);
     Boxed resolution = in<Boxed>(value.arguments[1]);
     OperationEffects effects = builtinCallEffects(value);
     auto& source = m_function.at(value.arguments[0]);
+    bool mayHaveNoPromise = m_function.mayRunWithoutPromise && m_function.blocks[0].parameters.last() == value.arguments[0];
     auto resolveByStub = [&] {
-        callICStub(Stub::ResolvePromiseAfterAwait, Void, { { promise.value(), GPRInfo::argumentGPR1 }, { resolution.value(), GPRInfo::argumentGPR2 } }, std::nullopt, effects);
+        Vector<std::pair<LValue, GPRReg>, 4> operands { { promise.value(), GPRInfo::argumentGPR1 }, { resolution.value(), GPRInfo::argumentGPR2 } };
+        if (mayHaveNoPromise)
+            return Boxed(callICStub(Stub::ResolvePromiseOrReturnResult, Int64, operands, std::nullopt, effects));
+        callICStub(Stub::ResolvePromiseAfterAwait, Void, operands, std::nullopt, effects);
+        return undefined();
     };
-    if (source.opcode == Opcode::GetField && m_program.at(source.layout()).isCoroutineFrame && !source.prediction()) {
-        resolveByStub();
-        return;
-    }
-    if (m_function.savesFrameOnSuspend && (!isReachedWithoutAwaiting() || (prefersGenericPathInColdCode() && !isPromiseOfUnsuspendedFunction(value.arguments[0])))) {
-        resolveByStub();
-        return;
-    }
+    if (source.opcode == Opcode::GetField && m_program.at(source.layout()).isCoroutineFrame && !source.prediction())
+        return resolveByStub();
+    if (m_function.savesFrameOnSuspend && (!isReachedWithoutAwaiting() || (prefersGenericPathInColdCode() && !isPromiseOfUnsuspendedFunction(value.arguments[0]))))
+        return resolveByStub();
     auto& type = typeOf(value.arguments[1]);
     bool isFresh = isPromiseOfUnsuspendedFunction(value.arguments[0]);
     bool mayBePrimitiveCell = type.primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt);
     bool isNotThenableWithoutExtraProperties = this->isNotThenableWithoutExtraProperties(type);
-    if (isFresh && type.isObject() && !isNotThenableWithoutExtraProperties) {
-        resolveByStub();
-        return;
-    }
+    if ((isFresh && type.isObject() && !isNotThenableWithoutExtraProperties) || (mayHaveNoPromise && !isFresh))
+        return resolveByStub();
     bool mayBecomeOutOfLine = !isFresh || type.hasObjects();
     LBasicBlock inlinePath = m_out.newBlock();
     LBasicBlock outOfLine = mayBecomeOutOfLine ? m_out.newBlock() : nullptr;
@@ -2005,6 +2010,14 @@ void Lowering::lowerResolvePromise(const Value& value)
     } else
         m_out.jump(inlinePath);
     m_out.appendTo(inlinePath);
+    Vector<ValueFromBlock, 3> returned;
+    if (mayHaveNoPromise) {
+        LBasicBlock hasPromise = m_out.newBlock();
+        returned.append(m_out.anchor(resolution.value()));
+        m_out.branch(m_out.notZero64(promise.value()), unsure(hasPromise), unsure(continuation));
+        m_out.appendTo(hasPromise);
+        returned.append(m_out.anchor(promise.value()));
+    }
     didEmitWrite(effects.writes);
     static_assert(CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer == 48);
     storeField(promise, m_heaps.JSPromise_slot, resolution);
@@ -2014,10 +2027,18 @@ void Lowering::lowerResolvePromise(const Value& value)
     m_out.jump(continuation);
     if (mayBecomeOutOfLine) {
         m_out.appendTo(outOfLine);
-        resolveByStub();
+        Boxed result = resolveByStub();
+        if (mayHaveNoPromise)
+            returned.append(m_out.anchor(result.value()));
         m_out.jump(continuation);
     }
     m_out.appendTo(continuation);
+    if (!mayHaveNoPromise)
+        return undefined();
+    LValue phi = m_out.phi(Int64);
+    for (ValueFromBlock value : returned)
+        m_out.addIncomingToPhi(phi, value);
+    return Boxed(phi);
 }
 
 Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
@@ -2218,6 +2239,8 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
     case LanguageOperation::NewPromise:
         return ensure(lowerNewPromise(), Type::engineClass(m_builtins.promiseClass()), type);
     case LanguageOperation::ResolvePromise:
+        if (m_function.mayRunWithoutPromise && m_function.blocks[0].parameters.last() == value.arguments[0])
+            return ensure(lowerResolvePromise(value), type);
         lowerResolvePromise(value);
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     case LanguageOperation::Await: {
@@ -2561,6 +2584,8 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::GetById:
         if (value.methodGetByIdBuiltin())
             return lowerMethodGetById(value);
+        if (auto property = lowerPropertyOfMatch(id, value))
+            return *property;
         return lowerGetById(id, value);
     case Opcode::PutById:
         lowerPutById(id, value);
@@ -2759,6 +2784,12 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::CallBuiltin:
         if (m_builtins.at(value.builtin()).implementation.kind == BuiltinImplementation::Operation)
             return lowerLanguageOperation(id, value);
+        if (auto match = lowerMatchOnlyTakenApart(id, value))
+            return *match;
+        if (auto length = lowerLengthOfSeparatedString(id, value))
+            return *length;
+        if (auto number = lowerNumberFromSubstring(id, value))
+            return *number;
         if (auto* literal = objectLiteralAt(m_currentIndexInBlock)) {
             if (!literal->fields.isEmpty())
                 return placeholder(value.rep);

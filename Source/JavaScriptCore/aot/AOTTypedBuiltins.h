@@ -357,7 +357,7 @@ public:
     unsigned cellOf(BuiltinID id) const { return id.index(); }
     bool hasCell(BuiltinID id) const { return hasCell(cellOf(id)); }
     bool hasCellAt(unsigned index) const { return hasCell(index); }
-    bool isReplaceableGlobalCell(unsigned index) const { return index < numberOfBuiltins && isReplaceable(at(BuiltinID(index)).holderName); }
+    bool isReplaceableGlobalCell(unsigned index) const { return index < numberOfBuiltins ? isReplaceable(at(BuiltinID(index)).holderName) : index < originalStructureCell(0) && isReplaceable(BuiltinName(index - numberOfBuiltins)); }
     unsigned cellOf(BuiltinName global) const { return numberOfBuiltins + global.index(); }
     unsigned originalStructureCell(unsigned index) const { return numberOfBuiltins + numberOfBuiltinNames + index; }
     static constexpr unsigned firstPrototypeCell() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures; }

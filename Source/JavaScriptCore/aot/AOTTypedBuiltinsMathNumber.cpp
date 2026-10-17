@@ -79,6 +79,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringToNumber8, double, (Ins
     return jsToNumber(StringView { unsafeMakeSpan(characters, length) });
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedParseInt16, double, (Instance*, uint64_t characters, uint32_t length, int32_t radix))
+{
+    return parseInt(unsafeMakeSpan(std::bit_cast<const char16_t*>(characters), length), radix);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringToNumber16, double, (Instance*, uint64_t characters, uint32_t length))
+{
+    return jsToNumber(StringView { unsafeMakeSpan(std::bit_cast<const char16_t*>(characters), length) });
+}
+
 namespace Typed {
 
 using namespace B3;
@@ -619,6 +629,39 @@ std::optional<Word32> Lowering::quotientToInt32(ValueID id)
     if (dividends.isSubsetOf(Range::int32()) && divisors.isSubsetOf(Range::int32()))
         return Word32(m_out.chillDiv(low32(x).value(), low32(y).value()));
     return low32(Integer(m_out.chillDiv(x.value(), y.value())));
+}
+
+std::optional<Operand> Lowering::lowerNumberFromSubstring(ValueID result, const Value& value)
+{
+    if (value.arguments.isEmpty() || !m_substringsOnlyInspected.get(value.arguments[0].index()))
+        return std::nullopt;
+    auto& implementation = m_builtins.at(value.builtin()).implementation;
+    if (implementation.kind != BuiltinImplementation::Inline || (implementation.inlined != InlineBuiltin::ToNumber && implementation.inlined != InlineBuiltin::ParseInt))
+        return std::nullopt;
+    const Substring* part = substringCreatedBy(value.arguments[0]);
+    if (!part) {
+        auto found = m_optionalSubstrings.find(value.arguments[0].index());
+        RELEASE_ASSERT(found != m_optionalSubstrings.end());
+        part = &found->value;
+    }
+    bool isParseInt = implementation.inlined == InlineBuiltin::ParseInt;
+    Characters characters = part->charactersOfBase ? *part->charactersOfBase : charactersOf(part->base);
+    Word32 length = low32(lengthOf(*part));
+    Word32 radix = isParseInt && value.arguments.size() > 1 ? low32(in<Integer>(value.arguments[1])) : word32(0);
+    auto parse = [&] {
+        return either<Number>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
+            Pointer data = offsetBy(characters.data, part->from, 0);
+            return isParseInt ? AOT_TYPED_OPERATION(ParseInt8, data, length, radix) : AOT_TYPED_OPERATION(StringToNumber8, data, length);
+        }, [&] {
+            Integer data(offsetBy(characters.data, part->from, 1).value());
+            return isParseInt ? AOT_TYPED_OPERATION(ParseInt16, data, length, radix) : AOT_TYPED_OPERATION(StringToNumber16, data, length);
+        });
+    };
+    Number yielded = part->isPresent.value() ? either<Number>(part->isPresent, parse, [&] {
+        return number(PNaN);
+    }) : parse();
+    ensureStillAliveHere(characters.owner);
+    return numberResult(yielded, typeOf(result));
 }
 
 std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, ValueID result, const Value& value, Writes writes)

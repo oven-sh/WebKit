@@ -304,6 +304,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(UncheckedNewRegExpLiteral) \
     v(RegExpExecWithFastPath) \
     v(RegExpTestWithFastPath) \
+    v(RegExpFindWithFastPath) \
     v(RegExpTestBoxedWithFastPath) \
     v(StringMatchRegExpWithFastPath) \
     v(StringToLowerCase) \
@@ -353,7 +354,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(AwaitMayContinue) \
     v(LeafAwaitMayContinue) \
     v(AwaitBySavingFrame) \
+    v(AwaitCallBySavingFrame) \
     v(ResolvePromiseAfterAwait) \
+    v(ResolvePromiseOrReturnResult) \
     v(AsyncIteratorNext) \
     v(AwaitInAsyncGenerator) \
     v(AsyncGeneratorYield) \

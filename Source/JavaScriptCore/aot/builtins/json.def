@@ -3,6 +3,7 @@
 inline JSONStringify
 inline AppendJSON
 inline ResponseJSON
+inline NewJSONResponse
 
 runtime JSONReserve : RuntimeState void* (uint64_t cursor, uint64_t size) noexcept
 runtime JSONAppendString : RuntimeState void* (uint64_t cursor, JSCell* string) noexcept
@@ -15,5 +16,7 @@ runtime JSONKeyOrdersOf : RuntimeState void* (JSCell* object) noexcept
 runtime JSONFinish : RuntimeState JSCell* (uint64_t cursor) noexcept
 runtime JSONPrepare : RuntimeState void (uint64_t cursor, EncodedJSValue value) noexcept
 runtime JSONDiscard : RuntimeState void () noexcept
+runtime NewJSONResponse : Heap EncodedJSValue (EncodedJSValue value, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues)
 
 intrinsic AppendJSON (any/-, any/-, any/-) -> number ; Allocates ReadsRuntimeState WritesRuntimeState ; Inline(AppendJSON, None)
+intrinsic NewJSONResponse (any, any/G, any/G, any/GP, any/G...) -> anything/N ; CallsUserCode ; Inline(NewJSONResponse, None)

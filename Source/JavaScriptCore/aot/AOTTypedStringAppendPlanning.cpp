@@ -22,8 +22,8 @@ constexpr unsigned entryState = 0;
 constexpr unsigned completeState = 1;
 constexpr unsigned firstFreeState = 2;
 constexpr unsigned maxPlanAttempts = 4;
+constexpr unsigned maxPlacementDepth = 64;
 constexpr unsigned minPartsWithoutCalls = 8;
-constexpr unsigned minExtraParts = 6;
 
 enum class Mode : uint8_t { Plain, Worker };
 
@@ -89,8 +89,6 @@ struct Checkpoint {
     size_t conversions;
     size_t guardedSites;
     unsigned nextState;
-    unsigned concatenationCount;
-    unsigned partCount;
     unsigned callCount;
     unsigned loopCount;
 };
@@ -197,9 +195,9 @@ BitVector findEscapeHTMLAliases(const Program& program)
     auto& builtins = Builtins::singleton();
     BuiltinName holder = builtins.nameOf(asBytes("Bun"_s.span8()));
     BuiltinName member = builtins.nameOf(asBytes("escapeHTML"_s.span8()));
-    BitVector aliases(program.variables.size());
-    BitVector others(program.variables.size());
-    for (auto& function : program.functions) {
+    Vector<Vector<std::pair<unsigned, bool>>> storesByFunction(program.functions.size());
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = program.functions[i];
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
                 auto& store = function.at(id);
@@ -211,9 +209,15 @@ BitVector findEscapeHTMLAliases(const Program& program)
                     auto& global = function.at(program.originOf(function, read.child(0)));
                     isAlias = global.opcode == Opcode::GetGlobal && program.builtinName(global.string()) == holder;
                 }
-                (isAlias ? aliases : others).set(store.variable().index());
+                storesByFunction[i].append({ store.variable().index(), isAlias });
             }
         }
+    });
+    BitVector aliases(program.variables.size());
+    BitVector others(program.variables.size());
+    for (auto& stores : storesByFunction) {
+        for (auto [variable, isAlias] : stores)
+            (isAlias ? aliases : others).set(variable);
     }
     aliases.exclude(others);
     return aliases;
@@ -637,7 +641,7 @@ private:
 
     Checkpoint checkpoint() const
     {
-        return { m_insertions.size(), m_newValues.size(), m_deadLog.size(), m_bufferedLog.size(), m_accountedLog.size(), m_calls.size(), m_conversions.size(), m_guardedSites.size(), m_nextState, m_concatenationCount, m_partCount, m_callCount, m_loopCount };
+        return { m_insertions.size(), m_newValues.size(), m_deadLog.size(), m_bufferedLog.size(), m_accountedLog.size(), m_calls.size(), m_conversions.size(), m_guardedSites.size(), m_nextState, m_callCount, m_loopCount };
     }
 
     void rollBack(const Checkpoint& to)
@@ -655,8 +659,6 @@ private:
         m_conversions.shrink(to.conversions);
         m_guardedSites.shrink(to.guardedSites);
         m_nextState = to.nextState;
-        m_concatenationCount = to.concatenationCount;
-        m_partCount = to.partCount;
         m_callCount = to.callCount;
         m_loopCount = to.loopCount;
     }
@@ -892,8 +894,6 @@ private:
         m_conversions.append({ site.result, point });
         m_guardedSites.append(WTF::move(site));
         context.knownStart = KnownStart::None;
-        m_partCount += 4;
-        ++m_concatenationCount;
         return true;
     }
 
@@ -908,7 +908,6 @@ private:
             return;
         context.pending.append(Part { StringAppendPart::Value, id });
         context.knownStart = KnownStart::None;
-        ++m_partCount;
     }
 
     bool placeNumberToString(Context& context, ValueID id)
@@ -1006,13 +1005,14 @@ private:
             }
             if (m_isDead.get(id.index()))
                 return false;
-            if (!m_mustMaterialize.get(id.index()) && !m_isConservative) {
+            if (!m_mustMaterialize.get(id.index()) && !m_isConservative && m_placementDepth < maxPlacementDepth) {
                 Checkpoint before = checkpoint();
                 Context saved = context;
                 bool isUsedOnce = m_uses[id.index()] == 1;
                 bool canBeBuffered = isUsedOnce || m_continuationUses[id.index()] == m_uses[id.index()];
                 bool succeeded = false;
                 bool attempted = true;
+                ++m_placementDepth;
                 if (canBeBuffered && isConcatenation(id)) {
                     succeeded = placeConcatenation(context, id, false, checkedUser);
                     if (!succeeded && !m_isNeverMeasured.set(id.index())) {
@@ -1026,6 +1026,7 @@ private:
                     succeeded = placeCall(context, id);
                 else
                     attempted = false;
+                --m_placementDepth;
                 if (succeeded)
                     return true;
                 if (attempted) {
@@ -1100,7 +1101,6 @@ private:
             buffered.knownStart = context.knownStart;
         }
         markDead(id);
-        ++m_concatenationCount;
         for (unsigned k = 0; k < operands.size(); ++k) {
             ValueID operand = operands[k];
             if (value.opcode == Opcode::Add && !isString(operand) && !isPlainPrimitive(typeOf(operand))) {
@@ -1393,8 +1393,7 @@ private:
 
     bool isProfitable() const
     {
-        unsigned extraParts = m_partCount > m_concatenationCount ? m_partCount - m_concatenationCount : 0;
-        return m_callCount || m_loopCount || extraParts >= minExtraParts;
+        return m_callCount || m_loopCount;
     }
 
     void planRegions()
@@ -1468,8 +1467,6 @@ private:
             size_t firstBuffered = m_bufferedLog.size();
             unsigned region = m_nextRegion;
             Context context { region, m_nextState++, true, KnownStart::RegionStart, { } };
-            m_concatenationCount = 0;
-            m_partCount = 0;
             m_callCount = 0;
             m_loopCount = 0;
             bool planned = placePhi(context, root, true);
@@ -1509,8 +1506,6 @@ private:
             size_t firstBuffered = m_bufferedLog.size();
             unsigned region = m_nextRegion;
             Context context { region, m_nextState++, true, KnownStart::RegionStart, { } };
-            m_concatenationCount = 0;
-            m_partCount = 0;
             m_callCount = 0;
             m_loopCount = 0;
             bool planned = placeConcatenation(context, root, true) && flush(context, pointBefore(root), origin);
@@ -1753,10 +1748,9 @@ private:
     Vector<unsigned, 4> m_appendingCallees;
     unsigned m_nextState { firstFreeState };
     unsigned m_nextRegion { callerRegion + 1 };
-    unsigned m_concatenationCount { 0 };
-    unsigned m_partCount { 0 };
     unsigned m_callCount { 0 };
     unsigned m_loopCount { 0 };
+    unsigned m_placementDepth { 0 };
 };
 
 bool maySuspend(const Program& program, const Function& function)

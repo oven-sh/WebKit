@@ -153,6 +153,7 @@ enum ShapeFlag : uint32_t {
     ShapeIsRelaxedForLogging = 1 << 11,
     ShapeAcceptsOnlyOtherLayouts = 1 << 12,
     ShapePrototypeIsSetByTypedCode = 1 << 13,
+    ShapeHasNoOwnInstances = 1 << 14,
 };
 
 struct Shape {

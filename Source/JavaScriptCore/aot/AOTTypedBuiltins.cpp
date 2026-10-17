@@ -546,7 +546,7 @@ bool Builtins::isHostFunctionInEngine(BuiltinID id) const
 
 JSCell* Builtins::findCell(JSGlobalObject* globalObject, unsigned index) const
 {
-    if (index < numberOfBuiltins && isReplaceable(builtinEntries[index].holderName))
+    if (isReplaceableGlobalCell(index))
         return globalObject->vm().structureStructure.get();
     if (globalObject->vm().useImmutableIntrinsics && !globalObject->hasImmutableIntrinsics()) [[unlikely]] {
         Instance* instance = globalObject->aotInstance();

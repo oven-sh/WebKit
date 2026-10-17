@@ -71,6 +71,19 @@ void BufferAccessorWatchpoint::handleFire(VM&, const FireDetail&)
     m_instance->bufferAccessors[m_row] = nullptr;
 }
 
+void CheckedStructureWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Instance& instance)
+{
+    RELEASE_ASSERT(!m_instance);
+    m_instance = &instance;
+    initialize(condition);
+    install(vm);
+}
+
+void CheckedStructureWatchpoint::handleFire(VM&, const FireDetail&)
+{
+    std::exchange(m_instance, nullptr)->forgetCheckedStructures();
+}
+
 void AsyncLocalStorageWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Instance& instance)
 {
     RELEASE_ASSERT(!m_instance);
@@ -86,6 +99,7 @@ void AsyncLocalStorageWatchpoint::handleFire(VM&, const FireDetail&)
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalPropertyWatchpoint);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CheckedStructureWatchpoint);
 
 void GlobalPropertyWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Typed::GlobalPropertyCache& cache, std::unique_ptr<GlobalPropertyWatchpoint>* sibling)
 {

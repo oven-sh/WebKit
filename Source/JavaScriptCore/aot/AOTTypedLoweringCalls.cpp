@@ -207,21 +207,24 @@ void Lowering::branchToLandingPad(PatchpointValue* patchpoint, std::optional<GPR
     m_out.appendTo(continuation);
 }
 
-static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister)
+static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister, bool isThrowStatement = false)
 {
+    bool passesWordInRegister = !returnsToSite && words.size() == 1 && !valueIsInWordRegister;
 #if CPU(X86_64) && OS(LINUX)
     static_assert(throwWordGPR == X86Registers::r11);
-    if (!returnsToSite && !isLeaf && !valueIsInWordRegister) {
+    if (!isThrowStatement && !returnsToSite && !isLeaf && !valueIsInWordRegister) {
         context.throwSiteTraps.append({ jit.labelIgnoringWatchpoints(), site.bits });
         jit.m_assembler.buffer().putByte(static_cast<int8_t>(0xf4));
         return false;
     }
+#else
+    UNUSED_PARAM(isThrowStatement);
 #endif
     if (isLeaf && !hasFramelessFunctionStubs) {
         jit.emitFunctionPrologue();
         isLeaf = false;
     }
-    if (!returnsToSite && words.size() == 1 && !valueIsInWordRegister) {
+    if (passesWordInRegister) {
         ArgumentMoves moves;
         static const bool wordIsWrongForTesting = Options::aotSlowPathFaultForTesting() && !strcmp(byteCast<char>(Options::aotSlowPathFaultForTesting()), "word");
         appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0] + wordIsWrongForTesting);
@@ -263,7 +266,7 @@ uint32_t Lowering::throwAt(ThrowKind kind, std::optional<Operand> operand, uint3
 #endif
         unsigned number = rep == Rep::Void ? newErrorClassPlusOne : rep == Rep::Double || rep == Rep::OptionalDouble ? static_cast<unsigned>(params[0].fpr()) : static_cast<unsigned>(params[0].gpr());
         auto words = throwSiteWords(kind, rep, number, a, b);
-        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR))
+        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR, !!newErrorClassPlusOne))
             return;
         context->recordDataInCode(jit, words.size());
         for (uint32_t word : words)
@@ -657,6 +660,8 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
         stub = stub == Stub::OperationValueWithInstance ? Stub::NewRegExpLiteral : Stub::UncheckedNewRegExpLiteral;
     if (entry == Entry::operationAOTTypedRegExpTest && stub == Stub::OperationValueWithInstance)
         stub = Stub::RegExpTestWithFastPath;
+    if (entry == Entry::operationAOTTypedRegExpFind && stub == Stub::OperationValueWithInstance)
+        stub = Stub::RegExpFindWithFastPath;
     if (entry == Entry::operationAOTTypedStringToLowerCase && (stub == Stub::OperationValueWithInstance || stub == Stub::UncheckedOperationWithInstance))
         stub = stub == Stub::OperationValueWithInstance ? Stub::StringToLowerCase : Stub::UncheckedStringToLowerCase;
     if (entry == Entry::operationAOTTypedStringToUpperCase && (stub == Stub::OperationValueWithInstance || stub == Stub::UncheckedOperationWithInstance))
@@ -681,7 +686,7 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        if (stub == Stub::NewRegExpLiteral || stub == Stub::UncheckedNewRegExpLiteral || stub == Stub::StringReplaceRegExpStringMayNotMatch || stub == Stub::RegExpExecWithFastPath || stub == Stub::StringMatchRegExpWithFastPath || stub == Stub::RegExpTestWithFastPath || stub == Stub::StringToLowerCase || stub == Stub::StringToUpperCase || stub == Stub::UncheckedStringToLowerCase || stub == Stub::UncheckedStringToUpperCase || stub == Stub::NewTypedArray || stub == Stub::UncheckedNewTypedArray || stub == Stub::NewMap || stub == Stub::StringToNumber8 || stub == Stub::ParseInt8)
+        if (stub == Stub::NewRegExpLiteral || stub == Stub::UncheckedNewRegExpLiteral || stub == Stub::StringReplaceRegExpStringMayNotMatch || stub == Stub::RegExpExecWithFastPath || stub == Stub::StringMatchRegExpWithFastPath || stub == Stub::RegExpTestWithFastPath || stub == Stub::RegExpFindWithFastPath || stub == Stub::StringToLowerCase || stub == Stub::StringToUpperCase || stub == Stub::UncheckedStringToLowerCase || stub == Stub::UncheckedStringToUpperCase || stub == Stub::NewTypedArray || stub == Stub::UncheckedNewTypedArray || stub == Stub::NewMap || stub == Stub::StringToNumber8 || stub == Stub::ParseInt8)
             stubCalls->call(jit, stub, site);
         else
             stubCalls->call(jit, stub, immediate, site);
@@ -1395,6 +1400,8 @@ bool Lowering::isPassedInMemory(ValueID array)
         for (auto& block : m_function.blocks) {
             for (ValueID id : block.values) {
                 auto& call = m_function.at(id);
+                if (call.takesElementsOfArrayLiteral)
+                    m_restArraysPassedInMemory.set(call.arguments[0].index());
                 if (call.opcode != Opcode::CallDirect || call.arguments.isEmpty() || call.isJumpToContinuation())
                     continue;
                 ValueID rest = call.arguments.last();
@@ -1962,6 +1969,11 @@ Operand Lowering::callCompiled(FunctionID function, const Vector<Argument, 8>& a
             passed.append(unusedParameterPlaceholder(repOf(declaredArgumentType(callee, i))));
             continue;
         }
+        if (callee.mayRunWithoutPromise && i + 1 == numberOfParameters) {
+            RELEASE_ASSERT(arguments.size() < numberOfParameters);
+            passed.append(m_callIsAwaitedWithoutPromise ? m_out.int64Zero : lowerNewPromise().value());
+            continue;
+        }
         Argument given = i < arguments.size() ? arguments[i] : Argument { undefined(), &undefinedType };
         passed.append(ensure(given.operand, *given.type, declaredArgumentType(callee, i)).value);
     }
@@ -2015,6 +2027,8 @@ Operand Lowering::callCompiled(FunctionID function, const Vector<Argument, 8>& a
     LValue value = callFunction(function, b3TypeOf(rep), passed, { }, closure, leavesDroppableFrame || callsFromDroppableFrame(function));
     if (rep == Rep::Void)
         return ensure(undefined(), undefinedType, result);
+    if (callee.mayRunWithoutPromise && !m_callIsAwaitedWithoutPromise)
+        return ensure(CellPointer(value), Type::engineClass(m_builtins.promiseClass()), result);
     if (!callee.callerResultCasts.isEmpty()) {
         Operand converted(rep, value);
         const Type* type = &m_program.at(m_program.types.anything);
@@ -2214,6 +2228,7 @@ Operand Lowering::lowerCallDirect(ValueID result, const Value& value)
     for (ValueID id : value.arguments)
         arguments.append(argument(id));
     LValue call = nullptr;
+    SetForScope isAwaitedWithoutPromise(m_callIsAwaitedWithoutPromise, value.isAwaitedWithoutPromise);
     Operand returnedValue = callCompiled(value.function(), arguments, typeOf(result), &call, true);
     if (call)
         m_multiResultCalls.add(result.index(), call);
@@ -2898,6 +2913,9 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
         if (auto access = isGuardedCallee(callee) ? std::nullopt : lowerBufferAccess(thisValue, read.string(), in<Boxed>(callee), value.arguments, type))
             return *access;
         if (auto builtin = predictedBuiltin(BuiltinKind::Method, thisValue, read.string(), value.arguments))
+            return lowerPredictedBuiltin(result, *builtin, in<Boxed>(callee), genericPath);
+    } else if (m_function.isSharedOutlinedBody && thisValue && methodName) {
+        if (auto builtin = predictedBuiltin(BuiltinKind::Method, thisValue, methodName, value.arguments))
             return lowerPredictedBuiltin(result, *builtin, in<Boxed>(callee), genericPath);
     }
     return genericPath();

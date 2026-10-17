@@ -27,6 +27,33 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringFindCharacter8, size_t,
     return WTF::find(unsafeMakeSpan(characters, length), static_cast<Latin1Character>(character), start);
 }
 
+template<typename CharacterType>
+static ALWAYS_INLINE size_t findSeparators(const CharacterType* characters, uint32_t length, uint32_t separator, uint32_t* positions, uint32_t wanted)
+{
+    bool countsAll = wanted >> 31;
+    wanted &= INT32_MAX;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < length; ++i) {
+        if (characters[i] != separator)
+            continue;
+        if (count < wanted)
+            positions[count] = i;
+        if (++count >= wanted && !countsAll)
+            break;
+    }
+    return count;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindSeparators8, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted))
+{
+    return findSeparators(std::bit_cast<const Latin1Character*>(characters), length, separator, std::bit_cast<uint32_t*>(positions), wanted);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindSeparators16, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted))
+{
+    return findSeparators(std::bit_cast<const char16_t*>(characters), length, separator, std::bit_cast<uint32_t*>(positions), wanted);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringUTF8Length8, size_t, (Instance*, const Latin1Character* characters, uint32_t length))
 {
     static_assert(std::endian::native == std::endian::little);
@@ -888,7 +915,8 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         }
     }
     bool readsAtIndex = which == InlineBuiltin::StringAt || which == InlineBuiltin::StringCharAt || which == InlineBuiltin::StringCharCodeAt || which == InlineBuiltin::StringCodePointAt;
-    const Substring* part = readsAtIndex || which == InlineBuiltin::StringLength ? substringCreatedBy(value.child(0)) : nullptr;
+    bool takesPart = which == InlineBuiltin::StringSlice || which == InlineBuiltin::StringSubstring || which == InlineBuiltin::StringSubstr;
+    const Substring* part = readsAtIndex || takesPart || which == InlineBuiltin::StringLength ? substringCreatedBy(value.child(0)) : nullptr;
     const OpenedString* openedCapturedVariable = readsAtIndex && !part ? openedString(value.child(0)) : nullptr;
     if (openedCapturedVariable && (!openedCapturedVariable->capturedVariableCell || !openedCapturedVariable->isOpened || get(value.child(0)).rep == Rep::Cell || !typeOf(value.child(0)).mayBeUndefinedOrNull()))
         openedCapturedVariable = nullptr;
@@ -1048,8 +1076,13 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
     case InlineBuiltin::StringSlice:
     case InlineBuiltin::StringSubstring:
     case InlineBuiltin::StringSubstr: {
+        std::optional<Substring> whole;
+        if (part)
+            whole = *part;
         Integer length;
-        if (auto known = lengthReadBefore(value.child(0)))
+        if (whole)
+            length = lengthOf(*whole);
+        else if (auto known = lengthReadBefore(value.child(0)))
             length = *known;
         else {
             length = stringLength(receiver);
@@ -1100,8 +1133,13 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             from = Integer(m_out.phi(Int64, originalStart, clampedStart));
             to = Integer(m_out.phi(Int64, originalEnd, clampedEnd));
         }
+        if (whole) {
+            from = add(whole->from, from);
+            to = add(whole->from, to);
+            length = whole->lengthOfBase;
+        }
         if (isOnMainPath()) {
-            m_substrings.set(result.index(), Substring { receiver, length, from, to });
+            m_substrings.set(result.index(), Substring { receiver, length, from, to, Word32(), whole ? whole->charactersOfBase : std::nullopt });
             if (m_substringsOnlyInspected.get(result.index()))
                 return Operand(value.rep, nullptr);
         }

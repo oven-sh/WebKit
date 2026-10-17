@@ -325,9 +325,229 @@ private:
         return true;
     }
 
+    struct LiteralValue {
+        BlockID block;
+        ValueID id;
+        bool endsInvokeBlock;
+    };
+
+    struct LiteralDefinition {
+        StringID name;
+        ValueID value;
+    };
+
+    struct ObjectLiteral {
+        Vector<LiteralDefinition, 6> definitions;
+        Vector<LiteralValue, 8> values;
+    };
+
+    unsigned useCountInRemainingValues(ValueID id) const
+    {
+        unsigned uses = 0;
+        auto count = [&](ValueID child) {
+            uses += child == id;
+        };
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& block = m_function.blocks[b];
+            for (unsigned i = m_remainingValueCounts[b]; i < block.values.size(); ++i)
+                std::as_const(m_function).at(block.values[i]).forEachChild(count);
+            const_cast<Terminator&>(block.terminator).forEachChild([&](ValueID& child) {
+                count(child);
+            });
+        }
+        return uses;
+    }
+
+    BlockID fallThroughPredecessor(BlockID block) const
+    {
+        BlockID found;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& terminator = m_function.blocks[b].terminator;
+            for (unsigned target = 0; target < terminator.targets.size(); ++target) {
+                if (terminator.targets[target].block != block)
+                    continue;
+                if (found || target || (terminator.kind != TerminatorKind::Jump && terminator.kind != TerminatorKind::Invoke))
+                    return { };
+                found = BlockID(b);
+            }
+        }
+        return found;
+    }
+
+    std::optional<LiteralDefinition> definitionIn(ValueID object, const Value& value) const
+    {
+        if (value.opcode == Opcode::PutById && value.child(0) == object && value.child(1) != object && !value.isInitialStore())
+            return LiteralDefinition { value.string(), value.child(1) };
+        if (languageOperationOf(m_program, value) != LanguageOperation::DefineField || value.arguments.size() != 3 || value.arguments[0] != object || value.arguments[2] == object || m_function.at(value.arguments[1]).opcode != Opcode::String)
+            return std::nullopt;
+        return LiteralDefinition { m_function.at(value.arguments[1]).string(), value.arguments[2] };
+    }
+
+    std::optional<ObjectLiteral> literalUsedOnlyBy(ValueID object, BlockID block, size_t user) const
+    {
+        constexpr unsigned maxBlocks = 32;
+        if (m_function.at(object).opcode != Opcode::NewObject)
+            return std::nullopt;
+        BlockID handler = m_function.at(block).terminator.kind == TerminatorKind::Invoke ? m_function.at(block).terminator.targets[1].block : BlockID();
+        ObjectLiteral literal;
+        for (unsigned visited = 0; visited < maxBlocks; ++visited) {
+            auto& current = m_function.at(block);
+            for (size_t i = user; i-- > m_remainingValueCounts[block.index()];) {
+                ValueID id = current.values[i];
+                bool endsInvokeBlock = current.terminator.kind == TerminatorKind::Invoke && i + 1 == current.values.size();
+                if (id == object) {
+                    literal.values.append({ block, id, false });
+                    literal.values.reverse();
+                    literal.definitions.reverse();
+                    if (useCountInRemainingValues(object) != literal.definitions.size() + 1)
+                        return std::nullopt;
+                    return literal;
+                }
+                auto& value = m_function.at(id);
+                if (auto definition = definitionIn(object, value)) {
+                    auto name = m_program.string(definition->name);
+                    bool isPlainName = !name.empty() && !isASCIIDigit(name[0]) && !equalSpans(name, asBytes("__proto__"_s.span8()));
+                    bool isRepeated = literal.definitions.containsIf([&](auto& later) { return later.name == definition->name; });
+                    if (!isPlainName || isRepeated || (endsInvokeBlock && current.terminator.targets[1].block != handler))
+                        return std::nullopt;
+                    literal.definitions.append(*definition);
+                    literal.values.append({ block, id, endsInvokeBlock });
+                    continue;
+                }
+                bool usesObject = false;
+                value.forEachChild([&](ValueID child) {
+                    usesObject |= child == object;
+                });
+                if (usesObject)
+                    return std::nullopt;
+            }
+            block = fallThroughPredecessor(block);
+            if (!block)
+                return std::nullopt;
+            user = m_function.at(block).values.size();
+        }
+        return std::nullopt;
+    }
+
+    struct ResponseInit {
+        ValueID status;
+        ValueID statusText;
+        ValueID headers;
+        Vector<LiteralDefinition, 6> headerDefinitions;
+        Vector<LiteralValue, 16> literalValues;
+    };
+
+    std::optional<ResponseInit> responseInitLiteral(ValueID object, BlockID block, size_t user) const
+    {
+        auto init = literalUsedOnlyBy(object, block, user);
+        if (!init)
+            return std::nullopt;
+        auto isNamed = [&](StringID name, ASCIILiteral text) {
+            return equalSpans(m_program.string(name), asBytes(text.span8()));
+        };
+        ResponseInit result;
+        for (size_t i = 0; i < init->definitions.size(); ++i) {
+            auto& definition = init->definitions[i];
+            if (isNamed(definition.name, "status"_s))
+                result.status = definition.value;
+            else if (isNamed(definition.name, "statusText"_s))
+                result.statusText = definition.value;
+            else if (isNamed(definition.name, "headers"_s)) {
+                auto& store = init->values[i + 1];
+                size_t index = m_function.at(store.block).values.reverseFind(store.id);
+                if (auto headers = literalUsedOnlyBy(definition.value, store.block, index)) {
+                    result.headerDefinitions = WTF::move(headers->definitions);
+                    result.literalValues.appendVector(headers->values);
+                } else
+                    result.headers = definition.value;
+            } else
+                return std::nullopt;
+        }
+        result.literalValues.appendVector(init->values);
+        return result;
+    }
+
+    void removeFromBlocks(const ResponseInit& init)
+    {
+        for (auto& moved : init.literalValues) {
+            auto& block = m_function.at(moved.block);
+            block.values.removeLast(moved.id);
+            if (!moved.endsInvokeBlock)
+                continue;
+            block.terminator.kind = TerminatorKind::Jump;
+            block.terminator.targets.shrink(1);
+        }
+    }
+
+    void appendToSlowPath(const ResponseInit& init)
+    {
+        for (auto& moved : init.literalValues) {
+            endBlockAfterThrowingValue();
+            m_function.at(m_block).values.append(moved.id);
+            m_lastMayThrow = m_hasHandler && moved.endsInvokeBlock;
+        }
+    }
+
+    Value callWithResponseInit(BuiltinID operation, TypeID type, ValueID first, const ResponseInit& init)
+    {
+        Value call = make(Opcode::CallBuiltin, type);
+        call.immediates[0] = operation.index();
+        call.arguments.append(first);
+        for (ValueID operand : { init.status, init.statusText, init.headers })
+            call.arguments.append(operand ? operand : append(make(Opcode::Undefined, m_program.types.undefined)));
+        for (auto& header : init.headerDefinitions) {
+            Value name = make(Opcode::String, m_program.types.string);
+            name.immediates[0] = header.name.index();
+            call.arguments.append(append(WTF::move(name)));
+            call.arguments.append(header.value);
+        }
+        return call;
+    }
+
+    bool isBehindFailedGuardOf(ValueID callee, BlockID block) const
+    {
+        constexpr unsigned maxBlocks = 32;
+        for (unsigned visited = 0; block && visited < maxBlocks; ++visited) {
+            if (m_calleesThatFailedGuard[block.index()] == callee)
+                return true;
+            block = fallThroughPredecessor(block);
+        }
+        return !!block;
+    }
+
+    bool specializeResponseConstruction(BlockID block, unsigned index)
+    {
+        Value original = m_function.at(m_function.at(block).values[index]);
+        BuiltinName global = replaceableGlobalNameOf(original.child(0));
+        if (!global || global != m_builtins.nameOf(asBytes("Response"_s.span8())) || isBehindFailedGuardOf(original.child(0), block))
+            return false;
+        std::optional<ResponseInit> init;
+        if (original.arguments.size() == 2)
+            init = responseInitLiteral(original.arguments[1], block, index);
+        if (!init)
+            return false;
+
+        removeFromBlocks(*init);
+        index -= std::ranges::count_if(init->literalValues, [&](auto& moved) { return moved.block == block; });
+        open(block, index);
+        Value guard = make(Opcode::IsBuiltinFunction, m_program.types.boolean);
+        guard.children[0] = original.child(0);
+        guard.immediates[1] = global.index();
+        BlockID slow = branch(append(WTF::move(guard)));
+        m_calleesThatFailedGuard[slow.index()] = original.child(0);
+        finish(appendThrowing(callWithResponseInit(Operations::NewResponse, original.type, original.arguments[0], *init)));
+
+        moveTo(slow);
+        appendToSlowPath(*init);
+        finish(appendThrowing(WTF::move(original)));
+        return true;
+    }
+
     bool specialize(BlockID block, unsigned index)
     {
         ValueID id = m_function.at(block).values[index];
+        if (m_mode == Mode::Speculation && m_function.at(id).opcode == Opcode::Construct)
+            return specializeResponseConstruction(block, index);
         Vector<Type, 4> argumentTypes;
         for (ValueID argument : m_function.at(id).arguments)
             argumentTypes.append(typeOf(argument));
@@ -645,6 +865,13 @@ private:
         ValueID method = original.opcode == Opcode::Call ? original.child(0) : ValueID();
         if (method && hasGuard(method))
             return false;
+        std::optional<ResponseInit> responseInit;
+        if (auto& implementation = m_builtins.at(entry).implementation; implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ResponseJSON && original.arguments.size() == 2)
+            responseInit = responseInitLiteral(original.arguments[1], block, index);
+        if (responseInit) {
+            removeFromBlocks(*responseInit);
+            index -= std::ranges::count_if(responseInit->literalValues, [&](auto& moved) { return moved.block == block; });
+        }
 
         open(block, index);
         if (!method) {
@@ -659,7 +886,9 @@ private:
         BlockID slow = branch(append(WTF::move(guard)));
 
         Value call = make(Opcode::CallBuiltin, original.type);
-        if (isCalledAsValue) {
+        if (responseInit)
+            call = callWithResponseInit(Operations::NewJSONResponse, original.type, original.arguments[0], *responseInit);
+        else if (isCalledAsValue) {
             Value function = make(Opcode::BuiltinFunction, m_program.types.function);
             function.immediates = { entry.index(), Format::none };
             call.opcode = Opcode::Call;
@@ -682,6 +911,8 @@ private:
         finish(appendThrowing(WTF::move(call)));
 
         moveTo(slow);
+        if (responseInit)
+            appendToSlowPath(*responseInit);
         Value general = make(Opcode::Call, original.type);
         general.children = { method, site.receiver, ValueID() };
         general.immediates[1] = m_inliningDepth;
@@ -693,12 +924,15 @@ private:
     void recordRefutedReceivers()
     {
         m_refuted.fill(Refuted { }, m_function.blocks.size());
+        m_calleesThatFailedGuard.fill(ValueID(), m_function.blocks.size());
         m_keepsOriginalDates.fill(false, m_function.blocks.size());
         m_remainingValueCounts.fill(0, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
             if (block.terminator.kind != TerminatorKind::Branch)
                 continue;
             auto& condition = m_function.at(block.terminator.value);
+            if (condition.comparedGlobal())
+                m_calleesThatFailedGuard[block.terminator.targets[1].block.index()] = condition.child(0);
             if (condition.opcode == Opcode::CallBuiltin && condition.builtin() == m_builtins.hasOriginalStructureOperation())
                 m_refuted[block.terminator.targets[1].block.index()] = { originOf(condition.arguments[0]), condition.engineClass() };
             if (condition.opcode == Opcode::TypeOfIs && condition.typeofType() == TypeofType::Number)
@@ -736,6 +970,7 @@ private:
     {
         m_function.blocks.append(Block { });
         m_refuted.append(Refuted { });
+        m_calleesThatFailedGuard.append(ValueID());
         m_keepsOriginalDates.append(false);
         m_remainingValueCounts.append(0);
         if (!m_isStaticallyCold.isEmpty())
@@ -864,6 +1099,7 @@ private:
     const Builtins& m_builtins;
     Mode m_mode;
     Vector<Refuted> m_refuted;
+    Vector<ValueID> m_calleesThatFailedGuard;
     Vector<bool> m_keepsOriginalDates;
     Vector<unsigned> m_remainingValueCounts;
     Vector<bool> m_isStaticallyCold;

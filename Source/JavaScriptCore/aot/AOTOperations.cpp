@@ -315,6 +315,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByNameAndCache, EncodedJSValue, (Instanc
             encodedBase = JSValue::encode(base);
         }
     }
+    if (instance->typed && base.isObject() && base.asCell()->type() == FinalObjectType) {
+        Structure* heirStructure = base.asCell()->structure();
+        bool mayDelegate = !heirStructure->compiledLayout() && !heirStructure->isDictionary() && heirStructure->hasMonoProto() && heirStructure->propertyAccessesAreCacheable() && !heirStructure->needImpurePropertyWatchpoint();
+        JSObject* prototype = mayDelegate ? heirStructure->storedPrototypeObject() : nullptr;
+        const Typed::LayoutData* layout = prototype ? prototype->structure()->compiledLayout() : nullptr;
+        if (layout && Typed::isObjectLayout(layout->kind) && !isValidOffset(heirStructure->get(vm, ident.impl()))) {
+            PropertySlot inquiry(prototype, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool isFound = prototype->getPropertySlot(globalObject, ident, inquiry);
+            inquiry.disallowVMEntry.reset();
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (!inquiry.isTaintedByOpaqueObject() && (!isFound || inquiry.isValue()) && table.setDelegatesToPrototype(heirStructure, name, prototype)) {
+                base = prototype;
+                encodedBase = JSValue::encode(base);
+            }
+        }
+    }
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
     if (structureBefore && structureBefore->typeInfo().type() == ProxyObjectType) {
         countOperationNamed(instance, __func__, "proxy");
@@ -765,6 +781,39 @@ static std::optional<uint32_t> newStructureFlagsAfterAdd(Structure* before, Stru
     return before->outOfLineCapacity() <= maxCapacityGrownByStub ? std::optional(PropertyLookupTable::growsStorage) : std::nullopt;
 }
 
+static bool storeAddsBelowTypedPrototype(JSGlobalObject* globalObject, JSObject* object, const Identifier& ident)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Structure* structure = object->structure();
+    TypeInfo info = structure->typeInfo();
+    if (ident == vm.propertyNames->underscoreProto || structure->hasPolyProto() || info.overridesGetPrototype() || info.overridesPut() || info.wouldHaveFixedProperties() || structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties())
+        return false;
+    bool hasTypedPrototype = false;
+    for (JSValue next = structure->storedPrototype(); next.isObject();) {
+        JSObject* holder = asObject(next);
+        Structure* holderStructure = holder->structure();
+        if (holderStructure->hasPolyProto() || holderStructure->typeInfo().overridesGetPrototype())
+            return false;
+        const Typed::LayoutData* layout = holderStructure->compiledLayout();
+        if (layout && Typed::isObjectLayout(layout->kind)) {
+            PropertySlot own(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool isFound = holder->methodTable()->getOwnPropertySlot(holder, globalObject, ident, own);
+            own.disallowVMEntry.reset();
+            if (scope.exception()) [[unlikely]] {
+                scope.clearExceptionExceptTermination();
+                return false;
+            }
+            if (own.isTaintedByOpaqueObject() || (isFound && (!own.isValue() || own.attributes() & PropertyAttribute::ReadOnly)))
+                return false;
+            hasTypedPrototype = true;
+        } else if (holderStructure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || holderStructure->typeInfo().overridesPut())
+            return false;
+        next = holderStructure->storedPrototype();
+    }
+    return hasTypedPrototype;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTPutByNameAndCache, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedValue, uint32_t name, uint32_t flagBits))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -844,7 +893,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByNameAndCache, void, (Instance* instanc
                     OPERATION_RETURN(scope);
                 }
             }
-        } else if (!oldStructure->mayBePrototype() && object->canPerformFastPutInline(vm, ident) && storesAreOrdinaryAlongPrototypeChain(oldStructure)) {
+        } else if (!oldStructure->mayBePrototype() && ((object->canPerformFastPutInline(vm, ident) && storesAreOrdinaryAlongPrototypeChain(oldStructure)) || storeAddsBelowTypedPrototype(globalObject, object, ident))) {
             PutPropertySlot slot(base, isStrict, PutPropertySlot::PutById);
             object->putInlineFast(globalObject, ident, value, slot);
             OPERATION_RETURN_IF_EXCEPTION(scope);
@@ -2452,6 +2501,16 @@ static LongRopeOwnNameResult findOwnNameForLongRope(VM& vm, JSObject* object, JS
     return result;
 }
 
+static ALWAYS_INLINE void prepareDictionaryForKeyedDelete(VM& vm, JSObject* object, PropertyName name)
+{
+    Structure* structure = object->structure();
+    if (!structure->isDictionary() || structure->isUncacheableDictionary() || structure->typeInfo().type() != FinalObjectType || structure->compiledLayout() || structure->mayBePrototype())
+        return;
+    unsigned attributes;
+    if (isValidOffset(structure->get(vm, name, attributes)) && !(attributes & PropertyAttribute::DontDelete))
+        object->convertToUncacheableDictionary(vm);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, uint32_t, Slot* cache, uint32_t))
 {
     AOT_OPERATION_BEGIN_AT(instance, cache);
@@ -2468,7 +2527,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instanc
         key = property.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     Typed::Object::specializeStructureForExtraPropertiesIfNeeded(vm, object);
+    prepareDictionaryForKeyedDelete(vm, object, key);
     Structure* oldStructure = object->structure();
+    uint32_t orderWordBefore = orderWordBeforeFieldDeletion(object);
     DeletePropertySlot slot;
     bool isDeleted = JSCell::deleteProperty(object, globalObject, key, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
@@ -2479,6 +2540,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instanc
     if (isDeleted && base.isObject() && (property.isString() || property.isSymbol())) {
         cacheKeyedDelete(vm, callerData(instance, callFrame), cache, object, oldStructure, property, slot.isCacheableDelete() && slot.isDeleteHit() ? std::optional(slot.cachedOffset()) : std::nullopt);
         cacheKeyedDeletion(instance, oldStructure, object->structure(), property, key.impl(), slot);
+        cacheKeyedFieldDeletion(instance, object, oldStructure, orderWordBefore, property, key.impl());
     }
     OPERATION_RETURN(scope, isDeleted);
 }
@@ -2499,7 +2561,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCache, void, (Instance* insta
         key = property.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     Typed::Object::specializeStructureForExtraPropertiesIfNeeded(vm, object);
+    prepareDictionaryForKeyedDelete(vm, object, key);
     Structure* oldStructure = object->structure();
+    uint32_t orderWordBefore = orderWordBeforeFieldDeletion(object);
     DeletePropertySlot slot;
     bool isDeleted = JSCell::deleteProperty(object, globalObject, key, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
@@ -2510,6 +2574,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCache, void, (Instance* insta
     if (base.isObject() && (property.isString() || property.isSymbol())) {
         cacheKeyedDelete(vm, callerData(instance, callFrame), cache, object, oldStructure, property, slot.isCacheableDelete() && slot.isDeleteHit() ? std::optional(slot.cachedOffset()) : std::nullopt);
         cacheKeyedDeletion(instance, oldStructure, object->structure(), property, key.impl(), slot);
+        cacheKeyedFieldDeletion(instance, object, oldStructure, orderWordBefore, property, key.impl());
     }
     OPERATION_RETURN(scope);
 }

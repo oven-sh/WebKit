@@ -31,6 +31,8 @@ namespace JSC { namespace AOT {
 static constexpr size_t minJSONBufferCapacity = 4 * KB;
 static constexpr size_t maxRetainedJSONBufferCapacity = 64 * KB;
 static constexpr unsigned jsonBufferSpareCapacity = 64;
+static constexpr uint32_t jsonValueIsWholeOutput = 2;
+static constexpr uintptr_t jsonWroteNothing = 1;
 static constexpr unsigned maxJSONInt32Length = 11;
 static constexpr unsigned maxJSONIntegerLength = 20;
 static constexpr unsigned maxJSONNumberLength = WTF::dragonbox::max_string_length<WTF::dragonbox::ieee754_binary64>();
@@ -284,6 +286,269 @@ static Latin1Character* appendStringified(Instance* instance, Latin1Character* c
     return cursor + characters.size();
 }
 
+struct JSONPlanCache {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JSONPlanCache);
+    struct Entry {
+        uint64_t orderAndShapeWords { 0 };
+        const Typed::State::KeysAsJSON* keys { nullptr };
+        uint32_t structureID { 0 };
+    };
+    static constexpr unsigned size = 64;
+    std::array<Entry, size> entries;
+};
+
+static constexpr unsigned maxJSONWalkDepth = 48;
+static Latin1Character* const jsonWalkGaveUp = std::bit_cast<Latin1Character*>(static_cast<uintptr_t>(1));
+
+static Latin1Character* appendObject(Instance*, JSGlobalObject*, VM&, Latin1Character* cursor, JSObject*, unsigned depth);
+
+static NEVER_INLINE const Typed::State::KeysAsJSON* findJSONPlan(VM& vm, JSObject* cell, JSONPlanCache::Entry& entry)
+{
+    auto* object = uncheckedDowncast<Typed::Object>(cell);
+    if (object->hasFlagsInOrderWord() || object->structure()->hasPolyProto())
+        return nullptr;
+    auto& state = object->state();
+    auto properties = state.propertiesInOrder(vm, object->layout(), object->orderWord());
+    if (!properties || std::ranges::any_of(*properties, [&](auto& property) { return property.name == vm.propertyNames->toJSON.impl(); }))
+        return nullptr;
+    auto* keys = state.keysAsJSON(vm, object->layout(), object->orderWord());
+    if (keys)
+        entry = { object->orderAndShapeWords(), keys, object->structureID().bits() };
+    return keys;
+}
+
+static ALWAYS_INLINE const Typed::State::KeysAsJSON* jsonPlanFor(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* object)
+{
+    Structure* structure = object->structure();
+    if (structure->classInfoForCells() != Typed::Object::info())
+        return nullptr;
+    if (!instance->jsonPlanCache) [[unlikely]]
+        instance->jsonPlanCache = new JSONPlanCache();
+    uint64_t words = WTF::unalignedLoad<uint64_t>(std::bit_cast<const uint8_t*>(object) + Typed::offsetOfOrderWord);
+    auto& entry = instance->jsonPlanCache->entries[(static_cast<uint32_t>(words >> 32) + static_cast<uint32_t>(words)) % JSONPlanCache::size];
+    const Typed::State::KeysAsJSON* keys = entry.keys;
+    if (entry.orderAndShapeWords != words || entry.structureID != object->structureID().bits()) [[unlikely]] {
+        keys = findJSONPlan(vm, object, entry);
+        if (!keys)
+            return nullptr;
+    }
+    JSValue prototype = structure->storedPrototype();
+    if (prototype != globalObject->objectPrototype() && prototype.isObject() && mayHaveToJSON(globalObject, vm, asObject(prototype))) [[unlikely]]
+        return nullptr;
+    return keys;
+}
+
+static ALWAYS_INLINE Latin1Character* appendQuoted(Instance* instance, Latin1Character* cursor, JSString* string)
+{
+    const StringImpl* impl = string->tryGetValueImpl();
+    if (!impl) [[unlikely]] {
+        auto value = string->tryGetValue();
+        if (value.data.isNull())
+            return nullptr;
+        impl = value.data.impl();
+    }
+    *cursor++ = '"';
+    cursor = appendCharacters(instance, cursor, *impl);
+    if (!cursor) [[unlikely]]
+        return nullptr;
+    *cursor++ = '"';
+    return cursor;
+}
+
+static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, JSValue value)
+{
+    if (value.isNumber())
+        return appendNumber(cursor, value.asNumber());
+    if (value.isBoolean())
+        return value.isTrue() ? appendLiteral(cursor, "true"_s) : appendLiteral(cursor, "false"_s);
+    return value.isNull() ? appendLiteral(cursor, "null"_s) : nullptr;
+}
+
+static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const Typed::State::KeysAsJSON& keys, unsigned depth)
+{
+    using ReadKind = Typed::Object::ReadKind;
+    constexpr unsigned copyStride = Typed::State::KeysAsJSON::copyStride;
+    constexpr uint32_t offsetMask = (1u << Typed::Object::readKindShift) - 1;
+    size_t fixedSize = keys.text.size() + keys.keys.size() * maxJSONNumberLength + 2 * jsonBufferSpareCapacity;
+    cursor = reserveInJSONBuffer(instance, cursor, fixedSize);
+    if (!cursor) [[unlikely]]
+        return nullptr;
+    size_t start = cursor - instance->jsonBufferStart;
+    const uint8_t* body = std::bit_cast<const uint8_t*>(&object);
+    const Latin1Character* text = keys.text.span().data();
+    auto appendKey = [&](const Typed::State::KeysAsJSON::Key& key) ALWAYS_INLINE_LAMBDA {
+        const Latin1Character* from = text + key.start;
+        memcpy(cursor, from, copyStride);
+        for (unsigned i = copyStride; i < key.length; i += copyStride)
+            memcpy(cursor + i, from + i, copyStride);
+        cursor += key.length;
+    };
+    for (auto& key : keys.keys) {
+        uint32_t offset = key.readKindAndOffset & offsetMask;
+        auto field = [&]() ALWAYS_INLINE_LAMBDA -> const Typed::FieldData& { return object.layout().fields()[key.fieldIndex]; };
+        JSValue value;
+        switch (static_cast<ReadKind>(key.readKindAndOffset >> Typed::Object::readKindShift)) {
+        case ReadKind::Int32OrNumberBox:
+            if (int32_t word = WTF::unalignedLoad<int32_t>(body + offset); word >= Typed::minInlineInt32) [[likely]] {
+                appendKey(key);
+                cursor = appendInteger(cursor, word);
+                continue;
+            }
+            value = object.read(field());
+            break;
+        case ReadKind::Int32:
+            appendKey(key);
+            cursor = appendInteger(cursor, WTF::unalignedLoad<int32_t>(body + offset));
+            continue;
+        case ReadKind::Double:
+            appendKey(key);
+            cursor = appendNumber(cursor, WTF::unalignedLoad<double>(body + offset));
+            continue;
+        case ReadKind::Boolean: {
+            bool isTrue = body[offset];
+            appendKey(key);
+            memcpy(cursor, isTrue ? "true\0\0\0" : "false\0\0", 8);
+            cursor += 5 - isTrue;
+            continue;
+        }
+        case ReadKind::Cell32: {
+            uint32_t word = WTF::unalignedLoad<uint32_t>(body + offset);
+            if (word == Typed::unmaterializedClosureCell32) [[unlikely]]
+                value = object.read(field());
+            else if (word <= Typed::undefinedCell32) [[unlikely]]
+                value = JSValue::decode(word);
+            else
+                value = MarkedBlockCage::decode(word);
+            break;
+        }
+        case ReadKind::JSValue:
+            value = JSValue::decode(WTF::unalignedLoad<EncodedJSValue>(body + offset));
+            break;
+        case ReadKind::General:
+            value = object.read(field());
+            break;
+        }
+        if (!value || value.isUndefined())
+            continue;
+        appendKey(key);
+        if (!value.isCell()) {
+            cursor = value.isInt32() ? appendInteger(cursor, value.asInt32()) : appendPrimitive(cursor, value);
+            if (!cursor) [[unlikely]]
+                return nullptr;
+            continue;
+        }
+        JSCell* cell = value.asCell();
+        if (cell->type() == StringType) [[likely]]
+            cursor = appendQuoted(instance, cursor, uncheckedDowncast<JSString>(cell));
+        else if (cell->type() >= ObjectType)
+            cursor = appendObject(instance, globalObject, vm, cursor, uncheckedDowncast<JSObject>(cell), depth + 1);
+        else
+            return nullptr;
+        if (!cursor) [[unlikely]]
+            return nullptr;
+        cursor = reserveInJSONBuffer(instance, cursor, fixedSize);
+        if (!cursor) [[unlikely]]
+            return nullptr;
+    }
+    Latin1Character* first = instance->jsonBufferStart + start;
+    cursor += first == cursor;
+    *first = '{';
+    *cursor++ = '}';
+    return cursor;
+}
+
+static NEVER_INLINE Latin1Character* appendTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const Typed::State::KeysAsJSON& keys, unsigned depth)
+{
+    return writeTypedObject(instance, globalObject, vm, cursor, object, keys, depth);
+}
+
+static NEVER_INLINE Latin1Character* appendArray(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, JSArray& array, unsigned depth)
+{
+    if (!globalObject->isOriginalArrayStructure(array.structure())) [[unlikely]]
+        return nullptr;
+    unsigned length = array.length();
+    IndexingType shape = array.indexingType() & IndexingShapeMask;
+    cursor = reserveInJSONBuffer(instance, cursor, 2 * jsonBufferSpareCapacity);
+    if (!cursor) [[unlikely]]
+        return nullptr;
+    if (!length) {
+        if (shape == ArrayStorageShape || shape == SlowPutArrayStorageShape)
+            return nullptr;
+        return appendLiteral(cursor, "[]"_s);
+    }
+    *cursor++ = '[';
+    switch (shape) {
+    case Int32Shape:
+    case ContiguousShape: {
+        const Typed::State::KeysAsJSON* lastKeys = nullptr;
+        uint64_t lastWords = 0;
+        uint32_t lastStructureID = 0;
+        for (unsigned i = 0; i < length; ++i) {
+            JSValue value = array.butterfly()->contiguous().at(&array, i).get();
+            if (!value) [[unlikely]]
+                return nullptr;
+            if (value.isCell()) {
+                JSCell* cell = value.asCell();
+                JSType type = cell->type();
+                if (type == FinalObjectType)
+                    return nullptr;
+                if (type == ObjectType) [[likely]] {
+                    auto* object = uncheckedDowncast<JSObject>(cell);
+                    uint64_t words = WTF::unalignedLoad<uint64_t>(std::bit_cast<const uint8_t*>(object) + Typed::offsetOfOrderWord);
+                    uint32_t structureID = object->structureID().bits();
+                    if (!lastKeys || words != lastWords || structureID != lastStructureID) [[unlikely]] {
+                        lastKeys = jsonPlanFor(instance, globalObject, vm, object);
+                        lastWords = words;
+                        lastStructureID = structureID;
+                    }
+                    cursor = lastKeys ? writeTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), *lastKeys, depth + 1) : appendObject(instance, globalObject, vm, cursor, object, depth + 1);
+                } else if (type == ArrayType) {
+                    if (depth + 1 >= maxJSONWalkDepth) [[unlikely]]
+                        return jsonWalkGaveUp;
+                    cursor = appendArray(instance, globalObject, vm, cursor, *uncheckedDowncast<JSArray>(cell), depth + 1);
+                    if (!cursor || cursor == jsonWalkGaveUp) [[unlikely]]
+                        return cursor;
+                } else if (type >= ObjectType)
+                    cursor = appendObject(instance, globalObject, vm, cursor, uncheckedDowncast<JSObject>(cell), depth + 1);
+                else if (cell->type() == StringType)
+                    cursor = appendQuoted(instance, cursor, uncheckedDowncast<JSString>(cell));
+                else
+                    return nullptr;
+                if (!cursor) [[unlikely]]
+                    return jsonWalkGaveUp;
+            } else if (value.isInt32())
+                cursor = appendInteger(cursor, value.asInt32());
+            else
+                cursor = value.isUndefined() ? appendLiteral(cursor, "null"_s) : appendPrimitive(cursor, value);
+            if (!cursor) [[unlikely]]
+                return nullptr;
+            *cursor++ = ',';
+            cursor = reserveInJSONBuffer(instance, cursor, 2 * jsonBufferSpareCapacity);
+            if (!cursor) [[unlikely]]
+                return nullptr;
+        }
+        break;
+    }
+    case DoubleShape: {
+        for (unsigned i = 0; i < length; ++i) {
+            double value = array.butterfly()->contiguousDouble().at(&array, i);
+            if (value != value) [[unlikely]]
+                return nullptr;
+            cursor = appendNumber(cursor, value);
+            *cursor++ = ',';
+            cursor = reserveInJSONBuffer(instance, cursor, 2 * jsonBufferSpareCapacity);
+            if (!cursor) [[unlikely]]
+                return nullptr;
+        }
+        break;
+    }
+    default:
+        return nullptr;
+    }
+    cursor[-1] = ']';
+    return cursor;
+}
+
 static Latin1Character* appendObjectGeneric(Instance* instance, JSGlobalObject* globalObject, Latin1Character* cursor, JSObject* object)
 {
     if (object->type() == JSDateType) {
@@ -297,17 +562,85 @@ static Latin1Character* appendObjectGeneric(Instance* instance, JSGlobalObject* 
     return isWritten ? cursor : nullptr;
 }
 
+static ALWAYS_INLINE bool isListWithPlainObjectNearStart(JSValue value)
+{
+    if (!value || !value.isCell() || value.asCell()->type() != ArrayType)
+        return false;
+    auto* array = uncheckedDowncast<JSArray>(value.asCell());
+    if ((array->indexingType() & IndexingShapeMask) != ContiguousShape)
+        return false;
+    unsigned examined = std::min(array->length(), 8u);
+    for (unsigned i = 0; i < examined; ++i) {
+        JSValue element = array->butterfly()->contiguous().at(array, i).get();
+        if (!element || !element.isCell())
+            continue;
+        JSType type = element.asCell()->type();
+        if (type == FinalObjectType)
+            return true;
+        if (type != ArrayType)
+            continue;
+        auto* inner = uncheckedDowncast<JSArray>(element.asCell());
+        if ((inner->indexingType() & IndexingShapeMask) != ContiguousShape || !inner->length())
+            continue;
+        JSValue first = inner->butterfly()->contiguous().at(inner, 0).get();
+        if (first && first.isCell() && first.asCell()->type() == FinalObjectType)
+            return true;
+    }
+    return false;
+}
+
+static Latin1Character* appendObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, JSObject* object, unsigned depth)
+{
+    if (depth >= maxJSONWalkDepth) [[unlikely]]
+        return nullptr;
+    JSType type = object->type();
+    if (type == ObjectType) {
+        if (auto* keys = jsonPlanFor(instance, globalObject, vm, object)) [[likely]]
+            return appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), *keys, depth);
+    } else if (type == ArrayType) {
+        size_t offset = cursor - instance->jsonBufferStart;
+        uint32_t wideSegmentCount = instance->jsonWideSegmentCount;
+        Latin1Character* end = appendArray(instance, globalObject, vm, cursor, *uncheckedDowncast<JSArray>(object), depth);
+        if (end == jsonWalkGaveUp) [[unlikely]]
+            return nullptr;
+        if (end) [[likely]]
+            return end;
+        cursor = instance->jsonBufferStart + offset;
+        instance->jsonWideSegmentCount = wideSegmentCount;
+    }
+    return appendObjectGeneric(instance, globalObject, cursor, object);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendValue, void*, (Instance* instance, uint64_t cursorBits, EncodedJSValue encodedValue, uint32_t isElement))
 {
+    if (isElement == jsonValueIsWholeOutput && isListWithPlainObjectNearStart(JSValue::decode(encodedValue)))
+        return std::bit_cast<void*>(jsonWroteNothing);
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    ASSERT(isElement != jsonValueIsWholeOutput || !instance->jsonWideSegmentCount);
     auto* cursor = std::bit_cast<Latin1Character*>(cursorBits);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isCell()) {
         if (!value)
             return nullptr;
         JSType type = value.asCell()->type();
+        if (type >= ObjectType && isElement == jsonValueIsWholeOutput) {
+            if (type == ObjectType) {
+                auto* keys = jsonPlanFor(instance, globalObject, vm, asObject(value));
+                return keys ? appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(value.asCell()), *keys, 0) : std::bit_cast<Latin1Character*>(jsonWroteNothing);
+            }
+            if (type != ArrayType)
+                return std::bit_cast<void*>(jsonWroteNothing);
+            Latin1Character* start = instance->jsonBufferStart;
+            Latin1Character* limit = instance->jsonBufferEnd;
+            Latin1Character* end = appendArray(instance, globalObject, vm, cursor, *uncheckedDowncast<JSArray>(value.asCell()), 0);
+            if (end == jsonWalkGaveUp) [[unlikely]]
+                return nullptr;
+            if (end) [[likely]]
+                return end;
+            return instance->jsonBufferStart == start && instance->jsonBufferEnd == limit && !instance->jsonWideSegmentCount && !(instance->jsonWideSegments && instance->jsonWideSegments->size()) ? std::bit_cast<void*>(jsonWroteNothing) : nullptr;
+        }
         if (type >= ObjectType)
-            return appendObjectGeneric(instance, globalObject, cursor, asObject(value));
+            return appendObject(instance, globalObject, vm, cursor, asObject(value), 0);
         if (type == StringType) {
             auto string = asString(value)->tryGetValue();
             if (string.data.isNull())
@@ -320,13 +653,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendValue, void*, (Inst
             if (!cursor)
                 return nullptr;
             *cursor++ = '"';
-            return cursor;
+            return reserveInJSONBuffer(instance, cursor, jsonBufferSpareCapacity);
         }
         if (type != SymbolType)
             return nullptr;
         value = jsUndefined();
     }
     if (value.isUndefined()) {
+        if (isElement == jsonValueIsWholeOutput)
+            return std::bit_cast<void*>(jsonWroteNothing);
         if (!isElement)
             return cursor;
         value = jsNull();
@@ -475,6 +810,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instanc
     return result;
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewJSONResponse, EncodedJSValue, (Instance* instance, EncodedJSValue value, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    EncodedJSValue response = Typed::hostClassEntryPoints().newJSONResponse(globalObject, value, status, statusText, headers, headerCount, headerNamesAndValues);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, response);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONDiscard, void, (Instance* instance))
 {
     countOperationNamed(instance, __func__);
@@ -521,6 +864,7 @@ void destroyJSONBuffers(Instance& instance)
     takePreparedJSON(instance, JSValue());
     fastFree(instance.jsonBufferStart);
     delete instance.jsonWideSegments;
+    delete instance.jsonPlanCache;
 }
 
 namespace Typed {
@@ -539,6 +883,8 @@ std::optional<Writes> writesOfInlineJSON(InlineBuiltin which, std::span<const Ty
 {
     if (which == InlineBuiltin::AppendJSON)
         return Writes::RuntimeState;
+    if (which == InlineBuiltin::NewJSONResponse)
+        return Writes::Heap;
     return writesIf(!arguments.empty() && (arguments[0].hasObjects() || arguments[0].withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent).isString()), Writes::Heap);
 }
 
@@ -546,7 +892,7 @@ std::optional<Operand> Lowering::lowerInlineJSON(InlineBuiltin which, ValueID re
 {
     if (which == InlineBuiltin::AppendJSON)
         return lowerAppendJSON(value);
-    if (which == InlineBuiltin::ResponseJSON)
+    if (which == InlineBuiltin::ResponseJSON || which == InlineBuiltin::NewJSONResponse)
         return lowerResponseJSON(result, value);
     return lowerJSONStringify(result, value);
 }
@@ -1964,7 +2310,7 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
     Type expected = predictedTypeOf(argument);
     auto literal = freshLiteralMembers(argument, { });
     bool dispatchesOnShape = !literal && !expected.withoutPrimitives(Primitive::UndefinedOrNull | Primitive::Absent).isString() && !hasCodeForJSON(expected);
-    if (Options::auditAOTTypedAssertions() || (dispatchesOnShape && !(m_program.jsonDispatcher && m_program.hasCode(m_program.jsonDispatcher) && expected.hasObjects())))
+    if (Options::auditAOTTypedAssertions() || (dispatchesOnShape && !(expected.hasObjects() && std::ranges::any_of(m_program.layouts, [](auto& layout) { return isObjectLayout(layout.kind) && layout.shape; }))))
         return false;
     output.givesUp = newColdBlock();
     output.givesUpBeforeWriting = newColdBlock();
@@ -1975,19 +2321,60 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
     if (literal)
         appendFreshLiteral(output, *literal, 0);
     else if (dispatchesOnShape) {
-        uint32_t least = UINT32_MAX;
-        uint32_t most = 0;
-        for (auto [layout, serializer] : m_program.jsonSerializers) {
-            if (uint32_t shape = m_program.at(layout).shape) {
-                least = std::min(least, shape);
-                most = std::max(most, shape);
+        LBasicBlock walks = m_out.newBlock();
+        LBasicBlock isWritten = m_out.newBlock();
+        LBasicBlock isNotObject = m_out.newBlock();
+        CellPointer cell = objectOrElse(argument, isNotObject);
+        if (m_program.jsonDispatcher && m_program.hasCode(m_program.jsonDispatcher)) {
+            uint32_t least = UINT32_MAX;
+            uint32_t most = 0;
+            for (auto [layout, serializer] : m_program.jsonSerializers) {
+                if (uint32_t shape = m_program.at(layout).shape) {
+                    least = std::min(least, shape);
+                    most = std::max(most, shape);
+                }
             }
+            LBasicBlock hasNoSerializer = m_out.newBlock();
+            orElse(below(add(shapeWordOf(cell), word32(static_cast<int32_t>(most))), word32(static_cast<int32_t>(most - least + 1))), hasNoSerializer);
+            LValue cursor = callFunction(m_program.jsonDispatcher, Int64, { cell.value(), cursorOf(output) });
+            LBasicBlock isWrittenByDispatcher = m_out.newBlock();
+            LBasicBlock isNotWrittenByIt = newColdBlock();
+            m_out.branch(m_out.above(cursor, m_out.constInt64(isNotWrittenByDispatcher)), usually(isWrittenByDispatcher), rarely(isNotWrittenByIt));
+            m_out.appendTo(isNotWrittenByIt);
+            m_out.branch(m_out.notZero64(cursor), unsure(walks), unsure(output.givesUp));
+            m_out.appendTo(isWrittenByDispatcher);
+            setCursor(output, cursor);
+            m_out.jump(isWritten);
+            m_out.appendTo(hasNoSerializer);
         }
-        CellPointer cell = objectOrElse(argument, output.givesUpBeforeWriting);
-        orElse(below(add(shapeWordOf(cell), word32(static_cast<int32_t>(most))), word32(static_cast<int32_t>(most - least + 1))), output.givesUpBeforeWriting);
-        LValue cursor = callFunction(m_program.jsonDispatcher, Int64, { cell.value(), cursorOf(output) });
-        orElse(Word32(m_out.above(cursor, m_out.constInt64(isNotWrittenByDispatcher))), output.givesUp);
-        setCursor(output, cursor);
+        Word32 cellType = loadByte(cell, m_heaps.JSCell_typeInfoType, safeIfReaches(cell, sizeof(JSCell)));
+        orElse(notEqual(cellType, word32(FinalObjectType)), output.givesUpBeforeWriting);
+        LBasicBlock hasNoLayout = m_out.newBlock();
+        m_out.branch(equal(cellType, word32(ObjectType)).value(), unsure(walks), unsure(hasNoLayout));
+        m_out.appendTo(hasNoLayout);
+        orElse(equal(cellType, word32(ArrayType)), output.givesUpBeforeWriting);
+        orElse(equal(anyArrayIndexingMode(cell, IndexingShapeMask), word32(ContiguousShape)), walks);
+        Pointer butterfly = butterflyOf(cell);
+        orElse(Word32(m_out.notZero64(publicLength(butterfly).value())), walks);
+        Boxed first(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), m_out.constInt64(0))));
+        orElse(isNotEmpty(first), walks);
+        orElse(isCell(first), walks);
+        CellPointer firstCell = asCell(first);
+        orElse(notEqual(loadByte(firstCell, m_heaps.JSCell_typeInfoType, safeIfReaches(firstCell, sizeof(JSCell))), word32(FinalObjectType)), output.givesUpBeforeWriting);
+        m_out.jump(walks);
+        m_out.appendTo(isNotObject);
+        m_out.jump(walks);
+        m_out.appendTo(walks);
+        Pointer cursor = AOT_TYPED_OPERATION(JSONAppendValue, Integer(cursorOf(output)), in<Boxed>(argument), word32(jsonValueIsWholeOutput));
+        LBasicBlock hasText = m_out.newBlock();
+        LBasicBlock hasNoText = m_out.newBlock();
+        m_out.branch(m_out.above(cursor.value(), m_out.constInt64(jsonWroteNothing)), unsure(hasText), unsure(hasNoText));
+        m_out.appendTo(hasNoText);
+        m_out.branch(m_out.notZero64(cursor.value()), unsure(output.givesUpBeforeWriting), unsure(output.givesUp));
+        m_out.appendTo(hasText);
+        setCursor(output, cursor.value());
+        m_out.jump(isWritten);
+        m_out.appendTo(isWritten);
     } else
         appendValue(output, get(argument), expected, false, 0, JSONPosition::Property, nothing);
     flushPendingBytes(output);
@@ -1997,7 +2384,8 @@ bool Lowering::appendArgument(JSONOutput& output, ValueID argument)
 Operand Lowering::lowerResponseJSON(ValueID result, const Value& value)
 {
     JSONOutput output;
-    if (value.arguments.size() <= numberOfArgumentGPRs && appendArgument(output, value.arguments[0])) {
+    bool takesInitOperands = m_builtins.at(value.builtin()).implementation.inlined == InlineBuiltin::NewJSONResponse;
+    if ((takesInitOperands || value.arguments.size() <= numberOfArgumentGPRs) && appendArgument(output, value.arguments[0])) {
         LBasicBlock calls = m_out.newBlock();
         AOT_TYPED_OPERATION(JSONPrepare, Integer(cursorOf(output)), in<Boxed>(value.arguments[0]));
         m_out.jump(calls);
@@ -2009,6 +2397,14 @@ Operand Lowering::lowerResponseJSON(ValueID result, const Value& value)
         m_out.appendTo(calls);
     }
     auto& type = typeOf(result);
+    if (takesInitOperands) {
+        constexpr unsigned firstHeaderOperand = 4;
+        unsigned headerOperandCount = value.arguments.size() - firstHeaderOperand;
+        LValue buffer = transientBuffer(std::max(headerOperandCount, 1u) * sizeof(EncodedJSValue));
+        for (unsigned i = 0; i < headerOperandCount; ++i)
+            m_out.store64(in<Boxed>(value.arguments[firstHeaderOperand + i]).value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
+        return ensure(AOT_TYPED_OPERATION(NewJSONResponse, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1]), in<Boxed>(value.arguments[2]), in<Boxed>(value.arguments[3]), word32(headerOperandCount / 2), Pointer(buffer)), type);
+    }
     Boxed yielded = callBuiltinFunction(value, builtinCallEffects(value));
     return guaranteesResultType(m_program, m_function, value) ? convert(yielded, type, repOf(type)) : ensure(yielded, type);
 }

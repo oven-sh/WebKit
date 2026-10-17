@@ -1426,6 +1426,38 @@ void cacheKeyedDeletion(Instance* instance, Structure* before, Structure* after,
     entry.holderValueCount = 1;
 }
 
+uint32_t orderWordBeforeFieldDeletion(JSObject* object)
+{
+    const Typed::LayoutData* layout = object->structure()->compiledLayout();
+    if (!layout || !Typed::isObjectLayout(layout->kind))
+        return Typed::orderWordHasExtraProperties;
+    return uncheckedDowncast<Typed::Object>(object)->orderWord();
+}
+
+void cacheKeyedFieldDeletion(Instance* instance, JSObject* object, Structure* before, uint32_t orderWordBefore, JSValue key, UniquedStringImpl* uid)
+{
+    if ((!key.isString() && !key.isSymbol()) || orderWordBefore & Typed::orderWordHasExtraProperties || object->structure() != before)
+        return;
+    auto* compiled = uncheckedDowncast<Typed::Object>(object);
+    const Typed::FieldData* field = compiled->fieldNamed(compiled->state(), uid);
+    constexpr uint32_t needsRuntime = Typed::fieldIsOutOfLine | Typed::fieldIsImmutable | Typed::fieldIsPinned | Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted;
+    if (!field || !(field->flags & Typed::fieldIsOptional) || field->flags & needsRuntime || compiled->isDiscriminant(*field) || compiled->hasExtraProperties())
+        return;
+    auto test = presenceTestFor(*field);
+    if (!test)
+        return;
+    JSCell* taggedKey = std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(key.asCell()) | Instance::keyedAdditionIsDeletion);
+    auto& entry = instance->keyedAdditionFor(before->id(), taggedKey);
+    entry.slot.structureID = StructureID();
+    entry.slot.offset = Instance::keyIsCompiledField | test->index << Instance::keyedHasFieldIndexShift | static_cast<uint32_t>(test->kind) << Instance::keyedHasFieldKindShift;
+    entry.slot.pointer = taggedKey;
+    entry.newStructureID = std::bit_cast<StructureID>(orderWordBefore);
+    entry.epoch = compiled->orderWord();
+    entry.newStorageCapacity = 0;
+    entry.holderValueCount = 1;
+    entry.slot.structureID = before->id();
+}
+
 static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
 
 static uint64_t fieldWriteFor(VM& vm, Typed::Object* object, const Identifier& ident, bool acceptsAnyMatchingValue = false, bool mayBeInExtension = false)
@@ -2967,6 +2999,16 @@ bool PropertyLookupTable::setInheritedFarOutOfLine(Structure* structure, uint32_
         return false;
     setPayload(inOverflow, wordForOwnOutOfLineIndex(place));
     return setEntryWithKind(structure, name, Kind::Unknown, farInheritedCode, MarkedBlockCage::encode(holder), uid);
+}
+
+bool PropertyLookupTable::setDelegatesToPrototype(Structure* structure, uint32_t name, JSCell* prototype)
+{
+    if (!MarkedBlockCage::contains(prototype))
+        return false;
+    uint32_t index = ensureIndex(structure, name);
+    if (!index || payload(index) & payloadIsSlots)
+        return false;
+    return setEntryWithKind(structure, name, Kind::Unknown, delegatesToPrototypeCode, MarkedBlockCage::encode(prototype), nullptr);
 }
 
 bool PropertyLookupTable::replaceSlotWithInherited(Structure* structure, uint32_t name, JSCell* holder, PropertyOffset offset)

@@ -597,6 +597,10 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     auto getParentGenerator = [&](Awaiter* gen) -> Awaiter* {
         JSPromise* awaitedPromise = promiseOf(gen);
         JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
+#if ENABLE(AOT)
+        if (!awaitedPromise)
+            promiseContext = AOT::Typed::promiseAllContextAwaiting(gen);
+#endif
 
         if (!promiseContext)
             return nullptr;

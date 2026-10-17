@@ -54,6 +54,8 @@ void cacheNamedFieldWrite(Instance*, JSCell* object, const Identifier&, uint32_t
 void cacheKeyedCompiledFieldStore(Instance*, JSCell* object, JSCell* key, const Identifier&);
 void cacheKeyedDelete(VM&, Data*, Slot* cache, JSObject* base, Structure* oldStructure, JSValue key, std::optional<PropertyOffset>);
 void cacheKeyedDeletion(Instance*, Structure* before, Structure* after, JSValue key, UniquedStringImpl*, const DeletePropertySlot&);
+uint32_t orderWordBeforeFieldDeletion(JSObject*);
+void cacheKeyedFieldDeletion(Instance*, JSObject*, Structure* before, uint32_t orderWordBefore, JSValue key, UniquedStringImpl*);
 void cacheInstanceOf(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype);
 void cacheHasInstance(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, bool isCalled);
 

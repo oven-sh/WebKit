@@ -541,6 +541,19 @@ Operand Lowering::lowerNumericBinary(Opcode opcode, ValueID a, ValueID b, const 
             return convert(*exact, type, repOf(type));
     }
 
+    auto constantOf = [&](ValueID id) -> std::optional<double> {
+        auto& value = m_function.at(id);
+        if (value.opcode == Opcode::Integer)
+            return static_cast<double>(value.integer());
+        if (value.opcode == Opcode::Double)
+            return std::bit_cast<double>(value.bits());
+        return std::nullopt;
+    };
+    if (auto first = constantOf(a), second = constantOf(b); first && second && opcode != Opcode::Pow) {
+        double folded = opcode == Opcode::Add ? *first + *second : opcode == Opcode::Sub ? *first - *second : opcode == Opcode::Mul ? *first * *second : opcode == Opcode::Div ? *first / *second : fmod(*first, *second);
+        if (std::isnan(folded))
+            return numericResult(number(PNaN), m_program.at(m_program.types.number), type, typeIsFact);
+    }
     Number x = asNumericOperand(a);
     Number y = asNumericOperand(b);
     Number computed;
@@ -1063,21 +1076,27 @@ std::optional<Word32> Lowering::areLiteralStringsEqual(ValueID a, ValueID b)
         ValueID origin = withoutUpcasts(id);
         return m_function.at(origin).rep == Rep::LiteralString ? origin : id;
     };
+    ValueID widenedA = a;
+    ValueID widenedB = b;
     a = withoutWidening(a);
     b = withoutWidening(b);
     if (m_function.at(a).rep != Rep::LiteralString && m_function.at(b).rep != Rep::LiteralString)
         return std::nullopt;
-    auto wordOf = [&](ValueID id) -> LiteralStringWord {
-        if (!typeOf(id).hasObjects() && !(typeOf(id).primitives & ~(Primitive::LiteralString | Primitive::UndefinedOrNull)))
-            return in<LiteralStringWord>(id);
+    auto wordOf = [&](ValueID id, ValueID widened) -> LiteralStringWord {
+        if (!typeOf(widened).hasObjects() && !(typeOf(widened).primitives & ~(Primitive::LiteralString | Primitive::UndefinedOrNull)))
+            return in<LiteralStringWord>(widened);
+        if (id != widened) {
+            auto boxed = m_boxedLiteralStrings.find(get(widened).value);
+            return boxed == m_boxedLiteralStrings.end() ? LiteralStringWord() : LiteralStringWord(boxed->value);
+        }
         ValueID constant = m_program.constantOf(m_function, id);
         if (!constant || m_function.at(constant).opcode != Opcode::String)
             return { };
         auto number = m_program.literalStringIndex(m_function.at(constant).string());
         return number ? LiteralStringWord(m_out.constInt64(literalStringWord(*number))) : LiteralStringWord();
     };
-    LiteralStringWord x = wordOf(a);
-    LiteralStringWord y = x ? wordOf(b) : LiteralStringWord();
+    LiteralStringWord x = wordOf(a, widenedA);
+    LiteralStringWord y = x ? wordOf(b, widenedB) : LiteralStringWord();
     if (!x || !y)
         return std::nullopt;
     if (isNeverStringCell(x) || isNeverStringCell(y) || !typeOf(a).hasLiteralString() || !typeOf(b).hasLiteralString())
@@ -1254,6 +1273,12 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
         for (auto [element, number] : { std::pair { a, b }, std::pair { b, a } }) {
             if (auto found = m_elementsReadAsNumbers.find(element.index()); found != m_elementsReadAsNumbers.end())
                 return equal(Number(found->value), in<Number>(number));
+        }
+    }
+    if (!m_optionalSubstrings.isEmpty()) {
+        for (auto [part, constant] : { std::pair { a, b }, std::pair { b, a } }) {
+            if (auto isEqual = isOptionalSubstringEqualTo(part, constant))
+                return *isEqual;
         }
     }
     if (auto areEqual = areTrackedCodeUnitsEqual(a, b))

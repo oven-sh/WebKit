@@ -33,6 +33,7 @@ class ArgList;
 class CustomGetterSetter;
 class HeapAnalyzer;
 class JSPromise;
+class JSPromiseCombinatorsGlobalContext;
 class StackFrame;
 class JSSlimPromiseReaction;
 
@@ -565,7 +566,8 @@ struct alignas(32) TypedCloneCacheEntry {
 static_assert(sizeof(TypedCloneCacheEntry) == 32);
 
 struct ConversionMove {
-    enum class Kind : uint8_t { Value, CellOfShape, CellOfType, Function, Object, NumberAsInlineInt32, NumberAsDouble, BooleanAsByte, BooleanAsValueByte, LiteralString };
+    enum class Kind : uint8_t { Value, CellOfShape, CellOfType, Function, Object, NumberAsInlineInt32, NumberAsDouble, BooleanAsByte, BooleanAsValueByte, LiteralString, SwitchSource };
+    static constexpr uint16_t outOfLineBias = 2048;
     static constexpr uint8_t acceptsUndefined = 1;
     static constexpr uint8_t acceptsNull = 2;
     static constexpr uint8_t isWide = 4;
@@ -574,7 +576,7 @@ struct ConversionMove {
     Kind kind;
     uint8_t flags;
     uint8_t cellType;
-    uint8_t unused;
+    uint8_t isOutOfLine;
     uint32_t lastShape;
     uint32_t shapeCount;
 };
@@ -1157,7 +1159,15 @@ public:
         m_liveSlotMapOffsetPlusOne = 0;
         didWrite();
     }
-    JSPromise* promise() const { return m_promise; }
+    JSPromise* promise() const;
+    SavedFrame* waiter() const;
+    JSPromiseCombinatorsGlobalContext* promiseAllContext() const;
+    void setPromiseAllContext(VM&, JSPromiseCombinatorsGlobalContext*, uint32_t index);
+    JSCell* promiseOrWaiter() const { return m_promiseOrWaiter; }
+    void setWaiter(VM&, SavedFrame* waiter, JSValue asyncContext);
+    void fulfill(JSGlobalObject*, VM&, JSValue);
+    void reject(JSGlobalObject*, VM&, JSValue);
+    JSPromise* ensurePromise(JSGlobalObject*, VM&);
     const void* resumeAddress() const { return m_resumeAddress; }
 
     static constexpr int32_t mayRunNextMicrotask = 128;
@@ -1165,7 +1175,8 @@ public:
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }
     static constexpr ptrdiff_t offsetOfVersion() { return OBJECT_OFFSETOF(SavedFrame, m_version); }
     static constexpr ptrdiff_t offsetOfLiveSlotMapOffsetPlusOne() { return OBJECT_OFFSETOF(SavedFrame, m_liveSlotMapOffsetPlusOne); }
-    static constexpr ptrdiff_t offsetOfPromise() { return OBJECT_OFFSETOF(SavedFrame, m_promise); }
+    static constexpr ptrdiff_t offsetOfPromiseOrWaiter() { return OBJECT_OFFSETOF(SavedFrame, m_promiseOrWaiter); }
+    static constexpr ptrdiff_t offsetOfAsyncContext() { return OBJECT_OFFSETOF(SavedFrame, m_asyncContext); }
     static constexpr ptrdiff_t offsetOfResumeAddress() { return OBJECT_OFFSETOF(SavedFrame, m_resumeAddress); }
     static constexpr ptrdiff_t offsetOfRegister() { return OBJECT_OFFSETOF(SavedFrame, m_register); }
     static constexpr ptrdiff_t offsetOfWords() { return sizeof(SavedFrame); }
@@ -1193,9 +1204,11 @@ private:
     uint32_t m_numberOfWords;
     uint32_t m_version { 0 };
     uint32_t m_liveSlotMapOffsetPlusOne { 0 };
+    uint32_t m_indexInPromiseAll { 0 };
     void* m_resumeAddress { nullptr };
-    JSPromise* m_promise { nullptr };
+    JSCell* m_promiseOrWaiter { nullptr };
     uint64_t m_register { 0 };
+    EncodedJSValue m_asyncContext { 0 };
 };
 
 class AsyncGenerator final : public JSNonFinalObject {
@@ -1336,6 +1349,8 @@ void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bo
 bool tryScheduleImmediateResume(Instance&, const uint64_t* frame, JSPromise*, JSValue resolution);
 JS_EXPORT_PRIVATE bool isAsyncFunctionResumeClosure(JSCell*);
 JS_EXPORT_PRIVATE JSPromise* asyncFunctionPromise(JSCell* resumeClosure);
+JS_EXPORT_PRIVATE JSCell* promiseAllContextAwaiting(JSCell* resumeClosure);
+bool settleElementOfPromiseAll(JSGlobalObject*, VM&, JSValue& element, JSPromiseCombinatorsGlobalContext*, uint64_t index);
 JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine);
 JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledAfter(JSPromise*);
 JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* resumeClosure);
@@ -1626,6 +1641,7 @@ struct State {
     bool canConvertQuickly(JSValue, const RuntimeType&, ChildrenOfQuickConversion&, unsigned depth);
     bool canSettleByPlans(JSValue, const RuntimeType&, ChildrenOfQuickConversion& seen, ChildrenOfQuickConversion& converted, unsigned depth);
     bool tryKeepByPlan(VM&, JSObject*, const RuntimeType&);
+    bool keepQuickly(VM&, JSObject*, const CoercionPlan&);
     struct ObjectBelowKeptObject {
         JSObject* object;
         Structure* structure;

@@ -55,6 +55,39 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTest, size_t, (Instance* instanc
     OPERATION_RETURN(scope, testRegExp(globalObject, vm, cell, subject));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpFind, size_t, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* object = uncheckedDowncast<RegExpObject>(cell);
+    auto* string = uncheckedDowncast<JSString>(subject);
+    auto input = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    unsigned lastIndex = getRegExpObjectLastIndexAsUnsigned(globalObject, object, input);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RegExp* regExp = object->regExp();
+    bool globalOrSticky = regExp->globalOrSticky();
+    if (lastIndex == UINT_MAX && globalOrSticky) {
+        object->setLastIndex(globalObject, 0);
+        OPERATION_RETURN(scope, false);
+    }
+    if (!globalOrSticky)
+        lastIndex = 0;
+    auto offsets = regExp->ovectorSpan();
+    int position = regExp->matchInline<Yarr::MatchFrom::VMThread>(globalObject, vm, input, lastIndex, offsets);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (position == -1) {
+        if (globalOrSticky)
+            object->setLastIndex(globalObject, 0);
+        OPERATION_RETURN(scope, false);
+    }
+    MatchResult result(position, offsets[1]);
+    if (globalOrSticky)
+        object->setLastIndex(globalObject, result.end);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, result, false);
+    OPERATION_RETURN(scope, true);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTestBoxed, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* subject))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -190,6 +223,53 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceRegExp, JSCell*, (Instanc
     OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, uncheckedDowncast<JSString>(string), regExpObject, JSValue::decode(replacement)));
 }
 
+static JSString* tryReplaceEveryAtom(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* regExpObject, JSString* replacement, const String& replacementText)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RegExp* regExp = regExpObject->regExp();
+    if (!regExp->global() || regExp->sticky() || !regExp->hasValidAtom() || replacementText.isEmpty() || replacementText.find('$') != notFound)
+        return nullptr;
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (regExp->eitherUnicode() && !source->is8Bit())
+        return nullptr;
+
+    regExpObject->setLastIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    StringView atom { regExp->atom() };
+    unsigned atomLength = atom.length();
+    unsigned sourceLength = source->length();
+    auto findFrom = [&](unsigned start) {
+        return atomLength == 1 ? source->find(atom[0], start) : source->find(atom, start);
+    };
+    size_t found = findFrom(0);
+    if (found == notFound)
+        return string;
+
+    Vector<Range<int32_t>, 16> sourceRanges;
+    unsigned end = 0;
+    size_t last = found;
+    do {
+        if (!sourceRanges.tryConstructAndAppend(end, found)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        last = found;
+        end = found + atomLength;
+        found = findFrom(end);
+    } while (found != notFound);
+    int count = sourceRanges.size();
+    if (end < sourceLength) {
+        if (!sourceRanges.tryConstructAndAppend(end, sourceLength)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+    }
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult { last, last + atomLength }, false);
+    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparator(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacement, replacementText, count));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceRegExpString, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacement))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -198,6 +278,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceRegExpString, JSCell*, (I
         OPERATION_RETURN(scope, nullptr);
     CallData callData;
     auto replacementText = uncheckedDowncast<JSString>(replacement)->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (JSString* result = tryReplaceEveryAtom(globalObject, vm, uncheckedDowncast<JSString>(string), regExpObject, uncheckedDowncast<JSString>(replacement), replacementText))
+        OPERATION_RETURN(scope, result);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, uncheckedDowncast<JSString>(string), regExpObject, callData, replacementText, replacement));
 }
@@ -465,6 +548,39 @@ void Lowering::putLastIndex(Boxed base, StringID name, Boxed value)
     m_out.appendTo(continuation);
 }
 
+std::optional<Operand> Lowering::lowerMatchOnlyTakenApart(ValueID result, const Value& value)
+{
+    auto taken = m_matchesOnlyTakenApart.find(result.index());
+    if (taken == m_matchesOnlyTakenApart.end())
+        return std::nullopt;
+    if (!isOnMainPath()) {
+        m_matchesOnlyTakenApart.remove(taken);
+        return std::nullopt;
+    }
+    auto& builtin = m_builtins.at(value.builtin());
+    bool isExec = builtin.implementation.inlined == InlineBuiltin::RegExpExec;
+    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
+    CellPointer regExpObject = isExec ? receiver : in<CellPointer>(value.arguments[0]);
+    CellPointer string = isExec ? toStringCell(value.arguments[0]) : receiver;
+    Word32 isFound = AOT_TYPED_OPERATION(RegExpFind, regExpObject, string);
+    LValue regExp = m_out.bitAnd(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), m_out.constInt64(RegExpObject::regExpMask));
+    LValue offsets = m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, regExp, RegExp::offsetOfOvector() + FixedVector<int>::offsetOfStorage()));
+    auto match = makeUniqueWithoutFastMallocCheck<MatchInFrame>();
+    match->subject = stringReceiver(string);
+    if (!isExec || typeOf(value.arguments[0]).isString())
+        match->subject.id = isExec ? value.arguments[0] : value.child(0);
+    match->numberOfGroups = zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, regExp, RegExp::offsetOfNumSubpatterns()))));
+    for (unsigned group = 0; group < taken->value; ++group) {
+        Integer index = group ? select(lessThanOrEqual(integer(group), match->numberOfGroups), integer(group), integer(0)) : integer(0);
+        LValue pair = m_out.add(offsets, m_out.shl(index.value(), m_out.constInt32(3)));
+        match->starts.append(signExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, pair, FixedVector<int>::Storage::offsetOfData())))));
+        match->ends.append(signExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, pair, FixedVector<int>::Storage::offsetOfData() + sizeof(int))))));
+    }
+    ensureStillAliveHere(regExpObject);
+    m_matchesInFrame.set(result.index(), WTF::move(match));
+    return convert(select(isFound, box(regExpObject), boxedConstant(jsNull())), typeOf(result), value.rep);
+}
+
 std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID result, const Value& value, Writes writes)
 {
     auto& type = typeOf(result);
@@ -562,6 +678,8 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
         Type arrayClass = Type::engineClass(m_builtins.arrayClass());
         if (isRegExp(typeOf(arguments[0])))
             return orGeneric(AOT_TYPED_OPERATION(StringSplitRegExp, receiver, in<CellPointer>(arguments[0]), limit()), arrayClass);
+        if (auto takenApart = lowerSplitOnlyTakenApart(result, value, receiver))
+            return takenApart;
         return ensure(AOT_TYPED_OPERATION(StringSplitString, receiver, in<CellPointer>(arguments[0]), limit()), arrayClass, type);
     }
     case InlineBuiltin::StringMatch:

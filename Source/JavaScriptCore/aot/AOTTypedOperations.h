@@ -69,6 +69,10 @@ struct Slot;
     v(operationAOTTypedNewPromise) \
     v(operationAOTTypedFinishStepForDriver) \
     v(operationAOTTypedResolvePromise) \
+    v(operationAOTTypedResolvePromiseOrReturnResult) \
+    v(operationAOTTypedSaveFrameAndAwaitCall) \
+    v(operationAOTTypedAwaitCallWithSavedFrame) \
+    v(operationAOTTypedPromiseAll) \
     v(operationAOTTypedParkAsyncFunction) \
     v(operationAOTTypedSuspendAtFirstAwait) \
     v(operationAOTTypedAwait) \
@@ -260,6 +264,7 @@ struct Slot;
     v(operationAOTTypedIterOpenInFrame) \
     v(operationAOTTypedIterHasInFrame) \
     v(operationAOTTypedFinishIterStepInFrame) \
+    v(operationAOTTypedFinishIterStep) \
     v(operationAOTTypedFinishIterOpenInFrame) \
     v(operationAOTTypedIterOpenInFrameWithMethod) \
     v(operationAOTTypedIterCloseInFrame) \
@@ -340,6 +345,10 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewObjectWithSpreads, Heap, JSCell*
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewPromise, RuntimeState, JSCell*, (Instance*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFinishStepForDriver, Heap, EncodedJSValue, (Instance*, JSCell* generator, EncodedJSValue result));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedResolvePromise, Heap, void, (Instance*, JSCell*, EncodedJSValue));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedResolvePromiseOrReturnResult, Heap, EncodedJSValue, (Instance*, JSCell* promise, EncodedJSValue));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSaveFrameAndAwaitCall, Heap, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAwaitCallWithSavedFrame, Heap, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* saved));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPromiseAll, Heap, JSCell*, (Instance*, uint32_t count, const EncodedJSValue* elements, uint32_t resultsOfCallsWithoutPromise));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedParkAsyncFunction, Heap, void, (Instance*, JSCell*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSuspendAtFirstAwait, Heap, void, (Instance*, JSCell* frame, EncodedJSValue awaited, uint64_t request));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAwait, Heap, void, (Instance*, JSCell*, EncodedJSValue, uint32_t));
@@ -566,6 +575,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterCloseForThrow, Heap, void, (Ins
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterOpenInFrame, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterHasInFrame, Heap, size_t, (Instance*, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFinishIterStepInFrame, Heap, size_t, (Instance*, EncodedJSValue*, EncodedJSValue));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFinishIterStep, Heap, size_t, (Instance*, EncodedJSValue state, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFinishIterOpenInFrame, Heap, EncodedJSValue, (Instance*, EncodedJSValue iterator, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterOpenInFrameWithMethod, Heap, EncodedJSValue, (Instance*, EncodedJSValue iterable, EncodedJSValue*, EncodedJSValue method));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterCloseInFrame, Heap, void, (Instance*, EncodedJSValue*));

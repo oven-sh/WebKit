@@ -90,6 +90,19 @@ bool isUsedOnlyAsCallee(const Program& program, const Function& function, const 
     }
 }
 
+template<typename Is>
+bool isCapturedOnlyToBeCalled(const Program& program, const Value& closure, const Is& is)
+{
+    auto& callee = program.at(closure.function());
+    if (std::ranges::any_of(closure.children, [&](ValueID child) { return child && is(child); }))
+        return false;
+    for (unsigned k = 0; k < closure.arguments.size(); ++k) {
+        if (is(closure.arguments[k]) && (k >= callee.captureTypes.size() || !callee.calledOnlyCaptures.get(k)))
+            return false;
+    }
+    return true;
+}
+
 bool canStackAllocateClosuresOf(const Program& program, const Function& callee)
 {
     if ((callee.kind != FunctionKind::Plain && callee.kind != FunctionKind::Arrow) || callee.declaredAs || callee.takesCalleeClosure || callee.resumeFunction || program.isResumeFunction(callee))
@@ -155,8 +168,8 @@ BitVector blocksInCycles(const Function& function)
     return result;
 }
 
-template<typename OriginOf>
-bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, unsigned allocationBlock, const OriginOf& originOf)
+template<typename OriginOf, typename IsClosureInFrame>
+bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, unsigned allocationBlock, const OriginOf& originOf, const IsClosureInFrame& isStackAllocatedClosure)
 {
     BitVector isAlias(function.values.size());
     isAlias.quickSet(allocationSite.index());
@@ -166,9 +179,9 @@ bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, u
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
-                if (!value.isStackAllocatedClosure() || isAlias.quickGet(id.index()))
+                if (!isStackAllocatedClosure(id) || isAlias.quickGet(id.index()))
                     continue;
-                if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return isAlias.quickGet(captured.index()); })) {
+                if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return isAlias.quickGet(originOf(captured).index()); })) {
                     isAlias.quickSet(id.index());
                     changed = true;
                 }
@@ -459,6 +472,15 @@ private:
         for (bool changed = true; changed;) {
             changed = false;
             for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    auto& value = m_function.at(id);
+                    if (!value.isStackAllocatedClosure() || result.quickGet(id.index()))
+                        continue;
+                    if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return result.quickGet(originOf(m_program, m_function, captured).index()); })) {
+                        result.quickSet(id.index());
+                        changed = true;
+                    }
+                }
                 for (auto& target : block.terminator.targets) {
                     auto& parameters = m_function.at(target.block).parameters;
                     for (unsigned k = 0; k < target.arguments.size(); ++k) {
@@ -832,7 +854,13 @@ void findStackAllocatedClosures(Program& program)
                 }
             }
         }
+        struct Capture {
+            ValueID captured;
+            ValueID closure;
+        };
+        Vector<Capture, 4> captures;
         BitVector isEscaping(function.values.size());
+        BitVector exposesCaptures(function.values.size());
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
                 auto& user = std::as_const(function).at(id);
@@ -845,6 +873,12 @@ void findStackAllocatedClosures(Program& program)
                     auto is = [&](ValueID operand) {
                         return originOf(program, function, operand) == alias;
                     };
+                    if (isCandidate.quickGet(id.index()) && isCapturedOnlyToBeCalled(program, user, is)) {
+                        captures.append({ alias, id });
+                        return;
+                    }
+                    if (user.opcode == Opcode::GetCapture || (user.opcode == Opcode::CallDirect && program.at(user.function()).copiesFirstArgumentToHeap))
+                        exposesCaptures.quickSet(alias.index());
                     if (user.mustBeProperTailCall || !isUsedOnlyAsCallee(program, function, user, is))
                         isEscaping.quickSet(alias.index());
                 });
@@ -852,29 +886,51 @@ void findStackAllocatedClosures(Program& program)
             if (block.terminator.value)
                 isEscaping.quickSet(originOf(program, function, block.terminator.value).index());
         }
+        std::optional<BitVector> inCycles;
+        auto originInFunction = [&](ValueID operand) {
+            return originOf(program, function, operand);
+        };
+        auto canBeStackAllocated = [&](ValueID id) {
+            return isCandidate.quickGet(id.index()) && !isEscaping.quickGet(id.index());
+        };
         for (bool changed = true; changed;) {
             changed = false;
             for (auto& block : function.blocks) {
                 for (auto& target : block.terminator.targets) {
                     auto& parameters = function.at(target.block).parameters;
                     for (unsigned k = 0; k < target.arguments.size(); ++k) {
-                        if (isEscaping.quickGet(parameters[k].index()) && !isEscaping.quickSet(originOf(program, function, target.arguments[k]).index()))
+                        ValueID origin = originInFunction(target.arguments[k]);
+                        if (isEscaping.quickGet(parameters[k].index()) && !isEscaping.quickSet(origin.index()))
+                            changed = true;
+                        if (exposesCaptures.quickGet(parameters[k].index()) && !exposesCaptures.quickSet(origin.index()))
                             changed = true;
                     }
                 }
             }
-        }
-        std::optional<BitVector> inCycles;
-        BitVector isStackAllocated(function.values.size());
-        for (auto [id, b] : candidates) {
-            if (isEscaping.quickGet(id.index()))
+            for (auto [captured, closure] : captures) {
+                if ((isEscaping.quickGet(closure.index()) || exposesCaptures.quickGet(closure.index())) && !isEscaping.quickSet(captured.index()))
+                    changed = true;
+                if (flowsThroughPhi.quickGet(closure.index()) && !flowsThroughPhi.quickSet(captured.index()))
+                    changed = true;
+            }
+            if (changed)
                 continue;
-            if (flowsThroughPhi.quickGet(id.index())) {
+            for (auto [id, b] : candidates) {
+                if (isEscaping.quickGet(id.index()) || !flowsThroughPhi.quickGet(id.index()))
+                    continue;
                 if (!inCycles)
                     inCycles = blocksInCycles(function);
-                if (inCycles->quickGet(b) && mayOutliveLoopIteration(function, id, b, [&](ValueID operand) { return originOf(program, function, operand); }))
-                    continue;
+                if (inCycles->quickGet(b) && mayOutliveLoopIteration(function, id, b, originInFunction, canBeStackAllocated)) {
+                    isEscaping.quickSet(id.index());
+                    changed = true;
+                }
             }
+        }
+        BitVector isStackAllocated(function.values.size());
+        for (auto [id, b] : candidates) {
+            UNUSED_VARIABLE(b);
+            if (isEscaping.quickGet(id.index()))
+                continue;
             auto& value = function.at(id);
             if (value.opcode != Opcode::NewClosure)
                 program.functions.invalidateValueIndex(i);
@@ -1031,7 +1087,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
                 continue;
             if (!inCycles)
                 inCycles = blocksInCycles(function);
-            bool allocatesOnHeap = inCycles->quickGet(allocationSite.block) && mayOutliveLoopIteration(function, allocationSite.environment, allocationSite.block, [&](ValueID operand) { return originOf(program, function, operand); });
+            bool allocatesOnHeap = inCycles->quickGet(allocationSite.block) && mayOutliveLoopIteration(function, allocationSite.environment, allocationSite.block, [&](ValueID operand) { return originOf(program, function, operand); }, [&](ValueID id) { return function.at(id).isStackAllocatedClosure(); });
             if (allocationSite.isCapturedByHeapClosure && !allocatesOnHeap) {
                 if (!allocationSite.flowsThroughPhi && EnvironmentMaterialization(program, function, allocationSite.environment).canRun())
                     materializedIn[i].append(allocationSite.environment);
