@@ -1595,6 +1595,14 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
         break;
     }
     auto genericPath = [&] {
+        if (B3::Variable* valueIfOwn = valueFoundByPresenceTest(result)) {
+            Boxed found(m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), valueIfOwn));
+            return ensure(either<Boxed>(Word32(m_out.notZero64(found.value())), [&] {
+                return found;
+            }, [&] {
+                return genericGetByVal(object, key);
+            }), type);
+        }
         return ensure(genericGetByVal(object, key), type);
     };
     if (value.readsForInKey()) {

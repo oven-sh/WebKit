@@ -2220,6 +2220,10 @@ static bool convertsResultOfTinyBody(const Program& program, FunctionID id, cons
     auto& call = function.at(terminator.value);
     if (call.opcode != Opcode::CallDirect || call.inlineFrame || program.genericEntrypoints.get(call.function().index()) != id)
         return false;
+    for (ValueID id : function.blocks[0].values) {
+        if (function.at(id).opcode == Opcode::Cast)
+            return false;
+    }
     return repOf(program.at(call.type)) != Rep::JSValue && program.sizesForInlining[call.function().index()] <= maxSizeOfBody;
 }
 

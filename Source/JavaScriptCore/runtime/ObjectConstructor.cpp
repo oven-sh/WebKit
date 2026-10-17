@@ -287,7 +287,7 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (target->type() == ObjectType && AOT::Typed::tryAssignPrimitivesToCompiledObjectFields(vm, target, source))
+    if (target->type() == ObjectType && AOT::Typed::tryAssignToCompiledObject(vm, target, source))
         return;
 #endif
 

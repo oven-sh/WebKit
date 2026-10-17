@@ -337,6 +337,7 @@ void Lowering::lowerTerminator(const Terminator& terminator)
 {
     if (std::exchange(m_needsPoll, false))
         poll();
+    forgetValuesFoundByPresenceTests(false);
     openStringsBeforeLoopsEnteredBy(terminator);
     hoistTypedArrayFieldsBeforeLoops(terminator);
     convertNumberArraysBeforeLoops(terminator, false);
@@ -892,6 +893,7 @@ void Lowering::lowerBlock(BlockID id)
 #endif
     auto& block = m_function.at(id);
     m_currentBlock = &block;
+    forgetValuesFoundByPresenceTests(true);
     m_refillsIntervalOnSlowPath = isCompact();
     for (ValueID parameter : block.parameters) {
         didDefineAccessRunReceiver(parameter);
@@ -1414,6 +1416,7 @@ bool Lowering::run()
             hasLocalThrowSource.set(terminator.targets[0].block.index());
     }
     findAccessRuns(order);
+    findPresenceTestsBeforeReads();
     for (BlockID block : order) {
         if (!block.index())
             continue;
@@ -2714,6 +2717,8 @@ Operand Lowering::lower(ValueID id, const Value& value)
             return AOT_TYPED_OPERATION(DeleteByValSloppy, in<Boxed>(value.child(0)), keyConstant(value.string()));
         return AOT_TYPED_OPERATION(DeleteByName, in<Boxed>(value.child(0)), word32(value.string().index()));
     case Opcode::InByVal:
+        if (B3::Variable* valueIfOwn = valueFoundByPresenceTest(id))
+            return lowerPresenceTestBeforeRead(value, valueIfOwn);
         if (!predictedTypeOf(value.child(1)).isNumber())
             return emitInByVal(in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
         if (Operand operand = get(value.child(0)); holdsCells(operand.rep)) {

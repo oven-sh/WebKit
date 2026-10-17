@@ -94,6 +94,7 @@ public:
     static Object* tryMergeAs(JSGlobalObject*, const LayoutData& to, Object& first, Object& second);
     static Object* tryCreateAs(JSGlobalObject*, State&, const LayoutData& to, std::span<const EncodedJSValue> namesToStoreNext);
     bool tryCopyFieldsOf(VM&, const Object& source);
+    bool tryAssignPropertiesOf(VM&, JSObject* source);
 
     const LayoutData& layout() const;
     State& state() const;
@@ -153,6 +154,7 @@ public:
     JSObject* extraProperties() const { return hasExtraProperties() ? extraPropertiesSlow() : nullptr; }
     JSObject* extraPropertiesSlow() const;
     void setExtraProperties(VM&, JSObject*, bool isForLookupTable = false);
+    void setExtraProperties(VM&, JSObject*, Structure* withExtraProperties);
     struct ExtraProperty {
         UniquedStringImpl* name;
         JSValue value;
@@ -1972,6 +1974,35 @@ struct State {
         Structure* structure { nullptr };
     };
     const PlainCopyPlan& plainCopyPlan(VM&, const LayoutData&, uint32_t orderWord);
+    struct AssignmentPlan {
+        enum class Kind : uint8_t { Int32OrNumberBox, Boxed, Cell32, Double, Boolean, General };
+        struct FieldStore {
+            uint32_t read;
+            Kind kind;
+            uint8_t acceptedKinds;
+            bool acceptsWhatSourceHolds;
+            const FieldData* from;
+            const FieldData* to;
+        };
+        struct ExtraPropertyStore {
+            uint32_t read;
+            PropertyOffset offset;
+            const FieldData* from;
+        };
+        StructureID target;
+        StructureID source;
+        StructureID extraPropertiesBefore;
+        uint32_t sourceOrderWord { 0 };
+        bool isUsable { false };
+        bool addsExtraProperties { false };
+        Structure* extraPropertiesAfter { nullptr };
+        Structure* targetAfter { nullptr };
+        Vector<FieldStore> fieldStores;
+        Vector<ExtraPropertyStore> extraPropertyStores;
+        Vector<StructureID, 4> prototypeStructures;
+    };
+    const AssignmentPlan& assignmentPlan(VM&, Object& target, JSObject* extraProperties, JSObject* source, uint32_t sourceOrderWord);
+    void clearAssignmentPlans();
     bool everyFieldIsOrdinaryProperty(VM&, const LayoutData&);
     bool mayInterceptPutOfOwnProperty(VM&, const LayoutData&, JSObject* extraProperties, JSObject* prototype);
     void clearCheckedPrototypeChains();
@@ -2328,6 +2359,10 @@ private:
     std::array<CheckedPrototypeChain, 16> m_checkedPrototypeChains { };
     bool m_hasCheckedPrototypeChains { false };
     std::unique_ptr<std::array<CachedPropertyList, propertyListCacheSize>> m_propertyListCache;
+    static constexpr unsigned numberOfAssignmentPlans = 64;
+    std::unique_ptr<std::array<AssignmentPlan, numberOfAssignmentPlans>> m_assignmentPlans;
+    bool m_hasAssignmentPlans { false };
+    void fillAssignmentPlan(VM&, AssignmentPlan&, Object& target, JSObject* extraProperties, JSObject* source);
     struct LastCoercionPlanLookup {
         Structure* structure { nullptr };
         const RuntimeType* type { nullptr };

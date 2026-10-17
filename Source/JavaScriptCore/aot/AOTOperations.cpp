@@ -1998,7 +1998,7 @@ bool findOwnPropertyByKeyGeneric(Instance* instance, JSValue base, JSValue key, 
     return !base.asCell()->structure()->compiledLayout();
 }
 
-static void cacheKeyedReplacementOfExtraProperty(Instance* instance, Structure* structure, JSCell* key, PropertyOffset offset)
+static void cacheKeyedReplacement(Instance* instance, Structure* structure, JSCell* key, PropertyOffset offset)
 {
     if (!structure->propertyAccessesAreCacheable() || !propertyLocation(offset))
         return;
@@ -2007,24 +2007,6 @@ static void cacheKeyedReplacementOfExtraProperty(Instance* instance, Structure* 
         return;
     cacheKeyedAccess(read->slot, structure, key, offset);
     read->slot.offset &= ~Instance::keyMayNotBeEvicted;
-}
-
-static void cacheKeyedReplacement(Instance* instance, Structure* structure, JSCell* key, PropertyOffset offset)
-{
-    const Typed::LayoutData* layout = structure->compiledLayout();
-    if (!structure->propertyAccessesAreCacheable() || !propertyLocation(offset) || (layout && Typed::isObjectLayout(layout->kind)))
-        return;
-    auto* entry = instance->allocateKeyedAddition(structure->id(), key);
-    if (!entry)
-        return;
-    entry->slot.structureID = StructureID();
-    entry->slot.offset = *propertyLocation(offset);
-    entry->slot.pointer = key;
-    entry->newStructureID = structure->id();
-    entry->epoch = Instance::keyedExtraPropertyAdditionSeenOnce;
-    entry->newStorageCapacity = 1;
-    entry->holderValueCount = 1;
-    entry->slot.structureID = structure->id();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyGeneric, size_t, (JSCell* base, JSCell* key, EncodedJSValue encodedValue, Instance* instance))
@@ -2056,7 +2038,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyGeneric, size_t, (JSCell* 
             else if (how == Typed::Object::ExtraPropertyStore::Added && place)
                 recordKeyedExtraPropertyAddition(*place, before, key);
             if (Structure* ofExtraProperties = how == Typed::Object::ExtraPropertyStore::Replaced && shouldCacheByKeyCell ? typedObject->extraProperties()->structure() : nullptr; ofExtraProperties && !ofExtraProperties->isDictionary())
-                cacheKeyedReplacementOfExtraProperty(instance, ofExtraProperties, key, offset);
+                cacheKeyedReplacement(instance, ofExtraProperties, key, offset);
             return answer(how != Typed::Object::ExtraPropertyStore::NotHandled ? "stored-beyond-the-layout" : nullptr);
         }
         if (stored.isObject() || typedObject->hasFlagsInOrderWord() || typedObject->isDiscriminant(*field) || !typedObject->readInline(*field) || !typedObject->write(*instance->vm, *field, stored))

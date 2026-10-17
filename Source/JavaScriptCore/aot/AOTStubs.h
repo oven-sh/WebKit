@@ -726,6 +726,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(DefineOwnProperty) \
     v(GetByValCached) \
     v(GetByValCachedOfCells) \
+    v(GetOwnByValIfCached) \
     v(PutByValCached) \
     v(PutByValCachedSloppy) \
     v(PrivateGet) \
@@ -838,6 +839,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(NewMap) \
     v(FrontEndTypedPutExtra) \
     v(FrontEndTypedGetExtra) \
+    v(FrontEndTypedGetByNameChecked) \
+    v(FrontEndTypedGetByNameCheckedAsNumber) \
     v(FrontEndTypedHasOwnPropertyByName) \
     v(FrontEndTypedToString) \
     v(FrontEndTypedBitNot) \

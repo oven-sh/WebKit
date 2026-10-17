@@ -888,12 +888,11 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->compactTableStructureID = first->compactTableStructureID;
         memcpySpan(std::span { instance->hostClassStructureIDs }, std::span { first->hostClassStructureIDs });
         if (!first->customGetters)
-            first->customGetters = static_cast<CustomGetter*>(fastZeroedMalloc(numberOfCustomGetters * sizeof(CustomGetter)));
+            first->customGetters = createCustomGetters(initialNumberOfCustomGetters);
         instance->customGetters = first->customGetters;
     }
     RELEASE_ASSERT(vm.heap.mutatorMarkStack().headSegmentOffsetIsValid());
     RELEASE_ASSERT(*std::bit_cast<MarkStackArray**>(std::bit_cast<char*>(&vm.heap) + Heap::offsetOfMutatorMarkStack()) == &vm.heap.mutatorMarkStack());
-    instance->megamorphicCacheEpoch = vm.ensureMegamorphicCache().epoch();
     vm.m_aotInstances.append(instance);
     PropertyLookupTable::of(vm).didCreate(instance);
     for (unsigned kind = 0; kind < PropertyLookupTable::numberOfKinds; ++kind) {
@@ -1197,7 +1196,7 @@ void Instance::destroy(Instance* instance)
         return other->customGetters == instance->customGetters;
     };
     if (!instance->vm->m_aotInstances.containsIf(holdsSameCustomGetters) && !instance->vm->m_aotInstancesToDestroy.containsIf(holdsSameCustomGetters))
-        fastFree(instance->customGetters);
+        destroyCustomGetters(instance->customGetters);
     fastFree(instance->propertyRuns);
     destroyJSONBuffers(*instance);
     destroyJSONSource(*instance);
@@ -3099,7 +3098,7 @@ void Instance::cacheOwnPropertyLocation(uint32_t structureID, UniquedStringImpl*
 void Instance::validateKeyedTables()
 {
     VM& vm = *this->vm;
-    DeferGC deferGC(vm);
+    DeferGCForAWhile deferGC(vm);
     uint32_t epoch = vm.ensureMegamorphicCache().epoch();
     auto uidOf = [](JSCell* key) -> RefPtr<UniquedStringImpl> {
         if (key->isSymbol())
@@ -3214,18 +3213,6 @@ void Instance::validateKeyedTables()
     }
     for (unsigned i = 0; i < numberOfKeyedAdditions; ++i) {
         auto& addition = keyedAdditions[i];
-        if (addition.slot.structureID && isKeyedReplacement(addition)) {
-            Structure* structure = addition.slot.structureID.decode();
-            JSCell* key = static_cast<JSCell*>(addition.slot.pointer);
-            if (!isOrdinary(structure))
-                continue;
-            auto uid = uidOf(key);
-            unsigned attributes;
-            PropertyOffset own = locationIn(structure, uid.get(), attributes);
-            if (!isAt(addition.slot.offset, own) || attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
-                fail("keyedAdditions"_s, i, "the object has no plain value that may be written where the entry says"_s, structure, key);
-            continue;
-        }
         if (!addition.slot.structureID || addition.slot.offset & Slot::isGetter || addition.holderValueCount || (addition.epoch != MegamorphicCache::invalidEpoch && addition.epoch != epoch))
             continue;
         Structure* structure = addition.slot.structureID.decode();
@@ -3358,7 +3345,7 @@ void Instance::sweepKeyedTables(bool newOnly)
             return;
         bool isStoreToCompiledField = addition.slot.offset & Slot::isGetter;
         uint32_t epoch = addition.epoch == keyedAdditionIsExtraProperty ? addition.holderValueCount >> keyedExtraPropertyEpochShift : addition.epoch;
-        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && !isKeyedReplacement(addition) && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
+        if (!namesLiveCells(addition.slot) || (!isStoreToCompiledField && (!isLive(addition.newStructureID) || (epoch != currentEpoch && epoch != MegamorphicCache::invalidEpoch))))
             zeroBytes(addition);
     });
     groupsToSweep.clearAll();
@@ -3401,13 +3388,93 @@ JSString* Instance::proxyTrapKey(VM& vm, UniquedStringImpl* name)
     return made;
 }
 
+Instance::CustomGetter* Instance::createCustomGetters(unsigned capacity)
+{
+    ASSERT(hasOneBitSet(capacity));
+    auto* table = static_cast<CustomGetterTable*>(fastZeroedMalloc(sizeof(CustomGetterTable) + capacity * sizeof(CustomGetter)));
+    table->capacity = capacity;
+    table->hashShift = 32 - WTF::fastLog2(capacity);
+    return std::bit_cast<CustomGetter*>(table + 1);
+}
+
+void Instance::destroyCustomGetters(CustomGetter* records)
+{
+    if (records)
+        fastFree(&customGetterTable(records));
+}
+
+void Instance::rehashCustomGetters()
+{
+    CustomGetter* old = customGetters;
+    unsigned capacity = customGetterTable(old).capacity;
+    unsigned numberAlive = 0;
+    for (auto& record : customGetterRecords())
+        numberAlive += !!record.structureID;
+    bool keepsRecords = true;
+    if (numberAlive * 2 > capacity) {
+        if (capacity < maxNumberOfCustomGetters)
+            capacity *= 2;
+        else
+            keepsRecords = false;
+    }
+    CustomGetter* fresh = createCustomGetters(capacity);
+    CustomGetterTable& table = customGetterTable(fresh);
+    if (keepsRecords) {
+        for (auto& record : customGetterRecords()) {
+            if (!record.structureID)
+                continue;
+            unsigned index = hashOfCustomGetter(record.structureID, record.uid) >> table.hashShift;
+            while (fresh[index & (capacity - 1)].lastSerial)
+                ++index;
+            fresh[index & (capacity - 1)] = record;
+            ++table.numberOfRecordsEverUsed;
+        }
+    }
+    auto adopt = [&](auto& instances) {
+        for (Instance* other : instances) {
+            if (other->customGetters == old)
+                other->customGetters = fresh;
+        }
+    };
+    adopt(vm->m_aotInstances);
+    adopt(vm->m_aotInstancesToDestroy);
+    customGetters = fresh;
+    destroyCustomGetters(old);
+}
+
+Instance::CustomGetter& Instance::ensureCustomGetterFor(uint32_t structureID, UniquedStringImpl* uid)
+{
+    if (!customGetters) [[unlikely]]
+        customGetters = createCustomGetters(initialNumberOfCustomGetters);
+    while (true) {
+        CustomGetterTable& table = customGetterTable(customGetters);
+        CustomGetter* free = nullptr;
+        for (unsigned index = hashOfCustomGetter(structureID, uid) >> table.hashShift;; ++index) {
+            auto& record = customGetters[index & (table.capacity - 1)];
+            if (record.structureID == structureID && record.uid == uid)
+                return record;
+            if (!free && !record.structureID)
+                free = &record;
+            if (!record.lastSerial)
+                break;
+        }
+        if (free->lastSerial)
+            return *free;
+        if ((table.numberOfRecordsEverUsed + 1) * 4 <= table.capacity * 3) {
+            ++table.numberOfRecordsEverUsed;
+            return *free;
+        }
+        rehashCustomGetters();
+    }
+}
+
 void Instance::clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollection, bool newOnly)
 {
     if (propertyRuns)
         zeroSpan(std::span { propertyRuns, numberOfPropertyRuns });
     if (customGetters) {
         auto isMarked = [&](JSCell* cell) { return !cell || vm->heap.isMarked(cell); };
-        for (auto& record : std::span { customGetters, numberOfCustomGetters }) {
+        for (auto& record : customGetterRecords()) {
             if (!record.structureID)
                 continue;
             if (isAtEndOfCollection && isMarked(std::bit_cast<StructureID>(record.structureID).decode()) && isMarked(record.passedForReceiver) && isMarked(record.globalObject))
@@ -3454,6 +3521,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
         typed->removeDeadCachedKeys(*vm);
         typed->clearExtraPropertyReads();
         typed->clearPropertyListCache();
+        typed->clearAssignmentPlans();
         typed->clearCheckedPrototypeChains();
         typed->clearLateFieldCreations();
         typed->removeDeadStoreTransitions(*vm);

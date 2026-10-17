@@ -752,6 +752,250 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
     return hasOnlyFields && isInlinedBlock;
 }
 
+bool Object::tryAssignPropertiesOf(VM& vm, JSObject* source)
+{
+    using Plan = State::AssignmentPlan;
+    using Kind = Plan::Kind;
+    using Kinds = State::CoercionPlan;
+    State& state = this->state();
+    if (at<uint32_t>(offsetOfOrderWord) & (orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible) || state.data.isCompiledForAudit || state.isCounting() || source == this)
+        return false;
+    const Object* typedSource = nullptr;
+    uint32_t sourceOrderWord = 0;
+    if (const LayoutData* sourceLayout = source->structure()->compiledLayout()) {
+        if (!isObjectLayout(sourceLayout->kind))
+            return false;
+        typedSource = uncheckedDowncast<Object>(source);
+        sourceOrderWord = typedSource->at<uint32_t>(offsetOfOrderWord);
+        if (sourceOrderWord & ~orderAndCountMask)
+            return false;
+    } else if (source->type() != FinalObjectType || source->canHaveExistingOwnIndexedProperties())
+        return false;
+    DeferGC deferGC(vm);
+    JSObject* extra = extraProperties();
+    const Plan& plan = state.assignmentPlan(vm, *this, extra, source, sourceOrderWord);
+    if (!plan.isUsable)
+        return false;
+    auto read = [&](auto& store) {
+        return typedSource ? typedSource->readInline(store.read, [&]() -> const FieldData& { return *store.from; }) : source->getDirect(static_cast<PropertyOffset>(store.read));
+    };
+    for (auto& store : plan.fieldStores) {
+        JSValue value = read(store);
+        if (!value)
+            continue;
+        const FieldData& field = *store.to;
+        bool isAccepted = store.acceptsWhatSourceHolds || store.acceptedKinds & Kinds::kindOf(value);
+        switch (store.kind) {
+        case Kind::Int32OrNumberBox:
+            if (isAccepted && value.isInt32() && value.asInt32() >= minInlineInt32 && at<int32_t>(field.offset) >= minInlineInt32) {
+                at<int32_t>(field.offset) = value.asInt32();
+                continue;
+            }
+            break;
+        case Kind::Boxed:
+            if (isAccepted && at<EncodedJSValue>(field.offset)) {
+                at<EncodedJSValue>(field.offset) = JSValue::encode(value);
+                vm.writeBarrier(this, value);
+                continue;
+            }
+            break;
+        case Kind::Cell32:
+            if (isAccepted && value.isCell() && at<uint32_t>(field.offset) > unmaterializedClosureCell32) {
+                at<uint32_t>(field.offset) = MarkedBlockCage::encode(value.asCell());
+                vm.writeBarrier(this, value.asCell());
+                continue;
+            }
+            break;
+        case Kind::Double:
+            if (isAccepted && value.isNumber()) {
+                at<double>(field.offset) = value.asNumber();
+                continue;
+            }
+            break;
+        case Kind::Boolean:
+            if (isAccepted && value.isBoolean()) {
+                at<uint8_t>(field.offset) = value.asBoolean();
+                continue;
+            }
+            break;
+        case Kind::General:
+            break;
+        }
+        if (value.isObject() && !store.acceptsWhatSourceHolds && (field.flags & fieldIsAnnotated || !state.matchesTypedSubtype(state.ownTypeOf(field), asObject(value))))
+            return false;
+        if (!readInline(field) || !write(vm, field, value))
+            return false;
+    }
+    if (plan.extraPropertyStores.isEmpty())
+        return true;
+    Structure* after = plan.extraPropertiesAfter;
+    Structure* before = extra ? extra->structure() : nullptr;
+    if (!extra) {
+        Butterfly* butterfly = after->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, after->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
+        extra = JSFinalObject::createWithButterfly(vm, after, butterfly);
+    } else if (before->outOfLineCapacity() != after->outOfLineCapacity()) {
+        if (typedSource) {
+            for (auto& store : plan.extraPropertyStores) {
+                if (!read(store))
+                    return false;
+            }
+        }
+        extra->nukeStructureAndSetButterfly(vm, before->id(), extra->allocateMoreOutOfLineStorage(vm, before->outOfLineCapacity(), after->outOfLineCapacity()));
+    }
+    for (auto& store : plan.extraPropertyStores) {
+        JSValue value = read(store);
+        if (!value)
+            return false;
+        extra->putDirectOffset(vm, store.offset, value);
+    }
+    if (!before) {
+        setExtraProperties(vm, extra, plan.targetAfter);
+        return true;
+    }
+    if (before != after)
+        extra->setStructure(vm, after);
+    if (structure() != plan.targetAfter)
+        JSCell::setStructure(vm, plan.targetAfter);
+    return true;
+}
+
+const State::AssignmentPlan& State::assignmentPlan(VM& vm, Object& target, JSObject* extraProperties, JSObject* source, uint32_t sourceOrderWord)
+{
+    if (!m_assignmentPlans)
+        m_assignmentPlans = makeUniqueWithoutFastMallocCheck<std::array<AssignmentPlan, numberOfAssignmentPlans>>();
+    StructureID targetID = target.structureID();
+    StructureID sourceID = source->structureID();
+    StructureID extraPropertiesID = extraProperties ? extraProperties->structureID() : StructureID();
+    auto& plan = (*m_assignmentPlans)[((targetID.bits() >> 4) + (sourceID.bits() >> 4) * 31 + (extraPropertiesID.bits() >> 4) * 7 + sourceOrderWord) % numberOfAssignmentPlans];
+    if (plan.target == targetID && plan.source == sourceID && plan.extraPropertiesBefore == extraPropertiesID && plan.sourceOrderWord == sourceOrderWord
+        && (!plan.addsExtraProperties || Instance::hasPrototypeStructures(target.structure(), plan.prototypeStructures.span()))) [[likely]]
+        return plan;
+    plan = { };
+    plan.target = targetID;
+    plan.source = sourceID;
+    plan.extraPropertiesBefore = extraPropertiesID;
+    plan.sourceOrderWord = sourceOrderWord;
+    m_hasAssignmentPlans = true;
+    fillAssignmentPlan(vm, plan, target, extraProperties, source);
+    return plan;
+}
+
+void State::fillAssignmentPlan(VM& vm, AssignmentPlan& plan, Object& target, JSObject* extraProperties, JSObject* source)
+{
+    using Kind = AssignmentPlan::Kind;
+    struct Property {
+        UniquedStringImpl* name;
+        uint32_t read;
+        const FieldData* field;
+    };
+    Vector<Property, 16> properties;
+    Structure* sourceStructure = source->structure();
+    bool sharesTypes = false;
+    if (sourceStructure->compiledLayout()) {
+        auto* typedSource = uncheckedDowncast<Object>(source);
+        State& sourceState = typedSource->state();
+        auto listed = sourceState.propertiesInOrder(vm, typedSource->layout(), plan.sourceOrderWord, Object::SymbolKeys::Include);
+        if (!listed)
+            return;
+        for (auto& property : *listed)
+            properties.append({ property.name, Object::readKindAndOffset(*property.field), property.field });
+        sharesTypes = &sourceState == this;
+    } else {
+        if (sourceStructure->isDictionary() || source->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon())
+            return;
+        sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (!(entry.attributes() & PropertyAttribute::DontEnum) && !PropertyName(entry.key()).isPrivateName())
+                properties.append({ entry.key(), static_cast<uint32_t>(entry.offset()), nullptr });
+            return true;
+        });
+    }
+    const LayoutData& layout = target.layout();
+    Structure* ofExtraProperties = extraProperties ? extraProperties->structure() : target.structure()->realm()->nullPrototypeObjectStructure();
+    if (extraProperties && (extraProperties->type() != FinalObjectType || ofExtraProperties->isDictionary()))
+        return;
+    Vector<AssignmentPlan::FieldStore> fieldStores;
+    Vector<AssignmentPlan::ExtraPropertyStore> extraPropertyStores;
+    Vector<UniquedStringImpl*, 8> addedNames;
+    for (auto& property : properties) {
+        const FieldData* field = this->field(vm, layout, property.name);
+        if (!field) {
+            unsigned attributes = 0;
+            PropertyOffset offset = ofExtraProperties->get(vm, property.name, attributes);
+            if (isValidOffset(offset) ? attributes : parseIndex(*property.name) || property.name == vm.propertyNames->underscoreProto.impl() || property.name == vm.propertyNames->isConcatSpreadableSymbol.impl() || hasImmutableMethod(layout, property.name) || !storeNeverSpecializes(layout, property.name))
+                return;
+            if (!isValidOffset(offset)) {
+                ofExtraProperties = Structure::addPropertyTransition(vm, ofExtraProperties, PropertyName(property.name), 0, offset);
+                if (ofExtraProperties->isDictionary())
+                    return;
+                addedNames.append(property.name);
+            }
+            extraPropertyStores.append({ property.read, offset, property.field });
+            continue;
+        }
+        if (field->flags & fieldIsImmutable || target.isDiscriminant(*field))
+            return;
+        bool acceptsWhatSourceHolds = sharesTypes && property.field->type() == field->type() && property.field->ownType() == field->ownType() && property.field->store() == field->store();
+        constexpr uint32_t needsGeneralStore = fieldIsOutOfLine | fieldIsPinned | fieldMayBeUnlisted | fieldHoldsLazyClosure | fieldMayExistWithoutStorage;
+        Kind kind = Kind::General;
+        if (!(field->flags & needsGeneralStore)) {
+            switch (field->store()) {
+            case Store::Int32OrNumberBox:
+                kind = Kind::Int32OrNumberBox;
+                break;
+            case Store::JSValue:
+                kind = Kind::Boxed;
+                break;
+            case Store::Cell32:
+            case Store::OptionalCell32:
+                kind = Kind::Cell32;
+                break;
+            case Store::Double:
+                kind = Kind::Double;
+                break;
+            case Store::Boolean:
+                kind = Kind::Boolean;
+                break;
+            default:
+                break;
+            }
+        }
+        fieldStores.append({ property.read, kind, kindsAcceptedBy(typeOf(*field)), acceptsWhatSourceHolds, property.field, field });
+    }
+    if (!addedNames.isEmpty()) {
+        for (JSValue next = target.structure()->storedPrototype(); next.isObject();) {
+            JSObject* holder = asObject(next);
+            ClassPrototype::look(holder);
+            Structure* structure = holder->structure();
+            TypeInfo typeInfo = structure->typeInfo();
+            if (structure->isDictionary() || structure->hasPolyProto() || typeInfo.overridesGetOwnPropertySlot() || (typeInfo.overridesPut() && structure->classInfoForCells() != PrototypeObject::info()) || typeInfo.overridesGetPrototype() || holder->hasNonReifiedStaticProperties())
+                return;
+            for (UniquedStringImpl* name : addedNames) {
+                unsigned attributes;
+                if (isValidOffset(structure->get(vm, name, attributes)) && attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+                    return;
+            }
+            plan.prototypeStructures.append(structure->id());
+            next = structure->storedPrototype();
+        }
+    }
+    if (!extraPropertyStores.isEmpty()) {
+        plan.extraPropertiesAfter = ofExtraProperties;
+        plan.targetAfter = structureFor(vm, layout.shape, target.getPrototypeDirect(), *ofExtraProperties);
+    }
+    plan.addsExtraProperties = !addedNames.isEmpty();
+    plan.fieldStores = WTF::move(fieldStores);
+    plan.extraPropertyStores = WTF::move(extraPropertyStores);
+    plan.isUsable = true;
+}
+
+void State::clearAssignmentPlans()
+{
+    if (!std::exchange(m_hasAssignmentPlans, false))
+        return;
+    for (auto& plan : *m_assignmentPlans)
+        plan = { };
+}
+
 } } // namespace AOT::Typed
 
 static ALWAYS_INLINE const AOT::Typed::LayoutData* compiledLayoutOf(const Structure::AOTFields& aotFields, uint32_t firstCompiledEnvironmentShape, const JSCell* cell)
@@ -1718,10 +1962,15 @@ JSObject* Object::ensureExtraProperties(VM& vm)
 
 void Object::setExtraProperties(VM& vm, JSObject* extra, bool isForLookupTable)
 {
-    ASSERT(!extraProperties());
     Structure* withExtraProperties = isForLookupTable ? state().structureFor(vm, layout().shape, getPrototypeDirect(), *extra->structure()) : state().existingStructureFor(layout().shape, getPrototypeDirect(), *extra->structure());
     if (!withExtraProperties)
         withExtraProperties = state().structureFor(vm, layout().shape, getPrototypeDirect(), true);
+    setExtraProperties(vm, extra, withExtraProperties);
+}
+
+void Object::setExtraProperties(VM& vm, JSObject* extra, Structure* withExtraProperties)
+{
+    ASSERT(!extraProperties());
     uint32_t word = at<uint32_t>(offsetOfOrderWord);
     if (uint32_t offset = layout().offsetOfExtraProperties())
         at<uint32_t>(offset) = MarkedBlockCage::encode(extra);
@@ -16436,52 +16685,10 @@ void reifyClassPrototypeIfNeeded(JSObject* object)
     ClassPrototype::look(object);
 }
 
-bool tryAssignPrimitivesToCompiledObjectFields(VM& vm, JSObject* target, JSObject* source)
+bool tryAssignToCompiledObject(VM& vm, JSObject* target, JSObject* source)
 {
     const LayoutData* layout = target->structure()->compiledLayout();
-    if (!layout || !isObjectLayout(layout->kind))
-        return false;
-    auto* typedTarget = uncheckedDowncast<Object>(target);
-    State& state = typedTarget->state();
-    if (typedTarget->hasFlagsInOrderWord() || state.data.isCompiledForAudit || source == target)
-        return false;
-    Vector<std::pair<const FieldData*, JSValue>, 8> stores;
-    auto note = [&](UniquedStringImpl& name, JSValue value) {
-        const FieldData* field = value.isObject() ? nullptr : typedTarget->fieldNamed(state, &name);
-        if (!field || typedTarget->isDiscriminant(*field) || !typedTarget->readInline(*field))
-            return false;
-        stores.append({ field, value });
-        return true;
-    };
-    bool isNoted = true;
-    Structure* sourceStructure = source->structure();
-    if (sourceStructure->compiledLayout()) {
-        if (!isObjectLayout(sourceStructure->compiledLayout()->kind))
-            return false;
-        bool isWalked = uncheckedDowncast<Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
-            isNoted = note(name, value);
-            return isNoted;
-        }, Object::SymbolKeys::Include);
-        if (!isWalked)
-            return false;
-    } else {
-        if (source->type() != FinalObjectType || source->hasNonReifiedStaticProperties() || source->canHaveExistingOwnIndexedProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon())
-            return false;
-        sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-            if (entry.attributes() & PropertyAttribute::DontEnum)
-                return true;
-            isNoted = note(*entry.key(), source->getDirect(entry.offset()));
-            return isNoted;
-        });
-    }
-    if (!isNoted)
-        return false;
-    for (auto& [field, value] : stores) {
-        if (!typedTarget->write(vm, *field, value))
-            return false;
-    }
-    ensureStillAliveHere(source);
-    return true;
+    return layout && isObjectLayout(layout->kind) && uncheckedDowncast<Object>(target)->tryAssignPropertiesOf(vm, source);
 }
 
 JSValue tryGetCompiledObjectOwnData(VM& vm, JSCell* cell, UniquedStringImpl* name)

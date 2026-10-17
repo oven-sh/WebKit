@@ -484,7 +484,9 @@ static void assignFrom(Instance* instance, JSGlobalObject* globalObject, JSObjec
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     auto* targetObject = dynamicDowncast<JSFinalObject>(target);
-    bool mayCopy = targetObject && targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexedSetterOrReadOnly(targetObject));
+    if (!targetObject)
+        RELEASE_AND_RETURN(scope, objectAssignGeneric(globalObject, vm, target, source));
+    bool mayCopy = targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexedSetterOrReadOnly(targetObject));
     if (mayCopy && !targetObject->canPerformFastPutInlineExcludingProto()) {
         Structure* structure = targetObject->structure();
         if (source->type() == FinalObjectType && !source->hasNonReifiedStaticProperties() && !structure->hasImmutableProperties() && !structure->typeInfo().wouldHaveFixedProperties() && !structure->mayBePrototype() && !structure->isWatchingReplacement()
@@ -1542,10 +1544,114 @@ void Lowering::byKeyOrder(ValueID object, const Vector<KeyOrder, 2>& orders, con
         LBasicBlock next = &order == &orders.last() ? otherwise : m_out.newBlock();
         m_out.branch(logicalAnd(equal(shapeWord, word32(Typed::shapeWordOf(m_program.at(order.layout).shape))), equal(orderWord, word32(order.orderWord))).value(), usually(matches), rarely(next));
         m_out.appendTo(matches);
-        inlinePath(cell, order);
+        if constexpr (std::is_invocable_v<InlinePath, CellPointer, const KeyOrder&, LBasicBlock>)
+            inlinePath(cell, order, otherwise);
+        else
+            inlinePath(cell, order);
         m_out.appendTo(next);
     }
     genericPath();
+}
+
+std::optional<Vector<Lowering::AssignedField, 8>> Lowering::fieldsAssignedWithoutRunningCode(ValueID target, const KeyOrder& order)
+{
+    auto& receiver = typeOf(target);
+    LayoutID supertype = receiver.singleLayout();
+    if (!supertype || Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations())
+        return std::nullopt;
+    if (!isObjectLayout(m_program.at(supertype).kind) || m_program.at(supertype).acceptsUntypedObjects || mayDespecialize(supertype))
+        return std::nullopt;
+    constexpr uint32_t isNoPlainSlot = fieldMayBeUnlisted | fieldHoldsLazyClosure | fieldMayExistWithoutStorage;
+    Vector<AssignedField, 8> result;
+    for (uint16_t index : order.fields) {
+        const Field& from = m_program.at(order.layout).fields[index];
+        if (from.isOutOfLine || from.flags & isNoPlainSlot)
+            return std::nullopt;
+        const Field* to = fieldFor(receiver, from.name);
+        if (!to) {
+            if (!isOnlyInExtraProperties(m_program, supertype, from.name) || !tableIndexOfName(from.name))
+                return std::nullopt;
+            result.append({ &from, nullptr });
+            continue;
+        }
+        switch (to->store) {
+        case Store::Int32OrNumberBox:
+        case Store::Int32:
+        case Store::Double:
+        case Store::OptionalDouble:
+        case Store::Boolean:
+        case Store::OptionalBoolean:
+        case Store::Cell:
+        case Store::JSValue:
+        case Store::Cell32:
+        case Store::OptionalCell32:
+            break;
+        default:
+            return std::nullopt;
+        }
+        if (to->store != from.store || to->isOutOfLine || to->isPinned || to->isMissingInSomeSubtype || to->hasOtherOffsetInSomeSubtype || to->isAnyObjectInSomeSubtype || to->mayBeCoercedInSomeSubtype)
+            return std::nullopt;
+        if (to->flags & (isNoPlainSlot | fieldIsNeverStored | fieldIsImmutable) || m_program.at(to->slot).isDiscriminant || hasSubtypeKeepingField(supertype, from.name))
+            return std::nullopt;
+        Type held = m_program.at(to->stored).withoutPrimitives(Primitive::Absent);
+        if (to->type && m_program.at(to->type).withoutPrimitives(Primitive::Absent).isSubsetOf(held, m_program))
+            held = m_program.at(to->type).withoutPrimitives(Primitive::Absent);
+        if (!m_program.at(from.stored).withoutPrimitives(Primitive::Absent).isSubsetOf(held, m_program))
+            return std::nullopt;
+        result.append({ &from, to });
+    }
+    return result;
+}
+
+void Lowering::assignFields(CellPointer target, ValueID targetID, CellPointer source, std::span<const AssignedField> fields, LBasicBlock otherwise)
+{
+    LayoutID supertype = typeOf(targetID).singleLayout();
+    bool addsProperties = std::ranges::any_of(fields, [](auto& field) { return !field.to; });
+    bool mayHaveIntegrity = mayBeFrozen(supertype) || m_program.at(supertype).subtypes.containsIf([&](LayoutID subtype) {
+        return m_program.at(subtype).isImmutableAfterAllocation;
+    });
+    if (addsProperties)
+        orElse(hasNoBits(orderWordOf(target), orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), otherwise);
+    else if (mayHaveIntegrity)
+        orElse(hasNoBits(orderWordOf(target), orderWordIsFrozen), otherwise);
+    Vector<LValue, 8> bits;
+    for (auto& field : fields) {
+        if (!field.to) {
+            bits.append(nullptr);
+            continue;
+        }
+        TypedPointer from = fieldAt(source, *field.from);
+        unsigned size = sizeOf(field.to->store);
+        bits.append(size == 8 ? m_out.load64(from) : size == 4 ? m_out.load32(from) : m_out.load8ZeroExt32(from));
+        if (field.to->store == Store::Int32OrNumberBox) {
+            orElse(Word32(m_out.greaterThanOrEqual(bits.last(), m_out.constInt32(minInlineInt32))), otherwise);
+            orElse(Word32(m_out.greaterThanOrEqual(m_out.load32(fieldAt(target, *field.to)), m_out.constInt32(minInlineInt32))), otherwise);
+        } else if (m_program.at(field.to->stored).primitives & Primitive::Absent)
+            orElse(hasField(target, *field.to), otherwise);
+    }
+    didEmitWrite(Writes::Fields);
+    bool storesCells = false;
+    for (unsigned i = 0; i < fields.size(); ++i) {
+        if (!fields[i].to)
+            continue;
+        TypedPointer to = fieldAt(target, *fields[i].to);
+        unsigned size = sizeOf(fields[i].to->store);
+        if (size == 8)
+            m_out.store64(bits[i], to);
+        else if (size == 4)
+            m_out.store32(bits[i], to);
+        else
+            m_out.store32As8(bits[i], to);
+        storesCells |= holdsCells(fields[i].to->store) && m_program.at(fields[i].from->stored).hasCells();
+    }
+    if (storesCells) {
+        ensureStillAliveHere(source);
+        barrier(target);
+    }
+    for (auto& field : fields) {
+        if (!field.to)
+            emitPutByNameThroughTable(Stub::PutByName, box(target), *tableIndexOfName(field.from->name), readField(source, *field.from, m_program.at(m_program.types.anything)).as<Boxed>());
+    }
 }
 
 CellPointer Lowering::cloneAsPlainObject(ValueID source, const CloneDefinitions& defined)
@@ -1728,10 +1834,23 @@ Operand Lowering::lowerAssign(ValueID result, const Value& value)
     for (unsigned i = firstSource; i < value.arguments.size(); ++i) {
         ValueID source = value.arguments[i];
         LBasicBlock continuation = m_out.newBlock();
-        byKeyOrder(source, isNew ? keyOrdersExpectedOf(source) : Vector<KeyOrder, 2> { }, [&](CellPointer cell, const KeyOrder& order) {
+        Vector<KeyOrder, 2> orders = keyOrdersExpectedOf(source);
+        Vector<Vector<AssignedField, 8>, 2> assigned;
+        for (auto& order : orders) {
+            auto fields = isNew ? std::nullopt : fieldsAssignedWithoutRunningCode(into, order);
+            if (fields)
+                assigned.append(WTF::move(*fields));
+        }
+        if (!isNew && assigned.size() != orders.size())
+            orders.clear();
+        byKeyOrder(source, orders, [&](CellPointer cell, const KeyOrder& order, LBasicBlock otherwise) {
             auto& fields = m_program.at(order.layout).fields;
-            for (uint16_t index : order.fields)
-                emitPutById(box(target), fields[index].name, readField(cell, fields[index], anything).as<Boxed>());
+            if (!isNew)
+                assignFields(target, into, cell, assigned[&order - orders.begin()].span(), otherwise);
+            else {
+                for (uint16_t index : order.fields)
+                    emitPutById(box(target), fields[index].name, readField(cell, fields[index], anything).as<Boxed>());
+            }
             m_out.jump(continuation);
         }, [&] {
             AOT_TYPED_OPERATION(ObjectAssignFrom, target, in<Boxed>(source));

@@ -438,6 +438,8 @@ void installOperationFrontEnds(VM& vm, void** entries)
     AOT_INSTALL_FRONT_END(CompareEq)
     install(Entry::operationAOTTypedPutExtra, Entry::RawTypedPutExtra, Stub::FrontEndTypedPutExtra);
     install(Entry::operationAOTTypedGetExtra, Entry::RawTypedGetExtra, Stub::FrontEndTypedGetExtra);
+    install(Entry::operationAOTTypedGetByNameChecked, Entry::RawTypedGetByNameChecked, Stub::FrontEndTypedGetByNameChecked);
+    install(Entry::operationAOTTypedGetByNameCheckedAsNumber, Entry::RawTypedGetByNameCheckedAsNumber, Stub::FrontEndTypedGetByNameCheckedAsNumber);
     install(Entry::operationAOTTypedHasOwnPropertyByName, Entry::RawTypedHasOwnPropertyByName, Stub::FrontEndTypedHasOwnPropertyByName);
     install(Entry::operationAOTTypedToString, Entry::RawTypedToString, Stub::FrontEndTypedToString);
     install(Entry::operationAOTTypedBitNot, Entry::RawTypedBitNot, Stub::FrontEndTypedBitNot);

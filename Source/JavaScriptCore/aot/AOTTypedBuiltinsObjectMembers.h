@@ -31,6 +31,12 @@
     };
     Vector<KeyOrder, 2> keyOrdersExpectedOf(ValueID) const;
     template<typename InlinePath, typename GenericPath> void byKeyOrder(ValueID object, const Vector<KeyOrder, 2>&, const InlinePath&, const GenericPath&);
+    struct AssignedField {
+        const Field* from;
+        const Field* to;
+    };
+    std::optional<Vector<AssignedField, 8>> fieldsAssignedWithoutRunningCode(ValueID target, const KeyOrder&);
+    void assignFields(CellPointer target, ValueID targetID, CellPointer source, std::span<const AssignedField>, LBasicBlock otherwise);
     CellPointer cloneAsPlainObject(ValueID source, const CloneDefinitions&);
     CellPointer newArrayOf(std::span<const Boxed>);
     CellPointer lowerValuesOrEntries(InlineBuiltin, const Value&);

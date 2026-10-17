@@ -6441,6 +6441,139 @@ void Lowering::lowerPutById(ValueID, const Value& value)
     });
 }
 
+void Lowering::findPresenceTestsBeforeReads()
+{
+    constexpr unsigned maxBlocksBetween = 8;
+    auto leavesPropertiesAlone = [&](const Value& value) {
+        switch (value.opcode) {
+        case Opcode::Undefined:
+        case Opcode::Null:
+        case Opcode::Boolean:
+        case Opcode::Integer:
+        case Opcode::Double:
+        case Opcode::String:
+        case Opcode::GetModuleVariable:
+        case Opcode::StrictEq:
+        case Opcode::LogicalNot:
+        case Opcode::ToBoolean:
+        case Opcode::TypeOf:
+        case Opcode::IsUndefinedOrNull:
+        case Opcode::UnlikelyHint:
+            return true;
+        case Opcode::Cast:
+            return value.castReason() == CastReason::Upcast;
+        default:
+            return false;
+        }
+    };
+    auto isLoopHeader = [&](unsigned block) {
+        return m_loops.containsIf([&](auto& loop) {
+            return loop.header.index() == block;
+        });
+    };
+    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+        auto& block = m_function.blocks[b];
+        for (unsigned i = 0; i < block.values.size(); ++i) {
+            auto& test = m_function.at(block.values[i]);
+            if (test.opcode != Opcode::InByVal || predictedTypeOf(test.child(1)).isNumber())
+                continue;
+            bool isLastToTouchProperties = true;
+            for (unsigned j = i + 1; j < block.values.size(); ++j)
+                isLastToTouchProperties &= leavesPropertiesAlone(m_function.at(block.values[j]));
+            if (!isLastToTouchProperties)
+                continue;
+            ValueID object = m_program.originOf(m_function, test.child(0));
+            ValueID key = m_program.originOf(m_function, test.child(1));
+            BitVector between;
+            BitVector readers;
+            Vector<ValueID, 2> reads;
+            Vector<unsigned, 8> worklist;
+            bool isTooFar = false;
+            for (auto& target : block.terminator.targets)
+                worklist.append(target.block.index());
+            while (!worklist.isEmpty()) {
+                unsigned next = worklist.takeLast();
+                if (!next || next == b || between.get(next) || isLoopHeader(next))
+                    continue;
+                auto& candidate = m_function.blocks[next];
+                ValueID read;
+                bool touchesProperties = false;
+                for (ValueID id : candidate.values) {
+                    auto& value = m_function.at(id);
+                    if (value.opcode == Opcode::GetByVal && !value.readsForInKey() && m_program.originOf(m_function, value.child(0)) == object && m_program.originOf(m_function, value.child(1)) == key && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Generic) {
+                        read = id;
+                        break;
+                    }
+                    if (!leavesPropertiesAlone(value)) {
+                        touchesProperties = true;
+                        break;
+                    }
+                }
+                if (touchesProperties)
+                    continue;
+                if (between.bitCount() == maxBlocksBetween) {
+                    isTooFar = true;
+                    break;
+                }
+                between.set(next);
+                if (read) {
+                    reads.append(read);
+                    readers.set(next);
+                    continue;
+                }
+                for (auto& target : candidate.terminator.targets)
+                    worklist.append(target.block.index());
+            }
+            if (isTooFar || reads.isEmpty() || reads.containsIf([&](ValueID read) { return m_presenceTestOf.contains(read.index()); }))
+                continue;
+            PresenceTestBeforeRead found { m_proc.addVariable(Int64), { }, WTF::move(readers) };
+            auto forgetWhereLeft = [&](const Terminator& terminator) {
+                for (auto& target : terminator.targets) {
+                    if (!between.get(target.block.index()))
+                        found.blocksThatForgetAtStart.set(target.block.index());
+                }
+            };
+            forgetWhereLeft(block.terminator);
+            for (size_t index : between)
+                forgetWhereLeft(m_function.blocks[index].terminator);
+            m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), found.valueIfOwn, m_out.int64Zero);
+            m_presenceTestOf.add(block.values[i].index(), m_presenceTestsBeforeReads.size());
+            for (ValueID read : reads)
+                m_presenceTestOf.add(read.index(), m_presenceTestsBeforeReads.size());
+            m_presenceTestsBeforeReads.append(WTF::move(found));
+        }
+    }
+}
+
+void Lowering::forgetValuesFoundByPresenceTests(bool isAtStart)
+{
+    for (auto& test : m_presenceTestsBeforeReads) {
+        if ((isAtStart ? test.blocksThatForgetAtStart : test.blocksThatForgetAtEnd).get(m_currentBlockID.index()))
+            m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), test.valueIfOwn, m_out.int64Zero);
+    }
+}
+
+B3::Variable* Lowering::valueFoundByPresenceTest(ValueID id) const
+{
+    if (m_presenceTestsBeforeReads.isEmpty())
+        return nullptr;
+    auto found = m_presenceTestOf.find(id.index());
+    return found == m_presenceTestOf.end() ? nullptr : m_presenceTestsBeforeReads[found->value].valueIfOwn;
+}
+
+Word32 Lowering::lowerPresenceTestBeforeRead(const Value& value, B3::Variable* valueIfOwn)
+{
+    Boxed object = in<Boxed>(value.child(0));
+    Boxed key = in<Boxed>(value.child(1));
+    LValue found = callAllocationStub(Stub::GetOwnByValIfCached, { { object.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 } }, { Writes::Nothing, false }, false);
+    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), valueIfOwn, found);
+    return either<Word32>(Word32(m_out.notZero64(found)), [&] {
+        return boolean(true);
+    }, [&] {
+        return emitInByVal(object, key);
+    });
+}
+
 Word32 Lowering::emitInByVal(Boxed object, Boxed key)
 {
     return Word32(callICStub(Stub::InByValCached, Int32, { { object.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 } }));

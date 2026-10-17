@@ -186,7 +186,7 @@ std::optional<std::pair<uint32_t, uint32_t>> fieldStoreOffsetAndKindForInterpret
 bool storeCompiledObjectExtraProperty(JSCell*, int offset, JSValue);
 JSValue compiledObjectExtraProperty(JSCell*, int offset);
 std::optional<std::pair<uint16_t, uint16_t>> extraPropertyLocationForInterpreter(VM&, JSCell*, const Identifier&);
-bool tryAssignPrimitivesToCompiledObjectFields(VM&, JSObject* target, JSObject* source);
+bool tryAssignToCompiledObject(VM&, JSObject* target, JSObject* source);
 JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
 JS_EXPORT_PRIVATE void didCreateReplaceableGlobal(JSGlobalObject*, ASCIILiteral name, JSObject*);
 struct HostClassCachedGetter {

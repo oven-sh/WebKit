@@ -4117,6 +4117,7 @@ struct InheritedField {
     bool isKnown { false };
     JSObject* holder { nullptr };
     PropertyOffset offset { invalidOffset };
+    JSObject* extraProperties { nullptr };
 };
 
 static JSValue getFromReceiver(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, InheritedField& inherited)
@@ -4132,8 +4133,13 @@ static JSValue getFromReceiver(JSGlobalObject* globalObject, JSObject* object, c
         isAbsentField = !(field->flags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted | Typed::fieldHoldsLazyClosure | Typed::fieldIsPlaceholder));
     } else if (JSObject* extra = ofLayout->extraProperties()) {
         unsigned attributes;
-        if (PropertyOffset offset = extra->structure()->get(vm, name, attributes); isValidOffset(offset))
-            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? object->get(globalObject, name) : extra->getDirect(offset);
+        if (PropertyOffset offset = extra->structure()->get(vm, name, attributes); isValidOffset(offset)) {
+            if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+                return object->get(globalObject, name);
+            inherited.extraProperties = extra;
+            inherited.offset = offset;
+            return extra->getDirect(offset);
+        }
     }
     JSValue prototype = object->getPrototypeDirect();
     if (!prototype.isObject()) {
@@ -4157,6 +4163,18 @@ static void rememberInheritedField(Instance* instance, JSCell* cell, uint32_t na
 {
     int32_t offset = inherited.holder ? static_cast<int32_t>(offsetRelativeToBase(inherited.offset)) : 0;
     instance->rememberInheritedFieldAnswer({ cell->structureID().bits(), name, question, offset, inherited.holder, static_cast<uint64_t>(JSValue::encode(onlyValueChecked)) });
+}
+
+static void rememberExtraProperty(Instance* instance, JSCell* cell, uint32_t name, uint32_t type, const InheritedField& found, JSValue value)
+{
+    State& state = *instance->typed;
+    Structure* ofExtraProperties = found.extraProperties->structure();
+    if (state.isCounting() || state.data.isCompiledForAudit || ofExtraProperties->isDictionary() || &uncheckedDowncast<Typed::Object>(cell)->state() != &state)
+        return;
+    const Typed::RuntimeType& accepted = state.type(type);
+    uint64_t kinds = state.kindsAcceptedBy(accepted);
+    uint64_t structureOfValue = value.isCell() && state.fits(accepted, value) ? value.asCell()->structureID().bits() : 0;
+    instance->rememberInheritedFieldAnswer({ cell->structureID().bits(), name, type | Instance::asksForExtraProperty, static_cast<int32_t>(offsetRelativeToBase(found.offset)), std::bit_cast<JSCell*>(static_cast<uintptr_t>(ofExtraProperties->id().bits())), kinds | structureOfValue << 32 });
 }
 
 static bool acceptsEveryValue(const Typed::RuntimeType& type)
@@ -4187,7 +4205,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameChecked, EncodedJSValue, (Ins
         bool isCheckedAtEveryRead = inherited.holder && !acceptsEveryValue(instance->typed->type(type));
         if (!isCheckedAtEveryRead || !value.isObject())
             rememberInheritedField(instance, cell, name, type, inherited, isCheckedAtEveryRead ? value : JSValue());
-    }
+    } else if (inherited.extraProperties)
+        rememberExtraProperty(instance, cell, name, type, inherited, value);
     OPERATION_RETURN(scope, JSValue::encode(value));
 }
 
@@ -4234,6 +4253,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameCheckedAsNumber, double, (Ins
     }
     if (inherited.isKnown && !inherited.holder)
         rememberInheritedField(instance, cell, name, type, inherited);
+    else if (inherited.extraProperties)
+        rememberExtraProperty(instance, cell, name, type, inherited, value);
     if (value.isNumber())
         OPERATION_RETURN(scope, purifyNaN(value.asNumber()));
     OPERATION_RETURN(scope, std::bit_cast<double>(value.isUndefined() ? Typed::undefinedDouble : Typed::nullDouble));

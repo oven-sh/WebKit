@@ -1269,6 +1269,17 @@ private:
     void lowerPutById(ValueID, const Value&);
     Word32 lowerInById(const Value&);
     Word32 emitInByVal(Boxed object, Boxed key);
+    struct PresenceTestBeforeRead {
+        B3::Variable* valueIfOwn { nullptr };
+        BitVector blocksThatForgetAtStart;
+        BitVector blocksThatForgetAtEnd;
+    };
+    Vector<PresenceTestBeforeRead, 1> m_presenceTestsBeforeReads;
+    UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_presenceTestOf;
+    void findPresenceTestsBeforeReads();
+    void forgetValuesFoundByPresenceTests(bool isAtStart);
+    B3::Variable* valueFoundByPresenceTest(ValueID) const;
+    Word32 lowerPresenceTestBeforeRead(const Value&, B3::Variable* valueIfOwn);
     Operand lowerNewObject(ValueID, const Value&);
     CellPointer stackAllocatedCell(size_t);
     CellPointer lowerMaterializeEnvironment(const Value&);

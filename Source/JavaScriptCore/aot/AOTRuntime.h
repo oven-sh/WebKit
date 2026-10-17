@@ -174,6 +174,8 @@ struct StringAppender;
     v(RawCompareEq) \
     v(RawTypedPutExtra) \
     v(RawTypedGetExtra) \
+    v(RawTypedGetByNameChecked) \
+    v(RawTypedGetByNameCheckedAsNumber) \
     v(RawTypedHasOwnPropertyByName) \
     v(RawTypedToString) \
     v(RawTypedBitNot) \
@@ -918,8 +920,6 @@ struct Instance {
     uintptr_t** typedOrderKeys;
     uint16_t* typedOrderKeyIndices;
     uint16_t numberOfTypedOrderKeyIndicesUsed;
-    uint32_t megamorphicCacheEpoch;
-    static constexpr ptrdiff_t offsetOfMegamorphicCacheEpoch() { return OBJECT_OFFSETOF(Instance, megamorphicCacheEpoch); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeys() { return OBJECT_OFFSETOF(Instance, typedOrderKeys); }
     static constexpr ptrdiff_t offsetOfTypedOrderKeyIndices() { return OBJECT_OFFSETOF(Instance, typedOrderKeyIndices); }
     static size_t numberOfTypedOrderKeyIndices(uint32_t numberOfLayouts) { return std::min<size_t>(numberOfLayouts, UINT16_MAX) + 1; }
@@ -1327,6 +1327,7 @@ struct Instance {
     static_assert(sizeof(InheritedFieldAnswer) == 32);
     static constexpr uint32_t asksForUncheckedValue = UINT32_MAX;
     static constexpr uint32_t asksWhetherStoreCreatesField = UINT32_MAX - 1;
+    static constexpr uint32_t asksForExtraProperty = 1u << 31;
     static constexpr unsigned inheritedFieldAnswerWays = 2;
     static constexpr unsigned numberOfInheritedFieldAnswers = 256;
     static constexpr unsigned firstInheritedFieldAnswer(uint32_t structureID, uint32_t name, uint32_t question) { return (((structureID >> 4) ^ name ^ question) & (numberOfInheritedFieldAnswers / inheritedFieldAnswerWays - 1)) * inheritedFieldAnswerWays; }
@@ -1405,44 +1406,38 @@ struct Instance {
         uint32_t padding[2];
     };
     static_assert(sizeof(CustomGetter) == 64);
-    static constexpr unsigned numberOfCustomGetters = 256;
-    static_assert(numberOfCustomGetters * sizeof(CustomGetter) < 1ull << (64 - Slot::customGetterIndexShift));
+    struct CustomGetterTable {
+        uint32_t capacity;
+        uint32_t hashShift;
+        uint32_t numberOfRecordsEverUsed;
+        uint32_t padding[13];
+    };
+    static_assert(sizeof(CustomGetterTable) == sizeof(CustomGetter));
+    static constexpr unsigned initialNumberOfCustomGetters = 256;
+    static constexpr unsigned maxNumberOfCustomGetters = 4096;
+    static_assert(maxNumberOfCustomGetters * sizeof(CustomGetter) < 1ull << (64 - Slot::customGetterIndexShift));
     CustomGetter* customGetters;
     static constexpr ptrdiff_t offsetOfCustomGetters() { return OBJECT_OFFSETOF(Instance, customGetters); }
-    static_assert(numberOfCustomGetters == 1u << 8);
-    static unsigned indexOfCustomGetter(uint32_t structureID, UniquedStringImpl* uid) { return ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4) * 0x85ebca6bu) * 0x9e3779b1u >> (32 - 8); }
-    static constexpr unsigned customGetterWays = 4;
+    static CustomGetter* createCustomGetters(unsigned capacity);
+    static void destroyCustomGetters(CustomGetter*);
+    static CustomGetterTable& customGetterTable(CustomGetter* records) { return std::bit_cast<CustomGetterTable*>(records)[-1]; }
+    std::span<CustomGetter> customGetterRecords() const { return { customGetters, customGetterTable(customGetters).capacity }; }
+    static unsigned hashOfCustomGetter(uint32_t structureID, UniquedStringImpl* uid) { return ((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4) * 0x85ebca6bu) * 0x9e3779b1u; }
     const CustomGetter* customGetterFor(uint32_t structureID, UniquedStringImpl* uid) const
     {
         if (!customGetters)
             return nullptr;
-        unsigned first = indexOfCustomGetter(structureID, uid);
-        for (unsigned i = 0; i < customGetterWays; ++i) {
-            auto& record = customGetters[(first + i) % numberOfCustomGetters];
+        const CustomGetterTable& table = customGetterTable(customGetters);
+        for (unsigned index = hashOfCustomGetter(structureID, uid) >> table.hashShift;; ++index) {
+            auto& record = customGetters[index & (table.capacity - 1)];
             if (record.structureID == structureID && record.uid == uid)
                 return &record;
+            if (!record.lastSerial)
+                return nullptr;
         }
-        return &customGetters[first];
     }
-    CustomGetter& ensureCustomGetterFor(uint32_t structureID, UniquedStringImpl* uid)
-    {
-        if (!customGetters) [[unlikely]]
-            customGetters = static_cast<CustomGetter*>(fastZeroedMalloc(numberOfCustomGetters * sizeof(CustomGetter)));
-        unsigned first = indexOfCustomGetter(structureID, uid);
-        CustomGetter* empty = nullptr;
-        for (unsigned i = 0; i < customGetterWays; ++i) {
-            auto& record = customGetters[(first + i) % numberOfCustomGetters];
-            if (record.structureID == structureID && record.uid == uid)
-                return record;
-            if (!empty && !record.serial)
-                empty = &record;
-        }
-        if (empty)
-            return *empty;
-        keyedTableRandomState = keyedTableRandomState * 1664525u + 1013904223u;
-        static_assert(customGetterWays == 4);
-        return customGetters[(first + (keyedTableRandomState >> 30)) % numberOfCustomGetters];
-    }
+    CustomGetter& ensureCustomGetterFor(uint32_t structureID, UniquedStringImpl* uid);
+    void rehashCustomGetters();
     struct PropertyRun {
         uint32_t structureID;
         uint32_t newStructureID;
@@ -1674,7 +1669,6 @@ struct Instance {
     static constexpr uint32_t keyedAdditionIsExtraProperty = UINT32_MAX;
     static constexpr uint32_t keyedExtraPropertyAdditionSeenOnce = UINT32_MAX - 1;
     static constexpr unsigned keyedExtraPropertyEpochShift = 16;
-    static bool isKeyedReplacement(const KeyedAddition& entry) { return !(entry.slot.offset & (Slot::isGetter | keyMayNotBeEvicted)); }
     static constexpr unsigned numberOfKeyedAdditions = 1024;
     static_assert(hasOneBitSet(numberOfKeyedAdditions));
     KeyedAddition& keyedAdditionFor(StructureID structureID, const JSCell* key) { return keyedEntryFor(keyedAdditions, numberOfKeyedAdditions, structureID, key); }

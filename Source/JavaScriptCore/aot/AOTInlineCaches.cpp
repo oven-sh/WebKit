@@ -3055,7 +3055,7 @@ void cacheKeyedExtraPropertyAddition(Instance* instance, Structure* before, Stru
     if (!addition)
         return;
     addition->slot.structureID = StructureID();
-    addition->slot.offset = Instance::keyMayNotBeEvicted;
+    addition->slot.offset = 0;
     addition->slot.pointer = key;
     addition->newStructureID = after->id();
     addition->epoch = Instance::keyedAdditionIsExtraProperty;
@@ -3067,7 +3067,7 @@ void cacheKeyedExtraPropertyAddition(Instance* instance, Structure* before, Stru
 void recordKeyedExtraPropertyAddition(Instance::KeyedAddition& addition, Structure* before, JSCell* key)
 {
     addition.slot.structureID = StructureID();
-    addition.slot.offset = Instance::keyMayNotBeEvicted;
+    addition.slot.offset = 0;
     addition.slot.pointer = key;
     addition.newStructureID = before->id();
     addition.epoch = Instance::keyedExtraPropertyAdditionSeenOnce;
