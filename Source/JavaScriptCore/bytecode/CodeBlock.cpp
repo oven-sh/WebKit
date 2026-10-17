@@ -461,10 +461,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache && unlinkedExecutable->hasFunctionRangeInParentSource()) {
-            bool isFunctionInSource = !isGeneratorOrAsyncFunctionBodyParseMode(unlinkedExecutable->parseMode()) && unlinkedExecutable->parseMode() != SourceParseMode::ClassStaticBlockMode;
-            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), isFunctionInSource);
-        }
+        if (shouldUpdateFunctionHasExecutedCache && unlinkedExecutable->hasFunctionRangeInParentSource())
+            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), unlinkedExecutable->parseMode());
         m_functionExprs[i].set(vm, this, linkFunctionExpr(i, unlinkedExecutable));
     }
 

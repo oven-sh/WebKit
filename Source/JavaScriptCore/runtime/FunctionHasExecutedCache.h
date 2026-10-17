@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ParserModes.h"
 #include "SourceID.h"
 #include <wtf/GenericHashKey.h>
 #include <wtf/HashMap.h>
@@ -47,16 +48,18 @@ public:
     };
 
     bool hasExecutedAtOffset(SourceID, unsigned offset);
-    // The body of a generator or of an async function and a static block are functions to the engine alone.
-    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, bool isFunctionInSource = true);
+    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, SourceParseMode = SourceParseMode::NormalFunctionMode);
     void removeUnexecutedRange(SourceID, unsigned start, unsigned end);
-    // hasExecuted, start, end, isFunctionInSource.
-    Vector<std::tuple<bool, unsigned, unsigned, bool>> getFunctionRanges(SourceID);
+    // hasExecuted, start, end, parseMode.
+    Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> getFunctionRanges(SourceID);
+
+    // The body of a generator or of an async function and a static block are functions to the engine alone.
+    static bool isFunctionInSource(SourceParseMode parseMode) { return !isGeneratorOrAsyncFunctionBodyParseMode(parseMode) && parseMode != SourceParseMode::ClassStaticBlockMode; }
 
 private:
     struct State {
         bool hasExecuted { false };
-        bool isFunctionInSource { true };
+        SourceParseMode parseMode { SourceParseMode::NormalFunctionMode };
     };
     using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, State>;
     using SourceIDToRangeMap = UncheckedKeyHashMap<GenericHashKey<intptr_t>, RangeMap>;

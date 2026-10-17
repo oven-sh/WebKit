@@ -50,7 +50,7 @@ bool FunctionHasExecutedCache::hasExecutedAtOffset(SourceID id, unsigned offset)
     return hasExecuted;
 }
 
-void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end, bool isFunctionInSource)
+void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end, SourceParseMode parseMode)
 {
     RangeMap& map = m_rangeMap.add(id, RangeMap { }).iterator->value;
     FunctionRange range;
@@ -58,7 +58,7 @@ void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start
     range.m_end = end;
     // Only insert unexecuted ranges once for a given sourceID because we may run into a situation where an executable executes, then is GCed, and then is allocated again,
     // and tries to reinsert itself, claiming it has never run, but this is false because it indeed already executed.
-    map.add(range, State { false, isFunctionInSource });
+    map.add(range, State { false, parseMode });
 }
 
 void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
@@ -76,9 +76,9 @@ void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start
     map.add(range, State { }).iterator->value.hasExecuted = true;
 }
 
-Vector<std::tuple<bool, unsigned, unsigned, bool>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)
+Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)
 {
-    Vector<std::tuple<bool, unsigned, unsigned, bool>> ranges(0);
+    Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> ranges(0);
     auto iterator = m_rangeMap.find(id);
     if (iterator == m_rangeMap.end())
         return ranges;
@@ -86,7 +86,7 @@ Vector<std::tuple<bool, unsigned, unsigned, bool>> FunctionHasExecutedCache::get
     RangeMap& map = iterator->value;
     for (auto& pair : map) {
         const FunctionRange& range = pair.key.key();
-        ranges.append(std::tuple { pair.value.hasExecuted, range.m_start, range.m_end, pair.value.isFunctionInSource });
+        ranges.append(std::tuple { pair.value.hasExecuted, range.m_start, range.m_end, pair.value.parseMode });
     }
 
     return ranges;

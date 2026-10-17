@@ -94,8 +94,8 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
     }
 
     // What is a function to the engine alone is not a function range to the caller, and has no basic blocks until it runs.
-    for (auto [hasExecuted, start, end, isFunctionInSource] : vm.functionHasExecutedCache()->getFunctionRanges(sourceID)) {
-        if (isFunctionInSource || hasExecuted)
+    for (auto [hasExecuted, start, end, parseMode] : vm.functionHasExecutedCache()->getFunctionRanges(sourceID)) {
+        if (FunctionHasExecutedCache::isFunctionInSource(parseMode) || hasExecuted)
             continue;
         BasicBlockRange range;
         range.m_hasExecuted = false;
