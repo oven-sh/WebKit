@@ -254,10 +254,9 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
     if (ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error)) {
 #if USE(BUN_JSC_ADDITIONS)
         // A host that formats the stack itself (VM::onComputeErrorInfo; Bun) reads the parser's position from these
-        // fields, maps it through its source maps and hands back the line to report: what it computed stands. It is
-        // only asked when the stack has a frame.
+        // fields, maps it through its source maps and hands back the line to report: what it computed stands.
         bool hostComputes = (vm.onComputeErrorInfoJSValue() || vm.onComputeErrorInfo())
-            && !errorInstance->hasMaterializedErrorInfo() && errorInstance->stackTrace() && !errorInstance->stackTrace()->isEmpty();
+            && !errorInstance->hasMaterializedErrorInfo() && errorInstance->stackTrace();
 
         if (line != -1) {
             errorInstance->setLine(line);
