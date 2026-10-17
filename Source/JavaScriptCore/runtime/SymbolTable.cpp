@@ -1,0 +1,457 @@
+/*
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1.  Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ * 2.  Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ * 3.  Neither the name of Apple Inc. ("Apple") nor the names of
+ *     its contributors may be used to endorse or promote products derived
+ *     from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "SymbolTable.h"
+
+#include "CachedTypes.h"
+#include "CodeBlock.h"
+#include "DebuggerLocation.h"
+#include "JSCJSValueInlines.h"
+#include "ResourceExhaustion.h"
+#include "ScriptExecutable.h"
+#include "SymbolTableInlines.h"
+#include "TypeProfiler.h"
+
+#include <wtf/CommaPrinter.h>
+
+namespace JSC {
+
+const ClassInfo SymbolTable::s_info = { "SymbolTable"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(SymbolTable) };
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SymbolTableEntryFatEntry);
+
+void SymbolTable::destroy(JSCell* cell)
+{
+    SymbolTable* thisObject = static_cast<SymbolTable*>(cell);
+    thisObject->SymbolTable::~SymbolTable();
+}
+
+void SymbolTableEntry::freeFatEntrySlow()
+{
+    ASSERT(isFat());
+    delete fatEntry();
+}
+
+void SymbolTableEntry::inflate()
+{
+    ASSERT(!isFat());
+    m_bits = std::bit_cast<intptr_t>(new FatEntry(m_bits));
+}
+
+SymbolTable::SymbolTable(VM& vm)
+    : JSCell(vm, vm.symbolTableStructure.get())
+    , m_usesSloppyEval(false)
+    , m_nestedLexicalScope(false)
+    , m_scopeType(VarScope)
+{
+}
+
+SymbolTable::~SymbolTable() = default;
+
+template<typename Visitor>
+void SymbolTable::visitChildrenImpl(JSCell* thisCell, Visitor& visitor)
+{
+    SymbolTable* thisSymbolTable = uncheckedDowncast<SymbolTable>(thisCell);
+    ASSERT_GC_OBJECT_INHERITS(thisSymbolTable, info());
+    Base::visitChildren(thisSymbolTable, visitor);
+
+    visitor.append(thisSymbolTable->m_arguments);
+    visitor.append(thisSymbolTable->m_clonedFrom);
+
+    // Save some memory. This is O(n) to rebuild and we do so on the fly.
+    ConcurrentJSLocker locker(thisSymbolTable->m_lock);
+    thisSymbolTable->m_localToEntry = nullptr;
+}
+
+DEFINE_VISIT_CHILDREN(SymbolTable);
+
+const SymbolTable::LocalToEntryVec& SymbolTable::localToEntry(const ConcurrentJSLocker& locker)
+{
+    materializeCachedEntriesIfPossible(locker);
+    if (!m_localToEntry) [[unlikely]] {
+        unsigned size = 0;
+        for (auto& entry : m_map) {
+            VarOffset offset = entry.value.varOffset();
+            if (offset.isScope())
+                size = std::max(size, offset.scopeOffset().offset() + 1);
+        }
+    
+        m_localToEntry = makeUnique<LocalToEntryVec>(FillWith { }, size, nullptr);
+        for (auto& entry : m_map) {
+            VarOffset offset = entry.value.varOffset();
+            if (offset.isScope())
+                m_localToEntry->at(offset.scopeOffset().offset()) = &entry.value;
+        }
+    }
+    
+    return *m_localToEntry;
+}
+
+SymbolTableEntry* SymbolTable::entryFor(const ConcurrentJSLocker& locker, ScopeOffset offset)
+{
+    auto& toEntryVector = localToEntry(locker);
+    if (offset.offset() >= toEntryVector.size())
+        return nullptr;
+    return toEntryVector[offset.offset()];
+}
+
+SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOriginal propagateCloneInvalidationToOriginal)
+{
+    SymbolTable* result = SymbolTable::create(vm);
+    
+    result->m_usesSloppyEval = m_usesSloppyEval;
+    result->m_nestedLexicalScope = m_nestedLexicalScope;
+    result->m_scopeType = m_scopeType;
+
+    UncheckedKeyHashMap<VarOffset, uint32_t> varOffsetToArgIndexMap;
+
+    if (this->arguments()) {
+        // Copy the arguments, but not the WatchpointSets. We create new WatchpointSets as appropriate when we create the SymbolTableEntry
+        // copies below and propogate the new watchpointSets to the new ScopedArgumentsTable.
+        auto length = this->arguments()->length();
+        ScopedArgumentsTable* arguments = ScopedArgumentsTable::tryCreate(vm, length);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(arguments, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+
+        for (uint32_t index = 0; index < length; ++index) {
+            ScopeOffset offset = this->arguments()->get(index);
+
+            arguments->trySet(vm, index, offset);
+            if (this->arguments()->getWatchpointSet(index))
+                varOffsetToArgIndexMap.set(VarOffset(offset), index);
+        }
+
+        result->m_arguments.set(vm, result, arguments);
+    }
+
+    bool hasScopedArgumentWatchpoints = !varOffsetToArgIndexMap.isEmpty();
+
+    if (m_cachedEntries) {
+        // A cached ScopedArgumentsTable has no watchpoint sets, and one only gets them via find(), which materializes.
+        ASSERT(!hasScopedArgumentWatchpoints);
+        result->setCachedEntries(*m_cachedEntriesDecoder, m_cachedEntries, true); // m_map is empty; nothing to copy below
+    }
+
+    for (auto iter = m_map.begin(), end = m_map.end(); iter != end; ++iter) {
+        if (!iter->value.varOffset().isScope())
+            continue;
+        SymbolTableEntry entry(iter->value.varOffset(), iter->value.getAttributes());
+
+        if (hasScopedArgumentWatchpoints) {
+            auto findIter = varOffsetToArgIndexMap.find(iter->value.varOffset());
+            if (findIter != varOffsetToArgIndexMap.end())
+                result->prepareToWatchScopedArgument(entry, findIter->value);
+        }
+
+        result->m_map.add(iter->key, WTF::move(entry));
+    }
+
+    result->m_maxScopeOffset = m_maxScopeOffset;
+
+    if (m_rareData) {
+        result->ensureRareData();
+
+        {
+            auto iter = m_rareData->m_uniqueIDMap.begin();
+            auto end = m_rareData->m_uniqueIDMap.end();
+            for (; iter != end; ++iter)
+                result->m_rareData->m_uniqueIDMap.set(iter->key, iter->value);
+        }
+
+        {
+            auto iter = m_rareData->m_offsetToVariableMap.begin();
+            auto end = m_rareData->m_offsetToVariableMap.end();
+            for (; iter != end; ++iter)
+                result->m_rareData->m_offsetToVariableMap.set(iter->key, iter->value);
+        }
+
+        {
+            auto iter = m_rareData->m_uniqueTypeSetMap.begin();
+            auto end = m_rareData->m_uniqueTypeSetMap.end();
+            for (; iter != end; ++iter)
+                result->m_rareData->m_uniqueTypeSetMap.set(iter->key, iter->value);
+        }
+
+        {
+            for (auto name : m_rareData->m_privateNames)
+                result->m_rareData->m_privateNames.add(name.key, name.value);
+        }
+    }
+
+    result->m_clonedFrom.set(vm, result, this);
+    result->m_propagateCloneInvalidationToOriginal = propagateCloneInvalidationToOriginal;
+    if (result->m_propagateCloneInvalidationToOriginal == PropagateCloneInvalidationToOriginal::Yes) {
+        // If the original SymbolTable's singleton is already invalidated, the new clone starts out invalidated too.
+        if (m_singleton.hasBeenInvalidated())
+            result->m_singleton.invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
+    }
+    return result;
+}
+
+bool SymbolTable::isCloneOfScopePartOf(SymbolTable& original)
+{
+    if (m_usesSloppyEval != original.m_usesSloppyEval || m_nestedLexicalScope != original.m_nestedLexicalScope || m_scopeType != original.m_scopeType)
+        return false;
+    if (m_maxScopeOffset != original.m_maxScopeOffset)
+        return false;
+    // Of the rare data a clone copies the private names and, when the code is profiled, the type profiler's maps; what
+    // collectDebuggerInfo() adds to a clone is not part of the scope.
+    auto privateNames = [] (SymbolTable& table) -> const PrivateNameEnvironment* {
+        return table.m_rareData && !table.m_rareData->m_privateNames.isEmpty() ? &table.m_rareData->m_privateNames : nullptr;
+    };
+    auto* clonePrivateNames = privateNames(*this);
+    auto* originalPrivateNames = privateNames(original);
+    if (!!clonePrivateNames != !!originalPrivateNames)
+        return false;
+    if (clonePrivateNames && *clonePrivateNames != *originalPrivateNames)
+        return false;
+    auto isPreparedForTypeProfiling = [] (SymbolTable& table) {
+        return table.m_rareData && !table.m_rareData->m_uniqueIDMap.isEmpty();
+    };
+    if (isPreparedForTypeProfiling(original) && !isPreparedForTypeProfiling(*this))
+        return false;
+
+    uint32_t argumentsLength = this->argumentsLength();
+    if (argumentsLength != original.argumentsLength() || !!m_arguments != !!original.m_arguments)
+        return false;
+    for (uint32_t i = 0; i < argumentsLength; ++i) {
+        if (m_arguments->get(i) != original.m_arguments->get(i))
+            return false;
+    }
+
+    // Only this thread takes two of these locks at a time.
+    ConcurrentJSLocker originalLocker(original.m_lock);
+    original.materializeCachedEntriesIfNeeded(originalLocker);
+    ConcurrentJSLocker locker(m_lock);
+    materializeCachedEntriesIfNeeded(locker);
+    unsigned scopeEntries = 0;
+    for (auto& entry : original.m_map) {
+        if (!entry.value.varOffset().isScope())
+            continue;
+        scopeEntries++;
+        auto iter = m_map.find(entry.key);
+        if (iter == m_map.end() || iter->value.varOffset() != entry.value.varOffset() || iter->value.getAttributes() != entry.value.getAttributes())
+            return false;
+    }
+    return m_map.size() == scopeEntries;
+}
+
+void SymbolTable::adoptOriginal(VM& vm, SymbolTable& original)
+{
+    m_clonedFrom.set(vm, this, &original);
+    if (m_propagateCloneInvalidationToOriginal != PropagateCloneInvalidationToOriginal::Yes)
+        return;
+    // Both ways, as between a clone and what it was cloned from (cloneScopePart, notifyCreation).
+    if (m_singleton.hasBeenInvalidated() && !original.m_singleton.hasBeenInvalidated())
+        original.m_singleton.invalidate(vm, StringFireDetail("Singleton invalidated in clone"));
+    else if (original.m_singleton.hasBeenInvalidated() && !m_singleton.hasBeenInvalidated())
+        m_singleton.invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
+}
+
+void SymbolTable::invalidateInferencesOfAbandonedClone(VM& vm)
+{
+    Vector<InlineWatchpointSet*> sets;
+    {
+        ConcurrentJSLocker locker(m_lock);
+        materializeCachedEntriesIfNeeded(locker);
+        for (auto& entry : m_map) {
+            // An entry that nobody watches yet would start out clear when somebody does.
+            entry.value.prepareToWatch();
+            if (auto* set = entry.value.watchpointSet())
+                sets.append(set);
+        }
+    }
+    StringFireDetail detail("The code this SymbolTable was cloned for was generated again with a different scope");
+    m_singleton.invalidate(vm, detail);
+    for (auto* set : sets)
+        set->invalidate(vm, detail);
+}
+
+void SymbolTable::prepareForTypeProfiling(const ConcurrentJSLocker& locker)
+{
+    if (m_rareData)
+        return;
+
+    materializeCachedEntriesIfNeeded(locker);
+    auto& rareData = ensureRareData();
+
+    for (auto iter = m_map.begin(), end = m_map.end(); iter != end; ++iter) {
+        rareData.m_uniqueIDMap.set(iter->key, TypeProfilerNeedsUniqueIDGeneration);
+        rareData.m_offsetToVariableMap.set(iter->value.varOffset(), iter->key);
+    }
+}
+
+String SymbolTable::inferredName()
+{
+    if (!m_rareData)
+        return String();
+    return m_rareData->m_inferredName;
+}
+
+DebuggerLocation SymbolTable::debuggerLocation()
+{
+    if (!m_rareData)
+        return DebuggerLocation();
+    return DebuggerLocation(m_rareData->m_debuggerSourceID, m_rareData->m_debuggerLineColumn.line, m_rareData->m_debuggerLineColumn.column);
+}
+
+void SymbolTable::collectDebuggerInfo(CodeBlock* codeBlock)
+{
+    auto& rareData = ensureRareData();
+    if (!rareData.m_inferredName.isNull())
+        return;
+    rareData.m_inferredName = String::fromUTF8(codeBlock->inferredName().span());
+    ScriptExecutable* executable = codeBlock->ownerExecutable();
+    if (!executable->isHostFunction()) {
+        rareData.m_debuggerSourceID = executable->sourceID();
+        rareData.m_debuggerLineColumn = { static_cast<unsigned>(executable->firstLine()), executable->startColumn() };
+    }
+}
+
+GlobalVariableID SymbolTable::uniqueIDForVariable(const ConcurrentJSLocker&, UniquedStringImpl* key, VM& vm)
+{
+    RELEASE_ASSERT(m_rareData);
+
+    auto iter = m_rareData->m_uniqueIDMap.find(key);
+    auto end = m_rareData->m_uniqueIDMap.end();
+    if (iter == end)
+        return TypeProfilerNoGlobalIDExists;
+
+    GlobalVariableID id = iter->value;
+    if (id == TypeProfilerNeedsUniqueIDGeneration) {
+        id = vm.typeProfiler()->getNextUniqueVariableID();
+        m_rareData->m_uniqueIDMap.set(key, id);
+        m_rareData->m_uniqueTypeSetMap.set(key, TypeSet::create()); // Make a new global typeset for this corresponding ID.
+    }
+
+    return id;
+}
+
+GlobalVariableID SymbolTable::uniqueIDForOffset(const ConcurrentJSLocker& locker, VarOffset offset, VM& vm)
+{
+    RELEASE_ASSERT(m_rareData);
+
+    auto iter = m_rareData->m_offsetToVariableMap.find(offset);
+    auto end = m_rareData->m_offsetToVariableMap.end();
+    if (iter == end)
+        return TypeProfilerNoGlobalIDExists;
+
+    return uniqueIDForVariable(locker, iter->value.get(), vm);
+}
+
+RefPtr<TypeSet> SymbolTable::globalTypeSetForOffset(const ConcurrentJSLocker& locker, VarOffset offset, VM& vm)
+{
+    RELEASE_ASSERT(m_rareData);
+
+    uniqueIDForOffset(locker, offset, vm); // Lazily create the TypeSet if necessary.
+
+    auto iter = m_rareData->m_offsetToVariableMap.find(offset);
+    auto end = m_rareData->m_offsetToVariableMap.end();
+    if (iter == end)
+        return nullptr;
+
+    return globalTypeSetForVariable(locker, iter->value.get(), vm);
+}
+
+RefPtr<TypeSet> SymbolTable::globalTypeSetForVariable(const ConcurrentJSLocker& locker, UniquedStringImpl* key, VM& vm)
+{
+    RELEASE_ASSERT(m_rareData);
+
+    uniqueIDForVariable(locker, key, vm); // Lazily create the TypeSet if necessary.
+
+    auto iter = m_rareData->m_uniqueTypeSetMap.find(key);
+    auto end = m_rareData->m_uniqueTypeSetMap.end();
+    if (iter == end)
+        return nullptr;
+
+    return iter->value;
+}
+
+#if ASSERT_ENABLED
+bool SymbolTable::hasScopedWatchpointSet(InlineWatchpointSet* watchpointSet)
+{
+    for (auto iter = m_map.begin(), end = m_map.end(); iter != end; ++iter) {
+        if (!iter->value.varOffset().isScope())
+            continue;
+
+        auto* entryWatchpointSet = iter->value.watchpointSet();
+        if (entryWatchpointSet && entryWatchpointSet == watchpointSet)
+            return true;
+    }
+
+    return false;
+}
+#endif
+
+void SymbolTable::setCachedEntries(Decoder& decoder, const CachedSymbolTable* record, bool scopePartOnly)
+{
+    ASSERT(m_map.isEmpty() && !m_cachedEntries);
+    m_cachedEntriesDecoder = &decoder;
+    m_cachedEntries = record;
+    m_cachedEntriesScopePartOnly = scopePartOnly;
+}
+
+void SymbolTable::materializeCachedEntries()
+{
+    ASSERT(m_cachedEntries && m_map.isEmpty());
+    VM& vm = this->vm();
+    // Decoding atomizes keys (and may swap JSString contents to atoms): mutator only, and not from inside a GC phase
+    // the mutator is running itself (heap snapshot analysis). See hasCachedEntriesPending(). No GC allocation.
+    if (isCompilationThread() || vm.heap.currentThreadIsDoingGCWork()) [[unlikely]]
+        return;
+    ASSERT(Thread::currentSingleton().atomStringTable() == vm.atomStringTable());
+    RefPtr<Decoder> decoder = std::exchange(m_cachedEntriesDecoder, nullptr);
+    const CachedSymbolTable* record = std::exchange(m_cachedEntries, nullptr);
+    decodeSymbolTableEntries(*decoder, *record, *this, m_cachedEntriesScopePartOnly);
+    m_localToEntry = nullptr; // A compiler thread may have built it from the empty map.
+}
+
+SymbolTable::SymbolTableRareData& SymbolTable::ensureRareDataSlow()
+{
+    auto rareData = makeUnique<SymbolTableRareData>();
+    WTF::storeStoreFence();
+    m_rareData = WTF::move(rareData);
+    return *m_rareData;
+}
+
+void SymbolTable::dump(PrintStream& out) const
+{
+    ConcurrentJSLocker locker(m_lock);
+    Base::dump(out);
+
+    CommaPrinter comma;
+    out.print(" <"_s);
+    if (m_cachedEntries)
+        out.print(comma, "<entries pending>"_s);
+    for (auto& iter : m_map)
+        out.print(comma, *iter.key, ": "_s, iter.value.varOffset());
+    out.println(">"_s);
+}
+
+} // namespace JSC
+

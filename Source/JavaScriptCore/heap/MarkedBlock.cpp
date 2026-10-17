@@ -1,0 +1,912 @@
+/*
+ * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "MarkedBlock.h"
+
+#include "AlignedMemoryAllocator.h"
+#include "FreeListInlines.h"
+#include "JSCJSValueInlines.h"
+#include "MarkedBlockInlines.h"
+#include "SweepingScope.h"
+#include "VMManager.h"
+#include "WeakSetInlines.h"
+#include <wtf/CommaPrinter.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
+#include <wtf/Scope.h>
+
+#if PLATFORM(COCOA)
+#include <wtf/cocoa/CrashReporter.h>
+#endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC {
+
+namespace MarkedBlockInternal {
+static constexpr bool verbose = false;
+}
+
+static constexpr bool computeBalance = false;
+static size_t balance;
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlock);
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlockHandle);
+
+MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)
+{
+    if (computeBalance) {
+        balance++;
+        if (!(balance % 10))
+            dataLog("MarkedBlock Balance: ", balance, "\n");
+    }
+    void* blockSpace = alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
+    if (!blockSpace)
+        return nullptr;
+    if (scribbleFreeCells())
+        scribble(blockSpace, blockSize);
+    return new Handle(heap, alignedMemoryAllocator, blockSpace);
+}
+
+MarkedBlock::Handle::Handle(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, void* blockSpace)
+    : m_markingVersionAtLastSweep(heap.objectSpace().markingVersion())
+    , m_alignedMemoryAllocator(alignedMemoryAllocator)
+    , m_block(new (NotNull, blockSpace) MarkedBlock(heap.vm(), *this))
+    , m_weakSet(heap.vm())
+{
+    heap.didAllocateBlock(blockSize);
+}
+
+MarkedBlock::Handle::~Handle()
+{
+    JSC::Heap& heap = *this->heap();
+    if (computeBalance) {
+        balance--;
+        if (!(balance % 10))
+            dataLog("MarkedBlock Balance: ", balance, "\n");
+    }
+    m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
+    recommitPages();
+    m_block->~MarkedBlock();
+    m_alignedMemoryAllocator->freeAlignedMemory(m_block);
+    heap.didFreeBlock(blockSize);
+}
+
+MarkedBlock::MarkedBlock(VM& vm, Handle& handle)
+{
+    new (&header()) Header(vm, handle);
+    if (MarkedBlockInternal::verbose)
+        dataLog(RawPointer(this), ": Allocated.\n");
+}
+
+MarkedBlock::~MarkedBlock()
+{
+    header().~Header();
+}
+
+MarkedBlock::Header::Header(VM& vm, Handle& handle)
+    : m_handle(handle)
+    , m_vm(&vm)
+    , m_markingVersion(MarkedSpace::nullVersion)
+    , m_newlyAllocatedVersion(MarkedSpace::nullVersion)
+{
+}
+
+MarkedBlock::Header::~Header() = default;
+
+void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
+{
+    RELEASE_ASSERT(m_isFreeListed);
+    m_isFreeListed = false;
+    m_directory->didFinishUsingBlock(this);
+}
+
+void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
+{
+    Locker locker { blockHeader().m_lock };
+    
+    if (MarkedBlockInternal::verbose)
+        dataLog(RawPointer(this), ": MarkedBlock::Handle::stopAllocating!\n");
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    ASSERT(!m_directory->isAllocated(this));
+
+    if (!isFreeListed()) {
+        if (MarkedBlockInternal::verbose)
+            dataLog("There ain't no newly allocated.\n");
+        // This means that we either didn't use this block at all for allocation since last GC,
+        // or someone had already done stopAllocating() before.
+        ASSERT(freeList.allocationWillFail());
+        return;
+    }
+    
+    if (MarkedBlockInternal::verbose)
+        dataLog("Free list: ", freeList, "\n");
+    
+    if (mode == StopAllocatingMode::ForGood) {
+        // MarkedSpace::lastChanceToFinalize() runs next and clears the newly-allocated bitmap before
+        // sweeping, so computing it here would be wasted work. The free list still has to be zapped:
+        // the sweep runs a destructor for every cell that is not zapped.
+        if (m_attributes.destruction != DoesNotNeedDestruction) {
+            freeList.forEach(
+                [&] (HeapCell* cell) {
+                    cell->zap(HeapCell::StopAllocating);
+                });
+        }
+        m_isFreeListed = false;
+        directory()->didFinishUsingBlock(this);
+        return;
+    }
+
+    // Roll back to a coherent state for Heap introspection. Cells newly
+    // allocated from our free list are not currently marked, so we need another
+    // way to tell what's live vs dead. 
+    
+    blockHeader().m_newlyAllocated.clearAll();
+    blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
+    blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+
+    ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
+    bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+    freeList.forEachInterval(
+        [&](char* intervalStart, char* intervalEnd) {
+            if (needsZapping || MarkedBlockInternal::verbose) {
+                for (char* cell = intervalStart; cell < intervalEnd; cell += freeList.cellSize()) {
+                    if constexpr (MarkedBlockInternal::verbose)
+                        dataLog("Free cell: ", RawPointer(cell), "\n");
+                    if (needsZapping)
+                        std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
+                }
+            }
+            blockHeader().m_newlyAllocated.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+        });
+    
+    m_isFreeListed = false;
+    directory()->didFinishUsingBlock(this);
+}
+
+void MarkedBlock::Handle::lastChanceToFinalize()
+{
+    // Concurrent sweeper is shut down at this point.
+    m_directory->assertSweeperIsSuspended();
+    m_directory->setIsAllocated(this, false);
+    m_directory->setIsDestructible(this, true);
+    m_directory->setIsUnswept(this, true);
+    blockHeader().m_marks.clearAll();
+    block().clearHasAnyMarked();
+    blockHeader().m_markingVersion = heap()->objectSpace().markingVersion();
+    m_weakSet.lastChanceToFinalize();
+    blockHeader().m_newlyAllocated.clearAll();
+    blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
+    m_directory->setIsInUse(this, true);
+    sweep(nullptr);
+}
+
+void MarkedBlock::Handle::resumeAllocating(FreeList& freeList)
+{
+    BlockDirectory* directory = this->directory();
+    directory->assertSweeperIsSuspended();
+    {
+        Locker locker { blockHeader().m_lock };
+        
+        if (MarkedBlockInternal::verbose)
+            dataLog(RawPointer(this), ": MarkedBlock::Handle::resumeAllocating!\n");
+
+
+        ASSERT(!directory->isAllocated(this));
+        ASSERT(!isFreeListed());
+        
+        if (!block().hasAnyNewlyAllocated()) {
+            if (MarkedBlockInternal::verbose)
+                dataLog("There ain't no newly allocated.\n");
+            // This means we had already exhausted the block when we stopped allocation.
+            freeList.clear();
+            return;
+        }
+    }
+
+    directory->setIsInUse(this, true);
+
+    // Re-create our free list from before stopping allocation. Note that this may return an empty
+    // freelist, in which case the block will still be Marked!
+    sweep(&freeList);
+}
+
+#if ENABLE(MARKEDBLOCK_TEST_DUMP_INFO)
+
+inline void MarkedBlock::setupTestForDumpInfoAndCrash()
+{
+    static std::atomic<uint64_t> count = 0;
+    char* blockMem = reinterpret_cast<char*>(this);
+
+    // Option set to 0 disables testing.
+    if (++count == Options::markedBlockDumpInfoCount()) {
+        switch (Options::markedBlockDumpInfoCount() & 0xf) {
+        case 1: // Test null VM pointer.
+            dataLogLn("Zeroing MarkedBlock::Header::m_vm");
+            *const_cast<VM**>(&header().m_vm) = nullptr;
+            break;
+        case 2: // Test non-null invalid VM pointer.
+            dataLogLn("Corrupting MarkedBlock::Header::m_vm");
+            *const_cast<VM**>(&header().m_vm) = std::bit_cast<VM*>(0xdeadbeefdeadbeef);
+            break;
+        case 3: // Test contiguous and total zero byte counts: start and end zeroed.
+            dataLogLn("Zeroing start and end of MarkedBlock");
+            memset(blockMem, 0, blockSize / 4);
+            memset(blockMem + 3 * blockSize / 4, 0, blockSize / 4);
+            break;
+        case 4: // Test contiguous and total zero byte counts: entire block zeroed.
+            dataLogLn("Zeroing MarkedBlock");
+            memset(blockMem, 0, blockSize);
+            break;
+        case 5: // Test already freed block (test this case with --useConcurrentGC=0)
+            dataLogLn("Simulating freed MarkedBlock");
+            space()->blocks().remove(this);
+            handle().removeFromDirectory();
+            break;
+        }
+        *reinterpret_cast<uintptr_t*>(&header()) = 0;
+    }
+}
+
+#else
+
+inline void MarkedBlock::setupTestForDumpInfoAndCrash() { }
+
+#endif // ENABLE(MARKEDBLOCK_TEST_DUMP_INFO)
+
+// Called the first time a collection marks a cell in this block while its marks are stale.
+// Resets the marks for this collection without losing the survivors they may still record.
+void MarkedBlock::resetStaleMarks(HeapVersion markingVersion, HeapCell* cell)
+{
+    ASSERT(vm().heap.objectSpace().isMarking());
+    setupTestForDumpInfoAndCrash();
+
+    Locker locker { header().m_lock };
+
+    // Another marker may have reset them since aboutToMark() checked.
+    if (!areMarksStale(markingVersion))
+        return;
+
+    MarkedBlock::Handle* handle = header().handlePointerForNullCheck();
+    if (!handle) [[unlikely]]
+        analyzeInvalidHandleAndCrash(locker, cell);
+
+    BlockDirectory* directory = handle->directory();
+    bool isAllocated;
+    {
+        Locker bitLocker { directory->bitvectorLock() };
+        isAllocated = directory->isAllocated(handle);
+    }
+
+    if (isAllocated || !staleMarksStillRecordSurvivors(markingVersion)) {
+        if (MarkedBlockInternal::verbose)
+            dataLog(RawPointer(this), ": Clearing marks without doing anything else.\n");
+        // When the block is full, its directory's allocated bit says every cell is live
+        // until this collection's End, so the marks are not needed. Otherwise, the
+        // block's marking version indicated that nothing in it was marked as of the last
+        // collection's End, so it has no survivors and the old mark bits are leftovers.
+        // Either way, the marks can just be cleared. m_newlyAllocated is left alone: if
+        // it is current, it records the cells allocated since the last collection.
+        header().m_marks.clearAll();
+    } else {
+        // The stale marks record the survivors, which must stay live: make sure
+        // m_newlyAllocated holds them before the marks are cleared.
+        if (MarkedBlockInternal::verbose)
+            dataLog(RawPointer(this), ": Doing things.\n");
+        HeapVersion newlyAllocatedVersion = space()->newlyAllocatedVersion();
+        if (header().m_newlyAllocatedVersion == newlyAllocatedVersion) {
+            // stopAllocating() rebuilt m_newlyAllocated during this collection by setting
+            // every cell not on the free list. Survivors are never on a free list, so
+            // m_newlyAllocated already holds them.
+            ASSERT(header().m_newlyAllocated.subsumes(header().m_marks));
+            header().m_marks.clearAll();
+        } else {
+            // m_newlyAllocated is stale, so stopAllocating() has not run on the block
+            // since the last collection's End. Either nothing has been allocated in it
+            // since, and the survivors are its only live cells, or the mutator is
+            // allocating from it right now, and the next stopAllocating() rebuilds
+            // m_newlyAllocated to include both the survivors and the cells allocated from
+            // the free list. Either way, move the survivors into m_newlyAllocated, which
+            // isLive() consults for the rest of this collection.
+            header().m_newlyAllocated.setAndClear(header().m_marks);
+            header().m_newlyAllocatedVersion = newlyAllocatedVersion;
+        }
+    }
+    clearHasAnyMarked();
+    // Store the new version last, so that a racing reader never pairs it with the old bits.
+    WTF::storeStoreFence();
+    header().m_markingVersion = markingVersion;
+    
+    // Workaround for a clang regression <rdar://111818130>.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wthread-safety-analysis"
+#endif
+    // This means we're the first ones to mark any object in this block.
+    Locker bitLocker { directory->bitvectorLock() };
+    directory->setIsMarkingNotEmpty(handle, true);
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+}
+
+// Called when the heap's newly-allocated version is about to wrap, at a collection's End,
+// when these bits are retired anyway. Clears them and sets the version to nullVersion, so
+// they can never look current by accident.
+void MarkedBlock::resetNewlyAllocatedForVersionWrap()
+{
+    header().m_newlyAllocated.clearAll();
+    header().m_newlyAllocatedVersion = MarkedSpace::nullVersion;
+}
+
+// Called when the heap's marking version is about to wrap, at a collections's Begin. Keeps the marks of the
+// survivors, those from the version about to be replaced, clears any older stale marks,
+// and sets the version to nullVersion which staleMarksStillRecordSurvivors() has a special case for.
+void MarkedBlock::resetMarksForVersionWrap()
+{
+    if (areMarksStale())
+        header().m_marks.clearAll();
+    header().m_markingVersion = MarkedSpace::nullVersion;
+}
+
+#if ASSERT_ENABLED
+void MarkedBlock::assertMarksNotStale()
+{
+    ASSERT(header().m_markingVersion == vm().heap.objectSpace().markingVersion());
+}
+#endif // ASSERT_ENABLED
+
+bool MarkedBlock::areMarksStale()
+{
+    return areMarksStale(vm().heap.objectSpace().markingVersion());
+}
+
+bool MarkedBlock::Handle::areMarksStale()
+{
+    return m_block->areMarksStale();
+}
+
+bool MarkedBlock::isMarked(const void* p)
+{
+    return isMarked(vm().heap.objectSpace().markingVersion(), p);
+}
+
+void MarkedBlock::Handle::didConsumeFreeList()
+{
+    Locker locker { blockHeader().m_lock };
+    if (MarkedBlockInternal::verbose)
+        dataLog(RawPointer(this), ": MarkedBlock::Handle::didConsumeFreeList!\n");
+    ASSERT(isFreeListed());
+    m_isFreeListed = false;
+    Locker bitLocker(m_directory->bitvectorLock());
+    m_directory->setIsAllocated(this, true);
+    m_directory->didFinishUsingBlock(bitLocker, this);
+}
+
+size_t MarkedBlock::markCount()
+{
+    return areMarksStale() ? 0 : header().m_marks.count();
+}
+
+void MarkedBlock::clearHasAnyMarked()
+{
+    header().m_biasedMarkCount = header().m_markCountBias;
+}
+
+void MarkedBlock::noteMarkedSlow()
+{
+    BlockDirectory* directory = handle().directory();
+    Locker locker { directory->bitvectorLock() };
+    directory->setIsMarkingRetired(&handle(), true);
+}
+
+void MarkedBlock::Handle::removeFromDirectory()
+{
+    if (!m_directory)
+        return;
+    
+    m_directory->removeBlock(this);
+}
+
+void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned index)
+{
+    ASSERT(m_index == std::numeric_limits<unsigned>::max());
+    ASSERT(!m_directory);
+    
+    RELEASE_ASSERT(directory->subspace()->alignedMemoryAllocator() == m_alignedMemoryAllocator);
+    
+    m_index = index;
+    m_directory = directory;
+    blockHeader().m_subspace = directory->subspace();
+    
+    size_t cellSize = directory->cellSize();
+    m_atomsPerCell = (cellSize + atomSize - 1) / atomSize;
+
+    // Discount the payload atoms at the front so that m_startAtom can start on an atom such that
+    // m_atomsPerCell increments from m_startAtom will get us exactly to endAtom when we have filled
+    // up the payload region using bump allocation. This makes simplifies the computation of the
+    // termination condition for iteration later.
+    size_t numberOfUnallocatableAtoms = numberOfPayloadAtoms % m_atomsPerCell;
+    m_startAtom = firstPayloadRegionAtom + numberOfUnallocatableAtoms;
+    ASSERT(m_startAtom < firstPayloadRegionAtom + m_atomsPerCell);
+
+    m_attributes = directory->attributes();
+
+    if (!isJSCellKind(m_attributes.cellKind))
+        RELEASE_ASSERT(m_attributes.destruction == DoesNotNeedDestruction);
+    
+    double markCountBias = -(Options::minMarkedBlockUtilization() * cellsPerBlock());
+    
+    // The mark count bias should be comfortably within this range.
+    RELEASE_ASSERT(markCountBias > static_cast<double>(std::numeric_limits<int16_t>::min()));
+    RELEASE_ASSERT(markCountBias < 0);
+    
+    // This means we haven't marked anything yet.
+    blockHeader().m_biasedMarkCount = blockHeader().m_markCountBias = static_cast<int16_t>(markCountBias);
+}
+
+void MarkedBlock::Handle::didRemoveFromDirectory()
+{
+    ASSERT(m_index != std::numeric_limits<unsigned>::max());
+    ASSERT(m_directory);
+    
+    m_index = std::numeric_limits<unsigned>::max();
+    m_directory = nullptr;
+    blockHeader().m_subspace = nullptr;
+}
+
+#if ASSERT_ENABLED
+void MarkedBlock::assertValidCell(VM& vm, HeapCell* cell) const
+{
+    RELEASE_ASSERT(&vm == &this->vm());
+    RELEASE_ASSERT(const_cast<MarkedBlock*>(this)->handle().cellAlign(cell) == cell);
+}
+#endif // ASSERT_ENABLED
+
+void MarkedBlock::Handle::dumpState(PrintStream& out)
+{
+    CommaPrinter comma;
+    Locker locker { directory()->bitvectorLock() };
+    directory()->forEachBitVectorWithName(
+        [&](auto vectorRef, const char* name) {
+            out.print(comma, name, ":"_s, vectorRef[index()] ? "YES"_s : "no"_s);
+        });
+}
+
+Subspace* MarkedBlock::Handle::subspace() const
+{
+    return directory()->subspace();
+}
+
+void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollection)
+{
+#if OS(WINDOWS)
+    // OSAllocator::decommit makes the pages inaccessible there; this scheme relies on decommitted pages reading as zero.
+    return;
+#else
+    if (!Options::decommitUnusedMarkedBlockPages())
+        return;
+    // A cell's destructor may read its Structure even when that Structure died in the same cycle and its block was
+    // swept first, so dead Structures must stay readable; and at shutdown everything is swept as dead in arbitrary order.
+    bool isStructureSpace = false;
+#define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == &heap()->name;
+    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+#undef CHECK_STRUCTURE_SPACE
+    if (isStructureSpace || heap()->isShuttingDown())
+        return;
+    size_t pageSize = WTF::pageSize();
+    if (pageSize >= blockSize || blockSize / pageSize > 16)
+        return;
+    // Only for what a full collection left behind (the blocks an eden collection adds to the unswept set are the young
+    // ones, refilled straight away, so decommitting there mostly buys page faults) and only for blocks that are not
+    // mostly full anyway. The test is whether this sweep is the block's first since the last full collection began, not
+    // which collection finished last: an eden collection can run between the end of a full one and the incremental
+    // sweeper's timer slice that reaches the block, and the block is no younger for it.
+    if (!isFirstSweepSinceFullCollection && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections())
+        return;
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    if (m_directory->isMarkingRetired(this))
+        return;
+    m_directory->releaseAssertAcquiredBitVectorLock();
+    unsigned pageCount = blockSize / pageSize;
+    size_t atomsPerPage = pageSize / atomSize;
+    RELEASE_ASSERT(!m_isFreeListed && !isAllocated());
+
+    uint16_t all = (1u << pageCount) - 1;
+    uint16_t keep = 0;
+    for (size_t offset = 0; offset < headerSize; offset += pageSize)
+        keep |= 1u << (offset / pageSize);
+    {
+        // The same liveness rules as isLive(), resolved once for the whole block: which bit set (if any) says a cell is
+        // live right now.
+        MarkedSpace& space = *this->space();
+        Header& header = block().header();
+        Locker locker { header.m_lock };
+        const WTF::BitSet<atomsPerBlock>* live = nullptr;
+        if (header.m_newlyAllocatedVersion == space.newlyAllocatedVersion())
+            live = &header.m_newlyAllocated;
+        else if (!block().areMarksStale(space.markingVersion()) || (space.isMarking() && block().staleMarksStillRecordSurvivors(space.markingVersion())))
+            live = &header.m_marks;
+        if (live) {
+            for (unsigned page = 0; page < pageCount; ++page) {
+                if (keep & (1u << page))
+                    continue;
+                size_t firstAtom = page * atomsPerPage;
+                // A live cell starting in this page, or the cell straddling in from the previous page being live, keeps it.
+                if (live->findBit(firstAtom, true) < firstAtom + atomsPerPage) {
+                    keep |= 1u << page;
+                    continue;
+                }
+                if (firstAtom > m_startAtom) {
+                    size_t straddler = m_startAtom + (firstAtom - 1 - m_startAtom) / m_atomsPerCell * m_atomsPerCell;
+                    if (straddler + m_atomsPerCell > firstAtom && live->get(straddler))
+                        keep |= 1u << page;
+                }
+            }
+        }
+    }
+
+    uint16_t toDecommit = all & ~keep & ~m_decommittedPages;
+    if (!toDecommit)
+        return;
+    char* base = reinterpret_cast<char*>(&block());
+    for (unsigned page = 0; page < pageCount;) {
+        if (!(toDecommit & (1u << page))) {
+            ++page;
+            continue;
+        }
+        unsigned runEnd = page;
+        while (runEnd < pageCount && (toDecommit & (1u << runEnd)))
+            ++runEnd;
+        // Dead cells in these pages read back as zero afterwards, i.e. zapped: destructors already ran in the
+        // sweep that preceded this call, and building a free list later writes before it reads.
+        OSAllocator::decommit(base + page * pageSize, (runEnd - page) * pageSize);
+        if (Options::poisonDecommittedMarkedBlockPages()) [[unlikely]]
+            poisonDecommittedPages(base + page * pageSize, (runEnd - page) * pageSize);
+        page = runEnd;
+    }
+    m_decommittedPages |= toDecommit;
+#endif
+}
+
+// Testing: nothing may read a decommitted page until the block is swept to a free list or freed. Under ASan a read is
+// reported where it happens; otherwise the pages are filled with a pattern that is neither a zapped cell nor a valid one.
+void MarkedBlock::Handle::poisonDecommittedPages(void* start, size_t size)
+{
+#if ASAN_ENABLED
+    __asan_poison_memory_region(start, size);
+#else
+    memset(start, 0xbd, size);
+#endif
+}
+
+void MarkedBlock::Handle::unpoisonDecommittedPages()
+{
+    size_t pageSize = WTF::pageSize();
+    unsigned pageCount = blockSize / pageSize;
+    char* base = reinterpret_cast<char*>(&block());
+    for (unsigned page = 0; page < pageCount; ++page) {
+        if (!(m_decommittedPages & (1u << page)))
+            continue;
+#if ASAN_ENABLED
+        __asan_unpoison_memory_region(base + page * pageSize, pageSize);
+#else
+        memset(base + page * pageSize, 0, pageSize);
+#endif
+    }
+}
+
+void MarkedBlock::Handle::recommitPages()
+{
+    if (!m_decommittedPages) [[likely]]
+        return;
+    if (Options::poisonDecommittedMarkedBlockPages()) [[unlikely]]
+        unpoisonDecommittedPages();
+#if OS(DARWIN)
+    // OSAllocator::decommit is MADV_FREE_REUSABLE there and wants a matching MADV_FREE_REUSE for the kernel's
+    // accounting; elsewhere decommitted anonymous pages simply fault back in as zero pages.
+    size_t pageSize = WTF::pageSize();
+    unsigned pageCount = blockSize / pageSize;
+    char* base = reinterpret_cast<char*>(&block());
+    for (unsigned page = 0; page < pageCount; ++page) {
+        if (m_decommittedPages & (1u << page))
+            OSAllocator::commit(base + page * pageSize, pageSize, true, false);
+    }
+#endif
+    m_decommittedPages = 0;
+}
+
+void MarkedBlock::Handle::sweep(FreeList* freeList)
+{
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    ASSERT(m_directory->isInUse(this));
+
+    SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
+    bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    // Nothing has been allocated into a block that is still swept, so no weak handle into it can have
+    // been created and died since; re-sweeping its weak set would find nothing.
+    if (sweepMode == SweepOnly && !needsDestruction && !m_directory->isUnswept(this))
+        return;
+
+    // A sweep while a full collection is marking cannot go by that collection's marks yet (the version has moved on, the
+    // marks have not caught up): it is not that collection's first sweep and must not count as it. An eden collection's
+    // marking leaves the version and the old blocks' marks alone, so a sweep during it counts like any other.
+    bool marksArePending = space()->isMarking() && heap()->collectionScope() == CollectionScope::Full;
+    bool isFirstSweepSinceFullCollection = !marksArePending && m_markingVersionAtLastSweep != space()->markingVersion();
+    if (!marksArePending)
+        m_markingVersionAtLastSweep = space()->markingVersion();
+
+    SweepingScope sweepingScope(*heap());
+
+    m_weakSet.sweep();
+
+    // If we don't "release" our read access without locking then the ThreadSafetyAnalysis code gets upset with the locker below.
+    m_directory->releaseAssertAcquiredBitVectorLock();
+
+    if (sweepMode == SweepOnly && !needsDestruction) {
+        if (!isEmpty())
+            decommitUnusedPages(isFirstSweepSinceFullCollection);
+        Locker locker(m_directory->bitvectorLock());
+        m_directory->setIsUnswept(this, false);
+        return;
+    }
+
+    m_zeroPagesDuringSweep = m_decommittedPages;
+    auto clearZeroPages = makeScopeExit([&] {
+        m_zeroPagesDuringSweep = 0;
+    });
+    if (sweepMode == SweepToFreeList)
+        recommitPages();
+
+    if (m_isFreeListed) [[unlikely]] {
+        dataLog("FATAL: ", RawPointer(this), "->sweep: block is free-listed.\n");
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    
+    if (isAllocated()) [[unlikely]] {
+        dataLog("FATAL: ", RawPointer(this), "->sweep: block is allocated.\n");
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    
+    if (space()->isMarking())
+        blockHeader().m_lock.lock();
+    
+    subspace()->didBeginSweepingToFreeList(this);
+    
+    if (needsDestruction) {
+        subspace()->finishSweep(*this, freeList);
+        if (sweepMode == SweepOnly && !isEmpty())
+            decommitUnusedPages(isFirstSweepSinceFullCollection);
+        return;
+    }
+    
+    // Handle the no-destructor specializations here, since we have the most of those. This
+    // ensures that they don't get re-specialized for every destructor space.
+    
+    EmptyMode emptyMode = this->emptyMode();
+    ScribbleMode scribbleMode = this->scribbleMode();
+    NewlyAllocatedMode newlyAllocatedMode = this->newlyAllocatedMode();
+    MarksMode marksMode = this->marksMode();
+    
+    auto trySpecialized = [&] () -> bool {
+        if (sweepMode != SweepToFreeList)
+            return false;
+        if (scribbleMode != DontScribble)
+            return false;
+        if (newlyAllocatedMode != DoesNotHaveNewlyAllocated)
+            return false;
+        
+        switch (emptyMode) {
+        case IsEmpty:
+            switch (marksMode) {
+            case MarksNotStale:
+                specializedSweep<true, IsEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksNotStale>(freeList, IsEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksNotStale, [] (VM&, JSCell*) { });
+                return true;
+            case MarksStale:
+                specializedSweep<true, IsEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksStale>(freeList, IsEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksStale, [] (VM&, JSCell*) { });
+                return true;
+            }
+            break;
+        case NotEmpty:
+            switch (marksMode) {
+            case MarksNotStale:
+                specializedSweep<true, NotEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksNotStale>(freeList, IsEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksNotStale, [] (VM&, JSCell*) { });
+                return true;
+            case MarksStale:
+                specializedSweep<true, NotEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksStale>(freeList, IsEmpty, SweepToFreeList, BlockHasNoDestructors, DontScribble, DoesNotHaveNewlyAllocated, MarksStale, [] (VM&, JSCell*) { });
+                return true;
+            }
+            break;
+        }
+        
+        return false;
+    };
+    
+    if (trySpecialized())
+        return;
+
+    // The template arguments don't matter because the first one is false.
+    specializedSweep<false, IsEmpty, SweepOnly, BlockHasNoDestructors, DontScribble, HasNewlyAllocated, MarksStale>(freeList, emptyMode, sweepMode, BlockHasNoDestructors, scribbleMode, newlyAllocatedMode, marksMode, [] (VM&, JSCell*) { });
+}
+
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void crashDueToGarbageCollectorClientDanglingReference_CheckRootsAndBarriers(HeapCell* heapCell, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM)
+{
+#if PLATFORM(COCOA)
+    StringPrintStream out;
+    out.printf("JavaScriptCore garbage collector detected a dangling reference to cell %p. "
+        "The referenced object was collected because it was not properly kept alive. "
+        "JSC API clients: do not call JSValueUnprotect on values still in use, "
+        "do not store JSValueRef in heap-allocated memory without calling JSValueProtect, "
+        "do not use values after their JSContext has been destroyed, "
+        "and do not use values across different JSContextGroups (JSVirtualMachines). "
+        "WebKit developers: check for missing write barriers, incomplete visitChildren implementations, "
+        "or unrooted GC objects.",
+        heapCell);
+    auto message = out.toUTF8CString();
+    dataLogLn(message);
+    WTF::setCrashLogMessage(WTF::move(message));
+#endif
+    CRASH_WITH_INFO(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+}
+
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::dumpInfoAndCrashForInvalidHandleV2(HeapCell* heapCell, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM)
+{
+    CRASH_WITH_INFO(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+}
+
+NO_RETURN_DUE_TO_CRASH NEVER_INLINE void MarkedBlock::analyzeInvalidHandleAndCrash(AbstractLocker&, HeapCell* heapCell)
+{
+    VM* blockVM = header().m_vm;
+    VM* actualVM = nullptr;
+    bool isBlockVMValid = false;
+    bool isBlockInSet = false;
+    bool isBlockInDirectory = false;
+    bool foundInBlockVM = false;
+    size_t contiguousZeroBytesHeadOfBlock = 0;
+    size_t totalZeroBytesInBlock = 0;
+    uint64_t cellFirst8Bytes = 0;
+    unsigned subspaceHash = 0;
+    MarkedBlock::Handle* handle = nullptr;
+
+    if (heapCell) {
+        uint64_t* p = std::bit_cast<uint64_t*>(heapCell);
+        cellFirst8Bytes = *p;
+    }
+
+    auto updateCrashLogMsg = [&](int line) {
+#if PLATFORM(COCOA)
+        StringPrintStream out;
+        out.printf("Suspected memory corruption: invalid handle [line=%d]: markedBlock=%p; heapCell=%p; cellFirst8Bytes=%#llx; subspaceHash=%#x; contiguousZeros=%lu; totalZeros=%lu; blockVM=%p; actualVM=%p; isBlockVMValid=%d; isBlockInSet=%d; isBlockInDir=%d; foundInBlockVM=%d;",
+            line, this, heapCell, cellFirst8Bytes, subspaceHash, contiguousZeroBytesHeadOfBlock, totalZeroBytesInBlock, blockVM, actualVM, isBlockVMValid, isBlockInSet, isBlockInDirectory, foundInBlockVM);
+        auto message = out.toUTF8CString();
+        dataLogLn(message);
+        WTF::setCrashLogMessage(WTF::move(message));
+#else
+        UNUSED_PARAM(line);
+#endif
+    };
+    updateCrashLogMsg(__LINE__);
+
+    char* blockStart = std::bit_cast<char*>(this);
+    bool sawNonZero = false;
+    for (auto mem = blockStart; mem < blockStart + MarkedBlock::blockSize; mem++) {
+        // Exclude the MarkedBlock::Header::m_lock from the zero scan since taking the lock writes a non-zero value.
+        auto isMLockBytes = [blockStart](char* p) ALWAYS_INLINE_LAMBDA {
+            constexpr size_t lockOffset = offsetOfHeader + OBJECT_OFFSETOF(MarkedBlock::Header, m_lock);
+            size_t offset = p - blockStart;
+            return lockOffset <= offset && offset < lockOffset + sizeof(MarkedBlock::Header::m_lock);
+        };
+        bool byteIsZero = !*mem;
+        if (byteIsZero || isMLockBytes(mem)) {
+            totalZeroBytesInBlock++;
+            if (!sawNonZero)
+                contiguousZeroBytesHeadOfBlock++;
+        } else
+            sawNonZero = true;
+    }
+    updateCrashLogMsg(__LINE__);
+
+    isBlockVMValid = VMManager::findMatchingVM([&] (VM& vm) {
+        return blockVM == &vm;
+    });
+    updateCrashLogMsg(__LINE__);
+
+    if (isBlockVMValid) {
+        MarkedSpace& objectSpace = blockVM->heap.objectSpace();
+        isBlockInSet = objectSpace.blocks().set().contains(this);
+        handle = objectSpace.findMarkedBlockHandleDebug(this);
+        isBlockInDirectory = !!handle;
+        foundInBlockVM = isBlockInSet || isBlockInDirectory;
+        updateCrashLogMsg(__LINE__);
+    }
+
+    if (!foundInBlockVM) {
+        // Search all VMs to see if this block belongs to any VM.
+        VMManager::forEachVM([&](VM& vm) {
+            if (!vm.isInService())
+                return IterationStatus::Continue;
+
+            MarkedSpace& objectSpace = vm.heap.objectSpace();
+            isBlockInSet = objectSpace.blocks().set().contains(this);
+            handle = objectSpace.findMarkedBlockHandleDebug(this);
+            isBlockInDirectory = !!handle;
+            // Either of them is true indicates that the block belongs to the VM.
+            if (isBlockInSet || isBlockInDirectory) {
+                actualVM = &vm;
+                updateCrashLogMsg(__LINE__);
+                return IterationStatus::Done;
+            }
+            return IterationStatus::Continue;
+        });
+    }
+    updateCrashLogMsg(__LINE__);
+
+    if (handle && handle->directory() && handle->directory()->subspace())
+        subspaceHash = handle->directory()->subspace()->nameHash();
+    updateCrashLogMsg(__LINE__);
+
+    uint64_t bitfield = 0xab00ab01ab020000;
+    if (!isBlockVMValid)
+        bitfield |= 1 << 7;
+    if (!isBlockInSet)
+        bitfield |= 1 << 6;
+    if (!isBlockInDirectory)
+        bitfield |= 1 << 5;
+    if (!foundInBlockVM)
+        bitfield |= 1 << 4;
+
+    static_assert(MarkedBlock::blockSize < (1ull << 32));
+    uint64_t zeroCounts = contiguousZeroBytesHeadOfBlock | (static_cast<uint64_t>(totalZeroBytesInBlock) << 32);
+
+    // If the block isn't attached to any VM's directory or block set, then the block was either already freed or the heapCell isn't
+    // really a heapCell. Assume either of these cases are due to a GC client bug not keeping this cell or the cell pointing at this cell alive.
+    if (!foundInBlockVM && !isBlockInSet && !isBlockInDirectory)
+        crashDueToGarbageCollectorClientDanglingReference_CheckRootsAndBarriers(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+
+    // Otherwise, the block is attached to some VM yet in some inconsistent state that is probably due to general memory corruption.
+    dumpInfoAndCrashForInvalidHandleV2(heapCell, cellFirst8Bytes, zeroCounts, bitfield, subspaceHash, blockVM, actualVM);
+}
+
+} // namespace JSC
+
+namespace WTF {
+
+void printInternal(PrintStream& out, JSC::MarkedBlock::Handle::SweepMode mode)
+{
+    switch (mode) {
+    case JSC::MarkedBlock::Handle::SweepToFreeList:
+        out.print("SweepToFreeList");
+        return;
+    case JSC::MarkedBlock::Handle::SweepOnly:
+        out.print("SweepOnly");
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+} // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

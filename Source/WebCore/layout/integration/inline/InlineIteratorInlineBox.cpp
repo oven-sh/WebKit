@@ -1,0 +1,141 @@
+/*
+ * Copyright (C) 2021 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "InlineIteratorInlineBox.h"
+
+#include "LayoutIntegrationLineLayout.h"
+#include "RenderBlockFlowInlines.h"
+#include "StyleComputedStyle+GettersInlines.h"
+
+namespace WebCore {
+namespace InlineIterator {
+
+InlineBox::InlineBox(const LayoutIntegration::InlineContent& inlineContent, size_t boxIndex)
+    : Box(inlineContent, boxIndex)
+{
+}
+
+RectEdges<bool> InlineBox::closedEdges() const
+{
+    RectEdges<bool> closedEdges { true };
+    if (style()->boxDecorationBreak() == BoxDecorationBreak::Clone)
+        return closedEdges;
+    auto writingMode = style()->writingMode();
+    // Layout knows whether a fragment of an inline box has its start/end (the root inline box is not fragmented this way).
+    if (displayBox().isNonRootInlineBox()) {
+        closedEdges.setStart(displayBox().isFirstFragment(), writingMode);
+        closedEdges.setEnd(displayBox().isLastFragment(), writingMode);
+        return closedEdges;
+    }
+    bool isFirst = !nextInlineBoxLineLeftward();
+    bool isLast = !nextInlineBoxLineRightward();
+    closedEdges.setStart(isFirst, writingMode);
+    closedEdges.setEnd(isLast, writingMode);
+    return closedEdges;
+};
+
+InlineBoxIterator InlineBox::nextInlineBoxLineRightward() const
+{
+    return InlineBoxIterator(*this).traverseInlineBoxLineRightward();
+}
+
+InlineBoxIterator InlineBox::nextInlineBoxLineLeftward() const
+{
+    return InlineBoxIterator(*this).traverseInlineBoxLineLeftward();
+}
+
+LeafBoxIterator InlineBox::firstLeafBox() const
+{
+    return { firstLeafBoxForInlineBox() };
+}
+
+LeafBoxIterator InlineBox::lastLeafBox() const
+{
+    return { lastLeafBoxForInlineBox() };
+}
+
+LeafBoxIterator InlineBox::endLeafBox() const
+{
+    if (auto last = lastLeafBox())
+        return last->nextLineRightwardOnLine();
+    return { };
+}
+
+IteratorRange<BoxIterator> InlineBox::descendants() const
+{
+    BoxIterator begin(*this);
+    begin.traverseLineRightwardOnLine();
+
+    BoxIterator end(*this);
+    end.traverseLineRightwardOnLineSkippingChildren();
+
+    return { begin, end };
+}
+
+InlineBoxIterator::InlineBoxIterator(const Box& box)
+    : BoxIterator(box)
+{
+}
+
+InlineBoxIterator& InlineBoxIterator::traverseInlineBoxLineRightward()
+{
+    m_box.traverseNextInlineBox();
+    return *this;
+}
+
+InlineBoxIterator& InlineBoxIterator::traverseInlineBoxLineLeftward()
+{
+    m_box.traversePreviousInlineBox();
+    return *this;
+}
+
+InlineBoxIterator lineLeftmostInlineBoxFor(const RenderBoxModelObject& inlineBox)
+{
+    if (CheckedPtr lineLayout = LayoutIntegration::LineLayout::containing(inlineBox))
+        return lineLayout->firstInlineBoxFor(inlineBox);
+    return { };
+}
+
+InlineBoxIterator firstRootInlineBoxFor(const RenderBlockFlow& block)
+{
+    if (CheckedPtr lineLayout = block.inlineLayout())
+        return lineLayout->firstRootInlineBox();
+    return { };
+}
+
+InlineBoxIterator inlineBoxFor(const LayoutIntegration::InlineContent& content, const InlineDisplay::Box& box)
+{
+    return inlineBoxFor(content, content.indexForBox(box));
+}
+
+InlineBoxIterator inlineBoxFor(const LayoutIntegration::InlineContent& content, size_t boxIndex)
+{
+    ASSERT(content.displayContent().boxes[boxIndex].isInlineBox());
+    return { Box { content, boxIndex } };
+}
+
+}
+}

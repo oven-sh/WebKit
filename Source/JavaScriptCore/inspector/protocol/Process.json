@@ -1,0 +1,150 @@
+{
+  "domain": "Process",
+  "description": "Provides commands and events for process management within the Bun runtime.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [
+    {
+      "id": "ProcessId",
+      "type": "integer",
+      "description": "Unique identifier for a spawned process."
+    },
+    {
+      "id": "ExitCode",
+      "type": "integer",
+      "description": "Process exit code."
+    },
+    {
+      "id": "Environment",
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Environment variables as a flat array of key/value strings. [key1, value1, key2, value2, ...]"
+    },
+    {
+      "id": "Arguments",
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Command line arguments array."
+    }
+  ],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables the Process domain."
+    },
+    {
+      "name": "spawn",
+      "description": "Spawns a new process.",
+      "parameters": [
+        {
+          "name": "command",
+          "type": "string",
+          "description": "The command to execute."
+        },
+        {
+          "name": "argv",
+          "$ref": "Arguments",
+          "optional": true,
+          "description": "Command line arguments. Defaults to empty array."
+        },
+        {
+          "name": "cwd",
+          "type": "string",
+          "optional": true,
+          "description": "Working directory for the process. Defaults to current working directory."
+        },
+        {
+          "name": "env",
+          "$ref": "Environment",
+          "optional": true,
+          "description": "Environment variables for the process. If not specified, inherits from parent process."
+        },
+        {
+          "name": "timeout",
+          "type": "number",
+          "optional": true,
+          "description": "Timeout in milliseconds after which the process will be killed. 0 means no timeout."
+        }
+      ],
+      "returns": [
+        {
+          "name": "processId",
+          "$ref": "ProcessId",
+          "description": "Unique identifier for the spawned process."
+        }
+      ]
+    },
+    {
+      "name": "kill",
+      "description": "Kills a spawned process.",
+      "parameters": [
+        {
+          "name": "processId",
+          "$ref": "ProcessId",
+          "description": "Identifier of the process to kill."
+        },
+        {
+          "name": "signal",
+          "type": "string",
+          "optional": true,
+          "description": "Signal to send to the process. Defaults to 'SIGTERM'."
+        }
+      ]
+    },
+    {
+      "name": "write",
+      "description": "Writes data to a process's stdin.",
+      "parameters": [
+        {
+          "name": "processId",
+          "$ref": "ProcessId",
+          "description": "Identifier of the process to write to."
+        },
+        {
+          "name": "data",
+          "type": "string",
+          "description": "Data to write to the process's stdin."
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "stdio",
+      "description": "Fired when a process produces output on stdout or stderr.",
+      "parameters": [
+        {
+          "name": "data",
+          "type": "string",
+          "description": "The stdio data from the process."
+        },
+        {
+          "name": "processId",
+          "$ref": "ProcessId",
+          "description": "Identifier of the process that produced the data."
+        },
+        {
+          "name": "stream",
+          "type": "integer",
+          "description": "The stdio stream that produced the data."
+        }
+      ]
+    },
+    {
+      "name": "exited",
+      "description": "Fired when a spawned process exits.",
+      "parameters": [
+        {
+          "name": "processId",
+          "$ref": "ProcessId",
+          "description": "Identifier of the process that exited."
+        },
+        {
+          "name": "exitCode",
+          "$ref": "ExitCode",
+          "description": "Exit code of the process."
+        }
+      ]
+    }
+  ]
+}

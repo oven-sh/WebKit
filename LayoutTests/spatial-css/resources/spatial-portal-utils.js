@@ -1,0 +1,163 @@
+const createPortal = (test, { width, height, portalTransform, portalAction } = {}) => {
+    const portal = document.createElement("div");
+    portal.className = "portal";
+    if (width)
+        portal.style.width = width;
+    if (height)
+        portal.style.height = height;
+    if (portalTransform)
+        portal.style.portalTransform = portalTransform;
+    if (portalAction)
+        portal.style.portalAction = portalAction;
+    document.body.appendChild(portal);
+    test.add_cleanup(() => portal.remove());
+    return portal;
+};
+
+const appendModel = (portal, asset, stageMode) => {
+    const model = document.createElement("model");
+    if (stageMode)
+        model.stageMode = stageMode;
+    portal.appendChild(model);
+    const source = document.createElement("source");
+    source.src = `../model-element/resources/${asset}`;
+    model.appendChild(source);
+    return model;
+};
+
+// Wraps the internals values back into a DOMMatrix.
+const resolvedPortalTransform = portal => {
+    const values = internals.spatialPortalResolvedTransform(portal);
+    return values ? new DOMMatrixReadOnly(values) : null;
+};
+
+const portalTransformsApproxEqual = (a, b) => {
+    if (!a || !b)
+        return false;
+
+    const aValues = a.toFloat64Array();
+    const bValues = b.toFloat64Array();
+    return aValues.every((value, index) => Math.abs(value - bValues[index]) <= epsilon);
+};
+
+const portalTransformScaleIsUnit = transform => {
+    return !!transform
+        && Math.abs(transform.m11 - 1) < epsilon
+        && Math.abs(transform.m22 - 1) < epsilon
+        && Math.abs(transform.m33 - 1) < epsilon;
+};
+
+const portalTransformIsResolved = transform => !!transform;
+const portalTransformIsCleared = transform => transform === null;
+
+const resolvedTransformForPortal = async (test, asset, portalTransform, portalOptions = { }) => {
+    const portal = createPortal(test, { ...portalOptions, portalTransform });
+    const model = appendModel(portal, asset);
+    await model.ready;
+    return await waitForPortalTransform(portal, portalTransformIsResolved, `portal-transform: ${portalTransform ?? "auto"}`);
+};
+
+async function waitFor(predicate, description, timeout = 5000) {
+    const startTime = Date.now();
+
+    while (!predicate()) {
+        if (Date.now() - startTime > timeout)
+            throw new Error(`Timeout waiting for ${description}`);
+
+        await sleepForSeconds(0.05);
+    }
+}
+
+async function waitForPortalTransform(portal, predicate, description, timeout = 5000) {
+    const startTime = Date.now();
+
+    while (true) {
+        const transform = resolvedPortalTransform(portal);
+        if (predicate(transform))
+            return transform;
+
+        if (Date.now() - startTime > timeout)
+            throw new Error(`Timeout waiting for the portal's resolved transform: ${description}`);
+
+        await sleepForSeconds(0.1);
+    }
+}
+
+async function waitForEntityTransform(model, predicate, description, timeout = 5000) {
+    const startTime = Date.now();
+
+    while (true) {
+        const transform = model.entityTransform;
+        if (predicate(transform))
+            return transform;
+
+        if (Date.now() - startTime > timeout)
+            throw new Error(`Timeout waiting for the child's entity transform: ${description}`);
+
+        await sleepForSeconds(0.1);
+    }
+}
+
+// The 3D matrix assertions reject a 2D argument outright, and DOMMatrix stays 2D until an operation touches z.
+const as3d = matrix => new DOMMatrixReadOnly(matrix.toFloat64Array());
+
+const effectiveEnvironmentMap = element => internals.effectiveEnvironmentMap(element);
+
+const declareEnvironmentMap = (test, { name, format = "equirectangular", src } = {}) => {
+    const descriptors = [];
+    if (name !== undefined)
+        descriptors.push(`name: "${name}"`);
+    if (format !== undefined)
+        descriptors.push(`format: ${format}`);
+    if (src !== undefined)
+        descriptors.push(`src: url("${src}")`);
+
+    const text = `@environment-map { ${descriptors.join("; ")} }`;
+
+    const style = document.createElement("style");
+    style.textContent = text;
+    document.head.appendChild(style);
+    test.add_cleanup(() => style.remove());
+    return style;
+};
+
+async function waitForEnvironmentMap(element, predicate, description, timeout = 5000) {
+    const startTime = Date.now();
+
+    while (true) {
+        const value = effectiveEnvironmentMap(element);
+        if (predicate(value))
+            return value;
+
+        if (Date.now() - startTime > timeout)
+            throw new Error(`Timeout waiting for the effective environment map: ${description}`);
+
+        await sleepForSeconds(0.1);
+    }
+}
+
+const parseSceneGraph = text => {
+    const entities = [];
+    const openEntities = [];
+    for (const line of text.split("\n")) {
+        const depth = line.search(/\S/);
+        const entityMatch = /^\s*\(entity(?: (.+))?$/.exec(line);
+        if (entityMatch) {
+            while (openEntities.length && openEntities.at(-1).depth >= depth)
+                openEntities.pop();
+            const entity = { name: entityMatch[1] ?? "", element: null, parent: openEntities.at(-1) ?? null, depth };
+            entities.push(entity);
+            openEntities.push(entity);
+            continue;
+        }
+
+        const elementMatch = /^\s*\(element (.+)\)$/.exec(line);
+        if (elementMatch && openEntities.length)
+            openEntities.at(-1).element = elementMatch[1];
+    }
+    return entities;
+};
+
+const parentOfElement = (entities, label) => entities.find(entity => entity.element === label)?.parent;
+
+const modelSceneGraph = async element => parseSceneGraph(await internals.modelSceneGraphAsText(element));

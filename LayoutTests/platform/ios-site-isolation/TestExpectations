@@ -1,0 +1,67 @@
+# Test expectations for iOS with --site-isolation
+
+####################
+# Tests that crash #
+####################
+imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Crash ]
+
+#######################
+# Tests that time out #
+#######################
+http/tests/resourceLoadStatistics/add-blocking-to-redirect.html [ Timeout ]
+http/tests/resourceLoadStatistics/strip-referrer-to-origin-for-third-party-redirects.html [ Timeout ]
+http/tests/resourceLoadStatistics/strip-referrer-to-origin-for-third-party-requests.html [ Timeout ]
+http/tests/workers/service/resultingClientId.https.html [ Timeout ]
+platform/ios/ios/plugin/youtube-flash-plugin-iframe.html [ Timeout ]
+http/tests/navigation/cross-site-iframe-nav-with-bfcache.html [ Timeout ]
+
+########################
+# Tests that Text fail #
+########################
+fast/forms/ios/focus-input-via-button-no-scaling.html [ Failure ]
+fast/viewport/ios/viewport-fit-auto.html [ Pass Failure ]
+http/tests/fast/events/touch/ios/block-without-overflow-scroll-and-passive-observer-on-document-scrolling-state.html [ Failure ]
+http/tests/fast/events/touch/ios/block-without-overflow-scroll-scrolling-state.html [ Failure ]
+http/wpt/webrtc/third-party-frame-ice-candidate-filtering.html [ Failure ]
+imported/w3c/web-platform-tests/css/css-viewport/zoom/zoom-iframe-dynamic.html [ Failure ]
+imported/w3c/web-platform-tests/html/interaction/focus/focus-input-type-switch.html [ Failure ]
+imported/w3c/web-platform-tests/html/semantics/interactive-elements/the-details-element/details-toggle-source.html [ Failure ]
+imported/w3c/web-platform-tests/webcodecs/videoFrame-serialization.crossAgentCluster.https.html [ Failure ]
+media/audio-play-with-video-element-interrupted.html [ Pass Failure Timeout ]
+imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ]
+imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/same-origin-top-navigation-without-user-activation.window.html [ Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-getStats.https.html?rest [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
+webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count.html [ Pass Failure ]
+
+#########################
+# Tests that Image fail #
+#########################
+css3/filters/effect-combined-hw.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-fonts/variation-sequences.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-position/sticky/position-sticky-fixed-ancestor.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-text-decor/text-emphasis-position-auto-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/rotated-cat-off-top-edge.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-viewport/zoom/iframe-zoom.sub.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-writing-modes/text-orientation-mixed-srl-016.xht [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/browsers/windows/iframe-cross-origin-scaled-print.sub.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/adopt-from-image-document.html [ Pass ImageOnlyFailure ]
+svg/animations/mozilla/animateMotion-mpath-pathLength-1.svg [ ImageOnlyFailure ]
+
+####################################
+# Tests with missing expectations #
+####################################
+fast/block/float/independent-align-positioning.html [ Missing ]
+
+# Top-level navigation by a sandboxed iframe with a propagated user gesture is not blocked.
+http/tests/security/block-top-level-navigations-by-sandboxed-iframe-with-propagated-user-gesture.html [ Failure ]
+
+# Document-Isolation-Policy is partially implemented.
+imported/w3c/web-platform-tests/html/document-isolation-policy/agent-cluster.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/blob-document-inherits-policy.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/header-parsing.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp-load-from-cache-storage.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context-https-iframe.tentative.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context.tentative.html [ Pass ]
+http/tests/document-isolation-policy/xslt-result-agent-cluster.https.html [ Pass ]

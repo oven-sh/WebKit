@@ -1,0 +1,127 @@
+/*
+ * Copyright (C) 2020 Igalia S.L.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "FlatpakLauncher.h"
+
+#if OS(LINUX)
+
+#include <gio/gio.h>
+#include <wtf/FileSystem.h>
+#include <wtf/glib/GSpanExtras.h>
+#include <wtf/glib/GUniquePtr.h>
+#include <wtf/glib/Sandbox.h>
+#include <wtf/text/MakeString.h>
+
+namespace WebKit {
+
+static bool canPossiblyExposePath(const String& path)
+{
+    // The child process's /app and /usr will both be identical to the parent process's.
+    return !path.startsWith("/app"_s) && !path.startsWith("/usr"_s);
+}
+
+GRefPtr<GSubprocess> flatpakSpawn(GSubprocessLauncher* launcher, const WebKit::ProcessLauncher::LaunchOptions& launchOptions, Vector<char*>& argv, int childProcessSocket, GError** error)
+{
+    ASSERT(launcher);
+
+    // When we are running inside of flatpak's sandbox we do not have permissions to use the same
+    // bubblewrap sandbox we do outside but flatpak offers the ability to create new sandboxes
+    // for us using flatpak-spawn.
+
+    Vector<UTF8CString> flatpakArgs = {
+        "flatpak-spawn"_s,
+        makeString("--forward-fd="_s, childProcessSocket).utf8(),
+        "--expose-pids"_s,
+        "--watch-bus"_s
+    };
+
+    if (launchOptions.processType == ProcessLauncher::ProcessType::Web) {
+        flatpakArgs.appendList({
+            "--sandbox"_s,
+            // The current working directory might not be visible in the sub-sandbox.
+            "--directory=/"_s,
+            "--no-network"_s,
+            "--sandbox-flag=share-gpu"_s,
+            "--sandbox-flag=share-display"_s,
+            "--sandbox-flag=share-sound"_s,
+            "--sandbox-flag=allow-a11y"_s,
+            "--sandbox-flag=allow-dbus"_s, // Note that this only allows portals and $appid.Sandbox.* access
+        });
+
+        // GST_DEBUG_FILE points to an absolute file path, so we need write permissions for its parent directory.
+        if (const char* debugFilePath = g_getenv("GST_DEBUG_FILE")) {
+            auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(debugFilePath));
+            if (canPossiblyExposePath(parentDir)) {
+                flatpakArgs.append(makeString("--sandbox-expose-path="_s, parentDir).utf8());
+            }
+        }
+
+        // GST_DEBUG_DUMP_DOT_DIR might not exist when the application starts, so we need write
+        // permissions for its parent directory.
+        if (const char* dotDir = g_getenv("GST_DEBUG_DUMP_DOT_DIR")) {
+            auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(dotDir));
+            if (canPossiblyExposePath(parentDir)) {
+                flatpakArgs.append(makeString("--sandbox-expose-path="_s, parentDir).utf8());
+            }
+        }
+
+        for (const auto& pathAndPermission : launchOptions.extraSandboxPaths) {
+            if (canPossiblyExposePath(String::fromUTF8WithLatin1Fallback(pathAndPermission.key.span()))) {
+                auto option = pathAndPermission.value == SandboxPermission::ReadOnly ? "--sandbox-expose-path-ro="_s : "--sandbox-expose-path="_s;
+                flatpakArgs.append(makeString(option, pathAndPermission.key.span()).utf8());
+            }
+        }
+
+#if USE(ATSPI)
+        RELEASE_ASSERT(isInsideFlatpak());
+        if (checkFlatpakPortalVersion(7)) {
+            auto busName = launchOptions.extraInitializationData.get<HashTranslatorASCIILiteral>("accessibilityBusName"_s);
+            flatpakArgs.append(makeString("--sandbox-a11y-own-name="_s, busName).utf8());
+        }
+#endif
+    }
+
+    // We need to pass our full environment to the subprocess.
+    GUniquePtr<char*> environ(g_get_environ());
+    for (auto* variable : span(environ)) {
+        GUniquePtr<char> arg(g_strconcat("--env=", variable, nullptr));
+        flatpakArgs.append(UTF8CString::unsafeFromUTF8(arg.get()));
+    }
+
+    Vector<char*> newArgv(argv.size() + flatpakArgs.size());
+    size_t i = 0;
+
+    for (const auto& arg : flatpakArgs)
+        newArgv[i++] = const_cast<char*>(arg.legacyCStringPointer());
+    for (const auto& arg : argv)
+        newArgv[i++] = arg;
+
+    return adoptGRef(g_subprocess_launcher_spawnv(launcher, newArgv.span().data(), error));
+}
+
+};
+
+#endif // OS(LINUX)

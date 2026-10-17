@@ -1,0 +1,78 @@
+/*
+ * Copyright (C) 2018 mce sys Ltd. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#pragma once
+
+#include <wtf/Function.h>
+#include <wtf/text/StringImpl.h>
+
+namespace WTF {
+
+class ExternalStringImpl;
+
+using ExternalStringImplFreeFunction = Function<void(void*, void*, unsigned)>;
+
+class ExternalStringImpl final : public StringImpl {
+public:
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> create(std::span<const Latin1Character> characters, void* ctx, ExternalStringImplFreeFunction&&);
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> create(std::span<const char16_t> characters, void* ctx, ExternalStringImplFreeFunction&&);
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const Latin1Character> characters);
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const char16_t> characters);
+#if USE(BUN_JSC_ADDITIONS)
+    // For immortal buffers whose StringImpl::hash() the embedder already knows (e.g. computed at build time).
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const Latin1Character> characters, unsigned existingHash);
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const char16_t> characters, unsigned existingHash);
+#endif
+
+    void releaseBufferEarly();
+    static const uintptr_t isAlreadyReleasedMarker = 0xDEADB33F;
+
+private:
+    friend class StringImpl;
+
+    ExternalStringImpl(std::span<const Latin1Character> characters, void* ctx, ExternalStringImplFreeFunction&&);
+    ExternalStringImpl(std::span<const char16_t> characters, void* ctx, ExternalStringImplFreeFunction&&);
+    ExternalStringImpl(std::span<const Latin1Character> characters, ExternalStringImplFreeFunction&&);
+    ExternalStringImpl(std::span<const char16_t> characters, ExternalStringImplFreeFunction&&);
+
+    inline void freeExternalBuffer(void* buffer, unsigned bufferSize);
+
+    ExternalStringImplFreeFunction m_free;
+    void* m_freeCtx;
+};
+
+ALWAYS_INLINE void ExternalStringImpl::freeExternalBuffer(void* buffer, unsigned bufferSize)
+{
+    if (reinterpret_cast<uintptr_t>(m_freeCtx) != isAlreadyReleasedMarker) [[likely]]
+        m_free(m_freeCtx, buffer, bufferSize);
+}
+
+} // namespace WTF
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WTF::ExternalStringImpl)
+    static bool isType(const WTF::StringImpl& impl) { return impl.isExternal(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+using WTF::ExternalStringImpl;

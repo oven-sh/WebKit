@@ -1,0 +1,7 @@
+
+PASS InputEvent constructor without InputEventInit.
+PASS InputEvent construtor with InputEventInit where data is null
+PASS InputEvent construtor with InputEventInit where data is empty string
+PASS InputEvent construtor with InputEventInit where data is non empty string
+PASS InputEvent constructor with an explicit inputType
+

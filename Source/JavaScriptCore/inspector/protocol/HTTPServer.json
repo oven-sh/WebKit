@@ -1,0 +1,416 @@
+{
+  "domain": "HTTPServer",
+  "description": "Provides events and commands for debugging server-side HTTP requests and responses within the Bun runtime.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [
+    {
+      "id": "ServerId",
+      "type": "integer",
+      "description": "Unique identifier for an HTTP server instance."
+    },
+    {
+      "id": "RequestId",
+      "type": "integer",
+      "description": "Unique identifier for an HTTP request."
+    },
+    {
+      "id": "RouteId",
+      "type": "integer",
+      "description": "Unique identifier for a server route."
+    },
+    {
+      "id": "HotReloadId",
+      "type": "integer",
+      "description": "Identifier for a hot reload instance of a server. Increments each time the server associated with a ServerId is reloaded."
+    },
+    {
+      "id": "Headers",
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Request / response headers as a flat array of key/value strings. [key1, value1, key2, value2, ...]"
+    },
+    {
+      "id": "RequestParams",
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Request route parameters as a flat array of key/value strings. [key1, value1, key2, value2, ...]"
+    },
+    {
+      "id": "HTTPMethod",
+      "type": "integer",
+      "description": "HTTP request method represented as an integer. (Mapping to be defined, e.g., 1=GET, 2=POST, ...)"
+    },
+    {
+      "id": "RouteType",
+      "type": "string",
+      "enum": ["default", "api", "html", "static"],
+      "description": "Type of the server route."
+    },
+    {
+      "id": "Route",
+      "type": "object",
+      "description": "Represents a defined server route.",
+      "properties": [
+        {
+          "name": "routeId",
+          "$ref": "RouteId",
+          "description": "Unique identifier for the route."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The path pattern for the route (e.g., '/users/:id')."
+        },
+        {
+          "name": "type",
+          "$ref": "RouteType",
+          "description": "The type of the route."
+        },
+        {
+          "name": "paramNames",
+          "type": "array",
+          "items": { "type": "string" },
+          "optional": true,
+          "description": "Names of the parameters defined in the path pattern."
+        },
+        {
+          "name": "filePath",
+          "type": "string",
+          "optional": true,
+          "description": "Filesystem path associated with 'static' or 'html' routes."
+        },
+        {
+          "name": "method",
+          "$ref": "HTTPMethod",
+          "description": "The HTTP method associated with the route.",
+          "optional": true
+        },
+        {
+          "name": "scriptUrl",
+          "type": "string",
+          "description": "url of the script the route is in. Available when the debugger is not attached.",
+          "optional": true
+        },
+        {
+          "name": "scriptLine",
+          "type": "integer",
+          "description": "Line number in the script that started the route. Available when the debugger is not attached."
+        }
+      ]
+    },
+    {
+      "id": "Request",
+      "type": "object",
+      "description": "Metadata about an incoming server request.",
+      "properties": [
+        {
+          "name": "requestId",
+          "$ref": "RequestId",
+          "description": "Unique identifier for this request."
+        },
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server processing this request."
+        },
+        {
+          "name": "routeId",
+          "$ref": "RouteId",
+          "description": "Identifier of the route that matched this request. 0 means no route matched."
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Request URL (path and query string)."
+        },
+        {
+          "name": "fullUrl",
+          "type": "string",
+          "description": "Full request URL including host and protocol."
+        },
+        {
+          "name": "method",
+          "$ref": "HTTPMethod",
+          "description": "HTTP method as an integer."
+        },
+        {
+          "name": "headers",
+          "$ref": "Headers",
+          "description": "HTTP request headers."
+        },
+        {
+          "name": "params",
+          "$ref": "RequestParams",
+          "optional": true,
+          "description": "Matched route parameters."
+        },
+        {
+          "name": "hasBody",
+          "type": "boolean",
+          "description": "Indicates if the request has a body."
+        },
+        {
+          "name": "timestamp",
+          "type": "number",
+          "description": "Timestamp when the request was received by the server (Unix epoch milliseconds)."
+        }
+      ]
+    },
+    {
+      "id": "Response",
+      "type": "object",
+      "description": "Metadata about an outgoing server response.",
+      "properties": [
+        {
+          "name": "requestId",
+          "$ref": "RequestId",
+          "description": "Identifier of the request this response corresponds to."
+        },
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server sending this response."
+        },
+        {
+          "name": "statusCode",
+          "type": "integer",
+          "description": "HTTP status code."
+        },
+        {
+          "name": "statusText",
+          "type": "string",
+          "description": "HTTP status text."
+        },
+        {
+          "name": "headers",
+          "$ref": "Headers",
+          "description": "HTTP response headers."
+        },
+        {
+          "name": "hasBody",
+          "type": "boolean",
+          "description": "Indicates if the response has a body."
+        },
+        {
+          "name": "timestamp",
+          "type": "number",
+          "description": "Timestamp when the response headers were sent (Unix epoch milliseconds)."
+        }
+      ]
+    },
+    {
+      "id": "BodyChunk",
+      "type": "object",
+      "description": "A chunk of a request or response body.",
+      "properties": [
+        {
+          "name": "requestId",
+          "$ref": "RequestId",
+          "description": "Identifier of the request this chunk belongs to."
+        },
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server handling the request."
+        },
+        {
+          "name": "flags",
+          "type": "integer",
+          "description": "Flags indicating the type of chunk. Bit 0: 1 if this chunk belongs to the request body, 0 for response body. Bit 1: 1 if this is the final chunk of the body, Bit 2: 1 if the chunk is base64 encoded. 0 otherwise."
+        },
+        {
+          "name": "chunk",
+          "type": "string",
+          "description": "The body chunk data"
+        },
+
+        {
+          "name": "timestamp",
+          "type": "number",
+          "description": "Timestamp when the chunk was received/sent (Unix epoch milliseconds)."
+        }
+      ]
+    },
+    {
+      "id": "RequestHandlerError",
+      "type": "object",
+      "description": "Details about an unhandled exception in a request handler.",
+      "properties": [
+        {
+          "name": "requestId",
+          "$ref": "RequestId",
+          "description": "Identifier of the request where the error occurred."
+        },
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server processing the request."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "description": "Error message."
+        },
+        {
+          "name": "timestamp",
+          "type": "number",
+          "description": "Timestamp when the error occurred (Unix epoch milliseconds)."
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "url of the script the route is in. Available when the debugger is not attached.",
+          "optional": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number in the script that started the route."
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables the HTTPServer domain, clearing any previous data."
+    },
+    {
+      "name": "disable",
+      "description": "Disables the HTTPServer domain."
+    }
+  ],
+  "events": [
+    {
+      "name": "listen",
+      "description": "Fired when an HTTP server starts listening.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Unique identifier for this server instance."
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "A URL you can fetch from the server. Example: 'http://localhost:3000' or 'https://localhost:3000'"
+        },
+        {
+          "name": "startTime",
+          "type": "number",
+          "description": "Timestamp when the server started (Unix epoch milliseconds)."
+        }
+      ]
+    },
+    {
+      "name": "close",
+      "description": "Fired when an HTTP server stops listening.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server that stopped."
+        },
+        {
+          "name": "timestamp",
+          "type": "number",
+          "description": "Timestamp when the server stopped (Unix epoch milliseconds)."
+        }
+      ]
+    },
+    {
+      "name": "serverRoutesUpdated",
+      "description": "Fired when a server starts or its routes are updated (e.g., via hot reload). Provides the complete list of current routes.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server whose routes were updated."
+        },
+        {
+          "name": "hotReloadId",
+          "$ref": "HotReloadId",
+          "description": "The number of times Bun has hot reloaded. When hot reloading server-side code, the server ID will be the same and the hotReloadId will increment. When not hot reloading, the server ID will be different and the hotReloadId will not increment."
+        },
+        {
+          "name": "routes",
+          "type": "array",
+          "items": { "$ref": "Route" },
+          "description": "The complete list of routes currently served."
+        }
+      ]
+    },
+    {
+      "name": "requestWillBeSent",
+      "description": "Fired when the server receives an HTTP request, before the handler is invoked. Body content is not included by default.",
+      "parameters": [
+        {
+          "name": "request",
+          "$ref": "Request",
+          "description": "Request metadata."
+        }
+      ]
+    },
+    {
+      "name": "responseReceived",
+      "description": "Fired when the server begins sending an HTTP response. Body content is not included by default.",
+      "parameters": [
+        {
+          "name": "response",
+          "$ref": "Response",
+          "description": "Response metadata."
+        }
+      ]
+    },
+    {
+      "name": "bodyChunkReceived",
+      "description": "Fired when a chunk of the request or response body is available, after being requested via `getRequestBody` or `getResponseBody`.",
+      "parameters": [
+        {
+          "name": "chunk",
+          "$ref": "BodyChunk",
+          "description": "The body chunk data."
+        }
+      ]
+    },
+    {
+      "name": "requestFinished",
+      "description": "Fired when the server has finished processing a request and sent the response.",
+      "parameters": [
+        {
+          "name": "requestId",
+          "$ref": "RequestId",
+          "description": "Identifier of the finished request."
+        },
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Identifier of the server handling the request."
+        },
+        {
+          "name": "timestamp",
+          "type": "number",
+          "description": "Timestamp when the request finished (Unix epoch milliseconds)."
+        },
+        {
+          "name": "duration",
+          "type": "number",
+          "optional": true,
+          "description": "Total duration of the request handling in milliseconds."
+        }
+      ]
+    },
+    {
+      "name": "requestHandlerException",
+      "description": "Fired when an unhandled exception occurs within a request handler.",
+      "parameters": [
+        {
+          "name": "error",
+          "$ref": "RequestHandlerError",
+          "description": "Details about the error."
+        }
+      ]
+    }
+  ]
+}

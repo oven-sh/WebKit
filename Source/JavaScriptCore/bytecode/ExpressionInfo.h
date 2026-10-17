@@ -1,0 +1,353 @@
+/*
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#pragma once
+
+#include <JavaScriptCore/LineColumn.h>
+#include <wtf/HashMap.h>
+#include <wtf/HashTraits.h>
+#include <wtf/IterationStatus.h>
+#include <wtf/MallocPtr.h>
+#include <wtf/PrintStream.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC {
+
+class SourceProvider;
+
+class ConcurrentJSLocker;
+
+// See comment at the top of ExpressionInfo.cpp on how ExpressionInfo works.
+
+class ExpressionInfo {
+    WTF_MAKE_NONCOPYABLE(ExpressionInfo);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ExpressionInfo);
+public:
+    enum class FieldID : uint8_t { InstPC, Divot, Start, End };
+
+    class Decoder;
+
+    using InstPC = unsigned; // aka bytecode PC.
+
+    static constexpr InstPC maxInstPC = std::numeric_limits<unsigned>::max();
+
+    struct Chapter {
+        InstPC startInstPC;
+        unsigned startEncodedInfoIndex;
+    };
+
+    struct Entry {
+        void LEGACY_NODELETE reset()
+        {
+            instPC = 0;
+            divot = 0;
+            startOffset = 0;
+            endOffset = 0;
+        }
+
+        InstPC instPC { 0 };
+        unsigned divot { 0 };
+        unsigned startOffset { 0 }; // This value is relative to divot.
+        unsigned endOffset { 0 }; // This value is relative to divot.
+    };
+
+    struct EncodedInfo {
+        bool LEGACY_NODELETE isAbsInstPC() const;
+        bool LEGACY_NODELETE isExtension() const;
+        unsigned value;
+    };
+
+    struct Diff;
+
+    class Encoder {
+    public:
+        void encode(InstPC, unsigned divot, unsigned startOffset, unsigned endOffset);
+
+        template<typename RemapFunc>
+        void remap(Vector<unsigned>&& adjustments, RemapFunc);
+
+        // Re-encode all entries with instruction PCs mapped through a monotonic (non-decreasing) function.
+        // Entries that end up sharing a PC with a later entry are dropped (the later one wins on lookup anyway).
+        template<typename MapFunc>
+        void rebuild(const MapFunc&);
+
+        Entry entry() const { return m_entry; }
+
+        std::unique_ptr<ExpressionInfo> createExpressionInfo();
+
+        void dumpEncodedInfo() // For debugging use only.
+        {
+            ExpressionInfo::dumpEncodedInfo(m_expressionInfoEncodedInfo.begin(), m_expressionInfoEncodedInfo.end());
+        }
+
+    private:
+        struct Wide {
+            enum class SortOrder : uint8_t { Single, Duo, Multi };
+
+            unsigned value;
+            FieldID fieldID;
+            SortOrder order { SortOrder::Multi };
+        };
+
+        static EncodedInfo LEGACY_NODELETE encodeAbsInstPC(InstPC absInstPC);
+        static EncodedInfo LEGACY_NODELETE encodeExtension(unsigned offset);
+        static constexpr EncodedInfo LEGACY_NODELETE encodeExtensionEnd();
+        static EncodedInfo LEGACY_NODELETE encodeSingle(FieldID, unsigned);
+        static EncodedInfo LEGACY_NODELETE encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
+        static EncodedInfo LEGACY_NODELETE encodeMultiHeader(unsigned numWides, Wide*);
+        static EncodedInfo LEGACY_NODELETE encodeBasic(const Diff&);
+
+        void adjustInstPC(unsigned infoIndex, unsigned instPCDelta);
+
+        template<unsigned bitCount> bool LEGACY_NODELETE fits(Wide);
+        template<typename T, unsigned bitCount> bool fits(T);
+
+        Entry m_entry;
+
+        unsigned m_currentChapterStartIndex { 0 };
+        unsigned m_numberOfEncodedInfoExtensions { 0 };
+        Vector<ExpressionInfo::Chapter> m_expressionInfoChapters;
+        Vector<ExpressionInfo::EncodedInfo> m_expressionInfoEncodedInfo;
+    };
+
+    class Decoder {
+    public:
+        Decoder() = default;
+        Decoder(const ExpressionInfo&);
+        Decoder(Vector<ExpressionInfo::EncodedInfo>&);
+
+        IterationStatus LEGACY_NODELETE decode(std::optional<InstPC> targetInstPC = std::nullopt);
+
+        void LEGACY_NODELETE recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
+        EncodedInfo* currentInfo() const { return m_currentInfo; }
+
+        // This is meant to be used to jump to the start of a chapter, where the encoder
+        // always start over with no historical Entry values to compute diffs from.
+        // If you use this to point to any EncodedInfo other than the start of a chapter,
+        // then you're responsible for setting up the initial conditions of m_entry correctly
+        // apriori.
+        void setNextInfo(EncodedInfo* info) { m_nextInfo = info; }
+
+        Entry entry() const { return m_entry; }
+        void setEntry(Entry entry) { m_entry = entry; } // For debugging use only.
+
+        InstPC instPC() const { return m_entry.instPC; }
+        unsigned divot() const { return m_entry.divot; }
+        unsigned startOffset() const { return m_entry.startOffset; }
+        unsigned endOffset() const { return m_entry.endOffset; }
+
+    private:
+        struct Wide {
+            FieldID fieldID;
+            unsigned value;
+        };
+
+        void appendWide(FieldID id, unsigned value)
+        {
+            m_wides[m_numWides++] = { id, value };
+        }
+
+        Entry m_entry;
+        EncodedInfo* m_startInfo { nullptr };
+        EncodedInfo* m_endInfo { nullptr };
+        EncodedInfo* m_endExtensionInfo { nullptr };
+        EncodedInfo* m_currentInfo { nullptr };
+        EncodedInfo* m_nextInfo { nullptr };
+        bool m_hasDecodedFirstEntry { false };
+
+        unsigned m_numWides { 0 };
+        std::array<Wide, 6> m_wides;
+    };
+
+    ~ExpressionInfo() = default;
+
+    // The caller holds the owning UnlinkedCodeBlock's lock, because compiler threads also look up
+    // entries (useSourceCodeDump) and lookups fill a cache.
+    Entry entryForInstPC(const ConcurrentJSLocker&, InstPC);
+    // Decodes without touching the cache: takes no lock and does not allocate (UnlinkedCodeBlock::expressionInfoIfDecoded).
+    Entry LEGACY_NODELETE decodeEntryForInstPC(InstPC);
+
+    // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
+    // sourceOffset. Decoding an entry starts from the start of its chapter, and stack traces ask for the
+    // same instructions again, so this keeps each answer. Sources share unlinked code when the CodeCache finds their text
+    // equal (a precompiled program is for the source it was compiled from), and everyone who asks it for global code
+    // gives it all of a source. So the text and sourceOffset, and with them the answer, are the same for every source
+    // that shares this. Where a source says its text starts is not in the answer.
+    // Not for a thread that runs beside the mutator: nothing guards the map.
+    LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
+
+    bool isEmpty() const { return !m_numberOfEncodedInfo; };
+    size_t LEGACY_NODELETE byteSize() const; // owned by this object
+    size_t LEGACY_NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
+
+    template<unsigned bitCount>
+    static void print(PrintStream&, FieldID, unsigned value);
+    static void dumpEncodedInfo(EncodedInfo* start, EncodedInfo* end); // For debugging use only.
+
+private:
+    ExpressionInfo(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
+    ExpressionInfo(Vector<Chapter>&&, Vector<EncodedInfo>&&, unsigned numberOfEncodedInfoExtensions);
+
+    template<typename T, unsigned bitCount> static T LEGACY_NODELETE cast(unsigned);
+
+    static bool LEGACY_NODELETE isSpecial(unsigned);
+    static bool LEGACY_NODELETE isWideOrSpecial(unsigned);
+
+    static size_t payloadSizeInBytes(size_t numChapters, size_t numberOfEncodedInfo, size_t numberOfEncodedInfoExtensions)
+    {
+        size_t size = numChapters * sizeof(Chapter) + (numberOfEncodedInfo + numberOfEncodedInfoExtensions) * sizeof(EncodedInfo);
+        return roundUpToMultipleOf<sizeof(unsigned)>(size);
+    }
+
+    static size_t totalSizeInBytes(size_t numChapters, size_t numberOfEncodedInfo, size_t numberOfEncodedInfoExtensions)
+    {
+        return sizeof(ExpressionInfo) + payloadSizeInBytes(numChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions);
+    }
+
+    EncodedInfo* LEGACY_NODELETE findChapterEncodedInfoJustBelow(InstPC) const;
+
+    Chapter* chapters() const
+    {
+        return std::bit_cast<Chapter*>(payload());
+    }
+
+    EncodedInfo* encodedInfo() const
+    {
+        return std::bit_cast<EncodedInfo*>(&chapters()[m_numberOfChapters]);
+    }
+
+    EncodedInfo* endEncodedInfo() const
+    {
+        return &encodedInfo()[m_numberOfEncodedInfo];
+    }
+
+    EncodedInfo* endExtensionEncodedInfo() const
+    {
+        return &encodedInfo()[m_numberOfEncodedInfo + m_numberOfEncodedInfoExtensions];
+    }
+
+    size_t payloadSize() const
+    {
+        return payloadSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions) / sizeof(unsigned);
+    }
+
+    unsigned* payload() const
+    {
+        if (m_borrowedPayload) [[unlikely]]
+            return m_borrowedPayload;
+        return std::bit_cast<unsigned*>(this + 1);
+    }
+
+    static std::unique_ptr<ExpressionInfo> createUninitialized(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
+    // Header-only object whose (immutable) payload lives elsewhere, e.g. inside an mmap'd bytecode cache.
+    static std::unique_ptr<ExpressionInfo> createBorrowed(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions, const unsigned* payload);
+
+    static constexpr unsigned bitsPerWord = sizeof(unsigned) * CHAR_BIT;
+
+    // Number of bits of each field in Basic encoding.
+    static constexpr unsigned instPCBits = 5;
+    static constexpr unsigned divotBits = 11;
+    static constexpr unsigned startBits = 8;
+    static constexpr unsigned endBits = 8;
+    static_assert(instPCBits + divotBits + startBits + endBits == bitsPerWord);
+
+    // Bias values used for the signed diff values which make it easier to do range checks on these.
+    static constexpr unsigned divotBias = (1 << divotBits) / 2;
+
+    static constexpr unsigned instPCShift = bitsPerWord - instPCBits;
+    static constexpr unsigned divotShift = instPCShift - divotBits;
+    static constexpr unsigned startShift = divotShift - startBits;
+    static constexpr unsigned endShift = startShift - endBits;
+
+    static constexpr unsigned specialHeader = (1 << instPCBits) - 1;
+    static constexpr unsigned wideHeader = specialHeader - 1;
+
+    static constexpr unsigned maxInstPCValue = wideHeader - 1;
+    static constexpr unsigned maxBiasedDivotValue = (1 << divotBits) - 1;
+    static constexpr unsigned maxStartValue = (1 << startBits) - 1;
+    static constexpr unsigned maxEndValue = (1 << endBits) - 1;
+
+    // Number of bits in Wide / Special encodings.
+    static constexpr unsigned specialValueBits = 26;
+    static constexpr unsigned singleValueBits = 23;
+    static constexpr unsigned duoValueBits = 10;
+    static constexpr unsigned fullValueBits = 32;
+    static constexpr unsigned multiSizeBits = 5;
+    static constexpr unsigned fieldIDBits = 3;
+
+    static constexpr unsigned maxSpecialValue = (1 << specialValueBits) - 1;
+    static constexpr unsigned maxSingleValue = (1 << singleValueBits) - 1;
+    static constexpr unsigned maxDuoValue = (1 << duoValueBits) - 1;
+    static constexpr unsigned invalidFieldID = (1 << fieldIDBits) - 1;
+
+    static constexpr unsigned multiSizeMask = (1 << multiSizeBits) - 1;
+    static constexpr unsigned fieldIDMask = (1 << fieldIDBits) - 1;
+
+    static constexpr unsigned headerShift = bitsPerWord - instPCBits;
+    static constexpr unsigned multiBitShift = headerShift - 1;
+    static_assert(headerShift == 27);
+    static_assert(multiBitShift == 26);
+
+    static constexpr unsigned specialValueShift = multiBitShift - specialValueBits;
+    static_assert(!specialValueShift);
+
+    static constexpr unsigned firstFieldIDShift = multiBitShift - fieldIDBits;
+    static constexpr unsigned singleValueShift = firstFieldIDShift - singleValueBits;
+    static_assert(!singleValueShift);
+
+    static constexpr unsigned duoFirstValueShift = firstFieldIDShift - duoValueBits;
+    static constexpr unsigned duoSecondFieldIDShift = duoFirstValueShift - fieldIDBits;
+    static constexpr unsigned duoSecondValueShift = duoSecondFieldIDShift - duoValueBits;
+    static_assert(!duoSecondValueShift);
+
+    static constexpr unsigned multiSizeShift = firstFieldIDShift - multiSizeBits;
+    static constexpr unsigned multiFirstFieldShift = multiSizeShift - fieldIDBits;
+
+    static constexpr unsigned numberOfWordsBetweenChapters = 10000;
+
+    using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+
+    UncheckedKeyHashMap<InstPC, Entry, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>> m_cachedEntries;
+
+    LineColumnMap m_cachedLineColumns;
+    unsigned m_numberOfChapters;
+    unsigned m_numberOfEncodedInfo;
+    unsigned m_numberOfEncodedInfoExtensions;
+    unsigned* m_borrowedPayload { nullptr };
+    // Followed by the following which are allocated but are dynamically sized.
+    //   Chapter chapters[numberOfChapters];
+    //   EncodedInfo encodedInfo[numberOfEncodedInfo + numberOfEncodedInfoExtensions];
+
+    friend class CachedExpressionInfo;
+};
+
+static_assert(roundUpToMultipleOf<sizeof(unsigned)>(sizeof(ExpressionInfo)) == sizeof(ExpressionInfo), "CachedExpressionInfo relies on this invariant");
+
+} // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

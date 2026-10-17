@@ -1,0 +1,4 @@
+
+
+PASS Scrolling broadcasts are suppressed when all remote frames are offscreen for consecutive updates
+

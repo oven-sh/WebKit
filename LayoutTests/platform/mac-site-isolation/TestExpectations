@@ -1,0 +1,82 @@
+# Test expectations for macOS with --site-isolation
+
+####################
+# Tests that crash #
+####################
+http/tests/security/referrer-policy-header-invalid.html [ Crash ]
+http/tests/security/referrer-policy-header-no-referrer-when-downgrade.html [ Crash ]
+http/tests/security/referrer-policy-header-no-referrer.html [ Crash ]
+http/tests/security/referrer-policy-header-origin.html [ Crash ]
+http/tests/security/referrer-policy-header-strict-origin.html [ Crash ]
+
+#######################
+# Tests that time out #
+#######################
+fullscreen/exit-full-screen-video-crash.html [ Pass Timeout ]
+http/tests/media/media-stream/enumerate-devices-source-id.html [ Timeout ]
+http/tests/workers/service/resultingClientId.https.html [ Timeout ]
+http/tests/navigation/cross-site-iframe-nav-with-bfcache.html [ Pass Timeout ]
+imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-video.html [ Pass Timeout ]
+
+########################
+# Tests that Text fail #
+########################
+http/tests/inspector/network/resource-sizes-network.html [ Pass Failure Timeout ]
+http/tests/inspector/network/fetch-response-body-304.html [ Failure ]
+webkit.org/b/318430 http/tests/inspector/network/clear-non-buffered-resource-data-on-navigate.html [ Failure ]
+http/tests/websocket/tests/hybi/inspector/handshake-error.html [ Failure ]
+http/tests/media/media-stream/speech-recognition-iframe-allow-attribute.html [ Failure ]
+http/tests/site-isolation/inspector/page/override-setting-cross-origin-iframe.html [ Failure ]
+webkit.org/b/311836 http/tests/site-isolation/inspector/page/set-emulated-media-cross-origin-iframe.html [ Failure ]
+http/wpt/webrtc/third-party-frame-ice-candidate-filtering.html [ Failure ]
+imported/w3c/web-platform-tests/cookies/partitioned-cookies/partitioned-cookies.tentative.https.html [ Failure ]
+imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ]
+imported/w3c/web-platform-tests/content-security-policy/inheritance/history-iframe.sub.html [ Failure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/event_pause_noautoplay.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/event_play_noautoplay.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/track/track-element/track-cues-pause-on-exit.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/same-origin-top-navigation-without-user-activation.window.html [ Failure ]
+imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiocontext-interface/suspend-with-navigation.html [ Failure ]
+imported/w3c/web-platform-tests/webcodecs/videoFrame-serialization.crossAgentCluster.https.html [ Failure ]
+imported/w3c/web-platform-tests/webmessaging/postMessage_cross_domain_image_transfer_2d.sub.htm [ Failure ]
+imported/w3c/web-platform-tests/webrtc-stats/rtp-stats-creation.html [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-addTransceiver-renegotiation.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-getStats.https.html?interop-2026 [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-getStats.https.html?rest [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-setRemoteDescription-tracks.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-audio-jitterBufferTarget-stats.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
+inspector/runtime/executionContextCreated-onEnable.html [ Failure ]
+http/tests/inspector/dom/cross-domain-inspected-node-access.html [ Failure ]
+
+#########################
+# Tests that Image fail #
+#########################
+fast/images/animated-avif.html [ ImageOnlyFailure ]
+fast/images/image-map-outline-with-paint-root-offset.html [ Pass ImageOnlyFailure ]
+fast/scrolling/rtl-scrollbars.html [ Pass ImageOnlyFailure ]
+imported/blink/fast/transforms/transform-update-frame-overflow.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-viewport/zoom/iframe-zoom.sub.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/browsers/windows/iframe-cross-origin-scaled-print.sub.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/adopt-from-image-document.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/svg/path/closepath/segment-completing.svg [ ImageOnlyFailure ]
+
+# Top-level navigation by a sandboxed iframe with a propagated user gesture is not blocked.
+http/tests/security/block-top-level-navigations-by-sandboxed-iframe-with-propagated-user-gesture.html [ Failure ]
+
+# This test has different output with site isolation enabled. It is symlinked and run with site isolation
+# enabled at http/tests/site-isolation/inspector/unit-tests/target-manager.html.
+inspector/unit-tests/target-manager.html [ Failure ]
+
+# rdar://178066625
+imported/w3c/web-platform-tests/html/user-activation/propagation-crossorigin.sub.html [ Failure ]
+
+# Document-Isolation-Policy is partially implemented.
+imported/w3c/web-platform-tests/html/document-isolation-policy/agent-cluster.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/blob-document-inherits-policy.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/header-parsing.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp-load-from-cache-storage.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context-https-iframe.tentative.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context.tentative.html [ Pass ]
+http/tests/document-isolation-policy/xslt-result-agent-cluster.https.html [ Pass ]

@@ -1,0 +1,184 @@
+{
+  "domain": "BunFrontendDevServer",
+  "description": "Provides an interface for tools to interact with Bun's development server.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [
+    {
+      "id": "ServerId",
+      "type": "integer",
+      "description": "Unique identifier for Bun.serve"
+    },
+    {
+      "id": "ConnectionId",
+      "type": "integer",
+      "description": "Unique identifier for a connected HMR WebSocket client."
+    },
+    {
+      "id": "RouteBundleId",
+      "type": "integer",
+      "description": "Identifier for a specific route bundle within DevServer."
+    },
+    {
+      "id": "SerializedPayloadBase64",
+      "type": "string",
+      "description": "A base64 encoded string representing a binary payload originally defined by DevServer's WebSocket protocol (MessageId enum in DevServer.zig)."
+    }
+  ],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables the BunFrontendDevServer domain, sending events as they occur."
+    },
+    {
+      "name": "disable",
+      "description": "Disables the BunFrontendDevServer domain, stopping further events from being sent."
+    }
+  ],
+  "events": [
+    {
+      "name": "clientConnected",
+      "description": "Fired when a new HMR WebSocket client connects.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "connectionId",
+          "$ref": "ConnectionId",
+          "description": "Identifier for the newly connected client."
+        }
+      ]
+    },
+    {
+      "name": "clientDisconnected",
+      "description": "Fired when an HMR WebSocket client disconnects.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "connectionId",
+          "$ref": "ConnectionId",
+          "description": "Identifier for the disconnected client."
+        }
+      ]
+    },
+    {
+      "name": "bundleStart",
+      "description": "Fired when the DevServer starts processing a new bundle.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "triggerFiles",
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of file paths that triggered this bundle."
+        }
+      ]
+    },
+    {
+      "name": "bundleComplete",
+      "description": "Fired when the DevServer successfully completes a bundle without build errors.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "durationMs",
+          "type": "number",
+          "description": "Time taken for the bundle in milliseconds."
+        }
+      ]
+    },
+    {
+      "name": "bundleFailed",
+      "description": "Fired when the DevServer completes a bundle with build errors. The payload is the base64 encoded binary data corresponding to the 'errors' MessageId.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "buildErrorsPayloadBase64",
+          "$ref": "SerializedPayloadBase64",
+          "description": "Base64 encoded binary payload containing serialized build errors (MessageId.errors format)."
+        }
+      ]
+    },
+    {
+      "name": "clientNavigated",
+      "description": "Fired when a connected client navigates to a new URL (via history API or initial load).",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "connectionId",
+          "$ref": "ConnectionId",
+          "description": "Identifier for the client that navigated."
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "The new URL the client navigated to."
+        },
+        {
+          "name": "routeBundleId",
+          "$ref": "RouteBundleId",
+          "optional": true,
+          "description": "The DevServer route bundle ID associated with this URL, if matched."
+        }
+      ]
+    },
+    {
+      "name": "clientErrorReported",
+      "description": "Fired when an error reported by a client (via the /_bun/report_error endpoint) has been processed and potentially remapped by the server. The payload is the base64 encoded binary data corresponding to the remapped error format (similar to MessageId.errors but potentially containing only one error).",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId",
+          "description": "Server ID"
+        },
+        {
+          "name": "clientErrorPayloadBase64",
+          "$ref": "SerializedPayloadBase64",
+          "description": "Base64 encoded binary payload containing the processed/remapped client error."
+        }
+      ]
+    },
+    {
+      "name": "consoleLog",
+      "description": "Fired when the client logs a message to the console.",
+      "parameters": [
+        {
+          "name": "serverId",
+          "$ref": "ServerId"
+        },
+        {
+          "name": "kind",
+          "type": "number",
+          "description": "The kind of log message."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "description": "The log message."
+        }
+      ]
+    }
+  ]
+}

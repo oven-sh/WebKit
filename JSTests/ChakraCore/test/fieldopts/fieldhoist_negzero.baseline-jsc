@@ -1,0 +1,3 @@
+Exception: ReferenceError: obj0 is not defined
+@fieldhoist_negzero.js:9:32
+global code@fieldhoist_negzero.js:12:3

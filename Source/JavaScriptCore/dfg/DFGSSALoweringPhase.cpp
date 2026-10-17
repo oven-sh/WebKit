@@ -1,0 +1,308 @@
+/*
+ * Copyright (C) 2013-2019 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
+#include "config.h"
+#include "DFGSSALoweringPhase.h"
+
+#if ENABLE(DFG_JIT)
+
+#include "DFGGraph.h"
+#include "DFGInsertionSet.h"
+#include "DFGPhase.h"
+#include "JSCJSValueInlines.h"
+
+namespace JSC { namespace DFG {
+
+class SSALoweringPhase : public Phase {
+    static constexpr bool verbose = false;
+    
+public:
+    SSALoweringPhase(Graph& graph)
+        : Phase(graph, "SSA lowering"_s)
+        , m_insertionSet(graph)
+    {
+    }
+    
+    bool run()
+    {
+        RELEASE_ASSERT(m_graph.m_form == SSA);
+        
+        for (BlockIndex blockIndex = m_graph.numBlocks(); blockIndex--;) {
+            m_block = m_graph.block(blockIndex);
+            if (!m_block)
+                continue;
+            for (m_nodeIndex = 0; m_nodeIndex < m_block->size(); ++m_nodeIndex) {
+                m_node = m_block->at(m_nodeIndex);
+                handleNode();
+            }
+            m_insertionSet.execute(m_block);
+        }
+
+        return true;
+    }
+
+private:
+    void handleNode()
+    {
+        switch (m_node->op()) {
+        case AtomicsAdd:
+        case AtomicsAnd:
+        case AtomicsCompareExchange:
+        case AtomicsExchange:
+        case AtomicsLoad:
+        case AtomicsOr:
+        case AtomicsStore:
+        case AtomicsSub:
+        case AtomicsXor: {
+            unsigned numExtraArgs = numExtraAtomicsArgs(m_node->op());
+            lowerBoundsCheck(m_graph.child(m_node, 0), m_graph.child(m_node, 1), m_graph.child(m_node, 2 + numExtraArgs));
+            break;
+        }
+
+        case HasIndexedProperty:
+            lowerBoundsCheck(m_graph.child(m_node, 0), m_graph.child(m_node, 1), m_graph.child(m_node, 2));
+            break;
+
+        case EnumeratorGetByVal:
+        case GetByVal: {
+            lowerBoundsCheck(m_graph.varArgChild(m_node, 0), m_graph.varArgChild(m_node, 1), m_graph.varArgChild(m_node, 2));
+            break;
+        }
+
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite: {
+#if USE(BUN_JSC_ADDITIONS)
+            lowerBufferAccessBoundsChecks();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node type"_s);
+#endif
+            break;
+        }
+
+        case StringAt:
+        case StringCharCodeAt:
+        case StringCodePointAt: {
+            lowerStringBoundsCheck(m_graph.child(m_node, 0), m_graph.child(m_node, 1), m_graph.child(m_node, 2));
+            break;
+        }
+
+        case EnumeratorPutByVal:
+            break;
+
+        case PutByVal:
+        case PutByValDirect: {
+            Edge base = m_graph.varArgChild(m_node, 0);
+            Edge index = m_graph.varArgChild(m_node, 1);
+            Edge storage = m_graph.varArgChild(m_node, 3);
+            if (lowerBoundsCheck(base, index, storage))
+                break;
+            
+            if (m_node->arrayMode().isSomeTypedArrayView() && m_node->arrayMode().isOutOfBounds()) {
+#if USE(LARGE_TYPED_ARRAYS)
+                if (m_node->arrayMode().mayBeLargeTypedArray() || m_graph.hasExitSite(m_node->origin.semantic, Overflow)) {
+                    Node* length = m_insertionSet.insertNode(
+                        m_nodeIndex, SpecInt52Any, GetTypedArrayLengthAsInt52, m_node->origin,
+                        OpInfo(m_node->arrayMode().asWord()), base, storage);
+                    length->setResult(NodeResultInt52);
+                    // GetTypedArrayLengthAsInt52 says write(MiscFields) to model concurrent updates. But this does not mean that
+                    // we cannot exit after running GetTypedArrayLengthAsInt52 since exit state is still intact after that.
+                    // To teach DFG / FTL about it, we insert ExitOK node here to make subsequent nodes valid for exits.
+                    if (m_node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
+                        m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+                    m_graph.varArgChild(m_node, 4) = Edge(length, Int52RepUse);
+                } else {
+#endif
+                    Node* length = m_insertionSet.insertNode(
+                        m_nodeIndex, SpecInt32Only, GetArrayLength, m_node->origin,
+                        OpInfo(m_node->arrayMode().asWord()), base, storage);
+                    if (m_node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
+                        m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+                    m_graph.varArgChild(m_node, 4) = Edge(length, KnownInt32Use);
+#if USE(LARGE_TYPED_ARRAYS)
+                }
+#endif
+                break;
+            }
+            break;
+        }
+            
+        default:
+            break;
+        }
+    }
+    
+    bool lowerBoundsCheck(Edge base, Edge index, Edge storage)
+    {
+        if (!m_node->arrayMode().permitsBoundsCheckLowering())
+            return false;
+        
+        if (!m_node->arrayMode().lengthNeedsStorage())
+            storage = Edge();
+        
+        NodeType op = GetArrayLength;
+        switch (m_node->arrayMode().type()) {
+        case Array::ArrayStorage:
+        case Array::SlowPutArrayStorage:
+            op = GetVectorLength;
+            break;
+        case Array::String:
+            // When we need to support this, it will require additional code since base's useKind is KnownStringUse.
+            DFG_CRASH(m_graph, m_node, "Array::String's base.useKind() is KnownStringUse"_s);
+            break;
+        default:
+            break;
+        }
+
+        Node* checkInBounds = nullptr;
+        if (op == GetArrayLength && m_node->arrayMode().isSomeTypedArrayView()) {
+#if USE(LARGE_TYPED_ARRAYS)
+            if (m_node->arrayMode().mayBeLargeTypedArray() || m_graph.hasExitSite(m_node->origin.semantic, Overflow)) {
+                Node* length = m_insertionSet.insertNode(
+                    m_nodeIndex, SpecInt52Any, GetTypedArrayLengthAsInt52, m_node->origin,
+                    OpInfo(m_node->arrayMode().asWord()), Edge(base.node(), KnownCellUse), storage);
+                if (m_node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
+                    m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+                // The return type is a dummy since this node does not actually return anything.
+                checkInBounds = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBoundsInt52, m_node->origin, index, Edge(length, Int52RepUse));
+            }
+#endif
+        }
+
+        if (!checkInBounds) {
+            Node* length = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, op, m_node->origin,
+                OpInfo(m_node->arrayMode().asWord()), Edge(base.node(), KnownCellUse), storage);
+            if (m_node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
+                m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+            checkInBounds = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, index, Edge(length, KnownInt32Use));
+        }
+
+        AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);
+        m_graph.m_varArgChildren.append(Edge(checkInBounds, UntypedUse));
+        adjacencyList.setNumChildren(adjacencyList.numChildren() + 1);
+        m_node->children = adjacencyList;
+        return true;
+    }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void lowerBufferAccessBoundsChecks()
+    {
+        ArrayMode arrayMode = m_node->arrayMode();
+        if (arrayMode.type() == Array::ForceExit)
+            return;
+        RELEASE_ASSERT(arrayMode.type() == Array::Uint8Array && arrayMode.isInBounds() && !arrayMode.lengthNeedsStorage());
+        DataViewData data = m_node->bufferAccessData();
+        Edge base = m_graph.varArgChild(m_node, 0);
+        Edge offset = m_graph.varArgChild(m_node, 1);
+        RELEASE_ASSERT(offset.useKind() == Int32Use);
+
+        // Like lowerBoundsCheck(): an Int32 length and CheckInBounds, which integer range analysis can eliminate,
+        // unless the site may see a view longer than INT32_MAX (GetArrayLength checks that on every execution and
+        // exits Overflow). Once an Overflow exit was seen, the int32 adds below stop checking: whatever they would
+        // catch, the unsigned bounds / range compares that consume them catch too.
+        bool sawOverflow = m_graph.hasExitSite(m_node->origin.semantic, Overflow);
+#if USE(LARGE_TYPED_ARRAYS)
+        bool lengthAsInt52 = arrayMode.mayBeLargeTypedArray() || sawOverflow;
+#else
+        constexpr bool lengthAsInt52 = false;
+#endif
+        Arith::Mode addMode = sawOverflow ? Arith::Unchecked : Arith::CheckOverflow;
+        Node* length = m_insertionSet.insertNode(
+            m_nodeIndex, lengthAsInt52 ? SpecInt52Any : SpecInt32Only, lengthAsInt52 ? GetTypedArrayLengthAsInt52 : GetArrayLength, m_node->origin,
+            OpInfo(arrayMode.asWord()), Edge(base.node(), KnownCellUse), Edge());
+        if (arrayMode.mayBeResizableOrGrowableSharedTypedArray())
+            m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+        Edge lengthEdge = lengthAsInt52 ? Edge(length, Int52RepUse) : Edge(length, KnownInt32Use);
+        NodeType checkInBounds = lengthAsInt52 ? CheckInBoundsInt52 : CheckInBounds;
+
+        unsigned appended = 1;
+        Node* checkFirstByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, offset, lengthEdge);
+        Node* checkLastByte = nullptr;
+        if (data.byteSize > 1) {
+            Node* lastByteOffset = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(addMode),
+                Edge(offset.node(), Int32Use),
+                m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(data.byteSize - 1), Int32Use));
+            checkLastByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, Edge(lastByteOffset, Int32Use), lengthEdge);
+            appended = 2;
+        }
+
+        Node* checkValueRange = nullptr;
+        if (m_node->op() == BufferWrite && !data.isFloatingPoint && data.byteSize <= 2) {
+            Edge value = m_graph.varArgChild(m_node, 2);
+            RELEASE_ASSERT(value.useKind() == Int32Use);
+            int32_t range = 1 << (8 * data.byteSize);
+            Node* checked = value.node();
+            if (data.isSigned) {
+                checked = m_insertionSet.insertNode(
+                    m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(addMode),
+                    Edge(value.node(), Int32Use),
+                    m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range / 2), Int32Use));
+            }
+            checkValueRange = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, Edge(checked, Int32Use),
+                m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range), Int32Use));
+            appended++;
+        }
+
+        RELEASE_ASSERT(m_graph.varArgChild(m_node, m_node->storageChildIndex()));
+        AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);
+        m_graph.m_varArgChildren.append(Edge(checkFirstByte, UntypedUse));
+        if (checkLastByte)
+            m_graph.m_varArgChildren.append(Edge(checkLastByte, UntypedUse));
+        if (checkValueRange)
+            m_graph.m_varArgChildren.append(Edge(checkValueRange, UntypedUse));
+        adjacencyList.setNumChildren(adjacencyList.numChildren() + appended);
+        m_node->children = adjacencyList;
+    }
+#endif // USE(BUN_JSC_ADDITIONS)
+
+    bool lowerStringBoundsCheck(Edge base, Edge index, Edge& checkInBoundsEdge)
+    {
+        if (!m_node->arrayMode().isInBounds())
+            return false;
+
+        Node* length = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, GetArrayLength, m_node->origin, OpInfo(m_node->arrayMode().asWord()), Edge(base.node(), KnownCellUse));
+        Node* checkInBounds = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, index, Edge(length, KnownInt32Use));
+        checkInBoundsEdge = Edge(checkInBounds, UntypedUse);
+        return true;
+    }
+
+    InsertionSet m_insertionSet;
+    BasicBlock* m_block;
+    unsigned m_nodeIndex;
+    Node* m_node;
+};
+
+bool performSSALowering(Graph& graph)
+{
+    return runPhase<SSALoweringPhase>(graph);
+}
+
+} } // namespace JSC::DFG
+
+#endif // ENABLE(DFG_JIT)
+

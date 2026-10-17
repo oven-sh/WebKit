@@ -1,0 +1,42 @@
+#!/bin/bash
+# Minimal `mig` (Mach Interface Generator) driver for cross-compiling Mach
+# interface definitions on a non-darwin host.
+#
+# Mirrors the argument routing of Apple's mig.sh
+# (bootstrap_cmds/migcom.tproj/mig.sh): preprocess the .defs file with the
+# cross clang against the macOS SDK, pipe the result to migcom. Only the
+# flags WebKit's build passes are handled explicitly; any other "-..."
+# argument is forwarded to the preprocessor, matching Apple's script.
+#
+# Required environment:
+#   MIGCC    — preprocessor command (the cross clang, including --target and
+#              -isysroot pointing at the macOS SDK)
+#   MIGCOM   — path to the host-built migcom (see Dockerfile.macos)
+set -euo pipefail
+
+: "${MIGCC:?set MIGCC to the cross clang command}"
+: "${MIGCOM:?set MIGCOM to the host-built migcom}"
+
+cppflags=(-D__MACH30__)
+migflags=()
+files=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -[dtqkKQvVtTrRsSlLxXnN]) migflags+=("$1"); shift ;;
+    -user|-server|-header|-sheader|-iheader|-dheader|-maxonstack|-max_descrs|-max_reply_descrs|-i)
+      migflags+=("$1" "$2"); shift 2 ;;
+    -split|-novouchers|-mach_msg2) migflags+=("$1"); shift ;;
+    -arch|-target|-isysroot|-cpp|-cc|-migcom) shift 2 ;;
+    -*) cppflags+=("$1"); shift ;;
+    *) files+=("$1"); shift ;;
+  esac
+done
+
+for file in "${files[@]}"; do
+  src="$(mktemp --suffix=.c)"
+  trap 'rm -f "$src"' EXIT
+  { echo "#line 1 \"$file\""; cat "$file"; } > "$src"
+  $MIGCC -E "${cppflags[@]}" -I "$(dirname "$file")" "$src" | "$MIGCOM" "${migflags[@]}"
+  rm -f "$src"
+done

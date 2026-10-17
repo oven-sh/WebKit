@@ -1,0 +1,17 @@
+// This directory is placed first on the include search path for non-Debug
+// builds when USE_BUN_JSC_ADDITIONS is on, so `#include <iostream>` resolves
+// here instead of the toolchain header.
+//
+// <iostream> is unlike <ostream>/<istream>/<sstream>: on libstdc++ it emits a
+// reference to std::ios_base_library_init in every translation unit that
+// includes it. One such reference anywhere in the link pulls globals_io.o from
+// libstdc++, whose static initializer constructs cin/cout/cerr/clog and their
+// wchar_t siblings before main, dragging the full std::locale facet set in
+// with it. Bun never touches C++ iostreams at runtime.
+//
+// Use WTF::dataLog()/dataLogLn() or fputs/fprintf for diagnostics.
+#ifndef BUN_ALLOW_IOSTREAM
+#error "<iostream> is banned in Bun WebKit release builds: it forces std::ios_base::Init and the full std::locale facet set to run before main in every bun process. Use WTF::dataLog() or <cstdio>. See Source/WTF/wtf/bun/BannedIncludes/iostream."
+#else
+#include_next <iostream>
+#endif

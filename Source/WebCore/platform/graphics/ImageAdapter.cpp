@@ -1,0 +1,77 @@
+/*
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "ImageAdapter.h"
+
+#include "BitmapImage.h"
+#include <wtf/TZoneMallocInlines.h>
+
+namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageAdapter);
+
+#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN) && !PLATFORM(WPE)
+Ref<BitmapImage> ImageAdapter::loadPlatformResource(const char* resource)
+{
+    WTFLogAlways("WARNING: trying to load platform resource '%s'", resource);
+    return BitmapImage::create();
+}
+
+void ImageAdapter::invalidate()
+{
+}
+#endif // !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN)
+
+RefPtr<NativeImage> ImageAdapter::nativeImageOfSize(const IntSize& size, ConcreteObjectSize concreteObjectSize, const ImageDrawingExtras* extras)
+{
+    RefPtr image = this->image();
+    unsigned count = image->frameCount();
+
+    for (unsigned i = 0; i < count; ++i) {
+        RefPtr nativeImage = image->nativeImageAtIndex(i, concreteObjectSize, extras);
+        if (nativeImage && nativeImage->size() == size)
+            return nativeImage;
+    }
+
+    // Fallback to the first frame image if we can't find the right size
+    return image->nativeImageAtIndex(0, concreteObjectSize, extras);
+}
+
+Vector<Ref<NativeImage>> ImageAdapter::allNativeImages(ConcreteObjectSize concreteObjectSize, const ImageDrawingExtras* extras)
+{
+    Vector<Ref<NativeImage>> nativeImages;
+    RefPtr image = this->image();
+    unsigned count = image->frameCount();
+
+    for (unsigned i = 0; i < count; ++i) {
+        if (RefPtr nativeImage = image->nativeImageAtIndex(i, concreteObjectSize, extras))
+            nativeImages.append(nativeImage.releaseNonNull());
+    }
+
+    return nativeImages;
+}
+
+} // namespace WebCore

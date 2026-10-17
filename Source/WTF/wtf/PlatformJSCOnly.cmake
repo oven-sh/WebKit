@@ -1,0 +1,211 @@
+list(APPEND WTF_SOURCES
+    generic/WorkQueueGeneric.cpp
+)
+
+if (WIN32)
+    list(APPEND WTF_SOURCES
+        text/win/StringWin.cpp
+        text/win/TextBreakIteratorInternalICUWin.cpp
+
+        win/CPUTimeWin.cpp
+        win/DbgHelperWin.cpp
+        win/FileHandleWin.cpp
+        win/FileSystemWin.cpp
+        win/LanguageWin.cpp
+        win/LoggingWin.cpp
+        win/MainThreadWin.cpp
+        win/MappedFileDataWin.cpp
+        win/OSAllocatorWin.cpp
+        win/PathWalker.cpp
+        win/SignalsWin.cpp
+        win/ThreadingWin.cpp
+        win/WTFCRTDebug.cpp
+        win/Win32Handle.cpp
+    )
+    list(APPEND WTF_LIBRARIES
+        DbgHelp
+        shlwapi
+        synchronization
+        winmm
+    )
+    list(APPEND WTF_PUBLIC_HEADERS
+        win/WTFCRTDebug.h
+    )
+else ()
+    list(APPEND WTF_SOURCES
+        generic/MainThreadGeneric.cpp
+
+        posix/OSAllocatorPOSIX.cpp
+        posix/ThreadingPOSIX.cpp
+
+        text/unix/TextBreakIteratorInternalICUUnix.cpp
+
+        unix/LanguageUnix.cpp
+        unix/LoggingUnix.cpp
+    )
+    if (WTF_OS_FUCHSIA)
+        list(APPEND WTF_SOURCES
+            fuchsia/CPUTimeFuchsia.cpp
+        )
+    else ()
+        list(APPEND WTF_SOURCES
+            posix/CPUTimePOSIX.cpp
+        )
+    endif ()
+
+    if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+        list(APPEND WTF_SOURCES
+            glib/FilePathWatcher.cpp
+            glib/FileSystemGlib.cpp
+            glib/Sandbox.cpp
+            glib/TimeZoneGLib.cpp
+        )
+    endif ()
+
+    list(APPEND WTF_SOURCES
+        posix/FileHandlePOSIX.cpp
+        posix/FileSystemPOSIX.cpp
+        posix/MappedFileDataPOSIX.cpp
+
+        unix/UniStdExtrasUnix.cpp
+    )
+
+    if (ANDROID)
+        list(REMOVE_ITEM WTF_SOURCES unix/LoggingUnix.cpp)
+        list(APPEND WTF_SOURCES
+            android/LoggingAndroid.cpp
+            android/RefPtrAndroid.cpp
+        )
+        list(APPEND WTF_PUBLIC_HEADERS
+            android/RefPtrAndroid.h
+        )
+        list(APPEND WTF_LIBRARIES log)
+    endif ()
+endif ()
+
+if (WIN32)
+    list(APPEND WTF_SOURCES
+        win/MemoryFootprintWin.cpp
+        win/MemoryPressureHandlerWin.cpp
+    )
+elseif (APPLE)
+    # When cross-compiling from a non-Darwin host, WebKitXcodeSDK.cmake (which
+    # sets Mig_EXECUTABLE via xcrun) is not included; fall back to PATH lookup.
+    if (NOT Mig_EXECUTABLE)
+        find_program(Mig_EXECUTABLE mig REQUIRED)
+    endif ()
+    file(COPY mac/MachExceptions.defs DESTINATION ${WTF_DERIVED_SOURCES_DIR})
+    add_custom_command(
+        OUTPUT
+            ${WTF_DERIVED_SOURCES_DIR}/MachExceptionsServer.h
+            ${WTF_DERIVED_SOURCES_DIR}/mach_exc.h
+            ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
+            ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
+        MAIN_DEPENDENCY mac/MachExceptions.defs
+        WORKING_DIRECTORY ${WTF_DERIVED_SOURCES_DIR}
+        COMMAND ${Mig_EXECUTABLE} -header mach_exc.h -user mach_excUser.c
+            -sheader MachExceptionsServer.h -server mach_excServer.c
+            -DMACH_EXC_SERVER_TASKIDTOKEN_STATE -isysroot ${CMAKE_OSX_SYSROOT}
+            MachExceptions.defs
+        VERBATIM)
+    # Bun: not with USE_BUN_JSC_ADDITIONS. TimeZone.cpp then compiles its no-op listenForTimeZoneChangeNotifications()
+    # on every platform (Bun bumps the time zone ID itself, through timeZoneDidChange()), and this file defines the same
+    # function: libWTF.a would hold two strong definitions of it and the link would take whichever came first.
+    if (NOT USE_GLIB AND NOT USE_BUN_JSC_ADDITIONS)
+        list(APPEND WTF_SOURCES
+            cocoa/TimeZoneCocoa.cpp
+        )
+    endif ()
+    list(APPEND WTF_SOURCES
+        cocoa/MemoryFootprintCocoa.cpp
+
+        generic/MemoryPressureHandlerGeneric.cpp
+
+        ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
+        ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
+    )
+elseif (ANDROID)
+    list(APPEND WTF_SOURCES
+        linux/CurrentProcessMemoryStatus.cpp
+        linux/HighPriorityThreads.cpp
+        linux/MemoryFootprintLinux.cpp
+
+        generic/MemoryPressureHandlerGeneric.cpp
+    )
+elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
+    list(APPEND WTF_SOURCES
+        linux/CurrentProcessMemoryStatus.cpp
+        linux/HighPriorityThreads.cpp
+        linux/MemoryFootprintLinux.cpp
+
+        unix/MemoryPressureHandlerUnix.cpp
+    )
+elseif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+    list(APPEND WTF_SOURCES
+        generic/MemoryFootprintGeneric.cpp
+
+        unix/MemoryPressureHandlerUnix.cpp
+    )
+    list(APPEND WTF_LIBRARIES execinfo)
+else ()
+    list(APPEND WTF_SOURCES
+        generic/MemoryFootprintGeneric.cpp
+        generic/MemoryPressureHandlerGeneric.cpp
+    )
+endif ()
+
+if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+    list(APPEND WTF_PUBLIC_HEADERS
+        glib/FilePathWatcher.h
+        glib/GRefPtr.h
+        glib/GSpanExtras.h
+        glib/GTypedefs.h
+        glib/RunLoopSourcePriority.h
+    )
+    list(APPEND WTF_SOURCES
+        glib/GRefPtr.cpp
+        glib/RunLoopGLib.cpp
+    )
+    if (ENABLE_REMOTE_INSPECTOR)
+        list(APPEND WTF_PUBLIC_HEADERS
+            glib/GLibExtras.h
+            glib/GSocketMonitor.h
+            glib/GUniquePtr.h
+            glib/SocketConnection.h
+        )
+        list(APPEND WTF_SOURCES
+            glib/GSocketMonitor.cpp
+            glib/GSpanExtras.cpp
+            glib/SocketConnection.cpp
+        )
+    endif ()
+    if (ENABLE_JSC_GLIB_API)
+        list(APPEND WTF_PUBLIC_HEADERS
+            glib/GLibExtras.h
+            glib/GUniquePtr.h
+            glib/GWeakPtr.h
+            glib/WTFGType.h
+        )
+    endif ()
+    list(APPEND WTF_LIBRARIES
+        GLib::GioUnix
+    )
+elseif (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "bun")
+    list(APPEND WTF_SOURCES
+        bun/RunLoopBun.cpp
+    )
+else ()
+    list(APPEND WTF_SOURCES
+        generic/RunLoopGeneric.cpp
+    )
+endif ()
+
+list(APPEND WTF_LIBRARIES
+    Threads::Threads
+)
+
+if (USE_LIBBACKTRACE)
+    list(APPEND WTF_LIBRARIES
+        LIBBACKTRACE::LIBBACKTRACE
+    )
+endif ()

@@ -1,0 +1,60 @@
+/*
+ * Copyright (C) 2013 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
+#include "config.h"
+#include "JSTypedArrayConstructors.h"
+
+#include "JSCInlines.h"
+
+namespace JSC {
+
+// JSGenericTypedArrayViewConstructor<ViewClass> overrides nothing in InternalFunction's method
+// table, so every instantiation's s_info is byte-identical to the others (and to the other
+// InternalFunction boilerplate). Nothing in this TU takes their addresses -- the only reader is
+// constructorClassInfoForType() over in TypedArrayType.cpp -- so clang marks them
+// local_unnamed_addr and LTO is free to fold them onto one address. DFG's
+// handleTypedArrayConstructor() then matches `new Uint8Array(n)` against the first type in the
+// loop (Int8) and allocates the wrong view type, so keep each address distinct.
+#undef MAKE_S_INFO
+#define MAKE_S_INFO(type) \
+    template<> const ClassInfo JS##type##Constructor::s_info = { "Function"_s, &JS##type##Constructor::Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JS##type##Constructor) }; \
+    CLASSINFO_KEEP_ADDRESS_UNIQUE(JS##type##Constructor)
+
+MAKE_S_INFO(Int8Array);
+MAKE_S_INFO(Int16Array);
+MAKE_S_INFO(Int32Array);
+MAKE_S_INFO(Uint8Array);
+MAKE_S_INFO(Uint8ClampedArray);
+MAKE_S_INFO(Uint16Array);
+MAKE_S_INFO(Uint32Array);
+MAKE_S_INFO(Float16Array);
+MAKE_S_INFO(Float32Array);
+MAKE_S_INFO(Float64Array);
+MAKE_S_INFO(BigInt64Array);
+MAKE_S_INFO(BigUint64Array);
+MAKE_S_INFO(DataView);
+
+} // namespace JSC
+

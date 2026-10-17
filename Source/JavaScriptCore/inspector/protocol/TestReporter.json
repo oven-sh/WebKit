@@ -1,0 +1,91 @@
+{
+  "domain": "TestReporter",
+  "description": "TestReporter domain allows reporting of test-related events.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [
+    {
+      "id": "TestStatus",
+      "type": "string",
+      "enum": ["pass", "fail", "timeout", "skip", "todo", "skipped_because_label"]
+    },
+    {
+      "id": "TestType",
+      "type": "string",
+      "enum": ["test", "describe"]
+    }
+  ],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables TestReporter domain events."
+    },
+    {
+      "name": "disable",
+      "description": "Disables TestReporter domain events."
+    }
+  ],
+  "events": [
+    {
+      "name": "found",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "integer",
+          "description": "Unique identifier of the test that was found."
+        },
+        {
+          "name": "scriptId",
+          "$ref": "Debugger.ScriptId",
+          "description": "Unique identifier of the script the test is in. Available when the debugger is attached.",
+          "optional": true
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "url of the script the test is in. Available when the debugger is not attached.",
+          "optional": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number in the script that started the test."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Name of the test that started.",
+          "optional": true
+        },
+        {
+          "name": "type",
+          "$ref": "TestType",
+          "description": "Type of the item found (test or describe block).",
+          "optional": true
+        },
+        {
+          "name": "parentId",
+          "type": "integer",
+          "description": "ID of the parent describe block, if any.",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "start",
+      "parameters": [{ "name": "id", "type": "integer", "description": "Unique identifier of the test that started." }]
+    },
+    {
+      "name": "end",
+      "parameters": [
+        { "name": "id", "type": "integer", "description": "Unique identifier of the test that ended." },
+        { "name": "status", "$ref": "TestStatus", "description": "Status of the test that ended." },
+        {
+          "name": "elapsed",
+          "type": "integer",
+          "description": "Elapsed time in milliseconds since the test started."
+        }
+      ]
+    }
+  ]
+}

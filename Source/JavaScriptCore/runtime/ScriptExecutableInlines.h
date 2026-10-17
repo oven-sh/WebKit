@@ -1,0 +1,65 @@
+/*
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#pragma once
+
+#include "CodeBlock.h"
+#include "ScriptExecutable.h"
+
+namespace JSC {
+
+inline void ScriptExecutable::jettisonCodeBlockEdgeIfDead(VM& vm, WriteBarrier<CodeBlock>& codeBlockEdge)
+{
+    for (;;) {
+        auto* codeBlock = codeBlockEdge.get();
+        if (!codeBlock)
+            return;
+
+        if (vm.heap.isMarked(codeBlock))
+            return;
+
+#if USE(BUN_JSC_ADDITIONS)
+        // An optimizing block the old-age check let go this cycle died of old age, not of a dead weak reference: say so,
+        // so jettison() takes its old-age path (no exit-site tally, baseline code cache released) rather than the dead-weak-reference one.
+        if (codeBlock->agedOut())
+            codeBlock->jettison(Profiler::JettisonDueToOldAge);
+        else
+#endif
+        if (codeBlock->shouldJettisonDueToWeakReference(vm)) {
+            // The executable is alive and will tier up again; without the back-off every such recompile is as eager as the first.
+            bool countsTowardBackoff = codeBlock->baselineAlternative()->reoptimizationRetryCounter() < Options::weakReferenceJettisonReoptimizationLimit();
+            codeBlock->jettison(Profiler::JettisonDueToWeakReference, countsTowardBackoff ? CountReoptimization : DontCountReoptimization);
+        } else
+            codeBlock->jettison(Profiler::JettisonDueToOldAge);
+
+        if (codeBlock == codeBlockEdge.get()) {
+            codeBlockEdge.clear();
+            return;
+        }
+    }
+}
+
+} // namespace JSC
+

@@ -1,0 +1,91 @@
+From 51122429556748ee2a115c44506f9b729bf48329 Mon Sep 17 00:00:00 2001
+From: Sosuke Suzuki <sosuke@bun.com>
+Date: Fri, 6 Feb 2026 11:48:19 +0900
+Subject: [PATCH] [YARR] Fix stale captures in FixedCount groups in MatchOnly
+ mode https://bugs.webkit.org/show_bug.cgi?id=307127
+
+Reviewed by NOBODY (OOPS!).
+
+When backreferences are used in MatchOnly mode (.test()), the JIT uses
+internal frame storage for subpattern data (m_needsInternalSubpatternOutput).
+
+However, the capture-clearing code at the start of each FixedCount iteration
+checked m_compileMode == IncludeSubpatterns instead of shouldRecordSubpatterns(),
+so captures were not cleared between iterations in MatchOnly mode.
+
+This caused stale capture values from a previous iteration to be visible to
+backreferences. For example, /(?:(a)|(b)){2}\2/.test("ba") returned false
+instead of true, because capture[2] retained "b" from iteration 1 into
+iteration 2 where it should have been undefined.
+
+Test: JSTests/stress/regexp-fixedcount-matchonly-stale-capture.js
+
+* JSTests/stress/regexp-fixedcount-matchonly-stale-capture.js: Added.
+(shouldBe):
+(re.a):
+(re2.a):
+* Source/JavaScriptCore/yarr/YarrJIT.cpp:
+---
+ ...gexp-fixedcount-matchonly-stale-capture.js | 30 +++++++++++++++++++
+ Source/JavaScriptCore/yarr/YarrJIT.cpp        |  4 +--
+ 2 files changed, 32 insertions(+), 2 deletions(-)
+ create mode 100644 JSTests/stress/regexp-fixedcount-matchonly-stale-capture.js
+
+diff --git a/JSTests/stress/regexp-fixedcount-matchonly-stale-capture.js b/JSTests/stress/regexp-fixedcount-matchonly-stale-capture.js
+new file mode 100644
+index 000000000000..6a7104f06d43
+--- /dev/null
++++ b/JSTests/stress/regexp-fixedcount-matchonly-stale-capture.js
+@@ -0,0 +1,30 @@
++function shouldBe(actual, expected) {
++    if (actual !== expected)
++        throw new Error("Expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual));
++}
++
++// In MatchOnly mode (.test()), captures inside FixedCount groups must be
++// cleared between iterations. The bug: when an earlier alternative succeeds
++// in iteration N+1, a later alternative's capture retains a stale value from
++// iteration N instead of being undefined.
++//
++// /(?:(a)|(b)){2}\2/ on "ba":
++//   iter1: (b) matches → capture[2]="b"
++//   iter2: (a) matches, (b) not attempted → capture[2] should be undefined
++//   \2 → undefined → empty match → true
++
++var re = /(?:(a)|(b)){2}\2/;
++for (var i = 0; i < 200; i++) {
++    re.exec("aabb");
++    re.test("aabb");
++}
++shouldBe(re.exec("ba")[2], undefined);
++shouldBe(re.test("ba"), true);
++
++var re2 = /(?:(a)|(b)){3}\2/;
++for (var i = 0; i < 200; i++) {
++    re2.exec("aabbaa");
++    re2.test("aabbaa");
++}
++shouldBe(re2.exec("baa")[2], undefined);
++shouldBe(re2.test("baa"), true);
+diff --git a/Source/JavaScriptCore/yarr/YarrJIT.cpp b/Source/JavaScriptCore/yarr/YarrJIT.cpp
+index 3530a12a9af8..6237c76a7561 100644
+--- a/Source/JavaScriptCore/yarr/YarrJIT.cpp
++++ b/Source/JavaScriptCore/yarr/YarrJIT.cpp
+@@ -3939,7 +3939,7 @@ class YarrGenerator final : public YarrJITInfo {
+                 // Clear nested captures at the start of each iteration.
+                 // This is required by ECMAScript spec - capture groups are reset to undefined
+                 // at the beginning of each iteration of a quantified group.
+-                if (m_compileMode == JITCompileMode::IncludeSubpatterns && term->containsAnyCaptures()) {
++                if (shouldRecordSubpatterns() && term->containsAnyCaptures()) {
+                     for (unsigned subpattern = term->parentheses.subpatternId; subpattern <= term->parentheses.lastSubpatternId; subpattern++)
+                         clearSubpattern(subpattern);
+                 }
+@@ -4039,7 +4039,7 @@ class YarrGenerator final : public YarrJITInfo {
+                     m_jit.store32(MacroAssembler::TrustedImm32(-1), MacroAssembler::Address(newParenContextReg, ParenContext::matchAmountOffset()));
+ 
+                     // Clear captures at BEGIN (before iteration runs) so each iteration starts fresh.
+-                    if (m_compileMode == JITCompileMode::IncludeSubpatterns) {
++                    if (shouldRecordSubpatterns() && term->containsAnyCaptures()) {
+                         for (unsigned subpattern = term->parentheses.subpatternId; subpattern <= term->parentheses.lastSubpatternId; subpattern++)
+                             clearSubpattern(subpattern);
+                     }

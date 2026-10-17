@@ -1,0 +1,2146 @@
+/*
+ * Copyright (C) 2015-2021 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "AbstractModuleRecord.h"
+
+#include "BuiltinNames.h"
+#include "CyclicModuleRecord.h"
+#include "Error.h"
+#include "JSCInlines.h"
+#include "JSInternalFieldObjectImplInlines.h"
+#include "JSMapInlines.h"
+#include "JSModuleEnvironment.h"
+#include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
+#include "JSModuleRecord.h"
+#include "JSPromise.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InternalFieldTuple.h"
+#include "JSAsyncFromSyncIterator.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
+#include "JSPromiseReaction.h"
+#endif
+#include "ObjectConstructor.h"
+#include "SyntheticModuleRecord.h"
+#include "VMTrapsInlines.h"
+#include "WebAssemblyModuleRecord.h"
+#include <wtf/text/MakeString.h>
+#include "HeapAnalyzer.h"
+
+namespace JSC {
+namespace AbstractModuleRecordInternal {
+static constexpr bool verbose = false;
+} // namespace AbstractModuleRecordInternal
+
+const ClassInfo AbstractModuleRecord::s_info = { "AbstractModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(AbstractModuleRecord) };
+
+AbstractModuleRecord::AsyncEvaluationOrder::AsyncEvaluationOrder(int64_t order)
+    : m_order(order)
+{
+}
+
+int64_t AbstractModuleRecord::AsyncEvaluationOrder::order() const
+{
+    ASSERT(hasOrder());
+    return m_order;
+}
+
+auto AbstractModuleRecord::AsyncEvaluationOrder::order(int64_t order) -> AsyncEvaluationOrder&
+{
+    ASSERT(order >= 0);
+    m_order = order;
+    return *this;
+}
+
+AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, Identifier moduleKey, SourceProviderSourceType sourceType)
+    : Base(vm, structure)
+    , m_moduleKey(WTF::move(moduleKey))
+    , m_moduleLoader(moduleLoader, WriteBarrierEarlyInit)
+    , m_sourceType(sourceType)
+{
+}
+
+void AbstractModuleRecord::finishCreation(JSGlobalObject*, VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+
+    auto values = initialValues();
+    ASSERT(values.size() == numberOfInternalFields);
+    for (unsigned index = 0; index < values.size(); ++index)
+        Base::internalField(index).set(vm, this, values[index]);
+}
+
+template<typename Visitor>
+void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    AbstractModuleRecord* thisObject = uncheckedDowncast<AbstractModuleRecord>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_moduleLoader);
+    visitor.append(thisObject->m_moduleEnvironment);
+    visitor.append(thisObject->m_moduleNamespaceObject);
+    visitor.append(thisObject->m_deferredNamespaceObject);
+    visitor.append(thisObject->m_cycleRoot);
+    visitor.append(thisObject->m_topLevelCapability);
+    visitor.append(thisObject->m_asyncCapability);
+    Locker locker { thisObject->cellLock() };
+    visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
+    for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
+        visitor.append(loadedModule.m_module);
+}
+
+DEFINE_VISIT_CHILDREN(AbstractModuleRecord);
+
+size_t AbstractModuleRecord::estimatedSize(JSCell* cell, VM& vm)
+{
+    size_t size = Base::estimatedSize(cell, vm);
+    auto* thisObject = uncheckedDowncast<AbstractModuleRecord>(cell);
+    size += thisObject->m_starExportEntries.capacity() * sizeof(ExportEntry);
+    size += thisObject->m_requestedModules.capacity() * sizeof(ModuleRequest);
+    // OrderedHashMap does not expose byteSize(); approximate with capacity * entry size.
+    size += thisObject->m_exportEntries.capacity() * (sizeof(RefPtr<UniquedStringImpl>) + sizeof(ExportEntry));
+    size += thisObject->m_importEntries.capacity() * (sizeof(RefPtr<UniquedStringImpl>) + sizeof(ImportEntry));
+#if USE(BUN_JSC_ADDITIONS)
+    size += thisObject->m_prelinkedImportResolutions.size() * sizeof(Resolution);
+#endif
+    return size;
+}
+
+ScriptFetchParameters::Type AbstractModuleRecord::ModuleRequest::type(ScriptFetchParameters::Type fallback) const
+{
+    if (m_attributes)
+        return m_attributes->type();
+    return fallback;
+}
+
+AbstractModuleRecord::LoadedModuleRequest::LoadedModuleRequest(VM& vm, ModuleRequest moduleRequest, AbstractModuleRecord* loadedModule, JSCell* owner)
+    : ModuleRequest(WTF::move(moduleRequest))
+    , m_module(vm, owner, loadedModule)
+{
+}
+
+bool AbstractModuleRecord::ModuleRequest::operator==(const ModuleRequest& other) const
+{
+    if (this == &other)
+        return true;
+
+    if (m_specifier != other.m_specifier)
+        return false;
+
+    if (!!m_attributes != !!other.m_attributes)
+        return false;
+
+    if (m_attributes)
+        return m_attributes->type() == other.m_attributes->type();
+
+    return true;
+}
+
+void AbstractModuleRecord::appendRequestedModule(const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& attributes, ModulePhase phase)
+{
+    m_requestedModules.append({ moduleName, WTF::move(attributes), phase });
+}
+
+void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
+{
+    m_starExportEntries.add({ moduleName.impl(), moduleRequestType });
+}
+
+void AbstractModuleRecord::addImportEntry(const ImportEntry& entry)
+{
+    bool isNewEntry = m_importEntries.add(entry.localName.impl(), entry).isNewEntry;
+    UNUSED_PARAM(isNewEntry);
+    // This is guaranteed by the parser.
+    ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate import entry name '%s'", entry.localName.impl()->utf8().legacyCStringPointer());
+}
+
+void AbstractModuleRecord::addExportEntry(const ExportEntry& entry)
+{
+    bool isNewEntry = m_exportEntries.add(entry.exportName.impl(), entry).isNewEntry;
+    UNUSED_PARAM(isNewEntry);
+    // This is guaranteed by the parser.
+    ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate export entry name '%s'", entry.exportName.impl()->utf8().legacyCStringPointer());
+}
+
+auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> std::optional<ImportEntry>
+{
+#if USE(BUN_JSC_ADDITIONS)
+    ensurePrelinkedEntriesMaterialized();
+#endif
+    const auto iterator = m_importEntries.find(localName);
+    if (iterator == m_importEntries.end())
+        return std::nullopt;
+    return std::optional<ImportEntry>(iterator->value);
+}
+
+auto AbstractModuleRecord::tryGetExportEntry(UniquedStringImpl* exportName) -> std::optional<ExportEntry>
+{
+#if USE(BUN_JSC_ADDITIONS)
+    ensurePrelinkedEntriesMaterialized();
+#endif
+    const auto iterator = m_exportEntries.find(exportName);
+    if (iterator == m_exportEntries.end())
+        return std::nullopt;
+    return std::optional<ExportEntry>(iterator->value);
+}
+
+auto AbstractModuleRecord::ExportEntry::createLocal(const Identifier& exportName, const Identifier& localName) -> ExportEntry
+{
+    return ExportEntry { Type::Local, ScriptFetchParameters::Type::JavaScript, exportName, Identifier(), Identifier(), localName };
+}
+
+auto AbstractModuleRecord::ExportEntry::createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType) -> ExportEntry
+{
+    return ExportEntry { Type::Indirect, moduleRequestType, exportName, moduleName, importName, Identifier() };
+}
+
+auto AbstractModuleRecord::ExportEntry::createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType) -> ExportEntry
+{
+    return ExportEntry { Type::Namespace, moduleRequestType, exportName, moduleName, Identifier(), Identifier() };
+}
+
+auto AbstractModuleRecord::Resolution::notFound() -> Resolution
+{
+    return Resolution { Type::NotFound, nullptr, Identifier() };
+}
+
+auto AbstractModuleRecord::Resolution::error() -> Resolution
+{
+    return Resolution { Type::Error, nullptr, Identifier() };
+}
+
+auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
+{
+    return Resolution { Type::Ambiguous, nullptr, Identifier() };
+}
+
+AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
+{
+    if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
+        return iter->value.m_module.get();
+#if USE(BUN_JSC_ADDITIONS)
+    // A prelinked record's graph requests are answered by the loader's index table, not [[LoadedModules]] (until
+    // something materializes the by-name view); a record has tens of requests, so find the request by name.
+    if (m_prelinked) {
+        for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+            const ModuleRequest& request = m_requestedModules[i];
+            if (request.m_specifier.impl() == moduleName.impl() && request.type() == moduleRequestType)
+                return prelinkedRequestedModule(i);
+        }
+    }
+#endif
+    return nullptr;
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void AbstractModuleRecord::initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&& graph, uint32_t moduleIndex)
+{
+    ASSERT(!m_prelinked && m_requestedModules.isEmpty());
+    m_prelinked = WTF::move(graph);
+    m_prelinkedIndex = m_prelinked->checkedModuleIndex(moduleIndex);
+    const auto& module = prelinkedModule();
+    m_isTypeScript = module.flags & PrelinkedModuleGraph::Module::IsTypeScript;
+    m_hasTLA = module.flags & PrelinkedModuleGraph::Module::HasTLA;
+    auto requests = m_prelinked->requests(module);
+    m_requestedModules = Vector<ModuleRequest>(requests.size(), [&](size_t i) {
+        const auto& request = requests[i];
+        return ModuleRequest { m_prelinked->identifier(request.specifierSid), m_prelinked->fetchParameters(request), request.isDeferred() ? ModulePhase::Defer : ModulePhase::Evaluation };
+    });
+}
+
+// The eager form for when Options::usePrelinkedModuleInfo() is off: the by-name entry maps are built from the graph now
+// and the record then behaves exactly like one ModuleAnalyzer made ([[LoadedModules]] is filled by the loader as usual).
+void AbstractModuleRecord::convertPrelinkedToEager()
+{
+    ASSERT(m_prelinked && !m_prelinkedEntriesMaterialized);
+    materializePrelinkedEntries();
+    m_prelinkedImportResolutions.clear();
+    m_prelinked = nullptr;
+    m_prelinkedEntriesMaterialized = false;
+}
+
+AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(unsigned requestIndex) const
+{
+    if (!m_prelinked || requestIndex >= m_requestedModules.size())
+        return nullptr;
+    const auto& request = m_prelinked->requests(prelinkedModule())[requestIndex];
+    if (request.moduleIndex != PrelinkedModuleGraph::noModule) {
+        if (AbstractModuleRecord* record = prelinkedRecordForResolution(globalObject(), request.moduleIndex)) [[likely]]
+            return record;
+    }
+    const ModuleRequest& moduleRequest = m_requestedModules[requestIndex];
+    if (auto iter = m_loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != m_loadedModules.end())
+        return iter->value.m_module.get();
+    return nullptr;
+}
+
+AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(const ModuleRequest& request) const
+{
+    if (!m_prelinked)
+        return nullptr;
+    // Graph walks hand us an element of requestedModules(): its position is the request index.
+    uintptr_t offset = std::bit_cast<uintptr_t>(&request) - std::bit_cast<uintptr_t>(m_requestedModules.span().data());
+    if (!(offset % sizeof(ModuleRequest)) && offset / sizeof(ModuleRequest) < m_requestedModules.size()) [[likely]]
+        return prelinkedRequestedModule(offset / sizeof(ModuleRequest));
+    // A copy (a top-level load's own request, or a caller that copied an element): match it the way ModuleRequestsEqual does.
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+        const ModuleRequest& candidate = m_requestedModules[i];
+        if (candidate.m_specifier.impl() == request.m_specifier.impl() && candidate.type() == request.type())
+            return prelinkedRequestedModule(i);
+    }
+    return nullptr;
+}
+
+bool AbstractModuleRecord::hasAllPrelinkedRequestedModules() const
+{
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+        if (!prelinkedRequestedModule(i))
+            return false;
+    }
+    return true;
+}
+
+// The by-name view the rest of the module machinery expects, built once from the graph: entry maps for dynamic by-name
+// resolution through star exports and reflection, and [[LoadedModules]] for code that walks it directly.
+void AbstractModuleRecord::materializePrelinkedEntries()
+{
+    ASSERT(m_prelinked && !m_prelinkedEntriesMaterialized);
+    m_prelinkedEntriesMaterialized = true;
+    VM& vm = this->vm();
+    PrelinkedModuleGraph& graph = *m_prelinked;
+    const auto& module = prelinkedModule();
+    auto requestType = [&](uint32_t requestIndex) {
+        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+        return m_requestedModules[requestIndex].type();
+    };
+    auto requestSpecifier = [&](uint32_t requestIndex) -> const Identifier& {
+        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+        return m_requestedModules[requestIndex].m_specifier;
+    };
+
+    auto imports = graph.imports(module);
+    m_importEntries.reserveInitialCapacity(imports.size());
+    for (const auto& import : imports) {
+        ImportEntryType type = ImportEntryType::Single;
+        ModulePhase phase = ModulePhase::Evaluation;
+        switch (import.kind()) {
+        case PrelinkedModuleGraph::ImportKind::Single:
+            break;
+        case PrelinkedModuleGraph::ImportKind::SingleTypeScript:
+            type = ImportEntryType::SingleTypeScript;
+            break;
+        case PrelinkedModuleGraph::ImportKind::NamespaceDefer:
+            phase = ModulePhase::Defer;
+            [[fallthrough]];
+        case PrelinkedModuleGraph::ImportKind::Namespace:
+            type = ImportEntryType::Namespace;
+            break;
+        }
+        addImportEntry(ImportEntry { type, phase, requestType(import.request()), requestSpecifier(import.request()), graph.identifier(import.importNameSid), graph.identifier(import.localSid) });
+    }
+
+    auto exports = graph.exports(module);
+    m_exportEntries.reserveInitialCapacity(exports.size());
+    for (const auto& entry : exports) {
+        Identifier exportName = graph.identifier(entry.exportSid);
+        switch (entry.kind()) {
+        case PrelinkedModuleGraph::ExportKind::Local:
+            addExportEntry(ExportEntry::createLocal(exportName, graph.identifier(entry.localOrImportSid)));
+            break;
+        case PrelinkedModuleGraph::ExportKind::Indirect:
+            if (entry.localOrImportSid == PrelinkedModuleGraph::starNamespaceSid)
+                addExportEntry(ExportEntry::createNamespace(exportName, requestSpecifier(entry.request()), requestType(entry.request())));
+            else
+                addExportEntry(ExportEntry::createIndirect(exportName, graph.identifier(entry.localOrImportSid), requestSpecifier(entry.request()), requestType(entry.request())));
+            break;
+        case PrelinkedModuleGraph::ExportKind::Namespace:
+            addExportEntry(ExportEntry::createNamespace(exportName, requestSpecifier(entry.request()), requestType(entry.request())));
+            break;
+        }
+    }
+
+    for (uint32_t requestIndex : graph.starExports(module))
+        addStarExportEntry(requestSpecifier(requestIndex), requestType(requestIndex));
+
+    Locker locker { cellLock() };
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+        AbstractModuleRecord* loaded = prelinkedRequestedModule(i);
+        if (!loaded)
+            continue;
+        const ModuleRequest& request = m_requestedModules[i];
+        m_loadedModules.ensure(ModuleMapKey { request.m_specifier.impl(), request.type() }, [&] {
+            return LoadedModuleRequest { vm, request, loaded, this };
+        });
+    }
+}
+
+AbstractModuleRecord* AbstractModuleRecord::prelinkedRecordForResolution(JSGlobalObject*, uint32_t moduleIndex) const
+{
+    if (moduleIndex == m_prelinkedIndex)
+        return const_cast<AbstractModuleRecord*>(this);
+    JSModuleLoader* loader = moduleLoader();
+    if (loader->prelinkedModuleGraph() != m_prelinked.get())
+        return nullptr;
+    AbstractModuleRecord* record = loader->prelinkedRecordForResolution(moduleIndex);
+    // The bundler only resolves bindings into modules of the graph, so anything found here is prelinked itself (and a
+    // SyntheticModuleRecord's lazy exports are never reached this way).
+    ASSERT(!record || (record->prelinkedGraph() == m_prelinked.get() && record->prelinkedIndex() == moduleIndex));
+    return record;
+}
+
+// A pre-resolved (module, binding) as a Resolution; nullopt when the runtime has to resolve by name instead (then on
+// `requestIndex`'s module with `importNameSid`, which does not need this record's own entry maps either).
+auto AbstractModuleRecord::prelinkedResolution(JSGlobalObject* globalObject, PrelinkedModuleGraph::ResolutionKind kind, uint32_t resolvedModule, uint32_t resolvedLocalSid, uint32_t requestIndex, uint32_t importNameSid) -> std::optional<Resolution>
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    using ResolutionKind = PrelinkedModuleGraph::ResolutionKind;
+    switch (kind) {
+    case ResolutionKind::Binding:
+        if (AbstractModuleRecord* target = prelinkedRecordForResolution(globalObject, resolvedModule)) [[likely]]
+            return Resolution { Resolution::Type::Resolved, target, m_prelinked->identifier(resolvedLocalSid) };
+        break;
+    case ResolutionKind::Namespace:
+        if (AbstractModuleRecord* target = prelinkedRecordForResolution(globalObject, resolvedModule)) [[likely]]
+            return Resolution { Resolution::Type::Resolved, target, vm.propertyNames->starNamespacePrivateName };
+        break;
+    case ResolutionKind::NotFound:
+        return Resolution::notFound();
+    case ResolutionKind::Ambiguous:
+        return Resolution::ambiguous();
+    case ResolutionKind::Error:
+        return Resolution::error();
+    case ResolutionKind::Unresolved:
+        break;
+    }
+    AbstractModuleRecord* importedModule = prelinkedRequestedModule(requestIndex);
+    if (!importedModule) [[unlikely]]
+        return std::nullopt;
+    if (importNameSid == PrelinkedModuleGraph::starNamespaceSid)
+        return Resolution { Resolution::Type::Resolved, importedModule, vm.propertyNames->starNamespacePrivateName };
+    // By name, not resolveExport(): the target may be prelinked too, and an Unresolved entry there that leads back here (a
+    // re-export cycle) would recurse; the by-name algorithm carries the resolve set that ends the cycle as NotFound.
+    RELEASE_AND_RETURN(scope, importedModule->resolveExportByName(globalObject, m_prelinked->identifier(importNameSid)));
+}
+
+// ResolveImport answered from the graph: which import `localName` is comes from the hash-sorted import table (code
+// names variables, not import indices); the binding is computed once per import and reused by every use site.
+auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const Identifier& localName) -> std::optional<Resolution>
+{
+    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(prelinkedModule(), localName.impl());
+    if (!import)
+        return Resolution::notFound();
+    return tryResolveImportPrelinked(globalObject, *import);
+}
+
+auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const PrelinkedModuleGraph::Import& entry) -> std::optional<Resolution>
+{
+    const PrelinkedModuleGraph::Import* import = &entry;
+    auto imports = m_prelinked->imports(prelinkedModule());
+    if (m_prelinkedImportResolutions.size() != imports.size()) [[unlikely]]
+        m_prelinkedImportResolutions = FixedVector<Resolution>(imports.size());
+    Resolution& memo = m_prelinkedImportResolutions[import - imports.data()];
+    if (memo.moduleRecord || memo.type != Resolution::Type::Resolved) [[likely]]
+        return memo;
+    std::optional<Resolution> resolution;
+    if (import->isNamespace())
+        resolution = Resolution::notFound();
+    else
+        resolution = prelinkedResolution(globalObject, import->resolution(), import->resolvedModule, import->resolvedLocalSid, import->request(), import->importNameSid);
+    if (resolution && (resolution->type == Resolution::Type::Resolved || resolution->type == Resolution::Type::NotFound))
+        memo = *resolution;
+    return resolution;
+}
+
+auto AbstractModuleRecord::tryResolveExportPrelinked(JSGlobalObject* globalObject, const PrelinkedModuleGraph::Export& entry) -> std::optional<Resolution>
+{
+    if (entry.kind() == PrelinkedModuleGraph::ExportKind::Local)
+        return Resolution { Resolution::Type::Resolved, this, m_prelinked->identifier(entry.localOrImportSid) };
+    auto kind = entry.resolution();
+    if (kind != PrelinkedModuleGraph::ResolutionKind::Binding && kind != PrelinkedModuleGraph::ResolutionKind::Namespace && kind != PrelinkedModuleGraph::ResolutionKind::Unresolved) {
+        // NotFound / Ambiguous / Error through an indirect export are re-derived by name so this module's star exports
+        // get their say and the error text names the right module.
+        return std::nullopt;
+    }
+    return prelinkedResolution(globalObject, kind, entry.resolvedModule, entry.resolvedLocalSid, entry.request(), entry.localOrImportSid);
+}
+
+auto AbstractModuleRecord::tryResolveExportPrelinked(JSGlobalObject* globalObject, const Identifier& exportName) -> std::optional<Resolution>
+{
+    VM& vm = globalObject->vm();
+    const auto& module = prelinkedModule();
+    const PrelinkedModuleGraph::Export* entry = m_prelinked->findExport(module, exportName.impl());
+    if (!entry) {
+        if (module.flags & PrelinkedModuleGraph::Module::HasStarExports)
+            return std::nullopt;
+        // resolveExportImpl with no local entry and no star exports.
+        if (exportName == vm.propertyNames->defaultKeyword)
+            return Resolution::error();
+        return Resolution::notFound();
+    }
+    return tryResolveExportPrelinked(globalObject, *entry);
+}
+
+// GetModuleNamespace's resolution list straight from the export table. False: this module has star exports (or a
+// resolution needs the by-name machinery) and the caller takes the generic path.
+bool AbstractModuleRecord::collectPrelinkedNamespaceResolutions(JSGlobalObject* globalObject, Vector<std::pair<Identifier, Resolution>>& resolutions)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto& module = prelinkedModule();
+    if (module.flags & PrelinkedModuleGraph::Module::HasStarExports)
+        return false;
+    auto exports = m_prelinked->exports(module);
+    resolutions.reserveInitialCapacity(exports.size());
+    for (const auto& entry : exports) {
+        std::optional<Resolution> resolution = tryResolveExportPrelinked(globalObject, entry);
+        RETURN_IF_EXCEPTION(scope, false);
+        Identifier exportName = m_prelinked->identifier(entry.exportSid);
+        if (!resolution) {
+            resolution = resolveExport(globalObject, exportName);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        switch (resolution->type) {
+        case Resolution::Type::NotFound:
+            if (m_isTypeScript)
+                break;
+            throwSyntaxError(globalObject, scope, makeString("Exported binding name '"_s, StringView(exportName.impl()), "' is not found."_s));
+            return false;
+        case Resolution::Type::Error:
+            throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
+            return false;
+        case Resolution::Type::Ambiguous:
+            break;
+        case Resolution::Type::Resolved:
+            resolutions.append({ WTF::move(exportName), *resolution });
+            break;
+        }
+    }
+    return true;
+}
+#endif // USE(BUN_JSC_ADDITIONS)
+
+void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const ModuleRequest& request, AbstractModuleRecord* record)
+{
+    VM& vm = globalObject->vm();
+    // visitChildrenImpl() walks m_loadedModules under cellLock(); take the same
+    // lock for mutation so a concurrent marker thread can't observe a mid-rehash
+    // bucket array (matches finishLoadingImportedModule's locking).
+    //
+    // innerModuleLinking/innerModuleEvaluation walk loadedModules() via
+    // getImportedModule(), so records that are linked outside the loader (Bun's
+    // node:vm SourceTextModule) need this map populated too. Reuse the original
+    // ModuleRequest (specifier + attributes) so a `with { type: "json" }` /
+    // HostDefined import lands in the same (specifier, type) bucket that
+    // getImportedModule()'s typed lookup will use.
+    Locker locker { cellLock() };
+    ModuleMapKey key { request.m_specifier.impl(), request.type() };
+    m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
+}
+
+auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_prelinked) {
+        std::optional<Resolution> resolution = tryResolveImportPrelinked(globalObject, localName);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (resolution) [[likely]] {
+            if (!Options::validatePrelinkedModuleInfo()) [[likely]]
+                return *resolution;
+            Resolution expected = resolveImportByName(globalObject, localName);
+            RETURN_IF_EXCEPTION(scope, Resolution::error());
+            RELEASE_ASSERT(resolution->isEquivalentTo(expected), m_prelinkedIndex, static_cast<unsigned>(resolution->type), static_cast<unsigned>(expected.type));
+            return expected;
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolveImportByName(globalObject, localName));
+#else
+    return resolveImportByName(globalObject, localName);
+#endif
+}
+
+auto AbstractModuleRecord::resolveImportByName(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    std::optional<ImportEntry> optionalImportEntry = tryGetImportEntry(localName.impl());
+    if (!optionalImportEntry)
+        return Resolution::notFound();
+
+    const ImportEntry& importEntry = *optionalImportEntry;
+    if (importEntry.type == AbstractModuleRecord::ImportEntryType::Namespace)
+        return Resolution::notFound();
+
+    AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, importEntry.moduleRequest, importEntry.moduleRequestType);
+    RETURN_IF_EXCEPTION(scope, Resolution::error());
+
+    RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, importEntry.importName));
+}
+
+struct AbstractModuleRecord::ResolveQuery {
+    struct Hash {
+        static unsigned hash(const ResolveQuery&);
+        static bool equal(const ResolveQuery&, const ResolveQuery&);
+        static constexpr bool safeToCompareToEmptyOrDeleted = true;
+    };
+    using HashTraits = WTF::CustomHashTraits<ResolveQuery>;
+
+    ResolveQuery(AbstractModuleRecord* moduleRecord, UniquedStringImpl* exportName)
+        : moduleRecord(moduleRecord)
+        , exportName(exportName)
+    {
+    }
+
+    ResolveQuery(AbstractModuleRecord* moduleRecord, const Identifier& exportName)
+        : ResolveQuery(moduleRecord, exportName.impl())
+    {
+    }
+
+    enum EmptyValueTag { EmptyValue };
+    ResolveQuery(EmptyValueTag)
+    {
+    }
+
+    enum DeletedValueTag { DeletedValue };
+    ResolveQuery(DeletedValueTag)
+        : moduleRecord(nullptr)
+        , exportName(WTF::HashTableDeletedValue)
+    {
+    }
+
+    bool LEGACY_NODELETE isEmptyValue() const
+    {
+        return !exportName;
+    }
+
+    bool LEGACY_NODELETE isDeletedValue() const
+    {
+        return exportName.isHashTableDeletedValue();
+    }
+
+    void dump(PrintStream& out) const
+    {
+        if (!moduleRecord) {
+            out.print("<empty>");
+            return;
+        }
+        out.print(moduleRecord->moduleKey(), " \"", exportName.get(), "\"");
+    }
+
+    // The module record is not marked from the GC. But these records are reachable from the JSGlobalObject.
+    // So we don't care the reachability to this record.
+    AbstractModuleRecord* moduleRecord;
+    RefPtr<UniquedStringImpl> exportName;
+};
+
+inline unsigned LEGACY_NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
+{
+    return WTF::PtrHash<AbstractModuleRecord*>::hash(query.moduleRecord) + IdentifierRepHash::hash(query.exportName);
+}
+
+inline bool LEGACY_NODELETE AbstractModuleRecord::ResolveQuery::Hash::equal(const ResolveQuery& lhs, const ResolveQuery& rhs)
+{
+    return lhs.moduleRecord == rhs.moduleRecord && lhs.exportName == rhs.exportName;
+}
+
+auto AbstractModuleRecord::tryGetCachedResolution(UniquedStringImpl* exportName) -> std::optional<Resolution>
+{
+    const auto iterator = m_resolutionCache.find(exportName);
+    if (iterator == m_resolutionCache.end())
+        return std::nullopt;
+    return std::optional<Resolution>(iterator->value);
+}
+
+void AbstractModuleRecord::cacheResolution(UniquedStringImpl* exportName, const Resolution& resolution)
+{
+    m_resolutionCache.add(exportName, resolution);
+}
+
+auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const ResolveQuery& root) -> Resolution
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (AbstractModuleRecordInternal::verbose)
+        dataLog("Resolving ", root, "\n");
+
+    // https://tc39.github.io/ecma262/#sec-resolveexport
+
+    // How to avoid C++ recursion in this function:
+    // This function avoids C++ recursion of the naive ResolveExport implementation.
+    // Flatten the recursion to the loop with the task queue and frames.
+    //
+    // 1. pendingTasks
+    //     We enqueue the recursive resolveExport call to this queue to avoid recursive calls in C++.
+    //     The task has 3 types. (1) Query, (2) IndirectFallback and (3) GatherStars.
+    //     (1) Query
+    //         Querying the resolution to the current module.
+    //     (2) IndirectFallback
+    //         Examine the result of the indirect export resolution. Only when the indirect export resolution fails,
+    //         we look into the star exports. (step 5-a-vi).
+    //     (3) GatherStars
+    //         Examine the result of the star export resolutions.
+    //
+    // 2. frames
+    //     When the spec calls the resolveExport recursively, instead we append the frame
+    //     (that holds the result resolution) to the frames and enqueue the task to the pendingTasks.
+    //     The entry in the frames means the *local* resolution result of the specific recursive resolveExport.
+    //
+    // We should maintain the local resolution result instead of holding the global resolution result only.
+    // For example,
+    //
+    //     star
+    // (1) ---> (2) "Resolve"
+    //      |
+    //      |
+    //      +-> (3) "NotFound"
+    //      |
+    //      |       star
+    //      +-> (4) ---> (5) "Resolve" [here]
+    //               |
+    //               |
+    //               +-> (6) "Error"
+    //
+    // Consider the above graph. The numbers represents the modules. Now we are [here].
+    // If we only hold the global resolution result during the resolveExport operation, [here],
+    // we decide the entire result of resolveExport is "Ambiguous", because there are multiple
+    // "Resolve" (in module (2) and (5)). However, this should become "Error" because (6) will
+    // propagate "Error" state to the (4), (4) will become "Error" and then, (1) will become
+    // "Error". We should aggregate the results at the star exports point ((4) and (1)).
+    //
+    // Usually, both "Error" and "Ambiguous" states will throw the syntax error. So except for the content of the
+    // error message, there are no difference. (And if we fix the (6) that raises "Error", next, it will produce
+    // the "Ambiguous" error due to (5). Anyway, user need to fix the both. So which error should be raised at first
+    // doesn't matter so much.
+    //
+    // However, this may become the problem under the module namespace creation.
+    // http://www.ecma-international.org/ecma-262/6.0/#sec-getmodulenamespace
+    // section 15.2.1.18, step 3-d-ii
+    // Here, we distinguish "Ambiguous" and "Error". When "Error" state is produced, we need to throw the propagated error.
+    // But if "Ambiguous" state comes, we just ignore the result.
+    // To follow the requirement strictly, in this implementation, we keep the local resolution result to produce the
+    // correct result under the above complex cases.
+
+    // Caching strategy:
+    // The resolveExport operation is frequently called. So caching results is important.
+    // We observe the following aspects and based on them construct the caching strategy.
+    // Here, we attempt to cache the resolution by constructing the map in module records.
+    // That means  Module -> ExportName -> Maybe<Resolution>.
+    // Technically, all the AbstractModuleRecords have the Map<ExportName, Resolution> for caching.
+    //
+    // The important observations are that,
+    //
+    //  - *cacheable* means that traversing to this node from a path will produce the same results as starting from this node.
+    //
+    //    Here, we define the resovling route. We represent [?] as the module that has the local binding.
+    //    And (?) as the module without the local binding.
+    //
+    //      @ -> (A) -> (B) -> [C]
+    //
+    //    We list the resolving route for each node.
+    //
+    //    (A): (A) -> (B) -> [C]
+    //    (B): (B) -> [C]
+    //    [C]: [C]
+    //
+    //    In this case, if we start the tracing from (B), the resolving route becomes (B) -> [C].
+    //    So this is the same. At that time, we can say (B) is cacheable in the first tracing.
+    //
+    //  - The cache ability of a node depends on the resolving route from this node.
+    //
+    // 1. The starting point is always cacheable.
+    //
+    // 2. A module that has resolved a local binding is always cacheable.
+    //
+    //  @ -> (A) -> [B]
+    //
+    //  In the above case, we can see the [B] as cacheable.
+    //  This is because when starting from [B] node, we immediately resolve with the local binding.
+    //  So the resolving route from [B] does not depend on the starting point.
+    //
+    // 3. If we don't follow any star links during the resolution, we can see all the traced nodes are cacheable.
+    //
+    //  If there are non star links, it means that there is *no branch* in the module dependency graph.
+    //  This *no branch* feature makes all the modules cachable.
+    //
+    //  I.e, if we traverse one star link (even if we successfully resolve that star link),
+    //  we must still traverse all other star links. I would also explain we don't run into
+    //  this when resolving a local/indirect link. When resolving a local/indirect link,
+    //  we won't traverse any star links.
+    //  And since the module can hold only one local/indirect link for the specific export name (if there
+    //  are multiple local/indirect links that has the same export name, it should be syntax error in the
+    //  parsing phase.), there is no multiple outgoing links from a module.
+    //
+    //  @ -> (A) --> (B) -> [C] -> (D) -> (E) -+
+    //                ^                        |
+    //                |                        |
+    //                +------------------------+
+    //
+    //  When starting from @, [C] will be found as the module resolving the given binding.
+    //  In this case, (B) can cache this resolution. Since the resolving route is the same to the one when
+    //  starting from (B). After caching the above result, we attempt to resolve the same binding from (D).
+    //
+    //                              @
+    //                              |
+    //                              v
+    //  @ -> (A) --> (B) -> [C] -> (D) -> (E) -+
+    //                ^                        |
+    //                |                        |
+    //                +------------------------+
+    //
+    //  In this case, we can use the (B)'s cached result. And (E) can be cached.
+    //
+    //    (E): The resolving route is now (E) -> (B) -> [C]. That is the same when starting from (E).
+    //
+    //  No branching makes that the problematic *once-visited* node cannot be seen.
+    //  The *once-visited* node makes the resolving route changed since when we see the *once-visited* node,
+    //  we stop tracing this.
+    //
+    //  If there is no star links and if we look *once-visited* node under no branching graph, *once-visited*
+    //  node cannot resolve the requested binding. If the *once-visited* node can resolve the binding, we
+    //  should have already finished the resolution before reaching this *once-visited* node.
+    //
+    // 4. Once we follow star links, we should not retrieve the result from the cache and should not cache.
+    //
+    //  Star links are only the way to introduce branch.
+    //  Once we follow the star links during the resolution, we cannot cache naively.
+    //  This is because the cacheability depends on the resolving route. And branching produces the problematic *once-visited*
+    //  nodes. Since we don't follow the *once-visited* node, the resolving route from the node becomes different from
+    //  the resolving route when starting from this node.
+    //
+    //  The following example explains when we should not retrieve the cache and cache the result.
+    //
+    //               +----> (D) ------+
+    //               |                |
+    //               |                v
+    //      (A) *----+----> (B) ---> [C]
+    //                       ^
+    //                       |
+    //                       @
+    //
+    //  When starting from (B), we find [C]. In this resolving route, we don't find any star link.
+    //  And by definition, (B) and [C] are cachable. (B) is the starting point. And [C] has the local binding.
+    //
+    //               +----> (D) ------+
+    //               |                |
+    //               |                v
+    //  @-> (A) *----+----> (B) ---> [C]
+    //
+    //  But when starting from (A), we should not get the value from the cache. Because,
+    //
+    //    1. When looking (D), we reach [C] and make both resolved.
+    //    2. When looking (B), if we retrieved the last cache from (B), (B) becomes resolved.
+    //    3. But actually, (B) is not-found in this trial because (C) is already *once-visited*.
+    //    4. If we accidentally make (B) resolved, (A) becomes ambiguous. But the correct answer is resolved.
+    //
+    //  Why is this problem caused? This is because the *once-visited* node makes the result not-found.
+    //  In the second trial, (B) -> [C] result is changed from resolved to not-found.
+    //
+    //  When does this become a problem? If the status of the *once-visited* node group is resolved,
+    //  changing the result to not-found makes the result changed.
+    //
+    //  This problem does not happen when we don't see any star link yet. Now, consider the minimum case.
+    //
+    //  @-> (A) -> [ some graph ]
+    //       ^            |
+    //       |            |
+    //       +------------+
+    //
+    //  In (A), we don't see any star link yet. So we can say that all the visited nodes does not have any local
+    //  resolution. Because if they had a local/indirect resolution, we should have already finished the tracing.
+    //
+    //  And even if the some graph will see the *once-visited* node (in this case, (A)), that does not affect the
+    //  result of the resolution. Because even if we follow the link to (A) or not follow the link to (A), the status
+    //  of the link is always not-found since (A) does not have any local resolution.
+    //  In the above case, we can use the result of the [some graph].
+    //
+    // 5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
+    //
+    //  Here is the reason why:
+    //
+    //       +-------------+
+    //       |             |
+    //       v             |
+    //      (A) -> (B) -> (C) *-> [E]
+    //       *             ^
+    //       |             |
+    //       v             @
+    //      [D]
+    //
+    //  In the above case, (C) will be resolved with [D].
+    //  (C) will see (A) and (A) gives up in (A) -> (B) -> (C) route. So, (A) will fallback to [D].
+    //
+    //       +-------------+
+    //       |             |
+    //       v             |
+    //  @-> (A) -> (B) -> (C) *-> [E]
+    //       *
+    //       |
+    //       v
+    //      [D]
+    //
+    //  But in this case, (A) will be resolved with [E] (not [D]).
+    //  (C) will attempt to follow the link to (A), but it fails.
+    //  So (C) will fallback to the star link and found [E]. In this senario,
+    //  (C) is now resolved with [E]'s result.
+    //
+    //  The cause of this problem is also the same to 4.
+    //  In the latter case, when looking (C), we cannot use the cached result in (C).
+    //  Because the cached result of (C) depends on the *once-visited* node (A) and
+    //  (A) has the fallback system with the star link.
+    //  In the latter trial, we now assume that (A)'s status is not-found.
+    //  But, actually, in the former trial, (A)'s status becomes resolved due to the fallback to the [D].
+    //
+    // To summarize the observations.
+    //
+    //  1. The starting point is always cacheable.
+    //  2. A module that has resolved a local binding is always cacheable. But since they are in exportEntries, we do not need a cache.
+    //  3. If we don't follow any star links during the resolution, we can see all the traced nodes are cacheable.
+    //  4. Once we follow star links, we should not retrieve the result from the cache and should not cache the result.
+    //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
+
+    using ResolveSet = WTF::UncheckedKeyHashSet<ResolveQuery, ResolveQuery::Hash, ResolveQuery::HashTraits>;
+    enum class Type { Query, IndirectFallback, GatherStars };
+    struct Task {
+        ResolveQuery query;
+        Type type;
+    };
+
+    auto typeString = [] (Type type) -> const char* {
+        switch (type) {
+        case Type::Query:
+            return "Query";
+        case Type::IndirectFallback:
+            return "IndirectFallback";
+        case Type::GatherStars:
+            return "GatherStars";
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
+    };
+
+    Vector<Task, 8> pendingTasks;
+    ResolveSet resolveSet;
+
+    Vector<Resolution, 8> frames;
+
+    bool foundStarLinks = false;
+
+    frames.append(Resolution::notFound());
+
+    // Call when the query is not resolved in the current module.
+    // It will enqueue the star resolution requests. Return "false" if the error occurs.
+    auto resolveNonLocal = [&](const ResolveQuery& query) -> bool {
+        // https://tc39.github.io/ecma262/#sec-resolveexport
+        // section 15.2.1.16.3, step 6
+        // If the "default" name is not resolved in the current module, we need to throw an error and stop resolution immediately,
+        // Rationale to this error: A default export cannot be provided by an export *.
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (query.exportName == vm.propertyNames->defaultKeyword.impl())
+            return false;
+
+        // Enqueue the task to gather the results of the stars.
+        // And append the new Resolution frame to gather the local result of the stars.
+        pendingTasks.append(Task { query, Type::GatherStars });
+        foundStarLinks = true;
+        frames.append(Resolution::notFound());
+
+        // Enqueue the tasks in reverse order.
+        for (auto iterator = query.moduleRecord->starExportEntries().rbegin(), end = query.moduleRecord->starExportEntries().rend(); iterator != end; ++iterator) {
+            const auto& [starModuleName, starModuleRequestType] = *iterator;
+            AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
+            RETURN_IF_EXCEPTION(scope, false);
+            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query });
+        }
+        return true;
+    };
+
+    // Return the current resolution value of the top frame.
+    auto currentTop = [&] () -> Resolution& {
+        ASSERT(!frames.isEmpty());
+        return frames.last();
+    };
+
+    // Merge the given resolution to the current resolution value of the top frame.
+    // If there is ambiguity, return "false". When the "false" is returned, we should make the result "ambiguous".
+    auto mergeToCurrentTop = [&] (const Resolution& resolution) -> bool {
+        if (resolution.type == Resolution::Type::NotFound)
+            return true;
+
+        if (currentTop().type == Resolution::Type::NotFound) {
+            currentTop() = resolution;
+            return true;
+        }
+
+        return currentTop().isSameBinding(resolution);
+    };
+
+    auto cacheResolutionForQuery = [] (const ResolveQuery& query, const Resolution& resolution) {
+        ASSERT(resolution.type == Resolution::Type::Resolved);
+        query.moduleRecord->cacheResolution(query.exportName.get(), resolution);
+    };
+
+    pendingTasks.append(Task { root, Type::Query });
+    while (!pendingTasks.isEmpty()) {
+        const Task task = pendingTasks.takeLast();
+        const ResolveQuery& query = task.query;
+
+        if (AbstractModuleRecordInternal::verbose)
+            dataLog("    ", typeString(task.type), " ", task.query, "\n");
+
+        switch (task.type) {
+        case Type::Query: {
+            AbstractModuleRecord* moduleRecord = query.moduleRecord;
+
+            if (!resolveSet.add(task.query).isNewEntry)
+                continue;
+
+            //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
+            if (!moduleRecord->starExportEntries().isEmpty())
+                foundStarLinks = true;
+
+            const std::optional<ExportEntry> optionalExportEntry = moduleRecord->tryGetExportEntry(query.exportName.get());
+            if (!optionalExportEntry) {
+                // If there is no matched exported binding in the current module, we need to look
+                // into the stars. We don't probe m_resolutionCache here: the only writer that can
+                // populate (moduleRecord, exportName) while exportEntries has no match for exportName
+                // is the root-cache write (rule #1), which only fires when star traversal produced
+                // Resolved - which in turn requires moduleRecord to have non-empty starExportEntries.
+                // starExportEntries is immutable after parse, so by the time we reach this point
+                // foundStarLinks is already true (set above) whenever a cached entry could exist -
+                // making any probe here dead. The top-level resolveExport fast path still benefits
+                // from the rule #1 cache write.
+                bool success = resolveNonLocal(task.query);
+                EXCEPTION_ASSERT(!scope.exception() || !success);
+                if (!success)
+                    return Resolution::error();
+                continue;
+            }
+
+            const ExportEntry& exportEntry = *optionalExportEntry;
+            switch (exportEntry.type) {
+            case ExportEntry::Type::Local: {
+                ASSERT(!exportEntry.localName.isNull());
+                Resolution resolution { Resolution::Type::Resolved, moduleRecord, exportEntry.localName };
+                if (!mergeToCurrentTop(resolution))
+                    return Resolution::ambiguous();
+                continue;
+            }
+
+            case ExportEntry::Type::Indirect: {
+                //  4. Once we follow star links, we should not retrieve the result from the cache and should not cache the result.
+                if (!foundStarLinks) {
+                    if (std::optional<Resolution> cachedResolution = moduleRecord->tryGetCachedResolution(query.exportName.get())) {
+                        if (!mergeToCurrentTop(*cachedResolution))
+                            return Resolution::ambiguous();
+                        continue;
+                    }
+                }
+
+                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName, exportEntry.moduleRequestType);
+                RETURN_IF_EXCEPTION(scope, Resolution::error());
+
+                // When the imported module does not produce any resolved binding, we need to look into the stars in the *current*
+                // module. To do this, we append the `IndirectFallback` task to the task queue.
+                pendingTasks.append(Task { query, Type::IndirectFallback });
+                // And append the new Resolution frame to check the indirect export will be resolved or not.
+                frames.append(Resolution::notFound());
+                pendingTasks.append(Task { ResolveQuery(importedModuleRecord, exportEntry.importName), Type::Query });
+                continue;
+            }
+
+            case ExportEntry::Type::Namespace: {
+                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName, exportEntry.moduleRequestType);
+                RETURN_IF_EXCEPTION(scope, Resolution::error());
+                Resolution resolution { Resolution::Type::Resolved, importedModuleRecord, vm.propertyNames->starNamespacePrivateName };
+                if (!mergeToCurrentTop(resolution))
+                    return Resolution::ambiguous();
+                continue;
+            }
+            }
+            break;
+        }
+
+        case Type::IndirectFallback: {
+            Resolution resolution = frames.takeLast();
+
+            if (resolution.type == Resolution::Type::NotFound) {
+                // Indirect export entry does not produce any resolved binding.
+                // So we will investigate the stars.
+                bool success = resolveNonLocal(task.query);
+                EXCEPTION_ASSERT(!scope.exception() || !success);
+                if (!success)
+                    return Resolution::error();
+                continue;
+            }
+
+            ASSERT_WITH_MESSAGE(resolution.type == Resolution::Type::Resolved, "When we see Error and Ambiguous, we immediately return from this loop. So here, only Resolved comes.");
+
+            //  3. If we don't follow any star links during the resolution, we can see all the traced nodes are cacheable.
+            //  4. Once we follow star links, we should not retrieve the result from the cache and should not cache the result.
+            if (!foundStarLinks)
+                cacheResolutionForQuery(query, resolution);
+
+            // If indirect export entry produces Resolved, we should merge it to the upper frame.
+            // And do not investigate the stars of the current module.
+            if (!mergeToCurrentTop(resolution))
+                return Resolution::ambiguous();
+            break;
+        }
+
+        case Type::GatherStars: {
+            Resolution resolution = frames.takeLast();
+            ASSERT_WITH_MESSAGE(resolution.type == Resolution::Type::Resolved || resolution.type == Resolution::Type::NotFound, "When we see Error and Ambiguous, we immediately return from this loop. So here, only Resolved and NotFound comes.");
+
+            // Merge the star resolution to the upper frame.
+            if (!mergeToCurrentTop(resolution))
+                return Resolution::ambiguous();
+            break;
+        }
+        }
+    }
+
+    ASSERT(frames.size() == 1);
+    //  1. The starting point is always cacheable.
+    if (frames[0].type == Resolution::Type::Resolved)
+        cacheResolutionForQuery(root, frames[0]);
+    return frames[0];
+}
+
+auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier& exportName) -> Resolution
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_prelinked) {
+        std::optional<Resolution> resolution = tryResolveExportPrelinked(globalObject, exportName);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (resolution) [[likely]] {
+            if (!Options::validatePrelinkedModuleInfo()) [[likely]]
+                return *resolution;
+            Resolution expected = resolveExportByName(globalObject, exportName);
+            RETURN_IF_EXCEPTION(scope, Resolution::error());
+            RELEASE_ASSERT(resolution->isEquivalentTo(expected), m_prelinkedIndex, static_cast<unsigned>(resolution->type), static_cast<unsigned>(expected.type));
+            return expected;
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolveExportByName(globalObject, exportName));
+#else
+    return resolveExportByName(globalObject, exportName);
+#endif
+}
+
+// ResolveExport over the by-name entry maps (a prelinked record builds them first): the specification's algorithm, used
+// when the graph has no answer and as the reference under Options::validatePrelinkedModuleInfo().
+auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, const Identifier& exportName) -> Resolution
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Local / Namespace exports are trivially derivable from m_exportEntries.
+    // m_resolutionCache only holds results that actually amortise costly traversals, Indirect resolutions and star-resolved results.
+    if (const auto optionalExportEntry = tryGetExportEntry(exportName.impl())) {
+        const ExportEntry& entry = *optionalExportEntry;
+        switch (entry.type) {
+        case ExportEntry::Type::Local:
+            ASSERT(!entry.localName.isNull());
+            return Resolution { Resolution::Type::Resolved, this, entry.localName };
+        case ExportEntry::Type::Namespace: {
+            AbstractModuleRecord* importedModuleRecord = hostResolveImportedModule(globalObject, entry.moduleName, entry.moduleRequestType);
+            RETURN_IF_EXCEPTION(scope, Resolution::error());
+            return Resolution { Resolution::Type::Resolved, importedModuleRecord, vm.propertyNames->starNamespacePrivateName };
+        }
+        case ExportEntry::Type::Indirect:
+            if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
+                return *cachedResolution;
+            break;
+        }
+    } else if (!starExportEntries().isEmpty()) {
+        // When there is no matching export entry, cache can exist only when we found star-resolved results.
+        // Thus, if there is no star export entries, cache never exists.
+        if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
+            return *cachedResolution;
+    }
+
+    RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
+}
+
+JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ASSERT_ENABLED
+    if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this))
+        ASSERT(cyclic->status() != CyclicModuleRecord::Status::New && cyclic->status() != CyclicModuleRecord::Status::Unlinked);
+#endif
+
+    // https://tc39.es/ecma262/#sec-getmodulenamespace
+    if (phase == ModulePhase::Defer) {
+        if (m_deferredNamespaceObject)
+            return m_deferredNamespaceObject.get();
+    } else if (m_moduleNamespaceObject)
+        return m_moduleNamespaceObject.get();
+
+    Vector<std::pair<Identifier, Resolution>> resolutions;
+#if USE(BUN_JSC_ADDITIONS)
+    bool collected = false;
+    if (m_prelinked && !Options::validatePrelinkedModuleInfo()) {
+        collected = collectPrelinkedNamespaceResolutions(globalObject, resolutions);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (!collected) {
+#endif
+    // Spec performs GetExportedNames() then per-name ResolveExport(), which walks the
+    // star-export graph once per exported name (O(names * edges)). We instead walk the
+    // graph once, recording each name's unique Local/Namespace binding. Any name with
+    // exactly one such binding across the whole graph is provably Resolved (resolveSet
+    // can only turn paths into null, and merge(Resolved, null) = Resolved). Names with
+    // an Indirect entry, or with two distinct bindings, fall back to resolveExport().
+
+    Resolutions uniqueBindings;
+    IdentifierSet rootShadowedNames;
+    IdentifierSet slowPathNames;
+
+    UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
+    Vector<AbstractModuleRecord*, 8> pendingModules;
+    pendingModules.append(this);
+
+    while (!pendingModules.isEmpty()) {
+        AbstractModuleRecord* moduleRecord = pendingModules.takeLast();
+        if (!exportStarSet.add(moduleRecord).isNewEntry)
+            continue;
+        bool isRoot = moduleRecord == this;
+
+        for (const auto& pair : moduleRecord->exportEntries()) {
+            const ExportEntry& exportEntry = pair.value;
+            SUPPRESS_UNCOUNTED_LOCAL auto* exportName = exportEntry.exportName.impl();
+            // ResolveExport returns at root's own Local/Indirect/Namespace entry before
+            // consulting star exports, so star-reachable bindings cannot affect those names.
+            if (isRoot)
+                rootShadowedNames.add(exportName);
+            else {
+                if (vm.propertyNames->defaultKeyword == exportEntry.exportName)
+                    continue;
+                // Both sets do not include exportName during the root iteration (root is always the first
+                // module popped from pendingModules), so we only need to probe them for non-root.
+                if (rootShadowedNames.contains(exportName))
+                    continue;
+                if (slowPathNames.contains(exportName))
+                    continue;
+            }
+
+            Resolution candidate;
+            switch (exportEntry.type) {
+            case ExportEntry::Type::Local:
+                candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.localName };
+                break;
+            case ExportEntry::Type::Namespace: {
+                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName, exportEntry.moduleRequestType);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                candidate = { Resolution::Type::Resolved, importedModuleRecord, vm.propertyNames->starNamespacePrivateName };
+                break;
+            }
+            case ExportEntry::Type::Indirect:
+                if (!isRoot)
+                    uniqueBindings.remove(exportName);
+                slowPathNames.add(exportName);
+                continue;
+            }
+
+            if (isRoot) {
+                // Root's own Local / Namespace are served by resolveExport's m_exportEntries
+                // fast path, so they never need to sit in uniqueBindings or the cache. Emit
+                // them directly so the cache-write loop below can skip the owned-name probe.
+                resolutions.append({ Identifier::fromUid(vm, exportName), candidate });
+                continue;
+            }
+
+            auto addResult = uniqueBindings.add(exportName, candidate);
+            if (!addResult.isNewEntry && !addResult.iterator->value.isSameBinding(candidate)) {
+                slowPathNames.add(exportName);
+                uniqueBindings.remove(addResult.iterator);
+            }
+        }
+
+        for (const auto& [starModuleName, starModuleRequestType] : moduleRecord->starExportEntries()) {
+            AbstractModuleRecord* requestedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            pendingModules.append(requestedModuleRecord);
+        }
+    }
+
+    resolutions.reserveCapacity(resolutions.size() + uniqueBindings.size() + slowPathNames.size());
+    for (auto& pair : uniqueBindings) {
+        // Every entry here arrived via a star-export edge (root's own names were emitted
+        // during the walk), so the cache is always useful.
+        cacheResolution(pair.key.get(), pair.value);
+        resolutions.append({ Identifier::fromUid(vm, pair.key.get()), pair.value });
+    }
+
+    for (auto& name : slowPathNames) {
+        Identifier ident = Identifier::fromUid(vm, name.get());
+        const Resolution resolution = resolveExport(globalObject, ident);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        switch (resolution.type) {
+        case Resolution::Type::NotFound:
+#if USE(BUN_JSC_ADDITIONS)
+            if(m_isTypeScript) break;
+#endif
+            throwSyntaxError(globalObject, scope, makeString("Exported binding name '"_s, StringView(name.get()), "' is not found."_s));
+            return nullptr;
+
+        case Resolution::Type::Error:
+            throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
+            return nullptr;
+
+        case Resolution::Type::Ambiguous:
+            break;
+
+        case Resolution::Type::Resolved:
+            resolutions.append({ WTF::move(ident), resolution });
+            break;
+        }
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    } // !collected
+#endif
+
+    auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (phase == ModulePhase::Defer) {
+        m_deferredNamespaceObject.set(vm, this, moduleNamespaceObject);
+        return moduleNamespaceObject;
+    }
+
+    // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
+    if (m_moduleEnvironment) {
+        bool putResult = false;
+        constexpr bool shouldThrowReadOnlyError = false;
+        constexpr bool ignoreReadOnlyErrors = true;
+        symbolTablePutTouchWatchpointSet(m_moduleEnvironment.get(), globalObject, vm.propertyNames->starNamespacePrivateName, moduleNamespaceObject, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    m_moduleNamespaceObject.set(vm, this, moduleNamespaceObject);
+
+    return moduleNamespaceObject;
+}
+
+// https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
+void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
+{
+    // The spec text is recursive; we use an explicit work list to avoid native stack overflow on
+    // deep graphs. Children are pushed in reverse to preserve the spec's pre-order discovery order.
+    Vector<AbstractModuleRecord*, 8> stack;
+    stack.append(this);
+    while (!stack.isEmpty()) {
+        AbstractModuleRecord* module = stack.takeLast();
+        // 3. If seen contains module, return result.
+        // 4. Append module to seen.
+        if (!seen.add(module).isNewEntry)
+            continue;
+        // 5. If module is not a Cyclic Module Record, return result.
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
+        if (!cyclic)
+            continue;
+        // 6. If module.[[Status]] is either EVALUATING or IsModuleSCCEvaluated(module), return result.
+        if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->isSCCEvaluated())
+            continue;
+        // 7. If module.[[HasTLA]] is true, then
+        if (cyclic->hasTLA()) {
+            // 7.a. Append module to result.
+            result.add(module);
+            // 7.b. Return result.
+            continue;
+        }
+        // 8. For each ModuleRequest Record request of module.[[RequestedModules]], do
+        //   8.a. Let requiredModule be GetImportedModule(module, request).
+        //   8.b. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule, seen).
+        //   8.c. For each Module Record m of additionalModules, do
+        //     8.c.i. If result does not contain m, then append m to result.
+        for (auto& request : cyclic->requestedModules() | std::views::reverse)
+            stack.append(JSModuleLoader::getImportedModule(cyclic, request));
+    }
+    // 9. Return result.
+}
+
+// https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
+bool AbstractModuleRecord::readyForSyncExecution()
+{
+    // The spec text is recursive; we use an explicit work list to avoid native stack overflow on deep graphs.
+    UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+    Vector<AbstractModuleRecord*, 8> stack;
+    stack.append(this);
+    while (!stack.isEmpty()) {
+        AbstractModuleRecord* module = stack.takeLast();
+        // 1. If module is not a Cyclic Module Record, return true.
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
+        if (!cyclic)
+            continue;
+        // 3. If seen contains module, return true.
+        // 4. Append module to seen.
+        if (!seen.add(module).isNewEntry)
+            continue;
+        // 5. If IsModuleSCCEvaluated(module), return true.
+        if (cyclic->isSCCEvaluated())
+            continue;
+        // 6. If module.[[Status]] is either EVALUATING or EVALUATING-ASYNC, return false.
+        if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->status() == CyclicModuleRecord::Status::EvaluatingAsync)
+            return false;
+        // 7. Assert: module.[[Status]] is LINKED or EVALUATED.
+        // EVALUATED is reachable for a module whose own body has run inside a cycle that is still
+        // awaiting; the walk below then reaches its EVALUATING-ASYNC cycle root and returns false.
+        // https://github.com/tc39/proposal-defer-import-eval/issues/86
+        ASSERT(cyclic->status() == CyclicModuleRecord::Status::Linked || cyclic->status() == CyclicModuleRecord::Status::Evaluated);
+        // 8. If module.[[HasTLA]] is true, return false.
+        if (cyclic->hasTLA())
+            return false;
+        // 9. For each ModuleRequest Record request of module.[[RequestedModules]], do
+        //   9.a. Let requiredModule be GetImportedModule(module, request).
+        //   9.b. If ReadyForSyncExecution(requiredModule, seen) is false, return false.
+        for (const ModuleRequest& request : cyclic->requestedModules())
+            stack.append(JSModuleLoader::getImportedModule(cyclic, request));
+    }
+    // 10. Return true.
+    return true;
+}
+
+// https://tc39.es/proposal-defer-import-eval/#sec-EvaluateModuleSync
+void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
+    if (!readyForSyncExecution()) {
+        throwTypeError(globalObject, scope, "Unable to synchronously evaluate deferred module"_s);
+        return;
+    }
+    // 2. Let promise be ! module.Evaluate().
+    JSPromise* promise = evaluate(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    // 3. Assert: promise.[[PromiseState]] is either FULFILLED or REJECTED.
+    ASSERT(promise->status() != JSPromise::Status::Pending);
+    // 4. If promise.[[PromiseState]] is REJECTED, then
+    if (promise->status() == JSPromise::Status::Rejected) {
+        // 4.a. If promise.[[PromiseIsHandled]] is false, perform HostPromiseRejectionTracker(promise, "handle").
+        // 4.b. Set promise.[[PromiseIsHandled]] to true.
+        promise->markAsHandled();
+        // 4.c. Return ThrowCompletion(promise.[[PromiseResult]]).
+        throwException(globalObject, scope, promise->result());
+    }
+    // 5. Return UNUSED.
+}
+
+JSPromise* AbstractModuleRecord::asyncCapability() const
+{
+    return m_asyncCapability.get();
+}
+
+void AbstractModuleRecord::asyncCapability(VM& vm, JSPromise* promise)
+{
+    m_asyncCapability.set(vm, this, promise);
+}
+
+void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JSModuleEnvironment* moduleEnvironment)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT(!m_moduleEnvironment);
+    bool putResult = false;
+    constexpr bool shouldThrowReadOnlyError = false;
+    constexpr bool ignoreReadOnlyErrors = true;
+    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+    RETURN_IF_EXCEPTION(scope, void());
+    // If module namespace object is materialized, we will materialize *namespace* slot too.
+    if (m_moduleNamespaceObject) {
+        symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->starNamespacePrivateName, m_moduleNamespaceObject.get(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    m_moduleEnvironment.set(vm, this, moduleEnvironment);
+}
+
+void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    {
+        UncheckedKeyHashSet<AbstractModuleRecord*> visited;
+        generateDeferredSyntheticModules(globalObject, visited);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+#endif
+    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this)) {
+        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
+        RETURN_IF_EXCEPTION(scope, void());
+    } else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
+        moduleRecord->link(globalObject, WTF::move(scriptFetcher));
+        RETURN_IF_EXCEPTION(scope, void());
+    } else
+        RELEASE_ASSERT_NOT_REACHED();
+}
+
+JS_EXPORT_PRIVATE JSValue AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue, JSValue resumeMode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* jsModuleRecord = dynamicDowncast<JSModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, jsModuleRecord->evaluate(globalObject, sentValue, resumeMode));
+#if ENABLE(WEBASSEMBLY)
+    if (auto* wasmModuleRecord = dynamicDowncast<WebAssemblyModuleRecord>(this)) {
+        // WebAssembly imports need to be supplied during evaluation so that, e.g.,
+        // JS module exports are actually available to be read and installed as import
+        // bindings.
+        wasmModuleRecord->initializeImports(globalObject, nullptr, Wasm::CreationMode::FromModuleLoader);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        wasmModuleRecord->initializeExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        RELEASE_AND_RETURN(scope, wasmModuleRecord->evaluate(globalObject));
+    }
+#endif
+    if (auto* syntheticRecord = dynamicDowncast<SyntheticModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, syntheticRecord->evaluate(globalObject));
+    RELEASE_ASSERT_NOT_REACHED();
+    return jsUndefined();
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
+#else
+JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
+#endif
+{
+    VM& vm = globalObject->vm();
+
+    auto wrap = [&](JSValue value) -> JSPromise* {
+        if (!value)
+            return nullptr;
+        if (auto* promise = dynamicDowncast<JSPromise>(value))
+            return promise;
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->resolve(globalObject, vm, value);
+        return promise;
+    };
+
+    if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
+#if USE(BUN_JSC_ADDITIONS)
+        return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder, dynamicImportPromise));
+#else
+        return wrap(cyclicRecord->evaluate(globalObject));
+#endif
+    if (auto* syntheticRecord = dynamicDowncast<SyntheticModuleRecord>(this))
+        return wrap(syntheticRecord->evaluate(globalObject));
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
+void AbstractModuleRecord::evaluateModuleSync(JSGlobalObject* globalObject)
+{
+    // EvaluateModuleSync(module)
+    // https://tc39.es/ecma262/#sec-EvaluateModuleSync
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(!inherits(JSModuleRecord::info()));
+    // A synthetic module's evaluation is synchronous and yields a plain value (or throws); skip materializing the
+    // settled promise the generic path would wrap it in. This runs once per import edge to such a module.
+    if (auto* syntheticRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
+        JSValue value = syntheticRecord->evaluate(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!value.inherits<JSPromise>())
+            return;
+    }
+    JSPromise* promise = evaluate(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    // "the caller guarantees that module's evaluation will return an already settled promise"
+    ASSERT(promise->status() != JSPromise::Status::Pending);
+    if (promise->status() == JSPromise::Status::Rejected)
+        throwException(globalObject, scope, promise->result());
+}
+
+static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    if (!globalObject->vm().isSafeToRecurse())
+        throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+{
+    auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
+        UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+        Vector<AbstractModuleRecord*, 8> work;
+        work.append(module);
+        while (!work.isEmpty()) {
+            AbstractModuleRecord* current = work.takeLast();
+            if (current == dependency)
+                return true;
+            if (!seen.add(current).isNewEntry)
+                continue;
+            for (auto& parent : current->asyncParentModules())
+                work.append(parent.get());
+        }
+        return false;
+    };
+
+    auto cellOf = [](JSValue value) -> JSCell* {
+        if (value.isEmpty() || !value.isCell())
+            return nullptr;
+        return value.asCell();
+    };
+
+    auto unwrapContext = [&](JSValue value) -> JSCell* {
+        JSCell* cell = cellOf(value);
+        if (auto* tuple = cell ? dynamicDowncast<InternalFieldTuple>(cell) : nullptr)
+            return cellOf(tuple->getInternalField(0));
+        return cell;
+    };
+
+    UncheckedKeyHashSet<JSPromise*> seen;
+    Vector<JSPromise*, 16> work;
+    work.append(importPromise);
+    bool found = false;
+
+    auto follow = [&](JSValue value) {
+        if (JSCell* cell = cellOf(value)) {
+            if (auto* promise = dynamicDowncast<JSPromise>(cell))
+                work.append(promise);
+        }
+    };
+
+    // A promise, or the async function or module body that an await or for-await resumes.
+    auto followPromiseOrDriver = [&](JSCell* cell) {
+        if (!cell)
+            return;
+        if (auto* promise = dynamicDowncast<JSPromise>(cell))
+            work.append(promise);
+        else if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(cell))
+            follow(generator->context());
+        else if (auto* module = dynamicDowncast<AbstractModuleRecord>(cell))
+            found = resumesDependency(module);
+    };
+
+    auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
+        switch (task) {
+        case InternalMicrotask::AsyncFunctionResume:
+        case InternalMicrotask::AsyncModuleExecutionResume:
+        case InternalMicrotask::AsyncGeneratorDriverResume:
+            followPromiseOrDriver(unwrapContext(context));
+            break;
+        case InternalMicrotask::AsyncFromSyncIteratorContinue:
+        case InternalMicrotask::AsyncFromSyncIteratorDone: {
+            // for-await over sync values that are promises: the pending step settles the
+            // iterator's result promise, or resumes its driver, with this promise's value.
+            JSCell* iteratorCell = unwrapContext(context);
+            if (auto* iterator = iteratorCell ? dynamicDowncast<JSAsyncFromSyncIterator>(iteratorCell) : nullptr)
+                followPromiseOrDriver(iterator->target());
+            break;
+        }
+        case InternalMicrotask::PromiseFinallyReactionJob:
+        case InternalMicrotask::PromiseFinallyAwaitJob: {
+            // The context record holds the promise that .finally() returned.
+            JSCell* contextCell = cellOf(context);
+            if (auto* record = contextCell ? dynamicDowncast<JSSlimPromiseReaction>(contextCell) : nullptr)
+                follow(record->promise());
+            break;
+        }
+        case InternalMicrotask::PromiseAllResolveJob:
+        case InternalMicrotask::PromiseAllSettledResolveJob: {
+            JSCell* contextCell = cellOf(cell);
+            if (auto* globalContext = contextCell ? dynamicDowncast<JSPromiseCombinatorsGlobalContext>(contextCell) : nullptr)
+                follow(globalContext->promise());
+            break;
+        }
+        case InternalMicrotask::None:
+        case InternalMicrotask::PromiseResolveThenableJobFast:
+        case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast:
+        case InternalMicrotask::PromiseResolveThenableJob:
+        case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
+        case InternalMicrotask::PromiseResolveWithoutHandlerJob:
+        case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
+        case InternalMicrotask::PromiseReactionJob:
+        case InternalMicrotask::ModuleLoadStep:
+        case InternalMicrotask::ModuleLoadTopSettled:
+        case InternalMicrotask::ModuleLoadTopRejected:
+        case InternalMicrotask::ModuleLoadSpecifierTransform:
+        case InternalMicrotask::ModuleLoadCombinedLoadSettled:
+        case InternalMicrotask::ModuleLoadCombinedStateSettled:
+        case InternalMicrotask::ModuleLoadLinkEvaluateSettled:
+        case InternalMicrotask::ModuleLoadReturnRecord:
+        case InternalMicrotask::ModuleLoadReturnModuleKey:
+        case InternalMicrotask::ModuleLoadStoreError:
+        case InternalMicrotask::ImportModuleNamespace:
+        case InternalMicrotask::DynamicImportLoadSettled:
+        case InternalMicrotask::DynamicImportEvaluateSettled:
+        case InternalMicrotask::DynamicImportDeferLoadSettled:
+        case InternalMicrotask::DynamicImportDeferDependencySettled:
+            follow(cell);
+            break;
+        default:
+            break;
+        }
+        return !found;
+    };
+
+    constexpr size_t maxPromises = 4096;
+    while (!work.isEmpty() && !found) {
+        JSPromise* promise = work.takeLast();
+        if (promise->status() != JSPromise::Status::Pending)
+            continue;
+        if (!seen.add(promise).isNewEntry)
+            continue;
+        if (seen.size() > maxPromises)
+            return false;
+        promise->forEachPendingReaction(visitReaction);
+    }
+    return found;
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
+#else
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
+#endif
+{
+    // InnerModuleEvaluation(module, stack, index)
+    // https://tc39.es/ecma262/#sec-innermoduleevaluation
+
+    constexpr auto invalid = static_cast<unsigned>(-1);
+    using Status = CyclicModuleRecord::Status;
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
+
+    // 1. If module is not a Cyclic Module Record, then
+    if (!module) {
+        // 1.a. Perform ? EvaluateModuleSync(module).
+        evaluateModuleSync(globalObject);
+        RETURN_IF_EXCEPTION(scope, invalid);
+        // 1.b. Return index.
+        return index;
+    }
+    // 2. If module.[[Status]] is either EVALUATING-ASYNC or EVALUATED, then
+    if (auto status = module->status(); status == Status::EvaluatingAsync || status == Status::Evaluated) {
+        // 2.a. If module.[[EvaluationError]] is EMPTY, return index.
+        JSValue evaluationError = module->evaluationError();
+        if (!evaluationError)
+            RELEASE_AND_RETURN(scope, index);
+        // 2.b. Otherwise, return ? module.[[EvaluationError]].
+        scope.throwException(globalObject, evaluationError);
+        return invalid;
+    }
+    // 3. If module.[[Status]] is EVALUATING, return index.
+    if (module->status() == Status::Evaluating)
+        RELEASE_AND_RETURN(scope, index);
+    // 4. Assert: module.[[Status]] is LINKED.
+    ASSERT(module->status() == Status::Linked);
+    // 5. Set module.[[Status]] to EVALUATING.
+    module->setStatus(Status::Evaluating);
+    // 6. Let moduleIndex be index.
+    unsigned moduleIndex = index;
+    // 7. Set module.[[DFSAncestorIndex]] to index.
+    module->setDFSAncestorIndex(index);
+    // 8. Set module.[[PendingAsyncDependencies]] to 0.
+    module->setPendingAsyncDependencies(0);
+    // 9. Set index to index + 1.
+    ++index;
+    // 10. Append module to stack.
+    stack.append(module);
+    // https://tc39.es/proposal-defer-import-eval/#sec-innermoduleevaluation
+    // 10. Let evaluationList be a new empty List.
+    OrderedHashSet<AbstractModuleRecord*> evaluationList;
+    // 11. For each ModuleRequest Record request of module.[[RequestedModules]], do
+    for (const ModuleRequest& request : module->requestedModules()) {
+        // 11.a. Let requiredModule be GetImportedModule(module, request).
+        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
+        // 11.b. If request.[[Phase]] is defer, then
+        if (request.m_phase == ModulePhase::Defer) [[unlikely]] {
+            // 11.b.i. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule).
+            // 11.b.ii. For each Module Record additionalModule of additionalModules, do
+            //   11.b.ii.1. If evaluationList does not contain additionalModule, then append additionalModule to evaluationList.
+            UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+            requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
+        } else {
+            // 11.c. Else if evaluationList does not contain requiredModule, then
+            //   11.c.i. Append requiredModule to evaluationList.
+            evaluationList.add(requiredModule);
+        }
+    }
+    // 12. For each Module Record requiredModule of evaluationList, do
+    for (AbstractModuleRecord* requiredModule : evaluationList) {
+        checkSafeToRecurse(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, invalid);
+        // 12.a. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise);
+#else
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index);
+#endif
+        RETURN_IF_EXCEPTION(scope, invalid);
+        index = result;
+        // 12.b. If requiredModule is a Cyclic Module Record, then
+        if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(requiredModule)) {
+#if USE(BUN_JSC_ADDITIONS)
+            // Bun extension: require(esm) can re-enter innerModuleEvaluation
+            // while an outer DFS is already evaluating one of our transitive
+            // deps. That outer module is Evaluating but lives on the OUTER
+            // stack vector, not the local one. Spec invariant 12.b.ii
+            // ("on stack iff Evaluating") assumes a single DFS and doesn't
+            // hold for nested evaluation. Detect the case and skip
+            // 12.b.iii/iv/v entirely: the outer module's bindings are
+            // populated up to its current suspension point, its cycleRoot
+            // isn't set yet (so the else branch would crash), and merging
+            // its DFSAncestorIndex into our inner SCC would taint the SCC
+            // linearization. The outer DFS owns the module's evaluation
+            // lifecycle; our inner pass treats it as a satisfied dependency.
+            bool depInOuterSCC = cyclic->status() == Status::Evaluating && !stack.contains(requiredModule);
+            if (!depInOuterSCC) {
+#endif
+            // 12.b.i. Assert: requiredModule.[[Status]] is one of EVALUATING, EVALUATING-ASYNC, or EVALUATED.
+            ASSERT(cyclic->status() == Status::Evaluating || cyclic->status() == Status::EvaluatingAsync || cyclic->status() == Status::Evaluated);
+            // 12.b.ii. Assert: requiredModule.[[Status]] is EVALUATING if and only if stack contains requiredModule.
+            ASSERT(stack.contains(requiredModule) == (cyclic->status() == Status::Evaluating));
+            // 12.b.iii. If requiredModule.[[Status]] is EVALUATING, then
+            if (cyclic->status() == Status::Evaluating) {
+                // 12.b.iii.1. Set module.[[DFSAncestorIndex]] to min(module.[[DFSAncestorIndex]], requiredModule.[[DFSAncestorIndex]]).
+                module->setDFSAncestorIndex(std::min(module->dfsAncestorIndex(), cyclic->dfsAncestorIndex()));
+            // 12.b.iv. Else,
+            } else {
+                // 12.b.iv.1. Set requiredModule to requiredModule.[[CycleRoot]].
+                cyclic = requiredModule->cycleRoot();
+                requiredModule = cyclic;
+                // 12.b.iv.2. Assert: requiredModule.[[Status]] is either EVALUATING-ASYNC or EVALUATED.
+                ASSERT(cyclic->status() == Status::EvaluatingAsync || cyclic->status() == Status::Evaluated);
+                // 12.b.iv.3. If requiredModule.[[EvaluationError]] is not empty, return ? requiredModule.[[EvaluationError]].
+                if (JSValue error = cyclic->evaluationError()) {
+                    scope.throwException(globalObject, error);
+                    return invalid;
+                }
+            }
+            // 12.b.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
+            if (cyclic->asyncEvaluationOrder().hasOrder()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // referrerAsyncOrder covers an import() whose promise reaches the suspended referrer only through native code (an HTTP round trip, a captured resolver), where the walk cannot follow.
+                bool deadlocks = cyclic->asyncEvaluationOrder().order() == referrerAsyncOrder
+                    || (dynamicImportPromise && importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic));
+                if (!deadlocks) {
+#endif
+                // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
+                module->setPendingAsyncDependencies(module->pendingAsyncDependencies().value() + 1);
+                // 12.b.v.2. Append module to requiredModule.[[AsyncParentModules]].
+                cyclic->appendAsyncParentModule(vm, module);
+#if USE(BUN_JSC_ADDITIONS)
+                }
+#endif
+            }
+#if USE(BUN_JSC_ADDITIONS)
+            } // depInOuterSCC: skip 11.c.iii/iv/v entirely.
+#endif
+        }
+    }
+    // 12. If module.[[PendingAsyncDependencies]] > 0 or module.[[HasTLA]] is true, then
+    if (module->pendingAsyncDependencies() > 0 || module->hasTLA()) {
+        // 12.a. Assert: module.[[AsyncEvaluationOrder]] is UNSET.
+        ASSERT(module->asyncEvaluationOrder().isUnset());
+        // 12.b. Set module.[[AsyncEvaluationOrder]] to IncrementModuleAsyncEvaluationCount().
+        module->setAsyncEvaluationOrder(vm.incrementModuleAsyncEvaluationCount());
+        // 12.c. If module.[[PendingAsyncDependencies]] = 0, perform ExecuteAsyncModule(module).
+        if (std::optional<int> deps = module->pendingAsyncDependencies(); deps && !*deps) {
+            module->executeAsync(globalObject);
+            RETURN_IF_EXCEPTION(scope, invalid);
+        }
+    // 13. Else,
+    } else {
+        // 13.a. Perform ? module.ExecuteModule().
+        module->execute(globalObject);
+        RETURN_IF_EXCEPTION(scope, invalid);
+    }
+    // 14. Assert: module occurs exactly once in stack.
+    ASSERT(stack.contains(module));
+    ASSERT(stack.find(module) == stack.reverseFind(module));
+    // 15. Assert: module.[[DFSAncestorIndex]] <= moduleIndex.
+    ASSERT(module->dfsAncestorIndex() <= moduleIndex);
+    // 16. If module.[[DFSAncestorIndex]] = moduleIndex, then
+    if (module->dfsAncestorIndex() == moduleIndex) {
+        // 16.a. Let done be false.
+        bool done = false;
+        // 16.b. Repeat, while done is false,
+        do {
+            // 16.b.i. Let requiredModule be the last element of stack.
+            // 16.b.ii. Remove the last element of stack.
+            AbstractModuleRecord* requiredModule = stack.takeLast();
+            // 16.b.iii. Assert: requiredModule is a Cyclic Module Record.
+            auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule); // cyclic is a downcasted alias of requiredModule.
+            // 16.b.iv. Assert: requiredModule.[[AsyncEvaluationOrder]] is either an integer or UNSET.
+            ASSERT(cyclic->asyncEvaluationOrder().hasOrder() || cyclic->asyncEvaluationOrder().isUnset());
+            // 16.b.v. If requiredModule.[[AsyncEvaluationOrder]] is UNSET, set requiredModule.[[Status]] to EVALUATED.
+            if (cyclic->asyncEvaluationOrder().isUnset()) {
+                cyclic->setStatus(Status::Evaluated);
+            // 16.b.vi. Otherwise, set requiredModule.[[Status]] to EVALUATING-ASYNC.
+            } else
+                cyclic->setStatus(Status::EvaluatingAsync);
+            // 16.b.vii. If requiredModule and module are the same Module Record, set done to true.
+            done = requiredModule == module;
+            // 16.b.viii. Set requiredModule.[[CycleRoot]] to module.
+            requiredModule->setCycleRoot(vm, module);
+        } while (!done);
+    }
+    // 17. Return index.
+    RELEASE_AND_RETURN(scope, index);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+// Runs the deferred generators (SyntheticSourceProvider::createDeferred()) of the graph below this record, depth first
+// in the order of the import declarations, which is the order InnerModuleEvaluation would reach those modules in.
+//
+// This is its own pass ahead of InnerModuleLinking because a generator runs user code, and user code can require() an
+// ES module that imports back into this graph. Such a load links and evaluates; started from inside InnerModuleLinking
+// it would find the records on the outer linking stack in the LINKING state and treat them as linked.
+void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* globalObject, UncheckedKeyHashSet<AbstractModuleRecord*>& visited)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, synthetic->runDeferredGenerator(globalObject));
+
+    // Everything below a record that has been linked went through this pass when that link started.
+    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
+    if (!module || module->status() != CyclicModuleRecord::Status::Unlinked)
+        return;
+    if (!visited.add(this).isNewEntry)
+        return;
+
+    for (const ModuleRequest& request : module->requestedModules()) {
+        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
+        checkSafeToRecurse(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, void());
+        requiredModule->generateDeferredSyntheticModules(globalObject, visited);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+#endif
+
+unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, Vector<CyclicModuleRecord*, 8>& stack, unsigned index, RefPtr<ScriptFetcher> scriptFetcher)
+{
+    // InnerModuleLinking(module, stack, index)
+    // https://tc39.es/ecma262/#sec-InnerModuleLinking
+
+    constexpr auto invalid = static_cast<unsigned>(-1);
+    using Status = CyclicModuleRecord::Status;
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
+
+    // 1. If module is not a Cyclic Module Record, then
+    if (!module) {
+        // 1.a. Perform ? module.Link().
+        link(globalObject, scriptFetcher);
+        RETURN_IF_EXCEPTION(scope, invalid);
+        // 1.b. Return index.
+        return index;
+    }
+    // 2. If module.[[Status]] is one of LINKING, LINKED, EVALUATING, EVALUATING-ASYNC, or EVALUATED, then
+    //    Bun extension: EVALUATING is reachable when require(esm) re-enters an outer module
+    //    that is currently mid-evaluation. Such a module is already linked, so re-link is a
+    //    no-op; we MUST early-return here, otherwise the linearization loop below would call
+    //    cyclic->status(Status::Linked) and downgrade the evaluating module, wiping its
+    //    in-flight bindings.
+    if (auto status = module->status(); status == Status::Linking || status == Status::Linked || status == Status::Evaluating || status == Status::EvaluatingAsync || status == Status::Evaluated) {
+        // 2.a. Return index.
+        return index;
+    }
+    // 3. Assert: module.[[Status]] is UNLINKED.
+    ASSERT(module->status() == Status::Unlinked);
+    // 4. Set module.[[Status]] to LINKING.
+    module->setStatus(Status::Linking);
+    // 5. Let moduleIndex be index.
+    unsigned moduleIndex = index;
+    // 6. Set module.[[DFSAncestorIndex]] to index.
+    module->setDFSAncestorIndex(index);
+    // 7. Set index to index + 1.
+    ++index;
+    // 8. Append module to stack.
+    stack.append(module);
+    // 9. For each ModuleRequest Record request of module.[[RequestedModules]], do
+    for (const ModuleRequest& request : module->requestedModules()) {
+        // 9.a. Let requiredModule be GetImportedModule(module, request).
+        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
+        checkSafeToRecurse(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, invalid);
+        // 9.b. Set index to ? InnerModuleLinking(requiredModule, stack, index).
+        index = requiredModule->innerModuleLinking(globalObject, stack, index, scriptFetcher);
+        RETURN_IF_EXCEPTION(scope, invalid);
+        // 9.c. If requiredModule is a Cyclic Module Record, then
+        if (auto* requiredCyclic = dynamicDowncast<CyclicModuleRecord>(requiredModule)) {
+            // 9.c.i. Assert: requiredModule.[[Status]] is one of LINKING, LINKED, EVALUATING, EVALUATING-ASYNC, or EVALUATED.
+            //        (See note above re: EVALUATING; Bun's require(esm) re-entry can put an outer module here.)
+            Status status = requiredCyclic->status();
+            ASSERT_UNUSED(status, status == Status::Linking || status == Status::Linked || status == Status::Evaluating || status == Status::EvaluatingAsync || status == Status::Evaluated);
+            // 9.c.ii. Assert: requiredModule.[[Status]] is LINKING if and only if stack contains requiredModule.
+            ASSERT((status == Status::Linking) == stack.contains(requiredModule));
+            // 9.c.iii. If requiredModule.[[Status]] is LINKING, then
+            if (status == Status::Linking) {
+                // 9.c.iii.1. Set module.[[DFSAncestorIndex]] to min(module.[[DFSAncestorIndex]], requiredModule.[[DFSAncestorIndex]]).
+                module->setDFSAncestorIndex(std::min(module->dfsAncestorIndex(), requiredCyclic->dfsAncestorIndex()));
+            }
+        }
+    }
+    // 10. Perform ? module.InitializeEnvironment().
+    module->initializeEnvironment(globalObject, scriptFetcher);
+    JSModuleLoader::attachErrorInfo(globalObject, scope, module, module->moduleKey(), module->moduleType(), JSModuleLoader::ModuleFailure::Kind::Instantiation);
+    RETURN_IF_EXCEPTION(scope, invalid);
+    // 11. Assert: module occurs exactly once in stack.
+    ASSERT(stack.contains(this));
+    ASSERT(stack.find(this) == stack.reverseFind(this));
+    // 12. Assert: module.[[DFSAncestorIndex]] ≤ moduleIndex.
+    ASSERT(module->dfsAncestorIndex() <= moduleIndex);
+    // 13. If module.[[DFSAncestorIndex]] = moduleIndex, then
+    if (module->dfsAncestorIndex() == moduleIndex) {
+        // 13.a. Let done be false.
+        bool done = false;
+        // 13.b. Repeat, while done is false,
+        do {
+            // 13.b.i. Let requiredModule be the last element of stack.
+            // 13.b.ii. Remove the last element of stack.
+            AbstractModuleRecord* requiredModule = stack.takeLast();
+            // 13.b.iii. Assert: requiredModule is a Cyclic Module Record.
+            auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule);
+            // 13.b.iv. Set requiredModule.[[Status]] to LINKED.
+            cyclic->setStatus(Status::Linked);
+            // 13.b.v. If requiredModule and module are the same Module Record, set done to true.
+            done = requiredModule == module;
+        } while (!done);
+    }
+    // 14. Return index.
+    return index;
+}
+
+static String printableName(const RefPtr<UniquedStringImpl>& uid)
+{
+    if (uid->isSymbol())
+        return uid.get();
+    return WTF::makeString('\'', StringView(uid.get()), '\'');
+}
+
+static String printableName(const Identifier& ident)
+{
+    return printableName(ident.impl());
+}
+
+ScriptFetchParameters::Type AbstractModuleRecord::moduleType() const
+{
+    switch (m_sourceType) {
+    case SourceProviderSourceType::Text:
+        return ScriptFetchParameters::Type::Text;
+    case SourceProviderSourceType::JSON:
+        return ScriptFetchParameters::Type::JSON;
+    case SourceProviderSourceType::Module:
+    case SourceProviderSourceType::Program:
+    case SourceProviderSourceType::Synthetic:
+#if USE(BUN_JSC_ADDITIONS)
+    case SourceProviderSourceType::BunTranspiledModule:
+#endif
+        return ScriptFetchParameters::Type::JavaScript;
+    case SourceProviderSourceType::WebAssembly:
+        return ScriptFetchParameters::Type::WebAssembly;
+    case SourceProviderSourceType::CSS:
+        return ScriptFetchParameters::Type::CSS;
+    case SourceProviderSourceType::ImportMap:
+        RELEASE_ASSERT_NOT_REACHED();
+        return ScriptFetchParameters::Type::None;
+    }
+    return ScriptFetchParameters::Type::None;
+}
+
+void AbstractModuleRecord::setCycleRoot(VM& vm, CyclicModuleRecord* newRoot)
+{
+    m_cycleRoot.set(vm, this, newRoot);
+}
+
+void AbstractModuleRecord::setTopLevelCapability(VM& vm, JSPromise* promise)
+{
+    m_topLevelCapability.set(vm, this, promise);
+}
+
+void AbstractModuleRecord::setHasTLA(bool has)
+{
+    m_hasTLA = has;
+}
+
+void AbstractModuleRecord::appendAsyncParentModule(VM& vm, AbstractModuleRecord* parentModule)
+{
+    Locker locker { cellLock() };
+    m_asyncParentModules.append({ vm, this, parentModule });
+}
+
+void AbstractModuleRecord::dump()
+{
+    dataLog("\nAnalyzing ModuleRecord key(", printableName(m_moduleKey), ")\n");
+
+    dataLog("    Dependencies: ", m_requestedModules.size(), " modules\n");
+    for (const auto& request : m_requestedModules)
+        dataLogLn("      module(", printableName(request.m_specifier), "),attributes(", RawPointer(request.m_attributes.get()), ")");
+
+    dataLog("    Import: ", m_importEntries.size(), " entries\n");
+    for (const auto& pair : m_importEntries) {
+        const ImportEntry& importEntry = pair.value;
+        dataLog("      import(", printableName(importEntry.importName), "), local(", printableName(importEntry.localName), "), module(", printableName(importEntry.moduleRequest), ")\n");
+    }
+
+    dataLog("    Export: ", m_exportEntries.size(), " entries\n");
+    for (const auto& pair : m_exportEntries) {
+        const ExportEntry& exportEntry = pair.value;
+        switch (exportEntry.type) {
+        case ExportEntry::Type::Local:
+            dataLog("      [Local] ", "export(", printableName(exportEntry.exportName), "), local(", printableName(exportEntry.localName), ")\n");
+            break;
+
+        case ExportEntry::Type::Indirect:
+            dataLog("      [Indirect] ", "export(", printableName(exportEntry.exportName), "), import(", printableName(exportEntry.importName), "), module(", printableName(exportEntry.moduleName), ")\n");
+            break;
+
+        case ExportEntry::Type::Namespace:
+            dataLog("      [Namespace] ", "export(", printableName(exportEntry.exportName), "), module(", printableName(exportEntry.moduleName), ")\n");
+            break;
+        }
+    }
+    for (const auto& starExportEntry : m_starExportEntries)
+        dataLog("      [Star] module(", printableName(starExportEntry.first), ")\n");
+}
+
+} // namespace JSC

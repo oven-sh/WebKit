@@ -1,0 +1,141 @@
+/*
+ * Copyright (C) 2015-2022 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#pragma once
+
+#include <JavaScriptCore/CyclicModuleRecord.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ModuleProgramExecutable.h>
+#include <JavaScriptCore/ParserModes.h>
+#include <JavaScriptCore/ScopeOffset.h>
+#include <JavaScriptCore/SourceCode.h>
+
+namespace JSC {
+
+class JSModuleEnvironment;
+class ModuleFunctionDeclarationSlots;
+class UnlinkedFunctionExecutable;
+class UnlinkedModuleProgramCodeBlock;
+
+// Based on the Source Text Module Record
+// http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
+class JSModuleRecord final : public CyclicModuleRecord {
+    friend class LLIntOffsetsExtractor;
+public:
+    using Base = CyclicModuleRecord;
+
+    DECLARE_EXPORT_INFO;
+
+    DECLARE_VISIT_CHILDREN;
+
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
+    static void destroy(JSCell*);
+
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return vm.jsModuleRecordSpace<mode>();
+    }
+
+    static size_t estimatedSize(JSCell*, VM&);
+
+    inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+    static JSModuleRecord* create(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier&, const SourceCode&, CodeFeatures);
+#if USE(BUN_JSC_ADDITIONS)
+    // Module `moduleIndex` of the graph: features, TLA/TypeScript flags and requested modules come from the graph; no
+    // import/export entries are added (AbstractModuleRecord::isPrelinked()). With Options::usePrelinkedModuleInfo() off
+    // the result is instead an ordinary record whose entries were copied out of the graph.
+    JS_EXPORT_PRIVATE static JSModuleRecord* createPrelinked(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier& moduleKey, const SourceCode&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
+#endif
+
+    JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
+
+    bool isTopLevelExecutionFinished() const;
+
+    void execute(JSGlobalObject*, JSPromise* = nullptr);
+    void executeAsync(JSGlobalObject*);
+
+    const SourceCode& sourceCode() const LIFETIME_BOUND { return m_sourceCode; }
+    CodeFeatures features() const { return m_features; }
+
+    ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
+    // This record will not run its body (again): it ran to the end, it threw, or a module it depends on did. (Not where a
+    // failed link is rolled back: such a record keeps its environment and its executable for the next attempt.)
+    void didFinishWithExecutable(VM&);
+
+    // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
+    // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.
+    void setFunctionDeclarationSlots(VM&, ModuleProgramExecutable*, UnlinkedModuleProgramCodeBlock*, bool leftUninstantiated);
+    // Whether readers of this module environment slot have to expect an uninstantiated function declaration. This only
+    // depends on the module's code (and the option), never on what has been instantiated so far: code that is shared
+    // between the CodeBlocks of one UnlinkedCodeBlock is specialized on the answer.
+    bool isFunctionDeclarationSlot(ScopeOffset) const;
+    // The slot's value, after instantiating its function declaration if that is what the empty slot stands for. Still
+    // empty if it is not (a binding in its TDZ).
+    JSValue readFunctionDeclarationSlot(VM&, JSModuleEnvironment*, ScopeOffset);
+    unsigned numberOfUninstantiatedFunctionDeclarations() const { return m_uninstantiatedFunctionDeclarations ? m_uninstantiatedFunctionDeclarations->remaining : 0; }
+
+    // The environment has an import slot (JSModuleEnvironment::importSlot) for each import entry
+    // that binds a single export (namespace imports are variables of this module's environment),
+    // numbered the same way for every record of the same source: a prelinked record's by the
+    // entry's position among the graph's imports of the module (a namespace import's position is
+    // a slot nothing uses), any other record's in the order of its import entries.
+    unsigned importSlotCount();
+    unsigned importSlotIndex(UniquedStringImpl* localName);
+    // resolveImport(localName) and, for a resolved binding, its import slot.
+    Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
+    JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
+    std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
+    // Whether every import binding of this record is at the same place for `executable`'s code as for the record it
+    // was linked for (its linker): the same slot, and the same variable of a module with the same source (or, for an
+    // exporter that is not a source text module, at the same offset).
+    bool resolvesImportsLike(JSGlobalObject*, ModuleProgramExecutable*);
+
+private:
+    JSModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, const SourceCode&, CodeFeatures);
+
+    void finishCreation(JSGlobalObject*, VM&);
+
+    const Vector<Identifier>& importSlotNames(); // not prelinked: the local names that have a slot, in the import entries' order
+    const Identifier& importSlotLocalName(unsigned index);
+    template<typename Functor> void forEachImportSlot(const Functor&); // (index, local name) -> IterationStatus
+
+    SourceCode m_sourceCode;
+    WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
+    std::optional<Vector<Identifier>> m_importSlotNames;
+    HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
+    CodeFeatures m_features;
+
+    struct UninstantiatedFunctionDeclarations {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);
+        WriteBarrier<ModuleProgramExecutable> executable;
+        WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots; null when the slots can decode the declarations without it
+        unsigned remaining { 0 }; // released when it reaches zero; a slot that was assigned to before it was read keeps it above
+    };
+    RefPtr<ModuleFunctionDeclarationSlots> m_functionDeclarationSlots;
+    std::unique_ptr<UninstantiatedFunctionDeclarations> m_uninstantiatedFunctionDeclarations; // released under cellLock()
+};
+
+} // namespace JSC

@@ -1,0 +1,83 @@
+{
+  "domain": "File",
+  "description": "Provides commands for file system operations within the Bun runtime.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [
+    {
+      "id": "Encoding",
+      "type": "string",
+      "enum": ["utf8", "base64"],
+      "description": "File encoding format."
+    },
+    {
+      "id": "FileContent",
+      "type": "object",
+      "description": "Content of a file with encoding information.",
+      "properties": [
+        {
+          "name": "content",
+          "type": "string",
+          "description": "The file content."
+        },
+        {
+          "name": "encoding",
+          "$ref": "Encoding",
+          "description": "The encoding used for the content."
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables the File domain."
+    },
+    {
+      "name": "read",
+      "description": "Reads the content of a file.",
+      "parameters": [
+        {
+          "name": "filePath",
+          "type": "string",
+          "description": "Path to the file to read."
+        },
+        {
+          "name": "encoding",
+          "$ref": "Encoding",
+          "optional": true,
+          "description": "Encoding format for the file content. Defaults to utf8."
+        }
+      ],
+      "returns": [
+        {
+          "name": "content",
+          "$ref": "FileContent",
+          "description": "The file content with encoding information."
+        }
+      ]
+    },
+    {
+      "name": "write",
+      "description": "Writes content to a file.",
+      "parameters": [
+        {
+          "name": "filePath",
+          "type": "string",
+          "description": "Path to the file to write."
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "description": "Content to write to the file."
+        },
+        {
+          "name": "encoding",
+          "$ref": "Encoding",
+          "optional": true,
+          "description": "Encoding format for the content. Defaults to utf8."
+        }
+      ]
+    }
+  ]
+}

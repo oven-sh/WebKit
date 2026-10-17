@@ -1,0 +1,171 @@
+API/APICallbackFunction.h
+API/JSCallbackConstructor.cpp
+API/JSCallbackObject.h
+API/JSCallbackObjectFunctions.h
+API/JSClassRef.cpp
+API/JSContextRef.cpp
+API/JSObjectRef.cpp
+API/JSScript.mm
+API/JSTypedArray.cpp
+API/JSWrapperMap.mm
+assembler/LinkBuffer.cpp
+[ macOS ] b3/B3CheckSpecial.cpp
+b3/B3PatchpointSpecial.cpp
+b3/B3Procedure.cpp
+[ iOS ] b3/air/AirAllocateRegistersAndStackAndGenerateCode.cpp
+[ iOS ] b3/air/AirGenerate.cpp
+bytecode/AccessCase.cpp
+bytecode/BytecodeDumper.cpp
+bytecode/CallLinkInfo.cpp
+bytecode/CodeBlock.cpp
+bytecode/CodeBlockHash.cpp
+bytecode/CodeBlockInlines.h
+bytecode/DirectEvalCodeCache.h
+bytecode/GetByStatus.cpp
+bytecode/InByStatus.cpp
+bytecode/InlineCacheCompiler.cpp
+bytecode/InlineCacheHandler.cpp
+bytecode/ObjectPropertyConditionSet.cpp
+bytecode/PolyProtoAccessChain.cpp
+bytecode/PropertyCondition.cpp
+bytecode/PropertyInlineCache.cpp
+bytecode/PutByStatus.cpp
+bytecode/Repatch.cpp
+bytecode/SetPrivateBrandStatus.cpp
+bytecode/UnlinkedFunctionExecutable.cpp
+bytecompiler/BytecodeGenerator.cpp
+bytecompiler/BytecodeGenerator.h
+bytecompiler/NodesCodegen.cpp
+debugger/Debugger.cpp
+dfg/DFGByteCodeParser.cpp
+dfg/DFGCommonData.cpp
+dfg/DFGConstantFoldingPhase.cpp
+dfg/DFGDesiredGlobalProperties.cpp
+dfg/DFGGraph.cpp
+[ macOS ] dfg/DFGGraphSafepoint.cpp
+dfg/DFGJITCode.cpp
+dfg/DFGJITCompiler.cpp
+dfg/DFGJITCompiler.h
+dfg/DFGJITFinalizer.cpp
+dfg/DFGLazyJSValue.cpp
+dfg/DFGPlan.cpp
+dfg/DFGSpeculativeJIT.cpp
+dfg/DFGSpeculativeJIT.h
+dfg/DFGToFTLDeferredCompilationCallback.cpp
+dfg/DFGToFTLForOSREntryDeferredCompilationCallback.cpp
+ftl/FTLCompile.cpp
+ftl/FTLFail.cpp
+ftl/FTLJITFinalizer.cpp
+ftl/FTLLazySlowPath.cpp
+ftl/FTLLink.cpp
+ftl/FTLLowerDFGToB3.cpp
+ftl/FTLSlowPathCall.cpp
+ftl/FTLState.cpp
+heap/GCIncomingRefCountedSetInlines.h
+heap/Heap.cpp
+heap/IsoCellSetInlines.h
+heap/JITStubRoutineSet.cpp
+[ macOS ] heap/MarkedSpace.cpp
+heap/MarkingConstraintSolver.cpp
+heap/ParallelSourceAdapter.h
+heap/SubspaceInlines.h
+inspector/ConsoleMessage.cpp
+inspector/JSGlobalObjectInspectorController.cpp
+inspector/JSJavaScriptCallFrame.cpp
+inspector/ScriptCallStack.cpp
+inspector/agents/InspectorDebuggerAgent.cpp
+inspector/agents/InspectorHeapAgent.cpp
+inspector/agents/InspectorRuntimeAgent.cpp
+inspector/agents/InspectorScriptProfilerAgent.cpp
+[ macOS ] interpreter/Interpreter.cpp
+jit/BaselineJITPlan.cpp
+[ iOS ] jit/ExecutableAllocator.cpp
+jit/GCAwareJITStubRoutine.cpp
+jit/ICStats.cpp
+jit/JIT.cpp
+jit/JITSafepoint.cpp
+jit/JITWorklist.cpp
+jit/JITWorklistInlines.h
+jit/JITWorklistThread.cpp
+jit/PolymorphicCallStubRoutine.cpp
+parser/Lexer.cpp
+parser/Parser.cpp
+parser/Parser.h
+parser/SourceProvider.h
+parser/UnlinkedSourceCode.cpp
+parser/UnlinkedSourceCode.h
+[ iOS ] profiler/ProfilerDatabase.cpp
+profiler/ProfilerEvent.cpp
+runtime/ArrayBufferView.cpp
+runtime/AtomicsObject.cpp
+runtime/CacheableIdentifierInlines.h
+runtime/CodeCache.cpp
+runtime/CodeCache.h
+runtime/DirectEvalExecutable.cpp
+runtime/ErrorInstance.cpp
+runtime/FunctionExecutable.cpp
+runtime/IndirectEvalExecutable.cpp
+runtime/InferredValue.h
+runtime/IntlObject.cpp
+runtime/JSArrayBuffer.cpp
+runtime/JSArrayBufferPrototype.cpp
+runtime/JSArrayBufferView.cpp
+runtime/JSCustomGetterFunction.cpp
+runtime/JSCustomSetterFunction.cpp
+runtime/JSGenericTypedArrayViewInlines.h
+runtime/JSGenericTypedArrayViewPrototypeFunctions.h
+runtime/JSGlobalObject.cpp
+runtime/JSObject.cpp
+runtime/JSObjectInlines.h
+runtime/JSRunLoopTimer.cpp
+[ macOS ] runtime/MicrotaskQueue.cpp
+runtime/ModuleProgramExecutable.cpp
+runtime/NativeExecutable.cpp
+runtime/ProgramExecutable.cpp
+runtime/RegExpKey.h
+[ macOS ] runtime/RegExpObject.cpp
+runtime/SamplingProfiler.cpp
+runtime/ScriptExecutable.h
+runtime/Structure.cpp
+runtime/StructureInlines.h
+runtime/SymbolTable.cpp
+runtime/TypeProfiler.cpp
+runtime/TypeProfilerLog.cpp
+runtime/TypeSet.cpp
+[ macOS ] runtime/VM.cpp
+runtime/VMTraps.cpp
+runtime/Watchdog.cpp
+tools/FunctionOverrides.cpp
+tools/JSDollarVM.cpp
+wasm/WasmBBQJIT.cpp
+[ iOS ] wasm/WasmBBQJIT64.cpp
+[ macOS ] wasm/WasmBBQPlan.cpp
+wasm/WasmCallee.cpp
+wasm/WasmCalleeGroup.cpp
+wasm/WasmEntryPlan.cpp
+wasm/WasmFunctionParser.h
+wasm/WasmIPIntPlan.cpp
+[ macOS ] wasm/WasmIPIntSlowPaths.cpp
+wasm/WasmMemory.cpp
+wasm/WasmMemory.h
+wasm/WasmOMGIRGenerator.cpp
+[ macOS ] wasm/WasmOMGPlan.cpp
+[ macOS ] wasm/WasmOSREntryPlan.cpp
+wasm/WasmOperationsInlines.h
+wasm/WasmPlan.cpp
+wasm/WasmStreamingCompiler.cpp
+wasm/WasmStreamingParser.cpp
+wasm/WasmTypeDefinition.cpp
+wasm/WasmWorklist.cpp
+[ macOS ] wasm/debugger/WasmExecutionHandler.cpp
+wasm/js/JSWebAssembly.cpp
+wasm/js/JSWebAssemblyHelpers.h
+wasm/js/JSWebAssemblyInstance.cpp
+wasm/js/JSWebAssemblyInstance.h
+wasm/js/JSWebAssemblyMemory.cpp
+wasm/js/JSWebAssemblyMemory.h
+wasm/js/WebAssemblyFunction.cpp
+wasm/js/WebAssemblyFunction.h
+wasm/js/WebAssemblyInstanceConstructor.cpp
+[ iOS ] wasm/js/WebAssemblyModuleConstructor.cpp
+wasm/js/WebAssemblyModuleRecord.cpp
