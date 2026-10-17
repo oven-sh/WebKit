@@ -1934,8 +1934,15 @@ private:
     const JSONRanges* m_sourceRanges;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// CloneBase.h has another JSC::WalkerState, of one byte. Vector's base classes have the same name for both.
+namespace {
+#endif
 enum WalkerState { StateUnknown, ArrayStartState, ArrayStartVisitMember, ArrayEndVisitMember, 
                                  ObjectStartState, ObjectStartVisitMember, ObjectEndVisitMember };
+#if USE(BUN_JSC_ADDITIONS)
+}
+#endif
 NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
 {
     VM& vm = m_globalObject->vm();
