@@ -150,8 +150,13 @@ public:
 
         m_codeBlock = codeBlock;
 
+#if USE(BUN_JSC_ADDITIONS)
+        // A builtin can have expression info (BytecodeGenerator::emitExpressionInfo), and the callers look it up by this index.
+        m_bytecodeIndex = visitor->bytecodeIndex();
+#else
         if (!codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
             m_bytecodeIndex = visitor->bytecodeIndex();
+#endif
         return IterationStatus::Done;
     }
 
