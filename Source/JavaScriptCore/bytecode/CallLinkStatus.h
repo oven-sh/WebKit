@@ -125,6 +125,7 @@ private:
 #endif
     
     void accountForExits(ExitSiteData, ExitingInlineKind);
+    void joinWithBaseline(const CallLinkStatus&);
     
     CallVariantList m_variants;
     bool m_couldTakeSlowPath { false };

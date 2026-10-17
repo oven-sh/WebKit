@@ -314,9 +314,28 @@ CallLinkStatus CallLinkStatus::computeFor(
         
         bool checkStatusFirst = context->optimizedCodeBlock->jitType() == JITType::FTLJIT;
         
+        // Takes what the optimized code has for the call site, before exits are accounted for.
         auto bless = [&] (CallLinkStatus& result) {
-            if (!context->isInlined(codeOrigin))
+            if (context->isInlined(codeOrigin)) {
+                result.accountForExits(exitSiteData, context->inlineKind(codeOrigin));
+                return;
+            }
+
+            // The optimized code names no callee: its call IC did not run, went virtual or was cleared, or it is
+            // an FTL stub, which counts nothing. Then the callees that Baseline counted are not known to be the
+            // frequent ones any more. merge() keeps them, and leaves the status not based on a stub, so that
+            // nothing switches over them.
+            if (result.m_variants.isEmpty()) {
+                result.accountForExits(exitSiteData, context->inlineKind(codeOrigin));
                 result.merge(computeFor(profiledBlock, codeOrigin.bytecodeIndex(), baselineMap, exitSiteData));
+                return;
+            }
+
+            // The exits are accounted for once, on the joined status: a callee that turned out wrong makes a
+            // status that is based on a stub a closure call, and makes any other status take the slow path.
+            // Accounted for per tier, the slow path of the tier that has no stub ends up on the joined status.
+            result.joinWithBaseline(computeFor(profiledBlock, codeOrigin.bytecodeIndex(), baselineMap, ExitSiteData()));
+            result.accountForExits(exitSiteData, ExitFromAnyInlineKind);
         };
         
         auto checkInfo = [&] () -> CallLinkStatus {
@@ -327,9 +346,7 @@ CallLinkStatus CallLinkStatus::computeFor(
             CallLinkStatus result;
             {
                 ConcurrentJSLocker locker(context->optimizedCodeBlock->m_lock);
-                result = computeFor(
-                    locker, context->optimizedCodeBlock, *status.callLinkInfo, exitSiteData,
-                    context->inlineKind(codeOrigin));
+                result = computeFor(locker, context->optimizedCodeBlock, *status.callLinkInfo);
                 if (CallLinkStatusInternal::verbose)
                     dataLog("Got result: ", result, "\n");
             }
@@ -343,7 +360,6 @@ CallLinkStatus CallLinkStatus::computeFor(
             CallLinkStatus result = *status.callStatus;
             if (CallLinkStatusInternal::verbose)
                 dataLog("Have callStatus: ", result, "\n");
-            result.accountForExits(exitSiteData, context->inlineKind(codeOrigin));
             bless(result);
             return result;
         };
@@ -411,6 +427,35 @@ void CallLinkStatus::merge(const CallLinkStatus& other)
         if (!found)
             m_variants.append(otherVariant);
     }
+}
+
+// |this| is what the call IC of the optimized code has seen of a call site, and names a callee. |baseline| is
+// what Baseline's call IC has seen. Neither has accounted for exits. Makes |this| what both have seen.
+void CallLinkStatus::joinWithBaseline(const CallLinkStatus& baseline)
+{
+    ASSERT(!m_variants.isEmpty());
+
+    m_couldTakeSlowPath |= baseline.m_couldTakeSlowPath;
+
+    // A stub counts the calls to each callee, and its variants are the ones it counted often. An IC without
+    // a stub names the one callee it calls. Both kinds of variant are safe to switch over, so the joined
+    // status is based on a stub if either tier has one. merge() forgets Baseline's stub: the DFG does not
+    // inline a call with two callees, its own IC then sees one callee and has no stub, and the FTL would get
+    // two callees that are not based on a stub and emit a call for good.
+    m_isBasedOnStub |= baseline.m_isBasedOnStub;
+
+    // The optimized code's callees stay first. Two callees become one closure call only if they share an
+    // executable. CallVariant::merge() also folds two callees that have no executable, which drops one.
+    for (const CallVariant& variant : baseline.m_variants) {
+        CallVariantList joined = variantListWithVariant(m_variants, variant);
+        if (joined != m_variants) {
+            m_variants = WTF::move(joined);
+            m_isProved = false;
+        }
+    }
+
+    // m_maxArgumentCountIncludingThisForVarargs stays the optimized code's. With the larger of the two, one
+    // call with many arguments that only Baseline has seen makes every later compile too big to inline.
 }
 
 void CallLinkStatus::filter(JSValue value)
