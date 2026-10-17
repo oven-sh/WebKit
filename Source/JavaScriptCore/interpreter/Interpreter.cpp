@@ -560,7 +560,44 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     };
 
     JSAsyncFunctionGenerator* currentGenerator = getParentGenerator(generator);
+#if USE(BUN_JSC_ADDITIONS)
+    // Async functions that await each other make the chain a cycle, and then only maxStackSize ends the walk.
+    // Two walks never reach it: a walk with no limit (SIZE_MAX from a caller, UINT_MAX from
+    // Error.stackTraceLimit = Infinity), and a walk whose cycle has only generators that add no frame.
+    // Both end when they are back at a generator they passed. A walk with a limit whose cycle adds frames
+    // repeats the cycle up to the limit, as V8 does.
+    //
+    // This is Brent's cycle detection: keep one generator the walk passed, and replace it after 1, 2, 4, ... steps.
+    bool hasLimit = maxStackSize < std::numeric_limits<unsigned>::max();
+    JSAsyncFunctionGenerator* passedGenerator = nullptr;
+    size_t framesAtPassedGenerator = 0;
+    size_t stepsBetweenPassedGenerators = 1;
+    size_t stepsToNextPassedGenerator = 1;
+    bool endsAfterFirstLap = false;
+    auto isBackAtPassedGenerator = [&](JSAsyncFunctionGenerator* candidate) ALWAYS_INLINE_LAMBDA -> bool {
+        if (candidate == passedGenerator) [[unlikely]] {
+            if (!hasLimit || results.size() == framesAtPassedGenerator)
+                return true;
+        }
+        if (!--stepsToNextPassedGenerator) [[unlikely]] {
+            // The second walk over a cycle counts its generators down to the end of the first lap.
+            if (endsAfterFirstLap)
+                return true;
+            passedGenerator = candidate;
+            framesAtPassedGenerator = results.size();
+            stepsBetweenPassedGenerators *= 2;
+            stepsToNextPassedGenerator = stepsBetweenPassedGenerators;
+        }
+        return false;
+    };
+
+    JSAsyncFunctionGenerator* firstGenerator = currentGenerator;
+    size_t firstFrame = results.size();
+#endif
     while (currentGenerator && results.size() < maxStackSize) {
+#if USE(BUN_JSC_ADDITIONS)
+        bool addedFrame = false;
+#endif
         JSValue nextValue = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Next)).get();
         JSFunction* asyncFunction = dynamicDowncast<JSFunction>(nextValue);
         if (asyncFunction && !asyncFunction->isHostOrPrivateBuiltinFunction()) {
@@ -571,13 +608,49 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
                 } else
                     results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+#if USE(BUN_JSC_ADDITIONS)
+                addedFrame = true;
+#endif
             }
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // With a limit, each frame brings the walk closer to its end. Only a step that adds none can go on forever.
+        if (!hasLimit || !addedFrame) [[unlikely]] {
+            if (isBackAtPassedGenerator(currentGenerator)) {
+                if (hasLimit || endsAfterFirstLap)
+                    break;
+                // No limit. The walk can pass a generator of the cycle up to three times before it sees the cycle.
+                // Walk again and end after the first lap, so that the trace has each function once:
+                // `lap` generators make the cycle, and `tail` generators come before it.
+                size_t lap = 1;
+                for (auto* next = getParentGenerator(currentGenerator); next != currentGenerator; next = getParentGenerator(next))
+                    ++lap;
+                JSAsyncFunctionGenerator* ahead = firstGenerator;
+                for (size_t i = 0; i < lap; ++i)
+                    ahead = getParentGenerator(ahead);
+                size_t tail = 0;
+                for (auto* behind = firstGenerator; behind != ahead; behind = getParentGenerator(behind)) {
+                    ahead = getParentGenerator(ahead);
+                    ++tail;
+                }
+                results.shrink(firstFrame);
+                endsAfterFirstLap = true;
+                passedGenerator = nullptr;
+                stepsToNextPassedGenerator = tail + lap;
+                currentGenerator = firstGenerator;
+                continue;
+            }
+        }
+#endif
         currentGenerator = getParentGenerator(currentGenerator);
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo, size_t maxAsyncStackSize)
+#else
 void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo)
+#endif
 {
     AssertNoGC assertNoGC;
     VM& vm = this->vm();
@@ -706,7 +779,11 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             updateAsyncStackTraceOriginGenerator();
         if (asyncStackTraceOriginGenerator) {
             Vector<StackFrame> asyncFrames;
+#if USE(BUN_JSC_ADDITIONS)
+            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, std::min(maxStackSize, maxAsyncStackSize));
+#else
             getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
+#endif
             if (!asyncFrames.isEmpty())
                 results.insertVector(asyncStackTraceInsertPos, asyncFrames);
         }
