@@ -36,6 +36,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "DFGSlowPathGenerator.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
+#include "FFIDFG.h"
 #include "FFISignature.h"
 #include "FFIType.h"
 #include "JSArrayBufferView.h"
@@ -79,12 +80,16 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     const unsigned returnSlotIndex = nativeArgumentCount;
 
     DFG_ASSERT(m_graph, node, node->numChildren() == 2 + nativeArgumentCount, node->numChildren(), nativeArgumentCount);
-    DFG_ASSERT(m_graph, node, m_graph.m_parameterSlots * sizeof(Register) >= signature.slotBufferBytes(), m_graph.m_parameterSlots, signature.slotCount());
+    DFG_ASSERT(m_graph, node, m_graph.m_parameterSlots * sizeof(Register) >= signature.marshalBufferBytes(), m_graph.m_parameterSlots, signature.slotCount());
 
     FrozenValue* frozenGlobalObject = m_graph.freeze(globalObject);
+    FFI::Signature* signaturePointer = &signature;
 
     auto slotAddressFor = [&](unsigned slotIndex) -> Address {
         return Address(stackPointerRegister, static_cast<int32_t>(slotIndex * FFI::slotSize));
+    };
+    auto valueAddressFor = [&](unsigned argumentIndex) -> Address {
+        return Address(stackPointerRegister, static_cast<int32_t>(FFI::argumentValueOffset(signature.slotCount(), argumentIndex)));
     };
 
     bool needsArenaBracket = false;
@@ -93,6 +98,24 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         Edge edge = m_graph.varArgChild(node, 2 + i);
         if (edge.useKind() == UntypedUse && ffiUntypedConversionMayUseStringArena(type))
             needsArenaBracket = true;
+    }
+
+    // An argument whose conversion reads an address or a byte length off a live buffer needs that
+    // read taken again if a later conversion runs JS: the JS can detach, transfer, or resize the
+    // buffer. Park the JSValue of each such argument next to its slot, and let the slow path of
+    // the later conversion read the parked ones again. Both sets follow from the signature and the
+    // edges, so they are known here: an argument list that runs no JS after a buffer read parks
+    // nothing and keeps the plain operationFFIWriteSlot slow path.
+    static_assert(FFI::Signature::maxArguments <= 32);
+    uint32_t parkedValues = 0;
+    bool conversionAfterThisCanRunJS = false;
+    for (unsigned i = nativeArgumentCount; i--;) {
+        FFI::Type type = signature.argumentType(i);
+        UseKind useKind = m_graph.varArgChild(node, 2 + i).useKind();
+        if (conversionAfterThisCanRunJS && FFI::conversionCanTakeBufferSnapshot(type, useKind))
+            parkedValues |= 1u << i;
+        if (FFI::conversionCanRunJS(type, useKind))
+            conversionAfterThisCanRunJS = true;
     }
 
     if (needsArenaBracket) {
@@ -203,6 +226,9 @@ void SpeculativeJIT::compileCallFFI(Node* node)
             FPRReg scratchFPR = fpScratchTemp.fpr();
 
             addPtr(TrustedImm32(static_cast<int32_t>(i * FFI::slotSize)), stackPointerRegister, slotAddressGPR);
+
+            if (parkedValues & (1u << i))
+                store64(valueGPR, valueAddressFor(i));
 
             JumpList slowCases;
             JumpList stored;
@@ -327,11 +353,20 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 silentSpillAllRegistersImpl(false, savePlans, NoResult);
                 uint32_t typeTag = static_cast<uint32_t>(type);
                 bool exitArenaOnException = needsArenaBracket;
+                // Only this conversion can run JS, and only the arguments before it can already
+                // hold a buffer snapshot, so the retaking slow path is needed exactly when one of
+                // them is parked.
+                bool retakeSnapshots = parkedValues & ((1u << i) - 1);
                 addSlowPathGeneratorLambda([=, this, savePlans = WTF::move(savePlans), slowCases = WTF::move(slowCases)]() mutable {
                     slowCases.link(this);
                     silentSpill(savePlans);
-                    setupArguments<decltype(operationFFIWriteSlot)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(ffiContext), TrustedImm32(static_cast<int32_t>(typeTag)), valueGPR, slotAddressGPR);
-                    appendCall(operationFFIWriteSlot);
+                    if (retakeSnapshots) {
+                        setupArguments<decltype(operationFFIWriteSlotAndRetakeSnapshots)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(signaturePointer), TrustedImm32(static_cast<int32_t>(i)), valueGPR, slotAddressGPR);
+                        appendCall(operationFFIWriteSlotAndRetakeSnapshots);
+                    } else {
+                        setupArguments<decltype(operationFFIWriteSlot)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(ffiContext), TrustedImm32(static_cast<int32_t>(typeTag)), valueGPR, slotAddressGPR);
+                        appendCall(operationFFIWriteSlot);
+                    }
                     if (exitArenaOnException)
                         emitArenaExitIfExceptionPending();
                     std::optional<GPRReg> exceptionReg = tryHandleOrGetExceptionUnderSilentSpill<decltype(operationFFIWriteSlot)>(savePlans, NoResult);
