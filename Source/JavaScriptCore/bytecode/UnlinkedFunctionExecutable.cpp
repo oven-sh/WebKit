@@ -60,8 +60,21 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     JSParserScriptMode scriptMode = executable->scriptMode();
     ASSERT(isFunctionParseMode(executable->parseMode()));
     auto* classElementDefinitions = executable->classElementDefinitions();
+#if USE(BUN_JSC_ADDITIONS)
+    // The parser names the body function of a generator or async function after the function. Without a declared name
+    // that is the inferred one (`const f = async () => { }`), unless it is a private name (`export default` is `*default*`).
+    const Identifier* inferredName = nullptr;
+    if (isGeneratorOrAsyncFunctionWrapperParseMode(executable->parseMode()) && executable->name().isNull()) {
+        const Identifier& ecmaName = executable->ecmaName();
+        if (!ecmaName.isEmpty() && !ecmaName.isSymbol())
+            inferredName = &ecmaName;
+    }
+    std::unique_ptr<FunctionNode> function = parse<FunctionNode>(
+        vm, source, executable->name(), executable->implementationVisibility(), builtinMode, executable->lexicallyScopedFeatures(), scriptMode, executable->parseMode(), executable->functionMode(), executable->superBinding(), error, executable->constructorKind(), executable->derivedContextType(), EvalContextType::None, nullptr, classElementDefinitions, false, inferredName);
+#else
     std::unique_ptr<FunctionNode> function = parse<FunctionNode>(
         vm, source, executable->name(), executable->implementationVisibility(), builtinMode, executable->lexicallyScopedFeatures(), scriptMode, executable->parseMode(), executable->functionMode(), executable->superBinding(), error, executable->constructorKind(), executable->derivedContextType(), EvalContextType::None, nullptr, classElementDefinitions);
+#endif
 
     if (!function) {
         ASSERT(error.isValid());
