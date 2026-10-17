@@ -28,6 +28,9 @@
 #if ENABLE(B3_JIT)
 
 #include "B3AbstractHeapRepository.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "B3Arena.h"
+#endif
 #include "B3Origin.h"
 #include "B3PCToOriginMap.h"
 #include "B3SparseCollection.h"
@@ -37,6 +40,7 @@
 #include "PureNaN.h"
 #include "RegisterAtOffsetList.h"
 #include <wtf/Bag.h>
+#include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashSet.h>
 #include <wtf/IndexedContainerIterator.h>
@@ -74,6 +78,9 @@ class StackSlot;
 
 typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
 typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
+class StackmapGenerationParams;
+typedef void StackmapGeneratorFunction(CCallHelpers&, const StackmapGenerationParams&);
+typedef SharedTask<StackmapGeneratorFunction> StackmapGenerator;
 
 // This represents B3's view of a piece of code. Note that this object must exist in a 1:1
 // relationship with Air::Code. B3::Procedure and Air::Code are just different facades of the B3
@@ -156,6 +163,9 @@ public:
 
     void LEGACY_NODELETE resetValueOwners();
     JS_EXPORT_PRIVATE void resetReachability();
+#if USE(BUN_JSC_ADDITIONS)
+    void resetReachabilityAfterContractions();
+#endif
 
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you
     // should call this anytime you call resetReachability().
@@ -258,6 +268,37 @@ public:
     
     JS_EXPORT_PRIVATE void LEGACY_NODELETE setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
+
+    void setPositionIndependent(bool value = true)
+    {
+        m_positionIndependent = value;
+#if USE(BUN_JSC_ADDITIONS)
+        m_arena.setKeepsFirstChunkForThread(value);
+#endif
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    Arena& arena() LIFETIME_BOUND { return m_arena; }
+    Arena* arenaOrNull() LIFETIME_BOUND { return m_positionIndependent ? &m_arena : nullptr; }
+    bool hasEverAdded(Opcode opcode) const { return m_opcodesEverAdded.get(opcode); }
+#endif
+    bool positionIndependent() const { return m_positionIndependent; }
+    void setKeepsDataInCode() { m_keepsDataInCode = true; }
+    bool keepsDataInCode() const { return m_keepsDataInCode || m_positionIndependent; }
+    void setMaterializesConstantsByFrequency() { m_materializesConstantsByFrequency = true; }
+    bool materializesConstantsByFrequency() const { return m_materializesConstantsByFrequency; }
+    void setRotatesLoops() { m_rotatesLoops = true; }
+    bool rotatesLoops() const { return m_rotatesLoops; }
+    void setNamesPinnedArgumentRegistersDirectly() { m_namesPinnedArgumentRegistersDirectly = true; }
+    bool namesPinnedArgumentRegistersDirectly() const { return m_namesPinnedArgumentRegistersDirectly; }
+    void setReachabilityIsFresh() { m_reachabilityIsFresh = true; }
+    bool takeReachabilityIsFresh() { return std::exchange(m_reachabilityIsFresh, false); }
+    // The generator that the patchpoints of all loop polls share: a phase knows a poll by it.
+    void setLoopPollGenerator(RefPtr<StackmapGenerator> generator) { m_loopPollGenerator = WTF::move(generator); }
+    StackmapGenerator* loopPollGenerator() const { return m_loopPollGenerator.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    void setLastPhase(RefPtr<SharedTask<void(Procedure&)>> phase) { m_lastPhase = WTF::move(phase); }
+    SharedTask<void(Procedure&)>* lastPhase() const { return m_lastPhase.get(); }
+#endif
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
     // you turn it off then you cannot use StackmapGenerationParams::usedRegisters() or
@@ -313,8 +354,18 @@ public:
     void setIonGraphPasses(Ref<JSON::Array>&&);
     void appendIonGraphPass(ASCIILiteral);
 
+#if USE(BUN_JSC_ADDITIONS)
+    AbstractHeapRepository& heaps()
+    {
+        if (!m_heaps)
+            m_heaps = makeUnique<AbstractHeapRepository>();
+        return *m_heaps;
+    }
+    const AbstractHeapRepository& heaps() const { return const_cast<Procedure*>(this)->heaps(); }
+#else
     AbstractHeapRepository& heaps() { return m_heaps.get(); }
     const AbstractHeapRepository& heaps() const { return m_heaps.get(); }
+#endif
 
     void setIsWasm(bool flag) { m_isWasm = flag; }
     bool isWasm() const { return m_isWasm; }
@@ -335,10 +386,16 @@ public:
 
 private:
     friend class BlockInsertionSet;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ProcedureFingerprint;
+#endif
 
     JS_EXPORT_PRIVATE Value* addValueImpl(Value*);
     void setBlockOrderImpl(Vector<BasicBlock*>&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    Arena m_arena;
+#endif
     SparseCollection<Variable> m_variables;
     Vector<Vector<Type>> m_tuples;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
@@ -352,7 +409,11 @@ private:
     const char* m_lastPhaseName;
     std::unique_ptr<OpaqueByproducts> m_byproducts;
     std::unique_ptr<Air::Code> m_code;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<AbstractHeapRepository> m_heaps;
+#else
     UniqueRef<AbstractHeapRepository> m_heaps;
+#endif
     RefPtr<SharedTask<void(PrintStream&, Origin)>> m_originPrinter;
     const void* m_frontendData;
     String m_name;
@@ -360,6 +421,22 @@ private:
     RefPtr<JSON::Array> m_ionGraphPasses;
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
+    bool m_positionIndependent { false };
+    bool m_keepsDataInCode { false };
+    bool m_materializesConstantsByFrequency { false };
+    bool m_rotatesLoops { false };
+    bool m_namesPinnedArgumentRegistersDirectly { false };
+    Vector<BasicBlock*> m_blocksInPreOrder;
+    Vector<BasicBlock*> m_blocksInPostOrder;
+    bool m_reachabilityIsFresh { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_keepsDominatorsThroughReset { false };
+    WTF::BitSet<256> m_opcodesEverAdded;
+#endif
+    RefPtr<StackmapGenerator> m_loopPollGenerator;
+#if USE(BUN_JSC_ADDITIONS)
+    RefPtr<SharedTask<void(Procedure&)>> m_lastPhase;
+#endif
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };

@@ -72,6 +72,7 @@ enum Scale { ScaleOne, ScaleTwo, ScaleFour, ScaleEight, ScalePtr };
 class Output : public CommonValues {
 public:
     Output(State&);
+    explicit Output(B3::Procedure&);
     ~Output();
 
     void LEGACY_NODELETE initialize(AbstractHeapRepository&);
@@ -491,7 +492,17 @@ public:
     double m_frequency { 1 };
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    struct BlockLink {
+        LBasicBlock block { nullptr };
+        unsigned previous { 0 };
+        unsigned next { 0 };
+    };
+
+    Vector<BlockLink, 32> m_blockLinks { BlockLink { } };
+#else
     OrderMaker<LBasicBlock> m_blockOrder;
+#endif
 };
 
 template<typename... Params>

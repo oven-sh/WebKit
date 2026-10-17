@@ -66,8 +66,18 @@ enum class TransitionKind : uint8_t {
     // Support for transitions related with private brand
     SetBrand = 17,
 
-    // The object becomes non-extensible and its own properties and prototype can no longer change. Property attributes do not change.
     MakePropertiesImmutable = 18,
+
+    LockProperties = 19,
+
+    BecomeDerivedArray = 20,
+
+    LockAndMakePropertiesImmutable = 21,
+
+    RecordLockedProperties = 22,
+    RecordLockedAndImmutableProperties = 23,
+
+    AllocateTypedContiguous = 24,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -79,6 +89,7 @@ inline bool changesIndexingType(TransitionKind transition)
     case TransitionKind::AllocateInt32:
     case TransitionKind::AllocateDouble:
     case TransitionKind::AllocateContiguous:
+    case TransitionKind::AllocateTypedContiguous:
     case TransitionKind::AllocateArrayStorage:
     case TransitionKind::AllocateSlowPutArrayStorage:
     case TransitionKind::SwitchToSlowPutArrayStorage:
@@ -103,8 +114,11 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
         ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || oldType == CopyOnWriteArrayWithDouble);
         return (oldType & ~IndexingShapeAndWritabilityMask) | DoubleShape;
     case TransitionKind::AllocateContiguous:
-        ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || oldType == CopyOnWriteArrayWithContiguous);
+        ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || hasTypedContiguous(oldType) || oldType == CopyOnWriteArrayWithContiguous);
         return (oldType & ~IndexingShapeAndWritabilityMask) | ContiguousShape;
+    case TransitionKind::AllocateTypedContiguous:
+        ASSERT(hasContiguous(oldType) && !isCopyOnWrite(oldType));
+        return (oldType & ~IndexingShapeAndWritabilityMask) | TypedContiguousShape;
     case TransitionKind::AllocateArrayStorage:
         ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType));
         return (oldType & ~IndexingShapeAndWritabilityMask) | ArrayStorageShape;
@@ -117,6 +131,7 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
     case TransitionKind::AddIndexedAccessors:
         return oldType | MayHaveIndexedAccessors;
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         // A JSArray that still has Int32, Double or Contiguous elements here keeps its shape and becomes copy-on-write:
         // JSObject::makePropertiesImmutable() has moved them to such storage. Every other object with elements has been given dictionary indexing first.
         if ((oldType & IsArray) && (hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType)))
@@ -134,10 +149,21 @@ inline bool preventsExtensions(TransitionKind transition)
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         return true;
     default:
         return false;
     }
+}
+
+inline bool makesPropertiesImmutable(TransitionKind transition)
+{
+    return transition == TransitionKind::MakePropertiesImmutable || transition == TransitionKind::LockAndMakePropertiesImmutable;
+}
+
+inline bool recordsLockedPropertiesFor(TransitionKind transition)
+{
+    return transition == TransitionKind::RecordLockedProperties || transition == TransitionKind::RecordLockedAndImmutableProperties;
 }
 
 inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
@@ -145,6 +171,8 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
+    case TransitionKind::LockProperties:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         return true;
     default:
         return false;
@@ -155,6 +183,8 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 {
     switch (transition) {
     case TransitionKind::Freeze:
+    case TransitionKind::LockProperties:
+    case TransitionKind::LockAndMakePropertiesImmutable:
         return true;
     default:
         return false;

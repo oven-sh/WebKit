@@ -202,6 +202,7 @@ set(WTF_PUBLIC_HEADERS
     MmapSpan.h
     MonotonicObjectIdentifier.h
     MonotonicTime.h
+    MultiArrayList.h
     module.modulemap
     NakedPtr.h
     NativePromise.h

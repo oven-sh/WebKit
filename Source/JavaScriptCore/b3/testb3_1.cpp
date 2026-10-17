@@ -769,6 +769,7 @@ void run(const TestConfig* config)
     RUN(testBranchLoad16S());
     RUN(testBranchLoad16Z());
     RUN(testBranch8WithLoad8ZIndex());
+    RUN(testBranch16WithLoad16Z());
 
     RUN(testComplex(64, 128));
     RUN(testComplex(4, 128));
@@ -864,6 +865,9 @@ void run(const TestConfig* config)
 
     addLoadTests(config, tasks);
     addTupleTests(config, tasks);
+#if USE(BUN_JSC_ADDITIONS)
+    addBunTests(config, tasks);
+#endif
 
     RUN(testSpillGP());
     RUN(testSpillFP());
@@ -1612,6 +1616,9 @@ int main(int argc, char** argv)
     JSC::Config::configureForTesting();
 
     WTF::initializeMainThread();
+#if USE(BUN_JSC_ADDITIONS)
+    JSC::installCompilers();
+#endif
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
     });

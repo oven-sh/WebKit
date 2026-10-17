@@ -482,6 +482,9 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
 #if defined(ASSEMBLER_HAS_CONSTANT_POOL) && ASSEMBLER_HAS_CONSTANT_POOL
     macroAssembler.m_assembler.buffer().flushConstantPool(false);
 #endif
+#if CPU(X86_64) && USE(BUN_JSC_ADDITIONS)
+    m_shortenedJumpShifts = macroAssembler.m_assembler.takeShortenedJumpShifts();
+#endif
     allocate(macroAssembler, effort);
     if (!m_didAllocate)
         return;

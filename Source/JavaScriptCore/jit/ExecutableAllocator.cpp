@@ -62,6 +62,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <windows.h>
 #endif
 
+#if OS(LINUX)
+#include <sys/mman.h>
+#endif
+
 #if HAVE(IOS_JIT_RESTRICTIONS) || HAVE(MAC_JIT_RESTRICTIONS)
 #include <wtf/cocoa/Entitlements.h>
 #endif
@@ -344,6 +348,13 @@ struct JITReservation {
     size_t size { 0 };
 };
 
+#if OS(LINUX) && ENABLE(AOT)
+static bool LEGACY_NODELETE opensPoolAtFirstAllocation()
+{
+    return Options::useAOT() && !Options::useJIT() && !Options::useJITDump();
+}
+#endif
+
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 
 // Register a dynamic function table covering the fixed JIT pool so that
@@ -608,6 +619,10 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
         // To avoid this problem, we use committed reservation if we need perf JITDump logging.
         if (Options::useJITDump())
             return PageReservation::tryReserveWithGuardPages(reservationSize, OSAllocator::JSJITCodePages, hintAddress, EXECUTABLE_POOL_WRITABLE, true, true, false);
+#if ENABLE(AOT)
+        if (opensPoolAtFirstAllocation())
+            return PageReservation::tryReserveWithGuardPages(reservationSize, OSAllocator::JSJITCodePages, hintAddress, false, false, false, false);
+#endif
 #endif
         if (Options::useJITCage() && JSC_ALLOW_JIT_CAGE_SPECIFIC_RESERVATION)
             return PageReservation::tryReserve(reservationSize, OSAllocator::JSJITCodePages, hintAddress, EXECUTABLE_POOL_WRITABLE, true, false, Options::useJITCage());
@@ -690,6 +705,9 @@ public:
     {
         JITReservation reservation = initializeJITPageReservation();
         m_reservation = WTF::move(reservation.pageReservation);
+#if OS(LINUX) && ENABLE(AOT)
+        m_isOpen = !opensPoolAtFirstAllocation();
+#endif
         if (m_reservation) {
 #if ENABLE(JUMP_ISLANDS)
             // Consider this scenario:
@@ -763,8 +781,25 @@ public:
     void* LEGACY_NODELETE memoryEnd() { return g_jscConfig.endExecutableMemory; }
     bool isValid() { return !!m_reservation; }
 
+#if OS(LINUX) && ENABLE(AOT)
+    NEVER_INLINE bool openPool()
+    {
+        Locker locker { m_openLock };
+        if (m_isOpen.load(std::memory_order_relaxed))
+            return true;
+        if (mprotect(m_reservation.base(), m_reservation.size(), PROT_READ | PROT_WRITE | PROT_EXEC))
+            return false;
+        m_isOpen.store(true, std::memory_order_release);
+        return true;
+    }
+#endif
+
     RefPtr<ExecutableMemoryHandle> allocate(size_t sizeInBytes)
     {
+#if OS(LINUX) && ENABLE(AOT)
+        if (!m_isOpen.load(std::memory_order_acquire) && !openPool()) [[unlikely]]
+            return nullptr;
+#endif
 #if ENABLE(LIBPAS_JIT_HEAP)
         Vector<void*, 0> randomAllocations;
         if (Options::useRandomizingExecutableIslandAllocation()) [[unlikely]] {
@@ -1343,6 +1378,10 @@ private:
     size_t m_bytesReserved { 0 };
 #if ENABLE(LIBPAS_JIT_HEAP)
     std::atomic<size_t> m_bytesAllocated { 0 };
+#endif
+#if OS(LINUX) && ENABLE(AOT)
+    Lock m_openLock;
+    std::atomic<bool> m_isOpen { true };
 #endif
 };
 

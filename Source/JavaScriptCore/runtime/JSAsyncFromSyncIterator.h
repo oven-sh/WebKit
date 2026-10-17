@@ -30,6 +30,8 @@
 
 namespace JSC {
 
+class JSPromise;
+
 class JSAsyncFromSyncIterator final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -96,6 +98,9 @@ private:
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSAsyncFromSyncIterator);
 
 void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject*, JSAsyncFromSyncIterator*, JSObject* driver, JSValue resumeValue);
-JSValue asyncFromSyncIteratorNext(JSGlobalObject*, JSAsyncFromSyncIterator*, JSValue argument);
+#if ENABLE(AOT)
+JSObject* driveAsyncFromSyncIterator(JSGlobalObject*, JSAsyncFromSyncIterator*, JSObject* driver);
+#endif
+JSValue asyncFromSyncIteratorNext(JSGlobalObject*, JSAsyncFromSyncIterator*, JSValue argument, JSPromise* immediateStep = nullptr);
 
 } // namespace JSC

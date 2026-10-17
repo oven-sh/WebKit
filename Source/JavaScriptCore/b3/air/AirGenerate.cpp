@@ -35,6 +35,7 @@
 #include "AirEliminateDeadCode.h"
 #include "AirFixObviousSpills.h"
 #include "AirFixPartialRegisterStalls.h"
+#include "AirForwardRegisterCopies.h"
 #include "AirGenerationContext.h"
 #include "AirLogRegisterPressure.h"
 #include "AirLowerAfterRegAlloc.h"
@@ -106,7 +107,9 @@ void prepareForGeneration(Code& code)
     // FIXME: Add Air optimizations.
     // https://bugs.webkit.org/show_bug.cgi?id=150456
 
+#if !USE(BUN_JSC_ADDITIONS)
     eliminateDeadCode(code);
+#endif
 
     // Register allocation for all the Tmps that do not have a corresponding machine
     // register. After this phase, every Tmp has a reg.
@@ -122,11 +125,19 @@ void prepareForGeneration(Code& code)
     // This replaces uses of spill slots with registers or constants if possible. It
     // does this by minimizing the amount that we perturb the already-chosen register
     // allocation. It may extend the live ranges of registers though.
+#if USE(BUN_JSC_ADDITIONS)
+    RegisterSet namedOrClobberedRegisters = fixObviousSpills(code);
+#else
     fixObviousSpills(code);
+#endif
 
     // This does first-fit allocation of stack slots using an interference graph plus a
     // bunch of other optimizations.
+#if USE(BUN_JSC_ADDITIONS)
+    allocateStackByGraphColoring(code, WTF::move(namedOrClobberedRegisters));
+#else
     allocateStackByGraphColoring(code);
+#endif
 
     // This turns all Stack and CallArg Args into Addr args that use the frame pointer.
     lowerStackArgs(code);
@@ -134,6 +145,23 @@ void prepareForGeneration(Code& code)
     // If we coalesced moves then we can unbreak critical edges. This is the main reason for this
     // phase.
     simplifyCFG(code);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (code.chargesForCalleeSaves() && code.needsUsedRegisters())
+        forwardRegisterCopies(code);
+#if CPU(X86_64)
+    if (auto& inMemory = code.maskInMemory()) {
+        for (BasicBlock* block : code) {
+            for (Inst& inst : *block) {
+                if (inst.kind.opcode != BranchTest64 || !inst.args()[1].isTmp() || !inst.args()[2].isBitImm() || inst.args()[2].value() != inMemory->mask)
+                    continue;
+                inst.args()[2] = inst.args()[1];
+                inst.args()[1] = Arg::addr(Tmp(inMemory->base), inMemory->offset);
+            }
+        }
+    }
+#endif
+#endif
 
     // Not worth a whole-graph liveness scan just for the dead assignments it also kills, so this runs
     // only for the used-register set that B3::StackmapValue reports to a patchpoint's generator.
@@ -176,6 +204,22 @@ void prepareForGeneration(Code& code)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+static bool repeatsCompareOfOnlyPredecessor(Code& code, BasicBlock* block)
+{
+    if (!code.proc().positionIndependent() || block->size() != 1 || block->numPredecessors() != 1 || code.isEntrypoint(block))
+        return false;
+    Inst& branch = block->last();
+    if (branch.kind.opcode != Branch32 && branch.kind.opcode != Branch64)
+        return false;
+    BasicBlock* predecessor = block->predecessor(0);
+    if (predecessor == block)
+        return false;
+    Inst& before = predecessor->last();
+    return before.kind.opcode == branch.kind.opcode && before.args()[1] == branch.args()[1] && before.args()[2] == branch.args()[2];
+}
+#endif
+
 static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 {
     CompilerTimingScope timingScope("Air"_s, "generateWithAlreadyAllocatedRegisters"_s);
@@ -186,15 +230,34 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     GenerationContext context;
     context.code = &code;
     context.blockLabels.resize(code.size());
+#if USE(BUN_JSC_ADDITIONS)
+    IndexMap<BasicBlock*, CCallHelpers::Label> labels(code.size());
+    for (BasicBlock* block : code) {
+        if (block->last().kind.opcode != Patch)
+            continue;
+        for (BasicBlock* successor : block->successorBlocks()) {
+            if (!context.blockLabels[successor])
+                context.blockLabels[successor] = Box<CCallHelpers::Label>::create();
+        }
+    }
+#else
     for (BasicBlock* block : code)
         context.blockLabels[block] = Box<CCallHelpers::Label>::create();
+#endif
     IndexMap<BasicBlock*, CCallHelpers::JumpList> blockJumps(code.size());
 
     auto link = [&] (CCallHelpers::Jump jump, BasicBlock* target) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (labels[target].isSet()) {
+            jump.linkTo(labels[target], &jit);
+            return;
+        }
+#else
         if (context.blockLabels[target]->isSet()) {
             jump.linkTo(*context.blockLabels[target], &jit);
             return;
         }
+#endif
 
         blockJumps[target].append(jump);
     };
@@ -212,12 +275,38 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 
     Disassembler* disassembler = code.disassembler();
 
+#if USE(BUN_JSC_ADDITIONS)
+    BitVector emittedLatePaths;
+    auto emitNearbyLatePaths = [&] {
+        constexpr uint32_t maxDistance = 96;
+        if (!isX86() || !code.placesRareBlocksInGaps() || disassembler)
+            return;
+        for (unsigned i = 0; i < context.nearbyLatePaths.size(); ++i) {
+            auto [index, recordedOffset] = context.nearbyLatePaths[i];
+            if (jit.m_assembler.buffer().codeSize() - recordedOffset > maxDistance)
+                continue;
+            if (shouldPreserveB3Origins)
+                pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), std::get<0>(context.latePaths[index]));
+            Ref<GenerationContext::LatePath> latePath = std::get<1>(context.latePaths[index]);
+            latePath->run(jit, context);
+            emittedLatePaths.set(index);
+        }
+        context.nearbyLatePaths.shrink(0);
+    };
+#endif
+
     for (BasicBlock* block : code) {
         context.currentBlock = block;
         context.indexInBlock = UINT_MAX;
         blockJumps[block].link(&jit);
         CCallHelpers::Label label = jit.label();
+#if USE(BUN_JSC_ADDITIONS)
+        labels[block] = label;
+        if (auto& sharedLabel = context.blockLabels[block])
+            *sharedLabel = label;
+#else
         *context.blockLabels[block] = label;
+#endif
 
         if (disassembler)
             disassembler->startBlock(block, jit); 
@@ -253,6 +342,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             && block->successorBlock(0) == code.findNextBlock(block))
             continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && !Options::validateAOTTypedFacts() && !Options::validateGraphAtEachPhase() && code.findNextBlock(block) && block->size() >= 2 && block->at(block->size() - 2).kind.opcode == Patch)
+            continue;
+#endif
+
         if (isReturn(block->last().kind.opcode)) {
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.
@@ -261,12 +355,19 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             code.emitEpilogue(jit);
             if (disassembler)
                 disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
+#if USE(BUN_JSC_ADDITIONS)
+            emitNearbyLatePaths();
+#endif
             continue;
         }
 
         addItem(block->last());
         auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+        CCallHelpers::Jump jump = repeatsCompareOfOnlyPredecessor(code, block) ? CCallHelpers::Jump(jit.m_assembler.jCC(static_cast<X86Assembler::Condition>(block->last().args()[0].asRelationalCondition()))) : block->last().generate(jit, context);
+#else
         CCallHelpers::Jump jump = block->last().generate(jit, context);
+#endif
         if (disassembler)
             disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
 
@@ -276,11 +377,18 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             switch (block->numSuccessors()) {
             case 1:
                 link(jump, block->successorBlock(0));
+#if USE(BUN_JSC_ADDITIONS)
+                emitNearbyLatePaths();
+#endif
                 break;
             case 2:
                 link(jump, block->successorBlock(0));
-                if (block->successorBlock(1) != code.findNextBlock(block))
+                if (block->successorBlock(1) != code.findNextBlock(block)) {
                     link(jit.jump(), block->successorBlock(1));
+#if USE(BUN_JSC_ADDITIONS)
+                    emitNearbyLatePaths();
+#endif
+                }
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -292,9 +400,24 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     context.currentBlock = nullptr;
     context.indexInBlock = UINT_MAX;
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (code.recordsRareCodeStart()) [[unlikely]] {
+        CCallHelpers::Label rareCodeStart = jit.labelIgnoringWatchpoints();
+        for (unsigned index = code.size(); index-- > code.numberOfBlocksInChains();) {
+            if (BasicBlock* block = code.at(index))
+                rareCodeStart = labels[block];
+        }
+        code.recordRareCodeStart(rareCodeStart);
+    }
+#endif
     Vector<CCallHelpers::Label> entrypointLabels(code.numEntrypoints());
-    for (unsigned i = code.numEntrypoints(); i--;)
+    for (unsigned i = code.numEntrypoints(); i--;) {
+#if USE(BUN_JSC_ADDITIONS)
+        entrypointLabels[i] = labels[code.entrypoint(i).block()];
+#else
         entrypointLabels[i] = *context.blockLabels[code.entrypoint(i).block()];
+#endif
+    }
     code.setEntrypointLabels(WTF::move(entrypointLabels));
 
     pcToOriginMap.appendItem(jit.label(), Origin());
@@ -302,11 +425,22 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     if (disassembler)
         disassembler->startLatePath(jit);
 
+#if USE(BUN_JSC_ADDITIONS)
+    for (unsigned index = 0; index < context.latePaths.size(); ++index) {
+        if (emittedLatePaths.get(index))
+            continue;
+        if (code.shouldPreserveB3Origins())
+            pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), std::get<0>(context.latePaths[index]));
+        Ref<GenerationContext::LatePath> latePath = std::get<1>(context.latePaths[index]);
+        latePath->run(jit, context);
+    }
+#else
     for (auto& [origin, latePath] : context.latePaths) {
         if (code.shouldPreserveB3Origins())
             pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), origin);
         latePath->run(jit, context);
     }
+#endif
 
     if (disassembler)
         disassembler->endLatePath(jit);

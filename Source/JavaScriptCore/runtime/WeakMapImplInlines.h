@@ -106,8 +106,10 @@ ALWAYS_INLINE void WeakMapImpl<WeakMapBucket>::addBucket(VM& vm, JSCell* key, JS
 
 // Note that this function can be executed in parallel as long as the mutator stops.
 template<typename WeakMapBucket>
-void WeakMapImpl<WeakMapBucket>::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
+void WeakMapImpl<WeakMapBucket>::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope scope)
 {
+    if (scope == CollectionScope::Eden && m_edenVersionAtLastVisit != vm.heap.objectSpace().edenVersion())
+        return;
     auto* buffer = this->buffer();
     for (uint32_t index = 0; index < m_capacity; ++index) {
         auto* bucket = buffer + index;

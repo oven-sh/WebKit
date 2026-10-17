@@ -107,6 +107,7 @@ public:
     friend class JSRopeString;
     friend class MarkStack;
     friend class SlotVisitor;
+    friend class CompiledLayoutVisitor;
     friend class SmallStrings;
 
     typedef JSCell Base;
@@ -245,11 +246,15 @@ public:
 
     ALWAYS_INLINE bool equalInline(JSGlobalObject*, JSString* other) const;
     inline bool equal(JSGlobalObject*, JSString* other) const;
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE bool equalResolvingRopes(JSString* other) const;
+#endif
     GCOwnedDataScope<const String&> value(JSGlobalObject*) const;
     inline GCOwnedDataScope<const String&> tryGetValue(bool allocationAllowed = true) const;
     GCOwnedDataScope<const String&> tryGetValueWithoutGC() const;
     StringImpl* getValueImpl() const;
     StringImpl* tryGetValueImpl() const;
+    JS_EXPORT_PRIVATE bool tryCollectLeaves(Vector<StringView, 32>&) const;
     ALWAYS_INLINE unsigned length() const;
 
     JSValue LEGACY_NODELETE toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
@@ -330,6 +335,9 @@ protected:
     friend class JSCell;
 
     JS_EXPORT_PRIVATE bool equalSlowCase(JSGlobalObject*, JSString* other) const;
+#if USE(BUN_JSC_ADDITIONS)
+    bool equalWithoutResolvingRopes(JSString* other) const;
+#endif
 
     inline JSString* tryReplaceOneCharImpl(JSGlobalObject*, char16_t search, JSString* replacement, uint8_t* stackLimit, bool& found);
 
@@ -371,6 +379,7 @@ private:
 // from JSStringSubspace::
 class JSRopeString final : public JSString {
     friend class JSString;
+    friend class CompiledLayoutVisitor;
     friend class RegExpObject;
     friend class RegExpSubstringGlobalAtomCache;
 public:
@@ -664,6 +673,9 @@ public:
     // The rope value will remain a null string in that case.
     JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
     JS_EXPORT_PRIVATE const String& resolveRopeWithoutGC() const;
+#if ENABLE(AOT)
+    void resolveSubstringBySharing(StringImpl&) const;
+#endif
 
     template<typename CharacterType>
     static void resolveToBuffer(JSString*, JSString*, JSString*, std::span<CharacterType> buffer, uint8_t* stackLimit);

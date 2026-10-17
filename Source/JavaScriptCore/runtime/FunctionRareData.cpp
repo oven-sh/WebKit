@@ -80,6 +80,7 @@ FunctionRareData::FunctionRareData(VM& vm, ExecutableBase* executable)
     , m_hasReifiedName(false)
     , m_hasModifiedLengthForBoundOrNonHostFunction(false)
     , m_hasModifiedNameForBoundOrNonHostFunction(false)
+    , m_allocatesGuardedObjects(false)
 {
 }
 

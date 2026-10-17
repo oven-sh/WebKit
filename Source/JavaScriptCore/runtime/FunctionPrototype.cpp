@@ -21,10 +21,12 @@
 #include "config.h"
 #include "FunctionPrototype.h"
 
+#include "AOTFunction.h"
 #include "BuiltinNames.h"
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
 #include "FunctionExecutable.h"
+#include "ImmutableIntrinsics.h"
 #include "IntegrityInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -98,6 +100,10 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
     if (thisValue.isObject()) {
         JSObject* object = asObject(thisValue);
         Integrity::auditStructureID(object->structureID());
+#if ENABLE(AOT)
+        if (isSlimClosureType(object->type()))
+            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::slimClosureSourceText(globalObject, object)));
+#endif
         if (object->isCallable())
             RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() { [native code] }"_s)));
     }
@@ -163,7 +169,7 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
     double length = 0;
     JSString* name = nullptr;
     JSFunction* function = dynamicDowncast<JSFunction>(target);
-    if (function && function->canAssumeNameAndLengthAreOriginal(vm)) [[likely]] {
+    if ((function && function->canAssumeNameAndLengthAreOriginal(vm)) || target->type() == SlimClosureType) [[likely]] {
         // Do nothing! 'length' and 'name' computation are lazily done.
         // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
         // at the time of creation of JSBoundFunction.
@@ -191,9 +197,14 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
             name = jsEmptyString(vm);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    SourceTaintedOrigin taintedness = vm.mightBeExecutingTaintedCode() ? sourceTaintedOriginFromStack(vm, callFrame).first : SourceTaintedOrigin::Untainted;
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, taintedness)));
+#else
     auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
     SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, source)));
+#endif
 }
 
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#isallowedreceiverfunctionforcallerandargumentsfunc-expectedrealm (except step 3)
@@ -246,6 +257,16 @@ static JSValue retrieveArguments(VM& vm, CallFrame* callFrame, JSFunction* funct
     return functor.result();
 }
 
+static bool isSloppyAOTFunction(JSValue receiver)
+{
+#if ENABLE(AOT)
+    return receiver.isCell() && AOT::isSloppyPlainClosure(receiver.asCell());
+#else
+    UNUSED_PARAM(receiver);
+    return false;
+#endif
+}
+
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#get-functionprototypearguments
 JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
@@ -253,11 +274,19 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+        if (isSloppyAOTFunction(JSValue::decode(thisValue)))
+            return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
+
+    if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && thisObj->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]]
+        return JSValue::encode(jsNull());
 
     JSValue result = retrieveArguments(vm, vm.topCallFrame, thisObj);
     EXCEPTION_ASSERT(scope.exception() || result);
+    if (vm.auditsImmutableIntrinsics() && result && !result.isNull()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->arguments);
     return JSValue::encode(result);
 }
 
@@ -324,8 +353,14 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+        if (isSloppyAOTFunction(JSValue::decode(thisValue)))
+            return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
+
+    if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && thisObj->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]]
+        return JSValue::encode(jsNull());
 
     JSValue caller = retrieveCallerFunction(vm, vm.topCallFrame, thisObj);
     if (caller.isNull())
@@ -347,6 +382,8 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     if (isGeneratorParseMode(parseMode) || isAsyncFunctionParseMode(parseMode))
         return JSValue::encode(jsNull());
 
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->caller);
     return JSValue::encode(caller);
 }
 
@@ -356,7 +393,7 @@ JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyAOTFunction(JSValue::decode(thisValue)))
         throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
     return true;

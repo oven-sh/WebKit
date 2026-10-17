@@ -29,6 +29,8 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "JSWebAssemblyInstance.h"
+#include "WasmFunctionIPIntMetadataGenerator.h"
+#include "WasmIPIntGenerator.h"
 #include "WasmIPIntPlan.h"
 #include "WasmInstanceAnchor.h"
 #include "WasmMergedProfile.h"
@@ -137,10 +139,27 @@ void Module::copyInitialCalleeGroupToAllMemoryModes(MemoryMode initialMode)
         // We should only try to copy the group here if it hasn't already been created.
         // If it exists but is not runnable, it should get compiled during module evaluation.
         if (auto& group = m_calleeGroups[i]; !group)
-            group = CalleeGroup::createFromExisting(static_cast<MemoryMode>(i), initialBlock);
+            group = CalleeGroup::createFromExisting(static_cast<MemoryMode>(i), initialBlock, moduleInformation());
     }
 }
 
+
+void Module::createInterpreterMetadataIfNeeded(const CalleeGroup& group)
+{
+    if (group.imageCodePointers() || Options::crashIfInterpreterIsUsed())
+        return;
+    ModuleInformation& info = m_moduleInformation.get();
+    Locker locker { info.interpreterMetadataLock };
+    if (!info.isMissingInterpreterMetadata)
+        return;
+    for (unsigned index = 0; index < info.internalFunctionCount(); ++index) {
+        info.functions[index].finishedValidating = false;
+        auto metadata = parseAndCompileMetadata(info.functions[index].data, info.rtt(info.internalFunctionTypeSignatureIndices[index]), info, FunctionCodeIndex(index));
+        RELEASE_ASSERT(metadata);
+        m_ipintCallees->at(index)->takeMetadata(**metadata);
+    }
+    info.isMissingInterpreterMetadata = false;
+}
 
 Ref<Wasm::InstanceAnchor> Module::registerAnchor(JSWebAssemblyInstance* instance)
 {

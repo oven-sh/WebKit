@@ -29,11 +29,15 @@
 
 #include "JSDollarVM.h"
 
+#include "AOTTypedCompactTable.h"
+#include "AOTTypedObject.h"
+#include "AOTTypedPasses.h"
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
+#include "CachedTypes.h"
 #include "CharacterPropertyDataGenerator.h"
 #include "CodeBlock.h"
 #include "Completion.h"
@@ -47,6 +51,7 @@
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "GetterSetter.h"
+#include "GlobalObjectMethodTable.h"
 #include "HeapProfiler.h"
 #include "HeapSnapshotBuilder.h"
 #include "InitializeThreading.h"
@@ -66,6 +71,7 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "MarkedSpaceInlines.h"
+#include "MicrotaskQueue.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2204,6 +2210,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpCell);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpHeapSnapshot);
 static JSC_DECLARE_HOST_FUNCTION(functionIndexingMode);
 static JSC_DECLARE_HOST_FUNCTION(functionInlineCapacity);
+static JSC_DECLARE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty);
 static JSC_DECLARE_HOST_FUNCTION(functionClearLinkBufferStats);
 static JSC_DECLARE_HOST_FUNCTION(functionLinkBufferStats);
 static JSC_DECLARE_HOST_FUNCTION(functionValue);
@@ -2261,6 +2268,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTPromisesSettledAfter);
 static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache);
 static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
@@ -2268,6 +2276,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
+static JSC_DECLARE_HOST_FUNCTION(functionToTypedElements);
+static JSC_DECLARE_HOST_FUNCTION(functionNewTypedElements);
+static JSC_DECLARE_HOST_FUNCTION(functionGrowTypedElements);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
@@ -2318,6 +2329,19 @@ static JSC_DECLARE_HOST_FUNCTION(functionIsPrivateSymbol);
 static JSC_DECLARE_HOST_FUNCTION(functionIsDefinitelyAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
+#if ENABLE(AOT)
+static JSC_DECLARE_HOST_FUNCTION(functionDumpAOTTypedProgram);
+static JSC_DECLARE_HOST_FUNCTION(functionBuildAOTImageFromTypedProgram);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTCompactTable);
+static JSC_DECLARE_HOST_FUNCTION(functionSetOnEachMicrotaskTick);
+static JSC_DECLARE_HOST_FUNCTION(functionSetHasDebugger);
+static JSC_DECLARE_HOST_FUNCTION(functionSetHasOwnMicrotaskQueue);
+static JSC_DECLARE_HOST_FUNCTION(functionRequireBuiltinModule);
+static JSC_DECLARE_HOST_FUNCTION(functionPutPrivateGlobal);
+static JSC_DECLARE_HOST_FUNCTION(functionPutDirect);
+static JSC_DECLARE_HOST_FUNCTION(functionGetDirect);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionMonotonicTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
@@ -3156,6 +3180,22 @@ JSC_DEFINE_HOST_FUNCTION(functionInlineCapacity, (JSGlobalObject*, CallFrame* ca
     return encodedJSUndefined();
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* object = dynamicDowncast<JSFinalObject>(callFrame->argument(0));
+    if (!object)
+        return encodedJSUndefined();
+
+    Structure* structure = object->structure();
+    auto* slots = std::bit_cast<const EncodedJSValue*>(object->inlineStorage());
+    for (unsigned i = structure->inlineSize(); i < structure->inlineCapacity(); ++i) {
+        if (slots[i])
+            return JSValue::encode(jsBoolean(false));
+    }
+    return JSValue::encode(jsBoolean(true));
+}
+
 // Clears the LinkBuffer profile statistics.
 // Usage: $vm.clearLinkBufferStats()
 JSC_DEFINE_HOST_FUNCTION(functionClearLinkBufferStats, (JSGlobalObject*, CallFrame*))
@@ -3257,7 +3297,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHavingABadTime, (JSGlobalObject* globalObject
 }
 
 // Calls JSObject::makePropertiesImmutable() and returns the object. Throws a TypeError for an object of a class that does not support it.
-// Usage: $vm.makePropertiesImmutable(object)
+// Usage: $vm.makePropertiesImmutable(object, fixAttributes = false)
 JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -3266,7 +3306,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globa
     JSObject* object = callFrame->argument(0).getObject();
     if (!object)
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable expects an object"_s);
-    if (!object->makePropertiesImmutable(vm))
+    if (!(callFrame->argument(1).toBoolean(globalObject) ? object->lockAndMakePropertiesImmutable(vm) : object->makePropertiesImmutable(vm)))
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable: objects of this class do not support it"_s);
     return JSValue::encode(object);
 }
@@ -4054,6 +4094,27 @@ JSC_DEFINE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle, (JSGlobalObject* g
     return changeDebuggerModeWhenIdle(globalObject, { });
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionAOTPromisesSettledAfter, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer promises;
+#if ENABLE(AOT)
+    if (auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0))) {
+        for (JSPromise* settled : AOT::Typed::promisesSettledAfter(promise))
+            promises.append(settled);
+    }
+#else
+    UNUSED_PARAM(callFrame);
+#endif
+    if (promises.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), promises)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -4200,6 +4261,35 @@ JSC_DEFINE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks, (JSGlobalObject* globa
     if (heldStorage)
         result->putDirect(vm, Identifier::fromString(vm, "heldStorageStayed"_s), jsBoolean(storageOfTargetOf(vm, holder) == heldStorage));
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNewTypedElements, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    if (!MarkedBlockCage::isEnabled() || globalObject->isHavingABadTime())
+        return JSValue::encode(jsUndefined());
+    Structure* structure = Structure::nonPropertyTransition(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), TransitionKind::AllocateTypedContiguous, nullptr);
+    JSArray* array = JSArray::tryCreateWithTypedContiguous(vm, structure, callFrame->argument(0).asUInt32(), callFrame->argument(1).asUInt32());
+    return JSValue::encode(array ? JSValue(array) : jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionGrowTypedElements, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object || object->indexingMode() != ArrayWithTypedContiguous)
+        return JSValue::encode(jsUndefined());
+    if (!object->tryGrowTypedContiguous(globalObject->vm(), callFrame->argument(1).asUInt32()))
+        return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsNumber(object->butterfly()->vectorLength()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionToTypedElements, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && isJSArray(object) && object->tryConvertContiguousToTypedContiguous(globalObject->vm())));
 }
 #endif
 
@@ -4874,6 +4964,236 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAtomString, (JSGlobalObject*, CallFrame* call
     return JSValue::encode(jsBoolean(impl && impl->isAtom()));
 }
 
+#if ENABLE(AOT)
+JSC_DEFINE_HOST_FUNCTION(functionDumpAOTTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* bytes = dynamicDowncast<JSUint8Array>(callFrame->argument(0));
+    if (!bytes)
+        return throwVMTypeError(globalObject, scope, "Expected a Uint8Array"_s);
+    String stage = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    StringPrintStream out;
+    if (!AOT::Typed::dumpAtStage(bytes->span(), stage, out))
+        return throwVMError(globalObject, scope, createError(globalObject, out.toString()));
+    return JSValue::encode(jsString(vm, out.toString()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBuildAOTImageFromTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<SourceCode, 1> sources;
+    auto add = [&](JSValue module) {
+        String text = module.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        sources.append(makeSource(WTF::move(text), { }, SourceTaintedOrigin::Untainted, { }, { }, SourceProviderSourceType::Module));
+    };
+    if (auto* list = dynamicDowncast<JSArray>(callFrame->argument(2))) {
+        for (unsigned i = 0; i < list->length(); ++i) {
+            JSValue module = list->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, { });
+            add(module);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+    unsigned numberOfModulesWithoutEntry = sources.size();
+    if (auto* list = dynamicDowncast<JSArray>(callFrame->argument(0))) {
+        for (unsigned i = 0; i < list->length(); ++i) {
+            JSValue module = list->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, { });
+            add(module);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    } else {
+        add(callFrame->argument(0));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    auto* bytes = dynamicDowncast<JSUint8Array>(callFrame->argument(1));
+    if (!bytes)
+        return throwVMTypeError(globalObject, scope, "Expected a Uint8Array"_s);
+    Vector<uint8_t> file = buildAOTFile(vm, sources.span(), true, bytes->span(), numberOfModulesWithoutEntry);
+    if (file.isEmpty())
+        return JSValue::encode(jsNull());
+    auto* result = JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>(), file.size());
+    RETURN_IF_EXCEPTION(scope, { });
+    memcpySpan(result->typedSpan(), file.span());
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& mismatch : AOT::Typed::Builtins::singleton().mismatches(globalObject)) {
+        result->push(globalObject, jsString(vm, mismatch));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+template<typename Traits>
+static EncodedJSValue aotCompactTable(JSGlobalObject* globalObject, CallFrame* callFrame, JSOrderedHashTable<Traits>* owner, StringView operation)
+{
+    using Table = AOT::Typed::CompactTable;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Table* table = owner->m_compactTable ? uncheckedDowncast<Table>(owner->m_compactTable.get()) : nullptr;
+    if (operation == "kind"_s) {
+        if (!table)
+            return JSValue::encode(jsNontrivialString(vm, owner->m_storage ? "storage"_s : "none"_s));
+        return JSValue::encode(jsString(vm, makeString("compact "_s, static_cast<unsigned>(table->keyWidth()), ' ', static_cast<unsigned>(table->valueWidth()))));
+    }
+    if (operation == "capacity"_s)
+        return JSValue::encode(jsNumber(table ? table->capacity() : 0));
+    if (operation == "bytes"_s)
+        return JSValue::encode(jsNumber(table ? table->cellSize() : 0));
+    if (operation == "table"_s)
+        return JSValue::encode(table ? JSValue(table) : owner->m_storage ? JSValue(owner->m_storage.get()) : jsNull());
+    if (operation == "next"_s) {
+        JSValue from = callFrame->argument(2);
+        auto position = Table::next(vm, owner, from.isCell() ? from.asCell() : nullptr, callFrame->argument(3).asUInt32());
+        if (!position.table)
+            return JSValue::encode(jsNull());
+        JSArray* result = constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, { });
+        for (JSValue element : { JSValue(position.table), jsNumber(position.entry), position.key, position.value ? position.value : jsUndefined() }) {
+            result->push(globalObject, element);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        return JSValue::encode(result);
+    }
+    return throwVMTypeError(globalObject, scope, "No such operation"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTCompactTable, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String operation = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* map = dynamicDowncast<JSMap>(callFrame->argument(1)))
+        RELEASE_AND_RETURN(scope, aotCompactTable<MapTraits>(globalObject, callFrame, map, operation));
+    if (auto* set = dynamicDowncast<JSSet>(callFrame->argument(1)))
+        RELEASE_AND_RETURN(scope, aotCompactTable<SetTraits>(globalObject, callFrame, set, operation));
+    return throwVMTypeError(globalObject, scope, "Expected a Map or a Set"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetOnEachMicrotaskTick, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    if (callFrame->argument(0).toBoolean(globalObject))
+        vm.setOnEachMicrotaskTick([](VM&) { });
+    else
+        vm.setOnEachMicrotaskTick(nullptr);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetHasDebugger, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    bool isRequested = callFrame->argument(0).toBoolean(globalObject);
+    if (isRequested == globalObject->hasDebugger())
+        return JSValue::encode(jsUndefined());
+    if (isRequested) {
+        globalObject->setDebugger(new DoNothingDebugger(globalObject->vm()));
+        return JSValue::encode(jsUndefined());
+    }
+    Debugger* debugger = globalObject->debugger();
+    globalObject->setDebugger(nullptr);
+    delete debugger;
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetHasOwnMicrotaskQueue, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    if (callFrame->argument(0).toBoolean(globalObject))
+        globalObject->setMicrotaskQueue(MicrotaskQueue::create(vm));
+    else
+        globalObject->setMicrotaskQueue(Ref { vm.defaultMicrotaskQueue() });
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequireBuiltinModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t id = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* require = globalObject->globalObjectMethodTable()->requireBuiltinModule;
+    if (!require)
+        return throwVMTypeError(globalObject, scope, "This global object has no builtin modules"_s);
+    RELEASE_AND_RETURN(scope, JSValue::encode(require(globalObject, id)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionPutPrivateGlobal, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    globalObject->putDirect(vm, AOT::Typed::enginePrivateName(vm, name), callFrame->argument(1), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    return JSValue::encode(jsUndefined());
+}
+
+static Identifier nameForDirectAccess(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value.isSymbol())
+        return Identifier::fromUid(asSymbol(value)->privateName());
+    String name = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return name.startsWith('@') ? AOT::Typed::enginePrivateName(vm, name.substring(1)) : Identifier::fromString(vm, name);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionPutDirect, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return throwVMTypeError(globalObject, scope, "putDirect: no object"_s);
+    Identifier name = nameForDirectAccess(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    object->putDirect(vm, name, callFrame->argument(2), callFrame->argument(3).isInt32() ? callFrame->argument(3).asInt32() : 0);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionGetDirect, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return throwVMTypeError(globalObject, scope, "getDirect: no object"_s);
+    Identifier name = nameForDirectAccess(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned attributes = 0;
+    JSValue value = object->getDirect(vm, name, attributes);
+    if (!value || value != object->getDirect(vm, name))
+        return JSValue::encode(jsUndefined());
+    MarkedArgumentBuffer list;
+    list.append(value);
+    list.append(jsNumber(attributes));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), list)));
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -5094,7 +5414,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCachedCallFromCPP, (JSGlobalObject* globalObjec
     auto callData = JSC::getCallData(callback);
     if (callData.type != CallData::Type::JS)
         return JSValue::encode(jsUndefined());
-    auto* callbackObject = uncheckedDowncast<JSFunction>(callback);
+    auto* callbackObject = asObject(callback);
 
     int32_t count = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -5955,6 +6275,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "indexingMode"_s, functionIndexingMode, 1);
     addFunction(vm, allowIfNotFuzz, "inlineCapacity"_s, functionInlineCapacity, 1);
+    addFunction(vm, allowIfNotFuzz, "unusedInlineStorageIsEmpty"_s, functionUnusedInlineStorageIsEmpty, 1);
     addFunction(vm, allowIfNotFuzz, "clearLinkBufferStats"_s, functionClearLinkBufferStats, 0);
     addFunction(vm, allowIfNotFuzz, "linkBufferStats"_s, functionLinkBufferStats, 0);
     addFunction(vm, allowIfNotFuzz, "value"_s, functionValue, 1);
@@ -6027,6 +6348,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "aotPromisesSettledBehind"_s, functionAOTPromisesSettledAfter, 1);
     addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
     addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
     addFunction(vm, alwaysAllow, "isGeneratorBodyCodeInBytecodeCache"_s, functionIsGeneratorBodyCodeInBytecodeCache, 1);
@@ -6034,6 +6356,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "evacuateAuxiliaryBlocks"_s, functionEvacuateAuxiliaryBlocks, 2);
+    addFunction(vm, alwaysAllow, "toTypedElements"_s, functionToTypedElements, 1);
+    addFunction(vm, alwaysAllow, "newTypedElements"_s, functionNewTypedElements, 2);
+    addFunction(vm, alwaysAllow, "growTypedElements"_s, functionGrowTypedElements, 2);
 #endif
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
@@ -6096,6 +6421,19 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "isDefinitelyAtomString"_s, functionIsDefinitelyAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "isAtomString"_s, functionIsAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "dumpAndResetPasDebugSpectrum"_s, functionDumpAndResetPasDebugSpectrum, 0);
+#if ENABLE(AOT)
+    addFunction(vm, allowIfNotFuzz, "dumpAOTTypedProgram"_s, functionDumpAOTTypedProgram, 2);
+    addFunction(vm, allowIfNotFuzz, "buildAOTImageOfTypedProgram"_s, functionBuildAOTImageFromTypedProgram, 2);
+    addFunction(vm, allowIfNotFuzz, "aotTypedBuiltinMismatches"_s, functionAOTTypedBuiltinMismatches, 0);
+    addFunction(vm, allowIfNotFuzz, "aotCompactTable"_s, functionAOTCompactTable, 2);
+    addFunction(vm, allowIfNotFuzz, "setOnEachMicrotaskTick"_s, functionSetOnEachMicrotaskTick, 1);
+    addFunction(vm, allowIfNotFuzz, "setHasDebugger"_s, functionSetHasDebugger, 1);
+    addFunction(vm, allowIfNotFuzz, "setHasOwnMicrotaskQueue"_s, functionSetHasOwnMicrotaskQueue, 1);
+    addFunction(vm, allowIfNotFuzz, "requireBuiltinModule"_s, functionRequireBuiltinModule, 1);
+    addFunction(vm, allowIfNotFuzz, "putPrivateGlobal"_s, functionPutPrivateGlobal, 2);
+    addFunction(vm, allowIfNotFuzz, "putDirect"_s, functionPutDirect, 4);
+    addFunction(vm, allowIfNotFuzz, "getDirect"_s, functionGetDirect, 2);
+#endif
 
     addFunction(vm, alwaysAllow, "monotonicTimeNow"_s, functionMonotonicTimeNow, 0);
     addFunction(vm, alwaysAllow, "wallTimeNow"_s, functionWallTimeNow, 0);

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ExecutableInfo.h"
+#include "Intrinsic.h"
 #include "JSCBuiltins.h"
 #include "ParserModes.h"
 #include "SourceCode.h"
@@ -35,9 +36,11 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class UnlinkedFunctionExecutable;
 class Identifier;
 class VM;
+struct BuiltinCode;
 
 #define BUILTIN_NAME_ONLY(name, functionName, overriddenName, length) name,
 enum class BuiltinCodeIndex {
@@ -76,6 +79,12 @@ SourceCode name##Source();
     JSC_FOREACH_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
+    std::optional<unsigned> indexOf(UnlinkedFunctionExecutable*) const;
+    static_assert(numberOfBuiltinCodes < 0x10000);
+    static std::span<const Latin1Character> textOf(unsigned index);
+    bool hasCompiledFunction(BuiltinCodeIndex);
+    BuiltinCode codeFor(BuiltinCodeIndex, Intrinsic);
+
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
@@ -87,6 +96,9 @@ SourceCode name##Source();
 
 private:
     VM& m_vm;
+
+    FunctionExecutable* linkFromText(BuiltinCodeIndex, Intrinsic);
+    UnlinkedFunctionExecutable* executableFor(BuiltinCodeIndex);
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
 

@@ -79,6 +79,7 @@ public:
     };
     static_assert(sizeof(TransitionEntry) == 8);
 
+
     static constexpr unsigned nameEntrySize = 256;
 
     // A Structure's property addition transition, with the source text that names it: the quoted
@@ -138,6 +139,10 @@ public:
     template<typename CharacterType> ALWAYS_INLINE Structure* getTransition(Structure* from, std::span<const CharacterType> name);
     template<typename CharacterType> ALWAYS_INLINE void addTransition(Structure* from, Structure* to, std::span<const CharacterType> name);
 
+    ALWAYS_INLINE bool isFinishedObjectStructure(StructureID, unsigned nameIndex) const;
+    ALWAYS_INLINE Structure* getStructureForFinishedObject(Structure* from) const;
+    ALWAYS_INLINE void addStructureForFinishedObject(Structure* from, Structure* to);
+
     static ALWAYS_INLINE unsigned nameIndex(StructureID);
     // Returns the entry whose text the source starts with, for a transition from the Structure whose
     // nameIndex() is index. The caller consumes entry->textLength characters of the source.
@@ -176,6 +181,8 @@ public:
             return;
         m_primaryTransitions.fill({ });
         m_secondaryTransitions.fill({ });
+        m_structuresForFinishedObjects.fill({ });
+        m_finishedObjectStructures.fill({ });
         m_names.m_entries.fill({ });
         m_prefixedNames.m_entries.fill({ });
     }
@@ -256,6 +263,8 @@ private:
     std::array<JSString*, longStringCapacity> m_longJSStrings { };
     std::array<TransitionEntry, primaryTransitionCapacity> m_primaryTransitions { };
     std::array<TransitionEntry, secondaryTransitionCapacity> m_secondaryTransitions { };
+    std::array<TransitionEntry, nameEntrySize> m_structuresForFinishedObjects { };
+    std::array<WriteBarrierStructureID, nameEntrySize> m_finishedObjectStructures { };
     NameTable<nameEntrySize> m_names { };
     NameTable<prefixedNameEntrySize> m_prefixedNames { };
     StringTable m_strings { };

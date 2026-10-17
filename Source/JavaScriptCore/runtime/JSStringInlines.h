@@ -397,6 +397,16 @@ inline void JSRopeString::convertToNonRope(String&& string) const
     notifyNeedsDestruction();
 }
 
+#if ENABLE(AOT)
+inline void JSRopeString::resolveSubstringBySharing(StringImpl& impl) const
+{
+    ASSERT(isSubstring());
+    ASSERT(impl.length() == length());
+    ASSERT(impl.is8Bit() || !is8Bit());
+    convertToNonRope(String { impl });
+}
+#endif
+
 // Overview: These functions convert a JSString from holding a string in rope form
 // down to a simple String representation. It does so by building up the string
 // backwards, since we want to avoid recursion, we expect that the tree structure

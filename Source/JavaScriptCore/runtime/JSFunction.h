@@ -52,6 +52,11 @@ class Signature;
 
 JS_EXPORT_PRIVATE JSC_DECLARE_HOST_FUNCTION(callHostFunctionAsConstructor);
 
+struct BuiltinCode {
+    FunctionExecutable* executable;
+    uint32_t id;
+};
+
 JS_EXPORT_PRIVATE String getCalculatedDisplayName(VM&, JSObject*);
 
 class JSFunction : public JSCallee {
@@ -71,7 +76,7 @@ public:
     }
     
     typedef JSCallee Base;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnSpecialPropertyNames | OverridesGetCallData | OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnSpecialPropertyNames | OverridesGetCallData | OverridesPut | TypeOfReturnsFunction;
 
     static size_t allocationSize(Checked<size_t> inlineCapacity)
     {
@@ -88,6 +93,8 @@ public:
 
     JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, FunctionExecutable*, JSScope*);
     static JSFunction* create(VM&, JSGlobalObject*, FunctionExecutable*, JSScope*, Structure*);
+    JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, BuiltinCode, JSScope*);
+    JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, BuiltinCode, JSScope*, Structure*);
 
     JS_EXPORT_PRIVATE String name(VM&);
     JS_EXPORT_PRIVATE String displayName(VM&);

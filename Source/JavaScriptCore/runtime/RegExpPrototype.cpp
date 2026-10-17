@@ -123,7 +123,7 @@ JSValue regExpExec(JSGlobalObject* globalObject, JSValue thisValue, JSString* st
         auto callData = JSC::getCallDataInline(regExpExec);
         ASSERT(callData.type != CallData::Type::None);
         if (callData.type == CallData::Type::JS) [[likely]] {
-            CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(regExpExec), 1);
+            CachedCall cachedCall(globalObject, asObject(regExpExec), 1);
             RETURN_IF_EXCEPTION(scope, { });
             match = cachedCall.callWithArguments(globalObject, thisValue, str);
             RETURN_IF_EXCEPTION(scope, { });

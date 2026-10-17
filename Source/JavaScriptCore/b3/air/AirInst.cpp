@@ -28,11 +28,44 @@
 
 #if ENABLE(B3_JIT)
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "AirFormTable.h"
+#endif
 #include "AirInstInlines.h"
 #include <wtf/ListDump.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
+#if USE(BUN_JSC_ADDITIONS)
+void Inst::fillForms()
+{
+    ASSERT(kind.opcode == Patch && m_size && m_size <= maxNumberOfForms + 1);
+    formsAfterSpecial()[0] = formsAreNotFixed;
+    if (!args()[0].special()->hasFixedForms(*this))
+        return;
+    std::array<uint8_t, maxNumberOfForms + 1> forms;
+    unsigned next = 0;
+    bool isInOrder = true;
+    forEachArgCustom(
+        [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
+            if (next >= m_size || &arg != &args()[next]) {
+                isInOrder = false;
+                return;
+            }
+            forms[next++] = ENCODE_INST_FORM(role, bank, width);
+        });
+    if (!isInOrder || next != m_size)
+        return;
+    if (forms[0] != ENCODE_INST_FORM(Arg::Use, GP, pointerWidth()))
+        return;
+    if (m_size == 1) {
+        formsAfterSpecial()[0] = formsAreNone;
+        return;
+    }
+    memcpy(formsAfterSpecial(), forms.data() + 1, m_size - 1);
+}
+
+#endif
 bool Inst::hasEarlyDef()
 {
     if (kind.opcode == Patch && !extraEarlyClobberedRegs().isEmpty())

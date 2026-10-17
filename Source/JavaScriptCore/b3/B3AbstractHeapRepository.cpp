@@ -26,6 +26,10 @@
 #include "config.h"
 #include "B3AbstractHeapRepository.h"
 
+#include "AOTRuntime.h"
+#include "AOTTypedCompactTable.h"
+#include "AOTTypedObject.h"
+#include "CodeBlock.h"
 #if ENABLE(B3_JIT)
 
 #include "B3CCallValue.h"
@@ -47,6 +51,7 @@
 #include "JSArrayBufferView.h"
 #include "JSBoundFunction.h"
 #include "JSGlobalObject.h"
+#include "NativeExecutable.h"
 #include "JSGlobalProxy.h"
 #include "JSMap.h"
 #include "JSPromise.h"
@@ -127,9 +132,107 @@ AbstractHeapRepository::AbstractHeapRepository()
     VM_heap_mutatorShouldBeFenced.changeParent(&VM_heapState);
 
     RELEASE_ASSERT(!JSCell_freeListNext.offset());
+
+#if USE(BUN_JSC_ADDITIONS)
+#define RETAIN_INDEXED_ABSTRACT_HEAPS(name, offset, size) name.retainCurrentHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(RETAIN_INDEXED_ABSTRACT_HEAPS)
+#undef RETAIN_INDEXED_ABSTRACT_HEAPS
+#define RETAIN_NUMBERED_ABSTRACT_HEAPS(name) name.retainCurrentHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(RETAIN_NUMBERED_ABSTRACT_HEAPS)
+#undef RETAIN_NUMBERED_ABSTRACT_HEAPS
+    absolute.retainCurrentHeaps();
+#endif
 }
 
+#if ENABLE(AOT)
+void AbstractHeapRepository::reparentHeapsForAOT()
+{
+    // Last, and in this order: what a call writes, by AOT::Typed::Writes and whether it writes shape words, is then one range.
+    AOTTyped_slots.atAnyNumber().changeParent(&AOTTyped_fields);
+    AOTTyped_variables.atAnyNumber().changeParent(&AOTTyped_fields);
+    AOTTypedObject_orderWord.changeParent(&AOTTypedObject_words);
+    // Between the two: what writes shape words may make a plain object one of the program where it is: another header, other slots. What writes the heap and no shape word ends here.
+    JSCellHeaderAndNamedProperties.changeParent(&AOTTypedObject_words);
+    AOTTypedObject_shapeWord.changeParent(&AOTTypedObject_words);
+    AOTTyped_fields.changeParent(&root);
+    TypedArrayProperties.changeParent(&root);
+    AOTTyped_collectorState.changeParent(&root);
+    indexedContiguousProperties.atAnyIndex().changeParent(&root);
+    AOTTyped_runtimeState.changeParent(&root);
+    AOTTypedObject_extension.changeParent(&root);
+    AOTTypedObject_words.changeParent(&root);
+    // What compiled code reads in place of the state of the run time. A load from the rest of it is taken to be from any of these.
+    JSRopeString_fiber0.changeParent(&AOTTyped_runtimeState);
+    JSRopeString_fiber1.changeParent(&AOTTyped_runtimeState);
+    JSRopeString_fiber2.changeParent(&AOTTyped_runtimeState);
+    StringImpl_hashAndFlags.changeParent(&AOTTyped_runtimeState);
+    JSMap_storage.changeParent(&AOTTyped_runtimeState);
+    JSMap_compactTable.changeParent(&AOTTyped_runtimeState);
+    JSSet_compactTable.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_used.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_alive.changeParent(&AOTTyped_runtimeState);
+    JSSet_storage.changeParent(&AOTTyped_runtimeState);
+    OrderedHashTableData.changeParent(&AOTTyped_runtimeState);
+    JSPromise_packed.changeParent(&AOTTyped_runtimeState);
+    JSPromise_slot.changeParent(&AOTTyped_runtimeState);
+}
+#endif
+
 AbstractHeapRepository::~AbstractHeapRepository() = default;
+
+#if USE(BUN_JSC_ADDITIONS)
+static std::unique_ptr<AbstractHeapRepository>& threadLocalRepository()
+{
+    static thread_local std::unique_ptr<AbstractHeapRepository> repository;
+    return repository;
+}
+
+std::unique_ptr<AbstractHeapRepository> AbstractHeapRepository::takeFromThread()
+{
+    if (auto repository = std::exchange(threadLocalRepository(), nullptr))
+        return repository;
+    auto repository = makeUnique<AbstractHeapRepository>();
+#if ENABLE(AOT)
+    repository->reparentHeapsForAOT();
+#endif
+    return repository;
+}
+
+void AbstractHeapRepository::giveBackToThread(std::unique_ptr<AbstractHeapRepository>&& repository)
+{
+    if (threadLocalRepository())
+        return;
+    repository->detachProcedure();
+    threadLocalRepository() = WTF::move(repository);
+}
+
+void AbstractHeapRepository::detachProcedure()
+{
+#define REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS(name, offset, size) name.removeTemporaryHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS)
+#undef REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS
+#define REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS(name) name.removeTemporaryHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS)
+#undef REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS
+    absolute.removeTemporaryHeaps();
+    m_heapForMemory.shrink(0);
+    m_heapForCCallRead.shrink(0);
+    m_heapForCCallWrite.shrink(0);
+    m_heapForPatchpointRead.shrink(0);
+    m_heapForPatchpointWrite.shrink(0);
+    m_heapsForPatchpointWrite.shrink(0);
+    m_heapForFenceRead.shrink(0);
+    m_heapForFenceWrite.shrink(0);
+    m_heapForFencedAccess.shrink(0);
+    m_heapForWasmStructGet.shrink(0);
+    m_heapForWasmStructSet.shrink(0);
+    m_heapForWasmStructNew.shrink(0);
+    m_heapForWasmArrayGet.shrink(0);
+    m_heapForWasmArraySet.shrink(0);
+    m_heapForWasmArrayNew.shrink(0);
+    m_heapForWasmArrayLength.shrink(0);
+}
+#endif
 
 void AbstractHeapRepository::decorateMemory(const AbstractHeap* heap, Value* value)
 {
@@ -154,6 +257,11 @@ void AbstractHeapRepository::decoratePatchpointRead(const AbstractHeap* heap, Va
 void AbstractHeapRepository::decoratePatchpointWrite(const AbstractHeap* heap, Value* value)
 {
     m_heapForPatchpointWrite.append(HeapForValue(heap, value));
+}
+
+void AbstractHeapRepository::decoratePatchpointWrite(const AbstractHeap* first, const AbstractHeap* last, Value* value)
+{
+    m_heapsForPatchpointWrite.append({ first, HeapForValue(last, value) });
 }
 
 void AbstractHeapRepository::decorateFenceRead(const AbstractHeap* heap, Value* value)
@@ -208,7 +316,20 @@ void AbstractHeapRepository::decorateWasmArrayLength(const AbstractHeap* heap, V
 
 void AbstractHeapRepository::computeRangesAndDecorateInstructions()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasTemporaryHeaps = absolute.hasTemporaryHeaps();
+#define CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS(name, offset, size) hasTemporaryHeaps |= name.hasTemporaryHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS)
+#undef CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS
+#define CHECK_FOR_TEMPORARY_NUMBERED_ABSTRACT_HEAPS(name) hasTemporaryHeaps |= name.hasTemporaryHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(CHECK_FOR_TEMPORARY_NUMBERED_ABSTRACT_HEAPS)
+#undef CHECK_FOR_TEMPORARY_NUMBERED_ABSTRACT_HEAPS
+    if (hasTemporaryHeaps || !m_rangesExcludeTemporaryHeaps)
+        root.compute();
+    m_rangesExcludeTemporaryHeaps = !hasTemporaryHeaps;
+#else
     root.compute();
+#endif
 
     if (Options::verboseCompilation() || Options::verboseFTLCompilation()) [[unlikely]] {
         WTF::dataFile().atomically([&](auto&) {
@@ -237,6 +358,10 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
         entry.value->as<PatchpointValue>()->effects.reads = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForPatchpointWrite)
         entry.value->as<PatchpointValue>()->effects.writes = rangeFor(entry.heap);
+    for (auto& [first, entry] : m_heapsForPatchpointWrite) {
+        if (auto* patchpoint = entry.value->as<PatchpointValue>())
+            patchpoint->effects.writes = HeapRange(first->range().begin(), entry.heap->range().end());
+    }
     for (HeapForValue entry : m_heapForFenceRead)
         entry.value->as<FenceValue>()->read = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForFenceWrite)

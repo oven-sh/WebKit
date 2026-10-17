@@ -28,6 +28,7 @@
 #include "ButterflyInlines.h"
 #include "Error.h"
 #include "JSArrayInlines.h"
+#include "MarkedBlockCage.h"
 #include "JSFunctionInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "JSGlobalProxy.h"
@@ -202,7 +203,7 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInlineExcludingProto()
     JSObject* obj = this;
     while (true) {
         Structure* structure = obj->structure();
-        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() || structure->typeInfo().wouldHaveFixedProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
         if (mayInterceptPut || structure->typeInfo().overridesGetPrototype())
             return false;
         if (obj != this && structure->typeInfo().overridesPut())
@@ -292,6 +293,11 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
+#if ENABLE(AOT)
+        } else if (std::optional<bool> isFound = object->type() == ObjectType ? object->getOwnPropertySlotFromCompiledObject(propertyName, slot) : std::nullopt) {
+            if (*isFound)
+                return true;
+#endif
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
@@ -410,7 +416,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
             result = offset;
         });
     if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
     return result;
 }
 
@@ -461,8 +467,21 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto error = putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
-    if (!error.isNull())
+    if (!error.isNull()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (error.characters() == ImmutableShapeError.characters())
+            RELEASE_AND_RETURN(scope, false);
+#endif
+        JSValue held;
+        bool isRejectedOnlyByLockHere = isLockedBuiltin() && isRejectedOnlyByLock(vm, propertyName.uid(), held);
+        if (isRejectedOnlyByLockHere && held == value)
+            return true;
+        if ((slot.isStrictMode() && isLockedBuiltin()) || (isRejectedOnlyByLockHere && slot.context() != PutPropertySlot::ReflectSet)) {
+            recordLockViolation(vm, propertyName.uid());
+            return typeError(globalObject, scope, true, lockViolationMessage(vm, propertyName.uid(), error));
+        }
         return typeError(globalObject, scope, slot.isStrictMode(), error);
+    }
     return true;
 }
 
@@ -516,6 +535,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if constexpr (mode == PutModePut) {
             if (!isStructureExtensible()) [[unlikely]]
                 return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+            if (structure->inheritorsMayOverrideReadOnlyProperties() && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+                return ReadonlyPropertyWriteError;
+        }
+        if (type() == ArrayType && structure->get(vm, propertyName) == invalidOffset && (inheritsImmutableProperty(vm, propertyName) || (vm.useImmutableIntrinsics && propertyName == vm.propertyNames->toJSON))) [[unlikely]] {
+            becomeDerivedArray(vm);
+            return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -550,7 +575,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 DeferredStructureTransitionWatchpointFire deferred(vm, structure);
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
                 if (mayBePrototype()) [[unlikely]]
-                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
@@ -564,7 +589,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
         if (mayBePrototype()) [[unlikely]]
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
         return { };
     }
 
@@ -589,7 +614,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             setStructure(vm, newStructure);
             slot.setNewProperty(this, offset);
             if (mayBePrototype()) [[unlikely]]
-                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
             return { };
         }
     }
@@ -611,7 +636,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
             if (mayBePrototype()) [[unlikely]]
-                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
             slot.setExistingProperty(this, offset);
@@ -620,10 +645,32 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         return { };
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->hasImmutableShape()) [[unlikely]] {
+#if ENABLE(AOT)
+        if (reifyIfSlimClosure(vm)) {
+            ASCIILiteral error = putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+            slot.disableCaching();
+            return error;
+        }
+        if constexpr (mode == PutModeDefineOwnProperty)
+            return putDirectToCompiledObject(vm, propertyName, value, newAttributes);
+#endif
+        return throwImmutableShapeError(vm);
+    }
+#endif
+
     if constexpr (mode == PutModePut) {
         if (!isStructureExtensible()) [[unlikely]]
             return NonExtensibleObjectPropertyDefineError;
+        if (structure->inheritorsMayOverrideReadOnlyProperties() && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+            return ReadonlyPropertyWriteError;
     }
+    if (type() == ArrayType && (inheritsImmutableProperty(vm, propertyName) || (vm.useImmutableIntrinsics && propertyName == vm.propertyNames->toJSON))) [[unlikely]] {
+        becomeDerivedArray(vm);
+        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+    }
+
     
     // We want the structure transition watchpoint to fire after this object has switched structure.
     // This allows adaptive watchpoints to observe if the new structure is the one we want.
@@ -649,7 +696,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
     if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
     return { };
 }
 
@@ -792,10 +839,25 @@ inline bool JSObject::putOwnDataPropertyMayBeIndex(JSGlobalObject* globalObject,
     return putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot).isNull();
 }
 
+#if ENABLE(AOT)
+ALWAYS_INLINE CallData slimClosureCallData(JSCell* cell)
+{
+    CallData callData;
+    callData.type = CallData::Type::JS;
+    callData.js.functionExecutable = nullptr;
+    callData.js.scope = std::bit_cast<JSScope*>(cell->structure()->realm());
+    return callData;
+}
+#endif
+
 ALWAYS_INLINE CallData getCallData(JSCell* cell)
 {
     if (cell->type() == JSFunctionType)
         return JSFunction::getCallData(cell);
+#if ENABLE(AOT)
+    if (isSlimClosureType(cell->type()))
+        return slimClosureCallData(cell);
+#endif
     CallData result = cell->methodTable()->getCallData(cell);
     ASSERT(result.type == CallData::Type::None || cell->isValidCallee());
     return result;
@@ -812,6 +874,10 @@ ALWAYS_INLINE CallData getCallDataInline(JSCell* cell)
 {
     if (cell->type() == JSFunctionType)
         return JSFunction::getCallDataInline(cell);
+#if ENABLE(AOT)
+    if (isSlimClosureType(cell->type()))
+        return slimClosureCallData(cell);
+#endif
     CallData result = cell->methodTable()->getCallData(cell);
     ASSERT(result.type == CallData::Type::None || cell->isValidCallee());
     return result;
@@ -1045,6 +1111,17 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         return;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->hasImmutableShape()) [[unlikely]] {
+#if ENABLE(AOT)
+        if (reifyIfSlimClosure(vm))
+            RELEASE_AND_RETURN(scope, setPrivateBrand(globalObject, brand));
+#endif
+        throwTypeError(globalObject, scope, withAOTErrorNote(ImmutableShapeError));
+        return;
+    }
+#endif
+
     if (structure->hasImmutableProperties()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
         return;
@@ -1077,7 +1154,8 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, NOESCAPE 
 
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
-    case ALL_DOUBLE_INDEXING_TYPES: {
+    case ALL_DOUBLE_INDEXING_TYPES:
+    case ArrayWithTypedContiguous: {
         unsigned usedLength = butterfly()->publicLength();
         for (unsigned i = 0; i < usedLength; ++i) {
             JSValue value = getDirectIndex(globalObject, i);
@@ -1255,6 +1333,7 @@ inline bool JSObject::canHaveExistingOwnIndexedGetterSetterProperties()
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
+    case ArrayWithTypedContiguous:
         return false;
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         SparseArrayValueMap* map = butterfly()->arrayStorage()->m_sparseMap.get();
@@ -1279,6 +1358,7 @@ inline unsigned JSObject::canHaveExistingOwnIndexedProperties() const
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
+    case ArrayWithTypedContiguous:
         return butterfly()->publicLength();
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         auto* storage = butterfly()->arrayStorage();
@@ -1344,10 +1424,26 @@ inline bool JSObject::ensureLength(VM& vm, unsigned length)
     return true;
 }
 
+ALWAYS_INLINE JSValue JSObject::decodeTypedElement(uint32_t word)
+{
+    return word <= static_cast<uint32_t>(JSValue::ValueUndefined) ? JSValue::decode(word) : JSValue(MarkedBlockCage::decode(word));
+}
+
+ALWAYS_INLINE std::optional<uint32_t> JSObject::tryEncodeTypedElement(JSValue value)
+{
+    if (!value || value.isUndefinedOrNull())
+        return static_cast<uint32_t>(JSValue::encode(value));
+    if (!value.isCell() || !MarkedBlockCage::contains(value.asCell()))
+        return std::nullopt;
+    return MarkedBlockCage::encode(value.asCell());
+}
+
 inline bool JSObject::canGetIndexQuickly(unsigned i) const
 {
     const Butterfly* butterfly = this->butterfly();
     switch (indexingType()) {
+    case ArrayWithTypedContiguous:
+        return i < butterfly->vectorLength() && butterfly->indexingPayload<uint32_t>()[i];
     case ALL_BLANK_INDEXING_TYPES:
         return canGetIndexQuicklyForTypedArray(i);
     case ALL_UNDECIDED_INDEXING_TYPES:
@@ -1387,6 +1483,9 @@ inline JSValue JSObject::getIndexQuickly(unsigned i) const
         return jsNumber(butterfly->contiguous().at(this, i).get().asInt32());
     case ALL_CONTIGUOUS_INDEXING_TYPES:
         return butterfly->contiguous().at(this, i).get();
+    case ArrayWithTypedContiguous:
+        RELEASE_ASSERT(i < butterfly->vectorLength());
+        return decodeTypedElement(butterfly->indexingPayload<uint32_t>()[i]);
     case ALL_DOUBLE_INDEXING_TYPES:
         return JSValue(JSValue::EncodeAsDouble, butterfly->contiguousDouble().at(this, i));
     case ALL_ARRAY_STORAGE_INDEXING_TYPES:
@@ -1419,6 +1518,10 @@ inline JSValue JSObject::tryGetIndexQuickly(unsigned i, ArrayProfile* arrayProfi
     case ALL_CONTIGUOUS_INDEXING_TYPES:
         if (i < butterfly->publicLength())
             return butterfly->contiguous().at(this, i).get();
+        break;
+    case ArrayWithTypedContiguous:
+        if (i < butterfly->publicLength())
+            return decodeTypedElement(butterfly->indexingPayload<uint32_t>()[i]);
         break;
     case ALL_DOUBLE_INDEXING_TYPES: {
         if (i >= butterfly->publicLength())
@@ -1472,6 +1575,8 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
         return trySetIndexQuicklyForTypedArray(i, v, arrayProfile);
     case ALL_UNDECIDED_INDEXING_TYPES:
         return false;
+    case ArrayWithTypedContiguous:
+        return tryPutTypedContiguousIndex(vm, i, v);
     case ALL_WRITABLE_INT32_INDEXING_TYPES: {
         if (i >= butterfly->vectorLength())
             return false;
@@ -1537,6 +1642,11 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
 
 inline void JSObject::setIndexQuickly(VM& vm, unsigned i, JSValue v)
 {
+    if (hasTypedContiguous(indexingType())) [[unlikely]] {
+        if (tryPutTypedContiguousIndex(vm, i, v))
+            return;
+        convertTypedContiguousToContiguous(vm);
+    }
     Butterfly* butterfly = this->butterfly();
     ASSERT(!isCopyOnWrite(indexingMode()));
     switch (indexingType()) {
@@ -1609,6 +1719,7 @@ inline bool JSObject::putDirectIndex(JSGlobalObject* globalObject, unsigned prop
         switch (indexingMode()) {
         case ALL_BLANK_INDEXING_TYPES:
         case ALL_UNDECIDED_INDEXING_TYPES:
+        case ArrayWithTypedContiguous:
             return false;
         case ALL_WRITABLE_INT32_INDEXING_TYPES:
         case ALL_WRITABLE_DOUBLE_INDEXING_TYPES:
@@ -1644,8 +1755,13 @@ ALWAYS_INLINE bool JSObject::putDirectIndex(JSGlobalObject* globalObject, uint64
 
 inline void JSObject::ensureWritable(VM& vm)
 {
-    if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+    if (isCopyOnWrite(indexingMode())) {
+        if (hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        else
+            convertFromCopyOnWrite(vm);
+    } else if (hasTypedContiguous(indexingMode())) [[unlikely]]
+        convertTypedContiguousToContiguous(vm);
 }
 
 inline bool JSObject::tryMakeWritable(VM& vm)
@@ -1653,8 +1769,12 @@ inline bool JSObject::tryMakeWritable(VM& vm)
     if (isCopyOnWrite(indexingMode())) {
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return false;
-        convertFromCopyOnWrite(vm);
-    }
+        if (hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        else
+            convertFromCopyOnWrite(vm);
+    } else if (hasTypedContiguous(indexingMode())) [[unlikely]]
+        convertTypedContiguousToContiguous(vm);
     return true;
 }
 

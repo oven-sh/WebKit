@@ -188,6 +188,27 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         return true;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr size_t maxLeavesToRebalance = 32;
+    if (leaves.size() > maxLeavesToRebalance) {
+        size_t remainingLeafCount = leaves.size();
+        if (op != Mul) {
+            Vector<Value*, 4> sortedLeaves = leaves;
+            std::ranges::sort(sortedLeaves, { }, &Value::index);
+            remainingLeafCount = 0;
+            for (size_t begin = 0; begin < sortedLeaves.size();) {
+                size_t end = begin + 1;
+                while (end < sortedLeaves.size() && sortedLeaves[end] == sortedLeaves[begin])
+                    ++end;
+                remainingLeafCount += op != BitXor || (end - begin) % 2;
+                begin = end;
+            }
+        }
+        if (remainingLeafCount > maxLeavesToRebalance)
+            return false;
+    }
+#endif
+
     // Pair up rotate halves inside XOR / OR trees so the `(x >>> N) ^ (x << (W-N))`
     // idiom (and its sigma/Sigma chained variants) lowers to a single RotR instead of a
     // pair of shifts + XOR.
@@ -216,7 +237,17 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         //     Into this: RotR(value, M)
         //
         // And replace leaf with RotR.
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<Value*, 4> shlBases;
+        for (Value* leaf : leaves) {
+            if (leaf->opcode() == Shl && leaf->child(1)->hasInt32() && !shlBases.contains(leaf->child(0)))
+                shlBases.append(leaf->child(0));
+        }
+        for (Value* shlBase : shlBases) {
+            auto& shlEntry = *shlIndicesByBase.find(shlBase);
+#else
         for (auto& shlEntry : shlIndicesByBase) {
+#endif
             auto zshrIter = zshrIndicesByBase.find(shlEntry.key);
             if (zshrIter == zshrIndicesByBase.end())
                 continue;
@@ -320,6 +351,27 @@ bool OptimizeAssociativeExpressionTrees::run()
     // In the second one we optimize each such expression tree in turn.
     // We need the use counts to avoid duplicating code.
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasTreeOfThree = false;
+    for (BasicBlock* block : m_proc) {
+        for (Value* value : *block) {
+            switch (value->opcode()) {
+            case Mul:
+            case Add:
+            case BitAnd:
+            case BitOr:
+            case BitXor:
+                hasTreeOfThree |= value->child(0)->opcode() == value->opcode() || value->child(1)->opcode() == value->opcode();
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    if (!hasTreeOfThree)
+        return false;
+#endif
+
     m_proc.resetValueOwners();
 
     Vector<unsigned> useCounts(FillWith { }, m_proc.values().size(), 0); // Mapping from Value::m_index to use counts.
@@ -338,6 +390,10 @@ bool OptimizeAssociativeExpressionTrees::run()
                 case BitOr:
                 case BitXor:
                     useCounts[child->index()]++;
+#if USE(BUN_JSC_ADDITIONS)
+                    if (child->child(0)->opcode() != child->opcode() && child->child(1)->opcode() != child->opcode())
+                        break;
+#endif
                     if (child->opcode() != value->opcode() || useCounts[child->index()] > 1) {
                         expressionTreeRoots.add(child);
                         rootOwners.add(child->owner);
@@ -351,7 +407,9 @@ bool OptimizeAssociativeExpressionTrees::run()
     }
 
     InsertionSet insertionSet = InsertionSet(m_proc);
-    for (BasicBlock* block : rootOwners) {
+    for (BasicBlock* block : m_proc) {
+        if (!rootOwners.contains(block))
+            continue;
         for (unsigned index = 0; index < block->size(); ++index) {
             Value* value = block->at(index);
             if (expressionTreeRoots.contains(value))

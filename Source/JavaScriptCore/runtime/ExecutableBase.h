@@ -182,6 +182,18 @@ public:
         return result;
     }
 
+    static constexpr ptrdiff_t offsetOfJITCodeFor(CodeSpecializationKind kind)
+    {
+        switch (kind) {
+        case CodeSpecializationKind::CodeForCall:
+            return OBJECT_OFFSETOF(ExecutableBase, m_jitCodeForCall);
+        case CodeSpecializationKind::CodeForConstruct:
+            return OBJECT_OFFSETOF(ExecutableBase, m_jitCodeForConstruct);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return 0;
+    }
+
     static constexpr ptrdiff_t offsetOfJITCodeWithArityCheckFor(
         CodeSpecializationKind kind)
     {

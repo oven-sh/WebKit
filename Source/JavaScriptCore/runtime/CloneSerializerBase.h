@@ -757,7 +757,12 @@ protected:
                 // objects have been handled. If we reach this point and
                 // the input is not an Object object then we should throw
                 // a DataCloneError.
-                if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != ObjectPrototype::info())
+#if ENABLE(AOT)
+                bool isCompiledObject = inObject->structure()->compiledLayout();
+#else
+                bool isCompiledObject = false;
+#endif
+                if (inObject->type() != FinalObjectType && inObject->classInfo() != ObjectPrototype::info() && !isCompiledObject)
                     return SerializationReturnCode::DataCloneError;
                 inputObjectStack.append(inObject);
                 indexStack.append(0);

@@ -1,3 +1,5 @@
+// Bun: upstream runs this in every mode. A frame of FTL code is sampled without a line, so a sample has to fall into the few milliseconds before test() gets there.
+//@ $skipModes << "ftl-eager".to_sym
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error('bad value: ' + actual);

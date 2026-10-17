@@ -1991,6 +1991,11 @@ public:
         m_assembler.ldp<64>(dest1, dest2, src.base, PairPostIndex(src.index));
     }
 
+    void loadPairVector(PostIndexAddress src, FPRegisterID dest1, FPRegisterID dest2)
+    {
+        m_assembler.ldp<128>(dest1, dest2, src.base, PairPostIndex(src.index));
+    }
+
     void loadPair64(Address address, RegisterID dest1, RegisterID dest2)
     {
         loadPair64(address.base, TrustedImm32(address.offset), dest1, dest2);
@@ -2628,6 +2633,11 @@ public:
     void storePair64(RegisterID src1, RegisterID src2, PostIndexAddress dest)
     {
         m_assembler.stp<64>(src1, src2, dest.base, PairPostIndex(dest.index));
+    }
+
+    void storePairVector(FPRegisterID src1, FPRegisterID src2, PostIndexAddress dest)
+    {
+        m_assembler.stp<128>(src1, src2, dest.base, PairPostIndex(dest.index));
     }
 
     void storePair64WithNonTemporalAccess(RegisterID src1, RegisterID src2, RegisterID dest)
@@ -6446,6 +6456,7 @@ public:
 
     void convertDoubleToInt32UsingJavaScriptSemantics(FPRegisterID src, RegisterID dest)
     {
+        RELEASE_ASSERT(supportsDoubleToInt32ConversionUsingJavaScriptSemantics());
         m_assembler.fjcvtzs(dest, src); // This zero extends.
     }
     
@@ -8299,6 +8310,12 @@ protected:
     }
 
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
+#if USE(BUN_JSC_ADDITIONS)
+public:
+    JS_EXPORT_PRIVATE static void restrictToBuildTargetFeatures();
+    JS_EXPORT_PRIVATE static unsigned buildTargetFeatures();
+protected:
+#endif
 
     JS_EXPORT_PRIVATE static CPUIDCheckState s_lseCheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_jscvtCheckState;

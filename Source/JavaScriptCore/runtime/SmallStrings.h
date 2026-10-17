@@ -82,6 +82,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     void setIsInitialized(bool isInitialized) { m_isInitialized = isInitialized; }
 
     JSString** singleCharacterStrings() { return &m_singleCharacterStrings[0]; }
+    static constexpr ptrdiff_t offsetOfSingleCharacterStrings() { return OBJECT_OFFSETOF(SmallStrings, m_singleCharacterStrings); }
 
     void initializeCommonStrings(VM&);
     template<typename Visitor> void visitStrongReferences(Visitor&);

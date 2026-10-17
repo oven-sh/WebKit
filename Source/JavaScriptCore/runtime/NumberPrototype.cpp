@@ -127,7 +127,6 @@ static ALWAYS_INLINE EncodedJSValue throwVMToThisNumberError(JSGlobalObject* glo
 // a point). We pick a buffer size such that can simply place the point in the
 // center of the buffer, and are guaranteed to have enough space in each direction
 // fo any number of digits an IEEE number may require to represent.
-typedef char RadixBuffer[2180];
 
 static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
 {
@@ -150,7 +149,7 @@ static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultSt
     return startOfResultString;
 }
 
-static char* toStringWithRadixInternal(RadixBuffer& buffer, double originalNumber, unsigned radix)
+char* toStringWithRadixInternal(RadixBuffer& buffer, double originalNumber, unsigned radix)
 {
     ASSERT(std::isfinite(originalNumber));
     ASSERT(radix >= 2 && radix <= 36);
@@ -499,8 +498,7 @@ JSString* NumericStrings::addJSString(VM& vm, int i)
         auto& entry = lookupSmallString(static_cast<unsigned>(i));
         if (entry.jsString)
             return entry.jsString;
-        entry.jsString = jsNontrivialString(vm, entry.value);
-        return entry.jsString;
+        return put(entry.jsString, jsNontrivialString(vm, entry.value));
     }
     auto& entry = lookup(i);
     if (i != entry.key || entry.value.isNull()) {
@@ -510,8 +508,7 @@ JSString* NumericStrings::addJSString(VM& vm, int i)
         if (entry.jsString)
             return entry.jsString;
     }
-    entry.jsString = jsNontrivialString(vm, entry.value);
-    return entry.jsString;
+    return put(entry.jsString, jsNontrivialString(vm, entry.value));
 }
 
 JSString* NumericStrings::addJSString(VM& vm, double value)
@@ -526,8 +523,7 @@ JSString* NumericStrings::addJSString(VM& vm, double value)
         if (entry.jsString)
             return entry.jsString;
     }
-    entry.jsString = jsNontrivialString(vm, entry.value);
-    return entry.jsString;
+    return put(entry.jsString, jsNontrivialString(vm, entry.value));
 }
 
 void NumericStrings::initializeSmallIntCache(VM& vm)

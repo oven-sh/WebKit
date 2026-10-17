@@ -425,6 +425,22 @@ EOF
         "setEntryAddressWide32(#{id}, _#{full_name}_wide32)"
     end
 
+    def set_entry_address_predecoded(id)
+        "setEntryAddressPredecoded(#{id}, _llint_predecoded_#{name})"
+    end
+
+    def set_entry_address_predecoded_registers(id)
+        "setEntryAddressPredecodedRegisters(#{id}, _llint_predecoded_registers_#{name})"
+    end
+
+    def is_bytecode?
+        @section.name == :Bytecode
+    end
+
+    def asm_section
+        @extras[:asm_section] || :bytecode
+    end
+
     def struct_indices
         out = []
         out += @args.map(&:field_name) unless @args.nil?

@@ -518,8 +518,18 @@ public:
 
     void oops()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_oopsEmitsBreakpointOnly) {
+            breakpoint();
+            return;
+        }
+#endif
         abortWithReason(B3Oops);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    void setOopsEmitsBreakpointOnly() { m_oopsEmitsBreakpointOnly = true; }
+    bool m_oopsEmitsBreakpointOnly { false };
+#endif
 
     // B3 has additional pseudo-opcodes for returning, when it wants to signal that the return
     // consumes some register in some way.
@@ -532,7 +542,7 @@ public:
     static constexpr unsigned BlindingModulus = 64;
     bool shouldConsiderBlinding()
     {
-        return !(random() & (BlindingModulus - 1));
+        return blindsConstants() && !(random() & (BlindingModulus - 1));
     }
 
     void move(Address src, Address dest, RegisterID scratch)

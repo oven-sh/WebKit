@@ -52,6 +52,10 @@ public:
 
     void prepareAllAllocators();
 
+#if USE(BUN_JSC_ADDITIONS)
+    void* tryAllocateInLargerCell(Heap&, BlockDirectory&, GCDeferralContext*);
+#endif
+
 private:
     JS_EXPORT_PRIVATE Allocator allocatorForSlow(size_t);
     

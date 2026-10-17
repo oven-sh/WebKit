@@ -60,6 +60,11 @@ public:
     }
 
     Vector<std::tuple<Origin, Ref<LatePath>>> latePaths;
+    struct NearbyLatePath {
+        unsigned index;
+        uint32_t recordedOffset;
+    };
+    Vector<NearbyLatePath, 8> nearbyLatePaths;
     IndexMap<BasicBlock*, Box<MacroAssembler::Label>> blockLabels;
     BasicBlock* currentBlock { nullptr };
     unsigned indexInBlock { UINT_MAX };

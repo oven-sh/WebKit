@@ -56,14 +56,14 @@ static size_t balance;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlock);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlockHandle);
 
-MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)
+MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, IsFirstInDirectory isFirstInDirectory)
 {
     if (computeBalance) {
         balance++;
         if (!(balance % 10))
             dataLog("MarkedBlock Balance: ", balance, "\n");
     }
-    void* blockSpace = alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
+    void* blockSpace = isFirstInDirectory == IsFirstInDirectory::Yes ? alignedMemoryAllocator->tryAllocateUntouchedAlignedMemory(blockSize, blockSize) : alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
     if (!blockSpace)
         return nullptr;
     if (scribbleFreeCells())
@@ -90,6 +90,9 @@ MarkedBlock::Handle::~Handle()
     }
     m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
     recommitPages();
+#if ASAN_ENABLED
+    unpoisonCells();
+#endif
     m_block->~MarkedBlock();
     m_alignedMemoryAllocator->freeAlignedMemory(m_block);
     heap.didFreeBlock(blockSize);
@@ -122,6 +125,47 @@ void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
     RELEASE_ASSERT(m_isFreeListed);
     m_isFreeListed = false;
     m_directory->didFinishUsingBlock(this);
+}
+
+template<typename Word>
+static void fillWithEachNthBit(std::span<Word> words, size_t n, size_t start)
+{
+    constexpr size_t wordSize = sizeof(Word) * 8;
+    ASSERT(n && n < wordSize);
+    Word pattern = 1;
+    for (size_t shift = n; shift < wordSize; shift *= 2)
+        pattern |= pattern << shift;
+    size_t firstWord = start / wordSize;
+    for (size_t i = 0; i < firstWord; ++i)
+        words[i] = 0;
+    size_t offset = start % wordSize;
+    words[firstWord] = pattern << offset;
+    size_t remainder = wordSize % n;
+    offset %= n;
+    for (size_t i = firstWord + 1; i < words.size(); ++i) {
+        offset = offset >= remainder ? offset - remainder : offset + n - remainder;
+        words[i] = pattern << offset;
+    }
+}
+
+template<typename Word>
+static void clearBits(std::span<Word> words, size_t start, size_t end)
+{
+    constexpr size_t wordSize = sizeof(Word) * 8;
+    if (start >= end)
+        return;
+    size_t firstWord = start / wordSize;
+    size_t lastWord = (end - 1) / wordSize;
+    Word preservedInFirstWord = (static_cast<Word>(1) << (start % wordSize)) - 1;
+    Word preservedInLastWord = end % wordSize ? ~static_cast<Word>(0) << (end % wordSize) : 0;
+    if (firstWord == lastWord) {
+        words[firstWord] &= preservedInFirstWord | preservedInLastWord;
+        return;
+    }
+    words[firstWord] &= preservedInFirstWord;
+    for (size_t i = firstWord + 1; i < lastWord; ++i)
+        words[i] = 0;
+    words[lastWord] &= preservedInLastWord;
 }
 
 void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
@@ -164,12 +208,23 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 
     
-    blockHeader().m_newlyAllocated.clearAll();
+    auto newlyAllocated = blockHeader().m_newlyAllocated.storage();
+    static_assert(!(endAtom % (sizeof(newlyAllocated[0]) * 8)));
+    bool fillsByWords = m_atomsPerCell < sizeof(newlyAllocated[0]) * 8;
     blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
-    blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    if (fillsByWords)
+        fillWithEachNthBit(newlyAllocated, m_atomsPerCell, m_startAtom);
+    else {
+        blockHeader().m_newlyAllocated.clearAll();
+        blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    }
 
     ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
     bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+#if ASSERT_ENABLED
+    WTF::BitSet<atomsPerBlock> expected;
+    expected.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+#endif
     freeList.forEachInterval(
         [&](char* intervalStart, char* intervalEnd) {
             if (needsZapping || MarkedBlockInternal::verbose) {
@@ -180,8 +235,12 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
                         std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
                 }
             }
-            blockHeader().m_newlyAllocated.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+            clearBits(newlyAllocated, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+#if ASSERT_ENABLED
+            expected.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+#endif
         });
+    ASSERT(expected == blockHeader().m_newlyAllocated);
     
     m_isFreeListed = false;
     directory()->didFinishUsingBlock(this);
@@ -191,6 +250,9 @@ void MarkedBlock::Handle::lastChanceToFinalize()
 {
     // Concurrent sweeper is shut down at this point.
     m_directory->assertSweeperIsSuspended();
+#if ASAN_ENABLED
+    unpoisonCells();
+#endif
     m_directory->setIsAllocated(this, false);
     m_directory->setIsDestructible(this, true);
     m_directory->setIsUnswept(this, true);
@@ -444,6 +506,7 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     
     size_t cellSize = directory->cellSize();
     m_atomsPerCell = (cellSize + atomSize - 1) / atomSize;
+    blockHeader().m_cellSize = m_atomsPerCell * atomSize;
 
     // Discount the payload atoms at the front so that m_startAtom can start on an atom such that
     // m_atomsPerCell increments from m_startAtom will get us exactly to endAtom when we have filled
@@ -639,6 +702,57 @@ void MarkedBlock::Handle::recommitPages()
     m_decommittedPages = 0;
 }
 
+#if ASAN_ENABLED
+void MarkedBlock::Handle::poisonDeadCells()
+{
+    if (m_isFreeListed)
+        return;
+    size_t size = cellSize();
+    char* begin = nullptr;
+    char* end = nullptr;
+    forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        char* address = std::bit_cast<char*>(cell);
+        if (address != end) {
+            if (begin)
+                __asan_poison_memory_region(begin, end - begin);
+            begin = address;
+        }
+        end = address + size;
+        return IterationStatus::Continue;
+    });
+    if (begin)
+        __asan_poison_memory_region(begin, end - begin);
+    m_weakSet.forEachBlock([&](WeakBlock& block) {
+        block.unpoisonCellsAwaitingFinalizers();
+    });
+}
+
+void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
+{
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    if (!m_directory->isUnswept(this))
+        return;
+    bool hasNewlyDeadCells = false;
+    forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        hasNewlyDeadCells = !__asan_address_is_poisoned(cell);
+        return hasNewlyDeadCells ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    if (hasNewlyDeadCells) {
+        Locker locker { m_directory->bitvectorLock() };
+        m_directory->setIsCanAllocate(this, false);
+        m_directory->setIsEmpty(this, false);
+    }
+    bool hasPendingDestructors = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    if (!hasPendingDestructors)
+        poisonDeadCells();
+}
+
+void MarkedBlock::Handle::unpoisonCells()
+{
+    __asan_unpoison_memory_region(&block(), blockSize);
+}
+#endif
+
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
@@ -660,6 +774,14 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
         m_markingVersionAtLastSweep = space()->markingVersion();
 
     SweepingScope sweepingScope(*heap());
+
+#if ASAN_ENABLED
+    unpoisonCells();
+    auto repoisonOnExit = makeScopeExit([&] {
+        if (sweepMode == SweepOnly && !heap()->isShuttingDown())
+            poisonDeadCells();
+    });
+#endif
 
     m_weakSet.sweep();
 

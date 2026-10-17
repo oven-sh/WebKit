@@ -26,6 +26,10 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#if ENABLE(AOT)
+#include "AOTTypedObject.h"
+#endif
+
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
@@ -592,23 +596,45 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
         return false;
 
     auto* structure = object->structure();
+#if ENABLE(AOT)
+    bool isCompiledObject = structure->compiledLayout();
+    if (isCompiledObject && uncheckedDowncast<AOT::Typed::Object>(object)->hasExtraProperties())
+        return false;
+#else
+    constexpr bool isCompiledObject = false;
+#endif
     auto state = structure->definitelyNonThenableState();
     if (state == Structure::DefinitelyNonThenableState::NonThenable && structure->realm() == globalObject)
         return true;
     if (state == Structure::DefinitelyNonThenableState::MaybeThenable)
         return false;
+#if ENABLE(AOT)
+    if (state == Structure::DefinitelyNonThenableState::NotComputed && globalObject->vm().useImmutableIntrinsics && structure->realm() == globalObject && AOT::Typed::neverHasThen(structure)) {
+        structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
+        return true;
+    }
+#endif
 
     bool result = true;
     auto* current = structure;
+    JSObject* holder = object;
     while (current) {
+        bool absenceIsObservable = !current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
+#if ENABLE(AOT)
+        if (isCompiledObject && current == structure)
+            absenceIsObservable = !AOT::Typed::hasFieldNamedThen(structure);
+        else if (!absenceIsObservable)
+            absenceIsObservable = AOT::Typed::isClassPrototypeWithoutThen(holder);
+#endif
         if (current->hasSpecialProperties()
-            || current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence()
+            || !absenceIsObservable
             || current->typeInfo().overridesGetPrototype()
             || !current->hasMonoProto()) {
             result = false;
             break;
         }
-        current = current->storedPrototypeStructure();
+        holder = current->storedPrototypeObject();
+        current = holder ? holder->structure() : nullptr;
     }
 
     // Dictionary structures are mutated in place when properties are added or removed,
@@ -665,6 +691,22 @@ ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObje
     globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(newStatus), cellValue, argument, context);
 #endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+std::optional<JSPromise::InlineJob> JSPromise::tryFulfillTakingInlineJob(VM& vm, JSValue argument)
+{
+    uint16_t currentFlags = flags();
+    if ((currentFlags & (stateMask | isFirstResolvingFunctionCalledFlag)) || (currentFlags & inlineReactionKindMask) != (static_cast<uint16_t>(InlineReactionKind::InternalMicrotask) << inlineReactionKindShift))
+        return std::nullopt;
+    JSCell* cell = payloadCell();
+    if (cell && !(currentFlags & inlineReactionAsyncContextFlag))
+        return std::nullopt;
+    InlineJob job { static_cast<InternalMicrotask>((currentFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift), m_slot.get(), cell ? JSValue(cell) : jsUndefined() };
+    setSlot(vm, argument);
+    setPackedCell(vm, (currentFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | isFirstResolvingFunctionCalledFlag | static_cast<uint16_t>(Status::Fulfilled), nullptr);
+    return job;
+}
+#endif
 
 ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* globalObject, Status newStatus, JSValue argument, uint16_t flagsSnapshot)
 {
@@ -769,6 +811,10 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
     if (isDefinitelyNonThenable(resolutionObject, globalObject))
         return fulfillPromise(vm, resolution);
 
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::Typed::countThenLookup(vm);
+#endif
     JSValue then;
     JSValue error;
     {
@@ -1140,6 +1186,10 @@ void JSPromise::resolveWithInternalMicrotask(JSGlobalObject* globalObject, VM& v
     if (isDefinitelyNonThenable(resolutionObject, globalObject))
         return fulfillWithInternalMicrotask(vm, globalObject, resolution, task, context BUN_ASYNC_CONTEXT);
 
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::Typed::countThenLookup(vm);
+#endif
     JSValue then;
     JSValue error;
     {

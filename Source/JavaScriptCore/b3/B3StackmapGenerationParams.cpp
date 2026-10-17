@@ -100,6 +100,14 @@ StackmapGenerationParams::StackmapGenerationParams(
 {
 }
 
+StackmapGenerationParams::StackmapGenerationParams(
+    StackmapValue* value, Reps&& reps, Air::GenerationContext& context)
+    : m_value(value)
+    , m_reps(WTF::move(reps))
+    , m_context(context)
+{
+}
+
 Origin StackmapGenerationParams::origin() const
 {
     return m_value->origin();

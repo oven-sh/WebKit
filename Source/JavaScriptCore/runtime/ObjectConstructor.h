@@ -161,5 +161,6 @@ void objectAssignGeneric(JSGlobalObject*, VM&, JSObject* target, JSObject* sourc
 JSValue objectValues(VM&, JSGlobalObject*, JSValue);
 
 JSC_DECLARE_HOST_FUNCTION(objectConstructorIs);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorSetPrototypeOf);
 
 } // namespace JSC

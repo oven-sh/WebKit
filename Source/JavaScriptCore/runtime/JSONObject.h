@@ -62,6 +62,13 @@ JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, StringView);
 JSValue JSONParseWithException(JSGlobalObject*, StringView);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, JSValue space);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, unsigned indent);
+struct WideStringInJSON {
+    unsigned offset;
+    String string;
+};
+using WideStringsInJSON = Vector<WideStringInJSON, 8>;
+bool tryStringifyWithoutSideEffects(JSGlobalObject&, JSValue, WideStringsInJSON&, const ScopedLambda<void(std::span<const Latin1Character>)>&);
+bool tryStringifyElementsWithoutSideEffects(JSGlobalObject&, JSArray&, unsigned first, WideStringsInJSON&, const ScopedLambda<void(std::span<const Latin1Character>)>&);
 
 #if USE(BUN_JSC_ADDITIONS)
 struct StreamingJSONParseResult {

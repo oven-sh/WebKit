@@ -165,6 +165,7 @@ public:
 
 private:
     friend class AlignedMemoryAllocator;
+    friend class CompleteSubspace;
     friend class IsoCellSet;
     friend class LocalAllocator;
     friend class LocalSideAllocator;
@@ -187,6 +188,9 @@ private:
     CellAttributes m_attributes;
 
     unsigned m_cellSize;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_numberOfLargerCells { 0 };
+#endif
     
     // After you do something to a block based on one of these cursors, you clear the bit in the
     // corresponding bitvector and leave the cursor where it was. We can use unsigned instead of size_t since

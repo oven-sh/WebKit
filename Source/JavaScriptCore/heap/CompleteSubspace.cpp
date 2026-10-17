@@ -102,6 +102,38 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
     return allocator;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static size_t sizeOfLargerCells(size_t cellSize)
+{
+    constexpr size_t largest = 2 * KB;
+    static_assert(largest <= MarkedSpace::largeCutoff);
+    if (cellSize > largest)
+        return 0;
+    auto sizeClassFor = [](size_t size) -> size_t {
+        return MarkedSpace::s_sizeClassForSizeStep[MarkedSpace::sizeClassToIndex(size)];
+    };
+    size_t power = roundUpToPowerOfTwo(cellSize);
+    if (sizeClassFor(power) == cellSize || sizeClassFor(power / 2) == cellSize)
+        return 0;
+    return sizeClassFor(power);
+}
+
+void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory& directory, GCDeferralContext* deferralContext)
+{
+    constexpr unsigned maxNumberOfLargerCells = 16;
+    constexpr unsigned maxBytesInLargerCells = 4 * KB;
+    if (!Options::useAOT() || directory.m_numberOfLargerCells >= maxNumberOfLargerCells || (directory.m_numberOfLargerCells + 1) * directory.m_cellSize > maxBytesInLargerCells)
+        return nullptr;
+    size_t size = sizeOfLargerCells(directory.m_cellSize);
+    if (!size)
+        return nullptr;
+    void* result = allocatorFor(size, AllocatorForMode::EnsureAllocator).allocate(heap, size, deferralContext, AllocationFailureMode::ReturnNull);
+    if (result)
+        ++directory.m_numberOfLargerCells;
+    return result;
+}
+#endif
+
 void* CompleteSubspace::allocateSlow(VM& vm, size_t size, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     void* result = tryAllocateSlow(vm, size, deferralContext);
@@ -191,7 +223,7 @@ void* CompleteSubspace::reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* 
     }
 
     m_space.m_preciseAllocations[oldIndexInSpace] = allocation;
-    vm.heap.didAllocate(difference);
+    vm.heap.didAllocatePreciseAllocation(difference, *this);
     m_space.m_capacity += difference;
 
     m_preciseAllocations.append(allocation);

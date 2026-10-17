@@ -30,17 +30,18 @@
 #include "IsoCellSetInlines.h"
 #include "JSCellInlines.h"
 #include "MarkedSpaceInlines.h"
+#include "Options.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IsoSubspace);
 
-IsoSubspace::IsoSubspace(ASCIICString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierPreciseCells, AlignedMemoryAllocator* allocator)
+IsoSubspace::IsoSubspace(ASCIICString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierPreciseCells, AlignedMemoryAllocator* allocator, bool usesLowerTierWithAOT)
     : Subspace(SubspaceKind::IsoSubspace, WTF::move(name), heap)
     , m_directory(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
 {
-    m_remainingLowerTierPreciseCount = numberOfLowerTierPreciseCells;
+    m_remainingLowerTierPreciseCount = Options::useAOT() && !usesLowerTierWithAOT ? 0 : numberOfLowerTierPreciseCells;
     ASSERT(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size) == cellSize());
     ASSERT(m_remainingLowerTierPreciseCount <= MarkedBlock::maxNumberOfLowerTierPreciseCells);
 

@@ -61,6 +61,10 @@ public:
     }
 
     void changeParent(AbstractHeap* parent);
+#if USE(BUN_JSC_ADDITIONS)
+    size_t numberOfChildren() const { return m_children.size(); }
+    void removeChildrenFrom(size_t first);
+#endif
 
     AbstractHeap* parent() const
     {
@@ -144,6 +148,12 @@ public:
     ptrdiff_t offset() const { return m_offset; }
     size_t elementSize() const { return m_elementSize; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void retainCurrentHeaps();
+    void removeTemporaryHeaps();
+    bool hasTemporaryHeaps() const { return m_heapForAnyIndex.numberOfChildren() != m_retainedHeapCount; }
+#endif
+
 private:
     const AbstractHeap& returnInitialized(AbstractHeap& field, ptrdiff_t index)
     {
@@ -169,6 +179,9 @@ private:
 
     MapType m_largeIndices;
     Vector<ASCIICString, 16> m_largeIndexNames;
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_retainedHeapCount { 0 };
+#endif
 };
 
 // A numbered abstract heap is like an indexed abstract heap, except that you
@@ -184,6 +197,11 @@ public:
     AbstractHeap& atAnyNumber() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
 
     const AbstractHeap& at(ptrdiff_t number) LIFETIME_BOUND { return m_indexedHeap.at(number); }
+#if USE(BUN_JSC_ADDITIONS)
+    void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
+    void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
+    bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
+#endif
     const AbstractHeap& operator[](ptrdiff_t number) { return at(number); }
 
     void dump(PrintStream&);
@@ -200,6 +218,11 @@ public:
     ~AbsoluteAbstractHeap();
 
     const AbstractHeap& atAnyAddress() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
+#if USE(BUN_JSC_ADDITIONS)
+    void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
+    void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
+    bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
+#endif
 
     const AbstractHeap& at(const void* address)
     {

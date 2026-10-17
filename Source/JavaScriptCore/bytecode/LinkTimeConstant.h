@@ -132,9 +132,11 @@ class JSGlobalObject;
     v(createPrivateSymbol, nullptr) \
     v(emptyPropertyNameEnumerator, nullptr) \
     v(sentinelString, nullptr) \
+    v(orderedHashTableSentinel, nullptr) \
     v(createRemoteFunction, nullptr) \
     v(isRemoteFunction, nullptr) \
     v(arrayFromFastWithoutMapFn, nullptr) \
+    v(arrayProtoValues, nullptr) \
     v(jsonParse, nullptr) \
     v(jsonStringify, nullptr) \
     v(String, nullptr) \
@@ -161,13 +163,17 @@ class JSGlobalObject;
     v(AsyncDisposableStack, nullptr) \
     v(enqueueJob, nullptr) \
 
+#define JSC_FOREACH_LINK_TIME_CONSTANTS_WITHOUT_NAMES(v) \
+    v(auditFunction, nullptr) \
+
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {
     JSC_FOREACH_LINK_TIME_CONSTANTS(DECLARE_LINK_TIME_CONSTANT)
+    JSC_FOREACH_LINK_TIME_CONSTANTS_WITHOUT_NAMES(DECLARE_LINK_TIME_CONSTANT)
 };
 #undef DECLARE_LINK_TIME_CONSTANT
 #define COUNT_LINK_TIME_CONSTANT(name, code) 1 +
-static constexpr unsigned numberOfLinkTimeConstants = JSC_FOREACH_LINK_TIME_CONSTANTS(COUNT_LINK_TIME_CONSTANT) 0;
+static constexpr unsigned numberOfLinkTimeConstants = JSC_FOREACH_LINK_TIME_CONSTANTS(COUNT_LINK_TIME_CONSTANT) JSC_FOREACH_LINK_TIME_CONSTANTS_WITHOUT_NAMES(COUNT_LINK_TIME_CONSTANT) 0;
 #undef COUNT_LINK_TIME_CONSTANT
 
 } // namespace JSC

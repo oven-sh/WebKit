@@ -804,6 +804,18 @@ op :get_by_id_direct,
         offset: unsigned,
     }
 
+op :in_by_id,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
+    },
+    metadata: {
+        structureID: StructureID,
+        offset: unsigned,
+        kind: unsigned,
+    }
+
 # Alignment: 1
 op :jneq_ptr,
     args: {
@@ -872,13 +884,6 @@ op :to_object,
         operand: VirtualRegister,
         message: unsigned,
         valueProfile: unsigned,
-    }
-
-op :in_by_id,
-    args: {
-        dst: VirtualRegister,
-        base: VirtualRegister,
-        property: unsigned,
     }
 
 op :has_private_name,
@@ -1467,6 +1472,39 @@ begin_section :NativeHelpers,
     emit_in_asm_file: true,
     macro_name_component: :BYTECODE_HELPER
 
+op :llint_leave_predecoded_instructions
+op :llint_predecoded_mov_constant
+op :llint_predecoded_get_closure_var
+op :llint_predecoded_get_closure_var_checked
+op :llint_predecoded_jstricteq_immediate
+op :llint_predecoded_jnstricteq_immediate
+op :llint_predecoded_stricteq_immediate
+op :llint_predecoded_nstricteq_immediate
+op :llint_predecoded_jstricteq_int32
+op :llint_predecoded_jnstricteq_int32
+op :llint_predecoded_stricteq_int32
+op :llint_predecoded_nstricteq_int32
+op :llint_predecoded_get_by_id_inline
+op :llint_predecoded_get_by_id_out_of_line
+op :llint_predecoded_get_by_id_unset
+op :llint_predecoded_get_by_id_custom_accessor
+op :llint_predecoded_get_by_id_prototype_inline
+op :llint_predecoded_get_by_id_prototype_out_of_line
+op :llint_predecoded_get_by_id_cell32
+op :llint_predecoded_get_by_id_int32_or_number_box
+op :llint_predecoded_get_by_id_js_value
+op :llint_predecoded_get_by_id_double
+op :llint_predecoded_get_by_id_boolean
+op :llint_predecoded_get_by_id_int32
+op :llint_predecoded_get_by_id_uint8
+op :llint_predecoded_get_by_id_int8
+op :llint_predecoded_get_by_id_uint16
+op :llint_predecoded_get_by_id_int16
+op :llint_predecoded_get_length
+op :llint_predecoded_put_by_id_replace_inline
+op :llint_predecoded_put_by_id_replace_out_of_line
+op :llint_predecoded_put_by_id_transition_inline
+op :llint_predecoded_put_by_id_transition_out_of_line
 op :llint_program_prologue
 op :llint_eval_prologue
 op :llint_module_program_prologue
@@ -1475,27 +1513,27 @@ op :llint_function_for_construct_prologue
 op :llint_function_for_call_arity_check
 op :llint_function_for_construct_arity_check
 op :llint_generic_return_point
-op :llint_throw_from_slow_path_trampoline
-op :llint_throw_during_call_trampoline
-op :llint_native_call_trampoline
-op :llint_native_construct_trampoline
-op :llint_internal_function_call_trampoline
-op :llint_internal_function_construct_trampoline
-op :llint_default_call_trampoline
-op :llint_unlinked_call_trampoline
-op :llint_virtual_call_trampoline
-op :llint_virtual_construct_trampoline
-op :llint_virtual_tail_call_trampoline
-op :llint_polymorphic_normal_call_trampoline
-op :llint_polymorphic_closure_call_trampoline
+op :llint_throw_from_slow_path_trampoline, extras: { asm_section: :trampoline }
+op :llint_throw_during_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_native_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_native_construct_trampoline, extras: { asm_section: :trampoline }
+op :llint_internal_function_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_internal_function_construct_trampoline, extras: { asm_section: :trampoline }
+op :llint_default_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_unlinked_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_virtual_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_virtual_construct_trampoline, extras: { asm_section: :trampoline }
+op :llint_virtual_tail_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_polymorphic_normal_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_polymorphic_closure_call_trampoline, extras: { asm_section: :trampoline }
 op :checkpoint_osr_exit_from_inlined_call_trampoline
 op :checkpoint_osr_exit_trampoline
 op :normal_osr_exit_trampoline
 op :array_sort_comparator_return_trampoline
 op :fuzzer_return_early_from_loop_hint
 op :loop_osr_entry_gate
-op :llint_get_host_call_return_value
-op :llint_handle_uncaught_exception
+op :llint_get_host_call_return_value, extras: { asm_section: :trampoline }
+op :llint_handle_uncaught_exception, extras: { asm_section: :trampoline }
 op :op_call_return_location
 op :op_call_ignore_result_return_location
 op :op_construct_return_location
@@ -1521,17 +1559,17 @@ op :op_iterator_open_return_location
 op :op_iterator_next_return_location
 op :op_async_iterator_next_return_location
 op :op_call_direct_eval_slow_return_location
-op :js_to_wasm_wrapper_entry
-op :wasm_to_wasm_ipint_wrapper_entry
-op :wasm_to_js_wrapper_entry
-op :ipint_trampoline
-op :ipint_entry
-op :ipint_catch_entry
-op :ipint_catch_all_entry
-op :ipint_table_catch_entry
-op :ipint_table_catch_ref_entry
-op :ipint_table_catch_all_entry
-op :ipint_table_catch_allref_entry
+op :js_to_wasm_wrapper_entry, extras: { asm_section: :webAssembly }
+op :wasm_to_wasm_ipint_wrapper_entry, extras: { asm_section: :webAssembly }
+op :wasm_to_js_wrapper_entry, extras: { asm_section: :webAssembly }
+op :ipint_trampoline, extras: { asm_section: :webAssembly }
+op :ipint_entry, extras: { asm_section: :webAssembly }
+op :ipint_catch_entry, extras: { asm_section: :webAssembly }
+op :ipint_catch_all_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_ref_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_all_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_allref_entry, extras: { asm_section: :webAssembly }
 
 op :js_trampoline_op_call
 op :js_trampoline_op_call_ignore_result
@@ -1549,11 +1587,11 @@ op :js_trampoline_llint_function_for_call_arity_check_untag
 op :js_trampoline_llint_function_for_call_arity_check_tag
 op :js_trampoline_llint_function_for_construct_arity_check_untag
 op :js_trampoline_llint_function_for_construct_arity_check_tag
-op :wasm_trampoline_wasm_ipint_call
-op :wasm_trampoline_wasm_ipint_tail_call
-op :wasm_throw_from_slow_path_trampoline
-op :wasm_throw_from_fault_handler_trampoline_reg_instance
-op :wasm_ipint_call_return_location
+op :wasm_trampoline_wasm_ipint_call, extras: { asm_section: :webAssembly }
+op :wasm_trampoline_wasm_ipint_tail_call, extras: { asm_section: :webAssembly }
+op :wasm_throw_from_slow_path_trampoline, extras: { asm_section: :webAssembly }
+op :wasm_throw_from_fault_handler_trampoline_reg_instance, extras: { asm_section: :webAssembly }
+op :wasm_ipint_call_return_location, extras: { asm_section: :webAssembly }
 
 end_section :NativeHelpers
 

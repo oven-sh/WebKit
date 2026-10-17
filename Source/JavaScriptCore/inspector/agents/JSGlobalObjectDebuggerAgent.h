@@ -50,6 +50,8 @@ public:
     void breakpointActionLog(JSC::JSGlobalObject*, const String& data) final;
 
 private:
+    void internalEnable() final;
+
     InjectedScript injectedScriptForEval(Protocol::ErrorString&, std::optional<Protocol::Runtime::ExecutionContextId>&&) final;
 
     // NOTE: JavaScript inspector does not yet need to mute a console because no messages

@@ -101,7 +101,7 @@ ClonedArguments* ClonedArguments::createEmpty(VM& vm, JSGlobalObject* nullOrGlob
         ClonedArguments(vm, structure, butterfly);
     result->finishCreation(vm);
 
-    result->m_callee.set(vm, result, callee);
+    result->m_callee.setMayBeNull(vm, result, callee);
     result->putDirectOffset(vm, clonedArgumentsLengthPropertyOffset, jsNumber(length));
     return result;
 }

@@ -55,6 +55,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class MegamorphicCache;
+
 typedef void (*V_DebugOperation_EPP)(CallFrame*, void*, void*);
 
 class AssemblyHelpers : public MacroAssembler {
@@ -189,11 +191,21 @@ public:
     void loadProperty(GPRReg objectGPR, GPRReg offsetGPR, GPRReg resultGPR);
     void storeProperty(GPRReg valueGPR, GPRReg objectGPR, GPRReg offsetGPR, GPRReg scratchGPR);
 
-    JumpList loadMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
-    JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    struct MegamorphicCacheLocation {
+        MegamorphicCacheLocation(VM&);
+        explicit MegamorphicCacheLocation(GPRReg gpr)
+            : gpr(gpr)
+        {
+        }
+
+        MegamorphicCache* cache { nullptr };
+        GPRReg gpr { InvalidGPRReg };
+    };
+    JumpList loadMegamorphicProperty(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList loadMegamorphicGetterSetter(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
-    JumpList findMegamorphicCacheEntry(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
-    std::tuple<JumpList, JumpList> storeMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList findMegamorphicCacheEntry(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    std::tuple<JumpList, JumpList> storeMegamorphicProperty(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList hasMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadCacheableIdentifierImpl(GPRReg propertyGPR, GPRReg destGPR, bool propertyIsString, bool propertyIsSymbol, bool canBeRope = true);
 
@@ -305,6 +317,37 @@ public:
     {
         move(MacroAssembler::TrustedImm64(JSValue::NumberTag), GPRInfo::numberTagRegister);
         or64(MacroAssembler::TrustedImm32(JSValue::OtherTag), GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
+    }
+
+#if CPU(X86_64)
+    void readTagsFromMemory(Address numberTag, Address notCellMask)
+    {
+        m_numberTagInMemory = numberTag;
+        m_notCellMaskInMemory = notCellMask;
+    }
+    bool readsTagsFromMemory() const { return !!m_numberTagInMemory; }
+#else
+    bool readsTagsFromMemory() const { return false; }
+#endif
+
+    template<typename Functor>
+    auto withNumberTag(const Functor& functor)
+    {
+#if CPU(X86_64)
+        if (m_numberTagInMemory)
+            return functor(*m_numberTagInMemory);
+#endif
+        return functor(GPRInfo::numberTagRegister);
+    }
+
+    template<typename Functor>
+    auto withNotCellMask(const Functor& functor)
+    {
+#if CPU(X86_64)
+        if (m_notCellMaskInMemory)
+            return functor(*m_notCellMaskInMemory);
+#endif
+        return functor(GPRInfo::notCellMaskRegister);
     }
 
 #if CPU(X86_64)
@@ -497,7 +540,7 @@ public:
     Jump branchIfNotCell(T maybeCell, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(NonZero, maybeCell, GPRInfo::notCellMaskRegister);
+            return withNotCellMask([&](auto mask) { return branchTest64(NonZero, maybeCell, mask); });
         return branchTest64(NonZero, maybeCell, TrustedImm64(JSValue::NotCellMask));
     }
 
@@ -505,7 +548,7 @@ public:
     Jump branchIfCell(T maybeCell, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(Zero, maybeCell, GPRInfo::notCellMaskRegister);
+            return withNotCellMask([&](auto mask) { return branchTest64(Zero, maybeCell, mask); });
         return branchTest64(Zero, maybeCell, TrustedImm64(JSValue::NotCellMask));
     }
     
@@ -524,35 +567,35 @@ public:
     Jump branchIfInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branch64(AboveOrEqual, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([&](auto tag) { return branch64(AboveOrEqual, gpr, tag); });
         return branch64(AboveOrEqual, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branch64(Below, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([&](auto tag) { return branch64(Below, gpr, tag); });
         return branch64(Below, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(NonZero, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([&](auto tag) { return branchTest64(NonZero, gpr, tag); });
         return branchTest64(NonZero, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(Zero, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([&](auto tag) { return branchTest64(Zero, gpr, tag); });
         return branchTest64(Zero, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotDoubleKnownNotInt32(GPRReg valueGPR, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(Zero, valueGPR, GPRInfo::numberTagRegister);
+            return withNumberTag([&](auto tag) { return branchTest64(Zero, valueGPR, tag); });
         return branchTest64(Zero, valueGPR, TrustedImm64(JSValue::NumberTag));
     }
 
@@ -1052,7 +1095,7 @@ public:
         if (mode == DoNotHaveTagRegisters)
             sub64(TrustedImm64(JSValue::NumberTag), gpr);
         else {
-            sub64(GPRInfo::numberTagRegister, gpr);
+            withNumberTag([&](auto tag) { sub64(tag, gpr); });
             jitAssertIsJSDouble(gpr);
         }
         return gpr;
@@ -1063,7 +1106,7 @@ public:
             move(TrustedImm64(JSValue::NumberTag), resultGPR);
             add64(gpr, resultGPR);
         } else
-            add64(GPRInfo::numberTagRegister, gpr, resultGPR);
+            withNumberTag([&](auto tag) { add64(tag, gpr, resultGPR); });
         move64ToDouble(resultGPR, fpr);
         return fpr;
     }
@@ -1117,7 +1160,7 @@ public:
         
         isInt32.link(this);
         zeroExtend32ToWord(source, target);
-        or64(GPRInfo::numberTagRegister, target);
+        withNumberTag([&](auto tag) { or64(tag, target); });
         
         done.link(this);
     }
@@ -1195,7 +1238,7 @@ public:
         if (mode == DoNotHaveTagRegisters)
             or64(TrustedImm64(JSValue::NumberTag), intGPR, boxedGPR);
         else
-            or64(GPRInfo::numberTagRegister, intGPR, boxedGPR);
+            withNumberTag([&](auto tag) { or64(tag, intGPR, boxedGPR); });
     }
 
     void boxNativeCallee(GPRReg calleeGPR, GPRReg boxedGPR)
@@ -1680,6 +1723,10 @@ protected:
 
     CodeBlock* const m_codeBlock;
     CodeBlock* const m_baselineCodeBlock;
+#if CPU(X86_64)
+    std::optional<Address> m_numberTagInMemory;
+    std::optional<Address> m_notCellMaskInMemory;
+#endif
 };
 
 } // namespace JSC

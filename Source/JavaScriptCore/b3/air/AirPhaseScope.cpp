@@ -31,6 +31,7 @@
 #include "AirCode.h"
 #include "AirValidate.h"
 #include "B3Common.h"
+#include "B3CompilationCohort.h"
 #include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -40,6 +41,9 @@ PhaseScope::PhaseScope(Code& code, ASCIILiteral name)
     , m_name(name)
     , m_timingScope("Air"_s, name)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    CompilationCohort::yieldBeforePhase(name);
+#endif
     if (shouldDumpIRAtEachPhase(AirMode)) {
         dataLog("Air after ", code.lastPhaseName(), ", before ", name, ":\n");
         dataLog(code);

@@ -54,6 +54,13 @@ std::optional<unsigned> Special::shouldTryAliasingDef(Inst&)
     return std::nullopt;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool Special::hasFixedForms(Inst&)
+{
+    return false;
+}
+
+#endif
 bool Special::isTerminal(Inst&)
 {
     return false;

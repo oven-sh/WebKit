@@ -59,4 +59,8 @@ JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncIsDetached);
 JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncIsOutOfBounds);
 JSC_DECLARE_HOST_FUNCTION(typedArrayViewPrivateFuncLength);
 
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE bool isTypedArrayViewPrototypeLengthGetter(JSFunction*);
+#endif
+
 } // namespace JSC

@@ -47,8 +47,15 @@ void handleCalleeSaves(Code& code)
                 });
 
             if (inst.kind.opcode == Patch) {
+#if USE(BUN_JSC_ADDITIONS)
+                RegisterSet clobbered = inst.extraClobberedRegs();
+                clobbered.merge(inst.extraEarlyClobberedRegs());
+                clobbered.exclude(code.calleeSavesClobberedAtSuspensions());
+                usedCalleeSaves.merge(clobbered);
+#else
                 usedCalleeSaves.merge(inst.extraClobberedRegs());
                 usedCalleeSaves.merge(inst.extraEarlyClobberedRegs());
+#endif
             }
         }
     }
@@ -62,6 +69,21 @@ void handleCalleeSaves(Code& code, RegisterSet usedCalleeSaves)
     usedCalleeSaves.filter(RegisterSet::calleeSaveRegisters());
     usedCalleeSaves.filter(code.mutableRegs());
     usedCalleeSaves.exclude(RegisterSet::stackRegisters()); // We don't need to save FP here.
+#if USE(BUN_JSC_ADDITIONS)
+    usedCalleeSaves.exclude(code.unsavedCalleeSaves());
+#if CPU(ARM64)
+    if (!code.calleeSavesClobberedAtSuspensions().isEmpty()) {
+        bool isSaved = false;
+        for (auto [first, second] : { std::pair { ARM64Registers::x19, ARM64Registers::x20 }, std::pair { ARM64Registers::x21, ARM64Registers::x22 }, std::pair { ARM64Registers::x23, ARM64Registers::x24 } }) {
+            isSaved |= usedCalleeSaves.contains(first, IgnoreVectors) || usedCalleeSaves.contains(second, IgnoreVectors);
+            if (isSaved) {
+                usedCalleeSaves.add(first, IgnoreVectors);
+                usedCalleeSaves.add(second, IgnoreVectors);
+            }
+        }
+    }
+#endif
+#endif
 
     auto calleSavesToSave = usedCalleeSaves;
 

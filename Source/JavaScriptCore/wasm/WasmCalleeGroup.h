@@ -49,6 +49,7 @@ class VM;
 
 namespace Wasm {
 
+class CodeInImage;
 class EntryPlan;
 struct ModuleInformation;
 struct UnlinkedWasmToWasmCall;
@@ -121,7 +122,7 @@ public:
 
 
     static Ref<CalleeGroup> createFromIPInt(VM&, MemoryMode, ModuleInformation&, Ref<IPIntCallees>&&);
-    static Ref<CalleeGroup> createFromExisting(MemoryMode, const CalleeGroup&);
+    static Ref<CalleeGroup> createFromExisting(MemoryMode, const CalleeGroup&, const ModuleInformation&);
 
     void waitUntilFinished();
     void compileAsync(VM&, AsyncCompilationCallback&&);
@@ -261,6 +262,9 @@ public:
 
     MemoryMode mode() const { return m_mode; }
 
+    void* const* imageCodePointers() const;
+    CodePtr<JSEntryPtrTag> jsEntrypointInImage(const RTT&) const;
+
     // TriState::Indeterminate means weakly referenced.
     TriState calleeIsReferenced(const AbstractLocker&, Wasm::Callee*) const WTF_REQUIRES_LOCK(m_lock);
 
@@ -275,7 +279,8 @@ private:
 #endif
 
     CalleeGroup(VM&, MemoryMode, ModuleInformation&, Ref<IPIntCallees>&&);
-    CalleeGroup(MemoryMode, const CalleeGroup&);
+    CalleeGroup(MemoryMode, const CalleeGroup&, const ModuleInformation&);
+    void takeEntrypoints(const ModuleInformation&);
     void setCompilationFinished() WTF_REQUIRES_LOCK(m_lock);
 
     OptimizedCallees* optimizedCalleesTuple(const AbstractLocker&, FunctionCodeIndex index) WTF_REQUIRES_LOCK(m_lock)
@@ -345,6 +350,9 @@ private:
     FixedVector<CodePtr<WasmEntryPtrTag>> m_wasmIndirectCallEntrypoints;
     FixedVector<RefPtr<Wasm::IPIntCallee>> m_wasmIndirectCallWasmCallees;
     FixedVector<MacroAssemblerCodeRef<WasmEntryPtrTag>> m_wasmToWasmExitStubs;
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    RefPtr<CodeInImage> m_codeInImage;
+#endif
     RefPtr<EntryPlan> m_plan WTF_GUARDED_BY_LOCK(m_lock);
     std::atomic<bool> m_compilationFinished { false };
     String m_errorMessage;

@@ -92,6 +92,10 @@ struct GlobalObjectMethodTable {
     String (*codeForEval)(JSGlobalObject*, JSValue);
     bool (*canCompileStrings)(JSGlobalObject*, CompilationType, String, const ArgList&);
     Structure* (*trustedScriptStructure)(JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue (*requireBuiltinModule)(JSGlobalObject*, uint32_t id);
+    JSValue (*nativeBinding)(JSGlobalObject*, uint32_t index);
+#endif
 };
 
 } // namespace JSC

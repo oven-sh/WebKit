@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StructureRareData.h"
 
+#include "AOTTypedObject.h"
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include "CacheableIdentifierInlines.h"
 #include "CachedSpecialPropertyAdaptiveStructureWatchpoint.h"
@@ -148,10 +149,23 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         break;
     }
 
-    if (!ownStructure->propertyAccessesAreCacheable() || ownStructure->isProxy()) {
+#if ENABLE(AOT)
+    bool isTypedStructureWithoutProperty = !ownStructure->hasPolyProto() && AOT::Typed::Object::structureGuaranteesAbsence(ownStructure, uid);
+#else
+    constexpr bool isTypedStructureWithoutProperty = false;
+#endif
+    if (!isTypedStructureWithoutProperty && (!ownStructure->propertyAccessesAreCacheable() || ownStructure->isProxy())) {
         giveUpOnSpecialPropertyCache(key);
         return;
     }
+    auto prepareChain = [&](JSObject* target) -> bool {
+        if (!isTypedStructureWithoutProperty)
+            return !!prepareChainForCaching(globalObject, ownStructure, uid, target);
+        JSValue prototype = ownStructure->storedPrototype();
+        if (!prototype.isObject())
+            return !target;
+        return !!prepareChainForCaching(globalObject, asObject(prototype), uid, target);
+    };
 
     ObjectPropertyConditionSet conditionSet;
     if (slot.isValue()) {
@@ -163,21 +177,19 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
 
         // This will not create a condition for the current structure but that is good because we know that property
         // is not on the ownStructure so we will transisition if one is added and this cache will no longer be used.
-        auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, slot.slotBase());
-        if (!cacheStatus) {
+        if (!prepareChain(slot.slotBase())) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }
         conditionSet = generateConditionsForPrototypePropertyHit(vm, this, globalObject, ownStructure, slot.slotBase(), uid);
         ASSERT(!conditionSet.isValid() || conditionSet.hasOneSlotBaseCondition());
     } else if (slot.isUnset()) {
-        if (!ownStructure->propertyAccessesAreCacheableForAbsence()) {
+        if (!isTypedStructureWithoutProperty && !ownStructure->propertyAccessesAreCacheableForAbsence()) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }
 
-        auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, nullptr);
-        if (!cacheStatus) {
+        if (!prepareChain(nullptr)) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }

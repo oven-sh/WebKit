@@ -44,12 +44,19 @@
 #include "B3LowerMacrosAfterOptimizations.h"
 #include "B3LowerToAir.h"
 #include "B3MoveConstants.h"
+#include "B3NaturalLoops.h"
 #include "B3OptimizeAssociativeExpressionTrees.h"
 #include "B3Procedure.h"
 #include "B3ReduceDoubleToFloat.h"
 #include "B3ReduceStrength.h"
+#include "B3RotateLoops.h"
+#include "B3CountedLoops.h"
+#include "B3StripMineLoops.h"
 #include "B3SpecializeSelect.h"
 #include "B3Validate.h"
+#include "B3SeparateIntegerPaths.h"
+#include "B3SinkValues.h"
+#include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
 
 namespace JSC { namespace B3 {
@@ -75,7 +82,8 @@ void generateToAir(Procedure& procedure)
         dataLog(procedure);
     }
     // We don't require the incoming IR to have predecessors computed.
-    procedure.resetReachability();
+    if (!procedure.takeReachabilityIsFresh())
+        procedure.resetReachability();
 
     if (Options::dumpIonGraph()) [[unlikely]]
         procedure.appendIonGraphPass("InitialCFG"_s);
@@ -84,14 +92,23 @@ void generateToAir(Procedure& procedure)
         validate(procedure);
     
     if (procedure.optLevel() >= 2) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (procedure.positionIndependent())
+            separateIntegerPaths(procedure);
+#endif
         reduceDoubleToFloat(procedure);
         if (Options::useB3SpecializeSelect())
             specializeSelect(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Initial);
-        if (Options::useB3HoistLoopInvariantValues())
+        if (Options::useB3HoistLoopInvariantValues() && !procedure.rotatesLoops())
             hoistLoopInvariantValues(procedure);
-        eliminateCommonSubexpressions(procedure);
-        eliminateDeadCode(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+        if (!procedure.positionIndependent())
+#endif
+        {
+            eliminateCommonSubexpressions(procedure);
+            eliminateDeadCode(procedure);
+        }
 
         // Wasm has br_table instruction, so intent of the switch is already represented
         // and OMG generates Switch nodes directly.
@@ -105,6 +122,49 @@ void generateToAir(Procedure& procedure)
             duplicateTails(procedure);
         fixSSA(procedure);
         foldPathConstants(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+        // By now a test in the body that repeats the loop test is decided. Behind the rotation it would no longer be seen to repeat it.
+        if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops()) {
+            bool hoists = Options::useB3HoistLoopInvariantValues();
+            simplifyTerminals(procedure);
+            eliminateRedundantPhiCycles(procedure);
+            if (hoists)
+                hoistLoopInvariantValues(procedure);
+            if (rotateLoops(procedure)) {
+                fixSSA(procedure);
+                if (hoists)
+                    hoistLoopInvariantValues(procedure);
+                // The rotation has made two of what the loop test tests on its way: the one in front of the loop decides the one at its end.
+                foldPathConstants(procedure);
+                simplifyTerminals(procedure);
+                eliminateDeadCode(procedure);
+            }
+            if (foldComparisonsWithBounds(procedure)) {
+                simplifyTerminals(procedure);
+                eliminateDeadCode(procedure);
+            }
+            Vector<BasicBlock*> topTestedVersionHeaders;
+            if (hoists && versionLoops(procedure, topTestedVersionHeaders)) {
+                fixSSA(procedure);
+                eliminateRedundantPhiCycles(procedure);
+                narrowExtendedWordPhis(procedure);
+                foldOutOfRangeComparisons(procedure);
+                eliminateDeadCode(procedure);
+                if (!topTestedVersionHeaders.isEmpty() && rotateLoops(procedure, &topTestedVersionHeaders)) {
+                    fixSSA(procedure);
+                    foldPathConstants(procedure);
+                    simplifyTerminals(procedure);
+                    eliminateDeadCode(procedure);
+                    if (foldComparisonsWithBounds(procedure)) {
+                        simplifyTerminals(procedure);
+                        eliminateDeadCode(procedure);
+                    }
+                }
+            }
+            if (stripMineLoops(procedure) && hoists)
+                hoistLoopInvariantValues(procedure);
+        }
+#endif
         if (procedure.usesWasmGCStructAllocations() && Options::useB3EliminateWasmGCAllocations())
             eliminateWasmGCAllocations(procedure);
         // FIXME: Add more optimizations here.
@@ -112,6 +172,10 @@ void generateToAir(Procedure& procedure)
     } else if (procedure.optLevel() >= 1) {
         // FIXME: Explore better "quick mode" optimizations.
         reduceStrength(procedure, ReduceStrengthPass::Initial);
+#if USE(BUN_JSC_ADDITIONS)
+        if (procedure.positionIndependent())
+            duplicateTails(procedure, true);
+#endif
         fixSSA(procedure);
     } else
         fixSSA(procedure);
@@ -122,13 +186,25 @@ void generateToAir(Procedure& procedure)
     if (procedure.optLevel() >= 2) {
         optimizeAssociativeExpressionTrees(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Final);
+#if USE(BUN_JSC_ADDITIONS)
+        if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops())
+            eliminateRedundantPhiCycles(procedure);
+#endif
 
         // FIXME: Add more optimizations here.
         // https://bugs.webkit.org/show_bug.cgi?id=150507
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* phase = procedure.lastPhase())
+        phase->run(procedure);
+#endif
     lowerMacrosAfterOptimizations(procedure);
     legalizeMemoryOffsets(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+    if (procedure.positionIndependent() && procedure.optLevel() >= 2)
+        sinkValues(procedure);
+#endif
     moveConstants(procedure);
     legalizeMemoryOffsets(procedure);
     eliminateDeadCode(procedure);

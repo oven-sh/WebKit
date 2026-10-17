@@ -381,6 +381,26 @@ namespace JSC {
 
         bool isConstructor() const { return m_codeBlock->isConstructor(); }
         bool allowsTailCallOptimization() const { return m_allowTailCallOptimization; }
+        std::optional<uint32_t> auditedTailCall() const { return m_auditedTailCall; }
+        void setAuditedTailCall(std::optional<uint32_t> id) { m_auditedTailCall = id; }
+        void setAuditedElementRead(uint32_t id) { m_auditedElementRead = id; }
+        std::optional<uint32_t> takeAuditedElementRead() { return std::exchange(m_auditedElementRead, std::nullopt); }
+        struct StoredValueAudit {
+            uint32_t id;
+            OptionSet<AuditedValueClass> passes;
+            int32_t least;
+            int32_t most;
+            JSTextPosition position;
+        };
+        void setStoredValueAudit(StoredValueAudit audit) { m_storedValueAudit = audit; }
+        std::optional<StoredValueAudit> takeStoredValueAudit() { return std::exchange(m_storedValueAudit, std::nullopt); }
+        void emitStoredValueAudit(RegisterID* value, const std::optional<StoredValueAudit>& audit)
+        {
+            if (!audit) [[likely]]
+                return;
+            emitExpressionInfo(audit->position, audit->position, audit->position);
+            emitAudit(value, audit->id, audit->passes, audit->least, audit->most);
+        }
         DerivedContextType derivedContextType() const { return m_derivedContextType; }
         bool usesArrowFunction() const { return m_scopeNode->usesArrowFunction(); }
         bool needsToUpdateArrowFunctionContext() const { return m_needsToUpdateArrowFunctionContext; }
@@ -637,7 +657,10 @@ namespace JSC {
 
             unsigned instructionOffset = instructions().size();
             m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
+            m_lastExpressionInfo = { divot, divotStart, divotEnd };
         }
+
+        std::array<JSTextPosition, 3> lastExpressionInfo() const { return m_lastExpressionInfo; }
 
 
         ALWAYS_INLINE bool leftHandSideNeedsCopy(bool rightHasAssignments, bool rightIsPure)
@@ -944,7 +967,12 @@ namespace JSC {
         RegisterID* emitIsCellWithType(RegisterID* dst, RegisterID* src, JSType);
         RegisterID* emitIsGenerator(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSGeneratorType); }
         RegisterID* emitIsIteratorHelper(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSIteratorHelperType); }
+#if USE(BUN_JSC_ADDITIONS)
+        RegisterID* emitIsCellWithTypeInRange(RegisterID* dst, RegisterID* src, JSType first, JSType last);
+        RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithTypeInRange(dst, src, ArrayType, DerivedArrayType); }
+#else
         RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ArrayType); }
+#endif
         RegisterID* emitIsPromise(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSPromiseType); }
         RegisterID* emitIsProxyObject(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ProxyObjectType); }
         RegisterID* emitIsRegExpObject(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, RegExpObjectType); }
@@ -962,6 +990,8 @@ namespace JSC {
         RegisterID* emitIsUndefined(RegisterID* dst, RegisterID* src) { return emitEqualityOp<OpStricteq>(dst, src, emitLoad(nullptr, jsUndefined())); }
         RegisterID* emitIsUndefinedOrNull(RegisterID* dst, RegisterID* src);
         RegisterID* emitIsEmpty(RegisterID* dst, RegisterID* src);
+        void emitAudit(RegisterID* value, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most);
+        void emitElementReadAudit(RegisterID* base, RegisterID* subscript, uint32_t id);
         RegisterID* emitIsDerivedArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DerivedArrayType); }
         RegisterID* emitIsDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DisposableStackType); }
         RegisterID* emitIsAsyncDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, AsyncDisposableStackType); }
@@ -1098,6 +1128,8 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
+        bool shouldTrackDeclaredNames() const { return m_optimizeBytecode || !Options::useJIT(); }
+        JSValue immutableGlobalNamedBy(const Variable&);
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1247,7 +1279,7 @@ namespace JSC {
                 generatorOrAsyncWrapperFunctionParameterNames = getParameterNames();
 
             auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement);
-            if (shouldRunBytecodeOptimizer()) [[unlikely]]
+            if (shouldTrackDeclaredNames()) [[unlikely]]
                 executable->setParentDeclaredNames(currentDeclaredNames());
             return executable;
         }
@@ -1267,6 +1299,15 @@ namespace JSC {
         void emitLogShadowChickenTailIfNecessary();
 
         void initializeParameters(FunctionParameters&);
+        void emitParameterAudits(const AuditSites&, FunctionParameters&);
+        unsigned m_auditCost { 0 };
+        std::array<JSTextPosition, 3> m_lastExpressionInfo;
+        RefPtr<RegisterID> m_auditsAreOff;
+        std::optional<uint32_t> m_auditedTailCall;
+        std::optional<uint32_t> m_auditedElementRead;
+        std::optional<StoredValueAudit> m_storedValueAudit;
+        RefPtr<RegisterID> emitCallerChecksResult(uint32_t id);
+        void emitJumpIfValueClassIsIn(RegisterID* value, OptionSet<AuditedValueClass>, Label& target);
         void initializeVarLexicalEnvironment(int symbolTableConstantIndex, SymbolTable* functionSymbolTable, bool hasCapturedVariables);
         void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, NOESCAPE const ScopedLambda<bool(UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);
         void initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable = nullptr, bool canReuseLexicalEnvironment = false);

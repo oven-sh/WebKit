@@ -137,6 +137,13 @@ void CheckSpecial::forEachArg(Inst& inst, NOESCAPE const ScopedLambda<Inst::Each
     forEachArgImpl(numB3Args(inst), m_numCheckArgs + 1, inst, m_stackmapRole, firstRecoverableIndex, callback, optionalDefArgWidth);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool CheckSpecial::hasFixedForms(Inst&)
+{
+    return m_stackmapRole != ForceLateUseUnlessRecoverable;
+}
+
+#endif
 bool CheckSpecial::isValid(Inst& inst)
 {
     return hiddenBranch(inst).isValidForm()

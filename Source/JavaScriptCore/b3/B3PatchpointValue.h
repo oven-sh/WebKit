@@ -52,6 +52,11 @@ public:
     // of substitution could be made so long as there are no interfering writes.
     Effects effects;
 
+#if USE(BUN_JSC_ADDITIONS)
+    uint64_t pureFunctionKey { 0 };
+    int32_t pureFunctionOfChildrenKey { 0 };
+#endif
+
     // The input representation (i.e. constraint) of the return value. This defaults to WarmAny if the
     // type is Void and it defaults to SomeRegister otherwise. It's illegal to mess with this if the type
     // is Void. Otherwise you can set this to any input constraint. If the type of the patchpoint is a tuple

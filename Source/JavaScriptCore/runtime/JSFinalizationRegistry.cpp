@@ -60,6 +60,11 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
     // Init the DOM wrapper for our document now: reconciliation runs during the GC flip, where no
     // JS objects can be allocated. This only works because we no longer weakly hold DOM wrappers.
     globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject);
+
+    if (vm.useImmutableIntrinsics) {
+        auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
+        vm.deferredWorkTimer->scheduleWorkSoonIfActive(ticket, [](DeferredWorkTimer::Ticket&) { });
+    }
 }
 
 template<typename Visitor>

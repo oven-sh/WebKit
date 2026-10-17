@@ -27,6 +27,7 @@
 #include "config.h"
 #include "CachedCall.h"
 
+#include "AOTRuntime.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSFunction.h"
@@ -36,12 +37,18 @@
 
 namespace JSC {
 
-CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int argumentCount)
+CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int argumentCount)
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
-    , m_entryScope(m_vm, function->scope()->realm())
-    , m_functionExecutable(function->jsExecutable())
-    , m_scope(function->scope())
+#if ENABLE(AOT)
+    , m_entryScope(m_vm, function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope()->realm() : function->realm())
+    , m_functionExecutable(function->type() != JSFunctionType || uncheckedDowncast<JSFunction>(function)->isHostFunction() ? nullptr : uncheckedDowncast<JSFunction>(function)->jsExecutable())
+    , m_scope(function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope() : nullptr)
+#else
+    , m_entryScope(m_vm, uncheckedDowncast<JSFunction>(function)->scope()->realm())
+    , m_functionExecutable(uncheckedDowncast<JSFunction>(function)->jsExecutable())
+    , m_scope(uncheckedDowncast<JSFunction>(function)->scope())
+#endif
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -50,7 +57,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         m_valid = !scope.exception();
     });
 #endif
-    ASSERT(!function->isHostFunctionNonInline());
+    ASSERT(isSlimClosureType(function->type()) || !m_functionExecutable == uncheckedDowncast<JSFunction>(function)->isHostFunctionNonInline());
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return;
@@ -68,7 +75,15 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         return;
     }
 
-    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
+#if ENABLE(AOT)
+    if (!m_functionExecutable) {
+        m_addressForCall = (function->type() == JSFunctionType ? AOT::closureEntrypoint() : AOT::slimClosureEntrypoint()).taggedPtr();
+        m_protoCallFrame.init(nullptr, m_entryScope.globalObject(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+        return;
+    }
+#endif
+
+    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, uncheckedDowncast<JSFunction>(function));
     if (scope.exception()) [[unlikely]]
         return;
     m_numParameters = newCodeBlock->numParameters();

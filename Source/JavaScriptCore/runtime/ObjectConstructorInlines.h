@@ -25,9 +25,11 @@
 
 #pragma once
 
+#include "AOTTypedObject.h"
 #include "JSObjectInlines.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
+#include "StructureArrayStorageInlines.h"
 #include "StructureCreateInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -60,15 +62,19 @@ ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    bool mayBeIntercepted = target->structure()->holesMustForwardToPrototype(target);
     source->forEachOwnIndexedProperty<>(globalObject, [&](unsigned index, JSValue value) {
-        target->putDirectIndex(globalObject, index, value);
+        if (mayBeIntercepted) [[unlikely]]
+            target->methodTable()->putByIndex(target, globalObject, index, value, true);
+        else
+            target->putDirectIndex(globalObject, index, value);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         return IterationStatus::Continue;
     });
     RETURN_IF_EXCEPTION(scope, void());
 }
 
-ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
+ALWAYS_INLINE bool checkStructureForClone(Structure* structure, bool requiresQuickEnumeration = true)
 {
     static constexpr bool verbose = false;
 
@@ -132,7 +138,7 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
         return false;
     }
 
-    if (!structure->isQuickPropertyAccessAllowedForEnumeration()) {
+    if (requiresQuickEnumeration && !structure->isQuickPropertyAccessAllowedForEnumeration()) {
         dataLogLnIf(verbose, "target has symbol properties (right now we disable this optimization in this case since we cannot detect private symbol properties)");
         return false;
     }
@@ -302,12 +308,33 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     properties.shrink(0);
     values.clear();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (target->structure()->hasImmutableShape()) [[unlikely]]
+        return false;
+#endif
+
     if (source->hasNonReifiedStaticProperties())
         return false;
 
     Structure* sourceStructure = source->structure();
-    if (!sourceStructure->canPerformFastPropertyEnumerationCommon())
+    if (!sourceStructure->canPerformFastPropertyEnumerationCommon()) {
+#if ENABLE(AOT)
+        if (sourceStructure->compiledLayout()) {
+            EnsureStillAliveScope sourceScope(source);
+            bool isWalked = AOT::Typed::forEachCompiledObjectOwnProperty(source, [&](UniquedStringImpl& name, JSValue value) {
+                properties.append(&name);
+                values.appendWithCrashOnOverflow(value);
+                return true;
+            });
+            if (!isWalked)
+                return false;
+            if (properties.size())
+                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            return true;
+        }
+#endif
         return false;
+    }
 
     if (objectCloneFast(vm, target, source))
         return true;

@@ -154,6 +154,12 @@ public:
         // the block. If it's not set and the block has nothing marked, then we'll make the
         // mistake of making a pop freelist rather than a bump freelist.
         void sweep(FreeList*);
+
+#if ASAN_ENABLED
+        void poisonDeadCells();
+        void poisonDeadCellsIfUnswept();
+        void unpoisonCells();
+#endif
         
         // This is to be called by Subspace.
         template<typename DestroyFunc>
@@ -179,6 +185,9 @@ public:
         void resumeAllocating(FreeList&); // Call this if you canonicalized a block for some non-collection related purpose.
             
         size_t cellSize();
+#if USE(BUN_JSC_ADDITIONS)
+        static constexpr ptrdiff_t offsetOfAtomsPerCell() { return OBJECT_OFFSETOF(Handle, m_atomsPerCell); }
+#endif
         inline unsigned cellsPerBlock();
 
         CellAttributes attributes() const;
@@ -260,6 +269,7 @@ public:
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
         BlockDirectory* m_directory { nullptr };
         MarkedBlock* const m_block { nullptr };
+        void* m_verifierMemo { nullptr };
 
         // WeakSet is rarely accessed so keep it after the other members.
         WeakSet m_weakSet;
@@ -277,6 +287,9 @@ public:
         ~Header();
 
         static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Header, m_vm); }
+#if USE(BUN_JSC_ADDITIONS)
+        static constexpr ptrdiff_t offsetOfHandle() { return offsetOfVM() - static_cast<ptrdiff_t>(sizeof(void*)); }
+#endif
 
         Handle* handlePointerForNullCheck()
         {
@@ -291,7 +304,7 @@ public:
         // m_vm must remain a pointer (instead of a reference) because JSCLLIntOffsetsExtractor
         // will fail otherwise.
         VM* const m_vm;
-        Subspace* m_subspace;
+        size_t m_cellSize { 0 };
 
         CountingLock m_lock;
     
@@ -365,7 +378,7 @@ public:
 
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
-        void* m_verifierMemo { nullptr };
+        Subspace* m_subspace;
     };
     
 private:
@@ -391,7 +404,8 @@ public:
     static_assert(endAtom * atomSize == blockSize);
     static_assert(endAtom - firstPayloadRegionAtom == numberOfPayloadAtoms);
 
-    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*);
+    enum class IsFirstInDirectory : bool { No, Yes };
+    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*, IsFirstInDirectory = IsFirstInDirectory::No);
         
     Handle& handle();
     const Handle& handle() const;
@@ -592,7 +606,7 @@ inline size_t MarkedBlock::Handle::cellSize()
 
 inline size_t MarkedBlock::cellSize()
 {
-    return handle().cellSize();
+    return header().m_cellSize;
 }
 
 inline CellAttributes MarkedBlock::Handle::attributes() const
@@ -738,13 +752,13 @@ inline bool MarkedBlock::hasAnyMarked() const
 
 inline void MarkedBlock::setVerifierMemo(void* p)
 {
-    header().m_verifierMemo = p;
+    handle().m_verifierMemo = p;
 }
 
 template<typename T>
 T MarkedBlock::verifierMemo() const
 {
-    return std::bit_cast<T>(header().m_verifierMemo);
+    return std::bit_cast<T>(header().m_handle.m_verifierMemo);
 }
 
 } // namespace JSC

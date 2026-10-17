@@ -161,6 +161,9 @@ int main(int argc, char** argv)
     timeBeginPeriod(1);
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSC::installCompilers();
+#endif
     JSC::initialize();
 
     // We can't use destructors in the following code because it uses Windows

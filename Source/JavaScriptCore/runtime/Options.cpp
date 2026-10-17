@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "Options.h"
+#include "CompilerHooks.h"
 
 #include "CPU.h"
 #include "JITOperationValidation.h"
@@ -728,6 +729,8 @@ static inline void LEGACY_NODELETE disableAllWasmOptions()
     Options::useWasmTailCalls() = false;
 }
 
+CompilerHooks g_compilerHooks;
+
 static inline void LEGACY_NODELETE disableAllJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
@@ -795,6 +798,10 @@ void Options::executeDumpOptions()
     dataLog(builder.toString());
 }
 
+double Options::sizeClassProgressionWithAOT()
+{
+    return OptionsHelper::wasOverridden(sizeClassProgressionID) ? Options::sizeClassProgression() : 1.1;
+}
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -805,6 +812,18 @@ void Options::notifyOptionsChanged()
     unsigned thresholdForGlobalLexicalBindingEpoch = Options::thresholdForGlobalLexicalBindingEpoch();
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
+
+    if (Options::aotImagePath())
+        Options::useAOT() = true;
+
+    if (Options::useAOT()) {
+        Options::useImmutableIntrinsics() = true;
+        Options::useJIT() = false;
+        Options::useMiniVMModeWithoutJIT() = false;
+        if (!OptionsHelper::wasOverridden(heapGrowthMaxIncreaseID))
+            Options::heapGrowthMaxIncrease() = 1;
+        Options::sizeClassProgression() = sizeClassProgressionWithAOT();
+    }
 
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
     if (Options::useGdbJITInfo())
@@ -877,6 +896,10 @@ void Options::notifyOptionsChanged()
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
+#if USE(BUN_JSC_ADDITIONS)
+    if (!g_compilerHooks.areInstalled())
+        Options::useJIT() = false;
+#endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
 #if OS(DARWIN)
@@ -1060,6 +1083,43 @@ inline bool strncasecmp(const char* str1, const char* str2, size_t n)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+NEVER_INLINE void Options::overrideOptionsFromEnvironment()
+{
+#if PLATFORM(COCOA) || OS(LINUX)
+    bool hasBadOptions = false;
+#if PLATFORM(COCOA)
+    char** envp = *_NSGetEnviron();
+#else
+    char** envp = environ;
+#endif
+
+    for (; *envp; envp++) {
+        const char* env = *envp;
+        if (!strncmp("JSC_", env, 4)) {
+            if (!Options::setOption(&env[4])) {
+                dataLog("ERROR: invalid option: ", *envp, "\n");
+                hasBadOptions = true;
+            }
+        }
+    }
+    if (hasBadOptions && Options::validateOptions())
+        CRASH();
+#endif // PLATFORM(COCOA) || OS(LINUX)
+
+#if !PLATFORM(COCOA)
+#define OVERRIDE_OPTION_WITH_HEURISTICS(type_, name_, defaultValue_, availability_, description_) \
+    overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
+    FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
+#undef OVERRIDE_OPTION_WITH_HEURISTICS
+
+#define OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS(aliasedName_, unaliasedName_, equivalence_) \
+    overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
+    FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
+#undef OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS
+
+#endif // !PLATFORM(COCOA)
+}
+
 void Options::initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& optionsCustomizationCallback)
 {
     static std::once_flag initializeOptionsOnceFlag;
@@ -1092,41 +1152,8 @@ void Options::initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<voi
             // The env var should be the name of the option prefixed with
             // "JSC_". An embedder with its own configuration surface can opt
             // out with Config::disableEnvironmentOptions().
-            if (!g_jscConfig.environmentOptionsDisabled) {
-#if PLATFORM(COCOA) || OS(LINUX)
-                bool hasBadOptions = false;
-#if PLATFORM(COCOA)
-                char** envp = *_NSGetEnviron();
-#else
-                char** envp = environ;
-#endif
-
-                for (; *envp; envp++) {
-                    const char* env = *envp;
-                    if (!strncmp("JSC_", env, 4)) {
-                        if (!Options::setOption(&env[4])) {
-                            dataLog("ERROR: invalid option: ", *envp, "\n");
-                            hasBadOptions = true;
-                        }
-                    }
-                }
-                if (hasBadOptions && Options::validateOptions())
-                    CRASH();
-#endif // PLATFORM(COCOA) || OS(LINUX)
-
-#if !PLATFORM(COCOA)
-#define OVERRIDE_OPTION_WITH_HEURISTICS(type_, name_, defaultValue_, availability_, description_) \
-                overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
-                FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
-#undef OVERRIDE_OPTION_WITH_HEURISTICS
-
-#define OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS(aliasedName_, unaliasedName_, equivalence_) \
-                overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
-                FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
-#undef OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS
-
-#endif // !PLATFORM(COCOA)
-            }
+            if (!g_jscConfig.environmentOptionsDisabled)
+                overrideOptionsFromEnvironment();
 
 #if 0
                 ; // Deconfuse editors that do auto indentation

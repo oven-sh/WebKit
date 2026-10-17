@@ -56,6 +56,9 @@ public:
 
     CustomGetterSetter::CustomGetter getter() const { return m_getter; }
     CustomGetterSetter::CustomSetter setter() const { return m_setter; }
+    uint32_t lazyClosureRequest() const { return m_lazyClosureRequest; }
+    void setLazyClosureRequest(uint32_t request) { m_lazyClosureRequest = request; }
+    static constexpr ptrdiff_t offsetOfLazyClosureRequest() { return OBJECT_OFFSETOF(CustomGetterSetter, m_lazyClosureRequest); }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
         
@@ -79,6 +82,7 @@ protected:
 private:
     CustomGetter m_getter;
     CustomSetter m_setter;
+    uint32_t m_lazyClosureRequest { 0 };
 };
 
 } // namespace JSC

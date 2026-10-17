@@ -38,8 +38,8 @@ using CustomAccessorValueFunc = FunctionPtr<CustomAccessorPtrTag, bool(JSGlobalO
 
 class PutPropertySlot {
 public:
-    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor };
-    enum Context : uint8_t { UnknownContext, PutById, PutByIdEval };
+    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingTypedField };
+    enum Context : uint8_t { UnknownContext, PutById, PutByIdEval, ReflectSet };
 
     PutPropertySlot(JSValue thisValue, bool isStrictMode = false, Context context = UnknownContext, bool isInitialization = false)
         : m_base(nullptr)
@@ -53,6 +53,16 @@ public:
         , m_cacheability(CachingAllowed)
     {
     }
+
+    void setExistingTypedField(JSObject* base, PropertyOffset offset, uint32_t fieldType)
+    {
+        m_type = ExistingTypedField;
+        m_base = base;
+        m_offset = offset;
+        m_fieldType = fieldType;
+    }
+    bool isTypedFieldCacheablePut() const { return isCacheable() && m_type == ExistingTypedField; }
+    uint32_t fieldType() const { return m_fieldType; }
 
     void setExistingProperty(JSObject* base, PropertyOffset offset)
     {
@@ -141,6 +151,7 @@ private:
     SUPPRESS_FORWARD_DECL_MEMBER JSObject* m_base;
     JSValue m_thisValue;
     PropertyOffset m_offset;
+    uint32_t m_fieldType { 0 };
     bool m_isStrictMode : 1;
     bool m_isInitialization : 1;
     bool m_isTaintedByOpaqueObject : 1;

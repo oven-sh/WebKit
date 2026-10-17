@@ -242,9 +242,26 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
     {
 #endif
         constexpr bool lookForWasmCallees = false;
+        MarkedSpace& space = m_heap.objectSpace();
+        char* startOfPreciseAllocations = std::bit_cast<char*>(std::numeric_limits<uintptr_t>::max());
+        char* endOfPreciseAllocations = nullptr;
+        if (space.preciseAllocationsForThisCollectionSize()) {
+            PreciseAllocation* last = space.preciseAllocationsForThisCollectionEnd()[-1];
+            startOfPreciseAllocations = std::bit_cast<char*>(space.preciseAllocationsForThisCollectionBegin()[0]->cell());
+            endOfPreciseAllocations = std::bit_cast<char*>(last->cell()) + last->cellSize() + sizeof(IndexingHeader);
+        }
         for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
             if (isPoisonedForConservativeScan(it))
                 continue;
+            char* pointer = removeArrayPtrTag(*it);
+            uintptr_t bits = std::bit_cast<uintptr_t>(pointer);
+            uintptr_t blockBits = bits & MarkedBlock::blockMask;
+            if (jsGCFilter.ruleOut(blockBits)
+                && (bits - blockBits > sizeof(IndexingHeader) || jsGCFilter.ruleOut((bits - sizeof(IndexingHeader) - 1) & MarkedBlock::blockMask))
+                && (pointer < startOfPreciseAllocations || pointer > endOfPreciseAllocations)) {
+                markHook.mark(pointer);
+                continue;
+            }
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
         }
     }

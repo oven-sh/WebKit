@@ -501,6 +501,7 @@ private:
     uint32_t m_capacity { emptyCapacity };
     uint32_t m_keyCount { 0 };
     uint32_t m_deleteCount { 0 };
+    uint32_t m_edenVersionAtLastVisit { 0 };
     // Left uninitialized: JIT-inlined allocation does not run the constructor, and the storage is
     // only read once makeAndSetNewBuffer() has cleared it and pointed m_buffer at it.
     alignas(WeakMapBucketType) std::byte m_inlineStorage[initialCapacity * sizeof(WeakMapBucketType)];

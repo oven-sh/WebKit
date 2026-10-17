@@ -29,6 +29,9 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTTypedObject.h"
+
+#include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -90,6 +93,7 @@
 #include "JSPromiseCombinatorsContextInlines.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
 #include "JSPromiseReaction.h"
 #include "JSPropertyNameEnumeratorInlines.h"
 #include "JSSentinelInlines.h"
@@ -211,7 +215,7 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
-    if (!Options::useJIT())
+    if (!Options::useJIT() && !Options::useRegExpJIT())
         return false;
 
     auto canUseJITString = unsafeSpan(getenv("JavaScriptCoreUseJIT"));
@@ -373,6 +377,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     evalExecutableStructure.setWithoutWriteBarrier(EvalExecutable::createStructure(*this, nullptr, jsNull()));
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
+    m_structureIDBase = JSC::structureIDBase();
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
     webAssemblyStreamingContextStructure.setWithoutWriteBarrier(JSWebAssemblyStreamingContext::createStructure(*this, nullptr, jsNull()));
@@ -516,8 +521,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // won't use this.
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
 
-    m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
-
     if (Options::useTypeProfiler())
         enableTypeProfiler();
     if (Options::useControlFlowProfiler())
@@ -573,6 +576,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
+    } else if (Options::useRegExpJIT()) {
+        jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
 
@@ -621,6 +626,9 @@ void waitForVMDestruction()
 void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 {
     m_crossTaskToken = WTF::move(token);
+#if USE(BUN_JSC_ADDITIONS)
+    updateHostObservesMicrotaskBoundaries();
+#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -681,7 +689,13 @@ VM::~VM()
     smallStrings.setIsInitialized(false);
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
+#if ENABLE(AOT)
+    AOT::Instance::destroyUnneededInstances(*this);
+#endif
     heap.shutDown();
+#if ENABLE(AOT)
+    AOT::PropertyLookupTable::destroy(*this);
+#endif
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();
@@ -941,6 +955,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> VM::getCTIStub(CommonJITThunkID thunkID)
 
 #endif // ENABLE(JIT)
 
+void VM::createBytecodeIntrinsicRegistry()
+{
+    m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
+}
+
 NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVisibility implementationVisibility, NativeFunction constructor, unsigned length, const String& name)
 {
     return getHostFunction(function, implementationVisibility, NoIntrinsic, constructor, nullptr, length, name);
@@ -960,6 +979,17 @@ static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
     }
 #endif
     default: {
+#if USE(BUN_JSC_ADDITIONS)
+        if (intrinsic != NoIntrinsic) {
+            static Lock lock;
+            Locker locker { lock };
+            static NeverDestroyed<std::array<RefPtr<NativeJITCode>, 256>> byIntrinsic;
+            RefPtr<NativeJITCode>& code = byIntrinsic.get()[intrinsic];
+            if (!code)
+                code = adoptRef(*new NativeJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_call_trampoline), JITType::HostCallThunk, intrinsic));
+            return *code;
+        }
+#endif
         static LazyNeverDestroyed<Ref<NativeJITCode>> result;
         static std::once_flag onceKey;
         std::call_once(onceKey, [&] {
@@ -980,15 +1010,21 @@ static Ref<NativeJITCode> jitCodeForConstructTrampoline()
     return result.get();
 }
 
+#if ENABLE(JIT)
+static NEVER_INLINE NativeExecutable* hostFunctionStubWithThunk(VM& vm, NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
+{
+    return vm.jitStubs->hostFunctionStub(
+        vm, toTagged(function), toTagged(constructor),
+        intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
+        implementationVisibility, intrinsic, signature, length, name);
+}
+#endif // ENABLE(JIT)
+
 NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
 {
 #if ENABLE(JIT)
-    if (Options::useJIT()) {
-        return jitStubs->hostFunctionStub(
-            *this, toTagged(function), toTagged(constructor),
-            intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
-            implementationVisibility, intrinsic, signature, length, name);
-    }
+    if (Options::useJIT())
+        return hostFunctionStubWithThunk(*this, function, implementationVisibility, intrinsic, constructor, signature, length, name);
 #endif // ENABLE(JIT)
     UNUSED_PARAM(intrinsic);
     UNUSED_PARAM(signature);
@@ -1268,10 +1304,26 @@ bool VM::cancelTermination()
 void VM::setException(Exception* exception)
 {
     ASSERT(!isTerminationException(exception) || hasTerminationRequest());
+    if (deferredStackCapture.exception && deferredStackCapture.exception != exception) [[unlikely]]
+        finishDeferredStackCapture();
     m_exception = exception;
     m_lastException = exception;
     if (exception)
         traps().fireTrap(VMTraps::NeedExceptionHandling);
+}
+
+void VM::finishDeferredStackCapture()
+{
+    DeferredStackCapture deferred = std::exchange(deferredStackCapture, { });
+    if (deferred.exception)
+        deferred.exception->finishDeferredStackCapture(*this, deferred.hostFunction, deferred.callerFrame, deferred.returnPC);
+}
+
+void VM::dropDeferredStackCapture()
+{
+    DeferredStackCapture deferred = std::exchange(deferredStackCapture, { });
+    if (deferred.exception)
+        deferred.exception->dropDeferredStackCapture();
 }
 
 void VM::throwTerminationException()
@@ -1306,8 +1358,10 @@ void VM::throwTerminationExceptionIfNeeded()
 Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
 {
     // The TerminationException should never be overridden.
-    if (hasPendingTerminationException())
+    if (hasPendingTerminationException()) {
+        finishDeferredStackCapture();
         return m_exception;
+    }
 
     // The TerminationException is not like ordinary exceptions that should be
     // reported to the debugger. The fact that the TerminationException uses the
@@ -1321,7 +1375,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
         return exceptionToThrow;
     }
 
-    CallFrame* throwOriginFrame = topJSCallFrame();
+    CallFrame* throwOriginFrame = globalObject->debugger() || Options::breakOnThrow() ? topJSCallFrame() : nullptr;
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = throwOriginFrame && !throwOriginFrame->isNativeCalleeFrame() ? throwOriginFrame->codeBlock() : nullptr;
         dataLog("Throwing exception in call frame ", RawPointer(throwOriginFrame), " for code block ", codeBlock, "\n");
@@ -1329,6 +1383,11 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     }
 
     interpreter.notifyDebuggerOfExceptionToBeThrown(*this, globalObject, throwOriginFrame, exceptionToThrow);
+
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : m_aotInstances)
+        instance->clearNewTarget();
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // An embedder reports an exception nobody caught after the async context it was thrown in has
@@ -1350,8 +1409,8 @@ Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
     if (!exception) {
-        auto action = Exception::StackCaptureAction::CaptureStack;
-        if (!globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClause())
+        auto action = Exception::StackCaptureAction::CaptureStackUnlessCaughtByCompiledCode;
+        if (!Options::useAOT() && !globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClause())
             action = Exception::StackCaptureAction::DoNotCaptureStack;
         exception = Exception::create(*this, thrownValue, action);
     }
@@ -2016,6 +2075,38 @@ NativeExecutable* VM::promiseAnySlowRejectFunctionExecutableSlow()
     return executable;
 }
 
+NativeExecutable* VM::promiseFinallyThenFinallyExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyThenFinallyExecutable);
+    auto* executable = getHostFunction(promiseFinallyThenFinallyFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, nullString());
+    m_promiseFinallyThenFinallyExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::promiseFinallyCatchFinallyExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyCatchFinallyExecutable);
+    auto* executable = getHostFunction(promiseFinallyCatchFinallyFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, nullString());
+    m_promiseFinallyCatchFinallyExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::promiseFinallyValueThunkExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyValueThunkExecutable);
+    auto* executable = getHostFunction(promiseFinallyValueThunkFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nullString());
+    m_promiseFinallyValueThunkExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::promiseFinallyThrowerExecutableSlow()
+{
+    ASSERT(!m_promiseFinallyThrowerExecutable);
+    auto* executable = getHostFunction(promiseFinallyThrowerFunc, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nullString());
+    m_promiseFinallyThrowerExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
 bool VM::hasLanguageChange()
 {
     return m_intlCache->hasLanguageChange();
@@ -2105,6 +2196,18 @@ void VM::executeEntryScopeServicesOnExit()
     clearScratchBuffers();
 }
 
+JSGlobalObject* VM::topFrameGlobalObject()
+{
+    JSGlobalObject* globalObject = nullptr;
+    StackVisitor::visit(topCallFrame, *this, [&](StackVisitor& visitor) {
+        globalObject = visitor->lexicalGlobalObject(*this);
+        return IterationStatus::Done;
+    });
+    if (!globalObject && entryScope)
+        globalObject = entryScope->globalObject();
+    return globalObject;
+}
+
 JSGlobalObject* VM::deprecatedVMEntryGlobalObject(JSGlobalObject* globalObject) const
 {
     if (entryScope)
@@ -2184,7 +2287,10 @@ void VM::visitAggregateImpl(Visitor& visitor)
         }
     }
 #endif
-    numericStrings.visitAggregate(visitor);
+    if (std::is_same_v<Visitor, SlotVisitor> && heap.collectionScope() == CollectionScope::Eden)
+        numericStrings.visitSlotsWrittenSinceLastCollection(visitor);
+    else
+        numericStrings.visitAggregate(visitor);
     m_jsonCache->visitAggregate(visitor);
     m_builtinExecutables->visitAggregate(visitor);
     m_regExpCache->visitAggregate(visitor);
@@ -2287,6 +2393,10 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_promiseAllSettledSlowRejectFunctionExecutable);
     visitor.append(m_promiseAnyRejectFunctionExecutable);
     visitor.append(m_promiseAnySlowRejectFunctionExecutable);
+    visitor.append(m_promiseFinallyThenFinallyExecutable);
+    visitor.append(m_promiseFinallyCatchFinallyExecutable);
+    visitor.append(m_promiseFinallyValueThunkExecutable);
+    visitor.append(m_promiseFinallyThrowerExecutable);
 }
 DEFINE_VISIT_AGGREGATE(VM);
 
@@ -2357,10 +2467,80 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
     heap.sweeper().doWorkUntil(*this, deadline);
 }
 
+void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty)
+{
+    if (changed->structure()->isUncacheableDictionary())
+        nameOfProperty = nullptr;
+#if ENABLE(AOT)
+    if (m_aotPropertyLookupTable)
+        m_aotPropertyLookupTable->didChangePrototype(nameOfProperty);
+    for (AOT::Instance* instance : m_aotInstances) {
+        instance->forgetInheritedFieldAnswers();
+        if (instance->typed && instance->typed->hasDescendantPrototypes()) [[unlikely]]
+            instance->typed->didChangeDescendantPrototype(*this, changed, nameOfProperty);
+    }
+#endif
+    auto* megamorphicCache = this->megamorphicCache();
+    if (megamorphicCache && megamorphicCache->mayHaveEntryThroughObject(changed) && (!nameOfProperty || megamorphicCache->mayHaveEntryForName(*nameOfProperty)))
+        invalidateEpochCaches();
+}
+
+#if ENABLE(AOT)
+void VM::didChangePrototypeOfFinalObject(Structure* before, JSObject* prototype, Structure* after)
+{
+    uint32_t idBefore = before->id().bits();
+    for (AOT::Instance* instance : m_aotInstances) {
+        auto& entry = instance->prototypeChangeCache[AOT::Instance::prototypeChangeCacheIndex(std::bit_cast<uintptr_t>(prototype))];
+        if (entry.prototype == prototype && entry.from == idBefore)
+            continue;
+        bool structureDecidesOutcome = before->isStructureExtensible() && !before->mayBePrototype() && !before->hasBeenDictionary() && !hasIndexedProperties(before->indexingType())
+            && !before->typeInfo().wouldHaveFixedProperties() && !before->isImmutablePrototypeExoticObject() && !before->inheritorsMayOverrideReadOnlyProperties();
+        if (!structureDecidesOutcome)
+            return;
+        entry = { prototype, idBefore, after->id().bits() };
+        instance->prototypeChangeCacheIsDirty = true;
+    }
+}
+#endif
+
+bool VM::mayHaveCachesDependingOnPrototype(JSObject* object)
+{
+#if ENABLE(AOT)
+    if (m_aotPropertyLookupTable && m_aotPropertyLookupTable->hasPrototypeDependentEntries())
+        return true;
+    for (AOT::Instance* instance : m_aotInstances) {
+        if (instance->hasInheritedFieldAnswers || (instance->typed && instance->typed->hasDescendantPrototypes()))
+            return true;
+    }
+#endif
+    auto* megamorphicCache = this->megamorphicCache();
+    return megamorphicCache && megamorphicCache->mayHaveEntryThroughObject(object);
+}
+
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 {
-    if (auto* megamorphicCache = this->megamorphicCache())
-        megamorphicCache->bumpEpoch();
+#if ENABLE(AOT)
+    if (m_aotPropertyLookupTable)
+        m_aotPropertyLookupTable->didChangePrototype(nullptr);
+    for (AOT::Instance* instance : m_aotInstances)
+        instance->forgetInheritedFieldAnswers();
+#endif
+    invalidateEpochCaches();
+}
+
+void VM::invalidateEpochCaches()
+{
+    auto* megamorphicCache = this->megamorphicCache();
+    if (!megamorphicCache)
+        return;
+    [[maybe_unused]] bool didClearEntries = megamorphicCache->bumpEpoch();
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : m_aotInstances) {
+        instance->megamorphicCacheEpoch = megamorphicCache->epoch();
+        if (didClearEntries) [[unlikely]]
+            instance->clearCachesValidatedByMegamorphicCacheEpoch();
+    }
+#endif
 }
 
 VM::DrainMicrotaskDelayScope::DrainMicrotaskDelayScope(VM& vm)

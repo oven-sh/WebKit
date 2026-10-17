@@ -157,6 +157,8 @@ private:
     bool anyMutatorHasConnWithLock() WTF_REQUIRES_LOCK(*m_threadLock);
     void assertConn(GCConductor);
 
+    bool isNotRunning() const { return m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed); }
+
     bool shouldCollectInCollectorThread() WTF_REQUIRES_LOCK(*m_threadLock);
     CollectionScope decideCollectionScope();
     void collectInCollectorThread();
@@ -191,6 +193,8 @@ private:
     // The per-heap part of the Begin and End phases.
     void beginCollectionInEachHeap(CollectionScope, MonotonicTime startTime);
     void setUpVisitors(CollectionScope);
+    void startHelpers();
+    bool hasStartedHelpers() const { return m_hasStartedHelpers.load(std::memory_order_relaxed); }
     void endCollectionInEachHeap();
 
     void stopThePeriphery();
@@ -247,6 +251,7 @@ private:
     // GC marking threads claim these at the start of marking, and return them at the end.
     Vector<SlotVisitor*> m_availableParallelSlotVisitors WTF_GUARDED_BY_LOCK(m_parallelSlotVisitorLock);
     ParallelHelperClient m_helperClient;
+    std::atomic<bool> m_hasStartedHelpers { false };
 
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
 
@@ -265,6 +270,7 @@ private:
     const Ref<AutomaticThreadCondition> m_threadCondition; // The mutator must not wait on this. It would cause a deadlock.
     const RefPtr<AutomaticThread> m_thread;
     Deque<GCRequest> m_requests WTF_GUARDED_BY_LOCK(*m_threadLock);
+    std::atomic<bool> m_hasQueuedRequest { false };
     GCRequest m_currentRequest;
     GCRequest::Ticket m_lastServedTicket WTF_GUARDED_BY_LOCK(*m_threadLock) { 0 };
     GCRequest::Ticket m_lastGrantedTicket WTF_GUARDED_BY_LOCK(*m_threadLock) { 0 };

@@ -35,6 +35,9 @@
 #include "B3SparseCollection.h"
 #include "B3Type.h"
 #include "B3ValueKey.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "B3Arena.h"
+#endif
 #include "B3Width.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/IteratorRange.h>
@@ -364,7 +367,11 @@ public:
 protected:
     Effects effectsSlow() const;
 
+#if USE(BUN_JSC_ADDITIONS)
+    Value* cloneImpl(Arena*) const;
+#else
     Value* cloneImpl() const;
+#endif
 
     void replaceWith(Kind, Type, BasicBlock*);
     void replaceWith(Kind, Type, BasicBlock*, Value*);
@@ -607,6 +614,36 @@ protected:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    static char* allocateSpace(Arena* arena, Opcode opcode, size_t size, size_t alignment)
+    {
+        size_t adjacencyListSpace = Value::adjacencyListSpace(opcode);
+        size_t allocIdentitySize = sizeof(Value) + sizeof(Value*);
+        size_t allocSize = std::max(size + adjacencyListSpace, allocIdentitySize);
+        if (!arena) [[unlikely]]
+            return static_cast<char*>(SequesteredArenaMalloc::malloc(allocSize));
+        return static_cast<char*>(arena->allocate(allocSize, alignment));
+    }
+
+protected:
+    template<typename ValueType, typename... Arguments>
+    static ValueType* allocateIn(Arena* arena, Arguments... arguments)
+    {
+        char* alloc = allocateSpace(arena, ValueType::opcodeFromConstructor(arguments...), sizeof(ValueType), alignof(ValueType));
+        ValueType* result = new (alloc) ValueType(arguments...);
+        result->m_isInArena = !!arena;
+        return result;
+    }
+    template<typename ValueType>
+    static ValueType* allocateCloneIn(Arena* arena, const ValueType& valueToClone)
+    {
+        char* alloc = allocateSpace(arena, valueToClone.opcode(), sizeof(ValueType), alignof(ValueType));
+        ValueType* result = new (alloc) ValueType(valueToClone);
+        result->buildAdjacencyList(sizeof(ValueType), valueToClone);
+        result->m_isInArena = !!arena;
+        return result;
+    }
+#else
     static char* allocateSpace(Opcode opcode, size_t size)
     {
         size_t adjacencyListSpace = Value::adjacencyListSpace(opcode);
@@ -631,6 +668,7 @@ protected:
         result->buildAdjacencyList(sizeof(ValueType), valueToClone);
         return result;
     }
+#endif
 
     // Protected so it will only be called from allocate above, possibly through the subclasses'copy constructors
     Value(const Value&) = default;
@@ -642,7 +680,13 @@ protected:
     size_t computeAdjacencyListOffset() const;
 
     friend class Procedure;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ProcedureFingerprint;
+#endif
     friend class SparseCollection<Value>;
+#if USE(BUN_JSC_ADDITIONS)
+    friend struct ValueDestroyer;
+#endif
 
 private:
     template<typename... Arguments>
@@ -937,6 +981,9 @@ private:
     Type m_type;
 protected:
     NumChildren m_numChildren;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_isInArena { false };
+#endif
 private:
     Origin m_origin;
 
@@ -960,6 +1007,16 @@ public:
 
     BasicBlock* owner { nullptr }; // computed by Procedure::resetValueOwners().
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+inline void ValueDestroyer::operator()(Value* value) const
+{
+    bool isInArena = value->m_isInArena;
+    value->~Value();
+    if (!isInArena)
+        SequesteredArenaMalloc::free(value);
+}
+#endif
 
 class DeepValueDump {
 public:

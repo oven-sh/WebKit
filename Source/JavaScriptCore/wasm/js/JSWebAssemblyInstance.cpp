@@ -269,6 +269,8 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObjec
 
 
     RELEASE_ASSERT(wasmCalleeGroup->isSafeToRun(memory0Mode()));
+    m_imageCodePointers = wasmCalleeGroup->imageCodePointers();
+    module().createInterpreterMetadataIfNeeded(wasmCalleeGroup.get());
 
     for (unsigned importFunctionNum = 0; importFunctionNum < numImportFunctions(); ++importFunctionNum) {
         auto functionSpaceIndex = FunctionSpaceIndex(importFunctionNum);

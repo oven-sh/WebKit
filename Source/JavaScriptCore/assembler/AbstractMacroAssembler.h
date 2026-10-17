@@ -82,6 +82,8 @@ public:
         return Success;
     }
 
+    void disableConstantBlinding() { m_blindsConstants = false; }
+
 protected:
     uint32_t random()
     {
@@ -89,11 +91,13 @@ protected:
             initializeRandom();
         return m_randomSource->getUint32();
     }
+    bool blindsConstants() const { return m_blindsConstants; }
 
 private:
     JS_EXPORT_PRIVATE void initializeRandom();
 
     std::optional<WeakRandom> m_randomSource;
+    bool m_blindsConstants { true };
 };
 
 template <class AssemblerType>
@@ -167,7 +171,7 @@ public:
     //
     // Describes a simple base-offset address.
     struct Address {
-        explicit Address(RegisterID base, int32_t offset = 0)
+        explicit constexpr Address(RegisterID base, int32_t offset = 0)
             : base(base)
             , offset(offset)
         {

@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3BasicBlockUtils.h"
 #include "B3BlockInsertionSet.h"
 #include "B3ValueInlines.h"
 
@@ -37,6 +38,9 @@ namespace JSC { namespace B3 {
 void breakCriticalEdges(Procedure& proc)
 {
     BlockInsertionSet insertionSet(proc);
+#if USE(BUN_JSC_ADDITIONS)
+    LargePredecessorLists<BasicBlock> lists;
+#endif
     
     for (BasicBlock* block : proc) {
         // Non-void terminals that are the moral equivalent of jumps trigger critical edge breaking
@@ -50,11 +54,15 @@ void breakCriticalEdges(Procedure& proc)
                 continue;
 
             BasicBlock* pad =
-                insertionSet.insertBefore(successor, successor->frequency());
+                insertionSet.insertBefore(successor, proc.positionIndependent() ? std::min(block->frequency(), successor->frequency()) : successor->frequency());
             pad->appendNew<Value>(proc, Jump, successor->at(0)->origin());
             pad->setSuccessors(FrequentedBlock(successor));
             pad->addPredecessor(block);
+#if USE(BUN_JSC_ADDITIONS)
+            lists.replace(successor, block, pad);
+#else
             successor->replacePredecessor(block, pad);
+#endif
             successor = pad;
         }
     }

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ProgramExecutable.h"
 
+#include "AOTRuntime.h"
 #include "BatchedTransitionOptimizer.h"
 #include "CodeCache.h"
 #include "Debugger.h"
@@ -116,6 +117,11 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
 
     if (error.isValid())
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
+
+#if ENABLE(AOT)
+    if (unlinkedCodeBlock->hasNoInstructions())
+        AOT::Instance::ensure(globalObject).setTopLevelExecutableOf(source().provider()->aotModuleID(), this);
+#endif
 
     JSValue nextPrototype = globalObject->getPrototypeDirect();
     while (nextPrototype && nextPrototype.isObject()) {
@@ -248,7 +254,7 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
         globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(unlinkedFunctionExecutable->name());
         RETURN_IF_EXCEPTION(throwScope, nullptr);
-        if (vm.typeProfiler() || vm.controlFlowProfiler()) {
+        if ((vm.typeProfiler() || vm.controlFlowProfiler()) && !unlinkedCodeBlock->hasNoInstructions()) {
             vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),
                 unlinkedFunctionExecutable->unlinkedFunctionEnd());

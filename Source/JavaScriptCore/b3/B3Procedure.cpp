@@ -51,11 +51,57 @@ namespace JSC { namespace B3 {
 
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Procedure);
 
+#if USE(BUN_JSC_ADDITIONS)
+Arena::ThreadChunk::~ThreadChunk()
+{
+    if (chunk)
+        fastFree(chunk);
+}
+
+Arena::ThreadChunk& Arena::threadChunk()
+{
+    static thread_local ThreadChunk threadLocal;
+    return threadLocal;
+}
+
+Arena::~Arena()
+{
+    for (Chunk* chunk = m_chunks; chunk;) {
+        Chunk* next = chunk->next;
+        if (!next && m_keepsFirstChunkForThread && chunk->size == firstChunkSize && !threadChunk().chunk)
+            threadChunk().chunk = chunk;
+        else
+            fastFree(chunk);
+        chunk = next;
+    }
+}
+
+void* Arena::allocateSlow(size_t size, size_t alignment)
+{
+    size_t needed = sizeof(Chunk) + alignment + size;
+    Chunk* chunk = nullptr;
+    if (!m_chunks && m_keepsFirstChunkForThread && needed <= firstChunkSize)
+        chunk = std::exchange(threadChunk().chunk, nullptr);
+    if (!chunk) {
+        size_t chunkSize = std::max(m_chunks ? std::min(m_chunks->size * 2, maxChunkSize) : firstChunkSize, needed);
+        chunk = static_cast<Chunk*>(fastMalloc(chunkSize));
+        chunk->size = chunkSize;
+    }
+    chunk->next = m_chunks;
+    m_chunks = chunk;
+    m_head = reinterpret_cast<uintptr_t>(chunk + 1);
+    m_end = reinterpret_cast<uintptr_t>(chunk) + chunk->size;
+    return allocate(size, alignment);
+}
+#endif
+
 Procedure::Procedure(bool usesSIMD)
     : m_cfg(new CFG(*this))
     , m_lastPhaseName("initial")
     , m_byproducts(makeUnique<OpaqueByproducts>())
+#if !USE(BUN_JSC_ADDITIONS)
     , m_heaps(makeUniqueRef<AbstractHeapRepository>())
+#endif
 {
     if (usesSIMD)
         setUsesSIMD();
@@ -77,7 +123,12 @@ void Procedure::printOrigin(PrintStream& out, Origin origin) const
 
 BasicBlock* Procedure::addBlock(double frequency)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<BasicBlock> block(new (arenaOrNull()) BasicBlock(m_blocks.size(), frequency));
+    block->m_isInArena = !!arenaOrNull();
+#else
     std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));
+#endif
     BasicBlock* result = block.get();
     m_blocks.append(WTF::move(block));
     return result;
@@ -113,7 +164,12 @@ const Vector<Type>& Procedure::tupleForType(Type tuple) const
 
 Value* Procedure::clone(Value* value)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    SparseCollection<Value>::Pointer clone(value->cloneImpl(arenaOrNull()));
+    m_opcodesEverAdded.set(value->opcode());
+#else
     std::unique_ptr<Value> clone(value->cloneImpl());
+#endif
     clone->m_index = UINT_MAX;
     clone->owner = nullptr;
     return m_values.add(WTF::move(clone));
@@ -211,6 +267,10 @@ void Procedure::resetValueOwners()
 
 void Procedure::resetReachability()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_blocksInPreOrder.shrink(0);
+    m_blocksInPostOrder.shrink(0);
+#endif
     recomputePredecessors(m_blocks);
     
     // The common case is that this does not find any dead blocks.
@@ -224,6 +284,30 @@ void Procedure::resetReachability()
     if (!foundDead)
         return;
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_dominators && m_keepsDominatorsThroughReset) {
+        m_dominators->skipOver([](BasicBlock* block) {
+            return isBlockDead(block);
+        });
+    }
+    IndexSet<Value*> deadPhis;
+    for (auto& block : m_blocks) {
+        if (!isBlockDead(block.get()))
+            continue;
+        for (Value* value : *block) {
+            if (value->opcode() == Phi)
+                deadPhis.add(value);
+        }
+    }
+    if (!deadPhis.isEmpty()) {
+        for (Value* value : values()) {
+            if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
+                if (deadPhis.contains(upsilon->phi()))
+                    upsilon->replaceWithNop();
+            }
+        }
+    }
+#else
     resetValueOwners();
 
     for (Value* value : values()) {
@@ -232,6 +316,7 @@ void Procedure::resetReachability()
                 upsilon->replaceWithNop();
         }
     }
+#endif
     
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get())) {
@@ -242,8 +327,24 @@ void Procedure::resetReachability()
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Procedure::resetReachabilityAfterContractions()
+{
+    m_keepsDominatorsThroughReset = true;
+    resetReachability();
+    m_keepsDominatorsThroughReset = false;
+    std::unique_ptr<Dominators> dominators = WTF::move(m_dominators);
+    invalidateCFG();
+    m_dominators = WTF::move(dominators);
+}
+#endif
+
 void Procedure::invalidateCFG()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_blocksInPreOrder.shrink(0);
+    m_blocksInPostOrder.shrink(0);
+#endif
     m_dominators = nullptr;
     m_naturalLoops = nullptr;
     m_backwardsCFG = nullptr;
@@ -285,8 +386,49 @@ void Procedure::dump(PrintStream& out) const
         out.print(*m_byproducts);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+template<GraphOrder order>
+static void appendBlocksInOrder(Procedure& proc, Vector<BasicBlock*>& output)
+{
+    constexpr uintptr_t isSecondVisit = 1;
+    static_assert(alignof(BasicBlock) > isSecondVisit);
+    output.reserveCapacity(proc.size());
+    Vector<uint8_t, 512> visited;
+    visited.fill(0, proc.size());
+    uint8_t* isVisited = visited.mutableSpan().data();
+    Vector<uintptr_t, 128> stack;
+    stack.append(std::bit_cast<uintptr_t>(proc[0]));
+    while (!stack.isEmpty()) {
+        uintptr_t entry = stack.takeLast();
+        if (entry & isSecondVisit) {
+            output.unsafeAppendWithoutCapacityCheck(std::bit_cast<BasicBlock*>(entry - isSecondVisit));
+            continue;
+        }
+        BasicBlock* block = std::bit_cast<BasicBlock*>(entry);
+        if (isVisited[block->index()])
+            continue;
+        isVisited[block->index()] = 1;
+        if (order == GraphOrder::PreOrder)
+            output.unsafeAppendWithoutCapacityCheck(block);
+        else
+            stack.append(entry | isSecondVisit);
+        for (const FrequentedBlock& successor : block->successors()) {
+            if (!isVisited[successor.block()->index()])
+                stack.append(std::bit_cast<uintptr_t>(successor.block()));
+        }
+    }
+}
+#endif
+
 Vector<BasicBlock*> Procedure::blocksInPreOrder()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (positionIndependent()) {
+        if (m_blocksInPreOrder.isEmpty())
+            appendBlocksInOrder<GraphOrder::PreOrder>(*this, m_blocksInPreOrder);
+        return m_blocksInPreOrder;
+    }
+#endif
     Vector<BasicBlock*> result;
     result.reserveInitialCapacity(size());
     appendNodesInOrder(cfg(), GraphOrder::PreOrder, result);
@@ -295,6 +437,13 @@ Vector<BasicBlock*> Procedure::blocksInPreOrder()
 
 Vector<BasicBlock*> Procedure::blocksInPostOrder()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (positionIndependent()) {
+        if (m_blocksInPostOrder.isEmpty())
+            appendBlocksInOrder<GraphOrder::PostOrder>(*this, m_blocksInPostOrder);
+        return m_blocksInPostOrder;
+    }
+#endif
     Vector<BasicBlock*> result;
     result.reserveInitialCapacity(size());
     appendNodesInOrder(cfg(), GraphOrder::PostOrder, result);
@@ -318,6 +467,13 @@ void Procedure::deleteValue(Value* value)
 
 void Procedure::deleteOrphans()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    size_t numberOfValuesInBlocks = 0;
+    for (BasicBlock* block : *this)
+        numberOfValuesInBlocks += block->size();
+    if (numberOfValuesInBlocks == m_values.numberOfEntries())
+        return;
+#endif
     IndexSet<Value*> valuesInBlocks;
     for (BasicBlock* block : *this)
         valuesInBlocks.addAll(*block);
@@ -423,7 +579,12 @@ RegisterAtOffsetList Procedure::calleeSaveRegisterAtOffsetList() const
 
 Value* Procedure::addValueImpl(Value* value)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_opcodesEverAdded.set(value->opcode());
+    return m_values.add(SparseCollection<Value>::Pointer(value));
+#else
     return m_values.add(std::unique_ptr<Value>(value));
+#endif
 }
 
 void Procedure::setBlockOrderImpl(Vector<BasicBlock*>& blocks)
@@ -479,6 +640,10 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
 
     if (m_code->shouldPreserveB3Origins())
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (positionIndependent())
+        return;
+#endif
 
     BitVector valuesToPreserve;
     valuesToPreserve.ensureSize(m_values.size());

@@ -116,6 +116,9 @@ public:
 
     ExecutableBase* executable() const LIFETIME_BOUND { return m_executable.get(); }
 
+    bool allocatesGuardedObjects() const { return m_allocatesGuardedObjects; }
+    void setAllocatesGuardedObjects() { m_allocatesGuardedObjects = true; }
+
     bool hasReifiedLength() const { return m_hasReifiedLength; }
     void setHasReifiedLength() { m_hasReifiedLength = true; }
     bool hasReifiedName() const { return m_hasReifiedName; }
@@ -165,6 +168,7 @@ private:
     bool m_hasReifiedName : 1;
     bool m_hasModifiedLengthForBoundOrNonHostFunction : 1;
     bool m_hasModifiedNameForBoundOrNonHostFunction : 1;
+    bool m_allocatesGuardedObjects : 1;
 };
 
 class FunctionRareData::AllocationProfileClearingWatchpoint final : public Watchpoint {

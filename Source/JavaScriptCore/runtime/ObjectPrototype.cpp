@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ObjectPrototype.h"
 
+#include "AOTFunction.h"
 #include "ArrayConstructor.h"
 #include "GetterSetter.h"
 #include "HasOwnPropertyCache.h"
@@ -105,6 +106,12 @@ bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* thisO
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (thisObject->type() == ObjectType) {
+        if (std::optional<bool> isOwn = AOT::Typed::compiledObjectHasOwnProperty(thisObject, propertyName.uid()))
+            return *isOwn;
+    }
+#endif
     Structure* structure = thisObject->structure();
     HasOwnPropertyCache& hasOwnPropertyCache = vm.ensureHasOwnPropertyCache();
     if (std::optional<bool> result = hasOwnPropertyCache.get(structure, propertyName)) {

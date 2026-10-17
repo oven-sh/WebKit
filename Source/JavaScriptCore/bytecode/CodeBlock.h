@@ -50,6 +50,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 #if ENABLE(DFG_JIT)
+namespace AOT {
+class JITCode;
+struct Data;
+}
 namespace DFG {
 class JITData;
 } // namespace DFG
@@ -106,6 +110,7 @@ class CodeBlock : public JSCell {
 public:
 
     enum CopyParsedBlockTag { CopyParsedBlock };
+    enum class LinkMode : uint8_t { Full, ForCodeFromImage };
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
@@ -122,10 +127,10 @@ public:
 
 protected:
     CodeBlock(VM&, Structure*, CopyParsedBlockTag, CodeBlock& other);
-    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
+    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
 
     void finishCreation(VM&, CopyParsedBlockTag, CodeBlock& other);
-    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
+    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
 
     WriteBarrier<JSGlobalObject> m_globalObject;
 
@@ -581,9 +586,20 @@ public:
     SimpleJumpTable& baselineSwitchJumpTable(int tableIndex);
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     void setBaselineJITData(std::unique_ptr<BaselineJITData>&&);
+#if ENABLE(AOT)
+    void installAOTCode(Ref<AOT::JITCode>&&);
+    void adoptAOTCode(AOT::JITCode&, AOT::Data*);
+    void releaseAOTData();
+    AOT::Data* aotData()
+    {
+        if (jitType() == JITType::AOTJIT)
+            return std::bit_cast<AOT::Data*>(m_jitData);
+        return nullptr;
+    }
+#endif
     BaselineJITData* baselineJITData()
     {
-        if (!JSC::JITCode::isOptimizingJIT(jitType()))
+        if (!JSC::JITCode::isOptimizingJIT(jitType()) && jitType() != JITType::AOTJIT)
             return std::bit_cast<BaselineJITData*>(m_jitData);
         return nullptr;
     }
@@ -894,6 +910,8 @@ public:
         Vector<HandlerInfo> m_exceptionHandlers;
 
         DirectEvalCodeCache m_directEvalCodeCache;
+
+        void* m_predecodedInstructions { nullptr };
     };
 
     void clearExceptionHandlers()
@@ -943,6 +961,12 @@ public:
 
     MetadataTable* metadataTable() { return m_metadata.get(); }
     const void* instructionsRawPointer() { return m_instructionsRawPointer; }
+    void* predecodedInstructions() { return m_rareData ? m_rareData->m_predecodedInstructions : nullptr; }
+    void setPredecodedInstructions(void* instructions)
+    {
+        createRareDataIfNecessary();
+        m_rareData->m_predecodedInstructions = instructions;
+    }
 
     static constexpr ptrdiff_t offsetOfMetadataTable() { return OBJECT_OFFSETOF(CodeBlock, m_metadata); }
     static constexpr ptrdiff_t offsetOfInstructionsRawPointer() { return OBJECT_OFFSETOF(CodeBlock, m_instructionsRawPointer); }

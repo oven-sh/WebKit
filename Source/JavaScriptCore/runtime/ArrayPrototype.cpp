@@ -56,8 +56,6 @@ static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToLocaleString);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncJoin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncKeys);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncEntries);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPush);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncShift);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
@@ -1008,7 +1006,7 @@ static ALWAYS_INLINE std::span<EncodedJSValue> sortStableSort(JSGlobalObject* gl
     ASSERT(callData.type != CallData::Type::None);
 
     if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(comparator), 2);
+        CachedCall cachedCall(globalObject, comparator, 2);
         RETURN_IF_EXCEPTION(scope, compacted);
         RELEASE_AND_RETURN(scope, (arrayStableSort<MergeStrategy::Galloping>(vm, compacted, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);

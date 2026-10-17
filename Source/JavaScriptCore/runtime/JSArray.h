@@ -69,6 +69,11 @@ public:
     inline static JSArray* tryCreate(VM&, Structure*, unsigned initialLength, unsigned vectorLengthHint);
     inline static JSArray* create(VM&, Structure*, unsigned initialLength = 0);
     static JSArray* createWithButterfly(VM&, GCDeferralContext*, Structure*, Butterfly*);
+    static constexpr unsigned typedContiguousCapacityFor(unsigned wanted)
+    {
+        return static_cast<unsigned>((((sizeof(IndexingHeader) + static_cast<uint64_t>(wanted ? wanted : 1) * sizeof(uint32_t) + 15) & ~static_cast<uint64_t>(15)) - sizeof(IndexingHeader)) / sizeof(uint32_t));
+    }
+    JS_EXPORT_PRIVATE static JSArray* tryCreateWithTypedContiguous(VM&, Structure*, unsigned length, unsigned minCapacity);
 
     // tryCreateUninitializedRestricted is used for fast construction of arrays whose size and
     // contents are known at time of creation. This is a restricted API for careful use only in
@@ -120,6 +125,9 @@ public:
     // This function returns NonArray if the indexing types are not compatable for copying.
     IndexingType mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion);
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, JSArray* otherArray);
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE bool tryPutIndexInPlace(VM&, unsigned index, JSValue);
+#endif
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, IndexingType, std::span<const EncodedJSValue>);
 
     bool fastFill(VM&, unsigned startIndex, unsigned endIndex, JSValue);
@@ -197,7 +205,7 @@ private:
     {
         ArrayStorage* storage = arrayStorageOrNull();
         if (!storage)
-            return true;
+            return !hasFrozenElementsInPlace();
         SparseArrayValueMap* map = storage->m_sparseMap.get();
         return !map || !map->lengthIsReadOnly();
     }
@@ -364,7 +372,7 @@ inline JSArray* asArray(JSValue value)
 
 inline bool isJSArray(JSCell* cell)
 {
-    ASSERT((cell->classInfo() == JSArray::info()) == (cell->type() == ArrayType));
+    ASSERT(cell->type() != ArrayType || cell->classInfo() == JSArray::info());
     return cell->type() == ArrayType;
 }
 

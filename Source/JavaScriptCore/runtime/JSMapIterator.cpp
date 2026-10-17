@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JSMapIterator.h"
 
+#include "AOTTypedCompactTable.h"
+
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
 #include "JSMap.h"
@@ -46,9 +48,17 @@ void JSMapIterator::finishCreation(VM& vm, JSMap* iteratedObject, IterationKind 
     Base::finishCreation(vm);
     setEntry(vm, 0);
     setIteratedObject(vm, iteratedObject);
-    internalField(Field::Storage).set(vm, this, iteratedObject->storage());
+    internalField(Field::Storage).set(vm, this, iteratedObject->m_storage.get());
     internalField(Field::Kind).setWithoutWriteBarrier(jsNumber(static_cast<int32_t>(kind)));
 }
+
+#if ENABLE(AOT)
+JSMapIterator::NextResult JSMapIterator::nextInCompactTable(VM& vm)
+{
+    auto position = AOT::Typed::CompactTable::stepIterator<MapTraits>(vm, this);
+    return { position.key, position.value };
+}
+#endif
 
 void JSMapIterator::finishCreation(VM& vm)
 {

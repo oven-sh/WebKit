@@ -31,6 +31,7 @@
 #include "B3BackwardsDominators.h"
 #include "B3Dominators.h"
 #include "B3EnsureLoopPreHeaders.h"
+#include "B3LoopUtilities.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
@@ -109,6 +110,10 @@ static bool isReachedWithoutTrapBarrier(const NaturalLoops& loops, const Natural
     return true;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static constexpr unsigned maxHoistedLoadsPerLoop = 8;
+#endif
+
 bool hoistLoopInvariantValues(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "hoistLoopInvariantValues"_s);
@@ -121,7 +126,9 @@ bool hoistLoopInvariantValues(Procedure& proc)
 
     proc.resetValueOwners();
     Dominators& dominators = proc.dominators();
+#if !USE(BUN_JSC_ADDITIONS)
     BackwardsDominators& backwardsDominators = proc.backwardsDominators();
+#endif
     
     // FIXME: We should have a reusable B3::EffectsSet data structure.
     // https://bugs.webkit.org/show_bug.cgi?id=174762
@@ -131,10 +138,20 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool writesPinned { false };
         bool exitsSideways { false };
         BasicBlock* preHeader { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+        IndexSet<BasicBlock*> blocksGuaranteedToExecute;
+        bool hasLikelyCall { false };
+        unsigned numberOfHoistedLoads { 0 };
+#endif
     };
 
     IndexMap<NaturalLoop, LoopData> data(loops.numLoops());
     IndexSet<BasicBlock*> blockBarriers;
+#if USE(BUN_JSC_ADDITIONS)
+    constexpr unsigned maxLoopBlocksPerWord = 64;
+    IndexMap<BasicBlock*, unsigned> numberInLoop(proc.size(), 0u);
+    Vector<uint64_t, maxLoopBlocksPerWord> onAllPathsFrom;
+#endif
 
     for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
         const NaturalLoop& loop = loops.loop(loopIndex);
@@ -144,6 +161,48 @@ bool hoistLoopInvariantValues(Procedure& proc)
             RELEASE_ASSERT(!data[loop].preHeader);
             data[loop].preHeader = predecessor;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (proc.positionIndependent() && loop.size() <= maxLoopBlocksPerWord) {
+            for (unsigned i = loop.size(); i--;)
+                numberInLoop[loop.at(i)] = i;
+            onAllPathsFrom.fill(~0ull, loop.size());
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (unsigned i = 0; i < loop.size(); ++i) {
+                    uint64_t common = ~0ull;
+                    bool goesOn = false;
+                    for (FrequentedBlock successor : loop.at(i)->successors()) {
+                        if (isRare(successor, loop.at(i)))
+                            continue;
+                        goesOn = true;
+                        if (successor.block() == loop.header() || !loops.belongsTo(successor.block(), loop))
+                            common = 0;
+                        else
+                            common &= onAllPathsFrom[numberInLoop[successor.block()]];
+                    }
+                    uint64_t blocks = (goesOn ? common : 0) | 1ull << i;
+                    changed |= blocks != onAllPathsFrom[i];
+                    onAllPathsFrom[i] = blocks;
+                }
+            }
+            for (unsigned i = loop.size(); i--;) {
+                if (onAllPathsFrom[numberInLoop[loop.header()]] >> i & 1)
+                    data[loop].blocksGuaranteedToExecute.add(loop.at(i));
+            }
+        } else if (proc.positionIndependent()) {
+            for (BasicBlock* block = loop.header(); block && loops.belongsTo(block, loop) && data[loop].blocksGuaranteedToExecute.add(block);) {
+                BasicBlock* next = nullptr;
+                unsigned numberOfLikelySuccessors = 0;
+                for (FrequentedBlock successor : block->successors()) {
+                    if (isRare(successor, block))
+                        continue;
+                    ++numberOfLikelySuccessors;
+                    next = successor.block();
+                }
+                block = numberOfLikelySuccessors == 1 ? next : nullptr;
+            }
+        }
+#endif
     }
     
     for (BasicBlock* block : proc) {
@@ -156,6 +215,10 @@ bool hoistLoopInvariantValues(Procedure& proc)
             data[*loop].writesLocalState |= effects.writesLocalState;
             data[*loop].writesPinned |= effects.writesPinned;
             data[*loop].exitsSideways |= effects.exitsSideways;
+#if USE(BUN_JSC_ADDITIONS)
+            if (proc.positionIndependent() && isCall(value) && block->frequency() * maxRatioOfHeaderToLikelyBlock >= loop->header()->frequency())
+                data[*loop].hasLikelyCall = true;
+#endif
             if (effects.isTrapBarrier())
                 blockBarriers.add(block);
         }
@@ -168,6 +231,9 @@ bool hoistLoopInvariantValues(Procedure& proc)
             data[*current].writesLocalState |= data[loop].writesLocalState;
             data[*current].writesPinned |= data[loop].writesPinned;
             data[*current].exitsSideways |= data[loop].exitsSideways;
+#if USE(BUN_JSC_ADDITIONS)
+            data[*current].hasLikelyCall |= data[loop].hasLikelyCall;
+#endif
         }
     }
     
@@ -176,9 +242,22 @@ bool hoistLoopInvariantValues(Procedure& proc)
     // Pre-order ensures that we visit our dominators before we visit ourselves. Otherwise we'd miss some
     // hoisting opportunities in complex CFGs.
     for (BasicBlock* block : proc.blocksInPreOrder()) {
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<const NaturalLoop*, 8> blockLoops;
+        for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop))
+            blockLoops.append(loop);
+#else
         Vector<const NaturalLoop*> blockLoops = loops.loopsOf(block);
+#endif
         if (blockLoops.isEmpty())
             continue;
+#if USE(BUN_JSC_ADDITIONS)
+        bool mayHoistFromBlock = !proc.positionIndependent() || blockLoops.containsIf([&](const NaturalLoop* loop) {
+            return data[*loop].blocksGuaranteedToExecute.contains(block);
+        });
+        if (!mayHoistFromBlock)
+            continue;
+#endif
 
         // Values that stay in this block run before everything later in it, so once one of them is a
         // trap barrier nothing after it can be hoisted out on the strength of trapping first.
@@ -196,6 +275,15 @@ bool hoistLoopInvariantValues(Procedure& proc)
                 for (unsigned i = blockLoops.size(); i--;) {
                     const NaturalLoop& loop = *blockLoops[i];
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (proc.positionIndependent()) {
+                        if (!data[loop].blocksGuaranteedToExecute.contains(block) || data[loop].preHeader->last()->opcode() != Jump)
+                            continue;
+                        if (effects.reads && (data[loop].hasLikelyCall || data[loop].numberOfHoistedLoads >= maxHoistedLoadsPerLoop))
+                            continue;
+                    }
+#endif
+
                     bool ok = true;
                     for (Value* child : value->children()) {
                         if (!dominators.dominates(child->owner, data[loop].preHeader)) {
@@ -206,10 +294,25 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     if (!ok)
                         continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (effects.readsPinned && data[loop].writesPinned)
+                        continue;
+
+                    if (effects.readsLocalState && data[loop].writesLocalState)
+                        continue;
+
+                    if (effects.readsMutability != Mutability::Immutable && data[loop].writes.overlaps(effects.reads))
+                        continue;
+#endif
+
                     if (effects.controlDependent || trappingLoad) {
                         // The block is backward-dominating the pre-header.
                         // The value needs to be guaranteed to run on every iteration.
+#if USE(BUN_JSC_ADDITIONS)
+                        if (!proc.backwardsDominators().dominates(block, data[loop].preHeader))
+#else
                         if (!backwardsDominators.dominates(block, data[loop].preHeader))
+#endif
                             continue;
 
                         if (data[loop].exitsSideways) {
@@ -221,19 +324,27 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         }
                     }
 
+#if !USE(BUN_JSC_ADDITIONS)
                     if (effects.readsPinned && data[loop].writesPinned)
                         continue;
 
                     if (effects.readsLocalState && data[loop].writesLocalState)
                         continue;
 
-                    if (data[loop].writes.overlaps(effects.reads))
+                    if (effects.readsMutability != Mutability::Immutable && data[loop].writes.overlaps(effects.reads))
                         continue;
+#endif
 
                     data[loop].preHeader->appendNonTerminal(value);
                     value = proc.add<Value>(Nop, Void, value->origin());
                     changed = true;
                     hoisted = true;
+#if USE(BUN_JSC_ADDITIONS)
+                    if (proc.positionIndependent()) {
+                        data[loop].numberOfHoistedLoads += !!effects.reads;
+                        break;
+                    }
+#endif
                 }
             }
 

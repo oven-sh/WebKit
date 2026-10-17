@@ -99,6 +99,19 @@ struct UnlinkedStringJumpTable {
         return loc->value.m_branchOffset;
     }
 
+    struct ViewTranslator {
+        static unsigned hash(StringView view) { return view.hash(); }
+        static bool equal(const RefPtr<StringImpl>& key, StringView view) { return StringView { *key } == view; }
+    };
+
+    inline int32_t offsetForValue(StringView value) const
+    {
+        auto loc = m_offsetTable.find<ViewTranslator>(value);
+        if (loc == m_offsetTable.end())
+            return m_defaultOffset;
+        return loc->value.m_branchOffset;
+    }
+
     inline unsigned indexForValue(StringImpl* value, unsigned defaultIndex) const
     {
         auto loc = m_offsetTable.find(value);
@@ -185,9 +198,19 @@ public:
     // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use decodeEntryForInstPC(),
     // which does neither; entryForInstPC() and lineColumnInTextForInstPC() fill a cache.
     ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
+    bool hasNoInstructions() const { return m_hasNoInstructions; }
+    void setHasNoInstructions() { m_hasNoInstructions = true; }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
+
+    unsigned auditCost() const { return m_rareData ? m_rareData->m_auditCost : 0; }
+    void setAuditCost(unsigned cost)
+    {
+        Locker locker { m_lock };
+        createRareDataIfNecessary(locker);
+        m_rareData->m_auditCost = cost;
+    }
 
     bool hasQuickDFGTierUpUpdated() const { return m_quickDFGTierUp != TriState::Indeterminate; }
     bool isQuickDFGTierUp() const { return m_quickDFGTierUp == TriState::True; }
@@ -242,7 +265,7 @@ public:
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
 
-    const JSInstructionStream& LEGACY_NODELETE instructions() const;
+    const JSInstructionStream& instructions() const LIFETIME_BOUND { return *m_instructions; }
     const JSInstruction* instructionAt(BytecodeIndex index) const { return instructions().at(index).ptr(); }
     unsigned bytecodeOffset(const JSInstruction* instruction)
     {
@@ -452,6 +475,7 @@ private:
     unsigned m_age : 3;
     static_assert(((1U << 3) - 1) >= maxAge);
     bool m_hasCheckpoints : 1;
+    bool m_hasNoInstructions : 1 { false };
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
     unsigned m_numberOfArrayProfiles { 0 };
@@ -509,6 +533,7 @@ public:
 
         unsigned m_needsClassFieldInitializer : 1;
         unsigned m_privateBrandRequirement : 1;
+        unsigned m_auditCost { 0 };
     };
 
     int outOfLineJumpOffset(JSInstructionStream::Offset);

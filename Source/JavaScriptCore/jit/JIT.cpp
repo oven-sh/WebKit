@@ -29,7 +29,13 @@
 
 #include "JIT.h"
 
+#include "AOTStubs.h"
 #include "BaselineJITPlan.h"
+#include "CompilerHooks.h"
+#include "InitializeThreading.h"
+#include "JITWorklist.h"
+#include "WasmBBQPlan.h"
+#include "YarrJIT.h"
 #include "BytecodeGraph.h"
 #include "CodeBlock.h"
 #include "CodeBlockWithJITType.h"
@@ -1112,6 +1118,28 @@ void JIT::exceptionCheck(Jump jumpToHandler)
 void JIT::exceptionCheck()
 {
     exceptionCheck(emitExceptionCheck(vm()));
+}
+
+void installRegExpCompiler()
+{
+#if ENABLE(YARR_JIT)
+    g_compilerHooks.compileRegExp = reinterpret_cast<void*>(&Yarr::jitCompile);
+#endif
+}
+
+void installCompilers()
+{
+    installRegExpCompiler();
+    g_compilerHooks.enqueueBaselinePlan = [](CodeBlock* codeBlock) {
+        JITWorklist::ensureGlobalWorklist().enqueue(adoptRef(*new BaselineJITPlan(codeBlock)));
+    };
+    g_compilerHooks.compileBaselineNow = &JIT::compileSync;
+#if ENABLE(WEBASSEMBLY_BBQJIT)
+    g_compilerHooks.newBBQPlan = reinterpret_cast<void*>(&Wasm::BBQPlan::create);
+#endif
+#if ENABLE(AOT)
+    installImageCompiler();
+#endif
 }
 
 } // namespace JSC

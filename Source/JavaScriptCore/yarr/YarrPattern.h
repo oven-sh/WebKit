@@ -39,6 +39,9 @@
 #include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/StackCheck.h>
+#endif
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
@@ -69,6 +72,10 @@ struct CharacterRange {
         , end(end)
     {
     }
+#if USE(BUN_JSC_ADDITIONS)
+
+    friend bool operator==(const CharacterRange&, const CharacterRange&) = default;
+#endif
 };
 
 enum struct CharacterClassWidths : unsigned char {
@@ -294,6 +301,11 @@ struct PatternTerm {
     // match a character this term matches. Backtracking into such a term is always futile,
     // so the JIT generates a possessive (no-give-back) backtrack instead of the retry loop.
     bool m_possessive { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_matchesPrecedingCapture { false };
+    bool m_immediatelyFollowsItsLookahead { false };
+    bool m_isNeverBacktrackedInto { false };
+#endif
 
     PatternTerm(char32_t ch, OptionSet<Flags> currFlags, MatchDirection matchDirection = Forward)
         : type(PatternTerm::Type::PatternCharacter)
@@ -633,7 +645,11 @@ struct TermChain {
 
 
 struct YarrPattern {
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, StackCheck* = nullptr);
+#else
     JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns);
+#endif
 
     void resetForReparsing()
     {
@@ -643,6 +659,9 @@ struct YarrPattern {
         m_maxParenContextFrameSize = 0;
 
         m_containsBackreferences = false;
+#if USE(BUN_JSC_ADDITIONS)
+        m_comparesBackreferences = false;
+#endif
         m_containsBOL = false;
         m_containsLookbehinds = false;
         m_containsUnsignedLengthPattern = false;
@@ -724,6 +743,9 @@ struct YarrPattern {
         return CompileMode::Legacy;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_comparesBackreferences { false };
+#endif
     bool m_containsBackreferences : 1;
     bool m_containsBOL : 1;
     bool m_containsLookbehinds : 1;
@@ -757,7 +779,11 @@ struct YarrPattern {
     String m_atom;
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    ErrorCode compile(StringView patternString, StackCheck*);
+#else
     ErrorCode compile(StringView patternString);
+#endif
 };
 
     void indentForNestingLevel(PrintStream&, unsigned);

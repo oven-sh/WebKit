@@ -32,6 +32,7 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#include <JavaScriptCore/AuditSites.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CodeBlockHash.h>
 #include <JavaScriptCore/CodeSpecializationKind.h>
@@ -210,6 +211,16 @@ public:
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
     void setSourceTaintedOrigin(SourceTaintKind kind, SourceTaintedOrigin taintedness) { m_taintedness[kind] = taintedness; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t aotModuleID() const { return m_aotModuleID; }
+    void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
+    bool hasNoSourceText() const { return m_hasNoSourceText; }
+    void setHasNoSourceText() { m_hasNoSourceText = true; }
+#endif
+
+    const AuditSites* auditSites() const { return m_auditSites.get(); }
+    void setAuditSites(RefPtr<AuditSites>&& auditSites) { m_auditSites = WTF::move(auditSites); }
+
     SourceTaintedness taintedness() const { return m_taintedness; }
     SourceTaintedOrigin sourceTaintedOrigin(SourceTaintKind kind) const { return m_taintedness[kind]; }
     bool LEGACY_NODELETE couldBeTainted() const { return m_taintedness.couldBeTainted(); }
@@ -282,6 +293,7 @@ public:
             && !m_lineStartTable.isBuilt();
     }
     LineStarts lineStartsIfBuilt() const { return m_lineStartTable.lineStartsIfBuilt(); }
+    LineStarts lineStarts() { return m_lineStartTable.lineStarts(source()); }
     // A builtin with a source of its own is parsed as a function, which is not all of the source.
     LineStarts lineStartsForBytecode()
     {
@@ -309,6 +321,11 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedness m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_aotModuleID { 0 };
+    bool m_hasNoSourceText { false };
+#endif
+    RefPtr<AuditSites> m_auditSites;
 #if USE(BUN_JSC_ADDITIONS)
     SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
 #endif

@@ -42,29 +42,48 @@ void lowerStackArgs(Code& code)
     // Now we need to deduce how much argument area we need. We always reserve the conservative
     // register bytes for Bank::FP because CallArgs do not record which bank they are.
     unsigned conservativeCallArgBytes = code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP);
+    struct Site {
+        unsigned blockIndex;
+        unsigned instIndex;
+    };
+    Vector<Site> sites;
     for (BasicBlock* block : code) {
-        for (Inst& inst : *block) {
+        unsigned blockSize = block->size();
+        for (unsigned instIndex = 0; instIndex < blockSize; ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            bool isSite = isARM64() && (inst.kind.opcode == Lea32 || inst.kind.opcode == Lea64);
             for (Arg& arg : inst.args()) {
                 if (arg.isCallArg()) {
                     ASSERT(arg.offset() >= 0);
                     code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
-                }
+                    isSite = true;
+                } else if (arg.isStack())
+                    isSite = true;
             }
+            if (isSite)
+                sites.append(Site { block->index(), instIndex });
         }
     }
 
     code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
+#if USE(BUN_JSC_ADDITIONS)
+    code.tryPlaceSpillsAboveFrameRecord();
+    code.tryPlaceCalleeSavesAtFrameBottom();
+    code.tryPushRegistersInPrologue();
+#endif
 
     // Finally, transform the code to use Addr's instead of StackSlot's. This is a lossless
     // transformation since we can search the StackSlots array to figure out which StackSlot any
     // offset-from-FP refers to.
 
     InsertionSet insertionSet(code);
-    for (BasicBlock* block : code) {
+    for (size_t site = 0; site < sites.size();) {
+        BasicBlock* block = code[sites[site].blockIndex];
         // FIXME We can keep track of the last large offset which was materialized in this block, and reuse the register
         // if it hasn't been clobbered instead of renetating imm+add+addr every time. https://bugs.webkit.org/show_bug.cgi?id=171387
 
-        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+        for (; site < sites.size() && sites[site].blockIndex == block->index(); ++site) {
+            unsigned instIndex = sites[site].instIndex;
             Inst& inst = block->at(instIndex);
             bool extendedOffsetAddrRegInUse = false;
 
@@ -78,10 +97,29 @@ void lowerStackArgs(Code& code)
                     return Arg::extendedOffsetAddr(offsetFromFP);
                 }
 
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+                if (code.proc().positionIndependent() && offsetFromFP < -128 && offsetFromSP >= 0 && offsetFromSP <= 127)
+                    return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
+#endif
                 Arg result = Arg::addr(Air::Tmp(GPRInfo::callFrameRegister), offsetFromFP);
                 if (result.isValidForm(Move, width))
                     return result;
 
+#if USE(BUN_JSC_ADDITIONS)
+#if CPU(ARM64)
+                if (code.placesSpillsAboveFrameRecord()) {
+                    if (inst.kind.opcode == Patch)
+                        return Arg::extendedOffsetAddr(offsetFromFP);
+                    RELEASE_ASSERT(!extendedOffsetAddrRegInUse && Arg::isValidImmForm(offsetFromFP));
+                    Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
+                    extendedOffsetAddrRegInUse = true;
+                    insertionSet.insert(insertionIndex, Add64, inst.origin, Arg::imm(offsetFromFP), Air::Tmp(GPRInfo::callFrameRegister), tmp);
+                    return Arg::addr(tmp, 0);
+                }
+#else
+                RELEASE_ASSERT(!code.placesSpillsAboveFrameRecord());
+#endif
+#endif
                 result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
                 if (result.isValidForm(Move, width))
                     return result;
@@ -181,19 +219,6 @@ void lowerStackArgs(Code& code)
                 }
                 // Fall through to handle remainder of the original or modified inst, including potential ZDef handling.
             }
-
-            // The scan below only ever acts on Stack and CallArg operands, and after register
-            // allocation most instructions have neither. Checking that does not need the Arg roles,
-            // and iterating args() directly can only over-approximate what forEachArg reports.
-            bool mayHaveStackArg = false;
-            for (Arg& arg : inst.args()) {
-                if (arg.isStack() || arg.isCallArg()) {
-                    mayHaveStackArg = true;
-                    break;
-                }
-            }
-            if (!mayHaveStackArg)
-                continue;
 
             inst.forEachArg(
                 [&] (Arg& arg, Arg::Role role, Bank, Width width) {

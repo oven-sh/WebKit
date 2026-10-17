@@ -39,6 +39,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static constexpr unsigned numberOfInternalFields = 2;
+    static constexpr ptrdiff_t offsetOfInternalFields() { return OBJECT_OFFSETOF(JSFunctionWithFields, m_internalFields); }
     enum class Field : unsigned {
         ExecutorResolve = 0,
         ExecutorReject = 1,

@@ -568,6 +568,9 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
+    void didAllocateInBlock(size_t, const BlockDirectory&);
+    void didAllocatePreciseAllocation(size_t, const Subspace&);
+    void didAllocate(size_t, const char* kind, const Subspace*, size_t cellSize, const JSCell* extraMemoryOwner);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
@@ -605,6 +608,9 @@ public:
     
     unsigned barrierThreshold() const { return m_barrierThreshold; }
     const unsigned* addressOfBarrierThreshold() const LIFETIME_BOUND { return &m_barrierThreshold; }
+    MarkStackArray& mutatorMarkStack() LIFETIME_BOUND { return *m_mutatorMarkStack; }
+    static constexpr ptrdiff_t offsetOfMutatorMarkStack() { return OBJECT_OFFSETOF(Heap, m_mutatorMarkStack); }
+    static constexpr ptrdiff_t offsetOfBarriersExecuted() { return OBJECT_OFFSETOF(Heap, m_barriersExecuted); }
 
     // If true, the GC believes that the mutator is currently messing with the heap. We call this
     // "having heap access". The GC may block if the mutator is in this state. If false, the GC may
@@ -752,6 +758,8 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
+    bool canSkipMarking() const;
 #if USE(BUN_JSC_ADDITIONS)
     // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
     // clock for every block it visits.
@@ -839,6 +847,7 @@ private:
     void gatherExtraHeapData(HeapProfiler&);
     void removeDeadHeapSnapshotNodes(HeapProfiler&);
     void runCollectionEpilogue();
+    void sweepAndClearCachesInEpilogue();
     void sweepEagerlyInEpilogue();
     
     void addDetachedWeakBlock(WeakBlock*);
@@ -931,6 +940,8 @@ private:
     bool m_shouldDoOpportunisticFullCollection { false };
     bool m_isInOpportunisticTask { false };
     bool m_shouldDoFullCollection { false };
+    bool m_hasAllocatedSinceLastCollection { true };
+    bool m_didSkipMarkingInLastCollection { false };
     Markable<CollectionScope> m_collectionScope;
     Markable<CollectionScope> m_lastCollectionScope;
 #if USE(BUN_JSC_ADDITIONS)
@@ -1157,6 +1168,9 @@ public:
     
     // Whenever possible, use subspaceFor<CellType>(vm) to get one of these subspaces.
     CompleteSubspace cellSpace;
+#if USE(BUN_JSC_ADDITIONS)
+    CompleteSubspace aotClosureSpace; // AOT::Typed::Closure and environments: as a rule they die young.
+#endif
     CompleteSubspace destructibleObjectSpace;
 
 #define DECLARE_ISO_SUBSPACE(name, heapCellType, type) \
@@ -1341,6 +1355,7 @@ private:
     IsoSubspace unlinkedFunctionExecutableSpace;
 
 
+    friend class JSC::LLIntOffsetsExtractor;
     friend class JSC::VM;
 };
 

@@ -37,6 +37,7 @@
 #endif
 
 #if OS(LINUX)
+#include <sys/auxv.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -146,9 +147,24 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // OS(OPENBSD)
 
+#if OS(LINUX)
+static void* endOfInitialStack(size_t stackLimit, size_t pageSize)
+{
+    auto* executableName = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    if (!executableName)
+        return nullptr;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    uintptr_t end = reinterpret_cast<uintptr_t>(executableName) + strlen(executableName) + 1 + sizeof(void*);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    uintptr_t stackPointer = reinterpret_cast<uintptr_t>(currentStackPointer());
+    if (end % pageSize || stackPointer >= end || end - stackPointer > stackLimit)
+        return nullptr;
+    return reinterpret_cast<void*>(end);
+}
+#endif
+
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
-    auto ret = newThreadStackBounds(pthread_self());
 #if OS(LINUX)
     // on glibc, pthread_attr_getstack will generally return the limit size (minus a guard page)
     // for the main thread; this is however not necessarily always true on every libc - for example
@@ -156,14 +172,17 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
     // be constant (and they are for every thread except main, which is allowed to grow), check
     // resource limits and use that as the boundary instead (and prevent stack overflows in JSC)
     if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
-        void* origin = ret.origin();
         rlimit limit;
         getrlimit(RLIMIT_STACK, &limit);
         rlim_t size = limit.rlim_cur;
         if (size == RLIM_INFINITY)
             size = 8 * MB;
+        rlim_t pageSize = static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
+        void* origin = endOfInitialStack(size, pageSize);
+        if (!origin)
+            origin = newThreadStackBounds(pthread_self()).origin();
         // account for a guard page
-        size -= static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
+        size -= pageSize;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -181,7 +200,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             stackBounds = { oldestEnviron, bound };
         return stackBounds;
     }
-#elif OS(FREEBSD)
+    return newThreadStackBounds(pthread_self());
+#else
+    auto ret = newThreadStackBounds(pthread_self());
+#if OS(FREEBSD)
     // libthr reports the main thread's stack as RLIMIT_STACK below its top, but when the executable
     // carries a sized PT_GNU_STACK (ld -z stack-size) exec maps only trunc_page(p_memsz) for it,
     // raising rlim_cur to that if it was smaller and leaving it alone if it was larger. The usable
@@ -235,6 +257,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 #endif
     return ret;
+#endif
 }
 
 #elif OS(WINDOWS)

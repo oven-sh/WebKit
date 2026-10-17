@@ -60,12 +60,12 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
     vm.addRegExpToTrace(regExp);
 #endif
 
-    if (!regExp->isValid())
+    if (!regExp->isValid() || regExp->hasSourceInPieces())
         return regExp;
 
     {
         Locker locker { m_lock };
-        weakAdd(m_weakCache, key, Weak<RegExp>(regExp, this));
+        weakAdd(m_weakCache, regExp->key(), Weak<RegExp>(regExp, this));
         return regExp;
     }
 }
@@ -100,6 +100,8 @@ void RegExpCache::finalize(Handle<Unknown> handle, void*)
 
 void RegExpCache::addToStrongCache(RegExp* regExp)
 {
+    if (regExp->hasSourceInPieces())
+        return;
     String pattern = regExp->pattern();
     if (pattern.length() > maxStrongCacheablePatternLength)
         return;

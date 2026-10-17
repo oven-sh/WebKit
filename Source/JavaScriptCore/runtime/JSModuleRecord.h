@@ -36,6 +36,9 @@ namespace JSC {
 
 class JSModuleEnvironment;
 class ModuleFunctionDeclarationSlots;
+namespace AOT {
+struct ProgramModule;
+}
 class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
 
@@ -88,6 +91,9 @@ public:
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
     // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.
     void setFunctionDeclarationSlots(VM&, ModuleProgramExecutable*, UnlinkedModuleProgramCodeBlock*, bool leftUninstantiated);
+#if ENABLE(AOT)
+    void setProgramModule(VM&, ModuleProgramExecutable*);
+#endif
     // Whether readers of this module environment slot have to expect an uninstantiated function declaration. This only
     // depends on the module's code (and the option), never on what has been instantiated so far: code that is shared
     // between the CodeBlocks of one UnlinkedCodeBlock is specialized on the answer.
@@ -134,7 +140,12 @@ private:
         WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots; null when the slots can decode the declarations without it
         unsigned remaining { 0 }; // released when it reaches zero; a slot that was assigned to before it was read keeps it above
     };
+    std::optional<unsigned> functionDeclarationIndex(ScopeOffset) const;
+
     RefPtr<ModuleFunctionDeclarationSlots> m_functionDeclarationSlots;
+#if ENABLE(AOT)
+    const AOT::ProgramModule* m_programModule { nullptr };
+#endif
     std::unique_ptr<UninstantiatedFunctionDeclarations> m_uninstantiatedFunctionDeclarations; // released under cellLock()
 };
 

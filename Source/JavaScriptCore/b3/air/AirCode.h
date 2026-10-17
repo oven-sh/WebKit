@@ -54,6 +54,7 @@ class CCallHelpers;
 namespace B3 {
 
 class Procedure;
+class ProcedureFingerprint;
 class WasmBoundsCheckValue;
 
 #if !ASSERT_ENABLED
@@ -75,6 +76,8 @@ typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 
 typedef void PrologueGeneratorFunction(CCallHelpers&, Code&, GenerationContext&);
 typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
+typedef void EpilogueGeneratorFunction(CCallHelpers&, Code&);
+typedef SharedTask<EpilogueGeneratorFunction> EpilogueGenerator;
 
 inline constexpr ASCIILiteral tierName { "Air "_s };
 
@@ -207,6 +210,14 @@ public:
     {
         return m_prologueGenerators[entrypointIndex];
     }
+    void setEpilogueGenerator(RefPtr<EpilogueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
+#if USE(BUN_JSC_ADDITIONS)
+    void copyFrameGeneratorsFrom(Code& other)
+    {
+        m_prologueGenerators = other.m_prologueGenerators;
+        m_epilogueGenerator = other.m_epilogueGenerator;
+    }
+#endif
 
     void setNumEntrypoints(unsigned);
 
@@ -261,7 +272,12 @@ public:
     Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const;
+    unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const
+    {
+        while (index < size() && !at(index))
+            index++;
+        return index;
+    }
 
     // Finds the smallest index' such that at(index') != null and index' > index.
     unsigned LEGACY_NODELETE findNextBlockIndex(unsigned index) const;
@@ -358,6 +374,37 @@ public:
 
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
+#if USE(BUN_JSC_ADDITIONS)
+    void setUnsavedCalleeSaves(const RegisterSet& registers) { m_unsavedCalleeSaves = registers; }
+    const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
+    JS_EXPORT_PRIVATE void setCalleeSavesClobberedAtSuspensions(const RegisterSet&);
+    const RegisterSet& calleeSavesClobberedAtSuspensions() const { return m_calleeSavesClobberedAtSuspensions; }
+    void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
+    struct MaskInMemory {
+        int64_t mask;
+        GPRReg base;
+        int32_t offset;
+    };
+    void setMaskInMemory(int64_t mask, GPRReg base, int32_t offset) { m_maskInMemory = MaskInMemory { mask, base, offset }; }
+    const std::optional<MaskInMemory>& maskInMemory() const { return m_maskInMemory; }
+    void setPlacesRareBlocksInGaps() { m_placesRareBlocksInGaps = true; }
+    bool placesRareBlocksInGaps() const { return m_placesRareBlocksInGaps; }
+    void setPlacesRareBlocksBehindGuards() { m_placesRareBlocksBehindGuards = true; }
+    bool placesRareBlocksBehindGuards() const { return m_placesRareBlocksBehindGuards; }
+    void setOrdersBlocksByEdgeFrequency() { m_ordersBlocksByEdgeFrequency = true; }
+    bool ordersBlocksByEdgeFrequency() const { return m_ordersBlocksByEdgeFrequency; }
+    void setMayPlaceSpillsAboveFrameRecord() { m_mayPlaceSpillsAboveFrameRecord = true; }
+    void tryPlaceSpillsAboveFrameRecord();
+    bool placesSpillsAboveFrameRecord() const { return m_placesSpillsAboveFrameRecord; }
+    unsigned bytesAboveFrameRecord() const { return m_bytesAboveFrameRecord; }
+    unsigned bytesBelowFrameRecord() const { return m_frameSize - m_bytesAboveFrameRecord; }
+    void setMayPlaceCalleeSavesAtFrameBottom() { m_mayPlaceCalleeSavesAtFrameBottom = true; }
+    void tryPlaceCalleeSavesAtFrameBottom();
+    bool placesCalleeSavesAtFrameBottom() const { return m_placesCalleeSavesAtFrameBottom; }
+    void tryPushRegistersInPrologue();
+    const Vector<Reg, 6>& registersPushedInPrologue() const { return m_registersPushedInPrologue; }
+    bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
+#endif
     
     void emitDefaultPrologue(CCallHelpers&, GenerationContext&);
     void emitEpilogue(CCallHelpers&);
@@ -369,6 +416,9 @@ public:
 
 private:
     friend class ::JSC::B3::Procedure;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class ::JSC::B3::ProcedureFingerprint;
+#endif
     friend class BlockInsertionSet;
     
     Code(Procedure&);
@@ -391,6 +441,21 @@ private:
     Vector<Reg> m_fpRegsInPriorityOrder;
     ScalarRegisterSet m_mutableRegs;
     ScalarRegisterSet m_pinnedRegs;
+#if USE(BUN_JSC_ADDITIONS)
+    RegisterSet m_unsavedCalleeSaves;
+    RegisterSet m_calleeSavesClobberedAtSuspensions;
+    bool m_chargesForCalleeSaves { false };
+    std::optional<MaskInMemory> m_maskInMemory;
+    bool m_placesRareBlocksInGaps { false };
+    bool m_placesRareBlocksBehindGuards { false };
+    bool m_ordersBlocksByEdgeFrequency { false };
+    bool m_mayPlaceSpillsAboveFrameRecord { false };
+    bool m_placesSpillsAboveFrameRecord { false };
+    unsigned m_bytesAboveFrameRecord { 0 };
+    bool m_mayPlaceCalleeSavesAtFrameBottom { false };
+    bool m_placesCalleeSavesAtFrameBottom { false };
+    Vector<Reg, 6> m_registersPushedInPrologue;
+#endif
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
@@ -410,11 +475,35 @@ private:
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.
     Vector<Ref<PrologueGenerator>, 1> m_prologueGenerators;
+    RefPtr<EpilogueGenerator> m_epilogueGenerator;
     RefPtr<WasmBoundsCheckGenerator> m_wasmBoundsCheckGenerator;
     const char* m_lastPhaseName;
     std::unique_ptr<Disassembler> m_disassembler;
     const Ref<PrologueGenerator> m_defaultPrologueGenerator;
     RefPtr<JSON::Array> m_ionGraphPasses;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_recordsRareCodeStart { false };
+    unsigned m_numberOfBlocksInChains { std::numeric_limits<unsigned>::max() };
+    MacroAssembler::Label m_rareCodeStart;
+
+public:
+    void setRecordsRareCodeStart() { m_recordsRareCodeStart = true; }
+    bool recordsRareCodeStart() const { return m_recordsRareCodeStart; }
+    void setNumberOfBlocksInChains(unsigned number) { m_numberOfBlocksInChains = number; }
+    unsigned numberOfBlocksInChains() const { return m_numberOfBlocksInChains; }
+    void recordRareCodeStart(MacroAssembler::Label label) { m_rareCodeStart = label; }
+    MacroAssembler::Label rareCodeStart() const { return m_rareCodeStart; }
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+
+public:
+    void recordTableInCode(MacroAssembler::Label, unsigned numberOfEntries);
+    const Vector<std::pair<MacroAssembler::Label, unsigned>>& tablesInCode() const { return m_tablesInCode; }
+    void clearTablesInCode() { m_tablesInCode.shrink(0); }
+
+private:
+    Vector<std::pair<MacroAssembler::Label, unsigned>> m_tablesInCode;
+#endif
 };
 
 } } } // namespace JSC::B3::Air

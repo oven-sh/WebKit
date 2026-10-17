@@ -50,6 +50,13 @@ using Opcode = OpcodeID;
 
 class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
+namespace AOT {
+struct FunctionRef;
+struct ReturnAddressTrace;
+}
+
+struct UnlinkedHandlerInfo;
+
 namespace Wasm {
 class Callee;
 struct HandlerInfo;
@@ -79,7 +86,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ProgramExecutable;
     class ModuleProgramExecutable;
     class Register;
+    class RegisterAtOffsetList;
     class JSAsyncFunctionGenerator;
+    class JSPromise;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -117,11 +126,15 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         CatchInfo() = default;
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
+#if ENABLE(AOT)
+        CatchInfo(const UnlinkedHandlerInfo*, const AOT::FunctionRef&);
+#endif
 #if ENABLE(WEBASSEMBLY)
         CatchInfo(const Wasm::HandlerInfo*, const Wasm::Callee*);
 #endif
 
         bool m_valid { false };
+        bool m_isAOT { false };
         HandlerType m_type;
 #if ENABLE(JIT)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;
@@ -171,12 +184,35 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         void notifyDebuggerOfExceptionToBeThrown(VM&, JSGlobalObject*, CallFrame*, Exception*);
         NEVER_INLINE void debug(CallFrame*, DebugHookType, JSValue data);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
+        JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator*);
+#if ENABLE(AOT)
+        JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure);
+        JS_EXPORT_PRIVATE static JSCell* asyncFunctionIn(JSValue context);
+        JS_EXPORT_PRIVATE static JSPromise* asyncFunctionPromise(JSCell* generatorOrResumeClosure);
+        JS_EXPORT_PRIVATE static JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure, size_t maxStackSize);
+        AOT::ReturnAddressTrace* tryGetStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames);
+        AOT::ReturnAddressTrace* tryGetStackTraceSkippingConstructors(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSCell* lastConstructor);
+        bool tryDeferStackCapture(Exception*);
+        JS_EXPORT_PRIVATE bool hostFunctionThrownValueIsIgnored();
+        AOT::ReturnAddressTrace* getStackTraceUnderHostFunction(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC);
+#endif
 
-        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+        struct FramesAlreadyInTrace {
+            CallFrame* lastCallFrame { nullptr };
+            void* lastReturnPC { nullptr };
+            size_t numberShown { 0 };
+        };
+        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, const FramesAlreadyInTrace* = nullptr);
         bool isExceptionCaughtByUserCatchClause();
 
     private:
+#if ENABLE(AOT)
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* initialGeneratorOrResumeClosure, size_t maxStackSize);
+        template<bool isUnderHostFunction, bool skipsConstructors = false> AOT::ReturnAddressTrace* getStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, CallFrame*, void* returnPC, JSFunction* hostFunctionOnTop, JSCell* lastConstructor = nullptr);
+        AOT::ReturnAddressTrace* tryGetStackTraceUnderHostFunction(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, CallFrame*);
+#else
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
+#endif
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
         CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);
@@ -219,7 +255,12 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     protected:
         inline UnwindFunctorBase(VM&);
 
+#if ENABLE(AOT)
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&, bool skipsAdapter = true) const;
+#else
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&) const;
+#endif
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame*, const RegisterAtOffsetList*) const;
         void notifyDebuggerOfUnwinding(JSGlobalObject*, CallFrame*) const;
 
         VM& m_vm;

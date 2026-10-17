@@ -31,6 +31,7 @@
 #include "LinkBuffer.h"
 #include "WasmBBQPlan.h"
 #include "WasmCallee.h"
+#include "WasmCodeInImage.h"
 #include "WasmIPIntPlan.h"
 #include "WasmMachineThreads.h"
 #include "WasmModuleInformation.h"
@@ -43,12 +44,37 @@ Ref<CalleeGroup> CalleeGroup::createFromIPInt(VM& vm, MemoryMode mode, ModuleInf
     return adoptRef(*new CalleeGroup(vm, mode, moduleInformation, WTF::move(ipintCallees)));
 }
 
-Ref<CalleeGroup> CalleeGroup::createFromExisting(MemoryMode mode, const CalleeGroup& other)
+Ref<CalleeGroup> CalleeGroup::createFromExisting(MemoryMode mode, const CalleeGroup& other, const ModuleInformation& moduleInformation)
 {
-    return adoptRef(*new CalleeGroup(mode, other));
+    return adoptRef(*new CalleeGroup(mode, other, moduleInformation));
 }
 
-CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other)
+static void crashOnInterpreterUse()
+{
+    dataLogLn("crashIfInterpreterIsUsed: a WebAssembly function of a module that was not compiled at build time");
+    CRASH();
+}
+
+void CalleeGroup::takeEntrypoints(const ModuleInformation& moduleInformation)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (!m_codeInImage || !m_codeInImage->isSafeToRun(m_mode))
+        m_codeInImage = CodeInImage::tryCreate(moduleInformation, m_ipintCallees.get(), m_mode);
+    if (m_codeInImage) {
+        for (unsigned i = 0; i < m_calleeCount; ++i)
+            m_wasmIndirectCallEntrypoints[i] = m_codeInImage->entrypoint(i);
+        for (unsigned i = 0; i < m_wasmToWasmExitStubs.size(); ++i)
+            m_wasmToWasmExitStubs[i] = MacroAssemblerCodeRef<WasmEntryPtrTag>::createSelfManagedCodeRef(m_codeInImage->importStub(i));
+        return;
+    }
+#else
+    UNUSED_PARAM(moduleInformation);
+#endif
+    for (unsigned i = 0; i < m_calleeCount; ++i)
+        m_wasmIndirectCallEntrypoints[i] = Options::crashIfInterpreterIsUsed() ? CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(crashOnInterpreterUse)) : m_ipintCallees->at(i)->entrypoint();
+}
+
+CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other, const ModuleInformation& moduleInformation)
     : m_calleeCount(other.m_calleeCount)
     , m_mode(mode)
     , m_ipintCallees(other.m_ipintCallees)
@@ -56,11 +82,15 @@ CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other)
     , m_wasmIndirectCallEntrypoints(other.m_wasmIndirectCallEntrypoints)
     , m_wasmIndirectCallWasmCallees(other.m_wasmIndirectCallWasmCallees)
     , m_wasmToWasmExitStubs(other.m_wasmToWasmExitStubs)
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    , m_codeInImage(other.m_codeInImage)
+#endif
 {
     {
         Locker otherLocker { other.m_jsToWasmCalleesLock };
         m_jsToWasmCallees = other.m_jsToWasmCallees;
     }
+    takeEntrypoints(moduleInformation);
     Locker locker { m_lock };
     setCompilationFinished();
 }
@@ -72,7 +102,7 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
     , m_callers(m_calleeCount)
 {
     RefPtr<CalleeGroup> protectedThis = this;
-    m_plan = adoptRef(*new IPIntPlan(vm, moduleInformation, m_ipintCallees.copyRef(), createSharedTask<Plan::CallbackType>([this, protectedThis = WTF::move(protectedThis)] (Plan&) {
+    m_plan = adoptRef(*new IPIntPlan(vm, moduleInformation, m_ipintCallees.copyRef(), createSharedTask<Plan::CallbackType>([this, protectedThis = WTF::move(protectedThis), moduleInformation = Ref { moduleInformation }] (Plan&) {
         Locker locker { m_lock };
         if (m_plan->failed()) {
             m_errorMessage = m_plan->errorMessage();
@@ -83,12 +113,11 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
         m_wasmIndirectCallEntrypoints = FixedVector<CodePtr<WasmEntryPtrTag>>(m_calleeCount);
         m_wasmIndirectCallWasmCallees = FixedVector<RefPtr<Wasm::IPIntCallee>>(m_calleeCount);
 
-        for (unsigned i = 0; i < m_calleeCount; ++i) {
-            m_wasmIndirectCallEntrypoints[i] = m_ipintCallees->at(i)->entrypoint();
+        for (unsigned i = 0; i < m_calleeCount; ++i)
             m_wasmIndirectCallWasmCallees[i] = m_ipintCallees->at(i).ptr();
-        }
 
         m_wasmToWasmExitStubs = m_plan->takeWasmToWasmExitStubs();
+        takeEntrypoints(moduleInformation.get());
 
         setCompilationFinished();
     })));
@@ -105,6 +134,26 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
 }
 
 CalleeGroup::~CalleeGroup() = default;
+
+CodePtr<JSEntryPtrTag> CalleeGroup::jsEntrypointInImage(const RTT& rtt) const
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_codeInImage)
+        return m_codeInImage->jsEntrypoint(rtt);
+#else
+    UNUSED_PARAM(rtt);
+#endif
+    return nullptr;
+}
+
+void* const* CalleeGroup::imageCodePointers() const
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_codeInImage)
+        return m_codeInImage->pointers();
+#endif
+    return nullptr;
+}
 
 JSToWasmCallee& CalleeGroup::ensureJSToWasmCallee(const ModuleInformation& moduleInformation, FunctionSpaceIndex functionIndexSpace)
 {
@@ -550,6 +599,8 @@ TriState CalleeGroup::calleeIsReferenced(const AbstractLocker& locker, Wasm::Cal
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     case CompilationMode::OMGMode: {
         FunctionCodeIndex index = toCodeIndex(callee->index());
+        if (m_codeInImage && m_codeInImage->holds(callee, index))
+            return TriState::True;
         const auto* tuple = optimizedCalleesTuple(locker, index);
         if (!tuple)
             return TriState::Indeterminate;

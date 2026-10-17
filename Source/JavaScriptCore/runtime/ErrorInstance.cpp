@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ErrorInstance.h"
 
+#include "AOTRuntime.h"
 #include "CodeBlock.h"
 #include "CustomGetterSetter.h"
 #include "ErrorInstanceInlines.h"
@@ -95,7 +96,14 @@ ErrorInstance* ErrorInstance::create(JSGlobalObject* globalObject, Structure* st
 
 String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, const String& message, RuntimeType type, ErrorInstance::SourceAppender appender)
 {
-    if (!codeBlock->hasExpressionInfo() || message.isNull())
+    if (message.isNull())
+        return message;
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasNoSourceText = codeBlock->source().provider()->hasNoSourceText();
+#else
+    bool hasNoSourceText = false;
+#endif
+    if (!codeBlock->hasExpressionInfo() && !hasNoSourceText)
         return message;
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -104,6 +112,18 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     // build, so that a message does not depend on the build and does not name the builtin's internals.
     if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); executable && executable->isPrivateBuiltinFunction())
         return message;
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (hasNoSourceText) {
+#if ENABLE(AOT)
+        if (auto function = AOT::FunctionRef::of(codeBlock)) {
+            if (auto quote = function.quoteAt(bytecodeIndex))
+                return appender(message, quote->first, type, quote->second ? ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource : ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource);
+        }
+#endif
+        return message;
+    }
 #endif
 
     auto info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
@@ -140,6 +160,7 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
+    m_returnAddresses = nullptr;
     // A collection may already have formatted the frames these replace.
     m_stackString = String();
     m_hasErrorInfo = false;
@@ -148,6 +169,19 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 #endif
     vm.writeBarrier(this);
 }
+
+template<typename Visitor>
+void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    Locker locker { thisObject->cellLock() };
+    if (thisObject->m_returnAddresses)
+        visitor.markAuxiliary(thisObject->m_returnAddresses);
+}
+
+DEFINE_VISIT_CHILDREN(ErrorInstance);
 
 size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
 {
@@ -158,6 +192,8 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
         Locker locker { errorInstance->cellLock() };
         if (errorInstance->m_stackTrace)
             size += errorInstance->m_stackTrace->sizeInBytes();
+        if (errorInstance->m_returnAddresses)
+            size += errorInstance->m_returnAddresses->sizeInBytes();
         if (!errorInstance->m_stackString.isEmpty())
             size += errorInstance->m_stackString.impl()->costDuringGC();
     }
@@ -165,8 +201,30 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
     return Base::estimatedSize(cell, vm) + size;
 }
 
+void ErrorInstance::materializeStackTrace()
+{
+    auto stackTrace = makeUnique<Vector<StackFrame>>();
+    unsigned onTop = m_returnAddresses->hasHostFunctionFrameOnTop;
+    if (onTop)
+        stackTrace->append(m_stackTrace->span().first(onTop));
+    StackFrame::appendTypedFrames(*m_returnAddresses, *stackTrace);
+    if (m_stackTrace)
+        stackTrace->append(m_stackTrace->span().subspan(onTop));
+    Locker locker { cellLock() };
+    m_stackTrace = WTF::move(stackTrace);
+    m_returnAddresses = nullptr;
+}
+
 void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size_t framesToSkip, bool append)
 {
+    if (m_returnAddresses) {
+        if (append)
+            materializeStackTrace();
+        else {
+            Locker locker { cellLock() };
+            m_returnAddresses = nullptr;
+        }
+    }
     {
         Locker locker { cellLock() };
 
@@ -202,18 +260,36 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     m_sourceAppender = appender;
     m_runtimeTypeForCause = type;
 
-    std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, this, useCurrentFrame, nullptr, nullptr, subclassCaller);
+    std::unique_ptr<Vector<StackFrame>> stackTrace;
+    AOT::ReturnAddressTrace* returnAddresses = nullptr;
+#if ENABLE(AOT)
+    if (vm.useImmutableIntrinsics) [[unlikely]] {
+        if (useCurrentFrame) {
+            if (std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit())
+                returnAddresses = subclassCaller ? vm.interpreter.tryGetStackTraceSkippingConstructors(this, *stackTraceLimit, stackTrace, subclassCaller) : vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
+        }
+    }
+#endif
+    if (!returnAddresses)
+        stackTrace = getStackTrace(vm, this, useCurrentFrame, nullptr, nullptr, subclassCaller);
     {
         Locker locker { cellLock() };
         m_stackTrace = WTF::move(stackTrace);
+        m_returnAddresses = returnAddresses;
     }
     vm.writeBarrier(this);
 
     String messageWithSource = message;
 
-    if (m_stackTrace && !m_stackTrace->isEmpty() && hasSourceAppender()) {
-        auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame);
-        if (codeBlock) {
+    if (hasSourceAppender() && (m_returnAddresses || (m_stackTrace && !m_stackTrace->isEmpty()))) {
+        if (auto quote = quoteSourceWithoutSourceText(vm, vm.topCallFrame)) {
+            ErrorInstance::SourceAppender appender = sourceAppender();
+            clearSourceAppender();
+            RuntimeType type = runtimeTypeForCause();
+            clearRuntimeTypeForCause();
+            if (!quote->text.isNull() && !message.isNull())
+                messageWithSource = appender(message, quote->text, type, quote->isExact ? SourceTextWhereErrorOccurred::FoundExactSource : SourceTextWhereErrorOccurred::FoundApproximateSource);
+        } else if (auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame); codeBlock) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
             RuntimeType type = runtimeTypeForCause();
@@ -290,6 +366,7 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     {
         Locker locker { cellLock() };
         m_stackTrace = nullptr;
+        m_returnAddresses = nullptr;
     }
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
@@ -405,6 +482,12 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
         m_capturedStackTrace->clear();
     }
 
+#if ENABLE(AOT)
+    if (m_returnAddresses && !vm.heap.isMarked(AOT::tokenOf(m_returnAddresses->instance))) {
+        computeErrorInfo(vm, false);
+        return;
+    }
+#endif
     if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace))
         computeErrorInfo(vm, false);
 }
@@ -416,6 +499,8 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     // that case, DeferGC's destructor might trigger another GC cycle which is unexpected.
     DeferGCForAWhile deferGC(vm);
     UNUSED_PARAM(allocationAllowed);
+    if (m_returnAddresses)
+        materializeStackTrace();
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
         auto& fn = vm.onComputeErrorInfo();
@@ -472,6 +557,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     bool materializedCapturedStackProperty = materializeCapturedStackPropertyIfSaved(vm);
     if (m_errorInfoMaterialized)
         return materializedCapturedStackProperty;
+    if (m_returnAddresses)
+        materializeStackTrace();
 
 #if USE(BUN_JSC_ADDITIONS)
 
@@ -550,6 +637,11 @@ static bool isErrorInfoProperty(VM& vm, PropertyName propertyName)
         || propertyName == vm.propertyNames->column
         || propertyName == vm.propertyNames->sourceURL
         || propertyName == vm.propertyNames->stack;
+}
+
+bool ErrorInstance::isLazilyMaterialized(VM& vm, PropertyName propertyName)
+{
+    return isErrorInfoProperty(vm, propertyName);
 }
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyName)

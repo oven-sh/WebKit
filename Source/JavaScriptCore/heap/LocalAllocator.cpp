@@ -28,9 +28,11 @@
 
 #include "AlignedMemoryAllocator.h"
 #include "AllocatingScope.h"
+#include "CompleteSubspace.h"
 #include "FreeListInlines.h"
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockCage.h"
 #include "MarkedBlockInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
@@ -133,7 +135,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     doTestCollectionsIfNeeded(heap, deferralContext);
 
     ASSERT(!m_directory->markedSpace().isIterating());
-    heap.didAllocate(m_freeList.originalSize());
+    heap.didAllocateInBlock(m_freeList.originalSize(), *m_directory);
     
     didConsumeFreeList();
 
@@ -146,6 +148,13 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     }
 #endif
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
+        if (void* result = static_cast<CompleteSubspace*>(m_directory->m_subspace)->tryAllocateInLargerCell(heap, *m_directory, deferralContext))
+            return result;
+    }
+#endif
+
     AllocatingScope helpingHeap(heap);
 
     heap.collectIfNecessaryOrDefer(deferralContext);
@@ -171,7 +180,18 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT(!subspace->isPreciseOnly());
     ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
     MarkedBlock::Handle* block = m_directory->tryAllocateBlock(heap);
+    if (!block && MarkedBlockCage::isRequired() && !deferralContext && !heap.isDeferred()) [[unlikely]] {
+        heap.collectNow(Sync, CollectionScope::Full);
+        if (m_currentBlock)
+            return allocate(heap, cellSize, deferralContext, failureMode);
+        result = tryAllocateWithoutCollecting(cellSize);
+        if (result)
+            return result;
+        block = m_directory->tryAllocateBlock(heap);
+    }
     if (!block) [[unlikely]] {
+        if (failureMode == AllocationFailureMode::Assert)
+            MarkedBlockCage::logExhaustion();
         RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
         return nullptr;
     }
@@ -294,7 +314,7 @@ void LocalAllocator::doTestCollectionsIfNeeded(JSC::Heap& heap, GCDeferralContex
             if (deferralContext)
                 deferralContext->m_shouldGC = true;
             else
-                heap.collectNow(Sync, CollectionScope::Full);
+                heap.collectNow(Sync, Options::useEdenCollectionsAtSlowPathAllocs() ? CollectionScope::Eden : CollectionScope::Full);
         }
     }
     if (++allocationCount >= Options::slowPathAllocsBetweenGCs())

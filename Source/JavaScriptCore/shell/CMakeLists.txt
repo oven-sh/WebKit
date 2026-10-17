@@ -149,6 +149,7 @@ if (DEVELOPER_MODE)
         ../b3/testb3_6.cpp
         ../b3/testb3_7.cpp
         ../b3/testb3_8.cpp
+        ../b3/testb3_bun.cpp
     )
     set(testb3_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testb3_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})

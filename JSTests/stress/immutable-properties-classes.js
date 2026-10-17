@@ -70,7 +70,12 @@ function snapshot(object) {
         shouldThrow(() => { "use strict"; fn.name = "x"; }, TypeError);
         shouldBe(Reflect.defineProperty(fn, "name", { value: "x" }), false);
         shouldBe(Reflect.defineProperty(fn, "name", { value: fn.name }), true);
-        shouldBe(Reflect.deleteProperty(fn, "name"), false);
+        // Immutability alone refuses this. Of a function of the program Reflect.deleteProperty() says so by a TypeError, of a bound or host function by false.
+        if (fn === bound || fn === native)
+            shouldBe(Reflect.deleteProperty(fn, "name"), false);
+        else
+            shouldThrow(() => Reflect.deleteProperty(fn, "name"), TypeError);
+        shouldBe(Object.hasOwn(fn, "name"), true);
         shouldBe(Reflect.deleteProperty(fn, "missing"), true);
         shouldBe(Reflect.setPrototypeOf(fn, null), false);
     }

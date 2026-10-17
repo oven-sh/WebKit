@@ -135,6 +135,14 @@ public:
     ModuleFunctionDeclarationSlots* heapAllocatedFunctionDeclSlots() const { return m_heapAllocatedFunctionDeclSlots.get(); }
     void setHeapAllocatedFunctionDeclSlots(Ref<ModuleFunctionDeclarationSlots>&& slots) { m_heapAllocatedFunctionDeclSlots = WTF::move(slots); }
 
+    unsigned firstVarScopeOffset() const { return m_firstVarScopeOffset; }
+    unsigned numberOfVarScopeOffsets() const { return m_numberOfVarScopeOffsets; }
+    void setVarScopeOffsets(unsigned first, unsigned count)
+    {
+        m_firstVarScopeOffset = first;
+        m_numberOfVarScopeOffsets = count;
+    }
+
     bool isAsync() const { return codeFeatures() & AwaitFeature; }
 
     void setVariableDeclarations(const VariableEnvironment& environment) { m_varDeclarations = environment; }
@@ -153,6 +161,8 @@ private:
     VariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset { 0 };
     unsigned m_numberOfHeapAllocatedFunctionDecls { 0 };
+    unsigned m_firstVarScopeOffset { 0 };
+    unsigned m_numberOfVarScopeOffsets { 0 };
     RefPtr<ModuleFunctionDeclarationSlots> m_heapAllocatedFunctionDeclSlots;
 
 public:

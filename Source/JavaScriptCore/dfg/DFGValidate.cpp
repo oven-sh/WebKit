@@ -356,7 +356,7 @@ public:
                         // This only supports structures that are JSFinalObject or JSArray.
                         VALIDATE(
                             (node),
-                            structure->classInfoForCells() == JSFinalObject::info()
+                            structure->typeInfo().type() == FinalObjectType
                             || structure->classInfoForCells() == JSArray::info());
 
                         // We only support certain indexing shapes.

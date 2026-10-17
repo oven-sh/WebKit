@@ -55,6 +55,9 @@ class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisit
 
     friend class SetCurrentCellScope;
     friend class Heap;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class CompiledLayoutVisitor;
+#endif
 
 public:
     class ReferrerContext {
@@ -158,6 +161,10 @@ public:
     // This informs the GC about auxiliary of some size that we are keeping alive. If you don't do
     // this then the space will be freed at end of GC.
     void markAuxiliary(const void* base) final;
+#if ENABLE(AOT)
+    bool markLeafCell(JSCell*);
+    void reportLeafCellExtraMemoryVisited(JSC::Heap&, size_t);
+#endif
 
     void reportExtraMemoryVisited(size_t) final;
 #if ENABLE(RESOURCE_USAGE)
@@ -210,6 +217,7 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+    void visitChildrenOfBlackCell(const JSCell*);
 
     void propagateExternalMemoryVisitedIfNecessary();
     ALWAYS_INLINE void noteBytesMarked(JSC::Heap&, size_t);

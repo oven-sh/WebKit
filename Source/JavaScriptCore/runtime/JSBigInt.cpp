@@ -7831,7 +7831,7 @@ static ALWAYS_INLINE unsigned LEGACY_NODELETE computeHash(JSBigInt::Digit* digit
     WTF::add(hasher, sign);
     for (unsigned index = 0; index < length; ++index)
         WTF::add(hasher, digits[index]);
-    return hasher.hash();
+    return hasher.hash() & 0x7f7fffff;
 }
 
 std::optional<unsigned> JSBigInt::concurrentHash()

@@ -70,6 +70,7 @@ private:
 
     void finishCreation(VM&);
 
+    alignas(AOTFields) [[maybe_unused]] std::byte m_aotFieldsStorage[sizeof(AOTFields)];
     const Ref<const Wasm::RTT> m_rtt;
     std::array<WriteBarrierStructureID, inlinedDisplaySize> m_inlinedDisplay { };
 };

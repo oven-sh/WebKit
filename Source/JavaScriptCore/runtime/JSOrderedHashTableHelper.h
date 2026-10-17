@@ -413,10 +413,10 @@ public:
     {
         ASSERT(!isObsolete(base));
         TableSize capacity = Helper::capacity(base);
-        TableSize dataCapacity = Helper::dataCapacity(capacity);
         TableSize deletedEntryCount = Helper::deletedEntryCount(base);
         TableSize usedCapacity = Helper::aliveEntryCount(base) + deletedEntryCount;
 
+        TableSize dataCapacity = Helper::dataCapacity(capacity);
         if (usedCapacity < dataCapacity)
             return nullptr;
 

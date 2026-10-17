@@ -2879,7 +2879,13 @@ public:
     void signExtend32To64(TrustedImm32 imm, RegisterID dest)
     {
         if (!imm.m_value)
+#if USE(BUN_JSC_ADDITIONS)
+            m_assembler.xorl_rr(dest, dest);
+        else if (imm.m_value > 0)
+            m_assembler.movl_i32r(imm.m_value, dest);
+#else
             m_assembler.xorq_rr(dest, dest);
+#endif
         else
             m_assembler.mov_i32r(imm.m_value, dest);
     }
@@ -3240,6 +3246,12 @@ public:
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
+    Jump branch32(RelationalCondition cond, BaseIndex left, RegisterID right)
+    {
+        m_assembler.cmpl_rm(right, left.offset, left.base, left.index, left.scale);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
     Jump branch32WithUnalignedHalfWords(RelationalCondition cond, BaseIndex left, TrustedImm32 right)
     {
         return branch32(cond, left, right);
@@ -3285,7 +3297,11 @@ public:
     {
         if (mask.m_value == -1)
             m_assembler.testl_rr(reg, reg);
+#if USE(BUN_JSC_ADDITIONS)
+        else if (!(mask.m_value & ~0xff)) {
+#else
         else if (!(mask.m_value & ~0xff) && reg < X86Registers::esp) { // Using esp and greater as a byte register yields the upper half of the 16 bit registers ax, cx, dx and bx, e.g. esp, register 4, is actually ah.
+#endif
             if (mask.m_value == 0xff)
                 m_assembler.testb_rr(reg, reg);
             else
@@ -5134,6 +5150,13 @@ public:
         m_assembler.addq_mr(src.offset, src.base, dest);
     }
 
+    void add64(Address a, RegisterID b, RegisterID dest)
+    {
+        ASSERT(a.base != dest);
+        move(b, dest);
+        add64(a, dest);
+    }
+
     void add64(BaseIndex src, RegisterID dest)
     {
         m_assembler.addq_mr(src.offset, src.base, src.index, src.scale, dest);
@@ -5679,7 +5702,19 @@ public:
         move(src1, dest);
         m_assembler.imulq_rr(src2, dest);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void mul64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        m_assembler.imulq_i32r(src, imm.m_value, dest);
+    }
+#endif
     
+    void x86RepeatMoveString64()
+    {
+        m_assembler.rep_movsq();
+    }
+
     void x86ConvertToQuadWord64()
     {
         m_assembler.cqo();
@@ -5755,6 +5790,13 @@ public:
     void or64(Address src, RegisterID dest)
     {
         m_assembler.orq_mr(src.offset, src.base, dest);
+    }
+
+    void or64(Address op1, RegisterID op2, RegisterID dest)
+    {
+        ASSERT(op1.base != dest);
+        move(op2, dest);
+        or64(op1, dest);
     }
 
     void or64(BaseIndex src, RegisterID dest)
@@ -6884,6 +6926,11 @@ public:
     {
         m_assembler.testq_rm(reg, address.offset, address.base);
         return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    Jump branchTest64(ResultCondition cond, RegisterID reg, Address mask)
+    {
+        return branchTest64(cond, mask, reg);
     }
 
     Jump branchTest64(ResultCondition cond, BaseIndex address, TrustedImm32 mask = TrustedImm32(-1))
@@ -9948,6 +9995,11 @@ public:
     static CPUID getCPUID(unsigned level);
     static CPUID getCPUIDEx(unsigned level, unsigned count);
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static void restrictToBuildTargetFeatures();
+    JS_EXPORT_PRIVATE static unsigned buildTargetFeatures();
+    JS_EXPORT_PRIVATE static bool setSupportsAVX(bool);
+#endif
 
     JS_EXPORT_PRIVATE static CPUIDCheckState s_sse3CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_supplementalSSE3CheckState;

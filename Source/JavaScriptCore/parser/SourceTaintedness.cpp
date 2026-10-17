@@ -50,7 +50,7 @@ String sourceTaintedOriginToString(SourceTaintedOrigin taintedness)
 static SourceProvider* sourceProviderIfCouldBeTainted(StackVisitor& visitor)
 {
 #if ENABLE(WEBASSEMBLY)
-    if (visitor->callFrame()->callee().isNativeCallee() && visitor->callFrame()->wasmInstance()) {
+    if (visitor->isNativeCalleeFrame() && visitor->callFrame()->wasmInstance()) {
         JSWebAssemblyInstance* instance = std::bit_cast<JSWebAssemblyInstance*>(*visitor->callFrame()->addressOfCodeBlock());
         auto* sourceProvider = instance->sourceProvider();
         return sourceProvider->couldBeTainted() ? sourceProvider : nullptr;
@@ -143,7 +143,7 @@ bool isPrevalentDomainTaintedCodeOnStack(VM& vm, CallFrame* callFrame)
     StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
         SourceProvider* sourceProvider = nullptr;
 #if ENABLE(WEBASSEMBLY)
-        if (visitor->callFrame()->callee().isNativeCallee() && visitor->callFrame()->wasmInstance())
+        if (visitor->isNativeCalleeFrame() && visitor->callFrame()->wasmInstance())
             sourceProvider = std::bit_cast<JSWebAssemblyInstance*>(*visitor->callFrame()->addressOfCodeBlock())->sourceProvider();
 #endif
         if (auto* codeBlock = visitor->codeBlock(); codeBlock && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction())

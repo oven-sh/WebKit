@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSOrderedHashTable.h"
 
+#include "AOTTypedCompactTable.h"
 #include "ButterflyInlinesLight.h"
 
 namespace JSC {
@@ -39,7 +40,75 @@ void JSOrderedHashTable<Traits>::visitChildrenImpl(JSCell* cell, Visitor& visito
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_storage);
+#if ENABLE(AOT)
+    visitor.append(thisObject->m_compactTable);
+#endif
 }
+
+#if ENABLE(AOT)
+using AOT::Typed::CompactTable;
+
+template<typename Traits>
+void JSOrderedHashTable<Traits>::convertCompactTable()
+{
+    CompactTable::convert(vm(), this);
+}
+
+template<typename Traits>
+void JSOrderedHashTable<Traits>::copyCompactTableOf(VM& vm, JSOrderedHashTable* base)
+{
+    m_compactTable.set(vm, this, uncheckedDowncast<CompactTable>(base->m_compactTable.get())->copy(vm));
+}
+
+template<typename Traits>
+uint32_t JSOrderedHashTable<Traits>::sizeOfCompactTable()
+{
+    return uncheckedDowncast<CompactTable>(m_compactTable.get())->size();
+}
+
+template<typename Traits>
+void JSOrderedHashTable<Traits>::clearCompactTable()
+{
+    CompactTable::clear(vm(), this);
+}
+
+template<typename Traits>
+static NEVER_INLINE JSValue findInCompactTableGeneric(JSGlobalObject* globalObject, CompactTable* table, JSValue key)
+{
+    auto entry = table->find(globalObject, key);
+    if (!entry)
+        return { };
+    return Traits::hasValueData ? table->valueAt(*entry) : key;
+}
+
+template<typename Traits>
+JSValue JSOrderedHashTable<Traits>::findInCompactTable(JSGlobalObject* globalObject, JSValue key)
+{
+    auto* table = uncheckedDowncast<CompactTable>(m_compactTable.get());
+    uint32_t found;
+    switch (table->tryFindQuickly(key, found)) {
+    case CompactTable::Quickly::Found:
+        return Traits::hasValueData ? table->valueAt(found) : key;
+    case CompactTable::Quickly::Absent:
+        return { };
+    case CompactTable::Quickly::Unknown:
+        break;
+    }
+    return findInCompactTableGeneric<Traits>(globalObject, table, key);
+}
+
+template<typename Traits>
+bool JSOrderedHashTable<Traits>::removeFromCompactTable(JSGlobalObject* globalObject, JSValue key)
+{
+    return CompactTable::remove(globalObject, this, key);
+}
+
+template<typename Traits>
+bool JSOrderedHashTable<Traits>::tryAddToCompactTable(JSGlobalObject* globalObject, JSValue key, JSValue value)
+{
+    return CompactTable::tryAdd(globalObject, this, key, value);
+}
+#endif
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSOrderedHashTable<Traits>);
 

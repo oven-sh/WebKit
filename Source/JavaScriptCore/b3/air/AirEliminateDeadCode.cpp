@@ -29,32 +29,65 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
+#include "AirFormTable.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
 #include "AirTmpInlines.h"
-#include "AirTmpSet.h"
-#include <wtf/IndexSet.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace B3 { namespace Air {
+
+static constexpr std::array<bool, 256> computeLivenessPreservingForms()
+{
+    std::array<bool, 256> result { };
+    for (unsigned form = 0; form < 256; ++form) {
+        switch (static_cast<Arg::Role>((form >> formRoleShift) & formRoleMask)) {
+        case Arg::Def:
+        case Arg::ZDef:
+        case Arg::UseDef:
+        case Arg::UseZDef:
+        case Arg::EarlyDef:
+        case Arg::EarlyZDef:
+            result[form] = true;
+            break;
+        default:
+            break;
+        }
+    }
+    return result;
+}
 
 bool eliminateDeadCode(Code& code)
 {
     PhaseScope phaseScope(code, "eliminateDeadCode"_s);
 
-    TmpSet liveTmps;
-    IndexSet<StackSlot*> liveStackSlots;
-    bool changed { false };
-    
-    auto isArgLive = [&](const Arg& arg) -> bool {
+    static constexpr std::array<bool, 256> livenessPreservingForms = computeLivenessPreservingForms();
+
+    const unsigned gpIndicesEnd = Tmp::absoluteIndexEnd(code, GP);
+    Vector<uint64_t, 64> liveTmpStore(FillWith { }, (gpIndicesEnd + Tmp::absoluteIndexEnd(code, FP) + 63) / 64, static_cast<uint64_t>(0));
+    uint64_t* liveTmps = liveTmpStore.mutableSpan().data();
+    Vector<uint64_t, 8> liveStackSlotStore(FillWith { }, (code.stackSlots().size() + 63) / 64, static_cast<uint64_t>(0));
+    uint64_t* liveStackSlots = liveStackSlotStore.mutableSpan().data();
+
+    auto indexOf = [&](Tmp tmp) ALWAYS_INLINE_LAMBDA -> unsigned {
+        return tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : gpIndicesEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
+    };
+
+    auto isArgLive = [&](const Arg& arg) ALWAYS_INLINE_LAMBDA -> bool {
         switch (arg.kind()) {
-        case Arg::Tmp:
+        case Arg::Tmp: {
             if (arg.isReg())
                 return true;
-            return liveTmps.contains(arg.tmp());
-        case Arg::Stack:
+            unsigned index = indexOf(arg.tmp());
+            return liveTmps[index / 64] >> (index % 64) & 1;
+        }
+        case Arg::Stack: {
             if (arg.stackSlot()->isLocked())
                 return true;
-            return liveStackSlots.contains(arg.stackSlot());
+            unsigned index = arg.stackSlot()->index();
+            return liveStackSlots[index / 64] >> (index % 64) & 1;
+        }
         default:
             return true;
         }
@@ -62,6 +95,15 @@ bool eliminateDeadCode(Code& code)
 
     auto isInstLiveByDefs = [&](Inst& inst) -> bool {
         // This instruction should be presumed dead, if its Args are all dead.
+        unsigned argIndex = 0;
+        if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
+            Arg* args = inst.args().data();
+            for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
+                if (livenessPreservingForms[forms[argIndex]] && isArgLive(args[argIndex]))
+                    return true;
+            }
+            return false;
+        }
         bool storesToLive = false;
         inst.forEachArg(
             [&] (Arg& arg, Arg::Role role, Bank, Width) {
@@ -75,22 +117,25 @@ bool eliminateDeadCode(Code& code)
     };
 
     auto isInstLive = [&](Inst& inst) -> bool {
-        return inst.hasNonArgEffects() || isInstLiveByDefs(inst);
+        return isInstLiveByDefs(inst) || inst.hasNonArgEffects();
     };
 
     auto markArgsLive = [&](Inst& inst) {
         for (Arg& arg : inst.args()) {
-            if (arg.isStack() && !arg.stackSlot()->isLocked())
-                changed |= liveStackSlots.add(arg.stackSlot());
+            if (arg.isStack() && !arg.stackSlot()->isLocked()) {
+                unsigned index = arg.stackSlot()->index();
+                liveStackSlots[index / 64] |= static_cast<uint64_t>(1) << (index % 64);
+            }
             arg.forEachTmpFast(
                 [&] (Tmp& tmp) {
-                    if (!tmp.isReg())
-                        changed |= liveTmps.add(tmp);
+                    unsigned index = indexOf(tmp);
+                    liveTmps[index / 64] |= static_cast<uint64_t>(1) << (index % 64);
                 });
         }
     };
 
     Vector<Inst*> backingStore;
+    bool changed { false };
 
     for (unsigned blockIndex = code.size(); blockIndex--;) {
         BasicBlock* block = code[blockIndex];
@@ -171,6 +216,8 @@ bool eliminateDeadCode(Code& code)
 }
 
 } } } // namespace JSC::B3::Air
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(B3_JIT)
 

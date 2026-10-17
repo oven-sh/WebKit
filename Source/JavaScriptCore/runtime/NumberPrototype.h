@@ -52,6 +52,8 @@ JSString* int32ToString(VM&, int32_t value, int32_t radix);
 JSString* int52ToString(VM&, int64_t value, int32_t radix);
 JSString* numberToString(VM&, double value, int32_t radix);
 String toStringWithRadix(double doubleValue, int32_t radix);
+typedef char RadixBuffer[2180];
+char* toStringWithRadixInternal(RadixBuffer&, double, unsigned radix);
 int32_t extractToStringRadixArgument(JSGlobalObject*, JSValue radixValue, ThrowScope&);
 
 } // namespace JSC

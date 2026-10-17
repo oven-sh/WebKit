@@ -1235,7 +1235,7 @@ public:
     template<int datasize>
     ALWAYS_INLINE void ldp(FPRegisterID rt, FPRegisterID rt2, RegisterID rn, PairPostIndex simm)
     {
-        CHECK_DATASIZE();
+        CHECK_DATASIZE_SIMD();
         insn(loadStoreRegisterPairPostIndex(MEMPAIROPSIZE_FP(datasize), true, MemOp_LOAD, simm, rn, rt, rt2));
     }
 
@@ -2880,7 +2880,7 @@ public:
     template<int datasize>
     ALWAYS_INLINE void stp(FPRegisterID rt, FPRegisterID rt2, RegisterID rn, PairPostIndex simm)
     {
-        CHECK_DATASIZE();
+        CHECK_DATASIZE_SIMD();
         insn(loadStoreRegisterPairPostIndex(MEMPAIROPSIZE_FP(datasize), true, MemOp_STORE, simm, rn, rt, rt2));
     }
 

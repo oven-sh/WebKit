@@ -402,8 +402,11 @@ static ALWAYS_INLINE size_t lineStartAfterTerminator(std::span<const CharType> t
 
 LineColumn BuiltinsSourceProvider::lineColumnInTextForOffset(unsigned offset)
 {
+    auto allText = source().span8();
+    if (!allText.data())
+        return { };
     unsigned start = *(std::ranges::upper_bound(m_starts, offset) - 1);
-    auto text = source().span8().subspan(start, offset - start);
+    auto text = allText.subspan(start, offset - start);
     unsigned line = 0;
     size_t lineStart = 0;
     while (lineStart < text.size()) {

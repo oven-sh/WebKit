@@ -357,6 +357,23 @@ IPIntCallee::IPIntCallee(FunctionIPIntMetadataGenerator& generator, FunctionSpac
     }
 }
 
+void IPIntCallee::takeMetadata(FunctionIPIntMetadataGenerator& generator)
+{
+    RELEASE_ASSERT(generator.m_exceptionHandlers.isEmpty());
+    m_bytecode = generator.m_bytecode.data() + generator.m_bytecodeOffset;
+    m_bytecodeEnd = m_bytecode + (generator.m_bytecode.size() - generator.m_bytecodeOffset - 1);
+    m_metadata = Vector<uint8_t>(WTF::move(generator.m_metadata));
+    m_localInitBytecode = Vector<uint8_t>(WTF::move(generator.m_localInitBytecode));
+    m_callTargets = WTF::move(generator.m_callTargets);
+    m_hotLocals = generator.hotLocals();
+    m_localSizeToAlloc = roundUpToMultipleOf<2>(generator.m_numLocals);
+    m_numRethrowSlotsToAlloc = generator.m_numAlignedRethrowSlots;
+    m_numLocals = generator.m_numLocals;
+    m_numArgumentsOnStack = generator.m_numArgumentsOnStack;
+    m_maxFrameSizeInV128 = generator.m_maxFrameSizeInV128;
+    m_maxCalleeStackSize = generator.m_maxCalleeStackSize;
+}
+
 void IPIntCallee::setEntrypoint(CodePtr<WasmEntryPtrTag> entrypoint)
 {
     ASSERT(!m_entrypoint);

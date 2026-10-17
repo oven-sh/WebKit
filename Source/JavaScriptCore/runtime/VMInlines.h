@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "Debugger.h"
 #include "EntryFrame.h"
 #include "FuzzerAgent.h"
@@ -88,10 +89,18 @@ inline CallFrame* VM::topJSCallFrame() const
     CallFrame* frame = topCallFrame;
     if (!frame) [[unlikely]]
         return frame;
+#if ENABLE(AOT)
+    if (AOT::topCallFrameIsAOTFrame(frame)) [[unlikely]]
+        return nullptr;
+#endif
     if (!frame->isNativeCalleeFrame() && !frame->isZombieFrame()) [[likely]]
         return frame;
     EntryFrame* entryFrame = topEntryFrame;
     do {
+#if ENABLE(AOT)
+        if (AOT::addressKind(removeCodePtrTag(frame->rawReturnPC())) != AOT::ImageAddressInfo::NotInImage) [[unlikely]]
+            return nullptr;
+#endif
         frame = frame->callerFrame(entryFrame);
         ASSERT(!frame || !frame->isZombieFrame());
     } while (frame && frame->isNativeCalleeFrame());
@@ -153,6 +162,10 @@ JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAllSettledSlowFulfillFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAllSettledSlowRejectFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAnyRejectFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAnySlowRejectFunction)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyThenFinally)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyCatchFinally)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyValueThunk)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseFinallyThrower)
 #undef JSC_DEFINE_VM_LAZY_EXECUTABLE
 
 } // namespace JSC

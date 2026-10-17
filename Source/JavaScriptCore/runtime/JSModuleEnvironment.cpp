@@ -34,6 +34,7 @@
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSModuleRecord.h"
 #include "SymbolTableInlines.h"
+#include "SyntheticModuleRecord.h"
 
 namespace JSC {
 
@@ -139,6 +140,13 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
         ASSERT(redirectSlot.isValue());
         JSValue value = redirectSlot.getValue(globalObject, resolution.localName);
         scope.assertNoException();
+#if USE(BUN_JSC_ADDITIONS)
+        if (SyntheticModuleRecord::isLiveBinding(value)) [[unlikely]] {
+            bool isRead = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty;
+            value = isRead ? SyntheticModuleRecord::readLiveBinding(globalObject, value) : jsUndefined();
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+#endif
         slot.setValue(thisObject, redirectSlot.attributes(), value);
         return true;
     }

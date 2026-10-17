@@ -205,6 +205,9 @@ void Value::replaceWithOops()
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 {
     unsigned index = m_index;
+#if USE(BUN_JSC_ADDITIONS)
+    bool isInArena = m_isInArena;
+#endif
 
     this->~Value();
 
@@ -212,11 +215,17 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 
     this->m_index = index;
     this->owner = owner;
+#if USE(BUN_JSC_ADDITIONS)
+    m_isInArena = isInArena;
+#endif
 }
 
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 {
     unsigned index = m_index;
+#if USE(BUN_JSC_ADDITIONS)
+    bool isInArena = m_isInArena;
+#endif
 
     this->~Value();
 
@@ -224,6 +233,9 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 
     this->m_index = index;
     this->owner = owner;
+#if USE(BUN_JSC_ADDITIONS)
+    m_isInArena = isInArena;
+#endif
 }
 
 void Value::dump(PrintStream& out) const
@@ -1136,7 +1148,9 @@ ValueKey Value::key() const
     case MemoryFill:
     case Fence:
     case CCall:
+#if !USE(BUN_JSC_ADDITIONS)
     case Patchpoint:
+#endif
     case Upsilon:
     case Phi:
     case Jump:
@@ -1146,6 +1160,20 @@ ValueKey Value::key() const
     case Return:
     case Oops:
         return ValueKey();
+#if USE(BUN_JSC_ADDITIONS)
+    case Patchpoint:
+        if (uint64_t key = as<PatchpointValue>()->pureFunctionKey)
+            return ValueKey(kind(), type(), static_cast<int64_t>(key));
+        if (int32_t key = as<PatchpointValue>()->pureFunctionOfChildrenKey) {
+            RELEASE_ASSERT(numChildren() <= 3);
+            v128_t bits;
+            for (unsigned i = 0; i < numChildren(); ++i)
+                bits.u32x4[i] = child(i)->index() + 1;
+            bits.u32x4[3] = key;
+            return ValueKey(kind(), type(), bits);
+        }
+        return ValueKey();
+#endif
     }
     RELEASE_ASSERT_NOT_REACHED();
     return ValueKey();

@@ -27,6 +27,9 @@
 #include "config.h"
 #include "LiteralParser.h"
 
+#if ENABLE(AOT)
+#include "AOTRuntime.h"
+#endif
 #include "CodeBlock.h"
 #include "GCMemoryOperations.h"
 #include "JSArray.h"
@@ -1477,6 +1480,10 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursivelyEntry(VM& vm)
     TokenType type = m_lexer.currentToken()->type;
     if (type == TokLBrace || type == TokLBracket) {
         JSONCache::ParsingScope parsingScope(m_jsonCache);
+#if ENABLE(AOT)
+        if (vm.m_aotProgram)
+            return parseRecursively<ParserMode::StrictJSON, true>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+#endif
         return parseRecursively<ParserMode::StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
     }
     return parsePrimitiveValue(vm);
@@ -1575,8 +1582,122 @@ JSArray* LiteralParser<CharType, reviverMode>::materializeArray(VM& vm, unsigned
     return array;
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE Structure* structureForFinishedObjectSlow(JSGlobalObject* globalObject, JSONCache& jsonCache, Structure* structure)
+{
+    unsigned count = structure->inlineSize() + structure->outOfLineSize();
+    if (count > JSFinalObject::maxInlineCapacity || structure->isDictionary() || hasIndexedProperties(structure->indexingType()))
+        return structure;
+    auto finish = [&](Structure* result) {
+        if (result != structure || count <= JSFinalObject::defaultInlineCapacity)
+            jsonCache.addStructureForFinishedObject(structure, result);
+        return result;
+    };
+    AOT::Instance* instance = globalObject->aotInstance();
+    if (!instance) {
+        if (!globalObject->vm().m_aotInstances.containsIf([&](AOT::Instance* candidate) { return candidate->globalObject == globalObject; }))
+            return finish(structure);
+        instance = &AOT::Instance::ensure(globalObject);
+    }
+    Vector<UniquedStringImpl*, JSFinalObject::maxInlineCapacity> names(count);
+    Structure* previous = structure;
+    for (unsigned i = count; i--; previous = previous->previousID()) {
+        if (!previous || previous->transitionKind() != TransitionKind::PropertyAddition || previous->transitionPropertyAttributes() || !previous->transitionPropertyName())
+            return structure;
+        if (previous->transitionOffset() != offsetForPropertyNumber(i, previous->inlineCapacity()))
+            return structure;
+        names[i] = previous->transitionPropertyName();
+    }
+    if (previous != globalObject->objectStructureForObjectConstructor())
+        return structure;
+    unsigned needed = count;
+    if (needed <= JSFinalObject::defaultInlineCapacity)
+        return finish(structure);
+    size_t size = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(needed));
+    unsigned inlineCapacity = std::min<unsigned>((size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
+    Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
+    Structure* wider = names.isEmpty() ? empty : instance->literalStructure(empty, names.span());
+    return finish(wider ? wider : structure);
+}
+
+static JSObject* createObjectWithProperties(VM& vm, Structure* structure, EncodedJSValue* values, unsigned count)
+{
+    Butterfly* butterfly = nullptr;
+    if (unsigned outOfLineCapacity = structure->outOfLineCapacity())
+        butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
+    unsigned inlineCapacity = structure->inlineCapacity();
+    for (unsigned i = count; i < inlineCapacity; ++i)
+        values[i] = JSValue::encode(JSValue());
+    JSFinalObject* object = JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, butterfly, reinterpret_cast<const WriteBarrierBase<Unknown>*>(values));
+    for (unsigned i = inlineCapacity; i < count; ++i)
+        object->putDirectOffset(vm, offsetForPropertyNumber(i, inlineCapacity), JSValue::decode(values[i]));
+    return object;
+}
+
+static JSObject* finishedObject(VM& vm, JSGlobalObject* globalObject, JSONCache& jsonCache, JSObject* object)
+{
+    if (!vm.m_aotProgram)
+        return object;
+    Structure* structure = object->structure();
+    if (jsonCache.isFinishedObjectStructure(structure->id(), JSONCache::nameIndex(structure->id())))
+        return object;
+    Structure* finishedStructure = jsonCache.getStructureForFinishedObject(structure);
+    if (!finishedStructure)
+        finishedStructure = structureForFinishedObjectSlow(globalObject, jsonCache, structure);
+    if (finishedStructure == structure)
+        return object;
+    JSFinalObject* result = JSFinalObject::create(vm, finishedStructure);
+    auto* storage = result->inlineStorageUnsafe();
+    unsigned count = structure->inlineSize() + structure->outOfLineSize();
+    for (unsigned i = 0; i < count; ++i)
+        storage[i].setWithoutWriteBarrier(object->getDirect(offsetForPropertyNumber(i, structure->inlineCapacity())));
+    return result;
+}
+
 template<typename CharType, JSONReviverMode reviverMode>
-template<ParserMode parserMode>
+NEVER_INLINE void LiteralParser<CharType, reviverMode>::storePendingValues(JSObject* object, Structure* structure, const EncodedJSValue* pendingValues)
+{
+    VM& vm = m_globalObject->vm();
+    ASSERT(object->structure() != structure);
+    ASSERT(!object->butterfly());
+    object->nukeStructureAndSetButterfly(vm, object->structureID(), Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0));
+    unsigned count = structure->outOfLineSize();
+    for (unsigned i = 0; i < count; ++i)
+        object->putDirectOffset(vm, firstOutOfLineOffset + i, JSValue::decode(pendingValues[JSFinalObject::defaultInlineCapacity + i]));
+    object->setStructure(vm, structure);
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+NEVER_INLINE JSObject* LiteralParser<CharType, reviverMode>::finishObjectWithPendingValues(JSObject* object, Structure* structure, EncodedJSValue* pendingValues)
+{
+    VM& vm = m_globalObject->vm();
+    Structure* finishedStructure = m_jsonCache.getStructureForFinishedObject(structure);
+    if (!finishedStructure)
+        finishedStructure = structureForFinishedObjectSlow(m_globalObject, m_jsonCache, structure);
+    bool hasPendingValues = object->structure() != structure;
+    if (finishedStructure == structure) {
+        if (hasPendingValues)
+            storePendingValues(object, structure, pendingValues);
+        return object;
+    }
+    unsigned count = structure->inlineSize() + structure->outOfLineSize();
+    memcpy(pendingValues, object->inlineStorageUnsafe(), JSFinalObject::defaultInlineCapacity * sizeof(EncodedJSValue));
+    if (!hasPendingValues) {
+        for (unsigned i = JSFinalObject::defaultInlineCapacity; i < count; ++i)
+            pendingValues[i] = JSValue::encode(object->getDirect(offsetForPropertyNumber(i, JSFinalObject::defaultInlineCapacity)));
+    }
+    JSObject* result = createObjectWithProperties(vm, finishedStructure, pendingValues, count);
+    if (!object->butterfly()) {
+        object->setStructureIDDirectly(m_globalObject->objectStructureIDForObjectConstructor());
+        gcSafeZeroMemory(object->inlineStorageUnsafe(), JSFinalObject::defaultInlineCapacity * sizeof(EncodedJSValue));
+        m_unusedObject = object;
+    }
+    return result;
+}
+#endif
+
+template<typename CharType, JSONReviverMode reviverMode>
+template<ParserMode parserMode, bool createsObjectsAtEnd>
 JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* stackLimit)
     requires (reviverMode == JSONReviverMode::Disabled)
 {
@@ -1599,7 +1720,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
         while (true) {
             JSValue value;
             if (type == TokLBrace || type == TokLBracket)
-                value = parseRecursively<parserMode>(vm, stackLimit);
+                value = parseRecursively<parserMode, createsObjectsAtEnd>(vm, stackLimit);
             else
                 value = parsePrimitiveValue(vm);
             EXCEPTION_ASSERT((!!scope.exception() || !m_parseErrorMessage.isNull()) == !value);
@@ -1642,7 +1763,13 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
     }
 
     ASSERT(type == TokLBrace);
-    JSObject* object = constructEmptyObject(m_globalObject);
+    static_assert(!createsObjectsAtEnd || parserMode == StrictJSON);
+    JSObject* object = createsObjectsAtEnd ? m_unusedObject : nullptr;
+    EncodedJSValue pendingValues[createsObjectsAtEnd ? JSFinalObject::maxInlineCapacity : 1];
+    if (object) [[unlikely]]
+        m_unusedObject = nullptr;
+    else
+        object = constructEmptyObject(m_globalObject);
 
     struct ExistingProperty {
         Structure* structure;
@@ -1702,7 +1829,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
 
     if (isPropertyKey) {
         while (true) {
-            ASSERT(object->structure() == structure);
+            ASSERT(createsObjectsAtEnd || object->structure() == structure);
             auto* originalStructure = structure;
             auto property = [&, &vm = vm] ALWAYS_INLINE_LAMBDA -> Variant<ExistingProperty, Identifier> {
                 if (consumedProperty)
@@ -1815,7 +1942,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                 default: {
                     TokenType type = m_lexer.next();
                     if (type == TokLBrace || type == TokLBracket)
-                        return parseRecursively<parserMode>(vm, stackLimit);
+                        return parseRecursively<parserMode, createsObjectsAtEnd>(vm, stackLimit);
                     return parsePrimitiveValue(vm);
                 }
                 }
@@ -1835,7 +1962,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                 // StrictJSON can skip this entirely! There is no replacer/reviver and __proto__ setters in
                 // a strict JSON value cannot run user code, so the parent object's structure is guaranteed not to have
                 // transitioned during the recursive parse of `value`.
-                ASSERT(object->structure() == originalStructure);
+                ASSERT(createsObjectsAtEnd || object->structure() == originalStructure);
             }
 
             // When creating JSON object in this fast path, we know the following.
@@ -1846,6 +1973,19 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             if (std::holds_alternative<ExistingProperty>(property)) {
                 auto& [newStructure, offset] = std::get<ExistingProperty>(property);
 
+#if ENABLE(AOT)
+                if constexpr (createsObjectsAtEnd) {
+                    if (offset >= firstOutOfLineOffset) [[unlikely]] {
+                        if (offset < offsetForPropertyNumber(JSFinalObject::maxInlineCapacity, JSFinalObject::defaultInlineCapacity) && !object->butterfly()) [[likely]] {
+                            pendingValues[offset - firstOutOfLineOffset + JSFinalObject::defaultInlineCapacity] = JSValue::encode(value);
+                            structure = newStructure;
+                            goto didAddProperty;
+                        }
+                        if (object->structure() != structure)
+                            storePendingValues(object, structure, pendingValues);
+                    }
+                }
+#endif
                 Butterfly* newButterfly = object->butterfly();
                 // Both capacities are zero while the properties still fit in inline storage, which
                 // is the common case, and reading them means touching two Structures.
@@ -1874,6 +2014,12 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             } else {
                 ASSERT(std::holds_alternative<Identifier>(property));
                 auto& ident = std::get<Identifier>(property);
+#if ENABLE(AOT)
+                if constexpr (createsObjectsAtEnd) {
+                    if (object->structure() != structure) [[unlikely]]
+                        storePendingValues(object, structure, pendingValues);
+                }
+#endif
                 if (parserMode != StrictJSON && ident == vm.propertyNames->underscoreProto) [[unlikely]] {
                     if (!m_visitedUnderscoreProto.add(object).isNewEntry) [[unlikely]] {
                         m_parseErrorMessage = "Attempted to redefine __proto__ property"_s;
@@ -1892,6 +2038,9 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                     structureNameIndex = JSONCache::nameIndex(StructureID::encode(structure));
             }
 
+#if ENABLE(AOT)
+        didAddProperty:
+#endif
             type = m_lexer.currentToken()->type;
             if (type == TokComma) {
                 consumedProperty = tryConsumeTransitionPropertyName(structure);
@@ -1914,6 +2063,12 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             }
 
             m_lexer.nextAfterValue();
+#if ENABLE(AOT)
+            if constexpr (createsObjectsAtEnd) {
+                if (!jsonCache.isFinishedObjectStructure(structure->id(), structureNameIndex)) [[unlikely]]
+                    return finishObjectWithPendingValues(object, structure, pendingValues);
+            }
+#endif
             return object;
         }
     }
@@ -1936,6 +2091,22 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
     ParserState state = initialState;
     JSValue lastValue;
     JSONRanges::Entry lastValueRange;
+#if ENABLE(AOT)
+    auto finishObject = [&, &vm = vm](JSObject* object) {
+        if (m_mode != StrictJSON)
+            return object;
+        JSObject* result = finishedObject(vm, m_globalObject, m_jsonCache, object);
+        if constexpr (reviverMode == JSONReviverMode::Enabled) {
+            if (sourceRanges && result != object)
+                lastValueRange.value = sourceRanges->record(result);
+        }
+        return result;
+    };
+#else
+    auto finishObject = [](JSObject* object) {
+        return object;
+    };
+#endif
 
     while (1) {
         switch(state) {
@@ -2109,7 +2280,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
                     }
                 }
                 m_lexer.next();
-                lastValue = object;
+                lastValue = finishObject(object);
                 break;
             }
 
@@ -2126,7 +2297,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
                 }
             }
             m_lexer.next();
-            lastValue = object;
+            lastValue = finishObject(object);
             break;
         }
         doParseObjectStartExpression:
@@ -2188,7 +2359,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
                 }
             }
             m_lexer.next();
-            lastValue = m_objectStack.takeLast();
+            lastValue = finishObject(asObject(m_objectStack.takeLast()));
             break;
         }
         startParseExpression:
@@ -2331,9 +2502,14 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
 
         JSValue value;
         if (type == TokLBrace || type == TokLBracket) {
-            if (Options::useRecursiveJSONParse()) [[likely]]
-                value = parseRecursively<StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
-            else
+            if (Options::useRecursiveJSONParse()) [[likely]] {
+#if ENABLE(AOT)
+                if (vm.m_aotProgram)
+                    value = parseRecursively<StrictJSON, true>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+                else
+#endif
+                    value = parseRecursively<StrictJSON>(vm, std::bit_cast<uint8_t*>(vm.softStackLimit()));
+            } else
                 value = parse(vm, StartParseExpression, nullptr);
         } else
             value = parsePrimitiveValue(vm);
@@ -2388,6 +2564,16 @@ template class LiteralParser<Latin1Character, JSONReviverMode::Enabled>;
 template class LiteralParser<char16_t, JSONReviverMode::Enabled>;
 template class LiteralParser<Latin1Character, JSONReviverMode::Disabled>;
 template class LiteralParser<char16_t, JSONReviverMode::Disabled>;
+
+NEVER_INLINE JSValue tryEvalAsJSON(JSGlobalObject* globalObject, StringView source, CodeBlock* nullOrCodeBlock)
+{
+    if (source.is8Bit()) {
+        LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, source.span8(), SloppyJSON, nullOrCodeBlock);
+        return preparser.tryEval();
+    }
+    LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, source.span16(), SloppyJSON, nullOrCodeBlock);
+    return preparser.tryEval();
+}
 
 }
 

@@ -540,7 +540,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
 
     std::optional<CachedCall> cachedCall;
     if (callData.type == CallData::Type::JS) {
-        cachedCall.emplace(globalObject, uncheckedDowncast<JSFunction>(replaceValue), 3);
+        cachedCall.emplace(globalObject, asObject(replaceValue), 3);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
@@ -881,7 +881,7 @@ ALWAYS_INLINE JSCellButterfly* addToRegExpSearchCache(VM& vm, JSGlobalObject* gl
     RELEASE_AND_RETURN(scope, result);
 }
 
-static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArguments(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSFunction* replaceFunction, JSCellButterfly* result)
+static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArguments(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSObject* replaceFunction, JSCellButterfly* result)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1009,7 +1009,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSFunction* replaceFunction)
+static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSObject* replaceFunction)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SuperSamplerScope superSamplerScope(true);

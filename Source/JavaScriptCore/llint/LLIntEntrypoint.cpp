@@ -256,8 +256,19 @@ MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointEntrypoint(OpcodeSize siz
     return { };
 }
 
-void setEntrypoint(CodeBlock* codeBlock)
+NEVER_INLINE void setEntrypoint(CodeBlock* codeBlock)
 {
+    if (Options::crashIfInterpreterIsUsed()) [[unlikely]] {
+        auto* executable = codeBlock->ownerExecutable();
+        const String& url = executable->sourceURL();
+        bool isRuntimeCompiledSource = codeBlock->codeType() == EvalCode || url.isEmpty() || url.startsWith("evalmachine."_s) || url.startsWith("data:"_s) || url.startsWith("blob:"_s) || url == "[Command Line]"_s;
+        bool isInspectedProcessDebugger = url == "internal:debugger"_s && getenv("BUN_INSPECT");
+        if (!isRuntimeCompiledSource && !isInspectedProcessDebugger) {
+            dataLogLn("crashIfInterpreterIsUsed: ", codeBlock->codeType(), " ", codeBlock->inferredName(), " at ", url, ":", executable->firstLine());
+            CRASH();
+        }
+    }
+
     switch (codeBlock->codeType()) {
     case GlobalCode:
         setProgramEntrypoint(codeBlock);

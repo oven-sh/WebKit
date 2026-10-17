@@ -62,15 +62,11 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(StringPrototype);
 
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToString);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharAt);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCodePointAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncMatchAll);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplace);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplaceAll);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToUpperCase);
@@ -371,7 +367,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
         if (callData.type == CallData::Type::JS && !hasNamedCaptures && sourceLen >= Options::thresholdForStringReplaceCache()) {
             auto resolved = string->value(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, uncheckedDowncast<JSFunction>(replaceValue)));
+            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, asObject(replaceValue)));
         }
     }
 
@@ -395,7 +391,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
         int argCount = regExp->numSubpatterns() + 1 + 2;
         if (hasNamedCaptures)
             ++argCount;
-        JSFunction* func = uncheckedDowncast<JSFunction>(replaceValue);
+        JSObject* func = asObject(replaceValue);
         std::optional<CachedCall> cachedCallHolder;
         CachedCall* cachedCall = nullptr;
         while (true) {
@@ -877,6 +873,11 @@ static EncodedJSValue stringIndexOfImpl(JSGlobalObject* globalObject, CallFrame*
 
     if (thisJSString->length() < otherJSString->length() + pos)
         return JSValue::encode(jsNumber(-1));
+
+    if (otherJSString->length() == 1 && !thisJSString->isRope() && !otherJSString->isRope()) {
+        size_t result = thisJSString->tryGetValueImpl()->find((*otherJSString->tryGetValueImpl())[0], pos);
+        return JSValue::encode(result == notFound ? jsNumber(-1) : jsNumber(result));
+    }
 
     if (otherJSString->length() == 1 && thisJSString->isRope() && thisJSString->length() >= JSString::minLengthForRopeWalk) {
         auto otherView = otherJSString->view(globalObject);

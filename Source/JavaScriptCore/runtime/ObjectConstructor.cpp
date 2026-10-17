@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ObjectConstructor.h"
 
+#include "AOTTypedObject.h"
 #include "BuiltinNames.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -38,7 +39,6 @@ static JSC_DECLARE_HOST_FUNCTION(objectConstructorAssign);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorEntries);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorValues);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorGetPrototypeOf);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorSetPrototypeOf);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperties);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorCreate);
@@ -177,8 +177,15 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorSetPrototypeOf, (JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     bool shouldThrowIfCantSet = true;
+#if ENABLE(AOT)
+    Structure* structureBefore = object->structure();
+#endif
     bool didSetPrototype = object->setPrototype(vm, globalObject, protoValue, shouldThrowIfCantSet);
     EXCEPTION_ASSERT_UNUSED(didSetPrototype, scope.exception() || didSetPrototype);
+#if ENABLE(AOT)
+    if (didSetPrototype && object->type() == FinalObjectType && protoValue.isObject() && structureBefore->hasMonoProto() && object->structure() != structureBefore)
+        vm.didChangePrototypeOfFinalObject(structureBefore, asObject(protoValue), object->structure());
+#endif
     return JSValue::encode(objectValue);
 }
 
@@ -279,6 +286,11 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (target->type() == ObjectType && AOT::Typed::tryAssignToCompiledObject(vm, target, source))
+        return;
+#endif
+
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.
     // For example, [[Get]] of source object could configure setter to target object. So disable the fast path.
 
@@ -326,7 +338,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // FIXME: Extend this for non JSFinalObject. For example, we would like to use this fast path for function objects too.
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
-    bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+    bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible() && !targetObject->structure()->typeInfo().overridesPut();
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetCanPerformFastPut && targetObject->structure()->hasImmutableShape()) [[unlikely]]
+        targetCanPerformFastPut = false;
+#endif
     unsigned argsCount = callFrame->argumentCount();
 
     // argsCount == 2 case does not need to use arguments' batching.
@@ -446,6 +462,21 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                 });
             }
         }
+#if ENABLE(AOT)
+        JSCellButterfly* typedObjectKeys = nullptr;
+        if (!canUseFastPath && target->structure()->compiledLayout()) {
+            auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
+            typedObjectKeys = typedObject->keys(vm);
+            if (!typedObjectKeys)
+                typedObjectKeys = typedObject->keysWithExtraProperties(vm);
+            auto collect = [&](UniquedStringImpl& name, JSValue value) {
+                properties.append(&name);
+                values.appendWithCrashOnOverflow(value);
+                return true;
+            };
+            canUseFastPath = typedObject->forEachFieldAsProperty(collect) || typedObject->forEachFieldAndExtraProperty(collect);
+        }
+#endif
 
         if (canUseFastPath) {
             Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
@@ -464,6 +495,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     if (butterfly->length() == properties.size())
                         cachedButterfly = butterfly;
                 }
+#if ENABLE(AOT)
+                else if (typedObjectKeys && typedObjectKeys->length() == properties.size())
+                    cachedButterfly = typedObjectKeys;
+#endif
             }
 
             if (!cachedButterfly && properties.size() < MIN_SPARSE_ARRAY_INDEX && !globalObject->isHavingABadTime() && targetStructure->canCacheOwnPropertyNames()) {
@@ -591,6 +626,28 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                     return true;
                 });
             }
+#if ENABLE(AOT)
+            else if (targetStructure->compiledLayout()) {
+                MarkedArgumentBuffer fields;
+                auto collect = [&](UniquedStringImpl&, JSValue value) {
+                    fields.appendWithCrashOnOverflow(value);
+                    return true;
+                };
+                auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
+                if (typedObject->forEachFieldAsProperty(collect) || typedObject->forEachFieldAndExtraProperty(collect)) {
+                    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), fields.size());
+                    if (!result) [[unlikely]] {
+                        throwOutOfMemoryError(globalObject, scope);
+                        return { };
+                    }
+                    auto values = result->butterfly()->contiguous();
+                    for (unsigned index = 0; index < fields.size(); ++index)
+                        values.at(result, index).setWithoutWriteBarrier(fields.at(index));
+                    vm.writeBarrier(result);
+                    return result;
+                }
+            }
+#endif
         }
 
         if (canUseFastPath) {
@@ -1156,8 +1213,17 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        uncheckedDowncast<AOT::Typed::Object>(object)->setIntegrity(globalObject, AOT::Typed::Object::Integrity::Sealed);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return object;
+    }
+#endif
+
+    if (object->classInfo() == JSFinalObject::info() && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 
@@ -1189,10 +1255,24 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
-        object->freeze(vm);
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        uncheckedDowncast<AOT::Typed::Object>(object)->setIntegrity(globalObject, AOT::Typed::Object::Integrity::Frozen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
+#endif
+
+    if (object->classInfo() == JSFinalObject::info() && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
+        object->freeze(vm);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return object;
+    }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.useImmutableIntrinsics && object->type() == ArrayType && object->tryFreezeArrayInPlace(vm))
+        return object;
+#endif
 
     bool success = setIntegrityLevel<IntegrityLevel::Frozen>(globalObject, vm, object);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1245,6 +1325,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsSealed, (JSGlobalObject* globalObjec
     // Quick check for final objects.
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
         return JSValue::encode(jsBoolean(object->isSealed(vm)));
+#if ENABLE(AOT)
+    if (auto* typedObject = dynamicDowncast<AOT::Typed::Object>(object); typedObject && (!typedObject->isNotExtensible() || (typedObject->isSealed() && !typedObject->hasExtraProperties())))
+        return JSValue::encode(jsBoolean(typedObject->isNotExtensible()));
+#endif
 
     // 2. Return ? TestIntegrityLevel(O, "sealed").
     return JSValue::encode(jsBoolean(testIntegrityLevel<IntegrityLevel::Sealed>(globalObject, vm, object)));
@@ -1263,6 +1347,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsFrozen, (JSGlobalObject* globalObjec
     // Quick check for final objects.
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
         return JSValue::encode(jsBoolean(object->isFrozen(vm)));
+#if ENABLE(AOT)
+    if (auto* typedObject = dynamicDowncast<AOT::Typed::Object>(object); typedObject && (!typedObject->isNotExtensible() || (typedObject->isFrozen() && !typedObject->hasExtraProperties())))
+        return JSValue::encode(jsBoolean(typedObject->isNotExtensible()));
+#endif
 
     // 2. Return ? TestIntegrityLevel(O, "frozen").
     return JSValue::encode(jsBoolean(testIntegrityLevel<IntegrityLevel::Frozen>(globalObject, vm, object)));
@@ -1321,6 +1409,16 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(immutableButterfly->indexingMode());
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
+#if ENABLE(AOT)
+        if (!Inherit && propertyNameMode != PropertyNameMode::Symbols && object->structure()->compiledLayout()) [[unlikely]] {
+            auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(object);
+            bool listsOnlyStrings = propertyNameMode == PropertyNameMode::Strings || !typedObject->state().hasFieldsWithSymbolKeys(typedObject->layout());
+            if (auto* keys = listsOnlyStrings ? typedObject->keys(vm) : nullptr)
+                return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+            if (JSArray* keys = listsOnlyStrings ? typedObject->tryCreateKeysArrayWithExtraProperties(globalObject) : nullptr)
+                return keys;
+        }
+#endif
     }
 
     PropertyNameArrayBuilder properties(vm, propertyNameMode, PrivateSymbolMode::Exclude);

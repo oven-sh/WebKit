@@ -27,7 +27,7 @@
 
 namespace JSC {
 
-void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObject, PropertyName propertyName)
+void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObject, PropertyName propertyName, unsigned attributes)
 {
     JSGlobalObject* globalObject = thisObject.realm();
     JSObject* getter = nullptr;
@@ -43,7 +43,16 @@ void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObje
     }
     GetterSetter* accessor = GetterSetter::create(vm, globalObject, getter, nullptr);
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-    thisObject.putDirectNonIndexAccessor(vm, propertyName, accessor, attributesForStructure(value.attributes()));
+    thisObject.putDirectNonIndexAccessor(vm, propertyName, accessor, attributes);
+}
+
+void reifyLockedStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObject)
+{
+    reifyStaticProperty(vm, classInfo, propertyName, value, thisObject, staticPropertyAttributes(vm, thisObject, value));
+    unsigned attributes;
+    PropertyOffset offset = thisObject.getDirectOffset(vm, propertyName, attributes);
+    if (isValidOffset(offset))
+        thisObject.realm()->makeIntrinsicValueImmutable(thisObject, propertyName, thisObject.getDirect(offset), attributes);
 }
 
 bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertyName propertyName, PropertySlot& slot)

@@ -22,6 +22,9 @@
 #include "config.h"
 #include "Heap.h"
 
+#include "AOTRuntime.h"
+#include "AOTTypedObject.h"
+
 #include "JSCJSValueInlines.h"
 
 #include "BaselineJITCode.h"
@@ -83,6 +86,7 @@
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
+#include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "MarkingConstraintSet.h"
 #include "MegamorphicCache.h"
@@ -287,7 +291,7 @@ private:
     , name ISO_SUBSPACE_INIT(*this, heapCellType, type)
 
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
-    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
+    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(std::is_same_v<type, Structure> ? Structure::allocationSize() : sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
 Heap::Heap(VM& vm, HeapType heapType)
     : m_heapType(heapType)
@@ -380,6 +384,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , auxiliarySpace("Auxiliary"_s, *this, auxiliaryHeapCellType, fastMallocAllocator.get()) // Hash:0x96255ba1
     , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, fastMallocAllocator.get()) // Hash:0xaadcb3c1
     , cellSpace("JSCell"_s, *this, cellHeapCellType, fastMallocAllocator.get()) // Hash:0xadfb5a79
+#if USE(BUN_JSC_ADDITIONS)
+    , aotClosureSpace("AOTClosure"_s, *this, cellHeapCellType, fastMallocAllocator.get())
+#endif
     , destructibleObjectSpace("JSDestructibleObject"_s, *this, destructibleObjectHeapCellType, fastMallocAllocator.get()) // Hash:0x4f5ed7a9
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(INIT_SERVER_ISO_SUBSPACE)
     FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
@@ -568,12 +575,17 @@ void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
+    m_hasAllocatedSinceLastCollection = true;
     m_extraMemoryBytesSinceLastCollectionCheck += size;
     bool shouldCheckForCollection = m_extraMemoryBytesSinceLastCollectionCheck >= MarkedBlock::blockSize;
     if (shouldCheckForCollection) {
         m_extraMemoryBytesSinceLastCollectionCheck = 0;
-        didAllocate(size);
+        didAllocate(size, "extra", nullptr, 0, cell);
     } else {
+#if ENABLE(AOT)
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            AOT::countAllocatedBytes(vm(), "extra", nullptr, 0, cell, size);
+#endif
         m_nonOversizedBytesAllocatedThisCycle += size;
         performIncrement(size);
     }
@@ -689,6 +701,26 @@ void Heap::reconcileWeakReferencesInMarkedCells(CellSet& cellSet, CollectionScop
 void Heap::reconcileWeakReferencesAtGCEnd()
 {
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
+
+#if ENABLE(AOT)
+    if (!isEdenCollectionWithEmptyEden() || Options::validateAOTTypedFacts() || Options::useAOTOperationCounters()) {
+        vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
+            if (!isMarked(instance->loader()))
+                return true;
+            if (!instance->loaderWasCleared() || isMarked(AOT::tokenOf(instance)))
+                return false;
+            instance->loader()->setAOTInstance(nullptr);
+            vm().m_aotInstancesToDestroy.append(instance);
+            return true;
+        });
+        for (AOT::Instance* instance : vm().m_aotInstances)
+            instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+        if (AOT::PropertyLookupTable* table = vm().m_aotPropertyLookupTable)
+            table->finalizeUnconditionally(vm(), collectionScope == CollectionScope::Eden);
+        if (auto* program = vm().m_aotProgram.get())
+            program->didFinishCollection();
+    }
+#endif
 
     {
         // Executables go before CodeBlock, since CodeBlock::reconcileWeakReferencesAtGCEnd looks at the owner executable's installed CodeBlock.
@@ -940,10 +972,19 @@ void Heap::verifyHeapAfterMarking()
     }
 }
 
+bool Heap::canSkipMarking() const
+{
+    return Options::useAOT() && isEdenCollectionWithEmptyEden() && !m_verifier && !Options::verifyGC() && !Options::validateAOTTypedFacts() && !Options::useAOTOperationCounters();
+}
+
 void Heap::pruneDeadReferences()
 {
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(!m_objectSpace.isMarking());
+
+    m_didSkipMarkingInLastCollection = canSkipMarking();
+    if (m_didSkipMarkingInLastCollection)
+        return;
 
     // This doesn't necessarily run on this heap's mutator thread. Clear the atom string table so that
     // destroying an atom string here fails whichever thread it runs on.
@@ -978,9 +1019,15 @@ void Heap::prepareForAllocation()
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(!m_objectSpace.isMarking());
 
-    m_sweeper->startSweeping(*this);
+    if (!isEdenCollectionWithEmptyEden())
+        m_sweeper->startSweeping(*this);
 
     m_objectSpace.prepareForAllocation();
+#if ASAN_ENABLED
+    m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+        handle->poisonDeadCellsIfUnswept();
+    });
+#endif
     updateAllocationLimits();
 
     if (m_verifier) [[unlikely]] {
@@ -1437,6 +1484,10 @@ static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
 // possibly shared) and for storage that is a precise allocation.
 static void* baseOfMovableStorage(JSObject* object)
 {
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout())
+        return nullptr;
+#endif
     Butterfly* butterfly = object->butterfly();
     if (!butterfly || isCopyOnWrite(object->indexingMode()))
         return nullptr;
@@ -2023,7 +2074,7 @@ bool Heap::stopIfNecessarySlow(unsigned oldState)
     // prevent us from polling this so much. Ideally, stopIfNecessary would ignore the mutatorHasConnBit
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
-    if (oldState & mutatorHasConnBit)
+    if ((oldState & mutatorHasConnBit) && !m_collector->isNotRunning())
         collectInMutatorThread();
     
     return false;
@@ -2061,7 +2112,8 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         m_mutatorDidRun = true;
         // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
         // do the collection.
-        relinquishConn();
+        if (relinquishConn(oldState))
+            continue;
 
         if (done) {
             clearMutatorWaiting(); // Clean up just in case.
@@ -2222,14 +2274,8 @@ void Heap::clearMutatorWaiting()
     m_worldState.exchangeAnd(~mutatorWaitingBit);
 }
 
-void Heap::runCollectionEpilogue()
+void Heap::sweepAndClearCachesInEpilogue()
 {
-    MonotonicTime before;
-    if (Options::logGC()) [[unlikely]] {
-        before = MonotonicTime::now();
-        dataLog("[GC<", RawPointer(this), ">: epilogue ");
-    }
-    
     {
         SweepingScope sweepingScope(*this);
         pruneUnusedSourceProviderCaches();
@@ -2241,14 +2287,21 @@ void Heap::runCollectionEpilogue()
     
     if (HasOwnPropertyCache* cache = vm().hasOwnPropertyCache())
         cache->clear();
-    if (auto* cache = vm().megamorphicCache())
-        cache->age(m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? CollectionScope::Full : CollectionScope::Eden);
+    if (auto* cache = vm().megamorphicCache()) {
+#if ENABLE(AOT)
+        if (!vm().m_aotInstances.isEmpty())
+            cache->removeDeadEntries(*this, m_lastCollectionScope.value_or(CollectionScope::Full));
+        else
+#endif
+            cache->age(m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? CollectionScope::Full : CollectionScope::Eden);
+    }
 
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         vm().jsonCache().clearStrings();
         vm().numericStrings.clearOnGarbageCollection();
         vm().stringReplaceCache.clear();
     }
+    vm().numericStrings.didFinishCollection();
     vm().keyAtomStringCache.clear();
     if (auto* cache = vm().stringSplitCache())
         cache->clear();
@@ -2260,7 +2313,19 @@ void Heap::runCollectionEpilogue()
     m_discoveredAccessedStringsFromGCOwnedDataScope.clear();
 
     immutableButterflyToStringCache.clear();
-    
+}
+
+void Heap::runCollectionEpilogue()
+{
+    MonotonicTime before;
+    if (Options::logGC()) [[unlikely]] {
+        before = MonotonicTime::now();
+        dataLog("[GC<", RawPointer(this), ">: epilogue ");
+    }
+
+    if (!m_didSkipMarkingInLastCollection)
+        sweepAndClearCachesInEpilogue();
+
     for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
         callback.run(vm());
 
@@ -2494,6 +2559,7 @@ void Heap::updateAllocationLimits()
 #endif
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
+    m_hasAllocatedSinceLastCollection = false;
     m_lastOversizedAllocationThisCycle = 0;
 
     dataLogIf(Options::logGC(), "=> ", currentHeapSize / 1024, "kb, ");
@@ -2574,9 +2640,35 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
         m_edenActivityCallback->setEnabled(enable);
 }
 
-constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
+    didAllocate(bytes, "other", nullptr, 0, nullptr);
+}
+
+void Heap::didAllocateInBlock(size_t bytes, const BlockDirectory& directory)
+{
+    didAllocate(bytes, "block", directory.subspace(), directory.cellSize(), nullptr);
+}
+
+void Heap::didAllocatePreciseAllocation(size_t bytes, const Subspace& subspace)
+{
+    m_hasAllocatedSinceLastCollection = true;
+    didAllocate(bytes, "precise", &subspace, 0, nullptr);
+}
+
+constexpr size_t oversizedAllocationThreshold = 64 * KB;
+void Heap::didAllocate(size_t bytes, const char* kind, const Subspace* subspace, size_t cellSize, const JSCell* extraMemoryOwner)
+{
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::countAllocatedBytes(vm(), kind, subspace, cellSize, extraMemoryOwner, bytes);
+#else
+    UNUSED_PARAM(kind);
+    UNUSED_PARAM(subspace);
+    UNUSED_PARAM(cellSize);
+    UNUSED_PARAM(extraMemoryOwner);
+#endif
+
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversizedAllocationThisCycle = bytes;
@@ -2655,7 +2747,7 @@ void Heap::disableStopIfNecessaryTimer()
 bool Heap::shouldSweepSynchronously()
 {
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
-    return overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
+    return ASAN_ENABLED || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -3089,6 +3181,52 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
         ConstraintConcurrency::Concurrent,
         ConstraintParallelism::Sequential));
 
+#if ENABLE(AOT)
+    if (vm().useImmutableIntrinsics) {
+        constraints.append(makeUnique<SimpleMarkingConstraint>(
+            "Ao"_s, "Instances of Statically Compiled Code"_s,
+            MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+                if constexpr (std::is_same_v<decltype(visitor), SlotVisitor&>) {
+                    if (isEdenCollectionWithEmptyEden())
+                        return;
+                }
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+                bool newOnly = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+                if (auto* program = vm().m_aotProgram.get())
+                    program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
+                for (AOT::Instance* instance : vm().m_aotInstances) {
+                    if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))) {
+                        instance->visit(visitor, newOnly);
+                        if (instance->typed && (!instance->typed->realmIsLocked || instance->globalObject->aotInstance() != instance))
+                            instance->typed->visit(visitor);
+                    }
+                }
+            })),
+            ConstraintVolatility::GreyedByMarking,
+            ConstraintConcurrency::Concurrent,
+            ConstraintParallelism::Sequential));
+        constraints.append(makeUnique<SimpleMarkingConstraint>(
+            "At"_s, "Static Variables of Compiled Code"_s,
+            MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+                if constexpr (std::is_same_v<decltype(visitor), SlotVisitor&>) {
+                    if (isEdenCollectionWithEmptyEden())
+                        return;
+                }
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+                for (AOT::Instance* instance : vm().m_aotInstances) {
+                    instance->visitCompiledCodeRoots(visitor);
+                    if (!instance->typed || !instance->typed->realmIsLocked)
+                        continue;
+                    if (instance->globalObject->aotInstance() == instance || (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))))
+                        instance->typed->visit(visitor);
+                }
+            })),
+            ConstraintVolatility::GreyedByExecution,
+            ConstraintConcurrency::Concurrent,
+            ConstraintParallelism::Sequential));
+    }
+#endif
+
     constraints.append(makeUnique<SimpleMarkingConstraint>(
         "D"_s, "Debugger"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
@@ -3299,6 +3437,12 @@ void Heap::setMutatorShouldBeFenced(bool value)
 {
     m_mutatorShouldBeFenced = value;
     m_barrierThreshold = value ? tautologicalThreshold : blackThreshold;
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : vm().m_aotInstances) {
+        instance->barrierThreshold = m_barrierThreshold;
+        instance->mutatorShouldBeFenced = value;
+    }
+#endif
 }
 
 void Heap::performIncrement(size_t bytes)

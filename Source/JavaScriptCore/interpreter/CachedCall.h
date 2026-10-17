@@ -44,7 +44,7 @@ class CachedCall : public CallLinkInfoBase {
     WTF_MAKE_NONCOPYABLE(CachedCall);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSFunction*, int argumentCount);
+    JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSObject*, int argumentCount);
 
     ~CachedCall()
     {

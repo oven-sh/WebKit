@@ -50,6 +50,7 @@ public:
     CodeBlockHash LEGACY_NODELETE hashFor(CodeSpecializationKind) const;
 
     TaggedNativeFunction function() const { return m_function; }
+    void setCallEntrypoint(CodePtr<JSEntryPtrTag> code) { m_jitCodeForCallWithArityCheck = code; }
     TaggedNativeFunction constructor() const { return m_constructor; }
         
     TaggedNativeFunction nativeFunctionFor(CodeSpecializationKind kind)
@@ -89,7 +90,15 @@ public:
     }
 
     JSString* asStringConcurrently() const LIFETIME_BOUND { return m_asString.get(); }
+#if ENABLE(AOT)
+    bool isSharedByAOTTypedClosures() const { return m_isSharedByAOTTypedClosures; }
+    void setIsSharedByAOTTypedClosures() { m_isSharedByAOTTypedClosures = true; }
+#endif
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
+#if ENABLE(AOT)
+    enum class StubBuiltin : uint8_t { None, MapGet, MapHas, MapSet, SetHas, SetAdd, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas, StringStartsWith, StringIndexOf, ArrayIsArray, ArrayPush, ArraySlice, ObjectSetPrototypeOf };
+    static constexpr ptrdiff_t offsetOfStubBuiltin() { return OBJECT_OFFSETOF(NativeExecutable, m_stubBuiltin); }
+#endif
 private:
     NativeExecutable(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility);
     void finishCreation(VM&, Ref<JSC::JITCode>&& callThunk, Ref<JSC::JITCode>&& constructThunk, unsigned length, const String& name);
@@ -99,7 +108,9 @@ private:
     TaggedNativeFunction m_function;
     TaggedNativeFunction m_constructor;
 
-    unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
+    uint8_t m_implementationVisibility : bitWidthOfImplementationVisibility;
+    uint8_t m_isSharedByAOTTypedClosures : 1 { 0 };
+    uint8_t m_stubBuiltin { 0 };
     unsigned m_length { 0 };
 
     String m_name;

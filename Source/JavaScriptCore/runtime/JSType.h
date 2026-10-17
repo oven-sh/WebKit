@@ -161,12 +161,14 @@ namespace JSC {
     macro(DerivedStringObjectType, SpecObjectOther) \
     /* End StringObjectType types. */ \
     macro(InternalFieldTupleType, SpecCellOther) \
+    macro(SlimClosureType, SpecObjectOther) \
+    macro(SlimClosureWithPropertiesType, SpecObjectOther) \
 
 enum JSType : uint8_t {
 #define JSC_DEFINE_JS_TYPE(type, speculatedType) type,
     FOR_EACH_JS_TYPE(JSC_DEFINE_JS_TYPE)
 #undef JSC_DEFINE_JS_TYPE
-    LastJSCObjectType = InternalFieldTupleType, // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
+    LastJSCObjectType = SlimClosureWithPropertiesType,
     MaxJSType = 0b11111111,
 };
 
@@ -180,6 +182,9 @@ struct JSTypeRange {
     JSType first;
     JSType last;
 };
+
+static constexpr JSTypeRange slimClosureTypes { SlimClosureType, SlimClosureWithPropertiesType };
+constexpr bool isSlimClosureType(JSType type) { return slimClosureTypes.first <= type && type <= slimClosureTypes.last; }
 
 static constexpr uint8_t EmbedderArrayLikeType = 0b11101101;
 

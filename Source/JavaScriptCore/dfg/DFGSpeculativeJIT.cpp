@@ -11465,6 +11465,9 @@ void SpeculativeJIT::compileNewMap(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSMap>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSMap), SlowAllocationResult::UndefinedBehavior);
     storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSMap::offsetOfStorage()));
+#if ENABLE(AOT)
+    storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSMap::offsetOfCompactTable()));
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewMap, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));
@@ -11488,6 +11491,9 @@ void SpeculativeJIT::compileNewSet(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSSet>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSSet), SlowAllocationResult::UndefinedBehavior);
     storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSSet::offsetOfStorage()));
+#if ENABLE(AOT)
+    storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSSet::offsetOfCompactTable()));
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewSet, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));
@@ -12968,6 +12974,7 @@ void SpeculativeJIT::emitSwitchStringOnString(Node* node, SwitchData* data, GPRR
         load64(Address(stringGPR, JSRopeString::offsetOfFiber1Lower()), tempGPR);
         and64(TrustedImm64(JSRopeString::CompactFibers::addressMask), tempGPR);
         loadPtr(Address(tempGPR, JSString::offsetOfValue()), tempGPR);
+        notReadableInPlace.append(branchTest32(Zero, Address(tempGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
 
         load32(Address(stringGPR, JSRopeString::offsetOfFiber2Lower()), lengthGPR);
         loadPtr(Address(tempGPR, StringImpl::dataOffset()), tempGPR);

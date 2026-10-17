@@ -204,6 +204,9 @@ void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const Source
 template<class UnlinkedCodeBlockType, class ExecutableType>
 UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableType* executable, const SourceCode& source, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
 {
+    if (source.provider()->auditSites()) [[unlikely]]
+        return generateUnlinkedCodeBlock<UnlinkedCodeBlockType, ExecutableType>(vm, executable, source, scriptMode, codeGenerationMode, error, evalContextType);
+
     DerivedContextType derivedContextType = executable->derivedContextType();
     bool isArrowFunctionContext = executable->isArrowFunctionContext();
     SourceCodeKey key(
@@ -217,7 +220,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     // the records that share its executable then use.
     bool privateToExecutable = false;
     if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
-        privateToExecutable = !executable->resolvesInGlobalScope();
+        privateToExecutable = !executable->resolvesInGlobalScope() && !source.provider()->hasNoSourceText();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
     UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
@@ -320,6 +323,8 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
 
     // We initially start with hasCapturedVariables = false.
     functionExecutable->recordParse(program->features(), metadata->lexicallyScopedFeatures(), /* hasCapturedVariables */ false);
+    if ((Options::useBytecodeOptimizer() || !Options::useJIT()) && !(lexicallyScopedFeatures & TaintedByWithScopeLexicallyScopedFeature))
+        functionExecutable->setParentDeclaredNames(DeclaredNamesLink::createForGlobalScope());
 
     if (Options::useCodeCache())
         m_sourceCode.addCache(key, SourceCodeValue(vm, functionExecutable, m_sourceCode.age()));

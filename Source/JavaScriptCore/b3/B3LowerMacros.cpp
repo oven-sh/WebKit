@@ -88,13 +88,30 @@ public:
         : m_proc(proc)
         , m_blockInsertionSet(proc)
         , m_insertionSet(proc)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_useCounts(proc)
+#endif
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!proc.positionIndependent())
+            m_useCounts.emplace(proc);
+#endif
     }
 
     bool run()
     {
         RELEASE_ASSERT(!m_proc.hasQuirks());
+#if USE(BUN_JSC_ADDITIONS)
+        bool mayFindSomething = !isX86() && (m_proc.hasEverAdded(Load8Z) || m_proc.hasEverAdded(Load16Z));
+        for (Opcode opcode : { Mod, UMod, FMax, FMin, Div, Switch, Depend, AtomicWeakCAS, AtomicStrongCAS, AtomicXchgAdd, AtomicXchgAnd, AtomicXchgOr, AtomicXchgSub, AtomicXchgXor, AtomicXchg,
+            VectorPopcnt, VectorNot, VectorNeg, VectorNotEqual, VectorAbove, VectorBelow, VectorGreaterThanOrEqual, VectorLessThanOrEqual,
+            WasmStructGet, WasmStructSet, WasmStructNew, WasmArrayLength, WasmArrayGet, WasmArraySet, WasmArrayNew, WasmRefCast, WasmRefTest })
+            mayFindSomething |= m_proc.hasEverAdded(opcode);
+        if (!mayFindSomething) {
+            m_proc.setHasQuirks(true);
+            return false;
+        }
+#endif
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();
@@ -446,7 +463,13 @@ private:
                 // things.
                 
                 if (isX86()) {
+#if USE(BUN_JSC_ADDITIONS)
+                    if (m_value->opcode() == AtomicXchgSub && !m_useCounts)
+                        m_useCounts.emplace(m_proc);
+                    if (m_value->opcode() == AtomicXchgSub && m_useCounts->numUses(m_value)) {
+#else
                     if (m_value->opcode() == AtomicXchgSub && m_useCounts.numUses(m_value)) {
+#endif
                         // On x86, xchgadd is better than xchgsub if it has any users.
                         m_value->setOpcodeUnsafely(AtomicXchgAdd);
                         m_value->child(0) = m_insertionSet.insert<Value>(
@@ -1162,10 +1185,226 @@ private:
         before->updatePredecessorsAfter();
     }
 
+    void appendJumpThroughTableInCode(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end, BasicBlock* before, Value* index, size_t tableSize)
+    {
+        auto addressLabel = Box<CCallHelpers::Label>::create();
+        PatchpointValue* tableAddress = before->appendNew<PatchpointValue>(m_proc, pointerType(), m_origin, cloningForbidden(Patchpoint));
+        tableAddress->effects = Effects::none();
+        tableAddress->setGenerator(
+            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                *addressLabel = jit.label();
+                GPRReg result = params[0].gpr();
+#if CPU(ARM64)
+                jit.m_assembler.adr(result, 0);
+#elif CPU(X86_64)
+                auto& buffer = jit.m_assembler.buffer();
+                buffer.putByte(static_cast<int8_t>(0x48 | (static_cast<unsigned>(result) >> 3) << 2));
+                buffer.putByte(static_cast<int8_t>(0x8d));
+                buffer.putByte(static_cast<int8_t>((static_cast<unsigned>(result) & 7) << 3 | 5));
+                buffer.putInt(0);
+#else
+                UNUSED_PARAM(result);
+                RELEASE_ASSERT_NOT_REACHED();
+#endif
+            });
+        Value* shifted = before->appendNew<Value>(m_proc, Shl, m_origin, index, before->appendIntConstant(m_proc, m_origin, Int32, getLSBSet(sizeof(int32_t))));
+        MemoryValue* offset = before->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, shifted, tableAddress));
+        offset->setControlDependent(false);
+        offset->setReadsMutability(B3::Mutability::Immutable);
+        Value* target = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, tableAddress, before->appendNew<Value>(m_proc, SExt32, m_origin, offset));
+        PatchpointValue* patchpoint = before->appendNew<PatchpointValue>(m_proc, Void, m_origin, cloningForbidden(Patchpoint));
+        patchpoint->effects = Effects();
+        patchpoint->effects.terminal = true;
+        patchpoint->appendSomeRegister(target);
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+
+        before->clearSuccessors();
+        int64_t firstValue = cases[start].caseValue();
+        BitVector handledIndices;
+        for (unsigned i = start; i < end; ++i) {
+            before->appendSuccessor(cases[i].target());
+            handledIndices.set(cases[i].caseValue() - firstValue);
+        }
+        before->appendSuccessor(fallThrough);
+
+        patchpoint->setGenerator(
+            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                jit.farJump(params[0].gpr(), NoPtrTag);
+                CCallHelpers::Label tableLabel = jit.label();
+#if USE(BUN_JSC_ADDITIONS)
+                params.proc().code().recordTableInCode(tableLabel, tableSize);
+#endif
+                jit.emitNops(tableSize * sizeof(int32_t));
+                Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+                jit.addLinkTask(
+                    [=](LinkBuffer& linkBuffer) {
+                        auto locationOf = [&](CCallHelpers::Label label) {
+                            return static_cast<uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr());
+                        };
+                        uint8_t* table = locationOf(tableLabel);
+                        auto distanceTo = [&](CCallHelpers::Label label) {
+                            return safeCast<int32_t>(locationOf(label) - table);
+                        };
+                        Vector<int32_t> entries(FillWith { }, tableSize, distanceTo(*labels.last()));
+                        unsigned labelIndex = 0;
+                        for (size_t entry : handledIndices)
+                            entries[entry] = distanceTo(*labels[labelIndex++]);
+                        performJITMemcpy<jitMemcpyRepatch>(table, entries.span().data(), tableSize * sizeof(int32_t));
+                        uint8_t* instruction = locationOf(*addressLabel);
+#if CPU(ARM64)
+                        uint32_t distance = safeCast<uint32_t>(table - instruction);
+                        RELEASE_ASSERT(distance < (1u << 20));
+                        uint32_t adr;
+                        memcpy(&adr, instruction, sizeof(adr));
+                        adr |= (distance & 3) << 29 | (distance >> 2) << 5;
+                        performJITMemcpy<jitMemcpyRepatch>(instruction, &adr, sizeof(adr));
+#elif CPU(X86_64)
+                        constexpr size_t instructionSize = 7;
+                        int32_t distance = safeCast<int32_t>(table - (instruction + instructionSize));
+                        performJITMemcpy<jitMemcpyRepatch>(instruction + instructionSize - sizeof(distance), &distance, sizeof(distance));
+#else
+                        UNUSED_PARAM(instruction);
+#endif
+                    });
+            });
+    }
+
+#if USE(BUN_JSC_ADDITIONS)
+    bool tryBuildBitTests(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart, unsigned end, BasicBlock* before)
+    {
+        unsigned size = end - start;
+        if (!m_proc.positionIndependent() || size < 4)
+            return false;
+        uint64_t first = cases[start].caseValue();
+        uint64_t limit = cases[end - 1].caseValue() - first;
+        if (limit >= 64)
+            return false;
+        bool needsRangeCheck = true;
+        if (hardStart && end < cases.size() && cases[end].caseValue() - 1 - first < 64) {
+            limit = cases[end].caseValue() - 1 - first;
+            needsRangeCheck = false;
+        }
+
+        struct BitTest {
+            FrequentedBlock target;
+            uint64_t mask { 0 };
+        };
+        Vector<BitTest, 3> tests;
+        uint64_t covered = 0;
+        for (unsigned i = start; i < end; ++i) {
+            FrequentedBlock target = cases[i].target();
+            if (target.block() == fallThrough.block())
+                continue;
+            size_t index = tests.findIf([&](const BitTest& test) { return test.target.block() == target.block(); });
+            if (index == notFound) {
+                if (tests.size() == 3)
+                    return false;
+                index = tests.size();
+                tests.append(BitTest { target });
+            }
+            tests[index].mask |= 1ull << (cases[i].caseValue() - first);
+            covered |= tests[index].mask;
+        }
+        std::ranges::stable_sort(tests, [](const BitTest& a, const BitTest& b) {
+            if (a.target.isRare() != b.target.isRare())
+                return b.target.isRare();
+            return std::popcount(a.mask) > std::popcount(b.mask);
+        });
+        bool coversAll = covered == (limit == 63 ? ~0ull : (1ull << (limit + 1)) - 1);
+        if (!coversAll && needsRangeCheck && first < 64 && first + limit < 64) {
+            for (BitTest& test : tests)
+                test.mask <<= first;
+            limit += first;
+            first = 0;
+        }
+
+        unsigned treeCost = 4;
+        for (unsigned remaining = size; remaining > 3; remaining = (remaining + 1) / 2)
+            treeCost += 2;
+        unsigned testsCost = (needsRangeCheck ? 2 : 0) + !!first;
+        for (unsigned i = 0; i + coversAll < tests.size(); ++i) {
+            unsigned maskCost = 1;
+            if (isARM64()) {
+                maskCost = 0;
+                for (unsigned shift = 0; shift < 64; shift += 16)
+                    maskCost += !!(tests[i].mask >> shift & 0xffff);
+            }
+            testsCost += 2 + maskCost;
+        }
+        if (testsCost > treeCost + 2)
+            return false;
+
+        Value* child = m_value->child(0);
+        Type type = child->type();
+        Value* index = first ? before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(first))) : child;
+        if (needsRangeCheck) {
+            BasicBlock* inRange = m_blockInsertionSet.insertAfter(m_block);
+            before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, Above, m_origin, index, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(limit))));
+            before->setSuccessors(fallThrough, FrequentedBlock(inRange));
+            before = inRange;
+        }
+        Value* amount = type == Int32 ? index : before->appendNew<Value>(m_proc, Trunc, m_origin, index);
+        Type maskType = limit < 32 ? Int32 : Int64;
+        for (unsigned i = 0; i < tests.size(); ++i) {
+            bool isLast = i + 1 == tests.size();
+            if (isLast && coversAll)
+                break;
+            Value* shifted = before->appendNew<Value>(m_proc, ZShr, m_origin, before->appendIntConstant(m_proc, m_origin, maskType, static_cast<int64_t>(tests[i].mask)), amount);
+            before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, before->appendIntConstant(m_proc, m_origin, maskType, 1)));
+            if (isLast) {
+                before->setSuccessors(tests[i].target, fallThrough);
+                return true;
+            }
+            BasicBlock* next = m_blockInsertionSet.insertAfter(m_block);
+            before->setSuccessors(tests[i].target, FrequentedBlock(next));
+            before = next;
+        }
+        before->setSuccessors(tests.isEmpty() ? fallThrough : tests.last().target);
+        before->appendNew<Value>(m_proc, Jump, m_origin);
+        return true;
+    }
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned nearestWindowBoundary(unsigned medianIndex, const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end)
+    {
+        if (!m_proc.positionIndependent())
+            return medianIndex;
+        Vector<BasicBlock*, 3> targets;
+        for (unsigned i = start; i < end; ++i) {
+            BasicBlock* target = cases[i].target().block();
+            if (target == fallThrough.block() || targets.contains(target))
+                continue;
+            if (targets.size() == 3)
+                return medianIndex;
+            targets.append(target);
+        }
+        unsigned nearest = medianIndex;
+        unsigned minDistance = end - start;
+        for (unsigned first = start; first < end;) {
+            unsigned next = first;
+            while (next < end && static_cast<uint64_t>(cases[next].caseValue()) - static_cast<uint64_t>(cases[first].caseValue()) < 64)
+                ++next;
+            unsigned distance = next < medianIndex ? medianIndex - next : next - medianIndex;
+            if (next < end && distance < minDistance) {
+                nearest = next;
+                minDistance = distance;
+            }
+            first = next;
+        }
+        return nearest;
+    }
+#endif
+
     void recursivelyBuildSwitch(
         const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart,
         unsigned end, BasicBlock* before)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (tryBuildBitTests(cases, fallThrough, start, hardStart, end, before))
+            return;
+#endif
         Value* child = m_value->child(0);
         Type type = child->type();
         
@@ -1175,9 +1414,13 @@ private:
         // shift off the uninteresting bits. On the other hand, it's not clear that this would
         // actually be any better than what we have done here and it's not clear that it would be
         // better than a binary switch.
+#if USE(BUN_JSC_ADDITIONS)
+        const unsigned minCasesForTable = m_proc.positionIndependent() ? 128 : 7;
+#else
         const unsigned minCasesForTable = 7;
+#endif
         const unsigned densityLimit = 4;
-        if (end - start >= minCasesForTable) {
+        if (end - start >= minCasesForTable && (!m_proc.positionIndependent() || isARM64())) {
             CheckedInt64 firstValue = cases[start].caseValue();
             CheckedInt64 lastValue = cases[end - 1].caseValue();
             CheckedInt64 range = lastValue - firstValue + 1;
@@ -1189,6 +1432,11 @@ private:
 
                 if (index->type() != pointerType() && index->type() == Int32)
                     index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);
+
+                if (m_proc.keepsDataInCode()) {
+                    appendJumpThroughTableInCode(cases, fallThrough, start, end, before, index, tableSize);
+                    return;
+                }
 
                 using JumpTableCodePtr = CodePtr<JSSwitchPtrTag>;
                 JumpTableCodePtr* jumpTable = static_cast<JumpTableCodePtr*>(m_proc.addDataSection(sizeof(JumpTableCodePtr) * tableSize));
@@ -1287,6 +1535,9 @@ private:
         }
 
         unsigned medianIndex = std::midpoint(start, end);
+#if USE(BUN_JSC_ADDITIONS)
+        medianIndex = nearestWindowBoundary(medianIndex, cases, fallThrough, start, end);
+#endif
 
         BasicBlock* left = m_blockInsertionSet.insertAfter(m_block);
         BasicBlock* right = m_blockInsertionSet.insertAfter(m_block);
@@ -1743,7 +1994,11 @@ private:
     Procedure& m_proc;
     BlockInsertionSet m_blockInsertionSet;
     InsertionSet m_insertionSet;
+#if USE(BUN_JSC_ADDITIONS)
+    std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
+#else
     UseCountsWithoutUsingInstructions m_useCounts;
+#endif
     BasicBlock* m_block;
     unsigned m_index;
     Value* m_value;

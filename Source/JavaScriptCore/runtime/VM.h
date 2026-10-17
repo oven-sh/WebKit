@@ -59,6 +59,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/MallocPtr.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/ThreadSafeRefCountedWithSuppressingSaferCPPChecking.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
 
@@ -125,6 +126,7 @@ class HeapProfiler;
 class IntlCache;
 enum Intrinsic : uint8_t;
 class JSDestructibleObjectHeapCellType;
+class JSFunction;
 class JSGlobalObject;
 class JSSentinel;
 struct CallSiteData;
@@ -182,6 +184,13 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 #endif
 
 #if ENABLE(FTL_JIT)
+namespace AOT {
+class PropertyLookupTable;
+class VMProgram;
+class RuntimeTable;
+struct Instance;
+JS_EXPORT_PRIVATE void microtaskQueueingDidChange(VM&);
+}
 namespace FTL {
 class Thunks;
 }
@@ -311,6 +320,7 @@ public:
     bool isEntered() const { return !!entryScope; }
 
     inline CallFrame* topJSCallFrame() const;
+    JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
     JS_EXPORT_PRIVATE JSGlobalObject* LEGACY_NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
@@ -496,6 +506,39 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+#if ENABLE(AOT)
+    std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
+    AOT::PropertyLookupTable* m_aotPropertyLookupTable { nullptr };
+    const uint32_t* m_aotEmptyLookupTableRow { nullptr };
+#endif
+    Vector<AOT::Instance*, 1> m_aotInstances;
+    uintptr_t m_structureIDBase { 0 };
+    static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
+    Vector<AOT::Instance*> m_aotInstancesToDestroy;
+    struct DeferredStackCapture {
+        Exception* exception { nullptr };
+        JSFunction* hostFunction { nullptr };
+        CallFrame* callerFrame { nullptr };
+        void* returnPC { nullptr };
+    };
+    DeferredStackCapture deferredStackCapture;
+    JS_EXPORT_PRIVATE void finishDeferredStackCapture();
+    JS_EXPORT_PRIVATE void dropDeferredStackCapture();
+    std::unique_ptr<AOT::VMProgram> m_aotProgram;
+
+    bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
+    bool hasRealmWithImmutableIntrinsics { false };
+    using DeclaredObjectGuard = String (*)(JSGlobalObject*, JSObject*, unsigned change, UniquedStringImpl* name, unsigned given, JSValue);
+    DeclaredObjectGuard declaredObjectGuard { nullptr };
+    using ImmutableIntrinsicsAuditReporter = void (*)(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column);
+    ImmutableIntrinsicsAuditReporter immutableIntrinsicsAuditReporter() const { return m_immutableIntrinsicsAuditReporter; }
+    void setImmutableIntrinsicsAuditReporter(ImmutableIntrinsicsAuditReporter reporter) { m_immutableIntrinsicsAuditReporter = useImmutableIntrinsics ? nullptr : reporter; }
+    bool auditsImmutableIntrinsics() const { return m_immutableIntrinsicsAuditReporter; }
+    bool locksOrAuditsIntrinsics() const { return useImmutableIntrinsics || m_immutableIntrinsicsAuditReporter; }
+    ImmutableIntrinsicsAuditReporter m_immutableIntrinsicsAuditReporter { nullptr };
+#if ENABLE(AOT)
+    static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); }
+#endif
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
@@ -616,6 +659,10 @@ public:
     WriteBarrier<NativeExecutable> m_promiseAllSettledSlowRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnyRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnySlowRejectFunctionExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyThenFinallyExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyCatchFinallyExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyValueThunkExecutable;
+    WriteBarrier<NativeExecutable> m_promiseFinallyThrowerExecutable;
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
@@ -656,6 +703,17 @@ public:
     WriteBarrier<JSString> lastCachedString;
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
+    struct {
+        uint32_t length { 0 };
+        bool isUTF16 { false };
+    } jsonStringifyHints;
+    struct {
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;
+        SegmentedVector<RefPtr<UniquedStringImpl>, 512> namesWithIDInHeader;
+        uintptr_t startOfImage { 0 };
+        uintptr_t sizeOfImage { 0 };
+        uint32_t next { 0 };
+    } aotPropertyNameIDs;
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
     static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;
@@ -703,6 +761,7 @@ public:
     {
         return m_orderedHashTableSentinel.get();
     }
+    static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
@@ -734,6 +793,10 @@ public:
     inline NativeExecutable* promiseAllSettledSlowRejectFunctionExecutable();
     inline NativeExecutable* promiseAnyRejectFunctionExecutable();
     inline NativeExecutable* promiseAnySlowRejectFunctionExecutable();
+    inline NativeExecutable* promiseFinallyThenFinallyExecutable();
+    inline NativeExecutable* promiseFinallyCatchFinallyExecutable();
+    inline NativeExecutable* promiseFinallyValueThunkExecutable();
+    inline NativeExecutable* promiseFinallyThrowerExecutable();
 
     WeakGCMap<WTF::SymbolImpl*, Symbol, PtrHash<WTF::SymbolImpl*>> symbolImplToSymbolMap;
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> atomStringToJSStringMap;
@@ -776,7 +839,7 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
-        return !Options::useJIT() || Options::forceMiniVMMode();
+        return (!Options::useJIT() && Options::useMiniVMModeWithoutJIT()) || Options::forceMiniVMMode();
     }
 
     static bool useUnlinkedCodeBlockJettisoning()
@@ -1008,6 +1071,12 @@ public:
         Prototype,
     };
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent);
+    JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty = nullptr);
+#if ENABLE(AOT)
+    void didChangePrototypeOfFinalObject(Structure* before, JSObject* prototype, Structure* after);
+#endif
+    JS_EXPORT_PRIVATE bool mayHaveCachesDependingOnPrototype(JSObject*);
+    void invalidateEpochCaches();
 
 #if ENABLE(REGEXP_TRACING)
     using RTTraceList = ListHashSet<RegExp*>;
@@ -1165,7 +1234,24 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
 #endif
-    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTF::move(func); }
+    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func)
+    {
+        m_onEachMicrotaskTick = WTF::move(func);
+#if USE(BUN_JSC_ADDITIONS)
+        updateHostObservesMicrotaskBoundaries();
+#endif
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    void updateHostObservesMicrotaskBoundaries()
+    {
+        m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken;
+#if ENABLE(AOT)
+        AOT::microtaskQueueingDidChange(*this);
+#endif
+    }
+    bool hostObservesMicrotaskBoundaries() const { return m_hostObservesMicrotaskBoundaries; }
+    static constexpr ptrdiff_t offsetOfHostObservesMicrotaskBoundaries() { return OBJECT_OFFSETOF(VM, m_hostObservesMicrotaskBoundaries); }
+#endif
     void callOnEachMicrotaskTick()
     {
         if (m_onEachMicrotaskTick)
@@ -1189,7 +1275,12 @@ public:
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
 
-    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
+    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry()
+    {
+        if (!m_bytecodeIntrinsicRegistry) [[unlikely]]
+            createBytecodeIntrinsicRegistry();
+        return *m_bytecodeIntrinsicRegistry;
+    }
     
     ShadowChicken* shadowChicken() { return m_shadowChicken.getIfExists(); }
     ShadowChicken& ensureShadowChicken() { return m_shadowChicken.get(*this); }
@@ -1339,6 +1430,10 @@ private:
     NativeExecutable* promiseAllSettledSlowRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnyRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnySlowRejectFunctionExecutableSlow();
+    NativeExecutable* promiseFinallyThenFinallyExecutableSlow();
+    NativeExecutable* promiseFinallyCatchFinallyExecutableSlow();
+    NativeExecutable* promiseFinallyValueThunkExecutableSlow();
+    NativeExecutable* promiseFinallyThrowerExecutableSlow();
 
     void updateStackLimits();
 
@@ -1358,6 +1453,8 @@ private:
 
     void clearException()
     {
+        if (deferredStackCapture.exception) [[unlikely]]
+            finishDeferredStackCapture();
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
         m_needExceptionCheck = false;
         clearNativeStackTraceOfLastThrow();
@@ -1449,6 +1546,7 @@ private:
 #endif
     std::unique_ptr<FuzzerAgent> m_fuzzerAgent;
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
+    void createBytecodeIntrinsicRegistry();
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
 
@@ -1457,6 +1555,7 @@ private:
 
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
+    bool m_hostObservesMicrotaskBoundaries { false };
     ErrorInfoFunction m_onComputeErrorInfo;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;

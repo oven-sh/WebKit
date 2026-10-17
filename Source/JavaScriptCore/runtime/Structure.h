@@ -33,6 +33,7 @@
 #include "JSCJSValueCell.h"
 #include "JSCast.h"
 #include "JSTypeInfo.h"
+#include "Options.h"
 #include "PropertyName.h"
 #include "PropertyNameArray.h"
 #include "PropertyOffset.h"
@@ -54,6 +55,22 @@ class UniquedStringImpl;
 
 namespace JSC {
 
+#if ENABLE(AOT)
+namespace AOT {
+struct Instance;
+struct Slot;
+namespace Typed {
+struct Data;
+struct LayoutData;
+}
+JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
+JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
+JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
+JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
+}
+#endif
+
+class CompiledLayoutVisitor;
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
 class LLIntOffsetsExtractor;
@@ -204,6 +221,7 @@ class Structure : public JSCell {
     static constexpr uint16_t shortInvalidOffset = std::numeric_limits<uint16_t>::max() - 1;
     static constexpr uint16_t useRareDataFlag = std::numeric_limits<uint16_t>::max();
 public:
+    friend class CompiledLayoutVisitor;
     friend class StructureTransitionTable;
 
     typedef JSCell Base;
@@ -302,6 +320,7 @@ public:
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* lockPropertiesTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -316,6 +335,48 @@ public:
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
+
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    JS_EXPORT_PRIVATE static Structure* createFromDescriptor(VM&, Structure* empty, std::span<UniquedStringImpl* const>, uint16_t structureDescriptorPlusOne);
+    JS_EXPORT_PRIVATE Vector<UniquedStringImpl*, 16> namesIfNumbered() const;
+    JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
+    static constexpr unsigned numberOfSlotsWithPropertyNameIDs = 4;
+    static bool hasAOTFields() { return Options::useAOT(); }
+    struct AOTFields {
+#if ENABLE(AOT)
+        static constexpr uintptr_t isCompiledEnvironmentStructure = 1;
+        bool isCompiledCellStructure() const { return compiledLayoutOrData; }
+        const AOT::Typed::LayoutData* compiledLayout() const { return compiledLayoutOrData & isCompiledEnvironmentStructure ? nullptr : std::bit_cast<const AOT::Typed::LayoutData*>(compiledLayoutOrData); }
+        const AOT::Typed::Data* compiledEnvironmentData() const { return compiledLayoutOrData & isCompiledEnvironmentStructure ? std::bit_cast<const AOT::Typed::Data*>(compiledLayoutOrData - isCompiledEnvironmentStructure) : nullptr; }
+
+        const uint32_t* lookupTableRow { nullptr };
+        AOT::Instance* aotInstance { nullptr };
+        uintptr_t compiledLayoutOrData { 0 };
+#endif
+        uint16_t fieldIDInSlot[numberOfSlotsWithPropertyNameIDs] { };
+    };
+    const AOTFields& existingAOTFields() const
+    {
+        ASSERT(hasAOTFields());
+        return *reinterpret_cast<const AOTFields*>(reinterpret_cast<const char*>(this) + sizeof(Structure));
+    }
+    AOTFields& existingAOTFields()
+    {
+        ASSERT(hasAOTFields());
+        return *reinterpret_cast<AOTFields*>(reinterpret_cast<char*>(this) + sizeof(Structure));
+    }
+    static size_t allocationSize() { return sizeof(Structure) + (hasAOTFields() ? sizeof(AOTFields) : 0); }
+    uint16_t fieldIDInSlot(unsigned slot) const { return aotFieldsOrEmpty().fieldIDInSlot[slot]; }
+    static constexpr uint16_t noPropertyNameID = 0xfffe;
+    static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
+    void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
+    {
+        ASSERT((!isUncacheableDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID);
+        aotFields().fieldIDInSlot[slot] = id;
+    }
+    static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return static_cast<ptrdiff_t>(sizeof(Structure)) + OBJECT_OFFSETOF(AOTFields, fieldIDInSlot); }
+    inline unsigned dictionaryPropertyCount() const;
+    PropertyTable* materializedPropertyTable() const { return m_propertyTableUnsafe.get(); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -667,6 +728,53 @@ public:
         return OBJECT_OFFSETOF(Structure, m_realm);
     }
 
+#if ENABLE(AOT)
+    AOT::Instance* aotInstance() const { return aotFieldsOrEmpty().aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { aotFields().aotInstance = instance; }
+    bool isCompiledCellStructure() const { return aotFieldsOrEmpty().isCompiledCellStructure(); }
+    const AOT::Typed::LayoutData* compiledLayout() const { return aotFieldsOrEmpty().compiledLayout(); }
+    void setCompiledLayout(const AOT::Typed::LayoutData* layout) { aotFields().compiledLayoutOrData = std::bit_cast<uintptr_t>(layout); }
+    static constexpr uint8_t markingStampMask = 3;
+    static constexpr uint8_t isStructureWithExtraProperties = 4;
+    static constexpr uint8_t hasPrototypeOfLayout = 8;
+    static constexpr uint8_t hasFieldsWithSymbolKeys = 16;
+    static constexpr uint8_t hasOtherPrototype = 32;
+    static_assert(!((markingStampMask | isStructureWithExtraProperties | hasPrototypeOfLayout | hasFieldsWithSymbolKeys | hasOtherPrototype) & (IndexingTypeLockIsHeld | IndexingTypeLockHasParked)));
+    static constexpr uint8_t markingStampFor(uint32_t markingVersion) { return (markingVersion & 1) + 1; }
+    uint8_t& markingStampAndFlags() { return *(reinterpret_cast<uint8_t*>(this) + indexingTypeAndMiscOffset()); }
+    static_assert(sizeof(SeenProperties) == sizeof(uint64_t));
+    static constexpr unsigned extraPropertiesOffsetShift = 32;
+    static constexpr unsigned extraPropertiesSizeShift = 48;
+    StructureID extraPropertiesStructureID() const { return std::bit_cast<StructureID>(static_cast<uint32_t>(m_seenProperties.bits())); }
+    void setExtraPropertiesStructure(Structure* structure, uint16_t inlineOffsetOfExtraProperties, uint16_t sizeOfCell)
+    {
+        ASSERT(compiledLayout());
+        m_seenProperties = SeenProperties(static_cast<uint64_t>(structure ? structure->id().bits() : 0) | static_cast<uint64_t>(inlineOffsetOfExtraProperties) << extraPropertiesOffsetShift | static_cast<uint64_t>(sizeOfCell) << extraPropertiesSizeShift);
+    }
+    static constexpr ptrdiff_t offsetOfExtraPropertiesStructureID() { return seenPropertiesOffset(); }
+    static constexpr ptrdiff_t offsetOfExtraPropertiesOffset() { return seenPropertiesOffset() + extraPropertiesOffsetShift / 8; }
+    // Of the environments of 65,536 shapes. Which of them a cell is of is in its header: see AOT::Typed::environmentLayout().
+    const AOT::Typed::Data* compiledEnvironmentData() const { return aotFieldsOrEmpty().compiledEnvironmentData(); }
+    uint32_t firstCompiledEnvironmentShape() const { return static_cast<uint32_t>(m_environmentShapePage) << 16; }
+    uint16_t structureDescriptorPlusOne() const { return aotFieldsOrEmpty().compiledLayoutOrData ? 0 : m_environmentShapePage; }
+    void setStructureDescriptorPlusOne(uint16_t number)
+    {
+        RELEASE_ASSERT(hasAOTFields() && !aotFieldsOrEmpty().compiledLayoutOrData && !m_environmentShapePage);
+        m_environmentShapePage = number;
+    }
+    static constexpr ptrdiff_t offsetOfStructureDescriptorPlusOne() { return OBJECT_OFFSETOF(Structure, m_environmentShapePage); }
+    void setCompiledEnvironments(const AOT::Typed::Data* data, uint16_t page)
+    {
+        aotFields().compiledLayoutOrData = std::bit_cast<uintptr_t>(data) | AOTFields::isCompiledEnvironmentStructure;
+        m_environmentShapePage = page;
+    }
+    JS_EXPORT_PRIVATE const AOT::Typed::LayoutData* compiledLayoutOf(const JSCell*) const;
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return static_cast<ptrdiff_t>(sizeof(Structure)) + OBJECT_OFFSETOF(AOTFields, aotInstance); }
+    static constexpr ptrdiff_t offsetOfLookupTableRow() { return static_cast<ptrdiff_t>(sizeof(Structure)) + OBJECT_OFFSETOF(AOTFields, lookupTableRow); }
+    const uint32_t* lookupTableRow() const { return existingAOTFields().lookupTableRow; }
+    void setLookupTableRow(const uint32_t* row) { aotFields().lookupTableRow = row; }
+#endif
+
     static constexpr ptrdiff_t classInfoOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_classInfo);
@@ -685,6 +793,11 @@ public:
     static constexpr ptrdiff_t propertyTableUnsafeOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_propertyTableUnsafe);
+    }
+
+    static constexpr ptrdiff_t maxOffsetOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_maxOffset);
     }
 
     static constexpr ptrdiff_t inlineCapacityOffset()
@@ -858,6 +971,16 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+#if USE(BUN_JSC_ADDITIONS)
+    DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
+    bool hasImmutablePropertiesWithLockedAttributes() const { return hasImmutableProperties() && inheritorsMayOverrideReadOnlyProperties(); }
+    JS_EXPORT_PRIVATE bool inheritorsMayOverride(VM&, UniquedStringImpl*) const;
+    DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
+    DEFINE_BITFIELD(bool, isReplacedSilently, IsReplacedSilently, 1, 12);
+    static_assert(!(s_isReplacedSilentlyBits & (s_hasImmutableShapeBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
+    static_assert(!(s_hasImmutableShapeBits & (s_definitelyNonThenableStateBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
+    static_assert(!(s_inheritorsMayOverrideReadOnlyPropertiesBits & s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits));
+#endif
 
     enum class StructureVariant : uint8_t {
         Normal,
@@ -950,7 +1073,7 @@ private:
     {
         if (PropertyTable* result = m_propertyTableUnsafe.get())
             return result;
-        if (!previousID())
+        if (!previousID() && (maxOffset() == invalidOffset || !structureDescriptorPlusOne()))
             return nullptr;
         return materializePropertyTable(vm);
     }
@@ -1027,6 +1150,9 @@ private:
 
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_environmentShapePage { 0 };
+#endif
 
     uint32_t m_propertyHash;
     SeenProperties m_seenProperties;
@@ -1049,6 +1175,22 @@ private:
     WriteBarrier<PropertyTable> m_propertyTableUnsafe;
 
     mutable InlineWatchpointSet m_transitionWatchpointSet;
+
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static const AOTFields s_emptyAOTFields;
+    AOTFields& aotFields()
+    {
+        RELEASE_ASSERT(hasAOTFields());
+        return existingAOTFields();
+    }
+    const AOTFields& aotFieldsOrEmpty() const { return hasAOTFields() ? existingAOTFields() : s_emptyAOTFields; }
+    void clearPropertyNameIDInSlot(PropertyOffset offset)
+    {
+        if (hasAOTFields() && static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs)
+            existingAOTFields().fieldIDInSlot[offset] = 0;
+    }
+    void copyPropertyNameIDsFrom(const Structure&);
+#endif
 
     static_assert(firstOutOfLineOffset < 256);
 

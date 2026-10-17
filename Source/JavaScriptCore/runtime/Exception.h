@@ -27,6 +27,7 @@
 
 #include "JSDestructibleObject.h"
 #include "StackFrame.h"
+#include <wtf/CompactPointerTuple.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -45,7 +46,8 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack
+        DoNotCaptureStack,
+        CaptureStackUnlessCaughtByCompiledCode
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
 
@@ -61,7 +63,12 @@ public:
     }
 
     JSValue value() const { return m_value.get(); }
-    const Vector<StackFrame>& stack() const LIFETIME_BOUND { return m_stack; }
+    const Vector<StackFrame>& stack() const LIFETIME_BOUND
+    {
+        if (m_returnAddressesAndFlags.pointer() || stackCaptureIsDeferred()) [[unlikely]]
+            const_cast<Exception*>(this)->materializeStack();
+        return m_stack;
+    }
     // The stack may be skipped when a user catch clause handles the throw, but vm.lastException()
     // outlives the catch and can still be reported, so fall back to the Error's own stack. That one
     // is freed whenever the Error materializes its stack property, so it is copied in, not borrowed.
@@ -76,8 +83,13 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
-    bool didNotifyInspectorOfThrow() const { return m_didNotifyInspectorOfThrow; }
-    void setDidNotifyInspectorOfThrow() { m_didNotifyInspectorOfThrow = true; }
+    JS_EXPORT_PRIVATE void setTopFrameIsAtStackTraceItemSite();
+    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndFlags.type() & didNotifyInspectorOfThrowFlag; }
+    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndFlags.setType(m_returnAddressesAndFlags.type() | didNotifyInspectorOfThrowFlag); }
+
+    bool stackCaptureIsDeferred() const { return m_returnAddressesAndFlags.type() & stackCaptureIsDeferredFlag; }
+    void finishDeferredStackCapture(VM&, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC);
+    void dropDeferredStackCapture();
 
 #if ENABLE(WEBASSEMBLY)
     void tryUnwrapValueForJSTag(VM&);
@@ -89,6 +101,8 @@ public:
 private:
     Exception(VM&, JSValue thrownValue);
     void finishCreation(VM&, StackCaptureAction);
+    bool tryRetainReturnAddresses(VM&);
+    JS_EXPORT_PRIVATE void materializeStack();
     static void destroy(JSCell*);
 
     WriteBarrier<Unknown> m_value;
@@ -96,7 +110,9 @@ private:
     WriteBarrier<Unknown> m_asyncContext;
 #endif
     Vector<StackFrame> m_stack;
-    bool m_didNotifyInspectorOfThrow { false };
+    static constexpr uint8_t didNotifyInspectorOfThrowFlag = 1;
+    static constexpr uint8_t stackCaptureIsDeferredFlag = 2;
+    CompactPointerTuple<AOT::ReturnAddressTrace*, uint8_t> m_returnAddressesAndFlags;
 
     friend class LLIntOffsetsExtractor;
 };

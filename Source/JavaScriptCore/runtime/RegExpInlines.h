@@ -158,11 +158,34 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     m_rtMatchTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
-    if (s.length() - startOffset < m_minimumSize)
+    if (static_cast<int32_t>(s.length() - startOffset) < static_cast<int32_t>(m_minimumSize))
         return -1;
 
     noteUse<matchFrom>(vm);
-    compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
+    ASSERT(ovector.size() >= static_cast<size_t>(offsetVectorSize()));
+    int* offsetVector = ovector.data();
+    auto findAtom = [&] {
+        size_t found;
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+            found = s.find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
+        else
+            found = s.find(StringView(atom()), startOffset);
+        if (found == notFound)
+            return -1;
+        offsetVector[0] = found;
+        offsetVector[1] = found + atom().length();
+        return static_cast<int>(found);
+    };
+    if (hasValidAtom())
+        return findAtom();
+    Yarr::CharSize charSize = s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16;
+    if (!hasCodeFor(charSize)) {
+        compileIfNecessary(vm, charSize, s);
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+            if (hasValidAtom() && m_state != ParseError)
+                return findAtom();
+        }
+    }
 
     auto throwError = [&] {
         if (matchFrom == Yarr::MatchFrom::CompilerThread)
@@ -178,20 +201,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
 
     if (m_state == ParseError)
         return throwError();
-
-    ASSERT(ovector.size() >= static_cast<size_t>(offsetVectorSize()));
-    int* offsetVector = ovector.data();
-
-    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-        if (hasValidAtom()) {
-            size_t found = s.find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
-            if (found == notFound)
-                return -1;
-            offsetVector[0] = found;
-            offsetVector[1] = found + atom().length();
-            return found;
-        }
-    }
 
     int result;
 #if ENABLE(YARR_JIT)
@@ -223,6 +232,10 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
                 result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
             }
+            if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
+                if (result == static_cast<int>(Yarr::flatProgramGaveUp))
+                    return result;
+            }
         }
 
 #if ENABLE(YARR_JIT_DEBUG)
@@ -238,6 +251,10 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+    }
+    if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
+        if (result == static_cast<int>(Yarr::flatProgramGaveUp))
+            return result;
     }
 
     ASSERT(result >= -1);
@@ -316,11 +333,30 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     m_rtMatchOnlyTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
-    if (s.length() - startOffset < m_minimumSize)
+    if (static_cast<int32_t>(s.length() - startOffset) < static_cast<int32_t>(m_minimumSize))
         return MatchResult::failed();
 
     noteUse<matchFrom>(vm);
-    compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
+    auto findAtom = [&] {
+        size_t found;
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+            found = StringView(s).find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
+        else
+            found = StringView(s).find(StringView(atom()), startOffset);
+        if (found == notFound)
+            return MatchResult::failed();
+        return MatchResult { found, found + atom().length() };
+    };
+    if (hasValidAtom())
+        return findAtom();
+    Yarr::CharSize charSize = s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16;
+    if (!hasMatchOnlyCodeFor(charSize)) {
+        compileIfNecessaryMatchOnly(vm, charSize, s);
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+            if (hasValidAtom() && m_state != ParseError)
+                return findAtom();
+        }
+    }
 
     auto throwError = [&] {
         if (matchFrom == Yarr::MatchFrom::CompilerThread)
@@ -336,15 +372,6 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
 
     if (m_state == ParseError)
         return throwError();
-
-    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-        if (hasValidAtom()) {
-            size_t found = StringView(s).find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
-            if (found == notFound)
-                return MatchResult::failed();
-            return MatchResult { found, found + atom().length() };
-        }
-    }
 
 #if ENABLE(YARR_JIT)
     if (m_state == JITCode) {
@@ -389,6 +416,10 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+    }
+    if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
+        if (result == static_cast<int>(Yarr::flatProgramGaveUp))
+            return MatchResult(static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure), 0);
     }
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->outputOneTest(this, s, startOffset, offsetVector, result);

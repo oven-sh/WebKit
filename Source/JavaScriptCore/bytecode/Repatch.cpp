@@ -132,6 +132,12 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
         callLinkInfo.setVirtualCall(vm);
         return;
     }
+#if ENABLE(AOT)
+    if (JSObject* oldCallee = callLinkInfo.stub() ? nullptr : callLinkInfo.callee(); isSlimClosureType(newVariant.rawCalleeCell()->type()) || (oldCallee && isSlimClosureType(oldCallee->type()))) {
+        callLinkInfo.setVirtualCall(vm);
+        return;
+    }
+#endif
 
     CodeBlock* callerCodeBlock = dynamicDowncast<CodeBlock>(owner); // WebAssembly -> JS stubs don't have a valid CodeBlock.
     ASSERT(owner);
@@ -139,6 +145,9 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
     bool isWebAssembly = owner->inherits<JSWebAssemblyModule>();
 #else
     bool isWebAssembly = false;
+#endif
+#if ENABLE(AOT)
+    isWebAssembly |= !callerCodeBlock;
 #endif
     bool isTailCall = callLinkInfo.isTailCall();
 
@@ -228,7 +237,10 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
                         arityCheck = ArityCheckMode::MustCheckArity;
 
                 }
-                codePtr = variant.executable()->generatedJITCodeForCall()->addressForCall(arityCheck);
+                if (variant.executable()->isHostFunction())
+                    codePtr = variant.executable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
+                else
+                    codePtr = variant.executable()->generatedJITCodeForCall()->addressForCall(arityCheck);
                 slot.m_arityCheckMode = arityCheck;
             }
         } else {

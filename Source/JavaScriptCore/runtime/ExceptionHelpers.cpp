@@ -425,6 +425,9 @@ Exception* throwStackOverflowError(JSGlobalObject* globalObject, ThrowScope& sco
 #if USE(BUN_JSC_ADDITIONS)
 Exception* throwNonStaticCodeError(JSGlobalObject* globalObject, ThrowScope& scope)
 {
+    const String& message = globalObject->evalDisabledErrorMessage();
+    if (!message.isEmpty())
+        return throwException(globalObject, scope, createEvalError(globalObject, message));
     return throwException(globalObject, scope, createEvalError(globalObject, "Code generation from strings disallowed for this context"_s));
 }
 #endif

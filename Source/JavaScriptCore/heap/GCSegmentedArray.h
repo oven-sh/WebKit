@@ -69,6 +69,9 @@ public:
 };
 
 template <typename T> class GCSegmentedArrayIterator;
+#if USE(BUN_JSC_ADDITIONS)
+class CompiledLayoutVisitor;
+#endif
 
 template <typename T>
 class GCSegmentedArray {
@@ -76,6 +79,9 @@ class GCSegmentedArray {
     WTF_MAKE_NONCOPYABLE(GCSegmentedArray);
     friend class GCSegmentedArrayIterator<T>;
     friend class GCSegmentedArrayIterator<const T>;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class CompiledLayoutVisitor;
+#endif
 public:
     GCSegmentedArray();
     ~GCSegmentedArray();
@@ -95,6 +101,12 @@ public:
     typedef GCSegmentedArrayIterator<T> iterator;
     iterator begin() const { return GCSegmentedArrayIterator<T>(m_segments.head(), m_top); }
     iterator end() const { return GCSegmentedArrayIterator<T>(); }
+
+    static constexpr ptrdiff_t offsetOfHeadSegment() { return OBJECT_OFFSETOF(GCSegmentedArray, m_segments); }
+    static constexpr ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(GCSegmentedArray, m_top); }
+    static constexpr ptrdiff_t offsetOfDataInSegment() { return sizeof(GCArraySegment<T>); }
+    static constexpr size_t segmentCapacity() { return s_segmentCapacity; }
+    bool headSegmentOffsetIsValid() const { return *std::bit_cast<GCArraySegment<T>* const*>(std::bit_cast<const char*>(this) + offsetOfHeadSegment()) == m_segments.head(); }
 
 protected:
     template <size_t size> struct CapacityFromSize {

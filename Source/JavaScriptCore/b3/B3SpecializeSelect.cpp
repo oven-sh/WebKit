@@ -57,6 +57,10 @@ public:
 
     bool run()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_proc.hasEverAdded(Select) || !m_proc.hasEverAdded(Check))
+            return false;
+#endif
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();

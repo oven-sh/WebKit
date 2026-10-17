@@ -570,6 +570,51 @@ def arm64LowerLabelReferences(list)
     newList
 end
 
+def arm64BranchToOtherSectionsThroughVeneers(list)
+    section = "trampolines"
+    list.each {
+        | node |
+        if node.is_a? Instruction and node.opcode == "section"
+            section = node.operands[0].value
+        elsif node.is_a? Label
+            node.section = section
+        end
+    }
+
+    newList = []
+    veneers = {}
+    veneerCount = 0
+    section = "trampolines"
+    putVeneers = lambda {
+        veneers.each {
+            | target, veneer |
+            newList << veneer
+            newList << Instruction.new(veneer.codeOrigin, "jmp", [LabelReference.new(veneer.codeOrigin, target)])
+        }
+        veneers = {}
+    }
+    list.each {
+        | node |
+        if node.is_a? Instruction and node.opcode == "section"
+            putVeneers.call
+            section = node.operands[0].value
+        elsif node.is_a? Instruction and isBranch(node.opcode) and node.operands.last.is_a? LabelReference
+            target = node.operands.last.label
+            if target.section and target.section != section
+                unless veneers[target]
+                    veneerCount += 1
+                    veneers[target] = Label.forName(node.codeOrigin, "#{target.name}_veneer_#{veneerCount}", true)
+                    veneers[target].section = section
+                end
+                node = Instruction.new(node.codeOrigin, node.opcode, node.operands[0..-2] + [LabelReference.new(node.codeOrigin, veneers[target])], node.annotation)
+            end
+        end
+        newList << node
+    }
+    putVeneers.call
+    newList
+end
+
 def arm64FixSpecialRegisterArithmeticMode(list)
     newList = []
     def usesSpecialRegister(node)
@@ -613,6 +658,7 @@ class Sequence
         getModifiedListARM64Common(result)
     end
     def getModifiedListARM64Common(result = @list)
+        result = arm64BranchToOtherSectionsThroughVeneers(result)
         result = riscLowerNot(result)
         result = riscLowerSimpleBranchOps(result)
 
@@ -1502,7 +1548,7 @@ class Instruction
         when "pcrtoaddr"
             labelRef = operands[0]
             register = operands[1].arm64Operand(:quad)
-            if labelRef.externOrGlobal?
+            if labelRef.externOrGlobal? or labelRef.label.section != $asm.section
                 $asm.putStr("#if OS(DARWIN)")
                 $asm.puts "adrp #{register}, #{labelRef.asmLabel}@PAGE"
                 $asm.puts "add #{register}, #{register}, #{labelRef.asmLabel}@PAGEOFF"

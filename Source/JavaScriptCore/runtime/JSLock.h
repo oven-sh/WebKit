@@ -53,6 +53,7 @@ namespace JSC {
 class CallFrame;
 class VM;
 class JSGlobalObject;
+class MarkedBlockCage;
 class JSLock;
 
 // FIXME: We should either have a specialization of WTF::Locker for JSLock or only allow using JSLockHolder.
@@ -168,6 +169,8 @@ private:
     uint32_t m_lastOwnerThread { 0 };
     VM* m_vm;
     AtomStringTable* m_entryAtomStringTable; 
+    MarkedBlockCage* m_entryMarkedBlockCage { nullptr };
+    uintptr_t m_entryMarkedBlockCageBase { 0 };
 };
 
 } // namespace

@@ -53,7 +53,7 @@ inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructu
     ASSERT(vm.structureStructure);
     switch (previous->variant()) {
     case StructureVariant::Normal: {
-        auto* result = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, previous->variant(), previous);
+        auto* result = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, previous->variant(), previous);
         result->finishCreation(vm, previous, deferred);
         return result;
     }
@@ -83,7 +83,18 @@ void Structure::forEachPropertyConcurrently(NOESCAPE const Functor& functor)
     UncheckedKeyHashSet<UniquedStringImpl*> seenProperties;
 
     for (auto* structure : structures) {
-        if (!structure->m_transitionPropertyName || seenProperties.contains(structure->m_transitionPropertyName.get()))
+        if (!structure->m_transitionPropertyName) {
+            int number = 0;
+            for (UniquedStringImpl* name : structure->namesIfNumbered()) {
+                PropertyOffset offset = offsetForPropertyNumber(number++, structure->m_inlineCapacity);
+                if (!seenProperties.add(name).isNewEntry)
+                    continue;
+                if (!functor(PropertyTableEntry(name, offset, 0)))
+                    return;
+            }
+            continue;
+        }
+        if (seenProperties.contains(structure->m_transitionPropertyName.get()))
             continue;
 
         seenProperties.add(structure->m_transitionPropertyName.get());
@@ -203,6 +214,12 @@ inline bool Structure::isValid(JSGlobalObject* globalObject, StructureChain* cac
 inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset)
 {
     ASSERT(isValidOffset(offset));
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.m_aotProgram && typeInfo().type() != GlobalObjectType && !propertyReplacementWatchpointSet(offset)) {
+        setIsReplacedSilently(true);
+        return;
+    }
+#endif
     firePropertyReplacementWatchpointSet(vm, offset, "Did cache property replacement");
 }
 
@@ -229,6 +246,13 @@ inline void Structure::cacheSpecialProperty(JSGlobalObject* globalObject, VM& vm
     if (!hasRareData())
         allocateRareData(vm);
     rareData()->cacheSpecialProperty(globalObject, vm, this, value, key, slot);
+}
+
+inline unsigned Structure::dictionaryPropertyCount() const
+{
+    ASSERT(isDictionary());
+    PropertyTable* table = m_propertyTableUnsafe.get();
+    return table ? table->size() : std::numeric_limits<unsigned>::max();
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>
@@ -279,6 +303,9 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attribute);
     auto newMaxOffset = std::max(newOffset, maxOffset());
+#if USE(BUN_JSC_ADDITIONS)
+    clearPropertyNameIDInSlot(newOffset);
+#endif
     
     func(locker, newOffset, newMaxOffset);
     
@@ -380,6 +407,9 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
 template<typename Func>
 inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!hasImmutableShape());
+#endif
     return add<ShouldPin::Yes>(vm, propertyName, attributes, func);
 }
 
@@ -437,6 +467,9 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attributes);
     auto newMaxOffset = std::max(newOffset, maxOffset());
+#if USE(BUN_JSC_ADDITIONS)
+    clearPropertyNameIDInSlot(newOffset);
+#endif
 
     func(locker, newOffset, newMaxOffset);
 
@@ -455,6 +488,9 @@ inline PropertyOffset Structure::attributeChangeWithoutTransition(VM& vm, Proper
 ALWAYS_INLINE void Structure::setPrototypeWithoutTransition(VM& vm, JSValue prototype)
 {
     ASSERT(isValidPrototype(prototype));
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!hasImmutableShape());
+#endif
     m_prototype.set(vm, this, prototype);
 }
 
