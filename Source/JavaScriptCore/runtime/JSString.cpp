@@ -183,7 +183,7 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobal
     size_t sizeToReport = atomString.impl()->hasOneRef() ? atomString.impl()->cost() : 0;
     convertToNonRope(String { atomString.releaseImpl() });
     // If we resolved a string that didn't previously exist, notify the heap that we've grown.
-    vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+    vm.heap.reportStringExtraMemoryAllocated(this, sizeToReport);
     return { this, static_cast<AtomStringImpl*>(valueInternal().impl()) };
 }
 
@@ -254,7 +254,7 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
         resolveRopeInternalNoSubstring(buffer, stackLimit);
         convertToNonRope(function(newImpl.releaseNonNull()));
         if constexpr (reportAllocation)
-            vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+            vm.heap.reportStringExtraMemoryAllocated(this, sizeToReport);
         return valueInternal();
     }
     
@@ -270,7 +270,7 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
     resolveRopeInternalNoSubstring(buffer, stackLimit);
     convertToNonRope(function(newImpl.releaseNonNull()));
     if constexpr (reportAllocation)
-        vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+        vm.heap.reportStringExtraMemoryAllocated(this, sizeToReport);
     return valueInternal();
 }
 
