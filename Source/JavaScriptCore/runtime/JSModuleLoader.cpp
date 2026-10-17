@@ -926,6 +926,9 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags);
+#if USE(BUN_JSC_ADDITIONS)
+    context->setEntry(vm, getRegisteredMayBeNull(moduleRequest.m_specifier, moduleRequest.type()));
+#endif
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
 
