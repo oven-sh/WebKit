@@ -3419,6 +3419,36 @@ private:
     unsigned here() const { return m_program->ops.size(); }
     void setTarget(unsigned op) { m_program->ops[op].target = here(); }
 
+    static uint64_t leastSize(const PatternTerm& term)
+    {
+        switch (term.type) {
+        case PatternTerm::Type::PatternCharacter:
+        case PatternTerm::Type::CharacterClass:
+            return static_cast<unsigned>(term.quantityMinCount);
+        case PatternTerm::Type::ParenthesesSubpattern:
+            return static_cast<uint64_t>(static_cast<unsigned>(term.quantityMinCount)) * term.parentheses.disjunction->m_minimumSize;
+        default:
+            return 0;
+        }
+    }
+
+    void setNeeded(unsigned op, uint64_t needed)
+    {
+        m_program->ops[op].needed = static_cast<uint32_t>(std::min<uint64_t>(needed, std::numeric_limits<uint32_t>::max()));
+    }
+
+    unsigned emitNeedsInput(uint64_t needed)
+    {
+        unsigned op = emit(Kind::NeedsInput);
+        setNeeded(op, needed);
+        return op;
+    }
+
+    uint64_t neededToEnter(const PatternDisjunction& disjunction) const
+    {
+        return disjunction.m_minimumSize && m_neededAfterAlternative ? disjunction.m_minimumSize + m_neededAfterAlternative : 0;
+    }
+
     unsigned emitChoice()
     {
         m_mayHaveBacktracked = true;
@@ -3610,6 +3640,10 @@ private:
                 later[i].fill();
         }
 
+        unsigned least = alternatives[0]->m_minimumSize;
+        for (auto& alternative : alternatives)
+            least = std::min(least, alternative->m_minimumSize);
+
         CaptureRange earlier;
         Vector<unsigned, 8> jumpsToEnd;
         bool mayHaveBacktrackedAtEntry = m_mayHaveBacktracked;
@@ -3626,6 +3660,8 @@ private:
                 }
             }
             m_mayHaveBacktracked = mayHaveBacktrackedAtEntry;
+            if (m_neededAfterAlternative && alternatives[i]->m_minimumSize > least)
+                emitNeedsInput(alternatives[i]->m_minimumSize + m_neededAfterAlternative);
             if (!emitAlternative(*alternatives[i]))
                 return false;
             if (isLast)
@@ -3690,19 +3726,28 @@ private:
             return true;
         };
 
-        unsigned choice = emit(Kind::Choice);
+        uint64_t needed = neededToEnter(*term.parentheses.disjunction);
         if (term.quantityType == QuantifierType::Greedy) {
+            std::optional<unsigned> check;
+            if (needed)
+                check = emitNeedsInput(needed);
+            unsigned choice = emit(Kind::Choice);
             if (!emitChecked())
                 return false;
             unsigned jump = emit(Kind::Jump);
             setTarget(choice);
+            if (check)
+                setTarget(*check);
             emitClear(range);
             setTarget(jump);
             m_mayHaveBacktracked = true;
             return true;
         }
+        unsigned choice = emit(Kind::Choice);
         unsigned jump = emit(Kind::Jump);
         setTarget(choice);
+        if (needed)
+            emitNeedsInput(needed);
         if (!emitChecked())
             return false;
         setTarget(jump);
@@ -3711,7 +3756,7 @@ private:
     }
 
     template<typename Body>
-    bool emitLoop(unsigned min, unsigned max, bool isLazy, bool canBeEmpty, const CaptureRange& range, const Body& emitBody)
+    bool emitLoop(unsigned min, unsigned max, bool isLazy, bool canBeEmpty, uint64_t neededForAnotherIteration, const CaptureRange& range, const Body& emitBody)
     {
         bool needsCounter = min > 1 || max != quantifyInfinite;
         unsigned counter = needsCounter ? m_nextRegister++ : 0;
@@ -3743,10 +3788,17 @@ private:
                 unsigned choice = emitChoice();
                 jumpsToExit.append(emit(Kind::Jump));
                 setTarget(choice);
-            } else
+                if (neededForAnotherIteration)
+                    emitNeedsInput(neededForAnotherIteration);
+                if (canBeEmpty)
+                    emit(Kind::LoggedSavePosition, start);
+            } else if (canBeEmpty)
+                jumpsToExit.append(emit(Kind::GreedyLoopChoice, start));
+            else {
+                if (neededForAnotherIteration)
+                    jumpsToExit.append(emitNeedsInput(neededForAnotherIteration));
                 jumpsToExit.append(emitChoice());
-            if (canBeEmpty)
-                emit(Kind::LoggedSavePosition, start);
+            }
         }
         if (jumpToMandatory) {
             if (canBeEmpty) {
@@ -3768,9 +3820,7 @@ private:
             emit(Kind::LoggedClearCaptures, 0, range.low, range.high);
         if (!emitBody())
             return false;
-        if (canBeEmpty)
-            emit(Kind::FailIfEmpty, start);
-        emit(Kind::LoopBack, 0, 0, head);
+        emit(canBeEmpty ? Kind::LoopBackUnlessEmpty : Kind::LoopBack, start, 0, head);
         for (unsigned jump : jumpsToExit)
             setTarget(jump);
         return true;
@@ -3820,7 +3870,7 @@ private:
             return term.quantityMinCount ? emitGroupBody(term) : emitOptionalGroup(term);
         CaptureRange range;
         addCaptures(term, range);
-        return emitLoop(term.quantityMinCount, term.quantityMaxCount, term.quantityType == QuantifierType::NonGreedy, !term.parentheses.disjunction->m_minimumSize, range, [&] {
+        return emitLoop(term.quantityMinCount, term.quantityMaxCount, term.quantityType == QuantifierType::NonGreedy, !term.parentheses.disjunction->m_minimumSize, neededToEnter(*term.parentheses.disjunction), range, [&] {
             return emitGroupBody(term);
         });
     }
@@ -3953,8 +4003,17 @@ private:
         if (alternative.matchDirection() != Forward)
             return false;
         auto& terms = alternative.m_terms;
+        uint64_t neededAfter = m_neededAfterAlternative;
+        for (auto& term : terms)
+            neededAfter += leastSize(term);
+        unsigned accounted = 0;
+        auto accountThrough = [&](unsigned last) {
+            while (accounted <= last)
+                neededAfter -= leastSize(terms[accounted++]);
+        };
         for (unsigned i = 0; i < terms.size(); ++i) {
             const PatternTerm& term = terms[i];
+            accountThrough(i);
             switch (term.type) {
             case PatternTerm::Type::AssertionBOL:
                 emit(term.multiline() ? Kind::LineStart : Kind::InputStart, term.multiline() ? newlineSet() : 0);
@@ -3970,13 +4029,14 @@ private:
                 if (term.matchDirection() != Forward)
                     return false;
                 if (auto run = runAt(alternative, i)) {
+                    accountThrough(i + run->terms - 1);
                     if (run->kind != Kind::PossessiveRun)
                         m_mayHaveBacktracked = true;
                     if (run->following) {
-                        emit(run->kind == Kind::GreedyRun ? Kind::GreedyRunBeforeKnownCharacters : Kind::LazyRunBeforeKnownCharacters, run->set, run->max, run->min);
+                        setNeeded(emit(run->kind == Kind::GreedyRun ? Kind::GreedyRunBeforeKnownCharacters : Kind::LazyRunBeforeKnownCharacters, run->set, run->max, run->min), neededAfter);
                         emit(Kind::KnownCharacters, appendRawSet(*run->following));
                     } else
-                        emit(run->kind, run->set, run->max, run->min);
+                        setNeeded(emit(run->kind, run->set, run->max, run->min), run->kind == Kind::PossessiveRun ? 0 : neededAfter);
                     i += run->terms - 1;
                     break;
                 }
@@ -4014,6 +4074,7 @@ private:
             case PatternTerm::Type::ParenthesesSubpattern: {
                 Continuation afterGroup { &alternative, i + 1, term.quantityMaxCount > 1 ? &term : nullptr, m_continuation };
                 SetForScope continuation(m_continuation, &afterGroup);
+                SetForScope neededAfterAlternative(m_neededAfterAlternative, neededAfter);
                 if (!emitGroup(term))
                     return false;
                 break;
@@ -4021,6 +4082,7 @@ private:
             case PatternTerm::Type::ParentheticalAssertion: {
                 Continuation unknown { nullptr, 0, nullptr, nullptr };
                 SetForScope continuation(m_continuation, &unknown);
+                SetForScope neededAfterAlternative(m_neededAfterAlternative, static_cast<uint64_t>(0));
                 if (!emitLookahead(term))
                     return false;
                 break;
@@ -4041,7 +4103,7 @@ private:
                     emitReference();
                     break;
                 }
-                emitLoop(term.quantityType == QuantifierType::FixedCount ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, { }, emitReference);
+                emitLoop(term.quantityType == QuantifierType::FixedCount ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, { }, emitReference);
                 break;
             }
             case PatternTerm::Type::NumberedForwardReference:
@@ -4117,6 +4179,7 @@ private:
     unsigned m_recursionDepth { 0 };
     unsigned m_nextRegister { 0 };
     const Continuation* m_continuation { nullptr };
+    uint64_t m_neededAfterAlternative { 0 };
     bool m_mayHaveBacktracked { false };
     bool m_logCaptures;
 };
@@ -4193,6 +4256,8 @@ static ALWAYS_INLINE bool fastCasedTextMatches(const CharType* input, const Lati
 }
 
 struct FastMatchState {
+    static constexpr uint64_t stepsBeforeGivingUp = 100000;
+    static constexpr uint64_t stepsBeforeGivingUpForEachCharacter = 64;
     static constexpr unsigned inlineFrames = 128;
     static constexpr unsigned registersPerFrame = sizeof(FastFrame) / sizeof(uint32_t);
 
@@ -4201,7 +4266,8 @@ struct FastMatchState {
     FastFrame* bottom;
     size_t framesOfRegisters;
     unsigned matchStart;
-    unsigned remainingLoops { matchLimit };
+    unsigned givenStart;
+    uint64_t remainingSteps;
     Vector<FastFrame> overflow;
     FastFrame inlineStorage[inlineFrames];
 };
@@ -4224,6 +4290,13 @@ static NEVER_INLINE FastFrame* growFastFrames(FastMatchState& state, FastFrame* 
     return state.storage + used;
 }
 
+static NEVER_INLINE unsigned handOverFromFastProgram(const FastProgram& program, StringView subject, unsigned start, unsigned* output)
+{
+    if (program.validate || !program.handOver)
+        return flatProgramGaveUp;
+    return program.handOver(program.owner, subject, start, output);
+}
+
 template<typename CharType>
 static unsigned runFastProgram(const FastProgram& program, std::span<const CharType> subject, unsigned start, unsigned* output)
 {
@@ -4241,18 +4314,20 @@ static unsigned runFastProgram(const FastProgram& program, std::span<const CharT
         WTF::compilerFence();
     }
 
+    FastMatchState state;
+    state.givenStart = start;
     if (program.endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet && length >= program.endAnchoredFixedSize)
         start = std::max(start, length - program.endAnchoredFixedSize);
 
     const CharType* input = subject.data();
     const FastOp* ops = program.ops.span().data();
     const FastSet* sets = program.sets.span().data();
-    FastMatchState state;
     state.framesOfRegisters = (program.numRegisters + FastMatchState::registersPerFrame - 1) / FastMatchState::registersPerFrame;
     state.storage = state.inlineStorage;
     state.storageEnd = state.inlineStorage + FastMatchState::inlineFrames;
     state.bottom = state.storage + state.framesOfRegisters;
     state.matchStart = start;
+    state.remainingSteps = FastMatchState::stepsBeforeGivingUp + FastMatchState::stepsBeforeGivingUpForEachCharacter * (length - start);
     Frame* top = state.bottom;
     size_t framesNeeded = 1;
     unsigned position = start;
@@ -4278,6 +4353,9 @@ static unsigned runFastProgram(const FastProgram& program, std::span<const CharT
         case Kind::LoggedSetRegister:
         case Kind::LoggedIncrement:
             reinterpret_cast<uint32_t*>(state.storage)[from.set] = frame.position;
+            break;
+        case Kind::GreedyLoopChoice:
+            reinterpret_cast<uint32_t*>(state.storage)[from.set] = frame.limit;
             break;
         default:
             break;
@@ -4401,7 +4479,11 @@ dispatch:
     FAST_OP(GreedyRun) {
         FAST_RESERVE(1);
         const FastSet& set = sets[op->set];
-        unsigned end = length - position > op->argument ? position + op->argument : length;
+        unsigned available = length - position;
+        if (available < op->needed)
+            FAST_FAIL();
+        available -= op->needed;
+        unsigned end = available > op->argument ? position + op->argument : position + available;
         unsigned begin = position;
         while (position < end && fastSetContains(set, input[position]))
             ++position;
@@ -4415,7 +4497,11 @@ dispatch:
         FAST_RESERVE(1);
         const FastSet& set = sets[op->set];
         const FastSet& following = sets[op[1].set];
-        unsigned end = length - position > op->argument ? position + op->argument : length;
+        unsigned available = length - position;
+        if (available < op->needed)
+            FAST_FAIL();
+        available -= op->needed;
+        unsigned end = available > op->argument ? position + op->argument : position + available;
         unsigned begin = position;
         while (position < end && fastSetContains(set, input[position]))
             ++position;
@@ -4434,7 +4520,8 @@ dispatch:
         const FastSet& set = sets[op->set];
         const FastSet& following = sets[op[1].set];
         unsigned count = op->target;
-        if (length - position < count)
+        unsigned available = length - position;
+        if (available < op->needed || available - op->needed < count)
             FAST_FAIL();
         for (unsigned i = 0; i < count; ++i) {
             if (!fastSetContains(set, input[position + i]))
@@ -4442,12 +4529,12 @@ dispatch:
         }
         position += count;
         while (position < length && !fastRawSetContains(following, input[position])) {
-            if (count == op->argument || !fastSetContains(set, input[position]))
+            if (count == op->argument || length - position <= op->needed || !fastSetContains(set, input[position]))
                 FAST_FAIL();
             ++count;
             ++position;
         }
-        FAST_PUSH(position, count, 0);
+        FAST_PUSH(position, count, length - op->needed);
         ++op;
         FAST_NEXT();
     }
@@ -4468,14 +4555,15 @@ dispatch:
         FAST_RESERVE(1);
         const FastSet& set = sets[op->set];
         unsigned count = op->target;
-        if (length - position < count)
+        unsigned available = length - position;
+        if (available < op->needed || available - op->needed < count)
             FAST_FAIL();
         for (unsigned i = 0; i < count; ++i) {
             if (!fastSetContains(set, input[position + i]))
                 FAST_FAIL();
         }
         position += count;
-        FAST_PUSH(position, count, 0);
+        FAST_PUSH(position, count, length - op->needed);
         FAST_NEXT();
     }
     FAST_OP(CapturedRun) {
@@ -4492,6 +4580,12 @@ dispatch:
     FAST_OP(Choice) {
         FAST_RESERVE(1);
         FAST_PUSH(position, 0, 0);
+        FAST_NEXT();
+    }
+    FAST_OP(GreedyLoopChoice) {
+        FAST_RESERVE(1);
+        FAST_PUSH(position, reinterpret_cast<uint32_t*>(state.storage)[op->set], 0);
+        reinterpret_cast<uint32_t*>(state.storage)[op->set] = position;
         FAST_NEXT();
     }
     FAST_OP(ChoiceByFirst) {
@@ -4547,6 +4641,14 @@ dispatch:
     FAST_OP(FailIfEmpty) {
         if (reinterpret_cast<uint32_t*>(state.storage)[op->set] == position)
             FAST_FAIL();
+        FAST_NEXT();
+    }
+    FAST_OP(NeedsInput) {
+        if (length - position < op->needed) {
+            if (op->target)
+                FAST_GOTO(op->target);
+            FAST_FAIL();
+        }
         FAST_NEXT();
     }
     FAST_OP(InputStart) {
@@ -4648,8 +4750,15 @@ dispatch:
         FAST_NEXT();
     }
     FAST_OP(LoopBack) {
-        if (!--state.remainingLoops) [[unlikely]]
-            return offsetNoMatch;
+        if (!--state.remainingSteps) [[unlikely]]
+            goto giveUp;
+        FAST_GOTO(op->target);
+    }
+    FAST_OP(LoopBackUnlessEmpty) {
+        if (reinterpret_cast<uint32_t*>(state.storage)[op->set] == position)
+            FAST_FAIL();
+        if (!--state.remainingSteps) [[unlikely]]
+            goto giveUp;
         FAST_GOTO(op->target);
     }
     FAST_OP(LookaheadBegin) {
@@ -4737,6 +4846,8 @@ backtrack:
             output[i] = offsetNoMatch;
         goto tryAtMatchStart;
     }
+    if (!--state.remainingSteps) [[unlikely]]
+        goto giveUp;
     {
 #define FAST_FRAME() Frame* frame = top - 1; const FastOp* from = opOf(*frame)
 #define FAST_RESUME(name) case Kind::name:
@@ -4748,6 +4859,13 @@ backtrack:
         FAST_RESUME(NegativeLookaheadBegin) {
             FAST_FRAME();
             position = frame->position;
+            --top;
+            FAST_GOTO(from->target);
+        }
+        FAST_RESUME(GreedyLoopChoice) {
+            FAST_FRAME();
+            position = frame->position;
+            reinterpret_cast<uint32_t*>(state.storage)[from->set] = frame->limit;
             --top;
             FAST_GOTO(from->target);
         }
@@ -4774,7 +4892,7 @@ backtrack:
             FAST_FRAME();
             position = frame->position;
             do {
-                if (frame->limit == from->argument || position >= length || !fastSetContains(sets[from->set], input[position])) {
+                if (frame->limit == from->argument || position >= frame->extra || !fastSetContains(sets[from->set], input[position])) {
                     --top;
                     goto backtrack;
                 }
@@ -4787,7 +4905,7 @@ backtrack:
         }
         FAST_RESUME(LazyRun) {
             FAST_FRAME();
-            if (frame->limit < from->argument && frame->position < length && fastSetContains(sets[from->set], input[frame->position])) {
+            if (frame->limit < from->argument && frame->position < frame->extra && fastSetContains(sets[from->set], input[frame->position])) {
                 ++frame->limit;
                 position = ++frame->position;
                 op = from;
@@ -4829,11 +4947,14 @@ growFrames:
         bool isBeforeTheFirstTry = top == state.storage;
         top = growFastFrames(state, top, framesNeeded);
         if (!top)
-            return offsetNoMatch;
+            goto giveUp;
         if (isBeforeTheFirstTry)
             goto tryAtMatchStart;
         FAST_DISPATCH();
     }
+
+giveUp:
+    return handOverFromFastProgram(program, StringView(subject), state.givenStart, output);
 
 #undef FAST_RESERVE
 #undef FAST_PUSH
@@ -4855,6 +4976,8 @@ static unsigned validatedFastProgram(BytecodePattern* bytecode, std::span<const 
         slot = offsetNoMatch;
     unsigned fastResult = runFastProgram<CharType>(program, subject, start, fastOutput.mutableSpan().data());
     unsigned result = Interpreter<CharType>(bytecode, output, subject, start).interpret();
+    if (fastResult == flatProgramGaveUp)
+        return result;
     bool same = fastResult == result;
     for (unsigned i = 0; same && result != offsetNoMatch && i <= program.numSubpatterns; ++i) {
         same = fastOutput[i << 1] == output[i << 1];
@@ -4871,22 +4994,33 @@ static unsigned validatedFastProgram(BytecodePattern* bytecode, std::span<const 
     return result;
 }
 
-std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
+std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock, bool alwaysWithBytecode)
 {
     std::unique_ptr<FastProgram> fastProgram;
     if (!Options::useRegExpJIT())
         fastProgram = FastProgramBuilder(pattern).build();
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), fastProgram ? "Runs on a flat program" : "Runs in the bytecode interpreter");
-    if (fastProgram && !fastProgram->validate) {
+    if (fastProgram && !fastProgram->validate && !alwaysWithBytecode) {
         Vector<std::unique_ptr<ByteDisjunction>> noParentheses;
         auto bytecode = makeUnique<BytecodePattern>(makeUnique<ByteDisjunction>(pattern.m_numSubpatterns, 0), noParentheses, pattern, allocator, lock, pattern.offsetVectorBaseForNamedCaptures(), pattern.offsetsSize());
         bytecode->m_fastProgram = WTF::move(fastProgram);
         return bytecode;
     }
     auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
-    if (bytecode)
+    if (bytecode) {
+        if (fastProgram)
+            fastProgram->hasBytecode = true;
         bytecode->m_fastProgram = WTF::move(fastProgram);
+    }
     return bytecode;
+}
+
+unsigned interpretBytecode(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    ASSERT(!bytecode->m_fastProgram || bytecode->m_fastProgram->hasBytecode);
+    if (input.is8Bit())
+        return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
+    return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
 }
 
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)

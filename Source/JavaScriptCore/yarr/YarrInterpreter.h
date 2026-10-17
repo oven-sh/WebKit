@@ -478,9 +478,12 @@ public:
     unsigned m_frameSize;
 };
 
+static constexpr unsigned flatProgramGaveUp = static_cast<unsigned>(JSRegExpResult::JITCodeFailure);
+
 #define FOR_EACH_YARR_FAST_OP_THAT_PUSHES_A_FRAME(macro) \
     macro(Choice) \
     macro(ChoiceByFirst) \
+    macro(GreedyLoopChoice) \
     macro(NegativeLookaheadBegin) \
     macro(GreedyRun) \
     macro(LazyRun) \
@@ -511,6 +514,7 @@ public:
     macro(ClearCaptures) \
     macro(SavePosition) \
     macro(FailIfEmpty) \
+    macro(NeedsInput) \
     macro(InputStart) \
     macro(LineStart) \
     macro(InputEnd) \
@@ -521,6 +525,7 @@ public:
     macro(JumpIfBelow) \
     macro(JumpIfNotBelow) \
     macro(LoopBack) \
+    macro(LoopBackUnlessEmpty) \
     macro(LookaheadBegin) \
     macro(LookaheadEnd) \
     macro(LookaheadEndKeepingCaptures) \
@@ -538,6 +543,7 @@ struct FastOp {
     uint16_t set;
     uint32_t argument;
     uint32_t target;
+    uint32_t needed;
 };
 
 struct FastSet {
@@ -574,6 +580,9 @@ public:
     uint8_t onlyFirstCharacter { 0 };
     bool triesOnlyOnce { false };
     bool validate { false };
+    bool hasBytecode { false };
+    void* owner { nullptr };
+    unsigned (*handOver)(void* owner, StringView subject, unsigned start, unsigned* output) { nullptr };
 };
 
 struct BytecodePattern {
@@ -661,7 +670,8 @@ private:
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
 };
 
-JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
+JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, bool alwaysWithBytecode = false);
+JS_EXPORT_PRIVATE unsigned interpretBytecode(BytecodePattern*, StringView input, unsigned start, unsigned* output);
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
 
 } } // namespace JSC::Yarr

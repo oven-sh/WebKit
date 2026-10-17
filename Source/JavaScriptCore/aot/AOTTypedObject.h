@@ -83,6 +83,8 @@ public:
     static Object* createWithBody(VM&, Structure*, std::span<const uint8_t> body);
     static Object* createWithInitializedFields(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
     Object* clone(JSGlobalObject*);
+    Object* tryCloneWithPrototype(JSGlobalObject*, JSValue prototype);
+    Object* copyWithStructure(VM&, Structure*, JSFinalObject* copiedExtraProperties);
     JSObject* tryCopyAsPlainObject(JSGlobalObject*) const;
     Structure* plainCopyStructure(JSGlobalObject*) const;
     JSFinalObject* tryCopyAsPlainObjectWithCapacity(JSGlobalObject*, Structure* plainCopyPrefixStructure) const;
@@ -119,6 +121,7 @@ public:
     uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(at<uint32_t>(offsetOfShapeWord)) << 32 | orderWord(); }
     uint32_t shape() const { return shapeOf(at<uint32_t>(offsetOfShapeWord)); }
     bool isFrozen() const;
+    bool mayRefuseStores() const;
     bool hasFlagsInOrderWord() const { return at<uint32_t>(offsetOfOrderWord) & ~orderAndCountMask; }
     unsigned attributesOf(const FieldData& field) const
     {
@@ -1917,6 +1920,7 @@ struct State {
         Structure* structure { nullptr };
     };
     const PlainCopyPlan& plainCopyPlan(VM&, const LayoutData&, uint32_t orderWord);
+    bool everyFieldIsOrdinaryProperty(VM&, const LayoutData&);
     struct PlainCopyExcludingPlan {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlainCopyExcludingPlan);
         Vector<RefPtr<UniquedStringImpl>, 2> excluded;
@@ -2112,6 +2116,7 @@ private:
         Vector<Vector<uint16_t>> added;
         Map byPrefix;
         bool hasExpectedOrderPrefixes { false };
+        std::optional<bool> everyFieldIsOrdinaryProperty;
         std::optional<uint32_t> initialInstanceOrderWord;
         Map transitions;
         UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> placements;

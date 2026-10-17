@@ -271,6 +271,8 @@ private:
     };
 
     void byteCodeCompileIfNecessary(VM*);
+    std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM*, Yarr::YarrPattern&, Yarr::ErrorCode&, bool alwaysWithBytecode = false);
+    static unsigned handOverFromFlatProgram(void* owner, StringView, unsigned startOffset, unsigned* offsetVector);
 
     void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);

@@ -694,6 +694,12 @@ static void prepareDataPropertyDescriptorAllocation(Instance* instance)
     data.allocator = allocator;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryCloneWithPrototype, JSCell*, (Instance* instance, JSCell* source, EncodedJSValue prototype))
+{
+    Typed::Object* object = instance->typed->compiledObject(source);
+    return object ? object->tryCloneWithPrototype(instance->globalObject, JSValue::decode(prototype)) : nullptr;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedObjectCreate, JSCell*, (Instance* instance, JSCell* prototype))
 {
     prepareDataPropertyDescriptorAllocation(instance);
@@ -1275,7 +1281,44 @@ Operand Lowering::lowerGetOwnPropertyDescriptor(ValueID result, const Value& val
     return join.finish();
 }
 
+std::optional<size_t> Lowering::indexOfAssignThatClones(ValueID created)
+{
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || m_currentBlock->terminator.kind == TerminatorKind::Invoke)
+        return std::nullopt;
+    auto isInline = [&](const Value& value, InlineBuiltin inlined) {
+        if (value.opcode != Opcode::CallBuiltin)
+            return false;
+        auto& implementation = m_builtins.at(value.builtin()).implementation;
+        return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == inlined;
+    };
+    auto& create = m_function.at(created);
+    if (!isInline(create, InlineBuiltin::ObjectCreate) || create.arguments.size() != 1 || usersOf(created).size() != 1 || isUsedByTerminator(created))
+        return std::nullopt;
+    auto& read = m_function.at(create.arguments[0]);
+    if (!isInline(read, InlineBuiltin::ObjectGetPrototypeOf) || read.arguments.size() != 1)
+        return std::nullopt;
+    ValueID user = usersOf(created)[0];
+    auto& assign = m_function.at(user);
+    if (!isInline(assign, InlineBuiltin::ObjectAssign) || assign.arguments.size() < 2 || assign.arguments[0] != created || assign.arguments[1] != read.arguments[0])
+        return std::nullopt;
+    unsigned uses = 0;
+    assign.forEachChild([&](ValueID child) {
+        uses += child == created;
+    });
+    auto [block, index] = placeOf(user);
+    if (uses != 1 || BlockID(block) != m_currentBlockID || placeOf(created).first != block)
+        return std::nullopt;
+    return index;
+}
+
 Operand Lowering::lowerCreate(ValueID result, const Value& value)
+{
+    if (indexOfAssignThatClones(result))
+        return placeholder(value.rep);
+    return createWithPrototype(result, value);
+}
+
+Operand Lowering::createWithPrototype(ValueID result, const Value& value)
 {
     using CacheEntry = Instance::ObjectCreateCacheEntry;
     static_assert(sizeof(CacheEntry) == 16 && !OBJECT_OFFSETOF(CacheEntry, prototype) && Instance::objectCreateCacheIndex(0x7f40) == ((0x7f40 >> 6) & (Instance::objectCreateCacheSize - 1)));
@@ -1363,8 +1406,7 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
         }
         return first < values.size();
     };
-    bool isFreshRecord = supertype && m_program.at(supertype).kind == LayoutKind::Record && isUnseenSinceItsAllocation();
-    if (!isFreshRecord && (value.arguments.size() < 2 || typeOf(value.arguments[0]).withoutPrimitives(Primitive::UndefinedOrNull).singleLayout()))
+    if (!supertype || m_program.at(supertype).kind != LayoutKind::Record || !isUnseenSinceItsAllocation())
         return convertToDeclaredResult(callBuiltinFunction(value, builtinCallEffects(value)), anything, value, type);
     Rep rep = repOf(type);
     LBasicBlock slowPath = newBlockForGenericCall(value);
@@ -1375,10 +1417,7 @@ Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes
     LValue entry = m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfPrototypeChangeCache())), offset);
     orElse(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, prototype))), prototype.value()), slowPath);
     orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, from))), loadField<Word32>(object, m_heaps.JSCell_structureID).value()), slowPath);
-    if (isFreshRecord)
-        orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
-    else
-        orElse(equal(loadCellType(object), word32(FinalObjectType)), slowPath);
+    orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
     didEmitWrite(writes);
     m_out.store32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to))), object.value(), m_heaps.JSCell_structureID);
     barrier(object);
@@ -1604,7 +1643,24 @@ Operand Lowering::lowerAssign(ValueID result, const Value& value)
     bool isNew = isNewPlainObject(into);
     unsigned firstSource = 1;
     CellPointer target;
-    if (isAllocatedHere(into)) {
+    if (indexOfAssignThatClones(into) == m_currentIndexInBlock) {
+        ValueID source = value.arguments[firstSource++];
+        auto& create = m_function.at(into);
+        LBasicBlock declined = m_out.newBlock();
+        Join made(m_out, Rep::Cell, b3TypeOf(Rep::Cell));
+        CellPointer cell = objectOrElse(source, declined);
+        orElse(equal(loadByte(cell, m_heaps.JSCell_typeInfoType, safeIfReaches(cell, sizeof(JSCell))), word32(ObjectType)), declined);
+        CellPointer copy = AOT_TYPED_OPERATION(TryCloneWithPrototype, cell, in<Boxed>(create.arguments[0]));
+        orElse(m_out.notNull(copy.value()), declined);
+        made.add(copy);
+        m_out.appendTo(declined);
+        Operand created = createWithPrototype(into, create);
+        CellPointer empty = create.rep == Rep::Cell ? created.as<CellPointer>() : CellPointer(created.as<Boxed>().value());
+        AOT_TYPED_OPERATION(ObjectAssignFrom, empty, in<Boxed>(source));
+        made.add(empty);
+        target = made.finish().as<CellPointer>();
+        defineDeferredAllocation(into, target);
+    } else if (isAllocatedHere(into)) {
         ValueID source = value.arguments[firstSource++];
         Join made(m_out, Rep::Cell, b3TypeOf(Rep::Cell));
         byKeyOrder(source, keyOrdersExpectedOf(source), [&](CellPointer cell, const KeyOrder& order) {

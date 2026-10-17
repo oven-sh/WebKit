@@ -358,7 +358,9 @@ private:
             return m_identifiers.last();
         if (m_identifiers[string].isNull()) {
             String text = decode(bytesOf(string));
-            if (!text.isNull())
+            if (isConstantSymbol(bytesOf(string)))
+                m_identifiers[string] = createConstantSymbol(m_vm, bytesOf(string));
+            else if (!text.isNull())
                 m_identifiers[string] = Identifier::fromString(m_vm, text);
         }
         return m_identifiers[string];
@@ -1584,6 +1586,10 @@ private:
                 return { };
             m_yieldedValues.last().append(child(0));
             return jsUndefined();
+        case Format::Opcode::ConstantSymbol:
+            if (identifierOf(value.immediates[0]).isNull() || !identifierOf(value.immediates[0]).isSymbol())
+                return { };
+            return Symbol::create(m_vm, static_cast<SymbolImpl&>(*identifierOf(value.immediates[0]).impl()));
         case Format::Opcode::GetResumeMode:
             return jsNumber(0);
         case Format::Opcode::Operation:

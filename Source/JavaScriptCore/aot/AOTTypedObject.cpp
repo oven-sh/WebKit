@@ -250,13 +250,20 @@ Object* Object::clone(JSGlobalObject* globalObject)
         }
         return copy;
     }
+    return copyWithStructure(vm, structure, copiedExtraProperties);
+}
+
+Object* Object::copyWithStructure(VM& vm, Structure* structure, JSFinalObject* copiedExtraProperties)
+{
+    State& state = this->state();
+    const LayoutData& layout = this->layout();
     Extension* copiedExtension = nullptr;
     if (layout.hasExtension && extension()) {
         copiedExtension = Extension::create(vm, extension()->size());
         memcpySpan(copiedExtension->slots(), extension()->slots());
         state.countExtension(0, copiedExtension->size());
     }
-    Object* copy = create(vm, structure, layout, size, orderWord() & orderAndCountMask);
+    Object* copy = create(vm, structure, layout, state.sizeWithSpecializationCapacity(layout.shape), orderWord() & orderAndCountMask);
     memcpySpan(std::span { &copy->at<uint8_t>(offsetOfFirstField), layout.size - offsetOfFirstField }, std::span { &at<uint8_t>(offsetOfFirstField), layout.size - offsetOfFirstField });
     if (layout.hasExtension)
         copy->setExtension(copiedExtension);
@@ -1583,6 +1590,19 @@ bool Object::isFrozen() const
     return !own || own->isFrozen;
 }
 
+bool Object::mayRefuseStores() const
+{
+    uint32_t word = orderWord();
+    if (word & orderWordIsNotExtensible)
+        return true;
+    if (!(word & orderWordIsFrozen))
+        return false;
+    auto* own = state().fieldAttributes.get(this);
+    return !own || own->isFrozen || own->attributesByField.containsIf([](auto& entry) {
+        return entry.second & PropertyAttribute::ReadOnly;
+    });
+}
+
 unsigned Object::attributesOfSlow(const FieldData& field) const
 {
     unsigned ofAll = static_cast<unsigned>(isSealed() ? PropertyAttribute::DontDelete : PropertyAttribute::None);
@@ -2888,10 +2908,8 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     }
 }
 
-static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
+static bool mayInterceptPuts(JSObject* object)
 {
-    if (name == vm.propertyNames->underscoreProto)
-        return true;
     while (true) {
         Structure* structure = object->structure();
         if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype() || (structure->typeInfo().overridesPut() && structure->classInfoForCells() != PrototypeObject::info()))
@@ -2901,6 +2919,29 @@ static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
             return false;
         object = asObject(prototype);
     }
+}
+
+static bool mayInterceptPut(VM& vm, JSObject* object, PropertyName name)
+{
+    return name == vm.propertyNames->underscoreProto || mayInterceptPuts(object);
+}
+
+Object* Object::tryCloneWithPrototype(JSGlobalObject* globalObject, JSValue prototype)
+{
+    VM& vm = globalObject->vm();
+    State& state = this->state();
+    const LayoutData& layout = this->layout();
+    if (globalObject != state.instance.globalObject || !isObjectLayout(layout.kind) || layout.hasUntypedBase || structure()->storedPrototype() != prototype)
+        return nullptr;
+    if (at<uint32_t>(offsetOfOrderWord) & ~(orderAndCountMask | orderWordHasExtraProperties) || !state.everyFieldIsOrdinaryProperty(vm, layout))
+        return nullptr;
+    if (prototype.isObject() && mayInterceptPuts(asObject(prototype)))
+        return nullptr;
+    JSFinalObject* copiedExtraProperties = tryCopyExtraPropertiesForClone(vm);
+    if (hasExtraProperties() && (!copiedExtraProperties || copiedExtraProperties->structure()->hasUnderscoreProtoPropertyExcludingOriginalProto()))
+        return nullptr;
+    materializeLazyClosures();
+    return copyWithStructure(vm, state.structureFor(vm, layout.shape, prototype), copiedExtraProperties);
 }
 
 static std::pair<JSObject*, PropertyOffset> findAccessorOnOrdinaryPrototypeChain(VM& vm, JSObject* object, PropertyName name)
@@ -3162,7 +3203,7 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
     if (!isValid)
         return false;
     unsigned attributes = current ? descriptor.attributesOverridingCurrent(currentDescriptor) : descriptor.attributes();
-    bool getsAttributes = attributes != currentAttributes && layout.mayBeFrozen && !descriptor.isAccessorDescriptor() && !name.isPrivateName() && (!(attributes & PropertyAttribute::DontEnum) || state.mayBeAbsent(*field));
+    bool getsAttributes = attributes != currentAttributes && (layout.mayBeFrozen || !(attributes & PropertyAttribute::ReadOnly)) && !descriptor.isAccessorDescriptor() && !name.isPrivateName() && (!(attributes & PropertyAttribute::DontEnum) || state.mayBeAbsent(*field));
     if (attributes != currentAttributes && !getsAttributes) {
         if (layout.mayDespecialize)
             RELEASE_AND_RETURN(scope, object->convertToOrdinaryObject(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
@@ -3216,7 +3257,7 @@ bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, u
             return false;
         if (!wasPresent)
             didCreateField(state, *field);
-        if (attributes != attributesOf(*field) && (layout().mayBeFrozen || !(attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete))) && !name.isPrivateName() && (!(attributes & PropertyAttribute::DontEnum) || state.mayBeAbsent(*field)))
+        if (attributes != attributesOf(*field) && (layout().mayBeFrozen || !(attributes & PropertyAttribute::ReadOnly)) && !name.isPrivateName() && (!(attributes & PropertyAttribute::DontEnum) || state.mayBeAbsent(*field)))
             setAttributesOf(vm, *field, attributes);
         return true;
     }
@@ -7410,7 +7451,7 @@ static String atomOf(const Data& data, uint32_t index)
     return AtomString(constantString(data, index)).string();
 }
 
-static Identifier createConstantSymbol(VM& vm, std::span<const uint8_t> name)
+Identifier createConstantSymbol(VM& vm, std::span<const uint8_t> name)
 {
     size_t endOfHead = 1;
     while (name[endOfHead] != ':' && name[endOfHead] != ';')
@@ -10313,6 +10354,17 @@ const State::PlainCopyPlan& State::plainCopyPlan(VM& vm, const LayoutData& layou
     return remember(table.plainCopyPlans.add(orderWord, PlainCopyPlan { properties, structure }).iterator->value);
 }
 
+bool State::everyFieldIsOrdinaryProperty(VM& vm, const LayoutData& layout)
+{
+    auto& known = orderTableFor(layout).everyFieldIsOrdinaryProperty;
+    if (!known) {
+        known = std::ranges::none_of(std::span { layout.fields(), layout.numberOfFields }, [&](const FieldData& field) {
+            return isPrivate(field) || name(vm, field.name) == vm.propertyNames->underscoreProto;
+        });
+    }
+    return *known;
+}
+
 JSCellButterfly* State::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord)
 {
     if (orderOf(orderWord) == keysAreInLayoutOrder)
@@ -11404,7 +11456,7 @@ private:
                 }
             }
         }
-        if (object->orderWord() & (orderWordIsNotExtensible | orderWordIsFrozen) && !layout.mayBeFrozen)
+        if (object->mayRefuseStores() && !layout.mayBeFrozen)
             return fail([&] { return makeString("is frozen, sealed or non-extensible and cannot be used as "_s, m_state.nameOf(layout)); });
         m_plannedShapes.set(object, to);
         size_t index = m_specializations.size();
@@ -14541,10 +14593,6 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         return converted;
     }
     Object* compiled = compiledObject(value);
-    if (!compiled && value.isObject() && type.acceptsUntypedObjectsByNature() && requestedReason == Format::CastReason::As) {
-        countCoercion(value, nullptr, type, reason, "left as it is"_s, value);
-        return value;
-    }
     if (!compiled && reason == Format::CastReason::Coerce && (requestedReason == reason || !isPlainData(asObject(value))) && !data.isCompiledForAudit) {
         countCoercion(value, nullptr, type, reason, "no data"_s, value);
         return value;
@@ -17049,6 +17097,20 @@ bool JSObject::becomeGuarded(VM& vm)
 void JSObject::lockAsClassPrototype(JSGlobalObject* globalObject, std::span<const Identifier> replaceable, bool constructorMayBeReplaced)
 {
     VM& vm = globalObject->vm();
+    didBecomePrototype(vm);
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]] {
+        lockProperties(vm, LockedObjectExtensibility::BecomesNonExtensible);
+        auto release = [&](PropertyName name) {
+            unsigned attributes = 0;
+            if (isValidOffset(structure()->get(vm, name, attributes)) && attributes & PropertyAttribute::WouldBeFixed)
+                setStructure(vm, Structure::attributeChangeTransition(vm, structure(), name, attributes & ~static_cast<unsigned>(PropertyAttribute::WouldBeFixed)));
+        };
+        for (auto& name : replaceable)
+            release(name);
+        if (constructorMayBeReplaced)
+            release(vm.propertyNames->constructor);
+        return;
+    }
     if (replaceable.empty() && !constructorMayBeReplaced) {
         lockAndMakePropertiesImmutable(vm);
         return;

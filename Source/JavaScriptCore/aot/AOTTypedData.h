@@ -170,6 +170,7 @@ inline bool isPrivateName(std::span<const uint8_t> name) { return !name.empty() 
 inline bool isEnginePrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfd; }
 inline bool isConstantSymbol(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfc; }
 inline bool isStringKey(std::span<const uint8_t> name) { return !isPrivateName(name) && !isConstantSymbol(name); }
+Identifier createConstantSymbol(VM&, std::span<const uint8_t> name);
 
 static constexpr uint32_t nameMayBeOwnField = 1u << 31;
 static constexpr uint32_t fieldIsOptional = 1;

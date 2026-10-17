@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 123 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -130,6 +130,7 @@ Rules for an edit to an upstream test:
 |---|---|---|
 | 32 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
 | `stress/sampling-profiler-bound-function-name.js` | `requireOptions("--useExecutableAllocationFuzz=false")` | with the DFG enabled it waits for the stack `foo < baz`, which exists only once the DFG has inlined the bound function. In the same mode, a process in which the compilations of `baz` and its caller fail sees `foo < bound foo < baz` for the 50 s the test allows itself |
+| `stress/sampling-profiler-line-column.js` | `$skipModes` for `ftl-eager` | it waits for a sample of `test()` with a line between 11 and 16. A frame of FTL code is sampled with no line (4294967295), so a sample has to fall into the few milliseconds before `test()` is compiled by the FTL; a process that misses them waits its 50 s in vain. 35 of 600 runs on a busy machine with `main`'s own shell (87ee10da), each over in under 5 s or never |
 | `stress/buffer-accessor-jit-byteoffset.js`, `-fractional-value.js`, `-large.js` | `$skipModes << :lockdown` | they check `numberOfDFGCompiles()`; lockdown runs with the JIT off |
 | `stress/regress-174463162.js` | `$skipModes` for `dfg-eager`, `dfg-eager-no-cjit-validate`, `ftl-eager`, `ftl-eager-no-cjit`, `no-cjit-collect-continuously` | its `$vm` helper scribbles a live cell's header; a collection before the script ends marks a cell with no Structure. Only the `--collectContinuously=true` modes collect that early. Upstream's bots hit it too |
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |

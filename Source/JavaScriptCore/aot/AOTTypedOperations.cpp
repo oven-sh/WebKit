@@ -141,6 +141,8 @@ static JSValue getFreeVariable(Instance* instance, JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (cacheNumber) {
         auto& cache = instance->typed->globalPropertyCaches()[cacheNumber - 1];
+        if (cache.value)
+            return JSValue::decode(cache.value);
         if (cache.location && cache.structureID == globalObject->structureID().bits() && cache.globalLexicalBindingEpoch == globalObject->globalLexicalBindingEpoch())
             return JSValue::decode(*std::bit_cast<EncodedJSValue*>((cache.location < 0 ? std::bit_cast<int64_t>(globalObject->butterfly()) : 0) + cache.location));
     }

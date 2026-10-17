@@ -39,7 +39,6 @@ static JSC_DECLARE_HOST_FUNCTION(objectConstructorAssign);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorEntries);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorValues);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorGetPrototypeOf);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorSetPrototypeOf);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperties);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorCreate);

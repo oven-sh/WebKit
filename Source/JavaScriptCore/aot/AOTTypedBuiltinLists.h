@@ -436,6 +436,7 @@
     v(operationAOTTypedObjectAssignToNew) \
     v(operationAOTTypedGetOwnPropertyDescriptor) \
     v(operationAOTTypedObjectCreate) \
+    v(operationAOTTypedTryCloneWithPrototype) \
     v(operationAOTTypedSuspendAsyncFunction) \
     v(operationAOTTypedSaveFrameAndAwait) \
     v(operationAOTTypedAwaitWithSavedFrame) \

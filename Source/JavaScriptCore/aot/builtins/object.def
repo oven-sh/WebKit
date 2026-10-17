@@ -25,6 +25,7 @@ runtime ObjectAssignFrom : Heap void (JSCell* target, EncodedJSValue source)
 runtime ObjectAssignToNew : Heap JSCell* (EncodedJSValue source)
 runtime GetOwnPropertyDescriptor : Heap EncodedJSValue (EncodedJSValue object, EncodedJSValue key)
 runtime ObjectCreate : Heap JSCell* (JSCell* prototype) noexcept
+runtime TryCloneWithPrototype : Heap JSCell* (JSCell* source, EncodedJSValue prototype) noexcept
 
 call Object (any/GR?, any/-...) -> new Object ; CallsUserCode ; Inline(ObjectCall)
 construct Object (any/GR?, any/-...) -> new Object ; CallsUserCode ; HostCall

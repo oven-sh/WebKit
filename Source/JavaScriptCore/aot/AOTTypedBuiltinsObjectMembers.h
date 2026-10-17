@@ -18,6 +18,8 @@
     Word32 hasOwnPropertyAt(CellPointer object, Word32 place);
     Operand lowerGetOwnPropertyDescriptor(ValueID result, const Value&);
     Operand lowerCreate(ValueID result, const Value&);
+    Operand createWithPrototype(ValueID result, const Value&);
+    std::optional<size_t> indexOfAssignThatClones(ValueID created);
     TypedPointer inlineProperty(CellPointer object, PropertyOffset);
     Operand lowerGetPrototypeOf(ValueID result, const Value&);
     Operand lowerSetPrototypeOf(ValueID result, const Value&, Writes);

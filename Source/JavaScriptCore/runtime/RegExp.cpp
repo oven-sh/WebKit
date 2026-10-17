@@ -36,6 +36,7 @@
 #include "YarrSyntaxChecker.h"
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
+#include <wtf/CompilationThread.h>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
@@ -379,9 +380,14 @@ void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& a
 
 
 
-static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode)
+std::unique_ptr<Yarr::BytecodePattern> RegExp::byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode, bool alwaysWithBytecode)
 {
-    return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);
+    auto bytecode = Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock, alwaysWithBytecode);
+    if (bytecode && bytecode->m_fastProgram) {
+        bytecode->m_fastProgram->owner = this;
+        bytecode->m_fastProgram->handOver = handOverFromFlatProgram;
+    }
+    return bytecode;
 }
 
 void RegExp::crashIfCompiledProgramLiteralIsInterpreted() const
@@ -414,6 +420,28 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         m_state = ParseError;
         return;
     }
+}
+
+unsigned RegExp::handOverFromFlatProgram(void* owner, StringView s, unsigned startOffset, unsigned* offsetVector)
+{
+    auto& regExp = *static_cast<RegExp*>(owner);
+    if (!regExp.m_regExpBytecode->m_fastProgram->hasBytecode) {
+        if (isCompilationThread())
+            return Yarr::flatProgramGaveUp;
+        VM& vm = regExp.vm();
+        Locker locker { regExp.cellLock() };
+        regExp.ensurePattern();
+        regExp.m_regExpBytecode = nullptr;
+        Yarr::YarrPattern pattern(regExp.m_patternString, regExp.m_flags, regExp.m_constructionErrorCode);
+        if (!hasError(regExp.m_constructionErrorCode))
+            regExp.m_regExpBytecode = regExp.byteCodeCompilePattern(&vm, pattern, regExp.m_constructionErrorCode, true);
+        if (!regExp.m_regExpBytecode) {
+            regExp.m_state = ParseError;
+            return Yarr::offsetNoMatch;
+        }
+    }
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "The flat program gave up: the bytecode interpreter answers");
+    return Yarr::interpretBytecode(regExp.m_regExpBytecode.get(), s, startOffset, offsetVector);
 }
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)

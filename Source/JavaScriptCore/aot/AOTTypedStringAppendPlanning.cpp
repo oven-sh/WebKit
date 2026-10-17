@@ -22,6 +22,8 @@ constexpr unsigned entryState = 0;
 constexpr unsigned completeState = 1;
 constexpr unsigned firstFreeState = 2;
 constexpr unsigned maxPlanAttempts = 4;
+constexpr unsigned minStoredParts = 8;
+constexpr size_t maxStoredConstantLength = 256;
 constexpr unsigned maxPlacementDepth = 64;
 constexpr unsigned minPartsWithoutCalls = 8;
 
@@ -1396,6 +1398,52 @@ private:
         return m_callCount || m_loopCount;
     }
 
+    void measureParts(ValueID id, unsigned depth, unsigned& parts, size_t& constantLength)
+    {
+        auto& value = at(id);
+        if (value.opcode == Opcode::String) {
+            constantLength += m_program.string(value.string()).size();
+            ++parts;
+            return;
+        }
+        if (depth < 8 && id.index() < m_originalValueCount && (!depth || m_uses[id.index()] == 1) && isConcatenation(id)) {
+            value.forEachChild([&](ValueID child) {
+                measureParts(child, depth + 1, parts, constantLength);
+            });
+            return;
+        }
+        ++parts;
+    }
+
+    bool isStoredInArray(ValueID root)
+    {
+        if (m_uses[root.index()] != 1 || !m_isInLoop.get(m_blockOf[root.index()]))
+            return false;
+        unsigned parts = 0;
+        size_t constantLength = 0;
+        measureParts(root, 0, parts, constantLength);
+        if (parts < minStoredParts || constantLength > maxStoredConstantLength)
+            return false;
+        auto use = findSingleExternalUse(root);
+        if (!use || use->index >= m_function.blocks[use->block].values.size())
+            return false;
+        auto& user = m_function.at(m_function.blocks[use->block].values[use->index]);
+        switch (user.opcode) {
+        case Opcode::PutByVal:
+            return user.child(0) != root && user.child(1) != root;
+        case Opcode::NewArray:
+            return true;
+        case Opcode::CallBuiltin: {
+            static const BuiltinName arrayName = Builtins::singleton().nameOf(asBytes("Array"_s.span8()));
+            static const BuiltinName pushName = Builtins::singleton().nameOf(asBytes("push"_s.span8()));
+            auto& builtin = Builtins::singleton().at(user.builtin());
+            return builtin.kind == BuiltinKind::Method && builtin.holderName == arrayName && builtin.nameName == pushName;
+        }
+        default:
+            return false;
+        }
+    }
+
     void planRegions()
     {
         for (unsigned k = m_postOrder.size(); k--;) {
@@ -1509,7 +1557,7 @@ private:
             m_callCount = 0;
             m_loopCount = 0;
             bool planned = placeConcatenation(context, root, true) && flush(context, pointBefore(root), origin);
-            bool isProfitable = this->isProfitable();
+            bool isProfitable = this->isProfitable() || isStoredInArray(root);
             if (planned && isProfitable && allBufferedUsesAccounted(firstBuffered, { })) {
                 ValueID regionID = addInteger(origin, region);
                 insert(pointBefore(root), Step::Other, regionID, region, 0, 0);

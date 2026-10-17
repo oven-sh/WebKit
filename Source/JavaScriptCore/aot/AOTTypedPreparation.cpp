@@ -3521,6 +3521,24 @@ static void outlineBuiltinCalls(Program& program)
         auto& builtin = builtins.at(value.builtin());
         return builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "create"_s;
     };
+    auto isInlineBuiltin = [&](const Value& value, InlineBuiltin inlined) {
+        if (value.opcode != Opcode::CallBuiltin)
+            return false;
+        auto& implementation = builtins.at(value.builtin()).implementation;
+        return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == inlined;
+    };
+    auto createsWithPrototypeOf = [&](const Function& function, const Value& value) {
+        return isInlineBuiltin(value, InlineBuiltin::ObjectCreate) && value.arguments.size() == 1 && isInlineBuiltin(function.at(value.arguments[0]), InlineBuiltin::ObjectGetPrototypeOf);
+    };
+    auto isPartOfCloneWithPrototype = [&](const Function& function, unsigned block, unsigned index, ValueID id) {
+        auto& value = function.at(id);
+        if (createsWithPrototypeOf(function, value))
+            return true;
+        if (isInlineBuiltin(value, InlineBuiltin::ObjectAssign))
+            return value.arguments.size() >= 2 && createsWithPrototypeOf(function, function.at(value.arguments[0]));
+        auto& values = function.blocks[block].values;
+        return isInlineBuiltin(value, InlineBuiltin::ObjectGetPrototypeOf) && index + 1 < values.size() && createsWithPrototypeOf(function, function.at(values[index + 1])) && function.at(values[index + 1]).arguments[0] == id;
+    };
     auto populatesFirstArgument = [&](const Function& function, const Value& value) {
         if (value.opcode != Opcode::CallBuiltin || value.arguments.size() < 2 || function.at(value.arguments[0]).opcode != Opcode::NewObject)
             return false;
@@ -3600,14 +3618,14 @@ static void outlineBuiltinCalls(Program& program)
         bool hasHandlers = program.functions.mayEndWith(i, TerminatorKind::Invoke) && function.blocks.containsIf([](auto& block) {
             return block.terminator.kind == TerminatorKind::Invoke;
         });
-        std::as_const(program).functions.forEachIndexedValueWithBlock(i, candidates, [&](unsigned b, unsigned, ValueID id) {
+        std::as_const(program).functions.forEachIndexedValueWithBlock(i, candidates, [&](unsigned b, unsigned index, ValueID id) {
             auto& value = function.at(id);
             StringID predictedMethod = predictedMethodName(function, value);
             if ((!isCandidate(value) && !isPredictedClassMethodRead(function, value) && !predictedMethod) || isDescribedByLiteral(function, value))
                 return;
             if (value.opcode == Opcode::Add ? isLocallyCreatedKey(id) || usesStringBuilder(id) : value.opcode == Opcode::CallBuiltin && !value.arguments.isEmpty() && isLocallyCreatedKey(value.arguments[0]))
                 return;
-            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || writesLiteralAsJSON(function, value) || isOnlyTakenApart(id))
+            if (isArithmetic(function, value) || createsNullPrototypeObject(function, value) || populatesFirstArgument(function, value) || isPartOfCloneWithPrototype(function, b, index, id) || writesLiteralAsJSON(function, value) || isOnlyTakenApart(id))
                 return;
             if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
                 return;
@@ -4759,6 +4777,167 @@ std::optional<FreshResultReads> computeFreshResultReads(const Program& program, 
     return result;
 }
 
+static unsigned readJoinedResultsOnEdges(const Program& program, Function& function)
+{
+    auto literalReturnedTo = [&](ValueID id) -> const Value* {
+        auto& call = std::as_const(function).at(id);
+        if (call.opcode != Opcode::CallDirect || call.isJumpToContinuation())
+            return nullptr;
+        auto& wrapper = program.at(call.function());
+        if (!wrapper.worker || wrapper.nullishResultKind)
+            return nullptr;
+        for (auto& value : wrapper.values) {
+            if (value.opcode == Opcode::NewObjectWithShape)
+                return &value;
+        }
+        return nullptr;
+    };
+    struct Arm {
+        unsigned block;
+        ValueID call;
+    };
+    auto tryJoin = [&](unsigned b, unsigned position) {
+        ValueID joined = function.blocks[b].parameters[position];
+        Vector<Arm, 4> arms;
+        for (unsigned from = 0; from < function.blocks.size(); ++from) {
+            auto& block = function.blocks[from];
+            for (auto& target : block.terminator.targets) {
+                if (target.block.index() != b)
+                    continue;
+                ValueID call = target.arguments[position];
+                if (block.terminator.kind != TerminatorKind::Jump || !literalReturnedTo(call) || !block.values.contains(call))
+                    return false;
+                arms.append({ from, call });
+            }
+        }
+        Vector<ValueID, 4> aliases { joined };
+        Vector<ValueID, 8> reads;
+        Vector<ValueID, 2> nullishTests;
+        for (unsigned next = 0; next < aliases.size(); ++next) {
+            ValueID object = aliases[next];
+            for (auto& block : function.blocks) {
+                if (block.terminator.value == object)
+                    return false;
+                for (auto& target : block.terminator.targets) {
+                    if (target.arguments.contains(object))
+                        return false;
+                }
+                for (ValueID user : block.values) {
+                    auto& value = std::as_const(function).at(user);
+                    bool uses = false;
+                    value.forEachChild([&](ValueID child) {
+                        uses |= child == object;
+                    });
+                    if (!uses)
+                        continue;
+                    StringID name;
+                    switch (value.opcode) {
+                    case Opcode::GetField:
+                        if (isObjectLayout(program.at(value.layout()).kind))
+                            name = program.at(value.layout()).fields[value.field()].name;
+                        break;
+                    case Opcode::GetById:
+                        if (!value.methodGetByIdBuiltin())
+                            name = value.string();
+                        break;
+                    case Opcode::IsUndefinedOrNull:
+                        nullishTests.append(user);
+                        continue;
+                    case Opcode::Cast:
+                        if (value.castReason() == CastReason::Upcast || value.castReason() == CastReason::Flow || value.castReason() == CastReason::NonNull) {
+                            aliases.append(user);
+                            continue;
+                        }
+                        break;
+                    default:
+                        break;
+                    }
+                    if (!name)
+                        return false;
+                    for (auto& arm : arms) {
+                        if (!program.at(literalReturnedTo(arm.call)->layout()).fieldNamed(name))
+                            return false;
+                    }
+                    reads.append(user);
+                }
+            }
+        }
+        for (auto& arm : arms) {
+            unsigned uses = 0;
+            for (auto& block : function.blocks) {
+                for (ValueID user : block.values) {
+                    std::as_const(function).at(user).forEachChild([&](ValueID child) {
+                        uses += child == arm.call;
+                    });
+                }
+                uses += block.terminator.value == arm.call;
+                for (auto& target : block.terminator.targets)
+                    uses += std::ranges::count(target.arguments, arm.call);
+            }
+            if (uses != 1)
+                return false;
+        }
+        function.blocks[b].parameters.removeAt(position);
+        for (auto& arm : arms)
+            function.blocks[arm.block].terminator.targets[0].arguments.removeAt(position);
+        for (ValueID read : reads) {
+            Value parameter;
+            parameter.opcode = Opcode::Parameter;
+            parameter.position = function.at(read).position;
+            parameter.inlineFrame = function.at(joined).inlineFrame;
+            parameter.type = function.at(read).type;
+            parameter.rep = function.at(read).rep;
+            parameter.copyPredictionFrom(function.at(read));
+            ValueID held(function.values.size());
+            function.values.append(WTF::move(parameter));
+            function.blocks[b].parameters.append(held);
+            for (auto& arm : arms) {
+                Value onEdge(function.at(read));
+                onEdge.children[0] = arm.call;
+                ValueID id(function.values.size());
+                function.values.append(WTF::move(onEdge));
+                function.blocks[arm.block].values.append(id);
+                function.blocks[arm.block].terminator.targets[0].arguments.append(id);
+            }
+            auto& value = function.at(read);
+            value.opcode = Opcode::Cast;
+            value.children = { held, ValueID(), ValueID() };
+            value.immediates = { Format::none, static_cast<uint32_t>(CastReason::Upcast) };
+        }
+        for (unsigned k = 0; k < function.blocks[b].parameters.size(); ++k)
+            function.at(function.blocks[b].parameters[k]).immediates = { b, k };
+        for (ValueID test : nullishTests) {
+            auto& value = function.at(test);
+            value.opcode = Opcode::Boolean;
+            value.children = { };
+            value.immediates = { 0, Format::none };
+        }
+        if (aliases.size() > 1) {
+            for (auto& block : function.blocks) {
+                block.values.removeAllMatching([&](ValueID id) {
+                    return id != joined && aliases.contains(id);
+                });
+            }
+        }
+        return true;
+    };
+    unsigned changed = 0;
+    for (bool found = true; std::exchange(found, false);) {
+        for (unsigned from = 0; from < function.blocks.size() && !found; ++from) {
+            auto& terminator = function.blocks[from].terminator;
+            if (terminator.kind != TerminatorKind::Jump)
+                continue;
+            unsigned b = terminator.targets[0].block.index();
+            for (unsigned position = 0; position < function.blocks[from].terminator.targets[0].arguments.size() && !found; ++position) {
+                if (literalReturnedTo(function.blocks[from].terminator.targets[0].arguments[position]))
+                    found = tryJoin(b, position);
+            }
+        }
+        changed += found;
+    }
+    return changed;
+}
+
 static Type unionOf(const Type& a, const Type& b)
 {
     Type result = a;
@@ -5290,13 +5469,80 @@ static void outlineDestructuredParameterReads(Program& program)
     program.functions.appendVector(WTF::move(bodies));
 }
 
-static void splitOffWorkers(Program& program)
+static void inlineWrapperIntoReturn(const Program& program, Function& function, unsigned b)
+{
+    Value site(function.at(function.blocks[b].terminator.value));
+    auto& wrapper = program.at(site.function());
+    Vector<ValueID> copies(wrapper.values.size());
+    for (unsigned k = 0; k < site.arguments.size(); ++k)
+        copies[wrapper.blocks[0].parameters[k].index()] = site.arguments[k];
+    function.blocks[b].values.removeLast();
+    for (ValueID id : wrapper.blocks[0].values) {
+        Value copy(wrapper.at(id));
+        copy.position = site.position;
+        copy.inlineFrame = site.inlineFrame;
+        copy.isInTailPosition = copy.opcode == Opcode::CallDirect && site.isInTailPosition;
+        copy.forEachChild([&](ValueID& child) {
+            child = copies[child.index()];
+        });
+        if (copy.opcode == Opcode::NewObjectWithShape) {
+            copy.immediates[1] = function.allocations.size();
+            function.allocations.append(Allocation(wrapper.allocations[wrapper.at(id).allocation()]));
+        }
+        copies[id.index()] = ValueID(function.values.size());
+        function.blocks[b].values.append(copies[id.index()]);
+        function.values.append(WTF::move(copy));
+    }
+    function.blocks[b].terminator.value = copies[wrapper.blocks[0].terminator.value.index()];
+}
+
+static BitVector makeForwardedResultsFresh(Program& program)
+{
+    unsigned count = program.functions.size();
+    static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+    Vector<std::unique_ptr<Function>> changed(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = std::as_const(program).functions[i];
+        if (function.worker || !function.resultTypes.isEmpty() || function.blocks.isEmpty() || program.functionsInCycles.get(i) || !program.functions.mayContain(i, directCalls))
+            return;
+        Vector<unsigned, 4> forwardingBlocks;
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto& block = function.blocks[b];
+            if (block.terminator.kind != TerminatorKind::Return || !block.terminator.value || function.at(block.terminator.value).opcode != Opcode::CallDirect)
+                continue;
+            auto& call = function.at(block.terminator.value);
+            if (call.isJumpToContinuation() || block.values.isEmpty() || block.values.last() != block.terminator.value)
+                return;
+            auto& wrapper = program.at(call.function());
+            if (!wrapper.worker || wrapper.nullishResultKind || wrapper.blocks.size() != 1 || wrapper.blocks[0].parameters.size() != call.arguments.size())
+                return;
+            forwardingBlocks.append(b);
+        }
+        if (forwardingBlocks.isEmpty())
+            return;
+        Function copy = function;
+        for (unsigned b : forwardingBlocks)
+            inlineWrapperIntoReturn(program, copy, b);
+        if (computeFreshResults(program, copy))
+            changed[i] = makeUniqueWithoutFastMallocCheck<Function>(WTF::move(copy));
+    });
+    BitVector result(count);
+    for (unsigned i = 0; i < count; ++i) {
+        if (!changed[i])
+            continue;
+        program.functions[i] = WTF::move(*changed[i]);
+        result.set(i);
+    }
+    return result;
+}
+
+static void splitOffWorkers(Program& program, const BitVector* considered)
 {
     unsigned count = program.functions.size();
     program.types.thaw();
     Vector<std::unique_ptr<FreshResults>> freshResults(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        if (!program.functions.mayContain(i, freshResultAllocations))
+        if ((considered && !considered->get(i)) || !program.functions.mayContain(i, freshResultAllocations))
             return;
         if (auto fresh = computeFreshResults(program, std::as_const(program).functions[i]))
             freshResults[i] = makeUniqueWithoutFastMallocCheck<FreshResults>(WTF::move(*fresh));
@@ -5500,6 +5746,21 @@ static void splitOffWorkers(Program& program)
             program.callGraphColdFunctions.set(workerID.index());
     }
     program.types.freeze();
+}
+
+static void splitOffWorkers(Program& program)
+{
+    splitOffWorkers(program, nullptr);
+    constexpr unsigned maxForwardingDepth = 4;
+    unsigned numberOfForwarders = 0;
+    for (unsigned depth = 0; depth < maxForwardingDepth; ++depth) {
+        BitVector forwarders = makeForwardedResultsFresh(program);
+        if (forwarders.isEmpty())
+            break;
+        numberOfForwarders += forwarders.bitCount();
+        splitOffWorkers(program, &forwarders);
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfForwarders, " functions that forward a fresh result return it in registers");
 }
 
 static void outlineHostObjectReads(Program& program)
@@ -12481,6 +12742,7 @@ Vector<String> optimize(Program& program)
         for (unsigned round = 0; round < 8 && !Options::auditAOTTypedAssertions(); ++round) {
             unsigned changed = resolvePreludeCalls(program, function, CleanUpTiming::Deferred);
             changed += resolveCalls(program, function, program.isStaticallyWarm(id), CleanUpTiming::Deferred);
+            changed += readJoinedResultsOnEdges(program, function);
             changed += inlineCalls(program, id, function, CleanUpTiming::Deferred);
             unsigned fused = fuseGeneratorLoops(program, function);
             changed += simplifyCasts(program, function, CleanUpTiming::Deferred);

@@ -232,6 +232,10 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
                 result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
             }
+            if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
+                if (result == static_cast<int>(Yarr::flatProgramGaveUp))
+                    return result;
+            }
         }
 
 #if ENABLE(YARR_JIT_DEBUG)
@@ -247,6 +251,10 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+    }
+    if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
+        if (result == static_cast<int>(Yarr::flatProgramGaveUp))
+            return result;
     }
 
     ASSERT(result >= -1);
@@ -408,6 +416,10 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+    }
+    if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
+        if (result == static_cast<int>(Yarr::flatProgramGaveUp))
+            return MatchResult(static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure), 0);
     }
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->outputOneTest(this, s, startOffset, offsetVector, result);

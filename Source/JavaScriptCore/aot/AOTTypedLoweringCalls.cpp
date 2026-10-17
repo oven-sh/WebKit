@@ -207,24 +207,21 @@ void Lowering::branchToLandingPad(PatchpointValue* patchpoint, std::optional<GPR
     m_out.appendTo(continuation);
 }
 
-static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister, bool isThrowStatement = false)
+static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister)
 {
-    bool passesWordInRegister = !returnsToSite && words.size() == 1 && !valueIsInWordRegister;
 #if CPU(X86_64) && OS(LINUX)
     static_assert(throwWordGPR == X86Registers::r11);
-    if (!isThrowStatement && !returnsToSite && !isLeaf && !valueIsInWordRegister) {
+    if (!returnsToSite && !isLeaf && !valueIsInWordRegister) {
         context.throwSiteTraps.append({ jit.labelIgnoringWatchpoints(), site.bits });
         jit.m_assembler.buffer().putByte(static_cast<int8_t>(0xf4));
         return false;
     }
-#else
-    UNUSED_PARAM(isThrowStatement);
 #endif
     if (isLeaf && !hasFramelessFunctionStubs) {
         jit.emitFunctionPrologue();
         isLeaf = false;
     }
-    if (passesWordInRegister) {
+    if (!returnsToSite && words.size() == 1 && !valueIsInWordRegister) {
         ArgumentMoves moves;
         static const bool wordIsWrongForTesting = Options::aotSlowPathFaultForTesting() && !strcmp(byteCast<char>(Options::aotSlowPathFaultForTesting()), "word");
         appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0] + wordIsWrongForTesting);
@@ -266,7 +263,7 @@ uint32_t Lowering::throwAt(ThrowKind kind, std::optional<Operand> operand, uint3
 #endif
         unsigned number = rep == Rep::Void ? newErrorClassPlusOne : rep == Rep::Double || rep == Rep::OptionalDouble ? static_cast<unsigned>(params[0].fpr()) : static_cast<unsigned>(params[0].gpr());
         auto words = throwSiteWords(kind, rep, number, a, b);
-        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR, !!newErrorClassPlusOne))
+        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR))
             return;
         context->recordDataInCode(jit, words.size());
         for (uint32_t word : words)

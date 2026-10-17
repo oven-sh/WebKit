@@ -337,10 +337,19 @@ static String describeKeyAsArgument(VM& vm, PropertyName name)
     return makeString('"', StringView(name.uid()), '"');
 }
 
+static bool isPrototypeOfProgramClass(VM& vm, JSObject* object)
+{
+    JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);
+    auto* function = constructor ? dynamicDowncast<JSFunction>(constructor) : nullptr;
+    return function && !function->isHostOrBuiltinFunction() && function->getDirect(vm, vm.propertyNames->prototype) == JSValue(object);
+}
+
 static ASCIILiteral kindOfWrite(VM& vm, JSObject* object)
 {
     if (object->isGlobalObject())
         return "global-binding-write"_s;
+    if (isPrototypeOfProgramClass(vm, object))
+        return "class-prototype-write"_s;
     if (!object->structure()->typeInfo().wouldHaveImmutableProperties())
         return "builtin-member-replace"_s;
     return generatorFunctionForPrototype(vm, object) ? "generator-prototype-write"_s : "builtin-prototype-write"_s;
@@ -384,6 +393,7 @@ void ImmutableIntrinsicsAudit::willPut(JSGlobalObject* globalObject, JSObject* r
     bool storesOnReceiver = true;
     bool isOwn = false;
     bool isFixed = false;
+    bool isReleased = false;
     for (JSObject* object = receiver; object; object = object->getPrototypeDirect().getObject()) {
         if (object != receiver && object->structure()->typeInfo().overridesPut())
             return;
@@ -405,11 +415,12 @@ void ImmutableIntrinsicsAudit::willPut(JSGlobalObject* globalObject, JSObject* r
         } else if (object == receiver) {
             isOwn = true;
             isFixed = property.wouldBeFixed && !(property.attributes & PropertyAttribute::CustomValue);
+            isReleased = !property.wouldBeFixed;
         }
         break;
     }
-    bool isRefused = isImmutable;
-    if (!isRefused && storesOnReceiver)
+    bool isRefused = isImmutable && !isReleased;
+    if (!isImmutable && storesOnReceiver)
         isRefused = isOwn ? isFixed : typeInfo.wouldHaveFixedProperties() && wouldInheritImmutableProperty(vm, receiver, name);
     if (!isRefused)
         return;
@@ -443,6 +454,8 @@ void ImmutableIntrinsicsAudit::willDefineOwnProperty(JSGlobalObject* globalObjec
     bool isImmutable = typeInfo.wouldHaveImmutableProperties();
     String error;
     if (!isCurrentDefined || !(current.attributes() & PropertyAttribute::WouldBeFixed)) {
+        if (isImmutable && isCurrentDefined)
+            return;
         if (isImmutable)
             error = NonExtensibleObjectPropertyDefineError;
         else if (!isCurrentDefined && typeInfo.wouldHaveFixedProperties() && name != vm.propertyNames->name && name != vm.propertyNames->length && wouldInheritImmutableProperty(vm, object, name))

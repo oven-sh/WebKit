@@ -131,6 +131,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectAssignFrom, Heap, void, (Inst
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectAssignToNew, Heap, JSCell*, (Instance*, EncodedJSValue source));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnPropertyDescriptor, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedObjectCreate, Heap, JSCell*, (Instance*, JSCell* prototype));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryCloneWithPrototype, Heap, JSCell*, (Instance*, JSCell* source, EncodedJSValue prototype));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSuspendAsyncFunction, Heap, void, (Instance*, JSCell* resumeClosure, EncodedJSValue awaited));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSaveFrameAndAwait, Heap, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAwaitWithSavedFrame, Heap, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* saved));

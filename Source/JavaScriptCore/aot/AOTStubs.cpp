@@ -15558,8 +15558,9 @@ static void jumpToStubBuiltin(CCallHelpers& jit, unsigned count, GPRReg executab
         jit.ret();
         differs.link(&jit);
     }
-    jit.branchIfNotCell(thisGPR).linkTo(callHostFunctionLabel, &jit);
+    Jump receiverIsNotCell = jit.branchIfNotCell(thisGPR);
     if (count == 1) {
+        receiverIsNotCell.linkTo(callHostFunctionLabel, &jit);
         {
             constexpr GPRReg type = structureID;
             static_assert(DerivedArrayType == ArrayType + 1 && noOverlap(A2, thisGPR) && noOverlap(A1, A2, A3, kindInPushToFullVector));
@@ -15593,6 +15594,29 @@ static void jumpToStubBuiltin(CCallHelpers& jit, unsigned count, GPRReg executab
             jit.branchIfNotObject(argumentGPR(0)).linkTo(callHostFunctionLabel, &jit);
         });
         serve(BuiltIn::MapSet, Stub::MapSet, [&] { hasOriginalStructureOf(Receiver::Map); });
+        receiverIsNotCell.link(&jit);
+        using CacheEntry = Instance::PrototypeChangeCacheEntry;
+        constexpr GPRReg object = argumentGPR(0);
+        constexpr GPRReg prototype = argumentGPR(1);
+        constexpr GPRReg entry = structureID;
+        static_assert(sizeof(CacheEntry) == 16 && Instance::prototypeChangeCacheIndex(0x7f40) == ((0x7f40 >> 6) & (Instance::prototypeChangeCacheSize - 1)) && R0 == GPRInfo::returnValueGPR);
+        auto inEntry = [&](ptrdiff_t offset) { return Address(entry, Instance::offsetOfPrototypeChangeCache() + offset); };
+        jit.branch32(CCallHelpers::NotEqual, builtIn, TrustedImm32(static_cast<int32_t>(BuiltIn::ObjectSetPrototypeOf))).linkTo(callHostFunctionLabel, &jit);
+        jit.branchIfNotCell(object).linkTo(callHostFunctionLabel, &jit);
+        isOfType(object, FinalObjectType);
+        jit.move(prototype, entry);
+        jit.urshift64(TrustedImm32(6), entry);
+        jit.and32(TrustedImm32(Instance::prototypeChangeCacheSize - 1), entry);
+        jit.lshift64(TrustedImm32(4), entry);
+        jit.addPtr(instanceGPR, entry);
+        jit.branchPtr(CCallHelpers::NotEqual, inEntry(OBJECT_OFFSETOF(CacheEntry, prototype)), prototype).linkTo(callHostFunctionLabel, &jit);
+        jit.load32(Address(object, JSCell::structureIDOffset()), builtIn);
+        jit.branch32(CCallHelpers::NotEqual, inEntry(OBJECT_OFFSETOF(CacheEntry, from)), builtIn).linkTo(callHostFunctionLabel, &jit);
+        jit.load32(inEntry(OBJECT_OFFSETOF(CacheEntry, to)), builtIn);
+        jit.store32(builtIn, Address(object, JSCell::structureIDOffset()));
+        jit.move(object, R0);
+        jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
+        return;
     }
     jit.jump().linkTo(callHostFunctionLabel, &jit);
 }

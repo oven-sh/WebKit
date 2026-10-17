@@ -29,6 +29,7 @@
 #include "Debugger.h"
 #include "ExecutableBaseInlines.h"
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -97,7 +98,7 @@ void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref
         case ArrayPushIntrinsic:
             return StubBuiltin::ArrayPush;
         default:
-            return StubBuiltin::None;
+            return m_function == TaggedNativeFunction(objectConstructorSetPrototypeOf) ? StubBuiltin::ObjectSetPrototypeOf : StubBuiltin::None;
         }
     }());
 #endif
