@@ -1018,6 +1018,26 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
 
+    // For where a new attempt to match the body starts: nothing can backtrack into the last attempt, so its contexts are dead.
+    // Backtracking has freed all of them but those that a lookaround allocated before it succeeded, since nothing backtracks
+    // into a lookaround that has matched. A search that keeps them runs out of stack after some number of start positions.
+    void releaseAllParenContexts()
+    {
+        if (!m_lookaroundsAllocateParenContexts)
+            return;
+#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+        ASSERT(m_executionMode != ExecutionMode::InlineTest);
+#endif
+        CCallHelpers::Address frame = frameAddress();
+        ASSERT(frame.base == GPRInfo::callFrameRegister);
+        m_jit.addPtr(MacroAssembler::TrustedImm32(frame.offset), frame.base, m_regs.regT0);
+        m_jit.move(m_regs.regT0, MacroAssembler::stackPointerRegister);
+        if (m_regs.freelistRegister != InvalidGPRReg)
+            m_jit.move(MacroAssembler::TrustedImmPtr(nullptr), m_regs.freelistRegister);
+        else
+            m_jit.storePtr(MacroAssembler::TrustedImmPtr(nullptr), MacroAssembler::Address(m_regs.matchingContext, MatchingContextHolder::offsetOfFreeList()));
+    }
+
     void storeBeginAndMatchAmountToParenContext(MacroAssembler::RegisterID beginGPR, MacroAssembler::RegisterID matchAmountGPR, MacroAssembler::RegisterID parenContextGPR)
     {
         static_assert(ParenContext::beginOffset() + 4 == ParenContext::matchAmountOffset());
@@ -5881,9 +5901,14 @@ class YarrGenerator final : public YarrJITInfo {
             // several points; all of them converge here, index at the first
             // alternative's claimed frontier, before alternative 0's terms. Route
             // on the match-start character now so every path is dispatched.
-            if (op.m_op == YarrOpCode::BodyAlternativeBegin && op.m_bodyDispatch) {
-                generateBodyDispatch(op);
-                bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
+            if (op.m_op == YarrOpCode::BodyAlternativeBegin) {
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+                releaseAllParenContexts();
+#endif
+                if (op.m_bodyDispatch) {
+                    generateBodyDispatch(op);
+                    bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
+                }
             }
 
             ++opIndex;
@@ -6898,6 +6923,7 @@ class YarrGenerator final : public YarrJITInfo {
                     // iteration took) or backtrackable inner content (needs to roll
                     // state back across iterations) — use the ParenContext path.
                     m_containsNestedSubpatterns = true;
+                    m_lookaroundsAllocateParenContexts |= m_isInLookaround;
                     m_usesT2 = true;
                     parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternBegin;
                     parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternEnd;
@@ -6912,6 +6938,7 @@ class YarrGenerator final : public YarrJITInfo {
             } else {
                 // Greedy/NonGreedy quantifiers: use generic ParenContext-based nodes.
                 m_containsNestedSubpatterns = true;
+                m_lookaroundsAllocateParenContexts |= m_isInLookaround;
                 parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternBegin;
                 parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternEnd;
 
@@ -7373,6 +7400,7 @@ class YarrGenerator final : public YarrJITInfo {
         // assertion point in every case.
         MatchDirection enclosingDirection = m_direction;
         m_direction = bodyDirection;
+        bool wasInLookaround = std::exchange(m_isInLookaround, true);
         if (bodyDirection == Backward)
             checkedOffset = 0;
 
@@ -7414,6 +7442,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         // The End op is back in the enclosing direction.
         m_direction = enclosingDirection;
+        m_isInLookaround = wasInLookaround;
 
         size_t parenEnd = m_ops.size();
         appendOp(YarrOpCode::ParentheticalAssertionEnd);
@@ -10242,8 +10271,10 @@ private:
     // Frame offset (in slots) for internal subpattern output storage
     unsigned m_internalSubpatternOutputOffsetInFrame { 0 };
     const CanonicalMode m_canonicalMode;
+    bool m_isInLookaround { false };
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
     bool m_containsNestedSubpatterns { false };
+    bool m_lookaroundsAllocateParenContexts { false };
     ParenContextSizes m_parenContextSizes;
 #endif
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
