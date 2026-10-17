@@ -118,18 +118,18 @@ public:
             // A requested object is older than the cache's capacity. We can
             // infer that requested objects are subject to high eviction probability,
             // so we grow the cache to improve our hit rate.
-            m_capacity += recencyBias * oldObjectSamplingMultiplier * key.length();
+            m_capacity += recencyBias * oldObjectSamplingMultiplier * weight(key);
         } else if (age < m_capacity / 2) {
             // A requested object is much younger than the cache's capacity. We can
             // infer that requested objects are subject to low eviction probability,
             // so we shrink the cache to save memory.
-            m_capacity -= recencyBias * key.length();
+            m_capacity -= recencyBias * weight(key);
             if (m_capacity < m_minCapacity)
                 m_capacity = m_minCapacity;
         }
 
         findResult->value.age = m_age;
-        m_age += key.length();
+        m_age += weight(key);
 
         return uncheckedDowncast<UnlinkedCodeBlockType>(findResult->value.cell.get());
     }
@@ -141,19 +141,24 @@ public:
         AddResult addResult = m_map.add(key, value);
         ASSERT(addResult.isNewEntry);
 
-        m_size += key.length();
-        m_age += key.length();
+        m_size += weight(key);
+        m_age += weight(key);
         return addResult;
     }
 
     void remove(iterator it)
     {
-        m_size -= it->key.length();
+        m_size -= weight(it->key);
         m_map.remove(it);
     }
 
     void removeIfHolds(const SourceCodeKey&, JSCell*);
     void removeCodeDecodedFromPersistentPayloads();
+#if USE(BUN_JSC_ADDITIONS)
+    // A full collection began: what is looked up from now on counts as used in its cycle.
+    void didStartFullCollection() { m_ageAtLastFullCollection = m_age; }
+    void removeEntriesNotUsedInCurrentFullCollectionCycle();
+#endif
 
     void clear()
     {
@@ -197,8 +202,17 @@ private:
     // This constant factor biases cache capacity toward allowing a minimum
     // working set to enter the cache before it starts evicting.
     static constexpr Seconds workingSetTime = 10_s;
+#if USE(BUN_JSC_ADDITIONS)
+    // The bytes an entry counts for in m_size, m_age and m_capacity. Its unlinked code and its Strong handle cost memory
+    // and collector time whatever the length of its source, so a flood of tiny sources is bounded by the byte working set
+    // too, where upstream bounds it by the entry count instead.
+    static constexpr int64_t entryOverhead = 1024;
+    static int64_t weight(const SourceCodeKey& key) { return static_cast<int64_t>(key.length()) + entryOverhead; }
+#else
     static constexpr int64_t workingSetMaxBytes = 16000000;
     static constexpr size_t workingSetMaxEntries = 2000;
+    static int64_t weight(const SourceCodeKey& key) { return key.length(); }
+#endif
 
     // How many random entries pruneSlowCase() looks at to pick the one it evicts.
     static constexpr unsigned evictionSampleSize = 5;
@@ -212,6 +226,23 @@ private:
     // sample them, so we need to extrapolate from the ones we do sample.
     static constexpr int64_t oldObjectSamplingMultiplier = 32;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // No bound on the number of entries: a loader that cycles through more distinct sources than such a bound would
+    // evict every entry before its next use and never hit. The byte working set bounds the cache instead, and
+    // VM::shrinkFootprintNow() lets go of what an idle VM has stopped using.
+    void pruneSlowCase();
+    void prune()
+    {
+        if (m_size <= m_capacity)
+            return;
+
+        if (ApproximateTime::now() - m_timeAtLastPrune < workingSetTime
+            && m_size - m_sizeAtLastPrune < static_cast<int64_t>(Options::codeCacheWorkingSetMaxBytes()))
+                return;
+
+        pruneSlowCase();
+    }
+#else
     size_t numberOfEntries() const { return static_cast<size_t>(m_map.size()); }
     bool canPruneQuickly() const { return numberOfEntries() < workingSetMaxEntries; }
 
@@ -228,6 +259,7 @@ private:
 
         pruneSlowCase();
     }
+#endif
 
     MapType m_map;
     int64_t m_size;
@@ -236,6 +268,9 @@ private:
     int64_t m_minCapacity;
     int64_t m_capacity;
     int64_t m_age;
+#if USE(BUN_JSC_ADDITIONS)
+    int64_t m_ageAtLastFullCollection { 0 };
+#endif
 };
 
 // Caches top-level code such as <script>, window.eval(), new Function, and JSEvaluateScript().
@@ -261,6 +296,11 @@ public:
     JS_EXPORT_PRIVATE void write();
     // Entries a lookup can decode again instead of parsing.
     void clearCodeDecodedFromPersistentPayloads() { m_sourceCode.removeCodeDecodedFromPersistentPayloads(); }
+#if USE(BUN_JSC_ADDITIONS)
+    void didStartFullCollection() { m_sourceCode.didStartFullCollection(); }
+    // Entries no lookup has hit since the last full collection began: an idle VM parses them again if it needs them.
+    void clearCodeNotUsedInCurrentFullCollectionCycle() { m_sourceCode.removeEntriesNotUsedInCurrentFullCollectionCycle(); }
+#endif
 
 private:
     template <class UnlinkedCodeBlockType, class ExecutableType> 
