@@ -1115,7 +1115,7 @@ namespace JSC {
         const Identifier& m_ident;
     };
 
-    class DeleteBracketNode final : public ExpressionNode, public ThrowableExpressionData {
+    class DeleteBracketNode final : public ExpressionNode, public ThrowableSubExpressionData {
     public:
         DeleteBracketNode(const JSTokenLocation&, ExpressionNode* base, ExpressionNode* subscript, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
@@ -1128,7 +1128,7 @@ namespace JSC {
         ExpressionNode* m_subscript;
     };
 
-    class DeleteDotNode final : public ExpressionNode, public ThrowableExpressionData {
+    class DeleteDotNode final : public ExpressionNode, public ThrowableSubExpressionData {
     public:
         DeleteDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 

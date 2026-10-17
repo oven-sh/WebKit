@@ -492,7 +492,7 @@ namespace JSC {
 
     inline DeleteBracketNode::DeleteBracketNode(const JSTokenLocation& location, ExpressionNode* base, ExpressionNode* subscript, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
         : ExpressionNode(location)
-        , ThrowableExpressionData(divot, divotStart, divotEnd)
+        , ThrowableSubExpressionData(divot, divotStart, divotEnd)
         , m_base(base)
         , m_subscript(subscript)
     {
@@ -500,7 +500,7 @@ namespace JSC {
 
     inline DeleteDotNode::DeleteDotNode(const JSTokenLocation& location, ExpressionNode* base, const Identifier& ident, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
         : ExpressionNode(location)
-        , ThrowableExpressionData(divot, divotStart, divotEnd)
+        , ThrowableSubExpressionData(divot, divotStart, divotEnd)
         , m_base(base)
         , m_ident(ident)
     {
