@@ -8,7 +8,8 @@
     Operand convertToDeclaredResult(Operand, const Type& guarantee, const Value& call, const Type&);
     CellPointer allocateCell(LValue allocator, size_t cellSize, LBasicBlock slowPath);
     CellPointer newCopyOnWriteArray(LValue list, LBasicBlock slowPath);
-    LValue layoutKeyListOrElse(CellPointer object, LBasicBlock otherwise);
+    enum class KeyListIsKept : bool { ByShape, ByStructure };
+    LValue layoutKeyListOrElse(CellPointer object, LBasicBlock otherwise, KeyListIsKept = KeyListIsKept::ByShape);
     CellPointer lowerOwnPropertyKeys(InlineBuiltin, ValueID object);
     CellPointer listKeysForIn(Boxed object, const Type&);
     enum class OwnField : uint8_t { InAllMembers, InNoMember, Varies };

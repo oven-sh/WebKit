@@ -6523,9 +6523,11 @@ static void shareCallsOfFunctionFields(Program& program)
             continue;
         auto access = fieldOf(program, program.at(body.receiver), site.string());
         program.layouts[access->layout.index()].fields[access->field].isPinnedToFunction = true;
+        program.layouts[access->layout.index()].hasFieldPinnedToFunction = true;
         for (LayoutID subtype : std::as_const(program).at(access->layout).subtypes) {
             auto& layout = program.layouts[subtype.index()];
             layout.fields[*layout.fieldNamed(site.string())].isPinnedToFunction = true;
+            layout.hasFieldPinnedToFunction = true;
         }
         Function tests;
         tests.name = site.string();
@@ -10262,7 +10264,8 @@ static void findCallGraphColdFunctions(Program& program, const Vector<uint8_t>& 
     static constexpr uint8_t maxColdHeat = 4;
     BitVector result(vigintiles.size());
     auto coldFunctions = findIndicesInParallel(vigintiles.size(), [&](unsigned i) {
-        return vigintiles[i] <= maxColdHeat && !std::as_const(program).functions[i].isValueEntry;
+        auto& function = std::as_const(program).functions[i];
+        return vigintiles[i] <= maxColdHeat && !function.isValueEntry && !(function.module && program.modulesRunPerRequest.get(function.module.index()));
     });
     for (unsigned i : coldFunctions)
         result.set(i);
@@ -10668,6 +10671,8 @@ static TailCalls findTailCalls(const Program& program)
     for (auto [function, entry] : program.genericEntrypoints) {
         hasOrIsGenericEntrypoint[function] = 1;
         hasOrIsGenericEntrypoint[entry.index()] = 1;
+        if (FunctionID declared = program.functions[function].declaredGenericEntrypoint)
+            hasOrIsGenericEntrypoint[declared.index()] = 1;
     }
     auto indirectlyCallable = findIndicesInParallel(count, [&](unsigned i) {
         return hasOrIsGenericEntrypoint[i] && !sites[i].isEmpty();
@@ -13629,14 +13634,10 @@ Vector<String> optimize(Program& program)
         predictClonesByCastsInOtherBlocks(program);
     didFinish("- predictClonesByCastsInOtherBlocks"_s);
     if (!Options::auditAOTTypedAssertions()) {
-        moveConstantTablesIntoImage(program);
-        didFinish("- moveConstantTablesIntoImage"_s);
         eliminateGuardsOnFreshResults(program);
         didFinish("- eliminateGuardsOnFreshResults"_s);
         eliminateGuardsOnUnescapedModuleVariables(program);
         didFinish("- eliminateGuardsOnUnescapedModuleVariables"_s);
-        askFreshTablesInImage(program);
-        didFinish("- askFreshTablesInImage"_s);
         std::atomic<unsigned> lateGuardedPreludeEntryCallCount { 0 };
         forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
             if (!std::as_const(program).functions[i].pendingGuardedPreludeEntries.isEmpty())
@@ -13680,6 +13681,8 @@ Vector<String> optimize(Program& program)
     if (!Options::auditAOTTypedAssertions())
         shareModuleEvaluation(program);
     didFinish("- shareModuleEvaluation"_s);
+    moveConstantTablesIntoImage(program);
+    didFinish("- moveConstantTablesIntoImage"_s);
     removeUncalledFunctions(program);
     didFinish("- removeUncalledFunctions"_s);
     findComparedBuiltinCells(program);

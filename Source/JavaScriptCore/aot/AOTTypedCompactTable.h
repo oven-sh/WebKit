@@ -333,6 +333,7 @@ private:
     void setValue(uint32_t entry, JSValue);
     template<typename Matches> std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches&) const;
     template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
+    std::optional<uint32_t> findInImage(JSGlobalObject*, JSString*) const;
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
     void fillIndex(uint32_t count);
@@ -357,14 +358,14 @@ static_assert(sizeof(CompactTable) == 24);
 
 struct TableInImage {
     uint32_t offsetInData;
-    uint32_t lengthOfLongestKey;
+    uint32_t unused;
     uint32_t count;
     uint32_t alive;
     uint32_t capacity;
     uint8_t indexBits;
     uint8_t keysShift;
     bool hasValues;
-    uint8_t unused;
+    uint8_t alsoUnused;
 
     const Data& data() const { return *reinterpret_cast<const Data*>(reinterpret_cast<const uint8_t*>(this) - offsetInData); }
     const uint8_t* index() const { return reinterpret_cast<const uint8_t*>(this + 1); }
@@ -413,14 +414,6 @@ struct TableInImage {
             return CompactTable::equalsCharacters(key, textAt(entry));
         });
     }
-    ALWAYS_INLINE std::optional<uint32_t> findFirstWithTagOf(unsigned hash) const
-    {
-        return findWithHash(hash, [](uint32_t) ALWAYS_INLINE_LAMBDA {
-            return true;
-        });
-    }
-    JS_EXPORT_PRIVATE std::optional<uint32_t> find(JSString*) const;
-    JSValue valueAt(State&, uint32_t entry) const;
     JS_EXPORT_PRIVATE static Vector<uint8_t> encode(std::span<const std::pair<uint32_t, std::span<const uint8_t>>> keys, std::span<const uint64_t> values);
     static constexpr ptrdiff_t offsetOfOffsetInData() { return OBJECT_OFFSETOF(TableInImage, offsetInData); }
 };

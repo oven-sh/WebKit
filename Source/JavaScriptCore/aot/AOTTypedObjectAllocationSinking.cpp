@@ -1188,7 +1188,7 @@ private:
             if (uint32_t object = aliasOf(first); isVirtual(object)) {
                 auto field = accessedField(object, m_function.at(id));
                 bool creates = field && !((m_candidates[object].initialFields | m_state[object].stored) & 1ull << *field);
-                if (field && typeOf(second).isSubsetOf(m_program.at(fieldType(m_candidates[object], *field)), m_program) && !(creates && m_state[object].created >> 56)) {
+                if (field && typeOf(second).isSubsetOf(m_program.at(fieldType(m_candidates[object], *field)), m_program) && !(creates && m_state[object].created >> 56) && !replacesPinnedFunction(m_program, m_function, m_function.at(m_candidates[object].allocation).layout(), m_function.at(id))) {
                     m_state[object].stored |= 1ull << *field;
                     if (creates)
                         m_state[object].created = m_state[object].created << 8 | (*field + 1);

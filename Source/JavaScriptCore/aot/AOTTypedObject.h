@@ -614,8 +614,17 @@ struct ConversionPlan {
     const ConversionMove* firstMove { nullptr };
     uint32_t wordCount { 0 };
     uint32_t moveCount { 0 };
+    void* allocatorOfExtraProperties { nullptr };
+    const uint64_t* wordsOfExtraProperties { nullptr };
+    const ConversionMove* firstMoveOfExtraProperties { nullptr };
+    uint32_t wordCountOfExtraProperties { 0 };
+    uint32_t moveCountOfExtraProperties { 0 };
+    uint32_t offsetOfExtraProperties { 0 };
+    uint32_t allocates { 0 };
     Vector<uint64_t, 8> cell;
     Vector<ConversionMove, 8> moves;
+    Vector<uint64_t, 8> cellOfExtraProperties;
+    Vector<ConversionMove, 2> movesOfExtraProperties;
 };
 
 struct alignas(16) ConversionCacheEntry {
@@ -1664,6 +1673,7 @@ struct State {
     void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Object* made, size_t sizeOfCell, uint32_t typeAndReason);
     std::optional<uint32_t> literalStringWordOfConstant(uint32_t string) const;
     void cacheCopyConversion(VM&, Structure*, const RuntimeType&, const CoercionPlan&, Structure* made, uint32_t typeAndReason);
+    void cacheConversionWithExtraProperties(VM&, Structure*, const RuntimeType&, const CoercionPlan&, Object* made, size_t sizeOfCell, uint32_t typeAndReason);
     std::unique_ptr<ConversionPlan> createConversionPlan(const CoercionPlan&, size_t sizeOfCell, uint64_t header, void* allocator, PropertyOffset discriminant = invalidOffset, const Object* converted = nullptr);
     void cacheConversion(uint32_t structureID, uint32_t typeAndReason, const ConversionPlan&);
     bool m_hasCachedConversions { false };

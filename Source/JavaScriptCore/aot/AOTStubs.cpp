@@ -11282,7 +11282,8 @@ static void generateConvertByPlan(CCallHelpers& jit)
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), counter).linkTo(moves, &jit);
     hasNoMoves.link(&jit);
 
-    Jump isCopy = jit.branchTestPtr(CCallHelpers::NonZero, Address(plan, OBJECT_OFFSETOF(Plan, allocator)));
+    Jump allocates = jit.branchTest32(CCallHelpers::NonZero, Address(plan, OBJECT_OFFSETOF(Plan, allocates)));
+    CCallHelpers::Label laysCellOverObject = jit.label();
     jit.load64(Address(object), value);
     jit.and64(CCallHelpers::TrustedImm64(preservedHeaderBits), value);
     jit.load64(Address(sp), scratch);
@@ -11292,6 +11293,32 @@ static void generateConvertByPlan(CCallHelpers& jit)
     jit.addPtr(TrustedImm32(frameSize), sp);
     jit.move(object, GPRInfo::returnValueGPR);
     jit.ret();
+
+    allocates.link(&jit);
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(Plan, allocatorOfExtraProperties)), scratch);
+    Jump isCopy = jit.branchTestPtr(CCallHelpers::Zero, scratch);
+    fails.append(jit.branch8(CCallHelpers::BelowOrEqual, Address(object, JSCell::cellStateOffset()), TrustedImm32(blackThreshold)));
+    jit.emitAllocateWithNonNullAllocator(value, JITAllocator::variable(), scratch, counter, fails, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(Plan, wordsOfExtraProperties)), scratch);
+    jit.load32(Address(plan, OBJECT_OFFSETOF(Plan, wordCountOfExtraProperties)), counter);
+    CCallHelpers::Label copiesWordOfExtraProperties = jit.label();
+    jit.load64(CCallHelpers::BaseIndex(scratch, counter, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(uint64_t))), kind);
+    jit.store64(kind, CCallHelpers::BaseIndex(value, counter, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(uint64_t))));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), counter).linkTo(copiesWordOfExtraProperties, &jit);
+    jit.load32(Address(plan, OBJECT_OFFSETOF(Plan, moveCountOfExtraProperties)), counter);
+    jit.loadPtr(Address(plan, OBJECT_OFFSETOF(Plan, firstMoveOfExtraProperties)), cursor);
+    CCallHelpers::Label movesExtraProperty = jit.label();
+    jit.load16(Address(cursor, OBJECT_OFFSETOF(Move, from)), scratch);
+    jit.load64(CCallHelpers::BaseIndex(object, scratch, CCallHelpers::TimesOne), kind);
+    jit.load16(Address(cursor, OBJECT_OFFSETOF(Move, to)), scratch);
+    jit.store64(kind, CCallHelpers::BaseIndex(value, scratch, CCallHelpers::TimesOne));
+    jit.addPtr(TrustedImm32(sizeof(Move)), cursor);
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), counter).linkTo(movesExtraProperty, &jit);
+    encodeCell32(jit, value, value);
+    jit.load32(Address(plan, OBJECT_OFFSETOF(Plan, offsetOfExtraProperties)), scratch);
+    jit.store32(value, CCallHelpers::BaseIndex(destination, scratch, CCallHelpers::TimesOne));
+    jit.jump().linkTo(laysCellOverObject, &jit);
+
     isCopy.link(&jit);
     fenceAfterAllocation(jit, scratch);
     jit.addPtr(TrustedImm32(frameSize), sp);

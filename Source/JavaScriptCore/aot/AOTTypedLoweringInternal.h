@@ -1544,6 +1544,9 @@ private:
     Vector<uint32_t> m_singlePredecessors;
     UncheckedKeyHashMap<uint32_t, bool> m_isUnreachableFromHandler;
     Boxed emitGetLength(Boxed base);
+    Boxed emitGetLengthByStub(Boxed base);
+    bool isReadByIndexInLoop(ValueID);
+    std::optional<BitVector> m_valuesReadByIndexInLoops;
     bool isInSloppyCode() const;
     void setByName(Boxed base, StringID, Boxed value);
     void emitPutById(Boxed base, StringID, Boxed value);
@@ -1565,7 +1568,8 @@ private:
         bool hasOriginalStructure { false };
         bool rejectsUntypedObjects { false };
     };
-    std::optional<Type> predictionOf(ValueID, uint16_t without = Primitive::UndefinedOrNull) const;
+    enum class PredictionUse : bool { ChoosesFasterPath, DecidesLayoutAtBirth };
+    std::optional<Type> predictionOf(ValueID, uint16_t without = Primitive::UndefinedOrNull, PredictionUse = PredictionUse::ChoosesFasterPath) const;
     Type predictedTypeOf(ValueID) const;
     Operand speculateOrElse(const Expectation&, LBasicBlock otherwise);
     template<typename InlinePath, typename GenericPath> Operand ifPredictionHolds(const Vector<Expectation, 4>&, Rep, const InlinePath&, const GenericPath&, LBasicBlock sharedSlowPath = nullptr);

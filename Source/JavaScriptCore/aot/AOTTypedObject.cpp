@@ -13657,6 +13657,7 @@ std::unique_ptr<ConversionPlan> State::createConversionPlan(const CoercionPlan& 
         memcpySpan(asMutableByteSpan(made->cell.mutableSpan()).subspan(discriminantField->offset, widthOf(discriminantField->store())), std::span { std::bit_cast<const uint8_t*>(converted) + discriminantField->offset, widthOf(discriminantField->store()) });
     made->firstText = made->texts.span().data();
     made->allocator = allocator;
+    made->allocates = !!allocator;
     made->words = made->cell.span().data();
     made->wordCount = made->cell.size();
     made->firstMove = made->moves.span().data();
@@ -13686,6 +13687,47 @@ void State::cacheCopyConversion(VM& vm, Structure* structure, const RuntimeType&
     }
     if (plan.copyConversion)
         cacheConversion(structure->id().bits(), typeAndReason, *plan.copyConversion);
+}
+
+void State::cacheConversionWithExtraProperties(VM& vm, Structure* structure, const RuntimeType& type, const CoercionPlan& plan, Object* converted, size_t sizeOfCell, uint32_t typeAndReason)
+{
+    plan.inPlaceConversion = nullptr;
+    JSObject* extra = converted->extraProperties();
+    uint32_t offsetOfWord = plan.layout->offsetOfExtraProperties();
+    if (m_counts || data.isCompiledForAudit || !extra || !offsetOfWord || offsetOfWord + sizeOfExtraPropertiesWord > sizeOfCell || structure->outOfLineCapacity() || structure->hasPolyProto() || coercionPlan(structure, type) != &plan)
+        return;
+    Structure* made = converted->structure();
+    Structure* ofExtraProperties = extra->structure();
+    if (made->extraPropertiesStructureID() != ofExtraProperties->id() || ofExtraProperties->isDictionary() || ofExtraProperties->outOfLineCapacity() || extra->butterfly())
+        return;
+    size_t sizeOfExtraProperties = WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(ofExtraProperties->inlineCapacity()));
+    if (sizeOfExtraProperties > ConversionPlan::maxCellSize || sizeOfExtraProperties != extra->cellSize())
+        return;
+    void* allocator = vm.cellSpace().allocatorFor(sizeOfExtraProperties, AllocatorForMode::EnsureAllocator).localAllocator();
+    auto planForStub = allocator ? createConversionPlan(plan, sizeOfCell, static_cast<uint64_t>(made->typeInfoBlob() & 0xffffff) << 32 | made->id().bits(), nullptr) : nullptr;
+    if (!planForStub)
+        return;
+    ConversionPlan& forStub = *planForStub;
+    for (auto& [offset, name] : plan.extraProperties) {
+        PropertyOffset to = ofExtraProperties->get(vm, name);
+        if (!isInlineOffset(offset) || !isValidOffset(to) || !isInlineOffset(to))
+            return;
+        forStub.movesOfExtraProperties.append(ConversionMove { static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue)), static_cast<uint16_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(to) * sizeof(EncodedJSValue)), ConversionMove::Kind::Value, 0, 0, 0, 0, 0 });
+    }
+    *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(forStub.cell.mutableSpan().data()) + offsetOfOrderWord) |= orderWordHasExtraProperties;
+    forStub.cellOfExtraProperties.fill(0, sizeOfExtraProperties / sizeof(uint64_t));
+    forStub.cellOfExtraProperties[0] = static_cast<uint64_t>(ofExtraProperties->typeInfoBlob()) << 32 | ofExtraProperties->id().bits();
+    forStub.allocatorOfExtraProperties = allocator;
+    forStub.allocates = 1;
+    forStub.wordsOfExtraProperties = forStub.cellOfExtraProperties.span().data();
+    forStub.wordCountOfExtraProperties = forStub.cellOfExtraProperties.size();
+    forStub.firstMoveOfExtraProperties = forStub.movesOfExtraProperties.span().data();
+    forStub.moveCountOfExtraProperties = forStub.movesOfExtraProperties.size();
+    forStub.offsetOfExtraProperties = offsetOfWord;
+    plan.inPlaceConversion = WTF::move(planForStub);
+    if (typeAndReason)
+        cacheConversion(structure->id().bits(), typeAndReason, *plan.inPlaceConversion);
+    cacheConversion(structure->id().bits(), conversionKeyOfChild(type), *plan.inPlaceConversion);
 }
 
 void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, const CoercionPlan& root, const CoercionPlan& plan, uint64_t discriminant, Object* converted, size_t sizeOfCell, uint32_t typeAndReason)
@@ -14442,7 +14484,9 @@ Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& 
             return nullptr;
     }
     if (Object* made = tryConvertOrCopyByPlan(vm, object, *plan, mayConvertInPlace)) {
-        if (mayBeQuick && JSValue(made) == JSValue(object))
+        if (mayBeQuick && JSValue(made) == JSValue(object) && !plan->extraProperties.isEmpty() && root == plan)
+            cacheConversionWithExtraProperties(vm, structureBefore, type, *plan, made, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())), typeAndReason);
+        else if (mayBeQuick && JSValue(made) == JSValue(object))
             cacheQuickConversion(structureBefore, type, *root, *plan, discriminant, made, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structureBefore->inlineCapacity())), typeAndReason);
         else if (typeAndReason && !mayConvertInPlace)
             cacheCopyConversion(vm, structureBefore, type, *plan, made->structure(), typeAndReason);
@@ -14663,6 +14707,10 @@ void State::clearPropertyListCache()
         return;
     for (auto& listing : *m_propertyListCache)
         listing = { };
+    for (auto& kept : std::span { instance.typedKeyLists, Instance::numberOfTypedKeyLists }) {
+        if (kept.orderWord & orderWordHasExtraProperties)
+            kept = { };
+    }
 }
 
 void State::clearLateFieldCreations()

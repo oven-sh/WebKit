@@ -5270,21 +5270,8 @@ public:
                     WTF::atomicExchangeAdd(&constantUseCount[value.string().index()], 1u, std::memory_order_relaxed);
             }
         });
-        Vector<uint8_t> tableIsNamed(FillWith { }, m_program.tablesInImage.size(), static_cast<uint8_t>(0));
-        forEachIndexInParallel(tableIsNamed.isEmpty() ? 0 : m_program.functions.size(), [&](unsigned i) {
-            auto& function = m_program.functions[i];
-            for (auto& block : function.blocks) {
-                for (ValueID id : block.values) {
-                    if (uint32_t table = function.at(id).tableInImage(); table != Format::none)
-                        WTF::atomicStore(&tableIsNamed[table], static_cast<uint8_t>(1), std::memory_order_relaxed);
-                }
-            }
-        });
         auto forEachStringInTables = [&](const auto& functor) {
-            for (unsigned i = 0; i < tableIsNamed.size(); ++i) {
-                if (!tableIsNamed[i])
-                    continue;
-                auto& table = m_program.tablesInImage[i];
+            for (auto& table : m_program.tablesInImage) {
                 for (StringID key : table.keys)
                     functor(key);
                 for (uint64_t value : table.values) {
@@ -5636,7 +5623,7 @@ public:
             for (auto& value : m_program.functions[i].values) {
                 if (stringNamingOpcodes.contains(value.opcode))
                     functionSources[i].append(value.immediates[0]);
-                if (value.tableInImage() != Format::none && tableIsNamed[value.tableInImage()]) {
+                if (value.tableInImage() != Format::none) {
                     for (StringID key : m_program.tablesInImage[value.tableInImage()].keys)
                         functionSources[i].append(key.index());
                 }
@@ -6096,12 +6083,7 @@ public:
             arrayLiterals.append({ append(elements), static_cast<uint32_t>(elements.size()) });
         header.arrayLiteralsOffset = append(arrayLiterals);
         Vector<uint32_t> tablesInImage;
-        for (unsigned i = 0; i < tableIsNamed.size(); ++i) {
-            if (!tableIsNamed[i]) {
-                tablesInImage.append(0);
-                continue;
-            }
-            auto& table = m_program.tablesInImage[i];
+        for (auto& table : m_program.tablesInImage) {
             auto keys = table.keys.map([&](StringID key) {
                 return std::pair { key.index(), m_program.string(key) };
             });

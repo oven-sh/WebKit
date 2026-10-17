@@ -494,7 +494,57 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     return patchpoint;
 }
 
+bool Lowering::isReadByIndexInLoop(ValueID object)
+{
+    if (!m_valuesReadByIndexInLoops) {
+        m_valuesReadByIndexInLoops.emplace();
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            if (!m_loopBlocks.get(b))
+                continue;
+            for (ValueID id : m_function.blocks[b].values) {
+                auto& value = m_function.at(id);
+                if (value.opcode == Opcode::GetByVal && typeOf(value.child(1)).isInteger())
+                    m_valuesReadByIndexInLoops->set(withoutUpcasts(value.child(0)).index());
+            }
+        }
+    }
+    return m_valuesReadByIndexInLoops->get(withoutUpcasts(object).index());
+}
+
 Boxed Lowering::emitGetLength(Boxed base)
+{
+    bool isLengthOfIndexedValue = m_isInLoop && m_out.m_block->frequency() && m_currentIndexInBlock < m_currentBlock->values.size();
+    if (isLengthOfIndexedValue) {
+        auto& read = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
+        isLengthOfIndexedValue = read.opcode == Opcode::GetById && read.string() == m_length && isReadByIndexInLoop(read.child(0));
+    }
+    if (!isLengthOfIndexedValue || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return emitGetLengthByStub(base);
+    LBasicBlock testsType = m_out.newBlock();
+    LBasicBlock isArray = m_out.newBlock();
+    LBasicBlock fits = m_out.newBlock();
+    LBasicBlock general = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isCell(base).value(), usually(testsType), rarely(general));
+    m_out.appendTo(testsType);
+    CellPointer array = asCell(base);
+    m_out.branch(isPlainArray(array).value(), usually(isArray), rarely(general));
+    m_out.appendTo(isArray);
+    Integer length = arrayLength(array);
+    m_out.branch(below(length, integer(1ll << 31)).value(), usually(fits), rarely(general));
+    m_out.appendTo(fits);
+    ValueFromBlock fast = m_out.anchor(boxInt32(low32(length)).value());
+    m_out.jump(continuation);
+    ValueFromBlock slow;
+    inColdBlock(general, [&] {
+        slow = m_out.anchor(emitGetLengthByStub(base).value());
+        m_out.jump(continuation);
+    });
+    m_out.appendTo(continuation);
+    return Boxed(m_out.phi(Int64, fast, slow));
+}
+
+Boxed Lowering::emitGetLengthByStub(Boxed base)
 {
     if (auto number = tableIndexOfName(m_length)) {
         setNameOfLength(*number);
@@ -1296,9 +1346,9 @@ Word32 Lowering::emitGenericCompare(Stub stub, Boxed a, Boxed b, OperationEffect
     return Word32(callICStub(stub, Int32, { { a.value(), firstStubOperandGPR }, { b.value(), GPRInfo::argumentGPR1 } }, std::nullopt, effects));
 }
 
-std::optional<Type> Lowering::predictionOf(ValueID id, uint16_t without) const
+std::optional<Type> Lowering::predictionOf(ValueID id, uint16_t without, PredictionUse use) const
 {
-    if (isCompact())
+    if (isCompact() && use == PredictionUse::ChoosesFasterPath)
         return std::nullopt;
     for (auto& assumption : m_assumptions) {
         if (assumption.value == id)

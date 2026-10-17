@@ -28,8 +28,6 @@ inline SetKeyAt
 inline WeakMapGet
 inline WeakMapHas
 inline WeakSetHas
-inline ConstantTableHas
-inline ConstantTableGet
 
 runtime MapDelete : RuntimeState EncodedJSValue (JSCell* map, EncodedJSValue key)
 runtime SetDelete : RuntimeState EncodedJSValue (JSCell* set, EncodedJSValue key)
@@ -43,8 +41,6 @@ runtime MapKeyAt : Nothing EncodedJSValue (JSCell* map, uint32_t entry) noexcept
 runtime MapValueAt : Nothing EncodedJSValue (JSCell* map, uint32_t entry) noexcept
 runtime SetNext : Nothing size_t (JSCell* set, EncodedJSValue table, uint32_t entry) noexcept
 runtime SetKeyAt : Nothing EncodedJSValue (JSCell* set, uint32_t entry) noexcept
-runtime ConstantTableHas : RuntimeState EncodedJSValue (uint32_t table, EncodedJSValue key) noexcept
-runtime ConstantTableGet : RuntimeState EncodedJSValue (uint32_t table, EncodedJSValue key) noexcept
 
 intrinsic CollectionTable (any/P) -> anything ; ReadsRuntimeState WritesRuntimeState ; Inline(CollectionTable)
 intrinsic MapNext (any/-, any/-, any/-) -> int[-1,INT32_MAX] ; ReadsRuntimeState ; Inline(MapNext)
@@ -52,8 +48,6 @@ intrinsic MapKeyAt (any/P, any/-) -> anything ; ReadsRuntimeState ; Inline(MapKe
 intrinsic MapValueAt (any/P, any/-) -> anything ; ReadsRuntimeState ; Inline(MapValueAt)
 intrinsic SetNext (any/-, any/-, any/-) -> int[-1,INT32_MAX] ; ReadsRuntimeState ; Inline(SetNext)
 intrinsic SetKeyAt (any/P, any/-) -> anything ; ReadsRuntimeState ; Inline(SetKeyAt)
-operation ConstantTableHas (any/-) -> boolean ; ReadsRuntimeState ; Inline(ConstantTableHas)
-operation ConstantTableGet (any/-) -> anything ; ReadsRuntimeState ; Inline(ConstantTableGet)
 
 construct Map () -> new Map/N ; Allocates ; Inline(MapNew)
 construct Map (any/GPD) -> new Map/N ; MayThrow Allocates ReadsArguments ; HostCall

@@ -54,13 +54,23 @@ static NEVER_INLINE JSValue callInEngine(Instance* instance, FunctionInEngine wh
     return callEngineBuiltin(instance, cells[index][1], typedBuiltinCell(instance, cells[index][0]), list);
 }
 
-static void cacheKeyList(Instance* instance, VM& vm, JSObject* object)
+static void cacheKeyList(Instance* instance, VM& vm, JSObject* object, OwnKeys keys)
 {
     if (!object->structure()->compiledLayout())
         return;
     auto* ofProgram = uncheckedDowncast<Typed::Object>(object);
     if (&ofProgram->state() != instance->typed)
         return;
+    if (ofProgram->hasExtraProperties()) {
+        if (keys != OwnKeys::ObjectKeys || instance->typed->isCounting() || instance->typed->data.isCompiledForAudit)
+            return;
+        ofProgram->specializeStructureForExtraProperties(vm);
+        JSCellButterfly* list = ofProgram->structure()->extraPropertiesStructureID() && ofProgram->layout().offsetOfExtraProperties() ? ofProgram->keysWithExtraProperties(vm) : nullptr;
+        uint32_t structureWord = ofProgram->structureID().bits() >> 1;
+        if (list)
+            instance->typedKeyLists[Instance::indexOfTypedKeyList(structureWord, ofProgram->orderWord())] = { ofProgram->orderWord(), structureWord, list };
+        return;
+    }
     if (JSCellButterfly* list = ofProgram->keys(vm))
         instance->typedKeyLists[Instance::indexOfTypedKeyList(Typed::shapeWordOf(ofProgram->shape()), ofProgram->orderWord())] = { ofProgram->orderWord(), Typed::shapeWordOf(ofProgram->shape()), list };
 }
@@ -85,7 +95,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedOwnPropertyKeys, JSCell*, (Instance* i
     if (object->structure()->isDictionary()) [[unlikely]]
         flattenOnce(vm, object);
     if (keys != OwnKeys::ObjectGetOwnPropertySymbols)
-        cacheKeyList(instance, vm, object);
+        cacheKeyList(instance, vm, object, keys);
     switch (keys) {
     case OwnKeys::ObjectKeys:
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude));
@@ -927,12 +937,12 @@ CellPointer Lowering::newCopyOnWriteArray(LValue list, LBasicBlock slowPath)
     return array;
 }
 
-LValue Lowering::layoutKeyListOrElse(CellPointer object, LBasicBlock otherwise)
+LValue Lowering::layoutKeyListOrElse(CellPointer object, LBasicBlock otherwise, KeyListIsKept how)
 {
     static_assert(sizeof(Instance::TypedKeyList) == 16);
     static_assert(hasOneBitSet(Instance::numberOfTypedKeyLists));
     static_assert(Instance::indexOfTypedKeyList(3, Instance::numberOfTypedKeyLists + 4) == 7);
-    Word32 shapeWord = shapeWordOf(object);
+    Word32 shapeWord = how == KeyListIsKept::ByShape ? shapeWordOf(object) : Word32(m_out.lShr(loadField<Word32>(object, m_heaps.JSCell_structureID).value(), m_out.constInt32(1)));
     Word32 objectOrderWord = orderWordOf(object);
     LValue entry = m_out.add(fixedPointer(Instance::offsetOfTypedKeyLists()), m_out.shl(zeroExtended(bitAnd(Word32(m_out.add(shapeWord.value(), objectOrderWord.value())), word32(Instance::numberOfTypedKeyLists - 1))).value(), m_out.constInt32(4)));
     orElse(equal(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, shapeWord)))), shapeWord), otherwise);
@@ -985,7 +995,17 @@ CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument
             m_out.jump(continuation);
             return;
         }
-        lists.append(m_out.anchor(layoutKeyListOrElse(object, slowPath)));
+        if (keys != OwnKeys::ObjectKeys) {
+            lists.append(m_out.anchor(layoutKeyListOrElse(object, slowPath)));
+            m_out.jump(haveList);
+            return;
+        }
+        LBasicBlock isNotKeptByShape = newUnlikelyBlock();
+        lists.append(m_out.anchor(layoutKeyListOrElse(object, isNotKeptByShape)));
+        m_out.jump(haveList);
+        m_out.appendTo(isNotKeptByShape);
+        orElse(hasBits(orderWordOf(object), orderWordHasExtraProperties), slowPath);
+        lists.append(m_out.anchor(layoutKeyListOrElse(object, slowPath, KeyListIsKept::ByStructure)));
         m_out.jump(haveList);
     };
     bool mayBeProgramObject = type.anyObject || !type.objectLayouts.isEmpty();

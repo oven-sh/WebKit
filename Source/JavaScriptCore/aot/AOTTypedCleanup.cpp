@@ -4960,7 +4960,7 @@ private:
             return !mayThrow(m_program, m_function, value);
         case Opcode::Operation:
         case Opcode::CallBuiltin:
-            return languageOperationOf(m_program, value) == LanguageOperation::CreateArguments || (value.tableInImage() != Format::none && Builtins::singleton().at(value.builtin()).kind == BuiltinKind::Constructor);
+            return languageOperationOf(m_program, value) == LanguageOperation::CreateArguments;
         case Opcode::Undefined:
         case Opcode::Null:
         case Opcode::Boolean:
@@ -5041,6 +5041,8 @@ private:
             switch (m_function.at(object).opcode) {
             case Opcode::NewObjectWithShape:
                 if (value.opcode == Opcode::PutById && !mayStoreDirectlyToObject(object, value))
+                    return std::nullopt;
+                if (replacesPinnedFunction(m_program, m_function, m_function.at(object).layout(), value))
                     return std::nullopt;
                 break;
             case Opcode::NewObject:

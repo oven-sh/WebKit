@@ -875,6 +875,7 @@ struct Layout {
     bool isRelaxedForLogging { false };
     bool acceptsOnlyOtherLayouts { false };
     bool isTypedOnlySupertype { false };
+    bool hasFieldPinnedToFunction { false };
     bool checksUntypedObjects() const { return isRelaxedForLogging || acceptsOnlyOtherLayouts; }
     bool acceptsUncheckedObjects() const { return acceptsUntypedObjects && (!acceptsOnlyOtherLayouts || isRelaxedForLogging); }
     TypeID type;

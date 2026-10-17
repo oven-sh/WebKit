@@ -43,6 +43,30 @@ FunctionID functionPinnedToField(const Program& program, const Type& receiver, S
     return callee;
 }
 
+bool keepsFunctionPinned(const Program& program, const Function& function, const Field& field, ValueID object, ValueID stored)
+{
+    auto withoutCasts = [&](ValueID id) {
+        while (function.at(id).opcode == Opcode::Cast)
+            id = function.at(id).child(0);
+        return id;
+    };
+    auto& closure = function.at(withoutCasts(stored));
+    if (closure.opcode != Opcode::NewClosure && closure.opcode != Opcode::NewClosureOnce && closure.opcode != Opcode::FunctionReference)
+        return false;
+    if (closure.function() != field.singleFunction)
+        return false;
+    return !program.at(field.singleFunction).closuresCaptureOnlyTheirHolder || (closure.arguments.size() == 1 && withoutCasts(closure.arguments[0]) == withoutCasts(object));
+}
+
+bool replacesPinnedFunction(const Program& program, const Function& function, LayoutID created, const Value& store)
+{
+    auto& layout = program.at(created);
+    if (!layout.hasFieldPinnedToFunction)
+        return false;
+    auto field = layout.fieldNamed(store.opcode == Opcode::PutField ? program.at(store.layout()).fields[store.field()].name : store.string());
+    return field && layout.fields[*field].isPinnedToFunction && !keepsFunctionPinned(program, function, layout.fields[*field], store.child(0), store.child(1));
+}
+
 namespace {
 
 static bool isAsyncFunctionRamp(const Function& function)

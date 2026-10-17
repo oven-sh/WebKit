@@ -2323,7 +2323,7 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
             auto hasRecordLayouts = [](const Type& ofCopy) {
                 return !ofCopy.anyObject && !ofCopy.objectLayouts.isEmpty();
             };
-            auto expected = predictionOf(id);
+            auto expected = predictionOf(id, Primitive::UndefinedOrNull, PredictionUse::DecidesLayoutAtBirth);
             bool keepsLayout = hasRecordLayouts(type) || (expected && hasRecordLayouts(*expected));
             bool takesStores = !keepsLayout && !m_isLoweringMergeGroup;
             return ensure(countPlainAllocation(PlainAllocationKind::Clone, id, cloneObject(value.arguments[0], keepsLayout, takesStores ? storesDirectlyBehindClone(id) : CloneDefinitions { 0, { } }, cloneCapacityOf(id))), m_program.at(m_program.types.object), type);
@@ -2496,7 +2496,7 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
                 return placeholder(value.rep);
             }
         }
-        auto expected = predictionOf(id);
+        auto expected = predictionOf(id, Primitive::UndefinedOrNull, PredictionUse::DecidesLayoutAtBirth);
         LayoutID supertype = expected ? expected->singleLayout() : LayoutID();
         if (supertype && m_program.at(supertype).kind == LayoutKind::Record && m_program.at(supertype).shape && !Options::auditAOTTypedAssertions()) {
             auto& inBlock = m_currentBlock->values;

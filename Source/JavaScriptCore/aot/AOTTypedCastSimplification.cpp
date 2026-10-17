@@ -763,8 +763,17 @@ private:
                 break;
         }
 
-        LayoutID target;
-        BitVector blocksWithCast(m_function.blocks.size());
+        Vector<std::pair<LayoutID, BitVector>, 4> askedFor;
+        auto noteAsked = [&](LayoutID asked, unsigned block) {
+            for (auto& [layout, blocks] : askedFor) {
+                if (layout == asked) {
+                    blocks.set(block);
+                    return;
+                }
+            }
+            askedFor.append({ asked, BitVector(m_function.blocks.size()) });
+            askedFor.last().second.set(block);
+        };
         Vector<ValueID, 8> storesIntoObject;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             auto& block = m_function.blocks[b];
@@ -774,28 +783,29 @@ private:
                 value.forEachChild([&](ValueID child) {
                     usesValue |= isSameObject.get(child.index());
                 });
-                if (!usesValue || isSameObject.get(id.index()))
+                if (!usesValue)
                     continue;
-                if (value.opcode == Opcode::Cast && (value.castReason() == CastReason::As || value.castReason() == CastReason::Coerce)) {
-                    LayoutID asked = targetOf(value);
-                    if (!asked || (target && asked != target))
-                        return false;
-                    target = asked;
-                    blocksWithCast.set(b);
+                if (value.opcode == Opcode::Cast) {
+                    if (LayoutID asked = targetOf(value); asked && asked != created && std::ranges::binary_search(from.specializations, asked))
+                        noteAsked(asked, b);
                     continue;
                 }
                 if ((value.opcode != Opcode::PutById && value.opcode != Opcode::PutField) || !isSameObject.get(value.child(0).index()) || isSameObject.get(value.child(1).index()))
-                    return false;
+                    continue;
                 storesIntoObject.append(id);
             }
-            if (block.terminator.value && isSameObject.get(block.terminator.value.index()))
-                return false;
         }
-        if (!target || !std::ranges::binary_search(from.specializations, target) || !m_program.isUpcast(target, created))
+        LayoutID target;
+        for (auto& [asked, blocks] : askedFor) {
+            auto& candidate = m_program.at(asked);
+            if (!m_program.isUpcast(asked, created) || candidate.kind != LayoutKind::Record || candidate.isAbstract || !allReturnsPassThrough(allocationSite, blocks))
+                continue;
+            target = asked;
+            break;
+        }
+        if (!target)
             return false;
         auto& to = m_program.at(target);
-        if (to.kind != LayoutKind::Record || to.isAbstract || !allReturnsPassThrough(allocationSite, blocksWithCast))
-            return false;
 
         unsigned numberOfInitialStores = 0;
         unsigned initializedFieldCount = 0;

@@ -1991,18 +1991,8 @@ void Lowering::guardPinnedFields(LayoutID holder, ValueID object, const Field& f
 {
     if (!field.slot || !m_program.at(field.slot).hasPinnedFields)
         return;
-    if (field.isPinnedToFunction) {
-        auto withoutCasts = [&](ValueID id) {
-            while (m_function.at(id).opcode == Opcode::Cast)
-                id = m_function.at(id).child(0);
-            return id;
-        };
-        auto& closure = m_function.at(withoutCasts(stored));
-        bool isFreshClosure = (closure.opcode == Opcode::NewClosure || closure.opcode == Opcode::NewClosureOnce || closure.opcode == Opcode::FunctionReference) && closure.function() == field.singleFunction;
-        bool mustCaptureHolder = isFreshClosure && m_program.at(field.singleFunction).closuresCaptureOnlyTheirHolder;
-        if (isFreshClosure && (!mustCaptureHolder || (closure.arguments.size() == 1 && withoutCasts(closure.arguments[0]) == withoutCasts(object))))
-            return;
-    }
+    if (field.isPinnedToFunction && keepsFunctionPinned(m_program, m_function, field, object, stored))
+        return;
     if (ValueID constant = m_program.constantOf(m_function, stored))
         stored = constant;
     bool preservesFields = holder && m_function.at(stored).opcode == Opcode::String;
@@ -4523,7 +4513,7 @@ Lowering::CloneCapacity Lowering::cloneCapacityOf(ValueID copy)
 {
     CloneCapacity result;
     result.copy = copy;
-    auto expected = predictionOf(copy);
+    auto expected = predictionOf(copy, Primitive::UndefinedOrNull, PredictionUse::DecidesLayoutAtBirth);
     result.supertype = expected ? expected->singleLayout() : LayoutID();
     if (!result.supertype)
         return result;
@@ -5129,7 +5119,7 @@ CellPointer Lowering::cloneObject(ValueID sourceID, bool keepsLayout, const Clon
     };
     auto& type = typeOf(sourceID);
     Vector<LayoutID, 2> layouts;
-    if (keepsLayout && !Options::auditAOTTypedAssertions() && !Options::countAOTTypedAllocations())
+    if (keepsLayout && !isCompact() && !Options::auditAOTTypedAssertions() && !Options::countAOTTypedAllocations())
         layouts = inlineClonedLayouts(type);
     layouts.removeAllMatching([&](LayoutID id) {
         return room.subtypesWithoutCapacity.contains(id);

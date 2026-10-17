@@ -160,7 +160,7 @@ public:
                     licence = 'r';
                 }
                 unsigned growsBy = sizeOf(m_program.at(callee), isBuiltin || isMoved ? UINT_MAX : limit + 1);
-                if (growsBy <= defaultSizeLimit)
+                if (growsBy <= defaultSizeLimit && !isAllocatedAsCastType)
                     licence = depthOf(m_caller.at(call)) ? 'c' : 's';
                 if (!isTooDeep && !isBuiltin && !isMoved && growsBy > limit) {
                     unsigned left = sizeAtCall(m_program.at(callee), m_caller.at(call), smallSizeWithExtraBenefit + 1);
@@ -190,7 +190,9 @@ public:
                     continue;
                 }
                 unsigned first = m_caller.blocks.size();
+                m_isInliningMaker = given == inlineReasonForLetter('b');
                 copyIn(block, k, callee, head);
+                m_isInliningMaker = false;
                 didChangeCaller();
                 m_caller.inlineFrames[m_lastInlineFrame].licence = given;
                 if (isMoved)
@@ -1007,9 +1009,13 @@ private:
             });
             if (!uses)
                 continue;
+            if ((user.opcode == Opcode::PutById || user.opcode == Opcode::PutField) && names.contains(user.child(0)) && !names.contains(user.child(1)))
+                continue;
             if (user.opcode != Opcode::Cast)
                 return false;
             if (user.castReason() == CastReason::Upcast) {
+                if (LayoutID view = m_program.at(user.type).singleLayout(); view && std::ranges::binary_search(m_program.at(created).specializations, view))
+                    return returnsOwnAllocation(callee);
                 names.append(values[i]);
                 continue;
             }
@@ -1343,7 +1349,7 @@ private:
         bool isInInnermostBuiltins = counted == Copies::OnlyNestingLevels;
         for (uint32_t frame = innermostFrame; frame; frame = m_caller.inlineFrames[frame].parent) {
             isInInnermostBuiltins = isInInnermostBuiltins && m_program.at(m_caller.inlineFrames[frame].callee).has(Format::FunctionIsBuiltin);
-            frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker && !m_program.at(m_caller.inlineFrames[frame].callee).testsPinnedFunction && !isInInnermostBuiltins;
+            frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker && !m_program.at(m_caller.inlineFrames[frame].callee).testsPinnedFunction && !isInInnermostBuiltins && m_caller.inlineFrames[frame].licence != inlineReasonForLetter('b');
         }
         if (frames && m_caller.isGenericEntrypoint())
             --frames;
@@ -1894,7 +1900,7 @@ private:
         Value restCall(m_caller.at(call));
         Arguments arguments = m_caller.at(call).arguments;
         uint32_t position = m_caller.at(call).position;
-        uint32_t depth = m_isInliningOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::OnlyNestingLevels) + (!callee.has(Format::FunctionIsBuiltin) && !callee.testsPinnedFunction);
+        uint32_t depth = m_isInliningOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::OnlyNestingLevels) + (!callee.has(Format::FunctionIsBuiltin) && !callee.testsPinnedFunction && !m_isInliningMaker);
         uint32_t outerFrame = m_caller.at(call).inlineFrame;
         if (m_caller.inlineFrames.isEmpty())
             m_caller.inlineFrames.append(InlineFrame { });
@@ -2194,6 +2200,7 @@ private:
     BitVector m_isInCallerLoop;
     bool m_currentBlockIsInCallerLoop { false };
     bool m_isInliningOwnBody { false };
+    bool m_isInliningMaker { false };
     unsigned m_queriesSinceCallerChanged { 0 };
     Vector<uint32_t> m_firstUser;
     Vector<ValueID> m_users;
