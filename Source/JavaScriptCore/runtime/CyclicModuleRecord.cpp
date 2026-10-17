@@ -733,6 +733,30 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
         // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
         for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules()) {
             auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
+#if USE(BUN_JSC_ADDITIONS)
+            // The specification has no job that runs while InnerModuleEvaluation walks a graph. A host can run one
+            // from a module body (a microtask checkpoint, a synchronous require() of an ES module). Such a job can
+            // finish `record` while m, which imports it, is still on the stack of the walk: m is EVALUATING, and it
+            // has no cycle root yet.
+            if (m->status() == CyclicModuleRecord::Status::Evaluating) {
+                // A job rejected another dependency of m before. The walk throws that error (asyncExecutionRejected).
+                if (m->evaluationError())
+                    continue;
+                int remaining = m->pendingAsyncDependencies().value() - 1;
+                m->setPendingAsyncDependencies(remaining);
+                // m has not reached step 12 of its InnerModuleEvaluation, which reads the count.
+                if (m->asyncEvaluationOrder().isUnset())
+                    continue;
+                // m is past that step and waits on the stack for a cycle that is not closed. Nothing in the walk reads
+                // its count again, so it runs as any other parent whose last dependency finished.
+                if (!remaining) {
+                    execList.append(m);
+                    if (!m->hasTLA())
+                        worklist.append(m);
+                }
+                continue;
+            }
+#endif
             // 1.a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
             // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
             ASSERT_IMPLIES(!m->cycleRoot(), m->evaluationError());
@@ -788,6 +812,21 @@ void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JS
             // 1.b. Return UNUSED.
             continue;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // A job that ran inside a walk (see gatherAvailableAncestors) rejected a module that is on the stack of that
+        // walk, or one that such a module waits for. The module keeps its status and remembers the error: the walk
+        // throws it where it next looks at the module, and Evaluate() then gives it to every module on the stack.
+        if (module->status() == CyclicModuleRecord::Status::Evaluating) {
+            if (module->evaluationError())
+                continue;
+            module->setEvaluationError(vm, error);
+            if (module->asyncEvaluationOrder().hasOrder())
+                module->setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
+            for (const WriteBarrier<AbstractModuleRecord>& m : module->asyncParentModules() | std::views::reverse)
+                stack.append(uncheckedDowncast<CyclicModuleRecord>(m.get()));
+            continue;
+        }
+#endif
         // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
         ASSERT(module->status() == CyclicModuleRecord::Status::EvaluatingAsync);
         // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
@@ -831,8 +870,17 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
         // 1.b. Return UNUSED.
         RELEASE_AND_RETURN(scope, void());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // A member of a cycle that is not closed can finish its async body in a job that runs inside the walk (see
+    // gatherAvailableAncestors). It stays EVALUATING: the walk sets its status when it pops the cycle.
+    bool isOnStack = status() == CyclicModuleRecord::Status::Evaluating;
+    if (isOnStack && evaluationError())
+        RELEASE_AND_RETURN(scope, void());
+#else
+    constexpr bool isOnStack = false;
+#endif
     // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
-    ASSERT(status() == CyclicModuleRecord::Status::EvaluatingAsync);
+    ASSERT(isOnStack || status() == CyclicModuleRecord::Status::EvaluatingAsync);
     // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
     ASSERT(asyncEvaluationOrder().hasOrder());
     // 4. Assert: module.[[EvaluationError]] is EMPTY.
@@ -840,7 +888,8 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     // 5. Set module.[[AsyncEvaluationOrder]] to DONE.
     setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
     // 6. Set module.[[Status]] to EVALUATED.
-    setStatus(CyclicModuleRecord::Status::Evaluated);
+    if (!isOnStack)
+        setStatus(CyclicModuleRecord::Status::Evaluated);
     // 7. If module.[[TopLevelCapability]] is not EMPTY, then
     if (auto* capability = topLevelCapability()) {
         // 7.a. Assert: module.[[CycleRoot]] and module are the same Module Record.
@@ -867,6 +916,14 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     });
     // 12. For each Cyclic Module Record m of sortedExecList, do
     for (CyclicModuleRecord* m : execList) {
+#if USE(BUN_JSC_ADDITIONS)
+        // On the stack of the walk that this job runs inside (see gatherAvailableAncestors).
+        bool mIsOnStack = m->status() == CyclicModuleRecord::Status::Evaluating;
+        if (mIsOnStack && m->evaluationError())
+            continue;
+#else
+        constexpr bool mIsOnStack = false;
+#endif
         // 12.a. If m.[[Status]] is EVALUATED, then
         if (m->status() == CyclicModuleRecord::Status::Evaluated) {
             // 12.a.i. Assert: m.[[EvaluationError]] is not EMPTY.
@@ -895,7 +952,8 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
                 // 12.c.iii.1. Set m.[[AsyncEvaluationOrder]] to DONE.
                 m->setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
                 // 12.c.iii.2. Set m.[[Status]] to EVALUATED.
-                m->setStatus(CyclicModuleRecord::Status::Evaluated);
+                if (!mIsOnStack)
+                    m->setStatus(CyclicModuleRecord::Status::Evaluated);
                 // 12.c.iii.3. If m.[[TopLevelCapability]] is not EMPTY, then
                 if (auto* capability = m->topLevelCapability()) {
                     // 12.c.iii.3.a. Assert: m.[[CycleRoot]] and m are the same Module Record.
