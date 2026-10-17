@@ -57,6 +57,22 @@ public:
         static constexpr ptrdiff_t offsetOfJSString() { return OBJECT_OFFSETOF(CacheEntryWithJSString, jsString); }
     };
 
+    // addJSString(VM&, int) admits a value into a slot on its second sighting. A value
+    // seen once (a counter, an index that never comes back) gets a fresh JSString and
+    // leaves the resident entry in place. seenKey fills the padding after key, so the
+    // layout the JIT probes (key first, jsString last, 24 bytes) is unchanged. Slots
+    // start at seenKey 0, and 0 never reaches this cache: 0..cacheSize-1 use m_smallIntCache.
+    struct IntCacheEntry {
+        int key;
+        int seenKey;
+        String value;
+        JSString* jsString { nullptr };
+
+        static constexpr ptrdiff_t offsetOfKey() { return OBJECT_OFFSETOF(IntCacheEntry, key); }
+        static constexpr ptrdiff_t offsetOfJSString() { return OBJECT_OFFSETOF(IntCacheEntry, jsString); }
+    };
+    static_assert(sizeof(IntCacheEntry) == sizeof(CacheEntryWithJSString<int>));
+
     struct StringWithJSString {
         String value;
         JSString* jsString { nullptr };
@@ -139,7 +155,7 @@ public:
     }
 
     const StringWithJSString* smallIntCache() LIFETIME_BOUND { return m_smallIntCache.data(); }
-    const CacheEntryWithJSString<int>* intCache() LIFETIME_BOUND { return m_intCache.data(); }
+    const IntCacheEntry* intCache() LIFETIME_BOUND { return m_intCache.data(); }
 
     void initializeSmallIntCache(VM&);
 
@@ -151,7 +167,7 @@ private:
         uint32_t hash = static_cast<uint32_t>(bits) ^ static_cast<uint32_t>(bits >> 32);
         return m_doubleCache->m_doubleCache[hash & (doubleCacheSize - 1)];
     }
-    CacheEntryWithJSString<int>& lookup(int i) { return m_intCache[WTF::IntHash<int>::hash(i) & (cacheSize - 1)]; }
+    IntCacheEntry& lookup(int i) { return m_intCache[WTF::IntHash<int>::hash(i) & (cacheSize - 1)]; }
     CacheEntry<unsigned>& lookup(unsigned i) { return m_unsignedCache[WTF::IntHash<unsigned>::hash(i) & (cacheSize - 1)]; }
     ALWAYS_INLINE StringWithJSString& lookupSmallString(unsigned i)
     {
@@ -164,7 +180,7 @@ private:
     JS_EXPORT_PRIVATE void initializeDoubleCache();
 
     std::array<StringWithJSString, cacheSize> m_smallIntCache { };
-    std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };
+    std::array<IntCacheEntry, cacheSize> m_intCache { };
     std::array<CacheEntry<unsigned>, cacheSize> m_unsignedCache { };
     std::unique_ptr<DoubleCache> m_doubleCache;
 };

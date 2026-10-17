@@ -503,13 +503,25 @@ JSString* NumericStrings::addJSString(VM& vm, int i)
         return entry.jsString;
     }
     auto& entry = lookup(i);
-    if (i != entry.key || entry.value.isNull()) {
-        entry.key = i;
-        entry.value = String::number(i);
-    } else {
+    if (i == entry.key && !entry.value.isNull()) {
         if (entry.jsString)
             return entry.jsString;
+        entry.jsString = jsNontrivialString(vm, entry.value);
+        return entry.jsString;
     }
+
+    unsigned length = lengthOfIntegerAsString(i);
+    std::span<Latin1Character> digits;
+    String string = String::createUninitialized(length, digits);
+    writeIntegerToBuffer(i, digits);
+
+    if (entry.seenKey != i) {
+        entry.seenKey = i;
+        return jsNontrivialString(vm, std::move(string));
+    }
+
+    entry.key = i;
+    entry.value = std::move(string);
     entry.jsString = jsNontrivialString(vm, entry.value);
     return entry.jsString;
 }
