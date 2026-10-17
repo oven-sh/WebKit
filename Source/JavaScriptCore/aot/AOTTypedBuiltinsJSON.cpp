@@ -158,8 +158,36 @@ static NEVER_INLINE Latin1Character* appendRopeCharacters(Instance* instance, Ca
     return appendCharacters(instance, cursor, *value.data.impl());
 }
 
+static constexpr char jsonDigitPairs[] =
+    "0001020304050607080910111213141516171819"
+    "2021222324252627282930313233343536373839"
+    "4041424344454647484950515253545556575859"
+    "6061626364656667686970717273747576777879"
+    "8081828384858687888990919293949596979899";
+
 static ALWAYS_INLINE Latin1Character* appendInteger(Latin1Character* cursor, int64_t integer)
 {
+    if (static_cast<uint64_t>(integer) < 10000) [[likely]] {
+        uint32_t value = static_cast<uint32_t>(integer);
+        uint32_t high = value / 100;
+        uint32_t low = value % 100;
+        if (value < 100) {
+            if (value < 10) {
+                *cursor = '0' + value;
+                return cursor + 1;
+            }
+            memcpy(cursor, jsonDigitPairs + 2 * low, 2);
+            return cursor + 2;
+        }
+        if (value < 1000) {
+            *cursor = '0' + high;
+            memcpy(cursor + 1, jsonDigitPairs + 2 * low, 2);
+            return cursor + 3;
+        }
+        memcpy(cursor, jsonDigitPairs + 2 * high, 2);
+        memcpy(cursor + 2, jsonDigitPairs + 2 * low, 2);
+        return cursor + 4;
+    }
     char* to = std::bit_cast<char*>(cursor);
     return std::bit_cast<Latin1Character*>(std::to_chars(to, to + maxJSONIntegerLength, integer).ptr);
 }

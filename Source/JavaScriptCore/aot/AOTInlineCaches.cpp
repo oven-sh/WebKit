@@ -1172,7 +1172,7 @@ static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* c
     auto status = prepareChainForCaching(globalObject, constructor, uid, hasInstance);
     if (!status || status->flattenedDictionary || status->usesPolyProto)
         return false;
-    if (slotTakesNothing || (cache->structureID && cache->structureID != structure->id())) {
+    if (slotTakesNothing) {
         if (PropertyLookupTable::of(vm).setInstanceOf(structure, PropertyLookupTable::ordinaryInstanceOfKind, prototype.cachedOffset(), nullptr, uid))
             return true;
         if (slotTakesNothing)
@@ -1190,7 +1190,9 @@ static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* c
 
 void cacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype)
 {
-    bool slotTakesNothing = SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask;
+    if (SharedData::contains(cache))
+        return;
+    bool slotTakesNothing = (cache->offset & Slot::attemptsMask) == Slot::attemptsMask;
     if (!tryCacheInstanceOf(globalObject, data, cache, constructor, structureBefore, hasInstance, prototype, slotTakesNothing) && !slotTakesNothing)
         countFailure(cache);
 }
@@ -1206,7 +1208,7 @@ static bool tryCacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* 
     JSObject* holder = hasInstance.slotBase();
     if (!isCalled && (holder == constructor || !(hasInstance.attributes() & PropertyAttribute::ReadOnly) || !(hasInstance.attributes() & PropertyAttribute::DontDelete)))
         return false;
-    if (isCalled && (slotTakesNothing || (cache->structureID && cache->structureID != structure->id()))) {
+    if (isCalled && slotTakesNothing) {
         UniquedStringImpl* uid = vm.propertyNames->hasInstanceSymbol.impl();
         bool isOwn = holder == constructor;
         auto status = isOwn ? std::nullopt : prepareChainForCaching(globalObject, constructor, uid, hasInstance);
@@ -1238,7 +1240,9 @@ static bool tryCacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* 
 
 void cacheHasInstance(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, bool isCalled)
 {
-    bool slotTakesNothing = SharedData::contains(cache) || (cache->offset & Slot::attemptsMask) == Slot::attemptsMask;
+    if (SharedData::contains(cache))
+        return;
+    bool slotTakesNothing = (cache->offset & Slot::attemptsMask) == Slot::attemptsMask;
     if (!tryCacheHasInstance(globalObject, data, cache, constructor, structureBefore, hasInstance, isCalled, slotTakesNothing) && !slotTakesNothing)
         countFailure(cache);
 }
@@ -1356,18 +1360,23 @@ void cacheKeyedDeletion(Instance* instance, Structure* before, Structure* after,
     auto isPlain = [](Structure* structure) {
         return structure->typeInfo().type() == FinalObjectType && !structure->compiledLayout() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->mayBePrototype() && !structure->hasPolyProto();
     };
-    if ((!key.isString() && !key.isSymbol()) || !slot.isCacheableDelete() || !isPlain(before) || !isPlain(after) || parseIndex(*uid))
+    if ((!key.isString() && !key.isSymbol()) || parseIndex(*uid))
+        return;
+    bool isAbsentFromLayout = before == after && Typed::compiledObjectStructureGuaranteesAbsence(before, uid);
+    if (!isAbsentFromLayout && (!slot.isCacheableDelete() || !isPlain(before) || !isPlain(after)))
         return;
     PropertyOffset offset = 0;
-    if (slot.isDeleteHit()) {
+    if (!isAbsentFromLayout && slot.isDeleteHit()) {
         offset = slot.cachedOffset();
         if (storageAfterAddition(before, after, offset) != StorageAfterAddition::Stays)
             return;
-    } else if (!slot.isConfigurableDeleteMiss() || before != after)
+    } else if (!isAbsentFromLayout && (!slot.isConfigurableDeleteMiss() || before != after))
         return;
     JSCell* taggedKey = std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(key.asCell()) | Instance::keyedAdditionIsDeletion);
     auto& entry = instance->keyedAdditionFor(before->id(), taggedKey);
     cacheKeyedAccess(entry.slot, before, taggedKey, offset);
+    if (isAbsentFromLayout)
+        entry.slot.offset = *propertyLocation(offset) | Instance::keyMayNotBeEvicted;
     entry.newStructureID = after->id();
     entry.epoch = MegamorphicCache::invalidEpoch;
     entry.newStorageCapacity = 0;

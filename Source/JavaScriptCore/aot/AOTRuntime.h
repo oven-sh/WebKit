@@ -1249,6 +1249,20 @@ struct Instance {
     static constexpr unsigned objectCreateCacheIndex(uintptr_t prototype) { return (prototype >> 4) & (objectCreateCacheSize - 1); }
     ObjectCreateCacheEntry objectCreateCache[objectCreateCacheSize];
     bool objectCreateCacheIsDirty;
+    struct PrototypeChangeCacheEntry {
+        JSCell* prototype;
+        uint32_t from;
+        uint32_t to;
+    };
+    static constexpr unsigned prototypeChangeCacheSize = 16;
+    static constexpr unsigned prototypeChangeCacheIndex(uintptr_t prototype) { return (prototype >> 6) & (prototypeChangeCacheSize - 1); }
+    PrototypeChangeCacheEntry prototypeChangeCache[prototypeChangeCacheSize];
+    bool prototypeChangeCacheIsDirty;
+    void forgetPrototypeChanges()
+    {
+        if (std::exchange(prototypeChangeCacheIsDirty, false))
+            zeroSpan(std::span { prototypeChangeCache });
+    }
     static constexpr unsigned numberOfThisAllocations = 64;
     static constexpr unsigned slotsPerThisAllocation = 4;
     static_assert(hasOneBitSet(numberOfThisAllocations) && hasOneBitSet(slotsPerThisAllocation * sizeof(Slot)));
@@ -1263,6 +1277,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfThisAllocations() { return OBJECT_OFFSETOF(Instance, thisAllocations); }
     Structure* emptyLiteralStructures[16];
     static constexpr ptrdiff_t offsetOfObjectCreateCache() { return OBJECT_OFFSETOF(Instance, objectCreateCache); }
+    static constexpr ptrdiff_t offsetOfPrototypeChangeCache() { return OBJECT_OFFSETOF(Instance, prototypeChangeCache); }
     struct CustomGetter {
         uint32_t structureID;
         uint32_t serial;

@@ -922,7 +922,8 @@ private:
                 return std::nullopt;
             if (layout.kind == LayoutKind::Instance && !layout.fieldNamed(name)) {
                 callee = findMethod(m_program, subtype, name, kind);
-                if (!callee || layout.mayHaveOtherPrototype || !mayBeCalledDirectly(callee) || !m_program.at(callee).captureTypes.isEmpty() || !isFirstOnPrototypeChain(subtype, callee))
+                bool isOnTheInstance = isPrivateName(m_program.string(name));
+                if (!callee || (layout.mayHaveOtherPrototype && !isOnTheInstance) || !mayBeCalledDirectly(callee) || !m_program.at(callee).captureTypes.isEmpty() || (!isOnTheInstance && !isFirstOnPrototypeChain(subtype, callee)))
                     return std::nullopt;
             } else if (kind != MethodKind::Method)
                 return std::nullopt;
@@ -1065,7 +1066,7 @@ private:
             supertype = predictedLayoutOf(block, object);
         if (!supertype || !isObjectLayout(m_program.at(supertype).kind))
             return false;
-        bool needsMembershipTest = !isExpected && kind != MethodKind::Method && m_program.at(supertype).acceptsUntypedObjects;
+        bool needsMembershipTest = !isExpected && (kind != MethodKind::Method || isPrivateName(m_program.string(name))) && m_program.at(supertype).acceptsUntypedObjects;
         auto cases = casesOf(supertype, name, kind, needsMembershipTest);
         if (!cases || !orderCases(*cases, supertype) || (isExpected && !cases->last().callee))
             return false;

@@ -1198,6 +1198,7 @@ JSCell** Instance::environmentSlot(ImageEnvironment environment) const
     return reinterpret_cast<JSCell**>(const_cast<char*>(reinterpret_cast<const char*>(this)) - sizeof(NegativeOffsetFields) - environment.distance);
 }
 
+#if !(OS(WINDOWS) && CPU(X86_64))
 SUPPRESS_ASAN void* returnAddressForFrame(const void* frame, const void* startingFrom)
 {
     struct Record {
@@ -1215,6 +1216,7 @@ SUPPRESS_ASAN void* returnAddressForFrame(const void* frame, const void* startin
     }
     return nullptr;
 }
+#endif
 
 namespace {
 struct FrameRecord {
@@ -3372,6 +3374,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     }
     if (std::exchange(objectCreateCacheIsDirty, false))
         zeroSpan(std::span { objectCreateCache });
+    forgetPrototypeChanges();
     if (std::exchange(hasThisAllocations, false))
         zeroSpan(std::span { thisAllocations.get() });
     if (std::exchange(hasCaseConversions, false))

@@ -130,6 +130,7 @@ public:
                 layout.hasUntypedBase = shape.flags & Format::ShapeHasUntypedBase;
                 layout.hasImmutableMembers = shape.flags & Format::ShapeHasFixedMembers;
                 layout.mayHaveOtherPrototype = shape.flags & Format::ShapeMayHaveOtherPrototype;
+                layout.prototypeIsSetByTypedCode = shape.flags & Format::ShapePrototypeIsSetByTypedCode;
                 layout.hasComputedStaticMemberName = shape.flags & Format::ShapeHasComputedStaticMemberName;
                 layout.constructorMayBeReplaced = shape.flags & Format::ShapeConstructorMayBeReplaced;
                 layout.acceptsUntypedObjects = shape.flags & Format::ShapeAcceptsUntypedObjects;

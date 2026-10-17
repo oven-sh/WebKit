@@ -59,6 +59,8 @@
 #include <link.h>
 #endif
 #elif OS(WINDOWS)
+#include "ExecutableAllocator.h"
+#include "LLIntPCRanges.h"
 #include <windows.h>
 #endif
 
@@ -112,6 +114,11 @@ static uint64_t currentBinaryIdentity()
             }
             command += loadCommand.cmdsize;
         }
+#elif OS(WINDOWS)
+        auto* module = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+        auto* headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(module + reinterpret_cast<const IMAGE_DOS_HEADER*>(module)->e_lfanew);
+        for (uint64_t value : { static_cast<uint64_t>(headers->FileHeader.TimeDateStamp), static_cast<uint64_t>(headers->OptionalHeader.SizeOfCode), static_cast<uint64_t>(headers->OptionalHeader.AddressOfEntryPoint) })
+            identity = (identity ^ value) * 0x100000001b3ULL;
 #endif
         return identity;
     }();
@@ -4003,6 +4010,35 @@ void prepareFaultingAccesses()
         return SignalAction::Handled;
     });
 }
+
+#if OS(WINDOWS) && CPU(X86_64)
+SUPPRESS_ASAN void* returnAddressForFrame(const void* frame, const void*)
+{
+    uintptr_t wanted = std::bit_cast<uintptr_t>(frame);
+    CONTEXT context;
+    RtlCaptureContext(&context);
+    while (context.Rip && context.Rsp <= wanted) {
+        void* pc = std::bit_cast<void*>(static_cast<uintptr_t>(context.Rip));
+        DWORD64 moduleBase = 0;
+        PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context.Rip, &moduleBase, nullptr);
+        if (function && !LLInt::isLLIntPC(pc) && !isJITPC(pc)) {
+            void* handlerData = nullptr;
+            DWORD64 establisherFrame = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, moduleBase, context.Rip, function, &context, &handlerData, &establisherFrame, nullptr);
+            continue;
+        }
+        if (context.Rbp == wanted)
+            return pc;
+        if (context.Rbp < context.Rsp || context.Rbp % sizeof(void*))
+            break;
+        auto* record = std::bit_cast<const DWORD64*>(static_cast<uintptr_t>(context.Rbp));
+        context.Rsp = context.Rbp + 2 * sizeof(void*);
+        context.Rip = record[1];
+        context.Rbp = record[0];
+    }
+    return nullptr;
+}
+#endif
 
 uintptr_t imageCodeStart()
 {

@@ -5632,6 +5632,162 @@ static void outlineGetStoreCalls(Program& program)
     }
 }
 
+static void shareCallsOfFunctionFields(Program& program)
+{
+    constexpr uint32_t sourceFlags = Format::FunctionIsTyped | Format::FunctionIsInBuiltinModule | Format::FunctionIsSloppy;
+    constexpr unsigned maxArguments = 5;
+    static constexpr OpcodeSet methodCalls { Opcode::CallMethod };
+    unsigned count = program.functions.size();
+    auto& functions = std::as_const(program).functions;
+    auto onlyFunctionCalledBy = [&](const Function& function, const Value& call) -> FunctionID {
+        auto access = fieldOf(program, program.typeOf(function, call.child(0)), call.string());
+        if (!access)
+            return { };
+        FunctionID callee = std::as_const(program).at(access->layout).fields[access->field].singleFunction;
+        if (!callee || !program.genericEntrypoints.contains(callee.index()))
+            return { };
+        auto& target = std::as_const(program).at(callee);
+        if (target.blocks.isEmpty() || target.isGenericEntrypoint() || target.kind == FunctionKind::Constructor || target.kind == FunctionKind::Module)
+            return { };
+        return callee;
+    };
+    Vector<Vector<ValueID, 0>> sites(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (!functions.mayContain(i, methodCalls) || program.isStaticallyWarm(FunctionID(i)))
+            return;
+        auto& function = functions[i];
+        if (function.isGenericEntrypoint() || function.has(Format::FunctionIsBuiltin))
+            return;
+        functions.forEachIndexedValue(i, methodCalls, [&](ValueID id) {
+            auto& call = function.at(id);
+            if (!call.isSignatureCall && call.arguments.size() <= maxArguments && onlyFunctionCalledBy(function, call))
+                sites[i].append(id);
+        });
+    });
+    struct Body {
+        TypeID receiver;
+        TypeID result;
+        uint32_t signature;
+        uint32_t flags;
+        Vector<TypeID, 4> parameters;
+        uint32_t numberOfCalls { 0 };
+        uint32_t firstFunction;
+        ValueID firstSite;
+        uint32_t created { Format::none };
+    };
+    Vector<Body> bodies;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> bodiesByReceiverAndName;
+    Vector<Vector<uint32_t, 0>> bodyOfSite(count);
+    auto& types = program.types;
+    for (unsigned i = 0; i < count; ++i) {
+        auto& function = functions[i];
+        for (ValueID id : sites[i]) {
+            auto& call = function.at(id);
+            auto& target = std::as_const(program).at(onlyFunctionCalledBy(function, call));
+            Vector<TypeID, 4> parameters;
+            for (unsigned k = 0; k < call.arguments.size(); ++k) {
+                TypeID given = function.at(call.arguments[k]).type;
+                auto& type = program.at(given);
+                TypeID taken = given;
+                for (TypeID wide : { types.number, types.string, types.boolean }) {
+                    if (type.isSubsetOf(program.at(wide), program))
+                        taken = wide;
+                }
+                bool isDeclared = !target.has(Format::FunctionHasRestParameter) && !target.takesCalleeClosure && k < target.parameterTypes.size() && target.parameterTypes[k];
+                TypeID declared = isDeclared ? target.parameterTypes[k] : types.anything;
+                if (type.isSubsetOf(program.at(declared), program))
+                    taken = declared;
+                parameters.append(taken);
+            }
+            TypeID receiver = function.at(call.child(0)).type;
+            uint32_t flags = function.flags & sourceFlags;
+            auto& candidates = bodiesByReceiverAndName.add(static_cast<uint64_t>(receiver.index()) << 32 | call.string().index(), Vector<uint32_t, 2> { }).iterator->value;
+            size_t found = candidates.findIf([&](uint32_t number) {
+                auto& body = bodies[number];
+                return body.result == call.type && body.signature == call.callSignature() && body.flags == flags && body.parameters == parameters;
+            });
+            if (found == notFound) {
+                found = candidates.size();
+                candidates.append(bodies.size());
+                bodies.append(Body { receiver, call.type, call.callSignature(), flags, WTF::move(parameters), 0, i, id, Format::none });
+            }
+            ++bodies[candidates[found]].numberOfCalls;
+            bodyOfSite[i].append(candidates[found]);
+        }
+    }
+    Vector<Function> created;
+    for (auto& body : bodies) {
+        if (body.numberOfCalls < 2)
+            continue;
+        auto& function = functions[body.firstFunction];
+        auto& site = function.at(body.firstSite);
+        Function shared;
+        shared.name = site.string();
+        shared.module = function.module;
+        shared.position = site.position;
+        shared.flags = body.flags | Format::FunctionIsHiddenInStackTraces;
+        shared.isSharedCallBody = true;
+        shared.resultType = body.result;
+        shared.blocks.append(Block { });
+        auto addParameter = [&](TypeID type) {
+            ValueID id(shared.values.size());
+            Value parameter;
+            parameter.opcode = Opcode::Parameter;
+            parameter.position = site.position;
+            parameter.type = type;
+            parameter.rep = repOf(program.at(type));
+            parameter.immediates = { 0, static_cast<uint32_t>(shared.parameterTypes.size()) };
+            shared.parameterTypes.append(type);
+            shared.blocks[0].parameters.append(id);
+            shared.values.append(WTF::move(parameter));
+            return id;
+        };
+        Value call(site);
+        call.inlineFrame = 0;
+        call.isInTailPosition = true;
+        call.children = { addParameter(body.receiver), ValueID(), ValueID() };
+        call.arguments.clear();
+        for (TypeID type : body.parameters)
+            call.arguments.append(addParameter(type));
+        shared.length = shared.parameterTypes.size();
+        shared.blocks[0].values.append(ValueID(shared.values.size()));
+        shared.blocks[0].terminator.kind = TerminatorKind::Return;
+        shared.blocks[0].terminator.value = ValueID(shared.values.size());
+        shared.values.append(WTF::move(call));
+        body.created = count + created.size();
+        created.append(WTF::move(shared));
+    }
+    if (created.isEmpty())
+        return;
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (sites[i].isEmpty())
+            return;
+        auto& function = program.functions[i];
+        for (unsigned k = 0; k < sites[i].size(); ++k) {
+            auto& body = bodies[bodyOfSite[i][k]];
+            if (body.created == Format::none)
+                continue;
+            auto& call = function.at(sites[i][k]);
+            Arguments passed;
+            passed.append(call.child(0));
+            passed.append(call.arguments.span());
+            call.opcode = Opcode::CallDirect;
+            call.setCallSignature(Format::none);
+            call.children = { };
+            call.immediates = { body.created, Format::none };
+            call.arguments = WTF::move(passed);
+        }
+    });
+    for (auto& body : bodies) {
+        if (body.created == Format::none)
+            continue;
+        program.numberOfDirectCalls.append(body.numberOfCalls);
+        program.staticallyHotFunctions.set(body.created);
+        program.staticallyWarmFunctions.set(body.created);
+    }
+    program.functions.appendVector(WTF::move(created));
+}
+
 static void returnResultsInRegisters(Program& program)
 {
     unsigned count = program.functions.size();
@@ -9804,8 +9960,11 @@ static void findConstructedRecords(Program& program)
     const Program& constProgram = program;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = constProgram.functions[i];
+        bool storesFirst = !function.blocks.isEmpty() && std::ranges::any_of(function.blocks[0].values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::Operation && program.operationOf(function.at(id)) == Operations::Initialize;
+        });
         for (TypeID thisType : { function.thisType, function.assertedThisType }) {
-            if (LayoutID supertype = thisType ? constProgram.at(thisType).singleLayout() : LayoutID(); supertype && constProgram.at(supertype).kind == LayoutKind::Record)
+            if (LayoutID supertype = thisType && storesFirst ? constProgram.at(thisType).singleLayout() : LayoutID(); supertype && constProgram.at(supertype).kind == LayoutKind::Record)
                 note(isCreated[supertype.index()]);
         }
         static constexpr OpcodeSet operations { Opcode::Operation };
@@ -9838,7 +9997,7 @@ static void findConstructedRecords(Program& program)
             mayHaveUnknownPrototypeAtCreation.set(subtype.index());
     }
     for (uint32_t i = 0; i < program.layouts.size(); ++i) {
-        if (program.layouts[i].kind == LayoutKind::Record && program.layouts[i].mayDespecialize && !mayHaveUnknownPrototypeAtCreation.get(i))
+        if (program.layouts[i].kind == LayoutKind::Record && program.layouts[i].mayDespecialize && !mayHaveUnknownPrototypeAtCreation.get(i) && !program.layouts[i].prototypeIsSetByTypedCode)
             program.layouts[i].mayHaveOtherPrototype = false;
     }
 }
@@ -12040,6 +12199,7 @@ Vector<String> optimize(Program& program)
         splitOffWorkers(program);
         outlineHostObjectReads(program);
         outlineGetStoreCalls(program);
+        shareCallsOfFunctionFields(program);
     }
     didFinish("- splitOffWorkers"_s);
     if (!Options::auditAOTTypedAssertions()) {

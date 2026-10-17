@@ -226,6 +226,7 @@
     v(ObjectGetOwnPropertyDescriptor, Object, false) \
     v(ObjectCreate, Object, false) \
     v(ObjectGetPrototypeOf, Object, false) \
+    v(ObjectSetPrototypeOf, Object, false) \
     v(ObjectIs, Object, false) \
     v(ObjectCall, Object, false) \
     v(ReflectOwnKeys, Object, false) \

@@ -1509,6 +1509,7 @@ struct State {
     bool hasFieldsWithSymbolKeys(const LayoutData&);
     bool hasPositionAmongKeys(const LayoutData& layout, UniquedStringImpl* name) { return !name->isSymbol() || (!static_cast<SymbolImpl*>(name)->isPrivate() && hasFieldsWithSymbolKeys(layout)); }
     bool findPrivateMethod(VM&, const LayoutData&, UniquedStringImpl*, Object::PrivateElement&);
+    void addPrivateMethods(JSGlobalObject*, JSObject*, const LayoutData&);
     bool hasImmutableMethod(const LayoutData&, UniquedStringImpl*) const;
     bool storeNeverSpecializes(const LayoutData&, UniquedStringImpl*) const;
     bool declaresMethod(const LayoutData&, UniquedStringImpl*) const;
@@ -1578,6 +1579,7 @@ struct State {
         PropertyOffset discriminant { invalidOffset };
         UncheckedKeyHashMap<String, std::unique_ptr<CoercionPlan>> byDiscriminant;
         mutable uint32_t quickConversionEpoch { 0 };
+        mutable uint32_t graphConversionEpoch { 0 };
         struct QuickMove {
             enum class Kind : uint8_t { Any, StringAsValue, StringAsCell32, InlineInt32, NumberAsDouble, BooleanAsByte };
             uint16_t from;
@@ -1606,6 +1608,7 @@ struct State {
     static constexpr unsigned numberOfQuickConversions = 512;
     static constexpr size_t maxSizeOfQuickConversion = 128;
     bool tryQuickConversion(VM&, JSValue, const RuntimeType&);
+    bool tryConvertPlainObjectInPlace(VM&, JSValue, const RuntimeType&, uint32_t typeAndReason);
     void cacheQuickConversion(Structure*, const RuntimeType&, const CoercionPlan& root, const CoercionPlan&, uint64_t discriminant, Object* made, size_t sizeOfCell, uint32_t typeAndReason);
     std::optional<uint32_t> literalStringWordOfConstant(uint32_t string) const;
     void cacheCopyConversion(VM&, Structure*, const RuntimeType&, const CoercionPlan&, Structure* made, uint32_t typeAndReason);
@@ -1616,6 +1619,10 @@ struct State {
     QuickConversion* quickConversion(uint32_t structureID, const RuntimeType&, uint64_t discriminant, bool evictsIfFull);
     std::unique_ptr<std::array<QuickConversion, numberOfQuickConversions>> m_quickConversions;
     uint32_t m_quickConversionEpoch { 1 };
+    static constexpr unsigned maxDepthOfChildConversions = 4;
+    bool m_isConvertingChildren { false };
+    using ChildrenOfQuickConversion = Vector<std::pair<JSCell*, const RuntimeType*>, 16>;
+    bool canConvertQuickly(JSValue, const RuntimeType&, ChildrenOfQuickConversion&, unsigned depth);
     static constexpr unsigned maxTypedClonePlans = 4096;
     Object* tryCloneAs(VM&, JSObject* source, uint64_t target);
     const TypedClonePlan& typedClonePlan(VM&, Structure*, uint64_t target);
@@ -2183,6 +2190,7 @@ private:
     CustomGetterSetter* m_liveBindingAccessor { nullptr };
     Strong<Structure> m_evalScopeStructure;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nameIndices;
+    UncheckedKeyHashMap<std::pair<const LayoutData*, UniquedStringImpl*>, uint32_t> m_privateMethods;
     SegmentedVector<Identifier, 128> m_names;
     const Identifier& nameSlow(VM&, uint32_t);
     UncheckedKeyHashMap<std::pair<uint32_t, RefPtr<UniquedStringImpl>>, Vector<uint32_t, 1>> m_specializationsWithField;

@@ -10,6 +10,7 @@ inline ObjectAssign
 inline ObjectGetOwnPropertyDescriptor
 inline ObjectCreate
 inline ObjectGetPrototypeOf
+inline ObjectSetPrototypeOf
 inline ObjectIs
 inline ObjectCall
 inline ReflectOwnKeys
@@ -33,7 +34,7 @@ static Object.defineProperties (any/WGR, any/GPD?, any/-...) -> arg0 ; CallsUser
 static Object.freeze (any/wGR, any/-...) -> arg0 ; CallsUserCode ; HostCall
 static Object.preventExtensions (any/wGR, any/-...) -> arg0 ; CallsUserCode ; HostCall
 static Object.seal (any/wGR, any/-...) -> arg0 ; CallsUserCode ; HostCall
-static Object.setPrototypeOf (any/wGR, any/KG?, any/-...) -> arg0 ; CallsUserCode ; HostCall
+static Object.setPrototypeOf (any/wGR, any/KG?, any/-...) -> arg0 ; CallsUserCode ; Inline(ObjectSetPrototypeOf)
 static Object.create (any/KG?, any/GPD?, any/-...) -> new Object/N ; CallsUserCode ; Inline(ObjectCreate)
 static Object.fromEntries (any/GPD?, any/-...) -> new Object/N ; CallsUserCode ; Call
 static Object.getOwnPropertyDescriptors (any/GP?, any/-...) -> new Object/N ; CallsUserCode ; HostCall

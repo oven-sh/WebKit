@@ -2022,6 +2022,7 @@ void State::didChangeDescendantPrototype(VM& vm, JSObject* changed, UniquedStrin
 
 void State::revalidatePrototypes(VM& vm, const ScopedLambda<bool(Structure*, const LayoutData&)>& shouldRevalidate)
 {
+    instance.forgetPrototypeChanges();
     DeferGC deferGC(vm);
     PreventCollectionScope preventCollection(vm.heap);
     Vector<Structure*> structures;
@@ -2071,7 +2072,11 @@ bool State::prototypeMatchesLayout(const LayoutData& layout, JSValue prototype)
         return prototype == JSValue(classPrototype) || (classPrototype && prototype.isObject() && descendantsAddNoProperties(asObject(prototype), classPrototype));
     }
     auto* functionPrototypeObject = dynamicDowncast<PrototypeObject>(prototype);
-    return prototype.isNull() || prototype == JSValue(instance.globalObject->objectPrototype()) || (functionPrototypeObject && (layout.mayBeConstructed || !(layout.mayHaveOtherPrototype || layout.mayDespecialize)) && functionPrototypeObject->isGuarded() && !functionPrototypeObject->isModified());
+    if (prototype.isNull() || prototype == JSValue(instance.globalObject->objectPrototype()) || (functionPrototypeObject && (layout.mayBeConstructed || !(layout.mayHaveOtherPrototype || layout.mayDespecialize)) && functionPrototypeObject->isGuarded() && !functionPrototypeObject->isModified()))
+        return true;
+    return std::ranges::all_of(std::span { layout.fields(), layout.numberOfFields }, [](const FieldData& field) {
+        return field.flags & fieldIsNeverObservedAbsent;
+    });
 }
 
 void State::updatePrototypeMatchesLayout(Structure* structure)
@@ -3316,8 +3321,14 @@ bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue 
     }
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
-    object->JSCell::setStructure(vm, state.structureWithExtraPropertiesMatching(vm, object->structure(), layout.shape, prototype));
+    Structure* before = object->structure();
+    bool isPlain = !object->hasFlagsInOrderWord() && state.isStructureWithoutExtraProperties(before);
+    object->JSCell::setStructure(vm, state.structureWithExtraPropertiesMatching(vm, before, layout.shape, prototype));
     object->updateNeedsSlowLookup(state);
+    if (isPlain && prototype.isObject() && !object->hasFlagsInOrderWord() && !object->anyObjectInChainMayInterceptIndexedAccesses()) {
+        state.instance.prototypeChangeCache[Instance::prototypeChangeCacheIndex(std::bit_cast<uintptr_t>(prototype.asCell()))] = { prototype.asCell(), before->id().bits(), object->structureID().bits() };
+        state.instance.prototypeChangeCacheIsDirty = true;
+    }
     if (state.isPrototypeShape(layout.shape) && object->anyObjectInChainMayInterceptIndexedAccesses()) [[unlikely]]
         object->realm()->haveABadTime(vm);
     return true;
@@ -9032,6 +9043,21 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
                 if (!(field.flags & (fieldIsAbsentAtCreation | fieldIsPlaceholder)))
                     object->putDirect(vm, name(vm, field.name), jsUndefined());
             }
+            for (const LayoutData* declaring = ofClass; declaring; declaring = baseOf(*declaring))
+                addPrivateMethods(globalObject, object, *declaring);
+            Vector<const LayoutData*, 4> descendants;
+            JSObject* next = newTarget;
+            while (next && next != constructor) {
+                auto* heir = dynamicDowncast<Closure>(next);
+                if (const LayoutData* descendantLayout = heir && heir->structure()->aotInstance() == &instance ? heir->classData() : nullptr; descendantLayout && ofHeir->hasFixedLayout)
+                    descendants.append(descendantLayout);
+                JSValue parentClass = next->getPrototypeDirect();
+                next = parentClass.isObject() ? asObject(parentClass) : nullptr;
+            }
+            if (next) {
+                for (const LayoutData* descendantLayout : descendants)
+                    addPrivateMethods(globalObject, object, *descendantLayout);
+            }
         }
         return object;
     }
@@ -9902,6 +9928,14 @@ bool State::hasPrototypeMembers(const LayoutData& layout) const
 
 bool State::findPrivateMethod(VM& vm, const LayoutData& layout, UniquedStringImpl* name, Object::PrivateElement& element)
 {
+    std::pair<const LayoutData*, UniquedStringImpl*> key { &layout, name };
+    if (auto found = m_privateMethods.find(key); found != m_privateMethods.end()) {
+        element.kind = Object::PrivateElement::Kind::Method;
+        element.value = closureObjectFor(vm, found->value);
+        return true;
+    }
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countOperation("a private method is searched for");
     for (const LayoutData* next = &layout; next; next = baseOf(*next)) {
         for (auto& method : next->methods()) {
             if (!next->isEvaluatedOnce || method.flags & methodHasComputedName || nameIfCreated(method.name).impl() != name)
@@ -9910,6 +9944,7 @@ bool State::findPrivateMethod(VM& vm, const LayoutData& layout, UniquedStringImp
             case Format::MethodKind::Method:
                 element.kind = Object::PrivateElement::Kind::Method;
                 element.value = closureObjectFor(vm, method.function);
+                m_privateMethods.add(key, method.function);
                 break;
             case Format::MethodKind::Getter:
                 element.kind = Object::PrivateElement::Kind::Accessor;
@@ -9925,6 +9960,25 @@ bool State::findPrivateMethod(VM& vm, const LayoutData& layout, UniquedStringImp
             return true;
     }
     return false;
+}
+
+void State::addPrivateMethods(JSGlobalObject* globalObject, JSObject* object, const LayoutData& ofClass)
+{
+    VM& vm = globalObject->vm();
+    for (auto& method : ofClass.methods()) {
+        if (method.flags & methodHasComputedName || !(data.stringFacts(method.name) & Data::stringIsPrivateName))
+            continue;
+        const Identifier& key = name(vm, method.name);
+        if (isValidOffset(object->getDirectOffset(vm, key)))
+            continue;
+        Object::PrivateElement element;
+        if (!findPrivateMethod(vm, ofClass, key.impl(), element))
+            continue;
+        if (element.kind == Object::PrivateElement::Kind::Method)
+            object->putDirect(vm, key, element.value, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+        else
+            object->putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, element.getter, element.setter), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
+    }
 }
 
 static constexpr uint64_t emptyFieldsHash = 0xcbf29ce484222325ull;
@@ -12488,6 +12542,8 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
         const CoercionPlan* plan;
         size_t body;
         Structure* structure;
+        Structure* before;
+        const RuntimeType* type;
     };
     static constexpr unsigned maxNumber = 32;
     Vector<ConvertedInPlace, maxNumber> all;
@@ -12505,14 +12561,14 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
         size_t body = bodies.size();
         bodies.grow(body + WTF::roundUpToMultipleOf<sizeof(uint64_t)>(plan->initialBody.size()) / sizeof(uint64_t));
         memcpySpan(asMutableByteSpan(bodies.mutableSpan().subspan(body)).first(plan->initialBody.size()), plan->initialBody.span());
-        all.append({ object, plan, body, nullptr });
+        all.append({ object, plan, body, nullptr, object->structure(), &type });
         for (auto& planned : plan->fields) {
             const FieldData& field = *planned.field;
             JSValue value = object->getDirect(planned.offset);
             if (!(planned.acceptedKinds & CoercionPlan::kindOf(value))) {
                 const RuntimeType& ofField = ownTypeOf(field);
                 if (!value.isObject()) {
-                    if (!fits(ofField, value))
+                    if (!fits(ofField, value) || !isAllowedLiteral(field, value))
                         return false;
                 } else if (Object* compiled = compiledObject(value)) {
                     bool isOfType = ofField.allowsAnyObject() || acceptsShape(ofField, compiled->shape());
@@ -12565,6 +12621,10 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
     for (auto& made : all) {
         vm.writeBarrier(made.object);
         countObject(std::bit_cast<Object*>(made.object));
+        if (made.plan->graphConversionEpoch != m_quickConversionEpoch && coercionPlan(made.before, *made.type) == made.plan) {
+            made.plan->graphConversionEpoch = m_quickConversionEpoch;
+            cacheQuickConversion(made.before, *made.type, *made.plan, *made.plan, 0, std::bit_cast<Object*>(made.object), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(made.before->inlineCapacity())), 0);
+        }
     }
     return true;
 }
@@ -12859,6 +12919,74 @@ void State::cacheQuickConversion(Structure* structure, const RuntimeType& type, 
     cacheConversion(structureID, typeAndReason, members);
 }
 
+bool State::canConvertQuickly(JSValue value, const RuntimeType& type, ChildrenOfQuickConversion& seen, unsigned depth)
+{
+    if (!value.isCell() || depth >= maxDepthOfChildConversions)
+        return false;
+    JSCell* cell = value.asCell();
+    for (auto& [object, typeOfObject] : seen) {
+        if (object == cell)
+            return typeOfObject == &type;
+    }
+    if (seen.size() == seen.capacity())
+        return false;
+    seen.append({ cell, &type });
+    uint32_t structureID = cell->structureID().bits();
+    const QuickConversion* entry = quickConversion(structureID, type, 0, false);
+    if (!entry)
+        return false;
+    if (entry->discriminantOffset != invalidOffset) {
+        uint64_t discriminant = discriminantWord(asObject(cell)->getDirect(entry->discriminantOffset));
+        if (!discriminant)
+            return false;
+        entry = quickConversion(structureID, type, discriminant, false);
+        if (!entry)
+            return false;
+    }
+    if (!entry->plan)
+        return false;
+    using Move = CoercionPlan::QuickMove;
+    const CoercionPlan& plan = *entry->plan;
+    uint8_t* bytes = std::bit_cast<uint8_t*>(cell);
+    std::span<const Move> moves = plan.quickMoves.span();
+    for (size_t i = 0; i < moves.size(); ++i) {
+        const Move& move = moves[i];
+        JSValue held = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(bytes + move.from));
+        bool isGood = true;
+        switch (move.kind) {
+        case Move::Kind::StringAsValue:
+        case Move::Kind::StringAsCell32:
+            isGood = held.isString();
+            break;
+        case Move::Kind::InlineInt32:
+            isGood = held.isInt32() && held.asInt32() >= minInlineInt32;
+            break;
+        case Move::Kind::NumberAsDouble:
+            isGood = held.isNumber();
+            break;
+        case Move::Kind::BooleanAsByte:
+            isGood = held.isBoolean();
+            break;
+        case Move::Kind::Any: {
+            const FieldData& field = *plan.fields[i].field;
+            if (!(move.acceptedKinds & CoercionPlan::kindOf(held)) && !canHoldWithoutConversion(field, move.acceptedKinds, held)) {
+                isGood = canConvertQuickly(held, ownTypeOf(field), seen, depth + 1);
+                break;
+            }
+            uint64_t slot = 0;
+            if (move.store != Store::Int32OrNumberBox)
+                isGood = storeAs(*this, move.store, &slot, held);
+            else
+                isGood = (held.isInt32() && held.asInt32() >= minInlineInt32) || held.isUndefinedOrNull();
+            break;
+        }
+        }
+        if (!isGood)
+            return false;
+    }
+    return true;
+}
+
 bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
 {
     if (!m_quickConversions || !value.isCell())
@@ -12883,6 +13011,7 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
     uint8_t* bytes = std::bit_cast<uint8_t*>(cell);
     std::span<const Move> moves = plan.quickMoves.span();
     uint64_t staged[CoercionPlan::maxNumberOfQuickMoves];
+    bool hasCheckedChildren = false;
     for (size_t i = 0; i < moves.size(); ++i) {
         const Move& move = moves[i];
         JSValue held = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(bytes + move.from));
@@ -12913,8 +13042,20 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type)
             staged[i] = held.asBoolean();
             break;
         case Move::Kind::Any:
-            if (!(move.acceptedKinds & CoercionPlan::kindOf(held)) && !canHoldWithoutConversion(*plan.fields[i].field, move.acceptedKinds, held))
-                return false;
+            if (!(move.acceptedKinds & CoercionPlan::kindOf(held)) && !canHoldWithoutConversion(*plan.fields[i].field, move.acceptedKinds, held)) {
+                bool isOutermost = !m_isConvertingChildren;
+                if (isOutermost && !hasCheckedChildren) {
+                    ChildrenOfQuickConversion seen;
+                    if (!canConvertQuickly(value, type, seen, 0))
+                        return false;
+                    hasCheckedChildren = true;
+                }
+                m_isConvertingChildren = true;
+                bool isConverted = tryQuickConversion(vm, held, ownTypeOf(*plan.fields[i].field));
+                m_isConvertingChildren = !isOutermost;
+                if (!isConverted || !canHoldWithoutConversion(*plan.fields[i].field, move.acceptedKinds, held))
+                    return false;
+            }
             staged[i] = 0;
             if (move.store != Store::Int32OrNumberBox) {
                 if (!storeAs(*this, move.store, &staged[i], held))
@@ -13021,11 +13162,14 @@ const State::CoercionPlan* State::firstCoercionPlanForShape(VM& vm, JSObject* ob
     bool hasOnlyFields = true;
     structure->forEachProperty(vm, [&](const auto& entry) {
         const FieldData* field = entry.attributes() ? nullptr : this->field(vm, layout, entry.key());
-        if (!field || field->numberOfLiterals()) {
+        if (!field || (field->numberOfLiterals() && field->flags & fieldIsPinned)) {
             hasOnlyFields = false;
             return false;
         }
-        plan->fields.append({ entry.offset(), field, entry.key(), kindsAcceptedBy(ownTypeOf(*field)) });
+        uint8_t kinds = kindsAcceptedBy(ownTypeOf(*field));
+        if (field->numberOfLiterals())
+            kinds &= ~(CoercionPlan::acceptsString | CoercionPlan::acceptsInt32 | CoercionPlan::acceptsDouble);
+        plan->fields.append({ entry.offset(), field, entry.key(), kinds });
         isPresent |= 1ull << (field - layout.fields());
         order.append(field - layout.fields());
         return true;
@@ -13047,7 +13191,7 @@ bool State::canHoldWithoutConversion(const FieldData& field, uint8_t acceptedKin
 {
     const RuntimeType& type = ownTypeOf(field);
     if (!value.isObject())
-        return fits(type, value);
+        return fits(type, value) && isAllowedLiteral(field, value);
     if (Object* compiled = compiledObject(value)) {
         if (type.allowsAnyObject())
             return true;
@@ -13195,6 +13339,17 @@ Object* State::tryCloneAs(VM& vm, JSObject* source, uint64_t target)
     return copy;
 }
 
+bool State::tryConvertPlainObjectInPlace(VM& vm, JSValue value, const RuntimeType& type, uint32_t typeAndReason)
+{
+    if (tryQuickConversion(vm, value, type))
+        return true;
+    if (data.isCompiledForAudit || !value.isObject() || asObject(value)->type() != FinalObjectType || type.acceptsUntypedObjectsByNature() || compiledObject(value))
+        return false;
+    if (Object* made = copyUnchangedByPlan(vm, asObject(value), type, true, typeAndReason))
+        return JSValue(made) == value;
+    return tryConvertInPlaceByPlans(vm, asObject(value), type);
+}
+
 Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& type, bool mayConvertInPlace, uint32_t typeAndReason)
 {
     const CoercionPlan* plan = coercionPlan(object, type);
@@ -13223,7 +13378,7 @@ Object* State::copyUnchangedByPlan(VM& vm, JSObject* object, const RuntimeType& 
             continue;
         const RuntimeType& ofField = ownTypeOf(*planned.field);
         if (!value.isObject()) {
-            if (!fits(ofField, value))
+            if (!fits(ofField, value) || !isAllowedLiteral(*planned.field, value))
                 return nullptr;
             continue;
         }

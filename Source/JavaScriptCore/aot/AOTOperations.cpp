@@ -2502,6 +2502,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instanc
     if (ownName == LongRopeOwnNameResult::Unknown)
         key = property.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    Typed::Object::specializeStructureForExtraPropertiesIfNeeded(vm, object);
     Structure* oldStructure = object->structure();
     DeletePropertySlot slot;
     bool isDeleted = JSCell::deleteProperty(object, globalObject, key, slot);
@@ -2532,6 +2533,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCache, void, (Instance* insta
     if (ownName == LongRopeOwnNameResult::Unknown)
         key = property.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
+    Typed::Object::specializeStructureForExtraPropertiesIfNeeded(vm, object);
     Structure* oldStructure = object->structure();
     DeletePropertySlot slot;
     bool isDeleted = JSCell::deleteProperty(object, globalObject, key, slot);

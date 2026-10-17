@@ -800,6 +800,8 @@ std::optional<Writes> writesOfInlineObject(InlineBuiltin which, std::span<const 
     case InlineBuiltin::ObjectGetPrototypeOf:
     case InlineBuiltin::ReflectGetPrototypeOf:
         return Writes::Heap;
+    case InlineBuiltin::ObjectSetPrototypeOf:
+        return writesIf(arguments.size() >= 2, Writes::Heap);
     case InlineBuiltin::ObjectCall:
         return writesIf(arguments.size() == 1, Writes::RuntimeState);
     case InlineBuiltin::ObjectIs:
@@ -1326,6 +1328,63 @@ Operand Lowering::lowerGetPrototypeOf(ValueID result, const Value& value)
     return join.finish();
 }
 
+Operand Lowering::lowerSetPrototypeOf(ValueID result, const Value& value, Writes writes)
+{
+    using CacheEntry = Instance::PrototypeChangeCacheEntry;
+    static_assert(sizeof(CacheEntry) == 16 && Instance::prototypeChangeCacheIndex(0x7f40) == ((0x7f40 >> 6) & (Instance::prototypeChangeCacheSize - 1)));
+    auto& type = typeOf(result);
+    auto& anything = m_program.at(m_program.types.anything);
+    LayoutID supertype = typeOf(value.arguments[0]).withoutPrimitives(Primitive::UndefinedOrNull).singleLayout();
+    auto isUnseenSinceItsAllocation = [&] {
+        ValueID allocated = value.arguments[0];
+        while (m_function.at(allocated).opcode == Opcode::Cast)
+            allocated = m_function.at(allocated).child(0);
+        if (m_function.at(allocated).opcode != Opcode::NewObjectWithShape)
+            return false;
+        auto values = m_currentBlock->values.span().first(m_currentIndexInBlock);
+        size_t first = std::ranges::find(values, allocated) - values.begin();
+        Vector<ValueID, 4> names { allocated };
+        for (ValueID id : values.subspan(std::min(first + 1, values.size()))) {
+            auto& other = m_function.at(id);
+            if (other.opcode == Opcode::Cast && names.contains(other.child(0))) {
+                names.append(id);
+                continue;
+            }
+            if (other.opcode == Opcode::PutField && names.contains(other.child(0)) && !names.contains(other.child(1)))
+                continue;
+            bool mentionsIt = false;
+            other.forEachChild([&](ValueID child) {
+                mentionsIt |= names.contains(child);
+            });
+            if (mentionsIt)
+                return false;
+        }
+        return first < values.size();
+    };
+    if (!supertype || m_program.at(supertype).kind != LayoutKind::Record || !isUnseenSinceItsAllocation())
+        return convertToDeclaredResult(callBuiltinFunction(value, builtinCallEffects(value)), anything, value, type);
+    Rep rep = repOf(type);
+    LBasicBlock slowPath = newBlockForGenericCall(value);
+    Join join(m_out, rep, b3TypeOf(rep));
+    CellPointer object = objectOrElse(value.arguments[0], slowPath);
+    CellPointer prototype = objectOrElse(value.arguments[1], slowPath);
+    LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), m_out.constInt32(2)), m_out.constIntPtr((Instance::prototypeChangeCacheSize - 1) << 4));
+    LValue entry = m_out.add(m_out.add(m_instance, m_out.constIntPtr(Instance::offsetOfPrototypeChangeCache())), offset);
+    orElse(m_out.equal(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, prototype))), prototype.value()), slowPath);
+    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, from))), loadField<Word32>(object, m_heaps.JSCell_structureID).value()), slowPath);
+    orElse(hasNoBits(orderWordOf(object), orderWordHasExtraProperties | orderWordIsFrozen | orderWordIsSealed | orderWordIsNotExtensible), slowPath);
+    didEmitWrite(writes);
+    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, entry, OBJECT_OFFSETOF(CacheEntry, to))), object.value(), m_heaps.JSCell_structureID);
+    barrier(object);
+    join.add(convertToDeclaredResult(get(value.arguments[0]), typeOf(value.arguments[0]), value, type));
+
+    if (!isSharedGenericPath(slowPath)) {
+        m_out.appendTo(slowPath);
+        join.add(convertToDeclaredResult(callBuiltinFunction(value, builtinCallEffects(value)), anything, value, type));
+    }
+    return join.finish();
+}
+
 Vector<Lowering::KeyOrder, 2> Lowering::keyOrdersExpectedOf(ValueID id) const
 {
     static constexpr unsigned maxOrders = 2;
@@ -1609,7 +1668,7 @@ Word32 Lowering::lowerSameValue(ValueID a, ValueID b)
     return join.finish().as<Word32>();
 }
 
-std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID result, const Value& value, Writes)
+std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID result, const Value& value, Writes writes)
 {
     auto& type = typeOf(result);
     switch (which) {
@@ -1636,6 +1695,8 @@ std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID 
     case InlineBuiltin::ObjectGetPrototypeOf:
     case InlineBuiltin::ReflectGetPrototypeOf:
         return lowerGetPrototypeOf(result, value);
+    case InlineBuiltin::ObjectSetPrototypeOf:
+        return lowerSetPrototypeOf(result, value, writes);
     case InlineBuiltin::ObjectIs:
         return booleanResult(lowerSameValue(value.arguments[0], value.arguments[1]), type);
     case InlineBuiltin::ObjectCall: {

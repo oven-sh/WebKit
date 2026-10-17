@@ -657,6 +657,7 @@ struct Function {
     bool isRampForClosures { false };
     bool isUsedAsObject { false };
     bool isSharedOutlinedBody { false };
+    bool isSharedCallBody { false };
     bool isGuardedPreludeEntry { false };
     bool onlyDestructuresParameter { false };
     bool copiesFirstArgumentToHeap { false };
@@ -842,6 +843,7 @@ struct Layout {
     bool hasUntypedBase { false };
     bool hasImmutableMembers { false };
     bool mayHaveOtherPrototype { false };
+    bool prototypeIsSetByTypedCode { false };
     bool constructorMayBeReplaced { false };
     bool mayBeConstructed { false };
     bool hasComputedMethodName { false };

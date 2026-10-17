@@ -113,6 +113,8 @@ public:
                 if (!canInline(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
                     continue;
                 bool callerIsHot = m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id);
+                if (m_program.at(callee).isSharedCallBody && !callerIsHot)
+                    continue;
                 if (m_program.at(callee).worker && !isOnlyRead(call))
                     continue;
                 if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinySizeInColdCode + 1) > tinySizeInColdCode)

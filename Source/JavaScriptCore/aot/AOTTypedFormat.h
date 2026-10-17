@@ -152,6 +152,7 @@ enum ShapeFlag : uint32_t {
     ShapeMayBeReused = 1 << 10,
     ShapeIsRelaxedForLogging = 1 << 11,
     ShapeAcceptsOnlyOtherLayouts = 1 << 12,
+    ShapePrototypeIsSetByTypedCode = 1 << 13,
 };
 
 struct Shape {

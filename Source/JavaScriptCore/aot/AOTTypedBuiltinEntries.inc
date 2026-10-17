@@ -1131,7 +1131,7 @@ constexpr Builtin builtinEntries[numberOfBuiltins] = {
     { BuiltinKind::StaticFunction, "Object"_s, "freeze"_s, Name(194), Name(370), { 339, 2 }, { 0, 0, 1, 0, 0 }, Effect::ClobbersWorld, 0, calls(BuiltinCallee::HostFunction) },
     { BuiltinKind::StaticFunction, "Object"_s, "preventExtensions"_s, Name(194), Name(491), { 339, 2 }, { 0, 0, 1, 0, 0 }, Effect::ClobbersWorld, 0, calls(BuiltinCallee::HostFunction) },
     { BuiltinKind::StaticFunction, "Object"_s, "seal"_s, Name(194), Name(539), { 339, 2 }, { 0, 0, 1, 0, 0 }, Effect::ClobbersWorld, 0, calls(BuiltinCallee::HostFunction) },
-    { BuiltinKind::StaticFunction, "Object"_s, "setPrototypeOf"_s, Name(194), Name(558), { 341, 3 }, { 0, 0, 1, 0, 0 }, Effect::ClobbersWorld, 0, calls(BuiltinCallee::HostFunction) },
+    { BuiltinKind::StaticFunction, "Object"_s, "setPrototypeOf"_s, Name(194), Name(558), { 341, 3 }, { 0, 0, 1, 0, 0 }, Effect::ClobbersWorld, 0, inlined(InlineBuiltin::ObjectSetPrototypeOf, BuiltinCallee::HostFunction) },
     { BuiltinKind::StaticFunction, "Object"_s, "create"_s, Name(194), Name(324), { 344, 3 }, { Result::Instance, 24, 0, 0, 0 }, Effect::ClobbersWorld, 0, inlined(InlineBuiltin::ObjectCreate, BuiltinCallee::HostFunction), true },
     { BuiltinKind::StaticFunction, "Object"_s, "fromEntries"_s, Name(194), Name(376), { 307, 2 }, { Result::Instance, 24, 0, 0, 0 }, Effect::ClobbersWorld, 0, calls(BuiltinCallee::Function) },
     { BuiltinKind::StaticFunction, "Object"_s, "getOwnPropertyDescriptors"_s, Name(194), Name(398), { 305, 2 }, { Result::Instance, 24, 0, 0, 0 }, Effect::ClobbersWorld, 0, calls(BuiltinCallee::HostFunction) },

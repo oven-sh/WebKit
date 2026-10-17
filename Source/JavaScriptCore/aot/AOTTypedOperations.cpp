@@ -3504,6 +3504,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCoerceElement, EncodedJSValue, (Instan
     State& state = *instance->typed;
     JSArray* array = uncheckedDowncast<JSArray>(cell);
     JSValue element = array->getIndexQuickly(index);
+    if (state.tryConvertPlainObjectInPlace(vm, element, state.type(type), type << 4 | static_cast<uint32_t>(Typed::Format::CastReason::As)))
+        OPERATION_RETURN(scope, JSValue::encode(element));
     JSValue converted = state.hold(globalObject, element, state.type(type));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (converted != element) {
@@ -5357,6 +5359,8 @@ static OperationReturnType<EncodedJSValue> getFromArrayAs(Instance* instance, Ca
     if (index && array->canGetIndexQuickly(*index)) {
         JSValue own = array->getIndexQuickly(*index);
         if (!own.isDouble() && state.fits(state.type(type), own))
+            OPERATION_RETURN(scope, JSValue::encode(own));
+        if (state.tryConvertPlainObjectInPlace(vm, own, state.type(type), type << 4 | static_cast<uint32_t>(Typed::Format::CastReason::As)))
             OPERATION_RETURN(scope, JSValue::encode(own));
     }
     Identifier name;
