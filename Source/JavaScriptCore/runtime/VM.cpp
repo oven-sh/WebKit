@@ -285,6 +285,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
     , m_builtinExecutables(makeUnique<BuiltinExecutables>(*this))
+    , m_invalidatedPropertyReplacementWatchpointSet(WatchpointSet::create(IsInvalidated))
     , m_defaultMicrotaskQueue(MicrotaskQueue::create(*this))
     , m_syncWaiter(adoptRef(*new Waiter(this)))
 {
