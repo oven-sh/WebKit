@@ -270,6 +270,8 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
         Structure* structure = propertyCache->inlineAccessBaseStructure();
         if (structure->takesSlowPathInDFGForImpureProperty())
             return GetByStatus(JSC::slowVersion(summary), propertyCache);
+        if (structure->isDepartedDictionary())
+            return GetByStatus(NoInformation, false);
         CacheableIdentifier identifier = propertyCache->identifier();
         UniquedStringImpl* uid = identifier.uid();
         RELEASE_ASSERT(uid);
@@ -345,6 +347,8 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
                 // crash on null structure.
                 return GetByStatus(JSC::slowVersion(summary), propertyCache);
             }
+            if (structure->isDepartedDictionary())
+                continue;
 
             switch (access.type()) {
             case AccessCase::CustomAccessorGetter: {
